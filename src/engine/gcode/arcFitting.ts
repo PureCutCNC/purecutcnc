@@ -38,6 +38,8 @@
  */
 
 import type { ToolpathMove, ToolpathPoint } from '../toolpaths/types'
+import { findArcRunsInPoints } from '../toolpaths/arcReconstruction'
+import type { Point } from '../../types/project'
 
 // ── public types ──────────────────────────────────────────────
 
@@ -70,121 +72,39 @@ export interface LinearMoveDescriptor {
 
 export type FittedMoveDescriptor = ArcMoveDescriptor | LinearMoveDescriptor
 
-// ── internal helpers ──────────────────────────────────────────
+// ── run predicates ────────────────────────────────────────────
 
-interface CircleFit {
-  center: { x: number; y: number }
-  radius: number
+/**
+ * True when two moves belong to the same fitting run: both are `cut`,
+ * at the same Z, share source and feedScale, and are spatially
+ * contiguous (the `from` of the second matches the `to` of the first).
+ */
+function sameRun(prev: ToolpathMove, next: ToolpathMove): boolean {
+  if (next.kind !== 'cut') return false
+  if (!pointsEq(prev.to, next.from)) return false
+  if (!sameZ(prev.to, next.to)) return false
+  if (prev.source !== next.source) return false
+  if (prev.feedScale !== next.feedScale) return false
+  return true
 }
+
+function sameZ(a: ToolpathPoint, b: ToolpathPoint, epsilon = 1e-9): boolean {
+  return Math.abs(a.z - b.z) <= epsilon
+}
+
+function toLinear(move: ToolpathMove): LinearMoveDescriptor {
+  return {
+    kind: 'linear',
+    point: move.to,
+    moveKind: move.kind,
+    source: move.source,
+    feedScale: move.feedScale,
+  }
+}
+
+// ── arc splitting helpers ────────────────────────────────────
 
 const TWO_PI = Math.PI * 2
-
-function pointsEq(a: ToolpathPoint, b: ToolpathPoint, eps = 1e-9): boolean {
-  return Math.abs(a.x - b.x) <= eps
-    && Math.abs(a.y - b.y) <= eps
-    && Math.abs(a.z - b.z) <= eps
-}
-
-/**
- * Kasa algebraic circle fit.
- * Minimises Σ(‖pᵢ‖² + A·xᵢ + B·yᵢ + C)².
- *
- * Returns `null` when the normal matrix is singular or the fitted radius
- * is ≤ 0 (points are effectively collinear).
- */
-function fitCircleKasa(points: readonly ToolpathPoint[]): CircleFit | null {
-  const n = points.length
-  if (n < 3) return null
-
-  let sx = 0, sy = 0, sx2 = 0, sy2 = 0, sxy = 0
-  // Accumulate the RHS terms: Σ zᵢ with zᵢ = xᵢ² + yᵢ²
-  let sz = 0, szx = 0, szy = 0
-
-  for (const p of points) {
-    const x = p.x, y = p.y
-    const x2 = x * x, y2 = y * y
-    const z = x2 + y2
-    sx += x
-    sy += y
-    sx2 += x2
-    sy2 += y2
-    sxy += x * y
-    sz += z
-    szx += z * x
-    szy += z * y
-  }
-
-  // Normal matrix  [[  sx2  sxy  sx  ]   [A]   [-szx]
-  //                 [  sxy  sy2  sy  ] × [B] = [-szy]
-  //                 [  sx   sy   n   ]]  [C]   [-sz ]
-
-  const det = sx2 * (sy2 * n - sy * sy)
-            - sxy * (sxy * n - sy * sx)
-            + sx  * (sxy * sy - sy2 * sx)
-
-  if (Math.abs(det) < 1e-20) return null
-
-  const invDet = 1 / det
-  const A = ((-szx) * (sy2 * n - sy * sy)
-          -    sxy  * ((-szy) * n - sy * (-sz))
-          +    sx   * ((-szy) * sy - sy2 * (-sz))) * invDet
-  const B = (    sx2  * ((-szy) * n - sy * (-sz))
-          -   (-szx) * (sxy * n - sy * sx)
-          +    sx   * (sxy * (-sz) - (-szy) * sx)) * invDet
-  const C = (    sx2  * (sy2 * (-sz) - (-szy) * sy)
-          -    sxy  * (sxy * (-sz) - (-szy) * sx)
-          +   (-szx) * (sxy * sy - sy2 * sx)) * invDet
-
-  const cx = -A / 2
-  const cy = -B / 2
-  const rSq = (A * A + B * B) / 4 - C
-
-  if (rSq <= 1e-24) return null
-
-  return { center: { x: cx, y: cy }, radius: Math.sqrt(rSq) }
-}
-
-/**
- * Maximum chordal deviation of any point from the fitted circle.
- */
-function maxResidual(points: readonly ToolpathPoint[], fit: CircleFit): number {
-  let maxDev = 0
-  for (const p of points) {
-    const dx = p.x - fit.center.x
-    const dy = p.y - fit.center.y
-    const dev = Math.abs(Math.sqrt(dx * dx + dy * dy) - fit.radius)
-    if (dev > maxDev) maxDev = dev
-  }
-  return maxDev
-}
-
-/**
- * Sum of absolute angular differences between consecutive points
- * around the fitted circle centre, in radians.  The result is
- * scale-independent: a full circle returns ≈ 2π regardless of
- * radius, and a near-collinear path returns a value close to 0.
- */
-function computeTotalSweep(
-  points: readonly ToolpathPoint[],
-  fit: CircleFit,
-): number {
-  let total = 0
-  for (let k = 0; k < points.length - 1; k++) {
-    const a0 = Math.atan2(
-      points[k].y - fit.center.y,
-      points[k].x - fit.center.x,
-    )
-    const a1 = Math.atan2(
-      points[k + 1].y - fit.center.y,
-      points[k + 1].x - fit.center.x,
-    )
-    let diff = a1 - a0
-    while (diff > Math.PI) diff -= TWO_PI
-    while (diff <= -Math.PI) diff += TWO_PI
-    total += Math.abs(diff)
-  }
-  return total
-}
 
 /** Minimum total angular sweep (radians) required to accept a fitted
  *  arc.  A residual-only fit can turn a very shallow bend into a
@@ -192,31 +112,10 @@ function computeTotalSweep(
  *  whose total accumulated chord-to-chord angle is below 0.5°. */
 const MIN_TOTAL_SWEEP_RAD = Math.PI / 360
 
-/**
- * Signed turning direction of three consecutive points.
- * Positive → CCW (G3), negative → CW (G2), near-zero → straight.
- */
-function signedTurn(a: ToolpathPoint, b: ToolpathPoint, c: ToolpathPoint): number {
-  return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)
-}
-
-/**
- * Determines the consistent rotation direction across all adjacent
- * chord pairs.  Returns `true` for clockwise (G2), `false` for
- * counter-clockwise (G3), or `null` when turns are inconsistent or
- * the path is effectively straight.
- */
-function detectDirection(points: readonly ToolpathPoint[]): boolean | null {
-  let pos = false
-  let neg = false
-  for (let i = 1; i < points.length - 1; i++) {
-    const t = signedTurn(points[i - 1], points[i], points[i + 1])
-    if (t > 1e-15) pos = true
-    else if (t < -1e-15) neg = true
-  }
-  if (pos && neg) return null   // inconsistent
-  if (!pos && !neg) return null // straight line
-  return neg // CW when turns are negative (right-hand turns)
+function pointsEq(a: ToolpathPoint, b: ToolpathPoint, eps = 1e-9): boolean {
+  return Math.abs(a.x - b.x) <= eps
+    && Math.abs(a.y - b.y) <= eps
+    && Math.abs(a.z - b.z) <= eps
 }
 
 /**
@@ -291,36 +190,6 @@ function splitArc(
   return segments_out
 }
 
-// ── run predicates ────────────────────────────────────────────
-
-/**
- * True when two moves belong to the same fitting run: both are `cut`,
- * at the same Z, share source and feedScale, and are spatially
- * contiguous (the `from` of the second matches the `to` of the first).
- */
-function sameRun(prev: ToolpathMove, next: ToolpathMove): boolean {
-  if (next.kind !== 'cut') return false
-  if (!pointsEq(prev.to, next.from)) return false
-  if (!sameZ(prev.to, next.to)) return false
-  if (prev.source !== next.source) return false
-  if (prev.feedScale !== next.feedScale) return false
-  return true
-}
-
-function sameZ(a: ToolpathPoint, b: ToolpathPoint, epsilon = 1e-9): boolean {
-  return Math.abs(a.z - b.z) <= epsilon
-}
-
-function toLinear(move: ToolpathMove): LinearMoveDescriptor {
-  return {
-    kind: 'linear',
-    point: move.to,
-    moveKind: move.kind,
-    source: move.source,
-    feedScale: move.feedScale,
-  }
-}
-
 // ── public API ────────────────────────────────────────────────
 
 /**
@@ -384,58 +253,71 @@ export function fitArcsInMachineMoves(
       continue
     }
 
-    // 1. Circle fit.
-    const circle = fitCircleKasa(points)
-    if (!circle) {
-      for (const m of run) result.push(toLinear(m))
-      i = j
-      continue
-    }
+    // Convert ToolpathPoint[] → Point[] for the shared geometry function
+    // (drops Z — planarity was already verified above).
+    const xyPoints: Point[] = points.map(p => ({ x: p.x, y: p.y }))
 
-    // 2. Residual check.
-    if (maxResidual(points, circle) > tolerance) {
-      for (const m of run) result.push(toLinear(m))
-      i = j
-      continue
-    }
+    // Partial-run arc search via the shared geometry function.
+    // sourceCenters is omitted — export has no source-circle metadata.
+    const arcRuns = findArcRunsInPoints(xyPoints, {
+      minArcPoints: 4,           // ≥ 3 chord segments = 4 points
+      maxResidual: tolerance,
+      maxSegmentAngleDeg: 90,    // individual chord step must be ≤ 90°
+      minChordRatio: 0.15,       // reject tiny-chord fits
+      minTotalSweepRad: MIN_TOTAL_SWEEP_RAD,
+    })
 
-    // 2b. Collinearity gate: a residual-only fit can turn a very
-    //     shallow bend into a huge-radius arc that is practically
-    //     a straight line.  Require a minimum total angular sweep
-    //     (scale-independent) before accepting the fit.
-    if (computeTotalSweep(points, circle) < MIN_TOTAL_SWEEP_RAD) {
-      for (const m of run) result.push(toLinear(m))
-      i = j
-      continue
-    }
-
-    // 3. Direction detection.
-    const clockwise = detectDirection(points)
-    if (clockwise === null) {
-      for (const m of run) result.push(toLinear(m))
-      i = j
-      continue
-    }
-
-    // 4. Split into ≤ maxSweepDeg sub-arcs.
     const source = run[0].source
     const feedScale = run[0].feedScale
-    const startPt = points[0]
-    const endPt = points[points.length - 1]
-    const subArcs = splitArc(startPt, endPt, circle.center, clockwise, maxSweepDeg)
 
-    let prevEnd = startPt
-    for (const seg of subArcs) {
-      result.push({
-        kind: 'arc',
-        startPoint: prevEnd,
-        endPoint: seg.endPt,
-        centerOffsets: seg.centerOffsets,
-        clockwise,
-        source,
-        feedScale,
-      })
-      prevEnd = seg.endPt
+    if (arcRuns.length === 0) {
+      // No arc runs found → all linear.
+      for (const m of run) result.push(toLinear(m))
+      i = j
+      continue
+    }
+
+    // Emit descriptors: walk through the point indices, emitting linear
+    // for gaps and arcs for found runs.
+    let moveIdx = 0
+    for (const arcRun of arcRuns) {
+      // Linear moves before this arc run.
+      while (moveIdx < arcRun.startIndex) {
+        result.push(toLinear(run[moveIdx]))
+        moveIdx++
+      }
+
+      // Arc sub-segments for the found run.
+      const arcStart = points[arcRun.startIndex]
+      const arcEnd = points[arcRun.endIndex]
+      const subArcs = splitArc(
+        arcStart, arcEnd,
+        { x: arcRun.center.x, y: arcRun.center.y },
+        arcRun.clockwise,
+        maxSweepDeg,
+      )
+
+      let prevEnd = arcStart
+      for (const seg of subArcs) {
+        result.push({
+          kind: 'arc',
+          startPoint: prevEnd,
+          endPoint: seg.endPt,
+          centerOffsets: seg.centerOffsets,
+          clockwise: arcRun.clockwise,
+          source,
+          feedScale,
+        })
+        prevEnd = seg.endPt
+      }
+
+      moveIdx = arcRun.endIndex
+    }
+
+    // Remaining linear moves after the last arc run.
+    while (moveIdx < run.length) {
+      result.push(toLinear(run[moveIdx]))
+      moveIdx++
     }
 
     i = j

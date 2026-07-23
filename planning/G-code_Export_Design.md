@@ -103,9 +103,19 @@ Export-stage arc fitting (`src/engine/gcode/arcFitting.ts`) runs between the
 project→machine coordinate transform and G-code emission. It does not modify
 `ToolpathResult` or affect preview/simulation.
 
-- Only constant-Z `cut` runs with consistent feed and source participate.
+- The core geometry fitting (`findArcRunsInPoints`) lives in
+  `src/engine/toolpaths/arcReconstruction.ts` as a shared, reusable partial-run
+  arc finder operating on flat `Point[]`. Export adapts its machine-coordinate
+  `ToolpathPoint` data into the shared seam and converts the returned arc-run
+  indices back into `ArcMoveDescriptor` segments with sub-arc splitting.
+- Export owns the move-level predicates: only constant-Z `cut` runs with
+  consistent feed and source participate. The shared function does not depend on
+  `ToolpathMove` types or G-code concerns.
 - Fitting uses a Kasa algebraic circle (linear least squares) with a
   conservative 0.01 mm (project-unit-equivalent) residual tolerance.
+- A qualifying cut run may contain a circular sub-run embedded in straight
+  lead-in/lead-out geometry. The shared partial-run search finds the circular
+  portion; the surrounding straight moves remain as linear G1 output.
 - Fitted arcs are split into ≤ 90° sub-arcs. Full circles and arcs > 90° are
   always split.
 - Direction (G2/G3) is determined from the chord turns in machine coordinates
