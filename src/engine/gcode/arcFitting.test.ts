@@ -21,6 +21,7 @@
  */
 
 import { fitArcsInMachineMoves } from './arcFitting'
+import type { ArcMoveDescriptor } from './arcFitting'
 import type { ToolpathMove, ToolpathPoint } from '../toolpaths/types'
 
 function assert(condition: boolean, message: string): void {
@@ -466,6 +467,137 @@ function testSplitsLargeArc(): void {
 
 const TWO_PI = Math.PI * 2
 
+// ── split-arc I/J is relative to each segment's own start ───────
+
+function testSplitArcOffsetsRelative(): void {
+  console.log('Testing that split-arc I/J offsets are relative to each segment start...')
+
+  // Full circle of radius 10 centred at (0, 0) → 16 chord segments → 4 × 90° arcs.
+  const r = 10
+  const n = 16
+  const points: ToolpathPoint[] = []
+  for (let i = 0; i <= n; i++) {
+    const angle = (Math.PI * 2 * i) / n
+    points.push(pt(r * Math.cos(angle), r * Math.sin(angle), 0))
+  }
+  const moves: ToolpathMove[] = []
+  for (let i = 0; i < n; i++) {
+    moves.push(cut(points[i], points[i + 1]))
+  }
+
+  const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
+  const arcs = result.filter(d => d.kind === 'arc')
+  assert(arcs.length >= 2, `need at least 2 arc segments for meaningful I/J test, got ${arcs.length}`)
+
+  // Verify a common centre: for each arc, centre = startPoint + (i, j).
+  const centers = arcs.map(a => {
+    if (a.kind !== 'arc') throw new Error('expected arc')
+    return {
+      x: a.startPoint.x + a.centerOffsets.i,
+      y: a.startPoint.y + a.centerOffsets.j,
+    }
+  })
+  const c0 = centers[0]
+  for (const c of centers) {
+    const dcx = c.x - c0.x
+    const dcy = c.y - c0.y
+    assert(Math.abs(dcx) < 1e-6 && Math.abs(dcy) < 1e-6,
+      `all arc segments must share the same centre; got (${c.x}, ${c.y}) vs (${c0.x}, ${c0.y})`)
+  }
+
+  // At least one later segment must have different I/J from the first — this
+  // confirms offsets are computed per segment, not copied from the run start.
+  const firstIJ = { i: (arcs[0] as ArcMoveDescriptor).centerOffsets.i, j: (arcs[0] as ArcMoveDescriptor).centerOffsets.j }
+  let distinctCount = 0
+  for (const a of arcs) {
+    if (a.kind !== 'arc') continue
+    const di = a.centerOffsets.i - firstIJ.i
+    const dj = a.centerOffsets.j - firstIJ.j
+    if (Math.abs(di) > 1e-6 || Math.abs(dj) > 1e-6) distinctCount++
+  }
+  assert(distinctCount > 0, `expected at least one split segment to have different I/J offsets; all were (${firstIJ.i}, ${firstIJ.j})`)
+}
+
+// ── non-planar rejection: Z-changing first cut ──────────────────
+
+function testRejectsPlanarWithZChangingFirstCut(): void {
+  console.log('Testing rejection when first cut changes Z (non-planar lead)...')
+
+  // First move changes Z — the run must be rejected even though subsequent
+  // cuts look circular and planar.
+  const r = 10
+  const moves: ToolpathMove[] = [
+    cut(pt(r, 0, 0), pt(0, r, -0.5)),                           // Z-changing first cut
+    cut(pt(0, r, -0.5), pt(-r, 0, -0.5)),                       // planar-looking at -0.5
+    cut(pt(-r, 0, -0.5), pt(0, -r, -0.5)),                      // planar-looking at -0.5
+    cut(pt(0, -r, -0.5), pt(r, 0, -0.5)),                       // planar-looking at -0.5
+  ]
+
+  const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
+  const arcs = result.filter(d => d.kind === 'arc')
+  assert(arcs.length === 0, 'run with Z-changing first cut must produce no arcs')
+  assert(result.length === 4, 'all 4 moves should remain as linear')
+  for (const d of result) {
+    assert(d.kind === 'linear', 'every descriptor should be linear')
+  }
+}
+
+// ── near-collinear rejection ────────────────────────────────────
+
+function testRejectsNearCollinearRun(): void {
+  console.log('Testing rejection of near-collinear (shallow bend) run...')
+
+  // A very shallow bend: points follow a huge-radius circle (R ≈ 100 000 mm)
+  // with a tiny angular sweep (well below 0.5°).  The Kasa residual would
+  // be tiny, but the total sweep gate must still reject it.
+  const hugeR = 100000
+  const shallowSweep = Math.PI / 720  // 0.25° — below the 0.5° threshold
+  const points: ToolpathPoint[] = []
+  const n = 4
+  for (let i = 0; i <= n; i++) {
+    const angle = shallowSweep * (i / n - 0.5)
+    points.push(pt(hugeR * Math.cos(angle), hugeR * Math.sin(angle), 0))
+  }
+  // Re-centre so the chord is near the origin (avoids floating-point issues).
+  const cx = points[0].x
+  const cy = (points[0].y + points[n].y) / 2
+  const recentred = points.map(p => pt(p.x - cx, p.y - cy, 0))
+  const moves: ToolpathMove[] = []
+  for (let i = 0; i < n; i++) {
+    moves.push(cut(recentred[i], recentred[i + 1]))
+  }
+
+  const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
+  const arcs = result.filter(d => d.kind === 'arc')
+  assert(arcs.length === 0, `near-collinear run (0.25° sweep) must produce no arcs, got ${arcs.length}`)
+  assert(result.length === n, `all ${n} moves should remain as linear`)
+}
+
+// ── near-collinear: accepted ordinary circular arc ──────────────
+
+function testAcceptsOrdinaryCircularArcAfterCollinearGate(): void {
+  console.log('Testing that ordinary circular arcs still pass the collinearity gate...')
+
+  // A 30° arc on R=5 — total sweep ≈ 0.524 rad, well above the 0.5° threshold.
+  const r = 5
+  const n = 4
+  const totalSweep = Math.PI / 6  // 30°
+  const points: ToolpathPoint[] = []
+  for (let i = 0; i <= n; i++) {
+    const angle = totalSweep * i / n
+    points.push(pt(r * Math.cos(angle), r * Math.sin(angle), 0))
+  }
+  const moves: ToolpathMove[] = []
+  for (let i = 0; i < n; i++) {
+    moves.push(cut(points[i], points[i + 1]))
+  }
+
+  const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
+  const arcs = result.filter(d => d.kind === 'arc')
+  // 30° fits in one ≤90° segment.
+  assert(arcs.length === 1, `expected 1 arc for 30° sweep, got ${arcs.length}`)
+}
+
 // ── run all ─────────────────────────────────────────────────────
 
 testAcceptedCircularRun()
@@ -486,5 +618,9 @@ testEmptyInput()
 testAllRapids()
 testSingleCutStaysLinear()
 testSplitsLargeArc()
+testSplitArcOffsetsRelative()
+testRejectsPlanarWithZChangingFirstCut()
+testRejectsNearCollinearRun()
+testAcceptsOrdinaryCircularArcAfterCollinearGate()
 
 console.log('arcFitting tests passed')

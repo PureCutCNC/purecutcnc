@@ -27,9 +27,10 @@
  *   feedScale, stay at constant Z, and contain ≥ 3 chord segments
  *   (4 points: from of the first move + to of every move in the run).
  * - Fitting uses the Kasa algebraic circle (linear least-squares).
- * - A run is rejected when any point’s residual exceeds the supplied
- *   tolerance, the points are effectively collinear, or the direction
- *   is ambiguous.
+ * - A run is rejected when any point is non-planar (Z varies),
+ *   any point’s residual exceeds the supplied tolerance, the total
+ *   angular sweep is below the collinearity threshold, or the
+ *   direction is ambiguous.
  * - Every fitted run is split into sub-arcs of ≤ 90° — the caller
  *   chooses the maximum sweep.
  * - Residual moves (rapid, plunge, lead, rejected runs) pass through
@@ -158,6 +159,40 @@ function maxResidual(points: readonly ToolpathPoint[], fit: CircleFit): number {
 }
 
 /**
+ * Sum of absolute angular differences between consecutive points
+ * around the fitted circle centre, in radians.  The result is
+ * scale-independent: a full circle returns ≈ 2π regardless of
+ * radius, and a near-collinear path returns a value close to 0.
+ */
+function computeTotalSweep(
+  points: readonly ToolpathPoint[],
+  fit: CircleFit,
+): number {
+  let total = 0
+  for (let k = 0; k < points.length - 1; k++) {
+    const a0 = Math.atan2(
+      points[k].y - fit.center.y,
+      points[k].x - fit.center.x,
+    )
+    const a1 = Math.atan2(
+      points[k + 1].y - fit.center.y,
+      points[k + 1].x - fit.center.x,
+    )
+    let diff = a1 - a0
+    while (diff > Math.PI) diff -= TWO_PI
+    while (diff <= -Math.PI) diff += TWO_PI
+    total += Math.abs(diff)
+  }
+  return total
+}
+
+/** Minimum total angular sweep (radians) required to accept a fitted
+ *  arc.  A residual-only fit can turn a very shallow bend into a
+ *  huge-radius arc; this scale-independent gate rejects candidates
+ *  whose total accumulated chord-to-chord angle is below 0.5°. */
+const MIN_TOTAL_SWEEP_RAD = Math.PI / 360
+
+/**
  * Signed turning direction of three consecutive points.
  * Positive → CCW (G3), negative → CW (G2), near-zero → straight.
  */
@@ -235,6 +270,7 @@ function splitArc(
   const a0 = Math.atan2(start.y - center.y, start.x - center.x)
   const segments_out: Array<{ endPt: ToolpathPoint; centerOffsets: { i: number; j: number } }> = []
 
+  let segStart = start
   for (let s = 1; s <= segments; s++) {
     const angle = a0 + step * s
     const ep: ToolpathPoint = {
@@ -245,10 +281,11 @@ function splitArc(
     segments_out.push({
       endPt: ep,
       centerOffsets: {
-        i: center.x - start.x,
-        j: center.y - start.y,
+        i: center.x - segStart.x,
+        j: center.y - segStart.y,
       },
     })
+    segStart = ep
   }
 
   return segments_out
@@ -337,6 +374,16 @@ export function fitArcsInMachineMoves(
     const points: ToolpathPoint[] = [run[0].from]
     for (const m of run) points.push(m.to)
 
+    // 0. Planarity gate: every cut must have from.z === to.z within
+    //    epsilon and all points in the run must share the same Z.
+    //    The fitter never emits helical or ramping arcs.
+    const refZ = points[0].z
+    if (points.some(p => Math.abs(p.z - refZ) > 1e-9)) {
+      for (const m of run) result.push(toLinear(m))
+      i = j
+      continue
+    }
+
     // 1. Circle fit.
     const circle = fitCircleKasa(points)
     if (!circle) {
@@ -347,6 +394,16 @@ export function fitArcsInMachineMoves(
 
     // 2. Residual check.
     if (maxResidual(points, circle) > tolerance) {
+      for (const m of run) result.push(toLinear(m))
+      i = j
+      continue
+    }
+
+    // 2b. Collinearity gate: a residual-only fit can turn a very
+    //     shallow bend into a huge-radius arc that is practically
+    //     a straight line.  Require a minimum total angular sweep
+    //     (scale-independent) before accepting the fit.
+    if (computeTotalSweep(points, circle) < MIN_TOTAL_SWEEP_RAD) {
       for (const m of run) result.push(toLinear(m))
       i = j
       continue

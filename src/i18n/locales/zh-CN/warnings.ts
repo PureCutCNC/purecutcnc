@@ -139,7 +139,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.postToolChangesDisabled': '加工操作“{operation}”使用了与之前不同的刀具（“{tool}”），但换刀已禁用。',
   'warnings.postNoCoolantCommands': '已请求冷却液输出，但机床定义没有冷却液指令。',
   'warnings.postCannedCycleUnsupported': '加工操作“{operation}”：机床“{machine}”不支持 {drillType} 固定循环；已输出展开的移动。',
-  'warnings.postArcNoCapability': '加工操作“{operation}”包含圆弧刀路段，但所选机床不支持圆弧插补（G2/G3）。已改用直线移动输出。',
+  'warnings.postArcNoCapability': '加工操作”{operation}”包含可拟合为圆弧的直线移动，但所选机床不支持圆弧插补（G2/G3）。已改用直线移动输出。',
   'warnings.replayNoTool': '所选加工操作未指定刀具。',
   'warnings.bookletNoTool': '此加工操作未选择刀具。',
   'warnings.bookletNoToolpath': '无法为此加工操作生成刀路。',
