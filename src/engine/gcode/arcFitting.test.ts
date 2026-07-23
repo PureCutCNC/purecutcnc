@@ -598,6 +598,115 @@ function testAcceptsOrdinaryCircularArcAfterCollinearGate(): void {
   assert(arcs.length === 1, `expected 1 arc for 30° sweep, got ${arcs.length}`)
 }
 
+// ── partial-run: full circular chord loop ──────────────────────
+
+function testFullCircularChordLoop(): void {
+  console.log('Testing full circular chord loop (partial-run regression)...')
+
+  // 16 chord segments forming a full circle of radius 10 at (0,0).
+  // Every point is on the circle — the entire run should fit as arcs.
+  const r = 10
+  const n = 16
+  const points: ToolpathPoint[] = []
+  for (let i = 0; i <= n; i++) {
+    const angle = (Math.PI * 2 * i) / n
+    points.push(pt(r * Math.cos(angle), r * Math.sin(angle), 0))
+  }
+  const moves: ToolpathMove[] = []
+  for (let i = 0; i < n; i++) {
+    moves.push(cut(points[i], points[i + 1]))
+  }
+
+  const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
+  const arcs = result.filter(d => d.kind === 'arc')
+
+  // Full circle → 4 × 90° sub-arcs. No linear moves should remain.
+  assert(arcs.length === 4, `expected 4 arc segments for full circle, got ${arcs.length}`)
+  const linears = result.filter(d => d.kind === 'linear')
+  assert(linears.length === 0, `expected 0 linear descriptors, got ${linears.length}`)
+}
+
+// ── partial-run: arc sub-run with straight leads/trails ─────────
+
+function testPartialArcWithStraightLeads(): void {
+  console.log('Testing partial circular sub-run with straight lead/trail cuts...')
+
+  // 3 straight moves (lead-in along X axis), then 8 chord segments
+  // forming a 180° arc (radius 10), then 3 more straight moves (lead-out).
+  const r = 10
+
+  // Lead-in: 3 straight segments from (-15, 0) to (r, 0).
+  const leadIn: ToolpathMove[] = [
+    cut(pt(-15, 0, 0), pt(-10, 0, 0)),
+    cut(pt(-10, 0, 0), pt(-5, 0, 0)),
+    cut(pt(-5, 0, 0), pt(r, 0, 0)),
+  ]
+
+  // 180° arc from angle 0 to π (8 chord segments).
+  const arcN = 8
+  const arcPoints: ToolpathPoint[] = []
+  for (let i = 0; i <= arcN; i++) {
+    const angle = (Math.PI * i) / arcN
+    arcPoints.push(pt(r * Math.cos(angle), r * Math.sin(angle), 0))
+  }
+  const arcMoves: ToolpathMove[] = []
+  for (let i = 0; i < arcN; i++) {
+    arcMoves.push(cut(arcPoints[i], arcPoints[i + 1]))
+  }
+
+  // Lead-out: 3 straight segments from (-r, 0) going further left.
+  const leadOut: ToolpathMove[] = [
+    cut(pt(-r, 0, 0), pt(-13, 0, 0)),
+    cut(pt(-13, 0, 0), pt(-16, 0, 0)),
+    cut(pt(-16, 0, 0), pt(-19, 0, 0)),
+  ]
+
+  const allMoves = [...leadIn, ...arcMoves, ...leadOut]
+  const result = fitArcsInMachineMoves(allMoves, TOL, MAX_DEG)
+
+  // The arc portion (180°) should fit in 2 × ≤90° sub-arcs.
+  const arcs = result.filter(d => d.kind === 'arc')
+  assert(arcs.length === 2, `expected 2 arc segments for 180°, got ${arcs.length}`)
+
+  // Lead-in (3) + lead-out (3) + any linear portions within the run = 6 linear.
+  // The arc run's first move starts at (r,0) = leadIn[2].to, so those 3 lead-in
+  // moves stay linear. Similarly the 3 lead-out moves after the arc stay linear.
+  const linears = result.filter(d => d.kind === 'linear')
+  assert(linears.length === 6, `expected 6 linear moves (3 lead-in + 3 lead-out), got ${linears.length}`)
+
+  // Verify the arc centre is at origin.
+  if (arcs[0] && arcs[0].kind === 'arc') {
+    const cx = arcs[0].startPoint.x + arcs[0].centerOffsets.i
+    const cy = arcs[0].startPoint.y + arcs[0].centerOffsets.j
+    assert(Math.abs(cx) < 1e-6 && Math.abs(cy) < 1e-6,
+      `expected arc centre at (0,0), got (${cx}, ${cy})`)
+  }
+
+  // Verify the endpoints: arc should start at lead-in end and finish at lead-out start.
+  const firstArc = arcs[0]
+  const lastArc = arcs[arcs.length - 1]
+  if (firstArc && firstArc.kind === 'arc') {
+    assert(pointsEq(firstArc.startPoint, pt(r, 0, 0)),
+      `first arc should start at (${r}, 0, 0)`)
+  }
+  if (lastArc && lastArc.kind === 'arc') {
+    assert(pointsEq(lastArc.endPoint, pt(-r, 0, 0)),
+      `last arc should end at (${-r}, 0, 0)`)
+  }
+
+  // All leads should be linear cut moves.
+  for (const d of linears) {
+    assert(d.kind === 'linear' && d.moveKind === 'cut',
+      'lead moves must be linear cuts')
+  }
+}
+
+function pointsEq(a: ToolpathPoint, b: ToolpathPoint, eps = 1e-6): boolean {
+  return Math.abs(a.x - b.x) <= eps
+    && Math.abs(a.y - b.y) <= eps
+    && Math.abs(a.z - b.z) <= eps
+}
+
 // ── run all ─────────────────────────────────────────────────────
 
 testAcceptedCircularRun()
@@ -622,5 +731,7 @@ testSplitArcOffsetsRelative()
 testRejectsPlanarWithZChangingFirstCut()
 testRejectsNearCollinearRun()
 testAcceptsOrdinaryCircularArcAfterCollinearGate()
+testFullCircularChordLoop()
+testPartialArcWithStraightLeads()
 
 console.log('arcFitting tests passed')
