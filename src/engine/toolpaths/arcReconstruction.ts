@@ -565,8 +565,14 @@ export function clipperContourToProfilePreserving(
 export interface PartialArcFitOptions {
   /** Minimum number of points needed to attempt a fit (≥ 3). */
   minArcPoints: number
-  /** Maximum absolute chordal deviation (radial residual) in project units. */
+  /** Maximum absolute chordal deviation (radial residual) in project units.
+   *  Used only when {@link radiusToleranceFraction} is unset or zero. */
   maxResidual: number
+  /** When > 0, the effective residual tolerance is
+   *  min(radiusToleranceFraction × radius, 0.05) instead of
+   *  {@link maxResidual}.  The editor offset path uses this so the
+   *  tolerance scales with feature size; export uses an absolute value. */
+  radiusToleranceFraction?: number
   /** Maximum angular step between consecutive points, in degrees. Rejects
    *  runs whose individual chord-to-chord angles exceed this threshold. */
   maxSegmentAngleDeg: number
@@ -663,9 +669,14 @@ function validateArcFitPoints(
 ): boolean {
   const { center, radius } = fit
 
-  // 1. Residual check — every point must lie within maxResidual of the circle.
+  // 1. Residual check — every point must lie within tolerance of the circle.
+  //    When radiusToleranceFraction is set, use radius-relative tolerance
+  //    (editor offset path); otherwise use the absolute maxResidual (export).
+  const tolerance = opts.radiusToleranceFraction && opts.radiusToleranceFraction > 0
+    ? Math.min(opts.radiusToleranceFraction * radius, 0.05)
+    : opts.maxResidual
   for (const p of points) {
-    if (Math.abs(dist2D(p, center) - radius) > opts.maxResidual) return false
+    if (Math.abs(dist2D(p, center) - radius) > tolerance) return false
   }
 
   // 2. Source-centre anti-spurious safeguard (optional).
@@ -872,56 +883,6 @@ function mergeCollinearLinesClosed(profile: SketchProfile): SketchProfile {
   return { ...profile, segments: merged }
 }
 
-interface ArcFitOutcome {
-  center: Point
-  clockwise: boolean
-}
-
-function tryFitArcRun(
-  points: Point[],
-  opts: OffsetFitOptions,
-  sourceCenters: Point[],
-): ArcFitOutcome | null {
-  if (points.length < opts.minArcSegments + 1) return null
-  if (sourceCenters.length === 0) return null
-
-  const fit = fitCircleLeastSquares(points)
-  if (!fit) return null
-
-  const { center, radius } = fit
-  const tolerance = Math.min(opts.radiusToleranceFraction * radius, 0.05)
-
-  for (const p of points) {
-    if (Math.abs(dist2D(p, center) - radius) > tolerance) return null
-  }
-
-  // Every legitimate offset arc is concentric with a source arc/circle. A
-  // Kasa fit whose center is far from any source center is geometrically
-  // valid math but spurious — typically a huge-radius circle fitted to a
-  // slightly-bowed straight run. Reject it.
-  const centerProximity = Math.min(0.01, radius * 0.001)
-  let nearSource = false
-  for (const sc of sourceCenters) {
-    if (dist2D(center, sc) <= centerProximity) { nearSource = true; break }
-  }
-  if (!nearSource) return null
-
-  const maxSegmentAngle = (opts.maxSegmentAngleDeg * Math.PI) / 180
-  for (let i = 0; i < points.length - 1; i += 1) {
-    const a1 = Math.atan2(points[i].y - center.y, points[i].x - center.x)
-    const a2 = Math.atan2(points[i + 1].y - center.y, points[i + 1].x - center.x)
-    let da = Math.abs(a2 - a1)
-    if (da > Math.PI) da = 2 * Math.PI - da
-    if (da > maxSegmentAngle) return null
-  }
-
-  const chord = dist2D(points[0], points[points.length - 1])
-  const isFullCircle = chord <= radius * 1e-6
-  if (!isFullCircle && chord < radius * 0.15) return null
-
-  return { center, clockwise: arcSweepClockwise(points, center) }
-}
-
 function sliceLineRunVertices(profile: SketchProfile, startSeg: number, endSeg: number): Point[] {
   const origin: Point = startSeg === 0 ? profile.start : profile.segments[startSeg - 1].to
   const pts: Point[] = [origin]
@@ -944,6 +905,15 @@ function fitArcsInLineRuns(
   if (segs.length < opts.minArcSegments) return profile
   if (sourceCenters.length === 0) return profile
 
+  const partialOpts: PartialArcFitOptions = {
+    minArcPoints: opts.minArcSegments + 1, // +1 for the run-start anchor vertex
+    maxResidual: 0,                        // unused — radiusToleranceFraction takes precedence
+    radiusToleranceFraction: opts.radiusToleranceFraction,
+    maxSegmentAngleDeg: opts.maxSegmentAngleDeg,
+    minChordRatio: 0.15,
+    sourceCenters,
+  }
+
   const out: Segment[] = []
   let i = 0
   while (i < segs.length) {
@@ -958,27 +928,42 @@ function fitArcsInLineRuns(
       runEnd += 1
     }
 
-    let consumed = false
-    for (let end = runEnd; end >= i + opts.minArcSegments; end -= 1) {
-      const pts = sliceLineRunVertices(profile, i, end)
-      const fit = tryFitArcRun(pts, opts, sourceCenters)
-      if (fit) {
+    // Collect the flat vertex sequence for this line run, anchored at the
+    // start of the first segment so the shared finder sees the full path.
+    const verts = sliceLineRunVertices(profile, i, runEnd)
+    const arcRuns = findArcRunsInPoints(verts, partialOpts)
+
+    if (arcRuns.length === 0) {
+      // No arcs found — emit all line segments in this run unchanged.
+      for (let k = i; k < runEnd; k += 1) out.push(segs[k])
+    } else {
+      // Map arc-run vertex indices back to segment indices and emit arcs
+      // interspersed with the line segments they don't cover.
+      let pos = i
+      for (const arc of arcRuns) {
+        // Emit line segments between the previous position and the arc start.
+        while (pos < i + arc.startIndex) {
+          out.push(segs[pos])
+          pos += 1
+        }
+        // Emit the arc. arc.endIndex is a vertex index into verts, which
+        // corresponds to the end of segment i + arc.endIndex - 1.
         out.push({
           type: 'arc',
-          to: pts[pts.length - 1],
-          center: fit.center,
-          clockwise: fit.clockwise,
+          to: verts[arc.endIndex],
+          center: arc.center,
+          clockwise: arc.clockwise,
         })
-        i = end
-        consumed = true
-        break
+        pos = i + arc.endIndex
+      }
+      // Emit any remaining line segments after the last arc.
+      while (pos < runEnd) {
+        out.push(segs[pos])
+        pos += 1
       }
     }
 
-    if (!consumed) {
-      out.push(segs[i])
-      i += 1
-    }
+    i = runEnd
   }
 
   return { ...profile, segments: out }
