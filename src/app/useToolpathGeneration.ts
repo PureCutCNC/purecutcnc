@@ -29,6 +29,7 @@ import {
   generateSurfaceCleanToolpath,
   generateVCarveMedialToolpath,
   generateVCarveToolpath,
+  optimizeLinearMoves,
   type ToolpathResult,
 } from '../engine/toolpaths'
 import type { Clamp, FeatureInstance, Operation, Project, Stock, Tab, Tool } from '../types/project'
@@ -203,28 +204,28 @@ export function useToolpathGeneration(project: Project, selectedOperation: Opera
       let result: ToolpathResult | null = null
 
       if (operation.kind === 'pocket') {
-        result = applyClampWarnings(project, applyTabWarnings(project, operation, generatePocketToolpath(project, operation)), operation)
+        result = applyClampWarnings(project, optimizeLinearMoves(applyTabWarnings(project, operation, generatePocketToolpath(project, operation))), operation)
       } else if (operation.kind === 'v_carve') {
-        result = applyClampWarnings(project, generateVCarveToolpath(project, operation), operation)
+        result = applyClampWarnings(project, optimizeLinearMoves(generateVCarveToolpath(project, operation)), operation)
       } else if (operation.kind === 'v_carve_medial') {
-        result = applyClampWarnings(project, generateVCarveMedialToolpath(project, operation), operation)
+        result = applyClampWarnings(project, optimizeLinearMoves(generateVCarveMedialToolpath(project, operation)), operation)
       } else if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
         const tabAware = applyTabsToEdgeRoute(project, operation, generateEdgeRouteToolpath(project, operation))
-        result = applyClampWarnings(project, applyTabWarnings(project, operation, tabAware), operation)
+        result = applyClampWarnings(project, optimizeLinearMoves(applyTabWarnings(project, operation, tabAware)), operation)
       } else if (operation.kind === 'surface_clean') {
-        result = applyClampWarnings(project, applyTabWarnings(project, operation, generateSurfaceCleanToolpath(project, operation)), operation)
+        result = applyClampWarnings(project, optimizeLinearMoves(applyTabWarnings(project, operation, generateSurfaceCleanToolpath(project, operation))), operation)
       } else if (operation.kind === 'rough_surface') {
-        result = applyClampWarnings(project, applyTabWarnings(project, operation, generateRoughSurfaceToolpath(project, operation)), operation)
+        result = applyClampWarnings(project, optimizeLinearMoves(applyTabWarnings(project, operation, generateRoughSurfaceToolpath(project, operation))), operation)
       } else if (operation.kind === 'finish_surface') {
         const tabAware = applyTabsToEdgeRoute(project, operation, generateFinishSurfaceToolpath(project, operation))
-        result = applyClampWarnings(project, applyTabWarnings(project, operation, tabAware), operation)
+        result = applyClampWarnings(project, optimizeLinearMoves(applyTabWarnings(project, operation, tabAware)), operation)
       } else if (operation.kind === 'finish_surface_cleanup') {
         const tabAware = applyTabsToEdgeRoute(project, operation, generateFinishSurfaceCleanupToolpath(project, operation))
-        result = applyClampWarnings(project, applyTabWarnings(project, operation, tabAware), operation)
+        result = applyClampWarnings(project, optimizeLinearMoves(applyTabWarnings(project, operation, tabAware)), operation)
       } else if (operation.kind === 'follow_line') {
-        result = applyClampWarnings(project, generateFollowLineToolpath(project, operation), operation)
+        result = applyClampWarnings(project, optimizeLinearMoves(generateFollowLineToolpath(project, operation)), operation)
       } else if (operation.kind === 'drilling') {
-        result = applyClampWarnings(project, generateDrillingToolpath(project, operation), operation)
+        result = applyClampWarnings(project, optimizeLinearMoves(generateDrillingToolpath(project, operation)), operation)
       }
 
       if (result) {
