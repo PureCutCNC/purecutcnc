@@ -123,6 +123,27 @@ test('unit change waits for Convert, Keep numeric values, or Cancel', async ({ a
   expect(converted.annotations[0].offset).toBeCloseTo(12.7)
 })
 
+test('status-bar units use the shared conversion decision', async ({ app, ui }) => {
+  const unitsButton = ui.statusBar.units(app.page)
+  await expect(unitsButton).toHaveText('INCH')
+  await expect(unitsButton).toHaveAttribute('aria-label', 'Change project units from Inches to Millimeters')
+
+  await unitsButton.click()
+  const dialog = ui.unitConversionDialog.root(app.page)
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('1 in becomes 25.4 mm')
+  expect((await snapshot(app.page)).meta.units).toBe('inch')
+
+  await ui.unitConversionDialog.cancelButton(app.page).click()
+  await expect(dialog).not.toBeVisible()
+  await expect(unitsButton).toHaveText('INCH')
+
+  await unitsButton.click()
+  await ui.unitConversionDialog.reinterpretButton(app.page).click()
+  expect((await snapshot(app.page)).meta.units).toBe('mm')
+  await expect(unitsButton).toHaveText('MM')
+})
+
 test('converts native circles in the T-style example without changing their shape', async ({ app, ui }) => {
   const example = await readFile(
     new URL('../public/examples/t-style-body.camj', import.meta.url),
@@ -179,5 +200,19 @@ test.describe('tablet unit conversion dialog', () => {
       expect(buttonBox).not.toBeNull()
       expect(buttonBox!.height).toBeGreaterThanOrEqual(44)
     }
+  })
+
+  test('opens the unit decision from a touch-sized expanded status bar', async ({ app, ui }) => {
+    const statusBar = ui.statusBar.root(app.page)
+    await statusBar.getByRole('button', { name: 'Expand status bar' }).click()
+
+    const unitsButton = ui.statusBar.units(app.page)
+    await expect(unitsButton).toBeVisible()
+    const unitsButtonBox = await unitsButton.boundingBox()
+    expect(unitsButtonBox).not.toBeNull()
+    expect(unitsButtonBox!.height).toBeGreaterThanOrEqual(44)
+
+    await unitsButton.click()
+    await expect(ui.unitConversionDialog.root(app.page)).toBeVisible()
   })
 })
