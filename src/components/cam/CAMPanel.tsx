@@ -1267,6 +1267,15 @@ export function CAMPanel({
                     />
                     <span>{camT('cam.operation.enabled')}</span>
                   </label>
+                  <label className="properties-check">
+                    <input
+                      type="checkbox"
+                      checked={selectedOperation.arcFittingEnabled ?? true}
+                      onChange={(event) => updateOperation(selectedOperation.id, { arcFittingEnabled: event.target.checked })}
+                      title={camT('cam.operation.arcFittingTip')}
+                    />
+                    <span>{camT('cam.operation.arcFitting')}</span>
+                  </label>
                   {showStepdown(selectedOperation) ? (
                     <label className="properties-field">
                       <span>{camT('cam.operation.stepdown')}</span>

@@ -53,7 +53,8 @@
     "cwArcCommand": "G2",
     "ccwArcCommand": "G3",
     "arcFormat": "ij",
-    "modalMotion": true
+    "modalMotion": true,
+    "arcInterpolation": true
   },
   "feedSpeed": {
     "feedCommand": "F",
