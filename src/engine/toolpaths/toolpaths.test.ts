@@ -1210,10 +1210,24 @@ function testPocketRestRegionsKeepGearIslandWedges() {
     }
     return Math.hypot(centroid.x - 2, centroid.y - 1.5) < 0.75
   })
+  const gearDraftArea = (draft: typeof result.drafts[number]) => {
+    const points = draftPoints(draft)
+    let area = 0
+    for (let index = 0; index < points.length; index += 1) {
+      const current = points[index]
+      const next = points[(index + 1) % points.length]
+      area += current.x * next.y - next.x * current.y
+    }
+    return Math.abs(area / 2)
+  }
 
   assert(result.drafts.length === 12, `expected 12 rest regions (4 corners + 8 gear wedges), got ${result.drafts.length}`)
   assert(gearDrafts.length === 8, `expected one rest region for each gear wedge, got ${gearDrafts.length}`)
   assert(result.drafts.every((draft) => draft.regionMaskMode === 'include'), 'gear rest regions should be include masks')
+  assert(
+    gearDrafts.every((draft) => gearDraftArea(draft) > 0.02),
+    'gear rest regions should overlap the preceding roughing pass instead of ending at the missed-material boundary',
+  )
   assert(
     gearDrafts.every((draft) => draftPoints(draft).every((point) => !pointInsidePolygon(point, gearPoints))),
     'gear rest regions must not cross into the additive island',

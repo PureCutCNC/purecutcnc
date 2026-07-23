@@ -530,7 +530,28 @@ function generateAreaRestRegionDrafts(
   const residual = cornerUnion.length > 0
     ? differenceClipperPaths(restPaths, cornerUnion)
     : restPaths
-  const residualBlobs = residual
+  // Give a smaller rest tool half of the roughing-tool radius of overlap with
+  // the prior clearing pass. This avoids an exact-edge handoff at narrow island
+  // roots, while the safe source union keeps the extra coverage out of additive
+  // islands and inside the target pocket. Limit that growth to residuals next
+  // to an additive island: pocket-corner crumbs use their analytical regions
+  // and must not become additional masks. Full-area residuals can contain hole
+  // contours, so they retain their exact topology rather than being offset.
+  const residualOverlap = toolRadius * 0.5
+  const maxIslandWedgeArea = toolRadius * toolRadius * 4
+  const islandInfluencePaths = protectedIslandPaths.length > 0
+    ? offsetClosedPaths(protectedIslandPaths, toolRadius, ClipperLib.JoinType.jtRound)
+    : []
+  const residualBlobs = residual.flatMap((path) => {
+    const touchesIsland = pathArea(path) <= maxIslandWedgeArea
+      && islandInfluencePaths.length > 0
+      && intersectClipperPaths([path], islandInfluencePaths).length > 0
+    if (!touchesIsland) return [path]
+    return intersectClipperPaths(
+      offsetClosedPaths([path], residualOverlap, ClipperLib.JoinType.jtRound),
+      safeSourceUnion,
+    )
+  })
 
   return [
     ...areaPathsToDrafts(cornerRegions, toolRadius, operation),
