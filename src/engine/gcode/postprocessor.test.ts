@@ -941,7 +941,7 @@ function testCaptureMotionTrace(): void {
     pocketPattern: 'offset', pocketAngle: 0, stockToLeaveRadial: 0,
     stockToLeaveAxial: 0, finishWalls: true, finishFloor: true,
     carveDepth: 1, maxCarveDepth: 1, cutDirection: 'climb',
-    machiningOrder: 'outside-in', debugShowRejectedCorners: false,
+    machiningOrder: 'level_first', debugShowRejectedCorners: false,
   }
   const toolpath = generatePocketToolpath(project, operation)
   const optimized = optimizeLinearMoves(toolpath)
