@@ -31,6 +31,13 @@ export const viewportZhCN: Record<keyof typeof viewportEn, string> = {
   'viewport.presets.right': '右视图',
   'viewport.presets.left': '左视图',
   'viewport.presets.iso': '等轴测视图',
+  'viewport.presets.free': '自定义视图',
+
+  'viewport.viewMenu.ariaLabel': '摄像机视图',
+  'viewport.viewMenu.headingStandard': '标准视图',
+  'viewport.viewMenu.headingActions': '操作',
+  'viewport.viewMenu.fit': '适配模型',
+  'viewport.viewMenu.reset': '重置视图',
 
   'viewport.sim.modeLabel': '仿真模式',
   'viewport.sim.modeSelected': '已选中',
