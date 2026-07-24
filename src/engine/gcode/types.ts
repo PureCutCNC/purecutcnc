@@ -17,7 +17,23 @@
 import { z } from 'zod'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import type { Project, Operation } from '../../types/project'
-import type { ToolpathResult, NormalizedTool } from '../toolpaths/types'
+import type { ToolpathResult, NormalizedTool, ToolpathMove } from '../toolpaths/types'
+import type { FittedMoveDescriptor } from './arcFitting'
+
+/**
+ * Per-operation machine-coordinate motion trace captured by the postprocessor
+ * when `PostProcessorOptions.captureMotionTrace` is set. `machineMoves` are the
+ * project→machine-transformed moves (before arc fitting); `descriptors` are the
+ * arc/linear descriptors actually emitted when arc fitting ran (`tryFit`),
+ * otherwise empty. Used by the exported-motion debug view (issue #356) as the
+ * reference to validate the literal G-code parse against.
+ */
+export interface OperationMotionTrace {
+  operationId: string
+  machineMoves: ToolpathMove[]
+  descriptors: FittedMoveDescriptor[]
+  tryFit: boolean
+}
 
 const DecimalPlacesSchema = z.union([
   z.number(),
@@ -130,14 +146,23 @@ export interface PostProcessorOptions {
   emitToolChanges: boolean   // emit tool change commands between operations
   emitCoolant: boolean       // emit coolant commands if definition supports them
   programName?: string       // overrides project.meta.name in header
+  /** When true, the postprocessor also returns a per-operation machine-coordinate
+   *  motion trace (see OperationMotionTrace) alongside the G-code text. Debug-only
+   *  (issue #356); defaults to false so the normal export path pays no cost. */
+  captureMotionTrace?: boolean
 }
 
 export interface PostProcessorResult {
   gcode: string
   warnings: ToolpathWarning[]
   stats: {
+    /** Physical G-code lines, including setup, comments, and footer. */
     lineCount: number
     operationCount: number
+    /** Motion blocks actually emitted into the G-code after export fitting. */
     moveCount: number
   }
+  /** Present only when `options.captureMotionTrace` was set. One entry per
+   *  operation, in input order. */
+  motionTraces?: OperationMotionTrace[]
 }

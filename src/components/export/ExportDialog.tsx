@@ -21,15 +21,17 @@ import { platform } from '../../platform'
 import {
   getActiveMachineDefinition,
   runPostProcessor,
+  getExportedMotionEligibility,
   type PostProcessorResult,
 } from '../../engine/gcode'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
-import type { ToolpathResult } from '../../engine/toolpaths/types'
+import type { ToolpathResult, ToolpathGenerationTrace, NormalizedTool } from '../../engine/toolpaths/types'
 import type { Operation } from '../../types/project'
 import {
   listExportOperationOptions,
   suggestGcodeFileName,
 } from './exportOperationSelection'
+import { ExportedMotionDebugDialog } from './ExportedMotionDebugDialog'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
@@ -38,11 +40,13 @@ import { toolpathWarningTexts } from '../../i18n/warningText'
 interface ExportDialogProps {
   onClose: () => void
   generateToolpath: (operation: Operation) => ToolpathResult | null
+  /** Debug-only (issue #356): produces a {raw, optimized} trace for one operation. */
+  getGenerationTrace: (operation: Operation) => ToolpathGenerationTrace | null
   /** Pre-check only these operations (per-operation export); defaults to the visible set. */
   initialOperationIds?: string[]
 }
 
-export function ExportDialog({ onClose, generateToolpath, initialOperationIds }: ExportDialogProps) {
+export function ExportDialog({ onClose, generateToolpath, getGenerationTrace, initialOperationIds }: ExportDialogProps) {
   useRestoreCanvasFocus()
   const { project, selectProject, lastExportPath, markExported } = useProjectStore()
   const { t, languageTag } = useI18n()
@@ -97,6 +101,16 @@ export function ExportDialog({ onClose, generateToolpath, initialOperationIds }:
       .filter((item): item is NonNullable<typeof item> => item !== null)
   ), [generateToolpath, operationOptions, project, selectedOperationIds])
 
+  type ActiveOperation = { operation: Operation; tool: NormalizedTool; toolpath: ToolpathResult }
+  const [debugOperation, setDebugOperation] = useState<ActiveOperation | null>(null)
+
+  // The exported-motion debug view is gated on exactly one eligible operation.
+  // Eligibility is derived from the generated motion, not an operation-name list.
+  const inspectEligible = useMemo(() => {
+    if (activeOperations.length !== 1) return false
+    return getExportedMotionEligibility(activeOperations[0].toolpath).eligible
+  }, [activeOperations])
+
   const previewWarnings = useMemo(() => {
     const warnings = toolpathWarningTexts(previewResult?.warnings ?? [])
     if (operationOptions.length > 0 && selectedOperationIds.size === 0) {
@@ -148,6 +162,7 @@ export function ExportDialog({ onClose, generateToolpath, initialOperationIds }:
           emitToolChanges,
           emitCoolant,
           programName: project.meta.name,
+          captureMotionTrace: activeOperations.length === 1,
         },
       })
       setPreviewResult(result)
@@ -311,6 +326,16 @@ export function ExportDialog({ onClose, generateToolpath, initialOperationIds }:
 
         <div className="dialog-footer">
           <button className="btn-secondary" onClick={onClose} type="button">{td('dialogs.common.cancel')}</button>
+          {inspectEligible && (
+            <button
+              className="btn-secondary"
+              onClick={() => setDebugOperation(activeOperations[0])}
+              disabled={!activeDefinition}
+              type="button"
+            >
+              {td('dialogs.export.inspectMotion')}
+            </button>
+          )}
           <button
             className="btn-primary"
             onClick={handleExport}
@@ -321,6 +346,16 @@ export function ExportDialog({ onClose, generateToolpath, initialOperationIds }:
           </button>
         </div>
       </div>
+      {debugOperation && activeDefinition && previewResult && (
+        <ExportedMotionDebugDialog
+          operation={debugOperation.operation}
+          getGenerationTrace={getGenerationTrace}
+          project={project}
+          definition={activeDefinition}
+          previewResult={previewResult}
+          onClose={() => setDebugOperation(null)}
+        />
+      )}
     </div>
   )
 }

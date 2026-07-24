@@ -17,13 +17,14 @@
 import type {
   PostProcessorInput,
   PostProcessorResult,
+  OperationMotionTrace,
 } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { projectToMachinePoint, formatGCodeNumber } from './utils'
 import type { ToolpathPoint, ToolpathMove } from '../toolpaths/types'
 import type { OperationTarget } from '../../types/project'
 import { fitArcsInMachineMoves } from './arcFitting'
-import type { ArcMoveDescriptor } from './arcFitting'
+import type { ArcMoveDescriptor, FittedMoveDescriptor } from './arcFitting'
 
 interface ModalState {
   motionCommand: string | null   // last G0/G1/G2/G3
@@ -74,7 +75,12 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
     lineNumber: definition.program.lineNumbers ? definition.program.lineNumberIncrement : 0
   }
 
+  // Count G-code motion blocks as emitted, not the input toolpath moves. The
+  // latter can be reduced by arc fitting or expanded when a rapid is split
+  // into safe Z and XY blocks.
   let moveCount = 0
+  const captureTrace = options.captureMotionTrace === true
+  const motionTraces: OperationMotionTrace[] = []
 
   const emitLine = (content: string) => {
     if (definition.program.lineNumbers) {
@@ -145,6 +151,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
 
     if (lineSegments.length > 0) {
       emitLine(lineSegments.join(' '))
+      moveCount += 1
     }
 
     state.currentPosition = {
@@ -310,7 +317,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         let lastP: string | null = null
 
         for (const cycle of cycles) {
-          moveCount++
+          moveCount += 1
 
           const segs: string[] = []
 
@@ -457,6 +464,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
 
         if (lineSegments.length > 0) {
           emitLine(lineSegments.join(' '))
+          moveCount += 1
         }
 
         state.currentPosition = {
@@ -483,7 +491,6 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
       if (tryFit) {
         // Fit arcs and emit the mixed sequence.
         const machineMoves = transformMoves()
-        moveCount += machineMoves.length  // count original moves, not descriptors
         const tolerance =
           project.meta.units === 'mm' ? 0.01 : 0.01 / 25.4
         const descriptors = fitArcsInMachineMoves(machineMoves, tolerance, 90)
@@ -520,7 +527,6 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         }
 
         toolpath.moves.forEach((move) => {
-          moveCount++
           const mPoint = projectToMachinePoint(move.to, project.origin, definition)
           const feed = effectiveFeed(move.kind, move.feedScale)
 
@@ -530,6 +536,25 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
           }
 
           emitMotionLine(definition.motion.linearCommand, mPoint, feed)
+        })
+      }
+
+      // Debug-only (issue #356): capture the machine-coordinate motion trace
+      // for the exported-motion debug view. Recomputed in isolation so the hot
+      // emission path above is untouched; only runs when captureMotionTrace.
+      if (captureTrace) {
+        const traceMachineMoves = transformMoves()
+        let traceDescriptors: FittedMoveDescriptor[] = []
+        if (tryFit) {
+          const tolerance =
+            project.meta.units === 'mm' ? 0.01 : 0.01 / 25.4
+          traceDescriptors = fitArcsInMachineMoves(traceMachineMoves, tolerance, 90)
+        }
+        motionTraces.push({
+          operationId: operation.id,
+          machineMoves: traceMachineMoves,
+          descriptors: traceDescriptors,
+          tryFit,
         })
       }
     }
@@ -560,6 +585,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
       lineCount: lines.length,
       operationCount: operations.length,
       moveCount
-    }
+    },
+    ...(captureTrace ? { motionTraces } : null),
   }
 }

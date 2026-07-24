@@ -55,6 +55,56 @@ export function projectToMachinePoint(
 }
 
 /**
+ * Inverse of `projectToMachinePoint`: maps a machine-coordinate point back
+ * into project coordinates. Used by the exported-motion debug view (issue #356)
+ * to render the parsed G-code layer in the same project space as the Generated
+ * and Optimized layers. Like the forward transform, this performs no unit
+ * conversion — G-code numeric values are emitted in project units (the machine
+ * is only *told* the units via G20/G21 in the header), so the parsed numbers
+ * are already in project units.
+ */
+export function machineToProjectPoint(
+  point: ToolpathPoint,
+  origin: MachineOrigin,
+  definition: MachineDefinition
+): ToolpathPoint {
+  const { xAxis, yAxis, zAxis } = definition.coordinateSystem
+
+  // Reverse the signed-permutation axis mapping. For each machine axis we
+  // know which project delta (dx/dy/dz) and sign produced it, so we invert
+  // by assigning that signed machine value back to its project delta.
+  const projectDelta: { dx: number | null; dy: number | null; dz: number | null } = {
+    dx: null, dy: null, dz: null,
+  }
+  const assign = (axisSpec: MachineDefinition['coordinateSystem']['xAxis'], machineAxisValue: number) => {
+    switch (axisSpec) {
+      case 'X': projectDelta.dx = machineAxisValue; break
+      case 'Y': projectDelta.dy = machineAxisValue; break
+      case 'Z': projectDelta.dz = machineAxisValue; break
+      case '-X': projectDelta.dx = -machineAxisValue; break
+      case '-Y': projectDelta.dy = -machineAxisValue; break
+      case '-Z': projectDelta.dz = -machineAxisValue; break
+    }
+  }
+  assign(xAxis, point.x)
+  assign(yAxis, point.y)
+  assign(zAxis, point.z)
+  const dx = projectDelta.dx ?? 0
+  const dy = projectDelta.dy ?? 0
+  const dz = projectDelta.dz ?? 0
+
+  // Reverse the origin offset applied by projectToMachinePoint:
+  //   dx = x - origin.x   =>   x = dx + origin.x
+  //   dy = origin.y - y   =>   y = origin.y - dy
+  //   dz = z - origin.z   =>   z = dz + origin.z
+  return {
+    x: dx + origin.x,
+    y: origin.y - dy,
+    z: dz + origin.z,
+  }
+}
+
+/**
  * Formats a number for G-code output according to machine definition rules.
  */
 export function formatGCodeNumber(

@@ -84,6 +84,22 @@ export interface PocketToolpathResult extends ToolpathResult {
   stepLevels: number[]
 }
 
+/**
+ * Ephemeral, debug-only snapshot of a single operation's toolpath at both
+ * sides of the always-on linear-move optimization. `raw` is the generated
+ * toolpath before adjacent-collinear cut moves are merged; `optimized` is the
+ * canonical result that caching, preview, simulation, and export consume.
+ *
+ * This is never serialised into `.camj` — it exists only in memory for the
+ * exported-motion debug view (issue #356) so the "Generated" layer can be
+ * rendered alongside the "Optimized" and parsed "Exported G-code" layers.
+ */
+export interface ToolpathGenerationTrace {
+  operationId: string
+  raw: ToolpathResult
+  optimized: ToolpathResult
+}
+
 export interface NormalizedTool {
   id: string
   name: string
