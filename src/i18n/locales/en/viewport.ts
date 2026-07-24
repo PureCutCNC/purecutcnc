@@ -29,6 +29,13 @@ export const viewportEn = {
   'viewport.presets.right': 'Right view',
   'viewport.presets.left': 'Left view',
   'viewport.presets.iso': 'Isometric view',
+  'viewport.presets.free': 'Custom view',
+
+  'viewport.viewMenu.ariaLabel': 'Camera view',
+  'viewport.viewMenu.headingStandard': 'Standard views',
+  'viewport.viewMenu.headingActions': 'Actions',
+  'viewport.viewMenu.fit': 'Fit to model',
+  'viewport.viewMenu.reset': 'Reset view',
 
   'viewport.sim.modeLabel': 'Simulation mode',
   'viewport.sim.modeSelected': 'Selected',

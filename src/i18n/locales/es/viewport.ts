@@ -25,6 +25,14 @@ export const viewportEs: Record<keyof typeof viewportEn, string> = {
   "viewport.presets.right": "Vista derecha",
   "viewport.presets.left": "Vista izquierda",
   "viewport.presets.iso": "Vista isométrica",
+  "viewport.presets.free": "Vista personalizada",
+
+  "viewport.viewMenu.ariaLabel": "Vista de la cámara",
+  "viewport.viewMenu.headingStandard": "Vistas estándar",
+  "viewport.viewMenu.headingActions": "Acciones",
+  "viewport.viewMenu.fit": "Ajustar al modelo",
+  "viewport.viewMenu.reset": "Restablecer vista",
+
   "viewport.sim.modeLabel": "Modo de simulación",
   "viewport.sim.modeSelected": "Seleccionado",
   "viewport.sim.modeVisible": "Visibles",

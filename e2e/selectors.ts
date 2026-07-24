@@ -399,3 +399,38 @@ export const toolbar = {
   /** Opens the New Project dialog. */
   newProjectButton: (page: Page) => page.getByRole('button', { name: 'New project' }),
 }
+
+// ── View preset menu (3D + simulation viewports) ───────────────────
+
+export const viewMenu = {
+  /** The workspace tab buttons for switching center views. */
+  tab3d: (page: Page) => page.getByRole('tab', { name: '3D' }),
+  tabSimulation: (page: Page) => page.getByRole('tab', { name: 'Simulation' }),
+
+  /** The single trigger button that shows the current view, scoped to the 3D panel. */
+  trigger3d: (page: Page) =>
+    page.locator('#workspace-panel-preview3d').getByRole('button', { name: 'Camera view' }),
+
+  /** The trigger button scoped to the simulation panel. */
+  triggerSim: (page: Page) =>
+    page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Camera view' }),
+
+  /** The open dropdown menu scoped to a panel. */
+  menu3d: (page: Page) =>
+    page.locator('#workspace-panel-preview3d').getByRole('menu', { name: 'Camera view' }),
+
+  menuSim: (page: Page) =>
+    page.locator('#workspace-panel-simulation').getByRole('menu', { name: 'Camera view' }),
+
+  /** A named-preset option (Top, Bottom, Front, …) by its localized label, in the 3D menu. */
+  option3d: (page: Page, label: string) =>
+    viewMenu.menu3d(page).getByRole('menuitemradio', { name: new RegExp(`^${label}`) }),
+
+  /** A named-preset option in the simulation menu. */
+  optionSim: (page: Page, label: string) =>
+    viewMenu.menuSim(page).getByRole('menuitemradio', { name: new RegExp(`^${label}`) }),
+
+  /** An action option (Fit to model, Reset view) in the 3D menu. */
+  action3d: (page: Page, label: string) =>
+    viewMenu.menu3d(page).getByRole('menuitem', { name: new RegExp(`^${label}`) }),
+}

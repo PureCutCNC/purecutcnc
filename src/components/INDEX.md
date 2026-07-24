@@ -17,7 +17,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 ## Subfolders (by area)
 - `common/` — shared cross-panel UI primitives. `DisclosureSection` is the reusable collapsible "Advanced" section (progressive disclosure); its open/collapsed state persists via the pure helpers in `common/disclosureState.ts`.
 - `canvas/` — 2D sketch canvas: drawing, snapping, panning/zoom, pointer handling, creation workflow panels, and overlap disambiguation through `useOverlapFeaturePicker` / `OverlapFeaturePicker`. `previewPrimitives.ts` keeps Line/Construction geometry stroke-only; `previewPrimitives.test.ts` covers that rendering-role policy. `stlTopViewRenderer.ts` maps imported-model top-view images through their full instance transform, covered by `stlTopViewRenderer.test.ts`. Dimension annotations + tape measure render via `canvas/dimensionRendering.ts` (pure geometry in `sketch/dimensions.ts`); `canvas/operationSnapshot.ts` renders static operation booklet images.
-- `viewport3d/` — Three.js 3D preview of the CSG-derived model, including toolpath overlay helpers
+- `viewport3d/` — Three.js 3D preview of the CSG-derived model, including toolpath overlay helpers, shared camera orbit controls (`orbitControls.ts`), view-preset data (`viewPresets.ts`), and the single-button view dropdown (`ViewPresetMenu.tsx`) used by both the 3D and simulation viewports
 - `simulation/` — voxel toolpath simulation viewport and playback controls
 - `cam/` — CAM panels (tools, operations, parameters); per-parameter reference icons via `OperationParameterReference`
 - `feature-tree/` — sketch feature tree UI (reordering, visibility, grouping) plus the extracted feature/tab/clamp context menu

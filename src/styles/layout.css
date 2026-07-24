@@ -2505,6 +2505,111 @@
 }
 
 /* ------------------------------------------------------------------ */
+/* View preset dropdown (3D + simulation viewports, issue #243)       */
+/* ------------------------------------------------------------------ */
+
+.view-preset-menu {
+  position: relative;
+}
+
+.view-preset-menu__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.view-preset-menu__trigger .icon-sprite {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.view-preset-menu__panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 100;
+  min-width: 220px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-popover);
+  box-shadow: 0 18px 48px var(--shadow-strong);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.view-preset-menu__heading {
+  padding: 4px 6px 9px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.view-preset-menu__heading--section {
+  margin-top: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.view-preset-menu__options {
+  display: grid;
+  gap: 4px;
+}
+
+.view-preset-menu__option {
+  display: grid;
+  grid-template-columns: 26px 1fr 20px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.view-preset-menu__option:hover,
+.view-preset-menu__option:focus-visible {
+  border-color: var(--line);
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.view-preset-menu__option--selected {
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--line));
+  background: var(--accent-soft);
+}
+
+.view-preset-menu__option--action {
+  grid-template-columns: 1fr;
+}
+
+.view-preset-menu__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.view-preset-menu__label {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.view-preset-menu__check {
+  color: var(--accent-strong);
+  font-size: 16px;
+  font-weight: 800;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ */
 /* Toolpath visibility toggles (3D viewport)                          */
 /* ------------------------------------------------------------------ */
 
