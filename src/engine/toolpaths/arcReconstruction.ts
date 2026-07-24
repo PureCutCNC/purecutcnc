@@ -263,7 +263,7 @@ function annKey(X: number, Y: number): string {
 function getSegmentSampleCount(seg: Segment, segStart: Point): number {
   if (seg.type === 'line') return 1
   if (seg.type === 'bezier') return DEFAULT_FLATTEN_CURVE_SAMPLES
-  if (seg.type === 'circle') return 64
+  if (seg.type === 'circle') return Math.max(8, Math.ceil((Math.PI * 2) / DEFAULT_FLATTEN_ARC_STEP)) // #359: match arc density
   const startAngle = Math.atan2(segStart.y - seg.center.y, segStart.x - seg.center.x)
   const endAngle = Math.atan2(seg.to.y - seg.center.y, seg.to.x - seg.center.x)
   let sweep = endAngle - startAngle
@@ -314,11 +314,11 @@ export function buildSegmentAnnotations(
       } else if (seg.type === 'circle') {
         const radius = Math.hypot(current.x - seg.center.x, current.y - seg.center.y)
         const startAngle = Math.atan2(current.y - seg.center.y, current.x - seg.center.x)
-        for (let s = 1; s <= 64; s++) {
-          const angle = startAngle + (seg.clockwise ? -1 : 1) * (Math.PI * 2 * s) / 64
+        for (let s = 1; s <= totalSamples; s++) {
+          const angle = startAngle + (seg.clockwise ? -1 : 1) * (Math.PI * 2 * s) / totalSamples
           const pt = { x: seg.center.x + Math.cos(angle) * radius, y: seg.center.y + Math.sin(angle) * radius }
           const k = annKey(Math.round(pt.x * scale), Math.round(pt.y * scale))
-          if (!map.has(k)) map.set(k, { featureIdx: fi, segIdx: si, sampleIdx: s, totalSamples: 64 })
+          if (!map.has(k)) map.set(k, { featureIdx: fi, segIdx: si, sampleIdx: s, totalSamples })
         }
         current = profile.start
       }

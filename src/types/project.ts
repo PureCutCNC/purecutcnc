@@ -1111,7 +1111,9 @@ export function sampleProfilePoints(
     if (segment.type === 'circle') {
       const radius = Math.hypot(current.x - segment.center.x, current.y - segment.center.y)
       const startAngle = Math.atan2(current.y - segment.center.y, current.x - segment.center.x)
-      const segmentCount = 64 // Smooth sampling for a full circle
+      // Sample density matches the arc path (issue #359): use arcStepRadians
+      // so full circles and broken-circle arcs have identical tessellation.
+      const segmentCount = Math.max(8, Math.ceil((Math.PI * 2) / arcStepRadians))
       for (let index = 1; index <= segmentCount; index += 1) {
         const angle = startAngle + (segment.clockwise ? -1 : 1) * (Math.PI * 2 * index) / segmentCount
         points.push({
