@@ -583,6 +583,10 @@ export interface PartialArcFitOptions {
   /** Minimum chord-length-to-radius ratio to accept a non-full-circle fit.
    *  Set to 0 to skip this check.  Prevents fitting a tiny chord as an arc. */
   minChordRatio: number
+  /** Optional maximum ratio between the largest fitted angular step and the
+   *  median step.  This rejects a long straight chord plus tiny neighbouring
+   *  curve chords that can otherwise pass an endpoint-only circle fit. */
+  maxAngularStepRatio?: number
   /** Optional source-circle centers for anti-spurious validation.
    *  When provided and non-empty, a fit whose center is farther than
    *  min(0.01, radius×0.001) from any source center is rejected.
@@ -692,15 +696,33 @@ function validateArcFitPoints(
   // 3. Per-segment angle check — individual chord-to-chord step must not
   //    exceed maxSegmentAngleDeg.
   const maxSegmentAngle = (opts.maxSegmentAngleDeg * Math.PI) / 180
+  const angularSteps: number[] = []
   for (let k = 0; k < points.length - 1; k += 1) {
     const a1 = Math.atan2(points[k].y - center.y, points[k].x - center.x)
     const a2 = Math.atan2(points[k + 1].y - center.y, points[k + 1].x - center.x)
     let da = Math.abs(a2 - a1)
     if (da > Math.PI) da = 2 * Math.PI - da
     if (da > maxSegmentAngle) return false
+    angularSteps.push(da)
   }
 
-  // 4. Minimum total sweep gate — prevent fitting a huge-radius circle
+  // 4. Uniform-step guard — a true flattened arc has comparable angular
+  //    chord steps. A broad false fit can otherwise consume one long G1 plus
+  //    a few tiny corner chords: all endpoints are near the circle, but the
+  //    long source chord bows far away between its endpoints. The median
+  //    intentionally tolerates one small endpoint fragment.
+  if (opts.maxAngularStepRatio && opts.maxAngularStepRatio > 0) {
+    const sortedSteps = [...angularSteps].sort((a, b) => a - b)
+    const middle = Math.floor(sortedSteps.length / 2)
+    const medianStep = sortedSteps.length % 2 === 0
+      ? (sortedSteps[middle - 1] + sortedSteps[middle]) / 2
+      : sortedSteps[middle]
+    if (medianStep <= 1e-12 || sortedSteps[sortedSteps.length - 1] > medianStep * opts.maxAngularStepRatio) {
+      return false
+    }
+  }
+
+  // 5. Minimum total sweep gate — prevent fitting a huge-radius circle
   //    to a nearly-straight line (scale-independent).
   if (opts.minTotalSweepRad && opts.minTotalSweepRad > 0) {
     let totalSweep = 0
@@ -715,7 +737,7 @@ function validateArcFitPoints(
     if (totalSweep < opts.minTotalSweepRad) return false
   }
 
-  // 5. Minimum chord ratio — prevent fitting a tiny chord as an arc.
+  // 6. Minimum chord ratio — prevent fitting a tiny chord as an arc.
   //    Full circles (chord ≈ 0) are exempt.
   if (opts.minChordRatio > 0) {
     const chord = dist2D(points[0], points[points.length - 1])

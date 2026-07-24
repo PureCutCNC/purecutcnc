@@ -573,6 +573,31 @@ function testRejectsNearCollinearRun(): void {
   assert(result.length === n, `all ${n} moves should remain as linear`)
 }
 
+// ── long straight chord plus corner fragment rejection ───────────
+
+function testRejectsLongStraightWithCornerFragment(): void {
+  console.log('Testing rejection of a long straight chord plus corner fragment...')
+
+  // Reproduced from work/tool-optimization-test.camj. These four points can
+  // pass an endpoint-only circle fit as a broad R≈6.746 in arc even though
+  // the first move is a perfectly straight 1.25 in span. The subsequent tiny
+  // corner chords have angular steps around 100× smaller than the long chord.
+  const moves: ToolpathMove[] = [
+    cut(pt(2.625, 1.77), pt(1.375, 1.77)),
+    cut(pt(1.375, 1.77), pt(1.3623624173015896, 1.769448231223303)),
+    cut(pt(1.3623624173015896, 1.769448231223303), pt(1.3498210142382951, 1.76779712418677)),
+  ]
+
+  const productionTolerance = 0.01 / 25.4
+  const result = fitArcsInMachineMoves(moves, productionTolerance, MAX_DEG)
+  const arcs = result.filter(d => d.kind === 'arc')
+  assert(arcs.length === 0, 'long straight chord plus corner fragment must remain linear')
+  assert(result.length === moves.length, 'rejected mixed run must retain every source move')
+  for (const descriptor of result) {
+    assert(descriptor.kind === 'linear', 'rejected mixed run must emit only linear descriptors')
+  }
+}
+
 // ── near-collinear: accepted ordinary circular arc ──────────────
 
 function testAcceptsOrdinaryCircularArcAfterCollinearGate(): void {
@@ -730,6 +755,7 @@ testSplitsLargeArc()
 testSplitArcOffsetsRelative()
 testRejectsPlanarWithZChangingFirstCut()
 testRejectsNearCollinearRun()
+testRejectsLongStraightWithCornerFragment()
 testAcceptsOrdinaryCircularArcAfterCollinearGate()
 testFullCircularChordLoop()
 testPartialArcWithStraightLeads()

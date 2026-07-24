@@ -265,6 +265,7 @@ export function fitArcsInMachineMoves(
       maxSegmentAngleDeg: 90,    // individual chord step must be ≤ 90°
       minChordRatio: 0.15,       // reject tiny-chord fits
       minTotalSweepRad: MIN_TOTAL_SWEEP_RAD,
+      maxAngularStepRatio: 4,    // never blend a long G1 with tiny corner chords
     })
 
     const source = run[0].source
