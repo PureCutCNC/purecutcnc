@@ -60,10 +60,19 @@ the user's direction:
 
 - **Direct implementation (default):** one agent owns discovery, edits,
   verification, and delivery on the issue branch.
+- **Built-in subagents (in-process):** subagents provided by the agent's own
+  harness (its built-in task/subagent mechanism — same model, same session) may
+  be used proactively for parallel research and for bounded implementation
+  slices once the design is established and interface seams are frozen.
+  Partition slices by file ownership: in-process subagents share the working
+  tree, so overlapping edits conflict. No explicit authorization needed — the
+  explicit-authorization rule in **Delegated slices** applies only to the
+  external worker harness.
 - **Isolated worktree:** use when the user requests isolation or concurrent work
   would otherwise disturb the active checkout.
-- **Delegated slices:** use only when the user explicitly authorizes delegation
-  and the task divides into bounded, independently reviewable slices. Follow
+- **Delegated slices (external worker):** use only when the user explicitly
+  authorizes delegation and the task divides into bounded, independently
+  reviewable slices. Follow
   [`.agents/skills/manager-delegate/SKILL.md`](.agents/skills/manager-delegate/SKILL.md);
   the manager owns the real diff, verification, integration, and credentials.
 - **Review/diagnosis:** stay read-only unless the user separately authorizes a
