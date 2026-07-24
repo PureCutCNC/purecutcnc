@@ -379,14 +379,6 @@ function cornerCuspTriangles(
   return triangles
 }
 
-/** Morphological open: drop anything thinner than 2·clearance, keep fatter blobs. */
-function removeThinSlivers(paths: ClipperPath[], clearance: number): ClipperPath[] {
-  if (paths.length === 0 || clearance <= 0) return paths
-  const eroded = offsetClosedPaths(paths, -clearance, ClipperLib.JoinType.jtMiter)
-  if (eroded.length === 0) return []
-  return offsetClosedPaths(eroded, clearance, ClipperLib.JoinType.jtMiter)
-}
-
 function signedContourArea(contour: Point[]): number {
   let area = 0
   for (let index = 0; index < contour.length; index += 1) {
@@ -408,9 +400,13 @@ function pointInContour(point: Point, contour: Point[]): boolean {
   }).PointInPolygon(clipperPoint, clipperContour) > 0
 }
 
-function areaPathsToDrafts(paths: ClipperPath[], toolRadius: number, operation: Operation): RestRegionDraft[] {
+function areaPathsToDrafts(
+  paths: ClipperPath[],
+  toolRadius: number,
+  operation: Operation,
+  simplifyTolerance = Math.max(5 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.04),
+): RestRegionDraft[] {
   const minArea = Math.max((100 / DEFAULT_CLIPPER_SCALE) ** 2, toolRadius * toolRadius * 0.0004)
-  const simplifyTolerance = Math.max(5 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.04)
   const contours = clipperPathsToPointContours(paths)
     .filter((contour) => contour.length >= 3)
     .map((contour) => simplifyClosedContour(contour, simplifyTolerance))
@@ -446,12 +442,16 @@ function generateAreaRestRegionDrafts(
 ): RestRegionDraft[] {
   const sourceAreaPaths: ClipperPath[] = []
   const reachableAreaPaths: ClipperPath[] = []
+  const islandPaths: ClipperPath[] = []
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   const centerInset = toolRadius + radialLeave
 
   for (const band of resolved.bands) {
     for (const region of band.regions) {
       sourceAreaPaths.push(...pocketRegionToAreaPaths(region))
+      islandPaths.push(...region.islands
+        .filter((island) => island.length >= 3)
+        .map((island) => toClipperPath(normalizeWinding(island, false), DEFAULT_CLIPPER_SCALE)))
 
       const centerRegions = buildInsetRegions(region, centerInset)
       const centerAreaPaths = centerRegions.flatMap(pocketRegionToAreaPaths)
@@ -465,11 +465,26 @@ function generateAreaRestRegionDrafts(
   }
   if (sourceUnion.length === 0) return []
 
+  // Clipper rounds each boundary to the integer grid. When a rest contour is
+  // converted back into a feature, a boundary vertex can otherwise round one
+  // grid unit into an additive island. Keep a two-grid-unit clearance from
+  // those islands so the generated include mask never asks a later operation
+  // to machine protected material.
+  const protectedIslandPaths = islandPaths.length > 0
+    ? offsetClosedPaths(unionClipperPaths(islandPaths), 2 / DEFAULT_CLIPPER_SCALE, ClipperLib.JoinType.jtRound)
+    : []
+  const safeSourceUnion = protectedIslandPaths.length > 0
+    ? differenceClipperPaths(sourceUnion, protectedIslandPaths)
+    : sourceUnion
+
   let reachableUnion = unionClipperPaths(reachableAreaPaths)
   if (sourceMask) {
     reachableUnion = applyRegionMaskToPaths(reachableUnion, sourceMask)
   }
-  const restPaths = unionClipperPaths(differenceClipperPaths(sourceUnion, reachableUnion))
+  const rawRestPaths = unionClipperPaths(differenceClipperPaths(sourceUnion, reachableUnion))
+  const restPaths = protectedIslandPaths.length > 0
+    ? differenceClipperPaths(rawRestPaths, protectedIslandPaths)
+    : rawRestPaths
   if (restPaths.length === 0) return []
 
   // Build one analytical cusp triangle per convex corner of every pocket
@@ -503,22 +518,45 @@ function generateAreaRestRegionDrafts(
     const remainingArea = remaining.reduce((sum, path) => sum + pathArea(path), 0)
     if (remainingArea < gateArea) continue
 
-    cornerRegions.push(...intersectClipperPaths([triangle], sourceUnion))
+    cornerRegions.push(...intersectClipperPaths([triangle], safeSourceUnion))
   }
 
   // Corners alone don't cover unreachable material away from a convex corner —
-  // e.g. a channel narrower than the tool, or a pocket the tool can't enter at
-  // all. Emit that residual too, but first open it to shed the thin corner-cusp
-  // remnants, the sub-grid slivers that run along walls, and the small crumbs a
-  // round tool leaves at a concave corner (all minor and visually noisy). A real
-  // unreachable channel or pocket is wider than this and survives.
+  // e.g. a channel narrower than the tool, or the narrow root wedges around a
+  // non-circular island. Keep that residual at its original Clipper resolution:
+  // a tool-relative sliver filter or contour simplification can erase legitimate
+  // wedges in inch-scale projects.
   const cornerUnion = unionClipperPaths(cornerRegions)
   const residual = cornerUnion.length > 0
     ? differenceClipperPaths(restPaths, cornerUnion)
     : restPaths
-  const residualBlobs = removeThinSlivers(residual, Math.max(3 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.4))
+  // Give a smaller rest tool half of the roughing-tool radius of overlap with
+  // the prior clearing pass. This avoids an exact-edge handoff at narrow island
+  // roots, while the safe source union keeps the extra coverage out of additive
+  // islands and inside the target pocket. Limit that growth to residuals next
+  // to an additive island: pocket-corner crumbs use their analytical regions
+  // and must not become additional masks. Full-area residuals can contain hole
+  // contours, so they retain their exact topology rather than being offset.
+  const residualOverlap = toolRadius * 0.5
+  const maxIslandWedgeArea = toolRadius * toolRadius * 4
+  const islandInfluencePaths = protectedIslandPaths.length > 0
+    ? offsetClosedPaths(protectedIslandPaths, toolRadius, ClipperLib.JoinType.jtRound)
+    : []
+  const residualBlobs = residual.flatMap((path) => {
+    const touchesIsland = pathArea(path) <= maxIslandWedgeArea
+      && islandInfluencePaths.length > 0
+      && intersectClipperPaths([path], islandInfluencePaths).length > 0
+    if (!touchesIsland) return [path]
+    return intersectClipperPaths(
+      offsetClosedPaths([path], residualOverlap, ClipperLib.JoinType.jtRound),
+      safeSourceUnion,
+    )
+  })
 
-  return areaPathsToDrafts([...cornerRegions, ...residualBlobs], toolRadius, operation)
+  return [
+    ...areaPathsToDrafts(cornerRegions, toolRadius, operation),
+    ...areaPathsToDrafts(residualBlobs, toolRadius, operation, 0),
+  ]
 }
 
 export function generatePocketRestRegionDrafts(project: Project, operation: Operation): RestRegionDraftResult {

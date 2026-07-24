@@ -26,6 +26,7 @@
 import type { Operation, Project, RegionMaskMode, SketchFeature, Tool } from '../../types/project'
 import { circleProfile, defaultTool, newProject, polygonProfile, rectProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
+import { buildGearProfile, defaultGearCreationParams } from '../../sketch/gearProfile'
 import type { ToolpathBounds, ToolpathMove, ToolpathResult } from './types'
 import { mergePocketToolpathResults, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { generatePocketToolpath } from './pocket'
@@ -1158,6 +1159,80 @@ function testPocketRestRegionsEmitHoleCapableMaskModes() {
   assert(mask.containsPoint({ x: 4, y: 4 }), 'rest mask should include pocket area')
   assert(!mask.containsPoint({ x: 20, y: 12 }), 'rest mask should exclude the island hole')
   console.log('pocket rest-region include/exclude mask modes: PASSED')
+}
+
+function testPocketRestRegionsKeepGearIslandWedges() {
+  // Regression for issue #352. This matches the supplied inch project: a 1/4"
+  // roughing tool clears a rectangular pocket around an 8-tooth involute gear.
+  // The narrow root wedges are valid rest material, not display noise.
+  console.log('Testing pocket rest-region generation keeps gear-island wedges...')
+  const tool: Tool = {
+    ...defaultTool('inch', 1),
+    id: 't1',
+    name: '1/4" Endmill',
+    diameter: 0.25,
+    defaultStepdown: 0.125,
+    defaultStepover: 0.32,
+  }
+  const gearProfile = buildGearProfile({
+    ...defaultGearCreationParams(0.625),
+    center: { x: 2, y: 1.5 },
+    outsideRadius: 0.625,
+    teeth: 8,
+    wholeDepth: 0.25,
+  })
+  const gearPoints = [gearProfile.start, ...gearProfile.segments.map((segment) => segment.to)]
+  const stockOutline = makeIslandFeature('stock', 0, 0, 4, 3, 0.75, 0)
+  const pocket = makePocketFeature('p1', 0.5, 0.5, 3, 2, 0.75, 0.5)
+  const gear = makePolygonIslandFeature('gear', gearPoints, 0.75, 0)
+  const project = projectWithFeatures(
+    { ...newProject('issue-352', 'inch'), tools: [tool] },
+    [stockOutline, pocket, gear],
+  )
+  const op = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    stepdown: 0.125,
+    stepover: 0.32,
+  })
+
+  const result = generatePocketRestRegionDrafts(project, op)
+  const draftPoints = (draft: typeof result.drafts[number]) => [
+    draft.profile.start,
+    ...draft.profile.segments.map((segment) => segment.to),
+  ]
+  const gearDrafts = result.drafts.filter((draft) => {
+    const points = draftPoints(draft)
+    const centroid = {
+      x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+      y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+    }
+    return Math.hypot(centroid.x - 2, centroid.y - 1.5) < 0.75
+  })
+  const gearDraftArea = (draft: typeof result.drafts[number]) => {
+    const points = draftPoints(draft)
+    let area = 0
+    for (let index = 0; index < points.length; index += 1) {
+      const current = points[index]
+      const next = points[(index + 1) % points.length]
+      area += current.x * next.y - next.x * current.y
+    }
+    return Math.abs(area / 2)
+  }
+
+  assert(result.drafts.length === 12, `expected 12 rest regions (4 corners + 8 gear wedges), got ${result.drafts.length}`)
+  assert(gearDrafts.length === 8, `expected one rest region for each gear wedge, got ${gearDrafts.length}`)
+  assert(result.drafts.every((draft) => draft.regionMaskMode === 'include'), 'gear rest regions should be include masks')
+  assert(
+    gearDrafts.every((draft) => gearDraftArea(draft) > 0.02),
+    'gear rest regions should overlap the preceding roughing pass instead of ending at the missed-material boundary',
+  )
+  assert(
+    gearDrafts.every((draft) => draftPoints(draft).every((point) => !pointInsidePolygon(point, gearPoints))),
+    'gear rest regions must not cross into the additive island',
+  )
+  console.log('pocket gear-island rest regions: PASSED')
 }
 
 function testRegionMaskVisitsNearestRegionFirst() {
@@ -2672,6 +2747,7 @@ try {
   testPocketRegionClipsMachiningArea()
   testPocketRestRegionsFindUnreachableArea()
   testPocketRestRegionsFindCornerCusps()
+  testPocketRestRegionsKeepGearIslandWedges()
   testPocketRestRegionsUniformCorners()
   testRegionMaskHonorsOrderedIncludeExcludeNesting()
   testRegionMaskExcludeOnlyPreservesOutsideArea()
