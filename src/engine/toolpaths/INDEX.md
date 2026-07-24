@@ -42,6 +42,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `clamps.test.ts` — clamp collision warnings, rapid auto-lift, per-move collision tagging
 	- `camOperationSmoke.test.ts` --- per-operation-kind smoke: pocket parallel/waterline patterns, drill-type differentiation (simple/peck/dwell/chip_breaking), post smoke for thin ops (v_carve, surface_clean, follow_line, v_carve_medial; closed-Line V-carve smoke); also documents the stock-target resolver gap
 - `roughSurface.test.ts` / `finishSurface.test.ts` / `finishSurfaceCleanup.test.ts` / `meshSlicing.test.ts` / `vcarveMedial/vcarveMedial.test.ts` — strategy-specific
+- `pocketTessellationConsistency.test.ts` — regression for circle/arc sampling consistency (issue #359): full-circle and broken-circle pockets must have identical chord sagitta
 - arc-reconstruction coverage lives with its store-level callers: `store/helpers/offsetSimplify.test.ts` (offset simplification) and `store/second_cut_test.ts` (segment-preserving boolean reconstruction)
 
 ## Adding a new strategy
