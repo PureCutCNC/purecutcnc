@@ -503,6 +503,11 @@ export interface Operation {
   waterlineRefinementThreshold?: number
   waterlineMaxRingsPerBand?: number
   waterlineTipStepdown?: number
+  /** When true, the postprocessor may replace contiguous linear cut moves
+   *  that approximate a circular path with G2/G3 arc moves. This is an
+   *  export-only preference — it does not affect the displayed or simulated
+   *  toolpath. */
+  arcFittingEnabled?: boolean
 }
 
 // ============================================================

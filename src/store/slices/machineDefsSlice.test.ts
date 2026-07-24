@@ -55,6 +55,7 @@ function makeDef(id: string, name?: string, builtin = false): MachineDefinition 
       ccwArcCommand: 'G03',
       arcFormat: 'ij' as const,
       modalMotion: true,
+      arcInterpolation: false,
     },
     feedSpeed: {
       feedCommand: 'F',

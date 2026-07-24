@@ -323,6 +323,7 @@ export function defaultOperationForTarget(
     waterlineRefinementThreshold: 0,
     waterlineMaxRingsPerBand: 0,
     waterlineTipStepdown: 0,
+    arcFittingEnabled: true,
     ...(kind === 'drilling' ? {
       drillType: 'simple' as const,
       peckDepth: convertLength(2, 'mm', project.meta.units),

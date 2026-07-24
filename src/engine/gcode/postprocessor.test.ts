@@ -26,7 +26,7 @@ import type { Operation, SketchFeature } from '../../types/project'
 import { replaceProjectFeatures } from '../../test/projectFixtures'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import { generateDrillingToolpath } from '../toolpaths/drilling'
-import type { ToolpathResult } from '../toolpaths/types'
+import type { ToolpathResult, ToolpathMove } from '../toolpaths/types'
 import { runPostProcessor } from './postprocessor'
 import { validateMachineDefinition } from './types'
 import type { MachineDefinition } from './types'
@@ -557,5 +557,359 @@ testCannedPeckG83()
 testCannedChipBreakingG73()
 testRegressionGrblNoCannedCycles()
 testLegacyCannedCycleDefaults()
+
+// ── Arc fitting tests ──────────────────────────────────────────
+
+function arcTestDefinition(overrides?: Partial<MachineDefinition>): MachineDefinition {
+  return validateMachineDefinition({
+    id: 'arc-test',
+    name: 'ArcTest',
+    description: 'Arc-capable test controller',
+    builtin: false,
+    fileExtension: 'nc',
+    coordinateSystem: { xAxis: 'X', yAxis: 'Y', zAxis: 'Z' },
+    numberFormat: {
+      decimalPlaces: { mm: 3, inch: 4 },
+      trailingZeros: false,
+      leadingZero: true,
+    },
+    units: { mmCommand: 'G21', inchCommand: 'G20' },
+    program: {
+      header: ['; {programName}'],
+      footer: [],
+      commentPrefix: ';',
+      commentSuffix: '',
+      lineNumbers: false,
+      lineNumberIncrement: 10,
+    },
+    workCoordinates: { selectCommand: null },
+    motion: {
+      rapidCommand: 'G0',
+      linearCommand: 'G1',
+      cwArcCommand: 'G2',
+      ccwArcCommand: 'G3',
+      arcFormat: 'ij',
+      modalMotion: true,
+      arcInterpolation: true,
+    },
+    feedSpeed: {
+      feedCommand: 'F',
+      rpmCommand: 'S',
+      spindleOnCW: 'M3',
+      spindleOnCCW: 'M4',
+      spindleOff: 'M5',
+      inlineWithMotion: true,
+      modalFeedSpeed: true,
+    },
+    toolChange: {
+      commands: ['M0 ; Tool change: {toolName}'],
+      stopSpindleFirst: true,
+      pauseAfterChange: false,
+      pauseCommand: 'M0',
+    },
+    cannedCycles: null,
+    coolant: null,
+    stop: { programEndCommand: 'M30' },
+    ...overrides,
+  })
+}
+
+function circularCutMoves(): ToolpathMove[] {
+  // 8 chord segments (= 9 points) on a circle of radius 10 at Z=0,
+  // forming a full 360° CCW circle in project coords (Y-down).
+  // After Y inversion to machine coords, this becomes CW (G2).
+  const r = 10
+  const n = 8
+  const projectPoints: Array<{ x: number; y: number; z: number }> = []
+  for (let i = 0; i <= n; i++) {
+    const angle = (Math.PI * 2 * i) / n
+    // Screen space Y-down: CCW = increasing angle
+    projectPoints.push({ x: r * Math.cos(angle), y: r * Math.sin(angle), z: 0 })
+  }
+  const moves: ToolpathMove[] = []
+  for (let i = 0; i < n; i++) {
+    moves.push({
+      kind: 'cut',
+      from: { ...projectPoints[i] },
+      to: { ...projectPoints[i + 1] },
+    })
+  }
+  return moves
+}
+
+function runArcFixture(
+  definition: MachineDefinition,
+  operationOverrides?: Partial<Operation>,
+): { gcode: string; warnings: ToolpathWarning[]; stats: { moveCount: number } } {
+  const project = newProject('Arc Test', 'mm')
+  const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '6 mm Endmill' }
+  project.tools = [toolRecord]
+  const tool = normalizeToolForProject(toolRecord, project)
+  const operation: Operation = {
+    id: 'op1',
+    name: 'Arc Op',
+    kind: 'pocket',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'stock' },
+    toolRef: toolRecord.id,
+    stepdown: 1,
+    stepover: 0.4,
+    feed: 600,
+    plungeFeed: 180,
+    rpm: 12000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+    ...operationOverrides,
+  }
+  const toolpath: ToolpathResult = {
+    operationId: operation.id,
+    warnings: [],
+    bounds: null,
+    moves: circularCutMoves(),
+  }
+  return runPostProcessor({
+    project,
+    definition,
+    operations: [{ operation, tool, toolpath }],
+    options: {
+      emitToolChanges: true,
+      emitCoolant: false,
+      programName: project.meta.name,
+    },
+  })
+}
+
+// ── I/J arc output ─────────────────────────────────────────────
+
+function testArcOutputIJ(): void {
+  console.log('Testing G2/G3 I/J arc output...')
+  const def = arcTestDefinition({ motion: { ...arcTestDefinition().motion, arcFormat: 'ij' } })
+  const { gcode, warnings } = runArcFixture(def)
+  // All nodes in project space (Y-down, CCW) invert to machine space (Y-up).
+  // In machine space the 360° CCW circle becomes 360° CW → G2.
+  // It splits into 4 × 90° sub-arcs → 4 G2 blocks.
+  const g2Count = (gcode.match(/\bG2\b/g) ?? []).length
+  assert(g2Count >= 1, `expected at least one G2, got ${g2Count}`)
+  assert(/\bI-?[\d.]/.test(gcode), 'G-code should contain I offsets')
+  assert(/\bJ-?[\d.]/.test(gcode), 'G-code should contain J offsets')
+  assert(!/\bG3\b/.test(gcode), 'should not contain G3 for CW arcs in machine coords')
+  // No arc capability warnings when machine supports arcs.
+  const arcWarnings = warnings.filter((w) => w.code === 'postArcNoCapability')
+  assert(arcWarnings.length === 0, `expected no arc capability warning, got ${arcWarnings.length}`)
+}
+
+// ── R arc output ───────────────────────────────────────────────
+
+function testArcOutputR(): void {
+  console.log('Testing G2/G3 R arc output...')
+  const def = arcTestDefinition({ motion: { ...arcTestDefinition().motion, arcFormat: 'r' } })
+  const { gcode, warnings } = runArcFixture(def)
+  const g2Count = (gcode.match(/\bG2\b/g) ?? []).length
+  assert(g2Count >= 1, `expected at least one G2, got ${g2Count}`)
+  assert(/\bR-?[\d.]/.test(gcode), 'G-code should contain R radius word')
+  assert(!/\bI-?[\d.]/.test(gcode), 'should not contain I when using R format')
+  assert(!/\bJ-?[\d.]/.test(gcode), 'should not contain J when using R format')
+  const arcWarnings = warnings.filter((w) => w.code === 'postArcNoCapability')
+  assert(arcWarnings.length === 0, `expected no arc capability warning, got ${arcWarnings.length}`)
+}
+
+// ── Disabled operation fallback ────────────────────────────────
+
+function testArcDisabledLinearFallback(): void {
+  console.log('Testing arc fitting disabled → linear output...')
+  const def = arcTestDefinition()
+  const { gcode, warnings } = runArcFixture(def, { arcFittingEnabled: false })
+  // Use word-boundary match — G21 (units) contains 'G2' as substring.
+  assert(!/\bG2\b/.test(gcode), 'should not contain G2 when arc fitting is disabled')
+  assert(!/\bG3\b/.test(gcode), 'should not contain G3 when arc fitting is disabled')
+  assert(/\bG1\b/.test(gcode), 'should contain G1 linear moves')
+  const arcWarnings = warnings.filter((w) => w.code === 'postArcNoCapability')
+  assert(arcWarnings.length === 0, `expected no arc capability warning when disabled, got ${arcWarnings.length}`)
+}
+
+// ── Unsupported machine fallback + warning ─────────────────────
+
+function testArcUnsupportedMachineWarning(): void {
+  console.log('Testing unsupported machine arc warning...')
+  const def = arcTestDefinition({
+    motion: { ...arcTestDefinition().motion, arcInterpolation: false },
+  })
+  const { gcode, warnings } = runArcFixture(def)
+  // Machine doesn't support arcs → output must be linear.
+  assert(!/\bG2\b/.test(gcode), 'should not contain G2 on unsupported machine')
+  assert(!/\bG3\b/.test(gcode), 'should not contain G3 on unsupported machine')
+  assert(/\bG1\b/.test(gcode), 'should contain G1 linear moves')
+  // Warning expected.
+  const arcWarnings = warnings.filter((w) => w.code === 'postArcNoCapability')
+  assert(arcWarnings.length === 1, `expected 1 arc capability warning, got ${arcWarnings.length}`)
+  if (arcWarnings[0]) {
+    assert(
+      arcWarnings[0].params?.operation === 'Arc Op',
+      `warning should reference the operation, got ${JSON.stringify(arcWarnings[0].params)}`,
+    )
+  }
+}
+
+// ── No regression on existing linear output ────────────────────
+
+function testArcNoRegressionLinear(): void {
+  console.log('Testing that non-circular linear moves are unchanged...')
+  const def = arcTestDefinition()
+  const project = newProject('Linear Test', 'mm')
+  const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '6 mm Endmill' }
+  project.tools = [toolRecord]
+  const tool = normalizeToolForProject(toolRecord, project)
+  const operation: Operation = {
+    id: 'op1',
+    name: 'Linear Op',
+    kind: 'pocket',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'stock' },
+    toolRef: toolRecord.id,
+    stepdown: 1,
+    stepover: 0.4,
+    feed: 600,
+    plungeFeed: 180,
+    rpm: 12000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+  }
+  const toolpath: ToolpathResult = {
+    operationId: operation.id,
+    warnings: [],
+    bounds: null,
+    moves: [
+      { kind: 'rapid', from: { x: 0, y: 0, z: 5 }, to: { x: 10, y: 0, z: 5 } },
+      { kind: 'plunge', from: { x: 10, y: 0, z: 5 }, to: { x: 10, y: 0, z: 0 } },
+      { kind: 'cut', from: { x: 10, y: 0, z: 0 }, to: { x: 10, y: 20, z: 0 } },
+      { kind: 'cut', from: { x: 10, y: 20, z: 0 }, to: { x: 20, y: 20, z: 0 } },
+    ],
+  }
+  const result = runPostProcessor({
+    project,
+    definition: def,
+    operations: [{ operation, tool, toolpath }],
+    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
+  })
+  // Should contain G1 moves for the linear cuts, no G2/G3.
+  assert(/\bG1\b/.test(result.gcode), 'linear toolpath should contain G1')
+  assert(!/\bG2\b/.test(result.gcode), 'linear toolpath should not contain G2')
+  assert(!/\bG3\b/.test(result.gcode), 'linear toolpath should not contain G3')
+  const arcWarnings = result.warnings.filter((w) => w.code === 'postArcNoCapability')
+  assert(arcWarnings.length === 0, 'linear toolpath should not produce arc capability warning')
+}
+
+// ── Mixed rapid and cut with arcs ──────────────────────────────
+
+function testArcMixedRapidAndCut(): void {
+  console.log('Testing mixed rapid and cut moves with arc fitting...')
+  const def = arcTestDefinition()
+  const project = newProject('Mixed Test', 'mm')
+  const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '6 mm Endmill' }
+  project.tools = [toolRecord]
+  const tool = normalizeToolForProject(toolRecord, project)
+
+  // A 90° arc in project space (Y-down, CCW) at Z=0.
+  const r = 10
+  const arcPoints: Array<{ x: number; y: number; z: number }> = []
+  for (let i = 0; i <= 4; i++) {
+    const angle = (Math.PI / 2 * i) / 4
+    arcPoints.push({ x: r * Math.cos(angle), y: r * Math.sin(angle), z: 0 })
+  }
+  const arcMoves: ToolpathMove[] = []
+  for (let i = 0; i < 4; i++) {
+    arcMoves.push({
+      kind: 'cut',
+      from: { ...arcPoints[i] },
+      to: { ...arcPoints[i + 1] },
+    })
+  }
+
+  const operation: Operation = {
+    id: 'op1',
+    name: 'Mixed Op',
+    kind: 'pocket',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'stock' },
+    toolRef: toolRecord.id,
+    stepdown: 1,
+    stepover: 0.4,
+    feed: 600,
+    plungeFeed: 180,
+    rpm: 12000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+  }
+  const toolpath: ToolpathResult = {
+    operationId: operation.id,
+    warnings: [],
+    bounds: null,
+    moves: [
+      { kind: 'rapid', from: { x: 0, y: 0, z: 5 }, to: { x: r, y: 0, z: 5 } },
+      { kind: 'plunge', from: { x: r, y: 0, z: 5 }, to: { x: r, y: 0, z: 0 } },
+      ...arcMoves,
+    ],
+  }
+  const result = runPostProcessor({
+    project,
+    definition: def,
+    operations: [{ operation, tool, toolpath }],
+    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
+  })
+  // Should have G0 for rapid, G2/G3 for the arc.
+  assert(/\bG0\b/.test(result.gcode), 'should contain G0 rapid')
+  assert(/\bG1\b/.test(result.gcode), 'should contain G1 plunge')
+  // In machine coords (Y-up), the CCW circle becomes CW → G2.
+  assert(/\bG2\b/.test(result.gcode), 'should contain G2 for the 90° arc')
+}
+
+// ── moveCount preserves original toolpath moves ─────────────────
+
+function testArcMoveCountPreserved(): void {
+  console.log('Testing moveCount preservation with arc fitting...')
+  const def = arcTestDefinition()
+  const { stats } = runArcFixture(def)
+  // circularCutMoves() creates 8 chord segments → moveCount must be 8,
+  // not the number of arc descriptors (which would be 4 for a full circle).
+  assert(
+    stats.moveCount === 8,
+    `moveCount must count original toolpath moves (8), got ${stats.moveCount}`,
+  )
+}
+
+testArcOutputIJ()
+testArcOutputR()
+testArcDisabledLinearFallback()
+testArcUnsupportedMachineWarning()
+testArcNoRegressionLinear()
+testArcMixedRapidAndCut()
+testArcMoveCountPreserved()
 
 console.log('gcode postprocessor tests passed')

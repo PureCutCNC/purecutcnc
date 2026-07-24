@@ -552,6 +552,202 @@ export function clipperContourToProfilePreserving(
   return { start: startVertex, segments, closed: true }
 }
 
+// ── Shared partial-run arc fitting ────────────────────────────────────────────
+// Extracted from the offset-simplification pipeline so G-code export can reuse
+// the same greedy sub-run search without depending on source-circle metadata,
+// Segment types, or Clipper internals.
+//
+// The function operates on a flat point sequence — no segment types, no
+// closed/open semantics. Callers adapt their data into Point[] and convert
+// the returned index ranges back into their own geometry descriptors.
+
+/** Options controlling the partial-run greedy arc search. */
+export interface PartialArcFitOptions {
+  /** Minimum number of points needed to attempt a fit (≥ 3). */
+  minArcPoints: number
+  /** Maximum absolute chordal deviation (radial residual) in project units.
+   *  Used only when {@link radiusToleranceFraction} is unset or zero. */
+  maxResidual: number
+  /** When > 0, the effective residual tolerance is
+   *  min(radiusToleranceFraction × radius, 0.05) instead of
+   *  {@link maxResidual}.  The editor offset path uses this so the
+   *  tolerance scales with feature size; export uses an absolute value. */
+  radiusToleranceFraction?: number
+  /** Maximum angular step between consecutive points, in degrees. Rejects
+   *  runs whose individual chord-to-chord angles exceed this threshold. */
+  maxSegmentAngleDeg: number
+  /** Minimum total angular sweep in radians to accept a fit (0 = skip).
+   *  Prevents fitting a huge-radius circle to a nearly-straight line —
+   *  a scale-independent gate.  0.5° ≈ 0.0087 rad is a reasonable default. */
+  minTotalSweepRad?: number
+  /** Minimum chord-length-to-radius ratio to accept a non-full-circle fit.
+   *  Set to 0 to skip this check.  Prevents fitting a tiny chord as an arc. */
+  minChordRatio: number
+  /** Optional maximum ratio between the largest fitted angular step and the
+   *  median step.  This rejects a long straight chord plus tiny neighbouring
+   *  curve chords that can otherwise pass an endpoint-only circle fit. */
+  maxAngularStepRatio?: number
+  /** Optional source-circle centers for anti-spurious validation.
+   *  When provided and non-empty, a fit whose center is farther than
+   *  min(0.01, radius×0.001) from any source center is rejected.
+   *  Pass an empty array to skip this check (export does this). */
+  sourceCenters?: Point[]
+}
+
+/** One contiguous arc sub-run found within a point sequence. */
+export interface FittedArcRun {
+  /** Index of the first point in the run (inclusive). */
+  startIndex: number
+  /** Index of the last point in the run (inclusive). */
+  endIndex: number
+  /** Fitted circle centre. */
+  center: Point
+  /** Fitted circle radius. */
+  radius: number
+  /** True when the arc turns clockwise (negative cross sum). */
+  clockwise: boolean
+}
+
+function dist2D(a: Point, b: Point): number {
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+/**
+ * Greedy partial-run arc finder.
+ *
+ * Walks the point sequence from left to right. At each position it attempts
+ * the longest qualifying arc run (working backward from the end). When a fit
+ * passes all validation gates the run is recorded and the walker advances
+ * past it; otherwise the walker advances by one point.
+ *
+ * Points not covered by any returned {@link FittedArcRun} are linear.
+ */
+export function findArcRunsInPoints(
+  points: Point[],
+  opts: PartialArcFitOptions,
+): FittedArcRun[] {
+  const n = points.length
+  if (n < opts.minArcPoints) return []
+
+  const runs: FittedArcRun[] = []
+  let i = 0
+
+  while (i < n - opts.minArcPoints + 1) {
+    let best: FittedArcRun | null = null
+
+    // Try the longest qualifying sub-run first (greedy).
+    for (let end = n - 1; end >= i + opts.minArcPoints - 1; end -= 1) {
+      const sub = points.slice(i, end + 1)
+      const fit = fitCircleLeastSquares(sub)
+      if (!fit) continue
+
+      if (!validateArcFitPoints(sub, fit, opts)) continue
+
+      const clockwise = arcSweepClockwise(sub, fit.center)
+      best = {
+        startIndex: i,
+        endIndex: end,
+        center: fit.center,
+        radius: fit.radius,
+        clockwise,
+      }
+      break // longest wins; stop trying shorter runs
+    }
+
+    if (best) {
+      runs.push(best)
+      i = best.endIndex // advance past the consumed arc run
+    } else {
+      i += 1
+    }
+  }
+
+  return runs
+}
+
+/** Shared arc-fit validation used by both the offset and export paths. */
+function validateArcFitPoints(
+  points: Point[],
+  fit: { center: Point; radius: number },
+  opts: PartialArcFitOptions,
+): boolean {
+  const { center, radius } = fit
+
+  // 1. Residual check — every point must lie within tolerance of the circle.
+  //    When radiusToleranceFraction is set, use radius-relative tolerance
+  //    (editor offset path); otherwise use the absolute maxResidual (export).
+  const tolerance = opts.radiusToleranceFraction && opts.radiusToleranceFraction > 0
+    ? Math.min(opts.radiusToleranceFraction * radius, 0.05)
+    : opts.maxResidual
+  for (const p of points) {
+    if (Math.abs(dist2D(p, center) - radius) > tolerance) return false
+  }
+
+  // 2. Source-centre anti-spurious safeguard (optional).
+  if (opts.sourceCenters && opts.sourceCenters.length > 0) {
+    const centerProximity = Math.min(0.01, radius * 0.001)
+    let nearSource = false
+    for (const sc of opts.sourceCenters) {
+      if (dist2D(center, sc) <= centerProximity) { nearSource = true; break }
+    }
+    if (!nearSource) return false
+  }
+
+  // 3. Per-segment angle check — individual chord-to-chord step must not
+  //    exceed maxSegmentAngleDeg.
+  const maxSegmentAngle = (opts.maxSegmentAngleDeg * Math.PI) / 180
+  const angularSteps: number[] = []
+  for (let k = 0; k < points.length - 1; k += 1) {
+    const a1 = Math.atan2(points[k].y - center.y, points[k].x - center.x)
+    const a2 = Math.atan2(points[k + 1].y - center.y, points[k + 1].x - center.x)
+    let da = Math.abs(a2 - a1)
+    if (da > Math.PI) da = 2 * Math.PI - da
+    if (da > maxSegmentAngle) return false
+    angularSteps.push(da)
+  }
+
+  // 4. Uniform-step guard — a true flattened arc has comparable angular
+  //    chord steps. A broad false fit can otherwise consume one long G1 plus
+  //    a few tiny corner chords: all endpoints are near the circle, but the
+  //    long source chord bows far away between its endpoints. The median
+  //    intentionally tolerates one small endpoint fragment.
+  if (opts.maxAngularStepRatio && opts.maxAngularStepRatio > 0) {
+    const sortedSteps = [...angularSteps].sort((a, b) => a - b)
+    const middle = Math.floor(sortedSteps.length / 2)
+    const medianStep = sortedSteps.length % 2 === 0
+      ? (sortedSteps[middle - 1] + sortedSteps[middle]) / 2
+      : sortedSteps[middle]
+    if (medianStep <= 1e-12 || sortedSteps[sortedSteps.length - 1] > medianStep * opts.maxAngularStepRatio) {
+      return false
+    }
+  }
+
+  // 5. Minimum total sweep gate — prevent fitting a huge-radius circle
+  //    to a nearly-straight line (scale-independent).
+  if (opts.minTotalSweepRad && opts.minTotalSweepRad > 0) {
+    let totalSweep = 0
+    for (let k = 0; k < points.length - 1; k += 1) {
+      const a0 = Math.atan2(points[k].y - center.y, points[k].x - center.x)
+      const a1 = Math.atan2(points[k + 1].y - center.y, points[k + 1].x - center.x)
+      let diff = a1 - a0
+      while (diff > Math.PI) diff -= 2 * Math.PI
+      while (diff <= -Math.PI) diff += 2 * Math.PI
+      totalSweep += Math.abs(diff)
+    }
+    if (totalSweep < opts.minTotalSweepRad) return false
+  }
+
+  // 6. Minimum chord ratio — prevent fitting a tiny chord as an arc.
+  //    Full circles (chord ≈ 0) are exempt.
+  if (opts.minChordRatio > 0) {
+    const chord = dist2D(points[0], points[points.length - 1])
+    const isFullCircle = chord <= radius * 1e-6
+    if (!isFullCircle && chord < radius * opts.minChordRatio) return false
+  }
+
+  return true
+}
+
 // ── Offset polyline simplification ────────────────────────────────────────────
 // Clipper offset emits dense polylines (a flattened source curve stays flat
 // after offsetting, and Clipper rebuilds the polygon from integer vertices).
@@ -577,10 +773,6 @@ const DEFAULT_OFFSET_FIT_OPTIONS: OffsetFitOptions = {
   minArcSegments: 6,
   radiusToleranceFraction: 0.01,
   maxSegmentAngleDeg: 20,
-}
-
-function dist2D(a: Point, b: Point): number {
-  return Math.hypot(a.x - b.x, a.y - b.y)
 }
 
 // Kasa least-squares circle fit. Returns null on near-collinear input.
@@ -713,56 +905,6 @@ function mergeCollinearLinesClosed(profile: SketchProfile): SketchProfile {
   return { ...profile, segments: merged }
 }
 
-interface ArcFitOutcome {
-  center: Point
-  clockwise: boolean
-}
-
-function tryFitArcRun(
-  points: Point[],
-  opts: OffsetFitOptions,
-  sourceCenters: Point[],
-): ArcFitOutcome | null {
-  if (points.length < opts.minArcSegments + 1) return null
-  if (sourceCenters.length === 0) return null
-
-  const fit = fitCircleLeastSquares(points)
-  if (!fit) return null
-
-  const { center, radius } = fit
-  const tolerance = Math.min(opts.radiusToleranceFraction * radius, 0.05)
-
-  for (const p of points) {
-    if (Math.abs(dist2D(p, center) - radius) > tolerance) return null
-  }
-
-  // Every legitimate offset arc is concentric with a source arc/circle. A
-  // Kasa fit whose center is far from any source center is geometrically
-  // valid math but spurious — typically a huge-radius circle fitted to a
-  // slightly-bowed straight run. Reject it.
-  const centerProximity = Math.min(0.01, radius * 0.001)
-  let nearSource = false
-  for (const sc of sourceCenters) {
-    if (dist2D(center, sc) <= centerProximity) { nearSource = true; break }
-  }
-  if (!nearSource) return null
-
-  const maxSegmentAngle = (opts.maxSegmentAngleDeg * Math.PI) / 180
-  for (let i = 0; i < points.length - 1; i += 1) {
-    const a1 = Math.atan2(points[i].y - center.y, points[i].x - center.x)
-    const a2 = Math.atan2(points[i + 1].y - center.y, points[i + 1].x - center.x)
-    let da = Math.abs(a2 - a1)
-    if (da > Math.PI) da = 2 * Math.PI - da
-    if (da > maxSegmentAngle) return null
-  }
-
-  const chord = dist2D(points[0], points[points.length - 1])
-  const isFullCircle = chord <= radius * 1e-6
-  if (!isFullCircle && chord < radius * 0.15) return null
-
-  return { center, clockwise: arcSweepClockwise(points, center) }
-}
-
 function sliceLineRunVertices(profile: SketchProfile, startSeg: number, endSeg: number): Point[] {
   const origin: Point = startSeg === 0 ? profile.start : profile.segments[startSeg - 1].to
   const pts: Point[] = [origin]
@@ -785,6 +927,15 @@ function fitArcsInLineRuns(
   if (segs.length < opts.minArcSegments) return profile
   if (sourceCenters.length === 0) return profile
 
+  const partialOpts: PartialArcFitOptions = {
+    minArcPoints: opts.minArcSegments + 1, // +1 for the run-start anchor vertex
+    maxResidual: 0,                        // unused — radiusToleranceFraction takes precedence
+    radiusToleranceFraction: opts.radiusToleranceFraction,
+    maxSegmentAngleDeg: opts.maxSegmentAngleDeg,
+    minChordRatio: 0.15,
+    sourceCenters,
+  }
+
   const out: Segment[] = []
   let i = 0
   while (i < segs.length) {
@@ -799,27 +950,42 @@ function fitArcsInLineRuns(
       runEnd += 1
     }
 
-    let consumed = false
-    for (let end = runEnd; end >= i + opts.minArcSegments; end -= 1) {
-      const pts = sliceLineRunVertices(profile, i, end)
-      const fit = tryFitArcRun(pts, opts, sourceCenters)
-      if (fit) {
+    // Collect the flat vertex sequence for this line run, anchored at the
+    // start of the first segment so the shared finder sees the full path.
+    const verts = sliceLineRunVertices(profile, i, runEnd)
+    const arcRuns = findArcRunsInPoints(verts, partialOpts)
+
+    if (arcRuns.length === 0) {
+      // No arcs found — emit all line segments in this run unchanged.
+      for (let k = i; k < runEnd; k += 1) out.push(segs[k])
+    } else {
+      // Map arc-run vertex indices back to segment indices and emit arcs
+      // interspersed with the line segments they don't cover.
+      let pos = i
+      for (const arc of arcRuns) {
+        // Emit line segments between the previous position and the arc start.
+        while (pos < i + arc.startIndex) {
+          out.push(segs[pos])
+          pos += 1
+        }
+        // Emit the arc. arc.endIndex is a vertex index into verts, which
+        // corresponds to the end of segment i + arc.endIndex - 1.
         out.push({
           type: 'arc',
-          to: pts[pts.length - 1],
-          center: fit.center,
-          clockwise: fit.clockwise,
+          to: verts[arc.endIndex],
+          center: arc.center,
+          clockwise: arc.clockwise,
         })
-        i = end
-        consumed = true
-        break
+        pos = i + arc.endIndex
+      }
+      // Emit any remaining line segments after the last arc.
+      while (pos < runEnd) {
+        out.push(segs[pos])
+        pos += 1
       }
     }
 
-    if (!consumed) {
-      out.push(segs[i])
-      i += 1
-    }
+    i = runEnd
   }
 
   return { ...profile, segments: out }

@@ -159,6 +159,9 @@ export const camDe: Record<keyof typeof camEn, string> = {
     'Maximale Anzahl projizierter Ringe in einem Band oder einer Spitze. 0 für die Standardgrenze verwenden.',
   'cam.operation.tabs': 'Haltestege',
   'cam.operation.autoPlaceTabs': 'Haltestege automatisch platzieren',
+  'cam.operation.arcFitting': 'Bogenanpassung (G2/G3)',
+  'cam.operation.arcFittingTip':
+    'Nur Export: Fasst aufeinanderfolgende lineare Bewegungen, die einen Kreisbogen annähern, zu G2/G3-Bögen zusammen, wenn die Steuerung dies unterstützt. Beeinflusst nicht den angezeigten oder simulierten Werkzeugweg.',
 
   // ── Region note ──
   'cam.regionNote.badge': 'Maske',

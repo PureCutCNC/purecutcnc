@@ -163,6 +163,9 @@ export const camEn = {
     'Maximum projected rings in one band or tip. Use 0 for the default cap.',
   'cam.operation.tabs': 'Tabs',
   'cam.operation.autoPlaceTabs': 'Auto place tabs',
+  'cam.operation.arcFitting': 'Arc fitting (G2/G3)',
+  'cam.operation.arcFittingTip':
+    'Export-only: fits contiguous linear moves that approximate a circular path into G2/G3 arc moves where the controller supports it. Does not affect the displayed or simulated toolpath.',
 
   // ── Region note ──
   'cam.regionNote.badge': 'mask',
