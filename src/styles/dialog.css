@@ -1041,6 +1041,12 @@
   font-size: 14px;
 }
 
+[data-shell-mode="tablet"] .motion-debug__sidebar select,
+[data-shell-mode="tablet-compact"] .motion-debug__sidebar select {
+  min-height: 44px;
+  font-size: 16px;
+}
+
 [data-shell-mode="tablet"] .motion-debug__svg-wrap,
 [data-shell-mode="tablet-compact"] .motion-debug__svg-wrap {
   min-height: 360px;

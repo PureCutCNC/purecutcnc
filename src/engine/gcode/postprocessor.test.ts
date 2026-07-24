@@ -26,6 +26,7 @@ import type { Operation, SketchFeature } from '../../types/project'
 import { replaceProjectFeatures } from '../../test/projectFixtures'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import { generateDrillingToolpath } from '../toolpaths/drilling'
+import { generatePocketToolpath, optimizeLinearMoves } from '../toolpaths'
 import type { ToolpathResult, ToolpathMove } from '../toolpaths/types'
 import { runPostProcessor } from './postprocessor'
 import { validateMachineDefinition } from './types'
@@ -925,6 +926,47 @@ function testArcMoveCountReflectsFittedOutput(): void {
   )
 }
 
+function testCaptureMotionTrace(): void {
+  console.log('Testing captureMotionTrace option...')
+  const def = arcTestDefinition()
+  const project = newProject('Arc Test', 'mm')
+  const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '6 mm Endmill' }
+  project.tools = [toolRecord]
+  const tool = normalizeToolForProject(toolRecord, project)
+  const operation: Operation = {
+    id: 'op1', name: 'Arc Op', kind: 'pocket', pass: 'rough',
+    enabled: true, showToolpath: true, debugToolpath: false,
+    target: { source: 'stock' }, toolRef: toolRecord.id,
+    stepdown: 1, stepover: 0.4, feed: 600, plungeFeed: 180, rpm: 12000,
+    pocketPattern: 'offset', pocketAngle: 0, stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0, finishWalls: true, finishFloor: true,
+    carveDepth: 1, maxCarveDepth: 1, cutDirection: 'climb',
+    machiningOrder: 'outside-in', debugShowRejectedCorners: false,
+  }
+  const toolpath = generatePocketToolpath(project, operation)
+  const optimized = optimizeLinearMoves(toolpath)
+
+  const withTrace = runPostProcessor({
+    project, definition: def,
+    operations: [{ operation, tool, toolpath: optimized }],
+    options: { emitToolChanges: false, emitCoolant: false, captureMotionTrace: true },
+  })
+  assert(withTrace.motionTraces !== undefined, 'motionTraces present when captureMotionTrace=true')
+  assert(withTrace.motionTraces!.length === 1, `expected 1 trace, got ${withTrace.motionTraces!.length}`)
+  const trace = withTrace.motionTraces![0]
+  assert(trace.operationId === 'op1', 'trace operationId matches')
+  assert(Array.isArray(trace.machineMoves), 'machineMoves is array')
+  assert(Array.isArray(trace.descriptors), 'descriptors is array')
+  assert(typeof trace.tryFit === 'boolean', 'tryFit is boolean')
+
+  const withoutTrace = runPostProcessor({
+    project, definition: def,
+    operations: [{ operation, tool, toolpath: optimized }],
+    options: { emitToolChanges: false, emitCoolant: false, captureMotionTrace: false },
+  })
+  assert(withoutTrace.motionTraces === undefined, 'motionTraces absent when captureMotionTrace=false')
+}
+
 testArcOutputIJ()
 testArcOutputR()
 testArcDisabledLinearFallback()
@@ -932,5 +974,6 @@ testArcUnsupportedMachineWarning()
 testArcNoRegressionLinear()
 testArcMixedRapidAndCut()
 testArcMoveCountReflectsFittedOutput()
+testCaptureMotionTrace()
 
 console.log('gcode postprocessor tests passed')

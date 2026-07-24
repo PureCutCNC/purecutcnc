@@ -366,7 +366,6 @@ export function ExportedMotionDebugDialog({
           <div className="motion-debug__view">
             <div className="motion-debug__toolbar">
               <button className="btn-secondary" type="button" onClick={handleFit} disabled={!model?.bounds}>{t('dialogs.motionDebug.fit')}</button>
-              <button className="btn-secondary" type="button" onClick={handleFit} disabled={!model?.bounds}>{t('dialogs.motionDebug.reset')}</button>
               <button
                 className={`btn-secondary${zoomSelectMode ? ' btn-primary' : ''}`}
                 type="button"
