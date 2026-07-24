@@ -23,6 +23,10 @@ import {
   type ViewPreset,
 } from './viewPresets'
 
+/** Margin applied on top of the exact frustum fit, kept small since the fit
+ *  is already tight (no sphere over-estimate). */
+const FIT_BOUNDS_MARGIN = 1.1
+
 /**
  * Shared orbit-camera controls for the 3D preview and simulation viewports.
  *
@@ -297,21 +301,64 @@ export function createOrbitControls(
       updateCamera()
     },
     fitToBounds: (bounds: THREE.Box3, alignToDefault = false) => {
-      const size = bounds.getSize(new THREE.Vector3())
       const center = bounds.getCenter(new THREE.Vector3())
-      const radius = Math.max(size.length() / 2, 1)
-      const aspect = Math.max(camera.aspect, 1e-3)
-      const verticalDistance = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov) / 2)
-      const horizontalFov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * aspect)
-      const horizontalDistance = radius / Math.sin(horizontalFov / 2)
 
       if (alignToDefault) {
         applyPreset('iso', true, false)
       }
 
+      // Compute the view direction (unit vector from target to camera).
+      const viewDir = new THREE.Vector3(
+        Math.sin(spherical.phi) * Math.sin(spherical.theta),
+        Math.cos(spherical.phi),
+        Math.sin(spherical.phi) * Math.cos(spherical.theta),
+      )
+
+      // Temporarily place the camera at unit distance in the current orientation,
+      // look at the box centre, then build the view matrix so we can transform
+      // the 8 box corners to camera space (camera at origin, looking down −Z).
+      camera.up.set(cameraUp[0], cameraUp[1], cameraUp[2])
+      camera.position.copy(center).addScaledVector(viewDir, 1)
+      camera.lookAt(center)
+      camera.updateMatrixWorld()
+      const viewMatrix = new THREE.Matrix4().copy(camera.matrixWorld).invert()
+
+      const aspect = Math.max(camera.aspect, 1e-3)
+      const vfovRad = THREE.MathUtils.degToRad(camera.fov)
+      const hfovRad = 2 * Math.atan(Math.tan(vfovRad / 2) * aspect)
+      const tanH = Math.tan(hfovRad / 2)
+      const tanV = Math.tan(vfovRad / 2)
+
+      const corner = new THREE.Vector3()
+      const vc = new THREE.Vector3()
+
+      let maxReq = -Infinity
+      for (let ix = 0; ix <= 1; ix++) {
+        for (let iy = 0; iy <= 1; iy++) {
+          for (let iz = 0; iz <= 1; iz++) {
+            corner.set(
+              ix === 0 ? bounds.min.x : bounds.max.x,
+              iy === 0 ? bounds.min.y : bounds.max.y,
+              iz === 0 ? bounds.min.z : bounds.max.z,
+            )
+            vc.copy(corner).applyMatrix4(viewMatrix)
+            // In view space the camera is at origin looking down -Z.  A corner
+            // at (vc.x, vc.y, vc.z) is inside the frustum at this distance when
+            //   −vc.z ≥ |vc.x| / tanH   AND   −vc.z ≥ |vc.y| / tanV
+            // If the camera is pushed back by D (relative to unit distance) the
+            // view-space z of every corner increases by D−1 (x/y unchanged), so
+            // the condition becomes  −(vc.z + D−1) ≥ |vc.x|/tanH which
+            // rearranges to  D ≥ 1 + vc.z + |vc.x|/tanH.
+            const reqH = 1 + vc.z + Math.abs(vc.x) / tanH
+            const reqV = 1 + vc.z + Math.abs(vc.y) / tanV
+            maxReq = Math.max(maxReq, reqH, reqV)
+          }
+        }
+      }
+
       spherical.radius = Math.max(
         MIN_CAMERA_RADIUS,
-        Math.min(MAX_CAMERA_RADIUS, Math.max(verticalDistance, horizontalDistance) * 1.15),
+        Math.min(MAX_CAMERA_RADIUS, maxReq * FIT_BOUNDS_MARGIN),
       )
       target.copy(center)
       updateCamera()
