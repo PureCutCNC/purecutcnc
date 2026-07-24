@@ -147,7 +147,10 @@ coordinates:
   before export arc fitting.
 - **Exported G-code** — the path reconstructed by parsing the literal emitted
   G-code text (`parseGcodeMotion`), mapped back to project space via the inverse
-  `machineToProjectPoint` transform.
+  `machineToProjectPoint` transform. Arc sweep direction is inverted when the
+  machine's axis mapping is orientation-reversing in the plane (a mirrored `-X`
+  or an X/Y swap — see `machineToProjectFlipsArcDirection`), so the layer
+  renders the true machine path for mirrored-axis machines.
 
 Invariants:
 

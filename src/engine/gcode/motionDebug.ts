@@ -24,7 +24,7 @@ import type { MachineOrigin } from '../../types/project'
 import type { ToolpathGenerationTrace, ToolpathMove, ToolpathPoint } from '../toolpaths/types'
 import type { OperationMotionTrace, MachineDefinition } from './types'
 import type { ParsedGcodeMove, ParsedGcodeMotion } from './gcodeMotionParser'
-import { machineToProjectPoint } from './utils'
+import { machineToProjectPoint, machineToProjectFlipsArcDirection } from './utils'
 
 const Z_EPS = 1e-6
 
@@ -152,13 +152,19 @@ function segmentFromParsed(move: ParsedGcodeMove, origin: MachineOrigin, definit
       origin,
       definition,
     )
+    // An odd machine axis mapping (single mirrored axis, X/Y swap) reverses
+    // the arc's visual direction between machine and project space; invert
+    // clockwise so the SVG sweep renders the true exported path.
+    const clockwise = machineToProjectFlipsArcDirection(definition)
+      ? !move.clockwise
+      : move.clockwise
     return {
       kind: 'arc',
       from: { x: fromProj.x, y: fromProj.y },
       to: { x: toProj.x, y: toProj.y },
       center: { x: centerProj.x, y: centerProj.y },
       radius: move.radius,
-      clockwise: move.clockwise,
+      clockwise,
       largeArc: move.largeArc,
       // z in PROJECT coords (machine→project), so the exported layer aligns
       // with the optimized toolpath's project-Z levels for filtering.

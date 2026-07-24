@@ -22,7 +22,7 @@
  * Run with: npx tsx src/engine/gcode/motionDebug.test.ts
  */
 
-import { machineToProjectPoint, projectToMachinePoint } from './utils'
+import { machineToProjectPoint, projectToMachinePoint, machineToProjectFlipsArcDirection } from './utils'
 import { validateMachineDefinition, type MachineDefinition } from './types'
 import type { MachineOrigin } from '../../types/project'
 import type { ToolpathGenerationTrace, ToolpathMove, ToolpathPoint } from '../toolpaths/types'
@@ -69,6 +69,14 @@ function mirroredDefinition(): MachineDefinition {
   // Axis-mirrored machine: project X → -machine X, project Y → -machine Y.
   const def = grblDefinition()
   def.coordinateSystem = { xAxis: '-X', yAxis: '-Y', zAxis: 'Z' }
+  return def
+}
+
+type AxisSpec = MachineDefinition['coordinateSystem']['xAxis']
+
+function withCoordinateSystem(xAxis: AxisSpec, yAxis: AxisSpec): MachineDefinition {
+  const def = grblDefinition()
+  def.coordinateSystem = { xAxis, yAxis, zAxis: 'Z' }
   return def
 }
 
@@ -240,8 +248,53 @@ function testExportedLayerInProjectCoords(): void {
     `exported endpoint in project coords ${JSON.stringify(exportedCut!.to)}`)
 }
 
+function testArcDirectionFlipParity(): void {
+  console.log('Testing machineToProjectFlipsArcDirection parity across axis mappings...')
+  const cases: { x: AxisSpec; y: AxisSpec; flips: boolean }[] = [
+    { x: 'X', y: 'Y', flips: false },     // identity
+    { x: '-X', y: '-Y', flips: false },   // 180° rotation — chirality preserved
+    { x: '-X', y: 'Y', flips: true },     // single mirror
+    { x: 'X', y: '-Y', flips: true },     // single mirror
+    { x: 'Y', y: 'X', flips: true },      // axis swap
+    { x: '-Y', y: 'X', flips: false },    // swap + mirror = rotation
+  ]
+  for (const c of cases) {
+    const def = withCoordinateSystem(c.x, c.y)
+    assert(machineToProjectFlipsArcDirection(def) === c.flips,
+      `xAxis=${c.x} yAxis=${c.y}: expected flips=${c.flips}`)
+  }
+}
+
+function testMirroredMachineFlipsExportedArc(): void {
+  console.log('Testing a mirrored machine flips the exported layer arc direction...')
+  // Machine-space CW quarter arc (G2) from (1,0) to (0,-1) about the origin.
+  const parsed = parseGcodeMotion('G0 X1 Y0 Z-1\nG2 X0 Y-1 Z-1 I-1 J0 F100', 'ij', '(', ')')
+  const build = (definition: MachineDefinition) => buildExportedMotionDebugModel({
+    trace: makeTrace(), parsed, postprocessorTrace: makePostprocessorTrace(),
+    origin: ZERO_ORIGIN, definition, tolerance: 0.01,
+  }).layers.exported.segments.find((s) => s.kind === 'arc')
+
+  const identity = build(grblDefinition())
+  assert(identity != null && identity.clockwise === true,
+    `identity mapping keeps machine CW, got ${JSON.stringify(identity)}`)
+
+  const mirrored = build(withCoordinateSystem('-X', 'Y'))
+  assert(mirrored != null && mirrored.clockwise === false,
+    `mirrored X flips the rendered arc to CCW, got ${JSON.stringify(mirrored)}`)
+  // Endpoints/centre still map through the inverse transform: machine (1,0)
+  // with xAxis '-X' → project (-1, 0).
+  assert(approx(mirrored!.from.x, -1) && approx(mirrored!.from.y, 0),
+    `mirrored arc start in project coords ${JSON.stringify(mirrored!.from)}`)
+
+  const rotated = build(mirroredDefinition())
+  assert(rotated != null && rotated.clockwise === true,
+    `180° mapping (-X/-Y) keeps machine CW, got ${JSON.stringify(rotated)}`)
+}
+
 testEligibility()
 testInverseTransform()
+testArcDirectionFlipParity()
+testMirroredMachineFlipsExportedArc()
 testBuildModelVerified()
 testBuildModelNoPositioningRapid()
 testInitialPlungeIsNotComparedAsPlanarCut()

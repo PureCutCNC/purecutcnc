@@ -105,6 +105,34 @@ export function machineToProjectPoint(
 }
 
 /**
+ * Whether an arc's CW/CCW direction flips when mapped from machine space back
+ * to project space by `machineToProjectPoint`. The mapping is a signed axis
+ * permutation composed with the project Y-flip; for odd permutations in the
+ * machine plane (a single mirrored axis like '-X', or an X/Y swap) the planar
+ * part is orientation-preserving, so a machine-CW arc renders CCW in project
+ * space and callers must invert `clockwise` before drawing. The common
+ * identity mapping (and 180° mappings like -X/-Y) need no flip.
+ */
+export function machineToProjectFlipsArcDirection(definition: MachineDefinition): boolean {
+  // Column of the machine→project XY Jacobian contributed by each machine
+  // axis: px = origin.x + dx, py = origin.y - dy, where dx/dy are recovered
+  // from the machine axis values with their signs.
+  const column = (axisSpec: MachineDefinition['coordinateSystem']['xAxis']): [number, number] => {
+    switch (axisSpec) {
+      case 'X': return [1, 0]
+      case '-X': return [-1, 0]
+      case 'Y': return [0, -1]
+      case '-Y': return [0, 1]
+      default: return [0, 0]   // Z / -Z: no planar contribution
+    }
+  }
+  const cx = column(definition.coordinateSystem.xAxis)
+  const cy = column(definition.coordinateSystem.yAxis)
+  const det = cx[0] * cy[1] - cx[1] * cy[0]
+  return det > 0
+}
+
+/**
  * Formats a number for G-code output according to machine definition rules.
  */
 export function formatGCodeNumber(
