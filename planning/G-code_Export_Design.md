@@ -131,6 +131,47 @@ project→machine coordinate transform and G-code emission. It does not modify
 - Helical/ramping moves, rapids, plunges, leads, and non-circular runs remain
   linear and never trigger the warning.
 
+## Exported-motion debug inspection
+
+The exported-motion debug view (issue #356, `src/components/export/ExportedMotionDebugDialog.tsx`
+backed by `src/engine/gcode/gcodeMotionParser.ts` and `motionDebug.ts`) is a
+diagnostic overlay that verifies the motion *written to the `.nc` file* still
+represents the intended path. It opens from the Export dialog when exactly one
+eligible operation is selected, and overlays three planar layers in project
+coordinates:
+
+- **Generated** — the raw toolpath before adjacent-collinear cut moves are merged
+  (captured at the `optimizeLinearMoves` seam in `src/app/useToolpathGeneration.ts`
+  into an ephemeral `ToolpathGenerationTrace`; never serialised into `.camj`).
+- **Optimized** — the canonical toolpath after always-on line optimization,
+  before export arc fitting.
+- **Exported G-code** — the path reconstructed by parsing the literal emitted
+  G-code text (`parseGcodeMotion`), mapped back to project space via the inverse
+  `machineToProjectPoint` transform. Arc sweep direction is inverted when the
+  machine's axis mapping is orientation-reversing in the plane (a mirrored `-X`
+  or an X/Y swap — see `machineToProjectFlipsArcDirection`), so the layer
+  renders the true machine path for mirrored-axis machines.
+
+Invariants:
+
+- The exported layer comes from parsing the literal G-code, not from an internal
+  approximation in its place. Arcs are kept analytic in the parsed model and
+  tessellate only for SVG display, so partial arcs stay visibly partial.
+- The postprocessor exposes its machine-coordinate motion trace
+  (`OperationMotionTrace`: transformed moves + fitted descriptors) only when
+  `PostProcessorOptions.captureMotionTrace` is set — the normal export path pays
+  no cost. The debug view reuses `runPostProcessor` for the single operation
+  rather than reimplementing formatting.
+- The diagnostic compares the parsed exported trace against the postprocessor
+  trace by non-rapid segment endpoint continuity plus arc-centre/direction
+  agreement at the configured 0.01 mm tolerance. It surfaces parser-unsupported,
+  parser-failed, discontinuity, and tolerance-deviation warnings explicitly and
+  never reports `verified` for a partial or unsupported parse.
+- Eligibility is motion-derived, not an operation-name allow-list: a non-empty
+  planar cutting trace with discrete constant-Z cutting levels. Variable-Z cuts
+  (V-carve, ramping surface paths) and drilling are unavailable, with a reason —
+  they are not flattened into a deceptively simple 2D result.
+
 ## Current limits and future work
 
 - Multi-setup/fixture workflows require a separate setup model rather than

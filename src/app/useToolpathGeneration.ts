@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyClampWarnings,
   applyTabsToEdgeRoute,
@@ -31,6 +31,7 @@ import {
   generateVCarveToolpath,
   optimizeLinearMoves,
   type ToolpathResult,
+  type ToolpathGenerationTrace,
 } from '../engine/toolpaths'
 import type { Clamp, FeatureInstance, Operation, Project, Stock, Tab, Tool } from '../types/project'
 
@@ -182,12 +183,17 @@ export function startToolpathGenerationPipeline({
 export function useToolpathGeneration(project: Project, selectedOperation: Operation | null): {
   toolpathMap: Map<string, ToolpathResult>
   generateToolpathForOperation: (op: Operation | null) => ToolpathResult | null
+  getGenerationTrace: (operation: Operation) => ToolpathGenerationTrace | null
   generatingOperationIds: Set<string>
   selectedToolpath: ToolpathResult | null
   visibleToolpaths: ToolpathResult[]
   collidingClampIds: string[]
 } {
   const toolpathCacheRef = useRef<Map<string, ToolpathCacheEntry>>(new Map())
+  // Ephemeral, debug-only (issue #356): the pre-optimization toolpath per
+  // operation, captured at the optimization seam. Never serialised; used only
+  // by the exported-motion debug view's "Generated" layer.
+  const rawToolpathRef = useRef<Map<string, ToolpathResult>>(new Map())
   const [toolpathMap, setToolpathMap] = useState<Map<string, ToolpathResult>>(new Map())
 
   const generateToolpathForOperation = useMemo(
@@ -201,31 +207,41 @@ export function useToolpathGeneration(project: Project, selectedOperation: Opera
         return cached.result
       }
 
+      // Capture the pre-optimization toolpath into the ephemeral raw trace
+      // (issue #356), then run the always-on linear-move merge. `runOptimize`
+      // is aliased so the call sites below can be redirected wholesale to
+      // `optimizeAndCapture` without recursing back into this definition.
+      const runOptimize = optimizeLinearMoves
+      const optimizeAndCapture = (raw: ToolpathResult): ToolpathResult => {
+        rawToolpathRef.current.set(raw.operationId, raw)
+        return runOptimize(raw)
+      }
+
       let result: ToolpathResult | null = null
 
       if (operation.kind === 'pocket') {
-        result = applyClampWarnings(project, optimizeLinearMoves(applyTabWarnings(project, operation, generatePocketToolpath(project, operation))), operation)
+        result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, generatePocketToolpath(project, operation))), operation)
       } else if (operation.kind === 'v_carve') {
-        result = applyClampWarnings(project, optimizeLinearMoves(generateVCarveToolpath(project, operation)), operation)
+        result = applyClampWarnings(project, optimizeAndCapture(generateVCarveToolpath(project, operation)), operation)
       } else if (operation.kind === 'v_carve_medial') {
-        result = applyClampWarnings(project, optimizeLinearMoves(generateVCarveMedialToolpath(project, operation)), operation)
+        result = applyClampWarnings(project, optimizeAndCapture(generateVCarveMedialToolpath(project, operation)), operation)
       } else if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
         const tabAware = applyTabsToEdgeRoute(project, operation, generateEdgeRouteToolpath(project, operation))
-        result = applyClampWarnings(project, optimizeLinearMoves(applyTabWarnings(project, operation, tabAware)), operation)
+        result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, tabAware)), operation)
       } else if (operation.kind === 'surface_clean') {
-        result = applyClampWarnings(project, optimizeLinearMoves(applyTabWarnings(project, operation, generateSurfaceCleanToolpath(project, operation))), operation)
+        result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, generateSurfaceCleanToolpath(project, operation))), operation)
       } else if (operation.kind === 'rough_surface') {
-        result = applyClampWarnings(project, optimizeLinearMoves(applyTabWarnings(project, operation, generateRoughSurfaceToolpath(project, operation))), operation)
+        result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, generateRoughSurfaceToolpath(project, operation))), operation)
       } else if (operation.kind === 'finish_surface') {
         const tabAware = applyTabsToEdgeRoute(project, operation, generateFinishSurfaceToolpath(project, operation))
-        result = applyClampWarnings(project, optimizeLinearMoves(applyTabWarnings(project, operation, tabAware)), operation)
+        result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, tabAware)), operation)
       } else if (operation.kind === 'finish_surface_cleanup') {
         const tabAware = applyTabsToEdgeRoute(project, operation, generateFinishSurfaceCleanupToolpath(project, operation))
-        result = applyClampWarnings(project, optimizeLinearMoves(applyTabWarnings(project, operation, tabAware)), operation)
+        result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, tabAware)), operation)
       } else if (operation.kind === 'follow_line') {
-        result = applyClampWarnings(project, optimizeLinearMoves(generateFollowLineToolpath(project, operation)), operation)
+        result = applyClampWarnings(project, optimizeAndCapture(generateFollowLineToolpath(project, operation)), operation)
       } else if (operation.kind === 'drilling') {
-        result = applyClampWarnings(project, optimizeLinearMoves(generateDrillingToolpath(project, operation)), operation)
+        result = applyClampWarnings(project, optimizeAndCapture(generateDrillingToolpath(project, operation)), operation)
       }
 
       if (result) {
@@ -244,6 +260,22 @@ export function useToolpathGeneration(project: Project, selectedOperation: Opera
     },
     [project]
   )
+
+  // Debug-only (issue #356): produce a {raw, optimized} trace for one operation.
+  // Forces a fresh compute (deleting the cache entry bypasses the cache-hit
+  // path, which skips raw capture) so the ephemeral raw trace is guaranteed
+  // fresh for the debug view. Generation is deterministic, so the recompute
+  // recaches the same optimized result preview/simulation already use.
+  const getGenerationTrace = useCallback((operation: Operation): ToolpathGenerationTrace | null => {
+    rawToolpathRef.current.delete(operation.id)
+    toolpathCacheRef.current.delete(operation.id)
+    const optimized = generateToolpathForOperation(operation)
+    const raw = rawToolpathRef.current.get(operation.id)
+    if (!optimized || !raw) {
+      return null
+    }
+    return { operationId: operation.id, raw, optimized }
+  }, [generateToolpathForOperation])
 
   // Operations that need toolpath computation (selected first for priority)
   const neededOperationIds = useMemo(() => {
@@ -319,6 +351,7 @@ export function useToolpathGeneration(project: Project, selectedOperation: Opera
   return {
     toolpathMap,
     generateToolpathForOperation,
+    getGenerationTrace,
     generatingOperationIds,
     selectedToolpath,
     visibleToolpaths,

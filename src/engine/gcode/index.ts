@@ -16,4 +16,8 @@
 
 export * from './types'
 export * from './definitions'
+export * from './utils'
+export * from './arcFitting'
+export * from './gcodeMotionParser'
+export * from './motionDebug'
 export { runPostProcessor } from './postprocessor'

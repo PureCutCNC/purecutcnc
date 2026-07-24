@@ -215,6 +215,7 @@ function App() {
   const {
     toolpathMap,
     generateToolpathForOperation,
+    getGenerationTrace,
     generatingOperationIds,
     selectedToolpath,
     visibleToolpaths,
@@ -504,6 +505,7 @@ function App() {
         <ExportDialog
           onClose={() => setExportDialogRequest(null)}
           generateToolpath={generateToolpathForOperation}
+          getGenerationTrace={getGenerationTrace}
           initialOperationIds={exportDialogRequest.operationIds}
         />
       )}
