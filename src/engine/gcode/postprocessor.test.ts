@@ -26,6 +26,7 @@ import type { Operation, SketchFeature } from '../../types/project'
 import { replaceProjectFeatures } from '../../test/projectFixtures'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import { generateDrillingToolpath } from '../toolpaths/drilling'
+import { generatePocketToolpath, optimizeLinearMoves } from '../toolpaths'
 import type { ToolpathResult, ToolpathMove } from '../toolpaths/types'
 import { runPostProcessor } from './postprocessor'
 import { validateMachineDefinition } from './types'
@@ -363,7 +364,12 @@ function runDrillingFixture(
   definition: MachineDefinition,
   drillType: 'simple' | 'peck' | 'dwell' | 'chip_breaking',
   overrides?: { peckDepth?: number; dwellTime?: number },
-): { gcode: string; warnings: ToolpathWarning[] } {
+): {
+  gcode: string
+  warnings: ToolpathWarning[]
+  stats: { lineCount: number; moveCount: number }
+  drillCycleCount: number
+} {
   const project = newProject('Canned Test', 'mm')
   const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '3 mm Drill', type: 'drill' as const, diameter: 3, defaultPlungeFeed: 150 }
   project.tools = [toolRecord]
@@ -435,17 +441,29 @@ function runDrillingFixture(
       programName: project.meta.name,
     },
   })
-  return { gcode: result.gcode, warnings: result.warnings }
+  return {
+    gcode: result.gcode,
+    warnings: result.warnings,
+    stats: result.stats,
+    drillCycleCount: toolpath.drillCycles.length,
+  }
 }
 
 function testCannedSimpleG81(): void {
   console.log('Testing canned cycle G81 (simple)...')
-  const { gcode } = runDrillingFixture(cannedCycleDefinition(), 'simple')
+  const { gcode, stats, drillCycleCount } = runDrillingFixture(cannedCycleDefinition(), 'simple')
   assert(gcode.includes('G81'), 'G-code should contain G81 for simple drilling')
   assert(gcode.includes('Z'), 'G-code should contain Z depth')
   assert(gcode.includes('R'), 'G-code should contain R retract plane')
   assert(gcode.includes('F'), 'G-code should contain feed rate')
   assert(gcode.includes('G80'), 'G-code should contain G80 cancel')
+  // The initial positioning rapid and each canned cycle emit one motion block.
+  // Setup/footer lines stay out of the motion count.
+  assert(
+    stats.moveCount === drillCycleCount + 1,
+    `expected positioning rapid + canned moves (${drillCycleCount + 1}), got ${stats.moveCount}`,
+  )
+  assert(stats.lineCount > stats.moveCount, 'total G-code lines include non-motion setup/footer lines')
 }
 
 function testCannedDwellG82(): void {
@@ -727,13 +745,14 @@ function testArcOutputR(): void {
 function testArcDisabledLinearFallback(): void {
   console.log('Testing arc fitting disabled → linear output...')
   const def = arcTestDefinition()
-  const { gcode, warnings } = runArcFixture(def, { arcFittingEnabled: false })
+  const { gcode, warnings, stats } = runArcFixture(def, { arcFittingEnabled: false })
   // Use word-boundary match — G21 (units) contains 'G2' as substring.
   assert(!/\bG2\b/.test(gcode), 'should not contain G2 when arc fitting is disabled')
   assert(!/\bG3\b/.test(gcode), 'should not contain G3 when arc fitting is disabled')
   assert(/\bG1\b/.test(gcode), 'should contain G1 linear moves')
   const arcWarnings = warnings.filter((w) => w.code === 'postArcNoCapability')
   assert(arcWarnings.length === 0, `expected no arc capability warning when disabled, got ${arcWarnings.length}`)
+  assert(stats.moveCount === 8, `linear fallback should emit all 8 source moves, got ${stats.moveCount}`)
 }
 
 // ── Unsupported machine fallback + warning ─────────────────────
@@ -888,20 +907,64 @@ function testArcMixedRapidAndCut(): void {
   assert(/\bG1\b/.test(result.gcode), 'should contain G1 plunge')
   // In machine coords (Y-up), the CCW circle becomes CW → G2.
   assert(/\bG2\b/.test(result.gcode), 'should contain G2 for the 90° arc')
+  // One source rapid becomes two safe G0 blocks, followed by one plunge and
+  // one fitted arc block.
+  assert(result.stats.moveCount === 4, `expected 4 emitted motion blocks, got ${result.stats.moveCount}`)
 }
 
-// ── moveCount preserves original toolpath moves ─────────────────
+// ── moveCount reports emitted post-fit motion blocks ─────────────
 
-function testArcMoveCountPreserved(): void {
-  console.log('Testing moveCount preservation with arc fitting...')
+function testArcMoveCountReflectsFittedOutput(): void {
+  console.log('Testing moveCount reflects emitted arc-fitted output...')
   const def = arcTestDefinition()
   const { stats } = runArcFixture(def)
-  // circularCutMoves() creates 8 chord segments → moveCount must be 8,
-  // not the number of arc descriptors (which would be 4 for a full circle).
+  // circularCutMoves() has 8 source chords, but the full circle is emitted as
+  // four ≤90° G2 blocks. The export summary must describe the saved program.
   assert(
-    stats.moveCount === 8,
-    `moveCount must count original toolpath moves (8), got ${stats.moveCount}`,
+    stats.moveCount === 4,
+    `moveCount must count emitted arc blocks (4), got ${stats.moveCount}`,
   )
+}
+
+function testCaptureMotionTrace(): void {
+  console.log('Testing captureMotionTrace option...')
+  const def = arcTestDefinition()
+  const project = newProject('Arc Test', 'mm')
+  const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '6 mm Endmill' }
+  project.tools = [toolRecord]
+  const tool = normalizeToolForProject(toolRecord, project)
+  const operation: Operation = {
+    id: 'op1', name: 'Arc Op', kind: 'pocket', pass: 'rough',
+    enabled: true, showToolpath: true, debugToolpath: false,
+    target: { source: 'stock' }, toolRef: toolRecord.id,
+    stepdown: 1, stepover: 0.4, feed: 600, plungeFeed: 180, rpm: 12000,
+    pocketPattern: 'offset', pocketAngle: 0, stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0, finishWalls: true, finishFloor: true,
+    carveDepth: 1, maxCarveDepth: 1, cutDirection: 'climb',
+    machiningOrder: 'level_first', debugShowRejectedCorners: false,
+  }
+  const toolpath = generatePocketToolpath(project, operation)
+  const optimized = optimizeLinearMoves(toolpath)
+
+  const withTrace = runPostProcessor({
+    project, definition: def,
+    operations: [{ operation, tool, toolpath: optimized }],
+    options: { emitToolChanges: false, emitCoolant: false, captureMotionTrace: true },
+  })
+  assert(withTrace.motionTraces !== undefined, 'motionTraces present when captureMotionTrace=true')
+  assert(withTrace.motionTraces!.length === 1, `expected 1 trace, got ${withTrace.motionTraces!.length}`)
+  const trace = withTrace.motionTraces![0]
+  assert(trace.operationId === 'op1', 'trace operationId matches')
+  assert(Array.isArray(trace.machineMoves), 'machineMoves is array')
+  assert(Array.isArray(trace.descriptors), 'descriptors is array')
+  assert(typeof trace.tryFit === 'boolean', 'tryFit is boolean')
+
+  const withoutTrace = runPostProcessor({
+    project, definition: def,
+    operations: [{ operation, tool, toolpath: optimized }],
+    options: { emitToolChanges: false, emitCoolant: false, captureMotionTrace: false },
+  })
+  assert(withoutTrace.motionTraces === undefined, 'motionTraces absent when captureMotionTrace=false')
 }
 
 testArcOutputIJ()
@@ -910,6 +973,7 @@ testArcDisabledLinearFallback()
 testArcUnsupportedMachineWarning()
 testArcNoRegressionLinear()
 testArcMixedRapidAndCut()
-testArcMoveCountPreserved()
+testArcMoveCountReflectsFittedOutput()
+testCaptureMotionTrace()
 
 console.log('gcode postprocessor tests passed')

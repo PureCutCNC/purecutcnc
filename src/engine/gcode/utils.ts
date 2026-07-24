@@ -55,6 +55,84 @@ export function projectToMachinePoint(
 }
 
 /**
+ * Inverse of `projectToMachinePoint`: maps a machine-coordinate point back
+ * into project coordinates. Used by the exported-motion debug view (issue #356)
+ * to render the parsed G-code layer in the same project space as the Generated
+ * and Optimized layers. Like the forward transform, this performs no unit
+ * conversion — G-code numeric values are emitted in project units (the machine
+ * is only *told* the units via G20/G21 in the header), so the parsed numbers
+ * are already in project units.
+ */
+export function machineToProjectPoint(
+  point: ToolpathPoint,
+  origin: MachineOrigin,
+  definition: MachineDefinition
+): ToolpathPoint {
+  const { xAxis, yAxis, zAxis } = definition.coordinateSystem
+
+  // Reverse the signed-permutation axis mapping. For each machine axis we
+  // know which project delta (dx/dy/dz) and sign produced it, so we invert
+  // by assigning that signed machine value back to its project delta.
+  const projectDelta: { dx: number | null; dy: number | null; dz: number | null } = {
+    dx: null, dy: null, dz: null,
+  }
+  const assign = (axisSpec: MachineDefinition['coordinateSystem']['xAxis'], machineAxisValue: number) => {
+    switch (axisSpec) {
+      case 'X': projectDelta.dx = machineAxisValue; break
+      case 'Y': projectDelta.dy = machineAxisValue; break
+      case 'Z': projectDelta.dz = machineAxisValue; break
+      case '-X': projectDelta.dx = -machineAxisValue; break
+      case '-Y': projectDelta.dy = -machineAxisValue; break
+      case '-Z': projectDelta.dz = -machineAxisValue; break
+    }
+  }
+  assign(xAxis, point.x)
+  assign(yAxis, point.y)
+  assign(zAxis, point.z)
+  const dx = projectDelta.dx ?? 0
+  const dy = projectDelta.dy ?? 0
+  const dz = projectDelta.dz ?? 0
+
+  // Reverse the origin offset applied by projectToMachinePoint:
+  //   dx = x - origin.x   =>   x = dx + origin.x
+  //   dy = origin.y - y   =>   y = origin.y - dy
+  //   dz = z - origin.z   =>   z = dz + origin.z
+  return {
+    x: dx + origin.x,
+    y: origin.y - dy,
+    z: dz + origin.z,
+  }
+}
+
+/**
+ * Whether an arc's CW/CCW direction flips when mapped from machine space back
+ * to project space by `machineToProjectPoint`. The mapping is a signed axis
+ * permutation composed with the project Y-flip; for odd permutations in the
+ * machine plane (a single mirrored axis like '-X', or an X/Y swap) the planar
+ * part is orientation-preserving, so a machine-CW arc renders CCW in project
+ * space and callers must invert `clockwise` before drawing. The common
+ * identity mapping (and 180° mappings like -X/-Y) need no flip.
+ */
+export function machineToProjectFlipsArcDirection(definition: MachineDefinition): boolean {
+  // Column of the machine→project XY Jacobian contributed by each machine
+  // axis: px = origin.x + dx, py = origin.y - dy, where dx/dy are recovered
+  // from the machine axis values with their signs.
+  const column = (axisSpec: MachineDefinition['coordinateSystem']['xAxis']): [number, number] => {
+    switch (axisSpec) {
+      case 'X': return [1, 0]
+      case '-X': return [-1, 0]
+      case 'Y': return [0, -1]
+      case '-Y': return [0, 1]
+      default: return [0, 0]   // Z / -Z: no planar contribution
+    }
+  }
+  const cx = column(definition.coordinateSystem.xAxis)
+  const cy = column(definition.coordinateSystem.yAxis)
+  const det = cx[0] * cy[1] - cx[1] * cy[0]
+  return det > 0
+}
+
+/**
  * Formats a number for G-code output according to machine definition rules.
  */
 export function formatGCodeNumber(

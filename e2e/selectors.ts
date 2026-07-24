@@ -365,6 +365,39 @@ export const exportDialog = {
 
   /** The primary footer button that performs the export. */
   exportButton: (page: Page) => exportDialog.root(page).locator('.dialog-footer .btn-primary'),
+
+  /** The "Inspect exported motion" footer button (issue #356). Shown only when
+   *  exactly one eligible operation is selected. */
+  inspectButton: (page: Page) =>
+    exportDialog.root(page).locator('.dialog-footer button', { hasText: 'Inspect exported motion' }),
+}
+
+// ── Exported-motion debug view (issue #356) ────────────────────────
+
+export const motionDebug = {
+  /** The exported-motion debug dialog root. */
+  root: (page: Page) => page.locator('.dialog--motion-debug'),
+
+  /** The SVG plan view. */
+  svg: (page: Page) => motionDebug.root(page).locator('.motion-debug__svg'),
+
+  /** A layer toggle checkbox by its (English) label. */
+  layerCheckbox: (page: Page, label: string) =>
+    motionDebug.root(page).locator('.motion-debug__layer-row', { hasText: label }).locator('input[type="checkbox"]'),
+
+  /** The non-cutting-moves toggle. */
+  nonCuttingCheckbox: (page: Page) =>
+    motionDebug.layerCheckbox(page, 'Non-cutting moves'),
+
+  /** The cutting-Z level <select>. */
+  zLevelSelect: (page: Page) =>
+    motionDebug.root(page).locator('.motion-debug__sidebar select'),
+
+  /** The bottom diagnostic status bar. */
+  diagnostic: (page: Page) => motionDebug.root(page).locator('.motion-debug__diagnostic'),
+
+  /** The footer Close button. */
+  closeButton: (page: Page) => motionDebug.root(page).locator('.dialog-footer .btn-primary'),
 }
 
 // ── Canvas ──────────────────────────────────────────────────────────

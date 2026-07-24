@@ -23,9 +23,11 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
   - `index.ts` — public API
   - `postprocessor.ts` — post-processor runner (arc fitting, modal tracking, canned cycles)
   - `arcFitting.ts` — export-stage arc fitting: Kasa circle fit, direction detection, ≤90° splitting
+  - `gcodeMotionParser.ts` — read-only parser for the emitted G-code dialect (issue #356); reconstructs planar motion analytically for the exported-motion debug view
+  - `motionDebug.ts` — exported-motion debug helpers (issue #356): eligibility, exported-vs-source diagnostic, and the planar three-layer model builder
   - `definitions/` — bundled machine definitions (Marlin, GRBL flavors, etc.)
-  - `types.ts` — `MachineDefinition` (with `motion.arcInterpolation` and `arcFormat`) and validation
-  - `utils.ts` — formatting helpers and `projectToMachinePoint` coordinate transform
+  - `types.ts` — `MachineDefinition` (with `motion.arcInterpolation` and `arcFormat`), `PostProcessorOptions.captureMotionTrace`, and validation
+  - `utils.ts` — formatting helpers, `projectToMachinePoint`, and its inverse `machineToProjectPoint`
 - `modelExport/` — model/design export (pluggable format registry: 3D mesh formats and 2D vector formats)
   - `index.ts` — public API and `MODEL_EXPORT_FORMATS` registry
   - `types.ts` — format/option interfaces (`kind: '2d' | '3d'` gates mesh assembly)
