@@ -95,7 +95,7 @@ function findLiterals(line: string): string[] {
 function collectViolations(): Violation[] {
   const violations: Violation[] = []
   for (const file of walk(SRC)) {
-    const rel = relative(ROOT, file)
+    const rel = relative(ROOT, file).replaceAll('\\', '/')
     if (ALLOWED_FILES.has(rel)) continue
 
     const lines = readFileSync(file, 'utf8').split('\n')
