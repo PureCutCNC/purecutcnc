@@ -120,7 +120,7 @@ function walk(dir: string, out: string[] = []): string[] {
 // The theme layer defines and plumbs tokens generically, so it never counts as
 // a consumer — otherwise every token would look used by its own definition.
 const consumers = walk(SRC)
-  .filter((file) => !relative(SRC, file).startsWith('theme/'))
+  .filter((file) => !relative(SRC, file).replaceAll('\\', '/').startsWith('theme/'))
   .map((file) => readFileSync(file, 'utf8'))
 
 function isConsumed(token: (typeof THEME_TOKENS)[number]): boolean {
