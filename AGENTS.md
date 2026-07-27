@@ -53,6 +53,22 @@ Always run `npm run build` from the project root to verify changes compile befor
 - **Enforcement (Claude Code):** a `PreToolUse` hook — [`.claude/hooks/block-default-branch-commit.sh`](.claude/hooks/block-default-branch-commit.sh), wired in [`.claude/settings.json`](.claude/settings.json) — blocks any `git commit` while `HEAD` is on `main`/`master`. Commits on other branches pass through untouched.
 - **Other tools (Codex, plain `git`, humans):** that hook only binds Claude Code sessions. Codex must follow this rule by reading this file (AGENTS.md). For tool-agnostic enforcement, a native git `pre-commit` hook can be added under a committed `.githooks/` dir + `git config core.hooksPath .githooks` — not set up yet.
 
+## Communication Style
+
+Applies to every agent in this repo — the main session, in-process subagents,
+and delegated workers (Codex, opencode, the DeepSeek worker, etc.) alike.
+
+- **Be terse.** Skip preamble, restating the request, and narrating what
+  you're about to do. State results and decisions directly.
+- **Stay on the task at hand.** Don't expand scope or chase tangential
+  findings mid-task. Flag out-of-scope issues briefly at the end (or as a
+  follow-up issue) instead of interrupting the current work.
+- **Close with a short, structured summary, not a wall of prose.** What
+  changed and what's next, skimmable as bullets — or the
+  `STATUS/COMMIT/CHANGED_FILES/CHECKS/RISKS` block already used for delegated
+  workers (`.agents/skills/manager-delegate/SKILL.md`). Scale the summary to
+  the change: a one-line fix gets a one-line summary, not a paragraph.
+
 ## Execution Modes
 
 Delegation is optional. Use the simplest mode that fits the approved issue and
