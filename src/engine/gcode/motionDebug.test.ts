@@ -291,6 +291,176 @@ function testMirroredMachineFlipsExportedArc(): void {
     `180° mapping (-X/-Y) keeps machine CW, got ${JSON.stringify(rotated)}`)
 }
 
+// ── Arc-vs-source comparison (issue #370) ────────────────────────────
+// A fitted arc is verified against the reference *vertices* it spans, not the
+// chords between them. These cover both directions of that change: the false
+// positive it removes, and the real faults it must still catch.
+
+/** Chord approximation of a circular sweep at `stepDeg`, as the toolpath holds it. */
+function circleChords(radius: number, toDeg: number, stepDeg: number, z: number): ToolpathPoint[] {
+  const pts: ToolpathPoint[] = []
+  for (let deg = 0; deg <= toDeg; deg += stepDeg) {
+    const a = (deg * Math.PI) / 180
+    pts.push(pt(radius * Math.cos(a), radius * Math.sin(a), z))
+  }
+  return pts
+}
+
+function chordMoves(pts: ToolpathPoint[]): ToolpathMove[] {
+  const moves: ToolpathMove[] = []
+  for (let i = 0; i < pts.length - 1; i++) moves.push(cut(pts[i], pts[i + 1]))
+  return moves
+}
+
+/**
+ * Large-radius curve whose chord sagitta exceeds the tolerance. The exported
+ * arc is correct — it is the *more* accurate path — so this must verify.
+ * Before #370 the chord-based comparison charged it the full 0.0285 mm sagitta
+ * and reported a deviation.
+ */
+function testFittedArcOverCoarseChordsVerifies(): void {
+  console.log('Testing a correctly fitted arc over coarse source chords verifies (issue #370)...')
+  const radius = 30
+  const z = -1
+  const pts = circleChords(radius, 90, 5, z)
+  const sagitta = radius * (1 - Math.cos((2.5 * Math.PI) / 180))
+  assert(sagitta > 0.01, `fixture must exceed tolerance to be meaningful, sagitta ${sagitta}`)
+
+  const optimized = { operationId: 'op', moves: chordMoves(pts), warnings: [], bounds: null }
+  const trace = { operationId: 'op', raw: optimized, optimized }
+  // Project (x,y) → machine (x,-y) under identity axes at a zero origin, so the
+  // quarter circle runs machine (30,0) → (0,-30) clockwise about the centre.
+  const parsed = parseGcodeMotion(`G0 X${radius} Y0 Z${z}\nG2 X0 Y-${radius} Z${z} I-${radius} J0 F100`, 'ij', '(', ')')
+  const ppTrace: OperationMotionTrace = {
+    operationId: 'op',
+    machineMoves: [rapid(pt(radius, 0, 5), pt(radius, 0, z)), cut(pt(radius, 0, z), pt(0, -radius, z))],
+    descriptors: [
+      { kind: 'linear', point: pt(radius, 0, z), moveKind: 'rapid' },
+      {
+        kind: 'arc',
+        startPoint: pt(radius, 0, z),
+        endPoint: pt(0, -radius, z),
+        centerOffsets: { i: -radius, j: 0 },
+        clockwise: true,
+      },
+    ],
+    tryFit: true,
+  }
+  const model = buildExportedMotionDebugModel({
+    trace, parsed, postprocessorTrace: ppTrace,
+    origin: ZERO_ORIGIN, definition: grblDefinition(), tolerance: 0.01,
+  })
+  assert(model.diagnostic.state === 'verified',
+    `expected verified, got ${model.diagnostic.state}: ${JSON.stringify(model.diagnostic.warnings)}`)
+}
+
+/** Shared fixture builder for the fault cases: same chords, swapped-in G-code. */
+function modelForExportedGcode(gcode: string, pts: ToolpathPoint[], z: number) {
+  const optimized = { operationId: 'op', moves: chordMoves(pts), warnings: [], bounds: null }
+  const trace = { operationId: 'op', raw: optimized, optimized }
+  const first = pts[0]
+  const last = pts[pts.length - 1]
+  const ppTrace: OperationMotionTrace = {
+    operationId: 'op',
+    machineMoves: [
+      rapid(pt(first.x, -first.y, 5), pt(first.x, -first.y, z)),
+      cut(pt(first.x, -first.y, z), pt(last.x, -last.y, z)),
+    ],
+    descriptors: [],
+    tryFit: false,
+  }
+  return buildExportedMotionDebugModel({
+    trace, parsed: parseGcodeMotion(gcode, 'ij', '(', ')'), postprocessorTrace: ppTrace,
+    origin: ZERO_ORIGIN, definition: grblDefinition(), tolerance: 0.01,
+  })
+}
+
+/** A displaced arc centre lifts the source vertices off the arc. */
+function testWrongArcCentreStillWarns(): void {
+  console.log('Testing a displaced arc centre still warns (issue #370 must not mask faults)...')
+  const radius = 30
+  const z = -1
+  const pts = circleChords(radius, 90, 5, z)
+  // J0.2 puts the centre at (0, 0.2) instead of the origin.
+  const model = modelForExportedGcode(
+    `G0 X${radius} Y0 Z${z}\nG2 X0 Y-${radius} Z${z} I-${radius} J0.2 F100`, pts, z)
+  assert(model.diagnostic.warnings.some((w) => w.kind === 'arcDeviation'),
+    `expected an arcDeviation warning, got ${JSON.stringify(model.diagnostic.warnings)}`)
+}
+
+/** A spurious arc fitted across a straight run bulges away from its interior vertices. */
+function testSpuriousArcOverStraightRunStillWarns(): void {
+  console.log('Testing a spurious arc across a straight run still warns (issue #370)...')
+  const z = -1
+  const pts = [pt(0, 0, z), pt(10, 0, z), pt(20, 0, z)]
+  // Arc of radius ~50.99 about (10,-50) in machine space — bulges ~0.99 away
+  // from the collinear interior vertex at (10,0).
+  const model = modelForExportedGcode(`G0 X0 Y0 Z${z}\nG3 X20 Y0 Z${z} I10 J-50 F100`, pts, z)
+  assert(model.diagnostic.warnings.some((w) => w.kind === 'arcDeviation'),
+    `expected an arcDeviation warning, got ${JSON.stringify(model.diagnostic.warnings)}`)
+}
+
+/**
+ * A closed contour repeats its opening vertex at the end, so the last arc's end
+ * point matches both. Each arc must still be measured against only the run it
+ * covers — otherwise the final arc claims the whole loop and every vertex
+ * outside its 90° sweep is scored against an endpoint.
+ */
+function testClosedContourArcsSpanOnlyTheirOwnRun(): void {
+  console.log('Testing arcs on a closed contour span only their own run (issue #370)...')
+  const radius = 30
+  const z = -1
+  const pts = circleChords(radius, 360, 5, z)
+  const optimized = { operationId: 'op', moves: chordMoves(pts), warnings: [], bounds: null }
+  const trace = { operationId: 'op', raw: optimized, optimized }
+  // Full circle emitted the way arc fitting splits it: four ≤90° G2 sub-arcs.
+  const parsed = parseGcodeMotion([
+    `G0 X${radius} Y0 Z${z}`,
+    `G2 X0 Y-${radius} Z${z} I-${radius} J0 F100`,
+    `G2 X-${radius} Y0 Z${z} I0 J${radius}`,
+    `G2 X0 Y${radius} Z${z} I${radius} J0`,
+    `G2 X${radius} Y0 Z${z} I0 J-${radius}`,
+  ].join('\n'), 'ij', '(', ')')
+  const ppTrace: OperationMotionTrace = {
+    operationId: 'op',
+    machineMoves: [
+      rapid(pt(radius, 0, 5), pt(radius, 0, z)),
+      cut(pt(radius, 0, z), pt(0, -radius, z)),
+      cut(pt(0, -radius, z), pt(-radius, 0, z)),
+      cut(pt(-radius, 0, z), pt(0, radius, z)),
+      cut(pt(0, radius, z), pt(radius, 0, z)),
+    ],
+    descriptors: [],
+    tryFit: false,
+  }
+  const model = buildExportedMotionDebugModel({
+    trace, parsed, postprocessorTrace: ppTrace,
+    origin: ZERO_ORIGIN, definition: grblDefinition(), tolerance: 0.01,
+  })
+  const deviations = model.diagnostic.warnings.filter((w) => w.kind === 'arcDeviation')
+  assert(deviations.length === 0,
+    `closed contour should report no arc deviation, got ${JSON.stringify(deviations)}`)
+}
+
+/**
+ * An arc joining the right endpoints the *short* way, over a run that swept the
+ * long way round. Endpoints match, so an endpoint-only check would pass it, but
+ * the machine would cut a completely different path — the intervening vertices
+ * fall outside the arc's sweep.
+ */
+function testMajorArcTakenTheShortWayStillWarns(): void {
+  console.log('Testing an arc that takes the short way round a major-arc run still warns (issue #370)...')
+  const radius = 30
+  const z = -1
+  // Source sweeps 270°: project (30,0) → (0,-30) the long way round.
+  const pts = circleChords(radius, 270, 5, z)
+  // Exported joins the same endpoints with a 90° arc instead.
+  const model = modelForExportedGcode(
+    `G0 X${radius} Y0 Z${z}\nG3 X0 Y${radius} Z${z} I-${radius} J0 F100`, pts, z)
+  assert(model.diagnostic.warnings.some((w) => w.kind === 'arcDeviation'),
+    `expected an arcDeviation warning, got ${JSON.stringify(model.diagnostic.warnings)}`)
+}
+
 testEligibility()
 testInverseTransform()
 testArcDirectionFlipParity()
@@ -300,5 +470,10 @@ testBuildModelNoPositioningRapid()
 testInitialPlungeIsNotComparedAsPlanarCut()
 testDiagnosticCountMismatch()
 testExportedLayerInProjectCoords()
+testFittedArcOverCoarseChordsVerifies()
+testWrongArcCentreStillWarns()
+testSpuriousArcOverStraightRunStillWarns()
+testClosedContourArcsSpanOnlyTheirOwnRun()
+testMajorArcTakenTheShortWayStillWarns()
 
 console.log('motionDebug tests passed')

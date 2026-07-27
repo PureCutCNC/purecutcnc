@@ -23,6 +23,7 @@ import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { projectToMachinePoint, formatGCodeNumber } from './utils'
 import type { ToolpathPoint, ToolpathMove } from '../toolpaths/types'
 import type { OperationTarget } from '../../types/project'
+import { exportGeometryTolerance } from '../../utils/units'
 import { fitArcsInMachineMoves } from './arcFitting'
 import type { ArcMoveDescriptor, FittedMoveDescriptor } from './arcFitting'
 
@@ -491,8 +492,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
       if (tryFit) {
         // Fit arcs and emit the mixed sequence.
         const machineMoves = transformMoves()
-        const tolerance =
-          project.meta.units === 'mm' ? 0.01 : 0.01 / 25.4
+        const tolerance = exportGeometryTolerance(project.meta.units)
         const descriptors = fitArcsInMachineMoves(machineMoves, tolerance, 90)
 
         for (const d of descriptors) {
@@ -514,8 +514,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         if (arcEnabled && !machineHasArcs) {
           // Check whether arcs *would* have been found.
           const machineMoves = transformMoves()
-          const tolerance =
-            project.meta.units === 'mm' ? 0.01 : 0.01 / 25.4
+          const tolerance = exportGeometryTolerance(project.meta.units)
           const descriptors = fitArcsInMachineMoves(machineMoves, tolerance, 90)
           const foundArcs = descriptors.some((d) => d.kind === 'arc')
           if (foundArcs) {
@@ -546,8 +545,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         const traceMachineMoves = transformMoves()
         let traceDescriptors: FittedMoveDescriptor[] = []
         if (tryFit) {
-          const tolerance =
-            project.meta.units === 'mm' ? 0.01 : 0.01 / 25.4
+          const tolerance = exportGeometryTolerance(project.meta.units)
           traceDescriptors = fitArcsInMachineMoves(traceMachineMoves, tolerance, 90)
         }
         motionTraces.push({

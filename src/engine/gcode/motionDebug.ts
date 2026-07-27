@@ -349,41 +349,123 @@ function minDistToRef(p: XYP, ref: RefSeg[]): number {
   return min
 }
 
-function sampleSegment(seg: MotionDebugSegment, n: number): XYP[] {
-  const points: XYP[] = []
-  if (seg.kind === 'arc' && seg.center && seg.radius !== undefined && seg.clockwise !== undefined) {
-    const cx = seg.center.x, cy = seg.center.y, r = seg.radius
-    const startAngle = Math.atan2(seg.from.y - cy, seg.from.x - cx)
-    const endAngle = Math.atan2(seg.to.y - cy, seg.to.x - cx)
-    // Compute the directed sweep in (-π, π]. For CW arcs the sweep is negative
-    // (decreasing angle); for CCW arcs it is positive. This matches the SVG
-    // sweep-flag convention (sweep=1 → CW in Y-down space) and the
-    // signedSweep helper in arcFitting.ts.
-    let sweep = endAngle - startAngle
-    if (seg.clockwise && sweep > 0) sweep -= Math.PI * 2
-    else if (!seg.clockwise && sweep < 0) sweep += Math.PI * 2
-    // Normalise to (-π, π] so the short-arc sweep is used (large-arc is
-    // already handled by the SVG A command flags; for sampling we just need
-    // the directed angle from start to end).
-    if (sweep > Math.PI) sweep -= Math.PI * 2
-    else if (sweep <= -Math.PI) sweep += Math.PI * 2
-    for (let i = 0; i <= n; i++) {
-      const angle = startAngle + sweep * (i / n)
-      points.push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) })
-    }
-  } else {
-    points.push(seg.from, seg.to)
-  }
-  return points
+/**
+ * Directed sweep of an arc segment, in (-π, π]. Negative for clockwise
+ * (decreasing angle), positive for counter-clockwise — matching the SVG
+ * sweep-flag convention (sweep=1 → CW in Y-down space) and the `signedSweep`
+ * helper in arcFitting.ts.
+ */
+function arcSweep(seg: MotionDebugSegment, startAngle: number, endAngle: number): number {
+  let sweep = endAngle - startAngle
+  if (seg.clockwise && sweep > 0) sweep -= Math.PI * 2
+  else if (!seg.clockwise && sweep < 0) sweep += Math.PI * 2
+  if (sweep > Math.PI) sweep -= Math.PI * 2
+  else if (sweep <= -Math.PI) sweep += Math.PI * 2
+  return sweep
 }
 
 /**
- * Compare the exported (arc-fitted) path against the optimized (linear) toolpath
- * using sampled planar deviation. This catches arc-fitting bulges where G2/G3
- * arcs deviate from the straight lines they replaced — the diagnostic the issue
- * spec calls "a reconstructed exported path that exceeds the configured tolerance
- * from its source geometry." The "source geometry" here is the optimized toolpath,
- * not the postprocessor trace (which is also arc-fitted and would agree).
+ * Distance from a point to an arc *segment* — the swept portion only, not the
+ * whole circle. A point beyond either end measures to that endpoint, so an arc
+ * is not credited with covering points it never reaches.
+ *
+ * `withinSweep` is reported separately because the two cases mean different
+ * things to the caller: a radial distance is a genuine geometric comparison,
+ * while an endpoint distance only says "this point is not on this arc".
+ */
+function distToArc(p: XYP, seg: MotionDebugSegment): { distance: number; withinSweep: boolean } | null {
+  if (seg.center === undefined || seg.radius === undefined || seg.clockwise === undefined) {
+    return null
+  }
+  const { x: cx, y: cy } = seg.center
+  const r = seg.radius
+  const startAngle = Math.atan2(seg.from.y - cy, seg.from.x - cx)
+  const endAngle = Math.atan2(seg.to.y - cy, seg.to.x - cx)
+  const sweep = arcSweep(seg, startAngle, endAngle)
+
+  // Where the point sits within the sweep, as a fraction from start to end.
+  const pointAngle = Math.atan2(p.y - cy, p.x - cx)
+  let delta = pointAngle - startAngle
+  while (delta > Math.PI) delta -= Math.PI * 2
+  while (delta <= -Math.PI) delta += Math.PI * 2
+  const t = Math.abs(sweep) < 1e-12 ? 0 : delta / sweep
+
+  if (t >= 0 && t <= 1) {
+    return { distance: Math.abs(Math.hypot(p.x - cx, p.y - cy) - r), withinSweep: true }
+  }
+  return {
+    distance: Math.min(
+      Math.hypot(p.x - seg.from.x, p.y - seg.from.y),
+      Math.hypot(p.x - seg.to.x, p.y - seg.to.y),
+    ),
+    withinSweep: false,
+  }
+}
+
+/** Ordered vertex sequence of the reference polyline (non-rapid moves only). */
+function buildRefVertices(ref: RefSeg[]): XYP[] {
+  const verts: XYP[] = []
+  for (const seg of ref) {
+    const last = verts[verts.length - 1]
+    if (!last || Math.abs(last.x - seg.from.x) > 1e-9 || Math.abs(last.y - seg.from.y) > 1e-9) {
+      verts.push(seg.from)
+    }
+    verts.push(seg.to)
+  }
+  return verts
+}
+
+/**
+ * Index of the reference vertex nearest `p`, searching forward from `start`.
+ *
+ * The forward-only search matters on closed contours: a closed loop repeats its
+ * first vertex at the end, so a global search for the *last* arc's end point
+ * would match the loop's opening vertex and claim the arc spanned the entire
+ * contour. Anchoring the search at the arc's own start keeps each arc to the
+ * run it actually covers.
+ */
+function nearestVertexIndex(p: XYP, verts: XYP[], start = 0): number {
+  let best = start
+  let bestD = Infinity
+  for (let i = start; i < verts.length; i++) {
+    const d = Math.hypot(p.x - verts[i].x, p.y - verts[i].y)
+    if (d < bestD) { bestD = d; best = i }
+  }
+  return best
+}
+
+/**
+ * Compare the exported (arc-fitted) path against the optimized (linear) toolpath.
+ *
+ * The two layers are not the same *kind* of geometry, so they are compared
+ * differently (issue #370):
+ *
+ * - **Linear** exported moves are compared directly against the reference
+ *   polyline — both are straight, so any gap is real export error.
+ * - **Arc** moves are checked against the reference **vertices** they span:
+ *   every such vertex must lie within tolerance of the swept arc. This is the
+ *   arc-fitting contract in `planning/G-code_Export_Design.md` ("a conservative
+ *   0.01 mm residual tolerance"), which bounds the distance from the source
+ *   *points* to the fitted circle.
+ *
+ * Measuring a fitted arc against the reference *chords* instead would charge it
+ * for the sagitta between them — the gap inherent to approximating any curve
+ * with line segments. That gap grows with radius (≈ 0.00095 × R for the 5°
+ * flattening used for source curves and corner fillets), so above roughly
+ * 10.5 mm radius it exceeds the tolerance no matter how the arc was fitted,
+ * making the check unsatisfiable for ordinary circles and rounded corners. The
+ * arc is in fact the *more* accurate path there: the machine cuts the true
+ * curve rather than the chords standing in for it.
+ *
+ * Real faults are still caught, and a spurious fit more sharply than before:
+ * a wrong centre or radius lifts the vertices off the arc, an arc that joins
+ * its endpoints by a different route leaves the intervening vertices outside
+ * its sweep, and an arc fitted across a straight run puts that run's interior
+ * vertices far off the circle. Faults that change the *sequence* rather than an
+ * individual arc — a reversed arc, or one truncated so the rest of the run is
+ * emitted separately — are caught by the segment count, endpoint and `arcDir`
+ * checks in {@link compareMotionTraces}, since a span derived from an arc's own
+ * endpoints cannot see beyond them.
  */
 function compareExportedVsOptimized(
   exportedSegments: MotionDebugSegment[],
@@ -394,6 +476,15 @@ function compareExportedVsOptimized(
   const warnings: MotionDebugDiagnostic['warnings'] = []
   const ref = buildRefPolyline(optimizedMoves)
   if (ref.length === 0) return { state: 'verified', warnings }
+  const refVertices = buildRefVertices(ref)
+
+  const report = (seg: MotionDebugSegment, index: number, d: number) => {
+    warnings.push({
+      kind: 'arcDeviation',
+      message: `Z=${seg.z.toFixed(4)}: segment ${index + 1} deviates by ${d.toFixed(4)} (tolerance ${tolerance.toFixed(4)})`,
+    })
+  }
+
   for (let i = 0; i < exportedSegments.length; i++) {
     const seg = exportedSegments[i]
     // Parsed G-code has only G0/G1/G2/G3 motion kinds: it cannot distinguish
@@ -403,14 +494,36 @@ function compareExportedVsOptimized(
     const sourceKind = sourceMachineMoves[i]?.kind
     if (sourceKind != null && sourceKind !== 'cut') continue
     if (!seg.cutting) continue
-    const samples = sampleSegment(seg, seg.kind === 'arc' ? 8 : 2)
-    for (const p of samples) {
+
+    if (seg.kind === 'arc') {
+      // The arc replaced a contiguous run of reference segments; both layers
+      // walk the same route in order, so the run is bounded by the vertices
+      // nearest the arc's own endpoints.
+      const i0 = nearestVertexIndex(seg.from, refVertices)
+      const i1 = nearestVertexIndex(seg.to, refVertices, i0)
+      let worst = 0
+      for (let v = i0; v <= i1; v++) {
+        const result = distToArc(refVertices[v], seg)
+        if (result === null) continue
+        if (!result.withinSweep && (v === i0 || v === i1)) {
+          // Seam artefact, not a fault: fitted runs are split into ≤ 90°
+          // sub-arcs, so a split point lands *between* source vertices. The
+          // vertex nearest such an endpoint can sit a fraction of one chord
+          // outside this sub-arc's sweep — it belongs to the adjoining one,
+          // which checks it. Only the boundary pair is forgiven this way;
+          // an interior vertex outside the sweep is a genuine mismatch.
+          continue
+        }
+        if (result.distance > worst) worst = result.distance
+      }
+      if (worst > tolerance) report(seg, i, worst)
+      continue
+    }
+
+    for (const p of [seg.from, seg.to]) {
       const d = minDistToRef(p, ref)
       if (d > tolerance) {
-        warnings.push({
-          kind: 'arcDeviation',
-          message: `Z=${seg.z.toFixed(4)}: segment ${i + 1} deviates by ${d.toFixed(4)} (tolerance ${tolerance.toFixed(4)})`,
-        })
+        report(seg, i, d)
         break
       }
     }

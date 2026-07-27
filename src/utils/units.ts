@@ -44,6 +44,23 @@ export type Units = ProjectMeta['units']
 
 const MM_PER_INCH = 25.4
 
+/**
+ * Geometric tolerance, in millimetres, shared by export-stage arc fitting and
+ * the exported-motion verification that checks its result.
+ *
+ * Both sides must read this same value: the fitter accepts a run whose points
+ * lie within this residual of the fitted circle, and the verifier confirms the
+ * emitted arc still holds those points to the same bound. If the two drifted
+ * apart, export would emit arcs the diagnostic then reports as deviations
+ * (issue #370).
+ */
+export const EXPORT_GEOMETRY_TOLERANCE_MM = 0.01
+
+/** {@link EXPORT_GEOMETRY_TOLERANCE_MM} expressed in the project's own units. */
+export function exportGeometryTolerance(units: Units): number {
+  return units === 'mm' ? EXPORT_GEOMETRY_TOLERANCE_MM : EXPORT_GEOMETRY_TOLERANCE_MM / MM_PER_INCH
+}
+
 export function convertLength(value: number, from: Units, to: Units): number {
   if (from === to) {
     return value

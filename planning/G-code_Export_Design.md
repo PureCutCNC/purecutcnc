@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: machine origin, machine definitions, postprocessing, and G-code export
-last-verified: 2026-07-23
+last-verified: 2026-07-27
 ---
 
 # G-code Export Design
@@ -167,6 +167,20 @@ Invariants:
   agreement at the configured 0.01 mm tolerance. It surfaces parser-unsupported,
   parser-failed, discontinuity, and tolerance-deviation warnings explicitly and
   never reports `verified` for a partial or unsupported parse.
+- The exported-vs-optimized deviation check compares like with like. Linear
+  moves are measured against the reference polyline directly; a fitted **arc**
+  is measured against the reference **vertices** it spans, which must lie within
+  tolerance of the swept arc. That is the arc-fitting contract above (a residual
+  bound on the source *points*). Measuring a fitted arc against the reference
+  *chords* instead would charge it the sagitta between them — the gap inherent
+  to approximating a curve with line segments, which grows with radius
+  (≈ 0.00095 × R at the 5° flattening used for source curves and corner
+  fillets) and so exceeds the tolerance above roughly 10.5 mm radius no matter
+  how well the arc was fitted. The arc is the more accurate path there: the
+  machine cuts the true curve rather than the chords standing in for it.
+- Both the tolerance the fitter accepts and the tolerance the diagnostic
+  verifies come from `exportGeometryTolerance()` in `src/utils/units.ts`, so the
+  two cannot drift apart.
 - Eligibility is motion-derived, not an operation-name allow-list: a non-empty
   planar cutting trace with discrete constant-Z cutting levels. Variable-Z cuts
   (V-carve, ramping surface paths) and drilling are unavailable, with a reason —
