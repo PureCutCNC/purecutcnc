@@ -55,6 +55,15 @@ const FIT_OPTIONS: PartialArcFitOptions = {
   maxAngularStepRatio: 4,
 }
 
+const EDITOR_FIT_OPTIONS: PartialArcFitOptions = {
+  minArcPoints: 7,
+  maxResidual: 0,
+  radiusToleranceFraction: 0.01,
+  maxSegmentAngleDeg: 20,
+  minChordRatio: 0.15,
+  sourceCenters: [{ x: 0, y: 0 }],
+}
+
 function testFindsLongestValidArcRun(): void {
   console.log('Testing longest valid arc run...')
 
@@ -85,6 +94,65 @@ function testDetectsClockwiseArcRun(): void {
   assert(runs[0].clockwise === true, 'expected clockwise arc')
 }
 
+function testSplitsLargeCircularRunWithoutChangingItsCircle(): void {
+  console.log('Testing large circular run splits on the same circle...')
+
+  const points = sampledArc(10, 0, Math.PI * 2, 360)
+  const runs = findArcRunsInPoints(points, FIT_OPTIONS)
+
+  assert(runs.length === 3, `expected 3 bounded runs, got ${runs.length}`)
+  let expectedStartIndex = 0
+  for (const run of runs) {
+    assert(run.startIndex === expectedStartIndex,
+      `expected run start ${expectedStartIndex}, got ${run.startIndex}`)
+    assert(run.endIndex - run.startIndex + 1 <= 128,
+      `run spans more than 128 points (${run.endIndex - run.startIndex + 1})`)
+    assert(approxEq(run.center.x, 0), `expected center.x 0, got ${run.center.x}`)
+    assert(approxEq(run.center.y, 0), `expected center.y 0, got ${run.center.y}`)
+    assert(approxEq(run.radius, 10), `expected radius 10, got ${run.radius}`)
+    assert(run.clockwise === false, 'expected counter-clockwise arc')
+    expectedStartIndex = run.endIndex
+  }
+  assert(expectedStartIndex === points.length - 1,
+    `expected runs to reach final point ${points.length - 1}, got ${expectedStartIndex}`)
+}
+
+function testUsesEditorRadiusRelativeValidation(): void {
+  console.log('Testing editor radius-relative validation...')
+
+  const runs = findArcRunsInPoints(sampledArc(10, 0, Math.PI / 2, 18), EDITOR_FIT_OPTIONS)
+
+  assert(runs.length === 1, `expected one editor arc run, got ${runs.length}`)
+  assert(approxEq(runs[0].center.x, 0), `expected center.x 0, got ${runs[0].center.x}`)
+  assert(approxEq(runs[0].center.y, 0), `expected center.y 0, got ${runs[0].center.y}`)
+  assert(approxEq(runs[0].radius, 10), `expected radius 10, got ${runs[0].radius}`)
+}
+
+function testMinimumRunCanExceedDefaultCandidateWindow(): void {
+  console.log('Testing minimum run above the default candidate window...')
+
+  const points = sampledArc(10, 0, Math.PI, 128)
+  const runs = findArcRunsInPoints(points, { ...FIT_OPTIONS, minArcPoints: points.length })
+
+  assert(runs.length === 1, `expected one minimum-sized arc run, got ${runs.length}`)
+  assert(runs[0].startIndex === 0, `expected start index 0, got ${runs[0].startIndex}`)
+  assert(runs[0].endIndex === points.length - 1,
+    `expected end index ${points.length - 1}, got ${runs[0].endIndex}`)
+}
+
+function nonFittingPoints(count: number): Point[] {
+  return Array.from({ length: count }, (_, index) => ({
+    x: index,
+    y: index % 2 === 0 ? 0 : 10,
+  }))
+}
+
+function measureNonFittingSearch(count: number): { runs: number; elapsedMs: number } {
+  const startedAt = performance.now()
+  const runs = findArcRunsInPoints(nonFittingPoints(count), FIT_OPTIONS)
+  return { runs: runs.length, elapsedMs: performance.now() - startedAt }
+}
+
 function testBoundsLargeNonFittingSearch(): void {
   console.log('Testing bounded large non-fitting search...')
 
@@ -92,20 +160,21 @@ function testBoundsLargeNonFittingSearch(): void {
   // This size used to take seconds because every starting point re-tested
   // nearly every remaining endpoint. Keep the budget generous for CI while
   // still catching a regression to the unbounded cubic search.
-  const points: Point[] = Array.from({ length: 1200 }, (_, index) => ({
-    x: index,
-    y: index % 2 === 0 ? 0 : 10,
-  }))
-  const startedAt = performance.now()
-  const runs = findArcRunsInPoints(points, FIT_OPTIONS)
-  const elapsedMs = performance.now() - startedAt
+  const result = measureNonFittingSearch(1200)
 
-  assert(runs.length === 0, `expected no arc runs, got ${runs.length}`)
-  assert(elapsedMs < 750, `expected bounded search below 750ms, took ${elapsedMs.toFixed(1)}ms`)
+  assert(result.runs === 0, `expected no arc runs, got ${result.runs}`)
+  // The exact-circle test above fixes the deterministic 128-point window
+  // contract. This broad budget catches restoring the cubic search without a
+  // flaky wall-clock scaling ratio while the full suite runs in parallel.
+  assert(result.elapsedMs < 750,
+    `expected bounded search below 750ms, took ${result.elapsedMs.toFixed(1)}ms`)
 }
 
 testFindsLongestValidArcRun()
 testDetectsClockwiseArcRun()
+testSplitsLargeCircularRunWithoutChangingItsCircle()
+testUsesEditorRadiusRelativeValidation()
+testMinimumRunCanExceedDefaultCandidateWindow()
 testBoundsLargeNonFittingSearch()
 
 console.log('arcReconstruction tests passed.')

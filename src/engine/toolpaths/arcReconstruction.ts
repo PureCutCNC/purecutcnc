@@ -608,10 +608,11 @@ export interface FittedArcRun {
   clockwise: boolean
 }
 
-// A fitted arc can be split downstream without changing its geometry, while
-// scanning every possible endpoint makes a long non-fitting polyline cubic.
-// Keep each greedy search window bounded so the shared editor/export path is
-// linear in the input length for a fixed candidate budget.
+// Scanning every possible endpoint makes a long non-fitting polyline cubic.
+// The normal 5° flattener emits at most 73 points for a full circle, so 128
+// preserves that path while bounding the shared editor/export search. Exact
+// circles retain their fitted circle across windows; non-circular input can
+// produce tighter local fits that still use the existing validation gates.
 const MAX_ARC_FIT_CANDIDATE_POINTS = 128
 
 function dist2D(a: Point, b: Point): number {
@@ -637,11 +638,14 @@ export function findArcRunsInPoints(
 
   const runs: FittedArcRun[] = []
   let i = 0
+  // Honour a caller's minimum instead of creating an empty candidate range
+  // when it exceeds the default bounded window.
+  const candidatePointLimit = Math.max(MAX_ARC_FIT_CANDIDATE_POINTS, opts.minArcPoints)
 
   while (i < n - opts.minArcPoints + 1) {
     let best: FittedArcRun | null = null
     const minEnd = i + opts.minArcPoints - 1
-    const maxEnd = Math.min(n - 1, i + MAX_ARC_FIT_CANDIDATE_POINTS - 1)
+    const maxEnd = Math.min(n - 1, i + candidatePointLimit - 1)
 
     // Try the longest qualifying sub-run in the bounded window first (greedy).
     for (let end = maxEnd; end >= minEnd; end -= 1) {
