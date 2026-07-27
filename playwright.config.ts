@@ -6,7 +6,12 @@ export default defineConfig({
   testDir: './e2e',
   forbidOnly: isCI,
   retries: 0,
-  workers: 1,
+  workers: isCI ? 2 : undefined,
+  // fullyParallel runs tests within each file concurrently — great locally
+  // but on CI's 2-vCPU runners the Vite dev server gets overwhelmed when
+  // multiple pages load/reload simultaneously. Tests across files still
+  // run in parallel via workers.
+  fullyParallel: !isCI,
   timeout: 60000,
   reporter: isCI
     ? [['github'], ['html', { outputFolder: 'playwright-report', open: 'never' }]]
