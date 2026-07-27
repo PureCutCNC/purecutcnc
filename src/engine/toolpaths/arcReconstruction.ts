@@ -608,6 +608,13 @@ export interface FittedArcRun {
   clockwise: boolean
 }
 
+// Scanning every possible endpoint makes a long non-fitting polyline cubic.
+// The normal 5° flattener emits at most 73 points for a full circle, so 128
+// preserves that path while bounding the shared editor/export search. Exact
+// circles retain their fitted circle across windows; non-circular input can
+// produce tighter local fits that still use the existing validation gates.
+const MAX_ARC_FIT_CANDIDATE_POINTS = 128
+
 function dist2D(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }
@@ -616,8 +623,8 @@ function dist2D(a: Point, b: Point): number {
  * Greedy partial-run arc finder.
  *
  * Walks the point sequence from left to right. At each position it attempts
- * the longest qualifying arc run (working backward from the end). When a fit
- * passes all validation gates the run is recorded and the walker advances
+ * the longest qualifying arc run within a bounded candidate window. When a
+ * fit passes all validation gates the run is recorded and the walker advances
  * past it; otherwise the walker advances by one point.
  *
  * Points not covered by any returned {@link FittedArcRun} are linear.
@@ -631,12 +638,17 @@ export function findArcRunsInPoints(
 
   const runs: FittedArcRun[] = []
   let i = 0
+  // Honour a caller's minimum instead of creating an empty candidate range
+  // when it exceeds the default bounded window.
+  const candidatePointLimit = Math.max(MAX_ARC_FIT_CANDIDATE_POINTS, opts.minArcPoints)
 
   while (i < n - opts.minArcPoints + 1) {
     let best: FittedArcRun | null = null
+    const minEnd = i + opts.minArcPoints - 1
+    const maxEnd = Math.min(n - 1, i + candidatePointLimit - 1)
 
-    // Try the longest qualifying sub-run first (greedy).
-    for (let end = n - 1; end >= i + opts.minArcPoints - 1; end -= 1) {
+    // Try the longest qualifying sub-run in the bounded window first (greedy).
+    for (let end = maxEnd; end >= minEnd; end -= 1) {
       const sub = points.slice(i, end + 1)
       const fit = fitCircleLeastSquares(sub)
       if (!fit) continue
