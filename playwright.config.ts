@@ -6,7 +6,8 @@ export default defineConfig({
   testDir: './e2e',
   forbidOnly: isCI,
   retries: 0,
-  workers: 1,
+  workers: isCI ? 4 : undefined,
+  fullyParallel: true,
   timeout: 60000,
   reporter: isCI
     ? [['github'], ['html', { outputFolder: 'playwright-report', open: 'never' }]]
