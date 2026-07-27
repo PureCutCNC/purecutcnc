@@ -24,7 +24,7 @@ import { defaultTool, newProject, polygonProfile, rectProfile } from '../../../t
 import { getTextFontOptions } from '../../../text'
 import { projectWithFeatures } from '../../../test/projectFixtures'
 import { resolvePocketRegions } from '../resolver'
-import type { ToolpathMove } from '../types'
+import type { ResolvedPocketRegion, ToolpathMove } from '../types'
 import {
   computeMedialAxis,
   emitMedialToolpath,
@@ -433,6 +433,26 @@ function assertContinuity(moves: ToolpathMove[]): void {
   }
 }
 
+function nearestResolvedRegionIndex(point: { x: number; y: number }, regions: ResolvedPocketRegion[]): number {
+  let nearestIndex = 0
+  let nearestDistance = Infinity
+  for (let index = 0; index < regions.length; index += 1) {
+    const centroid = regions[index].outer.reduce(
+      (sum, vertex) => ({ x: sum.x + vertex.x, y: sum.y + vertex.y }),
+      { x: 0, y: 0 },
+    )
+    const center = { x: centroid.x / regions[index].outer.length, y: centroid.y / regions[index].outer.length }
+    const dx = point.x - center.x
+    const dy = point.y - center.y
+    const distance = dx * dx + dy * dy
+    if (distance < nearestDistance) {
+      nearestIndex = index
+      nearestDistance = distance
+    }
+  }
+  return nearestIndex
+}
+
 function testGeneratorSquare(): void {
   console.log('Testing generateVCarveMedialToolpath on a 20×20 square...')
   const proj = baseProject([makeVBit()], [makeRectFeature('f1', 0, 0, 20, 20, -5)])
@@ -528,6 +548,32 @@ function testGeneratorMultipleFeatures(): void {
     assert(!inGap(move.from) || !inGap(move.to), 'cut crosses the gap between features')
   }
   console.log(`multi-feature: ${cuts.length} cuts PASSED`)
+}
+
+function testGeneratorVisitsNearestResolvedRegionFirst(): void {
+  console.log('Testing v_carve_medial visits the nearest resolved region first...')
+  const project = baseProject(
+    [makeVBit()],
+    [
+      makeRectFeature('far', 60, 0, 10, 10, -5),
+      makeRectFeature('near', 0, 0, 10, 10, -5),
+    ],
+  )
+  const operation = makeVCarveMedialOp(['far', 'near'])
+  const regions = resolvePocketRegions(project, operation).bands[0]?.regions ?? []
+  assert(regions.length === 2, `expected two resolved regions, got ${regions.length}`)
+  assert(
+    nearestResolvedRegionIndex({ x: 0, y: 0 }, regions) === 1,
+    'fixture must retain far-first resolved-region order before nearest-neighbor traversal',
+  )
+
+  const firstCut = cutMoves(generateVCarveMedialToolpath(project, operation).moves)[0]
+  assert(firstCut !== undefined, 'expected V-carve medial cut moves')
+  assert(
+    nearestResolvedRegionIndex(firstCut.from, regions) === 1,
+    'V-carve medial should start with the region nearest the origin, not resolver order',
+  )
+  console.log('v_carve_medial nearest resolved-region ordering: PASSED')
 }
 
 function makeOutlineTextFeature(
@@ -791,6 +837,7 @@ try {
   testGeneratorDeterminism()
   testGeneratorIgnoresLegacyStepover()
   testGeneratorMultipleFeatures()
+  testGeneratorVisitsNearestResolvedRegionFirst()
   testGeneratorTextFeatureTarget()
   testScaledOutlineTextTopologyStaysStable()
   testOutlineGRejectsFlatteningSpokesAcrossScales()

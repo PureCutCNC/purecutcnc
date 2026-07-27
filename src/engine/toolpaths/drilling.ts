@@ -19,6 +19,7 @@ import type { ToolpathWarning } from './warningCodes'
 import type { DrillCycle, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
   checkMaxCutDepthWarning,
+  greedyNearestNeighbor,
   getOperationSafeZ,
   normalizeToolForProject,
   resolveFeatureZSpan,
@@ -32,12 +33,6 @@ interface DrillTarget {
   center: Point
   span: ReturnType<typeof resolveFeatureZSpan>
   originalIndex: number
-}
-
-function xyDistanceSquared(a: ToolpathPoint, b: Point): number {
-  const dx = b.x - a.x
-  const dy = b.y - a.y
-  return dx * dx + dy * dy
 }
 
 function precomputeDrillTargets(
@@ -75,34 +70,11 @@ function precomputeDrillTargets(
 }
 
 export function sortTargetsByNearestNeighbor(targets: DrillTarget[], startPosition: ToolpathPoint | null): DrillTarget[] {
-  if (targets.length <= 1) return targets
-
-  const current: ToolpathPoint = startPosition ? { ...startPosition } : { x: 0, y: 0, z: 0 }
-  const ordered: DrillTarget[] = []
-  const remaining = [...targets]
-
-  while (remaining.length > 0) {
-    let bestIndex = 0
-    let bestDistance = xyDistanceSquared(current, remaining[0].center)
-
-    for (let i = 1; i < remaining.length; i += 1) {
-      const distance = xyDistanceSquared(current, remaining[i].center)
-      if (
-        distance < bestDistance
-        || (distance === bestDistance && remaining[i].originalIndex < remaining[bestIndex].originalIndex)
-      ) {
-        bestIndex = i
-        bestDistance = distance
-      }
-    }
-
-    const [next] = remaining.splice(bestIndex, 1)
-    ordered.push(next)
-    current.x = next.center.x
-    current.y = next.center.y
-  }
-
-  return ordered
+  return greedyNearestNeighbor(targets, {
+    positionOf: (target) => target.center,
+    start: startPosition ?? { x: 0, y: 0 },
+    tieBreakOf: (target) => target.originalIndex,
+  })
 }
 
 function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): ToolpathBounds {

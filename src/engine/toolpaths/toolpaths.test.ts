@@ -27,7 +27,7 @@ import type { Operation, Project, RegionMaskMode, SketchFeature, Tool } from '..
 import { circleProfile, defaultTool, newProject, polygonProfile, rectProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { buildGearProfile, defaultGearCreationParams } from '../../sketch/gearProfile'
-import type { ToolpathBounds, ToolpathMove, ToolpathResult } from './types'
+import type { ResolvedPocketRegion, ToolpathBounds, ToolpathMove, ToolpathResult } from './types'
 import { mergePocketToolpathResults, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { generatePocketToolpath } from './pocket'
 import { generateEdgeRouteToolpath } from './edge'
@@ -37,6 +37,7 @@ import { generateSurfaceCleanToolpath } from './surface'
 import { generateFollowLineToolpath } from './carving'
 import { generateDrillingToolpath, sortTargetsByNearestNeighbor } from './drilling'
 import { generatePocketRestRegionDrafts } from './restRegions'
+import { resolvePocketRegions } from './resolver'
 import {
   buildMaskFromClipperPaths,
   buildRegionMask,
@@ -46,7 +47,7 @@ import {
 import { DEFAULT_CLIPPER_SCALE } from './geometry'
 import type { ClipperPath } from './types'
 
-function assert(condition: boolean, message: string) {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
 
@@ -1659,6 +1660,55 @@ function testEdgeOutsideCombinedRoundCorners() {
 // V-carve: feature_first emits independent per-feature toolpath
 // ---------------------------------------------------------------------------
 
+function nearestResolvedRegionIndex(point: { x: number; y: number }, regions: ResolvedPocketRegion[]): number {
+  let nearestIndex = 0
+  let nearestDistance = Infinity
+  for (let index = 0; index < regions.length; index += 1) {
+    const centroid = regions[index].outer.reduce(
+      (sum, vertex) => ({ x: sum.x + vertex.x, y: sum.y + vertex.y }),
+      { x: 0, y: 0 },
+    )
+    const center = { x: centroid.x / regions[index].outer.length, y: centroid.y / regions[index].outer.length }
+    const dx = point.x - center.x
+    const dy = point.y - center.y
+    const distance = dx * dx + dy * dy
+    if (distance < nearestDistance) {
+      nearestIndex = index
+      nearestDistance = distance
+    }
+  }
+  return nearestIndex
+}
+
+function testVCarveVisitsNearestResolvedRegionFirst() {
+  console.log('Testing v_carve visits the nearest resolved region first...')
+  const tool = makeVBit('t1')
+  const far = makePocketFeature('far', 60, 0, 10, 10, 0, -2)
+  const near = makePocketFeature('near', 0, 0, 10, 10, 0, -2)
+  const project = baseProject([tool], [far, near])
+  const operation = makePocketOp({
+    kind: 'v_carve',
+    target: { source: 'features', featureIds: ['far', 'near'] },
+    toolRef: 't1',
+    maxCarveDepth: 2,
+    stepover: 0.3,
+  })
+  const regions = resolvePocketRegions(project, operation).bands[0]?.regions ?? []
+  assert(regions.length === 2, `expected two resolved regions, got ${regions.length}`)
+  assert(
+    nearestResolvedRegionIndex({ x: 0, y: 0 }, regions) === 1,
+    'fixture must retain far-first resolved-region order before nearest-neighbor traversal',
+  )
+
+  const firstCut = cutMoves(generateVCarveToolpath(project, operation).moves)[0]
+  assert(firstCut !== undefined, 'expected V-carve cut moves')
+  assert(
+    nearestResolvedRegionIndex(firstCut.from, regions) === 1,
+    'V-carve should start with the region nearest the origin, not resolver order',
+  )
+  console.log('v_carve nearest resolved-region ordering: PASSED')
+}
+
 function testVCarveDisjointFeaturesAreMachiningOrderInvariant() {
   console.log('Testing v_carve disjoint features are machiningOrder invariant...')
 
@@ -2794,6 +2844,7 @@ try {
   testEdgeOutsideClipsAroundNonSelectedAddFeatures()
   testEdgeOutsideRoundCornersOptIn()
   testEdgeOutsideCombinedRoundCorners()
+  testVCarveVisitsNearestResolvedRegionFirst()
   testVCarveDisjointFeaturesAreMachiningOrderInvariant()
   testSurfaceCleanMultiTargetProtectsTallerTarget()
   testSurfaceCleanRegionMaskClipsGeneratedToolpathOnly()

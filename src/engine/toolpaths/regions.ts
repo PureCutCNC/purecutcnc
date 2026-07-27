@@ -23,6 +23,7 @@ import {
   DEFAULT_CLIPPER_SCALE,
   flattenProfile,
   getOperationSafeZ,
+  greedyNearestNeighbor,
   normalizeWinding,
   toClipperPath,
 } from './geometry'
@@ -473,30 +474,10 @@ interface RegionCutGroup {
  * small disjoint corner regions). Mirrors orderPartsByNearestBlock.
  */
 function orderRegionCutGroupsByNearest(groups: RegionCutGroup[]): RegionCutGroup[] {
-  if (groups.length <= 1) return groups
-
-  const ordered: RegionCutGroup[] = [groups[0]]
-  const remaining = groups.slice(1)
-  let current = groups[0].end
-
-  while (remaining.length > 0) {
-    let bestIndex = 0
-    let bestDistance = Infinity
-    for (let index = 0; index < remaining.length; index += 1) {
-      const dx = remaining[index].start.x - current.x
-      const dy = remaining[index].start.y - current.y
-      const distance = dx * dx + dy * dy
-      if (distance < bestDistance) {
-        bestIndex = index
-        bestDistance = distance
-      }
-    }
-    const [next] = remaining.splice(bestIndex, 1)
-    ordered.push(next)
-    current = next.end
-  }
-
-  return ordered
+  return greedyNearestNeighbor(groups, {
+    positionOf: (group) => group.start,
+    exitOf: (group) => group.end,
+  })
 }
 
 export function clipToolpathResultToRegionMask(

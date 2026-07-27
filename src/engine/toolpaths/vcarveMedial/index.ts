@@ -34,7 +34,7 @@ import type {
   ToolpathPoint,
   ToolpathResult,
 } from '../types'
-import { checkMaxCutDepthWarning, getOperationSafeZ, normalizeToolForProject } from '../geometry'
+import { checkMaxCutDepthWarning, getOperationSafeZ, greedyNearestNeighbor, normalizeToolForProject } from '../geometry'
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from '../multiFeature'
 import { updateBounds } from '../pocket'
 import { resolvePocketRegions } from '../resolver'
@@ -65,33 +65,6 @@ function regionCentroid(region: { outer: Point[] }): { x: number; y: number } {
   for (const p of region.outer) { sx += p.x; sy += p.y }
   const n = region.outer.length || 1
   return { x: sx / n, y: sy / n }
-}
-
-function sortRegionsNearestNeighbor<T extends { outer: Point[] }>(
-  regions: T[],
-  currentPosition: ToolpathPoint | null,
-): T[] {
-  if (regions.length <= 1) return regions
-  const remaining = regions.slice()
-  const sorted: T[] = []
-  let curX = currentPosition?.x ?? 0
-  let curY = currentPosition?.y ?? 0
-
-  while (remaining.length > 0) {
-    let bestIdx = 0
-    let bestDist = Infinity
-    for (let i = 0; i < remaining.length; i += 1) {
-      const c = regionCentroid(remaining[i])
-      const d = Math.hypot(c.x - curX, c.y - curY)
-      if (d < bestDist) { bestDist = d; bestIdx = i }
-    }
-    const chosen = remaining.splice(bestIdx, 1)[0]
-    const c = regionCentroid(chosen)
-    curX = c.x
-    curY = c.y
-    sorted.push(chosen)
-  }
-  return sorted
 }
 
 export function generateVCarveMedialToolpath(project: Project, operation: Operation): ToolpathResult {
@@ -184,7 +157,10 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
       continue
     }
 
-    const sortedRegions = sortRegionsNearestNeighbor(band.regions, currentPosition)
+    const sortedRegions = greedyNearestNeighbor(band.regions, {
+      positionOf: regionCentroid,
+      start: currentPosition ?? { x: 0, y: 0 },
+    })
     for (const region of sortedRegions) {
       const resolvedResolution = resolveMedialResolution(region)
       if (!resolvedResolution) {

@@ -18,6 +18,7 @@ import { isConstruction } from '../../store/helpers/featureRoles'
 import { resolvedFeatureMap } from '../../store/helpers/resolveFeatures'
 import type { Operation, Project } from '../../types/project'
 import type { PocketToolpathResult, ToolpathBounds, ToolpathPoint, ToolpathResult } from './types'
+import { greedyNearestNeighbor } from './geometry'
 
 interface MergeToolpathOptions {
   orderBlocks?: 'input' | 'nearest'
@@ -102,12 +103,6 @@ function blockEnd(part: ToolpathResult): ToolpathPoint | null {
   return part.moves.at(-1)?.to ?? null
 }
 
-function xyDistanceSquared(a: ToolpathPoint, b: ToolpathPoint): number {
-  const dx = b.x - a.x
-  const dy = b.y - a.y
-  return dx * dx + dy * dy
-}
-
 function samePoint(a: ToolpathPoint, b: ToolpathPoint): boolean {
   return a.x === b.x && a.y === b.y && a.z === b.z
 }
@@ -121,30 +116,11 @@ function orderPartsByNearestBlock<T extends ToolpathResult>(parts: T[]): T[] {
   }, [])
   if (blocks.length <= 1) return parts
 
-  const ordered: IndexedToolpathPart<T>[] = [blocks[0]]
-  const remaining = blocks.slice(1)
-  let current = blocks[0].end
-
-  while (remaining.length > 0) {
-    let bestIndex = 0
-    let bestDistance = xyDistanceSquared(current, remaining[0].start)
-    for (let i = 1; i < remaining.length; i += 1) {
-      const distance = xyDistanceSquared(current, remaining[i].start)
-      if (
-        distance < bestDistance
-        || (distance === bestDistance && remaining[i].originalIndex < remaining[bestIndex].originalIndex)
-      ) {
-        bestIndex = i
-        bestDistance = distance
-      }
-    }
-
-    const [next] = remaining.splice(bestIndex, 1)
-    ordered.push(next)
-    current = next.end
-  }
-
-  return ordered.map((block) => block.part)
+  return greedyNearestNeighbor(blocks, {
+    positionOf: (block) => block.start,
+    exitOf: (block) => block.end,
+    tieBreakOf: (block) => block.originalIndex,
+  }).map((block) => block.part)
 }
 
 function mergeMoves(parts: ToolpathResult[], normalizeTransitions: boolean): ToolpathResult['moves'] {
