@@ -608,6 +608,12 @@ export interface FittedArcRun {
   clockwise: boolean
 }
 
+// A fitted arc can be split downstream without changing its geometry, while
+// scanning every possible endpoint makes a long non-fitting polyline cubic.
+// Keep each greedy search window bounded so the shared editor/export path is
+// linear in the input length for a fixed candidate budget.
+const MAX_ARC_FIT_CANDIDATE_POINTS = 128
+
 function dist2D(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }
@@ -616,8 +622,8 @@ function dist2D(a: Point, b: Point): number {
  * Greedy partial-run arc finder.
  *
  * Walks the point sequence from left to right. At each position it attempts
- * the longest qualifying arc run (working backward from the end). When a fit
- * passes all validation gates the run is recorded and the walker advances
+ * the longest qualifying arc run within a bounded candidate window. When a
+ * fit passes all validation gates the run is recorded and the walker advances
  * past it; otherwise the walker advances by one point.
  *
  * Points not covered by any returned {@link FittedArcRun} are linear.
@@ -634,9 +640,11 @@ export function findArcRunsInPoints(
 
   while (i < n - opts.minArcPoints + 1) {
     let best: FittedArcRun | null = null
+    const minEnd = i + opts.minArcPoints - 1
+    const maxEnd = Math.min(n - 1, i + MAX_ARC_FIT_CANDIDATE_POINTS - 1)
 
-    // Try the longest qualifying sub-run first (greedy).
-    for (let end = n - 1; end >= i + opts.minArcPoints - 1; end -= 1) {
+    // Try the longest qualifying sub-run in the bounded window first (greedy).
+    for (let end = maxEnd; end >= minEnd; end -= 1) {
       const sub = points.slice(i, end + 1)
       const fit = fitCircleLeastSquares(sub)
       if (!fit) continue
