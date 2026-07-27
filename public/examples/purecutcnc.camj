@@ -3,7 +3,7 @@
   "meta": {
     "name": "purecutcnc",
     "created": "2026-04-13T12:31:15.471Z",
-    "modified": "2026-07-15T13:25:59.626Z",
+    "modified": "2026-07-27T14:50:32.876Z",
     "units": "inch",
     "showFeatureInfo": false,
     "maxTravelZ": 2,
@@ -58,7 +58,8 @@
           "cwArcCommand": "G2",
           "ccwArcCommand": "G3",
           "arcFormat": "ij",
-          "modalMotion": true
+          "modalMotion": true,
+          "arcInterpolation": false
         },
         "feedSpeed": {
           "feedCommand": "F",
@@ -131,7 +132,8 @@
           "cwArcCommand": "G2",
           "ccwArcCommand": "G3",
           "arcFormat": "ij",
-          "modalMotion": true
+          "modalMotion": true,
+          "arcInterpolation": false
         },
         "feedSpeed": {
           "feedCommand": "F",
@@ -217,7 +219,8 @@
           "cwArcCommand": "G2",
           "ccwArcCommand": "G3",
           "arcFormat": "ij",
-          "modalMotion": true
+          "modalMotion": true,
+          "arcInterpolation": false
         },
         "feedSpeed": {
           "feedCommand": "F",
@@ -515,13 +518,13 @@
       "toolRef": "t0009",
       "stepdown": 0.1,
       "stepover": 0.6,
-      "feed": 18,
+      "feed": 30,
       "plungeFeed": 8,
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
-      "pocketSlotFeedPercent": 100,
-      "roundOutsideCorners": false,
+      "pocketSlotFeedPercent": 60,
+      "roundOutsideCorners": true,
       "stockToLeaveRadial": 0.05,
       "stockToLeaveAxial": 0.05,
       "finishWalls": true,
@@ -534,7 +537,8 @@
       "waterlineMicroStepover": 0,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
-      "waterlineTipStepdown": 0
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true
     },
     {
       "id": "op0017",
@@ -554,13 +558,13 @@
       "toolRef": "t0008",
       "stepdown": 0.05,
       "stepover": 0.5,
-      "feed": 18,
+      "feed": 30,
       "plungeFeed": 8,
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
-      "pocketSlotFeedPercent": 100,
-      "roundOutsideCorners": false,
+      "pocketSlotFeedPercent": 70,
+      "roundOutsideCorners": true,
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -573,7 +577,8 @@
       "waterlineMicroStepover": 0,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
-      "waterlineTipStepdown": 0
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true
     },
     {
       "id": "op0018",
@@ -612,7 +617,8 @@
       "waterlineMicroStepover": 0,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
-      "waterlineTipStepdown": 0
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true
     },
     {
       "id": "op0019",
@@ -651,7 +657,8 @@
       "waterlineMicroStepover": 0,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
-      "waterlineTipStepdown": 0
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true
     },
     {
       "id": "op0020",
@@ -690,7 +697,8 @@
       "waterlineMicroStepover": 0,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
-      "waterlineTipStepdown": 0
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true
     },
     {
       "id": "op0021",
@@ -729,7 +737,8 @@
       "waterlineMicroStepover": 0,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
-      "waterlineTipStepdown": 0
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true
     }
   ],
   "tabs": [
