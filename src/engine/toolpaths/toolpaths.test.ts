@@ -35,7 +35,7 @@ import { generateVCarveToolpath } from './vcarve'
 import { generateFinishSurfaceCleanupToolpath } from './finishSurfaceCleanup'
 import { generateSurfaceCleanToolpath } from './surface'
 import { generateFollowLineToolpath } from './carving'
-import { generateDrillingToolpath } from './drilling'
+import { generateDrillingToolpath, sortTargetsByNearestNeighbor } from './drilling'
 import { generatePocketRestRegionDrafts } from './restRegions'
 import {
   buildMaskFromClipperPaths,
@@ -1961,6 +1961,33 @@ function testDrillingOrdersByNearestNeighbor() {
   console.log('drilling nearest-neighbor ordering: PASSED')
 }
 
+function testDrillingNearestNeighborDoesNotMutateStartPosition() {
+  console.log('Testing drilling nearest-neighbor preserves the caller start position...')
+  const startPosition = { x: 10, y: 0, z: 7 }
+  const originalStartPosition = { ...startPosition }
+  const span = { top: 0, bottom: -1, min: -1, max: 0, height: 1 }
+  const targets = [
+    { feature: makeCircleBoss('far', 50, 0, 0.5, 0, -1), center: { x: 50, y: 0 }, span, originalIndex: 0 },
+    { feature: makeCircleBoss('near', 5, 0, 0.5, 0, -1), center: { x: 5, y: 0 }, span, originalIndex: 1 },
+    { feature: makeCircleBoss('next', 0, 0, 0.5, 0, -1), center: { x: 0, y: 0 }, span, originalIndex: 2 },
+  ] satisfies Parameters<typeof sortTargetsByNearestNeighbor>[0]
+
+  const ordered = sortTargetsByNearestNeighbor(targets, startPosition)
+
+  assert(
+    startPosition.x === originalStartPosition.x
+      && startPosition.y === originalStartPosition.y
+      && startPosition.z === originalStartPosition.z,
+    'nearest-neighbor sorting must not mutate the caller start position',
+  )
+  assert(
+    ordered.map((target) => target.originalIndex).join(',') === '1,2,0',
+    'nearest-neighbor ordering should be calculated from the provided start position',
+  )
+
+  console.log('drilling nearest-neighbor start-position preservation: PASSED')
+}
+
 function testDrillingTieBreaksByOriginalOrder() {
   console.log('Testing drilling tie-breaks equidistant holes by original feature order...')
   const tool = makeFlatEndmill('t1', 1)
@@ -2774,6 +2801,7 @@ try {
   testFollowLineRegionClipsOpenPath()
   testDrillingRegionFiltersHolePoints()
   testDrillingOrdersByNearestNeighbor()
+  testDrillingNearestNeighborDoesNotMutateStartPosition()
   testDrillingTieBreaksByOriginalOrder()
   testDrillingMinimizesSafeZTravelDistance()
   testFinishSurfaceCleanupRejectsRegionOnlyTarget()

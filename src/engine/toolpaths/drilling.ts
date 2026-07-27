@@ -74,10 +74,10 @@ function precomputeDrillTargets(
   return { targets, warnings }
 }
 
-function sortTargetsByNearestNeighbor(targets: DrillTarget[], startPosition: ToolpathPoint | null): DrillTarget[] {
+export function sortTargetsByNearestNeighbor(targets: DrillTarget[], startPosition: ToolpathPoint | null): DrillTarget[] {
   if (targets.length <= 1) return targets
 
-  const current = startPosition ?? { x: 0, y: 0, z: 0 }
+  const current: ToolpathPoint = startPosition ? { ...startPosition } : { x: 0, y: 0, z: 0 }
   const ordered: DrillTarget[] = []
   const remaining = [...targets]
 
