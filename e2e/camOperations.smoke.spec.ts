@@ -76,7 +76,8 @@ test.describe('CAM operation browser smoke', () => {
     await expect(ui.operations.countBadge(app.page)).toHaveText('1')
     const operationRow = ui.operations.rowByName(app.page, 'Edge route outside Rough')
     await expect(operationRow).toBeVisible()
-    await expect(app.page.getByText('Stepover Ratio', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Stepdown', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Stepover Ratio', { exact: true })).not.toBeVisible()
 
     const project = await getProject(app.page)
     const operations = project.operations as OperationSnapshot[]

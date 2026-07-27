@@ -48,6 +48,7 @@ function outsideRouteOperation(id: string, name: string) {
     rpm: 18000,
     pocketPattern: 'offset',
     pocketAngle: 0,
+    roundOutsideCorners: false,
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
     finishWalls: false,

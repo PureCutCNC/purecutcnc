@@ -1291,6 +1291,8 @@ export function CAMPanel({
                   {selectedOperation.kind !== 'follow_line'
                     && selectedOperation.kind !== 'drilling'
                     && selectedOperation.kind !== 'v_carve_medial'
+                    && selectedOperation.kind !== 'edge_route_inside'
+                    && selectedOperation.kind !== 'edge_route_outside'
                     && !(selectedOperation.kind === 'finish_surface' && selectedOperation.pocketPattern === 'waterline') ? (
                     <label className="properties-field">
                       <span>
