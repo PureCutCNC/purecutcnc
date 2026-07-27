@@ -16,6 +16,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
+import { exportGeometryTolerance } from '../../utils/units'
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
 import {
@@ -106,7 +107,7 @@ export function ExportedMotionDebugDialog({
       if (!eligibility.eligible) {
         throw new Error(`ineligible:${eligibility.reason ?? ''}`)
       }
-      const tolerance = project.meta.units === 'mm' ? 0.01 : 0.01 / 25.4
+      const tolerance = exportGeometryTolerance(project.meta.units)
       const postprocessorTrace = previewResult.motionTraces?.[0]
       if (!postprocessorTrace) {
         throw new Error('no-motion-trace')
