@@ -153,21 +153,69 @@ function measureNonFittingSearch(count: number): { runs: number; elapsedMs: numb
   return { runs: runs.length, elapsedMs: performance.now() - startedAt }
 }
 
+/**
+ * Lowest CPU time, in ms, across `reps` searches over the same input.
+ *
+ * Measures CPU time (`process.cpuUsage`) rather than wall clock, because
+ * `scripts/run-tests.ts` executes test files in a parallel pool. Wall clock
+ * counts time this process spends descheduled while sibling test files run,
+ * and it does so unevenly: the larger input runs longer, so it is exposed to
+ * more of that interference, which systematically inflates the ratio below.
+ * CPU time excludes descheduled time and is stable under load. Measured on an
+ * 8-core-saturated machine:
+ *
+ *   wall-clock ratio   2.18 .. 3.23   (and 4.7 observed in a real suite run)
+ *   CPU-time ratio     2.20 .. 2.35
+ *
+ * Minimum rather than mean, since contention can only ever add cost. Points
+ * are built once so allocation stays outside the measured region.
+ */
+function bestNonFittingCpuMs(count: number, reps = 3): number {
+  const points = nonFittingPoints(count)
+  let best = Infinity
+  for (let rep = 0; rep < reps; rep += 1) {
+    const before = process.cpuUsage()
+    findArcRunsInPoints(points, FIT_OPTIONS)
+    const delta = process.cpuUsage(before)
+    best = Math.min(best, (delta.user + delta.system) / 1000)
+  }
+  return best
+}
+
 function testBoundsLargeNonFittingSearch(): void {
   console.log('Testing bounded large non-fitting search...')
 
-  // Alternating points cannot fit a circle under the strict residual gate.
-  // This size used to take seconds because every starting point re-tested
-  // nearly every remaining endpoint. Keep the budget generous for CI while
-  // still catching a regression to the unbounded cubic search.
+  // Alternating points cannot fit a circle under the strict residual gate, so
+  // every start position runs the full candidate scan — the worst case.
   const result = measureNonFittingSearch(1200)
-
   assert(result.runs === 0, `expected no arc runs, got ${result.runs}`)
-  // The exact-circle test above fixes the deterministic 128-point window
-  // contract. This broad budget catches restoring the cubic search without a
-  // flaky wall-clock scaling ratio while the full suite runs in parallel.
-  assert(result.elapsedMs < 750,
-    `expected bounded search below 750ms, took ${result.elapsedMs.toFixed(1)}ms`)
+
+  // Assert the SHAPE of the cost curve, not a wall-clock budget. The bounded
+  // window makes the search linear in the input, so doubling the points roughly
+  // doubles the cost; the old unbounded search was cubic. Measured here:
+  //
+  //   window 128 (current)  400->800 pts    2.2x   pass
+  //   window 512            400->800 pts    5.5x   fail
+  //   unbounded             400->800 pts    7.7x   fail
+  //
+  // The point of a ratio is ROBUSTNESS, not extra sensitivity. An absolute
+  // budget cannot tell "the algorithm regressed" from "the machine is busy":
+  // the previous `< 750ms` assertion measured 119ms idle but 889ms under
+  // parallel suite load, and failed a build on unchanged code.
+  //
+  // Tradeoff, stated honestly: a ratio is BLIND to a uniform constant-factor
+  // slowdown, which an absolute budget would catch. That is an accepted gap —
+  // the deterministic tests above already pin the window contract (both
+  // regressions in the table fail `testSplitsLargeCircularRunWithoutChanging-
+  // ItsCircle` before reaching this point), so this assertion only has to guard
+  // a structural return to unbounded scanning.
+  const small = bestNonFittingCpuMs(400)
+  const large = bestNonFittingCpuMs(800)
+  const ratio = large / small
+
+  assert(ratio < 4,
+    `expected sub-cubic scaling for 2x the input (linear ~2x, cubic ~8x), got ${ratio.toFixed(1)}x `
+    + `(${small.toFixed(1)}ms -> ${large.toFixed(1)}ms CPU)`)
 }
 
 testFindsLongestValidArcRun()
