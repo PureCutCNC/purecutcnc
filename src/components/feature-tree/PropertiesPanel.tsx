@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useCallback, useContext, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useContext, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { Icon } from '../Icon'
 import { ExpandedPanelContext } from '../layout/expandedPanelContext'
@@ -158,7 +158,16 @@ function DraftNumberInput({
   )
 }
 
-export function PropertiesPanel() {
+/**
+ * Memoised because `App` subscribes to the whole store without a selector and
+ * renders `<PropertiesPanel />` inline, so every store write re-renders this
+ * panel as a child regardless of its own per-field selectors. The component
+ * takes no props, so the comparison is free and can never go stale.
+ *
+ * Without this the selectors below are inert: a 30-event canvas drag produced
+ * 30 panel renders both before and after converting them. With it, 0.
+ */
+export const PropertiesPanel = memo(function PropertiesPanel() {
   const project = useProjectStore((s) => s.project)
   const selection = useProjectStore((s) => s.selection)
   const addFeatureFolder = useProjectStore((s) => s.addFeatureFolder)
@@ -1661,4 +1670,4 @@ export function PropertiesPanel() {
       )}
     </>
   )
-}
+})
