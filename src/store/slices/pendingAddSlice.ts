@@ -24,8 +24,8 @@ import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createTextFeatureAt } from '../helpers/naming'
 import { isConstruction } from '../helpers/featureRoles'
 import { resolvedProjectFeatures } from '../helpers/resolveFeatures'
-import { pointsEqual } from '../helpers/geometry'
 import { clonePoint } from '../../geometry/profile'
+import { pointsEqual } from '../helpers/geometry'
 import {
   appendSplineDraftSegment,
   buildArcSegmentFromThreePoints,

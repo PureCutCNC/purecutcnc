@@ -34,6 +34,10 @@ export function clonePoint(point: Point): Point {
   return { ...point }
 }
 
+export function translatePoint(point: Point, dx: number, dy: number): Point {
+  return { x: point.x + dx, y: point.y + dy }
+}
+
 export function transformProfile(
   profile: SketchProfile,
   transformPoint: (point: Point) => Point,
@@ -68,9 +72,14 @@ export function transformProfile(
 }
 
 export function translateProfile(profile: SketchProfile, dx: number, dy: number): SketchProfile {
-  return transformProfile(profile, (point) => ({ x: point.x + dx, y: point.y + dy }))
+  return transformProfile(profile, (point) => translatePoint(point, dx, dy))
 }
 
+/**
+ * Copies a profile's points into fresh objects. Note this is *not* a deep clone:
+ * segments are shallow-spread, so any non-`Point` nested value a segment grows
+ * in future would still be shared with the source.
+ */
 export function cloneProfile(profile: SketchProfile): SketchProfile {
   return transformProfile(profile, clonePoint)
 }

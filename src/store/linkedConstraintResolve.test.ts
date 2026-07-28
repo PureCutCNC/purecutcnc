@@ -24,6 +24,9 @@ import {
   propagateConstraintsOnTranslate,
   validateConstraintsOnFeature,
 } from '../sketch/constraintSolver'
+// The solver's `transformProfile` option is the real implementation, not a
+// stand-in — a local copy would drift from it (it already had, on beziers).
+import { transformProfile, translateProfile } from '../geometry/profile'
 import {
   circleProfile,
   inferFeatureKind,
@@ -31,7 +34,6 @@ import {
   rectProfile,
   type FeatureDefinition,
   type Matrix2D,
-  type Point,
   type Project,
   type SketchFeature,
   type SketchProfile,
@@ -62,23 +64,9 @@ function approx(a: number, b: number, epsilon = 1e-2): boolean {
 
 // ── Re-usable test harness ────────────────────────────────────────────
 
-/** Transform profile helper matching the store's transformProfile. */
-function transformProfile(profile: SketchProfile, tx: (p: Point) => Point): SketchProfile {
-  return {
-    ...profile,
-    start: tx(profile.start),
-    segments: profile.segments.map((s) => {
-      if (s.type === 'circle' || s.type === 'arc') {
-        return { ...s, center: tx(s.center), to: tx(s.to) }
-      }
-      return { ...s, to: tx(s.to) }
-    }),
-  }
-}
-
 /** Translate a feature's profile in-place (simulating direct move). */
 function translateProfileDirect(profile: SketchProfile, dx: number, dy: number): SketchProfile {
-  return transformProfile(profile, (p) => ({ x: p.x + dx, y: p.y + dy }))
+  return translateProfile(profile, dx, dy)
 }
 
 /** Attach a definitionId + transform stub to a feature. */

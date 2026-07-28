@@ -22,8 +22,8 @@ import { duplicateClampName, duplicateFeatureName, duplicateTabName } from './na
 import { inferProfileOrientationAngle, normalizeAngleDegrees } from './normalize'
 import { mirrorFeatureFromReference } from './referenceTransforms'
 import { resolveProfile } from './resolveFeatures'
-import { rotatePointAround, transformStlFeatureData, translatePoint } from './transform'
-import { transformProfile } from '../../geometry/profile'
+import { transformProfile, translatePoint } from '../../geometry/profile'
+import { rotatePointAround, transformStlFeatureData } from './transform'
 
 export type ReferencedSketchFeature = SketchFeature & {
   definitionId: string

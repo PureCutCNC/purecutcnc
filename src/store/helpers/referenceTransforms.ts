@@ -16,6 +16,7 @@
 
 import { inferFeatureKind, profileVertices } from '../../types/project'
 import type { BackdropImage, Matrix2D, Point, SketchFeature } from '../../types/project'
+import { transformProfile } from '../../geometry/profile'
 import {
   addPoint,
   clampNumber,
@@ -36,7 +37,6 @@ import {
   transformProfileAffine,
   transformStlFeatureData,
 } from './transform'
-import { transformProfile } from '../../geometry/profile'
 
 function featureResizeBasis(feature: SketchFeature): { u: Point; v: Point } {
   const orientationAngle = normalizeAngleDegrees(

@@ -18,10 +18,6 @@ import type { Point, Segment, SketchFeature, Clamp, Tab, STLFeatureData } from '
 import { normalizePoint, subtractPoint, scalePoint, dotPoint } from './geometry'
 import { angleToPoint, normalizeAngleDegrees } from './normalize'
 
-export function translatePoint(point: Point, dx: number, dy: number): Point {
-  return { x: point.x + dx, y: point.y + dy }
-}
-
 export function arcToBezierSegments(start: Point, segment: Extract<Segment, { type: 'arc' }>): Array<Extract<Segment, { type: 'bezier' }>> {
   const startAngle = Math.atan2(start.y - segment.center.y, start.x - segment.center.x)
   const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)

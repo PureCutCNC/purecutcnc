@@ -9,8 +9,9 @@ and `src/store/` consumes them — neither should import the other's helpers, so
 the shared primitives live here instead.
 
 ## Files
-- `profile.ts` — `clonePoint`, `transformProfile`, `translateProfile`,
-  `cloneProfile`. Imported by `src/store/**` and `src/text/`.
+- `profile.ts` — `clonePoint`, `translatePoint`, `transformProfile`,
+  `translateProfile`, `cloneProfile`. Imported by `src/store/**`, `src/text/`,
+  and the constraint-solver tests that inject `transformProfile`.
 - `profile.test.ts` — direct unit tests, including the `circle`-segment cases
   that private copies of these helpers historically got wrong (issue #234).
 
