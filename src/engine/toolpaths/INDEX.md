@@ -36,6 +36,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 
 ## Tests
 - `linearMoveOptimization.test.ts` — zero-length removal, collinear merge, and boundary preservation
+- `geometry.test.ts` — shared nearest-neighbour ordering and squared-XY-distance behavior
 - `toolpaths.test.ts` — broad smoke tests across strategies
 - `resolverReadPath.test.ts` — resolved instance geometry and missing-definition behavior in toolpath resolution
 - `vcarveLineResolver.test.ts` — S2 closed-Line V-carve resolver tests: single Line, open-Line rejection, nested even-odd holes, disjoint Lines, mixed Subtract + Line, Subtract-only regression

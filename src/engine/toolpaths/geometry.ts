@@ -48,6 +48,82 @@ function clonePoint(point: Point): Point {
   return { x: point.x, y: point.y }
 }
 
+export function xyDistanceSquared(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  return dx * dx + dy * dy
+}
+
+export interface NearestNeighborOptions<T> {
+  /** Position used to measure distance to a candidate. */
+  positionOf: (item: T) => { x: number; y: number }
+  /** Where the tool ends after visiting the item. Defaults to positionOf. */
+  exitOf?: (item: T) => { x: number; y: number }
+  /** Explicit start point. Omit to keep the first item in place and seed from it. */
+  start?: { x: number; y: number } | null
+  /** When provided, exact ties prefer the lower value. Omit for first-encountered-wins. */
+  tieBreakOf?: (item: T) => number
+}
+
+interface NearestNeighborEntry<T> {
+  item: T
+  position: { x: number; y: number }
+  exit: { x: number; y: number }
+  tieBreak: number | null
+}
+
+export function greedyNearestNeighbor<T>(items: T[], options: NearestNeighborOptions<T>): T[] {
+  if (items.length <= 1) return items
+
+  const entries = items.map<NearestNeighborEntry<T>>((item) => {
+    const position = options.positionOf(item)
+    return {
+      item,
+      position,
+      exit: options.exitOf?.(item) ?? position,
+      tieBreak: options.tieBreakOf?.(item) ?? null,
+    }
+  })
+  const explicitStart = options.start ?? null
+  const ordered = explicitStart ? [] : [entries[0]]
+  const remaining = explicitStart ? entries : entries.slice(1)
+  let current = explicitStart
+    ? { x: explicitStart.x, y: explicitStart.y }
+    : { x: entries[0].exit.x, y: entries[0].exit.y }
+
+  while (remaining.length > 0) {
+    let bestIndex = 0
+    let bestDistance = xyDistanceSquared(current, remaining[0].position)
+    for (let index = 1; index < remaining.length; index += 1) {
+      const distance = xyDistanceSquared(current, remaining[index].position)
+      const candidateTieBreak = remaining[index].tieBreak
+      const bestTieBreak = remaining[bestIndex].tieBreak
+      if (
+        distance < bestDistance
+        || (
+          distance === bestDistance
+          && options.tieBreakOf !== undefined
+          && candidateTieBreak !== null
+          && bestTieBreak !== null
+          && candidateTieBreak < bestTieBreak
+        )
+      ) {
+        bestIndex = index
+        bestDistance = distance
+      }
+    }
+
+    const [next] = remaining.splice(bestIndex, 1)
+    ordered.push(next)
+    current = { x: next.exit.x, y: next.exit.y }
+  }
+
+  return ordered.map((entry) => entry.item)
+}
+
 export function resolveDimensionRef(project: Pick<Project, 'dimensions'>, value: DimensionRef): number {
   if (typeof value === 'number') {
     return value
