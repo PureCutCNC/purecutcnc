@@ -16,6 +16,7 @@
 
 import type { ToolType } from '../../types/project'
 import type { ToolpathMove } from '../toolpaths/types'
+import { effectiveFeed } from '../toolpaths/feed'
 import { applyMoveToGrid } from './replay'
 import type { DirtyRegion, SimulationGrid } from './types'
 
@@ -167,20 +168,15 @@ export class PlaybackController {
    */
   private feedRatioForMove(move: ToolpathMove): number {
     if (this.referenceFeedPerSecond <= 0) return 1
-    let ratio: number
-    switch (move.kind) {
-      case 'cut':
-      case 'lead_in':
-      case 'lead_out':
-        ratio = move.feedScale ?? 1
-        break
-      case 'plunge':
-        ratio = this.plungeFeedPerSecond > 0 ? this.plungeFeedPerSecond / this.referenceFeedPerSecond : 1
-        break
-      default:
-        ratio = 1
-    }
-    return ratio > 1e-3 ? ratio : 1e-3
+    if (move.kind === 'rapid') return 1
+    if (move.kind === 'plunge' && this.plungeFeedPerSecond <= 0) return 1
+    const feed = effectiveFeed(
+      move.kind,
+      move.feedScale,
+      this.referenceFeedPerSecond,
+      this.plungeFeedPerSecond,
+    )
+    return Math.max(feed / this.referenceFeedPerSecond, 1e-3)
   }
 
   reset(): void {

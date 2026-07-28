@@ -256,6 +256,45 @@ async function testPdfUnicodeFontRetriesAndUsesBold(): Promise<void> {
   }
 }
 
+/**
+ * Pins a deliberate behaviour change from the shared-effectiveFeed refactor
+ * (#256). The booklet previously priced cut moves at `operation.feed` with no
+ * fallback, so an operation with `feed: 0` reported "Unavailable (invalid
+ * feed)". It now falls back to `tool.defaultFeed`, matching what the
+ * postprocessor actually emits for that operation.
+ *
+ * `Operation.feed` is a required number defaulting to `tool.defaultFeed`, so
+ * this only fires when a user explicitly zeroes the feed. The trade is that the
+ * booklet stops warning and instead reports the feed the machine will really
+ * run — deliberate, and pinned here so it cannot be reverted by accident.
+ */
+function testFeedTimeFallsBackToToolDefaultFeed(): void {
+  console.log('Testing estimated feed time falls back to the tool default when operation feed is 0...')
+  const { project, operation } = fixture()
+  const tool = normalizeToolForProject(project.tools[0], project)
+  // 20 mm at the tool default 800 mm/min = 1.5 s.
+  const toolpath: ToolpathResult = {
+    operationId: operation.id,
+    warnings: [],
+    bounds: null,
+    moves: [{ kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 20, y: 0, z: 0 } }],
+  }
+  const report = buildOperationBookletReport({
+    project,
+    operation: { ...operation, feed: 0 },
+    tool,
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+
+  assert(tool.defaultFeed === 800, `fixture tool default feed should be 800, got ${tool.defaultFeed}`)
+  assert(
+    report.toolpathStats.some((row) => row.label === translate('booklet.label.estimatedFeedTime')
+      && row.value === translate('booklet.value.estimatedFeedTime', { duration: '1.5 s' })),
+    'feed time should use tool.defaultFeed when operation.feed is 0, not report an invalid feed',
+  )
+}
+
 function testFeedTimeUsesScaledSlotFeed(): void {
   console.log('Testing estimated feed time prices slot-feed fragments at the scaled feed...')
   const { project, operation } = fixture()
@@ -355,6 +394,7 @@ async function testGermanPdfSmoke(): Promise<void> {
 }
 
 testReportContent()
+testFeedTimeFallsBackToToolDefaultFeed()
 testFeedTimeUsesScaledSlotFeed()
 testReportIncludesEnabledRoundOutsideCorners()
 testLocalizedReportContent()

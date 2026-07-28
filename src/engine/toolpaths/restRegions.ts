@@ -37,7 +37,7 @@ import { differenceClipperPaths, intersectClipperPaths, unionClipperPaths, clipp
 import { applyRegionMaskToPaths, buildRegionMask, type RegionMask, splitFeatureTargets } from './regions'
 import { resolveInsideEdgeRegions, resolvePocketRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
-import type { ClipperPath, ResolvedPocketRegion, ResolvedPocketResult } from './types'
+import type { ClipperPath, ClipperPoint, ResolvedPocketRegion, ResolvedPocketResult } from './types'
 
 export interface RestRegionDraft {
   profile: SketchFeature['sketch']['profile']
@@ -389,17 +389,6 @@ function signedContourArea(contour: Point[]): number {
   return area / 2
 }
 
-function pointInContour(point: Point, contour: Point[]): boolean {
-  const clipperPoint = {
-    X: Math.round(point.x * DEFAULT_CLIPPER_SCALE),
-    Y: Math.round(point.y * DEFAULT_CLIPPER_SCALE),
-  }
-  const clipperContour = toClipperPath(contour, DEFAULT_CLIPPER_SCALE)
-  return (ClipperLib.Clipper as unknown as {
-    PointInPolygon(point: { X: number; Y: number }, path: ClipperPath): number
-  }).PointInPolygon(clipperPoint, clipperContour) > 0
-}
-
 function areaPathsToDrafts(
   paths: ClipperPath[],
   toolRadius: number,
@@ -414,11 +403,27 @@ function areaPathsToDrafts(
     .filter((contour) => contour.length >= 3)
     .filter((contour) => pathArea(toClipperPath(contour, DEFAULT_CLIPPER_SCALE)) >= minArea)
 
+  // Precompute clipper representations once so the nested point-in-contour
+  // test below is O(N) per comparison instead of O(N×M) per contour rebuild.
+  const clipperPaths: ClipperPath[] = contours.map(
+    (c) => toClipperPath(c, DEFAULT_CLIPPER_SCALE),
+  )
+  const firstClipperPoints: ClipperPoint[] = contours.map((c) => ({
+    X: Math.round(c[0].x * DEFAULT_CLIPPER_SCALE),
+    Y: Math.round(c[0].y * DEFAULT_CLIPPER_SCALE),
+  }))
+  const pointIn = (ClipperLib.Clipper as unknown as {
+    PointInPolygon(point: ClipperPoint, path: ClipperPath): number
+  }).PointInPolygon
+
   return contours
     .map((contour, index) => {
-      const depth = contours.reduce((count, other, otherIndex) => (
-        otherIndex !== index && pointInContour(contour[0], other) ? count + 1 : count
-      ), 0)
+      const depth = contours.reduce((count, _other, otherIndex) => {
+        if (otherIndex === index) return count
+        return pointIn(firstClipperPoints[index], clipperPaths[otherIndex]) > 0
+          ? count + 1
+          : count
+      }, 0)
       return {
         contour,
         depth,
