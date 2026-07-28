@@ -52,6 +52,9 @@ Always run `npm run build` from the project root to verify changes compile befor
 - Only commit on `main` if a human explicitly says "commit on `main`" / "commit directly to `main`".
 - **Enforcement (Claude Code):** a `PreToolUse` hook — [`.claude/hooks/block-default-branch-commit.sh`](.claude/hooks/block-default-branch-commit.sh), wired in [`.claude/settings.json`](.claude/settings.json) — blocks any `git commit` while `HEAD` is on `main`/`master`. Commits on other branches pass through untouched.
 - **Other tools (Codex, plain `git`, humans):** that hook only binds Claude Code sessions. Codex must follow this rule by reading this file (AGENTS.md). For tool-agnostic enforcement, a native git `pre-commit` hook can be added under a committed `.githooks/` dir + `git config core.hooksPath .githooks` — not set up yet.
+- **Rebase onto current `main` before opening a PR**, and again before asking for a merge if `main` has moved. Run `git fetch origin && git rebase origin/main`, then re-run `npm run build`.
+- **A conflicting PR gets no CI at all.** `pr-check.yml` runs on the merge ref, which GitHub cannot compute while the branch conflicts — so the `build` and `e2e` jobs never start. `gh pr checks <NN>` reporting *"no checks reported"* means **unverified**, not *pending*. This is not cosmetic: PR #380 sat with a TypeScript error nobody saw because a stale base suppressed the whole gate.
+- **Enforcement (all tools):** the `main-requires-pr` ruleset requires the `build` and `e2e` checks to pass **and** the branch to be up to date with `main` before merging. Unlike the commit hook above, this binds every author — Claude, Codex, and humans. Use GitHub's **Update branch** button or auto-merge when `main` moves under an open PR.
 
 ## Communication Style
 
