@@ -22,6 +22,7 @@ import type {
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { projectToMachinePoint, formatGCodeNumber } from './utils'
 import type { ToolpathPoint, ToolpathMove } from '../toolpaths/types'
+import { effectiveFeed } from '../toolpaths/feed'
 import type { OperationTarget } from '../../types/project'
 import { exportGeometryTolerance } from '../../utils/units'
 import { fitArcsInMachineMoves } from './arcFitting'
@@ -397,14 +398,9 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
     }
 
     if (!emittedCanned) {
-      // Resolve effective feed for a descriptor (linear or arc).
-      const effectiveFeed = (
-        moveKind: ToolpathMove['kind'],
-        feedScale?: number,
-      ): number =>
-        moveKind === 'plunge'
-          ? (operation.plungeFeed || tool.defaultPlungeFeed)
-          : (operation.feed || tool.defaultFeed) * (feedScale ?? 1)
+      // ── Effective feed ──
+      const feedForMove = (moveKind: ToolpathMove['kind'], feedScale?: number): number =>
+        effectiveFeed(moveKind, feedScale, operation.feed || tool.defaultFeed, operation.plungeFeed || tool.defaultPlungeFeed)
 
       // Emit a single rapid (G0) with per-axis splitting.
       const emitRapid = (pt: ToolpathPoint) => {
@@ -497,14 +493,14 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
 
         for (const d of descriptors) {
           if (d.kind === 'linear') {
-            const feed = effectiveFeed(d.moveKind, d.feedScale)
+            const feed = feedForMove(d.moveKind, d.feedScale)
             if (d.moveKind === 'rapid') {
               emitRapid(d.point)
               continue
             }
             emitMotionLine(definition.motion.linearCommand, d.point, feed)
           } else {
-            const feed = effectiveFeed('cut', d.feedScale)
+            const feed = feedForMove('cut', d.feedScale)
             emitArcLine(d, feed)
           }
         }
@@ -527,7 +523,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
 
         toolpath.moves.forEach((move) => {
           const mPoint = projectToMachinePoint(move.to, project.origin, definition)
-          const feed = effectiveFeed(move.kind, move.feedScale)
+          const feed = feedForMove(move.kind, move.feedScale)
 
           if (move.kind === 'rapid') {
             emitRapid(mPoint)

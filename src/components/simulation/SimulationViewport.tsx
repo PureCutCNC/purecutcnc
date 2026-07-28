@@ -29,6 +29,7 @@ import { ViewPresetMenu } from '../viewport3d/ViewPresetMenu'
 import type { PlaybackPose } from '../../engine/simulation/playback'
 import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
+import { effectiveFeed } from '../../engine/toolpaths/feed'
 import type { Clamp, MachineOrigin, Operation, ToolType } from '../../types/project'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
@@ -219,16 +220,11 @@ function currentFeedPerSecond(
   feedPerSecond: number | undefined,
   plungeFeedPerSecond: number | undefined,
 ): number | null {
-  switch (pose.moveKind) {
-    case 'cut':
-    case 'lead_in':
-    case 'lead_out':
-      return feedPerSecond && feedPerSecond > 0 ? feedPerSecond * (pose.feedScale ?? 1) : null
-    case 'plunge':
-      return plungeFeedPerSecond && plungeFeedPerSecond > 0 ? plungeFeedPerSecond : null
-    default:
-      return null
-  }
+  if (!pose.moveKind || pose.moveKind === 'rapid') return null
+  const cutFps = feedPerSecond && feedPerSecond > 0 ? feedPerSecond : 0
+  const plungeFps = plungeFeedPerSecond && plungeFeedPerSecond > 0 ? plungeFeedPerSecond : 0
+  const feed = effectiveFeed(pose.moveKind, pose.feedScale, cutFps, plungeFps)
+  return feed > 0 ? feed : null
 }
 
 export const SimulationViewport = forwardRef<SimulationViewportHandle, SimulationViewportProps>(function SimulationViewport({

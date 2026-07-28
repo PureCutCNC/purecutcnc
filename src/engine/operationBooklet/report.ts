@@ -23,6 +23,7 @@ import { getStockBounds } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import type { Units } from '../../utils/units'
 import type { NormalizedTool, ToolpathResult } from '../toolpaths/types'
+import { effectiveFeed } from '../toolpaths/feed'
 import type { OperationBookletInput, OperationBookletReport, OperationBookletRow } from './types'
 
 function operationKindLabel(kind: OperationKind): string {
@@ -153,11 +154,13 @@ function durationLabel(seconds: number): string {
 function feedControlledTimeSeconds(
   toolpath: ToolpathResult,
   operation: Operation,
+  tool: NormalizedTool | null,
 ): { seconds: number | null; feedDistance: number; rapidDistance: number } {
   let seconds = 0
   let feedDistance = 0
   let rapidDistance = 0
   let hasInvalidFeed = false
+  const toolDefaults = tool ?? { defaultFeed: 0, defaultPlungeFeed: 0 }
 
   for (const move of toolpath.moves) {
     const distance = distance3d(move.from, move.to)
@@ -166,25 +169,25 @@ function feedControlledTimeSeconds(
       case 'lead_in':
       case 'lead_out': {
         feedDistance += distance
-        // Slot-feed pocket fragments carry a feedScale multiplier and run
-        // slower than the operation feed — price them at the effective feed
-        // the postprocessor emits.
-        const effectiveFeed = operation.feed * (move.feedScale ?? 1)
-        if (effectiveFeed > 0) {
-          seconds += (distance / effectiveFeed) * 60
+        const cutFeed = operation.feed || toolDefaults.defaultFeed
+        const feed = effectiveFeed(move.kind, move.feedScale, cutFeed, 0)
+        if (feed > 0) {
+          seconds += (distance / feed) * 60
         } else {
           hasInvalidFeed = true
         }
         break
       }
-      case 'plunge':
+      case 'plunge': {
         feedDistance += distance
-        if (operation.plungeFeed > 0) {
-          seconds += (distance / operation.plungeFeed) * 60
+        const plungeEffective = effectiveFeed('plunge', undefined, 0, operation.plungeFeed || toolDefaults.defaultPlungeFeed)
+        if (plungeEffective > 0) {
+          seconds += (distance / plungeEffective) * 60
         } else {
           hasInvalidFeed = true
         }
         break
+      }
       case 'rapid':
         rapidDistance += distance
         break
@@ -290,7 +293,7 @@ function settingRows(operation: Operation, project: Project): OperationBookletRo
   return rows
 }
 
-function statsRows(toolpath: ToolpathResult | null, operation: Operation, units: Units): OperationBookletRow[] {
+function statsRows(toolpath: ToolpathResult | null, operation: Operation, units: Units, tool: NormalizedTool | null): OperationBookletRow[] {
   if (!toolpath) {
     return [{ label: translate('booklet.label.toolpath'), value: translate('booklet.value.notGenerated') }]
   }
@@ -298,7 +301,7 @@ function statsRows(toolpath: ToolpathResult | null, operation: Operation, units:
   const cutMoves = toolpath.moves.filter((move) => move.kind === 'cut' || move.kind === 'lead_in' || move.kind === 'lead_out').length
   const rapidMoves = toolpath.moves.filter((move) => move.kind === 'rapid').length
   const plungeMoves = toolpath.moves.filter((move) => move.kind === 'plunge').length
-  const timeEstimate = feedControlledTimeSeconds(toolpath, operation)
+  const timeEstimate = feedControlledTimeSeconds(toolpath, operation, tool)
   const rows: OperationBookletRow[] = [
     { label: translate('booklet.label.moves'), value: String(toolpath.moves.length) },
     { label: translate('booklet.label.cutMoves'), value: String(cutMoves) },
@@ -356,6 +359,6 @@ export function buildOperationBookletReport(input: OperationBookletInput): Opera
     toolRows: toolRows(input.tool, input.project.meta.units),
     settingRows: settingRows(input.operation, input.project),
     warnings: reportWarnings(input.tool, input.toolpath),
-    toolpathStats: statsRows(input.toolpath, input.operation, input.project.meta.units),
+    toolpathStats: statsRows(input.toolpath, input.operation, input.project.meta.units, input.tool),
   }
 }
