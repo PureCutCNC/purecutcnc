@@ -16,10 +16,6 @@
 
 import type { Point } from '../../types/project'
 
-export function clonePoint(point: Point): Point {
-  return { ...point }
-}
-
 export function pointsEqual(a: Point, b: Point, epsilon = 1e-9): boolean {
   return Math.abs(a.x - b.x) <= epsilon && Math.abs(a.y - b.y) <= epsilon
 }

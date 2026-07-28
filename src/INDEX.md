@@ -14,6 +14,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [components/](components/INDEX.md) — React UI (canvas, viewport3d, simulation, panels)
 - [import/](import/) — DXF / SVG / STL / OBJ parsers that normalize into `.camj`; `camj.ts` adds partial-import (merge selected folders from another `.camj` into the current project)
 - [text/](text/) — text-to-geometry (font → machinable paths); `index.ts` is the public API, `fontData.ts` the typed font-parse seam, and `outlineContours.ts` removes self-intersection slivers before profiles reach downstream consumers
+- [geometry/](geometry/INDEX.md) — layer-neutral pure profile primitives (`clonePoint`, `transformProfile`, `translateProfile`, `cloneProfile`) shared by the store and `text/` so neither depends on the other
 - [sketch/](sketch/) — sketch geometry helpers (segment math, profile ops, visible-scene bounds in `sceneBounds.ts`, gear profile generation)
 - [hooks/](hooks/INDEX.md) — shared cross-cutting React hooks (`useStableEvent`, `useWindowEvent`/`useEventListener`)
 - [i18n/](i18n/INDEX.md) — typed localization layer: English-fallback catalogs (en, zh-CN), custom language packs, locale persistence/detection, and the `useI18n()` React binding

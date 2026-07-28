@@ -30,7 +30,8 @@ import type { DerivedFeatureGroup } from '../helpers/derivedFeatures'
 import { createFeatureInstance, gcOrphanedDefinitions } from '../helpers/featureDefinitions'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import type { ProjectStore } from '../types'
-import { transformProfile, translateClamp, translateTab } from '../helpers/transform'
+import { translateClamp, translateTab } from '../helpers/transform'
+import { transformProfile } from '../../geometry/profile'
 import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
 import {
   mirrorFeatureFromReference,

@@ -19,7 +19,6 @@ import type { OpenProfileEndpoint, PendingAddTool, SketchInsertTarget } from '..
 import {
   addPoint,
   clampNumber,
-  clonePoint,
   crossPoint,
   dotPoint,
   lerpPoint,
@@ -29,6 +28,7 @@ import {
   scalePoint,
   subtractPoint,
 } from './geometry'
+import { clonePoint } from '../../geometry/profile'
 
 export function cloneSegment(segment: Segment): Segment {
   if (segment.type === 'arc') {

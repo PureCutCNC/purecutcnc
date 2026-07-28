@@ -33,10 +33,10 @@ import {
   mirrorAngleAcrossLine,
   mirrorProfile,
   rotatePointAround,
-  transformProfile,
   transformProfileAffine,
   transformStlFeatureData,
 } from './transform'
+import { transformProfile } from '../../geometry/profile'
 
 function featureResizeBasis(feature: SketchFeature): { u: Point; v: Point } {
   const orientationAngle = normalizeAngleDegrees(
