@@ -23,6 +23,7 @@ import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { projectToMachinePoint, formatGCodeNumber } from './utils'
 import type { ToolpathPoint, ToolpathMove } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
+import type { FedMoveKind } from '../toolpaths/feed'
 import type { OperationTarget } from '../../types/project'
 import { exportGeometryTolerance } from '../../utils/units'
 import { fitArcsInMachineMoves } from './arcFitting'
@@ -399,7 +400,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
 
     if (!emittedCanned) {
       // ── Effective feed ──
-      const feedForMove = (moveKind: ToolpathMove['kind'], feedScale?: number): number =>
+      const feedForMove = (moveKind: FedMoveKind, feedScale?: number): number =>
         effectiveFeed(moveKind, feedScale, operation.feed || tool.defaultFeed, operation.plungeFeed || tool.defaultPlungeFeed)
 
       // Emit a single rapid (G0) with per-axis splitting.
@@ -493,11 +494,11 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
 
         for (const d of descriptors) {
           if (d.kind === 'linear') {
-            const feed = feedForMove(d.moveKind, d.feedScale)
             if (d.moveKind === 'rapid') {
               emitRapid(d.point)
               continue
             }
+            const feed = feedForMove(d.moveKind, d.feedScale)
             emitMotionLine(definition.motion.linearCommand, d.point, feed)
           } else {
             const feed = feedForMove('cut', d.feedScale)
@@ -523,13 +524,13 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
 
         toolpath.moves.forEach((move) => {
           const mPoint = projectToMachinePoint(move.to, project.origin, definition)
-          const feed = feedForMove(move.kind, move.feedScale)
 
           if (move.kind === 'rapid') {
             emitRapid(mPoint)
             return
           }
 
+          const feed = feedForMove(move.kind, move.feedScale)
           emitMotionLine(definition.motion.linearCommand, mPoint, feed)
         })
       }

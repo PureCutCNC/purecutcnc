@@ -88,13 +88,20 @@ assert(
   'plunge × 0 feedScale should still return plungeFeed',
 )
 
-// ── Rapid: callers handle it separately, but the function is well-defined ──
-
-console.log('Testing rapid returns cutFeed (callers filter rapids themselves)...')
-assert(
-  approx(effectiveFeed('rapid', undefined, 600, 200), 600),
-  'rapid should return cutFeed by default (caller responsibility)',
-)
+// ── Rapid: excluded at the type level, not by convention ──
+//
+// `effectiveFeed` accepts `FedMoveKind`, which is `ToolpathMoveKind` minus
+// 'rapid'. A rapid is a positioning move with no feed; before this was
+// enforced, passing one fell through to the cut branch and returned a real
+// cutting feed. There is deliberately no runtime case here — the guarantee is
+// a compile error, and the line below documents it:
+//
+//   effectiveFeed('rapid', undefined, 600, 200)
+//   //            ^^^^^^^ Argument of type '"rapid"' is not assignable to
+//   //                    parameter of type 'FedMoveKind'.
+//
+// Callers (postprocessor, booklet report, playback, viewport readout) all
+// branch on rapid before reaching this helper.
 
 // ── Edge: zero or negative cut/plunge feeds ──
 

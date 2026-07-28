@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
-import type { ToolpathMove } from './types'
+import type { ToolpathMoveKind } from './types'
+
+/** Move kinds that carry a feed. Rapids are positioning moves and have none. */
+export type FedMoveKind = Exclude<ToolpathMoveKind, 'rapid'>
 
 /**
  * Compute the effective feed rate for a toolpath move.
@@ -22,14 +25,17 @@ import type { ToolpathMove } from './types'
  * Plunge moves return `plungeFeed` unchanged (feedScale never applies).
  * Cut, lead-in, and lead-out moves return `cutFeed` multiplied by
  * `feedScale` (defaulting to 1 when absent).
- * Rapid moves are not fed — callers handle them separately.
+ *
+ * `'rapid'` is excluded at the type level rather than by convention: a rapid
+ * has no feed, and falling through to the cut branch would hand a real cutting
+ * feed to a positioning move. Callers must branch on rapid before calling.
  *
  * All four sites that apply feedScale share this single entry point:
  * the postprocessor, booklet time estimator, simulation playback ratio,
  * and the simulation viewport live-feed readout.
  */
 export function effectiveFeed(
-  moveKind: ToolpathMove['kind'],
+  moveKind: FedMoveKind,
   feedScale: number | undefined,
   cutFeed: number,
   plungeFeed: number,
