@@ -34,7 +34,7 @@ import {
 } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { nextPlacementSession, nextUniqueGeneratedId } from '../helpers/ids'
-import { translateProfile, transformProfile } from '../helpers/transform'
+import { translateProfile, transformProfile } from '../../geometry/profile'
 import { cloneProject } from '../helpers/normalize'
 import { moveDelta, multiplyMatrix } from '../helpers/instanceTransforms'
 import { commitResolvedInstances, resolveFeatureInstance, resolveProject, restoreResolvedFeatureMetadata } from '../helpers/resolveFeatures'

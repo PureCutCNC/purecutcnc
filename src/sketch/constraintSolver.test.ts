@@ -25,6 +25,9 @@ import {
   projectPointOntoSegmentT,
 } from './constraintSolver'
 import type { SketchFeature, Point, SketchProfile, Segment } from '../types/project'
+// The solver's `transformProfile` option is the real implementation, not a
+// stand-in — a local copy would drift from it (it already had, on beziers).
+import { transformProfile } from '../geometry/profile'
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -43,22 +46,6 @@ function segmentCenter(seg: Segment): Point {
   throw new Error('Assertion failed: expected an arc or circle segment with a center')
 }
 
-function transformProfile(profile: SketchProfile, transformPoint: (p: Point) => Point): SketchProfile {
-  return {
-    ...profile,
-    start: transformPoint(profile.start),
-    segments: profile.segments.map((s: Segment) => {
-      if (s.type === 'circle' || s.type === 'arc') {
-        return {
-          ...s,
-          center: transformPoint(s.center),
-          to: transformPoint(s.to)
-        }
-      }
-      return { ...s, to: transformPoint(s.to) }
-    })
-  }
-}
 
 function testTranslatePropagation() {
   console.log('Testing Translate Propagation...')

@@ -42,9 +42,7 @@ import {
   syncFeatureTreeProject,
   syncFeatureBasedStock,
 } from './helpers/normalize'
-import {
-  transformProfile,
-} from './helpers/transform'
+import { transformProfile } from '../geometry/profile'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'

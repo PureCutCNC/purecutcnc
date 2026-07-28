@@ -38,6 +38,7 @@ import {
   type TextFontId,
   type TextFontStyle,
 } from '../types/project'
+import { clonePoint, cloneProfile, transformProfile, translateProfile } from '../geometry/profile'
 
 export interface TextToolConfig {
   text: string
@@ -231,10 +232,6 @@ export function defaultFontIdForStyle(style: TextFontStyle): TextFontId {
     return 'helvetiker_bold'
   }
   return 'simple_stroke'
-}
-
-function clonePoint(point: Point): Point {
-  return { x: point.x, y: point.y }
 }
 
 function lineProfile(points: Point[]): SketchProfile | null {
@@ -442,24 +439,6 @@ interface PositionedGlyph {
 
 const textShapeCache = new Map<string, TextTemplate>()
 
-function cloneProfile(profile: SketchProfile): SketchProfile {
-  return {
-    ...profile,
-    start: clonePoint(profile.start),
-    segments: profile.segments.map((segment) => ({
-      ...segment,
-      to: clonePoint(segment.to),
-      ...(segment.type === 'arc' ? { center: clonePoint(segment.center) } : {}),
-      ...(segment.type === 'bezier'
-        ? {
-          control1: clonePoint(segment.control1),
-          control2: clonePoint(segment.control2),
-        }
-        : {}),
-    })),
-  }
-}
-
 function layoutGlyphs(text: string, size: number, anchor: Point): PositionedGlyph[] {
   const normalized = normalizeText(text)
   const lines = normalized.split('\n')
@@ -487,44 +466,6 @@ function layoutGlyphs(text: string, size: number, anchor: Point): PositionedGlyp
 function displayLabelForText(text: string): string {
   const normalized = normalizeText(text).replace(/\s+/g, ' ').trim()
   return normalized.length > 24 ? `${normalized.slice(0, 24)}…` : normalized
-}
-
-function translateProfile(profile: SketchProfile, dx: number, dy: number): SketchProfile {
-  return {
-    ...profile,
-    start: { x: profile.start.x + dx, y: profile.start.y + dy },
-    segments: profile.segments.map((segment) => ({
-      ...segment,
-      to: { x: segment.to.x + dx, y: segment.to.y + dy },
-      ...(segment.type === 'arc'
-        ? { center: { x: segment.center.x + dx, y: segment.center.y + dy } }
-        : {}),
-      ...(segment.type === 'bezier'
-        ? {
-          control1: { x: segment.control1.x + dx, y: segment.control1.y + dy },
-          control2: { x: segment.control2.x + dx, y: segment.control2.y + dy },
-        }
-        : {}),
-    })),
-  }
-}
-
-function transformProfile(profile: SketchProfile, mapPoint: (point: Point) => Point): SketchProfile {
-  return {
-    ...profile,
-    start: mapPoint(profile.start),
-    segments: profile.segments.map((segment) => ({
-      ...segment,
-      to: mapPoint(segment.to),
-      ...(segment.type === 'arc' ? { center: mapPoint(segment.center) } : {}),
-      ...(segment.type === 'bezier'
-        ? {
-          control1: mapPoint(segment.control1),
-          control2: mapPoint(segment.control2),
-        }
-        : {}),
-    })),
-  }
 }
 
 function buildTextTemplate(config: TextToolConfig): TextTemplate {

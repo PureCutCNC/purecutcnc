@@ -32,8 +32,9 @@ import {
 } from '../../types/project'
 import type { OpenProfileEndpoint } from '../types'
 import type { ProjectStore } from '../types'
-import { clonePoint, lerpPoint, normalizePoint, pointLength, scalePoint, subtractPoint } from '../helpers/geometry'
-import { translatePoint, transformProfile, transformProfileAffine } from '../helpers/transform'
+import { lerpPoint, normalizePoint, pointLength, scalePoint, subtractPoint } from '../helpers/geometry'
+import { clonePoint, transformProfile, translatePoint } from '../../geometry/profile'
+import { transformProfileAffine } from '../helpers/transform'
 import {
   anchorPointForIndex,
   applyLineCornerChamfer,

@@ -16,6 +16,7 @@
 
 import { inferFeatureKind, profileVertices } from '../../types/project'
 import type { BackdropImage, Matrix2D, Point, SketchFeature } from '../../types/project'
+import { transformProfile } from '../../geometry/profile'
 import {
   addPoint,
   clampNumber,
@@ -33,7 +34,6 @@ import {
   mirrorAngleAcrossLine,
   mirrorProfile,
   rotatePointAround,
-  transformProfile,
   transformProfileAffine,
   transformStlFeatureData,
 } from './transform'

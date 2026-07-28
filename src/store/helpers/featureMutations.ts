@@ -26,7 +26,7 @@ import {
   validateConstraintsOnFeature,
   type FeatureOffset,
 } from '../../sketch/constraintSolver'
-import { transformProfile } from './transform'
+import { transformProfile } from '../../geometry/profile'
 import { moveDelta, multiplyMatrix } from './instanceTransforms'
 import { isImportedModelFeature } from './modelAssets'
 import { folderIdForOperation } from './operationDefaults'
