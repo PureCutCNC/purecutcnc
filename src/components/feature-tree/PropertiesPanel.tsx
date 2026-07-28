@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useCallback, useContext, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useContext, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { Icon } from '../Icon'
 import { ExpandedPanelContext } from '../layout/expandedPanelContext'
@@ -158,51 +158,58 @@ function DraftNumberInput({
   )
 }
 
-export function PropertiesPanel() {
-  const {
-    project,
-    selection,
-    addFeatureFolder,
-    startAddTabPlacement,
-    startAddClampPlacement,
-    assignFeaturesToFolder,
-    deleteTab,
-    deleteClamp,
-    deleteFeatureFolder,
-    toggleFolderGrouped,
-    setProjectName,
-    setShowFeatureInfo,
-    setProjectClearances,
-    setSelectedMachineId,
-    refreshMachineDefinitions,
-    setOrigin,
-    startPlaceOrigin,
-    loadBackdropImage,
-    backdropImageLoading,
-    setBackdropImageLoading,
-    updateBackdrop,
-    deleteBackdrop,
-    startMoveBackdrop,
-    startResizeBackdrop,
-    startRotateBackdrop,
-    setGrid,
-    setStock,
-    setStockSourceFeature,
-    updateTab,
-    updateClamp,
-    updateFeatureFolder,
-    updateFeature,
-    updateFeatures,
-    deleteFeature,
-    deleteFeatures,
-    enterSketchEdit,
-    enterStockSketchEdit,
-    enterTabEdit,
-    enterClampEdit,
-    deleteConstraint,
-    makeUnique,
-    expandTextFeature,
-  } = useProjectStore()
+/**
+ * Memoised because `App` subscribes to the whole store without a selector and
+ * renders `<PropertiesPanel />` inline, so every store write re-renders this
+ * panel as a child regardless of its own per-field selectors. The component
+ * takes no props, so the comparison is free and can never go stale.
+ *
+ * Without this the selectors below are inert: a 30-event canvas drag produced
+ * 30 panel renders both before and after converting them. With it, 0.
+ */
+export const PropertiesPanel = memo(function PropertiesPanel() {
+  const project = useProjectStore((s) => s.project)
+  const selection = useProjectStore((s) => s.selection)
+  const addFeatureFolder = useProjectStore((s) => s.addFeatureFolder)
+  const startAddTabPlacement = useProjectStore((s) => s.startAddTabPlacement)
+  const startAddClampPlacement = useProjectStore((s) => s.startAddClampPlacement)
+  const assignFeaturesToFolder = useProjectStore((s) => s.assignFeaturesToFolder)
+  const deleteTab = useProjectStore((s) => s.deleteTab)
+  const deleteClamp = useProjectStore((s) => s.deleteClamp)
+  const deleteFeatureFolder = useProjectStore((s) => s.deleteFeatureFolder)
+  const toggleFolderGrouped = useProjectStore((s) => s.toggleFolderGrouped)
+  const setProjectName = useProjectStore((s) => s.setProjectName)
+  const setShowFeatureInfo = useProjectStore((s) => s.setShowFeatureInfo)
+  const setProjectClearances = useProjectStore((s) => s.setProjectClearances)
+  const setSelectedMachineId = useProjectStore((s) => s.setSelectedMachineId)
+  const refreshMachineDefinitions = useProjectStore((s) => s.refreshMachineDefinitions)
+  const setOrigin = useProjectStore((s) => s.setOrigin)
+  const startPlaceOrigin = useProjectStore((s) => s.startPlaceOrigin)
+  const loadBackdropImage = useProjectStore((s) => s.loadBackdropImage)
+  const backdropImageLoading = useProjectStore((s) => s.backdropImageLoading)
+  const setBackdropImageLoading = useProjectStore((s) => s.setBackdropImageLoading)
+  const updateBackdrop = useProjectStore((s) => s.updateBackdrop)
+  const deleteBackdrop = useProjectStore((s) => s.deleteBackdrop)
+  const startMoveBackdrop = useProjectStore((s) => s.startMoveBackdrop)
+  const startResizeBackdrop = useProjectStore((s) => s.startResizeBackdrop)
+  const startRotateBackdrop = useProjectStore((s) => s.startRotateBackdrop)
+  const setGrid = useProjectStore((s) => s.setGrid)
+  const setStock = useProjectStore((s) => s.setStock)
+  const setStockSourceFeature = useProjectStore((s) => s.setStockSourceFeature)
+  const updateTab = useProjectStore((s) => s.updateTab)
+  const updateClamp = useProjectStore((s) => s.updateClamp)
+  const updateFeatureFolder = useProjectStore((s) => s.updateFeatureFolder)
+  const updateFeature = useProjectStore((s) => s.updateFeature)
+  const updateFeatures = useProjectStore((s) => s.updateFeatures)
+  const deleteFeature = useProjectStore((s) => s.deleteFeature)
+  const deleteFeatures = useProjectStore((s) => s.deleteFeatures)
+  const enterSketchEdit = useProjectStore((s) => s.enterSketchEdit)
+  const enterStockSketchEdit = useProjectStore((s) => s.enterStockSketchEdit)
+  const enterTabEdit = useProjectStore((s) => s.enterTabEdit)
+  const enterClampEdit = useProjectStore((s) => s.enterClampEdit)
+  const deleteConstraint = useProjectStore((s) => s.deleteConstraint)
+  const makeUnique = useProjectStore((s) => s.makeUnique)
+  const expandTextFeature = useProjectStore((s) => s.expandTextFeature)
   const features = useMemo(() => resolvedProjectFeatures(project), [project])
   const { t } = useI18n()
   const backdropFileInputRef = useRef<HTMLInputElement>(null)
@@ -1663,4 +1670,4 @@ export function PropertiesPanel() {
       )}
     </>
   )
-}
+})
