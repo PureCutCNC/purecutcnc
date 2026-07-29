@@ -2768,6 +2768,15 @@
   margin: 2px 4px;
 }
 
+/* Non-interactive heading above a run of menu items (2D/3D quick ops). */
+.feature-context-menu__group-label {
+  padding: 6px 8px 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .feature-context-menu__submenu-host {
   position: relative;
   display: grid;

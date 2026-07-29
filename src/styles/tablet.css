@@ -246,6 +246,11 @@
   .feature-context-menu__submenu-caret {
     font-size: 18px;
   }
+
+  /* Heading, not a target — no 44px min-height, just a legible size. */
+  .feature-context-menu__group-label {
+    font-size: 12px;
+  }
 }
 
 /* ── Split divider: larger hit area ─────────────────────── */

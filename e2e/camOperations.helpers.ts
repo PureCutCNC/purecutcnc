@@ -91,6 +91,27 @@ function buildCamQuickOperationProjectJson(): string {
         stl: null,
         operation: 'subtract',
       },
+      // An imported model — the only feature kind that offers 3D surface
+      // quick operations, so the 2D/3D grouping has something to group.
+      'def-imported-model': {
+        id: 'def-imported-model',
+        kind: 'stl',
+        profile: resolvedRectProfile(0, 0, 40, 20),
+        dimensions: [],
+        text: null,
+        stl: {
+          format: 'stl',
+          scale: 1,
+          axisSwap: 'none',
+          silhouettePaths: [[
+            { x: 0, y: 0 },
+            { x: 40, y: 0 },
+            { x: 40, y: 20 },
+            { x: 0, y: 20 },
+          ]],
+        },
+        operation: 'model',
+      },
     },
     features: [
       {
@@ -114,6 +135,18 @@ function buildCamQuickOperationProjectJson(): string {
         folderId: null,
         z_top: 2,
         z_bottom: 1.5,
+        visible: true,
+        locked: false,
+      },
+      {
+        id: 'f-imported-model',
+        name: 'Imported Model',
+        definitionId: 'def-imported-model',
+        transform: { a: 1, b: 0, c: 0, d: 1, e: 30, f: 80 },
+        constraints: [],
+        folderId: null,
+        z_top: 5,
+        z_bottom: 0,
         visible: true,
         locked: false,
       },

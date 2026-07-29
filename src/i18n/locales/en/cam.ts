@@ -69,9 +69,14 @@ export const camEn = {
   'cam.quickOp.surfaceClean': 'Create Surface Clean',
   'cam.quickOp.followLine': 'Create Engraving',
   'cam.quickOp.drilling': 'Create Drilling',
-  'cam.quickOp.roughSurface': 'Create Rough Surface',
-  'cam.quickOp.finishSurface': 'Create Finish Surface',
-  'cam.quickOp.finishSurfaceCleanup': 'Create Finish Surface Cleanup',
+  // The 3D kinds reuse the CAM panel's `cam.opLabel.*` names verbatim, so an
+  // operation is called the same thing wherever it is created (issue #398).
+  'cam.quickOp.roughSurface': 'Create 3D Surface rough',
+  'cam.quickOp.finishSurface': 'Create 3D Surface finish',
+  'cam.quickOp.finishSurfaceCleanup': 'Create 3D Surface cleanup',
+  // ── Quick operation group headings (feature context menu) ──
+  'cam.quickOp.group.twoD': '2D operations',
+  'cam.quickOp.group.threeD': '3D operations',
 
   // ── Pocket pattern labels ──
   'cam.pocketPattern.offset': 'Offset',
