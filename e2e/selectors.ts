@@ -271,6 +271,9 @@ export const contextMenu = {
   /** A menu item by its label text. */
   item: (menu: Locator, label: string) =>
     menu.locator('.feature-context-menu__item', { hasText: label }),
+
+  /** Non-interactive group headings (the quick-op 2D/3D split). */
+  groupLabels: (menu: Locator) => menu.locator('.feature-context-menu__group-label'),
 }
 
 // ── Properties panel ────────────────────────────────────────────────

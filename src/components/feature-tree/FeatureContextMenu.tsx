@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-import type { RefObject } from 'react'
+import { Fragment, type RefObject } from 'react'
 import type { QuickOperation } from '../cam/operationValidity'
+import { camT } from '../cam/camI18n'
 import type { FeatureTreeActions } from '../../app/useFeatureTreeActions'
 import type { MenuPosition, QuickOpsSubmenuPosition, FolderSubmenuPosition, MenuFolderEntry } from '../../app/useTreeContextMenu'
 import type { Clamp, SketchFeature, Tab } from '../../types/project'
@@ -75,6 +76,11 @@ export function FeatureContextMenu({
   onCloseAddToFolderSubmenu,
 }: FeatureContextMenuProps) {
   const { t } = useI18n()
+
+  // 2D/3D headings only when the submenu actually spans both halves; for a
+  // plain sketch feature (2D only) the list stays flat, as before.
+  const showQuickOpGroups = menuQuickOperations.some((quickOp) => quickOp.group === '2d')
+    && menuQuickOperations.some((quickOp) => quickOp.group === '3d')
 
   if (!position || !primaryId || (!menuFeature && !menuTab && !menuClamp)) {
     return null
@@ -139,16 +145,34 @@ export function FeatureContextMenu({
                     style={{ top: quickOpsSubmenu.top, left: quickOpsSubmenu.left }}
                     onContextMenu={(event) => event.preventDefault()}
                   >
-                    {menuQuickOperations.map((quickOp) => (
-                      <button
-                        key={quickOp.kind}
-                        className="feature-context-menu__item"
-                        type="button"
-                        onClick={() => actions.createQuickOperation(menuFeature.id, quickOp)}
-                      >
-                        {quickOp.label}
-                      </button>
-                    ))}
+                    {menuQuickOperations.map((quickOp, index) => {
+                      // Group headings only earn their space when the list
+                      // actually spans both halves — a lone heading over a
+                      // uniform list says nothing (issue #398).
+                      const startsGroup = showQuickOpGroups
+                        && (index === 0 || menuQuickOperations[index - 1].group !== quickOp.group)
+                      return (
+                        <Fragment key={quickOp.kind}>
+                          {startsGroup ? (
+                            <>
+                              {index > 0 ? <div className="feature-context-menu__separator" /> : null}
+                              <div className="feature-context-menu__group-label">
+                                {quickOp.group === '3d'
+                                  ? camT('cam.quickOp.group.threeD')
+                                  : camT('cam.quickOp.group.twoD')}
+                              </div>
+                            </>
+                          ) : null}
+                          <button
+                            className="feature-context-menu__item"
+                            type="button"
+                            onClick={() => actions.createQuickOperation(menuFeature.id, quickOp)}
+                          >
+                            {quickOp.label}
+                          </button>
+                        </Fragment>
+                      )
+                    })}
                   </div>
                 ) : null}
               </div>

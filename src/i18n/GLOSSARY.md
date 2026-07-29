@@ -198,7 +198,8 @@ the requester) settles it; the choice below is the shipped default.
 | surface clean | Oberfläche säubern | clears flats around raised features |
 | rough / roughing | Schruppen | standard machining term |
 | finish / finishing | Schlichten | standard machining term |
-| 3D surface rough/finish/cleanup | 3D-Oberfläche schruppen / schlichten / nacharbeiten | |
+| 3D surface rough/finish/cleanup | 3D-Oberfläche schruppen / schlichten / nacharbeiten | same name in the CAM panel and the feature context menu — do not invent a second wording for the "Create …" labels |
+| 2D operations / 3D operations | 2D-Operationen / 3D-Operationen | quick-op group headings; 3D = the kinds that machine an imported model |
 | stepdown | Zustellung | axial depth per pass |
 | stepover | Bahnabstand | |
 | stepover ratio | Bahnabstand-Verhältnis | fraction of tool diameter |

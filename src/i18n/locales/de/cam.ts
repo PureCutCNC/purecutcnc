@@ -65,9 +65,15 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.quickOp.surfaceClean': 'Oberflächensäuberung erstellen',
   'cam.quickOp.followLine': 'Gravur erstellen',
   'cam.quickOp.drilling': 'Bohrung erstellen',
-  'cam.quickOp.roughSurface': 'Oberflächenschruppen erstellen',
-  'cam.quickOp.finishSurface': 'Oberflächenschlichten erstellen',
-  'cam.quickOp.finishSurfaceCleanup': 'Oberflächen-Nacharbeit erstellen',
+  // Terminologie wie im CAM-Panel (`cam.opLabel.*`: "3D-Oberfläche schruppen"),
+  // hier aber substantiviert — "3D-Oberfläche schruppen erstellen" wäre kein
+  // Deutsch. Issue #398.
+  'cam.quickOp.roughSurface': '3D-Oberflächenschruppen erstellen',
+  'cam.quickOp.finishSurface': '3D-Oberflächenschlichten erstellen',
+  'cam.quickOp.finishSurfaceCleanup': '3D-Oberflächen-Nacharbeit erstellen',
+  // ── Gruppenüberschriften der Schnellaktionen (Kontextmenü) ──
+  'cam.quickOp.group.twoD': '2D-Operationen',
+  'cam.quickOp.group.threeD': '3D-Operationen',
 
   // ── Pocket pattern labels ──
   'cam.pocketPattern.offset': 'Offset',

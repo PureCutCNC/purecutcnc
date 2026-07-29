@@ -30,6 +30,7 @@ import {
   compatibleFeatureIdsForOperation,
   getOperationAddHint,
   operationTargetsRegion,
+  quickOperationGroup,
   quickOperationLabel,
   selectAllCompatibleFeatureIds,
   validQuickOperationsForFeature,
@@ -42,6 +43,7 @@ import {
   type FeatureKind,
   type FeatureOperation,
   type Operation,
+  type OperationKind,
   type OperationTarget,
   type Project,
   type SketchFeature,
@@ -188,7 +190,64 @@ function testQuickOperationCarriesDefaultPassAndLabel(): void {
   assert(pocket !== undefined, 'expected a pocket quick operation')
   assert(pocket?.pass === 'rough', 'quick operations should default to the rough pass')
   assert(pocket?.label === 'Create Pocket', `expected friendly label, got ${pocket?.label}`)
+  assert(pocket?.group === '2d', 'pocket is a 2D quick operation')
   assert(quickOperationLabel('edge_route_outside') === 'Create Outside Route', 'outside-route label mismatch')
+}
+
+// ── 2D/3D grouping (issue #398) ───────────────────────────────────
+
+/**
+ * The 3D group is exactly the three kinds that machine an imported model
+ * surface. `edge_route_outside` and `surface_clean` accept a model feature as a
+ * target but remain 2.5D passes, so they must stay in the 2D group.
+ */
+function testQuickOperationGroupClassification(): void {
+  const threeD: OperationKind[] = ['rough_surface', 'finish_surface', 'finish_surface_cleanup']
+  const twoD: OperationKind[] = [
+    'pocket',
+    'edge_route_inside',
+    'edge_route_outside',
+    'v_carve',
+    'v_carve_medial',
+    'surface_clean',
+    'follow_line',
+    'drilling',
+  ]
+
+  for (const kind of threeD) {
+    assert(quickOperationGroup(kind) === '3d', `${kind} should be a 3D quick operation`)
+  }
+  for (const kind of twoD) {
+    assert(quickOperationGroup(kind) === '2d', `${kind} should be a 2D quick operation`)
+  }
+}
+
+/** The menu renders the array in order, so 2D entries must all precede 3D. */
+function testStlModelQuickOperationsAreGroupedTwoDFirst(): void {
+  const project = projectWith([makeFeature('model', 'model', 'stl')])
+  const groups = validQuickOperationsForFeature(project, 'model').map((op) => op.group)
+
+  assert(groups.includes('2d') && groups.includes('3d'), 'stl model should offer both groups')
+  assert(
+    groups.indexOf('3d') === groups.lastIndexOf('2d') + 1,
+    `2D entries must all precede 3D, got ${groups.join(',')}`,
+  )
+}
+
+/** The 3D labels are the CAM panel's own names, not a second vocabulary. */
+function testThreeDLabelsMatchCamPanelNames(): void {
+  assert(
+    quickOperationLabel('rough_surface') === 'Create 3D Surface rough',
+    `rough-surface label mismatch, got ${quickOperationLabel('rough_surface')}`,
+  )
+  assert(
+    quickOperationLabel('finish_surface') === 'Create 3D Surface finish',
+    `finish-surface label mismatch, got ${quickOperationLabel('finish_surface')}`,
+  )
+  assert(
+    quickOperationLabel('finish_surface_cleanup') === 'Create 3D Surface cleanup',
+    `cleanup label mismatch, got ${quickOperationLabel('finish_surface_cleanup')}`,
+  )
 }
 
 // ── getOperationAddHint (golden, behaviour-preserving) ────────────
@@ -468,6 +527,9 @@ testStlModelOffersSurfaceOperations()
 testRegionFeatureOffersNothing()
 testMissingFeatureOffersNothing()
 testQuickOperationCarriesDefaultPassAndLabel()
+testQuickOperationGroupClassification()
+testStlModelQuickOperationsAreGroupedTwoDFirst()
+testThreeDLabelsMatchCamPanelNames()
 testGetOperationAddHintGoldenValues()
 testCompatibleFeatureIdsReuseValidityRules()
 testCompatibleFeatureIdsMatchAddHint()

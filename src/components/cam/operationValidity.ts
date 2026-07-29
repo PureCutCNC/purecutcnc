@@ -269,11 +269,45 @@ function getOperationAddHintWithMap(
   return null
 }
 
+/**
+ * Which half of the quick-operation menu an operation belongs to. `'3d'` is the
+ * set that machines an imported model surface; `'2d'` is everything driven by a
+ * sketch profile. Note that `edge_route_outside` and `surface_clean` accept a
+ * model feature as a target but are still 2.5D contour/facing passes, so they
+ * stay in the 2D group.
+ */
+export type QuickOperationGroup = '2d' | '3d'
+
+/**
+ * Group per operation kind. Deliberately an exhaustive `Record` rather than a
+ * predicate: a new `OperationKind` fails to compile until it is classified,
+ * instead of silently defaulting into the 2D half of the menu.
+ */
+const QUICK_OPERATION_GROUP: Record<OperationKind, QuickOperationGroup> = {
+  pocket: '2d',
+  edge_route_inside: '2d',
+  edge_route_outside: '2d',
+  v_carve: '2d',
+  v_carve_medial: '2d',
+  surface_clean: '2d',
+  follow_line: '2d',
+  drilling: '2d',
+  rough_surface: '3d',
+  finish_surface: '3d',
+  finish_surface_cleanup: '3d',
+}
+
+/** The 2D/3D group an operation kind belongs to in the quick-operation menu. */
+export function quickOperationGroup(kind: OperationKind): QuickOperationGroup {
+  return QUICK_OPERATION_GROUP[kind]
+}
+
 /** A machining operation that can be created directly from a single feature. */
 export interface QuickOperation {
   kind: OperationKind
   pass: OperationPass
   label: string
+  group: QuickOperationGroup
 }
 
 /**
@@ -295,7 +329,17 @@ const QUICK_OPERATION_KINDS: OperationKind[] = [
   'finish_surface_cleanup',
 ]
 
-/** Friendly "Create …" label for a quick-operation menu entry. */
+/**
+ * Friendly "Create …" label for a quick-operation menu entry.
+ *
+ * One key per kind rather than a `Create {name}` template over
+ * `operationKindLabel()`: French needs article and gender agreement ("Créer
+ * *une* ébauche" vs "Créer *un* nettoyage"), which a single template cannot
+ * produce. The duplication is deliberate — do not collapse it.
+ *
+ * The three 3D kinds reuse the CAM panel's `cam.opLabel.*` names verbatim so an
+ * operation is called the same thing wherever it is created (issue #398).
+ */
 export function quickOperationLabel(kind: OperationKind): string {
   switch (kind) {
     case 'pocket':
@@ -347,7 +391,9 @@ function singleFeatureSelection(featureId: string): SelectionState {
  * feature, using the same validity rules as the CAM panel. A kind is included
  * only when `getOperationAddHint` reports it valid (hint === null) for that
  * feature on its own. Each entry carries the default pass (`rough`, matching
- * the CAM panel's single-add behaviour) and a friendly menu label.
+ * the CAM panel's single-add behaviour), a friendly menu label, and its 2D/3D
+ * group. `QUICK_OPERATION_KINDS` lists the 2D kinds first, so the returned
+ * array is already grouped — the menu renders it in order.
  */
 export function validQuickOperationsForFeature(project: Project, featureId: string): QuickOperation[] {
   const featureById = resolvedFeatureMap(project)
@@ -359,7 +405,12 @@ export function validQuickOperationsForFeature(project: Project, featureId: stri
   const selection = singleFeatureSelection(featureId)
   return QUICK_OPERATION_KINDS
     .filter((kind) => getOperationAddHintWithMap(selection, kind, featureById) === null)
-    .map((kind) => ({ kind, pass: 'rough' as OperationPass, label: quickOperationLabel(kind) }))
+    .map((kind) => ({
+      kind,
+      pass: 'rough' as OperationPass,
+      label: quickOperationLabel(kind),
+      group: quickOperationGroup(kind),
+    }))
 }
 
 function compatibleFeatureIdsForOperationWithMap(

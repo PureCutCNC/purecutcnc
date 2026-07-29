@@ -88,6 +88,46 @@ test.describe('CAM operation browser smoke', () => {
     expect(operations[0].target?.featureIds).toEqual(['f-machinable-add'])
   })
 
+  test('quick-op submenu splits 2D and 3D operations for an imported model', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Imported Model'))
+    await ui.contextMenu.item(menu, 'Create operation').hover()
+
+    const submenu = ui.contextMenu.submenu(app.page)
+    await expect(submenu).toBeVisible()
+    await expect(ui.contextMenu.groupLabels(submenu)).toHaveText(['2D operations', '3D operations'])
+
+    // The 3D entries carry the CAM panel's own names, and all follow the 2D ones.
+    await expect(ui.contextMenu.item(submenu, 'Create 3D Surface rough')).toBeVisible()
+    await expect(ui.contextMenu.item(submenu, 'Create 3D Surface finish')).toBeVisible()
+    await expect(ui.contextMenu.item(submenu, 'Create 3D Surface cleanup')).toBeVisible()
+
+    await clickMenuItem(submenu, 'Create 3D Surface rough')
+
+    // Creation is async (it may load the bundled tool library first), so wait
+    // for the operation to land in the UI before reading project state.
+    await expect(ui.operations.countBadge(app.page)).toHaveText('1')
+
+    const project = await getProject(app.page)
+    const operations = project.operations as OperationSnapshot[]
+    expect(operations).toHaveLength(1)
+    expect(operations[0].kind).toBe('rough_surface')
+    expect(operations[0].target?.featureIds).toEqual(['f-imported-model'])
+  })
+
+  test('quick-op submenu stays flat for a feature with 2D operations only', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
+    await ui.contextMenu.item(menu, 'Create operation').hover()
+
+    const submenu = ui.contextMenu.submenu(app.page)
+    await expect(submenu).toBeVisible()
+    await expect(ui.contextMenu.item(submenu, 'Create Outside Route')).toBeVisible()
+    await expect(ui.contextMenu.groupLabels(submenu)).toHaveCount(0)
+  })
+
   test('quick operation creates a V-Carve medial with an auto-picked V-bit', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)
 
