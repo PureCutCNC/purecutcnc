@@ -35,6 +35,8 @@ interface TargetSurfaceValidation {
   stableInteriorCells: number
   stableInteriorGouges: number
   maxStableInteriorGouge: number
+  stableInteriorResiduals: number
+  maxStableInteriorResidual: number
   peakIndex: number
 }
 
@@ -178,6 +180,8 @@ function validateSweptSurface(
   let stableInteriorCells = 0
   let stableInteriorGouges = 0
   let maxStableInteriorGouge = 0
+  let stableInteriorResiduals = 0
+  let maxStableInteriorResidual = 0
   let peakIndex = -1
   let peakZ = Number.NEGATIVE_INFINITY
 
@@ -218,6 +222,11 @@ function validateSweptSurface(
       stableInteriorGouges += 1
       maxStableInteriorGouge = Math.max(maxStableInteriorGouge, gouge)
     }
+    const residual = simulation.grid.topZ[index] - targetZ
+    if (residual > tolerance) {
+      stableInteriorResiduals += 1
+      maxStableInteriorResidual = Math.max(maxStableInteriorResidual, residual)
+    }
   }
 
   assert(peakIndex >= 0, `expected rasterized target cells for ${operation.name}`)
@@ -228,6 +237,8 @@ function validateSweptSurface(
     stableInteriorCells,
     stableInteriorGouges,
     maxStableInteriorGouge,
+    stableInteriorResiduals,
+    maxStableInteriorResidual,
     peakIndex,
   }
 }
@@ -306,6 +317,12 @@ function testConeFinishStrategies(): void {
   const waterlineValidation = validateSweptSurface(project, waterline, waterlineResult)
   assertNoStableInteriorGouges(parallel, parallelValidation)
   assertNoStableInteriorGouges(waterline, waterlineValidation)
+  assert(parallelValidation.stableInteriorResiduals === 0,
+    `parallel finish left ${parallelValidation.stableInteriorResiduals} cone cells above tolerance; `
+    + `maximum residual ${parallelValidation.maxStableInteriorResidual}`)
+  assert(waterlineValidation.stableInteriorResiduals === 0,
+    `Waterline left ${waterlineValidation.stableInteriorResiduals} cone cells above tolerance; `
+    + `maximum residual ${waterlineValidation.maxStableInteriorResidual}`)
 
   const projectedCuts = cutMoves(waterlineResult).filter((move) => move.source)
   assert(projectedCuts.some((move) => move.source === 'projectedBand'),

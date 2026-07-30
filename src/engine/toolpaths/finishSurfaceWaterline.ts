@@ -49,6 +49,7 @@ import {
   offsetClipperPaths,
   pathsContainEnvelope,
   pointInClipperPaths,
+  safeSubtractBottomZAtPoint,
   unionClipperPaths,
   unionClipperPathsEvenOdd,
 } from './modelProtection'
@@ -1352,6 +1353,15 @@ export function generateFinishSurfaceWaterline(
     heightMapCellSize,
   )
   const safetyHeightMap = heightMapWithIntersectingAddTops(baseHeightMap, intersectingAdds)
+  const targetToolTipZCache = new Map<string, number>()
+  const targetToolTipZAtPoint = (point: XYPoint): number => {
+    const key = `${point.x.toFixed(6)},${point.y.toFixed(6)}`
+    const cached = targetToolTipZCache.get(key)
+    if (cached !== undefined) return cached
+    const z = safeToolTipZAt(point.x, point.y, baseHeightMap, tool)
+    targetToolTipZCache.set(key, z)
+    return z
+  }
   const surfaceZAtPoint = (point: XYPoint): number => {
     const col = Math.floor((point.x - safetyHeightMap.originX) / safetyHeightMap.cellSize)
     const row = Math.floor((point.y - safetyHeightMap.originY) / safetyHeightMap.cellSize)
@@ -1787,8 +1797,34 @@ export function generateFinishSurfaceWaterline(
           const distance = distanceToClipperPathsBoundary(meshBoundaryPaths, point)
           return Math.abs(distance - toolOffset) <= meshBoundaryTolerance
         }
-        const zAtPoint = ringEntry.projectZAtPoint ?? (() => ringEntry.z)
-        const shouldLiftForMeshSafety = intersectingAdds.length > 0 || Boolean(ringEntry.projectZAtPoint)
+        const projectedZAtPoint = ringEntry.projectZAtPoint ?? (() => ringEntry.z)
+        // A ball endmill offset horizontally by its full radius must run below
+        // the original mesh-slice Z on a slope. Project zero-stock Waterline
+        // rings onto the same swept-cutter contact surface used by Parallel;
+        // otherwise the remaining material equals the slope-induced height
+        // change across one tool radius.
+        const shouldProjectToTargetContact = radialLeave <= 1e-9
+          && operation.stockToLeaveAxial <= 1e-9
+          && intersectingAdds.length === 0
+        const zAtPoint = shouldProjectToTargetContact
+          ? (point: XYPoint): number => {
+              const contactZ = targetToolTipZAtPoint(point)
+              const projectedZ = Number.isFinite(contactZ) ? contactZ : projectedZAtPoint(point)
+              const pocketFloorZ = safeSubtractBottomZAtPoint(relatedSubtracts, point)
+                ?? effectiveBottom
+              // Height-map cells can miss a surface that is exactly tangent
+              // to the cutter footprint at a vertical wall. A ball cannot
+              // side-contact the nominal slice below sliceZ - radius, so keep
+              // that geometric lower bound as the boundary fallback.
+              const sideContactFloorZ = tool.type === 'ball_endmill'
+                ? ringEntry.z - tool.radius
+                : Number.NEGATIVE_INFINITY
+              const minimumZ = Math.max(pocketFloorZ, sideContactFloorZ)
+              return Math.max(projectedZ, minimumZ)
+            }
+          : projectedZAtPoint
+        const shouldLiftForMeshSafety = !shouldProjectToTargetContact
+          && (intersectingAdds.length > 0 || Boolean(ringEntry.projectZAtPoint))
         const liftedZAtPoint = shouldLiftForMeshSafety
           ? (point: XYPoint): number => {
               const baseZ = zAtPoint(point)
@@ -1808,7 +1844,9 @@ export function generateFinishSurfaceWaterline(
             }
           : zAtPoint
         if (ringEntry.projectZAtPoint) {
-          contour = densifyContour(contour, stepoverDistance / 2, waterlineLengthEpsilon, isClosed)
+          if (!shouldProjectToTargetContact) {
+            contour = densifyContour(contour, stepoverDistance / 2, waterlineLengthEpsilon, isClosed)
+          }
           if (!isClosed && contourPolylineLength(contour, false) <= Math.max(toolOffset * 2, stepoverDistance * 2)) {
             continue
           }
@@ -1872,7 +1910,9 @@ export function generateFinishSurfaceWaterline(
             transitionMove.source = ringEntry.source
           }
           canLinkFromPreviousRing = false
-          const cutMovesForContour = intersectingAdds.length > 0 || ringEntry.projectZAtPoint
+          const cutMovesForContour = shouldProjectToTargetContact
+            || intersectingAdds.length > 0
+            || ringEntry.projectZAtPoint
             ? toProjectedCutMoves(safeRun.contour, safeRun.closed, liftedZAtPoint, ringEntry.source)
             : safeRun.closed
               ? toClosedCutMoves(safeRun.contour, ringEntry.z)

@@ -1173,8 +1173,14 @@ function testWaterlineTipCapSmoothsConePeak(): void {
     `expected projected cap to reach near cone peak, got max Z ${maxCapZ}; debug: ${result.warnings.map(wtext).join('; ')}`)
   assert(maxCapZ - minCapZ > 0.4,
     `expected projected cap to form a Z ramp instead of a flat crown, got range ${maxCapZ - minCapZ}`)
-  assert(minCapZ >= 2 - 1e-6,
-    `expected cone cap projection not to cut below the matched lower step Z=2, got min Z ${minCapZ}`)
+  const toolRadius = 0.5
+  const coneSlope = 4 / 5
+  const expectedSideContactZ = 2 - (
+    coneSlope * toolRadius
+    - toolRadius * (Math.sqrt(1 + coneSlope * coneSlope) - 1)
+  )
+  assert(Math.abs(minCapZ - expectedSideContactZ) < 0.05,
+    `expected cone cap outer edge to use ball-side contact near Z=${expectedSideContactZ}, got ${minCapZ}`)
   assert(maxCapRadius > 2.5,
     `expected projected cap to absorb the first lower cone boundary, got max radius ${maxCapRadius}`)
 
@@ -1471,54 +1477,58 @@ function testWaterlineNewOperationGetsToolDerivedAdaptiveSpacing(): void {
     `expected tool-derived adaptive spacing of 1, got ${operation.waterlineMicroStepover}`)
 }
 
-function testWaterlineLevelsAreConstantBands(): void {
-  console.log('Testing waterline levels are constant Z bands...')
-  const { project } = makeProject()
-  replaceProjectFeatures(project, [makeTaperedModelFeature()])
-  const operation = makeWaterlineOperation()
-  project.operations = [operation]
-  const result = generateFinishSurfaceToolpath(project, operation)
-  const expected = [4, 3, 2, 1, 0]
-  for (const z of expected) {
-    const has = result.stepLevels.some((level) => Math.abs(level - z) < 1e-6)
-    assert(has, `expected constant waterline level near Z=${z}, got ${result.stepLevels.join(', ')}`)
-  }
-}
-
-function testWaterlineEmitsBandBoundaryLevels(): void {
-  console.log('Testing waterline emits current band boundary levels...')
-  const { project } = makeProject()
-  replaceProjectFeatures(project, [makeTaperedModelFeature()])
-  const operation: Operation = {
-    ...makeWaterlineOperation(),
-    stepover: 0.3,
-  }
-  project.operations = [operation]
-  const result = generateFinishSurfaceToolpath(project, operation)
-  const hasBandBoundaryNear4 = result.stepLevels.some((z) => z < 4.01 && z > 3.99)
-  const hasBandBoundaryNear3 = result.stepLevels.some((z) => z < 3.01 && z > 2.99)
-  const hasBandBoundaryNear2 = result.stepLevels.some((z) => z < 2.01 && z > 1.99)
-
-  assert(hasBandBoundaryNear4, `expected current-band boundary near Z=4 in ${result.stepLevels.join(', ')}`)
-  assert(hasBandBoundaryNear3, `expected current-band boundary near Z=3 in ${result.stepLevels.join(', ')}`)
-  assert(hasBandBoundaryNear2, `expected current-band boundary near Z=2 in ${result.stepLevels.join(', ')}`)
-}
-
-function testWaterlineBallEndmillUsesSideContactZ(): void {
-  console.log('Testing waterline ball-endmill stays on constant slice Z levels...')
+function testWaterlineProjectsPathsToBallContactSurface(): void {
+  console.log('Testing waterline paths use swept ball-endmill contact Z...')
   const { project } = makeProject()
   replaceProjectFeatures(project, [makeTaperedModelFeature()])
   const operation = makeWaterlineOperation()
   project.operations = [operation]
   const result = generateFinishSurfaceToolpath(project, operation)
   const cuts = cutMoves(result.moves)
-  const stepLevels = result.stepLevels
-  const maxCutZ = Math.max(...stepLevels)
-  const hasBand3 = stepLevels.some((z) => Math.abs(z - 3) < 1e-6)
-
   assert(cuts.length > 0, 'expected waterline cut moves')
-  assert(Math.abs(maxCutZ - 4) < 1e-6, `expected top waterline at Z=4, got ${maxCutZ}`)
-  assert(hasBand3, `expected band level near Z=3, got ${stepLevels.join(', ')}`)
+
+  const modelFeature = resolvedFeature(project, 'model1')
+  const toolRecord = project.tools.find((candidate) => candidate.id === operation.toolRef)
+  if (!toolRecord) throw new Error('Assertion failed: expected Waterline tool')
+  const tool = normalizeToolForProject(toolRecord, project)
+  const stlData = loadSTLTransformedGeometry(modelFeature, project)
+  if (!stlData) throw new Error('Assertion failed: expected tapered STL geometry')
+  const bbox = computeXYBounds(stlData.positions)
+  const stepoverDistance = Math.max(
+    operation.waterlineMicroStepover && operation.waterlineMicroStepover > 0
+      ? operation.waterlineMicroStepover
+      : (operation.stepover ?? 0.5) * tool.diameter,
+    1e-3,
+  )
+  const cellSize = chooseHeightMapCellSize(
+    bbox,
+    Math.min(tool.radius / 3, stepoverDistance * 0.5),
+    [],
+  )
+  const heightMap = getCachedHeightMap(
+    stlData as FinishSurfaceParallelCacheHost,
+    stlData.positions,
+    stlData.index,
+    bbox,
+    cellSize,
+  )
+  const tolerance = Math.max(1e-5, tool.radius * 0.05)
+  let comparedPoints = 0
+  let correctedSlopePoints = 0
+  for (const point of cuts.flatMap((move) => [move.from, move.to])) {
+    const contactZ = safeToolTipZAt(point.x, point.y, heightMap, tool)
+    if (!Number.isFinite(contactZ)) continue
+    const expectedZ = Math.max(0, contactZ)
+    assert(Math.abs(point.z - expectedZ) <= tolerance,
+      `expected Waterline point Z=${point.z} to match swept contact Z=${expectedZ}`)
+    comparedPoints += 1
+    if (point.z > 2.4 && point.z < 2.9) correctedSlopePoints += 1
+  }
+
+  assert(comparedPoints > 100,
+    `expected many Waterline contact samples, got ${comparedPoints}`)
+  assert(correctedSlopePoints > 0,
+    'expected nominal Z=3 slope ring to run below slice Z at ball-side contact')
 }
 
 function testWaterlineReachesModelTop(): void {
@@ -1528,11 +1538,13 @@ function testWaterlineReachesModelTop(): void {
   operation.stepdown = 1
   project.operations = [operation]
   const result = generateFinishSurfaceToolpath(project, operation)
-  const maxZ = Math.max(...result.stepLevels)
+  const maxTipZ = Math.max(...result.stepLevels)
   const topZ = 4
+  const ballRadius = 0.5
 
   assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
-  assert(maxZ >= topZ - 1e-6, `expected waterline to reach top ${topZ}, got ${maxZ}`)
+  assert(maxTipZ + ballRadius >= topZ - 1e-6,
+    `expected swept Waterline cutter to reach top ${topZ}, got tip Z ${maxTipZ}`)
 }
 
 function testWaterlineBlendsWithRoughInCombinedSimulation(): void {
@@ -2068,9 +2080,7 @@ testWaterlineAdaptiveSubdivisionIsBounded()
 testWaterlineMaxRingsPerBandLimitsProjectedRings()
 testWaterlineQualityControlsNormalizeAndConvertUnits()
 testWaterlineNewOperationGetsToolDerivedAdaptiveSpacing()
-testWaterlineLevelsAreConstantBands()
-testWaterlineEmitsBandBoundaryLevels()
-testWaterlineBallEndmillUsesSideContactZ()
+testWaterlineProjectsPathsToBallContactSurface()
 testWaterlineReachesModelTop()
 testWaterlineBlendsWithRoughInCombinedSimulation()
 testWaterlinePocketBlockSimplification()
