@@ -13,7 +13,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `finishSurface.ts` — 3D finish pass dispatcher
 - `finishSurfaceCleanup.ts` — cleanup-style 3D imported-mesh finishing that emits deepest retained wall/floor paths from rough-surface-style levels
 - `finishSurfaceParallel.ts` — parallel-line finish strategy
-- `finishSurfaceWaterline.ts` — waterline (constant-Z) finish strategy with bounded, user-tunable adaptive shallow-slope refinement
+- `finishSurfaceWaterline.ts` — waterline (constant-Z) finish strategy with bounded, user-tunable adaptive shallow-slope refinement, mesh-safe projected bands, and terminal peak coverage
 - `surface.ts` — shared surface-toolpath helpers
 - `surfaceStepdown3d.ts` — shared imported-mesh stepdown resolver used by rough-surface and cleanup-surface operations
 - `tabs.ts` — holding-tab generation on profile cuts
@@ -45,6 +45,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `clamps.test.ts` — clamp collision warnings, rapid auto-lift, per-move collision tagging
 	- `camOperationSmoke.test.ts` --- per-operation-kind smoke: pocket parallel/waterline patterns, drill-type differentiation (simple/peck/dwell/chip_breaking), post smoke for thin ops (v_carve, surface_clean, follow_line, v_carve_medial; closed-Line V-carve smoke); also documents the stock-target resolver gap
 - `roughSurface.test.ts` / `finishSurface.test.ts` / `finishSurfaceCleanup.test.ts` / `meshSlicing.test.ts` / `vcarveMedial/vcarveMedial.test.ts` — strategy-specific
+- `surfaceOperationValidation.test.ts` — real cone and hard-edge fixture matrix across Rough, Parallel, Waterline, and Cleanup, using an independently rasterized target surface plus swept-cutter simulation to validate stock, peak coverage, projected passes, determinism, and stable-interior gouging
 - `pocketTessellationConsistency.test.ts` — regression for circle/arc sampling consistency (issue #359): full-circle and broken-circle pockets must have identical chord sagitta
 - `arcReconstruction.test.ts` — direct partial-run arc-search coverage: greedy longest valid runs, sweep direction, and the bounded large non-fitting path (issue #369)
 - additional arc-reconstruction coverage lives with its store-level callers: `store/helpers/offsetSimplify.test.ts` (offset simplification) and `store/second_cut_test.ts` (segment-preserving boolean reconstruction)
