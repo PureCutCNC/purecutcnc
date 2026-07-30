@@ -1135,11 +1135,12 @@ function testWaterlineTipCapSmoothsConePeak(): void {
   console.log('Testing waterline projected cap smooths a cone peak...')
   const { project } = makeProject()
   replaceProjectFeatures(project, [makeConeModelFeature()])
+  const microStepover = 0.2
   const operation: Operation = {
     ...makeWaterlineOperation(),
     stepdown: 1,
     stepover: 0.2,
-    waterlineMicroStepover: 0.2,
+    waterlineMicroStepover: microStepover,
     waterlineMaxRingsPerBand: 64,
     debugToolpath: true,
   }
@@ -1183,6 +1184,13 @@ function testWaterlineTipCapSmoothsConePeak(): void {
     `expected cone cap outer edge to use ball-side contact near Z=${expectedSideContactZ}, got ${minCapZ}`)
   assert(maxCapRadius > 2.5,
     `expected projected cap to absorb the first lower cone boundary, got max radius ${maxCapRadius}`)
+  const terminalPassRadius = 0.01
+  const nearestCapRingRadius = Math.min(
+    ...capRadii.filter((radius) => radius > terminalPassRadius),
+  )
+  const maximumTerminalGap = microStepover * 1.5
+  assert(nearestCapRingRadius <= maximumTerminalGap,
+    `expected projected cap rings to bridge the cone apex within ${maximumTerminalGap}, got nearest ring radius ${nearestCapRingRadius}`)
 
   const nonCapInsideCrown = cutMoves(result.moves).filter((move) => (
     move.source !== 'projectedCap'
@@ -1245,6 +1253,48 @@ function testWaterlineTipCapFillsCollapsedBranch(): void {
     `expected collapsed peak cap to reach near the lower apex, got max Z ${maxLowerPeakInnerZ}`)
   assert(hasRisingInnerMove,
     'expected collapsed peak cap to use projected Z interpolation instead of a flat fill')
+}
+
+function testWaterlineTipCapBridgesPeakWithIntersectingAdd(): void {
+  console.log('Testing waterline projected cap bridges a peak with an intersecting add...')
+  const { project } = makeProject()
+  const intersectingAdd: SketchFeature = {
+    id: 'cone-edge-add',
+    name: 'Cone edge add',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(14, 4, 3, 2),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: 5,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+  replaceProjectFeatures(project, [makeConeModelFeature(), intersectingAdd])
+  const operation: Operation = {
+    ...makeWaterlineOperation(),
+    stepdown: 1,
+    stepover: 0.2,
+    waterlineMicroStepover: 0.2,
+    waterlineMaxRingsPerBand: 64,
+  }
+  project.operations = [operation]
+
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const capRadii = projectedWaterlineCuts(result, 'projectedCap')
+    .flatMap((move) => [move.from, move.to])
+    .map((point) => Math.hypot(point.x - 10, point.y - 5))
+    .filter((radius) => radius > 0.01)
+  assert(capRadii.length > 0, 'expected projected cap rings with an intersecting add')
+  const nearestCapRingRadius = Math.min(...capRadii)
+  assert(nearestCapRingRadius <= 0.3,
+    `expected projected cap rings to bridge the apex despite an intersecting add, got nearest ring radius ${nearestCapRingRadius}`)
 }
 
 function testWaterlineAdaptiveRefinementCanBeDisabled(): void {
@@ -2071,6 +2121,7 @@ testWaterlineRegionActsAsFilterNotBoundaryContour()
 testWaterlineAdaptivelyRefinesShallowSlope()
 testWaterlineTipCapSmoothsConePeak()
 testWaterlineTipCapFillsCollapsedBranch()
+testWaterlineTipCapBridgesPeakWithIntersectingAdd()
 testWaterlineAdaptiveRefinementCanBeDisabled()
 testWaterlineMicroStepoverControlsProjectedDensity()
 testWaterlineZeroMicroStepoverUsesLegacyRatioFallback()
