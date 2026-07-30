@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-import type { PlatformApi, OpenProjectResult, PickGeometryResult } from './api'
+import type { PlatformApi, OpenProjectResult } from './api'
 import { translate } from '../i18n/store'
 import { loadVersion } from '../utils/version'
+import { SUPPORTED_IMPORT_ACCEPT } from '../import/types'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -174,11 +175,8 @@ export const browserPlatform: PlatformApi = {
     return readFileAsText(file)
   },
 
-  async pickGeometryFile(): Promise<PickGeometryResult | null> {
-    const file = await pickFile('.svg,.dxf')
-    if (!file) return null
-    const content = await readFileAsText(file)
-    return { name: file.name, content }
+  async pickImportFile(): Promise<File | null> {
+    return pickFile(SUPPORTED_IMPORT_ACCEPT)
   },
 
   async revealInFileManager(): Promise<void> {
