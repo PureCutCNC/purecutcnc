@@ -174,3 +174,248 @@ test('fitToBounds near-degenerate flat box still fits', () => {
   controls.fitToBounds(box)
   assert.ok(allCornersInFrustum(box, camera), 'zero-height box must fit')
 })
+
+// ---- wheel-zoom pointer anchoring ----
+
+type ListenerStore = Record<string, Array<(e: Event) => void>>
+
+function makeListeningElement(listeners: ListenerStore): HTMLElement {
+  return {
+    addEventListener(type: string, fn: (e: Event) => void) {
+      (listeners[type] ??= []).push(fn)
+    },
+    removeEventListener() {},
+    getBoundingClientRect: () => ({
+      left: 0,
+      top: 0,
+      width: 800,
+      height: 600,
+      right: 800,
+      bottom: 600,
+      x: 0,
+      y: 0,
+      toJSON() {},
+    }),
+    setPointerCapture() {},
+    releasePointerCapture() {},
+    hasPointerCapture: () => false,
+  } as unknown as HTMLElement
+}
+
+function dispatchWheel(listeners: ListenerStore, clientX: number, clientY: number, deltaY: number) {
+  const event = {
+    clientX,
+    clientY,
+    deltaY,
+    preventDefault() {},
+    stopPropagation() {},
+  } as unknown as WheelEvent
+  listeners['wheel']?.forEach(fn => fn(event))
+}
+
+/** Returns the screen-space projection of a world point through the camera
+ *  (pixel coords in the fake 800×600 viewport). */
+function projectToScreen(point: THREE.Vector3, camera: THREE.Camera): { x: number; y: number } {
+  const ndc = point.clone().project(camera)
+  return {
+    x: (ndc.x + 1) / 2 * 800,
+    y: (1 - ndc.y) / 2 * 600,
+  }
+}
+
+/** Compute the world-space focus point: intersection of the pointer ray at
+ *  (clientX,clientY) with the camera-aligned plane through `target`. */
+function computeFocusPoint(
+  clientX: number,
+  clientY: number,
+  camera: THREE.Camera,
+  target: THREE.Vector3,
+): THREE.Vector3 {
+  const bounds = { left: 0, top: 0, width: 800, height: 600 }
+  const ndc = new THREE.Vector2(
+    ((clientX - bounds.left) / bounds.width) * 2 - 1,
+    -(((clientY - bounds.top) / bounds.height) * 2 - 1),
+  )
+  const raycaster = new THREE.Raycaster()
+  raycaster.setFromCamera(ndc, camera)
+  const camDir = new THREE.Vector3()
+  camera.getWorldDirection(camDir)
+  const plane = new THREE.Plane(camDir, camDir.dot(target))
+  const point = new THREE.Vector3()
+  raycaster.ray.intersectPlane(plane, point)
+  return point
+}
+
+test('wheel zoom anchors focus point under off-center pointer – iso view', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const listeners: ListenerStore = {}
+  const el = makeListeningElement(listeners)
+  createOrbitControls(cam, el, {
+    onChange: () => {},
+    onPresetChange: () => {},
+    isInteractionBlocked: () => false,
+  })
+
+  const px = 600
+  const py = 200
+  const focusPoint = computeFocusPoint(px, py, cam, new THREE.Vector3(0, 0, 0))
+
+  dispatchWheel(listeners, px, py, 100)
+
+  const screen = projectToScreen(focusPoint, cam)
+  assert.ok(
+    Math.abs(screen.x - px) < 1,
+    `focus point anchored at screen X: expected ${px}, got ${screen.x.toFixed(1)}`,
+  )
+  assert.ok(
+    Math.abs(screen.y - py) < 1,
+    `focus point anchored at screen Y: expected ${py}, got ${screen.y.toFixed(1)}`,
+  )
+})
+
+test('wheel zoom anchors focus point under off-center pointer – zoom out', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const listeners: ListenerStore = {}
+  const el = makeListeningElement(listeners)
+  createOrbitControls(cam, el, {
+    onChange: () => {},
+    onPresetChange: () => {},
+    isInteractionBlocked: () => false,
+  })
+
+  const px = 200
+  const py = 400
+  const focusPoint = computeFocusPoint(px, py, cam, new THREE.Vector3(0, 0, 0))
+
+  dispatchWheel(listeners, px, py, -120)
+
+  const screen = projectToScreen(focusPoint, cam)
+  assert.ok(
+    Math.abs(screen.x - px) < 1,
+    `focus point anchored at screen X: expected ${px}, got ${screen.x.toFixed(1)}`,
+  )
+  assert.ok(
+    Math.abs(screen.y - py) < 1,
+    `focus point anchored at screen Y: expected ${py}, got ${screen.y.toFixed(1)}`,
+  )
+})
+
+test('wheel zoom anchors focus point under off-center pointer – front view', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const listeners: ListenerStore = {}
+  const el = makeListeningElement(listeners)
+  const controls = createOrbitControls(cam, el, {
+    onChange: () => {},
+    onPresetChange: () => {},
+    isInteractionBlocked: () => false,
+  })
+
+  controls.setPreset('front')
+  const px = 150
+  const py = 450
+  const focusPoint = computeFocusPoint(px, py, cam, new THREE.Vector3(0, 0, 0))
+
+  dispatchWheel(listeners, px, py, 80)
+
+  const screen = projectToScreen(focusPoint, cam)
+  assert.ok(
+    Math.abs(screen.x - px) < 1,
+    `focus point anchored at screen X in front view: expected ${px}, got ${screen.x.toFixed(1)}`,
+  )
+  assert.ok(
+    Math.abs(screen.y - py) < 1,
+    `focus point anchored at screen Y in front view: expected ${py}, got ${screen.y.toFixed(1)}`,
+  )
+})
+
+test('wheel zoom anchors focus point under off-center pointer – right view', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const listeners: ListenerStore = {}
+  const el = makeListeningElement(listeners)
+  const controls = createOrbitControls(cam, el, {
+    onChange: () => {},
+    onPresetChange: () => {},
+    isInteractionBlocked: () => false,
+  })
+
+  controls.setPreset('right')
+  const px = 650
+  const py = 150
+  const focusPoint = computeFocusPoint(px, py, cam, new THREE.Vector3(0, 0, 0))
+
+  dispatchWheel(listeners, px, py, 90)
+
+  const screen = projectToScreen(focusPoint, cam)
+  assert.ok(
+    Math.abs(screen.x - px) < 1,
+    `focus point anchored at screen X in right view: expected ${px}, got ${screen.x.toFixed(1)}`,
+  )
+  assert.ok(
+    Math.abs(screen.y - py) < 1,
+    `focus point anchored at screen Y in right view: expected ${py}, got ${screen.y.toFixed(1)}`,
+  )
+})
+
+test('wheel zoom anchors focus point with non-origin target after fitToBounds', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const listeners: ListenerStore = {}
+  const el = makeListeningElement(listeners)
+  const controls = createOrbitControls(cam, el, {
+    onChange: () => {},
+    onPresetChange: () => {},
+    isInteractionBlocked: () => false,
+  })
+
+  const box = new THREE.Box3(
+    new THREE.Vector3(50, 50, 50),
+    new THREE.Vector3(150, 100, 150),
+  )
+  controls.fitToBounds(box)
+  const target = box.getCenter(new THREE.Vector3())
+
+  const px = 400
+  const py = 300
+  const focusPoint = computeFocusPoint(px, py, cam, target)
+
+  dispatchWheel(listeners, px, py, 100)
+
+  const screen = projectToScreen(focusPoint, cam)
+  assert.ok(
+    Math.abs(screen.x - px) < 1,
+    `focus point anchored after fitToBounds: expected X ${px}, got ${screen.x.toFixed(1)}`,
+  )
+  assert.ok(
+    Math.abs(screen.y - py) < 1,
+    `focus point anchored after fitToBounds: expected Y ${py}, got ${screen.y.toFixed(1)}`,
+  )
+})
+
+test('wheel zoom at radius limit does not move target', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const listeners: ListenerStore = {}
+  const el = makeListeningElement(listeners)
+  createOrbitControls(cam, el, {
+    onChange: () => {},
+    onPresetChange: () => {},
+    isInteractionBlocked: () => false,
+  })
+
+  // Zoom in aggressively to hit the minimum radius clamp.
+  dispatchWheel(listeners, 400, 300, -50000)
+
+  // Record the screen position of the origin after hitting the limit.
+  const originScreenBefore = projectToScreen(new THREE.Vector3(0, 0, 0), cam)
+
+  // Try to zoom in even more — should be clamped with no change.
+  dispatchWheel(listeners, 600, 200, -100)
+
+  const originScreenAfter = projectToScreen(new THREE.Vector3(0, 0, 0), cam)
+  assert.ok(
+    Math.abs(originScreenAfter.x - originScreenBefore.x) < 1,
+    'origin screen X must not jump when zoom is clamped',
+  )
+  assert.ok(
+    Math.abs(originScreenAfter.y - originScreenBefore.y) < 1,
+    'origin screen Y must not jump when zoom is clamped',
+  )
+})
