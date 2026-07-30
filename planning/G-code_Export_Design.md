@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: machine origin, machine definitions, postprocessing, and G-code export
-last-verified: 2026-07-27
+last-verified: 2026-07-30
 ---
 
 # G-code Export Design
@@ -69,6 +69,63 @@ A definition may describe:
 
 Unknown or invalid capabilities produce validation errors or warnings; they are
 not guessed by the exporter.
+
+## Application library vs project snapshot
+
+Machine definitions live in two clearly separated places, and export only ever
+reads one of them.
+
+**The application library** (`src/machine/`) is what the user picks from:
+bundled definitions supplied directly by the current build, plus a persistent
+app-local **My Machines** list of custom definitions. It is an application
+preference — stored in namespaced local storage, never serialized into a
+`.camj` file, never part of project undo history, and never a reason to mark a
+project dirty. Bundled IDs are reserved; a custom definition that claims one is
+rejected on read and re-keyed on import. Because bundled definitions come from
+the build, machines added or corrected in a release appear immediately in every
+project without any per-project refresh.
+
+**The project snapshot** is the single complete definition selected for that
+project. `project.meta.machineDefinitions` holds zero or one entry and
+`selectedMachineId` always matches `machineDefinitions[0]?.id ?? null`
+(enforced on decode and by the `setProjectMachine` store action). Selecting a
+library machine copies a validated snapshot in by value.
+
+`getActiveMachineDefinition(project)` is the export boundary and resolves
+**only** the embedded snapshot. Export, preview, exported-motion inspection,
+and output file extension therefore stay deterministic for whoever opens the
+file: a shared project remains exportable when the recipient has never seen
+that machine, and editing or removing a library entry cannot change an
+existing project's G-code. No selected machine remains valid for sketching,
+toolpaths, preview, and simulation; only G-code export is blocked.
+
+### Update warning contract
+
+On open, the embedded snapshot is compared with the library definition sharing
+its ID, over validated functional fields only (the `builtin` ownership flag is
+ignored). The comparison is advisory:
+
+- **differs** — a non-blocking notice offers *Review update* (opens the machine
+  manager on the comparison), *Keep project copy* (dismiss; snapshot and G-code
+  unchanged), and *Update project copy* (explicitly replace the snapshot —
+  dirtying and undoable). After dismissal an **Update available** badge remains
+  in Project Properties and the machine manager.
+- **absent from the library** — **Not in My Machines** is shown instead, the
+  embedded copy stays fully usable, and the manager offers *Save to My
+  Machines*.
+
+Nothing replaces an embedded snapshot automatically.
+
+### Legacy projects
+
+Files that stored a whole machine library are compacted on decode: the entry
+matching `selectedMachineId` is preserved verbatim as the only embedded
+snapshot, unselected bundled copies are discarded (the live library supplies
+them), and valid custom definitions are merged into My Machines — skipping
+semantically identical entries and re-keying ID collisions. An unresolvable
+selection is cleared and reported in the load warning. Compacted projects are
+marked dirty; the original file is unchanged until saved. The compact
+zero-or-one array is valid format 3.0 and stays readable by older builds.
 
 ## Postprocessor invariants
 

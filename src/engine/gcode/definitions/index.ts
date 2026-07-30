@@ -32,14 +32,14 @@ export const BUNDLED_DEFINITIONS: MachineDefinition[] = [
   linuxcnc as unknown as MachineDefinition,
 ]
 
-export function copyBundledDefinitions(): MachineDefinition[] {
-  return structuredClone(BUNDLED_DEFINITIONS)
-}
-
-export function getBundledDefinition(id: string): MachineDefinition | undefined {
-  return BUNDLED_DEFINITIONS.find((d) => d.id === id)
-}
-
+/**
+ * The export boundary: G-code generation, preview, exported-motion
+ * inspection, and file-extension selection all resolve the machine through
+ * this function, and it reads **only** the project's own embedded snapshot.
+ * The application machine library (`src/machine/`) is deliberately not
+ * consulted, so a library edit or an app upgrade can never change what a
+ * project exports until the user explicitly updates the project copy.
+ */
 export function getActiveMachineDefinition(project: Project): MachineDefinition | null {
   if (!project.meta.selectedMachineId) {
     return null

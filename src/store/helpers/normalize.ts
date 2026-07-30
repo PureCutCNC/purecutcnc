@@ -16,9 +16,9 @@
 
 import { clearImportedModelCaches } from '../../engine/importedMesh'
 import { clearSTLTransformedGeometryCache } from '../../engine/csg'
-import { copyBundledDefinitions } from '../../engine/gcode/definitions'
 import { validateMachineDefinition } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
+import { getBundledMachine, isBundledMachineId } from '../../machine/registry'
 import { convertLength } from '../../utils/units'
 import { defaultTool, inferFeatureKind, newProject, profileVertices } from '../../types/project'
 import type {
@@ -302,10 +302,32 @@ export function normalizeTab(tab: Tab, units: Project['meta']['units'], index: n
   }
 }
 
-export function normalizeMachineDefinitions(project: Project): {
+export interface MachineSnapshotNormalization {
+  /** The project's embedded snapshot: zero or one definition, never a library. */
   machineDefinitions: MachineDefinition[]
   selectedMachineId: string | null
-} {
+  /**
+   * Valid non-bundled definitions the stored file carried, selected one
+   * first. Decode hands these to the application library so a legacy
+   * project's custom machines survive the compaction.
+   */
+  customDefinitions: MachineDefinition[]
+  /** True when the stored file carried more machines than the snapshot keeps. */
+  compacted: boolean
+  /** A machine ID the file selected but could not resolve to a valid definition. */
+  unresolvedSelectionId: string | null
+}
+
+/**
+ * Reduce a stored project's machine data to the single embedded snapshot the
+ * current format keeps, and report what had to be rescued or dropped.
+ *
+ * Unselected bundled copies are discarded because the live application
+ * library supplies them; unselected custom definitions are surfaced in
+ * `customDefinitions` so nothing the user authored is lost. The snapshot
+ * itself is preserved verbatim — it is authoritative for export.
+ */
+export function normalizeMachineDefinitions(project: Project): MachineSnapshotNormalization {
   const legacyMeta = project.meta as Project['meta'] & {
     machineId?: string | null
     customMachineDefinition?: MachineDefinition | null
@@ -315,25 +337,41 @@ export function normalizeMachineDefinitions(project: Project): {
     ? project.meta.machineDefinitions
     : null
 
-  if (!rawDefinitions) {
-    const machineDefinitions = copyBundledDefinitions()
-    let selectedMachineId: string | null = legacyMeta.machineId ?? null
-
-    if (legacyMeta.customMachineDefinition) {
-      const customDefinition = validateMachineDefinition({
-        ...legacyMeta.customMachineDefinition,
-        builtin: false,
-      })
-      machineDefinitions.push(customDefinition)
-      selectedMachineId = customDefinition.id
-    }
-
+  const snapshotOf = (
+    definition: MachineDefinition | null,
+    others: MachineDefinition[],
+    rawCount: number,
+    unresolvedSelectionId: string | null,
+  ): MachineSnapshotNormalization => {
+    const customDefinitions = [
+      ...(definition && !isBundledMachineId(definition.id) ? [definition] : []),
+      ...others.filter((entry) => !isBundledMachineId(entry.id)),
+    ]
     return {
-      machineDefinitions,
-      selectedMachineId: machineDefinitions.some((definition) => definition.id === selectedMachineId)
-        ? selectedMachineId
-        : null,
+      machineDefinitions: definition ? [definition] : [],
+      selectedMachineId: definition?.id ?? null,
+      customDefinitions,
+      compacted: rawCount > (definition ? 1 : 0),
+      unresolvedSelectionId,
     }
+  }
+
+  // --- pre-3.0 shape: `machineId` plus an optional inline custom definition.
+  if (!rawDefinitions) {
+    if (legacyMeta.customMachineDefinition) {
+      try {
+        const customDefinition = validateMachineDefinition({
+          ...legacyMeta.customMachineDefinition,
+          builtin: false,
+        })
+        return snapshotOf(customDefinition, [], 0, null)
+      } catch {
+        // Fall through to the machineId path below.
+      }
+    }
+    const legacyId = legacyMeta.machineId ?? null
+    const bundled = legacyId ? getBundledMachine(legacyId) ?? null : null
+    return snapshotOf(bundled, [], 0, legacyId && !bundled ? legacyId : null)
   }
 
   const definitions: MachineDefinition[] = []
@@ -352,13 +390,17 @@ export function normalizeMachineDefinitions(project: Project): {
   }
 
   const selectedMachineId = project.meta.selectedMachineId ?? null
+  const selected = selectedMachineId
+    ? definitions.find((definition) => definition.id === selectedMachineId) ?? null
+    : null
+  const others = definitions.filter((definition) => definition !== selected)
 
-  return {
-    machineDefinitions: definitions,
-    selectedMachineId: definitions.some((definition) => definition.id === selectedMachineId)
-      ? selectedMachineId
-      : null,
-  }
+  return snapshotOf(
+    selected,
+    others,
+    rawDefinitions.length,
+    selectedMachineId && !selected ? selectedMachineId : null,
+  )
 }
 
 export function syncFeatureTreeProject(project: Project): Project {

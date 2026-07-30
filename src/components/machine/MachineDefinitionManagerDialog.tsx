@@ -14,10 +14,19 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { MachineDefinition } from '../../engine/gcode/types'
-import { validateMachineDefinition } from '../../engine/gcode/types'
+import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
+import {
+  duplicateMachineAsCustom,
+  machineFieldDifferences,
+  machinesFunctionallyEqual,
+  parseMachineImport,
+  serializeMachineExport,
+} from '../../machine/registry'
+import { deleteCustomMachine, saveCustomMachine } from '../../machine/store'
+import { useMachineLibrary } from '../../machine/useMachineLibrary'
 import { useProjectStore } from '../../store/projectStore'
 import { platform } from '../../platform'
 import { MachineDefinitionEditorDialog } from './MachineDefinitionEditorDialog'
@@ -27,46 +36,58 @@ import { useI18n } from '../../i18n/i18nContext'
 
 export interface MachineDefinitionManagerDialogProps {
   onClose: () => void
+  /** Open focused on a specific machine — used by the update warning's "Review update". */
+  focusMachineId?: string | null
 }
 
+/**
+ * Machine lifecycle manager. The list is the **application** library
+ * (built-in machines from the current build plus My Machines); the project
+ * holds only the snapshot it selected, shown as its own row when it is not in
+ * the library. Library CRUD here never edits a project — replacing a
+ * project's copy is always the explicit "Use this machine" / "Update project
+ * copy" action.
+ */
 export function MachineDefinitionManagerDialog({
   onClose,
+  focusMachineId = null,
 }: MachineDefinitionManagerDialogProps) {
   const project = useProjectStore((s) => s.project)
-  const setSelectedMachineId = useProjectStore((s) => s.setSelectedMachineId)
-  const addMachineDefinition = useProjectStore((s) => s.addMachineDefinition)
-  const removeMachineDefinition = useProjectStore((s) => s.removeMachineDefinition)
-  const updateMachineDefinition = useProjectStore((s) => s.updateMachineDefinition)
-  const duplicateMachineDefinition = useProjectStore((s) => s.duplicateMachineDefinition)
+  const setProjectMachine = useProjectStore((s) => s.setProjectMachine)
+  const { library, customMachines } = useMachineLibrary()
   const { t, languageTag } = useI18n()
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
     return t(key, params)
   }
 
-  const definitions = project.meta.machineDefinitions
-  const activeId = project.meta.selectedMachineId
+  const projectMachine = getActiveMachineDefinition(project)
+  const projectOnlyMachine = projectMachine
+    && !library.some((definition) => definition.id === projectMachine.id)
+    ? projectMachine
+    : null
 
-  // Track which machine is previewed in the right column (not necessarily active).
-  const [previewId, setPreviewId] = useState<string | null>(() =>
-    activeId ?? (definitions.length > 0 ? definitions[0].id : null),
+  /** Every row the list can show: the library, plus a project-only snapshot. */
+  const rows = useMemo(
+    () => (projectOnlyMachine ? [...library, projectOnlyMachine] : [...library]),
+    [library, projectOnlyMachine],
   )
 
-  // If the previewed machine was removed, fall back to the first available.
-  const safePreviewId =
-    previewId && definitions.some((d) => d.id === previewId)
-      ? previewId
-      : definitions.length > 0
-        ? definitions[0].id
-        : null
+  const [previewId, setPreviewId] = useState<string | null>(
+    () => focusMachineId ?? projectMachine?.id ?? (library.length > 0 ? library[0].id : null),
+  )
 
+  // A removed machine falls back to the first row so list and detail stay in sync.
+  const safePreviewId = previewId && rows.some((definition) => definition.id === previewId)
+    ? previewId
+    : (rows.length > 0 ? rows[0].id : null)
   const previewDef = safePreviewId
-    ? definitions.find((d) => d.id === safePreviewId) ?? null
+    ? rows.find((definition) => definition.id === safePreviewId) ?? null
     : null
 
   const [editingDef, setEditingDef] = useState<MachineDefinition | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  // Escape key closes.
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') onClose()
@@ -75,77 +96,112 @@ export function MachineDefinitionManagerDialog({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
+  const isProjectCopy = previewDef !== null && previewDef === projectOnlyMachine
+  const isActive = previewDef !== null
+    && projectMachine !== null
+    && previewDef.id === projectMachine.id
+    && machinesFunctionallyEqual(previewDef, projectMachine)
+  /** The previewed library machine is a newer/different copy of the project's. */
+  const isUpdateForProject = previewDef !== null
+    && projectMachine !== null
+    && !isProjectCopy
+    && previewDef.id === projectMachine.id
+    && !machinesFunctionallyEqual(previewDef, projectMachine)
+  const differingFields = isUpdateForProject && projectMachine && previewDef
+    ? machineFieldDifferences(projectMachine, previewDef)
+    : []
+
   const handleUseThisMachine = useCallback(() => {
-    if (previewDef) {
-      setSelectedMachineId(previewDef.id)
-    }
-  }, [previewDef, setSelectedMachineId])
+    if (previewDef) setProjectMachine(previewDef)
+  }, [previewDef, setProjectMachine])
+
+  const handleSaveToMyMachines = useCallback(() => {
+    if (!previewDef) return
+    const result = saveCustomMachine(previewDef)
+    setError(result.error ?? null)
+    if (result.ok) setPreviewId(result.ok.id)
+  }, [previewDef])
 
   const handleImportJson = useCallback(async () => {
     const content = await platform.pickJsonFile()
     if (!content) return
-    try {
-      const parsed = JSON.parse(content)
-      const validated = validateMachineDefinition({ ...parsed, builtin: false })
-      addMachineDefinition(validated)
-      setPreviewId(validated.id)
-    } catch (error) {
-      alert(td('dialogs.machineManager.invalidImport', { message: error instanceof Error ? error.message : String(error) }))
+    const parsed = parseMachineImport(content, customMachines)
+    if (parsed.error !== undefined) {
+      setError(td('dialogs.machineManager.invalidImport', { message: parsed.error }))
+      return
     }
+    const saved = saveCustomMachine(parsed.ok)
+    setError(saved.error ?? null)
+    if (saved.ok) setPreviewId(saved.ok.id)
   // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
-  }, [addMachineDefinition, languageTag])
+  }, [customMachines, languageTag])
 
   const handleEdit = useCallback(() => {
-    if (previewDef) {
-      setEditingDef(previewDef)
-    }
-  }, [previewDef])
+    if (previewDef && !previewDef.builtin && !isProjectCopy) setEditingDef(previewDef)
+  }, [previewDef, isProjectCopy])
 
   const handleDuplicateToEdit = useCallback(() => {
     if (!previewDef) return
-    // Store the current list length so we can find the new entry.
-    const prevIds = new Set(definitions.map((d) => d.id))
-    duplicateMachineDefinition(previewDef.id)
-    // The store updates synchronously; find the new id.
-    const updated = useProjectStore.getState().project.meta.machineDefinitions
-    const newDef = updated.find((d) => !prevIds.has(d.id))
-    if (newDef) {
-      setPreviewId(newDef.id)
-      setEditingDef(newDef)
+    const duplicate = duplicateMachineAsCustom(previewDef, customMachines)
+    const saved = saveCustomMachine(duplicate)
+    setError(saved.error ?? null)
+    if (saved.ok) {
+      setPreviewId(saved.ok.id)
+      setEditingDef(saved.ok)
     }
-  }, [previewDef, definitions, duplicateMachineDefinition])
+  }, [previewDef, customMachines])
 
   const handleExportJson = useCallback(() => {
     if (!previewDef) return
-    const { builtin: _, ...exportDef } = previewDef as MachineDefinition & { builtin?: boolean }
-    platform.saveTextFile(
-      `${previewDef.name}.json`,
-      JSON.stringify(exportDef, null, 2),
-      'json',
-    )
+    platform.saveTextFile(`${previewDef.name}.json`, serializeMachineExport(previewDef), 'json')
   }, [previewDef])
 
   const handleRemove = useCallback(() => {
-    if (!previewDef || previewDef.builtin) return
-    removeMachineDefinition(previewDef.id)
-    // The store updates synchronously; reset previewId so the list
-    // selection row stays in sync with the detail pane.
-    const updated = useProjectStore.getState().project.meta.machineDefinitions
-    setPreviewId(updated.length > 0 ? updated[0].id : null)
-  }, [previewDef, removeMachineDefinition])
+    if (!previewDef || previewDef.builtin || isProjectCopy) return
+    deleteCustomMachine(previewDef.id)
+    setPreviewId(null)
+  }, [previewDef, isProjectCopy])
 
   const handleEditorSave = useCallback(
     (definition: MachineDefinition) => {
-      // Use the original editingDef.id for the lookup so that editing the
-      // "id" field in the raw JSON editor does not cause the update to
-      // target a non-existent key and silently no-op.
-      updateMachineDefinition(editingDef!.id, definition)
+      // Look the entry up by the ID it had when editing started, so renaming
+      // the "id" field in the raw JSON editor moves the entry instead of
+      // silently creating a second one.
+      const originalId = editingDef?.id
+      const saved = saveCustomMachine(originalId ? { ...definition, id: originalId } : definition)
+      setError(saved.error ?? null)
+      if (saved.ok) setPreviewId(saved.ok.id)
       setEditingDef(null)
     },
-    [updateMachineDefinition, editingDef],
+    [editingDef],
   )
 
-  const isActive = previewDef?.id === activeId
+  function renderRow(definition: MachineDefinition, projectOnly: boolean) {
+    const rowIsActive = projectMachine !== null && definition.id === projectMachine.id
+    return (
+      <button
+        key={`${projectOnly ? 'project' : 'library'}-${definition.id}`}
+        type="button"
+        className={[
+          'machine-manager-item',
+          definition.id === safePreviewId ? 'machine-manager-item--selected' : '',
+          rowIsActive ? 'machine-manager-item--active' : '',
+        ].join(' ').trim()}
+        onClick={() => { setPreviewId(definition.id); setError(null) }}
+      >
+        <div className="machine-manager-item-name">{definition.name}</div>
+        {projectOnly ? (
+          <span className="machine-manager-badge machine-manager-badge--missing">
+            {td('dialogs.machineManager.notInLibrary')}
+          </span>
+        ) : (
+          <span className={definition.builtin ? 'machine-manager-badge machine-manager-badge--builtin' : 'machine-manager-badge machine-manager-badge--custom'}>
+            {definition.builtin ? td('dialogs.machineManager.builtin') : td('dialogs.machineManager.custom')}
+          </span>
+        )}
+      </button>
+    )
+  }
 
   return createPortal(
     <div className="dialog-backdrop" onClick={onClose}>
@@ -164,29 +220,21 @@ export function MachineDefinitionManagerDialog({
         </div>
 
         <div className="dialog-body dialog-body--machine-manager">
-          {/* Left: machine list */}
+          {/* Left: the application library, then the project-only snapshot */}
           <div className="machine-manager-list">
-            {definitions.map((def) => (
-              <button
-                key={def.id}
-                type="button"
-                className={[
-                  'machine-manager-item',
-                  def.id === previewId ? 'machine-manager-item--selected' : '',
-                  def.id === activeId ? 'machine-manager-item--active' : '',
-                ].join(' ').trim()}
-                onClick={() => setPreviewId(def.id)}
-              >
-                <div className="machine-manager-item-name">{def.name}</div>
-                <span className={def.builtin ? 'machine-manager-badge machine-manager-badge--builtin' : 'machine-manager-badge machine-manager-badge--custom'}>
-                  {def.builtin ? td('dialogs.machineManager.builtin') : td('dialogs.machineManager.custom')}
-                </span>
-              </button>
-            ))}
-            {definitions.length === 0 ? (
-              <div className="machine-manager-empty">
-                {td('dialogs.machineManager.empty')}
-              </div>
+            <div className="machine-manager-group-label">{td('dialogs.machineManager.builtinGroup')}</div>
+            {library.filter((definition) => definition.builtin).map((definition) => renderRow(definition, false))}
+
+            <div className="machine-manager-group-label">{td('dialogs.machineManager.myMachines')}</div>
+            {customMachines.length > 0
+              ? customMachines.map((definition) => renderRow(definition, false))
+              : <div className="machine-manager-empty">{td('dialogs.machineManager.emptyCustom')}</div>}
+
+            {projectOnlyMachine ? (
+              <>
+                <div className="machine-manager-group-label">{td('dialogs.machineManager.projectGroup')}</div>
+                {renderRow(projectOnlyMachine, true)}
+              </>
             ) : null}
           </div>
 
@@ -199,9 +247,16 @@ export function MachineDefinitionManagerDialog({
                   {isActive ? (
                     <span className="machine-manager-badge machine-manager-badge--active">{td('dialogs.machineManager.active')}</span>
                   ) : null}
-                  <span className={previewDef.builtin ? 'machine-manager-badge machine-manager-badge--builtin' : 'machine-manager-badge machine-manager-badge--custom'}>
-                    {previewDef.builtin ? td('dialogs.machineManager.builtin') : td('dialogs.machineManager.custom')}
-                  </span>
+                  {isProjectCopy ? (
+                    <span className="machine-manager-badge machine-manager-badge--missing">{td('dialogs.machineManager.notInLibrary')}</span>
+                  ) : (
+                    <span className={previewDef.builtin ? 'machine-manager-badge machine-manager-badge--builtin' : 'machine-manager-badge machine-manager-badge--custom'}>
+                      {previewDef.builtin ? td('dialogs.machineManager.builtin') : td('dialogs.machineManager.custom')}
+                    </span>
+                  )}
+                  {isUpdateForProject ? (
+                    <span className="machine-manager-badge machine-manager-badge--update">{td('dialogs.machineManager.updateAvailable')}</span>
+                  ) : null}
                 </div>
 
                 <dl className="machine-manager-meta">
@@ -222,17 +277,44 @@ export function MachineDefinitionManagerDialog({
                   {previewDef.builtin ? (
                     <dd className="machine-manager-hint">{td('dialogs.machineManager.builtinHint')}</dd>
                   ) : null}
+                  {isProjectCopy ? (
+                    <dd className="machine-manager-hint">{td('dialogs.machineManager.projectCopyHint')}</dd>
+                  ) : null}
                 </dl>
 
+                {isUpdateForProject ? (
+                  <div className="machine-manager-comparison">
+                    <strong>{td('dialogs.machineManager.comparisonTitle')}</strong>
+                    <p>{td('dialogs.machineManager.comparisonBody', { name: previewDef.name })}</p>
+                    {differingFields.length > 0 ? (
+                      <p className="machine-manager-hint">
+                        {td('dialogs.machineManager.comparisonFields', { fields: differingFields.join(', ') })}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {error ? <div className="machine-editor-error">{error}</div> : null}
+
                 <div className="machine-manager-actions">
-                  {!isActive ? (
+                  {isUpdateForProject ? (
+                    <button className="btn-primary" type="button" onClick={handleUseThisMachine}>
+                      {td('dialogs.machineManager.updateProjectCopy')}
+                    </button>
+                  ) : !isActive ? (
                     <button className="btn-primary" type="button" onClick={handleUseThisMachine}>
                       {td('dialogs.machineManager.useThisMachine')}
                     </button>
                   ) : null}
 
                   <div className="machine-manager-actions-row">
-                    {!previewDef.builtin ? (
+                    {isProjectCopy ? (
+                      <button className="btn-secondary" type="button" onClick={handleSaveToMyMachines}>
+                        {td('dialogs.machineManager.saveToMyMachines')}
+                      </button>
+                    ) : null}
+
+                    {!previewDef.builtin && !isProjectCopy ? (
                       <button className="btn-secondary" type="button" onClick={handleEdit}>
                         {td('dialogs.machineManager.edit')}
                       </button>
@@ -261,7 +343,7 @@ export function MachineDefinitionManagerDialog({
                     </button>
                   </div>
 
-                  {!previewDef.builtin ? (
+                  {!previewDef.builtin && !isProjectCopy ? (
                     <button className="machine-manager-action--remove" type="button" onClick={handleRemove}>
                       {td('dialogs.machineManager.removeMachine')}
                     </button>
