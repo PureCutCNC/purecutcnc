@@ -34,6 +34,30 @@ import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
 
+/**
+ * Human labels for the top-level definition fields, so the comparison state
+ * says "canned cycles, motion commands" instead of leaking schema keys.
+ */
+const MACHINE_FIELD_LABEL_KEYS: Record<string, keyof typeof dialogsEn> = {
+  id: 'dialogs.machineManager.field.id',
+  name: 'dialogs.machineManager.field.name',
+  description: 'dialogs.machineManager.field.description',
+  vendor: 'dialogs.machineManager.field.vendor',
+  builtin: 'dialogs.machineManager.field.builtin',
+  fileExtension: 'dialogs.machineManager.field.fileExtension',
+  coordinateSystem: 'dialogs.machineManager.field.coordinateSystem',
+  numberFormat: 'dialogs.machineManager.field.numberFormat',
+  units: 'dialogs.machineManager.field.units',
+  program: 'dialogs.machineManager.field.program',
+  workCoordinates: 'dialogs.machineManager.field.workCoordinates',
+  motion: 'dialogs.machineManager.field.motion',
+  feedSpeed: 'dialogs.machineManager.field.feedSpeed',
+  toolChange: 'dialogs.machineManager.field.toolChange',
+  cannedCycles: 'dialogs.machineManager.field.cannedCycles',
+  coolant: 'dialogs.machineManager.field.coolant',
+  stop: 'dialogs.machineManager.field.stop',
+}
+
 export interface MachineDefinitionManagerDialogProps {
   onClose: () => void
   /** Open focused on a specific machine — used by the update warning's "Review update". */
@@ -107,9 +131,13 @@ export function MachineDefinitionManagerDialog({
     && !isProjectCopy
     && previewDef.id === projectMachine.id
     && !machinesFunctionallyEqual(previewDef, projectMachine)
-  const differingFields = isUpdateForProject && projectMachine && previewDef
+  const differingFields = (isUpdateForProject && projectMachine && previewDef
     ? machineFieldDifferences(projectMachine, previewDef)
     : []
+  ).map((field) => {
+    const labelKey = MACHINE_FIELD_LABEL_KEYS[field]
+    return labelKey ? td(labelKey) : field
+  })
 
   const handleUseThisMachine = useCallback(() => {
     if (previewDef) setProjectMachine(previewDef)
@@ -285,7 +313,14 @@ export function MachineDefinitionManagerDialog({
                 {isUpdateForProject ? (
                   <div className="machine-manager-comparison">
                     <strong>{td('dialogs.machineManager.comparisonTitle')}</strong>
-                    <p>{td('dialogs.machineManager.comparisonBody', { name: previewDef.name })}</p>
+                    <p>
+                      {td(
+                        previewDef.builtin
+                          ? 'dialogs.machineManager.comparisonBodyBuiltin'
+                          : 'dialogs.machineManager.comparisonBodyCustom',
+                        { name: previewDef.name },
+                      )}
+                    </p>
                     {differingFields.length > 0 ? (
                       <p className="machine-manager-hint">
                         {td('dialogs.machineManager.comparisonFields', { fields: differingFields.join(', ') })}

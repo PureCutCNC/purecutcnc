@@ -111,7 +111,14 @@ test('a stale project copy warns without changing anything until asked', async (
   // The manager shows the comparison and only then replaces the copy.
   await ui.properties.manageMachines(app.page).click()
   await ui.machineManager.item(app.page, 'GRBL 1.1').first().click()
-  await expect(ui.machineManager.comparison(app.page)).toBeVisible()
+  const comparison = ui.machineManager.comparison(app.page)
+  await expect(comparison).toBeVisible()
+  // GRBL is built-in, so the comparison must name the build — not My Machines,
+  // which is empty here — and list differences in words, not schema keys.
+  await expect(comparison).toContainText('built-in definition in this version')
+  await expect(comparison).not.toContainText('My Machines')
+  await expect(comparison).toContainText('motion commands')
+  await expect(comparison).not.toContainText('cannedCycles')
   await ui.machineManager.updateProjectCopyButton(app.page).click()
 
   const updated = await embeddedMachine(app.page)
