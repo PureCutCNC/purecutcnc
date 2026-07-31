@@ -31,6 +31,7 @@ Defined in `src/types/project.ts`:
 - **SketchFeature:** A geometry-bearing runtime/editing shape. It is used for drafts and resolved world-space views, but it is not a serialized `Project.features[]` row in format 3.0.
 - **Construction geometry** (`operation: 'construction'`, issue #199): sketch-only reference geometry (points/lines/shapes, open or closed). It lives in its own **Construction** tree section, renders muted/dashed on the 2D canvas, participates in snapping, mirroring, cutting, dimensions, and as a constraint *reference* — but is **hard-excluded** from CSG/3D preview, simulation, toolpaths, and CAM targets. The exclusion is centralized in `src/store/helpers/featureRoles.ts` (`isMachinable` / `modelFeatures()`); use those predicates instead of ad-hoc `operation !== 'region'` checks. Guarded by `src/engine/constructionExclusion.test.ts`.
 - **Machine Origin:** Defines the translation between internal project coordinates and machine G-code coordinates.
+- **Machine snapshot** (issue #403): `meta.machineDefinitions` holds **zero or one** complete definition — the machine selected for this project — and `meta.selectedMachineId` always equals `machineDefinitions[0]?.id ?? null`. The pickable *library* (bundled definitions from the current build plus the app-local **My Machines** list) lives in `src/machine/` as an application preference and is never serialized into a `.camj`. `getActiveMachineDefinition(project)` is the export boundary and reads only the embedded snapshot, so library edits and app upgrades cannot change an existing project's G-code; replacing the snapshot is always an explicit, dirtying, undoable user action. Legacy files that stored a whole library are compacted on decode, with their custom definitions migrated into My Machines. See [`planning/G-code_Export_Design.md`](planning/G-code_Export_Design.md).
 
 ## 4. Feature References (Definitions & Instances)
 
@@ -58,6 +59,7 @@ PureCutCNC supports SketchUp-style **linked copies**: editing a shared shape upd
 - `src/import/`: DXF and SVG parsers that normalize external geometry into the `.camj` format.
 - `src/text/`: Logic for converting text and fonts into machinable geometry.
 - `src/i18n/`: Typed localization layer — catalogs, locale registry, custom language packs, store/provider (see §9).
+- `src/machine/`: Application machine library — bundled + **My Machines** registry, versioned local-storage persistence, and project-snapshot comparison (see §3).
 - `src/components/language/`: Language manager + custom-language editor dialogs (mirrors `src/components/theme/`).
 - `src/styles/tablet.css`: Tablet-optimized styles for touch/mobile-friendly UI (see [`planning/TABLET_UX_DESIGN.md`](planning/TABLET_UX_DESIGN.md) for the current tablet UX contract).
 

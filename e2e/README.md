@@ -17,11 +17,20 @@ or uncaught page error.
 
 ## CI gate
 
-Pull requests run `npm run test:e2e` in a dedicated workflow job. CI installs
-Chromium with Playwright, forbids committed `.only` tests, keeps traces on
-failure, and uploads `playwright-report/` / `test-results/` when the job fails.
-The e2e job is separate from `npm run build` so the build script stays
-browser-free while PRs still exercise the browser smoke.
+Pull requests run three logical E2E lanes on separate runners. Each runner
+keeps the safe CI configuration of two workers with per-file parallelism
+disabled, so the split reduces elapsed time without increasing browser or Vite
+load inside a runner:
+
+| Lane | Command | Specs |
+|------|---------|-------|
+| Settings | `npm run test:e2e:settings` | appearance, units, languages, language manager, theme manager |
+| Project input | `npm run test:e2e:project-input` | feature references, import geometry, creation targets |
+| Workflow UI | `npm run test:e2e:workflow-ui` | CAM operations, G-code export, motion debug, overlap selection, viewport views |
+
+The aggregate `e2e` check succeeds only when every lane succeeds, preserving
+the required PR gate. Each failed lane uploads its own Playwright report and
+test results. `npm run test:e2e` remains the full local-suite command.
 
 ## Scaffolding (read before writing a test)
 
@@ -33,6 +42,7 @@ browser-free while PRs still exercise the browser smoke.
 | `featureReferences.helpers.ts` | FR-specific helpers (e.g. `seedLinkedProject`). Built on the generic primitives. A new feature area gets its own `<area>.helpers.ts`. |
 | `camOperations.helpers.ts` | CAM-specific fixture helpers for operation workflow smoke tests. |
 | `gcodeExport.helpers.ts` | Export-dialog fixture: tool + two toolpath-producing operations + bundled GRBL machine selected. |
+| `machineLibrary.helpers.ts` | Machine-library fixture: a minimal project with a configurable machine section, a complete stand-in `MachineDefinition`, and an `embeddedMachine` store reader. |
 
 Current smoke targets:
 
@@ -42,6 +52,7 @@ Current smoke targets:
 - `creationTargets.smoke.spec.ts` — dedicated Line creation target wiring, active drawing badge, and landscape-tablet availability.
 - `gcodeExport.smoke.spec.ts` — Export G-code dialog operation checklist: per-operation entry point, default set, none-selected disabled state.
 - `importGeometry.smoke.spec.ts` — real-user import flow: dialog open/close, button state, file upload via hidden input, SVG/DXF mode selection with classification summary verification (Auto/Paths/Solid regions), real Import button, project-role verification through existing `getProject` seam, and landscape tablet layout. Synthetic inline fixtures only.
+- `machineLibrary.smoke.spec.ts` — application machine library (issue #403): My Machines persistence across projects and restarts, one-snapshot embedding on selection, the non-blocking update warning (keep vs. explicit update), and library deletion leaving a project's embedded machine usable.
 - `overlapFeatureSelection.smoke.spec.ts` — direct selection for clear outline clicks, ambiguous-overlap picker wiring, candidate hover/focus previews, non-topmost selection, boxed scroll behavior, next-action dismissal, and landscape-tablet availability.
 
 ## Adding a test

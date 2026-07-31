@@ -20,7 +20,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `clampsSlice.ts` — clamp CRUD: add/update/delete/duplicate clamp, set visibility, move control point
   - `tabsSlice.ts` — tab CRUD: update/delete tab, set visibility, move control point, auto-place for operation
   - `backdropSlice.ts` — backdrop CRUD: load/set/update/delete backdrop image
-  - `machineDefsSlice.ts` — machine definition CRUD: set selected, add/remove/refresh machine definitions
+  - `machineDefsSlice.ts` — the project's machine snapshot: one `setProjectMachine` action that atomically embeds or clears the single selected definition (history-tracked). The machine *library* lives in [`src/machine/`](../machine/INDEX.md) as an application preference and never touches the project.
   - `operationsSlice.ts` — operation CRUD, rest-operation creation, toolpath visibility, duplication, and ordering
   - `projectLifecycleSlice.ts` — project lifecycle and persistence actions: create/load/open/save, metadata display settings, and export path markers
   - `historySlice.ts` — undo/redo and history transaction lifecycle
@@ -61,6 +61,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `duplicateReference.test.ts` — reference copies share definitions and apply transforms once; independent copies clone definitions; copyMode store behavior
 - `editInPlace.test.ts` — edit-sketch-in-place for transformed linked instances; inverse-transform round-trip; make-unique-then-edit
 - `importRoles.test.ts` — importShapes with typed `classified` array: explicit roles honored in classifier order, fallback to legacy closed→add/open→line, definitions created, history recorded, layer grouping preserved; child-first source → parent-before-child, degenerate prefix, and cross-layer ordering regressions (issue #270 S3)
+- `machineSnapshot.test.ts` — issue #403: legacy machine libraries compact to the selected snapshot, custom definitions migrate into My Machines (idempotently), invalid selections clear with a load warning, save round trip holds the zero-or-one invariant, template machine behavior, and the export regression proving an embedded machine absent from the local library still emits identical G-code
 - `manualNestingDefaults.test.ts` — manual closed-feature defaults (issue #270 S5): Add/Subtract alternation, non-solid exclusion, explicit-operation precedence, no retroactive changes, and closed-composite completion
 - `importBulk.test.ts` — synthetic bulk-import coverage (issue #270 S4): one 2,980-contour repeated-name stress case plus the 499/500 expanded-selection boundary, many-layer folder naming, definitions/order/history, and legacy small-import behavior
 - `editOpFidelity.test.ts` — sketch-edit op segment-kind preservation + linked-instance propagation for insert/delete point, disconnect, and arc-handle edit (fills gaps editInPlace + H1 didn't cover)

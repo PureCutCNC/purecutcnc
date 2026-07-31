@@ -20,6 +20,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [hooks/](hooks/INDEX.md) — shared cross-cutting React hooks (`useStableEvent`, `useWindowEvent`/`useEventListener`)
 - [i18n/](i18n/INDEX.md) — typed localization layer: English-fallback catalogs (en, zh-CN), custom language packs, locale persistence/detection, and the `useI18n()` React binding
 - [theme/](theme/INDEX.md) — app-local Dark/Light/System appearance state plus typed canvas and Three.js palettes
+- [machine/](machine/INDEX.md) — app-local machine library: bundled definitions from the build plus a persistent **My Machines** list; a project embeds only its selected snapshot
 - [commands/](commands/INDEX.md) — shared desktop/tablet command descriptors and store-backed command predicates
 - [types/](types/) — core data model. `project.ts` is the canonical `.camj` schema
 - [utils/](utils/) — units, analytics, icons, version, misc helpers

@@ -22,6 +22,8 @@ import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { getStockBounds, newProject } from '../../types/project'
 import type { Project } from '../../types/project'
 import { formatLength } from '../../utils/units'
+import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
+import { normalizeMachineDefinitions } from '../../store/helpers/normalize'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
@@ -61,8 +63,18 @@ function templateLabel(
 }
 
 function setupOnlyTemplate(template: Project): Project {
+  const cloned = structuredClone(template)
+  // A template carries only the machine snapshot it selected — never a
+  // library. The picker always reads the current application library, so a
+  // template can't decide which bundled machines exist.
+  const machines = normalizeMachineDefinitions(cloned)
   return {
-    ...structuredClone(template),
+    ...cloned,
+    meta: {
+      ...cloned.meta,
+      machineDefinitions: machines.machineDefinitions,
+      selectedMachineId: machines.selectedMachineId,
+    },
     dimensions: {},
     features: [],
     featureFolders: [],
@@ -140,9 +152,9 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
         features: activeTemplate.features.length,
         tools: activeTemplate.tools.length,
         operations: activeTemplate.operations.length,
-        machine: activeTemplate.meta.selectedMachineId
-          ? (activeTemplate.meta.machineDefinitions.find((definition) => definition.id === activeTemplate.meta.selectedMachineId)?.name ?? td('dialogs.common.none'))
-          : td('dialogs.common.none'),
+        // The template carries only its own embedded snapshot; the machine
+        // picker always reads the current application library instead.
+        machine: getActiveMachineDefinition(activeTemplate)?.name ?? td('dialogs.common.none'),
       }
     } catch {
       return null

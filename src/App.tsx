@@ -34,6 +34,7 @@ import { NewProjectDialog } from './components/project/NewProjectDialog'
 import { ImportGeometryDialog } from './components/project/ImportGeometryDialog'
 import { EmptyStateOverlay } from './components/onboarding/EmptyStateOverlay'
 import { AboutDialog } from './components/about/AboutDialog'
+import { MachineUpdateNotice } from './components/machine/MachineUpdateNotice'
 import { useProjectStore } from './store/projectStore'
 import { useDesktopIntegration } from './platform/useDesktopIntegration'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
@@ -524,6 +525,9 @@ function App() {
           }}
         />
       )}
+
+      {/* Re-mounted per opened project so each project gets the notice once. */}
+      <MachineUpdateNotice key={`machine-update-${projectKey}`} />
 
       {projectLoading && (
         <div className="toolpath-loading-overlay">

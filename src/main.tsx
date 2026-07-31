@@ -28,9 +28,11 @@ import { ThemeProvider } from './theme/ThemeProvider'
 import { bootstrapTheme } from './theme/bootstrap'
 import { I18nProvider } from './i18n/I18nProvider'
 import { bootstrapI18n } from './i18n/bootstrap'
+import { bootstrapMachineLibrary } from './machine/bootstrap'
 
 bootstrapTheme()
 bootstrapI18n()
+bootstrapMachineLibrary()
 
 // Swap #root for a static error card if something throws before React mounts.
 // Once React is alive, AppErrorBoundary takes over — this flag prevents the

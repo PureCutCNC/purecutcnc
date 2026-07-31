@@ -183,7 +183,8 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
 
   // ── Properties: machine ──
   'featureTree.properties.machine.none': 'Keine',
-  'featureTree.properties.machine.refresh': 'Maschinendefinitionen aktualisieren',
+  'featureTree.properties.machine.updateAvailable': 'Aktualisierung verfügbar',
+  'featureTree.properties.machine.notInLibrary': 'Nicht in „Meine Maschinen“',
   'featureTree.properties.machine.manage': 'Maschinen verwalten…',
   'featureTree.properties.machine.builtin': 'Integriert',
   'featureTree.properties.machine.custom': 'Benutzerdefiniert',

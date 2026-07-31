@@ -276,6 +276,56 @@ export const contextMenu = {
   groupLabels: (menu: Locator) => menu.locator('.feature-context-menu__group-label'),
 }
 
+// ── Machine manager & update notice ────────────────────────────────
+
+export const machineManager = {
+  dialog: (page: Page) => page.getByRole('dialog', { name: 'Manage Machines' }),
+  /** A row in the library list (built-in, My Machines, or the project copy). */
+  item: (page: Page, name: string) =>
+    machineManager.dialog(page).locator('.machine-manager-item')
+      .filter({ has: page.getByText(name, { exact: true }) }),
+  groupLabel: (page: Page, text: string) =>
+    machineManager.dialog(page).locator('.machine-manager-group-label', { hasText: text }),
+  detailName: (page: Page) =>
+    machineManager.dialog(page).locator('.machine-manager-detail-name'),
+  badge: (page: Page, text: string) =>
+    machineManager.dialog(page).locator('.machine-manager-detail-header .machine-manager-badge', { hasText: text }),
+  comparison: (page: Page) =>
+    machineManager.dialog(page).locator('.machine-manager-comparison'),
+  useButton: (page: Page) =>
+    machineManager.dialog(page).getByRole('button', { name: 'Use this machine' }),
+  updateProjectCopyButton: (page: Page) =>
+    machineManager.dialog(page).getByRole('button', { name: 'Update project copy' }),
+  saveToMyMachinesButton: (page: Page) =>
+    machineManager.dialog(page).getByRole('button', { name: 'Save to My Machines' }),
+  duplicateButton: (page: Page) =>
+    machineManager.dialog(page).getByRole('button', { name: /^Duplicate/ }),
+  editButton: (page: Page) =>
+    machineManager.dialog(page).getByRole('button', { name: 'Edit', exact: true }),
+  removeButton: (page: Page) =>
+    machineManager.dialog(page).getByRole('button', { name: 'Remove machine' }),
+  doneButton: (page: Page) =>
+    machineManager.dialog(page).getByRole('button', { name: 'Done' }),
+}
+
+export const machineEditor = {
+  dialog: (page: Page) => page.getByRole('dialog', { name: /^Edit Machine/ }),
+  saveButton: (page: Page) =>
+    machineEditor.dialog(page).getByRole('button', { name: 'Save', exact: true }),
+  cancelButton: (page: Page) =>
+    machineEditor.dialog(page).getByRole('button', { name: 'Cancel', exact: true }),
+}
+
+export const machineUpdateNotice = {
+  root: (page: Page) => page.locator('.machine-update-notice'),
+  reviewButton: (page: Page) =>
+    machineUpdateNotice.root(page).getByRole('button', { name: 'Review update' }),
+  keepButton: (page: Page) =>
+    machineUpdateNotice.root(page).getByRole('button', { name: 'Keep project copy' }),
+  updateButton: (page: Page) =>
+    machineUpdateNotice.root(page).getByRole('button', { name: 'Update project copy' }),
+}
+
 // ── Properties panel ────────────────────────────────────────────────
 
 export const properties = {
@@ -297,6 +347,21 @@ export const properties = {
   /** An option in the open Project Units custom select. */
   unitsOption: (page: Page, label: string) =>
     page.locator('.properties-panel .properties-field').filter({ hasText: 'Units' }).getByRole('option', { name: label }),
+
+  /** Project Machine custom-select trigger, visible when the project root is selected. */
+  machineTrigger: (page: Page) =>
+    page.locator('.properties-panel .properties-field--machine .ui-select__trigger'),
+
+  /** An option in the open Project Machine custom select. */
+  machineOption: (page: Page, label: string) =>
+    page.locator('.properties-panel .properties-field--machine').getByRole('option', { name: label, exact: true }),
+
+  /** The badge row under the machine picker (built-in/custom + status). */
+  machineStatus: (page: Page) => page.locator('.properties-panel .properties-machine-status'),
+
+  /** "Manage machines…" action in the project properties. */
+  manageMachines: (page: Page) =>
+    page.locator('.properties-panel').getByRole('button', { name: 'Manage machines…' }),
 }
 
 // ── Project unit conversion dialog ─────────────────────────────────
