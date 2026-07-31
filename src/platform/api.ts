@@ -21,11 +21,6 @@ export interface OpenProjectResult {
   path: string | null
 }
 
-export interface PickGeometryResult {
-  name: string
-  content: string
-}
-
 /**
  * Platform-agnostic interface for all file I/O operations.
  *
@@ -91,10 +86,10 @@ export interface PlatformApi {
   pickJsonFile(): Promise<string | null>
 
   /**
-   * Prompt the user to choose an SVG or DXF file and return its name and content.
-   * Returns null if the user cancels.
+   * Prompt the user to choose an import file (svg/dxf/stl/obj/camj).
+   * Returns a File (with name + content) or null on cancel.
    */
-  pickGeometryFile(): Promise<PickGeometryResult | null>
+  pickImportFile(): Promise<File | null>
 
   /**
    * Open the OS file manager at the given path.

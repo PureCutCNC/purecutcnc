@@ -18,7 +18,7 @@ import type { PlatformApi } from './api'
 import { browserPlatform } from './browser'
 import { desktopPlatform } from './desktop'
 
-export type { PlatformApi, OpenProjectResult, PickGeometryResult } from './api'
+export type { PlatformApi, OpenProjectResult } from './api'
 
 /**
  * True when the app is running inside Tauri.

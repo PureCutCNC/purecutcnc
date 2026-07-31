@@ -15,11 +15,12 @@
  */
 
 import { open, save, confirm } from '@tauri-apps/plugin-dialog'
-import { readTextFile, writeFile, writeTextFile } from '@tauri-apps/plugin-fs'
+import { readFile, readTextFile, writeFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { getVersion } from '@tauri-apps/api/app'
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { translate } from '../i18n/store'
-import type { PlatformApi, OpenProjectResult, PickGeometryResult } from './api'
+import { SUPPORTED_IMPORT_EXTENSIONS } from '../import/types'
+import type { PlatformApi, OpenProjectResult } from './api'
 
 // ---------------------------------------------------------------------------
 // Desktop (Tauri) implementation
@@ -110,15 +111,17 @@ export const desktopPlatform: PlatformApi = {
     return readTextFile(path)
   },
 
-  async pickGeometryFile(): Promise<PickGeometryResult | null> {
+  async pickImportFile(): Promise<File | null> {
     const path = await open({
-      filters: [{ name: 'Geometry', extensions: ['svg', 'dxf'] }],
+      filters: [{ name: 'PureCutCNC Import', extensions: [...SUPPORTED_IMPORT_EXTENSIONS] }],
       multiple: false,
     })
     if (!path) return null
-    const content = await readTextFile(path)
     const name = path.split('/').pop() ?? path
-    return { name, content }
+    const bytes = await readFile(path)
+    const buffer = new ArrayBuffer(bytes.byteLength)
+    new Uint8Array(buffer).set(bytes)
+    return new File([new Blob([new Uint8Array(buffer)])], name)
   },
 
   async revealInFileManager(path: string): Promise<void> {
