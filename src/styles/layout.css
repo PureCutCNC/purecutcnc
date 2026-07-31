@@ -2017,11 +2017,6 @@
   gap: 6px;
 }
 
-.properties-refresh-btn .icon-sprite {
-  width: 15px;
-  height: 15px;
-}
-
 .properties-field > :not(span):not(.properties-field-label-row):not(.op-param-ref) {
   grid-column: 2;
 }

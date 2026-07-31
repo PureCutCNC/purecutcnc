@@ -188,7 +188,8 @@ export const featureTreeEn = {
 
   // ── Properties: machine ──
   'featureTree.properties.machine.none': 'None',
-  'featureTree.properties.machine.refresh': 'Refresh machine definitions',
+  'featureTree.properties.machine.updateAvailable': 'Update available',
+  'featureTree.properties.machine.notInLibrary': 'Not in My Machines',
   'featureTree.properties.machine.manage': 'Manage machines…',
   'featureTree.properties.machine.builtin': 'Built-in',
   'featureTree.properties.machine.custom': 'Custom',

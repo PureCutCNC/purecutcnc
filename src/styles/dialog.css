@@ -1593,6 +1593,88 @@
   color: var(--cut);
 }
 
+/* An available library update — advisory only, never auto-applied. */
+.machine-manager-badge--update {
+  background: color-mix(in srgb, var(--warning-text) 14%, transparent);
+  color: var(--warning-text);
+}
+
+/* The project's embedded machine is not in the local library. */
+.machine-manager-badge--missing {
+  background: color-mix(in srgb, var(--text-dim) 16%, transparent);
+  color: var(--text-dim);
+}
+
+/* Group headings in the library list */
+.machine-manager-group-label {
+  padding: 10px 12px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* Project-copy vs library-copy comparison */
+.machine-manager-comparison {
+  border: 1px solid color-mix(in srgb, var(--warning-text) 45%, transparent);
+  background: color-mix(in srgb, var(--warning-text) 8%, transparent);
+  border-radius: 7px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.machine-manager-comparison strong {
+  display: block;
+  color: var(--warning-text);
+  margin-bottom: 4px;
+}
+
+.machine-manager-comparison p {
+  margin: 0 0 4px;
+  color: var(--text);
+}
+
+.machine-manager-comparison .machine-manager-hint {
+  margin: 0;
+  word-break: break-word;
+}
+
+/* ── Non-blocking machine-update notice ─────────────────────── */
+
+.machine-update-notice {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 60;
+  max-width: 340px;
+  padding: 12px 14px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--warning-text) 50%, transparent);
+  background: var(--surface-popover);
+  box-shadow: 0 6px 20px var(--shadow-strong);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.machine-update-notice-title {
+  display: block;
+  color: var(--warning-text);
+  margin-bottom: 4px;
+}
+
+.machine-update-notice-body {
+  margin: 0 0 10px;
+  color: var(--text);
+}
+
+.machine-update-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 /* Meta */
 .machine-manager-meta {
   display: grid;

@@ -15,7 +15,6 @@
  */
 
 import type { MachineDefinition } from '../engine/gcode/types'
-import { copyBundledDefinitions } from '../engine/gcode/definitions'
 import type { SnapMode } from '../sketch/snapping'
 
 // ============================================================
@@ -579,6 +578,16 @@ export interface ProjectMeta {
   operationClearanceZ: number
   clampClearanceXY: number
   clampClearanceZ: number
+  /**
+   * The project's embedded machine snapshot — **zero or one** entry, never a
+   * library. The machine library lives in `src/machine/` as an application
+   * preference; only the definition selected for this project travels with
+   * the `.camj` file, so export stays deterministic for whoever opens it.
+   * The array field is retained so older builds can still read the file.
+   *
+   * Invariant (enforced on decode and by `setProjectMachine`):
+   * `selectedMachineId === machineDefinitions[0]?.id ?? null`.
+   */
   machineDefinitions: MachineDefinition[]
   selectedMachineId: string | null
 }
@@ -1307,7 +1316,7 @@ export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'inc
       operationClearanceZ: defaultOperationClearanceZ(units),
       clampClearanceXY: defaultClampClearanceXY(units),
       clampClearanceZ: defaultClampClearanceZ(units),
-      machineDefinitions: copyBundledDefinitions(),
+      machineDefinitions: [],
       selectedMachineId: null,
     },
     grid: defaultGrid(units),

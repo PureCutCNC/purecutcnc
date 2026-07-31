@@ -33,6 +33,13 @@ import {
 import { pruneUnusedModelAssets } from '../helpers/modelAssets'
 import { emptySelection } from './selectionSlice'
 import { decodeProjectFormat } from '../helpers/projectFormat'
+import { mergeCustomMachines } from '../../machine/store'
+
+/** Combine the independent load warnings into one message, or null if silent. */
+function joinWarnings(...warnings: (string | null)[]): string | null {
+  const present = warnings.filter((warning): warning is string => warning !== null)
+  return present.length > 0 ? present.join('\n\n') : null
+}
 
 export interface ProjectLifecycleSliceDependencies {
   rawSet: Parameters<StateCreator<ProjectStore>>[0]
@@ -274,6 +281,14 @@ export function createProjectLifecycleSlice(
         : null
       const decoded = decodeProjectFormat(parsed)
       const normalized = decoded.project
+      // A legacy file carried a whole machine library; the project keeps only
+      // its selected snapshot, so rescue the user's custom definitions into
+      // the application library before the rest of the file is dropped.
+      mergeCustomMachines(decoded.machineMigration.customDefinitions)
+      const machineWarning = decoded.machineMigration.unresolvedSelectionId
+        ? `This project selected a machine ("${decoded.machineMigration.unresolvedSelectionId}") that is missing or invalid, so no machine is selected. Choose one in Project Properties before exporting G-code.`
+        : null
+      const migratedMachineLibrary = decoded.machineMigration.compacted
       const stockDefaults = defaultStock(undefined, undefined, undefined, normalized.meta.units)
       const gridDefaults = defaultGrid(normalized.meta.units)
       clearProjectMemoryCaches()
@@ -290,10 +305,16 @@ export function createProjectLifecycleSlice(
           origin: normalized.origin ?? defaultOrigin(normalized.stock ?? stockDefaults),
         },
         filePath: path,
-        dirty: decoded.convertedLegacy,
-        loadWarning: versionWarning ?? (decoded.convertedLegacy
-          ? `This legacy project was converted in memory to file format ${LATEST_PROJECT_VERSION}. The original file is unchanged until you save. Files saved in ${LATEST_PROJECT_VERSION} are not compatible with older PureCutCNC builds.`
-          : null),
+        dirty: decoded.convertedLegacy || migratedMachineLibrary,
+        loadWarning: joinWarnings(
+          versionWarning ?? (decoded.convertedLegacy
+            ? `This legacy project was converted in memory to file format ${LATEST_PROJECT_VERSION}. The original file is unchanged until you save. Files saved in ${LATEST_PROJECT_VERSION} are not compatible with older PureCutCNC builds.`
+            : null),
+          migratedMachineLibrary
+            ? 'Machine definitions moved to the application library. This project now stores only its selected machine; any custom machines it carried were added to My Machines. The original file is unchanged until you save.'
+            : null,
+          machineWarning,
+        ),
         pendingAdd: null,
         pendingMove: null,
         pendingTransform: null,

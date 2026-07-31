@@ -189,7 +189,8 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
 
   // ── Properties: machine ──
   'featureTree.properties.machine.none': '无',
-  'featureTree.properties.machine.refresh': '刷新机床定义',
+  'featureTree.properties.machine.updateAvailable': '有可用更新',
+  'featureTree.properties.machine.notInLibrary': '不在“我的机床”中',
   'featureTree.properties.machine.manage': '管理机床…',
   'featureTree.properties.machine.builtin': '内置',
   'featureTree.properties.machine.custom': '自定义',

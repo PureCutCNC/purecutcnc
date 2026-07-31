@@ -16,7 +16,6 @@
 
 import { memo, useCallback, useContext, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
-import { Icon } from '../Icon'
 import { ExpandedPanelContext } from '../layout/expandedPanelContext'
 import { Select } from '../Select'
 import { DisclosureSection } from '../common/DisclosureSection'
@@ -29,6 +28,9 @@ import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
+import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
+import { machineSnapshotStatus } from '../../machine/registry'
+import { useMachineLibrary } from '../../machine/useMachineLibrary'
 import { useRequestUnitConversion } from '../project/UnitConversionContext'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
@@ -181,8 +183,8 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const setProjectName = useProjectStore((s) => s.setProjectName)
   const setShowFeatureInfo = useProjectStore((s) => s.setShowFeatureInfo)
   const setProjectClearances = useProjectStore((s) => s.setProjectClearances)
-  const setSelectedMachineId = useProjectStore((s) => s.setSelectedMachineId)
-  const refreshMachineDefinitions = useProjectStore((s) => s.refreshMachineDefinitions)
+  const setProjectMachine = useProjectStore((s) => s.setProjectMachine)
+  const { library: machineLibrary } = useMachineLibrary()
   const setOrigin = useProjectStore((s) => s.setOrigin)
   const startPlaceOrigin = useProjectStore((s) => s.startPlaceOrigin)
   const loadBackdropImage = useProjectStore((s) => s.loadBackdropImage)
@@ -301,9 +303,17 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     selectedNumericZTops.length === selectedZEditableFeatures.length
       ? Math.min(...selectedNumericZTops)
       : null
-  const selectedMachine = project.meta.selectedMachineId
-      ? project.meta.machineDefinitions.find((definition) => definition.id === project.meta.selectedMachineId) ?? null
-      : null
+  // The project embeds only its own snapshot; the picker lists the current
+  // application library, plus the embedded machine when it is not in it.
+  const selectedMachine = getActiveMachineDefinition(project)
+  const machineStatus = machineSnapshotStatus(selectedMachine, machineLibrary)
+  const machineOptions = [
+    { value: '', label: t('featureTree.properties.machine.none') },
+    ...machineLibrary.map((definition) => ({ value: definition.id, label: definition.name })),
+    ...(selectedMachine && !machineLibrary.some((definition) => definition.id === selectedMachine.id)
+      ? [{ value: selectedMachine.id, label: selectedMachine.name }]
+      : []),
+  ]
 
   function handleBackdropFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -452,23 +462,21 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           <label className="properties-field properties-field--machine">
             <div className="properties-field-label-row">
               <span>{t("featureTree.properties.machine")}</span>
-              <button
-                type="button"
-                className="tree-action-btn properties-refresh-btn"
-                onClick={refreshMachineDefinitions}
-                aria-label={t('featureTree.properties.machine.refresh')}
-                title={t('featureTree.properties.machine.refresh')}
-              >
-                <Icon id="refresh" size={15} />
-              </button>
             </div>
             <Select
               value={project.meta.selectedMachineId ?? ''}
-              options={[
-                { value: '', label: t('featureTree.properties.machine.none') },
-                ...project.meta.machineDefinitions.map((definition) => ({ value: definition.id, label: definition.name })),
-              ]}
-              onChange={(value) => setSelectedMachineId(value || null)}
+              options={machineOptions}
+              onChange={(value) => {
+                if (!value) {
+                  setProjectMachine(null)
+                  return
+                }
+                // Re-picking a machine that is only in the project keeps the
+                // embedded snapshot rather than clearing the selection.
+                const picked = machineLibrary.find((definition) => definition.id === value)
+                  ?? (selectedMachine?.id === value ? selectedMachine : null)
+                setProjectMachine(picked)
+              }}
             />
           </label>
           {selectedMachine ? (
@@ -477,6 +485,16 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 {selectedMachine.builtin ? t('featureTree.properties.machine.builtin') : t('featureTree.properties.machine.custom')}
               </span>
               <span className="properties-machine-ext">.{selectedMachine.fileExtension}</span>
+              {machineStatus.kind === 'update-available' ? (
+                <span className="machine-manager-badge machine-manager-badge--update">
+                  {t('featureTree.properties.machine.updateAvailable')}
+                </span>
+              ) : null}
+              {machineStatus.kind === 'not-in-library' ? (
+                <span className="machine-manager-badge machine-manager-badge--missing">
+                  {t('featureTree.properties.machine.notInLibrary')}
+                </span>
+              ) : null}
               {selectedMachine.builtin ? (
                 <span className="properties-machine-hint">{t('featureTree.properties.machine.duplicateHint')}</span>
               ) : null}

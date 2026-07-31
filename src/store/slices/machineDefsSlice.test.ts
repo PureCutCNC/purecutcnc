@@ -15,295 +15,204 @@
  */
 
 import type { MachineDefinition } from '../../engine/gcode/types'
-import type { Project } from '../../types/project'
+import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
+import { bundledMachines, validateCustomMachine } from '../../machine/registry'
+import {
+  deleteCustomMachine,
+  initMachineLibrary,
+  resetMachineLibraryForTests,
+  saveCustomMachine,
+} from '../../machine/store'
+import { newProject } from '../../types/project'
 import { useProjectStore } from '../projectStore'
 import type { ProjectStore } from '../types'
-import {
-  slugFromName,
-  allocateMachineId,
-} from './machineDefsSlice'
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
 
-/** Minimal valid machine definition. */
-function makeDef(id: string, name?: string, builtin = false): MachineDefinition {
-  return {
+function customMachine(id: string, name: string, overrides: Partial<MachineDefinition> = {}): MachineDefinition {
+  const validated = validateCustomMachine({
+    ...structuredClone(bundledMachines()[0]),
     id,
-    name: name ?? id,
-    description: `Description for ${name ?? id}`,
-    builtin,
-    fileExtension: 'nc',
-    coordinateSystem: { xAxis: 'X' as const, yAxis: 'Y' as const, zAxis: 'Z' as const },
-    numberFormat: { decimalPlaces: { mm: 3, inch: 4 }, trailingZeros: false, leadingZero: false },
-    units: { mmCommand: 'G21', inchCommand: 'G20' },
-    program: {
-      header: ['G90'],
-      operationHeader: [],
-      footer: ['M30'],
-      commentPrefix: '(',
-      commentSuffix: ')',
-      lineNumbers: false,
-      lineNumberIncrement: 1,
-    },
-    workCoordinates: { selectCommand: 'G54' },
-    motion: {
-      rapidCommand: 'G00',
-      linearCommand: 'G01',
-      cwArcCommand: 'G02',
-      ccwArcCommand: 'G03',
-      arcFormat: 'ij' as const,
-      modalMotion: true,
-      arcInterpolation: false,
-    },
-    feedSpeed: {
-      feedCommand: 'F',
-      rpmCommand: 'S',
-      spindleOnCW: 'M03',
-      spindleOnCCW: 'M04',
-      spindleOff: 'M05',
-      inlineWithMotion: false,
-      modalFeedSpeed: true,
-    },
-    toolChange: {
-      commands: ['T[TOOL]', 'M06'],
-      stopSpindleFirst: true,
-      pauseAfterChange: false,
-      pauseCommand: 'M00',
-    },
-    cannedCycles: null,
-    coolant: {
-      floodOnCommand: 'M8',
-      mistOnCommand: 'M7',
-      coolantOffCommand: 'M9',
-    },
-    stop: { programEndCommand: 'M30' },
-  } as MachineDefinition
+    name,
+    ...overrides,
+  })
+  if (validated.error !== undefined) throw new Error(validated.error)
+  return validated.ok
 }
 
-function makeMockProject(defs: MachineDefinition[], selectedMachineId?: string | null) {
-  return {
-    version: '1.0',
-    meta: {
-      name: 'test',
-      units: 'mm' as const,
-      created: '2026-01-01T00:00:00Z',
-      modified: '2026-01-01T00:00:00Z',
-      showFeatureInfo: false,
-      showDimensions: false,
-      copyMode: 'reference' as const,
-      maxTravelZ: 10,
-      operationClearanceZ: 5,
-      clampClearanceXY: 1,
-      clampClearanceZ: 1,
-      machineDefinitions: defs,
-      selectedMachineId: selectedMachineId ?? (defs.length > 0 ? defs[0].id : null),
-    },
-    grid: { extent: 200, majorSpacing: 20, minorSpacing: 5, snapIncrement: 0.1, visible: true },
-    stock: { x: 0, y: 0, w: 200, h: 200, thickness: 10, material: '', color: '#cccccc', visible: true, sourceFeatureId: null, sourceFeature: null },
-    origin: { name: 'Origin', x: 0, y: 0, z: 10, visible: true },
-    backdrop: null,
-    dimensions: {},
-    annotations: [],
-    modelAssets: {},
-    featureDefinitions: {},
-    features: [],
-    featureFolders: [],
-    featureTree: [],
-    global_constraints: [],
-    tools: [],
-    operations: [],
-    tabs: [],
-    clamps: [],
-    ai_history: [],
-  } as unknown as Project
+function resetStore(): void {
+  useProjectStore.setState({
+    project: newProject('Machine snapshot test', 'mm'),
+    dirty: false,
+    history: { past: [], future: [], transactionStart: null },
+  } as unknown as Partial<ProjectStore>)
 }
 
-// ── slugFromName / allocateMachineId ───────────────────────────
+// ── a new project embeds no machine ────────────────────────────────────────
 
 {
-  assert(slugFromName('GRBL Machine') === 'grbl-machine', 'slugFromName: spaces become hyphens')
-  assert(slugFromName('  Test--Foo  ') === 'test-foo', 'slugFromName: trim + collapse')
-  assert(slugFromName('Máquina #1') === 'm-quina-1', 'slugFromName: non-alphanumeric removed')
-  assert(slugFromName('') === '', 'slugFromName: empty')
+  resetStore()
+  const { project } = useProjectStore.getState()
+  assert(project.meta.machineDefinitions.length === 0, 'a new project embeds no machine definition')
+  assert(project.meta.selectedMachineId === null, 'a new project has no selected machine')
+  assert(getActiveMachineDefinition(project) === null, 'export resolves no machine for a blank project')
 }
+
+// ── selecting embeds a complete validated snapshot ─────────────────────────
 
 {
-  const existing = new Set(['grbl', 'grbl-2', 'grbl-3'])
-  assert(allocateMachineId('grbl', existing) === 'grbl-4', 'allocateMachineId: skips occupied slugs')
-  assert(allocateMachineId('unique', existing) === 'unique', 'allocateMachineId: returns base for unique')
-  assert(allocateMachineId('', existing) === 'custom-machine', 'allocateMachineId: fallback for empty')
+  resetStore()
+  const bundled = bundledMachines()[1]
+  useProjectStore.getState().setProjectMachine(bundled)
+
+  const { project, dirty } = useProjectStore.getState()
+  assert(project.meta.machineDefinitions.length === 1, 'exactly one definition is embedded')
+  assert(project.meta.selectedMachineId === bundled.id, 'the selection points at the embedded snapshot')
+  assert(
+    project.meta.selectedMachineId === (project.meta.machineDefinitions[0]?.id ?? null),
+    'the zero-or-one invariant holds',
+  )
+  assert(
+    JSON.stringify(project.meta.machineDefinitions[0]) === JSON.stringify(bundled),
+    'the snapshot is a complete copy of the chosen definition',
+  )
+  assert(dirty, 'selecting a machine dirties the project')
+  assert(getActiveMachineDefinition(project)?.id === bundled.id, 'export resolves the embedded snapshot')
 }
+
+// ── the snapshot is a copy, not a live reference ───────────────────────────
 
 {
-  const existing = new Set<string>()
-  assert(allocateMachineId('GRBL', existing) === 'grbl', 'allocateMachineId: lowercases')
+  resetStore()
+  const source = customMachine('shop-router', 'Shop Router')
+  useProjectStore.getState().setProjectMachine(source)
+  source.fileExtension = 'mutated'
+
+  const embedded = useProjectStore.getState().project.meta.machineDefinitions[0]
+  assert(embedded.fileExtension !== 'mutated', 'mutating the source cannot reach the embedded snapshot')
 }
 
-// ── updateMachineDefinition ─────────────────────────────────────
+// ── replacing and clearing ────────────────────────────────────────────────
 
 {
-  // Set up store with two custom definitions.
-  const defA = makeDef('alpha', 'Alpha')
-  const defB = makeDef('beta', 'Beta')
-  const project = makeMockProject([defA, defB], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
+  resetStore()
+  const first = bundledMachines()[0]
+  const second = bundledMachines()[1]
+  useProjectStore.getState().setProjectMachine(first)
+  useProjectStore.getState().setProjectMachine(second)
 
-  // Update name in place.
-  const state = useProjectStore.getState()
-  state.updateMachineDefinition('alpha', { ...defA, name: 'Alpha Revised' })
+  const { project } = useProjectStore.getState()
+  assert(project.meta.machineDefinitions.length === 1, 'replacing keeps exactly one definition')
+  assert(project.meta.selectedMachineId === second.id, 'the newest selection wins')
 
-  const updated = useProjectStore.getState().project
-  const defs = updated.meta.machineDefinitions
-  assert(defs.length === 2, 'updateMachineDefinition: count unchanged')
-  assert(defs[0].id === 'alpha', 'updateMachineDefinition: first entry still alpha (order preserved)')
-  assert(defs[0].name === 'Alpha Revised', 'updateMachineDefinition: name updated')
-  assert(defs[1].id === 'beta', 'updateMachineDefinition: second entry unchanged')
+  useProjectStore.getState().setProjectMachine(null)
+  const cleared = useProjectStore.getState().project
+  assert(cleared.meta.machineDefinitions.length === 0, 'clearing empties the embedded array')
+  assert(cleared.meta.selectedMachineId === null, 'clearing clears the selection')
+  assert(getActiveMachineDefinition(cleared) === null, 'export is blocked again after clearing')
 }
+
+// ── re-selecting the same machine is a no-op ──────────────────────────────
 
 {
-  // Rejects invalid definition (patch with bad motion.arcFormat)
-  const defA = makeDef('alpha', 'Alpha')
-  const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
+  resetStore()
+  const bundled = bundledMachines()[0]
+  useProjectStore.getState().setProjectMachine(bundled)
+  const afterFirst = useProjectStore.getState()
+  const historyDepth = afterFirst.history.past.length
 
-  const badDef: MachineDefinition = { ...defA, motion: { ...defA.motion, arcFormat: 'INVALID' as unknown as MachineDefinition['motion']['arcFormat'] } }
-  const state = useProjectStore.getState()
-  // Should throw from Zod validation; the state should remain unchanged.
-  let threw = false
-  try {
-    state.updateMachineDefinition('alpha', badDef)
-  } catch {
-    threw = true
-  }
-  assert(threw, 'updateMachineDefinition: throws on invalid definition')
-  // Store unchanged
-  const current = useProjectStore.getState().project.meta.machineDefinitions
-  assert(current[0].motion.arcFormat === 'ij', 'updateMachineDefinition: unchanged after failed validation')
+  afterFirst.setProjectMachine(structuredClone(bundled))
+  assert(
+    useProjectStore.getState().history.past.length === historyDepth,
+    're-selecting the same definition adds no history step',
+  )
+  assert(
+    useProjectStore.getState().project === afterFirst.project,
+    're-selecting the same definition leaves the project untouched',
+  )
+
+  resetStore()
+  useProjectStore.getState().setProjectMachine(null)
+  assert(useProjectStore.getState().history.past.length === 0, 'clearing an empty selection adds no history step')
 }
+
+// ── selection is undoable ─────────────────────────────────────────────────
 
 {
-  // No-op on builtin definitions.
-  const defA = makeDef('builtin-alpha', 'Builtin Alpha', true)
-  const project = makeMockProject([defA], 'builtin-alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
-
-  const state = useProjectStore.getState()
-  state.updateMachineDefinition('builtin-alpha', { ...defA, name: 'Renamed Builtin' })
-
-  const updated = useProjectStore.getState().project.meta.machineDefinitions
-  assert(updated[0].name === 'Builtin Alpha', 'updateMachineDefinition: builtin definition unchanged (no-op)')
+  resetStore()
+  const bundled = bundledMachines()[0]
+  useProjectStore.getState().setProjectMachine(bundled)
+  useProjectStore.getState().undo()
+  assert(
+    useProjectStore.getState().project.meta.selectedMachineId === null,
+    'undo restores the previous (empty) selection',
+  )
+  useProjectStore.getState().redo()
+  assert(
+    useProjectStore.getState().project.meta.selectedMachineId === bundled.id,
+    'redo re-applies the selection',
+  )
 }
+
+// ── an explicit update to a newer library copy is dirtying and undoable ────
 
 {
-  // No-op on non-existent id.
-  const defA = makeDef('alpha', 'Alpha')
-  const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
+  resetStore()
+  const older = customMachine('shop-router', 'Shop Router')
+  useProjectStore.getState().setProjectMachine(older)
+  useProjectStore.setState({ dirty: false } as unknown as Partial<ProjectStore>)
 
-  const state = useProjectStore.getState()
-  state.updateMachineDefinition('nonexistent', defA)
-  // Should not have changed
-  const current = useProjectStore.getState().project.meta.machineDefinitions
-  assert(current.length === 1, 'updateMachineDefinition: no-op on non-existent id')
+  const newer = { ...structuredClone(older), fileExtension: 'tap' }
+  useProjectStore.getState().setProjectMachine(newer)
+  assert(useProjectStore.getState().dirty, 'updating the project copy dirties the project')
+  assert(
+    useProjectStore.getState().project.meta.machineDefinitions[0].fileExtension === 'tap',
+    'the project copy is replaced by the newer definition',
+  )
+  useProjectStore.getState().undo()
+  assert(
+    useProjectStore.getState().project.meta.machineDefinitions[0].fileExtension === older.fileExtension,
+    'undo restores the previous project copy',
+  )
 }
+
+// ── library edits never touch the project snapshot ────────────────────────
 
 {
-  // Id change in patch is ignored (id locked).
-  const defA = makeDef('alpha', 'Alpha')
-  const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
+  resetStore()
+  resetMachineLibraryForTests()
+  initMachineLibrary(null)
 
-  const state = useProjectStore.getState()
-  state.updateMachineDefinition('alpha', { ...defA, id: 'hijacked' })
+  const saved = saveCustomMachine(customMachine('shop-router', 'Shop Router'))
+  assert(saved.ok !== undefined, 'the fixture machine saves into the library')
+  useProjectStore.getState().setProjectMachine(saved.ok!)
+  const embeddedBefore = JSON.stringify(useProjectStore.getState().project.meta.machineDefinitions[0])
+  useProjectStore.setState({ dirty: false } as unknown as Partial<ProjectStore>)
 
-  const updated = useProjectStore.getState().project.meta.machineDefinitions
-  assert(updated[0].id === 'alpha', 'updateMachineDefinition: id locked — patch id ignored')
+  saveCustomMachine({ ...saved.ok!, fileExtension: 'tap' })
+  assert(
+    JSON.stringify(useProjectStore.getState().project.meta.machineDefinitions[0]) === embeddedBefore,
+    'editing the library machine leaves the project snapshot alone',
+  )
+
+  deleteCustomMachine('shop-router')
+  assert(
+    JSON.stringify(useProjectStore.getState().project.meta.machineDefinitions[0]) === embeddedBefore,
+    'removing the library machine leaves the project snapshot alone',
+  )
+  assert(!useProjectStore.getState().dirty, 'library changes never dirty the project')
+  assert(
+    useProjectStore.getState().history.past.length === 1,
+    'library changes never add project history steps',
+  )
+  assert(
+    getActiveMachineDefinition(useProjectStore.getState().project)?.id === 'shop-router',
+    'a project stays exportable after its machine leaves the library',
+  )
+
+  resetMachineLibraryForTests()
 }
 
-// ── duplicateMachineDefinition ──────────────────────────────────
-
-{
-  // Duplicate a custom definition.
-  const defA = makeDef('alpha', 'Alpha')
-  const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
-
-  const state = useProjectStore.getState()
-  state.duplicateMachineDefinition('alpha')
-
-  const updated = useProjectStore.getState().project
-  const defs = updated.meta.machineDefinitions
-  assert(defs.length === 2, 'duplicateMachineDefinition: adds one definition')
-  assert(defs[1].builtin === false, 'duplicateMachineDefinition: copy is not builtin')
-  assert(defs[1].name === 'Alpha (copy)', 'duplicateMachineDefinition: name suffixed')
-  assert(defs[1].id !== 'alpha', 'duplicateMachineDefinition: copy has new id')
-  assert(updated.meta.selectedMachineId === defs[1].id, 'duplicateMachineDefinition: copy is selected')
-}
-
-{
-  // Duplicate a bundled definition (should also work).
-  const defA = makeDef('bundled', 'GRBL', true)
-  const project = makeMockProject([defA], 'bundled')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
-
-  const state = useProjectStore.getState()
-  state.duplicateMachineDefinition('bundled')
-
-  const updated = useProjectStore.getState().project
-  const defs = updated.meta.machineDefinitions
-  assert(defs.length === 2, 'duplicateMachineDefinition: bundled duplicated')
-  assert(defs[1].builtin === false, 'duplicateMachineDefinition: bundled copy not builtin')
-  // Bundled definitions get no suffix (they're exact clones by default; suffix for clarity)
-  assert(defs[1].name === 'GRBL (copy)', 'duplicateMachineDefinition: bundled copy has (copy)')
-  assert(updated.meta.selectedMachineId === defs[1].id, 'duplicateMachineDefinition: bundled copy selected')
-}
-
-{
-  // Duplicate twice yields distinct ids.
-  const defA = makeDef('alpha', 'Alpha')
-  const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
-
-  const state = useProjectStore.getState()
-  state.duplicateMachineDefinition('alpha')
-  state.duplicateMachineDefinition('alpha')
-
-  const updated = useProjectStore.getState().project
-  const defs = updated.meta.machineDefinitions
-  assert(defs.length === 3, 'duplicateMachineDefinition: two copies added')
-  assert(defs[1].id !== defs[2].id, 'duplicateMachineDefinition: copies have distinct ids')
-  assert(defs[1].name === 'Alpha (copy)', 'duplicateMachineDefinition: first copy name')
-  // Second copy gets unique id via allocateMachineId
-}
-
-{
-  // No-op on non-existent id.
-  const defA = makeDef('alpha', 'Alpha')
-  const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
-
-  const state = useProjectStore.getState()
-  state.duplicateMachineDefinition('nonexistent')
-
-  const defs = useProjectStore.getState().project.meta.machineDefinitions
-  assert(defs.length === 1, 'duplicateMachineDefinition: no-op on non-existent id')
-}
-
-{
-  // History is pushed on duplicate.
-  const defA = makeDef('alpha', 'Alpha')
-  const project = makeMockProject([defA], 'alpha')
-  useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null } } as unknown as Partial<ProjectStore>)
-
-  const state = useProjectStore.getState()
-  const pastLenBefore = state.history.past.length
-  state.duplicateMachineDefinition('alpha')
-
-  const after = useProjectStore.getState()
-  assert(after.history.past.length > pastLenBefore, 'duplicateMachineDefinition: history pushed')
-  assert(after.history.future.length === 0, 'duplicateMachineDefinition: future cleared')
-}
-
-console.log('machineDefsSlice.test.ts — all assertions passed')
+console.log('store/slices/machineDefsSlice.test.ts: all assertions passed')

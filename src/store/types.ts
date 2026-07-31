@@ -297,12 +297,13 @@ export interface ProjectStore {
   setBackdrop: (backdrop: BackdropImage | null) => void
   updateBackdrop: (patch: Partial<BackdropImage>) => void
   deleteBackdrop: () => void
-  setSelectedMachineId: (id: string | null) => void
-  addMachineDefinition: (definition: MachineDefinition) => void
-  removeMachineDefinition: (id: string) => void
-  updateMachineDefinition: (id: string, definition: MachineDefinition) => void
-  duplicateMachineDefinition: (id: string) => void
-  refreshMachineDefinitions: () => void
+  /**
+   * Atomically embed (or clear) the project's machine snapshot. The machine
+   * *library* is an application preference in `src/machine/` and is never
+   * stored in the project; this copies the chosen definition by value so a
+   * later library edit cannot change the project's exported G-code.
+   */
+  setProjectMachine: (definition: MachineDefinition | null) => void
   loadProject: (p: Project) => void
   saveProject: () => string
   /** Called after a successful open — records the file path and clears the session. */

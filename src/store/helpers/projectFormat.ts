@@ -33,6 +33,7 @@ import type {
   Project,
   SketchFeature,
 } from '../../types/project'
+import type { MachineDefinition } from '../../engine/gcode/types'
 import { syncIdCounter } from './ids'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
 import {
@@ -61,10 +62,21 @@ export type ProjectFormatInput = Omit<Project, 'features'> & {
   features: Array<FeatureInstance | LegacyFeatureRow>
 }
 
+/** What the machine-library compaction rescued or dropped while decoding. */
+export interface DecodedMachineMigration {
+  /** Custom definitions the file carried, for merging into **My Machines**. */
+  customDefinitions: MachineDefinition[]
+  /** True when the file stored more machines than the single embedded snapshot. */
+  compacted: boolean
+  /** A machine ID the file selected but could not resolve; the selection was cleared. */
+  unresolvedSelectionId: string | null
+}
+
 export interface DecodedProjectFormat {
   project: Project
   sourceVersion: string | null
   convertedLegacy: boolean
+  machineMigration: DecodedMachineMigration
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -319,10 +331,16 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
   if (!convertedLegacy && hasLegacyRows) {
     throw new Error(`Project format ${sourceVersion ?? '(missing)'} contains legacy baked feature geometry.`)
   }
+  const machines = normalizeMachineDefinitions(input as unknown as Project)
   return {
     project: normalizeProject(input),
     sourceVersion,
     convertedLegacy,
+    machineMigration: {
+      customDefinitions: machines.customDefinitions,
+      compacted: machines.compacted,
+      unresolvedSelectionId: machines.unresolvedSelectionId,
+    },
   }
 }
 
