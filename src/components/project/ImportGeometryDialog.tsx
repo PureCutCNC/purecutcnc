@@ -21,6 +21,8 @@ import {
   inspectCamjString,
   inspectDxfString,
   inspectSvgString,
+  detectImportSourceType,
+  SUPPORTED_IMPORT_ACCEPT,
   type CamjInspection,
   type ImportGeometryMode,
   type ImportInspection,
@@ -38,6 +40,7 @@ import { importModelFile } from './importModelFile'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
+import { platform } from '../../platform'
 
 interface LoadedImportFile {
   fileName: string
@@ -72,16 +75,6 @@ function defaultJoinTolerance(units: Units): string {
 
 function joinToleranceStep(units: Units): string {
   return units === 'inch' ? '0.001' : '0.01'
-}
-
-function detectSourceType(fileName: string): ImportSourceType | null {
-  const lowerName = fileName.toLowerCase()
-  if (lowerName.endsWith('.svg')) return 'svg'
-  if (lowerName.endsWith('.dxf')) return 'dxf'
-  if (lowerName.endsWith('.stl')) return 'stl'
-  if (lowerName.endsWith('.obj')) return 'obj'
-  if (lowerName.endsWith('.camj')) return 'camj'
-  return null
 }
 
 export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeometryDialogProps) {
@@ -170,11 +163,8 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     setImportStock(false)
   }
 
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    const nextSourceType = detectSourceType(file.name)
+  function loadSelectedFile(file: File): void {
+    const nextSourceType = detectImportSourceType(file.name)
     if (!nextSourceType) {
       setLoadedFile(null)
       resetDialogState()
@@ -250,6 +240,12 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     } else {
       reader.readAsText(file)
     }
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    loadSelectedFile(file)
   }
 
   // ── layer / folder selection ──────────────────────────────────────────
@@ -412,11 +408,18 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
               <button
                 className="btn-secondary import-dialog__file-button"
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={async () => {
+                  if (platform.isDesktop) {
+                    const f = await platform.pickImportFile()
+                    if (f) loadSelectedFile(f)
+                  } else {
+                    fileInputRef.current?.click()
+                  }
+                }}
               >
                 {loadedFile ? td('dialogs.importGeometry.chooseDifferentFile') : td('dialogs.importGeometry.chooseFile')}
               </button>
-              <input ref={fileInputRef} type="file" accept=".svg,.dxf,.stl,.obj,.camj" onChange={handleFileChange} style={{ display: 'none' }} />
+              <input ref={fileInputRef} type="file" accept={SUPPORTED_IMPORT_ACCEPT} onChange={handleFileChange} style={{ display: 'none' }} />
               <div className="import-dialog__file-name">
                 {loadedFile ? loadedFile.fileName : td('dialogs.importGeometry.noFileSelected')}
               </div>
