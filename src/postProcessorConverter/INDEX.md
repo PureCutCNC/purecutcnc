@@ -4,10 +4,14 @@ Standalone CLI (issue #402) that converts external CAM post-processor files
 into a PureCutCNC `MachineDefinition` JSON, plus a full conversion report.
 Never executes a vendor source file — declarative formats are parsed, and the
 three script-like formats (SheetCAM Lua, Autodesk JS, Mastercam GPP) are only
-ever pattern-matched as text. See
-[`planning/Post_Processor_Converter_Design.md`](../../planning/Post_Processor_Converter_Design.md)
-for the report format, supported-field reference, and the CNC-safety
-limitation; run `npm run convert-post-processor -- --help` for CLI usage.
+ever pattern-matched as text.
+
+- **How to run it:** [`README.md`](README.md) — flags, supported formats,
+  worked examples, how to read the report.
+- **Why it's built this way:**
+  [`planning/Post_Processor_Converter_Design.md`](../../planning/Post_Processor_Converter_Design.md)
+  — the report contract, per-format capability reference, and the
+  CNC-safety limitation.
 
 ## Files
 

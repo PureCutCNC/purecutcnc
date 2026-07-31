@@ -66,9 +66,12 @@ npm run convert-post-processor -- --input <file> --output <file>.json
 ```
 
 It never runs the vendor file's own scripting language, and it always
-produces a full report of exactly what was and wasn't carried over — see
-[`planning/Post_Processor_Converter_Design.md`](planning/Post_Processor_Converter_Design.md).
-Review the output in the app's advanced machine-definition editor before use.
+produces a full report of exactly what was and wasn't carried over. See
+[`src/postProcessorConverter/README.md`](src/postProcessorConverter/README.md)
+for flags, supported formats, and worked examples, or
+[`planning/Post_Processor_Converter_Design.md`](planning/Post_Processor_Converter_Design.md)
+for the report contract and safety details. Review the output in the app's
+advanced machine-definition editor before use.
 
 ### Work with text
 
