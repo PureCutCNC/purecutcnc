@@ -12,6 +12,7 @@
     "lint:scripts": "eslint scripts",
     "preview": "vite preview",
     "sync-icons": "npx tsx scripts/build-icon-sprite.ts",
+    "convert-post-processor": "npx tsx src/postProcessorConverter/cli.ts",
     "test": "npx tsx scripts/check-license-headers.ts && npx tsx scripts/run-tests.ts",
     "test:agent": "bash scripts/test-claude-deepseek-agent.sh",
     "test:e2e": "playwright test",

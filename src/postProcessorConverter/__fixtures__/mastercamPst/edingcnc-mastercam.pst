@@ -1,0 +1,1085 @@
+# Post Name           : Eding CNC
+# Product             : MILL
+# Machine Name        : GENERIC EDINGCNC
+# Control Name        : GENERIC EDINGCNC
+# Description         : GENERIC EDINGCNC 3 AXIS MILL POST
+# Associated Post     : NONE
+# Mill/Turn           : NO
+# 4-axis/Axis subs.   : NO
+# 5-axis              : NO
+# Subprograms         : NO
+# Executable          : MP 9.0
+#
+# WARNING: THIS POST IS GENERIC AND IS INTENDED FOR MODIFICATION TO
+# THE MACHINE TOOL REQUIREMENTS AND PERSONAL PREFERENCE.
+#
+# --------------------------------------------------------------------------
+# Revision log:
+# --------------------------------------------------------------------------
+# Programmers Note:
+# BED 04/18/08  -  Converted to from EMC to EDINGCNC
+#
+# --------------------------------------------------------------------------
+# Features:     
+# --------------------------------------------------------------------------
+# This post supports Generic Eding CNC code output for 3 axis milling and was
+# derived from the EMC2 post which supports 3 axis milling.
+# It is designed to support the features of Mastercam Mill V8.
+#
+# 
+# Following Misc. Integers are used:
+#
+# mi1 - Work coordinate system 
+#        0 = Reference return is generated and G92 with the 
+#            X, Y and Z home positions at file head.
+#        1 = Reference return is generated and G92 with the 
+#            X, Y and Z home positions at each tool.
+#        2 = WCS of G54, G55.... based on Mastercam settings.
+#
+# mi2 - Absolute or Incremental positioning at top level
+#        0 = absolute
+#        1 = incremental
+#
+# mi3 - Select G28 or G30 reference point return.
+#        0 = G28, 1 = G30
+#
+#Canned text:
+#    Entering cantext on a contour point from within Mastercam allows the
+#    following functions to enable/disable.
+#    Cantext value:
+#    1 = Stop = output the "M00" stop code
+#    2 = Ostop =  output the "M01" optional stop code
+#    3 = Bld on = turn on block delete codes in NC lines
+#    4 = bLd off = turn off block delete codes in NC lines
+#
+#Drill:
+# All standard drill methods are supported in the post.
+#
+#Additional Notes:
+# 1) G54 calls are generated where the work offset entry of 0 = G54,
+#    1 = G55, etc.
+# 2) Metric is applied from the NCI met_tool variable.
+# 3) Incremental mode calculates motion from home position at toolchanges.
+#    The home position is used to define the last position of the tool
+#    for all toolchanges.  
+# 4) The variable 'absinc' is now pre-defined, set mi2 (Misc. Integer) for
+#    the 'top level' absolute/incremental program output.  Subprograms are
+#    updated through the Mastercam dialog settings for sub-programs.
+#
+# --------------------------------------------------------------------------
+# Debugging and Factory Set Program Switches  
+# --------------------------------------------------------------------------
+m_one       : -1    #Define constant
+zero        : 0     #Define constant
+one         : 1     #Define constant
+two         : 2     #Define constant
+three       : 3     #Define constant 
+four        : 4     #Define constant 
+five        : 5     #Define constant
+c9k         : 9999  #Define constant
+
+fastmode    : yes   #Enable Quick Post Processing, (set to no for debug)
+bug1        : 2     #0=No display, 1=Generic list box, 2=Editor
+bug2        : 40    #Append postline labels, non-zero is column position? 
+bug3        : 0     #Append whatline no. to each NC line?
+bug4        : 1     #Append NCI line no. to each NC line?
+whatno      : yes   #Do not perform whatline branches? (leave as yes)
+
+get_1004    : 1     #Find gcode 1004 with getnextop?
+rpd_typ_v7  : 0     #Use Version 7 style contour flags/processing?
+strtool_v7  : 2     #Use Version 7+ toolname?
+tlchng_aft  : 2     #Delay call to toolchange until move line 
+cant_tlchng : 1     #Ignore cantext entry on move with tlchng_aft 
+newglobal   : 1     #Error checking for global variables
+getnextop   : 0     #Build the next variable table
+
+# --------------------------------------------------------------------------
+# General Output Settings
+# --------------------------------------------------------------------------
+sub_level   : 0     #Enable automatic subprogram support
+breakarcs   : 1     #Break arcs, 0 = no, 1 = quadrants, 2 = 180deg. max arcs
+arcoutput   : 1     #0 = IJK, 1 = R no sign, 2 = R signed neg. over 180
+arctype     : 2     #Arc center 1=abs, 2=St-Ctr, 3=Ctr-St, 4=unsigned inc.
+do_full_arc : 0     #Allow full circle output? 0=no, 1=yes
+helix_arc   : 0     #Support helix arc output, 0=no, 1=all planes, 2=XY plane only
+arccheck    : 1     #Check for small arcs, convert to linear
+atol        : .01   #Angularity tolerance for arccheck = 2
+ltol        : .002  #Length tolerance for arccheck = 1
+vtol        : .0001 #System tolerance
+maxfeedpm   : 500   #Limit for feed in inch/min
+ltol_m      : .05   #Length tolerance for arccheck = 1, metric
+vtol_m      : .0025 #System tolerance, metric
+maxfeedpm_m : 10000 #Limit for feed in mm/min
+force_wcs   : yes   #Force WCS output at every toolchange?
+spaces      : 1     #Number of spaces to add between fields
+omitseq     : yes   #Omit sequence numbers?
+seqmax      : 9999  #Max. sequence numbers
+stagetool   : 0     #0 = Do not pre-stage tools, 1 = Stage tools
+use_gear    : 0     #Output gear selection code, 0=no, 1=yes 
+max_speed   : 10000 #Maximum spindle speed
+min_speed   : 50    #Minimum spindle speed
+nobrk       : no    #Omit breakup of x, y & z rapid moves
+progname    : 1     #Use uppercase for program name (sprogname)
+
+# --------------------------------------------------------------------------
+# Enable Canned Drill Cycle Switches
+# --------------------------------------------------------------------------
+usecandrill : yes   #Use canned cycle for drill
+usecanpeck  : yes   #Use canned cycle for Peck
+usecanchip  : yes   #Use canned cycle for Chip Break
+usecantap   : yes   #Use canned cycle for Tap
+usecanbore1 : yes   #Use canned cycle for Bore1
+usecanbore2 : yes   #Use canned cycle for Bore2
+usecanmisc1 : yes   #Use canned cycle for Misc1
+usecanmisc2 : yes   #Use canned cycle for Misc2
+
+# --------------------------------------------------------------------------
+# Common User-defined Variable Initializations (not switches!)
+# --------------------------------------------------------------------------
+xia         : 0     #Formatted absolute value for X incremental calculations
+yia         : 0     #Formatted absolute value for Y incremental calculations
+zia         : 0     #Formatted absolute value for Z incremental calculations
+
+bld         : 0     #Block delete active
+result      : 0     #Return value for functions
+sav_spc     : 0     #Save spaces
+sav_gcode   : 0     #Gcode saved 
+sav_absinc  : 0     #Absolute/Incremental Saved Value
+sav_coolant : 0     #Coolant saved 
+toolchng    : 1     #On a toolchange flag 
+spdir2      : 1     #Copy for safe spindle direction calculation 
+
+#Drill variables
+drlgsel     : -1    #Drill Select Initialize
+drillref    : 0     #Select drill reference
+peckacel    : 0     #Fractional percent to reduce peck2 when usecan.. : no
+
+# --------------------------------------------------------------------------
+# Format statements - n=nonmodal, l=leading, t=trailing, i=inc, d=delta
+# --------------------------------------------------------------------------
+#Default english/metric position format statements
+fs2 1   0.7 0.6     #Decimal, absolute, 7 place, default for initialize (:)
+fs2 2   0.4 0.3     #Decimal, absolute, 4/3 place
+fs2 3   0.4 0.3d    #Decimal, delta, 4/3 place
+#Common format statements
+fs2 4   1 0 1 0     #Integer, not leading
+fs2 5   2 0 2 0l    #Integer, force two leading
+fs2 6   3 0 3 0l    #Integer, force three leading
+fs2 7   4 0 4 0l    #Integer, force four leading
+fs2 9   0.1 0.1     #Decimal, absolute, 1 place
+fs2 10  0.2 0.2     #Decimal, absolute, 2 place
+fs2 11  0.3 0.3     #Decimal, absolute, 3 place
+fs2 12  0.4 0.4     #Decimal, absolute, 4 place
+fs2 13  0.5 0.5     #Decimal, absolute, 5 place
+fs2 14  0.3 0.3d    #Decimal, delta, 3 place
+fs2 15  0.2 0.1     #Decimal, absolute, 2/1 place
+fs2 16  1 0 1 0n    #Integer, forced output
+
+# --------------------------------------------------------------------------
+#String and string selector definitions for NC output
+# --------------------------------------------------------------------------
+
+#Address string definitions
+strm        "M"
+strn        "N"
+stro        "O"
+strp        "P"
+srad        "R"
+srminus     "R-"
+sblank
+
+#Cantext string definitions (spaces must be padded here)
+sm00        "M00"
+sm01        "M01"
+strtextno
+strcantext
+
+# --------------------------------------------------------------------------
+# Error messages
+# --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# General G and M Code String select tables
+# --------------------------------------------------------------------------
+# Motion G code selection
+sg00    G0      #Rapid
+sg01    G1      #Linear feed
+sg02    G2      #Circular interpolation CW 
+sg03    G3      #Circular interpolation CCW 
+sg04    G4      #Dwell
+sgcode          #Target for string
+
+fstrsel sg00 gcode sgcode    
+# --------------------------------------------------------------------------
+# Select work plane G code
+sg17    G17     #XY plane code 
+sg19    G19     #YZ plane code 
+sg18    G18     #XZ plane code 
+sgplane         #Target string
+
+fstrsel sg17 plane sgplane      
+# --------------------------------------------------------------------------
+#Select english/metric code 
+sg20    G20     #Inch code
+sg21    G21     #Metric code
+smetric         #Target string  
+
+fstrsel sg20 met_tool smetric    
+# --------------------------------------------------------------------------
+#Select reference return code 
+sg28    G28     #First reference point return EMC Return to Home
+sg30    G30     #Second reference point return EMC Return to Secondary Home
+sg28ref         #Target string
+
+fstrsel sg28 mi3 sg28ref 
+# --------------------------------------------------------------------------
+# Cutter compensation G code selection
+scc0    G40     #Cancel cutter compensation
+scc1    G41     #Cutter compensation left
+scc2    G42     #Cutter compensation right
+sccomp          #Target for string
+
+fstrsel scc0 cc_pos sccomp
+# --------------------------------------------------------------------------
+# Canned drill cycle string select
+sg81    G81     #drill      - no dwell 
+sg81d   G82     #drill      - with dwell 
+sg83    G83     #peck drill - no dwell 
+sg83d   G83     #peck drill - with dwell 
+sg73    G73     #chip break - no dwell 
+sg73d   G73     #chip break - with dwell 
+sg84    G84     #tap        - right hand
+sg84d   G74     #tap        - left hand
+sg85    G85     #bore #1    - no dwell 
+sg85d   G89     #bore #1    - with dwell 
+sg86    G86     #bore #2    - no dwell 
+sg86d   G86     #bore #2    - with dwell 
+sgm1    G76     #misc #1    - no dwell
+sgm1d   G76     #misc #1    - with dwell
+sgm2    G81     #misc #2    - no dwell
+sgm2d   G82     #misc #2    - with dwell
+sgdrill         #Target for string
+                  
+fstrsel sg81 drlgsel sgdrill        
+# --------------------------------------------------------------------------
+# Select incremental or absolute G code 
+sg90    G90     #Absolute code
+sg91    G91     #Incremental code
+sgabsinc        #Target string  
+
+fstrsel sg90 absinc sgabsinc    
+# -------------------------------------------------------------------------- 
+#Canned drill cycle reference height
+sg98    G98     #Reference at initht
+sg99    G99     #Reference at refht     
+sgdrlref        #Target for string
+                  
+fstrsel sg98 drillref sgdrlref
+# --------------------------------------------------------------------------
+# Generate string for spindle 
+sm04    M4      #Spindle reverse 
+sm05    M5      #Spindle off     
+sm03    M3      #Spindle forward 
+spindle         #Target for string
+
+fstrsel sm04 spdir2 spindle
+# --------------------------------------------------------------------------
+# Coolant M code selection
+sm09    M9      #Coolant Off
+sm08    M8      #Coolant Flood 
+sm08_1  M8      #Coolant Mist
+sm08_2  M8      #Coolant Tool
+scoolant        #Target for string
+
+fstrsel sm09 coolant scoolant   
+# --------------------------------------------------------------------------
+# Define the gear selection code
+flktbl  1       3       #Lookup table definition - table no. - no. entries
+        40      0       #Low gear range
+        41      400     #Med gear range
+        42      2250    #Hi gear range
+
+# --------------------------------------------------------------------------
+# Toolchange / NC output Variable Formats
+# --------------------------------------------------------------------------
+fmt  T  4   t           #Tool number
+fmt  T  4   first_tool  #First Tool used 
+fmt  T  4   next_tool   #Next Tool used  
+fmt  D  4   tloffno     #Diameter Offset number
+fmt  H  4   tlngno      #Length Offset number
+fmt  G  4   g_wcs       #WCS G address
+fmt  P  4   p_wcs       #WCS P address
+fmt  S  4   speed       #Spindle Speed
+fmt  M  4   gear        #Gear range
+# --------------------------------------------------------------------------
+fmt  N  4   n           #Sequence number
+fmt  X  2   xabs        #X position output (absolute)
+fmt  Y  2   yabs        #Y position output (absolute)
+fmt  Z  2   zabs        #Z position output (absolute)
+fmt  X  3   xinc        #X position output (incremental)
+fmt  Y  3   yinc        #Y position output (incremental)
+fmt  Z  3   zinc        #Z position output (incremental)
+fmt  I  3   i           #Arc center description in X
+fmt  J  3   j           #Arc center description in Y
+fmt  K  3   k           #Arc center description in Z
+fmt  R  2   arcrad      #Arc Radius
+fmt  F  15  feed        #Feedrate
+fmt  P  11  dwell       #Dwell
+fmt  M  5   cantext     #Canned text
+# --------------------------------------------------------------------------
+#Move comment (pound) to output colon with program numbers
+#fmt  O  7   progno      #Program number EMC2 Commented out
+#fmt ":" 7   progno      #Program number
+# --------------------------------------------------------------------------
+fmt  Q  2   peck1       #First peck increment (positive)
+fmt  Q  2   shftdrl     #Fine bore tool shift
+fmt  R  2   refht_a     #Reference height (absolute)
+fmt  R  2   refht_i     #Reference height (incremental)
+# --------------------------------------------------------------------------
+fmt "TOOL - "       4   tnote       # Note format
+fmt " DIA. OFF. - " 4   toffnote    # Note format
+fmt " LEN. - "      4   tlngnote    # Note format
+fmt " DIA. - "      1   tldia       # Note format
+
+# --------------------------------------------------------------------------
+# Tool Comment / Manual Entry Section
+# --------------------------------------------------------------------------
+ptoolcomment    #Comment for tool
+      tnote = t 
+      toffnote = tloffno
+      tlngnote = tlngno
+      "(", pstrtool, *tnote, *toffnote, *tlngnote, *tldia, ")", e  
+
+pstrtool        #Comment for tool
+      if strtool <> sblank,
+        [
+        strtool = ucase(strtool)
+        *strtool, " "
+        ]
+
+pcomment        #Comment from manual entry (must call pcomment2 if booleans)
+      pcomment2
+
+pcomment2       #Comment from manual entry
+      scomm = ucase (scomm)
+      if gcode = 1007, "(", scomm, ")"
+      else, "(", scomm, ")", e
+
+# --------------------------------------------------------------------------
+# Start of File and Toolchange Setup
+# --------------------------------------------------------------------------
+psof0           #Start of file for tool zero                        
+      psof
+
+psof            #Start of file for non-zero tool number             
+      toolchng = one # Mark that we are IN a toolchange (for WCS output)
+      if ntools = one,
+        [
+        #skip single tool outputs, stagetool must be on
+        stagetool = m_one 
+        !next_tool
+        ]
+
+      pbld, n, *smetric, e        #Set for Inch or Metric mode
+      pbld, n, *sgcode, *sgplane, "G40", "G49", "G80", *sgabsinc, e
+      sav_absinc = absinc         #Save active Absolute/Incremental mode
+      if mi1 <= one,              #Work coordinate system
+        [
+        absinc = one              #Set to Incremental mode for retract
+        pfbld, n, sgabsinc, *sg28ref, "Z0.", e # Home Z
+        pfbld, n, *sg28ref, "X0.", "Y0.", e    # Home X,Y
+        pfbld, n, "G92", *xh, *yh, *zh, e      # Set G92 Origin
+        absinc = sav_absinc       # Restore prev. Absolute/Incremental setting
+        ]
+      pcom_moveb                  #Common motion preparation routines, before
+      ptoolcomment                #Comment for tool
+      comment                     #Comments from Operation
+      pcan                        #Canned text output (before)
+      if stagetool >= zero, pbld, n, *t, "M6", e
+      if mi1 > one, absinc = zero #Set for Absolute mode (for WCS)
+      pcan1, pbld, n, *sgcode, *sgabsinc, pwcs, pfxout, pfyout,  
+        *speed, *spindle, pgear, strcantext, e
+      absinc = sav_absinc         # Restore prev. Absolute/Incremental setting
+      pbld, n, sgabsinc, e
+      pbld, n, "G43", *tlngno, pfzout, scoolant, next_tool, e
+      pcom_movea                  #Common motion preparation routines, after
+      toolchng = zero             # Mark that we are NOT in a toolchange
+
+ptlchg0         #Call from NCI null tool change (tool number repeats)                        
+      pcom_moveb                  #Common motion preparation routines, before
+      comment                     #Comments from Operation
+      pcan                        #Canned text output (before)
+      pbld, n, sgplane, e         #Set work plane (XY,XZ,YZ)
+      pspindchng                  #Check for spindle speed change
+      pbld, n, scoolant, e        #Output (possible) coolant code
+      if mi1 > one & workofs <> prv_workofs,
+        [
+        sav_absinc = absinc       # Save active Absolute/Incremental mode
+        absinc = zero             # Set for Absolute mode
+        pbld, n, sgabsinc, pwcs, pfxout, pfyout, pfzout, e
+        pe_inc_calc               #Incremental calculations, end
+        ps_inc_calc               #Incremental calculations, start
+        absinc = sav_absinc       # Restore prev. Absolute/Incremental setting
+        ]
+      if gcode = one, plinout
+      else, prapidout
+      pcom_movea                  #Common motion preparation routines, after
+
+ptlchg          #Tool change                                        
+      toolchng = one # Mark that we are IN a toolchange (for WCS output)
+      if mi1 = one, #Work coordinate system
+        [
+        pfbld, n, *sg28ref, "X0.", "Y0.", e
+        pfbld, n, "G92", *xh, *yh, *zh, e
+        ]
+      pbld, n, "M01", e           # Optional stop between tools
+      pcom_moveb                  #Common motion preparation routines, before
+      ptoolcomment                #Comment for tool
+      comment                     #Comments from Operation
+      pcan                        #Canned text output (before)
+      pbld, n, *t, "M6", e        #Actual tool change
+      sav_absinc = absinc         #Save active Absolute/Incremental mode
+      if mi1 > one, absinc = zero #Set for Absolute mode (or WCS)
+      pcan1, pbld, n, *sgcode, *sgabsinc, pwcs, pfxout, pfyout,  
+        *speed, *spindle, pgear, strcantext, e
+      absinc = sav_absinc         #Restore prev. Absolute/Incremental setting
+      pbld, n, sgabsinc, e        #State Absolute/Incremental mode
+      pbld, n, "G43", *tlngno, pfzout, scoolant, next_tool, e
+      pcom_movea                  #Common motion preparation routines, after
+      toolchng = zero # Mark that we are NOT in a toolchange
+
+pretract        #End of tool path, toolchange
+      sav_absinc = absinc         #Save active Absolute/Incremental mode
+      absinc = one                #Set to Incremental mode for retract
+      sav_coolant = coolant       #Save current Coolant status
+      coolant = zero              #Turn any active Coolant OFF
+      gcode = zero                #Force Rapid mode
+      #cc_pos is reset in the toolchange here                        
+      cc_pos = zero               #Turn any active Cutter Diameter Comp. OFF
+      pcan                        #Canned text output (before)
+      pbld, n, sccomp, e          #Cancel any active Cutter Diameter Comp
+      pbld, n, *sm05, e           #Stop spindle
+      pcan1, pbld, n, sgabsinc, sgcode, *sg28ref,
+        "Z0.", scoolant, strcantext, e                        # Home Z
+      pbld, n, *sg28ref, "X0.", "Y0.", e                      # Home X,Y
+      pcan2                       #Canned text output (after)
+      absinc = sav_absinc         #Restore prev. Absolute/Incremental setting
+      coolant = sav_coolant       #Restore prev. Coolant setting
+        
+peof0           #End of file for tool zero               
+      peof
+
+peof            #End of file for non-zero tool           
+      pretract                    #End of tool path, toolchange
+      comment                     #Comments from Operation
+      #Remove pound character to output first tool with staged tools
+      #if stagetool = one, pbld, n, *first_tool, e
+      n, "M30", e  
+      "%", e
+
+pwcs            #G54+ coordinate setting at toolchange
+      if mi1 > one,
+        [
+        if workofs <> prv_workofs | (force_wcs & toolchng),
+          [
+          if workofs < 6,
+            [
+            g_wcs = workofs + 54
+            *g_wcs
+            ]
+          else,
+            [
+            p_wcs = workofs - five
+            "G54.1", *p_wcs
+            ]  
+          ]
+        !workofs
+        ]
+        
+pgear           #Find spindle gear from lookup table
+      if use_gear = one,
+        [
+        gear = frange (one, speed)
+        *gear
+        ]
+
+#Toolchange setup
+pspindchng      #Spindle speed change
+      if prv_spdir2 <> spdir2 & prv_speed <> zero, pbld, n, *sm05, e
+      if prv_speed <> speed | prv_spdir2 <> spdir2,
+        [
+        if speed, pbld, n, *speed, *spindle, pgear, e 
+        ]
+      !speed, !spdir2
+
+pspindle        #Spindle speed calculations for RPM
+      speed = abs(ss)
+      if maxss = zero | maxss > max_speed, maxss = max_speed
+      #zero indicates spindle off (not a mistake)
+      if speed,
+        [
+        if speed > max_speed, speed = maxss     # RPM too High
+        if speed < min_speed, speed = min_speed # RPM too Low
+        ]
+      spdir2 = fsg3(spdir)        #Determine the spindle direction
+
+pq              #Setup post based on switch settings
+      if stagetool = one, bldnxtool = one #Need to build Tool table
+      if arctype = one | arctype = four,
+        [
+        result = newfs(two, i)
+        result = newfs(two, j)
+        result = newfs(two, k)
+        ]
+      else,
+        [
+        result = newfs(three, i)
+        result = newfs(three, j)
+        result = newfs(three, k)
+        ]
+
+pheader         #Call before start of file                         
+      if met_tool = one, #Metric constants and variable adjustments
+        [
+        ltol = ltol_m 
+        vtol = vtol_m
+        maxfeedpm = maxfeedpm_m    
+        ]
+
+      #Top of NC program...
+      "%", e
+      # *progno, e EMC2 commented out
+      "(PROGRAM NAME - ", sprogname, ")", e
+      "(DATE, Day-Month-Year - ", date, "   TIME, Hr:Min - ", time, ")"
+
+ptoolend        #End of tool path, before reading new tool data               
+      !speed, !spdir2
+
+ptlchg1002      #Call at actual toolchange, end last path here                        
+      pspindle
+      if gcode = 1000,
+        [
+        #Null toolchange
+        ]
+      else,
+        [
+        #Toolchange and Start of file
+        if gcode = 1002,
+          [
+          #Actual toolchange
+          pretract                #End of tool path, toolchange
+          ]
+        if stagetool = one, prv_next_tool = m_one
+        prv_xia = vequ(xh)
+        prv_feed = c9k #Be sure to force out Feedrate on next tool
+        ]
+
+# --------------------------------------------------------------------------
+# Motion NC output
+# --------------------------------------------------------------------------
+#The variables for absolute output are xabs, yabs, zabs.
+#The variables for incremental output are xinc, yinc, zinc.
+# --------------------------------------------------------------------------
+prapidout       #Output to NC of linear movement - rapid               
+      pcan1, pbld, n, sgplane, `sgcode, sgabsinc, pccdia,
+        pxout, pyout, pzout, strcantext, scoolant, e
+
+plinout         #Output to NC of linear movement - feed                    
+      pcan1, pbld, n, sgplane, `sgcode, sgabsinc, pccdia,
+        pxout, pyout, pzout, feed, strcantext, scoolant, e 
+
+pcirout         #Output to NC of circular interpolation                                
+      pcan1, pbld, n, sgplane, sgcode, sgabsinc, pccdia,
+        pxout, pyout, pzout, parc, feed, strcantext, scoolant, e 
+
+pcom_moveb      #Common motion preparation routines, before
+      pxyzcout     #Retrieve X,Y,Z positions and Feedrate
+      ps_inc_calc  #Incremental calculations, start
+      
+pncoutput       #Movement output
+      pcom_moveb                  #Common motion preparation routines, before
+      comment                     #Comments from Operation
+      pcan                        #Canned text output (before)
+      if gcode = zero, prapidout
+      if gcode = one, plinout
+      if gcode > one & gcode < four, pcirout
+      pcom_movea                  #Common motion preparation routines, after
+            
+pcom_movea      #Common motion preparation routines, after
+      pcan2                       #Canned text output (after)
+      pe_inc_calc                 #Incremental calculations, end 
+
+pdwl_spd        #Call from NCI gcode 4
+      pspindle
+      comment                     #Comments from Operation
+      pspindchng                  #Check for spindle speed change
+      pcan                        #Canned text output (before)
+      if fmtrnd(dwell), pcan1, pbld, n, *sgcode, *dwell, strcantext, e
+      else, pcan1, pbld, n, strcantext, e 
+      pcan2                       #Canned text output (after)
+
+prapid          #Output to NC of linear movement - rapid               
+      pncoutput
+              
+pzrapid         #Output to NC of linear movement - rapid Z only    
+      pncoutput
+              
+plin            #Output to NC of linear movement - feed                    
+      pncoutput
+
+pz              #Output to NC of linear movement - feed Z only          
+      pncoutput
+
+pmx             #Output to NC of vector NCI          
+      pncoutput
+        
+pcir            #Output to NC of circular interpolation                                
+      pncoutput
+
+          
+# --------------------------------------------------------------------------
+# Motion output components
+# --------------------------------------------------------------------------
+        
+pfxout          #Force X axis output
+      if absinc = zero, *xabs, !xinc
+      else, *xinc, !xabs
+        
+pxout           #X output
+      if absinc = zero, xabs, !xinc
+      else, xinc, !xabs
+
+pfyout          #Force Y axis output
+      if absinc = zero, *yabs, !yinc
+      else, *yinc, !yabs
+              
+pyout           #Y output
+      if absinc = zero, yabs, !yinc
+      else, yinc, !yabs
+
+pfzout          #Force Z axis output
+      if absinc = zero, *zabs, !zinc
+      else, *zinc, !zabs
+              
+pzout           #Z output
+      if absinc = zero, zabs, !zinc
+      else, zinc, !zabs
+
+parc            #Select the arc output format
+      if arcoutput = zero | full_arc_flg | arc_pitch,       
+        [
+        #Arc output for IJK
+        i, j, k
+        ]
+      else,
+        [
+        #Arc output for R
+        if abs(sweep) <= 180 | arcoutput=one, result = nwadrs(srad, arcrad)
+        else, result = nwadrs(srminus, arcrad)
+        *arcrad
+        ]
+
+pbld            #Canned text - block delete
+      if bld, '/'
+              
+pfbld           #Force - block delete
+      "/"  
+
+pccdia          #Cutter Compensation
+      #Force Dxx#   
+      if prv_cc_pos <> cc_pos & cc_pos, prv_tloffno = c9k
+      sccomp
+      if cc_pos, tloffno
+
+# --------------------------------------------------------------------------
+# Drilling
+# --------------------------------------------------------------------------
+pdrlcommonb     #Canned Drill Cycle common call, before
+      if gcode = 81,
+	    [
+        result = newfs(two, zinc)
+        if drillcyc = three, drlgsel = fsg1(-ss) + drillcyc * two
+        else, drlgsel = fsg2(dwell) + drillcyc * two 
+        if initht <> refht, drillref = zero #G98 return level
+        else, drillref = one                #G99 return level
+        prv_refht_a = c9k
+        prv_refht_i = c9k
+		prv_dwell = zero
+	    ]
+      z = depth          
+      prv_zia = initht
+      feed = fr_pos      #Retrieve Feedrate
+      pcom_moveb         #Common motion preparation routines, before
+      comment            #Comments from Operation
+      pcan               #Canned text output (before)
+
+prdrlout        #R drill position
+      refht_a = refht          #Reference Hgt (absolute)
+      refht_i = refht - initht #Reference Hgt (incremental)
+      if absinc = zero, refht_a, !refht_i
+      else, refht_i, !refht_a
+
+pdrill          #Canned Drill Cycle
+      pdrlcommonb
+      pcan1, pbld, n, *sgdrlref, *sgdrill, pxout, pyout, pfzout, 
+        prdrlout, dwell, *feed, strcantext, e  
+      pcom_movea
+
+ppeck           #Canned Peck Drill Cycle
+      pdrlcommonb
+      pcan1, pbld, n, *sgdrlref, *sgdrill, pxout, pyout, pfzout,
+        prdrlout, *peck1, *feed, strcantext, e  
+      pcom_movea
+
+pchpbrk         #Canned Chip Break Cycle
+      pdrlcommonb
+      pcan1, pbld, n, *sgdrlref, *sgdrill, pxout, pyout, pfzout,
+        prdrlout, *peck1, *feed, strcantext, e  
+      pcom_movea
+
+ptap            #Canned Tap Cycle
+      pdrlcommonb
+      pcan1, pbld, n, *sgdrlref, *sgdrill, pxout, pyout, pfzout,
+        prdrlout, *feed, strcantext, e  
+      pcom_movea
+
+pbore1          #Canned Bore #1 Cycle
+      pdrlcommonb
+      pcan1, pbld, n, *sgdrlref, *sgdrill, pxout, pyout, pfzout,
+        prdrlout, dwell, *feed, strcantext, e  
+      pcom_movea
+
+pbore2          #Canned Bore #2 Cycle
+      pdrlcommonb
+      pcan1, pbld, n, *sgdrlref, *sgdrill, pxout, pyout, pfzout,
+        prdrlout, *feed, strcantext, e  
+      pcom_movea
+
+pmisc1          #Canned Misc #1 Cycle
+      pdrlcommonb
+      pcan1, pbld, n, *sgdrlref, *sgdrill, pxout, pyout, pfzout,
+        prdrlout, shftdrl, dwell, *feed, strcantext, e  
+      pcom_movea
+
+pmisc2          #Canned Misc #2 Cycle (User Option)
+      pdrill
+
+pdrill_2        #Canned Drill Cycle, additional points
+      pdrlcommonb
+      pcan1, pbld, n, pxout, pyout, pzout, prdrlout, dwell,
+        feed, strcantext, e  
+      pcom_movea
+
+ppeck_2         #Canned Peck Drill Cycle
+      pdrill_2
+
+pchpbrk_2       #Canned Chip Break Cycle
+      pdrill_2
+
+ptap_2          #Canned Tap Cycle
+      pdrill_2
+
+pbore1_2        #Canned Bore #1 Cycle
+      pdrill_2
+       
+pbore2_2        #Canned Bore #2 Cycle
+      pdrill_2
+
+pmisc1_2        #Canned Misc #1 Cycle
+      pdrill_2
+
+pmisc2_2        #Canned Misc #2 Cycle
+      pdrill_2
+
+pdrlcst         #Custom drill cycles 8 - 19 (user option)
+      #Use this postblock to customize drilling cycles 8 - 19
+      pdrlcommonb                 #Canned Drill Cycle common call, before
+      "CUSTOMIZABLE DRILL CYCLE ", pfxout, pfyout, pfzout, e
+      pcom_movea                  #Common motion preparation routines, after
+
+pdrlcst_2       #Custom drill cycles 8 - 19, additional points (user option)     
+      #Use this postblock to customize drilling cycles 8 - 19
+      pdrlcommonb                 #Canned Drill Cycle common call, before
+      "CUSTOMIZABLE DRILL CYCLE ", pfxout, pfyout, pfzout, e
+      pcom_movea                  #Common motion preparation routines, after
+
+pcanceldc       #Cancel canned drill cycle
+      result = newfs(three, zinc)
+      z = initht                  #Z axis left here after cycle
+      prv_zia = initht            #Z axis left here after cycle
+      pxyzcout                    #Retrieve X,Y,Z positions and Feedrate
+      !zabs, !zinc                #Update 'prv' Z axis positions
+      prv_gcode = m_one           #Force 'G'code that follows cycle (4/26/01)
+      pcan
+      pcan1, pbld, n, "G80", strcantext, e #Cancel the canned cycle
+      pcan2
+
+# --------------------------------------------------------------------------
+# Canned Text 
+# --------------------------------------------------------------------------
+pcan            #Canned text - before output call
+      strcantext = sblank
+      if cant_no > zero, 
+        [
+        if cant_pos1 = zero, pcant_1
+        if cant_pos2 = zero, pcant_2
+        if cant_pos3 = zero, pcant_3
+        if cant_pos4 = zero, pcant_4
+        if cant_pos5 = zero, pcant_5
+        if cant_pos6 = zero, pcant_6
+        if cant_pos7 = zero, pcant_7
+        if cant_pos8 = zero, pcant_8
+        if cant_pos9 = zero, pcant_9
+        if cant_pos10 = zero, pcant_10
+        pbld, n, strcantext, e
+        strcantext = sblank
+        ]
+
+pcan1           #Canned text - with move
+      strcantext = sblank
+      if cant_no > zero,
+        [
+        if cant_pos1 = one, pcant_1
+        if cant_pos2 = one, pcant_2
+        if cant_pos3 = one, pcant_3
+        if cant_pos4 = one, pcant_4
+        if cant_pos5 = one, pcant_5
+        if cant_pos6 = one, pcant_6
+        if cant_pos7 = one, pcant_7
+        if cant_pos8 = one, pcant_8
+        if cant_pos9 = one, pcant_9
+        if cant_pos10 = one, pcant_10
+        ]
+      if cstop, strcantext = strcantext + sm00
+      if cgstop, strcantext = strcantext + sm01
+      #Output of strcantext occurs at the end of the output line 
+
+pcan2           #Canned text - after output call
+      strcantext = sblank
+      if cant_no > zero,
+        [
+        if cant_pos1 = two, pcant_1
+        if cant_pos2 = two, pcant_2
+        if cant_pos3 = two, pcant_3
+        if cant_pos4 = two, pcant_4
+        if cant_pos5 = two, pcant_5
+        if cant_pos6 = two, pcant_6
+        if cant_pos7 = two, pcant_7
+        if cant_pos8 = two, pcant_8
+        if cant_pos9 = two, pcant_9
+        if cant_pos10 = two, pcant_10
+        pbld, n, strcantext, e
+        strcantext = sblank
+        ]
+
+pcant_1         #Canned text - output call
+      cantext = cant_val1
+      pcant_out
+
+pcant_2         #Canned text - output call
+      cantext = cant_val2
+      pcant_out
+
+pcant_3         #Canned text - output call
+      cantext = cant_val3
+      pcant_out
+
+pcant_4         #Canned text - output call
+      cantext = cant_val4
+      pcant_out
+
+pcant_5         #Canned text - output call
+      cantext = cant_val5
+      pcant_out
+
+pcant_6         #Canned text - output call
+      cantext = cant_val6
+      pcant_out
+
+pcant_7         #Canned text - output call
+      cantext = cant_val7
+      pcant_out
+
+pcant_8         #Canned text - output call
+      cantext = cant_val8
+      pcant_out
+
+pcant_9         #Canned text - output call
+      cantext = cant_val9
+      pcant_out
+
+pcant_10        #Canned text - output call
+      cantext = cant_val10
+      pcant_out
+
+pcant_out       #Canned text - build the string for output
+      #Assign string select type outputs
+      if cantext = three, bld = one
+      if cantext = four, bld = zero
+      #Build the cantext string
+      if cantext = one, strcantext = strcantext + sm00
+      if cantext = two, strcantext = strcantext + sm01
+      if cantext > four,
+        [
+        strtextno = no2str(cantext)
+        strcantext = strcantext + strm + strtextno
+        ] 
+
+# --------------------------------------------------------------------------
+# Position calculations, generally these do not need to be modified
+# --------------------------------------------------------------------------
+pmiscint        #Capture the top level absinc for subprograms
+      absinc = mi2
+
+pxyzcout        #Map coordinates
+        xabs = vequ (x)    # Retrieve X,Y,Z positions into xabs,yabs,zabs
+        feed = fr_pos      # Retrieve Feedrate
+        if feed > maxfeedpm, feed = maxfeedpm # Check for over feed
+
+#Incremental calculations
+ps_inc_calc     #Incremental calculations, start
+      xia = fmtrnd(xabs)           
+      yia = fmtrnd(yabs)          
+      zia = fmtrnd(zabs)          
+      xinc = vsub (xia, prv_xia)  #Calculate the Incremental move
+      
+pe_inc_calc     #Incremental calculations, end (update 'prv_' variables)
+      !xia, !yia, !zia
+      !x, !y, !z
+
+# --------------------------------------------------------------------------
+# Numbered questions for Mastercam Mill
+# --------------------------------------------------------------------------
+38. Rapid feedrate? 300.0
+1538. Rapid feedrate (metric)? 10000.0
+
+80. Communications port number for receive and transmit (1 or 2) ? 2
+81. Data rate (110,150,300,600,1200,2400,4800,9600,14400,19200,38400)? 1200 
+82. Parity (E/O/N)? E
+83. Data bits (7 or 8)? 7
+84. Stop bits (1 or 2)? 2
+85. Strip line feeds? N
+86. Delay after end of line (seconds)? 0
+87. Ascii, Eia, or Binary (A/E/B)? A
+88. Echo keyboard to screen in terminal emulation? n
+89. Strip carriage returns? N
+
+90. Drive and subdirectory for NC files?
+91. Name of executable post processor? MP
+92. Name of reverse post processor? RP
+93. Reverse post PST file name? RPFAN
+
+100. Number of places BEFORE the decimal point for sequence numbers? 3
+101. Number of places AFTER the decimal point for sequence numbers? 0
+103. Maximum spindle speed? 5000
+107. Average time for tool change (seconds)? 2.0
+
+161. Enable Home Position button? y
+162. Enable Reference Point button? y
+163. Enable Misc. Values button? y
+164. Enable Rotary Axis button? n
+165. Enable Tool Plane button? y
+166. Enable Construction Plane button? y
+167. Enable Tool Display button? y
+168. Check tplane during automatic work origin creation? y
+
+# --------------------------------------------------------------------------
+# Default Miscellaneous Real Values
+# --------------------------------------------------------------------------
+201. Default miscellaneous real variable 1 (mr1)? 0.0
+202. Default miscellaneous real variable 2 (mr2)? 0.0
+203. Default miscellaneous real variable 3 (mr3)? 0.0
+204. Default miscellaneous real variable 4 (mr4)? 0.0
+205. Default miscellaneous real variable 5 (mr5)? 0.0
+206. Default miscellaneous real variable 6 (mr6)? 0.0
+207. Default miscellaneous real variable 7 (mr7)? 0.0
+208. Default miscellaneous real variable 8 (mr8)? 0.0
+209. Default miscellaneous real variable 9 (mr9)? 0.0
+210. Default miscellaneous real variable 10 (mr10)? 0.0
+
+# --------------------------------------------------------------------------
+# Default Miscellaneous Real Values (METRIC)
+# --------------------------------------------------------------------------
+1601. Default miscellaneous real variable 1 (mr1) (metric)? 0.0
+1602. Default miscellaneous real variable 2 (mr2) (metric)? 0.0
+1603. Default miscellaneous real variable 3 (mr3) (metric)? 0.0
+1604. Default miscellaneous real variable 4 (mr4) (metric)? 0.0
+1605. Default miscellaneous real variable 5 (mr5) (metric)? 0.0
+1606. Default miscellaneous real variable 6 (mr6) (metric)? 0.0
+1607. Default miscellaneous real variable 7 (mr7) (metric)? 0.0
+1608. Default miscellaneous real variable 8 (mr8) (metric)? 0.0
+1609. Default miscellaneous real variable 9 (mr9) (metric)? 0.0
+1610. Default miscellaneous real variable 10 (mr10) (metric)? 0.0
+
+# --------------------------------------------------------------------------
+# Enable/Disable Miscellaneous Real Variable switches
+# --------------------------------------------------------------------------
+1611. Enable miscellaneous real variable 1? y
+1612. Enable miscellaneous real variable 2? y
+1613. Enable miscellaneous real variable 3? y
+1614. Enable miscellaneous real variable 4? y
+1615. Enable miscellaneous real variable 5? y
+1616. Enable miscellaneous real variable 6? y
+1617. Enable miscellaneous real variable 7? y
+1618. Enable miscellaneous real variable 8? y
+1619. Enable miscellaneous real variable 9? y
+1620. Enable miscellaneous real variable 10? y
+
+# --------------------------------------------------------------------------
+# Default Miscellaneous Integer Values
+# --------------------------------------------------------------------------
+301. Work Coordinates [0-1=G92, 2=G54's] (mi1)? 2
+302. Absolute or Incremental [0=ABS, 1=INC] (mi2)? 0
+303. Reference Return [0=G28, 1=G30] (mi3)? 0
+304. Miscellaneous integer variable 4 (mi4)? 0
+305. Miscellaneous integer variable 5 (mi5)? 0
+306. Miscellaneous integer variable 6 (mi6)? 0
+307. Miscellaneous integer variable 7 (mi7)? 0
+308. Miscellaneous integer variable 8 (mi8)? 0
+309. Miscellaneous integer variable 9 (mi9)? 0
+310. Miscellaneous integer variable 10 (mi10)? 0
+
+# --------------------------------------------------------------------------
+# Enable/Disable Miscellaneous Integer Variable switches
+# --------------------------------------------------------------------------
+1621. Enable miscellaneous integer variable 1? y
+1622. Enable miscellaneous integer variable 2? y
+1623. Enable miscellaneous integer variable 3? y
+1624. Enable miscellaneous integer variable 4? y
+1625. Enable miscellaneous integer variable 5? y
+1626. Enable miscellaneous integer variable 6? y
+1627. Enable miscellaneous integer variable 7? y
+1628. Enable miscellaneous integer variable 8? y
+1629. Enable miscellaneous integer variable 9? y
+1630. Enable miscellaneous integer variable 10? y
+
+# --------------------------------------------------------------------------
+# Configuration File association parameters (default is "y")
+# --------------------------------------------------------------------------
+#400. Name of associated cfg file? 
+401. Read SYSTEM COLORS section? y
+402. Read ALLOCATIONS section? y
+403. Read TOLERANCES section? y
+404. Read DATA PATHS section? y
+405. Read COMMUNICATIONS section? y
+406. Read DRAFT SETTINGS section? y
+407. Read MISCELLANEOUS section? y
+408. Read NC SETTINGS section? y
+409. Read DIALOG SCRIPTS section? y
+410. Read DESIGN SETTINGS section? y
+411. Read PLOTTER SETTINGS section? y
+412. Read ALT-KEY ASSIGNMENTS section? y
+413. Read CAD section? y
+414. Read START/EXIT section? y
+415. Read SCREEN section? y
+416. Read FILE NAMES section? y
+
+1500. Chook to execute from 'Misc. values' button?
+1501. Insert parameter information in the ascii NCI? n
+1502. Write operation information to binary file (.ops)? n
+
+1520. Display a warning when cutter compensation in control simulation finds an error? n
+
+# Do NOT manually change the answer for Q.1999 !
+1999. Product major version number that post supports? 9
+ 
