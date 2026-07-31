@@ -24,9 +24,20 @@ jobs:
       - name: Build
         run: npm run build
 
-  e2e:
+  e2e-lanes:
+    name: E2E - ${{ matrix.lane }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: Settings
+            command: test:e2e:settings
+          - lane: Project input
+            command: test:e2e:project-input
+          - lane: Workflow UI
+            command: test:e2e:workflow-ui
 
     steps:
       - name: Checkout
@@ -44,15 +55,31 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Run Playwright e2e
-        run: npm run test:e2e
+      - name: Run Playwright e2e lane
+        run: npm run ${{ matrix.command }}
 
       - name: Upload Playwright failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.lane }}
           path: |
             playwright-report/
             test-results/
           if-no-files-found: ignore
+
+  e2e:
+    if: ${{ always() }}
+    needs: e2e-lanes
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+
+    steps:
+      - name: Verify all E2E lanes passed
+        env:
+          E2E_LANES_RESULT: ${{ needs.e2e-lanes.result }}
+        run: |
+          if [ "$E2E_LANES_RESULT" != "success" ]; then
+            echo "::error::One or more E2E lanes failed: $E2E_LANES_RESULT"
+            exit 1
+          fi
