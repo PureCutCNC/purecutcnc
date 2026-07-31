@@ -1,0 +1,334 @@
+--************************************************
+--*** Set these values up to suit your machine ***
+--************************************************
+
+--this is the distance between each torch reference in MILLIMETRES
+refDistance = 250
+
+--this is the reference feed rate in mm/min
+refFeed = 200
+
+--Put your switch offset value here in MILLIMETRES
+switchOffset = 1.5
+
+--Scriber X,Y,Z offsets in MILLIMETRES. Do not use inches here even if you want inch code
+--Use the special code 'nil' on the Z axis to disable it.
+--In that case no Z values will be output at all while scribing.
+--e.g scriberZ = nil
+scriberX = 110
+scriberY = 220
+scriberZ = 0
+
+--scriber axis. Leave this as nil if the scriber is fixed to the same axis as the torch
+--scriberAxis = "A"
+scriberAxis = nil
+
+--If this value is set to true then use G28 (home) for the Z reference
+--Set it to false for G38.2 probe
+refHome = false
+
+--The cutter will slow down for corners and turn off THC below this radius
+slowRadius = 10
+
+--Minimum slow down speed.
+--This is a scale factor. For instance 0.5 = 50% of the current feed rate
+slowPercent = 0.4
+
+--THC on and off codes. Use nil if you don't want THC control e.g:
+-- thcOnCode = nil
+-- thcOffCode = nil
+
+--here is another example that use M667 and M666
+--thcOnCode = " M667"
+--thcOffCode = " M666"
+
+thcOnCode = nil
+thcOffCode = nil
+
+--************************************************
+--***           End of settings                ***
+--************************************************
+
+
+
+function OnAbout(event)
+   ctrl = event:GetTextCtrl()
+   ctrl:AppendText("Eding CNC plasma post processor with THC and sriber\n")
+   ctrl:AppendText("\n")
+   ctrl:AppendText("Modal G-codes and coordinates\n")
+   ctrl:AppendText("Comments enclosed with ( and )\n")
+   ctrl:AppendText("M03/M05 turn the torch on/off\n")
+   ctrl:AppendText("M08/M09 turn the engraver on/off\n")
+end
+
+
+
+post.DefineVariable("refDistance",sc.unitLINEAR,0,1e17)
+post.DefineVariable("refFeed",sc.unitFEED,0,1e17)
+post.DefineVariable("switchOffset",sc.unitLINEAR,-1e17,1e17)
+post.DefineVariable("slowRadius",sc.unitLINEAR,-1e17,1e17)
+post.DefineVariable("slowPercent",sc.unitPERCENT,-1e17,1e17)
+
+function OnInit()
+
+   offX = 0
+   offY = 0
+   offZ = 0
+
+   post.SetCommentChars ("()", "[]")  --make sure ( and ) characters do not appear in system text
+   post.Text (" (Filename: ", fileName, ")\n")
+   post.Text (" (Post processor: ", postName, ")\n")
+   post.Text (" (Date: ", date, ")\n")
+   if(scale == metric) then
+      post.Text (" G21 (Units: Metric)\n") --metric mode
+   else
+      post.Text (" G20 (Units: Inches)\n") --inch mode
+   end
+   post.Text ("G90 G40\n")
+   minArcSize = 0.2 --arcs smaller than this are converted to moves
+   firstRef = true
+   currentZAxis = "Z"
+
+   dist = 9999999
+   lastz = 0
+   thcstate = 1
+   ThcOff()
+end
+
+function OnNewLine()
+   post.Text ("N")
+   post.Number (lineNumber, "0000")
+   lineNumber = lineNumber + 10
+end
+
+
+function OnFinish()
+   endZ = safeZ
+   offX = 0
+   offY = 0
+   offZ = 0
+   OnRapid()
+   post.Text (" M05 M30\n")
+end
+
+function OnRapid()
+   if(endX > 1e17 and endY > 1e17) then return end
+   local len = math.hypot((endX + offX)-currentX , (endY + offY)-currentY)
+   dist = dist + len
+   post.Text (" G00")
+   post.ModalNumber (" X", (endX + offX) * scale, "0.0000")
+   post.ModalNumber (" Y", (endY + offY) * scale, "0.0000")
+   if(offZ and firstRef == false and currentZ ~= safeZ) then
+      post.ModalNumber (" " .. currentZAxis, (endZ + offZ) * scale, "0.0000")
+   end
+   post.Eol()
+end
+
+function OnMove()
+   local len = math.hypot(endX - currentX , endY - currentY)
+   dist = dist + len
+   if(len > slowRadius) then
+      ThcOn()
+   end
+   post.Text (" G01")
+   post.ModalNumber (" X", (endX + offX) * scale, "0.0000")
+   post.ModalNumber (" Y", (endY + offY) * scale, "0.0000")
+   if(offZ) then
+      post.ModalNumber (" " .. currentZAxis, (endZ + offZ) * scale, "0.0000")
+   end
+   post.ModalNumber (" F", feedRate * scale, "0.0###")
+   post.Eol()
+end
+
+function OnArc()
+   local radius = math.hypot(currentX - arcCentreX, currentY - arcCentreY)
+   dist = dist + radius * math.abs(arcAngle)
+
+   if (radius < slowRadius) and (math.abs(arcAngle) > 0.5) then
+      feed = (radius / slowRadius)
+      if(feed < slowPercent) then
+         feed = slowPercent
+      end
+      feed = feed * feedRate
+      ThcOff()
+   else
+      feed = feedRate
+      ThcOn()
+   end
+   if(arcAngle <0) then
+      post.Text (" G03")
+   else
+      post.Text (" G02")
+   end
+   post.ModalNumber (" X", (endX + offX) * scale, "0.0000")
+   post.ModalNumber (" Y", (endY + offY) * scale, "0.0000")
+   if(offZ) then
+      post.ModalNumber (" " .. currentZAxis, (endZ + offZ) * scale, "0.0000")
+   end
+   post.Text (" I")
+   post.Number ((arcCentreX - currentX) * scale, "0.0000")
+   post.Text (" J")
+   post.Number ((arcCentreY - currentY) * scale, "0.0000")
+   post.ModalNumber (" F", feed * scale, "0.0###")
+   post.Eol()
+end
+
+
+function ThcOff()
+   if(not thcOffCode) then return end
+   if(thcstate ==1) then
+      thcstate = 0
+      post.Text(thcOffCode)
+      post.Text(" (THC off)\n");
+   end
+end
+
+function ThcOn()
+   if(not thcOnCode) then return end
+   if(toolClass == "MarkerTool") or tool > 99 then return end
+   if(thcstate ==0) then
+      thcstate = 1
+      post.Text(thcOnCode)
+      post.Text(" (THC on)\n");
+      return
+   end
+   if(thcstate == 2) then
+      thcstate = 0
+   end
+end
+
+
+function OnPenDown()
+   if(toolClass == "MarkerTool") or tool > 99 then
+      if (firstRef) then
+         Reference()
+         post.Text (" G00")
+         post.Text(" Z")
+         post.Number (safeZ  * scale, "0.0000")
+         post.Eol()
+         offX = scriberX
+         offY = scriberY
+         offZ = scriberZ
+         post.ModalNumber (" X", (currentX + offX) * scale, "0.0000")
+         post.ModalNumber (" Y", (currentY + offY) * scale, "0.0000")
+         post.Eol()
+      end
+      if (offZ) then
+         post.ModalNumber (" " .. currentZAxis, (currentZ + offZ)  * scale, "0.0000")
+         post.Eol()
+      end
+      post.Text(" M08\n")
+   else
+      if(dist >= refDistance) then
+         dist = 0
+         Reference();
+      end
+      post.Text (" G00")
+      post.Text(" Z")
+      post.Number (pierceHeight  * scale, "0.0000")
+      post.Text (" ;to pierceHeight")
+      post.Eol()
+      if (preheat > 0) then
+         post.Text ("\n G04 P")
+         post.Number (preheat,"0.###")
+         post.Eol()
+      end
+      post.Text ("\n M03\n")
+   end
+   if (pierceDelay > 0) then
+      post.Text (" G04 P")
+      post.Number (pierceDelay,"0.###")
+      post.Text (" ;pierceDelay")
+      post.Eol()
+   end
+--   thcstate = 2 --leave THC off for plunge move
+end
+
+
+function Reference()
+  firstRef = false
+  post.Text(" if [[#5380 == 0] and [#5397 == 0]]")
+  post.Text(" ;Probe only when running")
+  post.Eol()
+  
+  post.Text("   G53 G38.2 Z[#5103+1]")
+  post.ModalNumber (" F", refFeed * scale, "0.0###")
+  post.Text(" ;Probe touch move until Z negative+1 to find Z zero")
+  post.Eol()
+  
+  post.Text("   G0 Z[#5063]")
+  post.Text(" ;Move back to touch point")
+  post.Eol()
+
+  post.Text ("   G92")
+  post.Text(" Z")
+  post.Number (switchOffset * scale, "0.0000")
+  post.Eol()
+  
+  post.Text(" endif")
+  post.Eol()
+end
+
+function OnPenUp()
+   if(toolClass == "MarkerTool" or tool > 99) then
+      post.Text(" M09\n")
+   else
+      post.Text (" M05\n")
+   end
+   if (endDelay > 0) then
+      post.Text (" G04 P")
+      post.Number (endDelay,"0.###")
+      post.Eol()
+   end
+end
+
+
+function OnNewOperation()
+   post.Text (" (Operation: ", operationName, ")\n")
+end
+
+function OnToolChange()
+    if (toolClass == "MarkerTool"  or tool > 99 ) then
+         ThcOff()
+         if(scriberAxis and scriberAxis ~= currentZAxis) then
+            endZ = safeZ
+            OnRapid()
+            currentZAxis = scriberAxis
+         end
+         if(firstRef ~= true) then
+            offX = scriberX
+            offY = scriberY
+            offZ = scriberZ
+         end
+    else
+         if(scriberAxis and scriberAxis == currentZAxis) then
+            endZ = safeZ
+            OnRapid()
+            currentZAxis = "Z"
+         end
+         offX = 0
+         offY = 0
+         offZ = 0
+    end
+end
+
+function OnNewPart()
+   post.Text(" (Part: ",partName,")\n");
+end
+
+function OnDrill()
+   OnRapid()
+   currentX = endX
+   currentY = endY
+   OnPenDown()
+   endZ = drillZ
+   OnMove()
+   OnPenUp()
+   endZ = safeZ
+   OnRapid()
+end
+
+
+function OnComment()
+  post.Text(" (",commentText,")\n")
+end

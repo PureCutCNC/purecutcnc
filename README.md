@@ -54,6 +54,25 @@ Import STL and OBJ meshes to drive 3D surface machining:
 
 Imported meshes participate in `Surface Rough` and `Surface Finish` operations and are visible in both the 3D preview and the simulation view.
 
+### Convert an external CAM post-processor
+
+A standalone command-line converter turns an existing Visual Mill, Vectric/
+Estlcam, ArtCAM, ECam, SheetCAM, Autodesk HSM/Inventor, or Mastercam
+post-processor file into a PureCutCNC machine definition, when the source's
+relevant behavior can be represented exactly:
+
+```bash
+npm run convert-post-processor -- --input <file> --output <file>.json
+```
+
+It never runs the vendor file's own scripting language, and it always
+produces a full report of exactly what was and wasn't carried over. See
+[`src/postProcessorConverter/README.md`](src/postProcessorConverter/README.md)
+for flags, supported formats, and worked examples, or
+[`planning/Post_Processor_Converter_Design.md`](planning/Post_Processor_Converter_Design.md)
+for the report contract and safety details. Review the output in the app's
+advanced machine-definition editor before use.
+
 ### Work with text
 
 Text is handled as an editable feature rather than exploded letter geometry.
