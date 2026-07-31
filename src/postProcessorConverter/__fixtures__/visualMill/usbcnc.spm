@@ -1,0 +1,397 @@
+//This file is Visual Mill Post-Processor Macro File
+//**************************************************************************************************************************************************************************************************************************************************************
+// Created by Post-Processor Generator
+//**************************************************************************************************************************************************************************************************************************************************************
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// INFORMATION SECTION
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+INFORMATION_Version = 3.000
+INFORMATION_MacroVersion = 1.020
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// GENERAL DEFINITION SECTION
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+GENERAL_Extension = txt
+GENERAL_StartReadingChar = %
+GENERAL_StopReadingChar = %
+GENERAL_UseSequencNo = 1
+GENERAL_PrefixLetter = N
+GENERAL_Increment = 1
+GENERAL_SequenceStartNo = 1
+GENERAL_ShowLeadingZeros = 0
+GENERAL_LeadingZerosNumOfDigit = 4
+GENERAL_Mode = 0
+GENERAL_AbsCode = G90
+GENERAL_IncCode = G91
+GENERAL_AbsCenterCode = G92
+GENERAL_Units = 1
+GENERAL_InchCode = G20
+GENERAL_MetricCode = G21
+GENERAL_ModalGCode = 1
+GENERAL_ModalXYZ = 1
+GENERAL_ModalFeedrate = 1
+GENERAL_ModalSpindle = 1
+GENERAL_Delimiter = 1
+GENERAL_UserDefinedDelimiter = ,
+GENERAL_EndBlockCharacter = 
+GENERAL_OutputPlusSign = 0
+GENERAL_CommentOutput = 1
+GENERAL_CommentStartChar = (
+GENERAL_CommentEndChar = )
+GENERAL_CommentSequenceMode = 0
+GENERAL_XRegister = X
+GENERAL_YRegister = Y
+GENERAL_ZRegister = Z
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// MOTION DEFINITION SECTION
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+MOTION_BlockPrefix = 
+MOTION_LinearMotionCode = G1
+MOTION_RapidMotionCode = G0
+MOTION_BlockPostfix = 
+MOTION_Order = 0
+MOTION_RapidFormat = 1
+MOTION_ScaleFactorX = 1.000000
+MOTION_ScaleFactorY = 1.000000
+MOTION_ScaleFactorZ = 1.000000
+MOTION_NumOfDecimalPlaces = 5
+MOTION_LinearBlock = [G_CODE][DELIMITER][NEXT_X][DELIMITER][NEXT_Y][DELIMITER][NEXT_Z]
+MOTION_ShowMotionTrailingZeros = 0
+MOTION_RapidBlockStart
+[G_CODE][DELIMITER][NEXT_Z]
+[DELIMITER][NEXT_X][DELIMITER][NEXT_Y]
+MOTION_RapidBlockEnd
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// CIRCLE DEFINITION SECTION
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+CIRCLE_ClockwiseArcCode = G02
+CIRCLE_CClockwiseArcCode = G03
+CIRCLE_XYPlaneCode = G17
+CIRCLE_YZPlaneCode = G19
+CIRCLE_ZXPlaneCode = G18
+CIRCLE_BlockXYStart
+[CIR_PLANE]
+[G_CODE][NEXT_X][NEXT_Y][NEXT_Z][NEXT_I][NEXT_J]
+CIRCLE_BlockXYEnd
+CIRCLE_BlockZXStart
+[CIR_PLANE]
+[G_CODE][NEXT_X][NEXT_Y][NEXT_Z][NEXT_K][NEXT_I]
+CIRCLE_BlockZXEnd
+CIRCLE_BlockYZStart
+[CIR_PLANE]
+[G_CODE][NEXT_X][NEXT_Y][NEXT_Z][NEXT_J][NEXT_K]
+CIRCLE_BlockYZEnd
+CIRCLE_ArcCenterCoordinate = 1
+CIRCLE_Modal = 0
+CIRCLE_Format = 1
+CIRCLE_SignedRadius = 0
+CIRCLE_SwitchPlanes = 0
+CIRCLE_LimitArcs = 0
+CIRCLE_LimitAngle = 180.000000
+CIRCLE_IRegister = I
+CIRCLE_JRegister = J
+CIRCLE_KRegister = K
+CIRCLE_RRegister = R
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// HELIXSPIRAL DEFINITION SECTION
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+HELIXSPIRAL_ClockwiseArcCodeHelix = 
+HELIXSPIRAL_CClockwiseArcCodeHelix = 
+HELIXSPIRAL_ClockwiseArcCodeSpiral = 
+HELIXSPIRAL_CClockwiseArcCodeSpiral = 
+HELIXSPIRAL_BlockXYHelixStart
+
+HELIXSPIRAL_BlockXYHelixEnd
+HELIXSPIRAL_BlockZXHelixStart
+
+HELIXSPIRAL_BlockZXHelixEnd
+HELIXSPIRAL_BlockYZHelixStart
+
+HELIXSPIRAL_BlockYZHelixEnd
+HELIXSPIRAL_BlockXYSpiralStart
+
+HELIXSPIRAL_BlockXYSpiralEnd
+HELIXSPIRAL_BlockZXSpiralStart
+
+HELIXSPIRAL_BlockZXSpiralEnd
+HELIXSPIRAL_BlockYZSpiralStart
+
+HELIXSPIRAL_BlockYZSpiralEnd
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// 4AXIS MOTION DEFINITION SECTION
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+GENERALMOTION_ClockwiseRotation = -
+GENERALMOTION_CClockwiseRotation = 
+GENERALMOTION_Aaxis = A
+GENERALMOTION_Baxis = B
+GENERALMOTION_Caxis = C
+GENERALMOTION_ScaleFactor = 57.295779513082
+GENERALMOTION_ShowTrailingZeros = 0
+GENERALMOTION_NumOfDecimalPlaces = 1
+GENERALMOTION_RestrictToPositiveAngles = 0
+GENERALMOTION_LinearBlockStart
+[LINEAR][DELIMITER][NEXT_X][DELIMITER][NEXT_Y][DELIMITER][NEXT_Z][DELIMITER][ROTATION_AXIS][ROTATION_DIR][ANGLE][DELIMITER][FEEDRATE_CODE][ROTATION_FEEDVALUE]
+GENERALMOTION_LinearBlockEnd
+GENERALMOTION_RapidBlockStart
+[RAPID][DELIMITER][NEXT_X][DELIMITER][NEXT_Y][DELIMITER][NEXT_Z][DELIMITER][ROTATION_AXIS][ROTATION_DIR][ANGLE][DELIMITER][FEEDRATE_CODE][ROTATION_FEEDVALUE]
+GENERALMOTION_RapidBlockEnd
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// SPINDLE DEFINITION SECTION
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+SPINDLE_BlockPrefix = 
+SPINDLE_Code = S
+SPINDLE_BlockPostfix = 
+SPINDLE_ClockwiseRotationCode = M3
+SPINDLE_CClockwiseRotationCode = M4
+SPINDLE_OffCode = M5
+SPINDLE_HighValue = 10000.000000
+SPINDLE_LowValue = 0.000000
+SPINDLE_ScaleFactor = 1.000000
+SPINDLE_NumOfDecimalPlaces = 0
+SPINDLE_Block = [SPINDLE_CODE][SPINDLE_SPD][DELIMITER][SPINDLE_ARC]
+SPINDLE_ShowSpindleTrailingZeros = 0
+SPINDLE_ConstantSurfaceSpeed = 
+SPINDLE_ConstantRotationSpeed = 
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// FEEDRATE DEFINITION SECTION
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+FEEDRATE_BlockPrefix = 
+FEEDRATE_Code = F
+FEEDRATE_BlockPostfix = 
+FEEDRATE_HighValue = 7620.000000
+FEEDRATE_LowValue = 10.000005
+FEEDRATE_ScaleFactor = 1.000000
+FEEDRATE_NumOfDecimalPlaces = 1
+FEEDRATE_Block = [FEEDRATE_CODE][FEEDRATE]
+FEEDRATE_OutputPlace = 1
+FEEDRATE_ShowTrailingZeros = 0
+FEEDRATE_FeedScaleFactor = 1.000000
+FEEDRATE_FeedShowTrailingZeros = 0
+FEEDRATE_FeedNumOfDecimalPlaces = 1
+FEEDRATE_ZScaleFactor = 1.000000
+FEEDRATE_UnitsPerRevolution = 
+FEEDRATE_UnitsPerMinute = 
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// MISCELLANEOUS DEFINITION SECTION
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+MISCELLANEOUS_CoolantOff = M09
+MISCELLANEOUS_CoolantOn = M08
+MISCELLANEOUS_CoolantMist = M07
+MISCELLANEOUS_CoolantFlood = M08
+MISCELLANEOUS_CoolantThru = M50
+MISCELLANEOUS_CoolantTap = M51
+MISCELLANEOUS_CompensationOff = G40
+MISCELLANEOUS_CompensationLeft = G41
+MISCELLANEOUS_CompensationRight = G42
+MISCELLANEOUS_CompensationLength = G43
+MISCELLANEOUS_WorkOffset = G
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// STARTUP DEFINITION SECTION
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+STARTUP_ProgramCodeStart
+[START_CHAR]
+[SEQ_PRECHAR][SEQNUM][DELIMITER]G17[DELIMITER][OUTPUT_UNITS_CODE][DELIMITER]G40[DELIMITER][OUTPUT_MODE_CODE][DELIMITER]
+STARTUP_ProgramCodeEnd
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// TOOLCHANGE DEFINITION SECTION
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+TOOLCHANGE_AdjustRegister = H
+TOOLCHANGE_FirstMacroStart
+[SEQ_PRECHAR][SEQNUM][DELIMITER]T[TOOL_NUM] M06
+TOOLCHANGE_FirstMacroEnd
+TOOLCHANGE_MacroStart
+[SEQ_PRECHAR][SEQNUM][DELIMITER]T[TOOL_NUM] M06
+TOOLCHANGE_MacroEnd
+TOOLCHANGE_CutComLeftStart
+G41
+TOOLCHANGE_CutComLeftEnd
+TOOLCHANGE_CutComRightStart
+G42
+TOOLCHANGE_CutComRightEnd
+TOOLCHANGE_CutComOffStart
+G40
+TOOLCHANGE_CutComOffEnd
+TOOLCHANGE_Use2DigitFormat = 0
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// CYCLES DEFINITION SECTION
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+CYCLES_DrillDwell = G82
+CYCLES_DrillNoDwell = G81
+CYCLES_Deep = G83
+CYCLES_BreakChip = 
+CYCLES_CounterSink = G82
+CYCLES_TapClockwise = 
+CYCLES_TapCClockwise = 
+CYCLES_BoreDragDwell = G89
+CYCLES_BoreDragNoDwell = G85
+CYCLES_BoreNoDragDwellOrient = 
+CYCLES_BoreNoDragDwellNoOrient = G86
+CYCLES_BoreNoDragNoDwellOrient = 
+CYCLES_BoreNoDragNoDwellNoOrient = G86
+CYCLES_BoreManualDwell = G87
+CYCLES_BoreManualNoDwell = G87
+CYCLES_BoreReverseDwell = G88
+CYCLES_BoreReverseNoDwell = G88
+CYCLES_CycleOff = G80
+CYCLES_RigidTapClockwise = T00
+CYCLES_RigidTapCClockwise = T01
+CYCLES_UDDrill01 = 
+CYCLES_UDDrill02 = 
+CYCLES_UDTap01 = 
+CYCLES_UDTap02 = 
+CYCLES_UDBore01 = 
+CYCLES_UDBore02 = 
+CYCLES_UDRBore01 = 
+CYCLES_UDRBore02 = 
+CYCLES_TurnCycleThreadAutomatic = 
+CYCLES_TurnCycleThreadBoxCycle = 
+CYCLES_TurnCycleThreadSingleBlock = 
+CYCLES_ScaleFactor = 1.000000
+CYCLES_Optimize = 0
+CYCLES_FeedrateRegister = F
+CYCLES_IncRegister = Q
+CYCLES_DwellRegister = P
+CYCLES_ClearRegister = R
+CYCLES_OrientRegister = Q
+CYCLES_DrillDwellCodeStart
+[SEQ_PRECHAR][SEQNUM][DELIMITER][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][DELIMITER][G_CODE][DELIMITER]X[NEXT_NONMDL_X][DELIMITER]Y[NEXT_NONMDL_Y][DELIMITER]Z[CYCL_Z-DEPTH][DELIMITER]R[CYCL_Z+CLEAR][DELIMITER]P[CYCL_SCALED_DWELL][DELIMITER]F[CYCL_IPM]
+CYCLES_DrillDwellCodeEnd
+CYCLES_DrillNoDwellCodeStart
+[SEQ_PRECHAR][SEQNUM][DELIMITER][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][DELIMITER][G_CODE][DELIMITER]X[NEXT_NONMDL_X][DELIMITER]Y[NEXT_NONMDL_Y][DELIMITER]Z[CYCL_Z-DEPTH][DELIMITER]R[CYCL_Z+CLEAR][DELIMITER]F[CYCL_IPM]
+CYCLES_DrillNoDwellCodeEnd
+CYCLES_DeepCodeStart
+[SEQ_PRECHAR][SEQNUM][DELIMITER][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][DELIMITER][G_CODE][DELIMITER]X[NEXT_NONMDL_X][DELIMITER]Y[NEXT_NONMDL_Y][DELIMITER]Z[CYCL_Z-DEPTH][DELIMITER]R[CYCL_Z+CLEAR][DELIMITER]Q[CYCL_INCR][DELIMITER]F[CYCL_IPM]
+CYCLES_DeepCodeEnd
+CYCLES_BreakChipCodeStart
+[SEQ_PRECHAR][SEQNUM][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][G_CODE]X[NEXT_NONMDL_X]Y[NEXT_NONMDL_Y]Z[CYCL_Z-DEPTH]R[CYCL_Z+CLEAR]F[CYCL_IPM]Q[CYCL_INCR]
+CYCLES_BreakChipCodeEnd
+CYCLES_TapCWCodeStart
+[SEQ_PRECHAR][SEQNUM][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM]G95[G_CODE]X[NEXT_NONMDL_X]Y[NEXT_NONMDL_Y]Z[CYCL_Z-DEPTH]R[CYCL_Z+CLEAR]F[CYCL_1/TPI]
+CYCLES_TapCWCodeEnd
+CYCLES_CounterSinkCodeStart
+[SEQ_PRECHAR][SEQNUM][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][G_CODE]X[NEXT_NONMDL_X]Y[NEXT_NONMDL_Y]Z[CYCL_CSINK_DEPTH]R[CYCL_Z+CLEAR]P[CYCL_SCALED_DWELL]F[CYCL_IPM]
+CYCLES_CounterSinkCodeEnd
+CYCLES_TapCCWodeStart
+[SEQ_PRECHAR][SEQNUM][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM]G95[G_CODE]X[NEXT_NONMDL_X]Y[NEXT_NONMDL_Y]Z[CYCL_Z-DEPTH]R[CYCL_Z+CLEAR]F[CYCL_1/TPI]
+CYCLES_TapCCWodeEnd
+CYCLES_BoreDragDwellCodeStart
+[SEQ_PRECHAR][SEQNUM][DELIMITER][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][DELIMITER][G_CODE][DELIMITER]X[NEXT_NONMDL_X][DELIMITER]Y[NEXT_NONMDL_Y][DELIMITER]Z[CYCL_Z-DEPTH][DELIMITER]R[CYCL_Z+CLEAR][DELIMITER]P[CYCL_SCALED_DWELL][DELIMITER]F[CYCL_IPM]
+CYCLES_BoreDragDwellCodeEnd
+CYCLES_BoreDragNoDwellCodeStart
+[SEQ_PRECHAR][SEQNUM][DELIMITER][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][DELIMITER][G_CODE][DELIMITER]X[NEXT_NONMDL_X][DELIMITER]Y[NEXT_NONMDL_Y][DELIMITER]Z[CYCL_Z-DEPTH][DELIMITER]R[CYCL_Z+CLEAR][DELIMITER]F[CYCL_IPM]
+CYCLES_BoreDragNoDwellCodeEnd
+CYCLES_BoreNoDragDOCodeStart
+[SEQ_PRECHAR][SEQNUM][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][G_CODE]X[NEXT_NONMDL_X]Y[NEXT_NONMDL_Y]Z[CYCL_Z-DEPTH]R[CYCL_Z+CLEAR]F[CYCL_IPM]Q[CYCL_ORIENT]
+CYCLES_BoreNoDragDOCodeEnd
+CYCLES_BoreNoDragDNOCodeStart
+[SEQ_PRECHAR][SEQNUM][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][G_CODE]X[NEXT_NONMDL_X]Y[NEXT_NONMDL_Y]Z[CYCL_Z-DEPTH]R[CYCL_Z+CLEAR]F[CYCL_IPM]L[CYCL_DWELL]
+CYCLES_BoreNoDragDNOCodeEnd
+CYCLES_BoreNoDragNDOCodeStart
+[SEQ_PRECHAR][SEQNUM][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][G_CODE]X[NEXT_NONMDL_X]Y[NEXT_NONMDL_Y]Z[CYCL_Z-DEPTH]R[CYCL_Z+CLEAR]F[CYCL_IPM]Q[CYCL_ORIENT]
+CYCLES_BoreNoDragNDOCodeEnd
+CYCLES_BoreNoDragNDNOCodeStart
+[SEQ_PRECHAR][SEQNUM][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][G_CODE]X[NEXT_NONMDL_X]Y[NEXT_NONMDL_Y]Z[CYCL_Z-DEPTH]R[CYCL_Z+CLEAR]F[CYCL_IPM]L[CYCL_DWELL]
+CYCLES_BoreNoDragNDNOCodeEnd
+CYCLES_BoreManualDwellCodeStart
+[SEQ_PRECHAR][SEQNUM][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][G_CODE]X[NEXT_NONMDL_X]Y[NEXT_NONMDL_Y]Z[CYCL_Z-DEPTH]R[CYCL_Z+CLEAR]F[CYCL_IPM]L[CYCL_DWELL]
+CYCLES_BoreManualDwellCodeEnd
+CYCLES_BoreManualNoDwellCodeStart
+[SEQ_PRECHAR][SEQNUM][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][G_CODE]X[NEXT_NONMDL_X]Y[NEXT_NONMDL_Y]Z[CYCL_Z-DEPTH]R[CYCL_Z+CLEAR]F[CYCL_IPM]L[CYCL_DWELL]
+CYCLES_BoreManualNoDwellCodeEnd
+CYCLES_BoreReverseDwellCodeStart
+[SEQ_PRECHAR][SEQNUM][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][G_CODE]X[NEXT_NONMDL_X]Y[NEXT_NONMDL_Y]Z[CYCL_Z-DEPTH]R[CYCL_Z+CLEAR]P[CYCL_SCALED_DWELL]F[CYCL_IPM]
+CYCLES_BoreReverseDwellCodeEnd
+CYCLES_BoreReverseNoDwellCodeStart
+[SEQ_PRECHAR][SEQNUM][OUTPUT_UNITS_CODE][SPINDLE_BLK]
+[SEQ_PRECHAR][SEQNUM][G_CODE]X[NEXT_NONMDL_X]Y[NEXT_NONMDL_Y]Z[CYCL_Z-DEPTH]R[CYCL_Z+CLEAR]P[CYCL_SCALED_DWELL]F[CYCL_IPM]
+CYCLES_BoreReverseNoDwellCodeEnd
+CYCLES_RigidTapClockwiseCodeStart
+CYCLES_RigidTapClockwiseCodeEnd
+CYCLES_RigidTapCClockwiseCodeStart
+CYCLES_RigidTapCClockwiseCodeEnd
+CYCLES_UDDrill01CodeStart
+
+CYCLES_UDDrill01CodeEnd
+CYCLES_UDDrill02CodeStart
+
+CYCLES_UDDrill02CodeEnd
+CYCLES_UDTap01CodeStart
+
+CYCLES_UDTap01CodeEnd
+CYCLES_UDTap02CodeStart
+
+CYCLES_UDTap02CodeEnd
+CYCLES_UDBore01CodeStart
+
+CYCLES_UDBore01CodeEnd
+CYCLES_UDBore02CodeStart
+
+CYCLES_UDBore02CodeEnd
+CYCLES_UDRBore01CodeStart
+
+CYCLES_UDRBore01CodeEnd
+CYCLES_UDRBore02CodeStart
+
+CYCLES_UDRBore02CodeEnd
+CYCLES_TurnCycleThreadAutomaticCodeStart
+
+CYCLES_TurnCycleThreadAutomaticCodeEnd
+CYCLES_TurnCycleThreadBoxCycleCodeStart
+
+CYCLES_TurnCycleThreadBoxCycleCodeEnd
+CYCLES_TurnCycleThreadSingleBlockCodeStart
+
+CYCLES_TurnCycleThreadSingleBlockCodeEnd
+CYCLES_CycleOffCodeStart
+[SEQ_PRECHAR][SEQNUM][DELIMITER][G_CODE]
+CYCLES_CycleOffCodeEnd
+
+
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// END DEFINITION SECTION
+//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+END_ProgramCodeStart
+[SEQ_PRECHAR][SEQNUM][DELIMITER]M30
+[STOP_CHAR]
+END_ProgramCodeEnd
+
+
