@@ -49,6 +49,7 @@ import {
   offsetClipperPaths,
   pathsContainEnvelope,
   pointInClipperPaths,
+  safeSubtractBottomZAtPoint,
   unionClipperPaths,
   unionClipperPathsEvenOdd,
 } from './modelProtection'
@@ -509,6 +510,7 @@ function generateProjectedWaterlineLevels(
   toolOffset: number,
   tipStepdownDistance: number,
   sliceProjectedAtZ: (z: number) => ClipperPath[],
+  projectTerminalCapsToTargetContact: boolean,
 ): WaterlineLevelBuild & { metrics: WaterlineRefinementMetrics; suppressedCoarsePaths: WaterlineSuppressedPath[] } {
   // Active intersecting-add footprints expanded by toolOffset, so projected
   // band/cap rings can be subtracted away from areas occupied by add features
@@ -569,6 +571,73 @@ function generateProjectedWaterlineLevels(
     const slice = sliceProjectedAtZ(z)
     if (slice.length === 0) return []
     return clipRingsAgainstAdds(offsetClipperPaths(slice, toolOffset), z)
+  }
+
+  const emitProjectedCapTerminal = (path: ClipperPath, z: number): boolean => {
+    const center = clipperPathCentroid(path)
+    const terminalCapPaths = clipRingsAgainstAdds([path], z)
+    if (!pointInClipperPaths(terminalCapPaths, center)) return true
+    const terminalMaterial = sliceProjectedAtZ(z - waterlineLengthEpsilon)
+    if (!pointInClipperPaths(terminalMaterial, center)) return true
+
+    // Tool-offset contours around a peak stop shrinking when their radius
+    // approaches the cutter radius. Fill that remaining disk at the requested
+    // micro-step before placing the cutter over the local maximum; otherwise
+    // the last offset ring and the center pass are separated by roughly one
+    // tool radius, leaving a flat crown on cone and nose tips.
+    if (projectTerminalCapsToTargetContact) {
+      if (!emitLevel({
+        z,
+        contourPaths: terminalCapPaths,
+        projectZAtPoint: () => z,
+        source: 'projectedCap',
+      })) return false
+
+      let stoppedByCollapse = false
+      for (let step = 1; step <= maxRingsPerBand; step += 1) {
+        const inward = clipRingsAgainstAdds(
+          offsetClipperPaths([path], -(step * stepoverDistance)),
+          z,
+        )
+        if (inward.length === 0) {
+          stoppedByCollapse = true
+          break
+        }
+        if (!emitLevel({
+          z,
+          contourPaths: inward,
+          projectZAtPoint: () => z,
+          source: 'projectedCap',
+        })) return false
+      }
+      if (!stoppedByCollapse) hitPassLimit = true
+    }
+
+    // Keep the terminal move as a tiny closed pass rather than adding a
+    // special single-point move to the shared toolpath model.
+    const centerX = Math.round(center.x * DEFAULT_CLIPPER_SCALE)
+    const centerY = Math.round(center.y * DEFAULT_CLIPPER_SCALE)
+    const terminalRadius = Math.max(
+      2,
+      Math.round(waterlineLengthEpsilon * DEFAULT_CLIPPER_SCALE),
+    )
+    const terminalPath: ClipperPath = [
+      { X: centerX, Y: centerY - terminalRadius },
+      { X: centerX + terminalRadius, Y: centerY + terminalRadius },
+      { X: centerX - terminalRadius, Y: centerY + terminalRadius },
+    ]
+    const clippedTerminalPaths = clipRingsAgainstAdds(
+      intersectClipperPaths([terminalPath], [path]),
+      z,
+    ).filter((candidate) => candidate.length >= 3)
+    if (clippedTerminalPaths.length === 0) return true
+
+    return emitLevel({
+      z,
+      contourPaths: clippedTerminalPaths,
+      projectZAtPoint: () => z,
+      source: 'projectedCap',
+    })
   }
 
   const emitProjectedBandFill = (
@@ -650,6 +719,7 @@ function generateProjectedWaterlineLevels(
             'projectedCap',
             waterlineLengthEpsilon,
           )) return false
+          if (!emitProjectedCapTerminal(activePath.path, nextZ)) return false
         }
         break
       }
@@ -670,6 +740,7 @@ function generateProjectedWaterlineLevels(
             'projectedCap',
             waterlineLengthEpsilon,
           )) return false
+          if (!emitProjectedCapTerminal(activePath.path, nextZ)) return false
           continue
         }
         if (!emitProjectedBandFill(
@@ -689,6 +760,12 @@ function generateProjectedWaterlineLevels(
       if (nextActive.length === 0) break
       active = nextActive
       currentZ = nextZ
+    }
+
+    if (currentZ >= peakZ - waterlineLengthEpsilon) {
+      for (const activePath of active) {
+        if (!emitProjectedCapTerminal(activePath.path, peakZ)) return false
+      }
     }
 
     return true
@@ -1307,6 +1384,28 @@ export function generateFinishSurfaceWaterline(
     heightMapCellSize,
   )
   const safetyHeightMap = heightMapWithIntersectingAddTops(baseHeightMap, intersectingAdds)
+  const shouldProjectToTargetContact = radialLeave <= 1e-9
+    && operation.stockToLeaveAxial <= 1e-9
+  const targetToolTipZCache = new Map<string, number>()
+  const targetToolTipZAtPoint = (point: XYPoint): number => {
+    const key = `${point.x.toFixed(6)},${point.y.toFixed(6)}`
+    const cached = targetToolTipZCache.get(key)
+    if (cached !== undefined) return cached
+    const z = safeToolTipZAt(point.x, point.y, baseHeightMap, tool)
+    targetToolTipZCache.set(key, z)
+    return z
+  }
+  const surfaceZAtPoint = (point: XYPoint): number => {
+    const col = Math.floor((point.x - safetyHeightMap.originX) / safetyHeightMap.cellSize)
+    const row = Math.floor((point.y - safetyHeightMap.originY) / safetyHeightMap.cellSize)
+    if (
+      col < 0
+      || col >= safetyHeightMap.width
+      || row < 0
+      || row >= safetyHeightMap.height
+    ) return Number.NEGATIVE_INFINITY
+    return safetyHeightMap.data[row * safetyHeightMap.width + col]
+  }
   const projectedLevelBuild = adaptiveRefinementEnabled && regionFeatures.length === 0
     ? generateProjectedWaterlineLevels(
         projectedInputBuild,
@@ -1318,6 +1417,7 @@ export function generateFinishSurfaceWaterline(
         toolOffset,
         tipStepdownDistance,
         projectedSliceAtZ,
+        shouldProjectToTargetContact,
       )
     : null
   const coarseLevelsWithSuppressedCaps = projectedLevelBuild
@@ -1468,6 +1568,14 @@ export function generateFinishSurfaceWaterline(
       .sort((a, b) => a.z - b.z)
     cluster.splice(0, cluster.length, ...realWaterlines, ...projectedFills)
   }
+  // A terminal cap can be much smaller than the surrounding rings and thus
+  // form its own XY cluster. Keep every cluster with a real waterline ahead
+  // of projected-only clusters so adaptive fill remains a finishing step.
+  clusters.sort((a, b) => {
+    const aProjectedOnly = a.every((entry) => Boolean(entry.source))
+    const bProjectedOnly = b.every((entry) => Boolean(entry.source))
+    return Number(aProjectedOnly) - Number(bProjectedOnly)
+  })
 
   const machiningEnvelopePaths = unionClipperPaths(
     contourClipEnvelope
@@ -1723,19 +1831,55 @@ export function generateFinishSurfaceWaterline(
           const distance = distanceToClipperPathsBoundary(meshBoundaryPaths, point)
           return Math.abs(distance - toolOffset) <= meshBoundaryTolerance
         }
-        const zAtPoint = ringEntry.projectZAtPoint ?? (() => ringEntry.z)
-        const liftedZAtPoint = intersectingAdds.length > 0
+        const projectedZAtPoint = ringEntry.projectZAtPoint ?? (() => ringEntry.z)
+        // A ball endmill offset horizontally by its full radius must run below
+        // the original mesh-slice Z on a slope. Project zero-stock Waterline
+        // rings onto the same swept-cutter contact surface used by Parallel;
+        // otherwise the remaining material equals the slope-induced height
+        // change across one tool radius.
+        const shouldProjectRingToTargetContact = shouldProjectToTargetContact
+          && (intersectingAdds.length === 0 || ringEntry.source === 'projectedCap')
+        const zAtPoint = shouldProjectRingToTargetContact
+          ? (point: XYPoint): number => {
+              const contactZ = targetToolTipZAtPoint(point)
+              const projectedZ = Number.isFinite(contactZ) ? contactZ : projectedZAtPoint(point)
+              const pocketFloorZ = safeSubtractBottomZAtPoint(relatedSubtracts, point)
+                ?? effectiveBottom
+              // Height-map cells can miss a surface that is exactly tangent
+              // to the cutter footprint at a vertical wall. A ball cannot
+              // side-contact the nominal slice below sliceZ - radius, so keep
+              // that geometric lower bound as the boundary fallback.
+              const sideContactFloorZ = tool.type === 'ball_endmill'
+                ? ringEntry.z - tool.radius
+                : Number.NEGATIVE_INFINITY
+              const minimumZ = Math.max(pocketFloorZ, sideContactFloorZ)
+              return Math.max(projectedZ, minimumZ)
+            }
+          : projectedZAtPoint
+        const shouldLiftForMeshSafety = !shouldProjectRingToTargetContact
+          && (intersectingAdds.length > 0 || Boolean(ringEntry.projectZAtPoint))
+        const liftedZAtPoint = shouldLiftForMeshSafety
           ? (point: XYPoint): number => {
               const baseZ = zAtPoint(point)
-              if (isNearMeshBoundary(point)) return baseZ
-              const safeMeshZ = safeToolTipZAt(point.x, point.y, safetyHeightMap, tool)
-              return Number.isFinite(safeMeshZ)
-                ? Math.max(baseZ, safeMeshZ + stepoverDistance * 0.5)
-                : baseZ
+              if (
+                intersectingAdds.length > 0
+                && !ringEntry.projectZAtPoint
+                && isNearMeshBoundary(point)
+              ) return baseZ
+              const safeMeshZ = intersectingAdds.length > 0
+                ? safeToolTipZAt(point.x, point.y, safetyHeightMap, tool)
+                : surfaceZAtPoint(point)
+              if (!Number.isFinite(safeMeshZ)) return baseZ
+              const intersectingAddClearance = intersectingAdds.length > 0 && !isNearMeshBoundary(point)
+                ? stepoverDistance * 0.5
+                : 0
+              return Math.max(baseZ, safeMeshZ + intersectingAddClearance)
             }
           : zAtPoint
         if (ringEntry.projectZAtPoint) {
-          contour = densifyContour(contour, stepoverDistance / 2, waterlineLengthEpsilon, isClosed)
+          if (!shouldProjectToTargetContact) {
+            contour = densifyContour(contour, stepoverDistance / 2, waterlineLengthEpsilon, isClosed)
+          }
           if (!isClosed && contourPolylineLength(contour, false) <= Math.max(toolOffset * 2, stepoverDistance * 2)) {
             continue
           }
@@ -1759,6 +1903,14 @@ export function generateFinishSurfaceWaterline(
         for (const safeRun of safeRuns) {
           if (safeRun.contour.length < 2) continue
           if (!safeRun.closed && contourPolylineLength(safeRun.contour, false) <= Math.max(toolOffset * 0.5, stepoverDistance)) {
+            continue
+          }
+          if (
+            ringEntry.projectZAtPoint
+            && safeRun.contour.every((point) => (
+              liftedZAtPoint(point) > zAtPoint(point) + waterlineLengthEpsilon
+            ))
+          ) {
             continue
           }
           const entry = safeRun.closed
@@ -1791,7 +1943,9 @@ export function generateFinishSurfaceWaterline(
             transitionMove.source = ringEntry.source
           }
           canLinkFromPreviousRing = false
-          const cutMovesForContour = intersectingAdds.length > 0 || ringEntry.projectZAtPoint
+          const cutMovesForContour = shouldProjectToTargetContact
+            || intersectingAdds.length > 0
+            || ringEntry.projectZAtPoint
             ? toProjectedCutMoves(safeRun.contour, safeRun.closed, liftedZAtPoint, ringEntry.source)
             : safeRun.closed
               ? toClosedCutMoves(safeRun.contour, ringEntry.z)
