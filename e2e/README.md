@@ -17,11 +17,20 @@ or uncaught page error.
 
 ## CI gate
 
-Pull requests run `npm run test:e2e` in a dedicated workflow job. CI installs
-Chromium with Playwright, forbids committed `.only` tests, keeps traces on
-failure, and uploads `playwright-report/` / `test-results/` when the job fails.
-The e2e job is separate from `npm run build` so the build script stays
-browser-free while PRs still exercise the browser smoke.
+Pull requests run three logical E2E lanes on separate runners. Each runner
+keeps the safe CI configuration of two workers with per-file parallelism
+disabled, so the split reduces elapsed time without increasing browser or Vite
+load inside a runner:
+
+| Lane | Command | Specs |
+|------|---------|-------|
+| Settings | `npm run test:e2e:settings` | appearance, units, languages, language manager, theme manager |
+| Project input | `npm run test:e2e:project-input` | feature references, import geometry, creation targets |
+| Workflow UI | `npm run test:e2e:workflow-ui` | CAM operations, G-code export, motion debug, overlap selection, viewport views |
+
+The aggregate `e2e` check succeeds only when every lane succeeds, preserving
+the required PR gate. Each failed lane uploads its own Playwright report and
+test results. `npm run test:e2e` remains the full local-suite command.
 
 ## Scaffolding (read before writing a test)
 

@@ -19,6 +19,9 @@ import type { Units } from '../utils/units'
 
 export type ImportSourceType = 'svg' | 'dxf' | 'stl' | 'obj' | 'camj'
 
+export const SUPPORTED_IMPORT_EXTENSIONS = ['svg', 'dxf', 'stl', 'obj', 'camj'] as const
+export const SUPPORTED_IMPORT_ACCEPT = '.' + SUPPORTED_IMPORT_EXTENSIONS.join(',.')
+
 /** Geometry import mode — how the importer assigns feature roles. */
 export type ImportGeometryMode = 'auto' | 'paths' | 'solid-regions'
 
@@ -81,4 +84,12 @@ export interface ImportContext {
    * Shapes with a null layerName are always included regardless of this filter.
    */
   layerFilter?: string[] | null
+}
+
+export function detectImportSourceType(fileName: string): ImportSourceType | null {
+  const lowerName = fileName.toLowerCase()
+  for (const ext of SUPPORTED_IMPORT_EXTENSIONS) {
+    if (lowerName.endsWith('.' + ext)) return ext
+  }
+  return null
 }

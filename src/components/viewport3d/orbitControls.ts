@@ -83,7 +83,7 @@ export function createOrbitControls(
   const target = new THREE.Vector3(initial[0], initial[1], initial[2])
   const pointerNdc = new THREE.Vector2()
   const raycaster = new THREE.Raycaster()
-  const designPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+  const focusPlane = new THREE.Plane()
   const beforeZoomPoint = new THREE.Vector3()
   const afterZoomPoint = new THREE.Vector3()
   const panRight = new THREE.Vector3()
@@ -127,7 +127,9 @@ export function createOrbitControls(
     pointerNdc.x = ((clientX - bounds.left) / bounds.width) * 2 - 1
     pointerNdc.y = -(((clientY - bounds.top) / bounds.height) * 2 - 1)
     raycaster.setFromCamera(pointerNdc, camera)
-    return raycaster.ray.intersectPlane(designPlane, out) !== null
+    camera.getWorldDirection(cameraDirection)
+    focusPlane.set(cameraDirection, cameraDirection.dot(target))
+    return raycaster.ray.intersectPlane(focusPlane, out) !== null
   }
 
   function panByPixels(deltaX: number, deltaY: number) {

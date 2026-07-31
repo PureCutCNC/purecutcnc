@@ -36,6 +36,7 @@ architecture contracts.
 ## Export and simulation
 
 - [G-code_Export_Design.md](G-code_Export_Design.md) — machine origin, machine definitions, postprocessing, and export.
+- [Post_Processor_Converter_Design.md](Post_Processor_Converter_Design.md) — standalone CLI (issue #402) that converts external CAM post-processor files into a machine definition; conversion-report contract, supported formats, and the safety/review workflow.
 - [SIMULATION_GPU_HEIGHTFIELD_DESIGN.md](SIMULATION_GPU_HEIGHTFIELD_DESIGN.md) — CPU simulation state and GPU heightfield rendering boundary.
 
 ## UI
