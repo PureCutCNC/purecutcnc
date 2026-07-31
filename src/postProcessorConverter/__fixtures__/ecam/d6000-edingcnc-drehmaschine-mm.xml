@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ToolMachine xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <MachineType>Lathe2Axis</MachineType>
+  <Unit>Millimeter</Unit>
+  <FileVersion>0.3</FileVersion>
+  <Filename>D6000 EdingCNC Drehmaschine mm</Filename>
+  <MeasureUnit>Millimeter</MeasureUnit>
+  <SpindleMaxRev>3000</SpindleMaxRev>
+  <RapidFeed>1800</RapidFeed>
+  <Post>
+    <Decimal_Count_Feed_Sync>3</Decimal_Count_Feed_Sync>
+    <Decimal_Count_Feed_Async>0</Decimal_Count_Feed_Async>
+    <Decimal_Count_Coordinate>3</Decimal_Count_Coordinate>
+    <Decimal_Count_Speed>0</Decimal_Count_Speed>
+    <Disable_Incremental_Coordinate>true</Disable_Incremental_Coordinate>
+    <EndLineCode />
+    <ForceDecimalPoint>false</ForceDecimalPoint>
+    <ForceDecimalPlacesOnCoordinate>false</ForceDecimalPlacesOnCoordinate>
+    <ForceLineNumeration>false</ForceLineNumeration>
+    <ForceSpacesBetweenCodes>true</ForceSpacesBetweenCodes>
+    <DecimalSeparator>.</DecimalSeparator>
+    <WriteReduntantCoordinate>false</WriteReduntantCoordinate>
+    <Line_Number_Start>5</Line_Number_Start>
+    <Line_Number_Increment>5</Line_Number_Increment>
+    <Line_Number_Maximum>9999</Line_Number_Maximum>
+    <StringFormatTool>00</StringFormatTool>
+    <FormatToolCorrector>00</FormatToolCorrector>
+    <CodeAlwaysRepeated>
+      <CODE>ARC_I</CODE>
+      <CODE>ARC_J</CODE>
+      <CODE>ARC_K</CODE>
+      <CODE>ARC_I_DIA</CODE>
+      <CODE>ARC_RADIUS</CODE>
+      <CODE>TOOL_DIA_COR</CODE>
+      <CODE>TOOL_CODE</CODE>
+      <CODE>TOOL_POS</CODE>
+      <CODE>TOOL_COR</CODE>
+      <CODE>TOOL_HEIGHT_COR</CODE>
+      <CODE>BRAKE_SPINDLE_CODE</CODE>
+    </CodeAlwaysRepeated>
+    <CodeAlwaysRepeated_DrillingTemplate>
+      <CODE>STEP_CODE</CODE>
+      <CODE>STEP_VALUE</CODE>
+      <CODE>TOTAL_INCRE_Z</CODE>
+    </CodeAlwaysRepeated_DrillingTemplate>
+    <Template_InitNewProgram>%
+;O{PRG_NUM}({PRG_NAME})
+{EMPTY_LINE}
+(Erstellt  {CREATION_DATE})
+{EMPTY_LINE}
+{TOOL_SUMMARY}</Template_InitNewProgram>
+    <Template_ToolSummaryRecord>(#{TOOL_POS} - {TOOL_LABEL} {RADIUS_COMP_INFO})</Template_ToolSummaryRecord>
+    <Template_InitOperation_With_Toolchange>{EMPTY_LINE}
+{LINE_N}
+{ORIGIN}
+({OP_DESC})
+{COOLANT_CODE}
+{FEED_MODE}G18
+G50S{REV_LIMIT_VALUE}
+({TOOL_LABEL})
+M6T{TOOL_POS}
+{SPEED_MODE}S{SPEED_VALUE}{SPINDLE_ORIENTATION}
+G95</Template_InitOperation_With_Toolchange>
+    <Template_InitOperation_NO_ToolChange>{EMPTY_LINE}
+({OP_DESC})
+{ORIGIN}
+{SPEED_MODE}S{SPEED_VALUE}{SPINDLE_ORIENTATION}</Template_InitOperation_NO_ToolChange>
+    <Template_EndProgram>
+M5
+M9
+M30
+%
+</Template_EndProgram>
+    <Template_StopProgramBetweenOperations>{EMPTY_LINE}
+M0({USER_MESSAGE})
+{EMPTY_LINE}</Template_StopProgramBetweenOperations>
+    <Template_CallAutomaticTailstock>{EMPTY_LINE}
+{LINE_N}
+G0 G28 U0
+G0 B{TAILSTOCK_ABS_VALUE}
+{EMPTY_LINE}
+M0({USER_MESSAGE})
+{EMPTY_LINE}
+M25
+M1</Template_CallAutomaticTailstock>
+    <Template_ApproachLatheXZ>{MOVE_MODE}{COO_X_DIA}{COO_Z}</Template_ApproachLatheXZ>
+    <Template_ApproachLatheFirstZThenX>{MOVE_MODE}{COO_Z}
+{COO_X_DIA}</Template_ApproachLatheFirstZThenX>
+    <Template_DisengagementLatheXZ>{MOVE_MODE}G53X[#5111*2]
+ ;Z[#5113]
+M1</Template_DisengagementLatheXZ>
+    <Template_DisengagementLatheFirstXThenZ>{MOVE_MODE}G53 X[#5111*2]
+;{MOVE_MODE}G53 Z[#5113]
+M1</Template_DisengagementLatheFirstXThenZ>
+    <DontPrintZCooInFirstBlock>false</DontPrintZCooInFirstBlock>
+    <Template_MacroAxialTurning />
+    <Template_MacroAxialTurningFinishing />
+    <Macro_Lathe_AllowanceZ>W</Macro_Lathe_AllowanceZ>
+    <Macro_Lathe_AllowanceX>U</Macro_Lathe_AllowanceX>
+    <Template_Lathe_Threading>G94
+G76P{PITCH_VALUE}{END_Z_CODE}I{MAJOR_DIAMETER_VALUE}J{FIRST_INCREMENT_RADIAL}K{THREAD_DEPTH_VALUE}H1 R2
+G95</Template_Lathe_Threading>
+    <CODE_ThreadTaperPrefix>R</CODE_ThreadTaperPrefix>
+    <Template_Lathe_Threading_Single_Diameter>{COO_X_DIA}</Template_Lathe_Threading_Single_Diameter>
+    <Template_LinearMovement_X_Normal_Z_Incremental>{MOVE_MODE}{COO_X_DIA}{DELTA_Z}</Template_LinearMovement_X_Normal_Z_Incremental>
+    <Template_LinearMovement_X_Incremental_Z_Normal>{MOVE_MODE}{DELTA_X_DIA}{COO_Z}{FEED_CODE}</Template_LinearMovement_X_Incremental_Z_Normal>
+    <ActivePolarCoordinate>C0.
+G112</ActivePolarCoordinate>
+    <DeactivePolarCoordinate>G113</DeactivePolarCoordinate>
+    <EnableSpindleBrake>M68</EnableSpindleBrake>
+    <DisableSpindleBrake>M69</DisableSpindleBrake>
+    <Move_RAPID>G0</Move_RAPID>
+    <Move_WORK>G1</Move_WORK>
+    <Move_ARC_CW>G2</Move_ARC_CW>
+    <Move_ARC_CCW>G3</Move_ARC_CCW>
+    <Move_WORK_ThreadSynchronized>G32</Move_WORK_ThreadSynchronized>
+    <RadiusCompensationOff>G40</RadiusCompensationOff>
+    <RadiusCompensationLeft>G41</RadiusCompensationLeft>
+    <RadiusCompensationRight>G42</RadiusCompensationRight>
+    <Coolant_ON>M7</Coolant_ON>
+    <Coolant_HighPressure_ON>M8</Coolant_HighPressure_ON>
+    <Coolant_OFF>M9</Coolant_OFF>
+    <Feed_SYNC>G99</Feed_SYNC>
+    <Feed_ASYNC>G98</Feed_ASYNC>
+    <Speed_SYNC>G96</Speed_SYNC>
+    <Speed_ASYNC>G97</Speed_ASYNC>
+    <AbsoluteCoordinate>G90</AbsoluteCoordinate>
+    <IncrementalCoordinate>G91</IncrementalCoordinate>
+    <Spindle_CW>M3</Spindle_CW>
+    <Spindle_CCW>M4</Spindle_CCW>
+    <Spindle_STOP>M5</Spindle_STOP>
+    <SpindleLiveTool_CW>M13</SpindleLiveTool_CW>
+    <SpindleLiveTool_CCW>M14</SpindleLiveTool_CCW>
+    <SpindleLiveTool_STOP>M5</SpindleLiveTool_STOP>
+    <Origin1>G54</Origin1>
+    <Origin2>G55</Origin2>
+    <Origin3>G56</Origin3>
+    <Origin4>G57</Origin4>
+    <Origin5>G58</Origin5>
+    <Origin6>G59</Origin6>
+    <Origin7>G59.1</Origin7>
+    <Origin8>G59.2</Origin8>
+    <Template_MacroLatheRightTapping>G33.1{ABSOLUTE_Z_DEPTH}K{FEED_VALUE}
+G80</Template_MacroLatheRightTapping>
+    <Template_MacroLatheLeftTapping>{INVERSE_SPINDLE_ORIENTATION}
+G33.1{ABSOLUTE_Z_DEPTH}K{FEED_VALUE}
+G80</Template_MacroLatheLeftTapping>
+    <Template_MacroLatheReamering />
+    <Template_MacroLatheSpotDrilling />
+    <Template_MacroLatheDeepHoleDrilling />
+    <RepeatDrillingMacroForEveryPoint>false</RepeatDrillingMacroForEveryPoint>
+    <Code_MacroDwell>P</Code_MacroDwell>
+    <Code_MacroStep>Q</Code_MacroStep>
+    <Code_MacroPointR>R</Code_MacroPointR>
+    <Code_MacroAcceleration>L</Code_MacroAcceleration>
+    <MacroDwellMode>millisecond</MacroDwellMode>
+    <Template_Macro_LateralRightTapping />
+    <Template_Macro_LateralLeftTapping />
+    <Template_Macro_LateralReamering />
+    <Template_Macro_LateralSpotDrilling />
+    <Template_Macro_LateralDeepHoleDrilling />
+    <Template_Macro_LateralBoring />
+    <Template_Macro_LateralCounterboring />
+    <DrillingCyclesFeedMode>Sync</DrillingCyclesFeedMode>
+    <MillingCyclesFeedMode>ASync</MillingCyclesFeedMode>
+    <FeedSyncMultiplier>0</FeedSyncMultiplier>
+    <FeedAsyncMultiplier>0</FeedAsyncMultiplier>
+    <Template_LinearMovement>{MOVE_MODE}{COMP_CODE}{COO_X_DIA}{COO_Y}{COO_C}{COO_Z}{FEED_CODE}</Template_LinearMovement>
+    <Template_ArcMovement>{MOVE_MODE}{COMP_CODE}{COO_X_DIA}{COO_Z}{ARC_I}{ARC_K}{FEED_CODE}</Template_ArcMovement>
+    <ArcIncrementalMode>RelativeToStartArc</ArcIncrementalMode>
+    <BreakArcIntoLinearStep>false</BreakArcIntoLinearStep>
+    <ArcLinearizationChordError>0.006</ArcLinearizationChordError>
+    <Axis_X>X</Axis_X>
+    <Axis_Y>Y</Axis_Y>
+    <Axis_Z>Z</Axis_Z>
+    <Axis_C>C</Axis_C>
+    <Axis_Delta_X />
+    <Axis_Delta_Y />
+    <Axis_Delta_Z />
+    <Axis_Delta_C />
+    <Radius_R>R</Radius_R>
+    <Arc_IX>I</Arc_IX>
+    <Arc_IY>J</Arc_IY>
+    <Arc_IZ>K</Arc_IZ>
+    <Code_Feed>F</Code_Feed>
+    <Code_Speed>S</Code_Speed>
+    <Axis_H>H</Axis_H>
+    <Code_LineNumber>N</Code_LineNumber>
+    <Code_Tool>T</Code_Tool>
+    <OutputFilenameTemplate>ECAM-D6000.CNC</OutputFilenameTemplate>
+    <InvertZAxis>false</InvertZAxis>
+    <Invert_G2_G3_XZ_Plane>true</Invert_G2_G3_XZ_Plane>
+    <Lathe_X_RadialCoordinate>false</Lathe_X_RadialCoordinate>
+    <AssociateOriginWithTool>false</AssociateOriginWithTool>
+  </Post>
+  <RapidSecureFeedAsync>1500</RapidSecureFeedAsync>
+  <RapidSecureFeedSync>0.5</RapidSecureFeedSync>
+  <OnlyWorkMovement>false</OnlyWorkMovement>
+  <OnlyWorkMovement_LiveTool>false</OnlyWorkMovement_LiveTool>
+  <MillEntryExitSecureDistance>5</MillEntryExitSecureDistance>
+  <DefaultSecureZ_NoChangeTool>2</DefaultSecureZ_NoChangeTool>
+  <DefaultSecureZ_Machining>2</DefaultSecureZ_Machining>
+  <DistanceZ_ApproachMillingOperation>0.5</DistanceZ_ApproachMillingOperation>
+  <ApproachOperationAtSetupZ>true</ApproachOperationAtSetupZ>
+  <FaceTurning_DiameterValueSlowdown>10</FaceTurning_DiameterValueSlowdown>
+  <FeedReductionPerc_PlungeMove>0</FeedReductionPerc_PlungeMove>
+  <ApprochDistanceRadial_TurningOperation>1</ApprochDistanceRadial_TurningOperation>
+  <ApprochMinimalDistanceRadial_TurningOperation>0.1</ApprochMinimalDistanceRadial_TurningOperation>
+  <ApproachDistanceZ_TurningOperation>2</ApproachDistanceZ_TurningOperation>
+  <LeadOutZ_TurningOperation>0.5</LeadOutZ_TurningOperation>
+  <LeadOutRadial_RoughingStep>0.5</LeadOutRadial_RoughingStep>
+  <LeadOutZ_GroovingOperation>0.1</LeadOutZ_GroovingOperation>
+  <ReturnDistance_BreakChipMovement>0.1</ReturnDistance_BreakChipMovement>
+  <DrillingStepClearanceDistance>1</DrillingStepClearanceDistance>
+  <SecureDistanceDrillingCycles>2</SecureDistanceDrillingCycles>
+  <LiveToolSpindleMaxRev>3000</LiveToolSpindleMaxRev>
+  <ToolOriginAssociation>
+    <AssociationToolOrigin>
+      <ToolNumber>1</ToolNumber>
+      <Origin>G54</Origin>
+    </AssociationToolOrigin>
+    <AssociationToolOrigin>
+      <ToolNumber>2</ToolNumber>
+      <Origin>G54</Origin>
+    </AssociationToolOrigin>
+    <AssociationToolOrigin>
+      <ToolNumber>3</ToolNumber>
+      <Origin>G54</Origin>
+    </AssociationToolOrigin>
+    <AssociationToolOrigin>
+      <ToolNumber>4</ToolNumber>
+      <Origin>G54</Origin>
+    </AssociationToolOrigin>
+    <AssociationToolOrigin>
+      <ToolNumber>5</ToolNumber>
+      <Origin>G54</Origin>
+    </AssociationToolOrigin>
+    <AssociationToolOrigin>
+      <ToolNumber>6</ToolNumber>
+      <Origin>G54</Origin>
+    </AssociationToolOrigin>
+    <AssociationToolOrigin>
+      <ToolNumber>7</ToolNumber>
+      <Origin>G54</Origin>
+    </AssociationToolOrigin>
+    <AssociationToolOrigin>
+      <ToolNumber>8</ToolNumber>
+      <Origin>G54</Origin>
+    </AssociationToolOrigin>
+    <AssociationToolOrigin>
+      <ToolNumber>9</ToolNumber>
+      <Origin>G54</Origin>
+    </AssociationToolOrigin>
+    <AssociationToolOrigin>
+      <ToolNumber>10</ToolNumber>
+      <Origin>G54</Origin>
+    </AssociationToolOrigin>
+  </ToolOriginAssociation>
+  <ReverseOrderedPointList>false</ReverseOrderedPointList>
+  <DontOptimizePointDistance>false</DontOptimizePointDistance>
+  <LastSelectionDate>2017-06-26T18:34:56.6353959+02:00</LastSelectionDate>
+  <Time_SetupPreparation>0</Time_SetupPreparation>
+  <Time_ToolPreparation>0</Time_ToolPreparation>
+</ToolMachine>
