@@ -17,7 +17,12 @@
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Point, Project } from '../../types/project'
-import { createEntryPolicy, synthesizeEntry, withEntryClearance, type EntryPolicy } from './entry'
+import {
+  createEntryPolicy,
+  synthesizeEntry,
+  withEntryHandoffFeedScale,
+  type EntryPolicy,
+} from './entry'
 import type {
   ClipperPath,
   PocketToolpathResult,
@@ -1283,7 +1288,7 @@ function cutOffsetRegionNode(
       true,
       direction,
       safeLinkCheck,
-      withEntryClearance(entryPolicy, [node.region]),
+      entryPolicy,
     )
   }
 
@@ -1416,11 +1421,14 @@ function generateRoughBandMoves(
     }
 
     const entryPolicy = entryEnabled
-      ? createEntryPolicy(
-        operation,
-        toolRadius * 2,
-        roughRegions,
-        (warning) => appendUniqueWarning(warnings, warning),
+      ? withEntryHandoffFeedScale(
+        createEntryPolicy(
+          operation,
+          toolRadius * 2,
+          roughRegions,
+          (warning) => appendUniqueWarning(warnings, warning),
+        ),
+        slotScale,
       )
       : undefined
 
@@ -1497,11 +1505,14 @@ function generateRoughBandMoves(
     .map((region) => buildOffsetRegionTree(region, effectiveStepover, islandJoinType))
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
   const entryPolicy = entryEnabled
-    ? createEntryPolicy(
-      operation,
-      toolRadius * 2,
-      regionTrees.map((tree) => tree.region),
-      (warning) => appendUniqueWarning(warnings, warning),
+    ? withEntryHandoffFeedScale(
+      createEntryPolicy(
+        operation,
+        toolRadius * 2,
+        regionTrees.map((tree) => tree.region),
+        (warning) => appendUniqueWarning(warnings, warning),
+      ),
+      slotScale,
     )
     : undefined
 
@@ -1583,12 +1594,16 @@ function generateFinishBandMoves(
   const finishRegions = needsMiterFinishRegions
     ? band.regions.flatMap((region) => buildInsetRegions(region, finishDelta))
     : []
+  const slotScale = resolveSlotFeedScale(operation)
   const entryPolicy = entryEnabled
-    ? createEntryPolicy(
-      operation,
-      toolRadius * 2,
-      finishRegions,
-      (warning) => appendUniqueWarning(warnings, warning),
+    ? withEntryHandoffFeedScale(
+      createEntryPolicy(
+        operation,
+        toolRadius * 2,
+        finishRegions,
+        (warning) => appendUniqueWarning(warnings, warning),
+      ),
+      slotScale,
     )
     : undefined
   let wallContours: Point[][] = []
@@ -1611,7 +1626,6 @@ function generateFinishBandMoves(
       wallContours = buildContourLoops(finishRegions)
     }
   }
-  const slotScale = resolveSlotFeedScale(operation)
   const isParallelPocket = operation.kind === 'pocket' && operation.pocketPattern === 'parallel'
   // Offset floors are cut through the same inner-first ring traversal as the
   // rough pass (each disjoint floor area starts at its innermost loop and

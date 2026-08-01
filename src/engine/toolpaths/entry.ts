@@ -47,6 +47,7 @@ export interface EntryPolicy {
   cutDirection: CutDirection
   cutSide: EntryCutSide
   clearanceRegions: EntryClearanceRegion[]
+  handoffFeedScale?: number
   onWarning?: (warning: ToolpathWarning) => void
 }
 
@@ -111,11 +112,11 @@ export function createEntryPolicy(
   }
 }
 
-export function withEntryClearance(
+export function withEntryHandoffFeedScale(
   policy: EntryPolicy | undefined,
-  clearanceRegions: EntryClearanceRegion[],
+  handoffFeedScale: number | null,
 ): EntryPolicy | undefined {
-  return policy ? { ...policy, clearanceRegions } : undefined
+  return policy && handoffFeedScale !== null ? { ...policy, handoffFeedScale } : policy
 }
 
 export function pitchFromRampAngle(pathDiameter: number, rampAngleDegrees: number): number {
@@ -299,7 +300,12 @@ function emitHelix(
   }
 
   if (!sameXY(current, target)) {
-    moves.push({ kind: 'lead_in', from: current, to: target })
+    moves.push({
+      kind: 'lead_in',
+      from: current,
+      to: target,
+      ...(policy.handoffFeedScale === undefined ? {} : { feedScale: policy.handoffFeedScale }),
+    })
   }
   return target
 }
@@ -337,7 +343,12 @@ function emitRamp(
   }
 
   if (!sameXY(current, target)) {
-    moves.push({ kind: 'lead_in', from: current, to: target })
+    moves.push({
+      kind: 'lead_in',
+      from: current,
+      to: target,
+      ...(policy.handoffFeedScale === undefined ? {} : { feedScale: policy.handoffFeedScale }),
+    })
   }
   return target
 }
@@ -413,12 +424,56 @@ function findHelixPlacement(
       const local = findTargetTouchingHelix(region, targetPoint, radius, safety)
       if (local) return local
 
-      const endpoint = findSafeHelixEndpoint(circle.center, radius, targetPoint, region)
-      if (endpoint) {
-        return { center: circle.center, endpoint, radius, region }
-      }
+      const reachable = findReachableHelixPlacement(region, targetPoint, radius, safety, precision)
+      if (reachable) return reachable
       radius *= 0.5
     }
+  }
+  return null
+}
+
+function findReachableHelixPlacement(
+  region: EntryClearanceRegion,
+  target: Point,
+  radius: number,
+  safety: number,
+  precision: number,
+): HelixPlacement | null {
+  const bounds = contourBounds(region.outer)
+  if (!bounds) return null
+  const width = bounds.maxX - bounds.minX
+  const height = bounds.maxY - bounds.minY
+  const cellSize = Math.min(width, height)
+  if (!(cellSize > 0)) return null
+
+  const cells = new ClearanceCellQueue()
+  const half = cellSize / 2
+  for (let x = bounds.minX; x < bounds.maxX; x += cellSize) {
+    for (let y = bounds.minY; y < bounds.maxY; y += cellSize) {
+      cells.push(makeCell(x + half, y + half, half, region))
+    }
+  }
+
+  const requiredClearance = radius + safety
+  let visited = 0
+  while (cells.length > 0 && visited < MAX_CLEARANCE_SEARCH_CELLS) {
+    const cell = cells.pop()
+    if (!cell) break
+    visited += 1
+    if (cell.maxDistance < requiredClearance - ENTRY_EPSILON) continue
+
+    if (cell.distance >= requiredClearance - ENTRY_EPSILON) {
+      const center = { x: cell.x, y: cell.y }
+      const endpoint = findSafeHelixEndpoint(center, radius, target, region)
+      if (endpoint) return { center, endpoint, radius, region }
+    }
+
+    if (cell.h <= precision / 2) continue
+    const nextHalf = cell.h / 2
+    cells.push(makeCell(cell.x - nextHalf, cell.y - nextHalf, nextHalf, region))
+    cells.push(makeCell(cell.x + nextHalf, cell.y - nextHalf, nextHalf, region))
+    cells.push(makeCell(cell.x - nextHalf, cell.y + nextHalf, nextHalf, region))
+    cells.push(makeCell(cell.x + nextHalf, cell.y + nextHalf, nextHalf, region))
   }
   return null
 }
