@@ -29,6 +29,7 @@ import { OperationParameterReference } from './OperationParameterReference'
 import { DisclosureSection } from '../common/DisclosureSection'
 import type {
   DrillType,
+  EntryStrategy,
   Operation,
   OperationKind,
   OperationPass,
@@ -1089,6 +1090,10 @@ export function CAMPanel({
     if (!selectedOperation) {
       return <div className="panel-empty">{camT('cam.panel.emptyOperation')}</div>
     }
+    const supportsEntryStrategy = selectedOperation.kind === 'pocket'
+      || selectedOperation.kind === 'surface_clean'
+      || selectedOperation.kind === 'rough_surface'
+    const entryStrategy = selectedOperation.entryStrategy ?? 'plunge'
     return (
       <div key={`${selectedOperation.id}-${selectedOperation.toolRef ?? ''}`} className="properties-panel cam-tool-properties cam-operation-properties">
                     <div className="properties-group">
@@ -1309,6 +1314,52 @@ export function CAMPanel({
                     </label>
                   ) : null}
                   <DisclosureSection title={camT('cam.operation.advanced')} storageKey="cam-operation-advanced">
+                  {supportsEntryStrategy ? (
+                    <>
+                      <span className="properties-section-title">{camT('cam.operation.entry')}</span>
+                      <label className="properties-field">
+                        <span>{camT('cam.operation.entryStrategy')}</span>
+                        <Select<EntryStrategy>
+                          value={entryStrategy}
+                          options={[
+                            { value: 'plunge', label: camT('cam.operation.entryPlunge') },
+                            { value: 'helix', label: camT('cam.operation.entryHelix') },
+                            { value: 'ramp', label: camT('cam.operation.entryRamp') },
+                          ]}
+                          onChange={(value) => updateOperation(selectedOperation.id, { entryStrategy: value })}
+                        />
+                        <OperationParameterReference kind="entryStrategy" variant={entryStrategy} />
+                      </label>
+                      {entryStrategy === 'helix' || entryStrategy === 'ramp' ? (
+                        <label className="properties-field">
+                          <span>{camT('cam.operation.entryRampAngle')}</span>
+                          <DraftNumberInput
+                            value={selectedOperation.entryRampAngle ?? 5}
+                            min={0.1}
+                            max={45}
+                            onCommit={(value) => updateOperation(selectedOperation.id, {
+                              entryRampAngle: Math.min(45, Math.max(0.1, value)),
+                            })}
+                          />
+                          <OperationParameterReference kind="entryRampAngle" />
+                        </label>
+                      ) : null}
+                      {entryStrategy === 'helix' ? (
+                        <label className="properties-field">
+                          <span>{camT('cam.operation.entryHelixDiameter')}</span>
+                          <DraftNumberInput
+                            value={selectedOperation.entryHelixDiameterPercent ?? 80}
+                            min={1}
+                            max={100}
+                            onCommit={(value) => updateOperation(selectedOperation.id, {
+                              entryHelixDiameterPercent: Math.min(100, Math.max(1, value)),
+                            })}
+                          />
+                          <OperationParameterReference kind="entryHelixDiameter" />
+                        </label>
+                      ) : null}
+                    </>
+                  ) : null}
                   {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' ? (
                     <label className="properties-field">
                       <span>{camT('cam.operation.pattern')}</span>

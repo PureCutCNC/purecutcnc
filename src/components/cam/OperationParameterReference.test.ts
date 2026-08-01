@@ -89,6 +89,7 @@ function testVariantKindsRenderEveryOption(): void {
     ['pattern', ['offset', 'parallel', 'waterline']],
     ['cutDirection', ['conventional', 'climb']],
     ['machiningOrder', ['level_first', 'feature_first']],
+    ['entryStrategy', ['plunge', 'helix', 'ramp']],
     ['drillType', ['simple', 'peck', 'dwell', 'chip_breaking']],
   ]
   for (const [kind, variants] of cases) {

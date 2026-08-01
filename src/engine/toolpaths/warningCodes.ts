@@ -32,6 +32,10 @@ export type ToolpathWarningCode =
   | 'resolverNoBands'
   // shared helpers
   | 'cutDepthExceedsToolMax'
+  // clearing-operation entry strategies
+  | 'entryStrategyFallback'
+  | 'entryDisabledByRegionMask'
+  | 'entryHelixDiameterClamped'
   // developer diagnostics (debugToolpath) — untranslated passthrough
   | 'debug'
   // shared generator preconditions

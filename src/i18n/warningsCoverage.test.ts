@@ -30,7 +30,8 @@ function assert(condition: boolean, message: string): void {
 const ALL_CODES = [
   'targetsMissingOrWrongRole', 'closedProfilesOnly', 'bandEmptySubject', 'bandNoRegions', 'resolverNoBands',
   'resolverOnlyInsideEdge', 'resolverOnlyPocketVcarve', 'resolverNoValidKindTargets', 'resolverNoValidSubtracts', 'resolverNoTargets',
-  'cutDepthExceedsToolMax', 'cutDepthExceedsToolMaxForFeature', 'debug',
+  'cutDepthExceedsToolMax', 'cutDepthExceedsToolMaxForFeature',
+  'entryStrategyFallback', 'entryDisabledByRegionMask', 'entryHelixDiameterClamped', 'debug',
   'noToolAssigned', 'vBitAngleRange', 'maxCarveDepthPositive', 'toolDiameterPositive', 'stepdownPositive',
   'targetsNotFound', 'targetsMissing', 'stepoverRatioRange', 'operationStepoverRatioRange',
   'vcarveMedialWrongKind', 'vcarveMedialNeedsVBit', 'vcarveBandNoDepth', 'vcarveDegenerateRegion',

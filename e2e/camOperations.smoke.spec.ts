@@ -26,6 +26,9 @@ import {
 interface OperationSnapshot {
   kind?: unknown
   pass?: unknown
+  entryStrategy?: unknown
+  entryRampAngle?: unknown
+  entryHelixDiameterPercent?: unknown
   target?: {
     source?: unknown
     featureIds?: unknown
@@ -78,6 +81,8 @@ test.describe('CAM operation browser smoke', () => {
     await expect(operationRow).toBeVisible()
     await expect(app.page.getByText('Stepdown', { exact: true })).toBeVisible()
     await expect(app.page.getByText('Stepover Ratio', { exact: true })).not.toBeVisible()
+    await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
+    await expect(app.page.getByText('Entry', { exact: true })).toHaveCount(0)
 
     const project = await getProject(app.page)
     const operations = project.operations as OperationSnapshot[]
@@ -109,10 +114,33 @@ test.describe('CAM operation browser smoke', () => {
     // for the operation to land in the UI before reading project state.
     await expect(ui.operations.countBadge(app.page)).toHaveText('1')
 
+    await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
+    await expect(app.page.getByText('Entry', { exact: true })).toBeVisible()
+
+    const strategyField = app.page.getByText('Entry Strategy', { exact: true }).locator('..')
+    await expect(strategyField.locator('.ui-select__label')).toHaveText('Plunge')
+    await expect(app.page.getByText('Ramp Angle (°)', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Helix Diameter (%)', { exact: true })).toHaveCount(0)
+
+    await strategyField.locator('.ui-select__trigger').click()
+    await app.page.getByRole('option', { name: 'Helix', exact: true }).click()
+
+    const rampAngleField = app.page.getByText('Ramp Angle (°)', { exact: true }).locator('..')
+    const helixDiameterField = app.page.getByText('Helix Diameter (%)', { exact: true }).locator('..')
+    await expect(rampAngleField.locator('input')).toHaveValue('5')
+    await expect(helixDiameterField.locator('input')).toHaveValue('80')
+    await rampAngleField.locator('input').fill('8')
+    await rampAngleField.locator('input').blur()
+    await helixDiameterField.locator('input').fill('65')
+    await helixDiameterField.locator('input').blur()
+
     const project = await getProject(app.page)
     const operations = project.operations as OperationSnapshot[]
     expect(operations).toHaveLength(1)
     expect(operations[0].kind).toBe('rough_surface')
+    expect(operations[0].entryStrategy).toBe('helix')
+    expect(operations[0].entryRampAngle).toBe(8)
+    expect(operations[0].entryHelixDiameterPercent).toBe(65)
     expect(operations[0].target?.featureIds).toEqual(['f-imported-model'])
   })
 

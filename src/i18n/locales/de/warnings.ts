@@ -38,6 +38,9 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   // shared
   'warnings.cutDepthExceedsToolMax': 'Schnitttiefe {depth} {units} überschreitet die max. Schnitttiefe des Werkzeugs {max} {units}',
   'warnings.cutDepthExceedsToolMaxForFeature': '{name}: Schnitttiefe {depth} {units} überschreitet die max. Schnitttiefe des Werkzeugs {max} {units}',
+  'warnings.entryStrategyFallback': 'Die gewählte Eintauchbewegung passte nicht in den verfügbaren Bearbeitungsbereich. Stattdessen wurde eine sichere Ausweichbewegung verwendet.',
+  'warnings.entryDisabledByRegionMask': 'Bei aktiven Bereichsfiltern sind Rampen- und Helix-Eintauchbewegungen deaktiviert; es wurde senkrecht eingetaucht.',
+  'warnings.entryHelixDiameterClamped': 'Der Helixdurchmesser wurde von {requestedDiameter} auf {actualDiameter} verkleinert, damit er in den Bearbeitungsbereich passt.',
   'warnings.noToolAssigned': 'Dieser Operation ist kein Werkzeug zugewiesen',
   'warnings.vBitAngleRange': 'Der V-Nutfräser-Winkel muss zwischen 0 und 180 Grad liegen',
   'warnings.maxCarveDepthPositive': 'Max. Gravurtiefe muss größer als null sein',

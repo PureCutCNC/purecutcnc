@@ -455,6 +455,7 @@ export type PocketPattern = 'offset' | 'parallel' | 'waterline'
 export type CutDirection = 'conventional' | 'climb'
 export type DrillType = 'simple' | 'peck' | 'dwell' | 'chip_breaking'
 export type MachiningOrder = 'level_first' | 'feature_first'
+export type EntryStrategy = 'plunge' | 'helix' | 'ramp'
 
 export type OperationTarget =
   | { source: 'features'; featureIds: string[] }
@@ -478,6 +479,9 @@ export interface Operation {
   rpm: number
   pocketPattern: PocketPattern
   pocketAngle: number
+  entryStrategy?: EntryStrategy
+  entryRampAngle?: number
+  entryHelixDiameterPercent?: number
   /** Feed percentage (1-100) applied to fully engaged (slotting) pocket cuts:
    *  each section's innermost offset loop, ring segments crossing uncleared
    *  pinch corridors, the parallel boundary pass and first fill line, and the

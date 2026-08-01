@@ -1,0 +1,798 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import type { CutDirection, EntryStrategy, Operation, Point } from '../../types/project'
+import type { ToolpathMove, ToolpathPoint } from './types'
+import type { ToolpathWarning } from './warningCodes'
+
+export const DEFAULT_ENTRY_RAMP_ANGLE = 5
+export const DEFAULT_ENTRY_HELIX_DIAMETER_PERCENT = 80
+
+const HELIX_SEGMENTS_PER_REVOLUTION = 48
+const ENTRY_EPSILON = 1e-9
+const MAX_CLEARANCE_SEARCH_CELLS = 20_000
+const MAX_ENTRY_DESCENT_MOVES = 20_000
+const clearanceCircleCache = new WeakMap<
+  EntryClearanceRegion,
+  Map<number, EntryClearanceCircle | null>
+>()
+
+export type EntryCutSide = 'internal' | 'external'
+
+export interface EntryClearanceRegion {
+  outer: Point[]
+  islands: Point[][]
+}
+
+export interface EntryPolicy {
+  strategy: Exclude<EntryStrategy, 'plunge'>
+  rampAngle: number
+  helixDiameterPercent: number
+  toolDiameter: number
+  cutFeed: number
+  plungeFeed: number
+  cutDirection: CutDirection
+  cutSide: EntryCutSide
+  clearanceRegions: EntryClearanceRegion[]
+  onWarning?: (warning: ToolpathWarning) => void
+}
+
+export interface EntrySynthesisResult {
+  end: ToolpathPoint
+  usedStrategy: EntryStrategy
+  warnings: ToolpathWarning[]
+}
+
+export interface EntryClearanceCircle {
+  center: Point
+  radius: number
+  region: EntryClearanceRegion
+}
+
+interface ClearanceCell {
+  x: number
+  y: number
+  h: number
+  distance: number
+  maxDistance: number
+}
+
+interface HelixPlacement {
+  center: Point
+  endpoint: Point
+  radius: number
+  region: EntryClearanceRegion
+}
+
+interface RampPlacement {
+  start: Point
+  end: Point
+  region: EntryClearanceRegion
+}
+
+export function createEntryPolicy(
+  operation: Operation,
+  toolDiameter: number,
+  clearanceRegions: EntryClearanceRegion[],
+  onWarning?: (warning: ToolpathWarning) => void,
+  cutSide: EntryCutSide = 'internal',
+): EntryPolicy | undefined {
+  const strategy = operation.entryStrategy ?? 'plunge'
+  if (strategy === 'plunge') return undefined
+
+  return {
+    strategy,
+    rampAngle: clamp(operation.entryRampAngle ?? DEFAULT_ENTRY_RAMP_ANGLE, 0.1, 45),
+    helixDiameterPercent: clamp(
+      operation.entryHelixDiameterPercent ?? DEFAULT_ENTRY_HELIX_DIAMETER_PERCENT,
+      1,
+      100,
+    ),
+    toolDiameter,
+    cutFeed: operation.feed,
+    plungeFeed: operation.plungeFeed,
+    cutDirection: operation.cutDirection ?? 'conventional',
+    cutSide,
+    clearanceRegions,
+    onWarning,
+  }
+}
+
+export function withEntryClearance(
+  policy: EntryPolicy | undefined,
+  clearanceRegions: EntryClearanceRegion[],
+): EntryPolicy | undefined {
+  return policy ? { ...policy, clearanceRegions } : undefined
+}
+
+export function pitchFromRampAngle(pathDiameter: number, rampAngleDegrees: number): number {
+  if (!(pathDiameter > 0) || !(rampAngleDegrees > 0)) return 0
+  return Math.PI * pathDiameter * Math.tan(toRadians(rampAngleDegrees))
+}
+
+export function plungeLimitedFeedScale(
+  cutFeed: number,
+  plungeFeed: number,
+  rampAngleDegrees: number,
+): number {
+  if (!(cutFeed > 0) || !(plungeFeed > 0)) return 1
+  const verticalRatio = Math.sin(toRadians(rampAngleDegrees))
+  if (!(verticalRatio > 0)) return 1
+  return Math.min(1, plungeFeed / (cutFeed * verticalRatio))
+}
+
+export function helixAngularDirection(cutDirection: CutDirection, cutSide: EntryCutSide): 1 | -1 {
+  // Positive project-space rotation becomes clockwise after the Y-down to
+  // machine-space Y-up transform. A climb cut is therefore negative for an
+  // internal helix and positive for an external helix.
+  if (cutSide === 'internal') {
+    return cutDirection === 'climb' ? -1 : 1
+  }
+  return cutDirection === 'climb' ? 1 : -1
+}
+
+export function findLargestClearanceCircle(
+  regions: EntryClearanceRegion[],
+  precision = 1e-3,
+): EntryClearanceCircle | null {
+  let best: EntryClearanceCircle | null = null
+  for (const region of regions) {
+    const candidate = findRegionClearanceCircle(region, precision)
+    if (candidate && (!best || candidate.radius > best.radius)) {
+      best = candidate
+    }
+  }
+  return best
+}
+
+export function synthesizeEntry(
+  moves: ToolpathMove[],
+  from: ToolpathPoint | null,
+  target: ToolpathPoint,
+  safeZ: number,
+  policy: EntryPolicy,
+): EntrySynthesisResult {
+  const warnings: ToolpathWarning[] = []
+  const warn = (warning: ToolpathWarning) => {
+    if (!warnings.some((entry) => warningKey(entry) === warningKey(warning))) {
+      warnings.push(warning)
+      policy.onWarning?.(warning)
+    }
+  }
+
+  if (policy.strategy === 'helix') {
+    const requestedDiameter = policy.toolDiameter * policy.helixDiameterPercent / 100
+    const requestedRadius = requestedDiameter / 2
+    const placement = findHelixPlacement(target, policy, requestedRadius)
+    if (placement && helixDescentMoveCount(safeZ - target.z, placement.radius, policy.rampAngle)
+      <= MAX_ENTRY_DESCENT_MOVES) {
+      const actualDiameter = placement.radius * 2
+      if (actualDiameter < requestedDiameter - numericTolerance(requestedDiameter)) {
+        warn({
+          code: 'entryHelixDiameterClamped',
+          params: {
+            requestedDiameter: formatWarningNumber(requestedDiameter),
+            actualDiameter: formatWarningNumber(actualDiameter),
+          },
+        })
+      }
+      return {
+        end: emitHelix(moves, from, target, safeZ, policy, placement),
+        usedStrategy: 'helix',
+        warnings,
+      }
+    }
+
+    const rampPlacement = findRampPlacement(target, policy.clearanceRegions, policy.toolDiameter)
+    if (rampPlacement && rampDescentMoveCount(safeZ - target.z, rampPlacement, policy.rampAngle)
+      <= MAX_ENTRY_DESCENT_MOVES) {
+      warn({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'ramp' } })
+      return {
+        end: emitRamp(moves, from, target, safeZ, policy, rampPlacement),
+        usedStrategy: 'ramp',
+        warnings,
+      }
+    }
+
+    warn({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'plunge' } })
+    return {
+      end: emitPlunge(moves, from, target, safeZ),
+      usedStrategy: 'plunge',
+      warnings,
+    }
+  }
+
+  const rampPlacement = findRampPlacement(target, policy.clearanceRegions, policy.toolDiameter)
+  if (rampPlacement && rampDescentMoveCount(safeZ - target.z, rampPlacement, policy.rampAngle)
+    <= MAX_ENTRY_DESCENT_MOVES) {
+    return {
+      end: emitRamp(moves, from, target, safeZ, policy, rampPlacement),
+      usedStrategy: 'ramp',
+      warnings,
+    }
+  }
+
+  warn({ code: 'entryStrategyFallback', params: { requested: 'ramp', fallback: 'plunge' } })
+  return {
+    end: emitPlunge(moves, from, target, safeZ),
+    usedStrategy: 'plunge',
+    warnings,
+  }
+}
+
+function helixDescentMoveCount(depth: number, radius: number, rampAngle: number): number {
+  const pitch = pitchFromRampAngle(radius * 2, rampAngle)
+  const revolutions = pitch > ENTRY_EPSILON ? Math.max(0, depth) / pitch : Infinity
+  return Math.max(1, Math.ceil(revolutions * HELIX_SEGMENTS_PER_REVOLUTION))
+}
+
+function rampDescentMoveCount(depth: number, placement: RampPlacement, rampAngle: number): number {
+  const runLength = Math.hypot(placement.end.x - placement.start.x, placement.end.y - placement.start.y)
+  const dropPerRun = runLength * Math.tan(toRadians(rampAngle))
+  return dropPerRun > ENTRY_EPSILON ? Math.max(1, Math.ceil(Math.max(0, depth) / dropPerRun)) : Infinity
+}
+
+function emitHelix(
+  moves: ToolpathMove[],
+  from: ToolpathPoint | null,
+  target: ToolpathPoint,
+  safeZ: number,
+  policy: EntryPolicy,
+  placement: HelixPlacement,
+): ToolpathPoint {
+  const direction = helixAngularDirection(policy.cutDirection, policy.cutSide)
+  const depth = Math.max(0, safeZ - target.z)
+  const pitch = pitchFromRampAngle(placement.radius * 2, policy.rampAngle)
+  const revolutions = pitch > ENTRY_EPSILON ? depth / pitch : 0
+  const descentSegments = helixDescentMoveCount(depth, placement.radius, policy.rampAngle)
+  const endpointAngle = Math.atan2(
+    placement.endpoint.y - placement.center.y,
+    placement.endpoint.x - placement.center.x,
+  )
+  const startAngle = endpointAngle - direction * revolutions * Math.PI * 2
+  const startPoint = {
+    x: placement.center.x + Math.cos(startAngle) * placement.radius,
+    y: placement.center.y + Math.sin(startAngle) * placement.radius,
+  }
+  let current = rapidToEntryStart(moves, from, { ...startPoint, z: safeZ }, safeZ)
+
+  for (let index = 1; index <= descentSegments; index += 1) {
+    const ratio = index / descentSegments
+    const angle = startAngle + direction * revolutions * Math.PI * 2 * ratio
+    const next: ToolpathPoint = {
+      x: placement.center.x + Math.cos(angle) * placement.radius,
+      y: placement.center.y + Math.sin(angle) * placement.radius,
+      z: safeZ + (target.z - safeZ) * ratio,
+    }
+    moves.push({
+      kind: 'lead_in',
+      from: current,
+      to: next,
+      feedScale: plungeLimitedMoveFeedScale(policy.cutFeed, policy.plungeFeed, current, next),
+    })
+    current = next
+  }
+
+  // Flatten the shallow spiral floor with one non-descending revolution.
+  for (let index = 1; index <= HELIX_SEGMENTS_PER_REVOLUTION; index += 1) {
+    const angle = endpointAngle + direction * Math.PI * 2 * index / HELIX_SEGMENTS_PER_REVOLUTION
+    const next: ToolpathPoint = {
+      x: placement.center.x + Math.cos(angle) * placement.radius,
+      y: placement.center.y + Math.sin(angle) * placement.radius,
+      z: target.z,
+    }
+    moves.push({ kind: 'lead_in', from: current, to: next })
+    current = next
+  }
+
+  if (!sameXY(current, target)) {
+    moves.push({ kind: 'lead_in', from: current, to: target })
+  }
+  return target
+}
+
+function emitRamp(
+  moves: ToolpathMove[],
+  from: ToolpathPoint | null,
+  target: ToolpathPoint,
+  safeZ: number,
+  policy: EntryPolicy,
+  placement: RampPlacement,
+): ToolpathPoint {
+  let current = rapidToEntryStart(moves, from, { ...placement.start, z: safeZ }, safeZ)
+  let descendingTo = placement.end
+  const fullRun = Math.hypot(placement.end.x - placement.start.x, placement.end.y - placement.start.y)
+  const dropPerRun = fullRun * Math.tan(toRadians(policy.rampAngle))
+
+  while (current.z > target.z + ENTRY_EPSILON) {
+    const remainingDrop = current.z - target.z
+    const ratio = dropPerRun > ENTRY_EPSILON ? Math.min(1, remainingDrop / dropPerRun) : 1
+    const next: ToolpathPoint = {
+      x: current.x + (descendingTo.x - current.x) * ratio,
+      y: current.y + (descendingTo.y - current.y) * ratio,
+      z: Math.max(target.z, current.z - dropPerRun * ratio),
+    }
+    moves.push({
+      kind: 'lead_in',
+      from: current,
+      to: next,
+      feedScale: plungeLimitedMoveFeedScale(policy.cutFeed, policy.plungeFeed, current, next),
+    })
+    current = next
+    if (ratio < 1) break
+    descendingTo = sameXY(current, placement.end) ? placement.start : placement.end
+  }
+
+  if (!sameXY(current, target)) {
+    moves.push({ kind: 'lead_in', from: current, to: target })
+  }
+  return target
+}
+
+function plungeLimitedMoveFeedScale(
+  cutFeed: number,
+  plungeFeed: number,
+  from: ToolpathPoint,
+  to: ToolpathPoint,
+): number {
+  if (!(cutFeed > 0) || !(plungeFeed > 0)) return 1
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const dz = to.z - from.z
+  const distance = Math.hypot(dx, dy, dz)
+  if (!(distance > ENTRY_EPSILON) || Math.abs(dz) <= ENTRY_EPSILON) return 1
+  return Math.min(1, plungeFeed / (cutFeed * Math.abs(dz) / distance))
+}
+
+function emitPlunge(
+  moves: ToolpathMove[],
+  from: ToolpathPoint | null,
+  target: ToolpathPoint,
+  safeZ: number,
+): ToolpathPoint {
+  const safeTarget = { x: target.x, y: target.y, z: safeZ }
+  const current = rapidToEntryStart(moves, from, safeTarget, safeZ)
+  moves.push({ kind: 'plunge', from: current, to: target })
+  return target
+}
+
+function rapidToEntryStart(
+  moves: ToolpathMove[],
+  from: ToolpathPoint | null,
+  target: ToolpathPoint,
+  safeZ: number,
+): ToolpathPoint {
+  let current = from
+  if (current && Math.abs(current.z - safeZ) > ENTRY_EPSILON) {
+    const retracted = { x: current.x, y: current.y, z: safeZ }
+    moves.push({ kind: 'rapid', from: current, to: retracted })
+    current = retracted
+  }
+  const safeTarget = { x: target.x, y: target.y, z: safeZ }
+  if (!current) {
+    moves.push({ kind: 'rapid', from: safeTarget, to: safeTarget })
+  } else if (!samePoint(current, safeTarget)) {
+    moves.push({ kind: 'rapid', from: current, to: safeTarget })
+  }
+  return safeTarget
+}
+
+function findHelixPlacement(
+  target: ToolpathPoint,
+  policy: EntryPolicy,
+  requestedRadius: number,
+): HelixPlacement | null {
+  if (!(requestedRadius > ENTRY_EPSILON)) return null
+  const targetPoint = { x: target.x, y: target.y }
+  const candidateRegions = policy.clearanceRegions.filter((region) => pointInRegion(targetPoint, region))
+  const regions = candidateRegions.length > 0 ? candidateRegions : policy.clearanceRegions
+  const precision = Math.max(1e-4, policy.toolDiameter * 0.0025)
+  const safety = Math.max(1e-4, policy.toolDiameter * 0.001)
+  const maximumCoreSafeRadius = policy.toolDiameter / 2
+  const minimumUsefulRadius = Math.min(requestedRadius, policy.toolDiameter * 0.05)
+
+  for (const region of regions) {
+    const circle = findRegionClearanceCircle(region, precision)
+    if (!circle) continue
+    let radius = Math.min(requestedRadius, maximumCoreSafeRadius, Math.max(0, circle.radius - safety))
+
+    for (let attempt = 0; attempt < 14 && radius >= Math.max(precision, minimumUsefulRadius); attempt += 1) {
+      const local = findTargetTouchingHelix(region, targetPoint, radius, safety)
+      if (local) return local
+
+      const endpoint = findSafeHelixEndpoint(circle.center, radius, targetPoint, region)
+      if (endpoint) {
+        return { center: circle.center, endpoint, radius, region }
+      }
+      radius *= 0.5
+    }
+  }
+  return null
+}
+
+function findTargetTouchingHelix(
+  region: EntryClearanceRegion,
+  target: Point,
+  radius: number,
+  safety: number,
+): HelixPlacement | null {
+  for (let index = 0; index < 72; index += 1) {
+    const angle = Math.PI * 2 * index / 72
+    const center = {
+      x: target.x - Math.cos(angle) * radius,
+      y: target.y - Math.sin(angle) * radius,
+    }
+    if (pointToRegionDistance(center, region) >= radius + safety - ENTRY_EPSILON) {
+      return { center, endpoint: target, radius, region }
+    }
+  }
+  return null
+}
+
+function findSafeHelixEndpoint(
+  center: Point,
+  radius: number,
+  target: Point,
+  region: EntryClearanceRegion,
+): Point | null {
+  const preferred = Math.atan2(target.y - center.y, target.x - center.x)
+  for (let index = 0; index < 72; index += 1) {
+    const alternating = index === 0 ? 0 : Math.ceil(index / 2) * (index % 2 === 0 ? -1 : 1)
+    const angle = preferred + alternating * Math.PI * 2 / 72
+    const endpoint = {
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y + Math.sin(angle) * radius,
+    }
+    if (segmentInsideRegion(endpoint, target, region)) return endpoint
+  }
+  return null
+}
+
+function findRampPlacement(
+  target: ToolpathPoint,
+  regions: EntryClearanceRegion[],
+  toolDiameter: number,
+): RampPlacement | null {
+  const point = { x: target.x, y: target.y }
+  const candidates = regions.filter((region) => pointInRegion(point, region))
+  const searchRegions = candidates.length > 0 ? candidates : regions
+  const safety = Math.max(1e-4, toolDiameter * 0.001)
+  let best: RampPlacement | null = null
+  let bestLength = 0
+
+  for (const region of searchRegions) {
+    for (let index = 0; index < 72; index += 1) {
+      const angle = Math.PI * index / 72
+      const direction = { x: Math.cos(angle), y: Math.sin(angle) }
+      const interval = lineIntervalInsideRegion(point, direction, region)
+      if (!interval) continue
+      const usableMin = interval.min + safety
+      const usableMax = interval.max - safety
+      const length = usableMax - usableMin
+      if (!(length > Math.max(ENTRY_EPSILON, toolDiameter * 0.02)) || length <= bestLength) continue
+      bestLength = length
+      best = {
+        start: { x: point.x + direction.x * usableMin, y: point.y + direction.y * usableMin },
+        end: { x: point.x + direction.x * usableMax, y: point.y + direction.y * usableMax },
+        region,
+      }
+    }
+  }
+  return best
+}
+
+function lineIntervalInsideRegion(
+  origin: Point,
+  direction: Point,
+  region: EntryClearanceRegion,
+): { min: number; max: number } | null {
+  const intersections: number[] = []
+  for (const contour of [region.outer, ...region.islands]) {
+    forEachEdge(contour, (a, b) => {
+      const edge = { x: b.x - a.x, y: b.y - a.y }
+      const denominator = cross(direction, edge)
+      if (Math.abs(denominator) <= ENTRY_EPSILON) return
+      const offset = { x: a.x - origin.x, y: a.y - origin.y }
+      const alongLine = cross(offset, edge) / denominator
+      const alongEdge = cross(offset, direction) / denominator
+      if (alongEdge >= -ENTRY_EPSILON && alongEdge <= 1 + ENTRY_EPSILON) {
+        intersections.push(alongLine)
+      }
+    })
+  }
+
+  const sorted = [...new Set(intersections.map((value) => Number(value.toFixed(12))))]
+    .sort((left, right) => left - right)
+  let best: { min: number; max: number } | null = null
+  for (let index = 0; index + 1 < sorted.length; index += 1) {
+    const min = sorted[index]
+    const max = sorted[index + 1]
+    if (min > ENTRY_EPSILON || max < -ENTRY_EPSILON) continue
+    const middle = (min + max) / 2
+    const sample = { x: origin.x + direction.x * middle, y: origin.y + direction.y * middle }
+    if (!pointInRegion(sample, region)) continue
+    if (!best || max - min > best.max - best.min) best = { min, max }
+  }
+  return best
+}
+
+function findRegionClearanceCircle(
+  region: EntryClearanceRegion,
+  precision: number,
+): EntryClearanceCircle | null {
+  const cached = clearanceCircleCache.get(region)?.get(precision)
+  if (cached !== undefined) return cached
+
+  const circle = computeRegionClearanceCircle(region, precision)
+  const precisionCache = clearanceCircleCache.get(region) ?? new Map<number, EntryClearanceCircle | null>()
+  precisionCache.set(precision, circle)
+  clearanceCircleCache.set(region, precisionCache)
+  return circle
+}
+
+function computeRegionClearanceCircle(
+  region: EntryClearanceRegion,
+  precision: number,
+): EntryClearanceCircle | null {
+  if (region.outer.length < 3) return null
+  const bounds = contourBounds(region.outer)
+  if (!bounds) return null
+  const width = bounds.maxX - bounds.minX
+  const height = bounds.maxY - bounds.minY
+  const cellSize = Math.min(width, height)
+  if (!(cellSize > 0)) return null
+
+  const cells = new ClearanceCellQueue()
+  const half = cellSize / 2
+  for (let x = bounds.minX; x < bounds.maxX; x += cellSize) {
+    for (let y = bounds.minY; y < bounds.maxY; y += cellSize) {
+      cells.push(makeCell(x + half, y + half, half, region))
+    }
+  }
+
+  const centroid = contourCentroid(region.outer)
+  let best = makeCell(centroid.x, centroid.y, 0, region)
+  const boundsCell = makeCell(
+    (bounds.minX + bounds.maxX) / 2,
+    (bounds.minY + bounds.maxY) / 2,
+    0,
+    region,
+  )
+  if (boundsCell.distance > best.distance) best = boundsCell
+
+  let visited = 0
+  while (cells.length > 0 && visited < MAX_CLEARANCE_SEARCH_CELLS) {
+    const cell = cells.pop()
+    if (!cell) break
+    visited += 1
+    if (cell.distance > best.distance) best = cell
+    if (cell.maxDistance - best.distance <= precision || cell.h <= precision / 2) continue
+    const nextHalf = cell.h / 2
+    cells.push(makeCell(cell.x - nextHalf, cell.y - nextHalf, nextHalf, region))
+    cells.push(makeCell(cell.x + nextHalf, cell.y - nextHalf, nextHalf, region))
+    cells.push(makeCell(cell.x - nextHalf, cell.y + nextHalf, nextHalf, region))
+    cells.push(makeCell(cell.x + nextHalf, cell.y + nextHalf, nextHalf, region))
+  }
+
+  return best.distance > ENTRY_EPSILON
+    ? { center: { x: best.x, y: best.y }, radius: best.distance, region }
+    : null
+}
+
+class ClearanceCellQueue {
+  private readonly cells: ClearanceCell[] = []
+
+  get length(): number {
+    return this.cells.length
+  }
+
+  push(cell: ClearanceCell): void {
+    this.cells.push(cell)
+    let index = this.cells.length - 1
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2)
+      if (this.cells[parent].maxDistance >= cell.maxDistance) break
+      this.cells[index] = this.cells[parent]
+      index = parent
+    }
+    this.cells[index] = cell
+  }
+
+  pop(): ClearanceCell | undefined {
+    const first = this.cells[0]
+    const last = this.cells.pop()
+    if (!first || this.cells.length === 0 || !last) return first
+
+    let index = 0
+    while (true) {
+      const left = index * 2 + 1
+      const right = left + 1
+      if (left >= this.cells.length) break
+      const child = right < this.cells.length
+        && this.cells[right].maxDistance > this.cells[left].maxDistance
+        ? right
+        : left
+      if (this.cells[child].maxDistance <= last.maxDistance) break
+      this.cells[index] = this.cells[child]
+      index = child
+    }
+    this.cells[index] = last
+    return first
+  }
+}
+
+function makeCell(x: number, y: number, h: number, region: EntryClearanceRegion): ClearanceCell {
+  const distance = pointToRegionDistance({ x, y }, region)
+  return {
+    x,
+    y,
+    h,
+    distance,
+    maxDistance: distance + h * Math.SQRT2,
+  }
+}
+
+function pointToRegionDistance(point: Point, region: EntryClearanceRegion): number {
+  const inside = pointInRegion(point, region)
+  let distanceSquared = Infinity
+  for (const contour of [region.outer, ...region.islands]) {
+    forEachEdge(contour, (a, b) => {
+      distanceSquared = Math.min(distanceSquared, pointSegmentDistanceSquared(point, a, b))
+    })
+  }
+  const distance = Number.isFinite(distanceSquared) ? Math.sqrt(distanceSquared) : 0
+  return inside ? distance : -distance
+}
+
+function segmentInsideRegion(from: Point, to: Point, region: EntryClearanceRegion): boolean {
+  const intersections = [0, 1]
+  for (const contour of [region.outer, ...region.islands]) {
+    forEachEdge(contour, (a, b) => {
+      const t = segmentIntersectionParameter(from, to, a, b)
+      if (t !== null) intersections.push(t)
+    })
+  }
+  const sorted = [...new Set(intersections.map((value) => Number(value.toFixed(12))))]
+    .sort((left, right) => left - right)
+  for (let index = 0; index + 1 < sorted.length; index += 1) {
+    const middle = (sorted[index] + sorted[index + 1]) / 2
+    const sample = {
+      x: from.x + (to.x - from.x) * middle,
+      y: from.y + (to.y - from.y) * middle,
+    }
+    if (!pointInRegion(sample, region)) return false
+  }
+  return true
+}
+
+function pointInRegion(point: Point, region: EntryClearanceRegion): boolean {
+  if (!pointInContour(point, region.outer)) return false
+  return !region.islands.some((island) => pointInContour(point, island) && !pointOnContour(point, island))
+}
+
+function pointInContour(point: Point, contour: Point[]): boolean {
+  if (pointOnContour(point, contour)) return true
+  let inside = false
+  forEachEdge(contour, (a, b) => {
+    const crosses = (a.y > point.y) !== (b.y > point.y)
+      && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x
+    if (crosses) inside = !inside
+  })
+  return inside
+}
+
+function pointOnContour(point: Point, contour: Point[]): boolean {
+  let onBoundary = false
+  forEachEdge(contour, (a, b) => {
+    if (pointSegmentDistanceSquared(point, a, b) <= 1e-16) onBoundary = true
+  })
+  return onBoundary
+}
+
+function pointSegmentDistanceSquared(point: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  if (dx === 0 && dy === 0) return squaredDistance(point, a)
+  const ratio = clamp(((point.x - a.x) * dx + (point.y - a.y) * dy) / (dx * dx + dy * dy), 0, 1)
+  return squaredDistance(point, { x: a.x + dx * ratio, y: a.y + dy * ratio })
+}
+
+function segmentIntersectionParameter(a: Point, b: Point, c: Point, d: Point): number | null {
+  const ab = { x: b.x - a.x, y: b.y - a.y }
+  const cd = { x: d.x - c.x, y: d.y - c.y }
+  const denominator = cross(ab, cd)
+  if (Math.abs(denominator) <= ENTRY_EPSILON) return null
+  const offset = { x: c.x - a.x, y: c.y - a.y }
+  const t = cross(offset, cd) / denominator
+  const u = cross(offset, ab) / denominator
+  if (t <= ENTRY_EPSILON || t >= 1 - ENTRY_EPSILON || u < -ENTRY_EPSILON || u > 1 + ENTRY_EPSILON) {
+    return null
+  }
+  return t
+}
+
+function contourCentroid(contour: Point[]): Point {
+  let twiceArea = 0
+  let x = 0
+  let y = 0
+  forEachEdge(contour, (a, b) => {
+    const areaTerm = a.x * b.y - b.x * a.y
+    twiceArea += areaTerm
+    x += (a.x + b.x) * areaTerm
+    y += (a.y + b.y) * areaTerm
+  })
+  if (Math.abs(twiceArea) <= ENTRY_EPSILON) return contour[0] ?? { x: 0, y: 0 }
+  return { x: x / (3 * twiceArea), y: y / (3 * twiceArea) }
+}
+
+function contourBounds(contour: Point[]): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  if (contour.length === 0) return null
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const point of contour) {
+    minX = Math.min(minX, point.x)
+    minY = Math.min(minY, point.y)
+    maxX = Math.max(maxX, point.x)
+    maxY = Math.max(maxY, point.y)
+  }
+  return { minX, minY, maxX, maxY }
+}
+
+function forEachEdge(contour: Point[], callback: (a: Point, b: Point) => void): void {
+  for (let index = 0; index < contour.length; index += 1) {
+    callback(contour[index], contour[(index + 1) % contour.length])
+  }
+}
+
+function sameXY(left: Point, right: Point): boolean {
+  return Math.abs(left.x - right.x) <= ENTRY_EPSILON && Math.abs(left.y - right.y) <= ENTRY_EPSILON
+}
+
+function samePoint(left: ToolpathPoint, right: ToolpathPoint): boolean {
+  return sameXY(left, right) && Math.abs(left.z - right.z) <= ENTRY_EPSILON
+}
+
+function squaredDistance(left: Point, right: Point): number {
+  const dx = left.x - right.x
+  const dy = left.y - right.y
+  return dx * dx + dy * dy
+}
+
+function cross(left: Point, right: Point): number {
+  return left.x * right.y - left.y * right.x
+}
+
+function toRadians(degrees: number): number {
+  return degrees * Math.PI / 180
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function numericTolerance(value: number): number {
+  return Math.max(1e-9, Math.abs(value) * 1e-9)
+}
+
+function formatWarningNumber(value: number): number {
+  return Number(value.toFixed(4))
+}
+
+function warningKey(warning: ToolpathWarning): string {
+  return `${warning.code}:${JSON.stringify(warning.params ?? {})}`
+}
