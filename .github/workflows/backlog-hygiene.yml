@@ -1,0 +1,67 @@
+name: Backlog Hygiene
+
+# Enforces the Backlog Contract (AGENTS.md § "The Backlog Contract") so that the
+# rules hold with nobody watching. Two independent jobs:
+#
+#   label-external  R3 — every issue from outside the maintainer team is tagged
+#                   the moment it is opened, which also makes it decay-exempt.
+#   hygiene         R1/R2/R4 — priority coverage, decay, and the digest.
+
+on:
+  schedule:
+    # Mondays 07:00 UTC — before the week's work is chosen, not after.
+    - cron: '0 7 * * 1'
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Report only, change nothing'
+        type: boolean
+        default: true
+
+permissions:
+  issues: write
+  repository-projects: read
+
+jobs:
+  # R3 — the highest-value rule here, because it needs no ongoing discipline.
+  # Only ~6% of this repo's issues come from outside; they are the scarcest
+  # signal it holds, and were previously indistinguishable from our own ideas.
+  label-external:
+    if: >-
+      github.event_name == 'issues' &&
+      !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label as an external report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh issue edit ${{ github.event.issue.number }} --add-label external-report
+
+  hygiene:
+    if: github.event_name != 'issues'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run backlog hygiene
+        env:
+          # The default GITHUB_TOKEN cannot read Projects v2. Provide a PAT with
+          # `project` scope as BACKLOG_PROJECT_TOKEN; without it the run fails
+          # loudly rather than silently treating every issue as unprioritized.
+          GITHUB_TOKEN: ${{ secrets.BACKLOG_PROJECT_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: npx tsx scripts/backlog-hygiene.ts
