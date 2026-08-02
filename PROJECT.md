@@ -71,6 +71,38 @@ PureCutCNC is not currently:
 Imported meshes may drive supported surface roughing and finishing operations,
 but mesh editing remains outside the core product model.
 
+## Road to 1.0
+
+Scope that has no stated end is unbounded in principle, which makes every "no"
+expensive to argue. This section is the line. It is a product commitment, not a
+schedule.
+
+**1.0 means:** a hobbyist can take a part from sketch or import to verified
+G-code for a 3-axis router without leaving the application — on desktop and
+tablet, in their own language — and trust the output enough to run it.
+
+**Required for 1.0:**
+
+- installers that do not warn on macOS and Windows;
+- every externally-reported defect either fixed or answered;
+- a first-run path that reaches a first toolpath without reading the source;
+- no open `P0` (see `AGENTS.md` § The Backlog Contract).
+
+**Explicitly post-1.0.** These are deferrals, not rejections, and each one is a
+legitimate future direction:
+
+- rotary and 4th-axis machining; turning and lathe work;
+- parametrics, variables, and part variants;
+- nesting and layout optimisation;
+- joinery and fabrication generator packs;
+- cloud sync or collaboration;
+- an in-product AI or MCP agent surface.
+
+The post-1.0 list restates the boundaries above rather than adding new ones —
+its purpose is to make an existing boundary *enforceable* instead of merely
+quotable. When a request lands squarely on this list, the answer is "after 1.0",
+and that answer needs no fresh argument.
+
 ## CNC safety contract
 
 Preview and simulation are verification aids, not guarantees that a job is safe

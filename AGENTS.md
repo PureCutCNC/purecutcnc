@@ -29,6 +29,109 @@ If the `codebase-memory-mcp` server is connected, prefer its graph tools (`searc
 
 Abandoned work: close the issue with a short reason; the board moves it to `Done`/closed. No file cleanup needed.
 
+## The Backlog Contract
+
+The workflow above governs how work *enters*. This section governs how it
+*leaves* — because without it the tracker fills with unranked cards faster than
+they can ever be worked. It has happened twice: a root `TODO.md` grew until it
+was migrated wholesale into 27 issues (#185–#211) in one sitting, and those sat
+unranked for nine weeks. Converting a list into cards does not convert it into
+decisions.
+
+Five rules. Four are enforced by
+[`.github/workflows/backlog-hygiene.yml`](.github/workflows/backlog-hygiene.yml)
+(logic in [`scripts/backlog-hygiene.ts`](scripts/backlog-hygiene.ts)), so they
+hold whether or not anyone is paying attention.
+
+### R1 — Every open issue carries a Priority
+
+Priority is GitHub's **native organization issue field**, not a project field.
+It lives on the issue itself, so it shows on the issue page, survives outside
+the board, and is filterable straight from the issues list. The project board
+projects the same field, so the board and the issue can never disagree.
+
+| Priority | Meaning | Cap |
+| --- | --- | --- |
+| `Urgent` | Broken, blocking, or actively in progress | 5 |
+| `High` | Committed to the current release cycle | 10 |
+| `Medium` | Real and accepted, but unscheduled | uncapped; decays |
+| `Low` | Kept only while someone is actively arguing for it | uncapped; decays |
+
+`Medium` and `Low` both decay. There is deliberately no permanent "Someday"
+tier — that bucket is where backlogs go to rot. Anything that cannot be argued
+to at least `Medium` today should be closed today; closed is not deleted, and
+closed issues stay searchable and reopenable forever.
+
+The caps are the point, not decoration: more than five `Urgent` means nothing is
+urgent, more than ten `High` means nothing is committed. Anything without a
+Priority is labelled `needs-priority` automatically.
+
+### R2 — Decay: 60 days quiet, 14 days' notice, then closed
+
+An open issue that is **not** `Urgent` or `High` — i.e. `Medium`, `Low`, or
+unprioritized — and has had **no activity for 60 days** gets a `stale` label and
+a comment. If nothing happens in the next **14 days**, it is closed as *not
+planned*. Any comment, edit, label, or priority change resets the clock.
+
+Keeping something alive costs one sentence. That is the design: the sentence
+*is* the act of valuing it.
+
+Never decays — external reports (R3), `Urgent`/`High`, anything with an
+assignee, anything past `Backlog` on the board, and `pinned`.
+
+The bet this rule makes is that **closing a speculative item costs nothing,
+because the ones that matter come back with better evidence than the original
+filing**. That is not a hope; it is the observed behaviour of this tracker.
+#196's polish list contained `[ ] Non-rectangular tabs`, untouched from
+2026-06-25. On 2026-08-02 an outside user filed #414 — smooth tabs — with a
+working branch and a screenshot.
+
+### R3 — External reports are marked automatically and never decay
+
+Any issue opened by someone whose `author_association` is not
+`OWNER`/`MEMBER`/`COLLABORATOR` is labelled `external-report` on arrival.
+
+This is the most valuable rule here because it requires no discipline at all.
+Roughly 6% of this repo's issues come from outside, they are the highest-signal
+ones, and before this label they were visually identical to our own speculation.
+The digest tracks any that have gone 14 days without a reply.
+
+### R4 — One weekly digest that cannot itself become clutter
+
+The workflow **rewrites the body** of the single issue labelled
+`backlog-digest`; it never comments, so it never grows. It reports counts per
+Priority, cap breaches, unranked issues, external reports awaiting a reply, and
+— importantly — **what will go stale in the next 14 days**, so a rescue is
+always possible before the warning, not after.
+
+### R5 — Intake: do not file speculative scope as an issue
+
+Open an issue only for work that is:
+
+1. a defect, or
+2. externally requested, or
+3. something you intend to start this cycle.
+
+Ideas that are none of these do not get a card. This is the only rule with no
+mechanical enforcement — R2 is its backstop. Speculative issues filed anyway
+decay in 74 days without anyone lifting a finger.
+
+### Operating notes
+
+- Both the 60/14 windows and the caps are constants at the top of
+  `scripts/backlog-hygiene.ts`. Change them there, not by hand-editing issues.
+- The script **defaults to a dry run**. `npx tsx scripts/backlog-hygiene.ts`
+  prints exactly what would change; `--apply` mutates.
+- The run needs no special token. Priority is read from the native issue field,
+  which the default Actions `GITHUB_TOKEN` can see. Board `Status` is optional
+  enrichment worth one extra decay exemption ("someone is already on it"); if
+  the token cannot read Projects v2 the script logs that and continues.
+- Carried over from the #374 audit, which was itself buried before it could be
+  acted on: **when a finding cites code, cite symbol names plus the commit SHA
+  it was verified against, and treat line numbers as a hint.** Every single
+  `file:line` reference in that audit had gone stale, and two files had moved
+  directory.
+
 ## Build & Verify
 
 ```bash
