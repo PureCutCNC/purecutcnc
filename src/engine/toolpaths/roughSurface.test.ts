@@ -580,6 +580,47 @@ function testRoughSurfaceGeneratesChangingZCuts(): void {
   assert(result.bounds !== null, 'expected non-null toolpath bounds')
 }
 
+function testRoughSurfaceHelixEntryUsesModelSafeRegions(): void {
+  console.log('Testing rough_surface helix entry uses model-safe regions...')
+  const { project, operation } = makeProject(['model1'])
+  operation.entryStrategy = 'helix'
+  operation.entryRampAngle = 5
+  operation.entryHelixDiameterPercent = 80
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const descendingLeadIns = result.moves.filter((move) =>
+    move.kind === 'lead_in' && move.to.z < move.from.z - 1e-9)
+
+  assert(descendingLeadIns.length > 0, 'expected rough-surface helical lead-in moves')
+  assert(
+    result.warnings
+      .filter((warning) => warning.code === 'entryStrategyFallback')
+      .every((warning) => warning.params?.requested === 'helix'),
+    'fallback warnings should preserve the requested helix strategy',
+  )
+}
+
+function testRoughSurfaceRegionMaskForcesPlungeEntry(): void {
+  console.log('Testing rough_surface region mask forces plunge entry...')
+  const { project, operation } = makeProject(['region1', 'model1'])
+  operation.entryStrategy = 'helix'
+  const result = generateRoughSurfaceToolpath(project, operation)
+
+  assert(
+    result.warnings.some((warning) => warning.code === 'entryDisabledByRegionMask'),
+    'expected region-mask entry guard warning',
+  )
+  assert(!result.moves.some((move) => move.kind === 'lead_in'), 'guarded operation should not emit lead-ins')
+  assert(result.moves.some((move) => move.kind === 'plunge'), 'guarded operation should retain plunge entries')
+}
+
+function testRoughSurfaceDefaultEntryMatchesExplicitPlunge(): void {
+  console.log('Testing rough_surface default entry matches explicit plunge...')
+  const { project, operation } = makeProject(['model1'])
+  const implicit = generateRoughSurfaceToolpath(project, operation)
+  const explicit = generateRoughSurfaceToolpath(project, { ...operation, entryStrategy: 'plunge' })
+  assert(JSON.stringify(implicit) === JSON.stringify(explicit), 'unset and explicit plunge toolpaths must match')
+}
+
 function testRoughSurfaceFindsModelWhenRegionIsFirst(): void {
   console.log('Testing rough_surface target order with region before model...')
   const { project, operation } = makeProject(['region1', 'model1'])
@@ -816,6 +857,9 @@ function testRoughSurfaceLinksOffsetRingsAtZ(): void {
 }
 
 testRoughSurfaceGeneratesChangingZCuts()
+testRoughSurfaceHelixEntryUsesModelSafeRegions()
+testRoughSurfaceRegionMaskForcesPlungeEntry()
+testRoughSurfaceDefaultEntryMatchesExplicitPlunge()
 testRoughSurfaceFindsModelWhenRegionIsFirst()
   testRoughSurfaceDefaultsLegacyModelFormatToStl()
   testRoughSurfaceCutsVerticalPocketAndOutsideWall()

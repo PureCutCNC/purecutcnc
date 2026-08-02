@@ -23,6 +23,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `index.ts` — barrel export — add new files here when adding a strategy
 - `types.ts` — shared toolpath types (segments, passes, parameters)
 - `feed.ts` — shared `effectiveFeed` helper: applies a move's `feedScale` (for slot-feed pocket cuts) to the cut feed, and returns the plunge feed unmodified for plunge moves; used by the postprocessor, booklet time estimator, simulation playback, and the live-feed readout
+- `entry.ts` — clearance-aware plunge, helical, and zig-zag ramp entry synthesis for pocket, surface-clean, and rough-surface clearing operations, including deterministic fallback warnings and plunge-feed limiting
 - `geometry.ts` — toolpath-specific geometric helpers; owns the shared `DEFAULT_FLATTEN_*` sampling constants
 - `offsetSmoothing.ts` — emit-time corner fillet for the outer/wall clearing rings (`roundContourCorners`, `smoothClosedContours`, `cornerSmoothingRadius`); shared by pocket + surface clearing when `roundOutsideCorners` is enabled. Bounds the setback so acute corners leave no crescent; the offset-tree emitter keeps each region's wall-adjacent (root) outer ring sharp so no corner stock stacks into a chip (interior rings self-clean). Islands are rounded the opposite way — via `jtRound` Clipper offsets (see `buildInsetRegions` island join), so the tool wraps convex island corners smoothly without gouging.
 - `linearMoveOptimization.ts` — pure generation-stage finalizer that removes zero-length duplicate moves and merges contiguous, direction-preserving, collinear XY moves; applied after tabs but before clamp warnings
@@ -38,6 +39,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 ## Tests
 - `linearMoveOptimization.test.ts` — zero-length removal, collinear merge, and boundary preservation
 - `feed.test.ts` — shared effectiveFeed helper: cut/plunge/lead-in/lead-out move kinds, feedScale present/absent, and plunge ignores-feedScale invariance
+- `entry.test.ts` — helix pitch/direction, region/island clearance, no-core diameter bounds, bottom flattening, ramp fallback, and plunge-feed limiting
 - `geometry.test.ts` — shared nearest-neighbour ordering and squared-XY-distance behavior
 - `toolpaths.test.ts` — broad smoke tests across strategies
 - `resolverReadPath.test.ts` — resolved instance geometry and missing-definition behavior in toolpath resolution

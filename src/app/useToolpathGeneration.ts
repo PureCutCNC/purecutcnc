@@ -75,6 +75,9 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.rpm === b.rpm
     && a.pocketPattern === b.pocketPattern
     && a.pocketAngle === b.pocketAngle
+    && a.entryStrategy === b.entryStrategy
+    && a.entryRampAngle === b.entryRampAngle
+    && a.entryHelixDiameterPercent === b.entryHelixDiameterPercent
     && a.pocketSlotFeedPercent === b.pocketSlotFeedPercent
     && a.roundOutsideCorners === b.roundOutsideCorners
     && a.stockToLeaveRadial === b.stockToLeaveRadial

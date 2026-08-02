@@ -2479,6 +2479,46 @@ function testPocketOffsetSlotFeedSimple() {
   console.log('pocket offset slot feed simple: PASSED')
 }
 
+function testPocketHelixUsesContainingClearanceAndSlotFeed() {
+  console.log('Testing pocket helix uses containing clearance and keeps slot feed...')
+  const tool = makeFlatEndmill('t1')
+  const pocket = makePocketFeature('p1', 0, 0, 30, 15, 2, 0)
+  const boss = makeCircleBoss('boss', 15, 7.5, 3, 2, 0)
+  const project = baseProject([tool], [pocket, boss])
+  const op = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    stepover: 0.32,
+    roundOutsideCorners: true,
+    pocketSlotFeedPercent: 50,
+    entryStrategy: 'helix',
+    entryRampAngle: 5,
+    entryHelixDiameterPercent: 80,
+  })
+
+  const result = generatePocketToolpath(project, op)
+  assert(
+    !result.warnings.some((warning) => warning.code === 'entryStrategyFallback'),
+    'small inner offset loops must not force fallback when the containing pocket fits a helix',
+  )
+  const moves = result.moves
+  const scaledHandoffs = moves.filter((move) =>
+    move.kind === 'lead_in'
+    && approx(move.from.z, move.to.z)
+    && approx(move.feedScale ?? 0, 0.5)
+    && Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y) > 1e-6)
+  assert(scaledHandoffs.length > 0, 'helix-to-slot handoff should keep feedScale 0.5')
+
+  const descending = moves.filter((move) => move.kind === 'lead_in' && move.to.z < move.from.z - 1e-9)
+  assert(descending.length > 0, 'fixture should contain a descending helix')
+  assert(
+    descending.some((move) => !approx(move.feedScale ?? 1, 0.5)),
+    'slot feed must not replace the helix plunge-component feed limit',
+  )
+  console.log('pocket helix uses containing clearance and keeps slot feed: PASSED')
+}
+
 function testPocketOffsetSlotFeedIslandSections() {
   console.log('Testing pocket offset slot feed with island-split sections and pinch corridors...')
   const tool = makeFlatEndmill('t1')
@@ -2863,6 +2903,7 @@ try {
   testPocketFinishFloorRoundsWhenEnabled()
   testSurfaceCleanRoughRoundsInnerRings()
   testPocketOffsetSlotFeedSimple()
+  testPocketHelixUsesContainingClearanceAndSlotFeed()
   testPocketOffsetSlotFeedIslandSections()
   testPocketOffsetSlotFeedPerLevel()
   testPocketOffsetSlotFeedPartialDepthIsland()

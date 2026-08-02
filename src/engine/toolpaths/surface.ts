@@ -17,6 +17,7 @@
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
+import { createEntryPolicy, withEntryStartZ } from './entry'
 import type {
   ClipperPath,
   PocketToolpathResult,
@@ -32,6 +33,7 @@ import {
   applyContourDirection,
   checkMaxCutDepthWarning,
   flattenProfile,
+  getOperationClearance,
   getOperationSafeZ,
   normalizeToolForProject,
   normalizeWinding,
@@ -58,7 +60,12 @@ import {
   updateBounds,
 } from './pocket'
 import { cornerSmoothingRadius, smoothClosedContours } from './offsetSmoothing'
-import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
+import {
+  buildRegionMask,
+  clipToolpathResultToRegionMask,
+  entryDisabledByRegionMaskWarning,
+  splitFeatureTargets,
+} from './regions'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
@@ -80,6 +87,13 @@ interface SurfaceCleanResult {
   bands: SurfaceCleanBand[]
   regionMask: ReturnType<typeof buildRegionMask>
   warnings: ToolpathWarning[]
+}
+
+function appendUniqueWarning(warnings: ToolpathWarning[], warning: ToolpathWarning): void {
+  const key = `${warning.code}:${JSON.stringify(warning.params ?? {})}`
+  if (!warnings.some((entry) => `${entry.code}:${JSON.stringify(entry.params ?? {})}` === key)) {
+    warnings.push(warning)
+  }
 }
 
 function executeClip(
@@ -303,11 +317,13 @@ function generateRoughBandMoves(
   band: SurfaceCleanBand,
   operation: Operation,
   safeZ: number,
+  entryClearance: number,
   stepdown: number,
   toolRadius: number,
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
+  entryEnabled = true,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -340,6 +356,14 @@ function generateRoughBandMoves(
 
     const boundaryContours = applyContourDirection(buildContourLoops(roughRegions), direction)
     const segments = buildPocketParallelSegments(roughRegions, effectiveStepover, operation.pocketAngle)
+    const entryPolicy = entryEnabled
+      ? createEntryPolicy(
+        operation,
+        toolRadius * 2,
+        roughRegions,
+        (warning) => appendUniqueWarning(warnings, warning),
+      )
+      : undefined
     if (segments.length === 0) {
       return {
         moves,
@@ -348,7 +372,12 @@ function generateRoughBandMoves(
       }
     }
 
-    for (const z of stepLevels) {
+    for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
+      const z = stepLevels[levelIndex]
+      const levelEntryPolicy = withEntryStartZ(
+        entryPolicy,
+        levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
+      )
       const orderedBoundaryContours = orderClosedContoursGreedy(
         boundaryContours,
         currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
@@ -356,7 +385,15 @@ function generateRoughBandMoves(
 
       for (const contour of orderedBoundaryContours) {
         const entryPoint = contourStartPoint(contour, z)
-        currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
+        currentPosition = transitionToCutEntry(
+          moves,
+          currentPosition,
+          entryPoint,
+          safeZ,
+          maxLinkDistance,
+          undefined,
+          levelEntryPolicy,
+        )
         const cutMoves = toClosedCutMoves(contour, z)
         moves.push(...cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
@@ -369,7 +406,15 @@ function generateRoughBandMoves(
 
       for (const segment of orderedSegments) {
         const entryPoint = contourStartPoint(segment, z)
-        currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
+        currentPosition = transitionToCutEntry(
+          moves,
+          currentPosition,
+          entryPoint,
+          safeZ,
+          maxLinkDistance,
+          undefined,
+          levelEntryPolicy,
+        )
         const cutMoves = toOpenCutMoves(segment, z)
         moves.push(...cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
@@ -388,8 +433,21 @@ function generateRoughBandMoves(
     ? ClipperLib.JoinType.jtRound
     : ClipperLib.JoinType.jtMiter
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
+  const entryPolicy = entryEnabled
+    ? createEntryPolicy(
+      operation,
+      toolRadius * 2,
+      coverageRegions,
+      (warning) => appendUniqueWarning(warnings, warning),
+    )
+    : undefined
 
-  for (const z of stepLevels) {
+  for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
+    const z = stepLevels[levelIndex]
+    const levelEntryPolicy = withEntryStartZ(
+      entryPolicy,
+      levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
+    )
     const currentRegions = coverageRegions.flatMap((region) =>
       buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
     if (currentRegions.length === 0) {
@@ -417,6 +475,7 @@ function generateRoughBandMoves(
         'outer-first',
         smoothRadius,
         islandJoinType,
+        levelEntryPolicy,
       )
     }
 
@@ -435,6 +494,7 @@ function generateFinishBandMoves(
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
+  entryEnabled = true,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -459,6 +519,14 @@ function generateFinishBandMoves(
   const coverageRegions = buildSurfaceCoverageRegions(band.subjectPaths, band.protectedPaths, band.regions, toolRadius)
   const finishDelta = radialLeave
   const finishRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, finishDelta))
+  const entryPolicy = entryEnabled
+    ? createEntryPolicy(
+      operation,
+      toolRadius * 2,
+      finishRegions,
+      (warning) => appendUniqueWarning(warnings, warning),
+    )
+    : undefined
   const wallContours = operation.finishWalls ? applyContourDirection(buildContourLoops(finishRegions), direction) : []
   // Finish-floor rings are filleted when the option is on. This is a single-
   // level pass (no chip risk) and the floor rings run one stepover inside the
@@ -498,7 +566,15 @@ function generateFinishBandMoves(
 
     for (const contour of orderedFloorContours) {
       const entryPoint = contourStartPoint(contour, z)
-      currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
+      currentPosition = transitionToCutEntry(
+        moves,
+        currentPosition,
+        entryPoint,
+        safeZ,
+        maxLinkDistance,
+        undefined,
+        entryPolicy,
+      )
       const cutMoves = toClosedCutMoves(contour, z)
       moves.push(...cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
@@ -511,7 +587,15 @@ function generateFinishBandMoves(
 
     for (const segment of orderedFloorSegments) {
       const entryPoint = contourStartPoint(segment, z)
-      currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
+      currentPosition = transitionToCutEntry(
+        moves,
+        currentPosition,
+        entryPoint,
+        safeZ,
+        maxLinkDistance,
+        undefined,
+        entryPolicy,
+      )
       const cutMoves = toOpenCutMoves(segment, z)
       moves.push(...cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
@@ -528,7 +612,15 @@ function generateFinishBandMoves(
 
     for (const contour of orderedWallContours) {
       const entryPoint = contourStartPoint(contour, z)
-      currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, maxLinkDistance)
+      currentPosition = transitionToCutEntry(
+        moves,
+        currentPosition,
+        entryPoint,
+        safeZ,
+        maxLinkDistance,
+        undefined,
+        entryPolicy,
+      )
       const cutMoves = toClosedCutMoves(contour, z)
       moves.push(...cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
@@ -582,11 +674,17 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
   }
 
   const safeZ = getOperationSafeZ(project)
+  const entryClearance = getOperationClearance(project)
   const stepoverDistance = tool.diameter * operation.stepover
   const maxLinkDistance = tool.diameter
   const direction = operation.cutDirection ?? 'conventional'
   const allMoves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
+  const entryGuardWarning = entryDisabledByRegionMaskWarning(operation, resolved.regionMask)
+  const entryEnabled = entryGuardWarning === null
+  if (entryGuardWarning) {
+    appendUniqueWarning(warnings, entryGuardWarning)
+  }
   const allStepLevels = new Set<number>()
   const maxBandDepth = resolved.bands.reduce((max, band) => Math.max(max, Math.abs(band.topZ - band.bottomZ)), 0)
   const depthWarning = checkMaxCutDepthWarning(tool, maxBandDepth)
@@ -605,16 +703,19 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
         stepoverDistance,
         maxLinkDistance,
         direction,
+        entryEnabled,
       )
       : generateRoughBandMoves(
         band,
         operation,
         safeZ,
+        entryClearance,
         operation.stepdown,
         tool.radius,
         stepoverDistance,
         maxLinkDistance,
         direction,
+        entryEnabled,
       )
 
     const { moves, stepLevels, warnings: bandWarnings } = result

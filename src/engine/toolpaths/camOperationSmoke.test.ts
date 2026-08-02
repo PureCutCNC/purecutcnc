@@ -33,7 +33,7 @@ import { projectWithFeatures } from '../../test/projectFixtures'
 import { runPostProcessor } from '../gcode/postprocessor'
 import { validateMachineDefinition } from '../gcode/types'
 import type { MachineDefinition } from '../gcode/types'
-import { normalizeToolForProject } from './geometry'
+import { getOperationClearance, getOperationSafeZ, normalizeToolForProject } from './geometry'
 import type { ToolpathResult } from './types'
 import { generatePocketToolpath } from './pocket'
 import { generateDrillingToolpath } from './drilling'
@@ -357,6 +357,91 @@ test('pocket waterline pattern: generates non-empty toolpath + posts', () => {
   assert(gcode.length > 0, 'waterline pocket should produce non-empty G-code')
 })
 
+test('pocket helix entry: emits descending lead-in moves and posts', () => {
+  const tool = makeFlatEndmill('t1', 4)
+  const feat = makeRectFeature('a', 0, 0, 20, 20, 0, -4)
+  const project = baseProject([tool], [feat])
+  const op = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+    entryStrategy: 'helix',
+    entryRampAngle: 5,
+    entryHelixDiameterPercent: 80,
+  })
+
+  const result = generatePocketToolpath(project, op)
+  const descendingLeadIns = result.moves.filter((move) =>
+    move.kind === 'lead_in' && move.to.z < move.from.z - 1e-9)
+  assert(descendingLeadIns.length > 0, 'helix entry should emit descending lead-in moves')
+  // Levels below the first descend to the previous cut Z plus clearance before
+  // the helix starts, so air-descent plunges are expected. A plunge *fallback*
+  // is the one that reaches cut depth itself, so it is always the move
+  // immediately before the first cut; a helix hands off with a lead-in.
+  const plungedIntoCut = result.moves.some((move, index) =>
+    move.kind === 'plunge' && result.moves[index + 1]?.kind === 'cut')
+  assert(!plungedIntoCut, 'open pocket should not need plunge fallback')
+
+  const gcode = postToolpath(project, op, result)
+  assert(gcode.length > 0, 'helix-entry pocket should produce non-empty G-code')
+})
+
+test('pocket helix entry starts above the previous cut level, not at safe Z', () => {
+  const tool = makeFlatEndmill('t1', 4)
+  const feat = makeRectFeature('a', 0, 0, 20, 20, 0, -4)
+  const project = baseProject([tool], [feat])
+  const op = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+    entryStrategy: 'helix',
+    entryRampAngle: 5,
+    entryHelixDiameterPercent: 80,
+  })
+
+  const result = generatePocketToolpath(project, op)
+  const safeZ = getOperationSafeZ(project)
+  const clearance = getOperationClearance(project)
+  assert(result.stepLevels.length > 1, 'fixture must step down more than once')
+
+  // The descent that precedes a helix is the only plunge in this toolpath.
+  const airDescents = result.moves.filter((move, index) =>
+    move.kind === 'plunge' && result.moves[index + 1]?.kind === 'lead_in')
+  assert(airDescents.length > 0, 'levels below the first should descend before the helix')
+
+  // Every one of them must stop one clearance above a level that is already
+  // cut, never at safe Z (the air-cutting case) and never at or below the
+  // level it is about to cut.
+  const cutLevels = [...result.stepLevels].sort((a, b) => b - a)
+  for (const descent of airDescents) {
+    assert(descent.from.z === safeZ, 'descent should begin at the global safe Z')
+    assert(descent.to.z < safeZ - 1e-9, 'descent should end below safe Z')
+    const matchesPreviousLevel = cutLevels.some((level) => approx(descent.to.z, level + clearance))
+    assert(matchesPreviousLevel, 'descent should stop one clearance above a cut level')
+  }
+
+  // XY travel still happens at safe Z: nothing rapids while buried.
+  const buriedRapids = result.moves.filter((move) =>
+    move.kind === 'rapid'
+    && (move.from.x !== move.to.x || move.from.y !== move.to.y)
+    && (move.from.z < safeZ - 1e-9 || move.to.z < safeZ - 1e-9))
+  assert(buriedRapids.length === 0, 'XY rapids must stay at safe Z')
+})
+
+test('pocket default entry remains byte-identical to explicit plunge', () => {
+  const tool = makeFlatEndmill('t1', 4)
+  const feat = makeRectFeature('a', 0, 0, 20, 20, 0, -4)
+  const project = baseProject([tool], [feat])
+  const base = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+  })
+  const implicit = generatePocketToolpath(project, base)
+  const explicit = generatePocketToolpath(project, { ...base, entryStrategy: 'plunge' })
+  assert(JSON.stringify(implicit) === JSON.stringify(explicit), 'unset and explicit plunge toolpaths must match')
+})
+
 // =====================================================================
 // 2. DRILLING — drill-type differentiation
 // =====================================================================
@@ -508,6 +593,46 @@ test('surface_clean: generates toolpath + posts to non-empty G-code', () => {
 
   const gcode = postToolpath(project, op, result)
   assert(gcode.length > 0, 'surface_clean should produce non-empty G-code')
+})
+
+test('surface_clean helix entry: emits descending lead-in moves', () => {
+  const tool = makeFlatEndmill('t1', 4)
+  const feat: SketchFeature = {
+    ...makeRectFeature('a', 0, 0, 20, 20, 4, 0),
+    operation: 'add',
+  }
+  const project = baseProject([tool], [feat])
+  const op = makePocketOp({
+    kind: 'surface_clean',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+    stepdown: 1,
+    entryStrategy: 'helix',
+  })
+
+  const result = generateSurfaceCleanToolpath(project, op)
+  assert(
+    result.moves.some((move) => move.kind === 'lead_in' && move.to.z < move.from.z - 1e-9),
+    'surface-clean helix should emit descending lead-in moves',
+  )
+})
+
+test('surface_clean default entry remains byte-identical to explicit plunge', () => {
+  const tool = makeFlatEndmill('t1', 4)
+  const feat: SketchFeature = {
+    ...makeRectFeature('a', 0, 0, 20, 20, 4, 0),
+    operation: 'add',
+  }
+  const project = baseProject([tool], [feat])
+  const base = makePocketOp({
+    kind: 'surface_clean',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+    stepdown: 1,
+  })
+  const implicit = generateSurfaceCleanToolpath(project, base)
+  const explicit = generateSurfaceCleanToolpath(project, { ...base, entryStrategy: 'plunge' })
+  assert(JSON.stringify(implicit) === JSON.stringify(explicit), 'unset and explicit plunge toolpaths must match')
 })
 
 test('follow_line: generates toolpath + posts to non-empty G-code', () => {

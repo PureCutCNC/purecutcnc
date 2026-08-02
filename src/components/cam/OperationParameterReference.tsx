@@ -132,6 +132,57 @@ export function OperationParameterReference({
         </OpParamRefFrame>
       )
 
+    case 'entryStrategy': {
+      if (variant === 'helix') {
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__outline" d="M6 27h46" />
+            <path className="gear-reference__guide" d="M29 5v20" />
+            <path className="gear-reference__accent" d="M17 11c0-4 24-4 24 0s-24 4-24 0 24-4 24 0v10" />
+            <path className="gear-reference__accent-fill" d="M41 24l-3-5h6z" />
+          </OpParamRefFrame>
+        )
+      }
+      if (variant === 'ramp') {
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__outline" d="M6 27h46" />
+            <path className="gear-reference__guide" d="M11 7h36" />
+            <path className="gear-reference__accent" d="M12 8l34 17" />
+            <path className="gear-reference__accent-fill" d="M48 26l-5.8.3 2.7-5.1z" />
+          </OpParamRefFrame>
+        )
+      }
+      return (
+        <OpParamRefFrame label={label}>
+          <path className="gear-reference__outline" d="M6 27h46" />
+          <path className="gear-reference__guide" d="M29 5v17" />
+          <path className="gear-reference__accent" d="M29 5v16" />
+          <path className="gear-reference__accent-fill" d="M29 25l-3.2-5.5h6.4z" />
+        </OpParamRefFrame>
+      )
+    }
+
+    case 'entryRampAngle':
+      return (
+        <OpParamRefFrame label={label}>
+          <path className="gear-reference__outline" d="M7 27h44" />
+          <path className="gear-reference__accent" d="M10 26L46 8" />
+          <path className="gear-reference__guide" d="M20 26a10 10 0 0 0-1.1-4.5" />
+          <path className="gear-reference__accent-fill" d="M48 7l-3.2 5.1-2.7-5.2z" />
+        </OpParamRefFrame>
+      )
+
+    case 'entryHelixDiameter':
+      return (
+        <OpParamRefFrame label={label}>
+          <ellipse className="gear-reference__outline" cx="29" cy="17" rx="18" ry="10" />
+          <ellipse className="gear-reference__guide" cx="29" cy="17" rx="7" ry="4" />
+          <path className="gear-reference__accent" d="M12 17h34" />
+          <path className="gear-reference__accent-fill" d="M10 17l4-2.7v5.4zM48 17l-4-2.7v5.4z" />
+        </OpParamRefFrame>
+      )
+
     case 'slotFeed':
       return (
         <OpParamRefFrame label={label}>

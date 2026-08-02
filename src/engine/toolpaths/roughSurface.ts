@@ -18,10 +18,20 @@ import ClipperLib from 'clipper-lib'
 import type { Project } from '../../types/project'
 import type { Operation } from '../../types/project'
 import type { PocketToolpathResult, ToolpathBounds, ToolpathMove, ToolpathPoint } from './types'
+import { createEntryPolicy } from './entry'
 import { cutOffsetRegionRecursive, orderRegionsGreedy, retractToSafe, updateBounds } from './pocket'
 import { cornerSmoothingRadius } from './offsetSmoothing'
 import { offsetClipperPaths, segmentInsideClipperPaths } from './modelProtection'
+import { buildRegionMask, entryDisabledByRegionMaskWarning, splitFeatureTargets } from './regions'
 import { resolve3DSurfaceStepdown } from './surfaceStepdown3d'
+import type { ToolpathWarning } from './warningCodes'
+
+function appendUniqueWarning(warnings: ToolpathWarning[], warning: ToolpathWarning): void {
+  const key = `${warning.code}:${JSON.stringify(warning.params ?? {})}`
+  if (!warnings.some((entry) => `${entry.code}:${JSON.stringify(entry.params ?? {})}` === key)) {
+    warnings.push(warning)
+  }
+}
 
 export function generateRoughSurfaceToolpath(
   project: Project,
@@ -38,6 +48,14 @@ export function generateRoughSurfaceToolpath(
   const allMoves: ToolpathMove[] = []
   const allStepLevels = new Set<number>()
   const warnings = [...resolved.warnings]
+  const featureIds = operation.target.source === 'features' ? operation.target.featureIds : []
+  const { regionFeatures } = splitFeatureTargets(project, featureIds)
+  const regionMask = buildRegionMask(regionFeatures)
+  const entryGuardWarning = entryDisabledByRegionMaskWarning(operation, regionMask)
+  const entryEnabled = entryGuardWarning === null
+  if (entryGuardWarning) {
+    appendUniqueWarning(warnings, entryGuardWarning)
+  }
   const smoothRadius = cornerSmoothingRadius(
     operation.roundOutsideCorners,
     resolved.tool.radius,
@@ -63,7 +81,22 @@ export function generateRoughSurfaceToolpath(
       currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
     )
 
+    // No withEntryStartZ() here, unlike pocket and surface clearing. Those
+    // reuse one XY footprint for every level, so the previous level's floor is
+    // guaranteed cleared and the entry can start just above it. 3D roughing
+    // recomputes the clearable region per level, so a level can expose area the
+    // level above never cut — descending to the previous cut Z there would
+    // drive the tool through standing stock. Entry stays at the global safe Z
+    // until that containment is proven per level.
     for (const region of orderedRegions) {
+      const entryPolicy = entryEnabled
+        ? createEntryPolicy(
+          operation,
+          resolved.tool.diameter,
+          [region],
+          (warning) => appendUniqueWarning(warnings, warning),
+        )
+        : undefined
       currentPosition = cutOffsetRegionRecursive(
         allMoves,
         region,
@@ -77,6 +110,7 @@ export function generateRoughSurfaceToolpath(
         'outer-first',
         smoothRadius,
         islandJoinType,
+        entryPolicy,
       )
     }
   }
