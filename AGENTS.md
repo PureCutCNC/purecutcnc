@@ -29,6 +29,33 @@ If the `codebase-memory-mcp` server is connected, prefer its graph tools (`searc
 
 Abandoned work: close the issue with a short reason; the board moves it to `Done`/closed. No file cleanup needed.
 
+### Fast lane (waives steps 2–3 only)
+
+A change that provably cannot affect machine output, saved projects, or the gates themselves may skip **Plan** and **Approve**. Nothing else changes: still an issue first (the branch name needs its number), still a branch, still green `npm run build`, still a PR with `Closes #NN`, still the board. Every rule in **Build & Verify**, **Git & Branching**, and **Coding Standards** applies unchanged — license header, no `any`, unit tests for engine fixes, e2e when rendered DOM / menu wiring / dialog behavior changes.
+
+Eligibility is mechanical, never a judgment call:
+
+```bash
+npm run check:fast-lane   # before branching, and again before opening the PR
+```
+
+It measures the diff against `git merge-base origin/main HEAD` and fails unless both hold:
+
+- **Size:** ≤ 3 changed files and ≤ 25 changed lines (added + deleted). Test files (`**/*.test.ts(x)`, `e2e/**`) are exempt from both counts — never trim a test to fit the budget. Generated output (`public/icons.svg`, `package-lock.json`) is counted; if regenerating it blows the budget, take the full lane.
+- **No protected path is touched**, however small the diff: machine output and safety (`src/engine/toolpaths/**`, `src/engine/gcode/**`, `src/machine/**`, `src/utils/units.ts`), the `.camj` format and its migrations (`src/types/project.ts`, `src/store/helpers/projectFormat.ts`, `src/import/camj.ts`), the frozen `ProjectStore` contract (`src/store/types.ts`), and the process/gate machinery itself (`AGENTS.md`, `PROJECT.md`, `ARCHITECTURE.md`, `.github/**`, `.claude/**`, the gate scripts under `scripts/`, `package.json`, `tsconfig*.json`, `eslint.config.js`). [`scripts/check-fast-lane.sh`](scripts/check-fast-lane.sh) owns the authoritative list — add to it whenever a new gate lands.
+
+**Label the PR `fast-lane`.** The `fast-lane-guard` CI job ([`.github/workflows/fast-lane-guard.yml`](.github/workflows/fast-lane-guard.yml)) re-runs the check on every labeled PR, so a labeled PR that does not meet the criteria cannot merge.
+
+**Growing past the criteria converts the change to the full lane.** The check failing is the decision, not the author's read of it: stop before the next commit, write the plan into the issue, wait for explicit approval, drop the label. Never split a change across PRs to stay under the budget.
+
+**Audit, monthly.** Every merged PR since the last audit must have either the `fast-lane` label or an approval on its issue predating the branch's first commit — a PR with neither is a process escape.
+
+```bash
+gh pr list --state merged --limit 50 --json number,title,labels,mergedAt
+```
+
+Re-run the eligibility check against each labeled PR's merge base. If fast-lane PRs exceed a third of the window, the criteria are being stretched — tighten them.
+
 ## The Backlog Contract
 
 The workflow above governs how work *enters*. This section governs how it
