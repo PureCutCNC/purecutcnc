@@ -60,6 +60,8 @@ interface Viewport3DProps {
   onZoomWindowComplete?: () => void
   toolpathVisibility: ToolpathVisibility
   onToolpathVisibilityChange: (visibility: ToolpathVisibility) => void
+  toolpathPanelExpanded: boolean
+  onToolpathPanelExpandedChange: (expanded: boolean) => void
 }
 
 function disposeObject3D(object: THREE.Object3D) {
@@ -347,6 +349,8 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   onZoomWindowComplete,
   toolpathVisibility,
   onToolpathVisibilityChange,
+  toolpathPanelExpanded,
+  onToolpathPanelExpandedChange,
 }, ref) {
   const { palette } = useTheme()
   const threePalette = palette.three
@@ -916,6 +920,8 @@ useImperativeHandle(ref, () => ({
         <ToolpathVisibilityPanel
           visibility={toolpathVisibility}
           onChange={onToolpathVisibilityChange}
+          expanded={toolpathPanelExpanded}
+          onExpandedChange={onToolpathPanelExpandedChange}
         />
       )}
       <div className="viewport-presets">

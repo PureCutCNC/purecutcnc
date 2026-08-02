@@ -77,6 +77,8 @@ export interface SketchCanvasProps {
   onToggleDepthLegend?: () => void
   toolpathVisibility?: ToolpathVisibility
   onToolpathVisibilityChange?: (visibility: ToolpathVisibility) => void
+  toolpathPanelExpanded?: boolean
+  onToolpathPanelExpandedChange?: (expanded: boolean) => void
   /**
    * A1.3: when an operation kind is armed/hovered in the CAM "Add operation"
    * menu, the canvas highlights features that operation could act on and dims
