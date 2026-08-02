@@ -7,10 +7,12 @@ available; do not treat one-off diagnostics as normal quality gates.
 
 - [`check-docs.ts`](check-docs.ts) and [`docs-check-core.ts`](docs-check-core.ts) — validate active-document links, planning metadata, and normalized agent entrypoints; covered by [`check-docs.test.ts`](check-docs.test.ts) and run through `npm run docs:check`.
 - [`check-license-headers.ts`](check-license-headers.ts) — enforce Apache 2.0 headers under `src/`.
+- [`check-fast-lane.sh`](check-fast-lane.sh) — decide fast-lane eligibility mechanically (size budget + protected paths) per the workflow section of [`AGENTS.md`](../AGENTS.md); run via `npm run check:fast-lane`, and by the `fast-lane-guard` CI job in `--ci` mode. Dependency-free bash, deliberately outside `npm run build` because it needs a fetched base ref.
 - [`run-tests.ts`](run-tests.ts) — discover and run structural `src/**/*.test.ts` files.
 - [`build-summary.sh`](build-summary.sh) — run `npm run build` once and print a compact failing-stage + extracted-errors summary (full output saved to a log whose path is printed); `--from-log FILE` summarizes an existing build log instead of re-running. Agents should use this instead of re-running the build to grep for failures.
 - [`edit-lines.ts`](edit-lines.ts) — deterministic line-range file editor for agents (`show`/`replace`/`insert-after`/`delete`, `--expect` stale-line guard, prints a diff of exactly what changed, atomic writes, `--self-test`). The sanctioned fallback when an exact-match edit fails; replaces `sed -i` surgery.
 - [`build-icon-sprite.ts`](build-icon-sprite.ts) — generate `public/icons.svg` from editable SVG sources.
+- [`backlog-hygiene.ts`](backlog-hygiene.ts) — enforce the Backlog Contract (`AGENTS.md`): label unprioritized issues, decay quiet ones (`stale` → close after a grace period), and rewrite the pinned digest. Reads GitHub's native issue-level Priority field. Run weekly by [`backlog-hygiene.yml`](../.github/workflows/backlog-hygiene.yml); **defaults to a dry run**, pass `--apply` to mutate.
 
 ## Optional delegated-agent harness
 

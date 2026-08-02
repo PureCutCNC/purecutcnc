@@ -7,9 +7,18 @@ labels: []
 
 <!--
 This issue IS the plan. Fill in each section, then ask the user for approval BEFORE changing any code.
-Add this issue to the Project board, set the area label and Size, and set Status to Backlog/Ready.
+Add this issue to the Project board, set the area label and Size, set the issue's PRIORITY, and set Status to Backlog/Ready.
 When work is done, open a PR with "Closes #<this issue>" — the PR is the delivery, not the plan.
 -->
+
+> **Before filing — intake rule (AGENTS.md § The Backlog Contract, R5).**
+> Open an issue only for work that is **(a)** a defect, **(b)** externally
+> requested, or **(c)** something you intend to start this cycle. An idea that
+> is none of these does not get a card. If it matters, it will come back — with
+> better evidence than you could write today.
+>
+> Issues that are not `Urgent`/`High` and go 60 days without activity are
+> labelled `stale`, then closed 14 days later. Set the issue's **Priority**.
 
 ## Goal
 
