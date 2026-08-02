@@ -43,35 +43,41 @@ Five rules. Four are enforced by
 (logic in [`scripts/backlog-hygiene.ts`](scripts/backlog-hygiene.ts)), so they
 hold whether or not anyone is paying attention.
 
-### R1 — Every open issue carries a board Priority
+### R1 — Every open issue carries a Priority
+
+Priority is GitHub's **native organization issue field**, not a project field.
+It lives on the issue itself, so it shows on the issue page, survives outside
+the board, and is filterable straight from the issues list. The project board
+projects the same field, so the board and the issue can never disagree.
 
 | Priority | Meaning | Cap |
 | --- | --- | --- |
-| `P0 — Now` | Broken, blocking, or actively in progress | 5 |
-| `P1 — Next` | Committed to the current release cycle | 10 |
-| `P2 — Later` | Real and accepted, but unscheduled | uncapped; decays |
+| `Urgent` | Broken, blocking, or actively in progress | 5 |
+| `High` | Committed to the current release cycle | 10 |
+| `Medium` | Real and accepted, but unscheduled | uncapped; decays |
+| `Low` | Kept only while someone is actively arguing for it | uncapped; decays |
 
-There is deliberately **no "Someday" option**. A Someday bucket is where
-backlogs go to rot. Anything that cannot be argued to `P2` today should be
-closed today — closed is not deleted, and closed issues stay searchable and
-reopenable forever.
+`Medium` and `Low` both decay. There is deliberately no permanent "Someday"
+tier — that bucket is where backlogs go to rot. Anything that cannot be argued
+to at least `Medium` today should be closed today; closed is not deleted, and
+closed issues stay searchable and reopenable forever.
 
-The caps are the point, not decoration: more than five `P0` means nothing is
-urgent, more than ten `P1` means nothing is committed. Anything without a
+The caps are the point, not decoration: more than five `Urgent` means nothing is
+urgent, more than ten `High` means nothing is committed. Anything without a
 Priority is labelled `needs-priority` automatically.
 
 ### R2 — Decay: 60 days quiet, 14 days' notice, then closed
 
-An open issue that is `P2` or unprioritized and has had **no activity for 60
-days** gets a `stale` label and a comment. If nothing happens in the next **14
-days**, it is closed as *not planned*. Any comment, edit, label, or board change
-resets the clock.
+An open issue that is **not** `Urgent` or `High` — i.e. `Medium`, `Low`, or
+unprioritized — and has had **no activity for 60 days** gets a `stale` label and
+a comment. If nothing happens in the next **14 days**, it is closed as *not
+planned*. Any comment, edit, label, or priority change resets the clock.
 
 Keeping something alive costs one sentence. That is the design: the sentence
 *is* the act of valuing it.
 
-Never decays — external reports (R3), `P0`/`P1`, anything with an assignee,
-anything past `Backlog` on the board, and `pinned`.
+Never decays — external reports (R3), `Urgent`/`High`, anything with an
+assignee, anything past `Backlog` on the board, and `pinned`.
 
 The bet this rule makes is that **closing a speculative item costs nothing,
 because the ones that matter come back with better evidence than the original
@@ -116,9 +122,10 @@ decay in 74 days without anyone lifting a finger.
   `scripts/backlog-hygiene.ts`. Change them there, not by hand-editing issues.
 - The script **defaults to a dry run**. `npx tsx scripts/backlog-hygiene.ts`
   prints exactly what would change; `--apply` mutates.
-- The scheduled run needs a `BACKLOG_PROJECT_TOKEN` secret with `project`
-  scope — the default Actions `GITHUB_TOKEN` cannot read Projects v2. Without
-  it the run fails loudly rather than treating the board as empty.
+- The run needs no special token. Priority is read from the native issue field,
+  which the default Actions `GITHUB_TOKEN` can see. Board `Status` is optional
+  enrichment worth one extra decay exemption ("someone is already on it"); if
+  the token cannot read Projects v2 the script logs that and continues.
 - Carried over from the #374 audit, which was itself buried before it could be
   acted on: **when a finding cites code, cite symbol names plus the commit SHA
   it was verified against, and treat line numbers as a hint.** Every single

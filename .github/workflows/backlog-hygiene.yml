@@ -58,10 +58,11 @@ jobs:
 
       - name: Run backlog hygiene
         env:
-          # The default GITHUB_TOKEN cannot read Projects v2. Provide a PAT with
-          # `project` scope as BACKLOG_PROJECT_TOKEN; without it the run fails
-          # loudly rather than silently treating every issue as unprioritized.
-          GITHUB_TOKEN: ${{ secrets.BACKLOG_PROJECT_TOKEN }}
+          # Priority is a native issue field, so the default token is enough.
+          # BACKLOG_PROJECT_TOKEN is optional: supply a PAT with `project` scope
+          # to also read board Status (one extra decay exemption). Without it the
+          # script logs the gap and carries on.
+          GITHUB_TOKEN: ${{ secrets.BACKLOG_PROJECT_TOKEN || secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
         run: npx tsx scripts/backlog-hygiene.ts

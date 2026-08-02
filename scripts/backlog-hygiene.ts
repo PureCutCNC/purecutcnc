@@ -18,27 +18,36 @@
  * Backlog Contract enforcement — see AGENTS.md § "The Backlog Contract".
  *
  * Runs weekly from .github/workflows/backlog-hygiene.yml and:
- *   R1  labels open issues that have no board Priority
+ *   R1  labels open issues that have no Priority
  *   R2  marks quiet issues `stale`, then closes them after a grace period
  *   R4  rewrites the body of the single pinned digest issue
  *
  * R3 (auto-label external reports) is enforced declaratively in the workflow,
  * not here. R5 (intake) is convention; R2 is its backstop.
  *
+ * Priority is GitHub's **native org-level issue field**, not a project field:
+ * it lives on the issue, shows on the issue page, and is filterable from the
+ * issues list. The project board projects the same field, so the board and the
+ * issue can never disagree. Reading it needs no Projects access.
+ *
  * Default is a dry run. Pass --apply, or set DRY_RUN=false, to mutate.
  */
 
 const STALE_AFTER_DAYS = 60
 const CLOSE_AFTER_STALE_DAYS = 14
-const P0_CAP = 5
-const P1_CAP = 10
+const URGENT_CAP = 5
+const HIGH_CAP = 10
 const EXTERNAL_RESPONSE_SLA_DAYS = 14
+
+const PRIORITY_FIELD = 'Priority'
+/** Ordering for the digest; matches the org's native Priority options. */
+const PRIORITY_ORDER = ['Urgent', 'High', 'Medium', 'Low']
 
 /** Never decays. An outside report is the scarcest signal the tracker holds. */
 const EXEMPT_LABELS = ['external-report', 'pinned', 'backlog-digest']
 /** Priorities that mean "committed" — decay would contradict the commitment. */
-const EXEMPT_PRIORITIES = ['P0 — Now', 'P1 — Next']
-/** Board statuses that mean somebody is already on it. */
+const EXEMPT_PRIORITIES = ['Urgent', 'High']
+/** Board statuses that mean somebody is already on it. Optional enrichment. */
 const EXEMPT_STATUSES = ['Ready', 'In progress', 'In review']
 
 const PROJECT_NUMBER = 1
@@ -59,11 +68,44 @@ interface Issue {
   labels: string[]
   assigned: boolean
   authorAssociation: string
+  /** Native issue-level Priority — 'Urgent' | 'High' | 'Medium' | 'Low' | null. */
+  priority: string | null
 }
 
 interface BoardFields {
   status: string | null
-  priority: string | null
+}
+
+interface IssuePage {
+  repository: {
+    issues: {
+      pageInfo: { hasNextPage: boolean; endCursor: string | null }
+      nodes: {
+        number: number
+        title: string
+        url: string
+        updatedAt: string
+        authorAssociation: string
+        labels: { nodes: { name: string }[] }
+        assignees: { totalCount: number }
+        issueFieldValues: { nodes: { optionId?: string }[] }
+      }[]
+    }
+  }
+}
+
+interface BoardPage {
+  organization: {
+    projectV2: {
+      items: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null }
+        nodes: {
+          content: { number?: number } | null
+          fieldValues: { nodes: { name?: string; field?: { name?: string } }[] }
+        }[]
+      }
+    } | null
+  }
 }
 
 interface Plan {
@@ -105,27 +147,40 @@ function daysSince(iso: string): number {
   return (now - Date.parse(iso)) / MS_PER_DAY
 }
 
+/** Option id → name for the org's native Priority field. */
+async function fetchPriorityOptions(): Promise<Map<string, string>> {
+  const data = await graphql<{
+    organization: {
+      issueFields: { nodes: { name?: string; options?: { id: string; name: string }[] }[] }
+    }
+  }>(
+    `query($owner:String!){
+      organization(login:$owner){
+        issueFields(first:50){
+          nodes{ ... on IssueFieldSingleSelect { name options{ id name } } }
+        }
+      }
+    }`,
+    { owner },
+  )
+  const field = data.organization.issueFields.nodes.find((f) => f.name === PRIORITY_FIELD)
+  const options = new Map<string, string>()
+  for (const option of field?.options ?? []) options.set(option.id, option.name)
+  if (options.size === 0) {
+    throw new Error(
+      `the org has no native issue field named "${PRIORITY_FIELD}" — ` +
+        'create it in the organization issue settings, or point PRIORITY_FIELD at the right name.',
+    )
+  }
+  return options
+}
+
 /** Every open issue in the repo, including any that never reached the board. */
-async function fetchOpenIssues(): Promise<Issue[]> {
+async function fetchOpenIssues(priorityOptions: Map<string, string>): Promise<Issue[]> {
   const issues: Issue[] = []
   let cursor: string | null = null
   do {
-    const data = await graphql<{
-      repository: {
-        issues: {
-          pageInfo: { hasNextPage: boolean; endCursor: string | null }
-          nodes: {
-            number: number
-            title: string
-            url: string
-            updatedAt: string
-            authorAssociation: string
-            labels: { nodes: { name: string }[] }
-            assignees: { totalCount: number }
-          }[]
-        }
-      }
-    }>(
+    const data: IssuePage = await graphql<IssuePage>(
       `query($owner:String!,$repo:String!,$cursor:String){
         repository(owner:$owner,name:$repo){
           issues(states:OPEN,first:100,after:$cursor){
@@ -134,6 +189,9 @@ async function fetchOpenIssues(): Promise<Issue[]> {
               number title url updatedAt authorAssociation
               labels(first:30){nodes{name}}
               assignees{totalCount}
+              issueFieldValues(first:20){
+                nodes{ ... on IssueFieldSingleSelectValue { optionId } }
+              }
             }
           }
         }
@@ -150,6 +208,10 @@ async function fetchOpenIssues(): Promise<Issue[]> {
         labels: node.labels.nodes.map((l) => l.name),
         assigned: node.assignees.totalCount > 0,
         authorAssociation: node.authorAssociation,
+        priority:
+          node.issueFieldValues.nodes
+            .map((v) => (v.optionId ? priorityOptions.get(v.optionId) : undefined))
+            .find((name) => name !== undefined) ?? null,
       })
     }
     cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null
@@ -157,26 +219,16 @@ async function fetchOpenIssues(): Promise<Issue[]> {
   return issues
 }
 
-/** Board Status + Priority for every issue card on the project. */
+/**
+ * Board Status per issue. Optional enrichment only — it buys one extra decay
+ * exemption ("somebody is already on it"). Priority no longer comes from here,
+ * so a token without Projects access degrades instead of failing.
+ */
 async function fetchBoardFields(): Promise<Map<number, BoardFields>> {
   const fields = new Map<number, BoardFields>()
   let cursor: string | null = null
   do {
-    const data = await graphql<{
-      organization: {
-        projectV2: {
-          items: {
-            pageInfo: { hasNextPage: boolean; endCursor: string | null }
-            nodes: {
-              content: { number?: number } | null
-              fieldValues: {
-                nodes: { name?: string; field?: { name?: string } }[]
-              }
-            }[]
-          }
-        }
-      }
-    }>(
+    const data: BoardPage = await graphql<BoardPage>(
       `query($owner:String!,$number:Int!,$cursor:String){
         organization(login:$owner){
           projectV2(number:$number){
@@ -194,26 +246,18 @@ async function fetchBoardFields(): Promise<Map<number, BoardFields>> {
       }`,
       { owner, number: PROJECT_NUMBER, cursor },
     )
-    // A token without `project` scope returns null here rather than erroring.
-    // Failing loudly matters: silently empty board data would read as "nothing
-    // is prioritized" and mark the entire backlog stale in one run.
     if (!data.organization?.projectV2) {
-      throw new Error(
-        `cannot read project #${PROJECT_NUMBER} for org ${owner} — the token needs \`project\` scope. ` +
-          'The default Actions GITHUB_TOKEN cannot read Projects v2; set the BACKLOG_PROJECT_TOKEN secret.',
-      )
+      throw new Error(`cannot read project #${PROJECT_NUMBER} for org ${owner} (token lacks \`project\` scope)`)
     }
     const page = data.organization.projectV2.items
     for (const node of page.nodes) {
       const issueNumber = node.content?.number
       if (issueNumber === undefined) continue
       let status: string | null = null
-      let priority: string | null = null
       for (const value of node.fieldValues.nodes) {
         if (value.field?.name === 'Status') status = value.name ?? null
-        if (value.field?.name === 'Priority') priority = value.name ?? null
       }
-      fields.set(issueNumber, { status, priority })
+      fields.set(issueNumber, { status })
     }
     cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null
   } while (cursor)
@@ -254,7 +298,7 @@ async function fetchStaleSince(issueNumber: number): Promise<string | null> {
 function isExempt(issue: Issue, board: BoardFields | undefined): boolean {
   if (issue.labels.some((l) => EXEMPT_LABELS.includes(l))) return true
   if (issue.assigned) return true
-  if (board?.priority && EXEMPT_PRIORITIES.includes(board.priority)) return true
+  if (issue.priority && EXEMPT_PRIORITIES.includes(issue.priority)) return true
   if (board?.status && EXEMPT_STATUSES.includes(board.status)) return true
   return false
 }
@@ -276,8 +320,8 @@ async function buildPlan(issues: Issue[], board: Map<number, BoardFields>): Prom
     const isDigest = issue.labels.includes(DIGEST_LABEL)
 
     // R1 — every open issue carries a Priority.
-    if (!isDigest && !fields?.priority && !hasNeedsPriority) plan.addNeedsPriority.push(issue)
-    if (fields?.priority && hasNeedsPriority) plan.removeNeedsPriority.push(issue)
+    if (!isDigest && !issue.priority && !hasNeedsPriority) plan.addNeedsPriority.push(issue)
+    if (issue.priority && hasNeedsPriority) plan.removeNeedsPriority.push(issue)
 
     // R2 — decay.
     if (hasStale) {
@@ -362,19 +406,17 @@ function buildDigest(issues: Issue[], board: Map<number, BoardFields>, plan: Pla
   const list = (rows: string[]) => (rows.length > 0 ? rows.join('\n') : '_none_')
   const link = (i: Issue) => `- #${i.number} — ${i.title}`
 
-  const byPriority = (name: string) =>
-    issues.filter((i) => board.get(i.number)?.priority === name)
-  const p0 = byPriority('P0 — Now')
-  const p1 = byPriority('P1 — Next')
-  const p2 = byPriority('P2 — Later')
-  const unranked = issues.filter(
-    (i) => !board.get(i.number)?.priority && !i.labels.includes(DIGEST_LABEL),
-  )
+  const byPriority = (name: string) => issues.filter((i) => i.priority === name)
+  const unranked = issues.filter((i) => !i.priority && !i.labels.includes(DIGEST_LABEL))
   const external = issues.filter((i) => i.labels.includes('external-report'))
   const externalQuiet = external.filter((i) => daysSince(i.updatedAt) >= EXTERNAL_RESPONSE_SLA_DAYS)
 
-  const capWarning = (label: string, count: number, cap: number, meaning: string) =>
-    count > cap ? `> [!WARNING]\n> **${label} is over cap** (${count}/${cap}). ${meaning}\n` : ''
+  const counts = PRIORITY_ORDER.map((name) => `${byPriority(name).length} ${name}`).join(' · ')
+
+  const capWarning = (name: string, cap: number, meaning: string) => {
+    const count = byPriority(name).length
+    return count > cap ? `> [!WARNING]\n> **${name} is over cap** (${count}/${cap}). ${meaning}\n` : ''
+  }
 
   const soon = issues
     .filter((i) => !i.labels.includes(STALE_LABEL) && !isExempt(i, board.get(i.number)))
@@ -389,15 +431,15 @@ function buildDigest(issues: Issue[], board: Map<number, BoardFields>, plan: Pla
     `Rewritten weekly by [\`backlog-hygiene.yml\`](../blob/main/.github/workflows/backlog-hygiene.yml).`,
     'This issue is edited in place, never commented on, so it cannot become clutter itself.',
     '',
-    `**${issues.length} open** · ${p0.length} P0 · ${p1.length} P1 · ${p2.length} P2 · ${unranked.length} unranked`,
+    `**${issues.length} open** · ${counts} · ${unranked.length} unranked`,
     '',
-    capWarning('P0 — Now', p0.length, P0_CAP, 'If everything is urgent, nothing is.'),
-    capWarning('P1 — Next', p1.length, P1_CAP, 'More committed than a cycle can hold.'),
-    '## P0 — Now',
-    list(p0.map(link)),
+    capWarning('Urgent', URGENT_CAP, 'If everything is urgent, nothing is.'),
+    capWarning('High', HIGH_CAP, 'More committed than a cycle can hold.'),
+    '## Urgent',
+    list(byPriority('Urgent').map(link)),
     '',
-    '## P1 — Next',
-    list(p1.map(link)),
+    '## High',
+    list(byPriority('High').map(link)),
     '',
     `## External reports (${external.length}) — never auto-closed`,
     list(external.map(link)),
@@ -424,7 +466,7 @@ function buildDigest(issues: Issue[], board: Map<number, BoardFields>, plan: Pla
     '',
     '## Unranked',
     '',
-    'Every open issue should carry a board Priority.',
+    'Every open issue should carry a Priority.',
     list(unranked.map(link)),
   ]
     .join('\n')
@@ -453,7 +495,18 @@ async function updateDigest(body: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const [issues, board] = await Promise.all([fetchOpenIssues(), fetchBoardFields()])
+  const priorityOptions = await fetchPriorityOptions()
+  const issues = await fetchOpenIssues(priorityOptions)
+  // Optional: costs one decay exemption if unavailable, never correctness.
+  let board = new Map<number, BoardFields>()
+  try {
+    board = await fetchBoardFields()
+  } catch (error) {
+    console.log(
+      `backlog-hygiene: board Status unavailable (${error instanceof Error ? error.message : String(error)}) — ` +
+        'continuing without the "already in progress" exemption',
+    )
+  }
   const plan = await buildPlan(issues, board)
 
   console.log(`backlog-hygiene: ${apply ? 'APPLY' : 'DRY RUN'} · ${issues.length} open issues`)

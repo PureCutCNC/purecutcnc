@@ -7,7 +7,7 @@ labels: []
 
 <!--
 This issue IS the plan. Fill in each section, then ask the user for approval BEFORE changing any code.
-Add this issue to the Project board, set the area label, Size, and PRIORITY, and set Status to Backlog/Ready.
+Add this issue to the Project board, set the area label and Size, set the issue's PRIORITY, and set Status to Backlog/Ready.
 When work is done, open a PR with "Closes #<this issue>" — the PR is the delivery, not the plan.
 -->
 
@@ -17,8 +17,8 @@ When work is done, open a PR with "Closes #<this issue>" — the PR is the deliv
 > is none of these does not get a card. If it matters, it will come back — with
 > better evidence than you could write today.
 >
-> Issues that are `P2` or unprioritized and go 60 days without activity are
-> labelled `stale`, then closed 14 days later. Set a **Priority** on the board.
+> Issues that are not `Urgent`/`High` and go 60 days without activity are
+> labelled `stale`, then closed 14 days later. Set the issue's **Priority**.
 
 ## Goal
 

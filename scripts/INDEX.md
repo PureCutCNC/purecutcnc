@@ -11,7 +11,7 @@ available; do not treat one-off diagnostics as normal quality gates.
 - [`build-summary.sh`](build-summary.sh) — run `npm run build` once and print a compact failing-stage + extracted-errors summary (full output saved to a log whose path is printed); `--from-log FILE` summarizes an existing build log instead of re-running. Agents should use this instead of re-running the build to grep for failures.
 - [`edit-lines.ts`](edit-lines.ts) — deterministic line-range file editor for agents (`show`/`replace`/`insert-after`/`delete`, `--expect` stale-line guard, prints a diff of exactly what changed, atomic writes, `--self-test`). The sanctioned fallback when an exact-match edit fails; replaces `sed -i` surgery.
 - [`build-icon-sprite.ts`](build-icon-sprite.ts) — generate `public/icons.svg` from editable SVG sources.
-- [`backlog-hygiene.ts`](backlog-hygiene.ts) — enforce the Backlog Contract (`AGENTS.md`): label unprioritized issues, decay quiet ones (`stale` → close after a grace period), and rewrite the pinned digest. Run weekly by [`backlog-hygiene.yml`](../.github/workflows/backlog-hygiene.yml); **defaults to a dry run**, pass `--apply` to mutate. Needs a token with `project` scope.
+- [`backlog-hygiene.ts`](backlog-hygiene.ts) — enforce the Backlog Contract (`AGENTS.md`): label unprioritized issues, decay quiet ones (`stale` → close after a grace period), and rewrite the pinned digest. Reads GitHub's native issue-level Priority field. Run weekly by [`backlog-hygiene.yml`](../.github/workflows/backlog-hygiene.yml); **defaults to a dry run**, pass `--apply` to mutate.
 
 ## Optional delegated-agent harness
 
