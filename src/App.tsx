@@ -26,7 +26,7 @@ import { isTabletMode, useShellMode } from './components/layout/useShellMode'
 import { CreationToolbar, GlobalToolbar } from './components/layout/Toolbar'
 import { SimulationViewport, type SimulationViewportHandle } from './components/simulation/SimulationViewport'
 import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewport3D'
-import { type ToolpathVisibility, DEFAULT_TOOLPATH_VISIBILITY } from './components/toolpathVisibility'
+import { type ToolpathVisibility, DEFAULT_TOOLPATH_VISIBILITY, ALL_TOOLPATH_HIDDEN } from './components/toolpathVisibility'
 import { ExportDialog } from './components/export/ExportDialog'
 import { ModelExportDialog } from './components/export/ModelExportDialog'
 import { PrintDesignDialog } from './components/export/PrintDesignDialog'
@@ -74,6 +74,8 @@ function App() {
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [showAboutDialog, setShowAboutDialog] = useState(false)
   const [toolpathVisibility, setToolpathVisibility] = useState<ToolpathVisibility>(DEFAULT_TOOLPATH_VISIBILITY)
+  const [toolpathPanelExpanded, setToolpathPanelExpanded] = useState(true)
+  const effectiveToolpathVisibility = toolpathPanelExpanded ? toolpathVisibility : ALL_TOOLPATH_HIDDEN
   // A1.3: operation kind armed in the CAM "Add operation" menu (on hover), so the
   // sketch canvas can highlight the features that operation could act on.
   const [operationHighlightKind, setOperationHighlightKind] = useState<OperationKind | null>(null)
@@ -394,8 +396,10 @@ function App() {
               onActiveSnapModeChange={setActiveSnapMode}
               depthLegendCollapsed={depthLegendCollapsed}
               onToggleDepthLegend={() => setDepthLegendCollapsed((value) => !value)}
-              toolpathVisibility={toolpathVisibility}
+              toolpathVisibility={effectiveToolpathVisibility}
               onToolpathVisibilityChange={setToolpathVisibility}
+              toolpathPanelExpanded={toolpathPanelExpanded}
+              onToolpathPanelExpandedChange={setToolpathPanelExpanded}
               operationHighlightKind={operationHighlightKind}
             />
             {project.features.length === 0 && !pendingAdd && !emptyStateEngaged ? (
@@ -417,8 +421,10 @@ function App() {
             originVisible={project.origin.visible}
             zoomWindowActive={zoomWindowActive && centerTab === 'preview3d'}
             onZoomWindowComplete={onZoomWindowComplete}
-            toolpathVisibility={toolpathVisibility}
+            toolpathVisibility={effectiveToolpathVisibility}
             onToolpathVisibilityChange={setToolpathVisibility}
+            toolpathPanelExpanded={toolpathPanelExpanded}
+            onToolpathPanelExpandedChange={setToolpathPanelExpanded}
           />
         }
         simulationViewport={

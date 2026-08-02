@@ -14,15 +14,17 @@
  * limitations under the License.
  */
 
-import { useState } from 'react'
 import type { ToolpathVisibility } from './toolpathVisibility'
 import { useI18n } from '../i18n/i18nContext'
 import type { MessageKey } from '../i18n/locales/en'
+import { Icon } from './Icon'
 
 interface ToolpathVisibilityPanelProps {
   visibility: ToolpathVisibility
   onChange: (visibility: ToolpathVisibility) => void
   className?: string
+  expanded: boolean
+  onExpandedChange: (expanded: boolean) => void
 }
 
 const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch: string }> = [
@@ -34,19 +36,19 @@ const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch
   { key: 'directions', labelKey: 'appShell.toolpath.directions', swatch: 'viewport-toolpath-vis__swatch--directions' },
 ]
 
-export function ToolpathVisibilityPanel({ visibility, onChange, className }: ToolpathVisibilityPanelProps) {
+export function ToolpathVisibilityPanel({ visibility, onChange, className, expanded, onExpandedChange }: ToolpathVisibilityPanelProps) {
   const { t } = useI18n()
-  const [expanded, setExpanded] = useState(true)
 
   return (
     <div className={`viewport-toolpath-vis${expanded ? ' viewport-toolpath-vis--expanded' : ''}${className ? ` ${className}` : ''}`}>
       <button
         className="viewport-toolpath-vis__label"
         type="button"
+        aria-label={t('appShell.toolpath.show')}
         aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() => onExpandedChange(!expanded)}
       >
-        {t('appShell.toolpath.show')}
+        <Icon id="gcode" />
       </button>
       {expanded ? (
         ITEMS.map(({ key, labelKey, swatch }) => {

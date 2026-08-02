@@ -535,3 +535,26 @@ export const viewMenu = {
   action3d: (page: Page, label: string) =>
     viewMenu.menu3d(page).getByRole('menuitem', { name: new RegExp(`^${label}`) }),
 }
+
+// ── Toolpath visibility panel ──────────────────────────────────────
+
+export const toolpathVis = {
+  /** The sketch-view toolpath visibility panel. */
+  sketchPanel: (page: Page) => page.locator('.sketch-toolpath-vis'),
+
+  /** The 3D-view toolpath visibility panel (no extra class). */
+  view3dPanel: (page: Page) =>
+    page.locator('#workspace-panel-preview3d .viewport-toolpath-vis'),
+
+  /** The toggle button (now the g-code icon). Scoped to the sketch panel. */
+  toggle: (page: Page) =>
+    toolpathVis.sketchPanel(page).locator('.viewport-toolpath-vis__label'),
+
+  /** All expanded items in the sketch panel. */
+  sketchItems: (page: Page) =>
+    toolpathVis.sketchPanel(page).locator('.viewport-toolpath-vis__item'),
+
+  /** All expanded items in the 3D panel. */
+  view3dItems: (page: Page) =>
+    toolpathVis.view3dPanel(page).locator('.viewport-toolpath-vis__item'),
+}

@@ -2640,6 +2640,14 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-right: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+.viewport-toolpath-vis__label svg {
+  width: 14px;
+  height: 14px;
 }
 
 .app-shell .viewport-toolpath-vis__label {
