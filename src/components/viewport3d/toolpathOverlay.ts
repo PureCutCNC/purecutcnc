@@ -14,9 +14,30 @@
  * limitations under the License.
  */
 
-import type { ToolpathMove, ToolpathPoint } from '../../engine/toolpaths/types'
+import type { ToolpathMove, ToolpathMoveKind, ToolpathPoint } from '../../engine/toolpaths/types'
+import type { ToolpathVisibility } from '../toolpathVisibility'
 
 export const DEFAULT_TOOLPATH_LINE_SEGMENTS_PER_CHUNK = 16384
+
+export type ToolpathOverlayLayerKey = 'cuts' | 'leadIns' | 'rapids' | 'plunges' | 'retractions'
+
+export interface ToolpathOverlayLayer {
+  key: ToolpathOverlayLayerKey
+  kinds: ToolpathMoveKind[]
+  visible: boolean
+  horizontalOnly?: boolean
+  retractOnly?: boolean
+}
+
+export function buildToolpathOverlayLayers(visibility: ToolpathVisibility): ToolpathOverlayLayer[] {
+  return [
+    { key: 'cuts', kinds: ['cut'], visible: visibility.cuts },
+    { key: 'leadIns', kinds: ['lead_in', 'lead_out'], visible: visibility.leadIns },
+    { key: 'rapids', kinds: ['rapid'], visible: visibility.rapids, horizontalOnly: true },
+    { key: 'plunges', kinds: ['plunge'], visible: visibility.plunges },
+    { key: 'retractions', kinds: ['rapid'], visible: visibility.retractions, retractOnly: true },
+  ]
+}
 
 export interface ToolpathLinePositionChunk {
   positions: Float32Array

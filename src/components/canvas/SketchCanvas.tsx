@@ -1161,7 +1161,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     for (const toolpath of toolpaths) {
       if (toolpath.moves.length > 0) {
-        drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId, toolpathVisibility ?? { cuts: true, rapids: true, plunges: true, retractions: true, directions: true })
+        drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId, toolpathVisibility ?? { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true })
       }
     }
 

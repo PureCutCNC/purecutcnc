@@ -592,7 +592,8 @@ export function drawToolpath(
     horizontalOnly?: boolean
     retractOnly?: boolean
   }> = [
-    { kinds: ['cut', 'lead_in', 'lead_out'], stroke: canvasColors().toolpathCut, lineWidth: 2.1, dash: [], visible: visibility.cuts },
+    { kinds: ['cut'], stroke: canvasColors().toolpathCut, lineWidth: 2.1, dash: [], visible: visibility.cuts },
+    { kinds: ['lead_in', 'lead_out'], stroke: canvasColors().toolpathCut, lineWidth: 2.1, dash: [], visible: visibility.leadIns },
     { kinds: ['rapid'], stroke: canvasColors().toolpathRapid, lineWidth: 1.3, dash: [8, 6], visible: visibility.rapids, horizontalOnly: true },
     { kinds: ['plunge'], stroke: canvasColors().toolpathPlunge, lineWidth: 1.5, dash: [3, 4], visible: visibility.plunges },
     { kinds: ['rapid'], stroke: canvasColors().toolpathRapid, lineWidth: 1.3, dash: [8, 6], visible: visibility.retractions, retractOnly: true },

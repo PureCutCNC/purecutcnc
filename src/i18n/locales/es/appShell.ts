@@ -83,6 +83,7 @@ export const appShellEs: Record<keyof typeof appShellEn, string> = {
   "appShell.empty.camPanel": "Las operaciones CAM y las trayectorias de herramientas están programadas para la Fase 4.",
   "appShell.toolpath.show": "Mostrar",
   "appShell.toolpath.cuts": "cortes",
+  "appShell.toolpath.leadIns": "Entradas",
   "appShell.toolpath.rapids": "Rápidos",
   "appShell.toolpath.plunges": "penetraciones",
   "appShell.toolpath.retractions": "Retracciones",
