@@ -410,7 +410,7 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       stockDefault: 0xc2cad4,
       stockMeshFallback: 0x7a8b9b,
       stockWireframeFallback: 0x96a7b6,
-      meshFeatureDefault: 0x8899aa,
+      meshFeatureDefault: 0xb7c2cf,
       meshFeatureSelected: 0x0d4f8c,
       meshFeatureHovered: 0x2288dd,
       meshFeatureRegion: 0x7b4fab,
