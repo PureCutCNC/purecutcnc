@@ -142,7 +142,7 @@ function testClosedCompositeUsesSameInference(): void {
   useProjectStore.getState().completePendingComposite()
   const composite = resolvedProjectFeatures(useProjectStore.getState().project).find((feature) => feature.name.startsWith('Composite'))
   assert(composite?.operation === 'subtract', 'closed composite inside Add defaults Subtract')
-  assert(useProjectStore.getState().pendingAdd === null, 'composite completion clears pending draft')
+  const pa = useProjectStore.getState().pendingAdd; assert(pa?.shape === 'composite' && pa.start === null && pa.segments.length === 0, 'composite completion re-arms draft')
 }
 
 const tests = [

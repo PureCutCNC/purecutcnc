@@ -17,6 +17,14 @@
 import { test, expect } from './fixtures'
 import type { Page } from '@playwright/test'
 import { seedOverlapFeatureProject } from './overlapFeatureSelection.helpers'
+import {
+  startAddRectPlacement,
+  setPendingAddAnchor,
+  placePendingAddAt,
+  cancelPendingAdd,
+  getPendingAddShape,
+  getFeatureCount,
+} from './helpers'
 
 async function convertFolderedFeatureToConstruction(page: Page): Promise<void> {
   await seedOverlapFeatureProject(page, 1)
@@ -68,4 +76,23 @@ test('foldered construction conversion updates the landscape-tablet tree immedia
   await app.page.setViewportSize({ width: 1024, height: 768 })
   await convertFolderedFeatureToConstruction(app.page)
   await expectConvertedFeatureInConstruction(app.page)
+})
+
+test('sticky drawing re-arms the same shape tool', async ({ app }) => {
+  await startAddRectPlacement(app.page)
+
+  await setPendingAddAnchor(app.page, 10, 10)
+  await placePendingAddAt(app.page, 20, 20)
+
+  expect(await getFeatureCount(app.page)).toBe(1)
+  expect(await getPendingAddShape(app.page)).toBe('rect')
+
+  await setPendingAddAnchor(app.page, 30, 30)
+  await placePendingAddAt(app.page, 40, 40)
+
+  expect(await getFeatureCount(app.page)).toBe(2)
+  expect(await getPendingAddShape(app.page)).toBe('rect')
+
+  await cancelPendingAdd(app.page)
+  expect(await getPendingAddShape(app.page)).toBeNull()
 })
