@@ -530,7 +530,7 @@ function buildToolpaths(ctx: WorldContext, extras: DesignPrintSvgExtras): string
   const toolpaths = extras.toolpaths ?? []
   if (toolpaths.length === 0) return []
   const visibility: PrintToolpathVisibility =
-    extras.toolpathVisibility ?? { cuts: true, rapids: true, plunges: true, retractions: true }
+    extras.toolpathVisibility ?? { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true }
 
   const layers: Array<{
     className: string
@@ -544,8 +544,15 @@ function buildToolpaths(ctx: WorldContext, extras: DesignPrintSvgExtras): string
       stroke: ctx.palette.cutToolpath,
       widthMm: STROKE_CUT_MM,
       dashed: false,
+      filter: (move) => visibility.cuts && move.kind === 'cut',
+    },
+    {
+      className: 'pc-toolpath-lead-in',
+      stroke: ctx.palette.cutToolpath,
+      widthMm: STROKE_CUT_MM,
+      dashed: false,
       filter: (move) =>
-        visibility.cuts && (move.kind === 'cut' || move.kind === 'lead_in' || move.kind === 'lead_out'),
+        visibility.leadIns && (move.kind === 'lead_in' || move.kind === 'lead_out'),
     },
     {
       className: 'pc-toolpath-rapid',

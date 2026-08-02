@@ -16,6 +16,7 @@
 
 export interface ToolpathVisibility {
   cuts: boolean
+  leadIns: boolean
   rapids: boolean
   plunges: boolean
   retractions: boolean
@@ -24,6 +25,7 @@ export interface ToolpathVisibility {
 
 export const DEFAULT_TOOLPATH_VISIBILITY: ToolpathVisibility = {
   cuts: true,
+  leadIns: true,
   rapids: true,
   plunges: true,
   retractions: true,

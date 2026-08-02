@@ -27,6 +27,7 @@ interface ToolpathVisibilityPanelProps {
 
 const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch: string }> = [
   { key: 'cuts', labelKey: 'appShell.toolpath.cuts', swatch: 'viewport-toolpath-vis__swatch--cuts' },
+  { key: 'leadIns', labelKey: 'appShell.toolpath.leadIns', swatch: 'viewport-toolpath-vis__swatch--lead-ins' },
   { key: 'rapids', labelKey: 'appShell.toolpath.rapids', swatch: 'viewport-toolpath-vis__swatch--rapids' },
   { key: 'plunges', labelKey: 'appShell.toolpath.plunges', swatch: 'viewport-toolpath-vis__swatch--plunges' },
   { key: 'retractions', labelKey: 'appShell.toolpath.retractions', swatch: 'viewport-toolpath-vis__swatch--retractions' },

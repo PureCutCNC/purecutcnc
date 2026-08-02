@@ -124,6 +124,7 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   // ── Toolpath visibility ──
   'appShell.toolpath.show': 'Anzeigen',
   'appShell.toolpath.cuts': 'Schnitte',
+  'appShell.toolpath.leadIns': 'Anfahrten',
   'appShell.toolpath.rapids': 'Eilgänge',
   'appShell.toolpath.plunges': 'Eintauchbewegungen',
   'appShell.toolpath.retractions': 'Rückzüge',

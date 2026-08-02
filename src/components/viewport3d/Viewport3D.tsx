@@ -26,7 +26,7 @@ import { applyClampHighlight, applyTabHighlight, buildOriginTriad, buildScene } 
 import { getStockBounds, rectProfile } from '../../types/project'
 import { getFeaturesWorldBounds } from '../canvas/scenePrimitives'
 import { getFeatureGeometryProfiles } from '../../text'
-import { buildToolpathLinePositionChunks, toolpathPointToWorldTuple } from './toolpathOverlay'
+import { buildToolpathLinePositionChunks, buildToolpathOverlayLayers, toolpathPointToWorldTuple } from './toolpathOverlay'
 import { useTheme } from '../../theme/themeContext'
 import type { ThreeThemePalette } from '../../theme/palette'
 import { createOrbitControls, type OrbitControls } from './orbitControls'
@@ -265,6 +265,7 @@ function buildToolpathOverlay(
   visibility: ToolpathVisibility,
   palette: ThreeThemePalette,
 ): THREE.Object3D[] {
+  const schemaLayers = buildToolpathOverlayLayers(visibility)
   const layers: Array<{
     kinds: ToolpathResult['moves'][number]['kind'][]
     color: number
@@ -272,12 +273,17 @@ function buildToolpathOverlay(
     visible: boolean
     horizontalOnly?: boolean
     retractOnly?: boolean
-  }> = [
-    { kinds: ['cut', 'lead_in', 'lead_out'], color: palette.toolpathCut, opacity: 0.98, visible: visibility.cuts },
-    { kinds: ['rapid'], color: palette.toolpathRapid, opacity: 0.75, visible: visibility.rapids, horizontalOnly: true },
-    { kinds: ['plunge'], color: palette.toolpathPlunge, opacity: 0.9, visible: visibility.plunges },
-    { kinds: ['rapid'], color: palette.toolpathRapid, opacity: 0.75, visible: visibility.retractions, retractOnly: true },
-  ]
+  }> = schemaLayers.map((layer) => {
+    const color =
+      layer.key === 'cuts' || layer.key === 'leadIns' ? palette.toolpathCut
+      : layer.key === 'rapids' || layer.key === 'retractions' ? palette.toolpathRapid
+      : palette.toolpathPlunge
+    const opacity =
+      layer.key === 'cuts' || layer.key === 'leadIns' ? 0.98
+      : layer.key === 'rapids' || layer.key === 'retractions' ? 0.75
+      : 0.9
+    return { kinds: layer.kinds, color, opacity, visible: layer.visible, horizontalOnly: layer.horizontalOnly, retractOnly: layer.retractOnly }
+  })
 
   const objects: THREE.Object3D[] = []
   for (const layer of layers) {

@@ -83,6 +83,7 @@ export const appShellFr: Record<keyof typeof appShellEn, string> = {
   'appShell.empty.camPanel': 'Les opérations FAO et les parcours d’outil sont prévus pour la phase 4.',
   'appShell.toolpath.show': 'Afficher',
   'appShell.toolpath.cuts': 'Coupes',
+  'appShell.toolpath.leadIns': 'Entrées',
   'appShell.toolpath.rapids': 'Rapides',
   'appShell.toolpath.plunges': 'Plongées',
   'appShell.toolpath.retractions': 'Retraits',

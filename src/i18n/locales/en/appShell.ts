@@ -129,6 +129,7 @@ export const appShellEn = {
   // ── Toolpath visibility ──
   'appShell.toolpath.show': 'Show',
   'appShell.toolpath.cuts': 'Cuts',
+  'appShell.toolpath.leadIns': 'Lead-ins',
   'appShell.toolpath.rapids': 'Rapids',
   'appShell.toolpath.plunges': 'Plunges',
   'appShell.toolpath.retractions': 'Retractions',

@@ -21,8 +21,10 @@
  */
 
 import type { ToolpathMove } from '../../engine/toolpaths/types'
+import type { ToolpathVisibility } from '../toolpathVisibility'
 import {
   buildToolpathLinePositionChunks,
+  buildToolpathOverlayLayers,
   toolpathPointToWorldTuple,
 } from './toolpathOverlay'
 
@@ -85,5 +87,60 @@ function testEmptyMovesDoNotAllocateChunks(): void {
 testPointMapping()
 testChunkedLinePositions()
 testEmptyMovesDoNotAllocateChunks()
+
+// --- buildToolpathOverlayLayers: layer kind membership and visibility gating ---
+
+function testOverlayLayersKinds(): void {
+  console.log('Testing buildToolpathOverlayLayers kind membership...')
+
+  const vis: ToolpathVisibility = { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }
+  const layers = buildToolpathOverlayLayers(vis)
+  const byKey = new Map(layers.map((l) => [l.key, l]))
+
+  // cuts layer
+  const cutsLayer = byKey.get('cuts')
+  assert(!!cutsLayer, 'cuts layer exists')
+  assert(cutsLayer!.kinds.length === 1 && cutsLayer!.kinds[0] === 'cut', 'cuts layer kinds === [\'cut\']')
+  assert(!cutsLayer!.kinds.includes('lead_in'), 'cuts layer does NOT include lead_in')
+  assert(!cutsLayer!.kinds.includes('lead_out'), 'cuts layer does NOT include lead_out')
+
+  // leadIns layer
+  const leadInsLayer = byKey.get('leadIns')
+  assert(!!leadInsLayer, 'leadIns layer exists')
+  assert(leadInsLayer!.kinds.includes('lead_in'), 'leadIns layer includes lead_in')
+  assert(leadInsLayer!.kinds.includes('lead_out'), 'leadIns layer includes lead_out')
+  assert(!leadInsLayer!.kinds.includes('cut'), 'leadIns layer does NOT include cut')
+}
+
+function testOverlayLayersVisibilityGating(): void {
+  console.log('Testing buildToolpathOverlayLayers visibility gating...')
+
+  const visDefault: ToolpathVisibility = { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }
+  function layerVis(vis: ToolpathVisibility, key: string): boolean {
+    return buildToolpathOverlayLayers(vis).find((l) => l.key === key)?.visible ?? false
+  }
+
+  assert(layerVis(visDefault, 'cuts') === true, 'cuts visible when cuts=true')
+  assert(layerVis({ ...visDefault, cuts: false }, 'cuts') === false, 'cuts hidden when cuts=false')
+  assert(layerVis(visDefault, 'leadIns') === true, 'leadIns visible when leadIns=true')
+  assert(layerVis({ ...visDefault, leadIns: false }, 'leadIns') === false, 'leadIns hidden when leadIns=false')
+
+  // leadIns visible independent of cuts
+  assert(
+    layerVis({ ...visDefault, cuts: false, leadIns: true }, 'leadIns') === true,
+    'leadIns visible when cuts=false,leadIns=true',
+  )
+  assert(
+    layerVis({ ...visDefault, cuts: true, leadIns: false }, 'leadIns') === false,
+    'leadIns hidden when cuts=true,leadIns=false',
+  )
+  assert(
+    layerVis({ ...visDefault, cuts: false, leadIns: true }, 'cuts') === false,
+    'cuts hidden when cuts=false,leadIns=true',
+  )
+}
+
+testOverlayLayersKinds()
+testOverlayLayersVisibilityGating()
 
 console.log('toolpathOverlay tests passed')

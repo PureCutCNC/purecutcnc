@@ -47,6 +47,7 @@ const MAX_PIXEL_RATIO = 2
 
 const SNAPSHOT_TOOLPATH_VISIBILITY: ToolpathVisibility = {
   cuts: true,
+  leadIns: true,
   rapids: true,
   plunges: true,
   retractions: true,
