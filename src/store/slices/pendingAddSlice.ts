@@ -33,7 +33,7 @@ import {
   resolveCompositeDraftSegments,
   resolveOpenCompositeDraftSegments,
 } from '../helpers/profileEdit'
-import type { CompositeSegmentMode, ProjectStore } from '../types'
+import type { CompositeSegmentMode, PendingAddTool, ProjectStore } from '../types'
 import {
   defaultGearCreationParams,
   normalizeGearCreationParams,
@@ -85,6 +85,37 @@ function resetFeaturePlacementSelection(selection: ProjectStore['selection']): P
     mode: 'feature',
     hoveredFeatureId: null,
     activeControl: null,
+  }
+}
+
+function rearmPendingAdd(current: PendingAddTool): PendingAddTool {
+  const session = nextPlacementSession()
+  switch (current.shape) {
+    case 'rect':
+    case 'circle':
+    case 'ellipse':
+    case 'tab':
+    case 'clamp':
+      return { shape: current.shape, anchor: null, session }
+    case 'roundrect':
+      return { shape: 'roundrect', anchor: null, corner: current.corner, session }
+    case 'chamferrect':
+      return { shape: 'chamferrect', anchor: null, corner: current.corner, session }
+    case 'polygon':
+    case 'spline':
+      return { shape: current.shape, points: [], session }
+    case 'slot':
+      return { shape: 'slot', points: [], session }
+    case 'ngon':
+      return { shape: 'ngon', anchor: null, sides: current.sides, session }
+    case 'gear':
+      return { shape: 'gear', anchor: null, outsideRadius: null, params: current.params, session }
+    case 'composite':
+      return { shape: 'composite', start: null, lastPoint: null, segments: [], currentMode: current.currentMode, pendingArcEnd: null, closed: false, session }
+    case 'text':
+      return { shape: 'text', config: current.config, session }
+    case 'origin':
+      return { shape: 'origin', session }
   }
 }
 
@@ -310,7 +341,7 @@ export function createPendingAddSlice(
               tabs: [...s.project.tabs, tabEntry],
               meta: { ...s.project.meta, modified: new Date().toISOString() },
             },
-            pendingAdd: null,
+            pendingAdd: rearmPendingAdd(state.pendingAdd!),
             selection: {
               ...s.selection,
               selectedFeatureId: null,
@@ -351,7 +382,7 @@ export function createPendingAddSlice(
               clamps: [...s.project.clamps, clampEntry],
               meta: { ...s.project.meta, modified: new Date().toISOString() },
             },
-            pendingAdd: null,
+            pendingAdd: rearmPendingAdd(state.pendingAdd!),
             selection: {
               ...s.selection,
               selectedFeatureId: null,
@@ -385,7 +416,7 @@ export function createPendingAddSlice(
         state.addCircleFeature(`Circle ${state.project.features.length + 1}`, anchor.x, anchor.y, radius, depth)
       }
 
-      set({ pendingAdd: null })
+      set({ pendingAdd: rearmPendingAdd(state.pendingAdd) })
     },
 
     placePendingTextAt: (point) => {
@@ -418,7 +449,7 @@ export function createPendingAddSlice(
         const primaryId = createdFeature.id
         return {
           project: nextProject,
-          pendingAdd: null,
+          pendingAdd: rearmPendingAdd(state.pendingAdd!),
           selection: {
             ...s.selection,
             selectedFeatureId: primaryId,
@@ -477,7 +508,7 @@ export function createPendingAddSlice(
           depth,
         )
       }
-      set({ pendingAdd: null })
+      set({ pendingAdd: rearmPendingAdd(state.pendingAdd) })
     },
 
     completePendingOpenPath: () => {
@@ -555,7 +586,7 @@ export function createPendingAddSlice(
         }
         state.addFeature(feature)
       }
-      set({ pendingAdd: null })
+      set({ pendingAdd: rearmPendingAdd(state.pendingAdd) })
     },
 
     setPendingCompositeMode: (mode: CompositeSegmentMode) =>
@@ -735,7 +766,7 @@ export function createPendingAddSlice(
       )
 
       state.addFeature(feature)
-      set({ pendingAdd: null })
+      set({ pendingAdd: rearmPendingAdd(state.pendingAdd) })
     },
 
     completePendingOpenComposite: () => {
@@ -779,7 +810,7 @@ export function createPendingAddSlice(
       }
 
       state.addFeature(feature)
-      set({ pendingAdd: null })
+      set({ pendingAdd: rearmPendingAdd(state.pendingAdd) })
     },
 
     setPendingNgonSides: (n) =>
@@ -839,7 +870,7 @@ export function createPendingAddSlice(
         depth,
       )
       if (createdIds.length > 0) {
-        set({ pendingAdd: null })
+        set({ pendingAdd: rearmPendingAdd(state.pendingAdd) })
       }
       return createdIds
     },
@@ -870,7 +901,7 @@ export function createPendingAddSlice(
 
       const depth = Math.min(state.project.stock.thickness, 10)
       state.addSlotFeature(`Slot ${state.project.features.length + 1}`, p1, p2, width, depth)
-      set({ pendingAdd: null })
+      set({ pendingAdd: rearmPendingAdd(state.pendingAdd) })
     },
 
     placePendingNgonAt: (point) => {
@@ -889,7 +920,7 @@ export function createPendingAddSlice(
       const baseName = NGON_NAMES[sides] ?? `Polygon${sides}`
       const name = `${baseName} ${state.project.features.length + 1}`
       state.addNgonFeature(name, anchor.x, anchor.y, sides, circumradius, firstVertexAngle, depth)
-      set({ pendingAdd: null })
+      set({ pendingAdd: rearmPendingAdd(state.pendingAdd) })
     },
   }
 }

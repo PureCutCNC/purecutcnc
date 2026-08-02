@@ -78,6 +78,54 @@ export async function completePendingMove(
   }, { x, y })
 }
 
+/** Arm the rectangle creation tool via the store. */
+export async function startAddRectPlacement(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const w = window as unknown as { __pcTest: { startAddRectPlacement: () => Promise<void> } }
+    await w.__pcTest.startAddRectPlacement()
+  })
+}
+
+/** Set the pending-add anchor point on the canvas. */
+export async function setPendingAddAnchor(page: Page, x: number, y: number): Promise<void> {
+  await page.evaluate(async ({ x: px, y: py }: { x: number; y: number }) => {
+    const w = window as unknown as { __pcTest: { setPendingAddAnchor: (x: number, y: number) => Promise<void> } }
+    await w.__pcTest.setPendingAddAnchor(px, py)
+  }, { x, y })
+}
+
+/** Complete a pending-add placement at the given point. */
+export async function placePendingAddAt(page: Page, x: number, y: number): Promise<void> {
+  await page.evaluate(async ({ x: px, y: py }: { x: number; y: number }) => {
+    const w = window as unknown as { __pcTest: { placePendingAddAt: (x: number, y: number) => Promise<void> } }
+    await w.__pcTest.placePendingAddAt(px, py)
+  }, { x, y })
+}
+
+/** Cancel the current pending-add draft (Escape equivalent). */
+export async function cancelPendingAdd(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const w = window as unknown as { __pcTest: { cancelPendingAdd: () => Promise<void> } }
+    await w.__pcTest.cancelPendingAdd()
+  })
+}
+
+/** Get the current pending-add shape (or null if idle). */
+export async function getPendingAddShape(page: Page): Promise<string | null> {
+  return page.evaluate(async () => {
+    const w = window as unknown as { __pcTest: { getPendingAddShape: () => Promise<string | null> } }
+    return w.__pcTest.getPendingAddShape()
+  })
+}
+
+/** Get the current feature count. */
+export async function getFeatureCount(page: Page): Promise<number> {
+  return page.evaluate(async () => {
+    const w = window as unknown as { __pcTest: { getFeatureCount: () => Promise<number> } }
+    return w.__pcTest.getFeatureCount()
+  })
+}
+
 // ── Feature tree ────────────────────────────────────────────────────
 
 /** Count feature rows currently rendered. */

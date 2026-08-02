@@ -130,11 +130,34 @@ if (import.meta.env.DEV) {
     /** Completes a pending copy/move starting from origin and ending at (x,y). */
     completePendingMove: async (x: number, y: number) => {
       const { useProjectStore } = await _pcTestStore()
-      // Set fromPoint to origin and toPoint to the target so the displacement
-      // is non-zero (completePendingMove requires dx/dy > 1e-9).
       useProjectStore.getState().setPendingMoveFrom({ x: 0, y: 0 })
       useProjectStore.getState().setPendingMoveTo({ x, y })
       useProjectStore.getState().completePendingMove({ x, y }, 1)
+    },
+    startAddRectPlacement: async () => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().startAddRectPlacement()
+    },
+    setPendingAddAnchor: async (x: number, y: number) => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().setPendingAddAnchor({ x, y })
+    },
+    placePendingAddAt: async (x: number, y: number) => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().placePendingAddAt({ x, y })
+    },
+    cancelPendingAdd: async () => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().cancelPendingAdd()
+    },
+    getPendingAddShape: async () => {
+      const { useProjectStore } = await _pcTestStore()
+      const pa = useProjectStore.getState().pendingAdd
+      return pa?.shape ?? null
+    },
+    getFeatureCount: async () => {
+      const { useProjectStore } = await _pcTestStore()
+      return useProjectStore.getState().project.features.length
     },
   }
 }
@@ -159,6 +182,12 @@ declare global {
       loadProject: (json: string) => Promise<void>
       getPendingMove: () => Promise<{ mode: string; entityType: string; entityIds: string[] } | null>
       completePendingMove: (x: number, y: number) => Promise<void>
+      startAddRectPlacement: () => Promise<void>
+      setPendingAddAnchor: (x: number, y: number) => Promise<void>
+      placePendingAddAt: (x: number, y: number) => Promise<void>
+      cancelPendingAdd: () => Promise<void>
+      getPendingAddShape: () => Promise<string | null>
+      getFeatureCount: () => Promise<number>
     }
   }
 }

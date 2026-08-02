@@ -85,7 +85,7 @@ function testGearWithoutBoreCreatesSingleFeature() {
   const state = useProjectStore.getState()
 
   assert(ids.length === 1, `expected one created id, got ${ids.length}`)
-  assert(state.pendingAdd === null, 'pending gear should clear after creation')
+  assert(state.pendingAdd?.shape === 'gear' && state.pendingAdd.anchor === null, 'pending gear should re-arm after creation')
   assert(state.project.features.length === 1, `expected one feature, got ${state.project.features.length}`)
   assert(state.project.featureFolders.length === 0, 'gear without bore should not create a folder')
   assert(state.history.past.length === beforeHistory + 1, 'gear creation should add one history entry')
@@ -109,7 +109,7 @@ function testGearWithBoreCreatesGroupedFeatures() {
   const state = useProjectStore.getState()
 
   assert(ids.length === 2, `expected two created ids, got ${ids.length}`)
-  assert(state.pendingAdd === null, 'pending gear should clear after grouped creation')
+  assert(state.pendingAdd?.shape === 'gear' && state.pendingAdd.anchor === null, 'pending gear should re-arm after grouped creation')
   assert(state.history.past.length === beforeHistory + 1, 'gear+bore should add one history entry')
 
   const gear = createdFeature(ids[0])

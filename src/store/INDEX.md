@@ -10,7 +10,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `slices/` — focused slices of store behavior
   - `selectionSlice.ts` — which features/segments are currently selected
   - `pendingActionsSlice.ts` — queue of deferred ops awaiting user confirmation
-  - `pendingAddSlice.ts` — in-progress feature being drawn but not yet committed, including multi-step gear placement
+  - `pendingAddSlice.ts` — in-progress feature being drawn but not yet committed, including multi-step gear placement; re-arms a fresh draft of the same shape on completion (sticky drawing, issue #415)
   - `pendingCompletionSlice.ts` — partially-completed sketches awaiting closure
   - `dimensionsSlice.ts` — persistent dimension annotations (`project.annotations`): add/update/delete + selection (history-tracked)
   - `dimensionToolSlice.ts` — transient measure tools: tape measure + in-progress permanent-dimension placement (not persisted, not in history)
