@@ -252,5 +252,69 @@ test('bounds pathological shallow-angle entry move counts with a deterministic f
   assert(moves.length < 20_010, `entry move count should stay bounded, got ${moves.length}`)
 })
 
+test('caps ramp run length instead of traversing the whole region', () => {
+  const moves: ToolpathMove[] = []
+  const region = rectangle(200, 200)
+  const result = synthesizeEntry(
+    moves,
+    null,
+    entryTarget(100, 100, -2),
+    2,
+    policy(region, { strategy: 'ramp', toolDiameter: 4 }),
+  )
+  assert(result.usedStrategy === 'ramp', `expected ramp, got ${result.usedStrategy}`)
+
+  // 3 tool diameters of XY run, lengthened only by the ramp's own descent.
+  const cap = 4 * 3 / Math.cos(5 * Math.PI / 180) + 1e-6
+  const longest = Math.max(...moves
+    .filter((move) => move.kind === 'lead_in')
+    .map((move) => Math.hypot(
+      move.to.x - move.from.x,
+      move.to.y - move.from.y,
+      move.to.z - move.from.z,
+    )))
+  assert(longest <= cap, `ramp move ${longest.toFixed(4)} should not exceed cap ${cap.toFixed(4)}`)
+})
+
+test('keeps ramp entry clear of the region boundary', () => {
+  const moves: ToolpathMove[] = []
+  const width = 40
+  const height = 40
+  const toolDiameter = 4
+  const result = synthesizeEntry(
+    moves,
+    null,
+    entryTarget(width / 2, height / 2, -2),
+    2,
+    policy(rectangle(width, height), { strategy: 'ramp', toolDiameter }),
+  )
+  assert(result.usedStrategy === 'ramp', `expected ramp, got ${result.usedStrategy}`)
+
+  // Entry must not score the wall the finish pass will leave as the final
+  // surface, so every ramp point stays a real standoff inside the boundary.
+  const standoff = toolDiameter * 0.1
+  for (const move of moves.filter((move) => move.kind === 'lead_in')) {
+    for (const point of [move.from, move.to]) {
+      const toEdge = Math.min(point.x, width - point.x, point.y, height - point.y)
+      assert(
+        toEdge >= standoff - 1e-6,
+        `ramp point ${toEdge.toFixed(4)} from wall is inside the ${standoff} standoff`,
+      )
+    }
+  }
+})
+
+test('still places a helix when the cut start sits on the region boundary', () => {
+  // Wall-finish contours are the region boundary, so the cheap tangent
+  // placement can never succeed there and every entry falls through to the
+  // global search. That path is bounded (see MAX_HELIX_ENDPOINT_CANDIDATES);
+  // this guards that bounding it did not stop it finding a placement.
+  const moves: ToolpathMove[] = []
+  const result = synthesizeEntry(moves, null, entryTarget(0, 20, -2), 2, policy(rectangle(40, 40)))
+  assert(result.usedStrategy === 'helix', `expected helix, got ${result.usedStrategy}`)
+  const descending = moves.filter((move) => move.kind === 'lead_in' && move.to.z < move.from.z - 1e-9)
+  assert(descending.length > 0, 'boundary-start helix should still descend')
+})
+
 console.log(`\nentry.ts tests: ${passed} passed, ${failed} failed`)
 if (failed > 0) process.exitCode = 1

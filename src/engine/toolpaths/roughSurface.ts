@@ -81,6 +81,13 @@ export function generateRoughSurfaceToolpath(
       currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
     )
 
+    // No withEntryStartZ() here, unlike pocket and surface clearing. Those
+    // reuse one XY footprint for every level, so the previous level's floor is
+    // guaranteed cleared and the entry can start just above it. 3D roughing
+    // recomputes the clearable region per level, so a level can expose area the
+    // level above never cut — descending to the previous cut Z there would
+    // drive the tool through standing stock. Entry stays at the global safe Z
+    // until that containment is proven per level.
     for (const region of orderedRegions) {
       const entryPolicy = entryEnabled
         ? createEntryPolicy(

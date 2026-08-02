@@ -25,6 +25,29 @@ const HELIX_SEGMENTS_PER_REVOLUTION = 48
 const ENTRY_EPSILON = 1e-9
 const MAX_CLEARANCE_SEARCH_CELLS = 20_000
 const MAX_ENTRY_DESCENT_MOVES = 20_000
+
+// Entry moves stay this far inside the region boundary, as a fraction of tool
+// diameter. Without it a ramp or helix runs right up to the wall and scores the
+// surface the finish pass is meant to leave — a single contour at final depth
+// cannot clean a sloped entry groove that crosses it.
+const ENTRY_BOUNDARY_SAFETY_FRACTION = 0.1
+// A ramp is a local zig-zag near the entry point, not a traverse of the whole
+// pocket. Cap the run at this multiple of tool diameter.
+const MAX_RAMP_RUN_DIAMETERS = 3
+// Connecting a candidate helix centre to the cut start is by far the most
+// expensive test here (segment-inside-region against every contour edge).
+// Bound the centres and angles tried so a hopeless search fails fast instead of
+// sweeping the entire quadtree once per radius attempt.
+//
+// This is not a micro-optimisation. A wall-finish contour *is* the region
+// boundary, so the cheap tangent placement can never succeed and every entry
+// falls through to the global search. Unbounded, one pocket finish pass spent
+// 101.6 s here versus 0.10 s bounded — and produced byte-identical output, so
+// the entire sweep was wasted. Do not raise these without re-measuring a
+// finish pass on a contour-heavy pocket.
+const MAX_HELIX_ENDPOINT_CANDIDATES = 12
+const HELIX_ENDPOINT_ANGLE_SAMPLES = 24
+const MAX_HELIX_RADIUS_ATTEMPTS = 4
 const clearanceCircleCache = new WeakMap<
   EntryClearanceRegion,
   Map<number, EntryClearanceCircle | null>
@@ -47,6 +70,7 @@ export interface EntryPolicy {
   cutDirection: CutDirection
   cutSide: EntryCutSide
   clearanceRegions: EntryClearanceRegion[]
+  startZ?: number
   handoffFeedScale?: number
   onWarning?: (warning: ToolpathWarning) => void
 }
@@ -119,6 +143,13 @@ export function withEntryHandoffFeedScale(
   return policy && handoffFeedScale !== null ? { ...policy, handoffFeedScale } : policy
 }
 
+export function withEntryStartZ(
+  policy: EntryPolicy | undefined,
+  startZ: number,
+): EntryPolicy | undefined {
+  return policy ? { ...policy, startZ } : undefined
+}
+
 export function pitchFromRampAngle(pathDiameter: number, rampAngleDegrees: number): number {
   if (!(pathDiameter > 0) || !(rampAngleDegrees > 0)) return 0
   return Math.PI * pathDiameter * Math.tan(toRadians(rampAngleDegrees))
@@ -167,6 +198,7 @@ export function synthesizeEntry(
   policy: EntryPolicy,
 ): EntrySynthesisResult {
   const warnings: ToolpathWarning[] = []
+  const startZ = Math.max(target.z, Math.min(safeZ, policy.startZ ?? safeZ))
   const warn = (warning: ToolpathWarning) => {
     if (!warnings.some((entry) => warningKey(entry) === warningKey(warning))) {
       warnings.push(warning)
@@ -178,7 +210,7 @@ export function synthesizeEntry(
     const requestedDiameter = policy.toolDiameter * policy.helixDiameterPercent / 100
     const requestedRadius = requestedDiameter / 2
     const placement = findHelixPlacement(target, policy, requestedRadius)
-    if (placement && helixDescentMoveCount(safeZ - target.z, placement.radius, policy.rampAngle)
+    if (placement && helixDescentMoveCount(startZ - target.z, placement.radius, policy.rampAngle)
       <= MAX_ENTRY_DESCENT_MOVES) {
       const actualDiameter = placement.radius * 2
       if (actualDiameter < requestedDiameter - numericTolerance(requestedDiameter)) {
@@ -191,18 +223,18 @@ export function synthesizeEntry(
         })
       }
       return {
-        end: emitHelix(moves, from, target, safeZ, policy, placement),
+        end: emitHelix(moves, from, target, safeZ, startZ, policy, placement),
         usedStrategy: 'helix',
         warnings,
       }
     }
 
     const rampPlacement = findRampPlacement(target, policy.clearanceRegions, policy.toolDiameter)
-    if (rampPlacement && rampDescentMoveCount(safeZ - target.z, rampPlacement, policy.rampAngle)
+    if (rampPlacement && rampDescentMoveCount(startZ - target.z, rampPlacement, policy.rampAngle)
       <= MAX_ENTRY_DESCENT_MOVES) {
       warn({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'ramp' } })
       return {
-        end: emitRamp(moves, from, target, safeZ, policy, rampPlacement),
+        end: emitRamp(moves, from, target, safeZ, startZ, policy, rampPlacement),
         usedStrategy: 'ramp',
         warnings,
       }
@@ -210,17 +242,17 @@ export function synthesizeEntry(
 
     warn({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'plunge' } })
     return {
-      end: emitPlunge(moves, from, target, safeZ),
+      end: emitPlunge(moves, from, target, safeZ, startZ),
       usedStrategy: 'plunge',
       warnings,
     }
   }
 
   const rampPlacement = findRampPlacement(target, policy.clearanceRegions, policy.toolDiameter)
-  if (rampPlacement && rampDescentMoveCount(safeZ - target.z, rampPlacement, policy.rampAngle)
+  if (rampPlacement && rampDescentMoveCount(startZ - target.z, rampPlacement, policy.rampAngle)
     <= MAX_ENTRY_DESCENT_MOVES) {
     return {
-      end: emitRamp(moves, from, target, safeZ, policy, rampPlacement),
+      end: emitRamp(moves, from, target, safeZ, startZ, policy, rampPlacement),
       usedStrategy: 'ramp',
       warnings,
     }
@@ -228,7 +260,7 @@ export function synthesizeEntry(
 
   warn({ code: 'entryStrategyFallback', params: { requested: 'ramp', fallback: 'plunge' } })
   return {
-    end: emitPlunge(moves, from, target, safeZ),
+    end: emitPlunge(moves, from, target, safeZ, startZ),
     usedStrategy: 'plunge',
     warnings,
   }
@@ -251,11 +283,12 @@ function emitHelix(
   from: ToolpathPoint | null,
   target: ToolpathPoint,
   safeZ: number,
+  startZ: number,
   policy: EntryPolicy,
   placement: HelixPlacement,
 ): ToolpathPoint {
   const direction = helixAngularDirection(policy.cutDirection, policy.cutSide)
-  const depth = Math.max(0, safeZ - target.z)
+  const depth = Math.max(0, startZ - target.z)
   const pitch = pitchFromRampAngle(placement.radius * 2, policy.rampAngle)
   const revolutions = pitch > ENTRY_EPSILON ? depth / pitch : 0
   const descentSegments = helixDescentMoveCount(depth, placement.radius, policy.rampAngle)
@@ -268,7 +301,7 @@ function emitHelix(
     x: placement.center.x + Math.cos(startAngle) * placement.radius,
     y: placement.center.y + Math.sin(startAngle) * placement.radius,
   }
-  let current = rapidToEntryStart(moves, from, { ...startPoint, z: safeZ }, safeZ)
+  let current = rapidToEntryStart(moves, from, { ...startPoint, z: startZ }, safeZ)
 
   for (let index = 1; index <= descentSegments; index += 1) {
     const ratio = index / descentSegments
@@ -276,7 +309,7 @@ function emitHelix(
     const next: ToolpathPoint = {
       x: placement.center.x + Math.cos(angle) * placement.radius,
       y: placement.center.y + Math.sin(angle) * placement.radius,
-      z: safeZ + (target.z - safeZ) * ratio,
+      z: startZ + (target.z - startZ) * ratio,
     }
     moves.push({
       kind: 'lead_in',
@@ -315,10 +348,11 @@ function emitRamp(
   from: ToolpathPoint | null,
   target: ToolpathPoint,
   safeZ: number,
+  startZ: number,
   policy: EntryPolicy,
   placement: RampPlacement,
 ): ToolpathPoint {
-  let current = rapidToEntryStart(moves, from, { ...placement.start, z: safeZ }, safeZ)
+  let current = rapidToEntryStart(moves, from, { ...placement.start, z: startZ }, safeZ)
   let descendingTo = placement.end
   const fullRun = Math.hypot(placement.end.x - placement.start.x, placement.end.y - placement.start.y)
   const dropPerRun = fullRun * Math.tan(toRadians(policy.rampAngle))
@@ -373,9 +407,9 @@ function emitPlunge(
   from: ToolpathPoint | null,
   target: ToolpathPoint,
   safeZ: number,
+  startZ: number,
 ): ToolpathPoint {
-  const safeTarget = { x: target.x, y: target.y, z: safeZ }
-  const current = rapidToEntryStart(moves, from, safeTarget, safeZ)
+  const current = rapidToEntryStart(moves, from, { x: target.x, y: target.y, z: startZ }, safeZ)
   moves.push({ kind: 'plunge', from: current, to: target })
   return target
 }
@@ -398,7 +432,10 @@ function rapidToEntryStart(
   } else if (!samePoint(current, safeTarget)) {
     moves.push({ kind: 'rapid', from: current, to: safeTarget })
   }
-  return safeTarget
+  if (!samePoint(safeTarget, target)) {
+    moves.push({ kind: 'plunge', from: safeTarget, to: target })
+  }
+  return target
 }
 
 function findHelixPlacement(
@@ -411,7 +448,7 @@ function findHelixPlacement(
   const candidateRegions = policy.clearanceRegions.filter((region) => pointInRegion(targetPoint, region))
   const regions = candidateRegions.length > 0 ? candidateRegions : policy.clearanceRegions
   const precision = Math.max(1e-4, policy.toolDiameter * 0.0025)
-  const safety = Math.max(1e-4, policy.toolDiameter * 0.001)
+  const safety = entryBoundarySafety(policy.toolDiameter)
   const maximumCoreSafeRadius = policy.toolDiameter / 2
   const minimumUsefulRadius = Math.min(requestedRadius, policy.toolDiameter * 0.05)
 
@@ -420,7 +457,11 @@ function findHelixPlacement(
     if (!circle) continue
     let radius = Math.min(requestedRadius, maximumCoreSafeRadius, Math.max(0, circle.radius - safety))
 
-    for (let attempt = 0; attempt < 14 && radius >= Math.max(precision, minimumUsefulRadius); attempt += 1) {
+    for (
+      let attempt = 0;
+      attempt < MAX_HELIX_RADIUS_ATTEMPTS && radius >= Math.max(precision, minimumUsefulRadius);
+      attempt += 1
+    ) {
       const local = findTargetTouchingHelix(region, targetPoint, radius, safety)
       if (local) return local
 
@@ -456,6 +497,7 @@ function findReachableHelixPlacement(
 
   const requiredClearance = radius + safety
   let visited = 0
+  let endpointAttempts = 0
   while (cells.length > 0 && visited < MAX_CLEARANCE_SEARCH_CELLS) {
     const cell = cells.pop()
     if (!cell) break
@@ -463,6 +505,12 @@ function findReachableHelixPlacement(
     if (cell.maxDistance < requiredClearance - ENTRY_EPSILON) continue
 
     if (cell.distance >= requiredClearance - ENTRY_EPSILON) {
+      // Cells pop in descending clearance order, so the first candidates are
+      // the roomiest ones. If none of them can reach the cut start, sweeping
+      // the rest of the quadtree will not help — give up and let the caller
+      // shrink the radius or fall back.
+      if (endpointAttempts >= MAX_HELIX_ENDPOINT_CANDIDATES) return null
+      endpointAttempts += 1
       const center = { x: cell.x, y: cell.y }
       const endpoint = findSafeHelixEndpoint(center, radius, target, region)
       if (endpoint) return { center, endpoint, radius, region }
@@ -504,9 +552,9 @@ function findSafeHelixEndpoint(
   region: EntryClearanceRegion,
 ): Point | null {
   const preferred = Math.atan2(target.y - center.y, target.x - center.x)
-  for (let index = 0; index < 72; index += 1) {
+  for (let index = 0; index < HELIX_ENDPOINT_ANGLE_SAMPLES; index += 1) {
     const alternating = index === 0 ? 0 : Math.ceil(index / 2) * (index % 2 === 0 ? -1 : 1)
-    const angle = preferred + alternating * Math.PI * 2 / 72
+    const angle = preferred + alternating * Math.PI * 2 / HELIX_ENDPOINT_ANGLE_SAMPLES
     const endpoint = {
       x: center.x + Math.cos(angle) * radius,
       y: center.y + Math.sin(angle) * radius,
@@ -524,9 +572,12 @@ function findRampPlacement(
   const point = { x: target.x, y: target.y }
   const candidates = regions.filter((region) => pointInRegion(point, region))
   const searchRegions = candidates.length > 0 ? candidates : regions
-  const safety = Math.max(1e-4, toolDiameter * 0.001)
+  const safety = entryBoundarySafety(toolDiameter)
+  const maxRun = toolDiameter * MAX_RAMP_RUN_DIAMETERS
+  const minRun = Math.max(ENTRY_EPSILON, toolDiameter * 0.02)
   let best: RampPlacement | null = null
   let bestLength = 0
+  let bestRoom = 0
 
   for (const region of searchRegions) {
     for (let index = 0; index < 72; index += 1) {
@@ -534,19 +585,36 @@ function findRampPlacement(
       const direction = { x: Math.cos(angle), y: Math.sin(angle) }
       const interval = lineIntervalInsideRegion(point, direction, region)
       if (!interval) continue
-      const usableMin = interval.min + safety
-      const usableMax = interval.max - safety
-      const length = usableMax - usableMin
-      if (!(length > Math.max(ENTRY_EPSILON, toolDiameter * 0.02)) || length <= bestLength) continue
+      const low = interval.min + safety
+      const high = interval.max - safety
+      const room = high - low
+      if (!(room > minRun)) continue
+
+      // Centre a bounded run on the entry point and slide it to stay inside the
+      // region. Taking the whole chord instead would ramp wall to wall across
+      // the pocket, which is a long air move and drags the entry across the
+      // finished boundary at both ends.
+      let start = Math.max(low, -maxRun / 2)
+      const end = Math.min(high, start + maxRun)
+      start = Math.max(low, end - maxRun)
+      const length = end - start
+      if (!(length > minRun)) continue
+      if (length < bestLength || (length === bestLength && room <= bestRoom)) continue
+
       bestLength = length
+      bestRoom = room
       best = {
-        start: { x: point.x + direction.x * usableMin, y: point.y + direction.y * usableMin },
-        end: { x: point.x + direction.x * usableMax, y: point.y + direction.y * usableMax },
+        start: { x: point.x + direction.x * start, y: point.y + direction.y * start },
+        end: { x: point.x + direction.x * end, y: point.y + direction.y * end },
         region,
       }
     }
   }
   return best
+}
+
+function entryBoundarySafety(toolDiameter: number): number {
+  return Math.max(1e-4, toolDiameter * ENTRY_BOUNDARY_SAFETY_FRACTION)
 }
 
 function lineIntervalInsideRegion(

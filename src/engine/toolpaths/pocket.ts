@@ -21,6 +21,7 @@ import {
   createEntryPolicy,
   synthesizeEntry,
   withEntryHandoffFeedScale,
+  withEntryStartZ,
   type EntryPolicy,
 } from './entry'
 import type {
@@ -37,6 +38,7 @@ import {
   applyContourDirection,
   checkMaxCutDepthWarning,
   fromClipperPath,
+  getOperationClearance,
   getOperationSafeZ,
   normalizeWinding,
   normalizeToolForProject,
@@ -1380,6 +1382,7 @@ function generateRoughBandMoves(
   band: ResolvedPocketBand,
   operation: Operation,
   safeZ: number,
+  entryClearance: number,
   stepdown: number,
   toolRadius: number,
   stepoverDistance: number,
@@ -1442,7 +1445,12 @@ function generateRoughBandMoves(
       }
     }
 
-    for (const z of stepLevels) {
+    for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
+      const z = stepLevels[levelIndex]
+      const levelEntryPolicy = withEntryStartZ(
+        entryPolicy,
+        levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
+      )
       const levelStartIndex = moves.length
       for (const contour of boundaryContours) {
         const entryPoint = contourStartPoint(contour, z)
@@ -1453,7 +1461,7 @@ function generateRoughBandMoves(
           safeZ,
           maxLinkDistance,
           undefined,
-          entryPolicy,
+          levelEntryPolicy,
         )
         const cutMoves = toClosedCutMoves(contour, z)
         moves.push(...cutMoves)
@@ -1474,7 +1482,7 @@ function generateRoughBandMoves(
           safeZ,
           maxLinkDistance,
           undefined,
-          entryPolicy,
+          levelEntryPolicy,
         )
         const cutMoves = toOpenCutMoves(segment, z)
         moves.push(...cutMoves)
@@ -1516,7 +1524,18 @@ function generateRoughBandMoves(
     )
     : undefined
 
-  for (const z of stepLevels) {
+  // Keep XY travel at the global safe Z, but start the entry just above the
+  // previous level's floor instead of at safe Z — otherwise a deep pocket
+  // spends most of its helix cutting air. Safe because the ring tree above is
+  // built once and reused, so every level clears the same XY footprint and the
+  // level above has already emptied everything down to stepLevels[i - 1]. The
+  // first level of each band has no cleared floor yet and stays at safe Z.
+  for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
+    const z = stepLevels[levelIndex]
+    const levelEntryPolicy = withEntryStartZ(
+      entryPolicy,
+      levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
+    )
     if (regionTrees.length === 0) {
       warnings.push({ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
       currentPosition = retractToSafe(moves, currentPosition, safeZ)
@@ -1543,7 +1562,7 @@ function generateRoughBandMoves(
         'all',
         smoothRadius,
         0,
-        entryPolicy,
+        levelEntryPolicy,
       )
     }
 
@@ -1855,6 +1874,7 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
   }
 
   const safeZ = getOperationSafeZ(project)
+  const entryClearance = getOperationClearance(project)
   const stepoverDistance = tool.diameter * operation.stepover
   const maxLinkDistance = tool.diameter
   const direction = operation.cutDirection ?? 'conventional'
@@ -1925,6 +1945,7 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
         band,
         operation,
         safeZ,
+        entryClearance,
         operation.stepdown,
         tool.radius,
         stepoverDistance,

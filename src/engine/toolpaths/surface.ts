@@ -17,7 +17,7 @@
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
-import { createEntryPolicy } from './entry'
+import { createEntryPolicy, withEntryStartZ } from './entry'
 import type {
   ClipperPath,
   PocketToolpathResult,
@@ -33,6 +33,7 @@ import {
   applyContourDirection,
   checkMaxCutDepthWarning,
   flattenProfile,
+  getOperationClearance,
   getOperationSafeZ,
   normalizeToolForProject,
   normalizeWinding,
@@ -316,6 +317,7 @@ function generateRoughBandMoves(
   band: SurfaceCleanBand,
   operation: Operation,
   safeZ: number,
+  entryClearance: number,
   stepdown: number,
   toolRadius: number,
   stepoverDistance: number,
@@ -370,7 +372,12 @@ function generateRoughBandMoves(
       }
     }
 
-    for (const z of stepLevels) {
+    for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
+      const z = stepLevels[levelIndex]
+      const levelEntryPolicy = withEntryStartZ(
+        entryPolicy,
+        levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
+      )
       const orderedBoundaryContours = orderClosedContoursGreedy(
         boundaryContours,
         currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
@@ -385,7 +392,7 @@ function generateRoughBandMoves(
           safeZ,
           maxLinkDistance,
           undefined,
-          entryPolicy,
+          levelEntryPolicy,
         )
         const cutMoves = toClosedCutMoves(contour, z)
         moves.push(...cutMoves)
@@ -406,7 +413,7 @@ function generateRoughBandMoves(
           safeZ,
           maxLinkDistance,
           undefined,
-          entryPolicy,
+          levelEntryPolicy,
         )
         const cutMoves = toOpenCutMoves(segment, z)
         moves.push(...cutMoves)
@@ -435,7 +442,12 @@ function generateRoughBandMoves(
     )
     : undefined
 
-  for (const z of stepLevels) {
+  for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
+    const z = stepLevels[levelIndex]
+    const levelEntryPolicy = withEntryStartZ(
+      entryPolicy,
+      levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
+    )
     const currentRegions = coverageRegions.flatMap((region) =>
       buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
     if (currentRegions.length === 0) {
@@ -463,7 +475,7 @@ function generateRoughBandMoves(
         'outer-first',
         smoothRadius,
         islandJoinType,
-        entryPolicy,
+        levelEntryPolicy,
       )
     }
 
@@ -662,6 +674,7 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
   }
 
   const safeZ = getOperationSafeZ(project)
+  const entryClearance = getOperationClearance(project)
   const stepoverDistance = tool.diameter * operation.stepover
   const maxLinkDistance = tool.diameter
   const direction = operation.cutDirection ?? 'conventional'
@@ -696,6 +709,7 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
         band,
         operation,
         safeZ,
+        entryClearance,
         operation.stepdown,
         tool.radius,
         stepoverDistance,
