@@ -2721,6 +2721,9 @@
 .viewport-toolpath-vis__swatch--cuts {
   background: var(--toolpath-cut);
 }
+.viewport-toolpath-vis__swatch--lead-ins {
+  background: var(--toolpath-cut);
+}
 
 .viewport-toolpath-vis__swatch--rapids {
   background: var(--toolpath-rapid);

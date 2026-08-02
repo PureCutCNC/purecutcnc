@@ -130,6 +130,7 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
   // ── Toolpath visibility ──
   'appShell.toolpath.show': '显示',
   'appShell.toolpath.cuts': '切削',
+  'appShell.toolpath.leadIns': '导入',
   'appShell.toolpath.rapids': '快速移动',
   'appShell.toolpath.plunges': '下刀',
   'appShell.toolpath.retractions': '抬刀',

@@ -118,6 +118,7 @@ export interface DesignPrintLayout {
  */
 export interface PrintToolpathVisibility {
   cuts: boolean
+  leadIns: boolean
   rapids: boolean
   plunges: boolean
   retractions: boolean
