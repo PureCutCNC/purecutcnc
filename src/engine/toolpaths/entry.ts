@@ -683,9 +683,15 @@ export function emitCenterLockedCircularBore(
 
   const direction = helixAngularDirection(cutDirection, 'internal')
 
-  // Rapid to safeZ above hole centre.
+  // Establish { hole centre, safeZ } before any descent. When this is the
+  // first expanded operation current is null, so the postprocessor has no
+  // known machine location. A zero-length rapid tells it to position XY and Z
+  // at safeZ before the next rapid (which descends to retractZ). Without it
+  // the postprocessor emits Z before XY and can lower Z at an unsafe location.
   const aboveSafe: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
-  if (current && (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z)) {
+  if (!current) {
+    moves.push({ kind: 'rapid', from: aboveSafe, to: aboveSafe })
+  } else if (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z) {
     moves.push({ kind: 'rapid', from: current, to: aboveSafe })
   }
 
@@ -755,8 +761,11 @@ function emitPlungeEntryFallback(
   safeZ: number,
   retractZ: number,
 ): ToolpathPoint {
+  // Same safe-Z ordering as the main bore path (see comment there).
   const aboveSafe: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
-  if (current && (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z)) {
+  if (!current) {
+    moves.push({ kind: 'rapid', from: aboveSafe, to: aboveSafe })
+  } else if (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z) {
     moves.push({ kind: 'rapid', from: current, to: aboveSafe })
   }
   const rapidStart: ToolpathPoint = { x: center.x, y: center.y, z: retractZ }

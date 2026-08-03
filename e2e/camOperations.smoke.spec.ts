@@ -184,4 +184,58 @@ test.describe('CAM operation browser smoke', () => {
     const tools = project.tools as Array<{ id?: unknown; type?: unknown }>
     expect(tools.some((tool) => tool.id === operations[0].toolRef && tool.type === 'v_bit')).toBe(true)
   })
+
+  test('helical drilling: select Helical, assert conditional controls, change and persist', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    // Create a drilling operation on the circle feature
+    const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Drill Target'))
+    await ui.contextMenu.item(menu, 'Create operation').hover()
+    const submenu = ui.contextMenu.submenu(app.page)
+    await expect(submenu).toBeVisible()
+    await clickMenuItem(submenu, 'Create Drilling')
+
+    // Wait for the operation row to appear
+    await expect(ui.operations.countBadge(app.page)).toHaveText('1')
+    await expect(ui.operations.rowByName(app.page, 'Drill')).toBeVisible()
+
+    // Expand the advanced section to reveal the Drill Type selector
+    await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
+
+    // The Drill Type selector should show the default (Simple (G81))
+    const drillTypeField = app.page.getByText('Drill Type', { exact: true }).locator('..')
+    await expect(drillTypeField.locator('.ui-select__label')).toHaveText('Simple (G81)')
+
+    // Ramp Angle and Helix Diameter should NOT be visible yet (default is Simple)
+    await expect(app.page.getByText('Ramp Angle (°)', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Helix Diameter (%)', { exact: true })).toHaveCount(0)
+
+    // Select Helical from the drill type dropdown
+    await drillTypeField.locator('.ui-select__trigger').click()
+    await app.page.getByRole('option', { name: 'Helical', exact: true }).click()
+
+    // Wait for the selector label to update
+    await expect(drillTypeField.locator('.ui-select__label')).toHaveText('Helical')
+
+    // Conditional controls should now be visible with defaults
+    const rampAngleField = app.page.getByText('Ramp Angle (°)', { exact: true }).locator('..')
+    const helixDiameterField = app.page.getByText('Helix Diameter (%)', { exact: true }).locator('..')
+    await expect(rampAngleField.locator('input')).toHaveValue('5')
+    await expect(helixDiameterField.locator('input')).toHaveValue('80')
+
+    // Change both values through the rendered inputs
+    await rampAngleField.locator('input').fill('8')
+    await rampAngleField.locator('input').blur()
+    await helixDiameterField.locator('input').fill('65')
+    await helixDiameterField.locator('input').blur()
+
+    // Verify persisted operation state
+    const project = await getProject(app.page)
+    const operations = project.operations as OperationSnapshot[]
+    expect(operations).toHaveLength(1)
+    expect(operations[0].kind).toBe('drilling')
+    expect((operations[0] as Record<string, unknown>).drillType).toBe('helical')
+    expect(operations[0].entryRampAngle).toBe(8)
+    expect(operations[0].entryHelixDiameterPercent).toBe(65)
+  })
 })

@@ -91,6 +91,21 @@ function buildCamQuickOperationProjectJson(): string {
         stl: null,
         operation: 'subtract',
       },
+      'def-drill-target': {
+        id: 'def-drill-target',
+        kind: 'circle',
+        profile: {
+          start: { x: 10, y: 0 },
+          segments: [
+            { type: 'circle', center: { x: 0, y: 0 }, to: { x: 10, y: 0 }, clockwise: true },
+          ],
+          closed: true,
+        },
+        dimensions: [],
+        text: null,
+        stl: null,
+        operation: 'subtract',
+      },
       // An imported model — the only feature kind that offers 3D surface
       // quick operations, so the 2D/3D grouping has something to group.
       'def-imported-model': {
@@ -135,6 +150,18 @@ function buildCamQuickOperationProjectJson(): string {
         folderId: null,
         z_top: 2,
         z_bottom: 1.5,
+        visible: true,
+        locked: false,
+      },
+      {
+        id: 'f-drill-target',
+        name: 'Drill Target',
+        definitionId: 'def-drill-target',
+        transform: { a: 1, b: 0, c: 0, d: 1, e: 140, f: 60 },
+        constraints: [],
+        folderId: null,
+        z_top: 2,
+        z_bottom: 1,
         visible: true,
         locked: false,
       },

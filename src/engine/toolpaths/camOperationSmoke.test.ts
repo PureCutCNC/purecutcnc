@@ -757,6 +757,118 @@ test('drilling helical: malformed four-arc geometry falls back to plunge', () =>
     'malformed 4-arc should produce a diagnostic warning')
 })
 
+test('drilling helical: partial four-arc (not closed) is rejected', () => {
+  const r = 5
+  const cx = 20
+  const cy = 20
+  // Three 90° arcs that don't close back to start → 270° partial circle
+  const partialSegments: Segment[] = [
+    { type: 'arc', to: { x: cx, y: cy + r }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx - r, y: cy }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx, y: cy - r }, center: { x: cx, y: cy }, clockwise: true },
+    // Fourth arc goes back to a wrong point, not profile.start
+    { type: 'arc', to: { x: cx, y: cy - r }, center: { x: cx, y: cy }, clockwise: true },
+  ]
+  const partialFeature: SketchFeature = {
+    id: 'c1', name: 'PartialCircle', kind: 'circle', folderId: null,
+    sketch: { profile: { start: { x: cx + r, y: cy }, segments: partialSegments, closed: true },
+      origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation: 'subtract', z_top: 0, z_bottom: -6, visible: true, locked: false,
+  }
+  const tool = makeFlatEndmill('t1', 3)
+  const project = baseProject([tool], [partialFeature])
+  const op = makePocketOp({
+    kind: 'drilling', target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1', stepdown: 2, drillType: 'helical',
+  })
+  const result = generateDrillingToolpath(project, op)
+  assert(result.warnings.some((w) => w.code === 'drillNoValidCircles' || w.code === 'drillNoCenter'),
+    'partial four-arc (not closing to start) should be rejected')
+})
+
+test('drilling helical: mixed-direction four-arc is rejected', () => {
+  const r = 5
+  const cx = 20
+  const cy = 20
+  const mixedSegments: Segment[] = [
+    { type: 'arc', to: { x: cx, y: cy + r }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx - r, y: cy }, center: { x: cx, y: cy }, clockwise: false }, // opposite direction
+    { type: 'arc', to: { x: cx, y: cy - r }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx + r, y: cy }, center: { x: cx, y: cy }, clockwise: true },
+  ]
+  const mixedFeature: SketchFeature = {
+    id: 'c1', name: 'MixedDir', kind: 'circle', folderId: null,
+    sketch: { profile: { start: { x: cx + r, y: cy }, segments: mixedSegments, closed: true },
+      origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation: 'subtract', z_top: 0, z_bottom: -6, visible: true, locked: false,
+  }
+  const tool = makeFlatEndmill('t1', 3)
+  const project = baseProject([tool], [mixedFeature])
+  const op = makePocketOp({
+    kind: 'drilling', target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1', stepdown: 2, drillType: 'helical',
+  })
+  const result = generateDrillingToolpath(project, op)
+  assert(result.warnings.some((w) => w.code === 'drillNoValidCircles' || w.code === 'drillNoCenter'),
+    'mixed-direction four-arc should be rejected')
+})
+
+test('drilling helical: oversized-sweep four-arc is rejected', () => {
+  const r = 5
+  const cx = 20
+  const cy = 20
+  // Four arcs each sweeping 180° (clockwise, same center/direction/radius)
+  // — they double-cover the circle but don't form a simple single-turn path.
+  const oversweepSegments: Segment[] = [
+    { type: 'arc', to: { x: cx - r, y: cy }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx + r, y: cy }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx - r, y: cy }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx + r, y: cy }, center: { x: cx, y: cy }, clockwise: true },
+  ]
+  const oversweepFeature: SketchFeature = {
+    id: 'c1', name: 'OversweepCircle', kind: 'circle', folderId: null,
+    sketch: { profile: { start: { x: cx + r, y: cy }, segments: oversweepSegments, closed: true },
+      origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation: 'subtract', z_top: 0, z_bottom: -6, visible: true, locked: false,
+  }
+  const tool = makeFlatEndmill('t1', 3)
+  const project = baseProject([tool], [oversweepFeature])
+  const op = makePocketOp({
+    kind: 'drilling', target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1', stepdown: 2, drillType: 'helical',
+  })
+  const result = generateDrillingToolpath(project, op)
+  assert(result.warnings.some((w) => w.code === 'drillNoValidCircles' || w.code === 'drillNoCenter'),
+    'oversized-sweep four-arc (180° per arc) should be rejected')
+})
+
+test('drilling helical: open four-arc profile is rejected', () => {
+  const r = 5
+  const cx = 20
+  const cy = 20
+  const openSegments: Segment[] = [
+    { type: 'arc', to: { x: cx, y: cy + r }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx - r, y: cy }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx, y: cy - r }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx + r, y: cy }, center: { x: cx, y: cy }, clockwise: true },
+  ]
+  const openFeature: SketchFeature = {
+    id: 'c1', name: 'OpenCircle', kind: 'circle', folderId: null,
+    sketch: { profile: { start: { x: cx + r, y: cy }, segments: openSegments, closed: false },
+      origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation: 'subtract', z_top: 0, z_bottom: -6, visible: true, locked: false,
+  }
+  const tool = makeFlatEndmill('t1', 3)
+  const project = baseProject([tool], [openFeature])
+  const op = makePocketOp({
+    kind: 'drilling', target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1', stepdown: 2, drillType: 'helical',
+  })
+  const result = generateDrillingToolpath(project, op)
+  assert(result.warnings.some((w) => w.code === 'drillNoValidCircles' || w.code === 'drillNoCenter'),
+    'open (non-closed) four-arc should be rejected')
+})
+
 // ---------------------------------------------------------------------
 // NOTE: Canned cycles (G81/G82/G83/G73) are emitted by the postprocessor
 // when the active machine definition supports them AND the operation is

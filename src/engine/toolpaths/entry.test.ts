@@ -509,6 +509,52 @@ test('center-locked bore: rapid travel and retract at safeZ', () => {
   assert(approx(lastRapid.to.z, safeZ), `final retract should be at safeZ=${safeZ}, got ${lastRapid.to.z}`)
 })
 
+test('center-locked bore: null current establishes safeZ before retract descent', () => {
+  const moves: ToolpathMove[] = []
+  const safeZ = 10
+  const retractZ = 0
+  emitCenterLockedCircularBore(
+    moves, null, { x: 20, y: 20 }, 1.6, 10, 4,
+    -6, safeZ, retractZ, 5, 'conventional', 600, 180,
+  )
+  // First move must be a rapid to { hole centre, safeZ } — establishes
+  // safe XY *before* any Z descent, so the postprocessor (which emits Z
+  // before XY on its first rapid) cannot descend at an unknown location.
+  const first = moves[0]
+  assert(first !== undefined, 'should have at least one move')
+  assert(first.kind === 'rapid', `first move should be rapid, got ${first.kind}`)
+  assert(approx(first.from.x, 20) && approx(first.from.y, 20) && approx(first.from.z, safeZ),
+    `first rapid from should be at hole centre + safeZ=${safeZ}, got (${first.from.x}, ${first.from.y}, ${first.from.z})`)
+  assert(approx(first.to.x, 20) && approx(first.to.y, 20) && approx(first.to.z, safeZ),
+    `first rapid to should be at hole centre + safeZ=${safeZ}, got (${first.to.x}, ${first.to.y}, ${first.to.z})`)
+
+  // After the safe-Z establishment, the next rapid may descend to retractZ.
+  // Verify that no rapid descends below safeZ before the position is established.
+  const rapids = moves.filter((m) => m.kind === 'rapid')
+  const firstDescent = rapids.find((m) => m.to.z < safeZ - 1e-9)
+  assert(firstDescent !== undefined, 'should have a descent rapid after safe-Z establishment')
+  const firstDescentIdx = rapids.indexOf(firstDescent)
+  assert(firstDescentIdx > 0, 'descent rapid must come after the initial safe-Z establishment rapid')
+})
+
+test('center-locked bore: fallback establishes safeZ before retract descent when current is null', () => {
+  // Force fallback with an oversized tool in a small hole.
+  const moves: ToolpathMove[] = []
+  const safeZ = 10
+  const retractZ = 0
+  emitCenterLockedCircularBore(
+    moves, null, { x: 0, y: 0 },
+    2, 3, 5,  // tool diameter 5, hole radius 3 → max safe = 0 → fallback
+    -3, safeZ, retractZ, 5, 'conventional', 600, 180,
+  )
+  // First move must establish safeZ at hole centre, even in the fallback path.
+  const first = moves[0]
+  assert(first !== undefined, 'fallback should have at least one move')
+  assert(first.kind === 'rapid', `fallback first move should be rapid, got ${first.kind}`)
+  assert(approx(first.from.z, safeZ) && approx(first.to.z, safeZ),
+    `fallback first rapid should be at safeZ=${safeZ}, got from.z=${first.from.z} to.z=${first.to.z}`)
+})
+
 test('center-locked bore: warns when requested diameter is clamped by clearance', () => {
   const moves: ToolpathMove[] = []
   // Request 80% of 4mm tool = 3.2mm diameter = 1.6mm radius

@@ -90,7 +90,7 @@ function testVariantKindsRenderEveryOption(): void {
     ['cutDirection', ['conventional', 'climb']],
     ['machiningOrder', ['level_first', 'feature_first']],
     ['entryStrategy', ['plunge', 'helix', 'ramp']],
-    ['drillType', ['simple', 'peck', 'dwell', 'chip_breaking']],
+    ['drillType', ['simple', 'peck', 'dwell', 'chip_breaking', 'helical']],
   ]
   for (const [kind, variants] of cases) {
     for (const variant of variants) {

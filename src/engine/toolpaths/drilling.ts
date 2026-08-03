@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { DrillType, Operation, Point, Project, Segment, SketchFeature, SketchProfile } from '../../types/project'
+import type { DrillType, Operation, Point, Project, SketchFeature, SketchProfile } from '../../types/project'
 import type { ToolpathWarning } from './warningCodes'
 import type { DrillCycle, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
@@ -114,7 +114,7 @@ function getCircleCenter(profile: SketchProfile): Point | null {
   }
 
   if (profile.segments.length === 4 && profile.segments.every((s) => s.type === 'arc')) {
-    if (!isValidFourArcCircle(profile.segments)) return null
+    if (!isValidFourArcCircle(profile)) return null
     const first = profile.segments[0]
     if (first.type === 'arc') {
       return first.center
@@ -125,13 +125,16 @@ function getCircleCenter(profile: SketchProfile): Point | null {
 }
 
 /**
- * Validate that four arc segments form a proper complete circle (same centre,
- * same radius for each arc). Rejects malformed four-arc geometry so the
- * first arc isn't trusted as a complete circular hole.
+ * Validate that a four-arc SketchProfile forms a proper complete circle:
+ * closed, contiguous, consistently directed, and each arc sweeps exactly one
+ * quarter turn. Returns false for partial, repeated, overlapping, open, or
+ * otherwise malformed four-arc inputs so the caller never treats them as a
+ * circular hole.
  */
-function isValidFourArcCircle(segments: Segment[]): boolean {
-  if (segments.length !== 4) return false
-  const arcs = segments
+function isValidFourArcCircle(profile: SketchProfile): boolean {
+  if (profile.segments.length !== 4) return false
+  if (!profile.closed) return false
+  const arcs = profile.segments
   if (!arcs.every((s) => s.type === 'arc')) return false
 
   const first = arcs[0]
@@ -139,18 +142,44 @@ function isValidFourArcCircle(segments: Segment[]): boolean {
   const cx = first.center.x
   const cy = first.center.y
   const r = Math.hypot(first.to.x - cx, first.to.y - cy)
+  const direction = first.clockwise
+  const tolerance = 1e-6
 
-  // All four arcs must share the same centre and radius within a reasonable
-  // geometric tolerance (1e-6 is approximately 1 µm in mm-space — far tighter
-  // than any legitimate four-arc circle approximation).
+  // All four arcs must share the same centre, radius, and direction.
   for (const seg of arcs) {
     if (seg.type !== 'arc') return false
-    const dcx = seg.center.x - cx
-    const dcy = seg.center.y - cy
-    if (Math.abs(dcx) > 1e-6 || Math.abs(dcy) > 1e-6) return false
-
+    if (Math.abs(seg.center.x - cx) > tolerance || Math.abs(seg.center.y - cy) > tolerance) return false
     const segR = Math.hypot(seg.to.x - seg.center.x, seg.to.y - seg.center.y)
-    if (Math.abs(segR - r) > 1e-6) return false
+    if (Math.abs(segR - r) > tolerance) return false
+    if (seg.clockwise !== direction) return false
+  }
+
+  // profile.start must lie on the circle.
+  const startDist = Math.hypot(profile.start.x - cx, profile.start.y - cy)
+  if (Math.abs(startDist - r) > tolerance) return false
+
+  // Path must be closed: the last arc's to equals profile.start.
+  const last = arcs[3]
+  if (last.type !== 'arc') return false
+  if (Math.abs(last.to.x - profile.start.x) > tolerance || Math.abs(last.to.y - profile.start.y) > tolerance) {
+    return false
+  }
+
+  // Each arc must sweep exactly one quarter turn (≈ 90°). In Y-down project
+  // space atan2 increases clockwise, so clockwise arcs sweep +π/2 and
+  // counterclockwise arcs sweep −π/2.
+  const sweepTolerance = 1e-4
+  let prevPoint = profile.start
+  for (const seg of arcs) {
+    if (seg.type !== 'arc') return false
+    const startAngle = Math.atan2(prevPoint.y - cy, prevPoint.x - cx)
+    const endAngle = Math.atan2(seg.to.y - cy, seg.to.x - cx)
+    let sweep = endAngle - startAngle
+    while (sweep > Math.PI) sweep -= 2 * Math.PI
+    while (sweep < -Math.PI) sweep += 2 * Math.PI
+    const expectedSweep = seg.clockwise ? Math.PI / 2 : -Math.PI / 2
+    if (Math.abs(sweep - expectedSweep) > sweepTolerance) return false
+    prevPoint = seg.to
   }
 
   return true
@@ -164,7 +193,7 @@ function getCircleRadius(profile: SketchProfile): number | null {
     return Math.sqrt(dx * dx + dy * dy)
   }
   if (profile.segments.length === 4 && profile.segments.every((s) => s.type === 'arc')) {
-    if (!isValidFourArcCircle(profile.segments)) return null
+    if (!isValidFourArcCircle(profile)) return null
     const first = profile.segments[0]
     if (first.type === 'arc') {
       const dx = first.to.x - first.center.x
