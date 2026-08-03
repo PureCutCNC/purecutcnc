@@ -259,6 +259,22 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.operation.model': '模型',
   'featureTree.properties.operation.modelLockedTooltip': '模型特征是导入的 3D 对象，无法更改操作类型',
 
+  // ── Properties: imported model 3D orientation ──
+  'featureTree.properties.model.orientation': '三维朝向',
+  'featureTree.properties.model.rotateX': '绕 X 旋转',
+  'featureTree.properties.model.rotateY': '绕 Y 旋转',
+  'featureTree.properties.model.rotateZ': '绕 Z 旋转',
+  'featureTree.properties.model.rotateMinus90': '将该轴反向旋转四分之一圈',
+  'featureTree.properties.model.rotatePlus90': '将该轴正向旋转四分之一圈',
+  'featureTree.properties.model.lift': '抬高',
+  'featureTree.properties.model.liftTooltip': '模型底面的高度。整体上下移动模型，不改变其尺寸。',
+  'featureTree.properties.model.heightHint': '模型高度：{height}',
+  'featureTree.properties.model.linkedHint.one': '朝向属于共享形状，因此 {count} 个副本会一起旋转。',
+  'featureTree.properties.model.linkedHint.other': '朝向属于共享形状，因此全部 {count} 个副本会一起旋转。使用“设为唯一”可单独调整某个副本。',
+  'featureTree.properties.model.busy': '正在重新定位模型…',
+  'featureTree.properties.model.rotateFailed': '无法旋转该模型。其网格可能缺失或无效。',
+  'featureTree.properties.model.resetOrientation': '恢复为导入时的朝向',
+
   // ── Properties: mask mode ──
   'featureTree.properties.maskMode': '遮罩模式',
   'featureTree.properties.maskMode.include': '包含',

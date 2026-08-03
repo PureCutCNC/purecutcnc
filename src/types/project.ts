@@ -280,6 +280,28 @@ export interface PersistedImportedMesh {
   bounds: PersistedImportedMeshBounds
 }
 
+/**
+ * Post-import 3D orientation of an imported model, in degrees.
+ *
+ * Applied to the definition-local mesh **X first, then Y, then Z** about the
+ * model's own axes — i.e. the matrix is `Rz · Ry · Rx`. Degrees (not a
+ * quaternion) because the dominant case is 90° snaps, which round-trip exactly
+ * and stay readable in the `.camj`. Absent means identity, so every project
+ * saved before this field existed loads unchanged.
+ *
+ * Lives on the definition (`FeatureDefinition.stl`) because the derived
+ * silhouette, profile, and top-view image are definition-level; see
+ * ARCHITECTURE §4.
+ */
+export interface ModelOrientation {
+  /** Rotation about the model X axis, degrees. Applied first. */
+  rx: number
+  /** Rotation about the model Y axis, degrees. Applied second. */
+  ry: number
+  /** Rotation about the model Z axis, degrees. Applied last. */
+  rz: number
+}
+
 export interface STLFeatureData {
   /** Imported model file format. Missing means legacy STL. */
   format?: ImportedModelSourceFormat
@@ -292,6 +314,8 @@ export interface STLFeatureData {
   fileData?: string // base64
   scale: number
   axisSwap?: 'none' | 'yz' | 'xz' | 'xy'
+  /** Post-import 3D orientation. Absent = identity (import orientation). */
+  orientation?: ModelOrientation
   /** Legacy imported silhouette PNG. New imports store only topViewDataUrl. */
   silhouetteDataUrl?: string
   /** Project-coordinate projected model silhouette paths. The first/largest path is mirrored in sketch.profile for legacy tools. */

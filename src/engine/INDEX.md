@@ -11,10 +11,11 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
 - `lineRendering.test.ts` — unit tests for `closeLinePolygonIfNeeded`: closed Line profiles append the first point for independent-segment closing; open profiles are unchanged
 - `lineBatcher.ts` — converts every visible open profile and closed operation=line profile (including multi-profile text) into at most two `LineSegments2` draw objects, preserving green/default and blue/Subtract colours without connector segments
 - `lineBatcher.test.ts` — value/object-level tests for independent segment geometry, colours, closed-solid exclusion, multi-profile text, 2,980-contour batching, and GPU resource disposal
-- `importedMesh.ts` — STL/OBJ triangle mesh handling: parsing, axis swaps, silhouette extraction, serialization
+- `importedMesh.ts` — STL/OBJ triangle mesh handling: parsing, axis swaps, post-import 3D orientation (`orientImportedMesh`), silhouette extraction, serialization
 - `importedMesh.test.ts` — tests for the above
-- `importedModelTransform.ts` — shared strict instance-matrix adapter for imported-model preview, CSG, CAM, and export
+- `importedModelTransform.ts` — shared strict instance-matrix adapter for imported-model preview, CSG, CAM, and export, plus the post-import 3D orientation math (`ModelOrientation` → matrix, X→Y→Z order, cache key)
 - `importedModelTransform.test.ts` — imported-model affine transform and consumer-alignment regressions
+- `modelOrientation.test.ts` — post-import 3D orientation (issue #241): rotation order, exact 90° round-trips, rigid-rotation regression across preview/CSG/CAM, and the orientation cache key
 
 ## Subfolders
 - [toolpaths/](toolpaths/INDEX.md) — toolpath generation (pocket, profile, v-carve, surface rough/finish, drill, edge…). **The heart of CAM.**
