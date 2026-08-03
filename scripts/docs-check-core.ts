@@ -34,6 +34,8 @@ export const AGENT_ENTRYPOINTS = [
   '.clinerules',
   '.clauderules',
   '.github/copilot-instructions.md',
+  '.roorules',
+  '.windsurfrules',
 ] as const
 
 const REQUIRED_AGENT_MARKERS = [

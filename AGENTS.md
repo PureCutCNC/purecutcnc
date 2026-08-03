@@ -18,11 +18,11 @@ If the `codebase-memory-mcp` server is connected, prefer its graph tools (`searc
 
 ## Workflow: Issue → Plan → Approve → Implement → PR
 
-**Every task follows this loop. No exceptions — even a one-line bug fix gets an issue and a short plan.** The plan can be tiny if the task is tiny; the point is that intent is written down, agreed, and traceable. Tasks are tracked on the GitHub Project board ([PureCutCNC project #1](https://github.com/orgs/PureCutCNC/projects/1)), **not** in checked-in plan files.
+**Every task follows this loop, and every task gets an issue.** The only steps a change may skip are 2 and 3 (Plan and Approve), and only when the **Fast lane** below says so — nothing else here is optional. The plan can be tiny if the task is tiny; the point is that intent is written down, agreed, and traceable. Tasks are tracked on the GitHub Project board ([PureCutCNC project #1](https://github.com/orgs/PureCutCNC/projects/1)), **not** in checked-in plan files.
 
 1. **Issue.** Open a GitHub issue for the work (`gh issue create`). Add it to the Project board, set the area label and Size, and set Status to `Backlog` (or `Ready` once planned).
-2. **Plan.** Before changing any code, write the plan **in the issue** — in the body, or a follow-up comment if it grows. Do not create a `planning/*_Plan.md` file; the issue is the plan's home.
-3. **Approve.** Share the issue with the user and **wait for an explicit "approved" (or equivalent) signal**. Do not start implementation before approval. If the user asks for changes, edit the issue and re-confirm. On approval, set Status to `Ready`.
+2. **Plan.** Before changing any code, write the plan **in the issue** — in the body, or a follow-up comment if it grows. Do not create a `planning/*_Plan.md` file; the issue is the plan's home. **Fast lane: skipped — check below before you write a plan.**
+3. **Approve.** Share the issue with the user and **wait for an explicit "approved" (or equivalent) signal**. Do not start implementation before approval. If the user asks for changes, edit the issue and re-confirm. On approval, set Status to `Ready`. **Fast lane: skipped — do not ask.**
 4. **Implement.** Branch (`<type>/issue-<NN>-<slug>`), set the board Status to `In progress`, and implement against the plan in the issue. If the plan changes mid-flight, edit the issue so it stays the source of truth.
 5. **PR when done.** When work is complete and the build is green, open the PR with `Closes #NN` in the description. Move Status to `In review`. The PR is created at the **end** as the delivery — it is not where the plan lives.
 6. **Merge.** Merging auto-closes the issue and moves the card to `Done`.
@@ -33,16 +33,21 @@ Abandoned work: close the issue with a short reason; the board moves it to `Done
 
 A change that provably cannot affect machine output, saved projects, or the gates themselves may skip **Plan** and **Approve**. Nothing else changes: still an issue first (the branch name needs its number), still a branch, still green `npm run build`, still a PR with `Closes #NN`, still the board. Every rule in **Build & Verify**, **Git & Branching**, and **Coding Standards** applies unchanged — license header, no `any`, unit tests for engine fixes, e2e when rendered DOM / menu wiring / dialog behavior changes.
 
-Eligibility is mechanical, never a judgment call:
+Eligibility is mechanical, never a judgment call. The two halves are answerable at different times.
+
+**Before you write anything — protected paths.** You already know which files you will edit. If any is protected, it is the full lane; decided, no script needed. However small the diff: machine output and safety (`src/engine/toolpaths/**`, `src/engine/gcode/**`, `src/machine/**`, `src/utils/units.ts`), the `.camj` format and its migrations (`src/types/project.ts`, `src/store/helpers/projectFormat.ts`, `src/import/camj.ts`), the frozen `ProjectStore` contract (`src/store/types.ts`), and the process/gate machinery itself (`AGENTS.md`, `PROJECT.md`, `ARCHITECTURE.md`, `.github/**`, `.claude/**`, the gate scripts under `scripts/`, `package.json`, `tsconfig*.json`, `eslint.config.js`). [`scripts/check-fast-lane.sh`](scripts/check-fast-lane.sh) owns the authoritative list — add to it whenever a new gate lands.
+
+**After implementing, before you commit — size.** This needs a real diff, so it cannot be answered earlier. The script re-checks the paths too, so a file set that grew mid-implementation is still caught here:
 
 ```bash
-npm run check:fast-lane   # before branching, and again before opening the PR
+npm run check:fast-lane
 ```
 
-It measures the diff against `git merge-base origin/main HEAD` and fails unless both hold:
+It measures against `git merge-base origin/main HEAD` and passes at ≤ 3 changed files and ≤ 25 changed lines (added + deleted). Test files (`**/*.test.ts(x)`, `e2e/**`) are exempt from both counts — never trim a test to fit the budget. Generated output (`public/icons.svg`, `package-lock.json`) is counted; if regenerating it blows the budget, take the full lane.
 
-- **Size:** ≤ 3 changed files and ≤ 25 changed lines (added + deleted). Test files (`**/*.test.ts(x)`, `e2e/**`) are exempt from both counts — never trim a test to fit the budget. Generated output (`public/icons.svg`, `package-lock.json`) is counted; if regenerating it blows the budget, take the full lane.
-- **No protected path is touched**, however small the diff: machine output and safety (`src/engine/toolpaths/**`, `src/engine/gcode/**`, `src/machine/**`, `src/utils/units.ts`), the `.camj` format and its migrations (`src/types/project.ts`, `src/store/helpers/projectFormat.ts`, `src/import/camj.ts`), the frozen `ProjectStore` contract (`src/store/types.ts`), and the process/gate machinery itself (`AGENTS.md`, `PROJECT.md`, `ARCHITECTURE.md`, `.github/**`, `.claude/**`, the gate scripts under `scripts/`, `package.json`, `tsconfig*.json`, `eslint.config.js`). [`scripts/check-fast-lane.sh`](scripts/check-fast-lane.sh) owns the authoritative list — add to it whenever a new gate lands.
+Green → skip Plan and Approve. Red → full lane: write the plan into the issue and wait for approval.
+
+**Do not ask whether you may use the fast lane.** A green check is the authorization. Asking reintroduces exactly the round-trip the lane exists to remove.
 
 **Label the PR `fast-lane`.** The `fast-lane-guard` CI job ([`.github/workflows/fast-lane-guard.yml`](.github/workflows/fast-lane-guard.yml)) re-runs the check on every labeled PR, so a labeled PR that does not meet the criteria cannot merge.
 
