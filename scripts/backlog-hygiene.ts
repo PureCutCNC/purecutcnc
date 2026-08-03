@@ -28,7 +28,14 @@
  * Priority is GitHub's **native org-level issue field**, not a project field:
  * it lives on the issue, shows on the issue page, and is filterable from the
  * issues list. The project board projects the same field, so the board and the
- * issue can never disagree. Reading it needs no Projects access.
+ * issue can never disagree.
+ *
+ * The field is *defined* on the org but *read* from the issue: the REST issues
+ * list returns `issue_field_values` inline with the selected option's name
+ * already resolved. So this needs neither Projects access nor org access — the
+ * repo scope the workflow already grants is enough. Asking the org for the
+ * field definition instead is what broke this job on its first scheduled run:
+ * a repo-scoped token gets an empty field list back, not an error.
  *
  * Default is a dry run. Pass --apply, or set DRY_RUN=false, to mutate.
  */
@@ -76,22 +83,22 @@ interface BoardFields {
   status: string | null
 }
 
-interface IssuePage {
-  repository: {
-    issues: {
-      pageInfo: { hasNextPage: boolean; endCursor: string | null }
-      nodes: {
-        number: number
-        title: string
-        url: string
-        updatedAt: string
-        authorAssociation: string
-        labels: { nodes: { name: string }[] }
-        assignees: { totalCount: number }
-        issueFieldValues: { nodes: { optionId?: string }[] }
-      }[]
-    }
-  }
+/** The subset of the REST issues list this script reads. */
+interface RestIssue {
+  number: number
+  title: string
+  html_url: string
+  updated_at: string
+  author_association: string
+  labels: { name: string }[]
+  assignees: unknown[]
+  /** Present only on pull requests, which the issues list mixes in. */
+  pull_request?: unknown
+  /** Absent when the issue carries no field values at all. */
+  issue_field_values?: {
+    issue_field_name?: string
+    single_select_option?: { name: string } | null
+  }[]
 }
 
 interface BoardPage {
@@ -147,75 +154,53 @@ function daysSince(iso: string): number {
   return (now - Date.parse(iso)) / MS_PER_DAY
 }
 
-/** Option id → name for the org's native Priority field. */
-async function fetchPriorityOptions(): Promise<Map<string, string>> {
-  const data = await graphql<{
-    organization: {
-      issueFields: { nodes: { name?: string; options?: { id: string; name: string }[] }[] }
-    }
-  }>(
-    `query($owner:String!){
-      organization(login:$owner){
-        issueFields(first:50){
-          nodes{ ... on IssueFieldSingleSelect { name options{ id name } } }
-        }
-      }
-    }`,
-    { owner },
-  )
-  const field = data.organization.issueFields.nodes.find((f) => f.name === PRIORITY_FIELD)
-  const options = new Map<string, string>()
-  for (const option of field?.options ?? []) options.set(option.id, option.name)
-  if (options.size === 0) {
-    throw new Error(
-      `the org has no native issue field named "${PRIORITY_FIELD}" — ` +
-        'create it in the organization issue settings, or point PRIORITY_FIELD at the right name.',
-    )
+/** A repo-scoped GET. Unlike `rest`, reads still happen during a dry run. */
+async function restGet<T>(path: string): Promise<T> {
+  const response = await fetch(`https://api.github.com/repos/${owner}/${repo}${path}`, {
+    headers: {
+      Authorization: `bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+    },
+  })
+  if (!response.ok) {
+    throw new Error(`GET ${path} → ${response.status} ${await response.text()}`)
   }
-  return options
+  return (await response.json()) as T
+}
+
+/**
+ * The issue's own Priority, or null.
+ *
+ * Matched by field name, not by option name: `Effort` is also a single-select
+ * and also offers High/Medium/Low, so the option name alone is ambiguous.
+ */
+function priorityOf(node: RestIssue): string | null {
+  const value = node.issue_field_values?.find((v) => v.issue_field_name === PRIORITY_FIELD)
+  return value?.single_select_option?.name ?? null
 }
 
 /** Every open issue in the repo, including any that never reached the board. */
-async function fetchOpenIssues(priorityOptions: Map<string, string>): Promise<Issue[]> {
+async function fetchOpenIssues(): Promise<Issue[]> {
   const issues: Issue[] = []
-  let cursor: string | null = null
-  do {
-    const data: IssuePage = await graphql<IssuePage>(
-      `query($owner:String!,$repo:String!,$cursor:String){
-        repository(owner:$owner,name:$repo){
-          issues(states:OPEN,first:100,after:$cursor){
-            pageInfo{hasNextPage endCursor}
-            nodes{
-              number title url updatedAt authorAssociation
-              labels(first:30){nodes{name}}
-              assignees{totalCount}
-              issueFieldValues(first:20){
-                nodes{ ... on IssueFieldSingleSelectValue { optionId } }
-              }
-            }
-          }
-        }
-      }`,
-      { owner, repo, cursor },
-    )
-    const page = data.repository.issues
-    for (const node of page.nodes) {
+  const perPage = 100
+  for (let page = 1; ; page++) {
+    const batch = await restGet<RestIssue[]>(`/issues?state=open&per_page=${perPage}&page=${page}`)
+    for (const node of batch) {
+      // The issues list mixes in pull requests; the Backlog Contract governs issues.
+      if (node.pull_request) continue
       issues.push({
         number: node.number,
         title: node.title,
-        url: node.url,
-        updatedAt: node.updatedAt,
-        labels: node.labels.nodes.map((l) => l.name),
-        assigned: node.assignees.totalCount > 0,
-        authorAssociation: node.authorAssociation,
-        priority:
-          node.issueFieldValues.nodes
-            .map((v) => (v.optionId ? priorityOptions.get(v.optionId) : undefined))
-            .find((name) => name !== undefined) ?? null,
+        url: node.html_url,
+        updatedAt: node.updated_at,
+        labels: node.labels.map((l) => l.name),
+        assigned: node.assignees.length > 0,
+        authorAssociation: node.author_association,
+        priority: priorityOf(node),
       })
     }
-    cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null
-  } while (cursor)
+    if (batch.length < perPage) break
+  }
   return issues
 }
 
@@ -363,12 +348,12 @@ const staleComment = () =>
   `## No activity for ${STALE_AFTER_DAYS} days\n\n` +
   `Per the [Backlog Contract](../blob/main/AGENTS.md#the-backlog-contract), this will close ` +
   `in **${CLOSE_AFTER_STALE_DAYS} days** unless something happens here.\n\n` +
-  `**To keep it:** comment saying why, or raise its board Priority to \`P1 — Next\`. ` +
+  `**To keep it:** comment saying why, or raise its Priority to \`High\`. ` +
   `Either resets the clock. One sentence is enough — that sentence *is* the act of valuing it.\n\n` +
   `**If it closes, nothing is lost.** Closed issues stay searchable and reopenable forever. ` +
   `The good ones come back on their own, with better evidence than the original filing — ` +
   `that is the whole bet this rule makes.\n\n` +
-  `<sub>Exempt from decay: external reports, \`P0\`/\`P1\`, assigned issues, and anything past ` +
+  `<sub>Exempt from decay: external reports, \`Urgent\`/\`High\`, assigned issues, and anything past ` +
   `\`Backlog\` on the board.</sub>`
 
 const closeComment = (staleSince: string) =>
@@ -495,8 +480,7 @@ async function updateDigest(body: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const priorityOptions = await fetchPriorityOptions()
-  const issues = await fetchOpenIssues(priorityOptions)
+  const issues = await fetchOpenIssues()
   // Optional: costs one decay exemption if unavailable, never correctness.
   let board = new Map<number, BoardFields>()
   try {
@@ -508,6 +492,20 @@ async function main(): Promise<void> {
     )
   }
   const plan = await buildPlan(issues, board)
+
+  // Not one issue ranked, out of many, means the field was renamed or removed —
+  // not that every card was genuinely left unranked. Acting on that reading is
+  // the dangerous case, because it strips the Urgent/High exemption from exactly
+  // the work that is committed. R1 and the digest still report the gap; R2 stands
+  // down until a Priority is visible again.
+  if (issues.length > 0 && !issues.some((issue) => issue.priority)) {
+    console.log(
+      `backlog-hygiene: no open issue carries a "${PRIORITY_FIELD}" value — ` +
+        'assuming the field is missing, not the priorities. Skipping decay this run.',
+    )
+    plan.markStale = []
+    plan.close = []
+  }
 
   console.log(`backlog-hygiene: ${apply ? 'APPLY' : 'DRY RUN'} · ${issues.length} open issues`)
   const report = (label: string, numbers: number[]) =>
