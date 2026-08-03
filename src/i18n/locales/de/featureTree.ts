@@ -265,7 +265,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.model.heightHint': 'Modellhöhe: {height}',
   'featureTree.properties.model.linkedHint.one': 'Die Ausrichtung gehört zur gemeinsamen Form, daher dreht sich {count} Kopie mit.',
   'featureTree.properties.model.linkedHint.other': 'Die Ausrichtung gehört zur gemeinsamen Form, daher drehen sich alle {count} Kopien gemeinsam. Mit „Eindeutig machen“ lässt sich eine Kopie einzeln ausrichten.',
-  'featureTree.properties.model.working': 'Modell wird neu projiziert … {percent} %',
+  'featureTree.properties.model.busy': 'Modell wird neu ausgerichtet …',
   'featureTree.properties.model.rotateFailed': 'Dieses Modell konnte nicht gedreht werden. Sein Netz fehlt möglicherweise oder ist ungültig.',
   'featureTree.properties.model.resetOrientation': 'Auf Importausrichtung zurücksetzen',
 

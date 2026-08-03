@@ -25,6 +25,7 @@
  */
 
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { DisclosureSection } from '../common/DisclosureSection'
 import {
   liftImportedModel,
@@ -118,10 +119,13 @@ export function ModelOrientationSection({
 }: ModelOrientationSectionProps) {
   const { t, tPlural } = useI18n()
   // Re-deriving the silhouette, profile, and top view is a Z-slice projection
-  // over the whole mesh, so it is async and can take a moment on a heavy model.
-  const [progress, setProgress] = useState<number | null>(null)
+  // over the whole mesh, so it is async and takes seconds on a heavy model.
+  const [busy, setBusy] = useState(false)
+  // Resolved when the work starts rather than read during render, so the
+  // render stays free of DOM queries. Null (no centre stage in this shell
+  // layout) simply means no spinner — the operation is unaffected.
+  const [centreStage, setCentreStage] = useState<Element | null>(null)
   const [error, setError] = useState(false)
-  const busy = progress !== null
 
   const current = orientation ?? IDENTITY_MODEL_ORIENTATION
   const isDefaultOrientation = isIdentityModelOrientation(orientation)
@@ -130,16 +134,27 @@ export function ModelOrientationSection({
   async function applyOrientation(next: ModelOrientation | null) {
     if (busy) return
     setError(false)
-    setProgress(0)
+    setCentreStage(document.querySelector('.centre-stage'))
+    setBusy(true)
+    // Hand the browser two frames to commit and paint the overlay before the
+    // work starts. This is not cosmetic: `extractImportedMeshProfileAndBounds`
+    // only yields on its waterline fallback (>200k triangles or a non-manifold
+    // mesh). A manifold mesh under that limit runs the whole projection inside
+    // one microtask drain, so without this yield React never paints the busy
+    // state at all — the app just freezes for a few seconds with no indicator.
+    // The spinner keeps turning through the freeze because `cam-spin` animates
+    // transform only, which the compositor runs off the main thread.
+    await new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+    })
     try {
-      const result = await reorientImportedModel(featureId, next, (percent) => {
-        setProgress(Math.max(0, Math.min(100, Math.round(percent))))
-      })
+      const result = await reorientImportedModel(featureId, next)
       if (!result) setError(true)
     } catch {
       setError(true)
     } finally {
-      setProgress(null)
+      setBusy(false)
+      setCentreStage(null)
     }
   }
 
@@ -228,10 +243,19 @@ export function ModelOrientationSection({
           )}
         </div>
       ) : null}
-      {busy ? (
-        <div className="properties-model-hint">
-          {t('featureTree.properties.model.working', { percent: progress ?? 0 })}
-        </div>
+      {busy && centreStage ? createPortal(
+        // Portalled onto the centre stage rather than rendered here, so the
+        // spinner sits over the viewport whose contents are being recomputed —
+        // the same treatment the simulation viewport uses while it computes,
+        // and scoped to the view instead of washing out the whole window.
+        <div
+          className="viewport-busy-overlay"
+          role="status"
+          aria-label={t('featureTree.properties.model.busy')}
+        >
+          <div className="viewport-busy-spinner" />
+        </div>,
+        centreStage,
       ) : null}
       {error ? (
         <div className="properties-warning">

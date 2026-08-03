@@ -92,6 +92,30 @@ function axisButton(page: Page, axisLabel: string, buttonLabel: string) {
     .getByRole('button', { name: buttonLabel, exact: true })
 }
 
+/**
+ * Arms a MutationObserver that latches if the busy overlay ever reaches the
+ * DOM. Locator polling cannot do this job: on a small mesh the reposition
+ * finishes in a couple of frames, so the overlay is real but too short-lived
+ * to catch by sampling. The observer fires on the mutation itself.
+ *
+ * What this actually guards is the paint yield in ModelOrientationSection —
+ * without it React never commits the busy state at all for a manifold mesh,
+ * and the app just freezes silently.
+ */
+async function watchForBusyOverlay(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const target = window as unknown as { __overlaySeen?: boolean }
+    target.__overlaySeen = false
+    new MutationObserver(() => {
+      if (document.querySelector('.viewport-busy-overlay')) target.__overlaySeen = true
+    }).observe(document.body, { childList: true, subtree: true })
+  })
+}
+
+function busyOverlayWasShown(page: Page): Promise<boolean> {
+  return page.evaluate(() => (window as unknown as { __overlaySeen?: boolean }).__overlaySeen === true)
+}
+
 test.describe('imported model 3D orientation', () => {
   test('rotating 90° about X is rigid and updates the sketch silhouette', async ({ app }) => {
     test.setTimeout(90_000)
@@ -106,6 +130,7 @@ test.describe('imported model 3D orientation', () => {
     expect(beforeHeight / before.silhouetteBounds.height).toBeCloseTo(BOX_Z / BOX_Y, 2)
 
     await openOrientationSection(app.page)
+    await watchForBusyOverlay(app.page)
     await axisButton(app.page, 'Rotate X', '+90°').click()
 
     // The rotation is async (silhouette re-projection); wait for the commit.
@@ -113,6 +138,7 @@ test.describe('imported model 3D orientation', () => {
       async () => readModelState(await getProject(app.page)).orientation?.rx ?? null,
       { timeout: 30_000 },
     ).toBe(90)
+    expect(await busyOverlayWasShown(app.page), 'busy overlay should reach the DOM').toBe(true)
 
     const after = readModelState(await getProject(app.page))
     // Standing the box on its side swaps the Y and Z extents. Rigid means the

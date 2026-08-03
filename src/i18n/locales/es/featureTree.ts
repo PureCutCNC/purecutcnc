@@ -210,7 +210,7 @@ export const featureTreeEs: Record<keyof typeof featureTreeEn, string> = {
   "featureTree.properties.model.heightHint": "Altura del modelo: {height}",
   "featureTree.properties.model.linkedHint.one": "La orientación forma parte de la forma compartida, por lo que {count} copia gira con ella.",
   "featureTree.properties.model.linkedHint.other": "La orientación forma parte de la forma compartida, por lo que las {count} copias giran juntas. Usa «Hacer único» para orientar una por separado.",
-  "featureTree.properties.model.working": "Reproyectando el modelo… {percent} %",
+  "featureTree.properties.model.busy": "Reposicionando el modelo…",
   "featureTree.properties.model.rotateFailed": "No se pudo girar este modelo. Puede que falte su malla o que no sea válida.",
   "featureTree.properties.model.resetOrientation": "Restablecer a la orientación de importación",
   "featureTree.properties.maskMode": "Modo de máscara",

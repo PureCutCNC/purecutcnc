@@ -271,7 +271,7 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.model.heightHint': '模型高度：{height}',
   'featureTree.properties.model.linkedHint.one': '朝向属于共享形状，因此 {count} 个副本会一起旋转。',
   'featureTree.properties.model.linkedHint.other': '朝向属于共享形状，因此全部 {count} 个副本会一起旋转。使用“设为唯一”可单独调整某个副本。',
-  'featureTree.properties.model.working': '正在重新投影模型… {percent}%',
+  'featureTree.properties.model.busy': '正在重新定位模型…',
   'featureTree.properties.model.rotateFailed': '无法旋转该模型。其网格可能缺失或无效。',
   'featureTree.properties.model.resetOrientation': '恢复为导入时的朝向',
 

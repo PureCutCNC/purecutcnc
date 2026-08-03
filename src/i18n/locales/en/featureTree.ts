@@ -270,7 +270,7 @@ export const featureTreeEn = {
   'featureTree.properties.model.heightHint': 'Model height: {height}',
   'featureTree.properties.model.linkedHint.one': 'Orientation is part of the shared shape, so {count} copy rotates with it.',
   'featureTree.properties.model.linkedHint.other': 'Orientation is part of the shared shape, so all {count} copies rotate together. Use Make Unique to orient one on its own.',
-  'featureTree.properties.model.working': 'Reprojecting model… {percent}%',
+  'featureTree.properties.model.busy': 'Repositioning model…',
   'featureTree.properties.model.rotateFailed': 'Could not rotate this model. Its mesh may be missing or invalid.',
   'featureTree.properties.model.resetOrientation': 'Reset to import orientation',
 

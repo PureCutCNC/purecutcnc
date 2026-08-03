@@ -126,7 +126,6 @@ export interface ReorientResult {
 export async function reorientImportedModel(
   featureId: string,
   orientation: ModelOrientation | null,
-  onProgress?: (percent: number) => void,
 ): Promise<ReorientResult | null> {
   const { project, updateFeature } = useProjectStore.getState()
   const instance = project.features.find((feature) => feature.id === featureId)
@@ -149,7 +148,6 @@ export async function reorientImportedModel(
       (orientedMesh.bounds.maxZ - orientedMesh.bounds.minZ) * scale,
       project.meta.units,
     ),
-    onProgress,
   })
   if (!artifacts) return null
 
