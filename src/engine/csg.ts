@@ -21,11 +21,14 @@ import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, Sketch
 import { expandFeatureGeometry } from '../text'
 import { modelFeatures } from '../store/helpers/featureRoles'
 import { resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
-import { loadPersistedBufferGeometryChunks, loadPersistedTriangleMesh } from './importedMesh'
+import { loadPersistedBufferGeometryChunks, loadPersistedTriangleMesh, orientImportedMesh } from './importedMesh'
 import {
   importedModelInstanceTransform,
   importedModelMatrix4,
   importedModelTransformKey,
+  isIdentityModelOrientation,
+  modelOrientationKey,
+  modelOrientationMatrix4,
   transformImportedModelPoint,
 } from './importedModelTransform'
 import type { MeshSliceIndex } from './toolpaths/meshSlicing'
@@ -230,6 +233,9 @@ function stlTransformedGeometryCacheKey(
     feature.id,
     stl?.format ?? 'stl',
     stl?.axisSwap ?? 'none',
+    // Post-import 3D orientation changes every vertex, so omitting it here
+    // would serve stale, un-rotated geometry to CAM and export (issue #241).
+    modelOrientationKey(stl?.orientation),
     stl?.scale ?? 1,
     importedModelTransformKey(transform),
     zTop,
@@ -295,9 +301,15 @@ export function loadSTLTransformedGeometry(
   const cached = getCachedSTLTransformedGeometry(cacheKey, asset.positions, asset.indices)
   if (cached) return cached
 
-  const sourceMesh = loadPersistedTriangleMesh(asset)
-  if (!sourceMesh) return null
+  const persistedMesh = loadPersistedTriangleMesh(asset)
+  if (!persistedMesh) return null
   const stl = feature.stl
+
+  // Post-import 3D orientation is a rigid rotation of the definition-local
+  // mesh, applied before scale and the Z fit. Bounds come from the rotated
+  // mesh, so the Z fit below stretches to the rotated height and the model
+  // keeps its true aspect ratio (issue #241).
+  const sourceMesh = orientImportedMesh(persistedMesh, stl?.orientation, stl?.meshAssetId)
 
   const rawPos = sourceMesh.positions
   const numVerts = rawPos.length / 3
@@ -374,6 +386,8 @@ export function buildFeatureMesh(
 
     const userScale = stl?.scale ?? 1
     const transform = importedModelInstanceTransform(feature)
+    const orientation = stl?.orientation
+    const oriented = !isIdentityModelOrientation(orientation)
 
     // Resolve z dimensions (DimensionRef → number).
     // STL features always store numeric z values, but the type allows DimensionRef.
@@ -384,13 +398,25 @@ export function buildFeatureMesh(
     // space, untransformed. Apply userScale to derive the post-uniform-scale
     // mesh height for the z-fit step. (Previously this was done via
     // geometry.computeBoundingBox() after baking userScale into the geometry.)
-    const meshHeight = (asset.bounds.maxZ - asset.bounds.minZ) * userScale
+    //
+    // A rotated model needs the ROTATED Z extent instead, and it has to be the
+    // exact bounds of the rotated vertices — rotating the eight AABB corners
+    // over-estimates, which would put the preview's Z fit slightly out of step
+    // with loadSTLTransformedGeometry and desync the preview from the toolpath.
+    // orientImportedMesh caches per (asset, orientation), so this costs one
+    // vertex pass on the first rebuild after a rotation and nothing after.
+    const persistedMesh = oriented ? loadPersistedTriangleMesh(asset) : null
+    const zBounds = persistedMesh
+      ? orientImportedMesh(persistedMesh, orientation, stl?.meshAssetId).bounds
+      : asset.bounds
+    const meshHeight = (zBounds.maxZ - zBounds.minZ) * userScale
     const targetHeight = Math.max(0.1, Math.abs(zTop - zBottom))
     const zScaleFactor = targetHeight / (meshHeight || 1)
-    const minZAfterScale = asset.bounds.minZ * userScale
+    const minZAfterScale = zBounds.minZ * userScale
 
     // The original geometry-level transform sequence (applied in order):
     //   1. scale(userScale)              → uniform scale
+    //   1b. post-import orientation      → rigid rotation of the model (#241)
     //   2. translate(0,0,-minZ)          → move bottom of mesh to z=0
     //   3. scale(1,1,zScaleFactor)       → stretch Z to targetHeight
     //   4. translate(0,0,min(zTop,zBot)) → move bottom to feature's bottom plane
@@ -403,11 +429,12 @@ export function buildFeatureMesh(
     // applied) to inner (first applied):
     //
     //   group (rotateX(-π/2), instance affine transform)
-    //     └── inner (scale Z, translate -minZ*userScale, scale userScale, then
-    //                translate by min(zTop,zBot) along Z BEFORE rotateX)
+    //     └── inner (scale Z, translate -minZ*userScale, orientation, scale
+    //                userScale, then translate by min(zTop,zBot) along Z
+    //                BEFORE rotateX)
     //
-    // The clearest way to assemble this without juggling matrices is two
-    // nested groups: an inner that handles the mesh-local scale/translate, and
+    // The clearest way to assemble this without juggling matrices is nested
+    // groups: an inner that handles the mesh-local scale/rotate/translate, and
     // an outer that handles the world-space affine placement. We also fold
     // mesh.scale.z = -1 into the inner.
 
@@ -415,11 +442,31 @@ export function buildFeatureMesh(
     //   z' = (z * userScale - minZAfterScale) * zScaleFactor + min(zTop,zBot)
     // As an affine transform on (x,y,z): scale (userScale, userScale, userScale*zScaleFactor),
     // then translate (0, 0, -minZAfterScale * zScaleFactor + min(zTop,zBot)).
+    //
+    // With an orientation the non-uniform Z scale must land AFTER the rotation,
+    // so the two cannot share a node (Three composes a node as T·R·S). The
+    // rotation gets its own group between the uniform scale and the Z fit;
+    // uniform scale commutes with rotation, so the result is identical to the
+    // per-vertex path in loadSTLTransformedGeometry.
     const innerGroup = new THREE.Group()
-    innerGroup.scale.set(userScale, userScale, userScale * zScaleFactor)
-    innerGroup.position.set(0, 0, -minZAfterScale * zScaleFactor + Math.min(zTop, zBottom))
-    for (const chunk of chunks) {
-      innerGroup.add(new THREE.Mesh(chunk, material))
+    if (orientation && persistedMesh) {
+      innerGroup.scale.set(1, 1, zScaleFactor)
+      innerGroup.position.set(0, 0, -minZAfterScale * zScaleFactor + Math.min(zTop, zBottom))
+
+      const orientGroup = new THREE.Group()
+      orientGroup.matrixAutoUpdate = false
+      orientGroup.matrix.fromArray(modelOrientationMatrix4(orientation))
+      orientGroup.matrix.scale(new THREE.Vector3(userScale, userScale, userScale))
+      innerGroup.add(orientGroup)
+      for (const chunk of chunks) {
+        orientGroup.add(new THREE.Mesh(chunk, material))
+      }
+    } else {
+      innerGroup.scale.set(userScale, userScale, userScale * zScaleFactor)
+      innerGroup.position.set(0, 0, -minZAfterScale * zScaleFactor + Math.min(zTop, zBottom))
+      for (const chunk of chunks) {
+        innerGroup.add(new THREE.Mesh(chunk, material))
+      }
     }
 
     // Each subsequent step in the original sequence (5–6, then mesh.scale.z = -1)
@@ -664,10 +711,14 @@ export function buildFeatureSolid(
   const asset = feature.kind === 'stl' ? featureModelAsset(project, feature) : null
   if (asset) {
     try {
-      const mesh = loadPersistedTriangleMesh(asset)
-      if (!mesh) return null
+      const persistedMesh = loadPersistedTriangleMesh(asset)
+      if (!persistedMesh) return null
       const stl = feature.stl
-      
+      // Orient before building the solid so `solid.boundingBox()` below is the
+      // rotated Z extent — the Z fit must stretch to the rotated height, not
+      // the import-orientation one, or rotation would squash the model.
+      const mesh = orientImportedMesh(persistedMesh, stl?.orientation, stl?.meshAssetId)
+
       const manifoldMesh = new module.Mesh({
         numProp: 3,
         vertProperties: new Float32Array(mesh.positions),

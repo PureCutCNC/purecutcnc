@@ -930,7 +930,11 @@
   line-height: 1.45;
 }
 
-.simulation-viewport__computing-overlay {
+/* Shared "this viewport is recomputing" treatment: a spinner over the centre
+   stage, no copy. `.viewport-busy-overlay` is the same thing rendered over the
+   whole centre stage rather than inside the simulation viewport (issue #241). */
+.simulation-viewport__computing-overlay,
+.viewport-busy-overlay {
   position: absolute;
   inset: 0;
   display: flex;
@@ -941,7 +945,8 @@
   z-index: 5;
 }
 
-.simulation-viewport__spinner {
+.simulation-viewport__spinner,
+.viewport-busy-spinner {
   width: 32px;
   height: 32px;
   border: 3px solid color-mix(in oklab, var(--text-dim) 22%, transparent);
@@ -3877,6 +3882,56 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+/* ── Imported-model 3D orientation (issue #241) ───────────── */
+
+/* An angle field carries two quarter-turn buttons as well as its input, which
+   does not fit the panel's narrow control column at any sensible button size.
+   These rows put the label on its own line and give the controls the full
+   width; the flex row still wraps rather than overflowing if it has to. */
+.properties-field--axis {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+/* Matches the specificity of the panel's `grid-column: 2` control rule and is
+   declared later, so the control row stacks under its label instead of being
+   pushed into a column this row does not have. */
+.properties-field.properties-field--axis > div.properties-axis-row {
+  grid-column: 1;
+}
+
+.properties-axis-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.properties-axis-row input {
+  flex: 1 1 56px;
+  min-width: 56px;
+}
+
+/* Overrides the panel's full-width control rule; same specificity, declared
+   later, so the quarter-turn buttons stay compact next to the angle field. */
+.properties-field .properties-axis-row button.properties-axis-btn {
+  flex: 0 0 auto;
+  width: auto;
+  height: 32px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.properties-model-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 2px 0;
 }
 
 /* ── A1.1: progressive-disclosure "Advanced" section ──────── */

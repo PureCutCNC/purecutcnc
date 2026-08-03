@@ -17,7 +17,13 @@
 import * as THREE from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import type { PersistedImportedMesh } from '../types/project'
+import type { ModelOrientation, PersistedImportedMesh } from '../types/project'
+import {
+  isIdentityModelOrientation,
+  modelOrientationKey,
+  normalizeModelOrientation,
+  rotatePointByModelOrientation,
+} from './importedModelTransform'
 
 export type ImportedModelFormat = 'stl' | 'obj'
 export type ModelAxisOrientation = 'none' | 'yz' | 'xz' | 'xy'
@@ -77,11 +83,13 @@ export const MAX_UINT16_INDEX = 65535
 
 const GEOMETRY_CACHE_LIMIT = 6
 const TRIANGLE_MESH_CACHE_LIMIT = 6
+const ORIENTED_MESH_CACHE_LIMIT = 4
 const geometryCache = new Map<string, CachedGeometryEntry>()
 const triangleMeshCache = new Map<string, CachedTriangleMeshEntry>()
 const persistedTriangleMeshCache = new Map<string, CachedPersistedTriangleMeshEntry>()
 const persistedGeometryCache = new Map<string, CachedPersistedGeometryEntry>()
 const persistedGeometryChunksCache = new Map<string, CachedPersistedGeometryChunksEntry>()
+const orientedMeshCache = new Map<string, ImportedTriangleMesh>()
 
 export function clearImportedSourceCaches(): void {
   for (const entry of geometryCache.values()) {
@@ -93,6 +101,7 @@ export function clearImportedSourceCaches(): void {
 
 export function clearImportedModelCaches(): void {
   clearImportedSourceCaches()
+  orientedMeshCache.clear()
   persistedTriangleMeshCache.clear()
   for (const entry of persistedGeometryCache.values()) {
     entry.geometry.dispose()
@@ -269,6 +278,76 @@ export function applyAxisOrientationToPositions(
       positions[i + 1] = tmp
     }
   }
+}
+
+/**
+ * Rotate mesh positions in place by a post-import {@link ModelOrientation}
+ * (issue #241). Rigid — lengths and angles are preserved, so the caller must
+ * recompute bounds afterwards rather than reusing the source ones.
+ */
+export function applyModelOrientationToPositions(
+  positions: Float32Array,
+  orientation: ModelOrientation,
+): void {
+  if (isIdentityModelOrientation(orientation)) return
+
+  for (let i = 0; i < positions.length; i += 3) {
+    const rotated = rotatePointByModelOrientation(
+      orientation,
+      positions[i],
+      positions[i + 1],
+      positions[i + 2],
+    )
+    positions[i] = rotated.x
+    positions[i + 1] = rotated.y
+    positions[i + 2] = rotated.z
+  }
+}
+
+/**
+ * Return the mesh as seen through its post-import orientation, with bounds
+ * recomputed from the rotated vertices.
+ *
+ * Identity orientation returns the **same object**, so every project that
+ * predates the field — and every model the user never rotated — pays nothing.
+ * Results are cached per (mesh identity, orientation) because callers on the
+ * CAM and preview paths ask for the same pair repeatedly.
+ */
+export function orientImportedMesh(
+  mesh: ImportedTriangleMesh,
+  orientation: ModelOrientation | null | undefined,
+  cacheId?: string,
+): ImportedTriangleMesh {
+  const normalized = normalizeModelOrientation(orientation)
+  if (!normalized) return mesh
+
+  const key = cacheId ? `${cacheId}|${modelOrientationKey(normalized)}` : null
+  if (key) {
+    const cached = orientedMeshCache.get(key)
+    if (cached) {
+      orientedMeshCache.delete(key)
+      orientedMeshCache.set(key, cached)
+      return cached
+    }
+  }
+
+  const positions = new Float32Array(mesh.positions)
+  applyModelOrientationToPositions(positions, normalized)
+  const oriented: ImportedTriangleMesh = {
+    positions,
+    index: mesh.index,
+    bounds: computeMeshBounds(positions),
+  }
+
+  if (key) {
+    orientedMeshCache.set(key, oriented)
+    while (orientedMeshCache.size > ORIENTED_MESH_CACHE_LIMIT) {
+      const oldestKey = orientedMeshCache.keys().next().value
+      if (!oldestKey) break
+      orientedMeshCache.delete(oldestKey)
+    }
+  }
+  return oriented
 }
 
 function getCachedGeometry(key: string, sourceData: ImportedSourceData): THREE.BufferGeometry | null {
