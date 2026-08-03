@@ -184,12 +184,120 @@ function test5() {
   console.log('test5 PASS')
 }
 
+// Test 6: circle endpoint snapped to a 72-gon vertex (exact boundary).
+// With canonical 5° flattening, a snapped curve endpoint lands exactly on
+// the splitter's 72-gon. This exercises the exact-endpoint fix on a curve.
+function test6() {
+  const cx = 2, cy = 1.5, r = 1.0
+  const n = 72
+  const circlePts: Point[] = []
+  for (let i = 0; i < n; i += 1) {
+    const a = -Math.PI / 2 + (i / n) * 2 * Math.PI
+    circlePts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) })
+  }
+  const circle = polygonProfile(circlePts)
+  // i=0 vertex (bottom) and i=18 vertex (right) — both exact 72-gon vertices.
+  const cutter = openPolyline([circlePts[0], circlePts[18]])
+  const crosses = openCrossesClosedFully(cutter, circle)
+  console.log('test6 openCrossesClosedFully:', crosses)
+  assert(crosses, 'chord between 72-gon vertices should fully cross')
+  const result = splitClosedByOpen(circle, cutter)
+  console.log('test6 result:', result === null ? 'NULL' : `${result.pieces.length} pieces`)
+  assert(result !== null, 'result is non-null')
+  assert(result!.pieces.length === 2, `expected 2 pieces, got ${result!.pieces.length}`)
+  console.log('test6 PASS')
+}
+
+// Test 7: analytic intersection snap on a circle. Endpoints on the
+// mathematical circle (slightly OUTSIDE the inscribed 72-gon) — the cutter
+// crosses the 72-gon boundary twice, no tolerance needed.
+function test7() {
+  const cx = 2, cy = 1.5, r = 1.0
+  const n = 72
+  const circlePts: Point[] = []
+  for (let i = 0; i < n; i += 1) {
+    const a = -Math.PI / 2 + (i / n) * 2 * Math.PI
+    circlePts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) })
+  }
+  const circle = polygonProfile(circlePts)
+  // Points on the math circle at non-vertex angles (5° and 185° from -π/2).
+  const a0 = -Math.PI / 2 + (5 * Math.PI) / 180
+  const a1 = -Math.PI / 2 + (185 * Math.PI) / 180
+  const cutter = openPolyline([
+    { x: cx + r * Math.cos(a0), y: cy + r * Math.sin(a0) },
+    { x: cx + r * Math.cos(a1), y: cy + r * Math.sin(a1) },
+  ])
+  const crosses = openCrossesClosedFully(cutter, circle)
+  console.log('test7 openCrossesClosedFully:', crosses)
+  assert(crosses, 'analytic snap endpoints should fully cross')
+  const result = splitClosedByOpen(circle, cutter)
+  console.log('test7 result:', result === null ? 'NULL' : `${result.pieces.length} pieces`)
+  assert(result !== null, 'result is non-null')
+  assert(result!.pieces.length === 2, `expected 2 pieces, got ${result!.pieces.length}`)
+  console.log('test7 PASS')
+}
+
+// Test 8: straight-edge endpoint genuinely INSIDE the polygon is rejected.
+function test8() {
+  const square = polygonProfile([
+    { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 4 }, { x: 0, y: 4 },
+  ])
+  // Start strictly inside the square, end outside.
+  const cutter = openPolyline([{ x: 1, y: 1 }, { x: 5, y: 5 }])
+  const crosses = openCrossesClosedFully(cutter, square)
+  console.log('test8 openCrossesClosedFully:', crosses)
+  assert(!crosses, 'cutter starting strictly inside should be rejected')
+  const result = splitClosedByOpen(square, cutter)
+  console.log('test8 result:', result === null ? 'NULL' : `${result.pieces.length} pieces`)
+  assert(result === null, 'strictly-inside endpoint must reject split')
+  console.log('test8 PASS')
+}
+
+// Test 9: boundary-to-boundary cutter routed OUTSIDE the target is rejected.
+// V-shaped cutter: both endpoints on the bottom edge, middle vertex below.
+function test9() {
+  const square = polygonProfile([
+    { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 4 }, { x: 0, y: 4 },
+  ])
+  const cutter = openPolyline([
+    { x: 1, y: 0 },
+    { x: 2, y: -1 },
+    { x: 3, y: 0 },
+  ])
+  const result = splitClosedByOpen(square, cutter)
+  console.log('test9 result:', result === null ? 'NULL' : `${result.pieces.length} pieces`)
+  assert(result === null, 'cutter routed outside target must be rejected')
+  console.log('test9 PASS')
+}
+
+// Test 10: original exact final-endpoint-on-boundary case → 2 pieces.
+function test10() {
+  const square = polygonProfile([
+    { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 4 }, { x: 0, y: 4 },
+  ])
+  // Cutter from outside ending exactly on the top edge.
+  const cutter = openPolyline([{ x: 2, y: -1 }, { x: 2, y: 4 }])
+  const crosses = openCrossesClosedFully(cutter, square)
+  console.log('test10 openCrossesClosedFully:', crosses)
+  assert(crosses, 'cutter ending on boundary should fully cross')
+  const result = splitClosedByOpen(square, cutter)
+  console.log('test10 result:', result === null ? 'NULL' : `${result.pieces.length} pieces`)
+  assert(result !== null, 'result is non-null')
+  assert(result!.pieces.length === 2, `expected 2 pieces, got ${result!.pieces.length}`)
+  console.log('test10 PASS')
+}
+
 try {
   test1()
   test2()
   test3()
   test4()
   test5()
+  test6()
+  test7()
+  test8()
+  test9()
+  test10()
   console.log('\nAll tests PASS')
 } catch (e) {
   console.error(e)

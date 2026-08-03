@@ -17,6 +17,7 @@
 import type { SnapMode } from '../../sketch/snapping'
 import type { SketchInsertTarget } from '../../store/types'
 import { bezierPoint, sampleProfilePoints } from '../../types/project'
+import { DEFAULT_FLATTEN_ARC_STEP } from '../../engine/toolpaths/geometry'
 import type { Point, Segment, SketchFeature, SketchProfile } from '../../types/project'
 import { anchorPointForIndex, arcControlPoint } from './profilePrimitives'
 import { distance2, pointInProfile, pointsEqual } from './hitTest'
@@ -171,7 +172,7 @@ export function sampleSegmentPolyline(start: Point, segment: Segment): Point[] {
     segments: [segment],
     closed: false,
   }
-  return sampleProfilePoints(profile, 12, Math.PI / 18)
+  return sampleProfilePoints(profile, 12, DEFAULT_FLATTEN_ARC_STEP)
 }
 
 export function nearestPointOnPolyline(point: Point, polyline: Point[]): Point {
