@@ -10,7 +10,9 @@
 
 set -euo pipefail
 
-WORKTREE_BASE="${PURECUT_WORKTREE_BASE:-/Users/frankp/Projects/worktrees/purecutcnc}"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKTREE_BASE="${PURECUT_WORKTREE_BASE:-$(dirname "$REPO_ROOT")/worktrees/$(basename "$REPO_ROOT")}"
 
 usage() {
   cat <<'EOF'
