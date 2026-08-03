@@ -14,11 +14,7 @@
  * limitations under the License.
  */
 
-import {
-  clampImportedMeshSilhouetteZSteps,
-  extractImportedMeshProfileAndBounds,
-  renderImportedMeshTopViewToDataUrl,
-} from '../../import/stl'
+import { deriveImportedModelArtifacts, recommendedSilhouetteZSteps } from './importedModelArtifacts'
 import { useProjectStore } from '../../store/projectStore'
 import {
   clearImportedSourceCaches,
@@ -38,17 +34,6 @@ function sourceTypeLabel(sourceType: ImportedModelFormat): string {
   if (sourceType === 'stl') return 'STL'
   if (sourceType === 'obj') return 'OBJ'
   return 'Unknown'
-}
-
-function defaultSilhouetteZStepSize(units: Units): number {
-  return units === 'inch' ? 0.02 : 0.5
-}
-
-function recommendedSilhouetteZSteps(modelHeight: number, units: Units): number {
-  if (!(modelHeight > 0)) return clampImportedMeshSilhouetteZSteps(96)
-  return clampImportedMeshSilhouetteZSteps(
-    Math.ceil(modelHeight / defaultSilhouetteZStepSize(units)),
-  )
 }
 
 function parseSilhouetteZStepsInput(value: string): number | null {
@@ -136,22 +121,18 @@ export async function importModelFile(params: {
     const bodyEnd = projectionStart + ((bodyIndex + 1) / bodiesToImport.length) * projectionBudget
 
     onProgress(`Projecting silhouette — ${bodyLabel} (${resolvedZSteps} Z steps)`, Math.round(bodyStart))
-    const modelInfo = await extractImportedMeshProfileAndBounds(bodyMesh, (p) => {
-      onProgress(
-        `Projecting silhouette — ${bodyLabel} (${resolvedZSteps} Z steps)`,
-        Math.round(bodyStart + (bodyEnd - bodyStart) * (p / 100)),
-      )
-    }, { silhouetteZSteps: resolvedZSteps })
+    // Shared with the post-import re-orientation path so the two cannot drift.
+    const modelInfo = await deriveImportedModelArtifacts(bodyMesh, {
+      silhouetteZSteps: resolvedZSteps,
+      onProgress: (p) => {
+        onProgress(
+          `Projecting silhouette — ${bodyLabel} (${resolvedZSteps} Z steps)`,
+          Math.round(bodyStart + (bodyEnd - bodyStart) * (p / 100)),
+        )
+      },
+    })
     if (!modelInfo) {
       throw new Error(`Failed to generate silhouette for ${bodyLabel.toLowerCase()} of ${modelLabel} import`)
-    }
-
-    let bodyTopViewDataUrl: string | undefined
-    try {
-      const url = renderImportedMeshTopViewToDataUrl(bodyMesh)
-      if (url) bodyTopViewDataUrl = url
-    } catch {
-      // top-view rendering is best-effort
     }
 
     const featureId = crypto.randomUUID()
@@ -168,7 +149,7 @@ export async function importModelFile(params: {
         scale: 1,
         axisSwap: 'none',
         silhouettePaths: modelInfo.silhouettePaths,
-        topViewDataUrl: bodyTopViewDataUrl,
+        topViewDataUrl: modelInfo.topViewDataUrl,
       },
       sketch: {
         profile: modelInfo.profile,
@@ -178,8 +159,8 @@ export async function importModelFile(params: {
         constraints: [],
       },
       operation: 'model',
-      z_top: modelInfo.z_top,
-      z_bottom: modelInfo.z_bottom,
+      z_top: modelInfo.meshZTop,
+      z_bottom: modelInfo.meshZBottom,
       visible: true,
       locked: false,
     })

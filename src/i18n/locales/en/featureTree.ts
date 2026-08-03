@@ -258,6 +258,22 @@ export const featureTreeEn = {
   'featureTree.properties.operation.model': 'Model',
   'featureTree.properties.operation.modelLockedTooltip': 'Model features are imported 3D objects and cannot change operation type',
 
+  // ── Properties: imported model 3D orientation ──
+  'featureTree.properties.model.orientation': '3D orientation',
+  'featureTree.properties.model.rotateX': 'Rotate X',
+  'featureTree.properties.model.rotateY': 'Rotate Y',
+  'featureTree.properties.model.rotateZ': 'Rotate Z',
+  'featureTree.properties.model.rotateMinus90': 'Rotate this axis a quarter turn backwards',
+  'featureTree.properties.model.rotatePlus90': 'Rotate this axis a quarter turn forwards',
+  'featureTree.properties.model.lift': 'Lift',
+  'featureTree.properties.model.liftTooltip': 'Height of the model base. Moves the whole model up or down without changing its size.',
+  'featureTree.properties.model.heightHint': 'Model height: {height}',
+  'featureTree.properties.model.linkedHint.one': 'Orientation is part of the shared shape, so {count} copy rotates with it.',
+  'featureTree.properties.model.linkedHint.other': 'Orientation is part of the shared shape, so all {count} copies rotate together. Use Make Unique to orient one on its own.',
+  'featureTree.properties.model.working': 'Reprojecting model… {percent}%',
+  'featureTree.properties.model.rotateFailed': 'Could not rotate this model. Its mesh may be missing or invalid.',
+  'featureTree.properties.model.resetOrientation': 'Reset to import orientation',
+
   // ── Properties: mask mode ──
   'featureTree.properties.maskMode': 'Mask mode',
   'featureTree.properties.maskMode.include': 'Include',

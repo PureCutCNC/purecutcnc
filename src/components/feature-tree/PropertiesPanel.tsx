@@ -20,6 +20,7 @@ import { ExpandedPanelContext } from '../layout/expandedPanelContext'
 import { Select } from '../Select'
 import { DisclosureSection } from '../common/DisclosureSection'
 import { ZRangeSlider } from './ZRangeSlider'
+import { ModelOrientationSection } from './ModelOrientationSection'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
@@ -1488,6 +1489,16 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             </div>
           ) : null}
         </DisclosureSection>
+        {selectedFeature.operation === 'model' && selectedFeature.stl?.meshAssetId ? (
+          <ModelOrientationSection
+            featureId={selectedFeature.id}
+            orientation={selectedFeature.stl.orientation}
+            zTop={zTop}
+            zBottom={zBottom}
+            units={units}
+            linkedInstanceCount={linkedInstanceCount}
+          />
+        ) : null}
         <DisclosureSection title={t('featureTree.properties.instance')} storageKey="feature-instance">
           <label className="properties-field">
             <span>{t('featureTree.properties.name')}</span>

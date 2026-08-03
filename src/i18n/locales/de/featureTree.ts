@@ -253,6 +253,22 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.operation.model': 'Modell',
   'featureTree.properties.operation.modelLockedTooltip': 'Modell-Features sind importierte 3D-Objekte und können den Operationstyp nicht ändern',
 
+  // ── Properties: imported model 3D orientation ──
+  'featureTree.properties.model.orientation': '3D-Ausrichtung',
+  'featureTree.properties.model.rotateX': 'X drehen',
+  'featureTree.properties.model.rotateY': 'Y drehen',
+  'featureTree.properties.model.rotateZ': 'Z drehen',
+  'featureTree.properties.model.rotateMinus90': 'Diese Achse eine Vierteldrehung zurück drehen',
+  'featureTree.properties.model.rotatePlus90': 'Diese Achse eine Vierteldrehung vor drehen',
+  'featureTree.properties.model.lift': 'Anheben',
+  'featureTree.properties.model.liftTooltip': 'Höhe der Modellunterseite. Verschiebt das gesamte Modell nach oben oder unten, ohne seine Größe zu ändern.',
+  'featureTree.properties.model.heightHint': 'Modellhöhe: {height}',
+  'featureTree.properties.model.linkedHint.one': 'Die Ausrichtung gehört zur gemeinsamen Form, daher dreht sich {count} Kopie mit.',
+  'featureTree.properties.model.linkedHint.other': 'Die Ausrichtung gehört zur gemeinsamen Form, daher drehen sich alle {count} Kopien gemeinsam. Mit „Eindeutig machen“ lässt sich eine Kopie einzeln ausrichten.',
+  'featureTree.properties.model.working': 'Modell wird neu projiziert … {percent} %',
+  'featureTree.properties.model.rotateFailed': 'Dieses Modell konnte nicht gedreht werden. Sein Netz fehlt möglicherweise oder ist ungültig.',
+  'featureTree.properties.model.resetOrientation': 'Auf Importausrichtung zurücksetzen',
+
   // ── Properties: mask mode ──
   'featureTree.properties.maskMode': 'Maskenmodus',
   'featureTree.properties.maskMode.include': 'Einschließen',

@@ -106,6 +106,48 @@ ENDSEC
 EOF`
 
 /**
+ * Build an ASCII STL of an axis-aligned box, so post-import 3D orientation has
+ * three distinguishable extents to check against (issue #241).
+ *
+ * Winding is not checked by the importer, but the triangles are wound
+ * consistently outward so the mesh is a valid closed solid for manifold.
+ */
+export function stlBox(sizeX: number, sizeY: number, sizeZ: number): string {
+  const corner = (i: number, j: number, k: number) => `${i * sizeX} ${j * sizeY} ${k * sizeZ}`
+  // Each face as two triangles, given as corner index triples.
+  const faces: Array<[string, string, string]> = [
+    // bottom (z=0)
+    [corner(0, 0, 0), corner(1, 1, 0), corner(1, 0, 0)],
+    [corner(0, 0, 0), corner(0, 1, 0), corner(1, 1, 0)],
+    // top (z=1)
+    [corner(0, 0, 1), corner(1, 0, 1), corner(1, 1, 1)],
+    [corner(0, 0, 1), corner(1, 1, 1), corner(0, 1, 1)],
+    // y=0
+    [corner(0, 0, 0), corner(1, 0, 0), corner(1, 0, 1)],
+    [corner(0, 0, 0), corner(1, 0, 1), corner(0, 0, 1)],
+    // x=1
+    [corner(1, 0, 0), corner(1, 1, 0), corner(1, 1, 1)],
+    [corner(1, 0, 0), corner(1, 1, 1), corner(1, 0, 1)],
+    // y=1
+    [corner(1, 1, 0), corner(0, 1, 0), corner(0, 1, 1)],
+    [corner(1, 1, 0), corner(0, 1, 1), corner(1, 1, 1)],
+    // x=0
+    [corner(0, 1, 0), corner(0, 0, 0), corner(0, 0, 1)],
+    [corner(0, 1, 0), corner(0, 0, 1), corner(0, 1, 1)],
+  ]
+  const facets = faces.map(([a, b, c]) => [
+    '  facet normal 0 0 0',
+    '    outer loop',
+    `      vertex ${a}`,
+    `      vertex ${b}`,
+    `      vertex ${c}`,
+    '    endloop',
+    '  endfacet',
+  ].join('\n')).join('\n')
+  return `solid box\n${facets}\nendsolid box\n`
+}
+
+/**
  * Assign the source-units select to "mm".  Needed when auto-detection
  * returns no units (common for synthetic SVG/DXF).
  */
