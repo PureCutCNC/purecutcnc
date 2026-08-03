@@ -96,13 +96,32 @@ function pointInPolygon(p: Point, poly: Point[]): boolean {
   return inside
 }
 
-// Returns { j, u } if point p lies on edge poly[j]→poly[(j+1)%n], where
-// u is the parameter along that edge (0 at poly[j], 1 at poly[(j+1)%n]).
-// Returns null otherwise. If p coincides with a vertex, returns the edge
-// where it is the start vertex (u = 0).
-function pointOnPolygonBoundary(p: Point, poly: Point[]): { j: number; u: number } | null {
+// Scale-aware tolerance for "near boundary" classification. Curves (circles,
+// arcs) are flattened to inscribed polygons, so a point snapped to the
+// mathematical curve lands slightly inside the polygon — up to
+// r·(1 − cos(π/n)) for an n-gon. We use 5% of the shortest edge, which
+// comfortably exceeds that deviation while staying well below edge length.
+function polygonTolerance(poly: Point[]): number {
+  let minLen2 = Infinity
+  for (let j = 0; j < poly.length; j += 1) {
+    const a = poly[j]
+    const b = poly[(j + 1) % poly.length]
+    const len2 = (b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)
+    if (len2 < minLen2) minLen2 = len2
+  }
+  if (minLen2 === Infinity) return EPSILON
+  return Math.max(EPSILON, 0.05 * Math.sqrt(minLen2))
+}
+
+// Returns { j, u, snapped } if point p lies on (or within `tol` of) edge
+// poly[j]→poly[(j+1)%n]. `u` is the parameter along that edge (0 at
+// poly[j], 1 at poly[(j+1)%n]); `snapped` is the projected point on the
+// edge. Returns null otherwise. If p coincides with a vertex, returns the
+// edge where it is the start vertex (u = 0).
+function pointOnPolygonBoundary(p: Point, poly: Point[], tol = EPSILON): { j: number; u: number; snapped: Point } | null {
   const n = poly.length
-  let best: { j: number; u: number } | null = null
+  const tol2 = tol * tol
+  let best: { j: number; u: number; snapped: Point } | null = null
   for (let j = 0; j < n; j += 1) {
     const a = poly[j]
     const b = poly[(j + 1) % n]
@@ -112,18 +131,17 @@ function pointOnPolygonBoundary(p: Point, poly: Point[]): { j: number; u: number
     if (len2 < EPSILON) continue
     const u = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2
     if (u < -EPSILON || u > 1 + EPSILON) continue
-    const projX = a.x + u * dx
-    const projY = a.y + u * dy
-    const dist2 = (p.x - projX) * (p.x - projX) + (p.y - projY) * (p.y - projY)
-    if (dist2 < EPSILON * EPSILON) {
-      const clamped = Math.max(0, Math.min(1, u))
+    const clamped = Math.max(0, Math.min(1, u))
+    const snapped = { x: a.x + clamped * dx, y: a.y + clamped * dy }
+    const dist2 = (p.x - snapped.x) * (p.x - snapped.x) + (p.y - snapped.y) * (p.y - snapped.y)
+    if (dist2 < tol2) {
       // Prefer the edge where the point is the start vertex (u = 0).
-      if (clamped < EPSILON) return { j, u: 0 }
+      if (clamped < EPSILON) return { j, u: 0, snapped: { x: a.x, y: a.y } }
       if (clamped > 1 - EPSILON) {
-        best = { j: (j + 1) % n, u: 0 }
+        best = { j: (j + 1) % n, u: 0, snapped: { x: poly[(j + 1) % n].x, y: poly[(j + 1) % n].y } }
         continue
       }
-      return { j, u: clamped }
+      return { j, u: clamped, snapped }
     }
   }
   return best
@@ -204,23 +222,38 @@ export function openCrossesClosedFully(openProfile: SketchProfile, closedProfile
   const P = flattenToVertices(closedProfile).points
   if (L.length < 2 || P.length < 3) return false
 
-  // Endpoints strictly inside (but NOT on the boundary) are not allowed.
-  // Ray-casting can misclassify boundary points as inside; check boundary first.
-  if (!pointOnPolygonBoundary(L[0], P) && pointInPolygon(L[0], P)) return false
-  if (!pointOnPolygonBoundary(L[L.length - 1], P) && pointInPolygon(L[L.length - 1], P)) return false
+  const tol = polygonTolerance(P)
+  const startOnBnd = pointOnPolygonBoundary(L[0], P, tol)
+  const endOnBnd = pointOnPolygonBoundary(L[L.length - 1], P, tol)
+  // Endpoints strictly inside (not on/near the boundary) are not allowed.
+  if (!startOnBnd && pointInPolygon(L[0], P)) return false
+  if (!endOnBnd && pointInPolygon(L[L.length - 1], P)) return false
+
+  // If both endpoints are on/near the boundary, the cutter is a chord —
+  // it fully crosses.
+  if (startOnBnd && endOnBnd) return true
 
   let count = 0
+  let startFoundByIntersect = false
   for (let i = 0; i < L.length - 1; i += 1) {
     for (let j = 0; j < P.length; j += 1) {
       const hit = segmentIntersect(L[i], L[i + 1], P[j], P[(j + 1) % P.length])
-      if (hit !== null) count += 1
+      if (hit !== null) {
+        count += 1
+        // Track whether the start endpoint (t≈0 on first segment) was found
+        // by segmentIntersect — exact-boundary starts are found (t=0 is
+        // included), near-boundary starts are not.
+        if (i === 0 && hit.t < 1e-6) startFoundByIntersect = true
+      }
     }
   }
 
-  // Endpoints on the polygon boundary are valid entry/exit points.
-  // segmentIntersect uses [0,1): the start endpoint (t=0) is already caught
-  // by its first segment, but the end endpoint (t=1) is never reported.
-  if (pointOnPolygonBoundary(L[L.length - 1], P)) count += 1
+  // The end endpoint (t=1 on the last segment) is never reported by
+  // segmentIntersect (half-open [0,1)). Count it if on/near boundary.
+  if (endOnBnd) count += 1
+  // A near-boundary start is not an exact intersection — count it. An
+  // exact-boundary start was already counted by segmentIntersect.
+  if (startOnBnd && !startFoundByIntersect) count += 1
 
   return count >= 2 && count % 2 === 0
 }
@@ -436,10 +469,12 @@ export function splitClosedByOpen(
   const lPoints = flattenToVertices(openProfile).points
   if (pPoints.length < 3 || lPoints.length < 2) return null
 
-  // Endpoints of L must lie outside P (or on the boundary).
-  // Ray-casting can misclassify boundary points as inside; check boundary first.
-  if (!pointOnPolygonBoundary(lPoints[0], pPoints) && pointInPolygon(lPoints[0], pPoints)) return null
-  if (!pointOnPolygonBoundary(lPoints[lPoints.length - 1], pPoints) && pointInPolygon(lPoints[lPoints.length - 1], pPoints)) return null
+  const tol = polygonTolerance(pPoints)
+  // Endpoints of L must lie outside P (or on/near the boundary).
+  const startBnd = pointOnPolygonBoundary(lPoints[0], pPoints, tol)
+  const endBnd = pointOnPolygonBoundary(lPoints[lPoints.length - 1], pPoints, tol)
+  if (!startBnd && pointInPolygon(lPoints[0], pPoints)) return null
+  if (!endBnd && pointInPolygon(lPoints[lPoints.length - 1], pPoints)) return null
 
   // Compute all proper crossings of L segments with P segments.
   type RawCrossing = { point: Point, tP: number, tL: number }
@@ -456,22 +491,19 @@ export function splitClosedByOpen(
     }
   }
 
-  // Detect L endpoints that land on the polygon boundary and add them as
-  // crossings. segmentIntersect uses [0,1) on both parameters, so a cutter
-  // endpoint at t=1 on the last L segment is never reported.
-  const pointNearEqual = (a: Point, b: Point) => Math.abs(a.x - b.x) < EPSILON && Math.abs(a.y - b.y) < EPSILON
-  const endpointIndices = [0, lPoints.length - 1]
-  const endpointTL = [0, lPoints.length - 1]
-  for (let e = 0; e < endpointIndices.length; e += 1) {
-    const idx = endpointIndices[e]
-    const pt = lPoints[idx]
-    const bnd = pointOnPolygonBoundary(pt, pPoints)
-    if (!bnd) continue
-    const tP = bnd.j + bnd.u
-    const tL = endpointTL[e]
-    // Deduplicate against existing raw entries at the same point.
-    if (raw.some((r) => pointNearEqual(r.point, pt))) continue
-    raw.push({ point: { x: pt.x, y: pt.y }, tP, tL })
+  // Detect L endpoints that land on/near the polygon boundary and add them
+  // as crossings (using the snapped boundary point). segmentIntersect uses
+  // [0,1): the end endpoint (t=1) is never reported, and a near-boundary
+  // start (within tol but not exactly on an edge) is not an exact intersection.
+  const pointNearEqual = (a: Point, b: Point) => Math.abs(a.x - b.x) < tol && Math.abs(a.y - b.y) < tol
+  const endpointData: Array<{ idx: number; tL: number; bnd: { j: number; u: number; snapped: Point } }> = []
+  if (startBnd) endpointData.push({ idx: 0, tL: 0, bnd: startBnd })
+  if (endBnd) endpointData.push({ idx: lPoints.length - 1, tL: lPoints.length - 1, bnd: endBnd })
+  for (const ep of endpointData) {
+    const tP = ep.bnd.j + ep.bnd.u
+    // Deduplicate against existing raw entries near the snapped point.
+    if (raw.some((r) => pointNearEqual(r.point, ep.bnd.snapped))) continue
+    raw.push({ point: { x: ep.bnd.snapped.x, y: ep.bnd.snapped.y }, tP, tL: ep.tL })
   }
 
   if (raw.length < 2 || raw.length % 2 !== 0) return null

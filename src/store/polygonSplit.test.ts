@@ -245,6 +245,38 @@ function test8() {
   console.log('test8 PASS')
 }
 
+// Test 9: near-boundary endpoints on a circle polygon (mimics the real
+// cutter-on-line.camj scenario). The cutter endpoints are snapped to the
+// mathematical circle but land slightly INSIDE the flattened polygon because
+// the polygon is inscribed in the circle. The tolerance must catch this.
+function test9() {
+  const cx = 2, cy = 1.5, r = 1.0
+  const n = 72
+  const circlePts: Point[] = []
+  for (let i = 0; i < n; i += 1) {
+    const a = -Math.PI / 2 + (i / n) * 2 * Math.PI
+    circlePts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) })
+  }
+  const circle = polygonProfile(circlePts)
+
+  // Endpoints slightly inside the polygon (as happens when a user snaps to
+  // the circle curve, not the polygon edge).
+  const cutter = openPolyline([
+    { x: 1.0878, y: 1.0991 },
+    { x: 2.9149, y: 1.8952 },
+  ])
+
+  const crosses = openCrossesClosedFully(cutter, circle)
+  console.log('test9 openCrossesClosedFully:', crosses)
+  assert(crosses, 'near-boundary chord should fully cross')
+
+  const result = splitClosedByOpen(circle, cutter)
+  console.log('test9 result:', result === null ? 'NULL' : `${result.pieces.length} pieces`)
+  assert(result !== null, 'result is non-null')
+  assert(result!.pieces.length === 2, `expected 2 pieces, got ${result!.pieces.length}`)
+  console.log('test9 PASS')
+}
+
 try {
   test1()
   test2()
@@ -254,6 +286,7 @@ try {
   test6()
   test7()
   test8()
+  test9()
   console.log('\nAll tests PASS')
 } catch (e) {
   console.error(e)
