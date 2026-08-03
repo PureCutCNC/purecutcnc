@@ -37,7 +37,7 @@ Eligibility is mechanical, never a judgment call. The two halves are answerable 
 
 **Before you write anything — protected paths.** You already know which files you will edit. If any is protected, it is the full lane; decided, no script needed. However small the diff: machine output and safety (`src/engine/toolpaths/**`, `src/engine/gcode/**`, `src/machine/**`, `src/utils/units.ts`), the `.camj` format and its migrations (`src/types/project.ts`, `src/store/helpers/projectFormat.ts`, `src/import/camj.ts`), the frozen `ProjectStore` contract (`src/store/types.ts`), and the process/gate machinery itself (`AGENTS.md`, `PROJECT.md`, `ARCHITECTURE.md`, `.github/**`, `.claude/**`, the gate scripts under `scripts/`, `package.json`, `tsconfig*.json`, `eslint.config.js`). [`scripts/check-fast-lane.sh`](scripts/check-fast-lane.sh) owns the authoritative list — add to it whenever a new gate lands.
 
-**After implementing, before you commit — size.** This needs a real diff, so it cannot be answered earlier:
+**After implementing, before you commit — size.** This needs a real diff, so it cannot be answered earlier. The script re-checks the paths too, so a file set that grew mid-implementation is still caught here:
 
 ```bash
 npm run check:fast-lane
