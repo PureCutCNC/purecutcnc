@@ -119,6 +119,7 @@ export const warningsEn = {
   'warnings.drillNoValidCircles': 'No valid circle features were found for this drilling operation',
   'warnings.drillPeckDepthPositive': 'Peck depth must be greater than zero for peck / chip-breaking drilling; falling back to a single plunge',
   'warnings.drillNotDrillBit': 'Selected tool is not a drill bit — drilling cycles typically require a drill tool',
+  'warnings.drillHelicalToolUnsupported': 'Helical boring requires a flat endmill; falling back to a simple plunge',
   'warnings.drillTargetsNotCircles': 'Some selected target features are not circles and were skipped',
   // carving (follow-line)
   'warnings.carveDepthClamped': '{name} carve depth exceeds stock bottom; clamped to Z 0',

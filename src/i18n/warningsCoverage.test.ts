@@ -50,7 +50,7 @@ const ALL_CODES = [
   'surfaceBandNoFinishDepth', 'surfaceBandNoRoughDepth', 'surfaceNoFinishContours',
   'surfaceTargetsWrongRole', 'surfaceClosedProfilesOnly', 'surfaceNoBands',
   'drillBottomAboveTop', 'drillNoCenter', 'drillNoTargets', 'drillWrongKind', 'drillNoValidCircles',
-  'drillPeckDepthPositive', 'drillNotDrillBit', 'drillTargetsNotCircles',
+  'drillPeckDepthPositive', 'drillNotDrillBit', 'drillHelicalToolUnsupported', 'drillTargetsNotCircles',
   'carveDepthClamped', 'carveNotEnoughGeometry', 'carveDepthPositive', 'carveNoTargets', 'carveWrongKind',
   'carveNoValidTargets',
   'restOnlyEdgeRoute', 'restOnlyPocket', 'restNoValidOutsideTargets',

@@ -25,6 +25,15 @@ import {
   resolveFeatureZSpan,
 } from './geometry'
 import { buildRegionMask, splitFeatureTargets } from './regions'
+import {
+  DEFAULT_ENTRY_RAMP_ANGLE,
+  DEFAULT_ENTRY_HELIX_DIAMETER_PERCENT,
+  HELIX_SEGMENTS_PER_REVOLUTION,
+  MAX_ENTRY_DESCENT_MOVES,
+  helixAngularDirection,
+  pitchFromRampAngle,
+  plungeLimitedFeedScale,
+} from './entry'
 
 const CHIP_BREAK_CLEARANCE = 0.5    // tiny retract between pecks in chip-breaking mode (project units)
 
@@ -116,6 +125,178 @@ function getCircleCenter(profile: SketchProfile): Point | null {
   }
 
   return null
+}
+
+function getCircleRadius(profile: SketchProfile): number | null {
+  if (profile.segments.length === 1 && profile.segments[0].type === 'circle') {
+    const seg = profile.segments[0]
+    const dx = seg.to.x - seg.center.x
+    const dy = seg.to.y - seg.center.y
+    return Math.sqrt(dx * dx + dy * dy)
+  }
+  if (profile.segments.length === 4 && profile.segments.every((s) => s.type === 'arc')) {
+    const first = profile.segments[0]
+    if (first.type === 'arc') {
+      const dx = first.to.x - first.center.x
+      const dy = first.to.y - first.center.y
+      return Math.sqrt(dx * dx + dy * dy)
+    }
+  }
+  return null
+}
+
+const ENTRY_BOUNDARY_SAFETY_FRACTION = 0.1
+
+function entryBoundarySafety(toolDiameter: number): number {
+  return Math.max(1e-4, toolDiameter * ENTRY_BOUNDARY_SAFETY_FRACTION)
+}
+
+function emitSimplePlunge(
+  moves: ToolpathMove[],
+  current: ToolpathPoint | null,
+  center: Point,
+  bottomZ: number,
+  safeZ: number,
+  retractZ: number,
+): ToolpathPoint {
+  const aboveSafe: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
+  if (current && (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z)) {
+    moves.push({ kind: 'rapid', from: current, to: aboveSafe })
+  }
+  const rapidStart: ToolpathPoint = { x: center.x, y: center.y, z: retractZ }
+  if (retractZ < safeZ) {
+    moves.push({ kind: 'rapid', from: aboveSafe, to: rapidStart })
+  }
+  const bottom: ToolpathPoint = { x: center.x, y: center.y, z: bottomZ }
+  moves.push({ kind: 'plunge', from: rapidStart, to: bottom })
+  const retract: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
+  moves.push({ kind: 'rapid', from: bottom, to: retract })
+  return retract
+}
+
+function emitHelicalBore(
+  moves: ToolpathMove[],
+  current: ToolpathPoint | null,
+  center: Point,
+  bottomZ: number,
+  safeZ: number,
+  retractZ: number,
+  operation: Operation,
+  toolDiameter: number,
+  holeRadius: number,
+): { position: ToolpathPoint; warnings: ToolpathWarning[] } {
+  const warnings: ToolpathWarning[] = []
+  const rampAngle = clampRampAngle(operation.entryRampAngle ?? DEFAULT_ENTRY_RAMP_ANGLE)
+  const helixDiameterPercent = clampPercent(operation.entryHelixDiameterPercent ?? DEFAULT_ENTRY_HELIX_DIAMETER_PERCENT)
+  const cutDirection = operation.cutDirection ?? 'conventional'
+
+  const requestedDiameter = toolDiameter * helixDiameterPercent / 100
+  const requestedRadius = requestedDiameter / 2
+
+  const safety = entryBoundarySafety(toolDiameter)
+  const noCoreCap = toolDiameter / 2
+
+  const clearanceRadius = Math.max(0, holeRadius - safety)
+  const helixRadius = Math.min(requestedRadius, clearanceRadius, noCoreCap)
+
+  if (!(helixRadius > 1e-9) || !(clearanceRadius > 1e-9)) {
+    warnings.push({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'plunge' } })
+    const pos = emitSimplePlunge(moves, current, center, bottomZ, safeZ, retractZ)
+    return { position: pos, warnings }
+  }
+
+  const depth = Math.max(0, retractZ - bottomZ)
+  const pitch = pitchFromRampAngle(helixRadius * 2, rampAngle)
+  const revolutions = pitch > 1e-9 ? depth / pitch : 0
+  const descentSegments = Math.max(1, Math.ceil(revolutions * HELIX_SEGMENTS_PER_REVOLUTION))
+
+  if (descentSegments > MAX_ENTRY_DESCENT_MOVES) {
+    warnings.push({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'plunge' } })
+    const pos = emitSimplePlunge(moves, current, center, bottomZ, safeZ, retractZ)
+    return { position: pos, warnings }
+  }
+
+  if (helixRadius < requestedRadius - Math.max(1e-9, requestedRadius * 1e-9)) {
+    warnings.push({
+      code: 'entryHelixDiameterClamped',
+      params: {
+        requestedDiameter: Number(requestedDiameter.toFixed(4)),
+        actualDiameter: Number((helixRadius * 2).toFixed(4)),
+      },
+    })
+  }
+
+  const direction = helixAngularDirection(cutDirection, 'internal')
+
+  // Rapid to safeZ above hole center
+  const aboveSafe: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
+  if (current && (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z)) {
+    moves.push({ kind: 'rapid', from: current, to: aboveSafe })
+  }
+
+  // Rapid down to retract height at hole center
+  const atRetract: ToolpathPoint = { x: center.x, y: center.y, z: retractZ }
+  if (retractZ < safeZ) {
+    moves.push({ kind: 'rapid', from: aboveSafe, to: atRetract })
+  }
+
+  // Rapid from center to helix start at retract height
+  const startPoint: ToolpathPoint = {
+    x: center.x + helixRadius,
+    y: center.y,
+    z: retractZ,
+  }
+  if (helixRadius > 1e-9) {
+    moves.push({ kind: 'rapid', from: atRetract, to: startPoint })
+  }
+
+  let prev = startPoint
+
+  // Helical descent
+  const feedScale = plungeLimitedFeedScale(operation.feed, operation.plungeFeed, rampAngle)
+  for (let index = 1; index <= descentSegments; index += 1) {
+    const ratio = index / descentSegments
+    const angle = direction * revolutions * Math.PI * 2 * ratio
+    const next: ToolpathPoint = {
+      x: center.x + Math.cos(angle) * helixRadius,
+      y: center.y + Math.sin(angle) * helixRadius,
+      z: retractZ + (bottomZ - retractZ) * ratio,
+    }
+    moves.push({
+      kind: 'lead_in',
+      from: prev,
+      to: next,
+      ...(feedScale < 1 ? { feedScale } : {}),
+    })
+    prev = next
+  }
+
+  // Bottom-flattening revolution
+  const finalAngle = direction * revolutions * Math.PI * 2
+  for (let index = 1; index <= HELIX_SEGMENTS_PER_REVOLUTION; index += 1) {
+    const angle = finalAngle + direction * Math.PI * 2 * index / HELIX_SEGMENTS_PER_REVOLUTION
+    const next: ToolpathPoint = {
+      x: center.x + Math.cos(angle) * helixRadius,
+      y: center.y + Math.sin(angle) * helixRadius,
+      z: bottomZ,
+    }
+    moves.push({ kind: 'lead_in', from: prev, to: next })
+    prev = next
+  }
+
+  // Rapid retract to safeZ from final position (which is on the helix circle at bottomZ)
+  const finalRetract: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
+  moves.push({ kind: 'rapid', from: prev, to: finalRetract })
+
+  return { position: finalRetract, warnings }
+}
+
+function clampRampAngle(value: number): number {
+  return Math.min(45, Math.max(0.1, value))
+}
+
+function clampPercent(value: number): number {
+  return Math.min(100, Math.max(1, value))
 }
 
 function emitDrillCycle(
@@ -235,18 +416,20 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
 
   const warnings: ToolpathWarning[] = []
 
-  if (tool.type !== 'drill') {
+  const drillType: DrillType = operation.drillType ?? 'simple'
+  const peckDepth = operation.peckDepth ?? 0
+
+  if (drillType === 'helical') {
+    if (tool.type !== 'flat_endmill') {
+      warnings.push({ code: 'drillHelicalToolUnsupported' })
+    }
+  } else if (tool.type !== 'drill') {
     warnings.push({ code: 'drillNotDrillBit' })
   }
 
   if (targetFeatures.length !== splitTargets.machiningFeatures.length || splitTargets.missingFeatureIds.length > 0) {
     warnings.push({ code: 'drillTargetsNotCircles' })
   }
-
-
-
-  const drillType: DrillType = operation.drillType ?? 'simple'
-  const peckDepth = operation.peckDepth ?? 0
 
   if ((drillType === 'peck' || drillType === 'chip_breaking') && !(peckDepth > 0)) {
     warnings.push({ code: 'drillPeckDepthPositive' })
@@ -293,28 +476,52 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
       warnings.push({ code: 'cutDepthExceedsToolMaxForFeature', params: { name: target.feature.name, ...depthWarning.params } })
     }
 
-    currentPosition = emitDrillCycle(
-      moves,
-      currentPosition,
-      target.center,
-      topZ,
-      bottomZ,
-      safeZ,
-      retractZ,
-      drillType,
-      peckDepth,
-    )
+    if (drillType === 'helical' && tool.type === 'flat_endmill') {
+      const holeRadius = getCircleRadius(target.feature.sketch.profile)
+      if (holeRadius !== null) {
+        const result = emitHelicalBore(
+          moves,
+          currentPosition,
+          target.center,
+          bottomZ,
+          safeZ,
+          retractZ,
+          operation,
+          tool.diameter,
+          holeRadius,
+        )
+        currentPosition = result.position
+        warnings.push(...result.warnings)
+      } else {
+        // Should not reach here (getCircleCenter already passed), but be safe
+        currentPosition = emitSimplePlunge(moves, currentPosition, target.center, bottomZ, safeZ, retractZ)
+      }
+      // No drillCycles entry for helical — moves are emitted as G1 lead-in moves
+    } else {
+      const effectiveDrillType: DrillType = drillType === 'helical' ? 'simple' : drillType
+      currentPosition = emitDrillCycle(
+        moves,
+        currentPosition,
+        target.center,
+        topZ,
+        bottomZ,
+        safeZ,
+        retractZ,
+        effectiveDrillType,
+        peckDepth,
+      )
 
-    drillCycles.push({
-      x: target.center.x,
-      y: target.center.y,
-      clearZ: safeZ,
-      retractZ,
-      bottomZ,
-      drillType,
-      peckDepth: operation.peckDepth ?? 0,
-      dwellTime,
-    })
+      drillCycles.push({
+        x: target.center.x,
+        y: target.center.y,
+        clearZ: safeZ,
+        retractZ,
+        bottomZ,
+        drillType: effectiveDrillType,
+        peckDepth: operation.peckDepth ?? 0,
+        dwellTime,
+      })
+    }
   }
 
   return {

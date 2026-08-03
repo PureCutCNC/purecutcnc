@@ -105,6 +105,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.drillNoValidCircles': 'Aucune entité circulaire valide n’a été trouvée pour cette opération de perçage',
   'warnings.drillPeckDepthPositive': 'La profondeur de débourrage doit être supérieure à zéro pour le perçage par débourrage/brise-copeaux ; retour à une seule plongée',
   'warnings.drillNotDrillBit': 'L’outil sélectionné n’est pas un foret — les cycles de perçage exigent généralement un foret',
+  'warnings.drillHelicalToolUnsupported': 'Le perçage hélicoïdal nécessite une fraise cylindrique ; retour à une plongée simple',
   'warnings.drillTargetsNotCircles': 'Certaines entités cibles ne sont pas des cercles et ont été ignorées',
   'warnings.carveDepthClamped': 'La profondeur de gravure de {name} dépasse le bas du brut ; limitée à Z 0',
   'warnings.carveNotEnoughGeometry': '{name} ne contient pas assez de géométrie pour une gravure suivant une ligne',

@@ -105,6 +105,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   "warnings.drillNoValidCircles": "No se encontraron elementos circulares válidos para esta operación de taladrado.",
   "warnings.drillPeckDepthPositive": "La profundidad de picoteo debe ser mayor que cero para el taladrado por picoteo o con rotura de viruta; se recurre a una sola penetración.",
   "warnings.drillNotDrillBit": "La herramienta seleccionada no es una broca; los ciclos de taladrado normalmente requieren una broca.",
+  "warnings.drillHelicalToolUnsupported": "El taladrado helicoidal requiere una fresa plana; se recurre a una penetración simple.",
   "warnings.drillTargetsNotCircles": "Algunos elementos objetivo seleccionados no son círculos y se omitieron.",
   "warnings.carveDepthClamped": "{name}: la profundidad de tallado supera la base del material en bruto; se limita a Z 0.",
   "warnings.carveNotEnoughGeometry": "{name} no contiene suficiente geometría para el tallado de seguimiento de línea",

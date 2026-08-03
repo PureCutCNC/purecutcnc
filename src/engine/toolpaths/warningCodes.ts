@@ -112,6 +112,7 @@ export type ToolpathWarningCode =
   | 'drillPeckDepthPositive'
   | 'drillNotDrillBit'
   | 'drillTargetsNotCircles'
+  | 'drillHelicalToolUnsupported'
   // carving (follow-line)
   | 'carveDepthClamped'
   | 'carveNotEnoughGeometry'

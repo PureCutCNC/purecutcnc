@@ -26,6 +26,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   "cam.drillType.peck": "Picoteo (G83)",
   "cam.drillType.dwell": "Permanencia (G82)",
   "cam.drillType.chipBreaking": "Rotura de viruta (G73)",
+  "cam.drillType.helical": "Helicoidal",
   "cam.opLabel.pocket": "Cajera",
   "cam.opLabel.vCarve": "V-carve por desfase",
   "cam.opLabel.vCarveMedial": "V-carve medial",

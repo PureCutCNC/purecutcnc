@@ -21,10 +21,10 @@ import type { ToolpathWarning } from './warningCodes'
 export const DEFAULT_ENTRY_RAMP_ANGLE = 5
 export const DEFAULT_ENTRY_HELIX_DIAMETER_PERCENT = 80
 
-const HELIX_SEGMENTS_PER_REVOLUTION = 48
+export const HELIX_SEGMENTS_PER_REVOLUTION = 48
 const ENTRY_EPSILON = 1e-9
 const MAX_CLEARANCE_SEARCH_CELLS = 20_000
-const MAX_ENTRY_DESCENT_MOVES = 20_000
+export const MAX_ENTRY_DESCENT_MOVES = 20_000
 
 // Entry moves stay this far inside the region boundary, as a fraction of tool
 // diameter. Without it a ramp or helix runs right up to the wall and scores the

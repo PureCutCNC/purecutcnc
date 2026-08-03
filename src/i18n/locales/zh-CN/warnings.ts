@@ -109,6 +109,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.drillNoValidCircles': '未找到适用于此钻孔加工操作的有效圆形特征',
   'warnings.drillPeckDepthPositive': '啄钻/断屑钻孔的啄钻深度必须大于零；已回退为单次下刀',
   'warnings.drillNotDrillBit': '所选刀具不是钻头 — 钻孔循环通常需要钻头刀具',
+  'warnings.drillHelicalToolUnsupported': '螺旋钻孔需要平底铣刀；已回退为简单下刀',
   'warnings.drillTargetsNotCircles': '部分选定的目标特征不是圆形，已跳过',
   'warnings.carveDepthClamped': '{name} 的雕刻深度超过毛坯底面；已钳制到 Z 0',
   'warnings.carveNotEnoughGeometry': '{name} 不包含足够的几何用于沿线雕刻',

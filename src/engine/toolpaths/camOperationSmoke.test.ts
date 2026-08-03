@@ -27,7 +27,7 @@
  * Run with: npx tsx src/engine/toolpaths/camOperationSmoke.test.ts
  */
 
-import type { Operation, Project, SketchFeature, Tool } from '../../types/project'
+import type { DrillType, Operation, Project, SketchFeature, Tool } from '../../types/project'
 import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { runPostProcessor } from '../gcode/postprocessor'
@@ -448,11 +448,12 @@ test('pocket default entry remains byte-identical to explicit plunge', () => {
 
 console.log('\nDrilling drill-type differentiation')
 
-function drillingFixture(drillType: 'simple' | 'peck' | 'dwell' | 'chip_breaking', peckDepth?: number): {
+function drillingFixture(drillType: DrillType, peckDepth?: number): {
   project: Project
   operation: Operation
 } {
-  const tool = makeDrill('t1', 3)
+  const toolType = drillType === 'helical' ? makeFlatEndmill('t1', 3) : makeDrill('t1', 3)
+  const tool = toolType
   const circle = makeCircleFeature('c1', 20, 20, 5, 0, -6)
   const project = baseProject([tool], [circle])
   const op = makePocketOp({
@@ -533,6 +534,71 @@ test('drilling chip_breaking: multiple plunges with small retracts', () => {
 
   const gcode = postToolpath(project, operation, result)
   assert(gcode.length > 0, 'chip_breaking should produce non-empty G-code')
+})
+
+test('drilling helical: spiral lead_in descent, bottom flatten, no canned cycle', () => {
+  const { project, operation } = drillingFixture('helical')
+  const result = generateDrillingToolpath(project, operation)
+  assert(result.moves.length > 0, 'helical drilling should produce moves')
+
+  // Helical uses lead_in moves (not plunge) for the spiral descent
+  const leadIns = result.moves.filter((m) => m.kind === 'lead_in')
+  assert(leadIns.length > 0, 'helical drilling should use lead_in moves')
+
+  // Must descend incrementally: not a single straight plunge
+  const plunges = result.moves.filter((m) => m.kind === 'plunge')
+  assert(plunges.length === 0, `helical drilling should have 0 plunges, got ${plunges.length}`)
+
+  // At least some moves should be below top Z (actual descent)
+  const belowTop = result.moves.filter((m) => m.to.z < 0)
+  assert(belowTop.length > 0, 'helical moves should descend below top Z')
+
+  // Final position should be at safeZ (retract)
+  const safeZ = project.stock.thickness + project.meta.operationClearanceZ
+  const finalMove = result.moves[result.moves.length - 1]
+  assert(approx(finalMove.to.z, safeZ), `final move should retract to safeZ=${safeZ}, got ${finalMove.to.z}`)
+
+  // No drillCycles emitted — moves are expanded G1
+  assert(!result.drillCycles || result.drillCycles.length === 0, 'helical drilling should have no drillCycles')
+
+  // No drillNotDrillBit warning for flat_endmill
+  const warning = result.warnings.find((w) => w.code === 'drillNotDrillBit')
+  assert(!warning, 'helical with flat_endmill should not produce drillNotDrillBit')
+
+  const gcode = postToolpath(project, operation, result)
+  assert(gcode.length > 0, 'helical drilling should produce non-empty G-code')
+  // G-code must not contain canned cycles (G81/G82/G83/G73)
+  assert(!/G8[123]/.test(gcode), 'helical G-code should not contain canned cycle codes')
+  assert(!/G73/.test(gcode), 'helical G-code should not contain G73')
+})
+
+test('drilling helical: unsupported tool falls back with warning', () => {
+  // Use a drill tool instead of flat_endmill
+  const drill = makeDrill('t1', 3)
+  const circle = makeCircleFeature('c1', 20, 20, 5, 0, -6)
+  const project = baseProject([drill], [circle])
+  const op = makePocketOp({
+    kind: 'drilling',
+    target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1',
+    stepdown: 2,
+    drillType: 'helical',
+  })
+  const result = generateDrillingToolpath(project, op)
+  assert(result.moves.length > 0, 'fallback should produce moves')
+
+  // Should warn about unsupported tool
+  const toolWarning = result.warnings.find((w) => w.code === 'drillHelicalToolUnsupported')
+  assert(!!toolWarning, 'helical with drill should produce drillHelicalToolUnsupported warning')
+
+  // Should fall back to simple plunge (drillCycles with simple type)
+  assert(result.drillCycles !== undefined && result.drillCycles.length > 0, 'fallback should have drillCycles')
+  if (result.drillCycles) {
+    assert(result.drillCycles[0].drillType === 'simple', 'fallback drillCycle should be simple')
+  }
+
+  const gcode = postToolpath(project, op, result)
+  assert(gcode.length > 0, 'fallback should produce non-empty G-code')
 })
 
 // ---------------------------------------------------------------------
