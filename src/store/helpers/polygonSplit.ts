@@ -96,6 +96,39 @@ function pointInPolygon(p: Point, poly: Point[]): boolean {
   return inside
 }
 
+// Returns { j, u } if point p lies on edge poly[j]→poly[(j+1)%n], where
+// u is the parameter along that edge (0 at poly[j], 1 at poly[(j+1)%n]).
+// Returns null otherwise. If p coincides with a vertex, returns the edge
+// where it is the start vertex (u = 0).
+function pointOnPolygonBoundary(p: Point, poly: Point[]): { j: number; u: number } | null {
+  const n = poly.length
+  let best: { j: number; u: number } | null = null
+  for (let j = 0; j < n; j += 1) {
+    const a = poly[j]
+    const b = poly[(j + 1) % n]
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const len2 = dx * dx + dy * dy
+    if (len2 < EPSILON) continue
+    const u = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2
+    if (u < -EPSILON || u > 1 + EPSILON) continue
+    const projX = a.x + u * dx
+    const projY = a.y + u * dy
+    const dist2 = (p.x - projX) * (p.x - projX) + (p.y - projY) * (p.y - projY)
+    if (dist2 < EPSILON * EPSILON) {
+      const clamped = Math.max(0, Math.min(1, u))
+      // Prefer the edge where the point is the start vertex (u = 0).
+      if (clamped < EPSILON) return { j, u: 0 }
+      if (clamped > 1 - EPSILON) {
+        best = { j: (j + 1) % n, u: 0 }
+        continue
+      }
+      return { j, u: clamped }
+    }
+  }
+  return best
+}
+
 // Segment-segment intersection treating each segment as a half-open interval
 // [start, end) on both parameters. This ensures intersections at shared
 // vertices are reported by exactly one segment (the one whose start vertex
@@ -171,8 +204,10 @@ export function openCrossesClosedFully(openProfile: SketchProfile, closedProfile
   const P = flattenToVertices(closedProfile).points
   if (L.length < 2 || P.length < 3) return false
 
-  if (pointInPolygon(L[0], P)) return false
-  if (pointInPolygon(L[L.length - 1], P)) return false
+  // Endpoints strictly inside (but NOT on the boundary) are not allowed.
+  // Ray-casting can misclassify boundary points as inside; check boundary first.
+  if (!pointOnPolygonBoundary(L[0], P) && pointInPolygon(L[0], P)) return false
+  if (!pointOnPolygonBoundary(L[L.length - 1], P) && pointInPolygon(L[L.length - 1], P)) return false
 
   let count = 0
   for (let i = 0; i < L.length - 1; i += 1) {
@@ -181,6 +216,12 @@ export function openCrossesClosedFully(openProfile: SketchProfile, closedProfile
       if (hit !== null) count += 1
     }
   }
+
+  // Endpoints on the polygon boundary are valid entry/exit points.
+  // segmentIntersect uses [0,1): the start endpoint (t=0) is already caught
+  // by its first segment, but the end endpoint (t=1) is never reported.
+  if (pointOnPolygonBoundary(L[L.length - 1], P)) count += 1
+
   return count >= 2 && count % 2 === 0
 }
 
@@ -395,9 +436,10 @@ export function splitClosedByOpen(
   const lPoints = flattenToVertices(openProfile).points
   if (pPoints.length < 3 || lPoints.length < 2) return null
 
-  // Endpoints of L must lie outside P.
-  if (pointInPolygon(lPoints[0], pPoints)) return null
-  if (pointInPolygon(lPoints[lPoints.length - 1], pPoints)) return null
+  // Endpoints of L must lie outside P (or on the boundary).
+  // Ray-casting can misclassify boundary points as inside; check boundary first.
+  if (!pointOnPolygonBoundary(lPoints[0], pPoints) && pointInPolygon(lPoints[0], pPoints)) return null
+  if (!pointOnPolygonBoundary(lPoints[lPoints.length - 1], pPoints) && pointInPolygon(lPoints[lPoints.length - 1], pPoints)) return null
 
   // Compute all proper crossings of L segments with P segments.
   type RawCrossing = { point: Point, tP: number, tL: number }
@@ -413,6 +455,25 @@ export function splitClosedByOpen(
       raw.push({ point: hit.point, tP: j + hit.u, tL: i + hit.t })
     }
   }
+
+  // Detect L endpoints that land on the polygon boundary and add them as
+  // crossings. segmentIntersect uses [0,1) on both parameters, so a cutter
+  // endpoint at t=1 on the last L segment is never reported.
+  const pointNearEqual = (a: Point, b: Point) => Math.abs(a.x - b.x) < EPSILON && Math.abs(a.y - b.y) < EPSILON
+  const endpointIndices = [0, lPoints.length - 1]
+  const endpointTL = [0, lPoints.length - 1]
+  for (let e = 0; e < endpointIndices.length; e += 1) {
+    const idx = endpointIndices[e]
+    const pt = lPoints[idx]
+    const bnd = pointOnPolygonBoundary(pt, pPoints)
+    if (!bnd) continue
+    const tP = bnd.j + bnd.u
+    const tL = endpointTL[e]
+    // Deduplicate against existing raw entries at the same point.
+    if (raw.some((r) => pointNearEqual(r.point, pt))) continue
+    raw.push({ point: { x: pt.x, y: pt.y }, tP, tL })
+  }
+
   if (raw.length < 2 || raw.length % 2 !== 0) return null
 
   // Pair crossings: sort by tL, then alternate entry/exit.

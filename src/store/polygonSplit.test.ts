@@ -184,12 +184,76 @@ function test5() {
   console.log('test5 PASS')
 }
 
+// Test 6: cutter ends exactly on the top edge of the square.
+// Cutter from (2,-1) outside to (2,4) exactly on the boundary.
+function test6() {
+  const square = polygonProfile([
+    { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 4 }, { x: 0, y: 4 },
+  ])
+  const cutter = openPolyline([{ x: 2, y: -1 }, { x: 2, y: 4 }])
+
+  const crosses = openCrossesClosedFully(cutter, square)
+  console.log('test6 openCrossesClosedFully:', crosses)
+  assert(crosses, 'cutter ending on boundary should fully cross')
+
+  const result = splitClosedByOpen(square, cutter)
+  console.log('test6 result:', result === null ? 'NULL' : `${result.pieces.length} pieces`)
+  assert(result !== null, 'result is non-null')
+  assert(result!.pieces.length === 2, `expected 2 pieces, got ${result!.pieces.length}`)
+  console.log('test6 PASS')
+}
+
+// Test 7: multi-segment cutter where only the last point lands on the boundary.
+// Cutter from (3,-1) outside through (3,2) interior to (2,4) on the top edge.
+function test7() {
+  const square = polygonProfile([
+    { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 4 }, { x: 0, y: 4 },
+  ])
+  const cutter = openPolyline([
+    { x: 3, y: -1 },
+    { x: 3, y: 2 },
+    { x: 2, y: 4 },
+  ])
+
+  const crosses = openCrossesClosedFully(cutter, square)
+  console.log('test7 openCrossesClosedFully:', crosses)
+  assert(crosses, 'multi-segment cutter ending on boundary should fully cross')
+
+  const result = splitClosedByOpen(square, cutter)
+  console.log('test7 result:', result === null ? 'NULL' : `${result.pieces.length} pieces`)
+  assert(result !== null, 'result is non-null')
+  assert(result!.pieces.length === 2, `expected 2 pieces, got ${result!.pieces.length}`)
+  console.log('test7 PASS')
+}
+
+// Test 8: both endpoints on the boundary — an interior chord.
+// Cutter from (2,0) to (2,4) — both on square edges, fully crossing.
+function test8() {
+  const square = polygonProfile([
+    { x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 4 }, { x: 0, y: 4 },
+  ])
+  const cutter = openPolyline([{ x: 2, y: 0 }, { x: 2, y: 4 }])
+
+  const crosses = openCrossesClosedFully(cutter, square)
+  console.log('test8 openCrossesClosedFully:', crosses)
+  assert(crosses, 'interior chord should fully cross')
+
+  const result = splitClosedByOpen(square, cutter)
+  console.log('test8 result:', result === null ? 'NULL' : `${result.pieces.length} pieces`)
+  assert(result !== null, 'result is non-null')
+  assert(result!.pieces.length === 2, `expected 2 pieces, got ${result!.pieces.length}`)
+  console.log('test8 PASS')
+}
+
 try {
   test1()
   test2()
   test3()
   test4()
   test5()
+  test6()
+  test7()
+  test8()
   console.log('\nAll tests PASS')
 } catch (e) {
   console.error(e)
