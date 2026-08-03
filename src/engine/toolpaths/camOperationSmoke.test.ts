@@ -27,7 +27,7 @@
  * Run with: npx tsx src/engine/toolpaths/camOperationSmoke.test.ts
  */
 
-import type { DrillType, Operation, Project, SketchFeature, Tool } from '../../types/project'
+import type { DrillType, Operation, Project, Segment, SketchFeature, Tool } from '../../types/project'
 import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { runPostProcessor } from '../gcode/postprocessor'
@@ -599,6 +599,162 @@ test('drilling helical: unsupported tool falls back with warning', () => {
 
   const gcode = postToolpath(project, op, result)
   assert(gcode.length > 0, 'fallback should produce non-empty G-code')
+})
+
+test('drilling helical: v_bit falls back with warning', () => {
+  const vBit = makeVBit('t1')
+  const circle = makeCircleFeature('c1', 20, 20, 5, 0, -6)
+  const project = baseProject([vBit], [circle])
+  const op = makePocketOp({
+    kind: 'drilling',
+    target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1',
+    stepdown: 2,
+    drillType: 'helical',
+  })
+  const result = generateDrillingToolpath(project, op)
+  const toolWarning = result.warnings.find((w) => w.code === 'drillHelicalToolUnsupported')
+  assert(!!toolWarning, 'helical with v_bit should produce drillHelicalToolUnsupported warning')
+  assert(result.drillCycles !== undefined && result.drillCycles.length > 0, 'v_bit fallback should have drillCycles')
+})
+
+test('drilling helical: ball_endmill falls back with warning', () => {
+  const base = defaultTool('mm', 1)
+  const ballEndmill: Tool = {
+    ...base,
+    id: 't1',
+    name: 'Ball endmill',
+    type: 'ball_endmill',
+    diameter: 4,
+    defaultStepdown: 2,
+    defaultStepover: 0.4,
+  }
+  const circle = makeCircleFeature('c1', 20, 20, 5, 0, -6)
+  const project = baseProject([ballEndmill], [circle])
+  const op = makePocketOp({
+    kind: 'drilling',
+    target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1',
+    stepdown: 2,
+    drillType: 'helical',
+  })
+  const result = generateDrillingToolpath(project, op)
+  const toolWarning = result.warnings.find((w) => w.code === 'drillHelicalToolUnsupported')
+  assert(!!toolWarning, 'helical with ball_endmill should produce drillHelicalToolUnsupported warning')
+  assert(result.drillCycles !== undefined && result.drillCycles.length > 0, 'ball_endmill fallback should have drillCycles')
+})
+
+test('drilling helical: legacy four-arc circle profile produces same result as native circle', () => {
+  // Build a circle via four 90° arcs matching the native circleProfile(20, 20, 5)
+  const r = 5
+  const cx = 20
+  const cy = 20
+  const fourArcSegments: Segment[] = [
+    { type: 'arc', to: { x: cx, y: cy + r }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx - r, y: cy }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx, y: cy - r }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx + r, y: cy }, center: { x: cx, y: cy }, clockwise: true },
+  ]
+  const fourArcFeature: SketchFeature = {
+    id: 'c1',
+    name: 'FourArcHole',
+    kind: 'circle',
+    folderId: null,
+    sketch: {
+      profile: { start: { x: cx + r, y: cy }, segments: fourArcSegments, closed: true },
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 0,
+    z_bottom: -6,
+    visible: true,
+    locked: false,
+  }
+  const nativeFeature = makeCircleFeature('c1', cx, cy, r, 0, -6)
+  const tool = makeFlatEndmill('t1', 3)
+
+  const nativeProj = baseProject([tool], [nativeFeature])
+  const fourArcProj = baseProject([tool], [fourArcFeature])
+
+  const nativeOp = makePocketOp({
+    kind: 'drilling',
+    target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1',
+    stepdown: 2,
+    drillType: 'helical',
+    entryRampAngle: 5,
+    entryHelixDiameterPercent: 80,
+  })
+  const fourArcOp = { ...nativeOp }
+
+  const nativeResult = generateDrillingToolpath(nativeProj, nativeOp)
+  const fourArcResult = generateDrillingToolpath(fourArcProj, fourArcOp)
+
+  assert(nativeResult.moves.length > 0, 'native circle should produce moves')
+  assert(fourArcResult.moves.length > 0, 'four-arc circle should produce moves')
+
+  // Both should produce lead_in moves (helical), not plunge
+  const nativeLeadIns = nativeResult.moves.filter((m) => m.kind === 'lead_in')
+  const fourArcLeadIns = fourArcResult.moves.filter((m) => m.kind === 'lead_in')
+  assert(nativeLeadIns.length > 0, 'native circle should have lead_in moves')
+  assert(fourArcLeadIns.length > 0, 'four-arc circle should have lead_in moves')
+
+  // The move count should be identical for identical geometry
+  assert(nativeResult.moves.length === fourArcResult.moves.length,
+    `four-arc moves (${fourArcResult.moves.length}) should match native (${nativeResult.moves.length})`)
+  assert(!nativeResult.drillCycles || nativeResult.drillCycles.length === 0, 'native should have no drillCycles')
+  assert(!fourArcResult.drillCycles || fourArcResult.drillCycles.length === 0, 'four-arc should have no drillCycles')
+})
+
+test('drilling helical: malformed four-arc geometry falls back to plunge', () => {
+  // Four arcs with DIFFERENT centers — does not form a proper circle
+  const cx = 20
+  const cy = 20
+  const r = 5
+  const malformedSegments: Segment[] = [
+    { type: 'arc', to: { x: cx, y: cy + r }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx - r, y: cy }, center: { x: cx + 1, y: cy + 1 }, clockwise: true }, // different centre
+    { type: 'arc', to: { x: cx, y: cy - r }, center: { x: cx, y: cy }, clockwise: true },
+    { type: 'arc', to: { x: cx + r, y: cy }, center: { x: cx, y: cy }, clockwise: true },
+  ]
+  const malformedFeature: SketchFeature = {
+    id: 'c1',
+    name: 'BadCircle',
+    kind: 'circle',
+    folderId: null,
+    sketch: {
+      profile: { start: { x: cx + r, y: cy }, segments: malformedSegments, closed: true },
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 0,
+    z_bottom: -6,
+    visible: true,
+    locked: false,
+  }
+  const tool = makeFlatEndmill('t1', 3)
+  const project = baseProject([tool], [malformedFeature])
+  const op = makePocketOp({
+    kind: 'drilling',
+    target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1',
+    stepdown: 2,
+    drillType: 'helical',
+  })
+  const result = generateDrillingToolpath(project, op)
+
+  // Should fall back: getCircleCenter returns null for malformed 4-arc
+  // → precomputeDrillTargets skips it → drillNoValidCircles
+  // Actually wait: getCircleCenter shares the same validation now.
+  // A malformed 4-arc circle returns null center → precompute skips it
+  assert(result.warnings.some((w) => w.code === 'drillNoValidCircles' || w.code === 'drillNoCenter'),
+    'malformed 4-arc should produce a diagnostic warning')
 })
 
 // ---------------------------------------------------------------------

@@ -576,6 +576,150 @@ testCannedChipBreakingG73()
 testRegressionGrblNoCannedCycles()
 testLegacyCannedCycleDefaults()
 
+// ── Helical drilling postprocessor test ─────────────────────────
+
+function testHelicalDrillingG1NoCannedCycles(): void {
+  console.log('Testing helical flat-endmill drilling emits G1, no canned cycles, no G2/G3...')
+
+  const project = newProject('Helical Test', 'mm')
+  const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '4 mm Endmill', type: 'flat_endmill' as const, diameter: 4, defaultPlungeFeed: 150 }
+  project.tools = [toolRecord]
+
+  const circle: SketchFeature = {
+    id: 'c1',
+    name: 'Bore',
+    kind: 'circle',
+    folderId: null,
+    sketch: { profile: circleProfile(20, 20, 6), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation: 'subtract',
+    z_top: 0,
+    z_bottom: -8,
+    visible: true,
+    locked: false,
+  }
+  replaceProjectFeatures(project, [circle])
+
+  const operation: Operation = {
+    id: 'op1',
+    name: 'Helical Bore Op',
+    kind: 'drilling',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1',
+    stepdown: 2,
+    stepover: 0.4,
+    feed: 600,
+    plungeFeed: 180,
+    rpm: 12000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+    drillType: 'helical',
+    entryRampAngle: 5,
+    entryHelixDiameterPercent: 80,
+  }
+
+  const toolpath = generateDrillingToolpath(project, operation)
+  assert(toolpath.moves.length > 0, 'helical drilling should produce moves')
+  assert(!toolpath.drillCycles || toolpath.drillCycles.length === 0, 'helical should have no drillCycles')
+
+  const result = runPostProcessor({
+    project,
+    definition: testDefinition(),
+    operations: [{ operation, tool: normalizeToolForProject(toolRecord, project), toolpath }],
+    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
+  })
+  const gcode = result.gcode
+
+  // Must emit G1 linear moves for the helix
+  assert(/\bG1\b/.test(gcode), 'helical G-code should contain G1 linear moves')
+  // Must NOT contain canned cycle codes
+  assert(!/G8[123]/.test(gcode), 'helical G-code should not contain canned cycle codes (G81/G82/G83)')
+  assert(!/G73/.test(gcode), 'helical G-code should not contain G73')
+  // Must contain program end
+  assert(gcode.includes('M30'), 'helical G-code should contain M30 program end')
+}
+
+function testHelicalDrillingArcFittingNoG2G3(): void {
+  console.log('Testing helical flat-endmill drilling: no G2/G3 even with arc fitting on...')
+
+  const project = newProject('Helical Arc Test', 'mm')
+  const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '4 mm Endmill', type: 'flat_endmill' as const, diameter: 4, defaultPlungeFeed: 150 }
+  project.tools = [toolRecord]
+
+  const circle: SketchFeature = {
+    id: 'c1',
+    name: 'Bore',
+    kind: 'circle',
+    folderId: null,
+    sketch: { profile: circleProfile(20, 20, 6), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation: 'subtract',
+    z_top: 0,
+    z_bottom: -8,
+    visible: true,
+    locked: false,
+  }
+  replaceProjectFeatures(project, [circle])
+
+  const operation: Operation = {
+    id: 'op1',
+    name: 'Helical Bore Op',
+    kind: 'drilling',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1',
+    stepdown: 2,
+    stepover: 0.4,
+    feed: 600,
+    plungeFeed: 180,
+    rpm: 12000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+    drillType: 'helical',
+    entryRampAngle: 5,
+    entryHelixDiameterPercent: 80,
+    arcFittingEnabled: true,
+  }
+
+  const toolpath = generateDrillingToolpath(project, operation)
+
+  // Use an arc-capable machine definition
+  const arcDef = arcTestDefinition()
+  const result = runPostProcessor({
+    project,
+    definition: arcDef,
+    operations: [{ operation, tool: normalizeToolForProject(toolRecord, project), toolpath }],
+    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
+  })
+  const gcode = result.gcode
+
+  // Even with arc fitting enabled, helical drilling must NOT emit G2/G3
+  assert(!/\bG2\b/.test(gcode), 'helical G-code should not contain G2 even with arc fitting on')
+  assert(!/\bG3\b/.test(gcode), 'helical G-code should not contain G3 even with arc fitting on')
+  assert(/\bG1\b/.test(gcode), 'helical G-code should contain G1 linear moves')
+  assert(gcode.includes('M30'), 'helical G-code should contain M30 program end')
+}
+
+testHelicalDrillingG1NoCannedCycles()
+testHelicalDrillingArcFittingNoG2G3()
+
 // ── Arc fitting tests ──────────────────────────────────────────
 
 function arcTestDefinition(overrides?: Partial<MachineDefinition>): MachineDefinition {

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { DrillType, Operation, Point, Project, SketchFeature, SketchProfile } from '../../types/project'
+import type { DrillType, Operation, Point, Project, Segment, SketchFeature, SketchProfile } from '../../types/project'
 import type { ToolpathWarning } from './warningCodes'
 import type { DrillCycle, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
@@ -28,11 +28,7 @@ import { buildRegionMask, splitFeatureTargets } from './regions'
 import {
   DEFAULT_ENTRY_RAMP_ANGLE,
   DEFAULT_ENTRY_HELIX_DIAMETER_PERCENT,
-  HELIX_SEGMENTS_PER_REVOLUTION,
-  MAX_ENTRY_DESCENT_MOVES,
-  helixAngularDirection,
-  pitchFromRampAngle,
-  plungeLimitedFeedScale,
+  emitCenterLockedCircularBore,
 } from './entry'
 
 const CHIP_BREAK_CLEARANCE = 0.5    // tiny retract between pecks in chip-breaking mode (project units)
@@ -118,6 +114,7 @@ function getCircleCenter(profile: SketchProfile): Point | null {
   }
 
   if (profile.segments.length === 4 && profile.segments.every((s) => s.type === 'arc')) {
+    if (!isValidFourArcCircle(profile.segments)) return null
     const first = profile.segments[0]
     if (first.type === 'arc') {
       return first.center
@@ -125,6 +122,38 @@ function getCircleCenter(profile: SketchProfile): Point | null {
   }
 
   return null
+}
+
+/**
+ * Validate that four arc segments form a proper complete circle (same centre,
+ * same radius for each arc). Rejects malformed four-arc geometry so the
+ * first arc isn't trusted as a complete circular hole.
+ */
+function isValidFourArcCircle(segments: Segment[]): boolean {
+  if (segments.length !== 4) return false
+  const arcs = segments
+  if (!arcs.every((s) => s.type === 'arc')) return false
+
+  const first = arcs[0]
+  if (first.type !== 'arc') return false
+  const cx = first.center.x
+  const cy = first.center.y
+  const r = Math.hypot(first.to.x - cx, first.to.y - cy)
+
+  // All four arcs must share the same centre and radius within a reasonable
+  // geometric tolerance (1e-6 is approximately 1 µm in mm-space — far tighter
+  // than any legitimate four-arc circle approximation).
+  for (const seg of arcs) {
+    if (seg.type !== 'arc') return false
+    const dcx = seg.center.x - cx
+    const dcy = seg.center.y - cy
+    if (Math.abs(dcx) > 1e-6 || Math.abs(dcy) > 1e-6) return false
+
+    const segR = Math.hypot(seg.to.x - seg.center.x, seg.to.y - seg.center.y)
+    if (Math.abs(segR - r) > 1e-6) return false
+  }
+
+  return true
 }
 
 function getCircleRadius(profile: SketchProfile): number | null {
@@ -135,6 +164,7 @@ function getCircleRadius(profile: SketchProfile): number | null {
     return Math.sqrt(dx * dx + dy * dy)
   }
   if (profile.segments.length === 4 && profile.segments.every((s) => s.type === 'arc')) {
+    if (!isValidFourArcCircle(profile.segments)) return null
     const first = profile.segments[0]
     if (first.type === 'arc') {
       const dx = first.to.x - first.center.x
@@ -143,12 +173,6 @@ function getCircleRadius(profile: SketchProfile): number | null {
     }
   }
   return null
-}
-
-const ENTRY_BOUNDARY_SAFETY_FRACTION = 0.1
-
-function entryBoundarySafety(toolDiameter: number): number {
-  return Math.max(1e-4, toolDiameter * ENTRY_BOUNDARY_SAFETY_FRACTION)
 }
 
 function emitSimplePlunge(
@@ -172,131 +196,6 @@ function emitSimplePlunge(
   const retract: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
   moves.push({ kind: 'rapid', from: bottom, to: retract })
   return retract
-}
-
-function emitHelicalBore(
-  moves: ToolpathMove[],
-  current: ToolpathPoint | null,
-  center: Point,
-  bottomZ: number,
-  safeZ: number,
-  retractZ: number,
-  operation: Operation,
-  toolDiameter: number,
-  holeRadius: number,
-): { position: ToolpathPoint; warnings: ToolpathWarning[] } {
-  const warnings: ToolpathWarning[] = []
-  const rampAngle = clampRampAngle(operation.entryRampAngle ?? DEFAULT_ENTRY_RAMP_ANGLE)
-  const helixDiameterPercent = clampPercent(operation.entryHelixDiameterPercent ?? DEFAULT_ENTRY_HELIX_DIAMETER_PERCENT)
-  const cutDirection = operation.cutDirection ?? 'conventional'
-
-  const requestedDiameter = toolDiameter * helixDiameterPercent / 100
-  const requestedRadius = requestedDiameter / 2
-
-  const safety = entryBoundarySafety(toolDiameter)
-  const noCoreCap = toolDiameter / 2
-
-  const clearanceRadius = Math.max(0, holeRadius - safety)
-  const helixRadius = Math.min(requestedRadius, clearanceRadius, noCoreCap)
-
-  if (!(helixRadius > 1e-9) || !(clearanceRadius > 1e-9)) {
-    warnings.push({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'plunge' } })
-    const pos = emitSimplePlunge(moves, current, center, bottomZ, safeZ, retractZ)
-    return { position: pos, warnings }
-  }
-
-  const depth = Math.max(0, retractZ - bottomZ)
-  const pitch = pitchFromRampAngle(helixRadius * 2, rampAngle)
-  const revolutions = pitch > 1e-9 ? depth / pitch : 0
-  const descentSegments = Math.max(1, Math.ceil(revolutions * HELIX_SEGMENTS_PER_REVOLUTION))
-
-  if (descentSegments > MAX_ENTRY_DESCENT_MOVES) {
-    warnings.push({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'plunge' } })
-    const pos = emitSimplePlunge(moves, current, center, bottomZ, safeZ, retractZ)
-    return { position: pos, warnings }
-  }
-
-  if (helixRadius < requestedRadius - Math.max(1e-9, requestedRadius * 1e-9)) {
-    warnings.push({
-      code: 'entryHelixDiameterClamped',
-      params: {
-        requestedDiameter: Number(requestedDiameter.toFixed(4)),
-        actualDiameter: Number((helixRadius * 2).toFixed(4)),
-      },
-    })
-  }
-
-  const direction = helixAngularDirection(cutDirection, 'internal')
-
-  // Rapid to safeZ above hole center
-  const aboveSafe: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
-  if (current && (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z)) {
-    moves.push({ kind: 'rapid', from: current, to: aboveSafe })
-  }
-
-  // Rapid down to retract height at hole center
-  const atRetract: ToolpathPoint = { x: center.x, y: center.y, z: retractZ }
-  if (retractZ < safeZ) {
-    moves.push({ kind: 'rapid', from: aboveSafe, to: atRetract })
-  }
-
-  // Rapid from center to helix start at retract height
-  const startPoint: ToolpathPoint = {
-    x: center.x + helixRadius,
-    y: center.y,
-    z: retractZ,
-  }
-  if (helixRadius > 1e-9) {
-    moves.push({ kind: 'rapid', from: atRetract, to: startPoint })
-  }
-
-  let prev = startPoint
-
-  // Helical descent
-  const feedScale = plungeLimitedFeedScale(operation.feed, operation.plungeFeed, rampAngle)
-  for (let index = 1; index <= descentSegments; index += 1) {
-    const ratio = index / descentSegments
-    const angle = direction * revolutions * Math.PI * 2 * ratio
-    const next: ToolpathPoint = {
-      x: center.x + Math.cos(angle) * helixRadius,
-      y: center.y + Math.sin(angle) * helixRadius,
-      z: retractZ + (bottomZ - retractZ) * ratio,
-    }
-    moves.push({
-      kind: 'lead_in',
-      from: prev,
-      to: next,
-      ...(feedScale < 1 ? { feedScale } : {}),
-    })
-    prev = next
-  }
-
-  // Bottom-flattening revolution
-  const finalAngle = direction * revolutions * Math.PI * 2
-  for (let index = 1; index <= HELIX_SEGMENTS_PER_REVOLUTION; index += 1) {
-    const angle = finalAngle + direction * Math.PI * 2 * index / HELIX_SEGMENTS_PER_REVOLUTION
-    const next: ToolpathPoint = {
-      x: center.x + Math.cos(angle) * helixRadius,
-      y: center.y + Math.sin(angle) * helixRadius,
-      z: bottomZ,
-    }
-    moves.push({ kind: 'lead_in', from: prev, to: next })
-    prev = next
-  }
-
-  // Rapid retract to safeZ from final position (which is on the helix circle at bottomZ)
-  const finalRetract: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
-  moves.push({ kind: 'rapid', from: prev, to: finalRetract })
-
-  return { position: finalRetract, warnings }
-}
-
-function clampRampAngle(value: number): number {
-  return Math.min(45, Math.max(0.1, value))
-}
-
-function clampPercent(value: number): number {
-  return Math.min(100, Math.max(1, value))
 }
 
 function emitDrillCycle(
@@ -365,6 +264,10 @@ function emitDrillCycle(
   const finalRetract: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
   moves.push({ kind: 'rapid', from: prev, to: finalRetract })
   return finalRetract
+}
+
+function clampPercent(value: number): number {
+  return Math.min(100, Math.max(1, value))
 }
 
 export function generateDrillingToolpath(project: Project, operation: Operation): ToolpathResult {
@@ -466,6 +369,9 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
   let currentPosition: ToolpathPoint | null = null
 
   const dwellTime = operation.dwellTime ?? 0
+  const rampAngle = Math.min(45, Math.max(0.1, operation.entryRampAngle ?? DEFAULT_ENTRY_RAMP_ANGLE))
+  const helixDiameterPercent = clampPercent(operation.entryHelixDiameterPercent ?? DEFAULT_ENTRY_HELIX_DIAMETER_PERCENT)
+  const cutDirection = operation.cutDirection ?? 'conventional'
 
   for (const target of sortedTargets) {
     const topZ = target.span.top
@@ -479,16 +385,21 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     if (drillType === 'helical' && tool.type === 'flat_endmill') {
       const holeRadius = getCircleRadius(target.feature.sketch.profile)
       if (holeRadius !== null) {
-        const result = emitHelicalBore(
+        const requestedRadius = tool.diameter * helixDiameterPercent / 200
+        const result = emitCenterLockedCircularBore(
           moves,
           currentPosition,
           target.center,
+          requestedRadius,
+          holeRadius,
+          tool.diameter,
           bottomZ,
           safeZ,
           retractZ,
-          operation,
-          tool.diameter,
-          holeRadius,
+          rampAngle,
+          cutDirection,
+          operation.feed,
+          operation.plungeFeed,
         )
         currentPosition = result.position
         warnings.push(...result.warnings)

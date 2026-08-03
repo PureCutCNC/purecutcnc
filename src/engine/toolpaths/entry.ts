@@ -613,8 +613,161 @@ function findRampPlacement(
   return best
 }
 
-function entryBoundarySafety(toolDiameter: number): number {
+export function entryBoundarySafety(toolDiameter: number): number {
   return Math.max(1e-4, toolDiameter * ENTRY_BOUNDARY_SAFETY_FRACTION)
+}
+
+/**
+ * Emit a center-locked helical bore path for endmill boring of circular holes.
+ *
+ * This is a narrow shared helper for drilling.ts — it does NOT run #412's
+ * generic clearance search or relocate from the selected hole centre. The
+ * caller supplies the desired (requested) helix radius; the helper clamps it
+ * by the no-core cap (tool radius) and the swept-envelope safety constraint
+ * (`pathRadius + toolDiameter / 2 + boundarySafety <= holeRadius`), then emits
+ * the descending G1 helix plus a bottom-flattening revolution.
+ *
+ * When no safe positive path radius remains the helper falls back to a simple
+ * centre plunge with a structured warning, matching the existing plunge/canned-
+ * cycle behaviour for unsupported cases.
+ */
+export function emitCenterLockedCircularBore(
+  moves: ToolpathMove[],
+  current: ToolpathPoint | null,
+  center: Point,
+  requestedRadius: number,
+  holeRadius: number,
+  toolDiameter: number,
+  bottomZ: number,
+  safeZ: number,
+  retractZ: number,
+  rampAngle: number,
+  cutDirection: CutDirection,
+  cutFeed: number,
+  plungeFeed: number,
+): { position: ToolpathPoint; warnings: ToolpathWarning[] } {
+  const warnings: ToolpathWarning[] = []
+  const safety = entryBoundarySafety(toolDiameter)
+  const toolRadius = toolDiameter / 2
+  const noCoreCap = toolRadius
+  const maxSafePathRadius = Math.max(0, holeRadius - toolRadius - safety)
+  const helixRadius = Math.min(requestedRadius, maxSafePathRadius, noCoreCap)
+
+  // Swept-envelope safety gate: the cutter must stay inside the selected
+  // hole at every point. The path is centred on the hole, so the constraint
+  // is constant per hole.
+  if (!(helixRadius > ENTRY_EPSILON) || helixRadius + toolRadius + safety > holeRadius + ENTRY_EPSILON) {
+    warnings.push({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'plunge' } })
+    return { position: emitPlungeEntryFallback(moves, current, center, bottomZ, safeZ, retractZ), warnings }
+  }
+
+  const depth = Math.max(0, retractZ - bottomZ)
+  const pitch = pitchFromRampAngle(helixRadius * 2, rampAngle)
+  const revolutions = pitch > ENTRY_EPSILON ? depth / pitch : 0
+  const descentSegments = Math.max(1, Math.ceil(revolutions * HELIX_SEGMENTS_PER_REVOLUTION))
+
+  if (descentSegments > MAX_ENTRY_DESCENT_MOVES) {
+    warnings.push({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'plunge' } })
+    return { position: emitPlungeEntryFallback(moves, current, center, bottomZ, safeZ, retractZ), warnings }
+  }
+
+  if (helixRadius < requestedRadius - Math.max(ENTRY_EPSILON, requestedRadius * ENTRY_EPSILON)) {
+    warnings.push({
+      code: 'entryHelixDiameterClamped',
+      params: {
+        requestedDiameter: formatWarningNumber(requestedRadius * 2),
+        actualDiameter: formatWarningNumber(helixRadius * 2),
+      },
+    })
+  }
+
+  const direction = helixAngularDirection(cutDirection, 'internal')
+
+  // Rapid to safeZ above hole centre.
+  const aboveSafe: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
+  if (current && (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z)) {
+    moves.push({ kind: 'rapid', from: current, to: aboveSafe })
+  }
+
+  // Rapid down to retract height at hole centre.
+  const atRetract: ToolpathPoint = { x: center.x, y: center.y, z: retractZ }
+  if (retractZ < safeZ) {
+    moves.push({ kind: 'rapid', from: aboveSafe, to: atRetract })
+  }
+
+  // Rapid from centre to helix start at retract height.
+  const startPoint: ToolpathPoint = {
+    x: center.x + helixRadius,
+    y: center.y,
+    z: retractZ,
+  }
+  if (helixRadius > ENTRY_EPSILON) {
+    moves.push({ kind: 'rapid', from: atRetract, to: startPoint })
+  }
+
+  let prev = startPoint
+
+  // Helical descent.
+  const feedScale = plungeLimitedFeedScale(cutFeed, plungeFeed, rampAngle)
+  for (let index = 1; index <= descentSegments; index += 1) {
+    const ratio = index / descentSegments
+    const angle = direction * revolutions * Math.PI * 2 * ratio
+    const next: ToolpathPoint = {
+      x: center.x + Math.cos(angle) * helixRadius,
+      y: center.y + Math.sin(angle) * helixRadius,
+      z: retractZ + (bottomZ - retractZ) * ratio,
+    }
+    moves.push({
+      kind: 'lead_in',
+      from: prev,
+      to: next,
+      ...(feedScale < 1 ? { feedScale } : {}),
+    })
+    prev = next
+  }
+
+  // Bottom-flattening revolution.
+  const finalAngle = direction * revolutions * Math.PI * 2
+  for (let index = 1; index <= HELIX_SEGMENTS_PER_REVOLUTION; index += 1) {
+    const angle = finalAngle + direction * Math.PI * 2 * index / HELIX_SEGMENTS_PER_REVOLUTION
+    const next: ToolpathPoint = {
+      x: center.x + Math.cos(angle) * helixRadius,
+      y: center.y + Math.sin(angle) * helixRadius,
+      z: bottomZ,
+    }
+    moves.push({ kind: 'lead_in', from: prev, to: next })
+    prev = next
+  }
+
+  // Rapid retract to safeZ from final position (on the helix circle at bottomZ).
+  const finalRetract: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
+  moves.push({ kind: 'rapid', from: prev, to: finalRetract })
+
+  return { position: finalRetract, warnings }
+}
+
+/** Simple centre plunge fallback used when the bore cannot fit a safe helix. */
+function emitPlungeEntryFallback(
+  moves: ToolpathMove[],
+  current: ToolpathPoint | null,
+  center: Point,
+  bottomZ: number,
+  safeZ: number,
+  retractZ: number,
+): ToolpathPoint {
+  const aboveSafe: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
+  if (current && (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z)) {
+    moves.push({ kind: 'rapid', from: current, to: aboveSafe })
+  }
+  const rapidStart: ToolpathPoint = { x: center.x, y: center.y, z: retractZ }
+  if (retractZ < safeZ) {
+    moves.push({ kind: 'rapid', from: aboveSafe, to: rapidStart })
+  }
+  const bottom: ToolpathPoint = { x: center.x, y: center.y, z: bottomZ }
+  moves.push({ kind: 'plunge', from: rapidStart, to: bottom })
+  const retract: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
+  moves.push({ kind: 'rapid', from: bottom, to: retract })
+  return retract
 }
 
 function lineIntervalInsideRegion(
