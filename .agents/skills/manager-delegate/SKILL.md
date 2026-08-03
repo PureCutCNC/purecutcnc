@@ -110,9 +110,8 @@ scripts call. Do not modify it.
 
 ## Guardrails (enforced by the scripts — do not re-derive)
 
-- Worktrees live under `$PURECUT_WORKTREE_BASE`
-  (default `/Users/frankp/Projects/worktrees/purecutcnc`), never the primary
-  checkout or `main`.
+- Worktrees live under `$PURECUT_WORKTREE_BASE` — by default a `worktrees/<repo-name>`
+  directory beside the repository — never the primary checkout or `main`.
 - Branch-first, always: `feat/issue-NN-SLUG` off the integration branch.
 - Independent build gate (`npm run build`) after the worker — the worker's
   reported checks are not trusted.
