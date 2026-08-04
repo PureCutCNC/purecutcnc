@@ -1,0 +1,72 @@
+name: G-code Conformance
+
+# Exports a corpus of representative G-code and feeds it to real controller
+# interpreters (issue #450). The unit tests re-derive controller rules in
+# TypeScript — that encodes our *belief* about them. This job runs the
+# firmware's own parser, so a rejection here is the controller's verdict.
+#
+# Deliberately NOT a required check yet: it clones and compiles third-party
+# sources, so a transient upstream failure must not be able to wedge merges.
+# Promote to required once it has been green across a run of PRs.
+#
+# Kept out of pr-check.yml because the validator build is cached separately
+# and has nothing to share with the app build.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+jobs:
+  conformance:
+    name: gcode-conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The validator is built from pinned upstream repositories, so it only
+      # needs rebuilding when the setup script itself changes.
+      - name: Cache controller interpreters
+        id: validator-cache
+        uses: actions/cache@v4
+        with:
+          path: .gcode-conformance/validators
+          key: gcode-validators-${{ runner.os }}-${{ hashFiles('scripts/gcode-conformance/setup-validators.sh') }}
+
+      - name: Build controller interpreters
+        if: steps.validator-cache.outputs.cache-hit != 'true'
+        run: ./scripts/gcode-conformance/setup-validators.sh
+
+      # linuxcnc-uspace ships the standalone rs274 interpreter. Best effort:
+      # if the package is unavailable on the runner image, the corpus still
+      # runs against GRBL and the runner reports the interpreter as skipped.
+      - name: Install LinuxCNC interpreter (optional)
+        continue-on-error: true
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends linuxcnc-uspace || \
+            echo "linuxcnc-uspace unavailable on this runner; continuing without rs274"
+
+      - name: Validate exported G-code
+        run: npm run check:gcode
+
+      - name: Upload corpus on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcode-corpus
+          path: .gcode-conformance/corpus
+          retention-days: 7

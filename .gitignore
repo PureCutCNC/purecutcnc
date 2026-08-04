@@ -42,3 +42,6 @@ playwright-report/
 /playwright/.cache/
 /e2e/test-results/
 
+
+# G-code conformance corpus output and built validators (issue #450)
+.gcode-conformance/
