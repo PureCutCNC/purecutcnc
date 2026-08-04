@@ -25,6 +25,10 @@ import {
   resolveFeatureZSpan,
 } from './geometry'
 import { buildRegionMask, splitFeatureTargets } from './regions'
+import {
+  DEFAULT_ENTRY_RAMP_ANGLE,
+  emitCenterLockedCircularBore,
+} from './entry'
 
 const CHIP_BREAK_CLEARANCE = 0.5    // tiny retract between pecks in chip-breaking mode (project units)
 
@@ -109,6 +113,7 @@ function getCircleCenter(profile: SketchProfile): Point | null {
   }
 
   if (profile.segments.length === 4 && profile.segments.every((s) => s.type === 'arc')) {
+    if (!isValidFourArcCircle(profile)) return null
     const first = profile.segments[0]
     if (first.type === 'arc') {
       return first.center
@@ -116,6 +121,109 @@ function getCircleCenter(profile: SketchProfile): Point | null {
   }
 
   return null
+}
+
+/**
+ * Validate that a four-arc SketchProfile forms a proper complete circle:
+ * closed, contiguous, consistently directed, and each arc sweeps exactly one
+ * quarter turn. Returns false for partial, repeated, overlapping, open, or
+ * otherwise malformed four-arc inputs so the caller never treats them as a
+ * circular hole.
+ */
+function isValidFourArcCircle(profile: SketchProfile): boolean {
+  if (profile.segments.length !== 4) return false
+  if (!profile.closed) return false
+  const arcs = profile.segments
+  if (!arcs.every((s) => s.type === 'arc')) return false
+
+  const first = arcs[0]
+  if (first.type !== 'arc') return false
+  const cx = first.center.x
+  const cy = first.center.y
+  const r = Math.hypot(first.to.x - cx, first.to.y - cy)
+  const direction = first.clockwise
+  const tolerance = 1e-6
+
+  // All four arcs must share the same centre, radius, and direction.
+  for (const seg of arcs) {
+    if (seg.type !== 'arc') return false
+    if (Math.abs(seg.center.x - cx) > tolerance || Math.abs(seg.center.y - cy) > tolerance) return false
+    const segR = Math.hypot(seg.to.x - seg.center.x, seg.to.y - seg.center.y)
+    if (Math.abs(segR - r) > tolerance) return false
+    if (seg.clockwise !== direction) return false
+  }
+
+  // profile.start must lie on the circle.
+  const startDist = Math.hypot(profile.start.x - cx, profile.start.y - cy)
+  if (Math.abs(startDist - r) > tolerance) return false
+
+  // Path must be closed: the last arc's to equals profile.start.
+  const last = arcs[3]
+  if (last.type !== 'arc') return false
+  if (Math.abs(last.to.x - profile.start.x) > tolerance || Math.abs(last.to.y - profile.start.y) > tolerance) {
+    return false
+  }
+
+  // Each arc must sweep exactly one quarter turn (≈ 90°). In Y-down project
+  // space atan2 increases clockwise, so clockwise arcs sweep +π/2 and
+  // counterclockwise arcs sweep −π/2.
+  const sweepTolerance = 1e-4
+  let prevPoint = profile.start
+  for (const seg of arcs) {
+    if (seg.type !== 'arc') return false
+    const startAngle = Math.atan2(prevPoint.y - cy, prevPoint.x - cx)
+    const endAngle = Math.atan2(seg.to.y - cy, seg.to.x - cx)
+    let sweep = endAngle - startAngle
+    while (sweep > Math.PI) sweep -= 2 * Math.PI
+    while (sweep < -Math.PI) sweep += 2 * Math.PI
+    const expectedSweep = seg.clockwise ? Math.PI / 2 : -Math.PI / 2
+    if (Math.abs(sweep - expectedSweep) > sweepTolerance) return false
+    prevPoint = seg.to
+  }
+
+  return true
+}
+
+function getCircleRadius(profile: SketchProfile): number | null {
+  if (profile.segments.length === 1 && profile.segments[0].type === 'circle') {
+    const seg = profile.segments[0]
+    const dx = seg.to.x - seg.center.x
+    const dy = seg.to.y - seg.center.y
+    return Math.sqrt(dx * dx + dy * dy)
+  }
+  if (profile.segments.length === 4 && profile.segments.every((s) => s.type === 'arc')) {
+    if (!isValidFourArcCircle(profile)) return null
+    const first = profile.segments[0]
+    if (first.type === 'arc') {
+      const dx = first.to.x - first.center.x
+      const dy = first.to.y - first.center.y
+      return Math.sqrt(dx * dx + dy * dy)
+    }
+  }
+  return null
+}
+
+function emitSimplePlunge(
+  moves: ToolpathMove[],
+  current: ToolpathPoint | null,
+  center: Point,
+  bottomZ: number,
+  safeZ: number,
+  retractZ: number,
+): ToolpathPoint {
+  const aboveSafe: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
+  if (current && (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z)) {
+    moves.push({ kind: 'rapid', from: current, to: aboveSafe })
+  }
+  const rapidStart: ToolpathPoint = { x: center.x, y: center.y, z: retractZ }
+  if (retractZ < safeZ) {
+    moves.push({ kind: 'rapid', from: aboveSafe, to: rapidStart })
+  }
+  const bottom: ToolpathPoint = { x: center.x, y: center.y, z: bottomZ }
+  moves.push({ kind: 'plunge', from: rapidStart, to: bottom })
+  const retract: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
+  moves.push({ kind: 'rapid', from: bottom, to: retract })
+  return retract
 }
 
 function emitDrillCycle(
@@ -235,18 +343,20 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
 
   const warnings: ToolpathWarning[] = []
 
-  if (tool.type !== 'drill') {
+  const drillType: DrillType = operation.drillType ?? 'simple'
+  const peckDepth = operation.peckDepth ?? 0
+
+  if (drillType === 'helical') {
+    if (tool.type !== 'flat_endmill') {
+      warnings.push({ code: 'drillHelicalToolUnsupported' })
+    }
+  } else if (tool.type !== 'drill') {
     warnings.push({ code: 'drillNotDrillBit' })
   }
 
   if (targetFeatures.length !== splitTargets.machiningFeatures.length || splitTargets.missingFeatureIds.length > 0) {
     warnings.push({ code: 'drillTargetsNotCircles' })
   }
-
-
-
-  const drillType: DrillType = operation.drillType ?? 'simple'
-  const peckDepth = operation.peckDepth ?? 0
 
   if ((drillType === 'peck' || drillType === 'chip_breaking') && !(peckDepth > 0)) {
     warnings.push({ code: 'drillPeckDepthPositive' })
@@ -283,6 +393,8 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
   let currentPosition: ToolpathPoint | null = null
 
   const dwellTime = operation.dwellTime ?? 0
+  const rampAngle = Math.min(45, Math.max(0.1, operation.entryRampAngle ?? DEFAULT_ENTRY_RAMP_ANGLE))
+  const cutDirection = operation.cutDirection ?? 'conventional'
 
   for (const target of sortedTargets) {
     const topZ = target.span.top
@@ -293,28 +405,92 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
       warnings.push({ code: 'cutDepthExceedsToolMaxForFeature', params: { name: target.feature.name, ...depthWarning.params } })
     }
 
-    currentPosition = emitDrillCycle(
-      moves,
-      currentPosition,
-      target.center,
-      topZ,
-      bottomZ,
-      safeZ,
-      retractZ,
-      drillType,
-      peckDepth,
-    )
+    if (drillType === 'helical' && tool.type === 'flat_endmill') {
+      const holeRadius = getCircleRadius(target.feature.sketch.profile)
+      if (holeRadius !== null) {
+        const holeDiameter = holeRadius * 2
+        const toolDiameter = tool.diameter
+        const toolRadius = toolDiameter / 2
+        const twiceDiameter = toolDiameter * 2
 
-    drillCycles.push({
-      x: target.center.x,
-      y: target.center.y,
-      clearZ: safeZ,
-      retractZ,
-      bottomZ,
-      drillType,
-      peckDepth: operation.peckDepth ?? 0,
-      dwellTime,
-    })
+        // Eligibility: the selected-circle diameter must be strictly larger
+        // than the tool diameter and no greater than twice it.  Outside that
+        // range a single centred helix cannot both clear the core and reach
+        // the wall without becoming a pocket operation.
+        if (holeDiameter - toolDiameter <= 1e-9) {
+          // Hole at or below tool diameter — no room to orbit.
+          warnings.push({
+            code: 'drillHelicalBoreTooSmall',
+            params: { holeDiameter: Number(holeDiameter.toFixed(4)), toolDiameter: Number(toolDiameter.toFixed(4)) },
+          })
+          // Emit no moves for this target; do not mutate currentPosition —
+          // the tool has not visited this hole centre.
+        } else if (holeDiameter - twiceDiameter > 1e-9) {
+          // Hole larger than 2× tool diameter — clearing requires pocketing.
+          warnings.push({
+            code: 'drillHelicalBoreTooLarge',
+            params: {
+              holeDiameter: Number(holeDiameter.toFixed(4)),
+              maxDiameter: Number(twiceDiameter.toFixed(4)),
+            },
+          })
+          // Do not mutate currentPosition — the tool has not visited this hole centre.
+        } else {
+          // Eligible: cutter-centre orbit = holeRadius - toolRadius.
+          const boreRadius = holeRadius - toolRadius
+          const result = emitCenterLockedCircularBore(
+            moves,
+            currentPosition,
+            target.center,
+            boreRadius,
+            holeRadius,
+            toolDiameter,
+            bottomZ,
+            safeZ,
+            retractZ,
+            rampAngle,
+            cutDirection,
+            operation.feed,
+            operation.plungeFeed,
+            true, // isFinishBore — do not subtract entry safety or clamp to no-core cap
+          )
+          // Rejected (unmachinable) bores emit no moves — do not advance
+          // currentPosition so the next target starts from the actual prior position.
+          if (!result.warnings.some((w) => w.code === 'drillHelicalBoreUnmachinable')) {
+            currentPosition = result.position
+          }
+          warnings.push(...result.warnings)
+        }
+      } else {
+        // Should not reach here (getCircleCenter already passed), but be safe
+        currentPosition = emitSimplePlunge(moves, currentPosition, target.center, bottomZ, safeZ, retractZ)
+      }
+      // No drillCycles entry for helical — moves are emitted as G1 lead-in moves
+    } else {
+      const effectiveDrillType: DrillType = drillType === 'helical' ? 'simple' : drillType
+      currentPosition = emitDrillCycle(
+        moves,
+        currentPosition,
+        target.center,
+        topZ,
+        bottomZ,
+        safeZ,
+        retractZ,
+        effectiveDrillType,
+        peckDepth,
+      )
+
+      drillCycles.push({
+        x: target.center.x,
+        y: target.center.y,
+        clearZ: safeZ,
+        retractZ,
+        bottomZ,
+        drillType: effectiveDrillType,
+        peckDepth: operation.peckDepth ?? 0,
+        dwellTime,
+      })
+    }
   }
 
   return {

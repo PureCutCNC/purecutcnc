@@ -29,6 +29,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.drillType.peck': 'Tieflochbohren (G83)',
   'cam.drillType.dwell': 'Verweilen (G82)',
   'cam.drillType.chipBreaking': 'Spanbruch (G73)',
+  'cam.drillType.helical': 'Helikal',
 
   // ── Operation kind labels (full, for the Kind field and operationValidity) ──
   'cam.opLabel.pocket': 'Tasche',

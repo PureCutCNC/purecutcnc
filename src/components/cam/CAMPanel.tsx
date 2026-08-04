@@ -352,6 +352,8 @@ function drillTypeLabel(type: DrillType): string {
       return camT('cam.drillType.dwell')
     case 'chip_breaking':
       return camT('cam.drillType.chipBreaking')
+    case 'helical':
+      return camT('cam.drillType.helical')
   }
 }
 
@@ -1477,6 +1479,7 @@ export function CAMPanel({
                             { value: 'peck', label: drillTypeLabel('peck') },
                             { value: 'dwell', label: drillTypeLabel('dwell') },
                             { value: 'chip_breaking', label: drillTypeLabel('chip_breaking') },
+                            { value: 'helical', label: drillTypeLabel('helical') },
                           ]}
                           onChange={(value) => updateOperation(selectedOperation.id, { drillType: value })}
                         />
@@ -1503,6 +1506,20 @@ export function CAMPanel({
                             onCommit={(value) => updateOperation(selectedOperation.id, { dwellTime: value })}
                           />
                           <OperationParameterReference kind="dwell" />
+                        </label>
+                      ) : null}
+                      {selectedOperation.drillType === 'helical' ? (
+                        <label className="properties-field">
+                          <span>{camT('cam.operation.entryRampAngle')}</span>
+                          <DraftNumberInput
+                            value={selectedOperation.entryRampAngle ?? 5}
+                            min={0.1}
+                            max={45}
+                            onCommit={(value) => updateOperation(selectedOperation.id, {
+                              entryRampAngle: Math.min(45, Math.max(0.1, value)),
+                            })}
+                          />
+                          <OperationParameterReference kind="entryRampAngle" />
                         </label>
                       ) : null}
                       <label className="properties-field">

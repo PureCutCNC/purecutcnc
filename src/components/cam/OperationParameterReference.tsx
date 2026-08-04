@@ -408,6 +408,15 @@ export function OperationParameterReference({
           </OpParamRefFrame>
         )
       }
+      if (variant === 'helical') {
+        return (
+          <OpParamRefFrame label={label}>
+            {hole}
+            <path className="gear-reference__accent" d="M29 5c0 2 6 1 6 3s-6 1-6 3 6 1 6 3-6 1-6 3" />
+            <path className="gear-reference__accent-fill" d="M29 26l-2.6-4.5h5.2z" />
+          </OpParamRefFrame>
+        )
+      }
       // simple (default)
       return (
         <OpParamRefFrame label={label}>

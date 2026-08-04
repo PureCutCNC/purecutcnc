@@ -35,6 +35,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.drillType.peck': '啄钻（G83）',
   'cam.drillType.dwell': '暂停（G82）',
   'cam.drillType.chipBreaking': '断屑（G73）',
+  'cam.drillType.helical': '螺旋',
 
   // ── Operation kind labels ──
   'cam.opLabel.pocket': '挖槽',

@@ -33,6 +33,7 @@ export const camEn = {
   'cam.drillType.peck': 'Peck (G83)',
   'cam.drillType.dwell': 'Dwell (G82)',
   'cam.drillType.chipBreaking': 'Chip breaking (G73)',
+  'cam.drillType.helical': 'Helical',
 
   // ── Operation kind labels (full, for the Kind field and operationValidity) ──
   'cam.opLabel.pocket': 'Pocket',
