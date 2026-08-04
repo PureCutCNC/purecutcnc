@@ -42,7 +42,7 @@ import type {
 
 export type Units = ProjectMeta['units']
 
-const MM_PER_INCH = 25.4
+export const MM_PER_INCH = 25.4
 
 /**
  * Geometric tolerance, in millimetres, shared by export-stage arc fitting and

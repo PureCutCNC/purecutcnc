@@ -25,9 +25,9 @@ import type { ToolpathPoint, ToolpathMove } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
 import type { FedMoveKind } from '../toolpaths/feed'
 import type { OperationTarget } from '../../types/project'
-import { exportGeometryTolerance } from '../../utils/units'
-import { fitArcsInMachineMoves } from './arcFitting'
-import type { ArcMoveDescriptor, FittedMoveDescriptor } from './arcFitting'
+import { exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
+import { fitArcsInMachineMoves, applyEmittedArcFallback, resolveEmittedArc } from './arcFitting'
+import type { ArcMoveDescriptor, FittedMoveDescriptor, EmittedArcOptions } from './arcFitting'
 
 interface ModalState {
   motionCommand: string | null   // last G0/G1/G2/G3
@@ -84,6 +84,30 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
   let moveCount = 0
   const captureTrace = options.captureMotionTrace === true
   const motionTraces: OperationMotionTrace[] = []
+
+  // Formats a value exactly as it will be written, parsed back to a number.
+  // Arc validation must judge the numbers the controller reads, not ours.
+  const formatValue = (value: number): number =>
+    Number(formatGCodeNumber(value, definition, outputUnits))
+
+  // Everything the emitted-arc resolver needs to reproduce, and satisfy, what
+  // the controller will compute from the formatted words.
+  const arcEmitOptions: EmittedArcOptions = {
+    format: formatValue,
+    arcFormat: definition.motion.arcFormat,
+    // Controllers convert to millimetres before checking, so an inch program
+    // faces the same absolute budget.
+    mmPerOutputUnit: outputUnits === 'mm' ? 1 : MM_PER_INCH,
+    // The output grid I/J can be snapped onto. `decimalPlaces` is normalised
+    // to a per-unit object by the definition schema.
+    quantum: Math.pow(10, -definition.numberFormat.decimalPlaces[outputUnits]),
+  }
+
+  // Where the *controller* believes the tool is: every emitted coordinate
+  // after number formatting. Arc I/J offsets are relative to this, not to the
+  // exporter's un-rounded position (`state.currentPosition`) — conflating the
+  // two is the defect behind issue #447.
+  let emittedPosition: { x: number; y: number } | null = null
 
   const emitLine = (content: string) => {
     if (definition.program.lineNumbers) {
@@ -161,6 +185,11 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
       x: axes.x ?? state.currentPosition?.x ?? 0,
       y: axes.y ?? state.currentPosition?.y ?? 0,
       z: axes.z ?? state.currentPosition?.z ?? 0,
+    }
+
+    emittedPosition = {
+      x: axes.x !== undefined ? formatValue(axes.x) : emittedPosition?.x ?? 0,
+      y: axes.y !== undefined ? formatValue(axes.y) : emittedPosition?.y ?? 0,
     }
   }
 
@@ -433,18 +462,22 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
           state.motionCommand = motionCmd
         }
 
+        // I/J are relative to where the controller actually is — the formatted
+        // endpoint of the preceding block — not to the arc's declared start.
+        const start = emittedPosition ?? {
+          x: formatValue(arc.startPoint.x),
+          y: formatValue(arc.startPoint.y),
+        }
+        const emitted = resolveEmittedArc(arc, start, arcEmitOptions)
+
         lineSegments.push(`X${formatGCodeNumber(arc.endPoint.x, definition, outputUnits)}`)
         lineSegments.push(`Y${formatGCodeNumber(arc.endPoint.y, definition, outputUnits)}`)
 
         if (definition.motion.arcFormat === 'ij') {
-          lineSegments.push(`I${formatGCodeNumber(arc.centerOffsets.i, definition, outputUnits)}`)
-          lineSegments.push(`J${formatGCodeNumber(arc.centerOffsets.j, definition, outputUnits)}`)
+          lineSegments.push(`I${formatGCodeNumber(emitted.i, definition, outputUnits)}`)
+          lineSegments.push(`J${formatGCodeNumber(emitted.j, definition, outputUnits)}`)
         } else {
-          const radius = Math.sqrt(
-            arc.centerOffsets.i * arc.centerOffsets.i +
-            arc.centerOffsets.j * arc.centerOffsets.j,
-          )
-          lineSegments.push(`R${formatGCodeNumber(radius, definition, outputUnits)}`)
+          lineSegments.push(`R${formatGCodeNumber(emitted.radius, definition, outputUnits)}`)
         }
 
         if (feed !== undefined && motionCmd !== definition.motion.rapidCommand) {
@@ -470,6 +503,11 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
           y: arc.endPoint.y,
           z: state.currentPosition?.z ?? 0,
         }
+
+        emittedPosition = {
+          x: formatValue(arc.endPoint.x),
+          y: formatValue(arc.endPoint.y),
+        }
       }
 
       // ── Arc fitting (export-stage) ──
@@ -477,6 +515,10 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
       const arcEnabled = operation.arcFittingEnabled ?? true
       const machineHasArcs = definition.motion.arcInterpolation === true
       const tryFit = arcEnabled && machineHasArcs
+
+      // Captured before emission so the debug trace below can replay the same
+      // decisions from the same starting point.
+      const operationStartPosition = emittedPosition
 
       // Transform every move into machine coordinates once.
       const transformMoves = (): ToolpathMove[] =>
@@ -487,12 +529,23 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         }))
 
       if (tryFit) {
-        // Fit arcs and emit the mixed sequence.
+        // Fit arcs, drop any run the controller would reject once formatted,
+        // then emit the mixed sequence.
         const machineMoves = transformMoves()
         const tolerance = exportGeometryTolerance(project.meta.units)
-        const descriptors = fitArcsInMachineMoves(machineMoves, tolerance, 90)
+        const fitted = fitArcsInMachineMoves(machineMoves, tolerance, 90)
+        const resolved = applyEmittedArcFallback(
+          fitted, arcEmitOptions, operationStartPosition,
+        )
 
-        for (const d of descriptors) {
+        if (resolved.fallbackRuns > 0) {
+          warnings.push({
+            code: 'postArcFallbackLinear',
+            params: { operation: operation.name, count: resolved.fallbackRuns },
+          })
+        }
+
+        for (const d of resolved.descriptors) {
           if (d.kind === 'linear') {
             if (d.moveKind === 'rapid') {
               emitRapid(d.point)
@@ -543,7 +596,12 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         let traceDescriptors: FittedMoveDescriptor[] = []
         if (tryFit) {
           const tolerance = exportGeometryTolerance(project.meta.units)
-          traceDescriptors = fitArcsInMachineMoves(traceMachineMoves, tolerance, 90)
+          // Same fallback resolution as the emission path above, so the debug
+          // view never draws an arc on a span that was emitted as G1.
+          traceDescriptors = applyEmittedArcFallback(
+            fitArcsInMachineMoves(traceMachineMoves, tolerance, 90),
+            arcEmitOptions, operationStartPosition,
+          ).descriptors
         }
         motionTraces.push({
           operationId: operation.id,

@@ -1003,6 +1003,7 @@ function circularCutMoves(): ToolpathMove[] {
 function runArcFixture(
   definition: MachineDefinition,
   operationOverrides?: Partial<Operation>,
+  movesOverride?: ToolpathMove[],
 ): { gcode: string; warnings: ToolpathWarning[]; stats: { moveCount: number } } {
   const project = newProject('Arc Test', 'mm')
   const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '6 mm Endmill' }
@@ -1037,7 +1038,7 @@ function runArcFixture(
     operationId: operation.id,
     warnings: [],
     bounds: null,
-    moves: circularCutMoves(),
+    moves: movesOverride ?? circularCutMoves(),
   }
   return runPostProcessor({
     project,
@@ -1098,6 +1099,125 @@ function testArcDisabledLinearFallback(): void {
   const arcWarnings = warnings.filter((w) => w.code === 'postArcNoCapability')
   assert(arcWarnings.length === 0, `expected no arc capability warning when disabled, got ${arcWarnings.length}`)
   assert(stats.moveCount === 8, `linear fallback should emit all 8 source moves, got ${stats.moveCount}`)
+}
+
+// ── issue #447: emitted arcs must satisfy the controller ───────
+
+/** The 14 contiguous cut moves from the issue #447 report. */
+function issue447CutMoves(): ToolpathMove[] {
+  const xy: Array<[number, number]> = [
+    [122.3941767939508, 167.17278330912177],
+    [122.37556680190744, 167.10332987328752],
+    [122.36930000002496, 167.0317],
+    [122.36677898139465, 166.96007012671248],
+    [122.37660115292522, 166.89061669087823],
+    [122.3982010594255, 166.82545000000005],
+    [122.43065538518721, 166.76655011100434],
+    [122.4727110084653, 166.71570666721345],
+    [122.52282307694827, 166.67446452093895],
+    [122.57920194731366, 166.6440767939257],
+    [122.63986756263506, 166.62546680188257],
+    [122.7027096154099, 166.6192000000001],
+    [122.76555166818474, 166.62546680188257],
+    [122.82621728350614, 166.6440767939257],
+    [122.88259615387153, 166.67446452093895],
+  ]
+  const points = xy.map(([x, y]) => ({ x, y, z: -1 }))
+  // Lead in with a rapid, as any real toolpath does: the arc chain is only
+  // meaningful relative to a position the controller has actually been given.
+  const moves: ToolpathMove[] = [
+    { kind: 'rapid', from: { x: 0, y: 0, z: 5 }, to: { ...points[0], z: 5 } },
+    { kind: 'plunge', from: { ...points[0], z: 5 }, to: { ...points[0] } },
+  ]
+  for (let i = 0; i < points.length - 1; i++) {
+    moves.push({ kind: 'cut', from: { ...points[i] }, to: { ...points[i + 1] } })
+  }
+  return moves
+}
+
+/**
+ * Re-derive GRBL's arc check from the emitted text alone — modal motion,
+ * modal position, formatted words. Deliberately independent of the exporter's
+ * own parser so the assertion tests the file, not our model of it.
+ */
+function assertEmittedArcsAreValid(gcode: string): number {
+  let modal = ''
+  let x = 0
+  let y = 0
+  let checked = 0
+
+  for (const raw of gcode.split('\n')) {
+    const line = raw.trim()
+    const motion = line.match(/\bG(0|1|2|3)\b/)
+    if (motion) modal = motion[1]
+
+    const wordX = line.match(/X(-?[\d.]+)/)
+    const wordY = line.match(/Y(-?[\d.]+)/)
+    const wordI = line.match(/I(-?[\d.]+)/)
+    const wordJ = line.match(/J(-?[\d.]+)/)
+
+    if ((modal === '2' || modal === '3') && wordX && wordY && wordI && wordJ) {
+      const i = parseFloat(wordI[1])
+      const j = parseFloat(wordJ[1])
+      const targetX = parseFloat(wordX[1])
+      const targetY = parseFloat(wordY[1])
+      const startRadius = Math.hypot(i, j)
+      const endRadius = Math.hypot(targetX - (x + i), targetY - (y + j))
+      const delta = Math.abs(endRadius - startRadius)
+      // GRBL: pass under 0.005 mm, else fail past 0.5 mm or 0.1 % of radius.
+      const accepted = delta <= 0.005
+        || (delta <= 0.5 && delta <= 0.001 * startRadius)
+      assert(accepted,
+        `controller would reject "${line}" from ${x},${y}: radius delta ${delta.toFixed(6)} mm`)
+      checked += 1
+    }
+
+    if (wordX) x = parseFloat(wordX[1])
+    if (wordY) y = parseFloat(wordY[1])
+  }
+
+  return checked
+}
+
+function testIssue447EmittedArcsPassControllerCheck(): void {
+  console.log('Testing issue #447 span exports arcs the controller accepts...')
+
+  const def = arcTestDefinition({ motion: { ...arcTestDefinition().motion, arcFormat: 'ij' } })
+  const { gcode, warnings } = runArcFixture(def, undefined, issue447CutMoves())
+
+  const checked = assertEmittedArcsAreValid(gcode)
+  assert(checked > 0, 'fixture must emit at least one I/J arc to be meaningful')
+  const fallbacks = warnings.filter((w) => w.code === 'postArcFallbackLinear')
+  assert(fallbacks.length === 0,
+    `span should export as arcs without falling back, got ${JSON.stringify(fallbacks)}`)
+}
+
+function testIssue447RFormatExport(): void {
+  console.log('Testing issue #447 span in R format...')
+
+  const def = arcTestDefinition({ motion: { ...arcTestDefinition().motion, arcFormat: 'r' } })
+  const { gcode, warnings } = runArcFixture(def, undefined, issue447CutMoves())
+
+  assert(/\bG[23]\b/.test(gcode), 'R-format export should still emit arcs')
+  assert(!/\bI-?[\d.]/.test(gcode), 'should not contain I when using R format')
+  const fallbacks = warnings.filter((w) => w.code === 'postArcFallbackLinear')
+  assert(fallbacks.length === 0,
+    `R-format span should not fall back, got ${JSON.stringify(fallbacks)}`)
+}
+
+function testArcOutputPassesControllerCheck(): void {
+  console.log('Testing that the standard arc fixture also satisfies the controller...')
+  const def = arcTestDefinition({ motion: { ...arcTestDefinition().motion, arcFormat: 'ij' } })
+  // Same circle as the other arc tests, led into by a rapid so the emitted
+  // arcs can be checked against a position the controller actually holds.
+  const circle = circularCutMoves()
+  const { gcode } = runArcFixture(def, undefined, [
+    { kind: 'rapid', from: { x: 0, y: 0, z: 5 }, to: { ...circle[0].from, z: 5 } },
+    { kind: 'plunge', from: { ...circle[0].from, z: 5 }, to: { ...circle[0].from } },
+    ...circle,
+  ])
+  const checked = assertEmittedArcsAreValid(gcode)
+  assert(checked > 0, 'standard fixture must emit I/J arcs')
 }
 
 // ── Unsupported machine fallback + warning ─────────────────────
@@ -1316,6 +1436,9 @@ testArcOutputIJ()
 testArcOutputR()
 testArcDisabledLinearFallback()
 testArcUnsupportedMachineWarning()
+testIssue447EmittedArcsPassControllerCheck()
+testIssue447RFormatExport()
+testArcOutputPassesControllerCheck()
 testArcNoRegressionLinear()
 testArcMixedRapidAndCut()
 testArcMoveCountReflectsFittedOutput()

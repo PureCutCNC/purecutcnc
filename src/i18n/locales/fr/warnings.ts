@@ -144,6 +144,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.postNoCoolantCommands': 'L’émission de liquide de refroidissement est demandée, mais la définition de machine ne contient aucune commande correspondante.',
   'warnings.postCannedCycleUnsupported': 'Opération « {operation} » : cycle fixe {drillType} non pris en charge par la machine « {machine} » ; émission des mouvements développés.',
   'warnings.postArcNoCapability': 'L\'opération « {operation} » contient des mouvements linéaires qui pourraient être ajustés en arcs, mais la machine sélectionnée ne prend pas en charge l\'interpolation circulaire (G2/G3). Émission de mouvements linéaires à la place.',
+  'warnings.postArcFallbackLinear': 'L\'opération « {operation} » comportait {count} section(s) d\'arc ajustée(s) que le contrôleur sélectionné aurait rejetée(s) après l\'arrondi des nombres. Ces sections ont été émises sous forme de mouvements linéaires.',
   'warnings.replayNoTool': 'Aucun outil n’est affecté à l’opération sélectionnée.',
   'warnings.bookletNoTool': 'Aucun outil n’est sélectionné pour cette opération.',
   'warnings.bookletNoToolpath': 'Le parcours d’outil n’a pas pu être généré pour cette opération.',
