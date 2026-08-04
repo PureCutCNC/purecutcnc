@@ -97,6 +97,7 @@ export const warningsEn = {
   'warnings.tabsOutsideCutZ': '{count} nearby tabs overlap the toolpath footprint but are outside the cut Z range ({minZ} -> {maxZ}).',
   'warnings.tabsOutsideCutZList': '{count} nearby tabs overlap the toolpath footprint but are outside the cut Z range ({minZ} -> {maxZ}): {names}.',
   'warnings.tabsOutsideCutZListMore': '{count} nearby tabs overlap the toolpath footprint but are outside the cut Z range ({minZ} -> {maxZ}): {names}, and {more} more.',
+  'warnings.tabsBlockFinalDepth': 'Tabs cover the whole final pass of "{name}", so it never reaches full depth and the part will not be cut free. Use fewer or narrower tabs.',
   // surface clean / finish bands
   'warnings.surfaceNoCleanupRegion': 'No machinable parallel cleanup region for band {topZ} -> {bottomZ}',
   'warnings.surfaceNoCleanupSegments': 'No machinable parallel cleanup segments for band {topZ} -> {bottomZ}',

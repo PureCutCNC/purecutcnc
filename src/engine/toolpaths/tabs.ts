@@ -28,19 +28,32 @@ interface PreservedObstacle {
   zBottom: number
 }
 
+const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
+const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.01
+
 function offsetObstaclePoints(points: Point[], delta: number): Point[] {
   if (!(delta > 1e-9) || points.length < 3) {
     return points
   }
 
+  const scaledDelta = delta * DEFAULT_CLIPPER_SCALE
   const offset = new ClipperLib.ClipperOffset()
+  // Round join, not miter: the raised zone is the set of tool-centre positions whose
+  // swept disc would touch the tab, i.e. the Minkowski sum of the tab rect with a
+  // circle of the tool radius. A miter join grows the rect by a *square* instead,
+  // overshooting each corner by up to (sqrt(2)-1)*radius and raising the toolpath
+  // where the cutter would never have reached the tab.
+  offset.ArcTolerance = Math.max(
+    1,
+    Math.min(MAX_ROUND_JOIN_ARC_TOLERANCE, scaledDelta * ROUND_JOIN_ARC_TOLERANCE_RATIO),
+  )
   offset.AddPaths(
     [toClipperPath(normalizeWinding(points, false), DEFAULT_CLIPPER_SCALE)],
-    ClipperLib.JoinType.jtMiter,
+    ClipperLib.JoinType.jtRound,
     ClipperLib.EndType.etClosedPolygon,
   )
   const solution = new ClipperLib.Paths()
-  offset.Execute(solution, delta * DEFAULT_CLIPPER_SCALE)
+  offset.Execute(solution, scaledDelta)
   const expanded = (solution as unknown as { X: number; Y: number }[][])[0]
   return expanded ? fromClipperPath(expanded, DEFAULT_CLIPPER_SCALE) : points
 }
@@ -413,11 +426,152 @@ export function applyTabsToEdgeRoute(project: Project, operation: Operation, res
     return result
   }
 
+  const warnings = [...result.warnings]
+  if (finalDepthIsBlocked(result.moves, adjustedMoves)) {
+    warnings.push({ code: 'tabsBlockFinalDepth', params: { name: operation.name } })
+  }
+
   return {
     ...result,
     moves: adjustedMoves,
+    warnings,
     bounds: computeBounds(adjustedMoves),
   }
+}
+
+/**
+ * True when every cut move that reached the deepest level before tabs were applied
+ * has been raised off it. The operation then never severs the part: the final pass
+ * rides the tab tops for its whole length. Tabs are meant to interrupt that pass,
+ * not replace it, so full coverage is always a mistake in the tab layout.
+ */
+function finalDepthIsBlocked(originalMoves: ToolpathMove[], adjustedMoves: ToolpathMove[]): boolean {
+  let deepestZ = Number.POSITIVE_INFINITY
+  for (const move of originalMoves) {
+    if (move.kind !== 'cut') continue
+    deepestZ = Math.min(deepestZ, move.from.z, move.to.z)
+  }
+
+  if (!Number.isFinite(deepestZ)) {
+    return false
+  }
+
+  return !adjustedMoves.some(
+    (move) => move.kind === 'cut'
+      && (move.from.z <= deepestZ + 1e-9 || move.to.z <= deepestZ + 1e-9),
+  )
+}
+
+/** A candidate tab footprint, before it becomes a `Tab` record. */
+export interface TabRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/**
+ * Tool-centre contours for a closed feature outline, offset the way an edge route
+ * offsets it: inward by the tool radius for an inside cut, outward for an outside cut.
+ * This is the path tabs actually interrupt, and it is what tab spacing has to be
+ * measured against — a feature's bounding box says nothing useful about it, least of
+ * all for a circle, whose offset path is `pi/4` of the box perimeter.
+ */
+export function toolCentreContours(profilePoints: Point[], offsetDelta: number): Point[][] {
+  if (profilePoints.length < 3) {
+    return []
+  }
+
+  if (Math.abs(offsetDelta) <= 1e-9) {
+    return [profilePoints]
+  }
+
+  const scaledDelta = offsetDelta * DEFAULT_CLIPPER_SCALE
+  const offset = new ClipperLib.ClipperOffset()
+  offset.ArcTolerance = Math.max(
+    1,
+    Math.min(MAX_ROUND_JOIN_ARC_TOLERANCE, Math.abs(scaledDelta) * ROUND_JOIN_ARC_TOLERANCE_RATIO),
+  )
+  offset.AddPaths(
+    [toClipperPath(normalizeWinding(profilePoints, true), DEFAULT_CLIPPER_SCALE)],
+    ClipperLib.JoinType.jtRound,
+    ClipperLib.EndType.etClosedPolygon,
+  )
+  const solution = new ClipperLib.Paths()
+  offset.Execute(solution, scaledDelta)
+
+  return (solution as unknown as { X: number; Y: number }[][])
+    .map((path) => fromClipperPath(path, DEFAULT_CLIPPER_SCALE))
+    .filter((points) => points.length >= 3)
+}
+
+/**
+ * Fraction of `contours` that the given tabs would leave free to cut, once each tab is
+ * grown by the tool radius exactly as `applyTabsToEdgeRoute` grows it. Returns 0 when
+ * there is no path to cut. A tab spanning a curve consumes arc length, which exceeds
+ * its own width, so this has to be measured rather than inferred from tab sizes.
+ */
+export function tabLayoutFreeFraction(
+  contours: Point[][],
+  tabRects: TabRect[],
+  toolRadius: number,
+): number {
+  const obstacles = tabRects.map((rect) =>
+    offsetObstaclePoints(sampleProfilePoints(rectProfile(rect.x, rect.y, rect.w, rect.h)), Math.max(0, toolRadius)),
+  )
+
+  let pathLength = 0
+  let coveredLength = 0
+
+  for (const contour of contours) {
+    for (let index = 0; index < contour.length; index += 1) {
+      const start = contour[index]
+      const end = contour[(index + 1) % contour.length]
+      const segmentLength = Math.hypot(end.x - start.x, end.y - start.y)
+      if (!(segmentLength > 0)) {
+        continue
+      }
+
+      pathLength += segmentLength
+
+      const intervals: Array<[number, number]> = []
+      for (const obstacle of obstacles) {
+        const interval = clipSegmentPolygon2D(start.x, start.y, end.x, end.y, obstacle)
+        if (interval) {
+          intervals.push(interval)
+        }
+      }
+
+      coveredLength += segmentLength * unionLength(intervals)
+    }
+  }
+
+  return pathLength > 0 ? Math.max(0, (pathLength - coveredLength) / pathLength) : 0
+}
+
+/** Total length of a union of [start, end] sub-intervals of [0, 1]. */
+function unionLength(intervals: Array<[number, number]>): number {
+  if (intervals.length === 0) {
+    return 0
+  }
+
+  const sorted = [...intervals].sort((left, right) => left[0] - right[0])
+  let total = 0
+  let currentStart = sorted[0][0]
+  let currentEnd = sorted[0][1]
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const [start, end] = sorted[index]
+    if (start > currentEnd) {
+      total += currentEnd - currentStart
+      currentStart = start
+      currentEnd = end
+      continue
+    }
+    currentEnd = Math.max(currentEnd, end)
+  }
+
+  return Math.min(1, total + (currentEnd - currentStart))
 }
 
 export function applyTabWarnings(project: Project, operation: Operation, result: ToolpathResult): ToolpathResult {

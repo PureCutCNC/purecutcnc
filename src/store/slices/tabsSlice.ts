@@ -18,6 +18,8 @@ import type { StateCreator } from 'zustand'
 import type { Tab, Project, SketchFeature, Operation } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { getProfileBounds } from '../../types/project'
+import { flattenProfile } from '../../engine/toolpaths/geometry'
+import { tabLayoutFreeFraction, toolCentreContours, type TabRect } from '../../engine/toolpaths/tabs'
 import { convertLength } from '../../utils/units'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { emptySelection, sanitizeSelection } from './selectionSlice'
@@ -65,6 +67,41 @@ function resolveToolDiameterInProjectUnits(project: Project, operation: Operatio
     : convertLength(tool.diameter, tool.units, project.meta.units)
 }
 
+/**
+ * Share of the tool-centre path a tab layout must leave uncovered to be usable. Below
+ * this the part is barely attached — and at zero the operation never reaches final
+ * depth at all, which `tabsBlockFinalDepth` reports.
+ */
+const MIN_FREE_PATH_FRACTION = 0.15
+
+function tabRectsAt(
+  count: 2 | 4,
+  size: number,
+  bounds: { minX: number; maxX: number; minY: number; maxY: number },
+  cx: number,
+  cy: number,
+  widthIsLongest: boolean,
+): TabRect[] {
+  if (count === 2) {
+    return widthIsLongest
+      ? [
+          { x: cx - size / 2, y: bounds.minY - size / 2, w: size, h: size },
+          { x: cx - size / 2, y: bounds.maxY - size / 2, w: size, h: size },
+        ]
+      : [
+          { x: bounds.minX - size / 2, y: cy - size / 2, w: size, h: size },
+          { x: bounds.maxX - size / 2, y: cy - size / 2, w: size, h: size },
+        ]
+  }
+
+  return [
+    { x: cx - size / 2, y: bounds.minY - size / 2, w: size, h: size },
+    { x: cx - size / 2, y: bounds.maxY - size / 2, w: size, h: size },
+    { x: bounds.minX - size / 2, y: cy - size / 2, w: size, h: size },
+    { x: bounds.maxX - size / 2, y: cy - size / 2, w: size, h: size },
+  ]
+}
+
 function buildAutoTabsForFeature(
   feature: SketchFeature,
   project: Project,
@@ -83,25 +120,32 @@ function buildAutoTabsForFeature(
   const zTop = defaultAutoTabZTop(project)
   const zBottom = 0
 
-  const entries: Array<Pick<Tab, 'x' | 'y' | 'w' | 'h'>> =
-    Math.min(width, height) < size * 3
-      ? (
-          width >= height
-            ? [
-                { x: cx - size / 2, y: bounds.minY - size / 2, w: size, h: size },
-                { x: cx - size / 2, y: bounds.maxY - size / 2, w: size, h: size },
-              ]
-            : [
-                { x: bounds.minX - size / 2, y: cy - size / 2, w: size, h: size },
-                { x: bounds.maxX - size / 2, y: cy - size / 2, w: size, h: size },
-              ]
-        )
-      : [
-          { x: cx - size / 2, y: bounds.minY - size / 2, w: size, h: size },
-          { x: cx - size / 2, y: bounds.maxY - size / 2, w: size, h: size },
-          { x: bounds.minX - size / 2, y: cy - size / 2, w: size, h: size },
-          { x: bounds.maxX - size / 2, y: cy - size / 2, w: size, h: size },
-        ]
+  // Measure candidate layouts against the real tool-centre path rather than the
+  // bounding box. A circle's inside path is pi/4 of the box perimeter and each tab
+  // eats arc, not chord, so four tabs that fit a square of the same extents can
+  // swallow the circle's final pass whole.
+  const toolRadius = (toolDiameter ?? 0) / 2
+  const insideCut = operation.kind === 'edge_route_inside'
+  const contours = toolCentreContours(
+    flattenProfile(feature.sketch.profile).points,
+    insideCut ? -toolRadius : toolRadius,
+  )
+  const widthIsLongest = width >= height
+
+  const candidates: Array<{ count: 2 | 4; size: number }> = [
+    { count: 4, size },
+    { count: 2, size },
+  ]
+  if (size > minSize + 1e-9) {
+    candidates.push({ count: 4, size: minSize }, { count: 2, size: minSize })
+  }
+
+  const fallback = tabRectsAt(2, minSize, bounds, cx, cy, widthIsLongest)
+  const entries =
+    candidates
+      .map((candidate) => tabRectsAt(candidate.count, candidate.size, bounds, cx, cy, widthIsLongest))
+      .find((rects) => tabLayoutFreeFraction(contours, rects, toolRadius) >= MIN_FREE_PATH_FRACTION)
+    ?? fallback
 
   const created: Tab[] = []
   for (const entry of entries) {

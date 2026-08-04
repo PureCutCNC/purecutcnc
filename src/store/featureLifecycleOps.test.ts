@@ -35,6 +35,8 @@ import { useProjectStore } from './projectStore'
 import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
 import type { ProjectStore } from './types'
 import { getProfileBounds } from '../types/project'
+import { flattenProfile } from '../engine/toolpaths/geometry'
+import { tabLayoutFreeFraction, toolCentreContours } from '../engine/toolpaths/tabs'
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -367,6 +369,68 @@ test('autoPlaceTabsForOperation creates tabs for edge_route_outside', () => {
   for (const tab of tabs) {
     assert(tab.w > 0 && tab.h > 0, `tab should have positive dimensions, got w=${tab.w}, h=${tab.h}`)
   }
+})
+
+// Issue #445: tab spacing has to be judged against the tool-centre path, not the
+// feature's bounding box. A circle's inside path is pi/4 of the box perimeter and
+// each tab consumes arc rather than chord, so four tabs that leave a same-sized
+// square well open can swallow the circle's final pass whole.
+test('autoPlaceTabsForOperation measures a circle against its real toolpath', () => {
+  function placeOn(shape: 'circle' | 'square'): { count: number; size: number; free: number } {
+    resetStore()
+    const base = newProject()
+    useProjectStore.setState({
+      project: { ...base, meta: { ...base.meta, units: 'mm' }, stock: { ...base.stock, thickness: 12 } },
+    } as unknown as Partial<ProjectStore>)
+
+    const store = useProjectStore.getState()
+    if (shape === 'circle') store.addCircleFeature('C', 60, 60, 12.7, 12)
+    else store.addRectFeature('C', 47.3, 47.3, 25.4, 25.4, 12)
+    const feat = getFeatures()[0]
+
+    const tool = { ...defaultTool('mm', 1), id: 't1', name: '6.35mm endmill', diameter: 6.35 }
+    const withTool = getProject()
+    useProjectStore.setState({
+      project: {
+        ...withTool,
+        tools: [tool],
+        featureDefinitions: Object.fromEntries(
+          Object.entries(withTool.featureDefinitions).map(([key, value]) => [key, { ...value, operation: 'subtract' }]),
+        ),
+      },
+    } as unknown as Partial<ProjectStore>)
+
+    const opId = useProjectStore.getState().addOperation('edge_route_inside', 'rough', {
+      source: 'features',
+      featureIds: [feat.id],
+    })
+    const withOp = getProject()
+    useProjectStore.setState({
+      project: {
+        ...withOp,
+        operations: withOp.operations.map((op) => (op.id === opId ? { ...op, toolRef: 't1', stepdown: 4 } : op)),
+      },
+    } as unknown as Partial<ProjectStore>)
+
+    useProjectStore.getState().autoPlaceTabsForOperation(opId!)
+
+    const project = getProject()
+    const resolved = resolveFeatureInstance(project, feat.id)!
+    const contours = toolCentreContours(flattenProfile(resolved.sketch.profile).points, -6.35 / 2)
+    return {
+      count: project.tabs.length,
+      size: project.tabs[0]?.w ?? 0,
+      free: tabLayoutFreeFraction(contours, project.tabs, 6.35 / 2),
+    }
+  }
+
+  const circle = placeOn('circle')
+  const square = placeOn('square')
+
+  assert(square.count === 4, `square of the same extents still gets 4 tabs, got ${square.count}`)
+  assert(square.free > 0.2, `square keeps real cut-through, free fraction ${square.free.toFixed(3)}`)
+  assert(circle.count === 2, `circle drops to 2 tabs, got ${circle.count}`)
+  assert(circle.free > 0.15, `circle keeps real cut-through, free fraction ${circle.free.toFixed(3)}`)
 })
 
 test('updateTab modifies tab geometry', () => {

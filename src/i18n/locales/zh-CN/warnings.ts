@@ -89,6 +89,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.tabsOutsideCutZ': '{count} 个附近凸台与刀路覆盖范围重叠，但在切削Z范围（{minZ} -> {maxZ}）之外。',
   'warnings.tabsOutsideCutZList': '{count} 个附近凸台与刀路覆盖范围重叠，但在切削Z范围（{minZ} -> {maxZ}）之外：{names}。',
   'warnings.tabsOutsideCutZListMore': '{count} 个附近凸台与刀路覆盖范围重叠，但在切削Z范围（{minZ} -> {maxZ}）之外：{names}，另有 {more} 个。',
+  'warnings.tabsBlockFinalDepth': '凸台覆盖了“{name}”的整个最后一刀，因此始终未切到最终深度，工件不会被切离。请减少凸台数量或缩小凸台宽度。',
   'warnings.surfaceNoCleanupRegion': '深度带 {topZ} -> {bottomZ} 没有可加工的平行清理区域',
   'warnings.surfaceNoCleanupSegments': '深度带 {topZ} -> {bottomZ} 没有可加工的平行清理段',
   'warnings.surfaceNoOffsetContours': '深度带 {topZ} -> {bottomZ} 没有可加工的偏置轮廓',
