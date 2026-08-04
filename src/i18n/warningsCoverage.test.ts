@@ -45,6 +45,7 @@ const ALL_CODES = [
   'surface3dFloorCollapsed', 'surface3dNoLevels',
   'tabOnlyEdgeRoute', 'tabsOverlapAmbiguous', 'tabNoIntersect', 'tabAboveStockTop', 'tabBelowStockBottom',
   'tabInvalidZRange', 'tabOutsideCutZ', 'tabsOutsideCutZ', 'tabsOutsideCutZList', 'tabsOutsideCutZListMore',
+  'tabsBlockFinalDepth',
   'surfaceNoCleanupRegion', 'surfaceNoCleanupSegments', 'surfaceNoOffsetContours', 'surfaceFinishBothDisabled',
   'surfaceCleanWrongKind', 'surfaceCleanNoTargets', 'surfaceCleanNoValidTargets',
   'surfaceBandNoFinishDepth', 'surfaceBandNoRoughDepth', 'surfaceNoFinishContours',

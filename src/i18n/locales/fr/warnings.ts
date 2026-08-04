@@ -85,6 +85,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.tabsOutsideCutZ': '{count} attaches proches recouvrent l’empreinte du parcours d’outil mais se trouvent hors de la plage Z de coupe ({minZ} -> {maxZ}).',
   'warnings.tabsOutsideCutZList': '{count} attaches proches recouvrent l’empreinte du parcours d’outil mais se trouvent hors de la plage Z de coupe ({minZ} -> {maxZ}) : {names}.',
   'warnings.tabsOutsideCutZListMore': '{count} attaches proches recouvrent l’empreinte du parcours d’outil mais se trouvent hors de la plage Z de coupe ({minZ} -> {maxZ}) : {names} et {more} autres.',
+  'warnings.tabsBlockFinalDepth': 'Les attaches couvrent toute la dernière passe de « {name} » : elle n’atteint jamais la profondeur finale et la pièce ne sera pas détachée. Utilisez moins d’attaches ou des attaches plus étroites.',
   'warnings.surfaceNoCleanupRegion': 'Aucune région de nettoyage parallèle usinable pour la bande {topZ} -> {bottomZ}',
   'warnings.surfaceNoCleanupSegments': 'Aucun segment de nettoyage parallèle usinable pour la bande {topZ} -> {bottomZ}',
   'warnings.surfaceNoOffsetContours': 'Aucun contour décalé usinable pour la bande {topZ} -> {bottomZ}',

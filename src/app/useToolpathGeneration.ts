@@ -229,18 +229,21 @@ export function useToolpathGeneration(project: Project, selectedOperation: Opera
       } else if (operation.kind === 'v_carve_medial') {
         result = applyClampWarnings(project, optimizeAndCapture(generateVCarveMedialToolpath(project, operation)), operation)
       } else if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
-        const tabAware = applyTabsToEdgeRoute(project, operation, generateEdgeRouteToolpath(project, operation))
-        result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, tabAware)), operation)
+        // Warnings first: applyTabWarnings judges each tab against the cut Z range, and
+        // applyTabsToEdgeRoute raises that range to the tab tops. Run it on the adjusted
+        // moves and every applied tab reports as lying outside the range it just created.
+        const warned = applyTabWarnings(project, operation, generateEdgeRouteToolpath(project, operation))
+        result = applyClampWarnings(project, optimizeAndCapture(applyTabsToEdgeRoute(project, operation, warned)), operation)
       } else if (operation.kind === 'surface_clean') {
         result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, generateSurfaceCleanToolpath(project, operation))), operation)
       } else if (operation.kind === 'rough_surface') {
         result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, generateRoughSurfaceToolpath(project, operation))), operation)
       } else if (operation.kind === 'finish_surface') {
-        const tabAware = applyTabsToEdgeRoute(project, operation, generateFinishSurfaceToolpath(project, operation))
-        result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, tabAware)), operation)
+        const warned = applyTabWarnings(project, operation, generateFinishSurfaceToolpath(project, operation))
+        result = applyClampWarnings(project, optimizeAndCapture(applyTabsToEdgeRoute(project, operation, warned)), operation)
       } else if (operation.kind === 'finish_surface_cleanup') {
-        const tabAware = applyTabsToEdgeRoute(project, operation, generateFinishSurfaceCleanupToolpath(project, operation))
-        result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, tabAware)), operation)
+        const warned = applyTabWarnings(project, operation, generateFinishSurfaceCleanupToolpath(project, operation))
+        result = applyClampWarnings(project, optimizeAndCapture(applyTabsToEdgeRoute(project, operation, warned)), operation)
       } else if (operation.kind === 'follow_line') {
         result = applyClampWarnings(project, optimizeAndCapture(generateFollowLineToolpath(project, operation)), operation)
       } else if (operation.kind === 'drilling') {

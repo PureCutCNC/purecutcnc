@@ -85,6 +85,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   "warnings.tabsOutsideCutZ": "{count} Las pestañas cercanas se superponen a la huella de la trayectoria de la herramienta, pero están fuera del rango de corte Z ({minZ} -> {maxZ}).",
   "warnings.tabsOutsideCutZList": "{count} Las pestañas cercanas se superponen a la huella de la trayectoria de la herramienta, pero están fuera del rango de corte Z ({minZ} -> {maxZ}): {names}.",
   "warnings.tabsOutsideCutZListMore": "Las pestañas cercanas a {count} se superponen a la huella de la trayectoria de la herramienta, pero están fuera del rango de corte Z ({minZ} -> {maxZ}): {names} y {more} más.",
+  "warnings.tabsBlockFinalDepth": "Las pestañas cubren toda la pasada final de \"{name}\", por lo que nunca alcanza la profundidad final y la pieza no quedará separada. Use menos pestañas o pestañas más estrechas.",
   "warnings.surfaceNoCleanupRegion": "No hay región de limpieza paralela mecanizable para la banda {topZ} -> {bottomZ}",
   "warnings.surfaceNoCleanupSegments": "No hay segmentos de limpieza paralela mecanizables para la banda {topZ} -> {bottomZ}",
   "warnings.surfaceNoOffsetContours": "No hay contornos de desfase mecanizables para la banda {topZ} -> {bottomZ}",

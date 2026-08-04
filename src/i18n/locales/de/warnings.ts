@@ -97,6 +97,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.tabsOutsideCutZ': '{count} nahe Haltestege überlappen die Werkzeugweg-Grundfläche, liegen aber außerhalb des Schnitt-Z-Bereichs ({minZ} -> {maxZ}).',
   'warnings.tabsOutsideCutZList': '{count} nahe Haltestege überlappen die Werkzeugweg-Grundfläche, liegen aber außerhalb des Schnitt-Z-Bereichs ({minZ} -> {maxZ}): {names}.',
   'warnings.tabsOutsideCutZListMore': '{count} nahe Haltestege überlappen die Werkzeugweg-Grundfläche, liegen aber außerhalb des Schnitt-Z-Bereichs ({minZ} -> {maxZ}): {names} und {more} weitere.',
+  'warnings.tabsBlockFinalDepth': 'Haltestege bedecken den gesamten letzten Durchgang von „{name}", daher wird die volle Tiefe nie erreicht und das Teil wird nicht freigeschnitten. Verwenden Sie weniger oder schmalere Haltestege.',
   // surface clean / finish bands
   'warnings.surfaceNoCleanupRegion': 'Kein bearbeitbarer paralleler Säuberungsbereich für Band {topZ} -> {bottomZ}',
   'warnings.surfaceNoCleanupSegments': 'Keine bearbeitbaren parallelen Säuberungssegmente für Band {topZ} -> {bottomZ}',

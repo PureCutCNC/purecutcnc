@@ -91,6 +91,7 @@ export type ToolpathWarningCode =
   | 'tabsOutsideCutZ'
   | 'tabsOutsideCutZList'
   | 'tabsOutsideCutZListMore'
+  | 'tabsBlockFinalDepth'
   // surface clean / finish bands
   | 'surfaceNoCleanupRegion'
   | 'surfaceNoCleanupSegments'
