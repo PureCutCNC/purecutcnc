@@ -51,7 +51,7 @@ const ALL_CODES = [
   'surfaceTargetsWrongRole', 'surfaceClosedProfilesOnly', 'surfaceNoBands',
   'drillBottomAboveTop', 'drillNoCenter', 'drillNoTargets', 'drillWrongKind', 'drillNoValidCircles',
   'drillPeckDepthPositive', 'drillNotDrillBit', 'drillHelicalToolUnsupported',
-  'drillHelicalBoreTooSmall', 'drillHelicalBoreTooLarge', 'drillTargetsNotCircles',
+  'drillHelicalBoreTooSmall', 'drillHelicalBoreTooLarge', 'drillHelicalBoreUnmachinable', 'drillTargetsNotCircles',
   'carveDepthClamped', 'carveNotEnoughGeometry', 'carveDepthPositive', 'carveNoTargets', 'carveWrongKind',
   'carveNoValidTargets',
   'restOnlyEdgeRoute', 'restOnlyPocket', 'restNoValidOutsideTargets',

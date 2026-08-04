@@ -108,6 +108,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   "warnings.drillHelicalToolUnsupported": "El taladrado helicoidal requiere una fresa plana; se recurre a una penetración simple.",
   "warnings.drillHelicalBoreTooSmall": "El diámetro del círculo seleccionado ({holeDiameter}) no es mayor que el diámetro de la herramienta ({toolDiameter}); taladrado helicoidal omitido — el agujero debe ser estrictamente mayor que la fresa",
   "warnings.drillHelicalBoreTooLarge": "El diámetro del círculo seleccionado ({holeDiameter}) supera 2× el diámetro de la herramienta ({maxDiameter}); el taladrado helicoidal está limitado a 2× el diámetro de la fresa — use Contorno Interior en su lugar",
+  "warnings.drillHelicalBoreUnmachinable": "El taladrado helicoidal solicitado no puede generarse dentro del límite de movimientos; no se produce salida para este objetivo",
   "warnings.drillTargetsNotCircles": "Algunos elementos objetivo seleccionados no son círculos y se omitieron.",
   "warnings.carveDepthClamped": "{name}: la profundidad de tallado supera la base del material en bruto; se limita a Z 0.",
   "warnings.carveNotEnoughGeometry": "{name} no contiene suficiente geometría para el tallado de seguimiento de línea",

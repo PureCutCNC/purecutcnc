@@ -469,6 +469,22 @@ test('center-locked bore: shallow-angle move-budget fallback', () => {
   assert(result.warnings.some((w) => w.code === 'entryStrategyFallback'), 'should fall back when move budget exceeded')
 })
 
+test('center-locked bore: finish-bore move-budget rejection emits no moves', () => {
+  const moves: ToolpathMove[] = []
+  const result = emitCenterLockedCircularBore(
+    moves, null, { x: 0, y: 0 },
+    0.02, 2, 0.03,  // tiny tool, tiny hole, tiny requested radius
+    -100, 0, 0,   // very deep hole: bottomZ, safeZ, retractZ
+    0.05,         // extremely shallow ramp angle (→ enormous move count)
+    'conventional', 600, 180,
+    true, // isFinishBore
+  )
+  assert(result.warnings.some((w) => w.code === 'drillHelicalBoreUnmachinable'),
+    'finish-bore move-budget breach should reject with unmachinable warning')
+  assert(!moves.some((m) => m.kind === 'plunge'), 'rejection must emit zero moves')
+  assert(moves.length === 0, 'rejection must emit zero moves')
+})
+
 test('center-locked bore: oversized tool in small hole falls back', () => {
   // toolDiameter=5, holeRadius=3 → toolRadius=2.5, safety=0.5 → maxSafePathRadius=0
   const moves: ToolpathMove[] = []
@@ -627,7 +643,7 @@ test('finish-bore: 2× boundary (holeDiameter = 2 × toolDiameter)', () => {
   assert(boreRadius <= toolDiameter / 2, 'bore radius must be at most tool radius')
 })
 
-test('finish-bore: swept-envelope gate catches oversized radius', () => {
+test('finish-bore: swept-envelope gate rejects oversized radius with no moves', () => {
   const moves: ToolpathMove[] = []
   // Pass boreRadius larger than holeRadius − toolRadius — the gate should trip.
   const result = emitCenterLockedCircularBore(
@@ -638,10 +654,11 @@ test('finish-bore: swept-envelope gate catches oversized radius', () => {
     -3, 10, 0, 5, 'conventional', 600, 180,
     true,
   )
-  // Swept envelope: 3 + 2 = 5 > 4 → gate trips, fallback to plunge
-  assert(result.warnings.some((w) => w.code === 'entryStrategyFallback'),
-    'oversized finish-bore radius should trigger swept-envelope fallback')
-  assert(moves.some((m) => m.kind === 'plunge'), 'should emit plunge fallback')
+  // Swept envelope: 3 + 2 = 5 > 4 → gate rejects with no moves
+  assert(result.warnings.some((w) => w.code === 'drillHelicalBoreUnmachinable'),
+    'oversized finish-bore radius should reject with unmachinable warning')
+  assert(!moves.some((m) => m.kind === 'plunge'), 'rejection must emit zero moves')
+  assert(moves.length === 0, 'rejection must emit zero moves')
 })
 
 console.log(`\nentry.ts tests: ${passed} passed, ${failed} failed`)

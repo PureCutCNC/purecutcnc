@@ -961,6 +961,100 @@ test('drilling helical: 12× hole (far above 2×) is rejected with Inside Edge C
     'should emit drillHelicalBoreTooLarge')
 })
 
+test('drilling helical: rejected first target does not fabricate position for valid sibling', () => {
+  // P1 regression: a rejected first target must not set currentPosition to
+  // the hole centre. The second (valid) target must establish safe-Z from
+  // scratch — no move should originate from or be attributed to the rejected
+  // hole center.
+  const tool = makeFlatEndmill('t1', 4)
+  // First hole too small (r=2, holeDiameter=4 = toolDiameter → rejected)
+  const tooSmall = makeCircleFeature('c1', 20, 20, 2, 0, -6)
+  // Second hole is valid (r=3, toolDiameter=4 → holeDiameter=6 ≤ 8)
+  const good = makeCircleFeature('c2', 50, 50, 3, 0, -6)
+  const project = baseProject([tool], [tooSmall, good])
+  const op = makePocketOp({
+    kind: 'drilling', target: { source: 'features', featureIds: ['c1', 'c2'] },
+    toolRef: 't1', stepdown: 2, drillType: 'helical', entryRampAngle: 5,
+  })
+  const result = generateDrillingToolpath(project, op)
+  // Warning for the too-small target
+  assert(!!result.warnings.find((w) => w.code === 'drillHelicalBoreTooSmall'),
+    'should warn about the too-small first hole')
+  // The valid second target must emit lead_in moves
+  const leadIns = result.moves.filter((m) => m.kind === 'lead_in')
+  assert(leadIns.length > 0, 'eligible sibling should emit lead_in moves')
+  // No move must have a from or to at the rejected hole centre (20,20)
+  const rejectedCenter = { x: 20, y: 20 }
+  for (const move of result.moves) {
+    for (const pt of [move.from, move.to]) {
+      // Allow rapids that initiate at the rejected centre only if they are
+      // the zero-length safe-Z establishment for the valid target. But the
+      // valid target is at (50,50), so no move should be at (20,20).
+      if (Math.abs(pt.x - rejectedCenter.x) < 0.01 && Math.abs(pt.y - rejectedCenter.y) < 0.01) {
+        assert(false, `no move should reference the rejected hole centre (20,20)`)
+      }
+    }
+  }
+})
+
+test('drilling helical: rejected mid-sequence target preserves prior position for sibling', () => {
+  // P1 regression: a valid first target sets currentPosition, then a
+  // rejected second target must NOT overwrite it. The third valid target
+  // should travel from the first target's position, not the rejected one.
+  const tool = makeFlatEndmill('t1', 3)
+  const first = makeCircleFeature('c1', 20, 20, 2.5, 0, -6)  // eligible: hole=5, tool=3 → 3<5≤6
+  const rejected = makeCircleFeature('c2', 80, 80, 1.5, 0, -6) // too small: hole=3 = tool=3
+  const third = makeCircleFeature('c3', 50, 50, 2.5, 0, -6)   // eligible
+  const project = baseProject([tool], [first, rejected, third])
+  const op = makePocketOp({
+    kind: 'drilling', target: { source: 'features', featureIds: ['c1', 'c2', 'c3'] },
+    toolRef: 't1', stepdown: 2, drillType: 'helical', entryRampAngle: 5,
+  })
+  const result = generateDrillingToolpath(project, op)
+  assert(!!result.warnings.find((w) => w.code === 'drillHelicalBoreTooSmall'),
+    'should warn about the too-small middle hole')
+  const leadIns = result.moves.filter((m) => m.kind === 'lead_in')
+  assert(leadIns.length > 0, 'eligible targets should emit lead_in moves')
+  // No move should reference the rejected centre (80,80)
+  const rejectedCenter = { x: 80, y: 80 }
+  for (const move of result.moves) {
+    for (const pt of [move.from, move.to]) {
+      if (Math.abs(pt.x - rejectedCenter.x) < 0.01 && Math.abs(pt.y - rejectedCenter.y) < 0.01) {
+        assert(false, `no move should reference the rejected hole centre (80,80)`)
+      }
+    }
+  }
+})
+
+test('drilling helical: move-budget exhaustion rejects with no moves and unmachinable warning', () => {
+  // P0 regression: when a finish-bore helix exceeds MAX_ENTRY_DESCENT_MOVES
+  // the result must be zero moves and drillHelicalBoreUnmachinable, not a
+  // plunge fallback.
+  const tool = makeFlatEndmill('t1', 3)
+  // Eligible diameter (hole=5, tool=3 → 3<5≤6) but very deep with shallow
+  // ramp angle → move budget exceeded.
+  const circle = makeCircleFeature('c1', 20, 20, 2.5, 0, -500)
+  const project = baseProject([tool], [circle])
+  const op = makePocketOp({
+    kind: 'drilling', target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1', stepdown: 2, drillType: 'helical', entryRampAngle: 0.1,
+  })
+  const result = generateDrillingToolpath(project, op)
+  // Must have the unmachinable warning
+  assert(!!result.warnings.find((w) => w.code === 'drillHelicalBoreUnmachinable'),
+    'move-budget breach should produce drillHelicalBoreUnmachinable warning')
+  // Must NOT have entryStrategyFallback warning
+  assert(!result.warnings.find((w) => w.code === 'entryStrategyFallback'),
+    'move-budget breach should not produce entryStrategyFallback for finish-bore')
+  // Zero cutting/travel moves
+  const nonRapidMoves = result.moves.filter((m) => m.kind !== 'rapid')
+  assert(nonRapidMoves.length === 0, 'rejection must emit zero non-rapid moves')
+  // Actually, zero moves total since no moves are emitted on rejection
+  assert(result.moves.length === 0, 'rejection must emit zero moves')
+  // No drill cycles
+  assert(!result.drillCycles || result.drillCycles.length === 0, 'rejection must emit no drill cycles')
+})
+
 test('drilling helical: valid sibling targets generate normally after ineligible target', () => {
   const tool = makeFlatEndmill('t1', 3)
   // First hole is too small (r=1, holeDiameter=2 < toolDiameter=3), second is eligible (r=2.5)

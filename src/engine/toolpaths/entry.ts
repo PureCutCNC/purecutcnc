@@ -666,8 +666,8 @@ export function emitCenterLockedCircularBore(
     // radius (within tolerance).  When helixRadius == holeRadius - toolRadius
     // this holds exactly, so the gate only catches a caller mistake.
     if (!(helixRadius > ENTRY_EPSILON) || helixRadius + toolRadius > holeRadius + ENTRY_EPSILON) {
-      warnings.push({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'plunge' } })
-      return { position: emitPlungeEntryFallback(moves, current, center, bottomZ, safeZ, retractZ), warnings }
+      warnings.push({ code: 'drillHelicalBoreUnmachinable' })
+      return { position: current ?? { x: center.x, y: center.y, z: safeZ }, warnings }
     }
   } else {
     const noCoreCap = toolRadius
@@ -689,6 +689,10 @@ export function emitCenterLockedCircularBore(
   const descentSegments = Math.max(1, Math.ceil(revolutions * HELIX_SEGMENTS_PER_REVOLUTION))
 
   if (descentSegments > MAX_ENTRY_DESCENT_MOVES) {
+    if (isFinishBore) {
+      warnings.push({ code: 'drillHelicalBoreUnmachinable' })
+      return { position: current ?? { x: center.x, y: center.y, z: safeZ }, warnings }
+    }
     warnings.push({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'plunge' } })
     return { position: emitPlungeEntryFallback(moves, current, center, bottomZ, safeZ, retractZ), warnings }
   }

@@ -857,12 +857,12 @@ function testHelicalSafeZBeforeRetractDescent(): void {
   assert(gcode.includes('M30'), 'helical G-code should contain M30')
 }
 
-function testHelicalPlungeFallbackSafeZBeforeDescent(): void {
-  console.log('Testing helical plunge fallback G-code: safeZ established before retractZ descent...')
+function testHelicalMoveBudgetRejection(): void {
+  console.log('Testing helical move-budget exhaustion rejects with no moves and unmachinable warning...')
 
-  const project = newProject('Fallback SafeZ Test', 'mm')
-  // Exhaust the move budget: a very deep hole with a shallow ramp angle
-  // will exceed MAX_ENTRY_DESCENT_MOVES (20k), triggering a plunge fallback.
+  const project = newProject('Rejection Test', 'mm')
+  // Eligible diameter (hole=6, tool=4 → 4<6≤8) but very deep + shallow
+  // ramp angle → exceeds MAX_ENTRY_DESCENT_MOVES → rejection
   const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '4 mm Endmill', type: 'flat_endmill' as const, diameter: 4, defaultPlungeFeed: 150 }
   project.tools = [toolRecord]
 
@@ -882,7 +882,7 @@ function testHelicalPlungeFallbackSafeZBeforeDescent(): void {
 
   const operation: Operation = {
     id: 'op1',
-    name: 'Fallback Bore',
+    name: 'Rejected Bore',
     kind: 'drilling',
     pass: 'rough',
     enabled: true,
@@ -909,58 +909,17 @@ function testHelicalPlungeFallbackSafeZBeforeDescent(): void {
   }
 
   const toolpath = generateDrillingToolpath(project, operation)
-  assert(toolpath.moves.length > 0, 'fallback drilling should produce moves')
-  // Move-budget exhausted → fallback should emit a plunge
-  assert(toolpath.moves.some((m) => m.kind === 'plunge'), 'fallback should emit plunge')
-
-  const result = runPostProcessor({
-    project,
-    definition: testDefinition(),
-    operations: [{ operation, tool: normalizeToolForProject(toolRecord, project), toolpath }],
-    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
-  })
-  const gcode = result.gcode
-
-  // Same safe-Z ordering invariant as the helical path.
-  const zValues = rapidZValues(gcode)
-  assert(zValues.length >= 2, `fallback: expected at least 2 rapid Z values, got ${zValues.length}`)
-  const firstZ = zValues[0]
-  assert(
-    zValues.slice(1).some((z) => z < firstZ),
-    `fallback: expected a Z descent below first Z ${firstZ} in ${JSON.stringify(zValues)}`,
-  )
-
-  // XY must be established before Z descends below the initial safeZ level.
-  const lines = gcode.split('\n')
-  let xyEstablished = false
-  let inRapid = false
-  let firstZSeen: number | null = null
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (trimmed.startsWith('G0')) inRapid = true
-    else if (/^G[123]\b/.test(trimmed)) inRapid = false
-
-    if (inRapid && /X-?[\d.]/.test(trimmed) && /Y-?[\d.]/.test(trimmed)) {
-      xyEstablished = true
-    }
-
-    if (inRapid) {
-      const zMatch = trimmed.match(/Z(-?[\d.]+)/)
-      if (zMatch) {
-        const z = parseFloat(zMatch[1])
-        if (firstZSeen === null) firstZSeen = z
-        else if (z < firstZSeen && !xyEstablished) {
-          assert(false, `fallback: rapid Z descent to ${z} before XY established (first Z was ${firstZSeen})`)
-        }
-      }
-    }
-  }
-  assert(xyEstablished, 'fallback: XY position must be established in G-code')
-  assert(gcode.includes('M30'), 'fallback G-code should contain M30')
+  // Move-budget exhausted in finish-bore mode → rejection, zero moves
+  assert(toolpath.moves.length === 0, 'move-budget rejection must produce zero moves')
+  assert(!toolpath.drillCycles || toolpath.drillCycles.length === 0, 'rejection must have no drillCycles')
+  assert(!!toolpath.warnings.find((w) => w.code === 'drillHelicalBoreUnmachinable'),
+    'rejection must produce drillHelicalBoreUnmachinable warning')
+  assert(!toolpath.warnings.find((w) => w.code === 'entryStrategyFallback'),
+    'rejection must not produce entryStrategyFallback')
 }
 
 testHelicalSafeZBeforeRetractDescent()
-testHelicalPlungeFallbackSafeZBeforeDescent()
+testHelicalMoveBudgetRejection()
 
 // ── Arc fitting tests ──────────────────────────────────────────
 

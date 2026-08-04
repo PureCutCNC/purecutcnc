@@ -423,10 +423,8 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
             code: 'drillHelicalBoreTooSmall',
             params: { holeDiameter: Number(holeDiameter.toFixed(4)), toolDiameter: Number(toolDiameter.toFixed(4)) },
           })
-          // Emit no moves for this target; advance currentPosition so the
-          // next target (if any) still gets a proper safe-Z rapid from the
-          // current hole centre.
-          currentPosition = { x: target.center.x, y: target.center.y, z: safeZ }
+          // Emit no moves for this target; do not mutate currentPosition —
+          // the tool has not visited this hole centre.
         } else if (holeDiameter - twiceDiameter > 1e-9) {
           // Hole larger than 2× tool diameter — clearing requires pocketing.
           warnings.push({
@@ -436,7 +434,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
               maxDiameter: Number(twiceDiameter.toFixed(4)),
             },
           })
-          currentPosition = { x: target.center.x, y: target.center.y, z: safeZ }
+          // Do not mutate currentPosition — the tool has not visited this hole centre.
         } else {
           // Eligible: cutter-centre orbit = holeRadius - toolRadius.
           const boreRadius = holeRadius - toolRadius
@@ -456,7 +454,11 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
             operation.plungeFeed,
             true, // isFinishBore — do not subtract entry safety or clamp to no-core cap
           )
-          currentPosition = result.position
+          // Rejected (unmachinable) bores emit no moves — do not advance
+          // currentPosition so the next target starts from the actual prior position.
+          if (!result.warnings.some((w) => w.code === 'drillHelicalBoreUnmachinable')) {
+            currentPosition = result.position
+          }
           warnings.push(...result.warnings)
         }
       } else {

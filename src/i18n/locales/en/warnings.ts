@@ -122,6 +122,7 @@ export const warningsEn = {
   'warnings.drillHelicalToolUnsupported': 'Helical boring requires a flat endmill; falling back to a simple plunge',
   'warnings.drillHelicalBoreTooSmall': 'Selected circle diameter ({holeDiameter}) is not larger than the tool diameter ({toolDiameter}); helical boring skipped — hole must be strictly larger than the endmill',
   'warnings.drillHelicalBoreTooLarge': 'Selected circle diameter ({holeDiameter}) exceeds 2× the tool diameter ({maxDiameter}); helical boring is limited to 2× the endmill diameter — use Inside Edge Cut instead',
+  'warnings.drillHelicalBoreUnmachinable': 'The requested helical bore cannot be generated within the move limit; no output produced for this target',
   'warnings.drillTargetsNotCircles': 'Some selected target features are not circles and were skipped',
   // carving (follow-line)
   'warnings.carveDepthClamped': '{name} carve depth exceeds stock bottom; clamped to Z 0',
