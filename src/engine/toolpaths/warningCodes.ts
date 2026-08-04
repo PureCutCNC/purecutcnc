@@ -113,6 +113,8 @@ export type ToolpathWarningCode =
   | 'drillNotDrillBit'
   | 'drillTargetsNotCircles'
   | 'drillHelicalToolUnsupported'
+  | 'drillHelicalBoreTooSmall'
+  | 'drillHelicalBoreTooLarge'
   // carving (follow-line)
   | 'carveDepthClamped'
   | 'carveNotEnoughGeometry'

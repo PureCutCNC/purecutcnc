@@ -645,20 +645,42 @@ export function emitCenterLockedCircularBore(
   cutDirection: CutDirection,
   cutFeed: number,
   plungeFeed: number,
+  isFinishBore?: boolean,
 ): { position: ToolpathPoint; warnings: ToolpathWarning[] } {
   const warnings: ToolpathWarning[] = []
   const safety = entryBoundarySafety(toolDiameter)
   const toolRadius = toolDiameter / 2
-  const noCoreCap = toolRadius
-  const maxSafePathRadius = Math.max(0, holeRadius - toolRadius - safety)
-  const helixRadius = Math.min(requestedRadius, maxSafePathRadius, noCoreCap)
 
-  // Swept-envelope safety gate: the cutter must stay inside the selected
-  // hole at every point. The path is centred on the hole, so the constraint
-  // is constant per hole.
-  if (!(helixRadius > ENTRY_EPSILON) || helixRadius + toolRadius + safety > holeRadius + ENTRY_EPSILON) {
-    warnings.push({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'plunge' } })
-    return { position: emitPlungeEntryFallback(moves, current, center, bottomZ, safeZ, retractZ), warnings }
+  let helixRadius: number
+
+  if (isFinishBore) {
+    // Drilling finish-bore mode: the caller has already verified eligibility
+    // (toolDiameter < holeDiameter <= 2 * toolDiameter).  The requested radius
+    // is the intentional cutter-centre orbit (holeRadius - toolRadius), whose
+    // swept envelope reaches the selected wall exactly.  Do NOT subtract
+    // entry-boundary safety from this finish radius; do NOT apply the
+    // no-core cap as an additional clamp.
+    helixRadius = requestedRadius
+
+    // Swept-envelope gate: the cutter outside edge must not exceed the hole
+    // radius (within tolerance).  When helixRadius == holeRadius - toolRadius
+    // this holds exactly, so the gate only catches a caller mistake.
+    if (!(helixRadius > ENTRY_EPSILON) || helixRadius + toolRadius > holeRadius + ENTRY_EPSILON) {
+      warnings.push({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'plunge' } })
+      return { position: emitPlungeEntryFallback(moves, current, center, bottomZ, safeZ, retractZ), warnings }
+    }
+  } else {
+    const noCoreCap = toolRadius
+    const maxSafePathRadius = Math.max(0, holeRadius - toolRadius - safety)
+    helixRadius = Math.min(requestedRadius, maxSafePathRadius, noCoreCap)
+
+    // Swept-envelope safety gate: the cutter must stay inside the selected
+    // hole at every point. The path is centred on the hole, so the constraint
+    // is constant per hole.
+    if (!(helixRadius > ENTRY_EPSILON) || helixRadius + toolRadius + safety > holeRadius + ENTRY_EPSILON) {
+      warnings.push({ code: 'entryStrategyFallback', params: { requested: 'helix', fallback: 'plunge' } })
+      return { position: emitPlungeEntryFallback(moves, current, center, bottomZ, safeZ, retractZ), warnings }
+    }
   }
 
   const depth = Math.max(0, retractZ - bottomZ)

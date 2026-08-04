@@ -110,6 +110,8 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.drillPeckDepthPositive': '啄钻/断屑钻孔的啄钻深度必须大于零；已回退为单次下刀',
   'warnings.drillNotDrillBit': '所选刀具不是钻头 — 钻孔循环通常需要钻头刀具',
   'warnings.drillHelicalToolUnsupported': '螺旋钻孔需要平底铣刀；已回退为简单下刀',
+  'warnings.drillHelicalBoreTooSmall': '选定圆直径 ({holeDiameter}) 不大于刀具直径 ({toolDiameter})；已跳过螺旋钻孔 — 孔径必须严格大于铣刀直径',
+  'warnings.drillHelicalBoreTooLarge': '选定圆直径 ({holeDiameter}) 超过 2 倍刀具直径 ({maxDiameter})；螺旋钻孔限于 2 倍铣刀直径 — 请改用内侧轮廓加工',
   'warnings.drillTargetsNotCircles': '部分选定的目标特征不是圆形，已跳过',
   'warnings.carveDepthClamped': '{name} 的雕刻深度超过毛坯底面；已钳制到 Z 0',
   'warnings.carveNotEnoughGeometry': '{name} 不包含足够的几何用于沿线雕刻',

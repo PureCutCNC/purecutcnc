@@ -27,7 +27,6 @@ import {
 import { buildRegionMask, splitFeatureTargets } from './regions'
 import {
   DEFAULT_ENTRY_RAMP_ANGLE,
-  DEFAULT_ENTRY_HELIX_DIAMETER_PERCENT,
   emitCenterLockedCircularBore,
 } from './entry'
 
@@ -295,10 +294,6 @@ function emitDrillCycle(
   return finalRetract
 }
 
-function clampPercent(value: number): number {
-  return Math.min(100, Math.max(1, value))
-}
-
 export function generateDrillingToolpath(project: Project, operation: Operation): ToolpathResult {
   if (operation.kind !== 'drilling') {
     return {
@@ -399,7 +394,6 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
 
   const dwellTime = operation.dwellTime ?? 0
   const rampAngle = Math.min(45, Math.max(0.1, operation.entryRampAngle ?? DEFAULT_ENTRY_RAMP_ANGLE))
-  const helixDiameterPercent = clampPercent(operation.entryHelixDiameterPercent ?? DEFAULT_ENTRY_HELIX_DIAMETER_PERCENT)
   const cutDirection = operation.cutDirection ?? 'conventional'
 
   for (const target of sortedTargets) {
@@ -414,24 +408,57 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     if (drillType === 'helical' && tool.type === 'flat_endmill') {
       const holeRadius = getCircleRadius(target.feature.sketch.profile)
       if (holeRadius !== null) {
-        const requestedRadius = tool.diameter * helixDiameterPercent / 200
-        const result = emitCenterLockedCircularBore(
-          moves,
-          currentPosition,
-          target.center,
-          requestedRadius,
-          holeRadius,
-          tool.diameter,
-          bottomZ,
-          safeZ,
-          retractZ,
-          rampAngle,
-          cutDirection,
-          operation.feed,
-          operation.plungeFeed,
-        )
-        currentPosition = result.position
-        warnings.push(...result.warnings)
+        const holeDiameter = holeRadius * 2
+        const toolDiameter = tool.diameter
+        const toolRadius = toolDiameter / 2
+        const twiceDiameter = toolDiameter * 2
+
+        // Eligibility: the selected-circle diameter must be strictly larger
+        // than the tool diameter and no greater than twice it.  Outside that
+        // range a single centred helix cannot both clear the core and reach
+        // the wall without becoming a pocket operation.
+        if (holeDiameter - toolDiameter <= 1e-9) {
+          // Hole at or below tool diameter — no room to orbit.
+          warnings.push({
+            code: 'drillHelicalBoreTooSmall',
+            params: { holeDiameter: Number(holeDiameter.toFixed(4)), toolDiameter: Number(toolDiameter.toFixed(4)) },
+          })
+          // Emit no moves for this target; advance currentPosition so the
+          // next target (if any) still gets a proper safe-Z rapid from the
+          // current hole centre.
+          currentPosition = { x: target.center.x, y: target.center.y, z: safeZ }
+        } else if (holeDiameter - twiceDiameter > 1e-9) {
+          // Hole larger than 2× tool diameter — clearing requires pocketing.
+          warnings.push({
+            code: 'drillHelicalBoreTooLarge',
+            params: {
+              holeDiameter: Number(holeDiameter.toFixed(4)),
+              maxDiameter: Number(twiceDiameter.toFixed(4)),
+            },
+          })
+          currentPosition = { x: target.center.x, y: target.center.y, z: safeZ }
+        } else {
+          // Eligible: cutter-centre orbit = holeRadius - toolRadius.
+          const boreRadius = holeRadius - toolRadius
+          const result = emitCenterLockedCircularBore(
+            moves,
+            currentPosition,
+            target.center,
+            boreRadius,
+            holeRadius,
+            toolDiameter,
+            bottomZ,
+            safeZ,
+            retractZ,
+            rampAngle,
+            cutDirection,
+            operation.feed,
+            operation.plungeFeed,
+            true, // isFinishBore — do not subtract entry safety or clamp to no-core cap
+          )
+          currentPosition = result.position
+          warnings.push(...result.warnings)
+        }
       } else {
         // Should not reach here (getCircleCenter already passed), but be safe
         currentPosition = emitSimplePlunge(moves, currentPosition, target.center, bottomZ, safeZ, retractZ)

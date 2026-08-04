@@ -106,6 +106,8 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.drillPeckDepthPositive': 'La profondeur de débourrage doit être supérieure à zéro pour le perçage par débourrage/brise-copeaux ; retour à une seule plongée',
   'warnings.drillNotDrillBit': 'L’outil sélectionné n’est pas un foret — les cycles de perçage exigent généralement un foret',
   'warnings.drillHelicalToolUnsupported': 'Le perçage hélicoïdal nécessite une fraise cylindrique ; retour à une plongée simple',
+  'warnings.drillHelicalBoreTooSmall': 'Le diamètre du cercle ({holeDiameter}) n\'est pas supérieur au diamètre de l\'outil ({toolDiameter}); perçage hélicoïdal ignoré — le trou doit être strictement plus grand que la fraise',
+  'warnings.drillHelicalBoreTooLarge': 'Le diamètre du cercle ({holeDiameter}) dépasse 2× le diamètre de l\'outil ({maxDiameter}); le perçage hélicoïdal est limité à 2× le diamètre de la fraise — utilisez Contour Intérieur à la place',
   'warnings.drillTargetsNotCircles': 'Certaines entités cibles ne sont pas des cercles et ont été ignorées',
   'warnings.carveDepthClamped': 'La profondeur de gravure de {name} dépasse le bas du brut ; limitée à Z 0',
   'warnings.carveNotEnoughGeometry': '{name} ne contient pas assez de géométrie pour une gravure suivant une ligne',

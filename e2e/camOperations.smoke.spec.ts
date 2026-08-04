@@ -185,7 +185,7 @@ test.describe('CAM operation browser smoke', () => {
     expect(tools.some((tool) => tool.id === operations[0].toolRef && tool.type === 'v_bit')).toBe(true)
   })
 
-  test('helical drilling: select Helical, assert conditional controls, change and persist', async ({ app, ui }) => {
+  test('helical drilling: select Helical, assert ramp angle visible, Helix Diameter absent, change and persist', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)
 
     // Create a drilling operation on the circle feature
@@ -217,17 +217,17 @@ test.describe('CAM operation browser smoke', () => {
     // Wait for the selector label to update
     await expect(drillTypeField.locator('.ui-select__label')).toHaveText('Helical')
 
-    // Conditional controls should now be visible with defaults
+    // Ramp Angle should now be visible with default value
     const rampAngleField = app.page.getByText('Ramp Angle (°)', { exact: true }).locator('..')
-    const helixDiameterField = app.page.getByText('Helix Diameter (%)', { exact: true }).locator('..')
     await expect(rampAngleField.locator('input')).toHaveValue('5')
-    await expect(helixDiameterField.locator('input')).toHaveValue('80')
 
-    // Change both values through the rendered inputs
+    // Helix Diameter must remain absent — the selected circle defines the bore
+    // diameter, not the shared #412 entry-helix-diameter setting
+    await expect(app.page.getByText('Helix Diameter (%)', { exact: true })).toHaveCount(0)
+
+    // Change the ramp angle
     await rampAngleField.locator('input').fill('8')
     await rampAngleField.locator('input').blur()
-    await helixDiameterField.locator('input').fill('65')
-    await helixDiameterField.locator('input').blur()
 
     // Verify persisted operation state
     const project = await getProject(app.page)
@@ -236,6 +236,5 @@ test.describe('CAM operation browser smoke', () => {
     expect(operations[0].kind).toBe('drilling')
     expect((operations[0] as Record<string, unknown>).drillType).toBe('helical')
     expect(operations[0].entryRampAngle).toBe(8)
-    expect(operations[0].entryHelixDiameterPercent).toBe(65)
   })
 })

@@ -1509,32 +1509,18 @@ export function CAMPanel({
                         </label>
                       ) : null}
                       {selectedOperation.drillType === 'helical' ? (
-                        <>
-                          <label className="properties-field">
-                            <span>{camT('cam.operation.entryRampAngle')}</span>
-                            <DraftNumberInput
-                              value={selectedOperation.entryRampAngle ?? 5}
-                              min={0.1}
-                              max={45}
-                              onCommit={(value) => updateOperation(selectedOperation.id, {
-                                entryRampAngle: Math.min(45, Math.max(0.1, value)),
-                              })}
-                            />
-                            <OperationParameterReference kind="entryRampAngle" />
-                          </label>
-                          <label className="properties-field">
-                            <span>{camT('cam.operation.entryHelixDiameter')}</span>
-                            <DraftNumberInput
-                              value={selectedOperation.entryHelixDiameterPercent ?? 80}
-                              min={1}
-                              max={100}
-                              onCommit={(value) => updateOperation(selectedOperation.id, {
-                                entryHelixDiameterPercent: Math.min(100, Math.max(1, value)),
-                              })}
-                            />
-                            <OperationParameterReference kind="entryHelixDiameter" />
-                          </label>
-                        </>
+                        <label className="properties-field">
+                          <span>{camT('cam.operation.entryRampAngle')}</span>
+                          <DraftNumberInput
+                            value={selectedOperation.entryRampAngle ?? 5}
+                            min={0.1}
+                            max={45}
+                            onCommit={(value) => updateOperation(selectedOperation.id, {
+                              entryRampAngle: Math.min(45, Math.max(0.1, value)),
+                            })}
+                          />
+                          <OperationParameterReference kind="entryRampAngle" />
+                        </label>
                       ) : null}
                       <label className="properties-field">
                         <span>{camT('cam.operation.retractHeight')}</span>

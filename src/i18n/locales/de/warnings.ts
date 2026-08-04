@@ -120,6 +120,8 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.drillPeckDepthPositive': 'Entspantiefe muss beim Tiefloch-/Spanbruchbohren größer als null sein; Rückfall auf einen einzelnen Eintauchvorgang',
   'warnings.drillNotDrillBit': 'Das ausgewählte Werkzeug ist kein Bohrer – Bohrzyklen erfordern in der Regel ein Bohrwerkzeug',
   'warnings.drillHelicalToolUnsupported': 'Helikales Bohren erfordert einen Schaftfräser; Rückfall auf einfaches Eintauchen',
+  'warnings.drillHelicalBoreTooSmall': 'Kreisdurchmesser ({holeDiameter}) ist nicht größer als der Werkzeugdurchmesser ({toolDiameter}); helikales Bohren übersprungen — Bohrung muss größer als der Schaftfräser sein',
+  'warnings.drillHelicalBoreTooLarge': 'Kreisdurchmesser ({holeDiameter}) überschreitet 2× Werkzeugdurchmesser ({maxDiameter}); helikales Bohren ist auf 2× Schaftfräserdurchmesser begrenzt — Innenkonturfräsen verwenden',
   'warnings.drillTargetsNotCircles': 'Einige ausgewählte Ziel-Features sind keine Kreise und wurden übersprungen',
   // carving (follow-line)
   'warnings.carveDepthClamped': '{name} Gravurtiefe überschreitet die Rohteilunterseite; auf Z 0 begrenzt',

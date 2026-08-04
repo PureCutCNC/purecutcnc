@@ -590,7 +590,7 @@ function testHelicalDrillingG1NoCannedCycles(): void {
     name: 'Bore',
     kind: 'circle',
     folderId: null,
-    sketch: { profile: circleProfile(20, 20, 6), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    sketch: { profile: circleProfile(20, 20, 3), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
     operation: 'subtract',
     z_top: 0,
     z_bottom: -8,
@@ -660,7 +660,7 @@ function testHelicalDrillingArcFittingNoG2G3(): void {
     name: 'Bore',
     kind: 'circle',
     folderId: null,
-    sketch: { profile: circleProfile(20, 20, 6), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    sketch: { profile: circleProfile(20, 20, 3), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
     operation: 'subtract',
     z_top: 0,
     z_bottom: -8,
@@ -759,7 +759,7 @@ function testHelicalSafeZBeforeRetractDescent(): void {
     name: 'Bore',
     kind: 'circle',
     folderId: null,
-    sketch: { profile: circleProfile(20, 20, 6), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    sketch: { profile: circleProfile(20, 20, 3), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
     operation: 'subtract',
     z_top: 0,
     z_bottom: -8,
@@ -861,19 +861,20 @@ function testHelicalPlungeFallbackSafeZBeforeDescent(): void {
   console.log('Testing helical plunge fallback G-code: safeZ established before retractZ descent...')
 
   const project = newProject('Fallback SafeZ Test', 'mm')
-  // Tool is too large for the hole → helical path falls back to plunge
-  const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '8 mm Endmill', type: 'flat_endmill' as const, diameter: 8, defaultPlungeFeed: 150 }
+  // Exhaust the move budget: a very deep hole with a shallow ramp angle
+  // will exceed MAX_ENTRY_DESCENT_MOVES (20k), triggering a plunge fallback.
+  const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '4 mm Endmill', type: 'flat_endmill' as const, diameter: 4, defaultPlungeFeed: 150 }
   project.tools = [toolRecord]
 
   const circle: SketchFeature = {
     id: 'c1',
-    name: 'TinyBore',
+    name: 'DeepBore',
     kind: 'circle',
     folderId: null,
-    sketch: { profile: circleProfile(20, 20, 4.5), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    sketch: { profile: circleProfile(20, 20, 3), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
     operation: 'subtract',
     z_top: 0,
-    z_bottom: -4,
+    z_bottom: -500,
     visible: true,
     locked: false,
   }
@@ -903,13 +904,13 @@ function testHelicalPlungeFallbackSafeZBeforeDescent(): void {
     carveDepth: 1,
     maxCarveDepth: 1,
     drillType: 'helical',
-    entryRampAngle: 5,
+    entryRampAngle: 0.1,
     entryHelixDiameterPercent: 80,
   }
 
   const toolpath = generateDrillingToolpath(project, operation)
   assert(toolpath.moves.length > 0, 'fallback drilling should produce moves')
-  // Fallback should emit a plunge (the tool is too large for a helix)
+  // Move-budget exhausted → fallback should emit a plunge
   assert(toolpath.moves.some((m) => m.kind === 'plunge'), 'fallback should emit plunge')
 
   const result = runPostProcessor({

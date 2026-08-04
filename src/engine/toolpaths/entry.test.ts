@@ -569,5 +569,80 @@ test('center-locked bore: warns when requested diameter is clamped by clearance'
   assert(result.warnings.some((w) => w.code === 'entryHelixDiameterClamped'), 'tight clearance should clamp and warn')
 })
 
+// ── Finish-bore mode (isFinishBore=true) ─────────────────────────
+
+test('finish-bore: exact H−T radius, no safety subtraction, no no-core clamp', () => {
+  const moves: ToolpathMove[] = []
+  const center = { x: 20, y: 20 }
+  const toolDiameter = 4   // toolRadius = 2
+  const holeRadius = 5     // boreRadius = 5 − 2 = 3
+  const boreRadius = holeRadius - toolDiameter / 2 // = 3
+
+  const result = emitCenterLockedCircularBore(
+    moves, null, center, boreRadius, holeRadius, toolDiameter,
+    -6, 10, 0, 5, 'conventional', 600, 180,
+    true, // isFinishBore
+  )
+  assert(result.warnings.filter((w) => w.code !== 'entryHelixDiameterClamped').length === 0,
+    'finish-bore should have no structural warnings')
+  assert(approx(result.position.z, 10), 'final retract should be at safeZ')
+
+  // Every lead-in point must be at exactly boreRadius from the centre.
+  const leadIns = moves.filter((m) => m.kind === 'lead_in')
+  assert(leadIns.length > 0, 'finish-bore should emit lead_in moves')
+  for (const move of leadIns) {
+    for (const pt of [move.from, move.to]) {
+      const dist = Math.hypot(pt.x - center.x, pt.y - center.y)
+      assert(approx(dist, boreRadius, 0.01),
+        `finish-bore point at dist ${dist.toFixed(4)} must equal boreRadius=${boreRadius}`)
+    }
+  }
+
+  // The swept envelope should reach the selected wall exactly:
+  // boreRadius + toolRadius = (5−2) + 2 = 5 = holeRadius
+  const maxDist = Math.max(...leadIns.flatMap((m) => [
+    Math.hypot(m.from.x - center.x, m.from.y - center.y),
+    Math.hypot(m.to.x - center.x, m.to.y - center.y),
+  ]))
+  assert(approx(maxDist + toolDiameter / 2, holeRadius, 0.01),
+    `swept envelope ${(maxDist + toolDiameter / 2).toFixed(4)} must equal holeRadius ${holeRadius}`)
+})
+
+test('finish-bore: 2× boundary (holeDiameter = 2 × toolDiameter)', () => {
+  const moves: ToolpathMove[] = []
+  const toolDiameter = 4
+  const holeRadius = 4  // holeDiameter = 8 = 2 × toolDiameter
+  const boreRadius = holeRadius - toolDiameter / 2 // = 2
+
+  const result = emitCenterLockedCircularBore(
+    moves, null, { x: 0, y: 0 }, boreRadius, holeRadius, toolDiameter,
+    -6, 10, 0, 5, 'conventional', 600, 180,
+    true,
+  )
+  assert(result.warnings.filter((w) => w.code !== 'entryHelixDiameterClamped').length === 0,
+    '2× boundary finish-bore should succeed')
+  const leadIns = moves.filter((m) => m.kind === 'lead_in')
+  assert(leadIns.length > 0, '2× boundary should emit moves')
+  // boreRadius = 2, toolRadius = 2 → boreRadius <= toolRadius → core is removed
+  assert(boreRadius <= toolDiameter / 2, 'bore radius must be at most tool radius')
+})
+
+test('finish-bore: swept-envelope gate catches oversized radius', () => {
+  const moves: ToolpathMove[] = []
+  // Pass boreRadius larger than holeRadius − toolRadius — the gate should trip.
+  const result = emitCenterLockedCircularBore(
+    moves, null, { x: 0, y: 0 },
+    3,  // boreRadius = 3
+    4,  // holeRadius = 4 → toolRadius=2, so max boreRadius=2
+    4,  // toolDiameter
+    -3, 10, 0, 5, 'conventional', 600, 180,
+    true,
+  )
+  // Swept envelope: 3 + 2 = 5 > 4 → gate trips, fallback to plunge
+  assert(result.warnings.some((w) => w.code === 'entryStrategyFallback'),
+    'oversized finish-bore radius should trigger swept-envelope fallback')
+  assert(moves.some((m) => m.kind === 'plunge'), 'should emit plunge fallback')
+})
+
 console.log(`\nentry.ts tests: ${passed} passed, ${failed} failed`)
 if (failed > 0) process.exitCode = 1
