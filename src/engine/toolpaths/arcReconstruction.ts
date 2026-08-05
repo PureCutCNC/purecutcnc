@@ -592,6 +592,19 @@ export interface PartialArcFitOptions {
    *  min(0.01, radius×0.001) from any source center is rejected.
    *  Pass an empty array to skip this check (export does this). */
   sourceCenters?: Point[]
+  /** When true, each candidate's fitted centre is moved onto the
+   *  perpendicular bisector of its first and last point, so the accepted
+   *  circle passes *exactly* through both run endpoints.  Every gate then
+   *  validates that constrained circle, so the search naturally shortens a
+   *  run until the constrained fit is within tolerance.
+   *
+   *  The export path (issue #447) needs this: it emits one arc run per
+   *  fitted run, and adjacent runs share an endpoint index.  Without the
+   *  constraint each run projects that shared point radially onto its own
+   *  circle, so the two disagree about it by up to twice the residual
+   *  tolerance — which the controller then rejects as an invalid target.
+   *  The editor offset path re-fits whole profiles and leaves this off. */
+  endpointConstrained?: boolean
 }
 
 /** One contiguous arc sub-run found within a point sequence. */
@@ -617,6 +630,34 @@ const MAX_ARC_FIT_CANDIDATE_POINTS = 128
 
 function dist2D(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+/**
+ * Move a fitted circle onto the perpendicular bisector of `start`→`end`,
+ * returning the closest such circle to the original fit.  Both endpoints are
+ * then exactly equidistant from the centre, so an arc drawn on this circle
+ * passes through them rather than through radial projections of them.
+ *
+ * Returns null when the endpoints coincide (a closed run / full circle): the
+ * bisector is undefined there, and the unconstrained fit is already endpoint-
+ * continuous because start and end are the same point.
+ */
+function constrainCircleToEndpoints(
+  fit: { center: Point; radius: number },
+  start: Point,
+  end: Point,
+): { center: Point; radius: number } | null {
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const chord2 = dx * dx + dy * dy
+  if (chord2 <= (fit.radius * 1e-6) ** 2) return null
+
+  // Bisector: point (mx, my) + t·(-dy, dx). Project the fitted centre onto it.
+  const mx = (start.x + end.x) / 2
+  const my = (start.y + end.y) / 2
+  const t = ((fit.center.x - mx) * -dy + (fit.center.y - my) * dx) / chord2
+  const center = { x: mx - dy * t, y: my + dx * t }
+  return { center, radius: dist2D(start, center) }
 }
 
 /**
@@ -650,8 +691,15 @@ export function findArcRunsInPoints(
     // Try the longest qualifying sub-run in the bounded window first (greedy).
     for (let end = maxEnd; end >= minEnd; end -= 1) {
       const sub = points.slice(i, end + 1)
-      const fit = fitCircleLeastSquares(sub)
+      let fit = fitCircleLeastSquares(sub)
       if (!fit) continue
+
+      // Constrain before validating, so every gate — residual, chord ratio,
+      // segment angle, sweep — judges the circle that will actually be
+      // emitted rather than the looser unconstrained fit.
+      if (opts.endpointConstrained) {
+        fit = constrainCircleToEndpoints(fit, sub[0], sub[sub.length - 1]) ?? fit
+      }
 
       if (!validateArcFitPoints(sub, fit, opts)) continue
 

@@ -61,7 +61,7 @@ const ALL_CODES = [
   'surfaceHeightMapReduced', 'surfaceSilhouetteDegenerate', 'cleanupStockToLeaveOffsets', 'cleanupNoContours',
   'pocketNoFloorRegion', 'pocketNoFloorSegments',
   'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
-  'postArcNoCapability',
+  'postArcNoCapability', 'postArcFallbackLinear',
   'replayNoTool', 'bookletNoTool', 'bookletNoToolpath',
   'restOperationNotFound', 'restOnlyPocketEdgeTargets',
 ] as const satisfies readonly ToolpathWarningCode[]

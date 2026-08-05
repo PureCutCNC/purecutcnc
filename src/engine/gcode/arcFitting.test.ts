@@ -20,8 +20,18 @@
  * Run with: npx tsx src/engine/gcode/arcFitting.test.ts
  */
 
-import { fitArcsInMachineMoves } from './arcFitting'
-import type { ArcMoveDescriptor } from './arcFitting'
+import {
+  fitArcsInMachineMoves,
+  resolveEmittedArc,
+  applyEmittedArcFallback,
+  ARC_RADIUS_CONSISTENCY_TOLERANCE_MM,
+} from './arcFitting'
+import type {
+  ArcMoveDescriptor,
+  FittedMoveDescriptor,
+  LinearMoveDescriptor,
+  EmittedArcOptions,
+} from './arcFitting'
 import type { ToolpathMove, ToolpathPoint } from '../toolpaths/types'
 
 function assert(condition: boolean, message: string): void {
@@ -732,6 +742,391 @@ function pointsEq(a: ToolpathPoint, b: ToolpathPoint, eps = 1e-6): boolean {
     && Math.abs(a.z - b.z) <= eps
 }
 
+// ── issue #447: emitted arcs must survive number formatting ─────
+
+/** Three-decimal millimetre formatting, as GRBL-family definitions use. */
+function mm3(value: number): number {
+  return Number(value.toFixed(3))
+}
+
+/** Emit options for a 3-decimal millimetre, I/J-format machine. */
+const MM3_IJ: EmittedArcOptions = {
+  format: mm3, arcFormat: 'ij', mmPerOutputUnit: 1, quantum: 1e-3,
+}
+
+/**
+ * Reproduce the controller's own arc check on a formatted block:
+ * r_start = |I,J|, r_end = |target − (start + I,J)|.
+ */
+function controllerRadiusDelta(
+  start: { x: number; y: number },
+  target: { x: number; y: number },
+  i: number,
+  j: number,
+): number {
+  const centerX = start.x + i
+  const centerY = start.y + j
+  return Math.abs(
+    Math.hypot(target.x - centerX, target.y - centerY) - Math.hypot(i, j),
+  )
+}
+
+/**
+ * Walk a descriptor sequence exactly as the postprocessor does — formatted
+ * position chained from block to block — and return the worst radius
+ * disagreement any emitted arc would present to the controller.
+ */
+function worstEmittedRadiusDelta(descriptors: FittedMoveDescriptor[]): number {
+  let position: { x: number; y: number } | null = null
+  let worst = 0
+  for (const d of descriptors) {
+    if (d.kind === 'linear') {
+      position = { x: mm3(d.point.x), y: mm3(d.point.y) }
+      continue
+    }
+    const start = position ?? { x: mm3(d.startPoint.x), y: mm3(d.startPoint.y) }
+    const emitted = resolveEmittedArc(d, start, MM3_IJ)
+    worst = Math.max(worst, controllerRadiusDelta(
+      start,
+      { x: mm3(d.endPoint.x), y: mm3(d.endPoint.y) },
+      mm3(emitted.i),
+      mm3(emitted.j),
+    ))
+    position = { x: mm3(d.endPoint.x), y: mm3(d.endPoint.y) }
+  }
+  return worst
+}
+
+/** The 14 contiguous cut moves from the issue #447 report. */
+function issue447Moves(): ToolpathMove[] {
+  const xy: Array<[number, number]> = [
+    [122.3941767939508, 167.17278330912177],
+    [122.37556680190744, 167.10332987328752],
+    [122.36930000002496, 167.0317],
+    [122.36677898139465, 166.96007012671248],
+    [122.37660115292522, 166.89061669087823],
+    [122.3982010594255, 166.82545000000005],
+    [122.43065538518721, 166.76655011100434],
+    [122.4727110084653, 166.71570666721345],
+    [122.52282307694827, 166.67446452093895],
+    [122.57920194731366, 166.6440767939257],
+    [122.63986756263506, 166.62546680188257],
+    [122.7027096154099, 166.6192000000001],
+    [122.76555166818474, 166.62546680188257],
+    [122.82621728350614, 166.6440767939257],
+    [122.88259615387153, 166.67446452093895],
+  ]
+  const points = xy.map(([x, y]) => pt(x, y, -10.5))
+  const moves: ToolpathMove[] = []
+  for (let i = 0; i < points.length - 1; i++) {
+    moves.push(cut(points[i], points[i + 1]))
+  }
+  return moves
+}
+
+function testIssue447MinimalReproduction(): void {
+  console.log('Testing issue #447 minimal reproduction (small-radius trochoidal span)...')
+
+  const result = fitArcsInMachineMoves(issue447Moves(), TOL, MAX_DEG)
+  const arcs = result.filter(d => d.kind === 'arc')
+  assert(arcs.length > 0, 'reproduction should still fit arcs, not degrade to all-linear')
+
+  // Radii here are ~0.32-0.43 mm: below 5 mm the GRBL relative allowance is
+  // smaller than the 0.005 mm floor, so the floor is the whole budget.
+  for (const arc of arcs as ArcMoveDescriptor[]) {
+    const radius = Math.hypot(arc.centerOffsets.i, arc.centerOffsets.j)
+    assert(radius > 0.3 && radius < 0.5,
+      `fixture should exercise small-radius arcs, got r=${radius}`)
+  }
+
+  const worst = worstEmittedRadiusDelta(result)
+  assert(worst <= ARC_RADIUS_CONSISTENCY_TOLERANCE_MM,
+    `every emitted block must pass the GRBL radius check; worst delta ${worst.toFixed(6)} mm`)
+}
+
+function testAdjacentRunsShareEndpointsExactly(): void {
+  console.log('Testing endpoint continuity between adjacent fitted runs...')
+
+  const result = fitArcsInMachineMoves(issue447Moves(), TOL, MAX_DEG)
+  const runIds = new Set(
+    result.filter((d): d is ArcMoveDescriptor => d.kind === 'arc').map(d => d.runId),
+  )
+  assert(runIds.size >= 2,
+    `fixture must produce adjacent independently fitted runs, got ${runIds.size}`)
+
+  // Every descriptor must begin exactly where the previous one ended —
+  // this is what the pre-fix code violated by 0.0153 mm.
+  let previousEnd: ToolpathPoint | null = null
+  for (const d of result) {
+    const start = d.kind === 'arc' ? d.startPoint : null
+    if (previousEnd && start) {
+      assert(Math.hypot(start.x - previousEnd.x, start.y - previousEnd.y) === 0,
+        `arc start must equal the previous emitted endpoint exactly, gap ` +
+        `${Math.hypot(start.x - previousEnd.x, start.y - previousEnd.y)}`)
+    }
+    previousEnd = d.kind === 'arc' ? d.endPoint : d.point
+  }
+}
+
+function testFittedArcsPassThroughSourceEndpoints(): void {
+  console.log('Testing that fitted runs land on their source points...')
+
+  const moves = issue447Moves()
+  const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
+
+  // The last descriptor's endpoint must be the last source point exactly:
+  // no radial projection drift is allowed to accumulate across runs.
+  const last = result[result.length - 1]
+  const end = last.kind === 'arc' ? last.endPoint : last.point
+  const target = moves[moves.length - 1].to
+  assert(Math.hypot(end.x - target.x, end.y - target.y) < 1e-9,
+    `emitted span must end on the source point, off by ${Math.hypot(end.x - target.x, end.y - target.y)}`)
+}
+
+function testIJDerivedFromPreviousEmittedPoint(): void {
+  console.log('Testing that I/J are relative to the emitted position, not the declared start...')
+
+  const arc: ArcMoveDescriptor = {
+    kind: 'arc',
+    startPoint: pt(10.0004, 0, 0),      // exporter's un-rounded idea of the start
+    endPoint: pt(0, 10, 0),
+    centerOffsets: { i: -10.0004, j: 0 },  // centre at the origin
+    clockwise: false,
+    runId: 0,
+    runFallback: [{ kind: 'linear', point: pt(0, 10, 0), moveKind: 'cut' }],
+  }
+  // The controller is at the *formatted* 10.000, not at 10.0004.
+  const emitted = resolveEmittedArc(arc, { x: 10, y: 0 }, MM3_IJ)
+  assert(Math.abs(emitted.i - -10) < 1e-9,
+    `I must be measured from the emitted position (expected -10, got ${emitted.i})`)
+  assert(emitted.accepted, 'a centred arc measured from the emitted position must be accepted')
+}
+
+/**
+ * A run the controller must reject: the endpoint sits 0.02 mm off the circle
+ * its own I/J declares — the exact failure shape issue #447 produced. Built by
+ * hand rather than fitted, so the test pins the fallback behaviour itself and
+ * not the fitter's choice of run boundaries.
+ */
+function inconsistentRun(): { arcs: ArcMoveDescriptor[]; fallback: LinearMoveDescriptor[] } {
+  const fallback: LinearMoveDescriptor[] = [
+    { kind: 'linear', point: pt(7.07, 7.07, 0), moveKind: 'cut' },
+    { kind: 'linear', point: pt(0, 10.02, 0), moveKind: 'cut' },
+  ]
+  return {
+    arcs: [{
+      kind: 'arc',
+      startPoint: pt(10, 0, 0),
+      endPoint: pt(0, 10.02, 0),
+      centerOffsets: { i: -10, j: 0 },   // declares r = 10, lands at r = 10.02
+      clockwise: false,
+      runId: 99,
+      runFallback: fallback,
+    }],
+    fallback,
+  }
+}
+
+function testInvalidRunFallsBackToOriginalMoves(): void {
+  console.log('Testing whole-run fallback to original G1 moves...')
+
+  const { arcs, fallback } = inconsistentRun()
+  const entry: LinearMoveDescriptor = { kind: 'linear', point: pt(10, 0, 0), moveKind: 'rapid' }
+  const resolved = applyEmittedArcFallback([entry, ...arcs], MM3_IJ)
+
+  assert(resolved.fallbackRuns === 1,
+    `expected exactly 1 rejected run, got ${resolved.fallbackRuns}`)
+  assert(!resolved.descriptors.some(d => d.kind === 'arc'),
+    'a rejected run must leave no arcs behind')
+  assert(resolved.descriptors.length === 1 + fallback.length,
+    'fallback must emit the run’s original moves, one for one')
+
+  // The span must still end exactly where the original moves ended.
+  const last = resolved.descriptors[resolved.descriptors.length - 1]
+  if (last.kind !== 'linear') throw new Error('fallback output must be linear')
+  assert(last.point.x === 0 && last.point.y === 10.02,
+    'fallback must end on the original final source point')
+}
+
+function testFallbackLeavesValidRunsAlone(): void {
+  console.log('Testing that fallback is scoped to the offending run...')
+
+  // A clean 10 mm circle plus the issue #447 span: neither may be rewritten.
+  const r = 10
+  const circle: ToolpathPoint[] = []
+  for (let i = 0; i <= 16; i++) {
+    const angle = (Math.PI * 2 * i) / 16
+    circle.push(pt(r * Math.cos(angle), r * Math.sin(angle), -10.5))
+  }
+  const moves: ToolpathMove[] = []
+  for (let i = 0; i < 16; i++) moves.push(cut(circle[i], circle[i + 1]))
+  moves.push(rapid(circle[16], pt(122.3941767939508, 167.17278330912177, -10.5)))
+  moves.push(...issue447Moves())
+
+  const fitted = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
+  const goodArcs = fitted.filter(d => d.kind === 'arc').length
+  assert(goodArcs > 0, 'fixture must fit arcs to be meaningful')
+
+  const clean = applyEmittedArcFallback(fitted, MM3_IJ)
+  assert(clean.fallbackRuns === 0,
+    `well-formed spans must not fall back, got ${clean.fallbackRuns}`)
+  assert(worstEmittedRadiusDelta(clean.descriptors) <= ARC_RADIUS_CONSISTENCY_TOLERANCE_MM,
+    'every emitted arc across both spans must pass the radius check')
+
+  // Now append a run that must fail: only it may be rewritten.
+  const { arcs } = inconsistentRun()
+  const mixed = applyEmittedArcFallback(
+    [...fitted, { kind: 'linear', point: pt(10, 0, 0), moveKind: 'rapid' }, ...arcs],
+    MM3_IJ,
+  )
+  assert(mixed.fallbackRuns === 1,
+    `only the offending run may fall back, got ${mixed.fallbackRuns}`)
+  assert(mixed.descriptors.filter(d => d.kind === 'arc').length === goodArcs,
+    'valid runs must survive untouched alongside a rejected one')
+}
+
+function testRFormatRejectsUnrepresentableChord(): void {
+  console.log('Testing R-format chord validation...')
+
+  // Chord longer than the diameter: GRBL derives the centre itself in R mode
+  // and cannot, so this must be rejected rather than emitted.
+  const arc: ArcMoveDescriptor = {
+    kind: 'arc',
+    startPoint: pt(0, 0, 0),
+    endPoint: pt(10, 0, 0),
+    centerOffsets: { i: 1, j: 0 },   // radius 1, chord 10
+    clockwise: false,
+    runId: 0,
+    runFallback: [{ kind: 'linear', point: pt(10, 0, 0), moveKind: 'cut' }],
+  }
+  const bad = resolveEmittedArc(arc, { x: 0, y: 0 }, { ...MM3_IJ, arcFormat: 'r' })
+  assert(!bad.accepted, 'a chord longer than the diameter must be rejected in R format')
+
+  // The issue #447 span must be emittable in R format too.
+  const fitted = fitArcsInMachineMoves(issue447Moves(), TOL, MAX_DEG)
+  const resolved = applyEmittedArcFallback(fitted, { ...MM3_IJ, arcFormat: 'r' })
+  assert(resolved.fallbackRuns === 0,
+    `R-format output must also be representable, got ${resolved.fallbackRuns} fallback(s)`)
+}
+
+function testInchOutputUsesMillimetreBudget(): void {
+  console.log('Testing that inch output is judged against the millimetre threshold...')
+
+  // 0.004" of radius disagreement is 0.1016 mm — comfortably legal in inches
+  // if the threshold were applied naively, but far past GRBL's 0.005 mm.
+  const arc: ArcMoveDescriptor = {
+    kind: 'arc',
+    startPoint: pt(1, 0, 0),
+    endPoint: pt(0, 1.004, 0),
+    centerOffsets: { i: -1, j: 0 },
+    clockwise: false,
+    runId: 0,
+    runFallback: [{ kind: 'linear', point: pt(0, 1.004, 0), moveKind: 'cut' }],
+  }
+  const inch4 = (v: number): number => Number(v.toFixed(4))
+  const asInch = resolveEmittedArc(arc, { x: 1, y: 0 }, { format: inch4, arcFormat: 'ij', mmPerOutputUnit: 25.4, quantum: 1e-4 })
+  assert(!asInch.accepted,
+    `inch output must face the same 0.005 mm budget (delta ${asInch.deltaRmm.toFixed(4)} mm)`)
+}
+
+function testSnappingNeverWorsensAgreement(): void {
+  console.log('Testing that I/J snapping beats naive rounding...')
+
+  // I/J are ours to choose: the emitted pair must agree at least as well as
+  // the naively rounded one, on every arc, in both unit systems.
+  for (const [label, opts] of [
+    ['mm @3dp', MM3_IJ],
+    ['inch @4dp', {
+      format: (v: number) => Number(v.toFixed(4)),
+      arcFormat: 'ij' as const,
+      mmPerOutputUnit: 25.4,
+      quantum: 1e-4,
+    }],
+  ] as const) {
+    const scale = opts.mmPerOutputUnit === 1 ? 1 : 1 / 25.4
+    const moves = issue447Moves().map((m) => ({
+      ...m,
+      from: pt(m.from.x * scale, m.from.y * scale, m.from.z * scale),
+      to: pt(m.to.x * scale, m.to.y * scale, m.to.z * scale),
+    }))
+    const fitted = fitArcsInMachineMoves(moves, TOL * scale, MAX_DEG)
+
+    let position: { x: number; y: number } | null = null
+    let improved = false
+    for (const d of fitted) {
+      if (d.kind !== 'arc') {
+        position = { x: opts.format(d.point.x), y: opts.format(d.point.y) }
+        continue
+      }
+      const start = position ?? { x: opts.format(d.startPoint.x), y: opts.format(d.startPoint.y) }
+      const resolved = resolveEmittedArc(d, start, opts)
+
+      // What plain rounding would have produced for the same block.
+      const centerX = d.startPoint.x + d.centerOffsets.i
+      const centerY = d.startPoint.y + d.centerOffsets.j
+      const naiveI = opts.format(centerX - start.x)
+      const naiveJ = opts.format(centerY - start.y)
+      const targetX = opts.format(d.endPoint.x)
+      const targetY = opts.format(d.endPoint.y)
+      const naiveDelta = Math.abs(
+        Math.hypot(targetX - (start.x + naiveI), targetY - (start.y + naiveJ))
+        - Math.hypot(naiveI, naiveJ),
+      ) * opts.mmPerOutputUnit
+
+      assert(resolved.deltaRmm <= naiveDelta + 1e-12,
+        `${label}: snapped delta ${resolved.deltaRmm} must not exceed naive ${naiveDelta}`)
+      if (resolved.deltaRmm < naiveDelta - 1e-12) improved = true
+
+      position = { x: targetX, y: targetY }
+    }
+    assert(improved, `${label}: snapping should strictly improve at least one arc`)
+  }
+}
+
+function testRFormatRepairsRoundingShortfallOnly(): void {
+  console.log('Testing that R format repairs rounding, not geometry...')
+
+  // Chord a hair longer than the rounded diameter — a pure rounding artifact.
+  // Nudging R up one grid step is the right repair.
+  const nudge: ArcMoveDescriptor = {
+    kind: 'arc',
+    startPoint: pt(0, 0, 0),
+    endPoint: pt(1.0004, 0, 0),
+    centerOffsets: { i: 0.5002, j: 0 },
+    clockwise: false,
+    runId: 0,
+    runFallback: [{ kind: 'linear', point: pt(1.0004, 0, 0), moveKind: 'cut' }],
+  }
+  const repaired = resolveEmittedArc(nudge, { x: 0, y: 0 }, { ...MM3_IJ, arcFormat: 'r' })
+  assert(repaired.accepted, 'a rounding-sized shortfall must be repaired, not rejected')
+  assert(repaired.radius >= 0.5,
+    `repaired radius must span the chord, got ${repaired.radius}`)
+  assert(repaired.radius < 0.51,
+    `repair must stay within rounding distance, got ${repaired.radius}`)
+
+  // A genuinely inconsistent descriptor must still be rejected: widening R to
+  // fit would swap the intended arc for a much larger one.
+  const { arcs } = inconsistentRunForR()
+  const rejected = resolveEmittedArc(arcs[0], { x: 0, y: 0 }, { ...MM3_IJ, arcFormat: 'r' })
+  assert(!rejected.accepted,
+    'a chord far longer than the diameter must be rejected, not silently reshaped')
+}
+
+/** Radius 1, chord 10 — inconsistent by a factor of five, not by rounding. */
+function inconsistentRunForR(): { arcs: ArcMoveDescriptor[] } {
+  return {
+    arcs: [{
+      kind: 'arc',
+      startPoint: pt(0, 0, 0),
+      endPoint: pt(10, 0, 0),
+      centerOffsets: { i: 1, j: 0 },
+      clockwise: false,
+      runId: 0,
+      runFallback: [{ kind: 'linear', point: pt(10, 0, 0), moveKind: 'cut' }],
+    }],
+  }
+}
+
 // ── run all ─────────────────────────────────────────────────────
 
 testAcceptedCircularRun()
@@ -759,5 +1154,16 @@ testRejectsLongStraightWithCornerFragment()
 testAcceptsOrdinaryCircularArcAfterCollinearGate()
 testFullCircularChordLoop()
 testPartialArcWithStraightLeads()
+
+testIssue447MinimalReproduction()
+testAdjacentRunsShareEndpointsExactly()
+testFittedArcsPassThroughSourceEndpoints()
+testIJDerivedFromPreviousEmittedPoint()
+testInvalidRunFallsBackToOriginalMoves()
+testFallbackLeavesValidRunsAlone()
+testRFormatRejectsUnrepresentableChord()
+testInchOutputUsesMillimetreBudget()
+testSnappingNeverWorsensAgreement()
+testRFormatRepairsRoundingShortfallOnly()
 
 console.log('arcFitting tests passed')

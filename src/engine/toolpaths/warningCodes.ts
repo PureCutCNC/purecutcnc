@@ -166,6 +166,7 @@ export type ToolpathWarningCode =
   | 'postNoCoolantCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
+  | 'postArcFallbackLinear'
   // simulation replay / booklet report
   | 'replayNoTool'
   | 'bookletNoTool'
