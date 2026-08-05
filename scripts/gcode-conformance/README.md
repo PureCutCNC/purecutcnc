@@ -1,0 +1,90 @@
+# G-code conformance corpus
+
+Exports representative G-code and feeds it to **real controller interpreters**
+(issue #450).
+
+The unit tests in `src/engine/gcode/` re-derive controller rules in TypeScript.
+That verifies our *belief* about the rules. These binaries are the rules — a
+rejection here is the firmware's verdict, not a second opinion.
+
+## Running
+
+```bash
+./scripts/gcode-conformance/setup-validators.sh   # once
+npm run check:gcode
+```
+
+Validators are optional. With none installed the corpus is still exported and
+the command succeeds, saying plainly that nothing was verified.
+
+## What it validates
+
+`corpus.ts` defines the cases; each states what it covers. They target the ways
+arc output has actually broken: small-radius fitted arcs (the issue #447
+failure), full circles, the 90° split boundary, inch output, the R dialect,
+per-machine dialects, and a pure-G1 control.
+
+## Validators
+
+| validator | what it is | dialects |
+|---|---|---|
+| `grbl-gvalidate` | GRBL 1.1's own `gcode.c` built for the desktop via [grbl-sim](https://github.com/grbl/grbl-sim) | grbl, grblhal, generic, linuxcnc |
+| `linuxcnc-rs274` | LinuxCNC's standalone RS-274NGC interpreter (`linuxcnc-uspace`) | linuxcnc, generic |
+
+`rs274` has no macOS build and `linuxcnc-uspace` is absent from the Ubuntu
+runner's sources, so CI runs it in a **Debian container** as a separate job.
+Locally, install `linuxcnc-uspace` or point `RS274_BIN` at the binary.
+
+**`rs274 -g` does check arc geometry, but more loosely than GRBL.** Measured
+by sweeping the radius mismatch in a Debian container: it accepts up to
+0.028 mm and rejects from 0.029 mm, identically at r = 10, 1 and 0.34 mm — so
+the tolerance is absolute and radius-independent, roughly **5.7x looser than
+GRBL's 0.005 mm**. Its error text reports both `abs_err` and `rel_err`.
+
+This settles the question left open by #447: **GRBL is the tightest of the
+controllers we can test**, so satisfying it satisfies LinuxCNC. The export
+invariant in `arcFitting.ts` now rests on a measurement rather than an
+assumption. LinuxCNC would *not* have rejected the block that started #447.
+
+## Validator probes
+
+Each validator faces three probes before its verdicts are trusted:
+
+1. **Smoke** — a trivially valid program it must accept. One that rejects this
+   is misconfigured (wrong flags, missing tool table), not strict, and is
+   skipped loudly rather than reporting every case as a rejection.
+2. **Arc-valid twin** — must be accepted.
+3. **Arc-invalid** — the issue #447 block as the controller received it, whose
+   radii disagree by 0.0106 mm. Must be rejected.
+
+All probes are byte-identical except the G3 target, so the only variable is
+arc consistency. Two questions are kept separate, because controllers differ
+in *tolerance*, not just in whether they check at all:
+
+| tier | meaning |
+|---|---|
+| `strict` | rejects the 0.0106 mm mismatch — at least as strict as the exporter's invariant |
+| `tolerant` | checks arcs, but accepts it; would not have caught #447 |
+| `syntax-only` | accepts a 1 mm error on a 10 mm radius; not judging geometry at all |
+
+Only `strict` validators contribute to the verified count. Collapsing these
+into a binary mislabels a genuinely looser controller as one that checks
+nothing — which is how `rs274` was first misread here.
+
+Dialect targeting matters: GRBL rejects Mach3/UCCNC output on the `%` wrapper,
+`O` program number and `N` line numbers long before reaching an arc, so a
+syntax error there would say nothing about arc validity. Cases no available
+interpreter can parse are reported as **not validated** rather than passed —
+an unchecked case must never read as a verified one.
+
+Mach3 and UCCNC have no offline interpreter: closed-source, Windows-only, and
+line-limited demos. They stay a manual pre-release step.
+
+## Notes
+
+- Output lives in `.gcode-conformance/` (gitignored). `corpus/` is wiped each
+  run; `validators/` persists so built binaries survive.
+- Tool changes are disabled when exporting: they emit `M0`, a real program
+  pause that an interpreter blocks on forever.
+- The GRBL arc radius check (`0.005 mm`, `0.5 mm`, `0.1 %` of radius) is
+  byte-identical in 0.9j and 1.1h — verified against both sources.
