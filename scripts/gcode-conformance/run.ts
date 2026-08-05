@@ -95,7 +95,10 @@ const VALIDATORS: Validator[] = [
   },
 ]
 
-function validatorAvailable(validator: Validator): boolean {
+/** A minimal, unambiguously valid program every interpreter must accept. */
+const SMOKE_PROGRAM = 'G21\nG90\nG0 X0 Y0\nG1 X1 Y0 F100\nM2\n'
+
+function binaryPresent(validator: Validator): boolean {
   if (validator.binary.includes('/')) return existsSync(validator.binary)
   try {
     execFileSync('which', [validator.binary], { stdio: 'pipe' })
@@ -103,6 +106,20 @@ function validatorAvailable(validator: Validator): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * Confirm the binary actually works the way we invoke it.
+ *
+ * An interpreter that rejects a trivially valid program is misconfigured —
+ * wrong CLI flags, a missing tool table — not strict. Without this probe such
+ * a validator would report every corpus case as a rejection and read as a
+ * catastrophic export bug. Skipping loudly is the honest failure mode.
+ */
+function smokeTestPasses(validator: Validator): boolean {
+  const file = join(OUT_DIR, `_smoke-${validator.name}.ngc`)
+  writeFileSync(file, SMOKE_PROGRAM, 'utf8')
+  return runValidator(validator, file) === null
 }
 
 function runValidator(validator: Validator, file: string): string | null {
@@ -142,12 +159,22 @@ function main(): void {
   console.log(`Exporting ${CORPUS.length} corpus cases to ${OUT_DIR}`)
   const files = exportCorpus()
 
-  const available = VALIDATORS.filter(validatorAvailable)
-  const missing = VALIDATORS.filter((v) => !available.includes(v))
+  const present = VALIDATORS.filter(binaryPresent)
+  const available: Validator[] = []
 
-  for (const validator of missing) {
-    console.log(`\nSKIP ${validator.name} — not installed (${validator.description})`)
-    console.log('     install with: scripts/gcode-conformance/setup-validators.sh')
+  for (const validator of VALIDATORS) {
+    if (!present.includes(validator)) {
+      console.log(`\nSKIP ${validator.name} — not installed (${validator.description})`)
+      console.log('     install with: scripts/gcode-conformance/setup-validators.sh')
+      continue
+    }
+    if (!smokeTestPasses(validator)) {
+      console.log(`\nSKIP ${validator.name} — present but rejected a known-good program.`)
+      console.log('     The binary or its invocation is wrong; treating as unusable')
+      console.log('     rather than reporting every case as a rejection.')
+      continue
+    }
+    available.push(validator)
   }
 
   if (available.length === 0) {

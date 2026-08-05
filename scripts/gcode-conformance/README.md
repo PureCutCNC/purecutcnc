@@ -31,11 +31,16 @@ per-machine dialects, and a pure-G1 control.
 | `grbl-gvalidate` | GRBL 1.1's own `gcode.c` built for the desktop via [grbl-sim](https://github.com/grbl/grbl-sim) | grbl, grblhal, generic, linuxcnc |
 | `linuxcnc-rs274` | LinuxCNC's standalone RS-274NGC interpreter (`linuxcnc-uspace`) | linuxcnc, generic |
 
-`rs274` is **not currently running anywhere**: it has no macOS build, and
-`linuxcnc-uspace` is a Debian package absent from the Ubuntu CI runner's
-sources. Reaching it needs LinuxCNC's own apt repo or a Debian container.
-Until then, whether LinuxCNC's arc radius tolerance is stricter than GRBL's
-remains unverified — the exporter assumes it is not (see `arcFitting.ts`).
+`rs274` has no macOS build and `linuxcnc-uspace` is absent from the Ubuntu
+runner's sources, so CI runs it in a **Debian container** as a separate job.
+That job is the only place LinuxCNC's *own* rules are applied — elsewhere,
+including the `linuxcnc-dialect` case on the GRBL job, the file is judged by
+GRBL's rules, which answers a different question. Locally, install
+`linuxcnc-uspace` or point `RS274_BIN` at the binary.
+
+Each validator must first accept a trivially valid program. One that rejects
+it is misconfigured — wrong flags, missing tool table — not strict, and is
+skipped loudly rather than reporting every case as a rejection.
 
 Dialect targeting matters: GRBL rejects Mach3/UCCNC output on the `%` wrapper,
 `O` program number and `N` line numbers long before reaching an arc, so a

@@ -75,3 +75,54 @@ jobs:
           name: gcode-corpus
           path: .gcode-conformance/corpus
           retention-days: 7
+
+  # LinuxCNC's rs274 ships only as a Debian package, so this job runs in a
+  # Debian container rather than on the Ubuntu runner. Kept separate from the
+  # job above on purpose: if the container or the package regresses, GRBL
+  # coverage survives untouched.
+  #
+  # This is the only place LinuxCNC's *own* rules are applied. Everywhere else
+  # — including the linuxcnc-dialect corpus case on the Ubuntu job — the file
+  # is judged by GRBL's rules, which answers a different question.
+  conformance-linuxcnc:
+    name: gcode-conformance (LinuxCNC)
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    timeout-minutes: 20
+
+    steps:
+      # The container image is minimal: checkout needs git, and the validator
+      # build needs a toolchain.
+      - name: Install prerequisites
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git make gcc libc6-dev xz-utils
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install LinuxCNC interpreter
+        run: apt-get install -y --no-install-recommends linuxcnc-uspace
+
+      - name: Build GRBL interpreter
+        run: ./scripts/gcode-conformance/setup-validators.sh
+
+      - name: Validate exported G-code
+        run: npm run check:gcode
+
+      - name: Upload corpus on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcode-corpus-linuxcnc
+          path: .gcode-conformance/corpus
+          retention-days: 7

@@ -190,6 +190,20 @@ export const CORPUS: CorpusCase[] = [
     moves: leadInAndCut(issue447Points()),
   },
   {
+    name: 'grblhal-dialect',
+    covers: 'grblHAL: grbl numerics with parenthesised comments',
+    units: 'mm',
+    machineId: 'grblhal',
+    moves: leadInAndCut(issue447Points()),
+  },
+  {
+    name: 'generic-trailing-zeros-stripped',
+    covers: 'trailing-zero stripping, which rewrites every emitted arc word',
+    units: 'mm',
+    machineId: 'generic',
+    moves: leadInAndCut(issue447Points()),
+  },
+  {
     name: 'mach3-dialect',
     covers: 'line numbers, program number and %% wrapper alongside fitted arcs',
     units: 'mm',
