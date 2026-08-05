@@ -51,7 +51,13 @@ git clone --depth 1 --quiet "$GRBL_SIM_REPO" "$WORK_DIR/grbl/grbl/grbl-sim"
 sed -i.bak "s/^PLATFORM   = LINUX/PLATFORM   = $PLATFORM/" \
   "$WORK_DIR/grbl/grbl/grbl-sim/Makefile"
 
-make -C "$WORK_DIR/grbl/grbl/grbl-sim" gvalidate >/dev/null
+# grbl-sim declares globals (`wdt`, `io`) in headers without `extern`, relying
+# on the pre-GCC-10 default of merging tentative definitions across translation
+# units. GCC 10 flipped that default to -fno-common, so every object collides
+# at link time. Apple clang still permits it, which is why this builds on macOS
+# untouched and needs the flag on Linux. Harmless where it is already the
+# behaviour, so it is passed unconditionally rather than branched on platform.
+make -C "$WORK_DIR/grbl/grbl/grbl-sim" FLAGS="-g -O3 -fcommon" gvalidate >/dev/null
 
 mkdir -p "$OUT_DIR"
 cp "$WORK_DIR/grbl/grbl/grbl-sim/gvalidate.exe" "$OUT_DIR/"
