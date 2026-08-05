@@ -50,9 +50,14 @@ jobs:
         if: steps.validator-cache.outputs.cache-hit != 'true'
         run: ./scripts/gcode-conformance/setup-validators.sh
 
-      # linuxcnc-uspace ships the standalone rs274 interpreter. Best effort:
-      # if the package is unavailable on the runner image, the corpus still
-      # runs against GRBL and the runner reports the interpreter as skipped.
+      # linuxcnc-uspace ships the standalone rs274 interpreter, but it is a
+      # Debian package and is NOT in the Ubuntu runner's sources — measured:
+      # "E: Unable to locate package linuxcnc-uspace". Reaching it would mean
+      # adding LinuxCNC's own apt repo or running the job in a Debian
+      # container; both were outside this change's timebox (issue #450).
+      # The step stays as a best-effort probe so the day it becomes available
+      # the interpreter starts running on its own, and the runner reports it
+      # as skipped until then.
       - name: Install LinuxCNC interpreter (optional)
         continue-on-error: true
         run: |
