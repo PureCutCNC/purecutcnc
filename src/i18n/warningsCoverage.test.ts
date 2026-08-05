@@ -38,6 +38,11 @@ const ALL_CODES = [
   'vcarveSamplingBudget', 'vcarveNoMedialAxis', 'vcarveMedialNoMoves',
   'vcarveWrongKind', 'vcarveNeedsVBit', 'contourSpacingPositive', 'vBitInvalidSlope', 'vcarveNoMoves',
   'edgeRouteWrongKind', 'edgeRouteNoTargets', 'edgeRouteNoValidTargets',
+  'edgeTrochoidalWidthTooSmall', 'edgeTrochoidalWidthNarrow', 'edgeTrochoidalAdvanceRange',
+  'edgeTrochoidalParametersInvalid', 'edgeTrochoidalEntryStrategyUnsupported', 'edgeTrochoidalRegionUnsupported',
+  'edgeTrochoidalInvalidGuide', 'edgeTrochoidalMoveBudget', 'edgeTrochoidalEntryBudget',
+  'edgeTrochoidalTabsRequireHelix', 'edgeTrochoidalTabUnsafe', 'edgeTrochoidalSkippedSpan',
+  'edgeTrochoidalNoSurvivingSpan', 'edgeTrochoidalSafetyCheck',
   'edgeMixedDepthSpans', 'edgeNoCombinedContour', 'edgeFeatureNoCutDepth', 'edgeBandNoCutDepth',
   'edgeNoContourForFeature', 'edgeNoInsideContour', 'edgeClosedProfilesOnly',
   'surface3dNeedsModel', 'surface3dNotMesh', 'surface3dLoadFailed', 'surface3dStockToLeaveTooLarge',
@@ -63,7 +68,7 @@ const ALL_CODES = [
   'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
   'postArcNoCapability', 'postArcFallbackLinear',
   'replayNoTool', 'bookletNoTool', 'bookletNoToolpath',
-  'restOperationNotFound', 'restOnlyPocketEdgeTargets',
+  'restOperationNotFound', 'restOnlyPocketEdgeTargets', 'restTrochoidalUnsupported',
 ] as const satisfies readonly ToolpathWarningCode[]
 
 // Exhaustiveness both ways: the list is assignable to the union (satisfies

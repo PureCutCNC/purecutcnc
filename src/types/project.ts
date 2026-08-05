@@ -475,6 +475,8 @@ export type OperationKind =
   | 'drilling'
 
 export type OperationPass = 'rough' | 'finish'
+
+export type EdgeStrategy = 'contour' | 'trochoidal'
 export type PocketPattern = 'offset' | 'parallel' | 'waterline'
 export type CutDirection = 'conventional' | 'climb'
 export type DrillType = 'simple' | 'peck' | 'dwell' | 'chip_breaking' | 'helical'
@@ -503,6 +505,12 @@ export interface Operation {
   rpm: number
   pocketPattern: PocketPattern
   pocketAngle: number
+  /** Edge-route roughing strategy. Missing values are legacy contour operations. */
+  edgeStrategy?: EdgeStrategy
+  /** Trochoidal channel width in the project's length units. */
+  trochoidalCutWidth?: number
+  /** Trochoidal guide advance as a ratio of cutter diameter. */
+  trochoidalAdvance?: number
   entryStrategy?: EntryStrategy
   entryRampAngle?: number
   entryHelixDiameterPercent?: number

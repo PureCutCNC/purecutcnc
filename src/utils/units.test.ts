@@ -175,6 +175,7 @@ const anchoredAngleDim: DimensionAnnotation = {
     plungeFeed: 127,
     stockToLeaveRadial: 2.54,
     stockToLeaveAxial: 5.08,
+    trochoidalCutWidth: 25.4,
     carveDepth: 25.4,
     maxCarveDepth: 50.8,
     peckDepth: 12.7,
@@ -337,6 +338,7 @@ const anchoredAngleDim: DimensionAnnotation = {
   assert(inchConstraint.segment_ids.join(',') === 'text-1,reference-1', 'local constraint anchors survive')
   assert(inchConstraint.anchor_point !== undefined && approx(inchConstraint.anchor_point.x, 1), 'local constraint anchor point converts')
   assert(approx(inch.operations[0].carveDepth, 1), 'operation carve depth converts')
+  assert(approx(inch.operations[0].trochoidalCutWidth ?? 0, 1), 'trochoidal cut width converts')
   assert(approx(inch.operations[0].maxCarveDepth, 2), 'operation max carve depth converts')
   assert(approx(inch.operations[0].peckDepth ?? 0, 0.5), 'operation peck depth converts')
   assert(approx(inch.operations[0].retractHeight ?? 0, 3), 'operation retract height converts')

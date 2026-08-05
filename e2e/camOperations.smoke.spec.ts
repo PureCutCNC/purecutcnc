@@ -26,6 +26,10 @@ import {
 interface OperationSnapshot {
   kind?: unknown
   pass?: unknown
+  edgeStrategy?: unknown
+  trochoidalCutWidth?: unknown
+  trochoidalAdvance?: unknown
+  machiningOrder?: unknown
   entryStrategy?: unknown
   entryRampAngle?: unknown
   entryHelixDiameterPercent?: unknown
@@ -81,14 +85,41 @@ test.describe('CAM operation browser smoke', () => {
     await expect(operationRow).toBeVisible()
     await expect(app.page.getByText('Stepdown', { exact: true })).toBeVisible()
     await expect(app.page.getByText('Stepover Ratio', { exact: true })).not.toBeVisible()
+    const contourProject = await getProject(app.page)
+    const contourOperations = contourProject.operations as OperationSnapshot[]
+    expect(contourOperations[0]?.pass).toBe('rough')
+    expect(contourOperations[0]?.kind).toBe('edge_route_outside')
+
+    const strategyField = ui.cam.operationField(app.page, 'Strategy')
+    await expect(strategyField.locator('.ui-select__label')).toHaveText('Contour')
+    await strategyField.locator('.ui-select__trigger').click()
+    await app.page.getByRole('option', { name: 'Trochoidal', exact: true }).click()
+
+    await expect(app.page.getByText('Trochoidal Cut Width', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Advance per Loop (% of tool diameter)', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Advance per Loop (distance)', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Machining Order', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByRole('button', { name: 'Create rest operation', exact: true })).toBeDisabled()
+    await expect(app.page.getByText('Rest machining is unavailable for trochoidal edge routing.', { exact: true })).toBeVisible()
+
     await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
-    await expect(app.page.getByText('Entry', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Entry', { exact: true })).toBeVisible()
+    const entryField = ui.cam.operationField(app.page, 'Entry Strategy')
+    await expect(entryField.locator('.ui-select__label')).toHaveText('Helix')
+    await entryField.locator('.ui-select__trigger').click()
+    await expect(app.page.getByRole('option', { name: 'Ramp', exact: true })).toHaveCount(0)
+    await app.page.keyboard.press('Escape')
 
     const project = await getProject(app.page)
     const operations = project.operations as OperationSnapshot[]
     expect(operations).toHaveLength(1)
     expect(operations[0].kind).toBe('edge_route_outside')
     expect(operations[0].pass).toBe('rough')
+    expect(operations[0].edgeStrategy).toBe('trochoidal')
+    expect(operations[0].trochoidalCutWidth).toEqual(expect.any(Number))
+    expect(operations[0].trochoidalAdvance).toBe(0.1)
+    expect(operations[0].entryStrategy).toBe('helix')
+    expect(operations[0].machiningOrder).toBe('level_first')
     expect(operations[0].target?.source).toBe('features')
     expect(operations[0].target?.featureIds).toEqual(['f-machinable-add'])
   })

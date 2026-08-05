@@ -284,6 +284,8 @@ export function defaultOperationForTarget(
   const toolRef = resolved ? resolved.toolRef : (project.tools[0]?.id ?? null)
 
   const isVCarve = kind === 'v_carve' || kind === 'v_carve_medial'
+  const isRoughEdge = pass === 'rough' && (kind === 'edge_route_inside' || kind === 'edge_route_outside')
+  const isEdge = kind === 'edge_route_inside' || kind === 'edge_route_outside'
   const vCarveMaxDepth = tool.maxCutDepth > 0
     ? tool.maxCutDepth
     : (project.stock.thickness > 0 ? project.stock.thickness : convertLength(1, 'mm', project.meta.units))
@@ -308,6 +310,13 @@ export function defaultOperationForTarget(
     rpm: tool.defaultRpm,
     pocketPattern: kind === 'finish_surface' || kind === 'finish_surface_cleanup' ? 'parallel' : 'offset',
     pocketAngle: 0,
+    ...(isEdge ? { edgeStrategy: 'contour' as const } : {}),
+    ...(isRoughEdge ? {
+      trochoidalCutWidth: tool.diameter * 1.5,
+      trochoidalAdvance: 0.1,
+      entryStrategy: 'helix' as const,
+      entryRampAngle: 5,
+    } : {}),
     pocketSlotFeedPercent: 100,
     roundOutsideCorners: true,
     stockToLeaveRadial: 0,

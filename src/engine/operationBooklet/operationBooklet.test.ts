@@ -169,6 +169,32 @@ function testReportIncludesEnabledRoundOutsideCorners(): void {
   )
 }
 
+function testReportIncludesTrochoidalSettings(): void {
+  console.log('Testing operation booklet reports trochoidal settings...')
+  const { project, operation, toolpath } = fixture()
+  const report = buildOperationBookletReport({
+    project,
+    operation: {
+      ...operation,
+      kind: 'edge_route_inside',
+      pass: 'rough',
+      edgeStrategy: 'trochoidal',
+      trochoidalCutWidth: 9,
+      trochoidalAdvance: 0.1,
+      machiningOrder: 'feature_first',
+    },
+    tool: normalizeToolForProject(project.tools[0], project),
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+
+  assert(report.settingRows.some((row) => row.label === translate('booklet.label.edgeStrategy') && row.value === translate('booklet.edgeStrategy.trochoidal')), 'trochoidal strategy should be reported')
+  assert(report.settingRows.some((row) => row.label === translate('booklet.label.trochoidalCutWidth') && row.value === '9 mm'), 'trochoidal cut width should be reported in project units')
+  assert(report.settingRows.some((row) => row.label === translate('booklet.label.trochoidalAdvance') && row.value === '0.1 × D'), 'trochoidal advance should be reported as a cutter-diameter ratio')
+  assert(!report.settingRows.some((row) => row.label === translate('booklet.label.stepover')), 'trochoidal routing should not report its unused stepover setting')
+  assert(!report.settingRows.some((row) => row.label === translate('booklet.label.machiningOrder')), 'trochoidal routing should not report an inapplicable machining order')
+}
+
 async function testPdfSmoke(): Promise<void> {
   console.log('Testing operation booklet PDF smoke output...')
   const { project, operation, toolpath } = fixture()
@@ -397,6 +423,7 @@ testReportContent()
 testFeedTimeFallsBackToToolDefaultFeed()
 testFeedTimeUsesScaledSlotFeed()
 testReportIncludesEnabledRoundOutsideCorners()
+testReportIncludesTrochoidalSettings()
 testLocalizedReportContent()
 await testGermanLabelLayout()
 await testPdfSmoke()

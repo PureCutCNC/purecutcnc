@@ -169,6 +169,12 @@ export function createOperationsSlice(
       if ((operation.kind !== 'pocket' && operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') || operation.target.source !== 'features') {
         return { operationId: null, regionIds: [], warnings: [{ code: 'restOnlyPocketEdgeTargets' as const }] }
       }
+      if (
+        (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside')
+        && operation.edgeStrategy === 'trochoidal'
+      ) {
+        return { operationId: null, regionIds: [], warnings: [{ code: 'restTrochoidalUnsupported' as const }] }
+      }
 
       if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
         const result = generateEdgeRestRegionDrafts(state.project, operation)

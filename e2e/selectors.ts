@@ -207,6 +207,13 @@ export const newProjectDialog = {
     newProjectDialog.root(page).getByRole('button', { name: new RegExp(`^${label}`) }),
 }
 
+// ── CAM operation properties ───────────────────────────────────────
+
+export const cam = {
+  operationField: (page: Page, label: string) =>
+    page.getByText(label, { exact: true }).locator('..'),
+}
+
 // ── Feature tree ────────────────────────────────────────────────────
 
 export const tree = {
