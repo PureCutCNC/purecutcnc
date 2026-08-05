@@ -98,6 +98,23 @@ const VALIDATORS: Validator[] = [
 /** A minimal, unambiguously valid program every interpreter must accept. */
 const SMOKE_PROGRAM = 'G21\nG90\nG0 X0 Y0\nG1 X1 Y0 F100\nM2\n'
 
+/**
+ * Paired arc probes: byte-identical except the G3 target, so the *only*
+ * variable between them is whether the arc is geometrically consistent.
+ *
+ * The invalid one is the block from issue #447 as the controller received it:
+ * its two radii disagree by 0.0106 mm, past GRBL's 0.005 mm limit. The valid
+ * twin pulls the target back onto the circle its own I/J describes.
+ *
+ * An interpreter that accepts BOTH is not checking arc radii — its verdicts
+ * mean "this parses", not "these arcs are valid". Without the pair we cannot
+ * tell that apart from a controller that is genuinely more permissive, and a
+ * rubber stamp that looks like coverage is worse than no coverage.
+ */
+const ARC_PROBE_PREFIX = 'G21\nG90\nG0 X11.109 Y16.962\nG1 F600\n'
+const ARC_PROBE_VALID = `${ARC_PROBE_PREFIX}G3 X11.316 Y16.652 I0.339 J0.002\nM2\n`
+const ARC_PROBE_INVALID = `${ARC_PROBE_PREFIX}G3 X11.314 Y16.647 I0.339 J0.002\nM2\n`
+
 function binaryPresent(validator: Validator): boolean {
   if (validator.binary.includes('/')) return existsSync(validator.binary)
   try {
@@ -117,9 +134,26 @@ function binaryPresent(validator: Validator): boolean {
  * catastrophic export bug. Skipping loudly is the honest failure mode.
  */
 function smokeTestPasses(validator: Validator): boolean {
-  const file = join(OUT_DIR, `_smoke-${validator.name}.ngc`)
-  writeFileSync(file, SMOKE_PROGRAM, 'utf8')
-  return runValidator(validator, file) === null
+  return probe(validator, 'smoke', SMOKE_PROGRAM) === null
+}
+
+function probe(validator: Validator, label: string, program: string): string | null {
+  const file = join(OUT_DIR, `_probe-${label}-${validator.name}.ngc`)
+  writeFileSync(file, program, 'utf8')
+  return runValidator(validator, file)
+}
+
+/**
+ * Does this interpreter actually judge arc geometry, or only parse it?
+ *
+ * Credited only when it accepts the valid twin *and* rejects the invalid one.
+ * Rejecting both would mean the rejection is about something other than the
+ * arc, which tells us nothing.
+ */
+function checksArcGeometry(validator: Validator): boolean {
+  const validRejected = probe(validator, 'arc-valid', ARC_PROBE_VALID)
+  if (validRejected) return false
+  return probe(validator, 'arc-invalid', ARC_PROBE_INVALID) !== null
 }
 
 function runValidator(validator: Validator, file: string): string | null {
@@ -160,7 +194,7 @@ function main(): void {
   const files = exportCorpus()
 
   const present = VALIDATORS.filter(binaryPresent)
-  const available: Validator[] = []
+  const available: Array<{ validator: Validator; checksArcs: boolean }> = []
 
   for (const validator of VALIDATORS) {
     if (!present.includes(validator)) {
@@ -174,7 +208,13 @@ function main(): void {
       console.log('     rather than reporting every case as a rejection.')
       continue
     }
-    available.push(validator)
+    const checksArcs = checksArcGeometry(validator)
+    if (!checksArcs) {
+      console.log(`\nNOTE ${validator.name} accepted a known-invalid arc.`)
+      console.log('     Its verdicts mean "this parses", not "these arcs are valid";')
+      console.log('     results below are reported as syntax-only.')
+    }
+    available.push({ validator, checksArcs })
   }
 
   if (available.length === 0) {
@@ -185,11 +225,14 @@ function main(): void {
 
   let failures = 0
   const validated = new Set<string>()
-  for (const validator of available) {
-    console.log(`\n── ${validator.name} ─────────────────────`)
+  const arcVerified = new Set<string>()
+  for (const { validator, checksArcs } of available) {
+    const tier = checksArcs ? 'arc-checking' : 'syntax-only'
+    console.log(`\n── ${validator.name} (${tier}) ─────────────────────`)
     for (const { entry, file } of files) {
       if (!validator.machines.includes(entry.machineId)) continue
       validated.add(entry.name)
+      if (checksArcs) arcVerified.add(entry.name)
       const rejection = runValidator(validator, file)
       if (rejection) {
         failures += 1
@@ -216,7 +259,15 @@ function main(): void {
     process.exit(1)
   }
 
-  console.log(`\n${validated.size}/${files.length} cases accepted by ${available.length} interpreter(s).`)
+  // Parsed-only cases must not be counted as arc-verified ones.
+  const syntaxOnly = files.filter(({ entry }) => (
+    validated.has(entry.name) && !arcVerified.has(entry.name)
+  ))
+  console.log(`\n${arcVerified.size}/${files.length} cases arc-verified by an interpreter that provably checks arc geometry.`)
+  if (syntaxOnly.length > 0) {
+    console.log(`${syntaxOnly.length} further case(s) parsed cleanly but were not arc-verified:`)
+    for (const { entry } of syntaxOnly) console.log(`  ${entry.name}`)
+  }
 }
 
 main()

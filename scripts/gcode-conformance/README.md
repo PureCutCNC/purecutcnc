@@ -38,9 +38,23 @@ including the `linuxcnc-dialect` case on the GRBL job, the file is judged by
 GRBL's rules, which answers a different question. Locally, install
 `linuxcnc-uspace` or point `RS274_BIN` at the binary.
 
-Each validator must first accept a trivially valid program. One that rejects
-it is misconfigured — wrong flags, missing tool table — not strict, and is
-skipped loudly rather than reporting every case as a rejection.
+## Validator probes
+
+Each validator faces three probes before its verdicts are trusted:
+
+1. **Smoke** — a trivially valid program it must accept. One that rejects this
+   is misconfigured (wrong flags, missing tool table), not strict, and is
+   skipped loudly rather than reporting every case as a rejection.
+2. **Arc-valid twin** — must be accepted.
+3. **Arc-invalid** — the issue #447 block as the controller received it, whose
+   radii disagree by 0.0106 mm. Must be rejected.
+
+Probes 2 and 3 are byte-identical except the G3 target, so the only variable
+is whether the arc is geometrically consistent. A validator that accepts both
+is not checking arc radii: its results are labelled **syntax-only** and are
+excluded from the arc-verified count. Without this pair, an interpreter that
+never checks arcs is indistinguishable from a permissive one — and a rubber
+stamp that looks like coverage is worse than no coverage.
 
 Dialect targeting matters: GRBL rejects Mach3/UCCNC output on the `%` wrapper,
 `O` program number and `N` line numbers long before reaching an arc, so a
