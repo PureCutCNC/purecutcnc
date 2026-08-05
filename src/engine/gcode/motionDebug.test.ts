@@ -342,6 +342,8 @@ function testFittedArcOverCoarseChordsVerifies(): void {
         endPoint: pt(0, -radius, z),
         centerOffsets: { i: -radius, j: 0 },
         clockwise: true,
+        runId: 0,
+        runFallback: [{ kind: 'linear', point: pt(0, -radius, z), moveKind: 'cut' }],
       },
     ],
     tryFit: true,

@@ -57,6 +57,17 @@ export interface ArcMoveDescriptor {
   source?: string
   /** Feed-scale carried from the original moves (may be undefined). */
   feedScale?: number
+  /** Identifier shared by every sub-arc split out of one fitted run.
+   *  Validation and fallback are per *run*, never per sub-arc. */
+  runId: number
+  /** The original linear moves this run replaced, in order.  Emitted
+   *  verbatim when post-format validation rejects any sub-arc of the run.
+   *  Shared by reference across the run's sub-arcs.
+   *
+   *  Fallback must be whole-run: sub-arc boundaries are synthesised points
+   *  on the fitted circle that match no source point, so a partial fallback
+   *  would strand the controller somewhere no original G1 move reaches. */
+  runFallback: readonly LinearMoveDescriptor[]
 }
 
 export interface LinearMoveDescriptor {
@@ -147,6 +158,7 @@ function splitArc(
   clockwise: boolean,
   maxSweepDeg: number,
 ): Array<{ endPt: ToolpathPoint; centerOffsets: { i: number; j: number } }> {
+  const radius = Math.hypot(start.x - center.x, start.y - center.y)
   const maxSweep = (maxSweepDeg * Math.PI) / 180
   const rawSweep = signedSweep(start, end, center)
 
@@ -172,11 +184,17 @@ function splitArc(
   let segStart = start
   for (let s = 1; s <= segments; s++) {
     const angle = a0 + step * s
-    const ep: ToolpathPoint = {
-      x: center.x + Math.cos(angle) * Math.hypot(start.x - center.x, start.y - center.y),
-      y: center.y + Math.sin(angle) * Math.hypot(start.x - center.x, start.y - center.y),
-      z: start.z,
-    }
+    // The final sub-arc lands on the caller's end point exactly. With an
+    // endpoint-constrained fit the projected point already equals it to
+    // floating-point precision; using `end` verbatim removes the last path
+    // by which an emitted run could drift off its source geometry.
+    const ep: ToolpathPoint = s === segments
+      ? { x: end.x, y: end.y, z: start.z }
+      : {
+        x: center.x + Math.cos(angle) * radius,
+        y: center.y + Math.sin(angle) * radius,
+        z: start.z,
+      }
     segments_out.push({
       endPt: ep,
       centerOffsets: {
@@ -188,6 +206,285 @@ function splitArc(
   }
 
   return segments_out
+}
+
+// ── emitted-arc self-consistency ─────────────────────────────
+
+/**
+ * An arc block is over-determined: start (modal), end (X/Y) and centre (I/J)
+ * supply one more constraint than a circular arc needs, so the numbers can
+ * contradict each other.  Controllers absorb a little contradiction as
+ * rounding noise and reject the rest — a large disagreement means a spiral,
+ * and cutting one because the file was wrong gouges the part.
+ *
+ * These are *export invariants*, not a dialect gate: they apply to every
+ * machine definition, and no controller benefits from receiving an arc that
+ * fails them.  The values are GRBL's published limits (`gcode.c`), which are
+ * the tightest among the controllers shipped in `definitions/`; satisfying
+ * them satisfies the more permissive ones.  Snapping (below) keeps emitted
+ * arcs one to two orders of magnitude inside this budget, so the exact
+ * numbers do not change any real outcome — if a stricter controller ever
+ * turns up, tightening them here is the whole change.
+ */
+export const ARC_RADIUS_CONSISTENCY_TOLERANCE_MM = 0.005
+
+/** Above this absolute disagreement no relative allowance applies. */
+export const ARC_RADIUS_GROSS_MM = 0.5
+
+/** Relative allowance between the floor and the gross limit (0.1 % of radius). */
+export const ARC_RADIUS_RELATIVE_TOLERANCE = 0.001
+
+/** How far around the naively rounded I/J the snap search looks, in grid steps. */
+const SNAP_SEARCH_STEPS = 2
+
+export interface EmittedArcOptions {
+  /** Formats a value exactly as the postprocessor will, parsed back to a
+   *  number, so the values judged here are the values written to the file. */
+  format: (value: number) => number
+  arcFormat: 'ij' | 'r'
+  /** 1 for millimetre output, 25.4 for inch.  Controllers convert to
+   *  millimetres before checking, so an inch program faces the same budget —
+   *  and inch at 4 dp has a *coarser* grid in millimetres (0.00254) than
+   *  millimetre output at 3 dp (0.001). */
+  mmPerOutputUnit: number
+  /** Output grid step in output units (10^-decimalPlaces).  Enables I/J
+   *  snapping; pass 0 to disable it. */
+  quantum: number
+}
+
+export interface EmittedArcGeometry {
+  /** I offset to emit, relative to the *previously emitted* position. */
+  i: number
+  /** J offset to emit, relative to the *previously emitted* position. */
+  j: number
+  /** Radius to emit in R-format dialects. */
+  radius: number
+  /** False when the controller would reject the formatted block. */
+  accepted: boolean
+  /** Radius disagreement the controller would compute, in millimetres. */
+  deltaRmm: number
+}
+
+/** The radius disagreement a controller computes from a formatted I/J block. */
+function radiusDisagreement(
+  startX: number, startY: number,
+  targetX: number, targetY: number,
+  i: number, j: number,
+): number {
+  return Math.abs(
+    Math.hypot(targetX - (startX + i), targetY - (startY + j)) - Math.hypot(i, j),
+  )
+}
+
+/**
+ * Choose the I/J the file should carry.
+ *
+ * I and J are *ours to pick*: the only hard requirement is that the emitted
+ * block be self-consistent. Naive rounding takes whatever the grid happens to
+ * give and can land the two radii further apart than necessary, so instead we
+ * search the grid neighbourhood and keep the pair that agrees best. Ties go to
+ * the smaller displacement, which bounds the centre shift to at most
+ * {@link SNAP_SEARCH_STEPS} output quanta — the same rounding that already
+ * constrains every number in the file.
+ */
+function snapOffsets(
+  startX: number, startY: number,
+  targetX: number, targetY: number,
+  rawI: number, rawJ: number,
+  format: (value: number) => number,
+  quantum: number,
+): { i: number; j: number } {
+  const baseI = format(rawI)
+  const baseJ = format(rawJ)
+  if (!(quantum > 0)) return { i: baseI, j: baseJ }
+
+  let best = { i: baseI, j: baseJ }
+  let bestDelta = radiusDisagreement(startX, startY, targetX, targetY, baseI, baseJ)
+  let bestSteps = 0
+
+  for (let di = -SNAP_SEARCH_STEPS; di <= SNAP_SEARCH_STEPS; di++) {
+    for (let dj = -SNAP_SEARCH_STEPS; dj <= SNAP_SEARCH_STEPS; dj++) {
+      if (di === 0 && dj === 0) continue
+      // Re-format so the candidate is exactly on the output grid rather than
+      // a float a hair off it.
+      const i = format(baseI + di * quantum)
+      const j = format(baseJ + dj * quantum)
+      const delta = radiusDisagreement(startX, startY, targetX, targetY, i, j)
+      const steps = Math.abs(di) + Math.abs(dj)
+      if (delta < bestDelta - 1e-12
+        || (delta <= bestDelta + 1e-12 && steps < bestSteps)) {
+        best = { i, j }
+        bestDelta = delta
+        bestSteps = steps
+      }
+    }
+  }
+
+  return best
+}
+
+/**
+ * Resolve the words an arc will emit, and decide whether the controller will
+ * accept them — by reproducing its arithmetic on the *formatted* values.
+ *
+ * Both halves live here so they cannot diverge: the postprocessor emits the
+ * values returned, formatted with the same `format` used to judge them.
+ *
+ * @param previousEmitted  Where the controller actually is — the formatted
+ *                         endpoint of the preceding block, not the arc's own
+ *                         declared start.  This distinction is the defect in
+ *                         issue #447.
+ */
+export function resolveEmittedArc(
+  arc: ArcMoveDescriptor,
+  previousEmitted: { x: number; y: number },
+  opts: EmittedArcOptions,
+): EmittedArcGeometry {
+  const { format, arcFormat, mmPerOutputUnit, quantum } = opts
+  const center = {
+    x: arc.startPoint.x + arc.centerOffsets.i,
+    y: arc.startPoint.y + arc.centerOffsets.j,
+  }
+  const rawI = center.x - previousEmitted.x
+  const rawJ = center.y - previousEmitted.y
+
+  // What the controller reads off the line.
+  const startX = format(previousEmitted.x)
+  const startY = format(previousEmitted.y)
+  const targetX = format(arc.endPoint.x)
+  const targetY = format(arc.endPoint.y)
+
+  if (arcFormat === 'r') {
+    // In R mode the controller derives the centre itself, and cannot when the
+    // chord is longer than the diameter. Rounding the radius *down* can cause
+    // that on its own, so nudge up to the smallest grid radius spanning the
+    // chord — but only when the shortfall is rounding-sized. A larger gap
+    // means the descriptor is genuinely inconsistent, and widening R there
+    // would silently swap the intended arc for a different, larger one.
+    const chord = Math.hypot(targetX - startX, targetY - startY)
+    const rounded = format(Math.hypot(rawI, rawJ))
+    const spanning = quantum > 0
+      ? Math.ceil((chord / 2) / quantum) * quantum
+      : chord / 2
+    const repairable = quantum > 0 && spanning - rounded <= SNAP_SEARCH_STEPS * quantum
+    const radius = repairable ? Math.max(rounded, spanning) : rounded
+    const overshoot = (chord - 2 * format(radius)) * mmPerOutputUnit
+    return {
+      i: rawI,
+      j: rawJ,
+      radius,
+      accepted: overshoot <= 0,
+      deltaRmm: Math.max(0, overshoot),
+    }
+  }
+
+  const { i, j } = snapOffsets(
+    startX, startY, targetX, targetY, rawI, rawJ, format, quantum,
+  )
+  const startRadius = Math.hypot(i, j)
+  const deltaRmm = radiusDisagreement(startX, startY, targetX, targetY, i, j) * mmPerOutputUnit
+
+  let accepted: boolean
+  if (deltaRmm <= ARC_RADIUS_CONSISTENCY_TOLERANCE_MM) {
+    accepted = true
+  } else if (deltaRmm > ARC_RADIUS_GROSS_MM) {
+    accepted = false
+  } else {
+    accepted = deltaRmm <= ARC_RADIUS_RELATIVE_TOLERANCE * startRadius * mmPerOutputUnit
+  }
+
+  return { i, j, radius: Math.hypot(rawI, rawJ), accepted, deltaRmm }
+}
+
+/**
+ * Walk a run's sub-arcs from a known emitted position and report whether every
+ * one of them survives formatting.  Rejecting the run as a whole keeps the
+ * fallback aligned to real source points — see {@link ArcMoveDescriptor.runFallback}.
+ */
+export function runSurvivesFormatting(
+  runArcs: readonly ArcMoveDescriptor[],
+  previousEmitted: { x: number; y: number },
+  opts: EmittedArcOptions,
+): boolean {
+  let position = previousEmitted
+  for (const arc of runArcs) {
+    if (!resolveEmittedArc(arc, position, opts).accepted) return false
+    position = { x: opts.format(arc.endPoint.x), y: opts.format(arc.endPoint.y) }
+  }
+  return true
+}
+
+export interface ArcFallbackResult {
+  /** Descriptors as they will actually be emitted: runs the controller would
+   *  reject are replaced by the original linear moves they had fitted. */
+  descriptors: FittedMoveDescriptor[]
+  /** How many fitted runs were replaced. */
+  fallbackRuns: number
+}
+
+/**
+ * Resolve a fitted descriptor sequence into the sequence that can safely be
+ * emitted, replacing any run whose formatted output the controller would
+ * reject with the original G1 moves for that span.
+ *
+ * Both the emission path and the exported-motion debug trace call this, so the
+ * debug view can never show an arc on a span that was emitted as G1.
+ */
+export function applyEmittedArcFallback(
+  descriptors: readonly FittedMoveDescriptor[],
+  opts: EmittedArcOptions,
+  /** Where the controller already is when this sequence begins — the emitted
+   *  position carried over from earlier operations.  Omitting it would judge
+   *  a leading arc from its own declared start, the very conflation this
+   *  function exists to prevent. */
+  startPosition?: { x: number; y: number } | null,
+): ArcFallbackResult {
+  const { format } = opts
+  const out: FittedMoveDescriptor[] = []
+  let fallbackRuns = 0
+  // Where the controller believes it is, tracked in formatted values.
+  let position: { x: number; y: number } | null = startPosition ?? null
+  let index = 0
+
+  while (index < descriptors.length) {
+    const descriptor = descriptors[index]
+
+    if (descriptor.kind === 'linear') {
+      out.push(descriptor)
+      position = { x: format(descriptor.point.x), y: format(descriptor.point.y) }
+      index += 1
+      continue
+    }
+
+    // Gather the whole fitted run — validation and fallback are per run.
+    const runId = descriptor.runId
+    const runArcs: ArcMoveDescriptor[] = []
+    while (index < descriptors.length) {
+      const next = descriptors[index]
+      if (next.kind !== 'arc' || next.runId !== runId) break
+      runArcs.push(next)
+      index += 1
+    }
+
+    const start = position ?? {
+      x: format(runArcs[0].startPoint.x),
+      y: format(runArcs[0].startPoint.y),
+    }
+
+    if (runSurvivesFormatting(runArcs, start, opts)) {
+      out.push(...runArcs)
+    } else {
+      fallbackRuns += 1
+      out.push(...runArcs[0].runFallback)
+    }
+
+    const last = out[out.length - 1]
+    position = last.kind === 'arc'
+      ? { x: format(last.endPoint.x), y: format(last.endPoint.y) }
+      : { x: format(last.point.x), y: format(last.point.y) }
+  }
+
+  return { descriptors: out, fallbackRuns }
 }
 
 // ── public API ────────────────────────────────────────────────
@@ -213,6 +510,7 @@ export function fitArcsInMachineMoves(
   const result: FittedMoveDescriptor[] = []
   const n = machineMoves.length
   let i = 0
+  let nextRunId = 0
 
   while (i < n) {
     const move = machineMoves[i]
@@ -266,6 +564,7 @@ export function fitArcsInMachineMoves(
       minChordRatio: 0.15,       // reject tiny-chord fits
       minTotalSweepRad: MIN_TOTAL_SWEEP_RAD,
       maxAngularStepRatio: 4,    // never blend a long G1 with tiny corner chords
+      endpointConstrained: true, // arcs must pass through their source endpoints
     })
 
     const source = run[0].source
@@ -298,6 +597,13 @@ export function fitArcsInMachineMoves(
         maxSweepDeg,
       )
 
+      // Original moves this run replaces — move k spans points k → k+1, so the
+      // point range [startIndex, endIndex] is covered by moves
+      // [startIndex, endIndex).  Shared by reference across the run's sub-arcs.
+      const runFallback: readonly LinearMoveDescriptor[] =
+        run.slice(arcRun.startIndex, arcRun.endIndex).map(toLinear)
+      const runId = nextRunId++
+
       let prevEnd = arcStart
       for (const seg of subArcs) {
         result.push({
@@ -308,6 +614,8 @@ export function fitArcsInMachineMoves(
           clockwise: arcRun.clockwise,
           source,
           feedScale,
+          runId,
+          runFallback,
         })
         prevEnd = seg.endPt
       }

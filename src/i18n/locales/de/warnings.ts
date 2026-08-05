@@ -164,6 +164,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postNoCoolantCommands': 'Kühlmittelausgabe angefordert, aber die Maschinendefinition hat keine Kühlmittelbefehle.',
   'warnings.postCannedCycleUnsupported': 'Operation „{operation}": {drillType}-Festzyklus wird von Maschine „{machine}" nicht unterstützt; erweiterte Bewegungen werden ausgegeben.',
   'warnings.postArcNoCapability': 'Operation „{operation}" enthält lineare Bewegungen, die als Bögen ausgegeben werden könnten, aber die ausgewählte Maschine unterstützt keine Kreisinterpolation (G2/G3). Stattdessen werden lineare Bewegungen ausgegeben.',
+  'warnings.postArcFallbackLinear': 'Bei Operation „{operation}" hätte die ausgewählte Steuerung {count} angepasste Bogenabschnitt(e) nach der Zahlenrundung abgelehnt. Diese Abschnitte wurden stattdessen als lineare Bewegungen ausgegeben.',
   // simulation replay / booklet report
   'warnings.replayNoTool': 'Der ausgewählten Operation ist kein Werkzeug zugewiesen.',
   'warnings.bookletNoTool': 'Für diese Operation ist kein Werkzeug ausgewählt.',
