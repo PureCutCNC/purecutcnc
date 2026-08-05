@@ -192,7 +192,7 @@ function testReportIncludesTrochoidalSettings(): void {
   assert(report.settingRows.some((row) => row.label === translate('booklet.label.trochoidalCutWidth') && row.value === '9 mm'), 'trochoidal cut width should be reported in project units')
   assert(report.settingRows.some((row) => row.label === translate('booklet.label.trochoidalAdvance') && row.value === '0.1 × D'), 'trochoidal advance should be reported as a cutter-diameter ratio')
   assert(!report.settingRows.some((row) => row.label === translate('booklet.label.stepover')), 'trochoidal routing should not report its unused stepover setting')
-  assert(!report.settingRows.some((row) => row.label === translate('booklet.label.machiningOrder')), 'trochoidal routing should not report an inapplicable machining order')
+  assert(report.settingRows.some((row) => row.label === translate('booklet.label.machiningOrder') && row.value === translate('booklet.machiningOrder.featureFirst')), 'trochoidal routing honours machining order, so the booklet must report it')
 }
 
 async function testPdfSmoke(): Promise<void> {

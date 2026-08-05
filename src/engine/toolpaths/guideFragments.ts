@@ -15,10 +15,10 @@
  */
 
 import type { Point } from '../../types/project'
-import { DEFAULT_CLIPPER_SCALE } from './geometry'
+import { DEFAULT_CLIPPER_SCALE, XY_EPSILON, samePointXY } from './geometry'
 import type { ClipperPath } from './types'
 
-const EPSILON = 1e-9
+const EPSILON = XY_EPSILON
 
 /** An outside span of a closed guide. `closed` is true only when nothing split the guide. */
 export interface ClosedGuideFragment {
@@ -28,9 +28,7 @@ export interface ClosedGuideFragment {
 
 export type GuideFragmentKeep = 'outside' | 'inside'
 
-function samePoint(a: Point, b: Point): boolean {
-  return Math.abs(a.x - b.x) <= EPSILON && Math.abs(a.y - b.y) <= EPSILON
-}
+const samePoint = samePointXY
 
 function clonePoint(point: Point): Point {
   return { x: point.x, y: point.y }
@@ -151,19 +149,14 @@ function pointAt(from: Point, to: Point, t: number): Point {
  * The result retains every requested span in cyclic order. A repeated final
  * guide vertex is accepted and removed. With no retained/discarded boundary,
  * the sole result remains closed; otherwise every result is an open span with
- * exact boundary intersections as its endpoints. Supplying `keep` as the third
- * argument is shorthand for using the default Clipper scale.
+ * exact boundary intersections as its endpoints.
  */
 export function splitClosedGuideByForbiddenPaths(
   guide: Point[],
   forbiddenPaths: ClipperPath[],
-  clipperScaleOrKeep: number | GuideFragmentKeep = DEFAULT_CLIPPER_SCALE,
-  requestedKeep: GuideFragmentKeep = 'outside',
+  keep: GuideFragmentKeep = 'outside',
+  clipperScale: number = DEFAULT_CLIPPER_SCALE,
 ): ClosedGuideFragment[] {
-  const clipperScale = typeof clipperScaleOrKeep === 'number'
-    ? clipperScaleOrKeep
-    : DEFAULT_CLIPPER_SCALE
-  const keep = typeof clipperScaleOrKeep === 'string' ? clipperScaleOrKeep : requestedKeep
   const normalizedGuide = normalizeClosedGuide(guide)
   if (normalizedGuide.length < 3 || !(clipperScale > 0)) return []
 

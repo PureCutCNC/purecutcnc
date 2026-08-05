@@ -545,6 +545,22 @@ export interface Operation {
   arcFittingEnabled?: boolean
 }
 
+/**
+ * True for an Edge Route operation that generates trochoidal orbits rather than
+ * a plain offset contour.
+ *
+ * This is the single definition. The predicate gates generation, the tab pass in
+ * `useToolpathGeneration`, the booklet's setting rows, and the CAM panel's field
+ * visibility — and those must agree exactly, so none of them may re-spell it.
+ * Note the `pass` term: a finish pass is always a contour, even if a stale
+ * `edgeStrategy` survives on the operation from an earlier rough pass.
+ */
+export function isTrochoidalEdgeRoughing(operation: Operation): boolean {
+  return operation.pass === 'rough'
+    && (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside')
+    && operation.edgeStrategy === 'trochoidal'
+}
+
 // ============================================================
 // Clamps
 // ============================================================

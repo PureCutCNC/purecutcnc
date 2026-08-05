@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import type {
   DimensionRef,
@@ -327,6 +328,54 @@ export function toClipperPath(points: Point[], scale = DEFAULT_CLIPPER_SCALE): C
 
 export function fromClipperPath(path: ClipperPath, scale = DEFAULT_CLIPPER_SCALE): Point[] {
   return path.map((p) => ({ x: p.X / scale, y: p.Y / scale }))
+}
+
+const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
+const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.01
+
+/** Coincidence tolerance for XY comparisons in project units. */
+export const XY_EPSILON = 1e-9
+
+/** True when two points are coincident in XY within `epsilon`. */
+export function samePointXY(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  epsilon = XY_EPSILON,
+): boolean {
+  return Math.abs(a.x - b.x) <= epsilon && Math.abs(a.y - b.y) <= epsilon
+}
+
+/**
+ * Grow (or shrink) a closed keep-out boundary. `delta` is in **Clipper units**,
+ * not project units — unlike `modelProtection.offsetClipperPaths`, which scales
+ * for you. Callers here pass `distance * DEFAULT_CLIPPER_SCALE`.
+ *
+ * The arc tolerance is bounded both relatively and absolutely so a round join
+ * never deviates from the true arc by more than 0.01 mm: small offsets stay
+ * proportionally accurate, large ones do not accumulate error. Every consumer
+ * that grows a keep-out (tab footprints, retained walls, obstacle envelopes)
+ * must share this policy — two callers approximating the same boundary to
+ * different tolerances is how one keep-out ends up with two disagreeing edges,
+ * and a cutter threading the gap between them.
+ */
+export function offsetKeepOutPaths(
+  paths: ClipperPath[],
+  delta: number,
+  joinType: number = ClipperLib.JoinType.jtMiter,
+): ClipperPath[] {
+  if (paths.length === 0) {
+    return []
+  }
+
+  const offset = new ClipperLib.ClipperOffset()
+  offset.ArcTolerance = Math.max(
+    1,
+    Math.min(MAX_ROUND_JOIN_ARC_TOLERANCE, Math.abs(delta) * ROUND_JOIN_ARC_TOLERANCE_RATIO),
+  )
+  offset.AddPaths(paths, joinType, ClipperLib.EndType.etClosedPolygon)
+  const solution = new ClipperLib.Paths()
+  offset.Execute(solution, delta)
+  return solution as ClipperPath[]
 }
 
 export function checkMaxCutDepthWarning(tool: NormalizedTool, cutDepth: number): ToolpathWarning | null {

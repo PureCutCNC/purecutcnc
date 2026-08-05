@@ -15,10 +15,18 @@
  */
 
 import ClipperLib from 'clipper-lib'
-import type { Operation, Point, Project } from '../../types/project'
-import { rectProfile, sampleProfilePoints } from '../../types/project'
-import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
-import { DEFAULT_CLIPPER_SCALE, fromClipperPath, normalizeToolForProject, normalizeWinding, toClipperPath } from './geometry'
+import type { Operation, Point, Project, Tab } from '../../types/project'
+import { isTrochoidalEdgeRoughing, rectProfile, sampleProfilePoints } from '../../types/project'
+import type { ClipperPath, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
+import {
+  DEFAULT_CLIPPER_SCALE,
+  fromClipperPath,
+  normalizeToolForProject,
+  normalizeWinding,
+  offsetKeepOutPaths,
+  toClipperPath,
+} from './geometry'
+import { unionClipperPaths } from './modelProtection'
 
 interface PreservedObstacle {
   id: string
@@ -28,34 +36,50 @@ interface PreservedObstacle {
   zBottom: number
 }
 
-const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
-const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.01
+// Round join, not miter: the raised zone is the set of tool-centre positions whose
+// swept disc would touch the tab, i.e. the Minkowski sum of the tab rect with a
+// circle of the tool radius. A miter join grows the rect by a *square* instead,
+// overshooting each corner by up to (sqrt(2)-1)*radius and raising the toolpath
+// where the cutter would never have reached the tab.
+const TAB_FOOTPRINT_JOIN_TYPE = ClipperLib.JoinType.jtRound
 
 function offsetObstaclePoints(points: Point[], delta: number): Point[] {
   if (!(delta > 1e-9) || points.length < 3) {
     return points
   }
 
-  const scaledDelta = delta * DEFAULT_CLIPPER_SCALE
-  const offset = new ClipperLib.ClipperOffset()
-  // Round join, not miter: the raised zone is the set of tool-centre positions whose
-  // swept disc would touch the tab, i.e. the Minkowski sum of the tab rect with a
-  // circle of the tool radius. A miter join grows the rect by a *square* instead,
-  // overshooting each corner by up to (sqrt(2)-1)*radius and raising the toolpath
-  // where the cutter would never have reached the tab.
-  offset.ArcTolerance = Math.max(
-    1,
-    Math.min(MAX_ROUND_JOIN_ARC_TOLERANCE, scaledDelta * ROUND_JOIN_ARC_TOLERANCE_RATIO),
-  )
-  offset.AddPaths(
+  const expanded = offsetKeepOutPaths(
     [toClipperPath(normalizeWinding(points, false), DEFAULT_CLIPPER_SCALE)],
-    ClipperLib.JoinType.jtRound,
-    ClipperLib.EndType.etClosedPolygon,
-  )
-  const solution = new ClipperLib.Paths()
-  offset.Execute(solution, scaledDelta)
-  const expanded = (solution as unknown as { X: number; Y: number }[][])[0]
+    delta * DEFAULT_CLIPPER_SCALE,
+    TAB_FOOTPRINT_JOIN_TYPE,
+  )[0]
   return expanded ? fromClipperPath(expanded, DEFAULT_CLIPPER_SCALE) : points
+}
+
+/**
+ * Tab footprints grown by `clearance` and unioned, in Clipper units.
+ *
+ * This is the one definition of "how much space a tab occupies once a cutter of
+ * some size has to stay clear of it". Callers supply the clearance because they
+ * are answering different questions — `applyTabsToEdgeRoute` uses tool radius +
+ * radial stock-to-leave (how much material the finish pass still needs), while
+ * trochoidal guide fragmentation uses orbit-derived clearances (how far the
+ * guide must sit so the whole orbit misses the tab). What they must NOT differ
+ * on is the footprint shape or the offset tolerance, which is why both come
+ * through here rather than each re-deriving the rectangle.
+ */
+export function expandedTabFootprints(tabs: Tab[], clearance: number): ClipperPath[] {
+  if (tabs.length === 0) {
+    return []
+  }
+  const footprints = tabs.map((tab) => toClipperPath(
+    normalizeWinding(sampleProfilePoints(rectProfile(tab.x, tab.y, tab.w, tab.h)), false),
+    DEFAULT_CLIPPER_SCALE,
+  ))
+  const grown = clearance > 1e-9
+    ? offsetKeepOutPaths(footprints, clearance * DEFAULT_CLIPPER_SCALE, TAB_FOOTPRINT_JOIN_TYPE)
+    : footprints
+  return unionClipperPaths(grown)
 }
 
 function expandObstacles(obstacles: PreservedObstacle[], delta: number): PreservedObstacle[] {
@@ -369,6 +393,27 @@ function adjustVerticalMoveForTabs(
   }
 }
 
+/**
+ * The tab pass for Edge Route operations.
+ *
+ * LOAD-BEARING: trochoidal roughing generates its own tab motion. It fragments
+ * the guide around each tab *before* any orbit exists, cuts the local tab-top
+ * interval, and helically re-enters afterwards. Running the shared pass over
+ * that output applies tabs a second time, against a footprint expanded by a
+ * different clearance, which splits finished orbits and lifts them to the tab
+ * top with synthesised lead-ins — an unproven vertical re-entry into stock the
+ * guide-domain design exists to prevent. Do not "simplify" this branch away.
+ *
+ * Callers that are not edge routes (finish-surface passes) still call
+ * `applyTabsToEdgeRoute` directly; the strategy question does not arise there.
+ */
+export function applyEdgeRouteTabs(project: Project, operation: Operation, result: ToolpathResult): ToolpathResult {
+  if (isTrochoidalEdgeRoughing(operation)) {
+    return result
+  }
+  return applyTabsToEdgeRoute(project, operation, result)
+}
+
 export function applyTabsToEdgeRoute(project: Project, operation: Operation, result: ToolpathResult): ToolpathResult {
   if (!isSupportedTabOperation(operation.kind) || result.moves.length === 0) {
     return result
@@ -486,21 +531,11 @@ export function toolCentreContours(profilePoints: Point[], offsetDelta: number):
     return [profilePoints]
   }
 
-  const scaledDelta = offsetDelta * DEFAULT_CLIPPER_SCALE
-  const offset = new ClipperLib.ClipperOffset()
-  offset.ArcTolerance = Math.max(
-    1,
-    Math.min(MAX_ROUND_JOIN_ARC_TOLERANCE, Math.abs(scaledDelta) * ROUND_JOIN_ARC_TOLERANCE_RATIO),
-  )
-  offset.AddPaths(
+  return offsetKeepOutPaths(
     [toClipperPath(normalizeWinding(profilePoints, true), DEFAULT_CLIPPER_SCALE)],
-    ClipperLib.JoinType.jtRound,
-    ClipperLib.EndType.etClosedPolygon,
+    offsetDelta * DEFAULT_CLIPPER_SCALE,
+    TAB_FOOTPRINT_JOIN_TYPE,
   )
-  const solution = new ClipperLib.Paths()
-  offset.Execute(solution, scaledDelta)
-
-  return (solution as unknown as { X: number; Y: number }[][])
     .map((path) => fromClipperPath(path, DEFAULT_CLIPPER_SCALE))
     .filter((points) => points.length >= 3)
 }

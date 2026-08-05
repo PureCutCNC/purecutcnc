@@ -19,7 +19,7 @@ import type { Operation, OperationKind, OperationPass, OperationTarget, Project 
 // it maps structured warnings to localized text here via the i18n layer.
 import { translate } from '../../i18n/store'
 import { toolpathWarningTexts } from '../../i18n/warningText'
-import { getStockBounds } from '../../types/project'
+import { getStockBounds, isTrochoidalEdgeRoughing } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import type { Units } from '../../utils/units'
 import type { NormalizedTool, ToolpathResult } from '../toolpaths/types'
@@ -60,12 +60,6 @@ function edgeStrategyLabel(strategy: NonNullable<Operation['edgeStrategy']>): st
     : translate('booklet.edgeStrategy.contour')
 }
 
-function isTrochoidalEdgeRoughing(operation: Operation): boolean {
-  return operation.pass === 'rough'
-    && (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside')
-    && operation.edgeStrategy === 'trochoidal'
-}
-
 function operationSupportsCutDirection(kind: OperationKind): boolean {
   return (
     kind === 'pocket'
@@ -81,10 +75,8 @@ function operationSupportsCutDirection(kind: OperationKind): boolean {
 
 function operationSupportsMachiningOrder(operation: Operation): boolean {
   return operation.kind === 'pocket'
-    || (
-      (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside')
-      && !isTrochoidalEdgeRoughing(operation)
-    )
+    || operation.kind === 'edge_route_inside'
+    || operation.kind === 'edge_route_outside'
 }
 
 function operationUsesRoundOutsideCorners(operation: Operation): boolean {

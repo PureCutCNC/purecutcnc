@@ -17,6 +17,7 @@
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import type { Operation, Point, Project, SketchFeature, Tab } from '../../types/project'
+import { isTrochoidalEdgeRoughing } from '../../types/project'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import type { ClipperPath, ResolvedPocketRegion, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
@@ -28,9 +29,11 @@ import {
   getOperationSafeZ,
   normalizeToolForProject,
   normalizeWinding,
+  offsetKeepOutPaths,
   resolveFeatureZSpan,
   toClipperPath,
 } from './geometry'
+import { unionClipperPaths } from './modelProtection'
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { buildInsetRegions, buildOuterContours, cutClosedContours, resolveBandBottomZ } from './pocket'
 import { buildMaskFromClipperPaths, buildRegionMask, clipToolpathResultToObstaclesByLevel, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
@@ -40,9 +43,8 @@ import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { helixAngularDirection, plungeLimitedFeedScale } from './entry'
 import { splitClosedGuideByForbiddenPaths } from './guideFragments'
 import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET } from './trochoidalEdge'
+import { expandedTabFootprints } from './tabs'
 
-const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
-const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.01
 const TROCHOIDAL_ENTRY_STEPS_PER_REVOLUTION = 36
 const MAX_TROCHOIDAL_ENTRY_MOVES = 20_000
 const TROCHOIDAL_GUIDE_SAFETY_FRACTION = 0.01
@@ -60,42 +62,8 @@ interface TrochoidalOperationBudget {
   remainingPoints: number
 }
 
-function offsetPaths(
-  paths: ClipperPath[],
-  delta: number,
-  joinType: number = ClipperLib.JoinType.jtMiter,
-): ClipperPath[] {
-  if (paths.length === 0) {
-    return []
-  }
-
-  const offset = new ClipperLib.ClipperOffset()
-  offset.ArcTolerance = Math.max(
-    1,
-    Math.min(MAX_ROUND_JOIN_ARC_TOLERANCE, Math.abs(delta) * ROUND_JOIN_ARC_TOLERANCE_RATIO),
-  )
-  offset.AddPaths(paths, joinType, ClipperLib.EndType.etClosedPolygon)
-  const solution = new ClipperLib.Paths()
-  offset.Execute(solution, delta)
-  return solution as ClipperPath[]
-}
-
-function unionPaths(paths: ClipperPath[]): ClipperPath[] {
-  if (paths.length === 0) {
-    return []
-  }
-
-  const clipper = new ClipperLib.Clipper()
-  clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true)
-  const solution = new ClipperLib.Paths()
-  clipper.Execute(
-    ClipperLib.ClipType.ctUnion,
-    solution,
-    ClipperLib.PolyFillType.pftNonZero,
-    ClipperLib.PolyFillType.pftNonZero,
-  )
-  return solution as ClipperPath[]
-}
+const offsetPaths = offsetKeepOutPaths
+const unionPaths = unionClipperPaths
 
 function contourStartPoint(points: Point[], z: number): ToolpathPoint {
   const first = points[0] ?? { x: 0, y: 0 }
@@ -397,17 +365,14 @@ function trochoidalPathIsSafe(points: Point[], isSegmentSafe: (from: Point, to: 
   return points.length > 1 && points.slice(1).every((point, index) => isSegmentSafe(points[index], point))
 }
 
-function tabClipperPaths(tabs: Tab[]): ClipperPath[] {
-  return tabs.map((tab) => toClipperPath([
-    { x: tab.x, y: tab.y },
-    { x: tab.x + tab.w, y: tab.y },
-    { x: tab.x + tab.w, y: tab.y + tab.h },
-    { x: tab.x, y: tab.y + tab.h },
-  ], DEFAULT_CLIPPER_SCALE))
-}
+// Tab footprint geometry lives in tabs.ts so the shared tab pass and trochoidal
+// guide fragmentation cannot drift apart on shape or offset tolerance.
+const expandedTabPaths = expandedTabFootprints
 
-function expandedTabPaths(tabs: Tab[], expansion: number): ClipperPath[] {
-  return unionPaths(offsetPaths(tabClipperPaths(tabs), expansion * DEFAULT_CLIPPER_SCALE, ClipperLib.JoinType.jtRound))
+/** True when no segment of an open polyline touches any forbidden path. */
+function polylineOutsideForbiddenPaths(points: Point[], paths: ClipperPath[]): boolean {
+  if (paths.length === 0) return true
+  return points.slice(1).every((point, index) => segmentOutsideForbiddenPaths(points[index], point, paths))
 }
 
 function polylineLength(points: Point[]): number {
@@ -560,8 +525,25 @@ function createTrochoidalFragmentPlanner(
       'inside',
     )
     for (const fragment of shallowFragments) {
-      const tabTop = tabTopForGuideFragment(fragment.points, crossingTabs, tabGuideClearance)
+      // Height comes from EVERY tab covering the span, not just the crossing
+      // ones. Where a short tab overlaps a taller one, the taller top wins —
+      // taking the crossing tab's own top would machine the taller tab away
+      // across the overlap.
+      const tabTop = tabTopForGuideFragment(fragment.points, tabs, tabGuideClearance)
       if (tabTop === null || polylineLength(fragment.points) < minimumSpanLength) {
+        appendUniqueTrochoidalWarning(warnings, {
+          code: 'edgeTrochoidalSkippedSpan',
+          params: { x: fragment.points[0]?.x ?? 0, y: fragment.points[0]?.y ?? 0 },
+        })
+        continue
+      }
+      // Raising the span to the tallest covering top can still leave part of it
+      // inside a tab that is a keep-out at that height (staggered overlapping
+      // tabs). Skip those spans with their location rather than emitting a cut
+      // that the verification backstop would then fail the whole operation on:
+      // a tight spot interrupts the cut, it does not cancel the job.
+      const blocking = expandedTabPaths(activeTabsAtZ(tabs, tabTop), tabGuideClearance)
+      if (!polylineOutsideForbiddenPaths(fragment.points, blocking)) {
         appendUniqueTrochoidalWarning(warnings, {
           code: 'edgeTrochoidalSkippedSpan',
           params: { x: fragment.points[0]?.x ?? 0, y: fragment.points[0]?.y ?? 0 },
@@ -605,6 +587,7 @@ function appendContoursAtLevels(
 function hasFatalTrochoidalWarning(warnings: ToolpathWarning[]): boolean {
   return warnings.some((warning) => (
     warning.code === 'edgeTrochoidalInvalidGuide'
+    || warning.code === 'edgeTrochoidalParametersInvalid'
     || warning.code === 'edgeTrochoidalMoveBudget'
     || warning.code === 'edgeTrochoidalEntryBudget'
     || warning.code === 'edgeTrochoidalEntryStrategyUnsupported'
@@ -632,9 +615,9 @@ function appendTrochoidalEntry(
   targetZ: number,
   orbitRadius: number,
   operation: Operation,
-  cutSide: 'internal' | 'external',
+  angularDirection: 1 | -1,
 ): ToolpathPoint {
-  const points = trochoidalEntryPoints(from, entry, center, targetZ, orbitRadius, operation, cutSide)
+  const points = trochoidalEntryPoints(from, entry, center, targetZ, orbitRadius, operation, angularDirection)
   let current = from
   for (const next of points) {
     if (points.length === 1) {
@@ -654,6 +637,11 @@ function appendTrochoidalEntry(
   return current
 }
 
+/**
+ * The entry helix bores the cavity the first orbit continues out of, so it must
+ * share the orbit's angular direction exactly — a mismatch reverses the tool at
+ * the handoff. `angularDirection` is therefore passed in rather than re-derived.
+ */
 function trochoidalEntryPoints(
   from: ToolpathPoint,
   entry: Point,
@@ -661,7 +649,7 @@ function trochoidalEntryPoints(
   targetZ: number,
   orbitRadius: number,
   operation: Operation,
-  cutSide: 'internal' | 'external',
+  angularDirection: 1 | -1,
 ): ToolpathPoint[] {
   const target = { x: entry.x, y: entry.y, z: targetZ }
   if (targetZ >= from.z || trochoidalEntryStrategy(operation) === 'plunge') {
@@ -673,7 +661,6 @@ function trochoidalEntryPoints(
   const revolutions = Math.max(1, Math.ceil((from.z - targetZ) / pitch))
   const steps = revolutions * TROCHOIDAL_ENTRY_STEPS_PER_REVOLUTION
   const startAngle = Math.atan2(entry.y - center.y, entry.x - center.x)
-  const angularDirection = helixAngularDirection(operation.cutDirection ?? 'conventional', cutSide)
   const points: ToolpathPoint[] = []
   for (let step = 1; step <= steps; step += 1) {
     const progress = step / steps
@@ -720,7 +707,7 @@ function appendTrochoidalContoursAtLevels(
   safeZ: number,
   operation: Operation,
   toolDiameter: number,
-  cutSide: 'internal' | 'external',
+  angularDirection: 1 | -1,
   warnings: ToolpathWarning[],
   isSegmentSafe: (from: Point, to: Point, z: number) => boolean,
   budget: TrochoidalOperationBudget,
@@ -729,7 +716,6 @@ function appendTrochoidalContoursAtLevels(
   const cutWidth = operation.trochoidalCutWidth ?? toolDiameter * 1.5
   const orbitRadius = (cutWidth - toolDiameter) / 2
   const advance = (operation.trochoidalAdvance ?? 0.1) * toolDiameter
-  const angularDirection = helixAngularDirection(operation.cutDirection ?? 'conventional', cutSide)
   const prepared: PreparedTrochoidalPath[] = []
   let remainingPoints = budget.remainingPoints
 
@@ -777,7 +763,7 @@ function appendTrochoidalContoursAtLevels(
           fragment.z,
           orbitRadius,
           operation,
-          cutSide,
+          angularDirection,
         )
         let previousEntryPoint = entryAtStart
         for (const entryPoint of entryPoints) {
@@ -833,7 +819,7 @@ function appendTrochoidalContoursAtLevels(
         z,
         orbitRadius,
         operation,
-        cutSide,
+        angularDirection,
       )
     }
     const cutMoves = closed ? toClosedCutMoves(built.points, z) : toOpenCutMoves(built.points, z)
@@ -853,19 +839,44 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
     }
   }
 
-  // Trochoidal fragments are planned by depth so each continuation can prove an
-  // entry cavity. Never route them through the feature-first block reordering.
-  const isTrochoidal = operation.pass === 'rough' && operation.edgeStrategy === 'trochoidal'
-  if (isFeatureFirst(operation) && !isTrochoidal) {
+  const isTrochoidal = isTrochoidalEdgeRoughing(operation)
+  if (isFeatureFirst(operation)) {
+    // Trochoidal needs two things the contour path gets for free.
+    //
+    // The point budget is per operation, not per target: one budget is created
+    // here and threaded through every sub-operation, so N features share the
+    // 500,000 points rather than quietly claiming N x 500,000.
+    const sharedBudget: TrochoidalOperationBudget | undefined = isTrochoidal
+      ? { remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET }
+      : undefined
     const parts = perFeatureOperations(operation, project).map((subOp) =>
-      generateEdgeRouteToolpathSingle(project, subOp),
+      generateEdgeRouteToolpathSingle(project, subOp, sharedBudget),
     )
+    // And multi-target generation stays atomic: mergeToolpathResults would
+    // happily emit the targets that succeeded alongside one that failed closed,
+    // which for an entry-bearing strategy means cutting some parts and skipping
+    // another with only a warning to say so. Refuse the whole operation instead.
+    if (isTrochoidal) {
+      const fatal = parts.filter((part) => hasFatalTrochoidalWarning(part.warnings))
+      if (fatal.length > 0) {
+        return {
+          operationId: operation.id,
+          moves: [],
+          warnings: parts.flatMap((part) => part.warnings),
+          bounds: null,
+        }
+      }
+    }
     return mergeToolpathResults(operation.id, parts, { orderBlocks: 'nearest' })
   }
   return generateEdgeRouteToolpathSingle(project, operation)
 }
 
-function generateEdgeRouteToolpathSingle(project: Project, operation: Operation): ToolpathResult {
+function generateEdgeRouteToolpathSingle(
+  project: Project,
+  operation: Operation,
+  sharedTrochoidalBudget?: TrochoidalOperationBudget,
+): ToolpathResult {
   if (operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') {
     return {
       operationId: operation.id,
@@ -916,7 +927,7 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     }
   }
 
-  const isTrochoidal = operation.pass === 'rough' && operation.edgeStrategy === 'trochoidal'
+  const isTrochoidal = isTrochoidalEdgeRoughing(operation)
   const trochoidalCutWidth = operation.trochoidalCutWidth ?? tool.diameter * 1.5
   const trochoidalAdvance = operation.trochoidalAdvance ?? 0.1
   if (isTrochoidal && !(trochoidalCutWidth >= tool.diameter * 1.15)) {
@@ -967,6 +978,14 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
   }
   if (isTrochoidal && trochoidalCutWidth < tool.diameter * 1.25) {
     warnings.push({ code: 'edgeTrochoidalWidthNarrow' })
+  }
+  // Past 2x D the orbit radius exceeds the tool radius, so the helical entry
+  // bore no longer overlaps its own centre and leaves a full-stepdown core that
+  // the first advancing loops then hit side-on. entry.ts caps pocket helixes at
+  // the tool radius for exactly this reason; here the channel width is the
+  // user's call, so warn rather than clamp.
+  if (isTrochoidal && trochoidalCutWidth > tool.diameter * 2) {
+    warnings.push({ code: 'edgeTrochoidalWidthLeavesCore' })
   }
   if (isTrochoidal && splitTargets.regionFeatures.length > 0) {
     return {
@@ -1031,7 +1050,9 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
       : isTrochoidal ? trochoidalGuideOffset : tool.radius + radialLeave
 
   const moves: ToolpathMove[] = []
-  const trochoidalBudget: TrochoidalOperationBudget = {
+  // Shared across sub-operations under feature-first ordering; a fresh budget
+  // only when this call *is* the whole operation. The budget is per operation.
+  const trochoidalBudget: TrochoidalOperationBudget = sharedTrochoidalBudget ?? {
     remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET,
   }
   let currentPosition: ToolpathPoint | null = null
@@ -1043,6 +1064,14 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
   // = climb for OUTSIDE cuts (where conventional requires CW in Y-up, isClockwise=true).
   // Invert the requested direction for outside so applyContourDirection maps correctly.
   const outsideDirection = (direction === 'conventional' ? 'climb' : 'conventional') as typeof direction
+
+  // A trochoid's engagement orientation is set by its guide winding and its
+  // orbit sense together, so both must come from the SAME resolved direction.
+  // Deriving the orbit from operation.cutDirection while the guide is wound
+  // from outsideDirection double-applies the Y-up inversion above and silently
+  // reverses climb/conventional on every outside route.
+  const insideOrbitDirection = helixAngularDirection(direction, 'internal')
+  const outsideOrbitDirection = helixAngularDirection(outsideDirection, 'external')
 
   if (operation.kind === 'edge_route_inside') {
     const resolved = resolveInsideEdgeRegions(project, operation)
@@ -1083,7 +1112,7 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
           safeZ,
           operation,
           tool.diameter,
-          'internal',
+          insideOrbitDirection,
           warnings,
           (from, to, z) => segmentInsideSafeRegions(from, to, safeRegions)
             && segmentOutsideForbiddenPaths(
@@ -1127,6 +1156,11 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
       warnings,
       bounds,
     }
+    // Same load-bearing rule as the outside return below: the region clipper
+    // would strip the helical entries. Region targets are already refused for
+    // trochoidal, so this is currently a no-op — state it anyway rather than
+    // leave the invariant resting on a refusal several hundred lines away.
+    if (isTrochoidal) return result
     return clipToolpathResultToRegionMask(project, result, regionMask)
   }
 
@@ -1255,7 +1289,7 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
             safeZ,
             operation,
             tool.diameter,
-            'external',
+            outsideOrbitDirection,
             warnings,
             (from, to, z) => segmentOutsideForbiddenPaths(from, to, retainedWall)
               && segmentOutsideForbiddenPaths(from, to, obstacles)
@@ -1324,7 +1358,7 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
           safeZ,
           operation,
           tool.diameter,
-          'external',
+          outsideOrbitDirection,
           warnings,
           (from, to, z) => segmentOutsideForbiddenPaths(from, to, retainedWall)
             && segmentOutsideForbiddenPaths(from, to, obstacles)
@@ -1368,9 +1402,18 @@ function generateEdgeRouteToolpathSingle(project: Project, operation: Operation)
     warnings,
     bounds,
   }
-  if (!isTrochoidal && allAdditiveObstacles.length > 0) {
+  // LOAD-BEARING: trochoidal output must never reach either shared clipper.
+  // Both drop every non-`cut` move and re-link the surviving fragments with
+  // vertical plunges (regions.ts), which would silently delete the helical
+  // entries this strategy depends on and drop the tool into uncleared stock.
+  // Obstacles and regions are instead handled up front — obstacles by
+  // fragmenting the guide before any orbit exists, regions by refusing the
+  // operation outright (edgeTrochoidalRegionUnsupported). Contour edge routes
+  // have no entry strategies, so the defect is latent for them; routing
+  // trochoidal through here is what would make it live. See #452.
+  if (isTrochoidal) return result
+  if (allAdditiveObstacles.length > 0) {
     result = clipToolpathResultToObstaclesByLevel(project, result, obstacleMaskForZ)
   }
-  if (isTrochoidal) return result
   return clipToolpathResultToRegionMask(project, result, regionMask)
 }

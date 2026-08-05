@@ -65,6 +65,7 @@ export type ToolpathWarningCode =
   // trochoidal edge route
   | 'edgeTrochoidalWidthTooSmall'
   | 'edgeTrochoidalWidthNarrow'
+  | 'edgeTrochoidalWidthLeavesCore'
   | 'edgeTrochoidalAdvanceRange'
   | 'edgeTrochoidalParametersInvalid'
   | 'edgeTrochoidalEntryStrategyUnsupported'

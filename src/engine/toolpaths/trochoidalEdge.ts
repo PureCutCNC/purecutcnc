@@ -15,9 +15,10 @@
  */
 
 import type { Point } from '../../types/project'
+import { XY_EPSILON, samePointXY } from './geometry'
 
 const MIN_STEPS_PER_LOOP = 36
-const GEOMETRY_EPSILON = 1e-9
+const GEOMETRY_EPSILON = XY_EPSILON
 
 export const DEFAULT_TROCHOIDAL_POINT_BUDGET = 500_000
 
@@ -48,10 +49,7 @@ interface ArcLengthPath {
   closed: boolean
 }
 
-function samePoint(a: Point, b: Point): boolean {
-  return Math.abs(a.x - b.x) <= GEOMETRY_EPSILON
-    && Math.abs(a.y - b.y) <= GEOMETRY_EPSILON
-}
+const samePoint = samePointXY
 
 function normalizeContour(contour: Point[], closed: boolean): Point[] {
   const points: Point[] = []
