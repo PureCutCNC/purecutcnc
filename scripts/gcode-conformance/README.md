@@ -33,10 +33,15 @@ per-machine dialects, and a pure-G1 control.
 
 `rs274` has no macOS build and `linuxcnc-uspace` is absent from the Ubuntu
 runner's sources, so CI runs it in a **Debian container** as a separate job.
-That job is the only place LinuxCNC's *own* rules are applied — elsewhere,
-including the `linuxcnc-dialect` case on the GRBL job, the file is judged by
-GRBL's rules, which answers a different question. Locally, install
-`linuxcnc-uspace` or point `RS274_BIN` at the binary.
+Locally, install `linuxcnc-uspace` or point `RS274_BIN` at the binary.
+
+**As invoked (`rs274 -g`), it is syntax-only.** It accepts the arc-invalid
+probe, so it is not checking arc radii — measured, not assumed. Its passes
+confirm the file parses as valid RS-274NGC and nothing more. Whether
+LinuxCNC's arc tolerance is stricter than GRBL's therefore **remains
+unverified**; the exporter assumes it is not (see `arcFitting.ts`). Making
+this job answer that question needs an rs274 invocation that runs the
+interpreter's motion checks, which has not been found yet.
 
 ## Validator probes
 
