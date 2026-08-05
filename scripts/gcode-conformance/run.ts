@@ -99,21 +99,27 @@ const VALIDATORS: Validator[] = [
 const SMOKE_PROGRAM = 'G21\nG90\nG0 X0 Y0\nG1 X1 Y0 F100\nM2\n'
 
 /**
- * Paired arc probes: byte-identical except the G3 target, so the *only*
- * variable between them is whether the arc is geometrically consistent.
+ * Arc probes, byte-identical except the G3 target, so the only variable
+ * between them is whether the arc is geometrically consistent.
  *
- * The invalid one is the block from issue #447 as the controller received it:
- * its two radii disagree by 0.0106 mm, past GRBL's 0.005 mm limit. The valid
- * twin pulls the target back onto the circle its own I/J describes.
+ * Two questions, deliberately separated — controllers differ in tolerance,
+ * not just in whether they check:
  *
- * An interpreter that accepts BOTH is not checking arc radii — its verdicts
- * mean "this parses", not "these arcs are valid". Without the pair we cannot
- * tell that apart from a controller that is genuinely more permissive, and a
- * rubber stamp that looks like coverage is worse than no coverage.
+ * 1. **Does it check arc geometry at all?** The gross probe is off by 1 mm on
+ *    a 10 mm radius. Every controller that checks rejects that. One that
+ *    accepts it is not checking — its verdicts mean "this parses", and a
+ *    rubber stamp that looks like coverage is worse than no coverage.
+ * 2. **Is it as strict as our export invariant?** The tight probe is the
+ *    issue #447 block as the controller received it: radii disagreeing by
+ *    0.0106 mm. GRBL rejects it (0.005 mm limit); LinuxCNC's rs274 accepts it
+ *    — measured, its threshold sits between 0.028 and 0.029 mm, absolute and
+ *    radius-independent. Conflating the two questions mislabels a genuinely
+ *    looser controller as one that checks nothing.
  */
-const ARC_PROBE_PREFIX = 'G21\nG90\nG0 X11.109 Y16.962\nG1 F600\n'
-const ARC_PROBE_VALID = `${ARC_PROBE_PREFIX}G3 X11.316 Y16.652 I0.339 J0.002\nM2\n`
-const ARC_PROBE_INVALID = `${ARC_PROBE_PREFIX}G3 X11.314 Y16.647 I0.339 J0.002\nM2\n`
+const ARC_PROBE_VALID = 'G21\nG90\nG0 X10 Y0\nG1 F600\nG3 X0 Y10 I-10 J0\nM2\n'
+const ARC_PROBE_GROSS = 'G21\nG90\nG0 X10 Y0\nG1 F600\nG3 X0 Y11 I-10 J0\nM2\n'
+const ARC_PROBE_TIGHT_PREFIX = 'G21\nG90\nG0 X11.109 Y16.962\nG1 F600\n'
+const ARC_PROBE_TIGHT = `${ARC_PROBE_TIGHT_PREFIX}G3 X11.314 Y16.647 I0.339 J0.002\nM2\n`
 
 function binaryPresent(validator: Validator): boolean {
   if (validator.binary.includes('/')) return existsSync(validator.binary)
@@ -143,17 +149,25 @@ function probe(validator: Validator, label: string, program: string): string | n
   return runValidator(validator, file)
 }
 
+type ArcTier = 'strict' | 'tolerant' | 'syntax-only'
+
 /**
- * Does this interpreter actually judge arc geometry, or only parse it?
+ * Classify how far an interpreter's arc checking goes.
  *
- * Credited only when it accepts the valid twin *and* rejects the invalid one.
- * Rejecting both would mean the rejection is about something other than the
- * arc, which tells us nothing.
+ * `strict`      — rejects a 0.0106 mm mismatch, i.e. at least as strict as
+ *                 the export invariant in arcFitting.ts.
+ * `tolerant`    — checks arcs but accepts that mismatch; it would not have
+ *                 caught issue #447.
+ * `syntax-only` — accepts a 1 mm error on a 10 mm radius, so it is not
+ *                 judging arc geometry at all.
+ *
+ * A validator that rejects the *valid* probe is misconfigured rather than
+ * strict, and is reported as syntax-only so its verdicts are not trusted.
  */
-function checksArcGeometry(validator: Validator): boolean {
-  const validRejected = probe(validator, 'arc-valid', ARC_PROBE_VALID)
-  if (validRejected) return false
-  return probe(validator, 'arc-invalid', ARC_PROBE_INVALID) !== null
+function classifyArcChecking(validator: Validator): ArcTier {
+  if (probe(validator, 'arc-valid', ARC_PROBE_VALID) !== null) return 'syntax-only'
+  if (probe(validator, 'arc-gross', ARC_PROBE_GROSS) === null) return 'syntax-only'
+  return probe(validator, 'arc-tight', ARC_PROBE_TIGHT) !== null ? 'strict' : 'tolerant'
 }
 
 function runValidator(validator: Validator, file: string): string | null {
@@ -194,7 +208,7 @@ function main(): void {
   const files = exportCorpus()
 
   const present = VALIDATORS.filter(binaryPresent)
-  const available: Array<{ validator: Validator; checksArcs: boolean }> = []
+  const available: Array<{ validator: Validator; tier: ArcTier }> = []
 
   for (const validator of VALIDATORS) {
     if (!present.includes(validator)) {
@@ -208,13 +222,15 @@ function main(): void {
       console.log('     rather than reporting every case as a rejection.')
       continue
     }
-    const checksArcs = checksArcGeometry(validator)
-    if (!checksArcs) {
-      console.log(`\nNOTE ${validator.name} accepted a known-invalid arc.`)
-      console.log('     Its verdicts mean "this parses", not "these arcs are valid";')
-      console.log('     results below are reported as syntax-only.')
+    const tier = classifyArcChecking(validator)
+    if (tier === 'syntax-only') {
+      console.log(`\nNOTE ${validator.name} accepted a grossly invalid arc.`)
+      console.log('     Its verdicts mean "this parses", not "these arcs are valid".')
+    } else if (tier === 'tolerant') {
+      console.log(`\nNOTE ${validator.name} checks arc geometry but is looser than`)
+      console.log('     the exporter\'s own invariant — it would not have caught #447.')
     }
-    available.push({ validator, checksArcs })
+    available.push({ validator, tier })
   }
 
   if (available.length === 0) {
@@ -226,13 +242,12 @@ function main(): void {
   let failures = 0
   const validated = new Set<string>()
   const arcVerified = new Set<string>()
-  for (const { validator, checksArcs } of available) {
-    const tier = checksArcs ? 'arc-checking' : 'syntax-only'
+  for (const { validator, tier } of available) {
     console.log(`\n── ${validator.name} (${tier}) ─────────────────────`)
     for (const { entry, file } of files) {
       if (!validator.machines.includes(entry.machineId)) continue
       validated.add(entry.name)
-      if (checksArcs) arcVerified.add(entry.name)
+      if (tier === 'strict') arcVerified.add(entry.name)
       const rejection = runValidator(validator, file)
       if (rejection) {
         failures += 1
@@ -263,7 +278,9 @@ function main(): void {
   const syntaxOnly = files.filter(({ entry }) => (
     validated.has(entry.name) && !arcVerified.has(entry.name)
   ))
-  console.log(`\n${arcVerified.size}/${files.length} cases arc-verified by an interpreter that provably checks arc geometry.`)
+  const strict = available.filter((a) => a.tier === 'strict').map((a) => a.validator.name)
+  console.log(`\n${arcVerified.size}/${files.length} cases verified against the strictest known controller rules`
+    + `${strict.length > 0 ? ` (${strict.join(', ')})` : ''}.`)
   if (syntaxOnly.length > 0) {
     console.log(`${syntaxOnly.length} further case(s) parsed cleanly but were not arc-verified:`)
     for (const { entry } of syntaxOnly) console.log(`  ${entry.name}`)

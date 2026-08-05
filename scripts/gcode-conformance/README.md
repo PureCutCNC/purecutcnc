@@ -35,13 +35,16 @@ per-machine dialects, and a pure-G1 control.
 runner's sources, so CI runs it in a **Debian container** as a separate job.
 Locally, install `linuxcnc-uspace` or point `RS274_BIN` at the binary.
 
-**As invoked (`rs274 -g`), it is syntax-only.** It accepts the arc-invalid
-probe, so it is not checking arc radii — measured, not assumed. Its passes
-confirm the file parses as valid RS-274NGC and nothing more. Whether
-LinuxCNC's arc tolerance is stricter than GRBL's therefore **remains
-unverified**; the exporter assumes it is not (see `arcFitting.ts`). Making
-this job answer that question needs an rs274 invocation that runs the
-interpreter's motion checks, which has not been found yet.
+**`rs274 -g` does check arc geometry, but more loosely than GRBL.** Measured
+by sweeping the radius mismatch in a Debian container: it accepts up to
+0.028 mm and rejects from 0.029 mm, identically at r = 10, 1 and 0.34 mm — so
+the tolerance is absolute and radius-independent, roughly **5.7x looser than
+GRBL's 0.005 mm**. Its error text reports both `abs_err` and `rel_err`.
+
+This settles the question left open by #447: **GRBL is the tightest of the
+controllers we can test**, so satisfying it satisfies LinuxCNC. The export
+invariant in `arcFitting.ts` now rests on a measurement rather than an
+assumption. LinuxCNC would *not* have rejected the block that started #447.
 
 ## Validator probes
 
@@ -54,12 +57,19 @@ Each validator faces three probes before its verdicts are trusted:
 3. **Arc-invalid** — the issue #447 block as the controller received it, whose
    radii disagree by 0.0106 mm. Must be rejected.
 
-Probes 2 and 3 are byte-identical except the G3 target, so the only variable
-is whether the arc is geometrically consistent. A validator that accepts both
-is not checking arc radii: its results are labelled **syntax-only** and are
-excluded from the arc-verified count. Without this pair, an interpreter that
-never checks arcs is indistinguishable from a permissive one — and a rubber
-stamp that looks like coverage is worse than no coverage.
+All probes are byte-identical except the G3 target, so the only variable is
+arc consistency. Two questions are kept separate, because controllers differ
+in *tolerance*, not just in whether they check at all:
+
+| tier | meaning |
+|---|---|
+| `strict` | rejects the 0.0106 mm mismatch — at least as strict as the exporter's invariant |
+| `tolerant` | checks arcs, but accepts it; would not have caught #447 |
+| `syntax-only` | accepts a 1 mm error on a 10 mm radius; not judging geometry at all |
+
+Only `strict` validators contribute to the verified count. Collapsing these
+into a binary mislabels a genuinely looser controller as one that checks
+nothing — which is how `rs274` was first misread here.
 
 Dialect targeting matters: GRBL rejects Mach3/UCCNC output on the `%` wrapper,
 `O` program number and `N` line numbers long before reaching an arc, so a
