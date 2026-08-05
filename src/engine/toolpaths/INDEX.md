@@ -27,6 +27,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `entry.ts` — clearance-aware plunge, helical, and zig-zag ramp entry synthesis for pocket, surface-clean, and rough-surface clearing operations, including deterministic fallback warnings and plunge-feed limiting
 - `geometry.ts` — toolpath-specific geometric helpers; owns the shared `DEFAULT_FLATTEN_*` sampling constants
 - `guideFragments.ts` — cyclic closed-guide fragmentation against pre-unioned keep-outs; preserves every safe span before entry-bearing motion is generated
+- `tabs.ts` also owns the shared tab footprint geometry (`expandedTabFootprints`) and `applyEdgeRouteTabs`, the edge-route tab pass that deliberately returns trochoidal results untouched — see `planning/TROCHOIDAL_EDGE_DESIGN.md`
 - `offsetSmoothing.ts` — emit-time corner fillet for the outer/wall clearing rings (`roundContourCorners`, `smoothClosedContours`, `cornerSmoothingRadius`); shared by pocket + surface clearing when `roundOutsideCorners` is enabled. Bounds the setback so acute corners leave no crescent; the offset-tree emitter keeps each region's wall-adjacent (root) outer ring sharp so no corner stock stacks into a chip (interior rings self-clean). Islands are rounded the opposite way — via `jtRound` Clipper offsets (see `buildInsetRegions` island join), so the tool wraps convex island corners smoothly without gouging.
 - `linearMoveOptimization.ts` — pure generation-stage finalizer that removes zero-length duplicate moves and merges contiguous, direction-preserving, collinear XY moves; applied after tabs but before clamp warnings
 - `arcReconstruction.ts` — recovers arcs/circles/beziers from flattened Clipper output: known-circle reconstruction, segment-preserving boolean reconstruction (annotation map), and the Clipper-offset simplification pipeline (Kasa fit + RDP)
@@ -40,7 +41,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 
 ## Tests
 - `linearMoveOptimization.test.ts` — zero-length removal, collinear merge, and boundary preservation
-- `trochoidalEdge.test.ts` — deterministic closed/open orbit sampling, seam closure, direction, normalized duplicate vertices, and fail-closed budgets
+- `trochoidalEdge.test.ts` — deterministic closed/open orbit sampling, seam closure, direction, normalized duplicate vertices, and fail-closed budgets. Integrated cut-direction parity (trochoidal vs contour, inside and outside), circular/multi-target guides, and overlapping tabs live in `toolpaths.test.ts`
 - `feed.test.ts` — shared effectiveFeed helper: cut/plunge/lead-in/lead-out move kinds, feedScale present/absent, and plunge ignores-feedScale invariance
 - `entry.test.ts` — helix pitch/direction, region/island clearance, no-core diameter bounds, bottom flattening, ramp fallback, and plunge-feed limiting
 - `geometry.test.ts` — shared nearest-neighbour ordering and squared-XY-distance behavior

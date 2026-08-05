@@ -29,6 +29,7 @@ architecture contracts.
 - [DESKTOP_DESIGN.md](DESKTOP_DESIGN.md) — desktop shell and platform-adapter boundaries.
 - [TABLET_UX_DESIGN.md](TABLET_UX_DESIGN.md) — tablet interaction, command-surface, layout, and focus contracts.
 - [REGION_FEATURE_SEMANTICS.md](REGION_FEATURE_SEMANTICS.md) — regions as machining filters rather than material or standalone targets.
+- [TROCHOIDAL_EDGE_DESIGN.md](TROCHOIDAL_EDGE_DESIGN.md) — trochoidal Edge Route roughing: guide-domain fragmentation, the clearance budget, and the pipeline stages it must bypass.
 - [INTEGRATION_HANDOFF_TEMPLATE.md](INTEGRATION_HANDOFF_TEMPLATE.md) — optional execution-ledger template for explicitly delegated, multi-slice work.
 - [I18N_MULTI_LANGUAGE_HANDOFF.md](I18N_MULTI_LANGUAGE_HANDOFF.md) — active execution ledger for issue #314 (multi-language support) on `feat/issue-314-multi-language`.
 - [THEME_TOKENIZATION_HANDOFF.md](THEME_TOKENIZATION_HANDOFF.md) — colour policy and active execution ledger for issue #341 (complete theme tokenization).
