@@ -311,9 +311,12 @@ export function defaultOperationForTarget(
     pocketPattern: kind === 'finish_surface' || kind === 'finish_surface_cleanup' ? 'parallel' : 'offset',
     pocketAngle: 0,
     ...(isEdge ? { edgeStrategy: 'contour' as const } : {}),
+    // trochoidalCutWidth and trochoidalAdvance are deliberately NOT seeded.
+    // Left undefined they resolve against the operation's current tool
+    // (1.5 x D and 0.1 x D) everywhere they are read, so assigning a different
+    // cutter re-derives the channel. Writing a value here would pin it to
+    // whichever tool happened to be selected when the operation was created.
     ...(isRoughEdge ? {
-      trochoidalCutWidth: tool.diameter * 1.5,
-      trochoidalAdvance: 0.1,
       entryStrategy: 'helix' as const,
       entryRampAngle: 5,
     } : {}),

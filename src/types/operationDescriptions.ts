@@ -25,6 +25,28 @@ interface OperationDescription {
   exampleImageName: string
 }
 
+/**
+ * Catalog-key segment per kind: `cam.opDesc.<segment>.<slot>`.
+ *
+ * Lives beside the descriptions themselves because the UI renders one bullet
+ * per entry in `keyPoints` but takes the *text* from the catalog. If the two
+ * drift, the surplus bullets render blank — see operationDescriptions.test.ts,
+ * which holds them in step.
+ */
+export const OPERATION_DESCRIPTION_SEGMENT: Record<OperationKind, string> = {
+  pocket: 'pocket',
+  v_carve: 'vCarve',
+  v_carve_medial: 'vCarveMedial',
+  edge_route_inside: 'edgeRouteInside',
+  edge_route_outside: 'edgeRouteOutside',
+  surface_clean: 'surfaceClean',
+  rough_surface: 'roughSurface',
+  finish_surface: 'finishSurface',
+  finish_surface_cleanup: 'finishSurfaceCleanup',
+  follow_line: 'followLine',
+  drilling: 'drilling',
+}
+
 export const operationDescriptions: Record<OperationKind, OperationDescription> = {
   pocket: {
     title: 'Pocket',
@@ -78,7 +100,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     keyPoints: [
       'Requires one or more closed subtract profiles',
       'Contour or trochoidal roughing strategy',
-      'Trochoidal roughing uses helical or plunge entry and requires a contour finish for tabs',
+      'Trochoidal roughing uses Helix or Plunge entry; tabs require Helix',
       'Finish passes always use a contour',
       'Regions are supported by contour routing only',
     ],
@@ -92,7 +114,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     keyPoints: [
       'Requires one or more closed add or model profiles',
       'Contour or trochoidal roughing strategy',
-      'Trochoidal roughing uses helical or plunge entry and requires a contour finish for tabs',
+      'Trochoidal roughing uses Helix or Plunge entry; tabs require Helix',
       'Finish passes always use a contour',
       'Regions are supported by contour routing only',
     ],

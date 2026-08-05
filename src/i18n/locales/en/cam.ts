@@ -136,11 +136,10 @@ export const camEn = {
   'cam.operation.edgeStrategy': 'Strategy',
   'cam.operation.edgeStrategyContour': 'Contour',
   'cam.operation.edgeStrategyTrochoidal': 'Trochoidal',
-  'cam.operation.trochoidalCutWidth': 'Trochoidal Cut Width',
-  'cam.operation.trochoidalAdvance': 'Advance per Loop',
+  'cam.operation.trochoidalCutWidth': 'Trochoidal Cut Width', 'cam.operation.trochoidalCutWidthBelowFloor': 'Cut width is below the {minimum} minimum for this tool; no toolpath will be generated.',
   'cam.operation.trochoidalAdvancePercent': 'Advance per Loop (% of tool diameter)',
   'cam.operation.trochoidalAdvanceDistance': 'Advance per Loop (distance)',
-  'cam.operation.trochoidalAdvanceTooltip': 'Stored as a fraction of tool diameter; the displayed distance changes with the selected tool.',
+  'cam.operation.trochoidalAdvanceTooltip': 'Stored as a percentage of tool diameter, so it follows the assigned tool. The distance below is derived.',
   'cam.operation.contourSpacing': 'Contour Spacing',
   'cam.operation.stepoverRatio': 'Stepover Ratio',
   'cam.operation.advanced': 'Advanced',
@@ -330,7 +329,7 @@ export const camEn = {
   'cam.library.failed': 'Failed to load tool library.',
 
   // ── Parameter reference diagram labels ──
-  'cam.paramRef.stepdown': 'Stepdown reference',
+  'cam.paramRef.stepdown': 'Stepdown reference', 'cam.paramRef.edgeStrategy': 'Strategy', 'cam.paramRef.trochoidalCutWidth': 'Trochoidal Cut Width', 'cam.paramRef.trochoidalAdvance': 'Advance per Loop',
   'cam.paramRef.stepover': 'Stepover reference',
   'cam.paramRef.maxDepth': 'Max depth reference',
   'cam.paramRef.retractHeight': 'Retract height reference',
@@ -395,8 +394,8 @@ export const camEn = {
     'Edge Route Inside follows the inside edge of one or more closed subtract profiles. A contour pass offsets inward by the tool radius; rough passes can instead use trochoidal loops to reduce radial engagement while leaving stock for a contour finish.',
   'cam.opDesc.edgeRouteInside.keyPoint.0': 'Requires one or more closed subtract profiles',
   'cam.opDesc.edgeRouteInside.keyPoint.1': 'Contour or trochoidal roughing strategy',
-  'cam.opDesc.edgeRouteInside.keyPoint.2': 'Trochoidal roughing uses Helix or Plunge entry; contour finish carries tabs',
-  'cam.opDesc.edgeRouteInside.keyPoint.3': 'Regions are supported by contour routing only',
+  'cam.opDesc.edgeRouteInside.keyPoint.2': 'Trochoidal roughing uses Helix or Plunge entry; tabs require Helix',
+  'cam.opDesc.edgeRouteInside.keyPoint.3': 'Finish passes always use a contour', 'cam.opDesc.edgeRouteInside.keyPoint.4': 'Regions are supported by contour routing only',
 
   // Edge route outside
   'cam.opDesc.edgeRouteOutside.title': 'Edge Route Outside',
@@ -404,8 +403,8 @@ export const camEn = {
     'Edge Route Outside follows the outside edge of one or more closed add or model profiles. A contour pass offsets outward by the tool radius; rough passes can instead use trochoidal loops to reduce radial engagement while leaving stock for a contour finish.',
   'cam.opDesc.edgeRouteOutside.keyPoint.0': 'Requires one or more closed add or model profiles',
   'cam.opDesc.edgeRouteOutside.keyPoint.1': 'Contour or trochoidal roughing strategy',
-  'cam.opDesc.edgeRouteOutside.keyPoint.2': 'Trochoidal roughing uses Helix or Plunge entry; contour finish carries tabs',
-  'cam.opDesc.edgeRouteOutside.keyPoint.3': 'Regions are supported by contour routing only',
+  'cam.opDesc.edgeRouteOutside.keyPoint.2': 'Trochoidal roughing uses Helix or Plunge entry; tabs require Helix',
+  'cam.opDesc.edgeRouteOutside.keyPoint.3': 'Finish passes always use a contour', 'cam.opDesc.edgeRouteOutside.keyPoint.4': 'Regions are supported by contour routing only',
 
   // Surface clean
   'cam.opDesc.surfaceClean.title': 'Surface Clean',

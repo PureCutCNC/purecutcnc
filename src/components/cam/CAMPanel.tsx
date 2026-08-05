@@ -1100,6 +1100,17 @@ export function CAMPanel({
       : selectedOperationTool
     const trochoidalToolDiameter = trochoidalTool?.diameter ?? 0
     const trochoidalAdvance = selectedOperation.trochoidalAdvance ?? 0.1
+    // Undefined means "follow the tool". Only an explicit edit pins the value,
+    // so swapping cutters re-derives the channel instead of leaving a width
+    // that belonged to the previous tool.
+    const trochoidalCutWidth = selectedOperation.trochoidalCutWidth ?? trochoidalToolDiameter * 1.5
+    const trochoidalCutWidthFloor = trochoidalToolDiameter * 1.15
+    // A pinned width can fall under the floor when the tool grows. The engine
+    // refuses to generate in that case, so say so at the field rather than
+    // leaving the user to find it in the warnings list.
+    const trochoidalCutWidthBelowFloor = isTrochoidalRoughEdge
+      && trochoidalToolDiameter > 0
+      && trochoidalCutWidth < trochoidalCutWidthFloor
     const supportsEntryStrategy = selectedOperation.kind === 'pocket'
       || selectedOperation.kind === 'surface_clean'
       || selectedOperation.kind === 'rough_surface'
@@ -1324,17 +1335,14 @@ export function CAMPanel({
                           { value: 'contour', label: camT('cam.operation.edgeStrategyContour') },
                           { value: 'trochoidal', label: camT('cam.operation.edgeStrategyTrochoidal') },
                         ]}
-                        onChange={(edgeStrategy) => updateOperation(selectedOperation.id, {
-                          edgeStrategy,
-                          ...(edgeStrategy === 'trochoidal' ? {
-                            trochoidalCutWidth: selectedOperation.trochoidalCutWidth ?? trochoidalToolDiameter * 1.5,
-                            trochoidalAdvance: selectedOperation.trochoidalAdvance ?? 0.1,
-                            entryStrategy: selectedOperation.entryStrategy === 'plunge' ? 'plunge' : 'helix',
-                            entryRampAngle: selectedOperation.entryRampAngle ?? 5,
-                            machiningOrder: 'level_first' as const,
-                          } : {}),
-                        })}
+                        // Write only the strategy. Cut width and advance stay
+                        // undefined until the user edits them so they keep
+                        // tracking the assigned tool, and machiningOrder is left
+                        // alone so switching back to Contour does not silently
+                        // discard the user's choice (trochoidal ignores it).
+                        onChange={(edgeStrategy) => updateOperation(selectedOperation.id, { edgeStrategy })}
                       />
+                      <OperationParameterReference kind="edgeStrategy" variant={selectedOperation.edgeStrategy ?? 'contour'} />
                     </label>
                   ) : null}
                   {isTrochoidalRoughEdge ? (
@@ -1342,38 +1350,46 @@ export function CAMPanel({
                       <label className="properties-field">
                         <span>{camT('cam.operation.trochoidalCutWidth')}</span>
                         <DraftLengthInput
-                          value={selectedOperation.trochoidalCutWidth ?? trochoidalToolDiameter * 1.5}
+                          value={trochoidalCutWidth}
                           units={project.meta.units}
-                          min={Math.max(0.0001, trochoidalToolDiameter * 1.15)}
+                          min={Math.max(0.0001, trochoidalCutWidthFloor)}
                           onCommit={(value) => updateOperation(selectedOperation.id, { trochoidalCutWidth: value })}
                         />
+                        <OperationParameterReference kind="trochoidalCutWidth" />
                       </label>
+                      {trochoidalCutWidthBelowFloor ? (
+                        <div className="properties-field">
+                          <span />
+                          <span className="cam-field-message">
+                            {camT('cam.operation.trochoidalCutWidthBelowFloor', {
+                              minimum: formatLength(trochoidalCutWidthFloor, project.meta.units),
+                            })}
+                          </span>
+                        </div>
+                      ) : null}
                       <label className="properties-field">
                         <span>{camT('cam.operation.trochoidalAdvancePercent')}</span>
+                        {/* Percent of tool diameter is the only stored form. An
+                            absolute-distance twin fought this field: each wrote
+                            the same ratio back through a rounded display, so
+                            editing either nudged the other. The distance is
+                            shown derived instead. */}
                         <DraftNumberInput
                           value={trochoidalAdvance * 100}
-                          min={0.001}
+                          min={1}
                           max={100}
                           onCommit={(value) => updateOperation(selectedOperation.id, {
-                            trochoidalAdvance: Math.min(1, Math.max(0.00001, value / 100)),
+                            trochoidalAdvance: Math.min(1, Math.max(0.01, value / 100)),
                           })}
                         />
+                        <OperationParameterReference kind="trochoidalAdvance" />
                       </label>
-                      <label className="properties-field">
+                      <div className="properties-field">
                         <span>{camT('cam.operation.trochoidalAdvanceDistance')}</span>
-                        <DraftLengthInput
-                          value={trochoidalAdvance * trochoidalToolDiameter}
-                          units={project.meta.units}
-                          min={0.0001}
-                          onCommit={(value) => {
-                            if (trochoidalToolDiameter > 0) {
-                              updateOperation(selectedOperation.id, {
-                                trochoidalAdvance: Math.min(1, Math.max(0.00001, value / trochoidalToolDiameter)),
-                              })
-                            }
-                          }}
-                        />
-                      </label>
+                        <span className="cam-field-derived">
+                          {formatLength(trochoidalAdvance * trochoidalToolDiameter, project.meta.units)}
+                        </span>
+                      </div>
                     </>
                   ) : null}
                   {selectedOperation.kind !== 'follow_line'
@@ -1521,7 +1537,7 @@ export function CAMPanel({
                   ) : null}
                   {(selectedOperation.kind === 'pocket'
                     || selectedOperation.kind === 'edge_route_inside'
-                    || selectedOperation.kind === 'edge_route_outside') && !isTrochoidalRoughEdge ? (
+                    || selectedOperation.kind === 'edge_route_outside') ? (
                     <label className="properties-field">
                       <span>{camT('cam.operation.machiningOrder')}</span>
                       <Select

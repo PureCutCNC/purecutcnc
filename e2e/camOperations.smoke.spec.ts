@@ -98,12 +98,13 @@ test.describe('CAM operation browser smoke', () => {
     await expect(app.page.getByText('Trochoidal Cut Width', { exact: true })).toBeVisible()
     await expect(app.page.getByText('Advance per Loop (% of tool diameter)', { exact: true })).toBeVisible()
     await expect(app.page.getByText('Advance per Loop (distance)', { exact: true })).toBeVisible()
-    await expect(app.page.getByText('Machining Order', { exact: true })).toHaveCount(0)
     await expect(app.page.getByRole('button', { name: 'Create rest operation', exact: true })).toBeDisabled()
     await expect(app.page.getByText('Rest machining is unavailable for trochoidal edge routing.', { exact: true })).toBeVisible()
 
     await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
     await expect(app.page.getByText('Entry', { exact: true })).toBeVisible()
+    // Trochoidal honours both machining orders, so the control stays available.
+    await expect(app.page.getByText('Machining Order', { exact: true })).toBeVisible()
     const entryField = ui.cam.operationField(app.page, 'Entry Strategy')
     await expect(entryField.locator('.ui-select__label')).toHaveText('Helix')
     await entryField.locator('.ui-select__trigger').click()
@@ -116,10 +117,18 @@ test.describe('CAM operation browser smoke', () => {
     expect(operations[0].kind).toBe('edge_route_outside')
     expect(operations[0].pass).toBe('rough')
     expect(operations[0].edgeStrategy).toBe('trochoidal')
-    expect(operations[0].trochoidalCutWidth).toEqual(expect.any(Number))
-    expect(operations[0].trochoidalAdvance).toBe(0.1)
+    // Selecting the strategy must NOT pin the tool-derived settings. They stay
+    // undefined so the displayed 1.5 x D width and 10% advance keep following
+    // whichever tool the operation is assigned; only an explicit edit stores a
+    // value. The panel above already asserted both fields render.
+    expect(operations[0].trochoidalCutWidth).toBeUndefined()
+    expect(operations[0].trochoidalAdvance).toBeUndefined()
     expect(operations[0].entryStrategy).toBe('helix')
-    expect(operations[0].machiningOrder).toBe('level_first')
+    // Selecting Trochoidal must not rewrite machiningOrder. Generation is
+    // level-first for trochoidal regardless (the engine skips the feature-first
+    // block reordering) and the control is hidden above, so forcing the stored
+    // value would only discard the user's choice for when they switch back.
+    expect(operations[0].machiningOrder).toBe(contourOperations[0]?.machiningOrder)
     expect(operations[0].target?.source).toBe('features')
     expect(operations[0].target?.featureIds).toEqual(['f-machinable-add'])
   })

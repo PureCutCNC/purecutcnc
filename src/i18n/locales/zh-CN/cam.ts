@@ -137,11 +137,10 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.edgeStrategy': '策略',
   'cam.operation.edgeStrategyContour': '轮廓',
   'cam.operation.edgeStrategyTrochoidal': '摆线',
-  'cam.operation.trochoidalCutWidth': '摆线切削宽度',
-  'cam.operation.trochoidalAdvance': '每圈推进量',
+  'cam.operation.trochoidalCutWidth': '摆线切削宽度', 'cam.operation.trochoidalCutWidthBelowFloor': '切削宽度低于该刀具的最小值 {minimum}，将不会生成刀具路径。',
   'cam.operation.trochoidalAdvancePercent': '每圈推进量（刀具直径百分比）',
   'cam.operation.trochoidalAdvanceDistance': '每圈推进量（距离）',
-  'cam.operation.trochoidalAdvanceTooltip': '该值按刀具直径比例存储；显示的距离会随所选刀具变化。',
+  'cam.operation.trochoidalAdvanceTooltip': '按刀具直径的百分比存储，因此会随所选刀具变化。下方距离为推导值。',
   'cam.operation.contourSpacing': '轮廓间距',
   'cam.operation.stepoverRatio': '横向步距比',
   'cam.operation.advanced': '高级',
@@ -328,7 +327,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.library.failed': '加载刀具库失败。',
 
   // ── Parameter reference diagram labels ──
-  'cam.paramRef.stepdown': '下刀步距参考',
+  'cam.paramRef.stepdown': '下刀步距参考', 'cam.paramRef.edgeStrategy': '策略', 'cam.paramRef.trochoidalCutWidth': '摆线切削宽度', 'cam.paramRef.trochoidalAdvance': '每圈进给',
   'cam.paramRef.stepover': '横向步距参考',
   'cam.paramRef.maxDepth': '最大深度参考',
   'cam.paramRef.retractHeight': '退刀高度参考',
@@ -389,16 +388,16 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
     '内缘走刀沿一个或多个闭合减法轮廓的内侧边缘走刀。轮廓走刀按刀具半径向内偏移；粗加工也可使用摆线环来降低径向吃刀量，并为轮廓精加工留出余量。',
   'cam.opDesc.edgeRouteInside.keyPoint.0': '需要一个或多个闭合的减法轮廓',
   'cam.opDesc.edgeRouteInside.keyPoint.1': '支持轮廓或摆线粗加工策略',
-  'cam.opDesc.edgeRouteInside.keyPoint.2': '摆线粗加工使用螺旋或垂直下刀；连接桥由轮廓精加工处理',
-  'cam.opDesc.edgeRouteInside.keyPoint.3': '区域仅由轮廓走刀支持',
+  'cam.opDesc.edgeRouteInside.keyPoint.2': '摆线粗加工使用螺旋或垂直下刀；连接桥要求螺旋下刀',
+  'cam.opDesc.edgeRouteInside.keyPoint.3': '精加工始终使用轮廓走刀', 'cam.opDesc.edgeRouteInside.keyPoint.4': '区域仅由轮廓走刀支持',
 
   'cam.opDesc.edgeRouteOutside.title': '外缘走刀',
   'cam.opDesc.edgeRouteOutside.fullDescription':
     '外缘走刀沿一个或多个闭合加法或模型轮廓的外侧边缘走刀。轮廓走刀按刀具半径向外偏移；粗加工也可使用摆线环来降低径向吃刀量，并为轮廓精加工留出余量。',
   'cam.opDesc.edgeRouteOutside.keyPoint.0': '需要一个或多个闭合的加法或模型轮廓',
   'cam.opDesc.edgeRouteOutside.keyPoint.1': '支持轮廓或摆线粗加工策略',
-  'cam.opDesc.edgeRouteOutside.keyPoint.2': '摆线粗加工使用螺旋或垂直下刀；连接桥由轮廓精加工处理',
-  'cam.opDesc.edgeRouteOutside.keyPoint.3': '区域仅由轮廓走刀支持',
+  'cam.opDesc.edgeRouteOutside.keyPoint.2': '摆线粗加工使用螺旋或垂直下刀；连接桥要求螺旋下刀',
+  'cam.opDesc.edgeRouteOutside.keyPoint.3': '精加工始终使用轮廓走刀', 'cam.opDesc.edgeRouteOutside.keyPoint.4': '区域仅由轮廓走刀支持',
 
   'cam.opDesc.surfaceClean.title': '表面清理',
   'cam.opDesc.surfaceClean.fullDescription':

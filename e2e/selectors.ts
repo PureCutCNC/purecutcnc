@@ -210,8 +210,15 @@ export const newProjectDialog = {
 // ── CAM operation properties ───────────────────────────────────────
 
 export const cam = {
+  /**
+   * The operation-properties row whose label is exactly `label`. Anchored on the
+   * `.properties-field` row rather than "parent of the text node", so wrapping a
+   * field in another element does not silently retarget the locator, and scoped
+   * to the operation panel so a matching word elsewhere cannot claim it.
+   */
   operationField: (page: Page, label: string) =>
-    page.getByText(label, { exact: true }).locator('..'),
+    page.locator('.cam-operation-properties .properties-field')
+      .filter({ has: page.getByText(label, { exact: true }) }),
 }
 
 // ── Feature tree ────────────────────────────────────────────────────

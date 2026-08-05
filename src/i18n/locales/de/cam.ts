@@ -133,11 +133,10 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.edgeStrategy': 'Strategie',
   'cam.operation.edgeStrategyContour': 'Kontur',
   'cam.operation.edgeStrategyTrochoidal': 'Trochoidal',
-  'cam.operation.trochoidalCutWidth': 'Trochoidale Schnittbreite',
-  'cam.operation.trochoidalAdvance': 'Vorschub pro Umlauf',
+  'cam.operation.trochoidalCutWidth': 'Trochoidale Schnittbreite', 'cam.operation.trochoidalCutWidthBelowFloor': 'Schnittbreite liegt unter dem Minimum von {minimum} für dieses Werkzeug; es wird kein Werkzeugweg erzeugt.',
   'cam.operation.trochoidalAdvancePercent': 'Vorschub pro Umlauf (% des Werkzeugdurchmessers)',
   'cam.operation.trochoidalAdvanceDistance': 'Vorschub pro Umlauf (Strecke)',
-  'cam.operation.trochoidalAdvanceTooltip': 'Wird als Anteil des Werkzeugdurchmessers gespeichert; die angezeigte Strecke ändert sich mit dem gewählten Werkzeug.',
+  'cam.operation.trochoidalAdvanceTooltip': 'Wird als Prozentsatz des Werkzeugdurchmessers gespeichert und folgt daher dem zugewiesenen Werkzeug. Die Distanz darunter ist abgeleitet.',
   'cam.operation.contourSpacing': 'Konturabstand',
   'cam.operation.stepoverRatio': 'Bahnabstand-Verhältnis',
   'cam.operation.advanced': 'Erweitert',
@@ -327,7 +326,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.library.failed': 'Werkzeugbibliothek konnte nicht geladen werden.',
 
   // ── Parameter reference diagram labels ──
-  'cam.paramRef.stepdown': 'Referenz für Zustellung',
+  'cam.paramRef.stepdown': 'Referenz für Zustellung', 'cam.paramRef.edgeStrategy': 'Strategie', 'cam.paramRef.trochoidalCutWidth': 'Trochoidale Schnittbreite', 'cam.paramRef.trochoidalAdvance': 'Vorschub pro Schleife',
   'cam.paramRef.stepover': 'Referenz für Bahnabstand',
   'cam.paramRef.maxDepth': 'Referenz für maximale Tiefe',
   'cam.paramRef.retractHeight': 'Referenz für Rückzugshöhe',
@@ -392,8 +391,8 @@ export const camDe: Record<keyof typeof camEn, string> = {
     'Kontur innen folgt der Innenkante eines oder mehrerer geschlossener Abzieh-Profile. Ein Konturdurchgang wird um den Werkzeugradius nach innen versetzt; Schruppdurchgänge können stattdessen trochoidale Schleifen verwenden, um den radialen Eingriff zu verringern und Aufmaß für einen Kontur-Schlichtgang zu lassen.',
   'cam.opDesc.edgeRouteInside.keyPoint.0': 'Erfordert ein oder mehrere geschlossene Abzieh-Profile',
   'cam.opDesc.edgeRouteInside.keyPoint.1': 'Kontur- oder trochoidale Schruppstrategie',
-  'cam.opDesc.edgeRouteInside.keyPoint.2': 'Trochoidales Schruppen nutzt Helix- oder Senkrechteinstieg; Kontur-Schlichten trägt die Stege',
-  'cam.opDesc.edgeRouteInside.keyPoint.3': 'Bereiche werden nur von Konturfräsung unterstützt',
+  'cam.opDesc.edgeRouteInside.keyPoint.2': 'Trochoidales Schruppen nutzt Helix- oder Senkrechteinstieg; Stege erfordern Helix',
+  'cam.opDesc.edgeRouteInside.keyPoint.3': 'Schlichtgänge nutzen immer die Kontur', 'cam.opDesc.edgeRouteInside.keyPoint.4': 'Bereiche werden nur von Konturfräsung unterstützt',
 
   // Edge route outside
   'cam.opDesc.edgeRouteOutside.title': 'Kontur außen',
@@ -401,8 +400,8 @@ export const camDe: Record<keyof typeof camEn, string> = {
     'Kontur außen folgt der Außenkante eines oder mehrerer geschlossener Hinzufügen- oder Modell-Profile. Ein Konturdurchgang wird um den Werkzeugradius nach außen versetzt; Schruppdurchgänge können stattdessen trochoidale Schleifen verwenden, um den radialen Eingriff zu verringern und Aufmaß für einen Kontur-Schlichtgang zu lassen.',
   'cam.opDesc.edgeRouteOutside.keyPoint.0': 'Erfordert ein oder mehrere geschlossene Hinzufügen- oder Modell-Profile',
   'cam.opDesc.edgeRouteOutside.keyPoint.1': 'Kontur- oder trochoidale Schruppstrategie',
-  'cam.opDesc.edgeRouteOutside.keyPoint.2': 'Trochoidales Schruppen nutzt Helix- oder Senkrechteinstieg; Kontur-Schlichten trägt die Stege',
-  'cam.opDesc.edgeRouteOutside.keyPoint.3': 'Bereiche werden nur von Konturfräsung unterstützt',
+  'cam.opDesc.edgeRouteOutside.keyPoint.2': 'Trochoidales Schruppen nutzt Helix- oder Senkrechteinstieg; Stege erfordern Helix',
+  'cam.opDesc.edgeRouteOutside.keyPoint.3': 'Schlichtgänge nutzen immer die Kontur', 'cam.opDesc.edgeRouteOutside.keyPoint.4': 'Bereiche werden nur von Konturfräsung unterstützt',
 
   // Surface clean
   'cam.opDesc.surfaceClean.title': 'Oberfläche säubern',
