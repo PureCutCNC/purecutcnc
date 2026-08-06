@@ -79,6 +79,7 @@ worker must not re-derive:
 | p3b-carving-waterline-finish | `feat/issue-452-p3b-carving-waterline-finish` | accepted | `2607ce1` | `f85c52e` |
 | p4-trochoidal-regions | `feat/issue-452-p4-trochoidal-regions` | accepted | `c07d678` | `e242175` |
 | p5-delete-clippers | `feat/issue-452-p5-delete-clippers` | accepted | `3374d4b` | `17d5a61` |
+| p6-edge-region-clearance | `feat/issue-452-p6-edge-region-clearance` | accepted | `a0689fd` + `41dfed3` | `1f8f4f6` |
 
 Dependencies: p0 and p1 are independent of everything and of each other. p2, p3
 and p4 each require p1. p5 requires p2, p3 and p4.
@@ -91,6 +92,38 @@ and p4 each require p1. p5 requires p2, p3 and p4.
   merged. Subsequent prompts state the one-commit requirement explicitly and in
   stronger terms; if the pattern repeats, treat it as a launcher-level problem
   rather than a per-slice one.
+
+## The Edge Route clearance rule (found by user testing, fixed in p6)
+
+Every operation behaves the same way at a region boundary: an **include** region
+lets the **tool centre** reach the line (the cut then sweeps a tool radius past,
+unavoidably); an **exclude** region keeps the **tool body** clear. Edge Route did
+not, and user testing caught it — trochoidal cut about a full cut width past an
+include boundary and stopped short of an exclude one.
+
+Cause: p4 used `trochoidalGuideOffset` (`= stockToLeave + cutWidth/2 + 0.01·D`)
+as the region clearance and **dilated by it in both polarities**. A trochoidal
+guide is not the tool-centre path — the tool centre orbits at `orbitRadius`
+around it — so the correct clearances are:
+
+- include → **erode** by `orbitRadius`
+- exclude → **dilate** by `orbitRadius + tool.radius`
+
+Contour Edge Route is the same rule with `orbitRadius = 0`: include `0`
+(already correct), exclude `tool.radius` (was `0`, so the kerf crossed an
+exclude boundary by a full radius — same defect class, fixed in the same slice).
+
+The approved plan said this from the start: *"where a generator has a
+centre-offset of its own — e.g. a trochoidal orbit radius — the domain should be
+inset by that offset so tool-centre containment stays identical."*
+
+`trochoidalGuideOffset` remains correct and unchanged for its original uses:
+retained wall, obstacles, tabs. Only the region clearance moved.
+
+Note that `resolveRegionDomainCurve` originally ignored negative offsets
+(`centreInset > 0` guard), so an erosion request silently did nothing. It now
+takes separate include/exclude offsets, with the exclude defaulting to the
+include so other callers are unchanged.
 
 ## Before the PR opens — required manual regression
 
