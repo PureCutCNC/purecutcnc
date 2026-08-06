@@ -74,7 +74,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeTrochoidalAdvanceRange': 'Der trochoidale Vorschub pro Umlauf muss größer als 0 und höchstens ein Werkzeugdurchmesser sein.',
   'warnings.edgeTrochoidalParametersInvalid': 'Trochoidales Fräsen erfordert positive Werte für Vorschub, Eintauchvorschub und Drehzahl.',
   'warnings.edgeTrochoidalEntryStrategyUnsupported': 'Trochoidales Fräsen unterstützt nur Helix- oder Eintauch-Einstiege.',
-  'warnings.edgeTrochoidalRegionUnsupported': 'Trochoidale Konturfräsung unterstützt keine Regionsmasken.',
+
   'warnings.edgeTrochoidalInvalidGuide': 'Trochoidales Fräsen erfordert eine einzelne gültige geschlossene Führungskontur.',
   'warnings.edgeTrochoidalMoveBudget': 'Trochoidales Fräsen überschreitet das Operationslimit von 500.000 Punkten.',
   'warnings.edgeTrochoidalEntryBudget': 'Der trochoidale Einstieg nahe ({x}, {y}) überschreitet das Einstiegspunktlimit.',

@@ -64,7 +64,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   "warnings.edgeTrochoidalAdvanceRange": "El avance trocoidal debe ser mayor que 0 y no superar un diámetro de herramienta.",
   "warnings.edgeTrochoidalParametersInvalid": "El fresado trocoidal requiere valores positivos de avance, avance de penetración y RPM.",
   "warnings.edgeTrochoidalEntryStrategyUnsupported": "El fresado trocoidal solo admite entrada helicoidal o por penetración.",
-  "warnings.edgeTrochoidalRegionUnsupported": "El fresado de borde trocoidal no admite máscaras de región.",
+
   "warnings.edgeTrochoidalInvalidGuide": "El fresado trocoidal requiere una única guía cerrada válida.",
   "warnings.edgeTrochoidalMoveBudget": "El fresado trocoidal supera el presupuesto de 500.000 puntos de la operación.",
   "warnings.edgeTrochoidalEntryBudget": "La entrada trocoidal cerca de ({x}, {y}) supera el presupuesto de puntos de entrada.",

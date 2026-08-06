@@ -471,12 +471,23 @@ function createTrochoidalFragmentPlanner(
   toolDiameter: number,
   operation: Operation,
   warnings: ToolpathWarning[],
+  regionMask: RegionMask | null = null,
+  regionClearance = 0,
 ): TrochoidalFragmentPlanner {
   return (contour, z, previousZ, orbitRadius) => {
     const activeTabs = activeTabsAtZ(tabs, z)
     const tabPaths = expandedTabPaths(activeTabs, tabGuideClearance)
     const forbidden = unionPaths([...staticForbiddenPaths, ...tabPaths])
-    const depthFragments = splitClosedGuideByForbiddenPaths(contour, forbidden)
+    let depthFragments = splitClosedGuideByForbiddenPaths(contour, forbidden)
+
+    // Apply the region mask after tab/obstacle fragmentation so the guide is
+    // kept inside include regions and outside exclude regions — both with the
+    // orbit + cutter clearance needed to keep generated trochoids out.
+    if (regionMask && regionClearance > 0) {
+      depthFragments = depthFragments.flatMap((fragment) =>
+        resolveRegionDomainCurve(fragment.points, fragment.closed, regionMask, regionClearance))
+    }
+
     const hasOpenDepthFragment = depthFragments.some((fragment) => !fragment.closed)
     if (hasOpenDepthFragment && trochoidalEntryStrategy(operation) !== 'helix') {
       appendUniqueTrochoidalWarning(warnings, {
@@ -525,7 +536,11 @@ function createTrochoidalFragmentPlanner(
       expandedTabPaths(crossingTabs, tabGuideClearance),
       'inside',
     )
-    for (const fragment of shallowFragments) {
+    const regionFilteredShallow = regionMask && regionClearance > 0
+      ? shallowFragments.flatMap((fragment) =>
+        resolveRegionDomainCurve(fragment.points, fragment.closed, regionMask, regionClearance))
+      : shallowFragments
+    for (const fragment of regionFilteredShallow) {
       // Height comes from EVERY tab covering the span, not just the crossing
       // ones. Where a short tab overlaps a taller one, the taller top wins —
       // taking the crossing tab's own top would machine the taller tab away
@@ -650,7 +665,6 @@ function hasFatalTrochoidalWarning(warnings: ToolpathWarning[]): boolean {
     || warning.code === 'edgeTrochoidalTabUnsafe'
     || warning.code === 'edgeTrochoidalNoSurvivingSpan'
     || warning.code === 'edgeTrochoidalSafetyCheck'
-    || warning.code === 'edgeTrochoidalRegionUnsupported'
     || warning.code === 'edgeTrochoidalWidthTooSmall'
     || warning.code === 'edgeTrochoidalAdvanceRange'
     || warning.code === 'targetsMissingOrWrongRole'
@@ -1042,14 +1056,6 @@ function generateEdgeRouteToolpathSingle(
   if (isTrochoidal && trochoidalCutWidth > tool.diameter * 2) {
     warnings.push({ code: 'edgeTrochoidalWidthLeavesCore' })
   }
-  if (isTrochoidal && splitTargets.regionFeatures.length > 0) {
-    return {
-      operationId: operation.id,
-      moves: [],
-      warnings: [...warnings, { code: 'edgeTrochoidalRegionUnsupported' }],
-      bounds: null,
-    }
-  }
   const maxFeatureDepth = targetFeatures.reduce((max, feature) => {
     const span = resolveFeatureZSpan(project, feature)
     return Math.max(max, span.height)
@@ -1183,6 +1189,8 @@ function generateEdgeRouteToolpathSingle(
             tool.diameter,
             operation,
             warnings,
+            regionMask,
+            trochoidalGuideOffset,
           ),
         )
         if (hasFatalTrochoidalWarning(warnings)) break
@@ -1372,6 +1380,8 @@ function generateEdgeRouteToolpathSingle(
               tool.diameter,
               operation,
               warnings,
+              regionMask,
+              trochoidalGuideOffset,
             ),
           )
         } else {
@@ -1444,6 +1454,8 @@ function generateEdgeRouteToolpathSingle(
             tool.diameter,
             operation,
             warnings,
+            regionMask,
+            trochoidalGuideOffset,
           ),
         )
         if (hasFatalTrochoidalWarning(warnings)) break

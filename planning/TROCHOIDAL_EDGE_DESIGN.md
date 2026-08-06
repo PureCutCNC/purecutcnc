@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: trochoidal Edge Route roughing — guide-domain fragmentation, clearance budget, and the pipeline stages it must bypass
-last-verified: 2026-08-05
+last-verified: 2026-08-06
 ---
 
 # Trochoidal Edge Routing
@@ -23,7 +23,11 @@ this first.
 
 - Rough pass only. A finish pass is always a contour, on both edge kinds.
 - Closed guides only.
-- Region masks refuse (`edgeTrochoidalRegionUnsupported`); see #452.
+- Region masks participate in guide-domain fragmentation via
+  `resolveRegionDomainCurve` before any orbit exists, using the same
+  `trochoidalGuideOffset` clearance that obstacles use. Exclude regions keep the
+  tool body clear; include regions constrain the guide to the mask. Both follow
+  ordered mask composition from `buildRegionMask`.
 
 Both machining orders are supported — see below. The plan originally scoped
 `feature_first` out; it was enabled once the two things it actually needed were
@@ -164,12 +168,13 @@ but the footprint shape and the offset tolerance come from one place.
 
 Each has a comment at its site pointing here.
 
-1. **Trochoidal output must never reach `clipToolpathResultToObstaclesByLevel`
-   or `clipToolpathResultToRegionMask`.** Both drop every non-`cut` move and
-   re-link the survivors with vertical plunges, silently deleting the helical
-   entries. Contour edge routes have no entry strategies, so that defect is
-   latent for them; routing trochoidal through it is what would make it live.
-   Tracked in #452.
+1. **Interruptions are planned in the guide domain before any orbit exists.** The
+   closed guide is split against the forbidden set (tabs, obstacles, and region
+   excludes — each expanded by the single `trochoidalGuideOffset` clearance) and
+   the allowed set (region includes, via `resolveRegionDomainCurve` with the same
+   clearance). A generated orbit must never be clipped, and every fragment is
+   independently helix-entered. Region masks no longer refuse; they participate in
+   the same guide-domain fragmentation.
 2. **Trochoidal must bypass the shared tab pass.** `useToolpathGeneration` calls
    `applyEdgeRouteTabs`, which returns trochoidal results untouched. The shared
    pass expands tab footprints by `toolRadius + stockToLeaveRadial` while the
