@@ -74,8 +74,9 @@ worker must not re-derive:
 | p0-rough-surface-guard | `feat/issue-452-p0-rough-surface-guard` | accepted | `330cd76` | `f62924a` |
 | p1-region-domain-resolver | `feat/issue-452-p1-region-domain-resolver` | accepted | `e302911` | `8b96d33` |
 | p2-area-generators | `feat/issue-452-p2-area-generators` | accepted with gap | `6731fef` | `0b24579` |
-| p2b-centre-domain-containment | `feat/issue-452-p2b-centre-domain-containment` | dispatched | — | — |
-| p3-curve-generators | `feat/issue-452-p3-curve-generators` | pending | — | — |
+| p2b-centre-domain-containment | `feat/issue-452-p2b-centre-domain-containment` | accepted | `de7b117` + `a6f2359` | `03eecef` |
+| p3a-edge-route-curve-domain | `feat/issue-452-p3a-edge-route-curve-domain` | dispatched | — | — |
+| p3b-carving-waterline-finish | `feat/issue-452-p3b-carving-waterline-finish` | pending | — | — |
 | p4-trochoidal-regions | `feat/issue-452-p4-trochoidal-regions` | pending | — | — |
 | p5-delete-clippers | `feat/issue-452-p5-delete-clippers` | pending | — | — |
 
