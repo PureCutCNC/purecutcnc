@@ -71,8 +71,8 @@ worker must not re-derive:
 
 | Slice | Branch | Status | Commit | Merged |
 | --- | --- | --- | --- | --- |
-| p0-rough-surface-guard | `feat/issue-452-p0-rough-surface-guard` | pending | — | — |
-| p1-region-domain-resolver | `feat/issue-452-p1-region-domain-resolver` | pending | — | — |
+| p0-rough-surface-guard | `feat/issue-452-p0-rough-surface-guard` | accepted | `330cd76` | `f62924a` |
+| p1-region-domain-resolver | `feat/issue-452-p1-region-domain-resolver` | dispatched | — | — |
 | p2-area-generators | `feat/issue-452-p2-area-generators` | pending | — | — |
 | p3-curve-generators | `feat/issue-452-p3-curve-generators` | pending | — | — |
 | p4-trochoidal-regions | `feat/issue-452-p4-trochoidal-regions` | pending | — | — |
@@ -80,6 +80,15 @@ worker must not re-derive:
 
 Dependencies: p0 and p1 are independent of everything and of each other. p2, p3
 and p4 each require p1. p5 requires p2, p3 and p4.
+
+## Worker protocol notes
+
+- **p0 reported `STATUS: complete` with `COMMIT: none`.** The diff, tests and
+  build gate were all correct and independently verified, but the worker left
+  the work staged-but-uncommitted. The manager committed the reviewed diff and
+  merged. Subsequent prompts state the one-commit requirement explicitly and in
+  stronger terms; if the pattern repeats, treat it as a launcher-level problem
+  rather than a per-slice one.
 
 ## Notes
 
