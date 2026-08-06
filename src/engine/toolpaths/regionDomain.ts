@@ -1,0 +1,319 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import type { Point } from '../../types/project'
+import { DEFAULT_CLIPPER_SCALE } from './geometry'
+import { splitClosedGuideByForbiddenPaths, type ClosedGuideFragment } from './guideFragments'
+import { differenceClipperPaths, intersectClipperPaths, offsetClipperPaths, unionClipperPaths } from './modelProtection'
+import type { RegionMask } from './regions'
+import type { ClipperPath } from './types'
+
+/**
+ * Resolve a region mask into an area domain (polygon set) so the generator
+ * receives already-valid geometry.  `centreInset` is `tool.radius +
+ * stockToLeaveRadial`, computed once per operation.
+ *
+ * For an **include** region the resolver pre-dilates by `centreInset` to cancel
+ * the generator's own erosion.  For an **exclude** region the raw paths are
+ * subtracted — the generator's erosion supplies the required clearance.
+ *
+ * Ordered composition matches `buildRegionMask`: the first entry sets the
+ * starting state (empty for include, full domain for exclude); later includes
+ * add, later excludes remove.  The result is always constrained to the original
+ * `domain`.
+ */
+export function resolveRegionDomainArea(
+  domain: ClipperPath[],
+  mask: RegionMask | null,
+  centreInset: number,
+): ClipperPath[] {
+  if (mask === null) return domain
+  if (domain.length === 0) return []
+
+  const entries = mask.entries
+  if (entries.length === 0) return domain
+
+  const firstMode = entries[0].mode
+  let accumulator: ClipperPath[] = firstMode === 'include' ? [] : domain
+
+  for (const entry of entries) {
+    if (entry.paths.length === 0) continue
+    if (entry.mode === 'include') {
+      const dilated = centreInset > 0 ? offsetClipperPaths(entry.paths, centreInset) : entry.paths
+      accumulator = unionClipperPaths([...accumulator, ...dilated])
+    } else {
+      accumulator = differenceClipperPaths(accumulator, entry.paths)
+    }
+  }
+
+  // Always constrain to the original domain so coverage over-reach cannot
+  // introduce cuts the unmasked operation would never have made.
+  return intersectClipperPaths(accumulator, domain)
+}
+
+/**
+ * Compute a bounding-axis-aligned Clipper rectangle that comfortably encloses
+ * both the world-space guide and every entry's (already Clipper-space) paths.
+ * The caller uses this as the initial "everything" domain when the first mask
+ * entry is `exclude`.
+ */
+function buildClipperBoundingBox(guide: Point[], entries: Array<{ paths: ClipperPath[] }>): ClipperPath {
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+
+  for (const point of guide) {
+    if (point.x < minX) minX = point.x
+    if (point.y < minY) minY = point.y
+    if (point.x > maxX) maxX = point.x
+    if (point.y > maxY) maxY = point.y
+  }
+
+  for (const entry of entries) {
+    for (const path of entry.paths) {
+      for (const pt of path) {
+        const wx = pt.X / DEFAULT_CLIPPER_SCALE
+        const wy = pt.Y / DEFAULT_CLIPPER_SCALE
+        if (wx < minX) minX = wx
+        if (wy < minY) minY = wy
+        if (wx > maxX) maxX = wx
+        if (wy > maxY) maxY = wy
+      }
+    }
+  }
+
+  const margin = Math.max((maxX - minX) * 0.25, (maxY - minY) * 0.25, 10)
+  const scale = DEFAULT_CLIPPER_SCALE
+  return [
+    { X: Math.round((minX - margin) * scale), Y: Math.round((minY - margin) * scale) },
+    { X: Math.round((maxX + margin) * scale), Y: Math.round((minY - margin) * scale) },
+    { X: Math.round((maxX + margin) * scale), Y: Math.round((maxY + margin) * scale) },
+    { X: Math.round((minX - margin) * scale), Y: Math.round((maxY + margin) * scale) },
+  ]
+}
+
+/**
+ * Resolve a region mask into curve-guide fragments.  A curve generator's guide
+ * *is* the tool-centre path — no further erosion happens — so both polarities
+ * dilate the region by `centreInset` and only the keep-side differs:
+ *
+ * - **include** `R`: keep the guide **inside** `R ⊕ centreInset`
+ * - **exclude** `X`: keep the guide **outside** `X ⊕ centreInset`
+ *
+ * Ordered composition matches `buildRegionMask`.  The composite allowed area is
+ * built with Clipper boolean ops and then a single call to
+ * `splitClosedGuideByForbiddenPaths` produces the final fragments.
+ */
+export function resolveRegionDomainCurve(
+  guide: Point[],
+  closed: boolean,
+  mask: RegionMask | null,
+  centreInset: number,
+): ClosedGuideFragment[] {
+  if (mask === null) return [{ points: guide, closed }]
+  if (guide.length < 2) return []
+
+  const entries = mask.entries
+  if (entries.length === 0) return [{ points: guide, closed }]
+
+  const firstMode = entries[0].mode
+
+  // Build the composite allowed area.  When the first entry is exclude we seed
+  // with a bounding box that covers the guide and every region so Clipper has a
+  // finite subject to difference from.
+  let allowed: ClipperPath[] = firstMode === 'include' ? [] : [buildClipperBoundingBox(guide, entries)]
+
+  for (const entry of entries) {
+    if (entry.paths.length === 0) continue
+    const dilated = centreInset > 0 ? offsetClipperPaths(entry.paths, centreInset) : entry.paths
+    if (entry.mode === 'include') {
+      allowed = unionClipperPaths([...allowed, ...dilated])
+    } else {
+      allowed = differenceClipperPaths(allowed, dilated)
+    }
+  }
+
+  if (allowed.length === 0) return []
+
+  // `splitClosedGuideByForbiddenPaths` with keep:'inside' treats the forbidden
+  // paths AS the allowed area — everything outside is discarded.
+  if (closed) {
+    return splitClosedGuideByForbiddenPaths(guide, allowed, 'inside')
+  }
+
+  // Open guide: the closed-guide splitter wraps around, which would create
+  // spurious fragments across the open ends.  Split each segment individually
+  // against the composite and collect the inside spans.
+  return splitOpenGuideByAllowedPaths(guide, allowed)
+}
+
+/**
+ * Split an open polyline, keeping only the spans that lie inside `allowed`.
+ * Every returned fragment is open (`closed: false`).
+ */
+function splitOpenGuideByAllowedPaths(guide: Point[], allowed: ClipperPath[]): ClosedGuideFragment[] {
+  // Convert allowed ClipperPaths to world-space point arrays for the
+  // even-odd containment test, matching splitClosedGuideByForbiddenPaths.
+  const allowedWorld = allowed
+    .map((path) => normalizeWorldPath(path, DEFAULT_CLIPPER_SCALE))
+    .filter((path) => path.length >= 3)
+
+  if (allowedWorld.length === 0) return []
+
+  const fragments: ClosedGuideFragment[] = []
+  let current: Point[] | null = null
+
+  const finishCurrent = () => {
+    if (current !== null && current.length >= 2) {
+      fragments.push({ points: current, closed: false })
+    }
+    current = null
+  }
+
+  for (let i = 0; i < guide.length - 1; i += 1) {
+    const from = guide[i]
+    const to = guide[i + 1]
+    const params = [0, 1]
+
+    for (const path of allowedWorld) {
+      for (let j = 0; j < path.length; j += 1) {
+        const edgeFrom = path[j]
+        const edgeTo = path[(j + 1) % path.length]
+        params.push(...segmentIntersectionParams(from, to, edgeFrom, edgeTo))
+      }
+    }
+
+    const breakpoints = distinctSorted(params)
+    for (let k = 0; k < breakpoints.length - 1; k += 1) {
+      const t0 = breakpoints[k]
+      const t1 = breakpoints[k + 1]
+      if (t1 - t0 <= 1e-9) continue
+
+      const mid = pointAt(from, to, (t0 + t1) / 2)
+      if (!pointInPathsEvenOdd(mid, allowedWorld)) {
+        finishCurrent()
+        continue
+      }
+
+      const startPt = pointAt(from, to, t0)
+      const endPt = pointAt(from, to, t1)
+      if (current === null) {
+        current = [startPt, endPt]
+      } else if (sameWorldPoint(current.at(-1)!, startPt)) {
+        current.push(endPt)
+      } else {
+        finishCurrent()
+        current = [startPt, endPt]
+      }
+    }
+  }
+  finishCurrent()
+  return fragments
+}
+
+// ---------------------------------------------------------------------------
+// Lightweight geometry helpers — duplicated from guideFragments.ts to keep
+// that module's internals private.  Identical semantics, independent copies.
+// ---------------------------------------------------------------------------
+
+function sameWorldPoint(a: Point, b: Point): boolean {
+  return Math.abs(a.x - b.x) <= 1e-9 && Math.abs(a.y - b.y) <= 1e-9
+}
+
+function pointAt(from: Point, to: Point, t: number): Point {
+  return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t }
+}
+
+function distinctSorted(values: number[]): number[] {
+  const sorted = values.slice().sort((a, b) => a - b)
+  const result: number[] = []
+  for (const v of sorted) {
+    if (result.length === 0 || v - result.at(-1)! > 1e-9) result.push(v)
+  }
+  return result
+}
+
+function segmentIntersectionParams(
+  from: Point, to: Point,
+  eFrom: Point, eTo: Point,
+): number[] {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const eDx = eTo.x - eFrom.x
+  const eDy = eTo.y - eFrom.y
+  const denom = dx * eDy - dy * eDx
+  const ox = eFrom.x - from.x
+  const oy = eFrom.y - from.y
+
+  if (Math.abs(denom) <= 1e-9) {
+    const collinear = Math.abs(ox * dy - oy * dx) <= 1e-9
+    const len2 = dx * dx + dy * dy
+    if (!collinear || len2 <= 1e-9) return []
+    const tA = (ox * dx + oy * dy) / len2
+    const tB = ((eTo.x - from.x) * dx + (eTo.y - from.y) * dy) / len2
+    const lo = Math.max(0, Math.min(tA, tB))
+    const hi = Math.min(1, Math.max(tA, tB))
+    return hi - lo > 1e-9 ? [lo, hi] : []
+  }
+
+  const t = (ox * eDy - oy * eDx) / denom
+  const u = (ox * dy - oy * dx) / denom
+  if (t < -1e-9 || t > 1 + 1e-9 || u < -1e-9 || u > 1 + 1e-9) return []
+  return [Math.max(0, Math.min(1, t))]
+}
+
+function pointInWorldPath(point: Point, path: Point[]): boolean {
+  let inside = false
+  for (let i = 0; i < path.length; i += 1) {
+    const from = path[i]
+    const to = path[(i + 1) % path.length]
+    // Point-on-segment check
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    const cross = (point.x - from.x) * dy - (point.y - from.y) * dx
+    if (Math.abs(cross) <= 1e-9) {
+      const dot = (point.x - from.x) * dx + (point.y - from.y) * dy
+      if (dot >= -1e-9 && dot <= dx * dx + dy * dy + 1e-9) return true
+    }
+    if ((from.y > point.y) === (to.y > point.y)) continue
+    const cx = from.x + (point.y - from.y) * (to.x - from.x) / (to.y - from.y)
+    if (cx > point.x) inside = !inside
+  }
+  return inside
+}
+
+function pointInPathsEvenOdd(point: Point, paths: Point[][]): boolean {
+  let inside = false
+  for (const path of paths) {
+    if (pointInWorldPath(point, path)) inside = !inside
+  }
+  return inside
+}
+
+function normalizeWorldPath(path: ClipperPath, scale: number): Point[] {
+  const points: Point[] = []
+  for (const pt of path) {
+    const converted = { x: pt.X / scale, y: pt.Y / scale }
+    if (points.length === 0 || !sameWorldPoint(points.at(-1)!, converted)) {
+      points.push(converted)
+    }
+  }
+  if (points.length > 1 && sameWorldPoint(points[0], points.at(-1)!)) {
+    points.pop()
+  }
+  return points
+}
