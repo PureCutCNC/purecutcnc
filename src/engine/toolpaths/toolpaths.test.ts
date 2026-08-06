@@ -36,16 +36,12 @@ import { generateFinishSurfaceCleanupToolpath } from './finishSurfaceCleanup'
 import { generateSurfaceCleanToolpath } from './surface'
 import { generateFollowLineToolpath } from './carving'
 import { generateDrillingToolpath, sortTargetsByNearestNeighbor } from './drilling'
-import { generatePocketRestRegionDrafts } from './restRegions'
+import { generatePocketRestRegionDrafts, generateEdgeRestRegionDrafts } from './restRegions'
 import { resolvePocketRegions } from './resolver'
 import {
-  buildMaskFromClipperPaths,
   buildRegionMask,
-  clipToolpathResultToRegionMask,
   splitFeatureTargets,
 } from './regions'
-import { DEFAULT_CLIPPER_SCALE } from './geometry'
-import type { ClipperPath } from './types'
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -1249,45 +1245,6 @@ function testPocketRestRegionsKeepGearIslandWedges() {
   console.log('pocket gear-island rest regions: PASSED')
 }
 
-function testRegionMaskVisitsNearestRegionFirst() {
-  // Regression: a region-masked toolpath (e.g. a rest operation) used to machine
-  // its regions in whatever arbitrary order the mask paths happened to be in, so
-  // the tool zig-zagged across the part. It should instead hop to the nearest
-  // unvisited region each time.
-  console.log('Testing region-mask clipping visits the nearest region first...')
-  const project = newProject('region-order', 'mm')
-
-  // One left-to-right cut pass crossing three boxes laid out along X.
-  const result: ToolpathResult = {
-    operationId: 'op',
-    moves: [{ kind: 'cut', from: { x: -1, y: 1, z: -1 }, to: { x: 31, y: 1, z: -1 } }],
-    warnings: [],
-    bounds: null,
-  }
-  const box = (x0: number, x1: number): ClipperPath => [
-    { X: x0 * DEFAULT_CLIPPER_SCALE, Y: -1 * DEFAULT_CLIPPER_SCALE },
-    { X: x1 * DEFAULT_CLIPPER_SCALE, Y: -1 * DEFAULT_CLIPPER_SCALE },
-    { X: x1 * DEFAULT_CLIPPER_SCALE, Y: 3 * DEFAULT_CLIPPER_SCALE },
-    { X: x0 * DEFAULT_CLIPPER_SCALE, Y: 3 * DEFAULT_CLIPPER_SCALE },
-  ]
-  // Mask paths deliberately out of travel order: left, RIGHT, middle.
-  const mask = buildMaskFromClipperPaths([box(0, 5), box(25, 30), box(10, 15)])
-  const clipped = clipToolpathResultToRegionMask(project, result, mask)
-
-  const cutStarts = cutMoves(clipped.moves).map((move) => Math.round(move.from.x))
-  // Nearest-first from the first box (0–5) should give left→middle→right: 0,10,25.
-  // The old arbitrary order would have been 0,25,10.
-  assert(
-    cutStarts.length === 3,
-    `expected one cut fragment per region, got ${cutStarts.length} [${cutStarts.join(',')}]`,
-  )
-  assert(
-    cutStarts[0] < cutStarts[1] && cutStarts[1] < cutStarts[2],
-    `expected nearest-first region order (ascending X), got [${cutStarts.join(',')}]`,
-  )
-  console.log('region-mask nearest-region ordering: PASSED')
-}
-
 function testPocketRestRegionsUniformCorners() {
   // Regression: corner rest regions are built analytically from each pocket
   // vertex (apex + tangent points sized by the tool radius), so every equal
@@ -1360,6 +1317,100 @@ function testPocketRestRegionsUniformCorners() {
     )
   }
   console.log('pocket uniform corner rest-region generation: PASSED')
+}
+
+function testEdgeRestIncludeRegionShowsCoverage() {
+  // An include region on an outside-edge rest operation must show rest drafts
+  // with coverage: resolveRegionDomainCentre dilates the include region by
+  // centreInset so the rest drafts extend beyond the drawn region line.
+  // stockToLeaveRadial > 0 creates a non-empty sourceBand − reachableBand gap.
+  console.log('Testing outside-edge rest include region coverage...')
+
+  const tool = makeFlatEndmill('t1', 4) // radius = 2 mm
+  const stockToLeave = 1 // mm
+  // Boss at (20,20) → (40,40). Stock-to-leave creates a rest band:
+  // sourceBand = expand(boss, 3mm) − boss = (17,17)..(43,43) minus the boss.
+  // reachableBand = expand(boss, 5mm) − expand(boss, 1mm).
+  // restPaths = sourceBand − reachableBand ≈ 1mm-wide inner band.
+  const boss = makeAddFeature('b1', 20, 20, 20, 20, 5, 0)
+  // Include region large enough to cover the band: (15,15) → (45,45).
+  // Dilated by centreInset (3 mm) it extends to (12,12) → (48,48), which
+  // fully contains the source band at (17,17) → (43,43).
+  const includeRegion = makeRegionFeature('r1', 15, 15, 30, 30, 'include')
+  const project = baseProject([tool], [boss, includeRegion])
+
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['b1', 'r1'] },
+    toolRef: 't1',
+    stockToLeaveRadial: stockToLeave,
+  })
+
+  const result = generateEdgeRestRegionDrafts(project, op)
+  assert(result.drafts.length > 0, 'expected rest drafts with include region covering the band')
+  assert(result.drafts.every((draft) => draft.profile.closed), 'rest drafts should be closed profiles')
+  console.log('outside-edge rest include region coverage: PASSED')
+}
+
+function testEdgeRestExcludeRegionKeepsClearance() {
+  // An exclude region on an outside-edge rest operation must keep rest drafts
+  // clear of the region by at least centreInset = tool.radius + stockToLeaveRadial.
+  // Assert distance, not mere non-containment — that exact weakness shipped a
+  // defect earlier in this issue.
+  console.log('Testing outside-edge rest exclude region clearance...')
+
+  const tool = makeFlatEndmill('t1', 4) // radius = 2 mm
+  const stockToLeave = 1 // mm
+  const centreInset = tool.diameter / 2 + stockToLeave // = 3 mm
+  // Boss at (20,15) → (40,35). With stockToLeave, rest drafts occupy the band
+  // (17,12)−(43,38) minus the reachable swept area (the 1 mm ring at the
+  // sourceBand−reachableBand gap).
+  const boss = makeAddFeature('b1', 20, 15, 20, 20, 5, 0)
+  // Exclude region at (0,15) → (28,35) — the right edge at x=28 overlaps the
+  // left side of the band (band starts at x≈17). Dilated by centreInset to
+  // x=31, the effective keep-out covers the entire overlap, so no draft vertex
+  // with x < 31 can exist unless it is at least centreInset clear.
+  const excludeRegion = makeRegionFeature('r1', 0, 15, 28, 20, 'exclude')
+  const project = baseProject([tool], [boss, excludeRegion])
+
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['b1', 'r1'] },
+    toolRef: 't1',
+    stockToLeaveRadial: stockToLeave,
+  })
+
+  // Without the exclude region, rest drafts would appear in the full band.
+  const noRegionOp = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['b1'] },
+    toolRef: 't1',
+    stockToLeaveRadial: stockToLeave,
+  })
+  const unmasked = generateEdgeRestRegionDrafts(project, noRegionOp)
+  const masked = generateEdgeRestRegionDrafts(project, op)
+
+  assert(unmasked.drafts.length > 0, 'expected unmasked rest drafts to exist as a baseline')
+
+  // The exclude region should narrow or eliminate the drafts.
+  assert(masked.drafts.length < unmasked.drafts.length || masked.drafts.length === 0,
+    'exclude region should narrow the rest drafts')
+
+  // Every masked draft vertex must be at least centreInset from the exclude
+  // region boundary (the right edge of the exclude rect is the closest face).
+  const excludeRightEdge = 28
+  for (const draft of masked.drafts) {
+    const vertices = [draft.profile.start, ...draft.profile.segments.map((seg) => seg.to)]
+    for (const pt of vertices) {
+      const dist = excludeRightEdge - pt.x
+      assert(
+        dist >= centreInset - 0.001 || pt.x > excludeRightEdge,
+        `draft vertex (${pt.x.toFixed(3)}, ${pt.y.toFixed(3)}) is ${dist.toFixed(3)} mm from exclude boundary, need >= ${centreInset} mm clearance`,
+      )
+    }
+  }
+
+  console.log('outside-edge rest exclude region clearance: PASSED')
 }
 
 // ---------------------------------------------------------------------------
@@ -3784,7 +3835,8 @@ try {
   testPocketOffsetFinishExcludeOnlyRegionStillGeneratesToolpath()
   testPocketOffsetFinishLeadingExcludeWithInnerInclude()
   testPocketRestRegionsEmitHoleCapableMaskModes()
-  testRegionMaskVisitsNearestRegionFirst()
+	  testEdgeRestIncludeRegionShowsCoverage()
+	  testEdgeRestExcludeRegionKeepsClearance()
   testEdgeInsideLevelFirstVsFeatureFirst()
   testEdgeInsideFeatureFirstNearestBlockOrder()
   testEdgeInsideRegionClipsAtBoundary()

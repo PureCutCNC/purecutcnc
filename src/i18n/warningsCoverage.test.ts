@@ -62,7 +62,7 @@ const ALL_CODES = [
   'carveDepthClamped', 'carveNotEnoughGeometry', 'carveDepthPositive', 'carveNoTargets', 'carveWrongKind',
   'carveNoValidTargets',
   'restOnlyEdgeRoute', 'restOnlyPocket', 'restNoValidOutsideTargets',
-  'clampCrossedOne', 'clampCrossedMany', 'clampTravelLimitExceeded', 'regionClippedOne', 'regionClippedMany',
+  'clampCrossedOne', 'clampCrossedMany', 'clampTravelLimitExceeded',
   'finishNeedsModel', 'finishNotMesh', 'finishNoDepthInPocket',
   'surfaceHeightMapReduced', 'surfaceSilhouetteDegenerate', 'cleanupStockToLeaveOffsets', 'cleanupNoContours',
   'pocketNoFloorRegion', 'pocketNoFloorSegments',

@@ -142,8 +142,6 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.clampCrossedOne': '压板“{name}”被 {count} 次{moveKind}移动以低于所需安全高度穿越（最低Z {minZ}，要求Z {requiredZ}）。',
   'warnings.clampCrossedMany': '压板“{name}”被 {count} 次{moveKind}移动以低于所需安全高度穿越（最低Z {minZ}，要求Z {requiredZ}）。',
   'warnings.clampTravelLimitExceeded': '压板“{name}”要求的安全高度Z {requiredZ} 超过项目最大行程Z {maxZ}。',
-  'warnings.regionClippedOne': '区域过滤裁剪了 {count} 个切削移动。',
-  'warnings.regionClippedMany': '区域过滤裁剪了 {count} 个切削移动。',
   'warnings.moveKind.rapid': '快速',
   'warnings.moveKind.plunge': '下刀',
   'warnings.moveKind.lead_in': '切入',

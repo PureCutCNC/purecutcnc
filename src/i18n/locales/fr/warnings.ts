@@ -138,8 +138,6 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.clampCrossedOne': 'La bride « {name} » est traversée par {count} mouvement {moveKind} sous le dégagement requis (Z min. {minZ}, Z requis {requiredZ}).',
   'warnings.clampCrossedMany': 'La bride « {name} » est traversée par {count} mouvements {moveKind} sous le dégagement requis (Z min. {minZ}, Z requis {requiredZ}).',
   'warnings.clampTravelLimitExceeded': 'La bride « {name} » exige un dégagement Z {requiredZ}, qui dépasse la course Z maximale du projet {maxZ}.',
-  'warnings.regionClippedOne': 'Le filtre de région a rogné {count} mouvement de coupe.',
-  'warnings.regionClippedMany': 'Le filtre de région a rogné {count} mouvements de coupe.',
   'warnings.moveKind.rapid': 'rapide',
   'warnings.moveKind.plunge': 'plongée',
   'warnings.moveKind.lead_in': 'entrée',
