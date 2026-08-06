@@ -2404,26 +2404,170 @@ function testSurfaceCleanHonorsOrderedRegionMaskModes() {
   let hasOuterCut = false
   let hasInnerCut = false
 
+  // Both polarities are dilated by centreInset = toolRadius + radialLeave = 1.
+  // The exclude check uses the dilated boundary; the include check uses the
+  // dilated inner-include polygon so the assertion matches the actual composite.
+  const centreInset = tool.diameter / 2 /* no stockToLeaveRadial in this op */
+  const dilatedExcludeX = 4 - centreInset       // 3
+  const dilatedExcludeY = 2 - centreInset       // 1
+  const dilatedExcludeW = 16 + 2 * centreInset  // 18
+  const dilatedExcludeH = 8 + 2 * centreInset   // 10
+  const dilatedInnerIncludePoly = [
+    { x: 10 - centreInset, y: 5 - centreInset },   // {9, 4}
+    { x: 14 + centreInset, y: 5 - centreInset },   // {15, 4}
+    { x: 14 + centreInset, y: 7 + centreInset },   // {15, 8}
+    { x: 10 - centreInset, y: 7 + centreInset },   // {9, 8}
+  ]
+
   assert(cuts.length > 0, `expected surface_clean cuts, warnings: ${result.warnings.join(', ')}`)
   for (const move of cuts) {
     const samples = [0.1, 0.25, 0.5, 0.75, 0.9].map((t) => ({
       x: move.from.x + (move.to.x - move.from.x) * t,
       y: move.from.y + (move.to.y - move.from.y) * t,
     }))
-    const innerIncludePoly = [
-      { x: 10, y: 5 }, { x: 14, y: 5 }, { x: 14, y: 7 }, { x: 10, y: 7 },
-    ]
     hasOuterCut ||= samples.some((point) => point.x < 4 && point.y < 4)
-    hasInnerCut ||= samples.some((point) => pointInsidePolygonOrOnBoundary(point, innerIncludePoly))
+    hasInnerCut ||= samples.some((point) => pointInsidePolygonOrOnBoundary(point, dilatedInnerIncludePoly))
     assert(
-      samples.every((point) => !pointInsideRect(point, 4, 2, 16, 8)
-        || pointInsidePolygonOrOnBoundary(point, innerIncludePoly)),
+      samples.every((point) =>
+        !pointInsideRect(point, dilatedExcludeX, dilatedExcludeY, dilatedExcludeW, dilatedExcludeH)
+        || pointInsidePolygonOrOnBoundary(point, dilatedInnerIncludePoly)),
       `surface_clean should remove excluded cut fragments except the later include, got move ${JSON.stringify(move)}`,
     )
   }
   assert(hasOuterCut, 'expected surface_clean cuts outside the leading excluded region')
   assert(hasInnerCut, 'expected surface_clean cuts in the later included inner region')
   console.log('surface_clean ordered region mask modes: PASSED')
+}
+
+/**
+ * Distance from a point to the boundary of a polygon.  Returns 0 when the
+ * point is inside or on the boundary; otherwise returns the shortest distance
+ * to any edge.
+ */
+function pointToPolygonBoundary(
+  point: { x: number; y: number },
+  polygon: Array<{ x: number; y: number }>,
+): number {
+  // Interior points collapse to 0 so a clearance assertion cannot be satisfied
+  // by a cut that landed deep INSIDE the keep-out — without this, a point at the
+  // centre of the excluded block reports its (large) distance to the nearest
+  // edge and passes.
+  if (pointInsidePolygon(point, polygon)) return 0
+  let minDist = Infinity
+  for (let i = 0; i < polygon.length; i += 1) {
+    const a = polygon[i]
+    const b = polygon[(i + 1) % polygon.length]
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const len2 = dx * dx + dy * dy
+    if (len2 === 0) {
+      minDist = Math.min(minDist, Math.hypot(point.x - a.x, point.y - a.y))
+      continue
+    }
+    const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / len2))
+    const projX = a.x + t * dx
+    const projY = a.y + t * dy
+    minDist = Math.min(minDist, Math.hypot(point.x - projX, point.y - projY))
+  }
+  return minDist
+}
+
+/**
+ * Tool-body containment: pocket with an exclude region must keep every cut
+ * move endpoint at least `toolRadius + stockToLeaveRadial` from the excluded
+ * polygon boundary.  This confirms that the area resolver + generator erosion
+ * together supply the correct clearance.
+ */
+function testPocketExcludeRegionToolBodyClearance(): void {
+  console.log('Testing pocket exclude region keeps tool body clear...')
+  const tool = makeFlatEndmill('t1', 2)
+  const stockToLeaveRadial = 0.1
+  // 30×20 pocket, exclude a 10×10 block in the middle.
+  const pocket = makePocketFeature('p1', 0, 0, 30, 20, 4, 0)
+  const excludePoly = [
+    { x: 10, y: 5 }, { x: 20, y: 5 }, { x: 20, y: 15 }, { x: 10, y: 15 },
+  ]
+  const exclude = makePolygonRegionFeature('r-exclude', excludePoly, 'exclude')
+  const project = baseProject([tool], [pocket, exclude])
+  const op = makePocketOp({
+    kind: 'pocket',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['p1', 'r-exclude'] },
+    toolRef: 't1',
+    pocketPattern: 'offset',
+    stockToLeaveRadial,
+    stepdown: 1,
+    stepover: 0.3,
+  })
+  const result = generatePocketToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, `expected pocket cuts, warnings: ${result.warnings.join(', ')}`)
+
+  const requiredClearance = tool.diameter / 2 + stockToLeaveRadial  // 1 + 0.1 = 1.1
+  const epsilon = 1e-6
+  let minObserved = Infinity
+  for (const move of cuts) {
+    const distFrom = pointToPolygonBoundary(move.from, excludePoly)
+    const distTo = pointToPolygonBoundary(move.to, excludePoly)
+    minObserved = Math.min(minObserved, distFrom, distTo)
+    assert(
+      distFrom >= requiredClearance - epsilon,
+      `pocket cut move endpoint must be >= ${requiredClearance} from exclude, got ${distFrom} at ${JSON.stringify(move.from)}`,
+    )
+    assert(
+      distTo >= requiredClearance - epsilon,
+      `pocket cut move endpoint must be >= ${requiredClearance} from exclude, got ${distTo} at ${JSON.stringify(move.to)}`,
+    )
+  }
+  console.log(`pocket exclude region tool-body clearance (min ${minObserved.toFixed(4)} >= ${requiredClearance}): PASSED`)
+}
+
+/**
+ * Tool-body containment: surface clean with an exclude region must keep every
+ * cut move endpoint at least `toolRadius + stockToLeaveRadial` from the
+ * excluded polygon boundary.
+ */
+function testSurfaceCleanExcludeRegionToolBodyClearance(): void {
+  console.log('Testing surface_clean exclude region keeps tool body clear...')
+  const tool = makeFlatEndmill('t1', 2)
+  const stockToLeaveRadial = 0.1
+  // Boss 30×20, exclude a 10×10 block in the middle.
+  const boss = makeAddFeature('boss', 0, 0, 30, 20, 4, 0)
+  const excludePoly = [
+    { x: 10, y: 5 }, { x: 20, y: 5 }, { x: 20, y: 15 }, { x: 10, y: 15 },
+  ]
+  const exclude = makePolygonRegionFeature('r-exclude', excludePoly, 'exclude')
+  const project = baseProject([tool], [boss, exclude])
+  project.stock = { ...project.stock, thickness: 6 }
+  const op = makePocketOp({
+    kind: 'surface_clean',
+    target: { source: 'features', featureIds: ['boss', 'r-exclude'] },
+    toolRef: 't1',
+    stockToLeaveRadial,
+    stepdown: 1,
+    stepover: 0.3,
+  })
+  const result = generateSurfaceCleanToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, `expected surface_clean cuts, warnings: ${result.warnings.join(', ')}`)
+
+  const requiredClearance = tool.diameter / 2 + stockToLeaveRadial  // 1 + 0.1 = 1.1
+  const epsilon = 1e-6
+  let minObserved = Infinity
+  for (const move of cuts) {
+    const distFrom = pointToPolygonBoundary(move.from, excludePoly)
+    const distTo = pointToPolygonBoundary(move.to, excludePoly)
+    minObserved = Math.min(minObserved, distFrom, distTo)
+    assert(
+      distFrom >= requiredClearance - epsilon,
+      `surface_clean cut move endpoint must be >= ${requiredClearance} from exclude, got ${distFrom} at ${JSON.stringify(move.from)}`,
+    )
+    assert(
+      distTo >= requiredClearance - epsilon,
+      `surface_clean cut move endpoint must be >= ${requiredClearance} from exclude, got ${distTo} at ${JSON.stringify(move.to)}`,
+    )
+  }
+  console.log(`surface_clean exclude region tool-body clearance (min ${minObserved.toFixed(4)} >= ${requiredClearance}): PASSED`)
 }
 
 function testFollowLineRegionClipsOpenPath() {
@@ -3387,6 +3531,8 @@ try {
   testSurfaceCleanMultiTargetProtectsTallerTarget()
   testSurfaceCleanRegionMaskClipsGeneratedToolpathOnly()
   testSurfaceCleanHonorsOrderedRegionMaskModes()
+  testPocketExcludeRegionToolBodyClearance()
+  testSurfaceCleanExcludeRegionToolBodyClearance()
   testFollowLineRegionClipsOpenPath()
   testDrillingRegionFiltersHolePoints()
   testDrillingOrdersByNearestNeighbor()
