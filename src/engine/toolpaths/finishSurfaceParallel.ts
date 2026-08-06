@@ -19,7 +19,8 @@ import type { ToolpathWarning } from './warningCodes'
 import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 import { DEFAULT_CLIPPER_SCALE, flattenProfile, normalizeWinding, toClipperPath } from './geometry'
 import { transitionToCutEntry } from './pocket'
-import { buildRegionMask, clipTupleContoursToRegionMask } from './regions'
+import { buildRegionMask } from './regions'
+import { resolveRegionDomainCentre } from './regionDomain'
 import { significantSilhouettePaths } from './silhouette'
 import { buildProtectedFootprintPaths, clipperPathsToTupleContours, differenceClipperPaths, unionClipperPaths } from './modelProtection'
 
@@ -746,8 +747,14 @@ export function generateFinishSurfaceParallel(
     return { moves: allMoves, stepLevels: allStepLevels }
   }
 
-  const coverageContours = regionMask && !regionMask.baseIncludesSubject
-    ? clipTupleContoursToRegionMask(baseContours, regionMask)
+  // Resolve the region mask into the coverage domain before scanline
+  // generation.  The coverage contours define the tool-centre area (the
+  // scanline endpoints stay on the silhouette boundary, and the tool body
+  // extends radius beyond), so use the centre-domain resolver: both
+  // polarities dilate by centreInset.
+  const centreInset = tool.radius + Math.max(0, operation.stockToLeaveRadial ?? 0)
+  const coverageContours = regionMask
+    ? clipperPathsToTupleContours(resolveRegionDomainCentre(baseCoveragePaths, regionMask, centreInset))
     : baseContours
   const clippedContours = subtractProtectedContours(coverageContours, protectedPaths)
   const clippedBounds = computeContourBounds([clippedContours])
