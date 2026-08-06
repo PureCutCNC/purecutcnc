@@ -40,7 +40,7 @@ const ALL_CODES = [
   'edgeRouteWrongKind', 'edgeRouteNoTargets', 'edgeRouteNoValidTargets',
   'edgeTrochoidalWidthTooSmall', 'edgeTrochoidalWidthNarrow', 'edgeTrochoidalWidthLeavesCore',
   'edgeTrochoidalAdvanceRange',
-  'edgeTrochoidalParametersInvalid', 'edgeTrochoidalEntryStrategyUnsupported', 'edgeTrochoidalRegionUnsupported',
+  'edgeTrochoidalParametersInvalid', 'edgeTrochoidalEntryStrategyUnsupported',
   'edgeTrochoidalInvalidGuide', 'edgeTrochoidalMoveBudget', 'edgeTrochoidalEntryBudget',
   'edgeTrochoidalTabsRequireHelix', 'edgeTrochoidalTabUnsafe', 'edgeTrochoidalSkippedSpan',
   'edgeTrochoidalNoSurvivingSpan', 'edgeTrochoidalSafetyCheck',

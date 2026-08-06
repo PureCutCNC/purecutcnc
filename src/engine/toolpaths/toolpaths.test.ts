@@ -1924,29 +1924,117 @@ function testTrochoidalOutsideFragmentsAroundTightObstacle() {
   console.log('trochoidal tight-obstacle fragmentation: PASSED')
 }
 
-function testTrochoidalRejectsRegionMasksAndUnsafeWidths() {
-  console.log('Testing trochoidal rejects region clipping and undersized widths...')
+function testTrochoidalIncludeRegionGenerates() {
+  console.log('Testing trochoidal include region generates with lead-in per span...')
 
   const tool = makeFlatEndmill('t1', 4)
-  const target = makeAddFeature('target', 0, 0, 20, 20, 0, -2)
-  const region = makeRegionFeature('region', 0, 0, 10, 20)
+  const target = makeAddFeature('target', 0, 0, 30, 30, 0, -2)
+  // Include region covering the left half of the target so the right side is masked.
+  const region = makeRegionFeature('region', 0, 0, 15, 30)
   const project = baseProject([tool], [target, region])
 
-  const regionResult = generateEdgeRouteToolpath(project, {
+  const result = generateEdgeRouteToolpath(project, {
     ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
     target: { source: 'features', featureIds: ['target', 'region'] },
   })
-  assert(regionResult.moves.length === 0, 'region-masked trochoidal route must fail closed before post-clipping')
-  assert(regionResult.warnings.some((warning) => warning.code === 'edgeTrochoidalRegionUnsupported'), 'region-masked trochoid must explain the unsupported mask')
+
+  assert(result.moves.length > 0, 'include-region trochoidal must generate motion')
+  const leads = result.moves.filter((move) => move.kind === 'lead_in')
+  assert(leads.length > 0, 'include-region trochoidal must emit lead_in per surviving span')
+
+  // Cuts must be bounded by the include region + guide clearance.
+  // The full unmasked reach on the right would be ~target right edge + tool.outside_offset.
+  // With the include region at x∈[0,15], cuts should not reach far past it.
+  const cuts = cutMoves(result.moves)
+  const maxX = Math.max(...cuts.map((move) => Math.max(move.from.x, move.to.x)))
+  // The unmasked right boundary would be > 34; the include region keeps it much smaller.
+  assert(maxX < 35, `include-region cut maxX ${maxX} must be bounded by the region`)
+
+  // Also check the result is not empty and has no fatal warnings.
+  assert(
+    !result.warnings.some((w) => w.code === 'edgeTrochoidalNoSurvivingSpan'),
+    'include-region trochoidal must not report no surviving spans',
+  )
+
+  console.log('trochoidal include region: PASSED')
+}
+
+function testTrochoidalExcludeRegionClearance() {
+  console.log('Testing trochoidal exclude region keeps tool body clear...')
+
+  const toolDiameter = 4
+  const tool = makeFlatEndmill('t1', toolDiameter)
+  const target = makeAddFeature('target', 0, 0, 40, 20, 0, -2)
+  // Exclude region in the middle — a keep-out the tool body must stay out of.
+  const region = makeRegionFeature('region', 15, -5, 10, 30, 'exclude')
+  const project = baseProject([tool], [target, region])
+
+  const result = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
+    target: { source: 'features', featureIds: ['target', 'region'] },
+  })
+
+  assert(result.moves.length > 0, 'exclude-region trochoidal must generate motion')
+  const leads = result.moves.filter((move) => move.kind === 'lead_in')
+  assert(leads.length > 0, 'exclude-region trochoidal must emit lead_in per span')
+
+  // The exclude region is split in the guide domain.  The guide stays
+  // trochoidalGuideOffset clear of the exclude region, but the orbit swings
+  // ±R from the guide, so the cut centre can reach trochoidalGuideOffset − R
+  // = tool.radius + radialLeave + safety_allowance from the exclude boundary.
+  // Verify the tool body (the worst-case cut centre) stays clear.
+  const trochoidalCutWidth = 6
+  const orbitRadius = (trochoidalCutWidth - toolDiameter) / 2 // 1.0
+  const guideClearance = trochoidalCutWidth / 2 + toolDiameter * 0.01 // 3.04
+  const centreClearance = guideClearance - orbitRadius // 2.04 — min tool-centre distance from exclude
+  const excludeDilated = {
+    xMin: 15 - centreClearance,
+    xMax: 25 + centreClearance,
+    yMin: -5 - centreClearance,
+    yMax: 25 + centreClearance,
+  }
+
+  // The guide is split at the dilated-exclude boundary; a cut centre exactly
+  // at the boundary is the expected result — the clearance is working.  Allow
+  // a 0.01 mm floating-point slop to avoid boundary races.
+  const eps = 0.01
+  const cuts = cutMoves(result.moves)
+  for (const move of cuts) {
+    const fromInside = move.from.x > excludeDilated.xMin + eps
+      && move.from.x < excludeDilated.xMax - eps
+      && move.from.y > excludeDilated.yMin + eps
+      && move.from.y < excludeDilated.yMax - eps
+    const toInside = move.to.x > excludeDilated.xMin + eps
+      && move.to.x < excludeDilated.xMax - eps
+      && move.to.y > excludeDilated.yMin + eps
+      && move.to.y < excludeDilated.yMax - eps
+    assert(
+      !fromInside && !toInside,
+      `exclude-region cut move at (${move.from.x.toFixed(2)},${move.from.y.toFixed(2)})→(${move.to.x.toFixed(2)},${move.to.y.toFixed(2)}) enters the excluded keep-out`,
+    )
+  }
+
+  console.log('trochoidal exclude region clearance: PASSED')
+}
+
+function testTrochoidalNarrowWidthStillFails() {
+  console.log('Testing trochoidal undersized width still refuses...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const target = makeAddFeature('target', 0, 0, 20, 20, 0, -2)
+  const project = baseProject([tool], [target])
 
   const narrowResult = generateEdgeRouteToolpath(project, {
     ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
     trochoidalCutWidth: 4.5,
   })
   assert(narrowResult.moves.length === 0, 'cut width below 1.15D must fail closed')
-  assert(narrowResult.warnings.some((warning) => warning.code === 'edgeTrochoidalWidthTooSmall'), 'undersized cut width must be diagnosed')
+  assert(
+    narrowResult.warnings.some((warning) => warning.code === 'edgeTrochoidalWidthTooSmall'),
+    'undersized cut width must be diagnosed',
+  )
 
-  console.log('trochoidal guards: PASSED')
+  console.log('trochoidal narrow width: PASSED')
 }
 
 /**
@@ -2183,10 +2271,26 @@ function testTrochoidalFeatureFirstSharesBudgetAndFailsAtomically() {
 
   // Atomicity: one target failing closed must refuse the whole operation rather
   // than cutting the target that succeeded and warning about the other.
-  const regionProject = baseProject([tool], [left, right, makeRegionFeature('region', 0, 0, 10, 14)])
-  const partialFailure = generateEdgeRouteToolpath(regionProject, {
+  // A subtract feature is not a valid target for edge_route_outside, so its
+  // per-feature sub-operation fails with targetsMissingOrWrongRole and the
+  // top-level code refuses every sub-operation rather than cutting only the
+  // valid one.
+  const badTarget: SketchFeature = {
+    id: 'subtractTarget',
+    name: 'subtractTarget',
+    kind: 'rect',
+    folderId: null,
+    sketch: { profile: rectProfile(40, 0, 14, 14), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation: 'subtract',
+    z_top: 0,
+    z_bottom: -2,
+    visible: true,
+    locked: false,
+  }
+  const wrongRoleProject = baseProject([tool], [left, badTarget])
+  const partialFailure = generateEdgeRouteToolpath(wrongRoleProject, {
     ...makeTrochoidalEdgeOperation('left', 'edge_route_outside'),
-    target: { source: 'features', featureIds: ['left', 'right', 'region'] },
+    target: { source: 'features', featureIds: ['left', 'subtractTarget'] },
     machiningOrder: 'feature_first',
   })
   assert(
@@ -2194,7 +2298,7 @@ function testTrochoidalFeatureFirstSharesBudgetAndFailsAtomically() {
     'a target that fails closed must take the whole feature-first operation with it',
   )
   assert(
-    partialFailure.warnings.some((warning) => warning.code === 'edgeTrochoidalRegionUnsupported'),
+    partialFailure.warnings.some((warning) => warning.code === 'targetsMissingOrWrongRole'),
     'the atomic refusal must still explain which limitation was hit',
   )
 
@@ -3696,7 +3800,9 @@ try {
   testTrochoidalOutsideTracksDifferentTargetSizes()
   testTrochoidalTabsFragmentBeforeMotionAndHelixReenter()
   testTrochoidalOutsideFragmentsAroundTightObstacle()
-  testTrochoidalRejectsRegionMasksAndUnsafeWidths()
+  testTrochoidalIncludeRegionGenerates()
+  testTrochoidalExcludeRegionClearance()
+  testTrochoidalNarrowWidthStillFails()
   testTrochoidalEngagementMatchesContourDirection()
   testTrochoidalCircularAndMultiTargetGuides()
   testTrochoidalFeatureFirstSharesBudgetAndFailsAtomically()

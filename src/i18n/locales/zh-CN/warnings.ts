@@ -68,7 +68,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeTrochoidalAdvanceRange': '摆线每圈推进量必须大于 0 且不超过一个刀具直径。',
   'warnings.edgeTrochoidalParametersInvalid': '摆线加工要求进给、下刀进给和转速均为正值。',
   'warnings.edgeTrochoidalEntryStrategyUnsupported': '摆线加工仅支持螺旋或垂直下刀。',
-  'warnings.edgeTrochoidalRegionUnsupported': '摆线沿边加工不支持区域蒙版。',
+
   'warnings.edgeTrochoidalInvalidGuide': '摆线加工需要单一有效的闭合引导路径。',
   'warnings.edgeTrochoidalMoveBudget': '摆线加工超过了每个操作 500,000 点的预算。',
   'warnings.edgeTrochoidalEntryBudget': '({x}, {y}) 附近的摆线入口超过了入口点预算。',

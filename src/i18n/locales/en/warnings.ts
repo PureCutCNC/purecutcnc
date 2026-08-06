@@ -74,7 +74,7 @@ export const warningsEn = {
   'warnings.edgeTrochoidalAdvanceRange': 'Trochoidal advance must be greater than 0 and no more than one tool diameter.',
   'warnings.edgeTrochoidalParametersInvalid': 'Trochoidal routing requires positive feed, plunge feed, and RPM values.',
   'warnings.edgeTrochoidalEntryStrategyUnsupported': 'Trochoidal routing supports Helix or Plunge entry only.',
-  'warnings.edgeTrochoidalRegionUnsupported': 'Trochoidal edge routing does not support region masks.',
+
   'warnings.edgeTrochoidalInvalidGuide': 'Trochoidal routing requires a single valid closed guide.',
   'warnings.edgeTrochoidalMoveBudget': 'Trochoidal routing exceeds the 500,000-point operation budget.',
   'warnings.edgeTrochoidalEntryBudget': 'The trochoidal entry near ({x}, {y}) exceeds the entry-point budget.',

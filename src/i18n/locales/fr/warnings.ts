@@ -64,7 +64,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeTrochoidalAdvanceRange': 'L’avance trochoïdale doit être supérieure à 0 et ne pas dépasser un diamètre d’outil.',
   'warnings.edgeTrochoidalParametersInvalid': 'Le fraisage trochoïdal exige des valeurs positives pour l’avance, l’avance de plongée et le régime.',
   'warnings.edgeTrochoidalEntryStrategyUnsupported': 'Le fraisage trochoïdal ne prend en charge que les entrées hélicoïdale ou en plongée.',
-  'warnings.edgeTrochoidalRegionUnsupported': 'Le contournage trochoïdal ne prend pas en charge les masques de région.',
+
   'warnings.edgeTrochoidalInvalidGuide': 'Le fraisage trochoïdal exige un seul guide fermé valide.',
   'warnings.edgeTrochoidalMoveBudget': 'Le fraisage trochoïdal dépasse le budget de 500 000 points de l’opération.',
   'warnings.edgeTrochoidalEntryBudget': 'L’entrée trochoïdale près de ({x}, {y}) dépasse le budget de points d’entrée.',

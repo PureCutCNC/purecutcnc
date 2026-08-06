@@ -69,7 +69,6 @@ export type ToolpathWarningCode =
   | 'edgeTrochoidalAdvanceRange'
   | 'edgeTrochoidalParametersInvalid'
   | 'edgeTrochoidalEntryStrategyUnsupported'
-  | 'edgeTrochoidalRegionUnsupported'
   | 'edgeTrochoidalInvalidGuide'
   | 'edgeTrochoidalMoveBudget'
   | 'edgeTrochoidalEntryBudget'
