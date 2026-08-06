@@ -27,8 +27,8 @@ with `Closes #452`.
 - Base commit: `240e15be1d61649b0fc18221031a18012910c156`
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/452#issuecomment-5199629410
 - Manager session: 2026-08-05
-- Status: `preparing`
-- User authorization for credential-backed worker dispatch: `pending`
+- Status: `slice in progress`
+- User authorization for credential-backed worker dispatch: `granted 2026-08-05 for all six slices of this issue`
 
 ## Global rules
 
