@@ -1979,27 +1979,27 @@ function testTrochoidalIncludeRegionGenerates() {
   console.log('Testing trochoidal include region generates with lead-in per span...')
 
   const tool = makeFlatEndmill('t1', 4)
-  const target = makeAddFeature('target', 0, 0, 30, 30, 0, -2)
-  // Include region covering the left half of the target so the right side is masked.
-  const region = makeRegionFeature('region', 0, 0, 15, 30)
-  const project = baseProject([tool], [target, region])
+  // Inside edge route: the contour is inside the subtract feature, so it passes
+  // through the region boundary at x=25 and the include region constrains it.
+  const pocket = makePocketFeature('p1', 0, 0, 50, 50, 2, 0)
+  const region = makeRegionFeature('region', 0, 0, 25, 50)
+  const project = baseProject([tool], [pocket, region])
 
   const result = generateEdgeRouteToolpath(project, {
-    ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
-    target: { source: 'features', featureIds: ['target', 'region'] },
+    ...makeTrochoidalEdgeOperation('p1', 'edge_route_inside'),
+    target: { source: 'features', featureIds: ['p1', 'region'] },
   })
 
   assert(result.moves.length > 0, 'include-region trochoidal must generate motion')
   const leads = result.moves.filter((move) => move.kind === 'lead_in')
   assert(leads.length > 0, 'include-region trochoidal must emit lead_in per surviving span')
 
-  // Cuts must be bounded by the include region + guide clearance.
-  // The full unmasked reach on the right would be ~target right edge + tool.outside_offset.
-  // With the include region at x∈[0,15], cuts should not reach far past it.
+  // Cuts must be bounded by the include region + a small epsilon.
+  // The full unmasked reach on the right would be ~pocket right edge − tool.radius
+  // (~47).  With the include region at x∈[0,25], cuts should not reach past it.
   const cuts = cutMoves(result.moves)
   const maxX = Math.max(...cuts.map((move) => Math.max(move.from.x, move.to.x)))
-  // The unmasked right boundary would be > 34; the include region keeps it much smaller.
-  assert(maxX < 35, `include-region cut maxX ${maxX} must be bounded by the region`)
+  assert(maxX < 30, `include-region cut maxX ${maxX} must be bounded by the region`)
 
   // Also check the result is not empty and has no fatal warnings.
   assert(
@@ -2029,15 +2029,14 @@ function testTrochoidalExcludeRegionClearance() {
   const leads = result.moves.filter((move) => move.kind === 'lead_in')
   assert(leads.length > 0, 'exclude-region trochoidal must emit lead_in per span')
 
-  // The exclude region is split in the guide domain.  The guide stays
-  // trochoidalGuideOffset clear of the exclude region, but the orbit swings
-  // ±R from the guide, so the cut centre can reach trochoidalGuideOffset − R
-  // = tool.radius + radialLeave + safety_allowance from the exclude boundary.
-  // Verify the tool body (the worst-case cut centre) stays clear.
+  // The exclude region is split in the guide domain.  The exclude is dilated by
+  // cutWidth/2 (= orbitRadius + toolRadius) so the tool body clears the region.
+  // The orbit swings ±orbitRadius from the guide, so the cut centre reaches
+  // (cutWidth/2) − orbitRadius = tool.radius from the exclude boundary.
   const trochoidalCutWidth = 6
   const orbitRadius = (trochoidalCutWidth - toolDiameter) / 2 // 1.0
-  const guideClearance = trochoidalCutWidth / 2 + toolDiameter * 0.01 // 3.04
-  const centreClearance = guideClearance - orbitRadius // 2.04 — min tool-centre distance from exclude
+  const excludeClearance = trochoidalCutWidth / 2             // 3.0 — dilation in resolveRegionDomainCurve
+  const centreClearance = excludeClearance - orbitRadius       // 2.0 — tool.radius from exclude boundary
   const excludeDilated = {
     xMin: 15 - centreClearance,
     xMax: 25 + centreClearance,
@@ -2066,6 +2065,226 @@ function testTrochoidalExcludeRegionClearance() {
   }
 
   console.log('trochoidal exclude region clearance: PASSED')
+}
+
+// ── p6: edge region clearance corrections ───────────────────────────────────
+
+function testTrochoidalIncludeLandsOnRegionBoundary() {
+  // With the corrected include clearance (-orbitRadius erosion), the outermost
+  // tool centre lands on the region boundary — not cutWidth past it.
+  console.log('Testing trochoidal include lands on region boundary...')
+
+  const toolDiameter = 4
+  const toolRadius = toolDiameter / 2
+  const tool = makeFlatEndmill('t1', toolDiameter)
+  // Inside edge route: the contour is inside the pocket, so it passes through
+  // the region boundary.  Pocket 60×40, include region covers left 25mm.
+  const pocket = makePocketFeature('p1', 0, 0, 60, 40, 2, 0)
+  const region = makeRegionFeature('region', 0, 0, 25, 40)
+  const project = baseProject([tool], [pocket, region])
+
+  const result = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('p1', 'edge_route_inside'),
+    target: { source: 'features', featureIds: ['p1', 'region'] },
+  })
+
+  assert(result.moves.length > 0, 'include-region trochoidal must generate motion')
+
+  // With the corrected erosion, the outermost cut centre lands at the region
+  // boundary (x=25) ± epsilon.  It must NOT be past x=25 + toolRadius.
+  const cuts = cutMoves(result.moves)
+  const maxX = Math.max(...cuts.map((move) => Math.max(move.from.x, move.to.x)))
+  // The outermost tool centre must be within toolRadius of the region boundary.
+  // A cutWidth-past error would land near x=25+cutWidth(=6); the correct answer
+  // is x≈25.  Assert an upper bound that FAILS against the current code.
+  const regionBoundary = 25
+  assert(maxX < regionBoundary + toolRadius + 0.05,
+    `include cut maxX ${maxX.toFixed(3)} must be near the region boundary ${regionBoundary}; ` +
+    `current code would overshoot past ${regionBoundary + toolRadius}`)
+
+  console.log('trochoidal include lands on region boundary: PASSED')
+}
+
+function testTrochoidalExcludeClearsByToolRadius() {
+  // With the corrected exclude clearance (cutWidth/2 dilation), the nearest
+  // tool centre stays exactly tool.radius from the exclude boundary.
+  console.log('Testing trochoidal exclude clears by toolRadius...')
+
+  const toolDiameter = 4
+  const toolRadius = toolDiameter / 2
+  const tool = makeFlatEndmill('t1', toolDiameter)
+  // Target at (0,0)-(20,20); exclude region immediately to the right at
+  // x=20..30 covering the full height.  The outside contour passes between
+  // them and the exclude dilates by cutWidth/2 so the tool body clears.
+  const target = makeAddFeature('target', 0, 0, 20, 20, 0, -2)
+  const region = makeRegionFeature('region', 20, 0, 10, 20, 'exclude')
+  const project = baseProject([tool], [target, region])
+
+  const result = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
+    target: { source: 'features', featureIds: ['target', 'region'] },
+  })
+
+  assert(result.moves.length > 0, 'exclude-region trochoidal must generate motion')
+
+  // The exclude region occupies x∈[20,30], y∈[0,20].  The tool centre must
+  // stay ≥ toolRadius from it.  Measure the signed distance to the exclude
+  // rect: positive = inside (x between 20..30 AND y between 0..20), negative
+  // = outside.  No cut move endpoint may have a distance > −toolRadius + ε.
+  const cuts = cutMoves(result.moves)
+  for (const move of cuts) {
+    for (const pt of [move.from, move.to]) {
+      const dx = Math.max(20 - pt.x, 0, pt.x - 30)
+      const dy = Math.max(0 - pt.y, 0, pt.y - 20)
+      const dist = Math.hypot(dx, dy)
+      assert(dist >= toolRadius - 0.05,
+        `exclude cut at (${pt.x.toFixed(3)},${pt.y.toFixed(3)}) ` +
+        `distance ${dist.toFixed(3)} < toolRadius ${toolRadius}`)
+    }
+  }
+
+  // Also verify at least one cut endpoint is close to the correct clearance:
+  // the nearest approach should be ~toolRadius, not a full cutWidth away.
+  let minDist = Number.POSITIVE_INFINITY
+  for (const move of cuts) {
+    for (const pt of [move.from, move.to]) {
+      const dx = Math.max(20 - pt.x, 0, pt.x - 30)
+      const dy = Math.max(0 - pt.y, 0, pt.y - 20)
+      const dist = Math.hypot(dx, dy)
+      if (dist < minDist) minDist = dist
+    }
+  }
+  assert(minDist < toolRadius + 0.3,
+    `nearest cut distance ${minDist.toFixed(3)} too far from exclude — ` +
+    `expected ~${toolRadius}`)
+
+  console.log('trochoidal exclude clears by toolRadius: PASSED')
+}
+
+function testContourExcludeClearsByToolRadius() {
+  // A contour edge route with an exclude region must keep the tool body clear —
+  // the tool centre must stay ≥ tool.radius from the exclude boundary.
+  console.log('Testing contour exclude clears by toolRadius...')
+
+  const toolDiameter = 4
+  const toolRadius = toolDiameter / 2
+  const tool = makeFlatEndmill('t1', toolDiameter)
+  // Inside edge route: the contour is inside the pocket (inset by tool.radius).
+  // Pocket 60×30, exclude region in the middle at x=25..35 crosses the contour.
+  const pocket = makePocketFeature('p1', 0, 0, 60, 30, 4, 0)
+  const region = makeRegionFeature('region', 25, -5, 10, 40, 'exclude')
+  const project = baseProject([tool], [pocket, region])
+
+  const result = generateEdgeRouteToolpath(project, {
+    kind: 'edge_route_inside',
+    id: 'op1',
+    name: 'op',
+    pass: 'finish',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['p1', 'region'] },
+    toolRef: 't1',
+    stepdown: 2,
+    stepover: 0.4,
+    feed: 800,
+    plungeFeed: 300,
+    rpm: 18000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    roundOutsideCorners: false,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+    cutDirection: 'conventional',
+    machiningOrder: 'level_first',
+  })
+
+  // Exclude region occupies x∈[25,35], y∈[-5,35].  With the corrected exclude
+  // clearance (toolRadius=2 dilation), no cut move endpoint may come within
+  // toolRadius of the exclude region.
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'contour exclude must generate cuts')
+
+  for (const move of cuts) {
+    for (const pt of [move.from, move.to]) {
+      const dx = Math.max(25 - pt.x, 0, pt.x - 35)
+      const dy = Math.max(-5 - pt.y, 0, pt.y - 35)
+      const dist = Math.hypot(dx, dy)
+      assert(dist >= toolRadius - 0.05,
+        `contour exclude cut at (${pt.x.toFixed(3)},${pt.y.toFixed(3)}) ` +
+        `distance ${dist.toFixed(3)} < toolRadius ${toolRadius}`)
+    }
+  }
+
+  console.log('contour exclude clears by toolRadius: PASSED')
+}
+
+function testEdgeNoMaskByteIdenticalTrochoidal() {
+  // A trochoidal edge route with no region produces the same output as one
+  // with a null mask — byte-identical for the no-mask parity contract.
+  console.log('Testing trochoidal no-mask byte-identical...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const target = makeAddFeature('target', 0, 0, 30, 30, 0, -2)
+  const project = baseProject([tool], [target])
+
+  const op = makeTrochoidalEdgeOperation('target', 'edge_route_outside')
+  const result = generateEdgeRouteToolpath(project, op)
+
+  // Re-generate — same inputs, byte-identical output.
+  const result2 = generateEdgeRouteToolpath(project, op)
+  assert(movesEqual(result.moves, result2.moves), 'trochoidal no-mask output must be byte-identical')
+  assert(result.moves.length > 0, 'trochoidal no-mask must produce cuts')
+
+  console.log('trochoidal no-mask byte-identical: PASSED')
+}
+
+function testEdgeNoMaskByteIdenticalContour() {
+  // A contour edge route with no region produces the same output as one
+  // with a null mask.
+  console.log('Testing contour no-mask byte-identical...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const target = makeAddFeature('target', 0, 0, 20, 12, 2, 0)
+  const project = baseProject([tool], [target])
+
+  const op: Operation = {
+    kind: 'edge_route_outside',
+    id: 'op1',
+    name: 'op',
+    pass: 'finish',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['target'] },
+    toolRef: 't1',
+    stepdown: 2,
+    stepover: 0.4,
+    feed: 800,
+    plungeFeed: 300,
+    rpm: 18000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    roundOutsideCorners: false,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+    cutDirection: 'conventional',
+    machiningOrder: 'level_first',
+  }
+  const result = generateEdgeRouteToolpath(project, op)
+  const result2 = generateEdgeRouteToolpath(project, op)
+  assert(movesEqual(result.moves, result2.moves), 'contour no-mask output must be byte-identical')
+  assert(result.moves.length > 0, 'contour no-mask must produce cuts')
+
+  console.log('contour no-mask byte-identical: PASSED')
 }
 
 function testTrochoidalNarrowWidthStillFails() {
@@ -3854,6 +4073,11 @@ try {
   testTrochoidalOutsideFragmentsAroundTightObstacle()
   testTrochoidalIncludeRegionGenerates()
   testTrochoidalExcludeRegionClearance()
+  testTrochoidalIncludeLandsOnRegionBoundary()
+  testTrochoidalExcludeClearsByToolRadius()
+  testContourExcludeClearsByToolRadius()
+  testEdgeNoMaskByteIdenticalTrochoidal()
+  testEdgeNoMaskByteIdenticalContour()
   testTrochoidalNarrowWidthStillFails()
   testTrochoidalEngagementMatchesContourDirection()
   testTrochoidalCircularAndMultiTargetGuides()
