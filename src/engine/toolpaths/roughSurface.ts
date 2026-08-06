@@ -22,7 +22,6 @@ import { createEntryPolicy } from './entry'
 import { cutOffsetRegionRecursive, orderRegionsGreedy, retractToSafe, updateBounds } from './pocket'
 import { cornerSmoothingRadius } from './offsetSmoothing'
 import { offsetClipperPaths, segmentInsideClipperPaths } from './modelProtection'
-import { buildRegionMask, entryDisabledByRegionMaskWarning, splitFeatureTargets } from './regions'
 import { resolve3DSurfaceStepdown } from './surfaceStepdown3d'
 import type { ToolpathWarning } from './warningCodes'
 
@@ -48,14 +47,6 @@ export function generateRoughSurfaceToolpath(
   const allMoves: ToolpathMove[] = []
   const allStepLevels = new Set<number>()
   const warnings = [...resolved.warnings]
-  const featureIds = operation.target.source === 'features' ? operation.target.featureIds : []
-  const { regionFeatures } = splitFeatureTargets(project, featureIds)
-  const regionMask = buildRegionMask(regionFeatures)
-  const entryGuardWarning = entryDisabledByRegionMaskWarning(operation, regionMask)
-  const entryEnabled = entryGuardWarning === null
-  if (entryGuardWarning) {
-    appendUniqueWarning(warnings, entryGuardWarning)
-  }
   const smoothRadius = cornerSmoothingRadius(
     operation.roundOutsideCorners,
     resolved.tool.radius,
@@ -89,14 +80,12 @@ export function generateRoughSurfaceToolpath(
     // drive the tool through standing stock. Entry stays at the global safe Z
     // until that containment is proven per level.
     for (const region of orderedRegions) {
-      const entryPolicy = entryEnabled
-        ? createEntryPolicy(
-          operation,
-          resolved.tool.diameter,
-          [region],
-          (warning) => appendUniqueWarning(warnings, warning),
-        )
-        : undefined
+      const entryPolicy = createEntryPolicy(
+        operation,
+        resolved.tool.diameter,
+        [region],
+        (warning) => appendUniqueWarning(warnings, warning),
+      )
       currentPosition = cutOffsetRegionRecursive(
         allMoves,
         region,
