@@ -77,8 +77,8 @@ worker must not re-derive:
 | p2b-centre-domain-containment | `feat/issue-452-p2b-centre-domain-containment` | accepted | `de7b117` + `a6f2359` | `03eecef` |
 | p3a-edge-route-curve-domain | `feat/issue-452-p3a-edge-route-curve-domain` | accepted (regression fixed in p3b) | `8281de5` | `33baf96` |
 | p3b-carving-waterline-finish | `feat/issue-452-p3b-carving-waterline-finish` | accepted | `2607ce1` | `f85c52e` |
-| p4-trochoidal-regions | `feat/issue-452-p4-trochoidal-regions` | dispatched | — | — |
-| p5-delete-clippers | `feat/issue-452-p5-delete-clippers` | pending | — | — |
+| p4-trochoidal-regions | `feat/issue-452-p4-trochoidal-regions` | accepted | `c07d678` | `e242175` |
+| p5-delete-clippers | `feat/issue-452-p5-delete-clippers` | dispatched | — | — |
 
 Dependencies: p0 and p1 are independent of everything and of each other. p2, p3
 and p4 each require p1. p5 requires p2, p3 and p4.
