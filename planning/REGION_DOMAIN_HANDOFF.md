@@ -72,8 +72,8 @@ worker must not re-derive:
 | Slice | Branch | Status | Commit | Merged |
 | --- | --- | --- | --- | --- |
 | p0-rough-surface-guard | `feat/issue-452-p0-rough-surface-guard` | accepted | `330cd76` | `f62924a` |
-| p1-region-domain-resolver | `feat/issue-452-p1-region-domain-resolver` | dispatched | — | — |
-| p2-area-generators | `feat/issue-452-p2-area-generators` | pending | — | — |
+| p1-region-domain-resolver | `feat/issue-452-p1-region-domain-resolver` | accepted | `e302911` | `8b96d33` |
+| p2-area-generators | `feat/issue-452-p2-area-generators` | dispatched | — | — |
 | p3-curve-generators | `feat/issue-452-p3-curve-generators` | pending | — | — |
 | p4-trochoidal-regions | `feat/issue-452-p4-trochoidal-regions` | pending | — | — |
 | p5-delete-clippers | `feat/issue-452-p5-delete-clippers` | pending | — | — |
@@ -89,6 +89,17 @@ and p4 each require p1. p5 requires p2, p3 and p4.
   merged. Subsequent prompts state the one-commit requirement explicitly and in
   stronger terms; if the pattern repeats, treat it as a launcher-level problem
   rather than a per-slice one.
+
+## Debt to clear before the PR
+
+- `regionDomain.ts` duplicates ~90 lines of geometry predicates from
+  `guideFragments.ts` (`segmentIntersectionParams`, `pointInWorldPath`,
+  `distinctSorted`, `pointAt`, `sameWorldPoint`, `normalizeWorldPath`). The
+  copies are semantically identical — both use `XY_EPSILON = 1e-9`, verified at
+  review — but two copies of subtle geometry predicates will drift. p1's prompt
+  forbade touching `guideFragments.ts`, which forced the duplication; that was a
+  prompt defect, not a worker one. **p3 owns the fix**: export the shared helpers
+  from `guideFragments.ts` and delete the copies.
 
 ## Notes
 
