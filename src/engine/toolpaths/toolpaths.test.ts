@@ -2448,6 +2448,11 @@ function pointToPolygonBoundary(
   point: { x: number; y: number },
   polygon: Array<{ x: number; y: number }>,
 ): number {
+  // Interior points collapse to 0 so a clearance assertion cannot be satisfied
+  // by a cut that landed deep INSIDE the keep-out — without this, a point at the
+  // centre of the excluded block reports its (large) distance to the nearest
+  // edge and passes.
+  if (pointInsidePolygon(point, polygon)) return 0
   let minDist = Infinity
   for (let i = 0; i < polygon.length; i += 1) {
     const a = polygon[i]
