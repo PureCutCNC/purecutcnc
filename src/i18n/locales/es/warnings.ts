@@ -138,8 +138,6 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   "warnings.clampCrossedOne": "La mordaza \"{name}\" es atravesada por {count} movimiento {moveKind} por debajo de la holgura requerida (Z mínima {minZ}; Z requerida {requiredZ}).",
   "warnings.clampCrossedMany": "La mordaza \"{name}\" es atravesada por {count} movimientos {moveKind} por debajo de la holgura requerida (Z mínima {minZ}; Z requerida {requiredZ}).",
   "warnings.clampTravelLimitExceeded": "La mordaza \"{name}\" requiere una holgura Z de {requiredZ}, que supera el recorrido Z máximo del proyecto ({maxZ}).",
-  "warnings.regionClippedOne": "El filtro de región recortó el movimiento de corte de {count}.",
-  "warnings.regionClippedMany": "El filtro de región recortó los movimientos de corte de {count}.",
   "warnings.moveKind.rapid": "de avance rápido",
   "warnings.moveKind.plunge": "de penetración",
   "warnings.moveKind.lead_in": "de entrada",

@@ -147,8 +147,6 @@ export type ToolpathWarningCode =
   // clamps / regions
   | 'clampCrossedOne'
   | 'clampCrossedMany'
-  | 'regionClippedOne'
-  | 'regionClippedMany'
   // surface-clean resolver
   | 'surfaceTargetsWrongRole'
   | 'surfaceClosedProfilesOnly'

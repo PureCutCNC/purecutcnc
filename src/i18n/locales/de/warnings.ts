@@ -155,8 +155,6 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.clampCrossedOne': 'Spannzwinge „{name}" wird von {count} Bewegung des Typs {moveKind} unterhalb der erforderlichen Freiraumhöhe gekreuzt (min. Z {minZ}, erforderliches Z {requiredZ}).',
   'warnings.clampCrossedMany': 'Spannzwinge „{name}" wird von {count} Bewegungen des Typs {moveKind} unterhalb der erforderlichen Freiraumhöhe gekreuzt (min. Z {minZ}, erforderliches Z {requiredZ}).',
   'warnings.clampTravelLimitExceeded': 'Spannzwinge „{name}" erfordert Freiraum-Z {requiredZ}, was das maximale Verfahr-Z {maxZ} des Projekts überschreitet.',
-  'warnings.regionClippedOne': 'Bereichsfilter beschnitt {count} Schnittbewegung.',
-  'warnings.regionClippedMany': 'Bereichsfilter beschnitt {count} Schnittbewegungen.',
   'warnings.moveKind.rapid': 'Eilgang',
   'warnings.moveKind.plunge': 'Eintauchen',
   'warnings.moveKind.lead_in': 'Anfahren',

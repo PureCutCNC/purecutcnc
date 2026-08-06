@@ -155,8 +155,6 @@ export const warningsEn = {
   'warnings.clampCrossedOne': 'Clamp "{name}" is crossed by {count} {moveKind} move below required clearance (min Z {minZ}, required Z {requiredZ}).',
   'warnings.clampCrossedMany': 'Clamp "{name}" is crossed by {count} {moveKind} moves below required clearance (min Z {minZ}, required Z {requiredZ}).',
   'warnings.clampTravelLimitExceeded': 'Clamp "{name}" requires clearance Z {requiredZ}, which exceeds project max travel Z {maxZ}.',
-  'warnings.regionClippedOne': 'Region filter clipped {count} cut move.',
-  'warnings.regionClippedMany': 'Region filter clipped {count} cut moves.',
   'warnings.moveKind.rapid': 'rapid',
   'warnings.moveKind.plunge': 'plunge',
   'warnings.moveKind.lead_in': 'lead-in',
