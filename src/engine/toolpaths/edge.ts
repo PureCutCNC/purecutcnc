@@ -1104,6 +1104,15 @@ function generateEdgeRouteToolpathSingle(
   const trochoidalGuideOffset = radialLeave
     + trochoidalCutWidth / 2
     + tool.diameter * TROCHOIDAL_GUIDE_SAFETY_FRACTION
+  // The orbit radius, derived once. Region clearances are expressed against it:
+  // an include region is eroded by the orbit radius so the outermost tool centre
+  // lands on the region boundary, and an exclude region is dilated by the orbit
+  // radius plus the tool radius so the whole cutter clears it. Same reason
+  // trochoidalGuideOffset is computed once — two spellings of one distance is
+  // how a seam becomes a gouge.
+  const trochoidalOrbitRadius = (trochoidalCutWidth - tool.diameter) / 2
+  const trochoidalRegionIncludeClearance = -trochoidalOrbitRadius
+  const trochoidalRegionExcludeClearance = trochoidalOrbitRadius + tool.radius
   // Keep guide-fragment endpoints one extra epsilon away from the tab's
   // cutter footprint. The orbit closes in place at each fragment endpoint;
   // a merely tangent endpoint is therefore an intersection, not safe margin.
@@ -1196,8 +1205,8 @@ function generateEdgeRouteToolpathSingle(
             operation,
             warnings,
             regionMask,
-            -(trochoidalCutWidth - tool.diameter) / 2,
-            trochoidalCutWidth / 2,
+            trochoidalRegionIncludeClearance,
+            trochoidalRegionExcludeClearance,
           ),
         )
         if (hasFatalTrochoidalWarning(warnings)) break
@@ -1389,8 +1398,8 @@ function generateEdgeRouteToolpathSingle(
               operation,
               warnings,
               regionMask,
-              -(trochoidalCutWidth - tool.diameter) / 2,
-              trochoidalCutWidth / 2,
+              trochoidalRegionIncludeClearance,
+              trochoidalRegionExcludeClearance,
             ),
           )
         } else {
@@ -1464,8 +1473,8 @@ function generateEdgeRouteToolpathSingle(
             operation,
             warnings,
             regionMask,
-            -(trochoidalCutWidth - tool.diameter) / 2,
-            trochoidalCutWidth / 2,
+            trochoidalRegionIncludeClearance,
+            trochoidalRegionExcludeClearance,
           ),
         )
         if (hasFatalTrochoidalWarning(warnings)) break
