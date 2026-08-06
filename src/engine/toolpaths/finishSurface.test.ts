@@ -2436,6 +2436,14 @@ function testParallelFinishHonorsOrderedRegionMaskModes(): void {
   let hasOuterCut = false
   let hasInnerCut = false
 
+  // centreInset = tool.radius + stockToLeaveRadial = 0.5.  The centre-domain
+  // resolver dilates both include and exclude entries by centreInset before
+  // composing them, so the tool centre stays centreInset clear of excluded
+  // boundaries and may reach centreInset beyond included boundaries.
+  const ci = 0.5 // tool.radius = 1mm diameter / 2
+  const dilatedExclude = { x: 8 - ci, y: 4 - ci, w: 4 + 2 * ci, h: 2 + 2 * ci }
+  const dilatedInner = { x: 9.25 - ci, y: 4.6 - ci, w: 1.5 + 2 * ci, h: 0.8 + 2 * ci }
+
   assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
   assert(cuts.length > 0, 'expected parallel finish cuts inside the ordered region mask')
   for (const move of cuts) {
@@ -2443,11 +2451,15 @@ function testParallelFinishHonorsOrderedRegionMaskModes(): void {
       x: move.from.x + (move.to.x - move.from.x) * t,
       y: move.from.y + (move.to.y - move.from.y) * t,
     }))
-    hasOuterCut ||= samples.some((point) => pointInsideRect(point, { x: 6.5, y: 3.5, w: 1, h: 1 }))
-    hasInnerCut ||= samples.some((point) => pointInsideRect(point, { x: 9.25, y: 4.6, w: 1.5, h: 0.8 }))
+    const outerRect = { x: 6.5, y: 3.5, w: 1, h: 1 }
+    const innerRect = { x: 9.25, y: 4.6, w: 1.5, h: 0.8 }
+    hasOuterCut ||= samples.some((point) => pointInsideRect(point, outerRect))
+    hasInnerCut ||= samples.some((point) => pointInsideRect(point, innerRect))
+    // Each sampled point must either be outside the dilated exclude or inside
+    // the dilated inner re-include (the later include restores that area).
     assert(
-      samples.every((point) => !pointInsideRect(point, { x: 8, y: 4, w: 4, h: 2 })
-        || pointInsideRect(point, { x: 9.25, y: 4.6, w: 1.5, h: 0.8 })),
+      samples.every((point) => !pointInsideRect(point, dilatedExclude)
+        || pointInsideRect(point, dilatedInner)),
       `parallel finish should remove excluded area except the later include, got move ${JSON.stringify(move)}`,
     )
   }

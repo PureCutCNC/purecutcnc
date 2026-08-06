@@ -2710,7 +2710,7 @@ function testSurfaceCleanExcludeRegionToolBodyClearance(): void {
 }
 
 function testFollowLineRegionClipsOpenPath() {
-  console.log('Testing follow_line region clips open path...')
+  console.log('Testing follow_line region fragments guide...')
   const tool = makeFlatEndmill('t1', 1)
   const line = makeLineFeature('line1', 0, 5, 10, 5)
   const region = makeRegionFeature('r1', 2, 0, 4, 10)
@@ -2724,10 +2724,43 @@ function testFollowLineRegionClipsOpenPath() {
   const result = generateFollowLineToolpath(project, op)
   const cuts = cutMoves(result.moves)
 
-  assert(cuts.length > 0, 'expected clipped follow-line cuts')
-  assert(cuts.every((move) => move.from.x >= 2 - 1e-6 && move.to.x <= 6 + 1e-6), 'expected follow-line cuts inside region X bounds')
-  assert(result.bounds !== null && result.bounds.minX >= 2 - 1e-6 && result.bounds.maxX <= 6 + 1e-6, 'expected clipped follow-line bounds')
-  console.log('follow_line region clipping: PASSED')
+  assert(cuts.length > 0, 'expected follow-line cut fragments')
+
+  // The include region [2,6] is resolved pre-generation with
+  // centreInset = tool.radius = 0.5, which dilates the allowed area to
+  // [1.5, 6.5].  The guide is fragmented against that dilated area
+  // (coverage — the tool centre may reach centreInset past the region so
+  // the cut surface fully covers it).  Assert tool-centre endpoints stay
+  // within the dilated region.
+  const centreInset = tool.diameter / 2 // 0.5, stockToLeaveRadial = 0
+  const xMin = 2 - centreInset - 1e-6
+  const xMax = 6 + centreInset + 1e-6
+  for (const move of cuts) {
+    assert(
+      move.from.x >= xMin && move.from.x <= xMax &&
+      move.to.x >= xMin && move.to.x <= xMax,
+      `follow-line cut move X ${move.from.x}→${move.to.x} outside [${xMin}, ${xMax}]`,
+    )
+  }
+  assert(result.bounds !== null && result.bounds.minX >= xMin && result.bounds.maxX <= xMax,
+    `follow-line bounds X [${result.bounds?.minX}, ${result.bounds?.maxX}] outside [${xMin}, ${xMax}]`)
+
+  // No-mask parity: without the region the full line is cut.
+  const opNoMask = makePocketOp({
+    kind: 'follow_line',
+    target: { source: 'features', featureIds: ['line1'] },
+    toolRef: 't1',
+    carveDepth: 1,
+  })
+  const resultNoMask = generateFollowLineToolpath(project, opNoMask)
+  const noMaskCuts = cutMoves(resultNoMask.moves)
+  assert(noMaskCuts.length > 0, 'expected unmasked follow-line cuts')
+  const maskedLen = cuts.reduce((s, m) => s + Math.hypot(m.to.x - m.from.x, m.to.y - m.from.y), 0)
+  const unmaskedLen = noMaskCuts.reduce((s, m) => s + Math.hypot(m.to.x - m.from.x, m.to.y - m.from.y), 0)
+  assert(unmaskedLen > maskedLen + 1e-6,
+    `unmasked cut length (${unmaskedLen}) must exceed masked (${maskedLen})`)
+
+  console.log('follow_line region fragmentation: PASSED')
 }
 
 function testDrillingRegionFiltersHolePoints() {

@@ -26,7 +26,7 @@ import type { PocketToolpathResult, ToolpathBounds } from './types'
 import { getOperationSafeZ, normalizeToolForProject } from './geometry'
 import { generateStepLevels, retractToSafe, updateBounds } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
-import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
+import { splitFeatureTargets } from './regions'
 import {
   buildExpandedTabFootprints,
   offsetClipperPaths,
@@ -279,20 +279,7 @@ export function generateFinishSurfaceToolpath(
       warnings,
     )
 
-  const parallelRegionMask = operation.pocketPattern === 'waterline'
-    ? null
-    : buildRegionMask(regionFeatures)
-  const shouldPostClipParallelRegionMask = parallelRegionMask?.baseIncludesSubject ?? false
-  const regionClippedResult = parallelRegionMask
-    && shouldPostClipParallelRegionMask
-    ? clipToolpathResultToRegionMask(project, {
-      operationId: operation.id,
-      moves: strategyResult.moves,
-      warnings: [],
-      bounds: null,
-    }, parallelRegionMask)
-    : null
-  const finalMoves = regionClippedResult?.moves ?? strategyResult.moves
+  const finalMoves = strategyResult.moves
   const lastMove = finalMoves[finalMoves.length - 1]
   if (lastMove && lastMove.to.z !== safeZ) {
     retractToSafe(finalMoves, lastMove.to, safeZ)
