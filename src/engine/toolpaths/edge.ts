@@ -36,12 +36,13 @@ import {
 import { unionClipperPaths } from './modelProtection'
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { buildInsetRegions, buildOuterContours, cutClosedContours, resolveBandBottomZ } from './pocket'
-import { buildMaskFromClipperPaths, buildRegionMask, clipToolpathResultToObstaclesByLevel, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
+import { buildMaskFromClipperPaths, buildRegionMask, type RegionMask, splitFeatureTargets } from './regions'
 import { resolveInsideEdgeRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { helixAngularDirection, plungeLimitedFeedScale } from './entry'
-import { splitClosedGuideByForbiddenPaths } from './guideFragments'
+import { splitClosedGuideByForbiddenPaths, type ClosedGuideFragment } from './guideFragments'
+import { resolveRegionDomainCurve } from './regionDomain'
 import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET } from './trochoidalEdge'
 import { expandedTabFootprints } from './tabs'
 
@@ -561,26 +562,80 @@ function createTrochoidalFragmentPlanner(
   }
 }
 
-function appendContoursAtLevels(
+/**
+ * Fragment contours through the region mask and (per level) the obstacle set,
+ * then emit closed or open cut moves with safe transitions.
+ *
+ * centreInset is 0 because the guide is already the tool-centre path —
+ * `resolveContourPaths` offset by `tool.radius + stockToLeaveRadial` — so the
+ * region should constrain it directly without further dilation.
+ */
+function appendFragmentedContoursAtLevels(
   moves: ToolpathMove[],
   currentPosition: ToolpathPoint | null,
   contours: Point[][],
   levels: number[],
   safeZ: number,
   maxLinkDistance: number,
+  regionMask: RegionMask | null,
+  obstacleMaskForZ: (z: number) => RegionMask | null,
 ): ToolpathPoint | null {
-  let nextPosition = currentPosition
+  // Fragment by region mask once — region is Z-independent.
+  const regionFragments = contours.flatMap((c) =>
+    resolveRegionDomainCurve(c, true, regionMask, 0))
 
+  if (regionFragments.length === 0) return currentPosition
+
+  let nextPosition = currentPosition
   for (const z of levels) {
-    for (const contour of contours) {
-      const entryPoint = contourStartPoint(contour, z)
-      nextPosition = transitionToCutEntry(moves, nextPosition, entryPoint, safeZ, maxLinkDistance)
-      const cutMoves = toClosedCutMoves(contour, z)
-      moves.push(...cutMoves)
-      nextPosition = cutMoves.at(-1)?.to ?? nextPosition
+    const obsMask = obstacleMaskForZ(z)
+
+    for (const frag of regionFragments) {
+      let finalFragments: ClosedGuideFragment[]
+
+      if (!obsMask) {
+        finalFragments = [frag]
+      } else if (frag.closed) {
+        finalFragments = splitClosedGuideByForbiddenPaths(frag.points, obsMask.paths, 'outside')
+        if (finalFragments.length === 0) continue
+      } else {
+        // Open fragment + obstacles: build an exclude mask and re-use
+        // resolveRegionDomainCurve to split the open guide against it.
+        const excludeMask: RegionMask = {
+          paths: obsMask.paths,
+          hasIncludeRegions: false,
+          excludePaths: obsMask.paths,
+          boundaryPaths: obsMask.paths,
+          baseIncludesSubject: true,
+          entries: [{ mode: 'exclude', paths: obsMask.paths }],
+          containsPoint: () => false,
+        }
+        finalFragments = resolveRegionDomainCurve(frag.points, false, excludeMask, 0)
+        if (finalFragments.length === 0) continue
+      }
+
+      for (const ff of finalFragments) {
+        if (ff.points.length < 2) continue
+        if (ff.closed) {
+          const entry = contourStartPoint(ff.points, z)
+          nextPosition = transitionToCutEntry(moves, nextPosition, entry, safeZ, maxLinkDistance)
+          const cutMoves = toClosedCutMoves(ff.points, z)
+          moves.push(...cutMoves)
+          nextPosition = cutMoves.at(-1)?.to ?? nextPosition
+        } else {
+          // Open span: retract to safe Z, rapid to the start, descend.  This
+          // follows the transition pattern already used between separate
+          // contours in appendContoursAtLevels.
+          const entry = { x: ff.points[0].x, y: ff.points[0].y, z }
+          nextPosition = retractToSafe(moves, nextPosition, safeZ)
+          nextPosition = pushRapidAndPlunge(moves, nextPosition, entry, safeZ)
+          moves.push(...toOpenCutMoves(ff.points, z))
+          nextPosition = moves.at(-1)?.to ?? nextPosition
+          nextPosition = retractToSafe(moves, nextPosition, safeZ)
+        }
+      }
     }
   }
-
   return nextPosition
 }
 
@@ -1132,8 +1187,25 @@ function generateEdgeRouteToolpathSingle(
         )
         if (hasFatalTrochoidalWarning(warnings)) break
       } else {
+        // Fragment the band contours through the region mask.  centreInset is 0
+        // because the band contours are already tool-centre paths.
+        const regionFragments = contours.flatMap((c) =>
+          resolveRegionDomainCurve(c, true, regionMask, 0))
+        const closedFrags = regionFragments.filter((f) => f.closed).map((f) => f.points)
+        const openFrags = regionFragments.filter((f) => !f.closed)
+
         for (const z of levels) {
-          currentPosition = cutClosedContours(moves, contours, z, safeZ, maxLinkDistance, currentPosition)
+          if (closedFrags.length > 0) {
+            currentPosition = cutClosedContours(moves, closedFrags, z, safeZ, maxLinkDistance, currentPosition)
+          }
+          for (const frag of openFrags) {
+            const entry = { x: frag.points[0].x, y: frag.points[0].y, z }
+            currentPosition = retractToSafe(moves, currentPosition, safeZ)
+            currentPosition = pushRapidAndPlunge(moves, currentPosition, entry, safeZ)
+            moves.push(...toOpenCutMoves(frag.points, z))
+            currentPosition = moves.at(-1)?.to ?? currentPosition
+            currentPosition = retractToSafe(moves, currentPosition, safeZ)
+          }
         }
       }
     }
@@ -1150,18 +1222,12 @@ function generateEdgeRouteToolpathSingle(
       bounds = updateBounds(bounds, move.to)
     }
 
-    const result = {
+    return {
       operationId: operation.id,
       moves,
       warnings,
       bounds,
     }
-    // Same load-bearing rule as the outside return below: the region clipper
-    // would strip the helical entries. Region targets are already refused for
-    // trochoidal, so this is currently a no-op — state it anyway rather than
-    // leave the invariant resting on a refusal several hundred lines away.
-    if (isTrochoidal) return result
-    return clipToolpathResultToRegionMask(project, result, regionMask)
   }
 
   const routableTargets = closedTargetFeatures
@@ -1309,7 +1375,10 @@ function generateEdgeRouteToolpathSingle(
             ),
           )
         } else {
-          currentPosition = appendContoursAtLevels(moves, currentPosition, contours, levels, safeZ, maxLinkDistance)
+          currentPosition = appendFragmentedContoursAtLevels(
+            moves, currentPosition, contours, levels, safeZ, maxLinkDistance,
+            regionMask, obstacleMaskForZ,
+          )
         }
       }
     } else {
@@ -1379,7 +1448,10 @@ function generateEdgeRouteToolpathSingle(
         )
         if (hasFatalTrochoidalWarning(warnings)) break
       } else {
-        currentPosition = appendContoursAtLevels(moves, currentPosition, contours, levels, safeZ, maxLinkDistance)
+        currentPosition = appendFragmentedContoursAtLevels(
+          moves, currentPosition, contours, levels, safeZ, maxLinkDistance,
+          regionMask, obstacleMaskForZ,
+        )
       }
     }
   }
@@ -1396,24 +1468,10 @@ function generateEdgeRouteToolpathSingle(
     bounds = updateBounds(bounds, move.to)
   }
 
-  let result: ToolpathResult = {
+  return {
     operationId: operation.id,
     moves,
     warnings,
     bounds,
   }
-  // LOAD-BEARING: trochoidal output must never reach either shared clipper.
-  // Both drop every non-`cut` move and re-link the surviving fragments with
-  // vertical plunges (regions.ts), which would silently delete the helical
-  // entries this strategy depends on and drop the tool into uncleared stock.
-  // Obstacles and regions are instead handled up front — obstacles by
-  // fragmenting the guide before any orbit exists, regions by refusing the
-  // operation outright (edgeTrochoidalRegionUnsupported). Contour edge routes
-  // have no entry strategies, so the defect is latent for them; routing
-  // trochoidal through here is what would make it live. See #452.
-  if (isTrochoidal) return result
-  if (allAdditiveObstacles.length > 0) {
-    result = clipToolpathResultToObstaclesByLevel(project, result, obstacleMaskForZ)
-  }
-  return clipToolpathResultToRegionMask(project, result, regionMask)
 }

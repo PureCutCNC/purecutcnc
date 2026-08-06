@@ -1669,6 +1669,145 @@ function testEdgeOutsideCombinedRoundCorners() {
   console.log('combined edge_route_outside round outside corners: PASSED')
 }
 
+// ── p3a: no-mask parity ────────────────────────────────────────────────────
+
+function testEdgeNoMaskProducesClosedCuts() {
+  console.log('Testing edge_route_outside no-mask parity produces closed contours...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const feature = makeAddFeature('a', 0, 0, 20, 12, 2, 0)
+  const project = baseProject([tool], [feature])
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+  })
+
+  const result = generateEdgeRouteToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'no-mask route produces cut moves')
+  // Without a mask, all contours stay closed — every cut move's from/to
+  // should connect in a closed loop (last move's to equals first move's from).
+  const firstFrom = { x: cuts[0].from.x, y: cuts[0].from.y, z: cuts[0].from.z }
+  const lastTo = { x: cuts[cuts.length - 1].to.x, y: cuts[cuts.length - 1].to.y, z: cuts[cuts.length - 1].to.z }
+  assert(
+    Math.abs(firstFrom.x - lastTo.x) < 1e-6
+      && Math.abs(firstFrom.y - lastTo.y) < 1e-6,
+    `no-mask contour should be closed, got first=${JSON.stringify(firstFrom)} last=${JSON.stringify(lastTo)}`,
+  )
+  // No moves should be rapid/plunge mid-contour — the transition from
+  // safe Z to the first cut is the only non-cut move.
+  const nonCuts = result.moves.filter((m) => m.kind !== 'cut')
+  assert(nonCuts.length <= 3,
+    `no-mask route should have at most 3 non-cut moves (rapid + plunge + retract), got ${nonCuts.length}`)
+
+  console.log('edge_route_outside no-mask parity: PASSED')
+}
+
+// ── p3a: region fragmentation ──────────────────────────────────────────────
+
+function testEdgeInsideRegionFragmentsIntoOpenSpans() {
+  console.log('Testing edge_route_inside region mask fragments contour into open spans...')
+
+  const tool = makeFlatEndmill('t1', 6)
+  // Subtract feature (pocket) 50×50, with a region covering only the
+  // right half (x=25..50).  The inside contour is offset inward by
+  // tool.radius (3), so it goes from (3,3) to (47,47) — well within
+  // both the pocket and the region's x-range.
+  const pocket = makePocketFeature('p1', 0, 0, 50, 50, 4, 0)
+  const region = makeRegionFeature('reg', 25, 0, 25, 50)
+  const project = baseProject([tool], [pocket, region])
+  const op = makePocketOp({
+    kind: 'edge_route_inside',
+    target: { source: 'features', featureIds: ['p1', 'reg'] },
+    toolRef: 't1',
+    machiningOrder: 'level_first',
+  })
+
+  const result = generateEdgeRouteToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, `region-masked inside route produces cut moves, got ${result.moves.length} moves`)
+
+  // Every cut move must lie within the masked region (x >= 25 for the
+  // right-half region).  The contour is inset by tool.radius=3, so its
+  // left edge is at x=3, but the region mask keeps only x >= 25.
+  const regionViolations = cuts.filter((m) => m.to.x < 25 - 1e-6)
+  assert(regionViolations.length === 0,
+    `expected no cuts with centre x < 25, got ${violationsDesc(regionViolations)}`)
+
+  // The contour should be cut open at the region boundary (x=25).
+  if (cuts.length >= 2) {
+    const firstCutFrom = cuts[0].from
+    const lastCutTo = cuts[cuts.length - 1].to
+    const contourIsOpen = Math.abs(firstCutFrom.x - lastCutTo.x) > 1e-6
+      || Math.abs(firstCutFrom.y - lastCutTo.y) > 1e-6
+    // The region splits the contour — fragments are open.
+    assert(contourIsOpen, 'region-masked inside contour should be open (split at region boundary)')
+  }
+
+  // Every transition between spans must go through safe Z.
+  const safeZ = project.stock.thickness + project.meta.operationClearanceZ
+  for (let i = 1; i < result.moves.length; i += 1) {
+    const prev = result.moves[i - 1]
+    const curr = result.moves[i]
+    if (prev.kind !== 'cut' && curr.kind === 'cut') {
+      const prevEnd = prev.to
+      if (prevEnd.z < safeZ - 1e-6) {
+        assert(
+          Math.abs(prevEnd.x - curr.from.x) < 1e-6
+            && Math.abs(prevEnd.y - curr.from.y) < 1e-6,
+          `cut entry at (${curr.from.x.toFixed(3)},${curr.from.y.toFixed(3)}) ` +
+          `preceded by move ending at (${prevEnd.x.toFixed(3)},${prevEnd.y.toFixed(3)}) z=${prevEnd.z.toFixed(3)} — expected safe-Z transition`,
+        )
+      }
+    }
+  }
+
+  console.log('edge_route_inside region fragmentation: PASSED')
+}
+
+function violationsDesc(violations: ToolpathMove[]): string {
+  if (violations.length === 0) return 'none'
+  const first = violations[0]
+  return `${violations.length} violations (first x=${first?.to.x.toFixed(3)}, y=${first?.to.y.toFixed(3)})`
+}
+
+// ── p3a: obstacle fragmentation ─────────────────────────────────────────────
+
+function testEdgeOutsideObstacleFragmentsContour() {
+  console.log('Testing edge_route_outside obstacle fragments contour...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  // featureA at x=0..10, featureB at x=20..30 (gap = 10mm, wide enough for
+  // the tool at diameter 4 to pass through).  The outside contour around
+  // featureA should be split by featureB's keep-away zone.
+  const featureA = makeAddFeature('a', 0, 0, 10, 10, 6, 0)
+  const featureB = makeAddFeature('b', 20, 0, 10, 10, 6, 0)
+  const project = baseProject([tool], [featureA, featureB])
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+  })
+
+  const result = generateEdgeRouteToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'obstacle-fragmented route produces cut moves')
+
+  // featureB spans x=[20..30], expanded by tool.radius (2) gives keep-away
+  // at x=[18..32].  No cut move's tool centre may land inside that zone.
+  const keepAwayViolations = cuts.filter((m) => {
+    const inY = m.to.y >= -2 && m.to.y <= 12
+    const inX = m.to.x > 18 && m.to.x < 32
+    return inX && inY
+  })
+  assert(keepAwayViolations.length === 0,
+    `expected no cuts inside obstacle keep-away zone, got ${keepAwayViolations.length} (first x=${keepAwayViolations[0]?.to.x.toFixed(2)})`)
+
+  console.log('edge_route_outside obstacle fragmentation: PASSED')
+}
+
 function makeTrochoidalEdgeOperation(featureId: string, kind: 'edge_route_inside' | 'edge_route_outside'): Operation {
   return makePocketOp({
     kind,
@@ -3518,6 +3657,9 @@ try {
   testEdgeOutsideClipsAroundNonSelectedAddFeatures()
   testEdgeOutsideRoundCornersOptIn()
   testEdgeOutsideCombinedRoundCorners()
+  testEdgeNoMaskProducesClosedCuts()
+  testEdgeInsideRegionFragmentsIntoOpenSpans()
+  testEdgeOutsideObstacleFragmentsContour()
   testTrochoidalOutsideTracksDifferentTargetSizes()
   testTrochoidalTabsFragmentBeforeMotionAndHelixReenter()
   testTrochoidalOutsideFragmentsAroundTightObstacle()

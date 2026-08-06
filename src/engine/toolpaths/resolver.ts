@@ -35,7 +35,6 @@ import {
   resolveFeatureZSpan,
   toClipperPath,
 } from './geometry'
-import { applyRegionMaskToPaths, buildRegionMask } from './regions'
 
 interface FeatureWithSpan {
   feature: SketchFeature
@@ -260,7 +259,6 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
     .filter((feature) => feature !== null)
   const regionFeatures = selectedTargetFeatures
     .filter((feature) => feature.operation === 'region')
-  const regionMask = buildRegionMask(regionFeatures)
 
   const isVCarve = operation.kind === 'v_carve' || operation.kind === 'v_carve_medial'
   const validTargetSourceFeatures = selectedTargetFeatures
@@ -437,10 +435,6 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
         resolvedPaths,
         activeTabIslands.map((tab) => tab.path),
       )
-    }
-
-    if (resolvedPaths.length > 0 && regionMask && operation.kind !== 'pocket') {
-      resolvedPaths = applyRegionMaskToPaths(resolvedPaths, regionMask)
     }
 
     if (resolvedPaths.length === 0) {
