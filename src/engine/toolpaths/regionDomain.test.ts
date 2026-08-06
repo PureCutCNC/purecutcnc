@@ -18,7 +18,7 @@ import type { Point } from '../../types/project'
 import { DEFAULT_CLIPPER_SCALE } from './geometry'
 import { differenceClipperPaths, intersectClipperPaths, offsetClipperPaths } from './modelProtection'
 import { buildMaskFromClipperPaths, type RegionMask } from './regions'
-import { resolveRegionDomainArea, resolveRegionDomainCurve } from './regionDomain'
+import { resolveRegionDomainArea, resolveRegionDomainCentre, resolveRegionDomainCurve } from './regionDomain'
 import type { ClipperPath } from './types'
 
 // ---------------------------------------------------------------------------
@@ -304,6 +304,171 @@ function testAreaOrderedExcludeThenInclude(): void {
 }
 
 // ---------------------------------------------------------------------------
+// resolveRegionDomainCentre
+// ---------------------------------------------------------------------------
+
+/** Null mask returns the input domain by reference. */
+function testCentreNullMaskReturnsDomainByReference(): void {
+  const domain = [rectClipper(0, 0, 10, 10)]
+  const result = resolveRegionDomainCentre(domain, null, 2)
+  assert(result === domain, 'null mask must return the domain argument by reference')
+}
+
+/** Null mask with empty domain returns the (empty) domain by reference. */
+function testCentreNullMaskEmptyDomain(): void {
+  const domain: ClipperPath[] = []
+  const result = resolveRegionDomainCentre(domain, null, 2)
+  assert(result === domain, 'null mask with empty domain must return by reference')
+  assert(result.length === 0, 'returned empty array')
+}
+
+/** Empty domain with a mask returns empty. */
+function testCentreEmptyDomainWithMask(): void {
+  const region = clipperPaths([rect(0, 0, 10, 10)])
+  const mask = buildMaskFromClipperPaths(region)
+  assert(mask !== null, 'mask built')
+  const result = resolveRegionDomainCentre([], mask!, 2)
+  assert(result.length === 0, 'empty domain with mask returns empty')
+}
+
+/**
+ * Centre include: dilation pushes the allowed area `centreInset` beyond the
+ * region boundary so the tool centre can reach every part of the region.
+ */
+function testCentreIncludeDilation(): void {
+  const domain = [rectClipper(0, 0, 20, 20)]
+  const region = clipperPaths([rect(4, 4, 16, 16)])    // R = 12×12 centred
+  const r = 2
+
+  const mask = buildMaskFromClipperPaths(region)
+  assert(mask !== null, 'include mask built')
+
+  const resolved = resolveRegionDomainCentre(domain, mask!, r)
+  assert(resolved.length > 0, 'include does not collapse the domain')
+
+  // The allowed area is D ∩ (R ⊕ r).  With convex regions this is exact.
+  const expected = intersectClipperPaths(domain, offsetClipperPaths(region, r))
+  const diff = differenceClipperPaths(resolved, expected)
+  const missing = differenceClipperPaths(expected, resolved)
+  assert(diff.length === 0, 'resolved is subset of D ∩ (R ⊕ r)')
+  assert(missing.length === 0, 'D ∩ (R ⊕ r) is subset of resolved')
+}
+
+/**
+ * Centre exclude: the dilated exclude region is subtracted, so the tool centre
+ * stays at least `centreInset` clear of the exclude boundary.
+ */
+function testCentreExcludeDilation(): void {
+  const domain = [rectClipper(0, 0, 20, 20)]
+  const excludePath = clipperPaths([rect(8, 8, 12, 12)])  // X = 4×4 hole
+  const r = 2
+
+  const mask = excludeMask(excludePath)
+
+  const resolved = resolveRegionDomainCentre(domain, mask, r)
+  assert(resolved.length > 0, 'exclude leaves a non-empty domain')
+
+  // The dilated exclude X ⊕ r must not overlap the resolved domain.
+  const dilatedX = offsetClipperPaths(excludePath, r)
+  const overlap = intersectClipperPaths(resolved, dilatedX)
+  assert(overlap.length === 0, 'resolved domain does not overlap dilated exclude — centre is r clear')
+
+  // The raw exclude region must also be absent (stronger condition).
+  const rawOverlap = intersectClipperPaths(resolved, excludePath)
+  assert(rawOverlap.length === 0, 'resolved domain does not overlap raw exclude')
+}
+
+/**
+ * Centre exclude with zero inset: the raw region is subtracted (no dilation),
+ * matching the area resolver's exclude behaviour.
+ */
+function testCentreExcludeZeroInset(): void {
+  const domain = [rectClipper(0, 0, 20, 20)]
+  const excludePath = clipperPaths([rect(8, 8, 12, 12)])
+  const mask = excludeMask(excludePath)
+
+  const resolved = resolveRegionDomainCentre(domain, mask, 0)
+  assert(resolved.length > 0, 'exclude with zero inset leaves domain')
+
+  // With zero inset the result should be exactly D \ X.
+  const expected = differenceClipperPaths(domain, excludePath)
+  const extra = differenceClipperPaths(resolved, expected)
+  const missing = differenceClipperPaths(expected, resolved)
+  assert(extra.length === 0, 'resolved is subset of D\\X')
+  assert(missing.length === 0, 'D\\X is subset of resolved')
+}
+
+/**
+ * Centre ordered composition — include then exclude.
+ *
+ * Start empty → union (R₁ ⊕ r) → subtract (X₁ ⊕ r) → intersect D.
+ */
+function testCentreOrderedIncludeThenExclude(): void {
+  const domain = [rectClipper(0, 0, 20, 20)]
+  const r = 2
+  const r1 = clipperPaths([rect(2, 2, 18, 18)])        // large include
+  const x1 = clipperPaths([rect(14, 2, 18, 18)])        // exclude the right strip
+
+  const mask = regionMask([
+    { mode: 'include', paths: r1 },
+    { mode: 'exclude', paths: x1 },
+  ])
+
+  const resolved = resolveRegionDomainCentre(domain, mask, r)
+  assert(resolved.length > 0, 'include-then-exclude is non-empty')
+
+  // After include: (R₁ ⊕ r) = (0,0)-(20,20) inside D.
+  // After exclude: subtract (X₁ ⊕ r) = (12,0)-(20,20).
+  // The right portion is removed; the dilated exclude must not be present.
+  const dilatedX1 = offsetClipperPaths(x1, r)
+  const excludeOverlap = intersectClipperPaths(resolved, dilatedX1)
+  assert(excludeOverlap.length === 0, 'dilated excluded area is absent from result')
+}
+
+/**
+ * Centre ordered composition — exclude then include.
+ *
+ * Start from D → subtract (X₁ ⊕ r) → union (R₁ ⊕ r) → intersect D.
+ */
+function testCentreOrderedExcludeThenInclude(): void {
+  const domain = [rectClipper(0, 0, 20, 20)]
+  const r = 2
+  const x1 = clipperPaths([rect(4, 4, 16, 16)])        // exclude big middle
+  const r1 = clipperPaths([rect(8, 8, 12, 12)])        // include back a small block
+
+  const mask = regionMask([
+    { mode: 'exclude', paths: x1 },
+    { mode: 'include', paths: r1 },
+  ])
+
+  const resolved = resolveRegionDomainCentre(domain, mask, r)
+  assert(resolved.length > 0, 'exclude-then-include is non-empty')
+
+  // The dilated include block must be present.
+  const dilatedR1 = offsetClipperPaths(r1, r)
+  const includeOverlap = intersectClipperPaths(resolved, dilatedR1)
+  assert(includeOverlap.length > 0, 'dilated include region is present in result')
+
+  // The dilated exclude should be removed except where the include added back.
+  const dilatedX1 = offsetClipperPaths(x1, r)
+  const excludeResidual = differenceClipperPaths(
+    intersectClipperPaths(resolved, dilatedX1),
+    dilatedR1,
+  )
+  assert(excludeResidual.length === 0, 'dilated exclude area is absent except for re-included part')
+}
+
+/** Fully-excluded domain returns empty. */
+function testCentreFullyExcluded(): void {
+  const domain = [rectClipper(0, 0, 10, 10)]
+  const bigExclude = clipperPaths([rect(-1, -1, 11, 11)])
+  const mask = excludeMask(bigExclude)
+
+  const resolved = resolveRegionDomainCentre(domain, mask, 2)
+  assert(resolved.length === 0, 'wholly-excluded domain returns empty')
+}
+
+// ---------------------------------------------------------------------------
 // resolveRegionDomainCurve
 // ---------------------------------------------------------------------------
 
@@ -545,6 +710,17 @@ function run(): void {
   testAreaFullyExcluded()
   testAreaOrderedIncludeThenExclude()
   testAreaOrderedExcludeThenInclude()
+
+  // Centre
+  testCentreNullMaskReturnsDomainByReference()
+  testCentreNullMaskEmptyDomain()
+  testCentreEmptyDomainWithMask()
+  testCentreIncludeDilation()
+  testCentreExcludeDilation()
+  testCentreExcludeZeroInset()
+  testCentreOrderedIncludeThenExclude()
+  testCentreOrderedExcludeThenInclude()
+  testCentreFullyExcluded()
 
   // Curve
   testCurveNullMaskReturnsWholeGuide()

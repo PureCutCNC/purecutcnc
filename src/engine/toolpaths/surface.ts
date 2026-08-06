@@ -65,7 +65,7 @@ import {
   buildRegionMask,
   splitFeatureTargets,
 } from './regions'
-import { resolveRegionDomainArea } from './regionDomain'
+import { resolveRegionDomainCentre } from './regionDomain'
 import { unionClipperPaths } from './modelProtection'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
@@ -340,8 +340,9 @@ function generateRoughBandMoves(
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   let coverageRegions = buildSurfaceCoverageRegions(band.subjectPaths, band.protectedPaths, band.regions, toolRadius)
-  // Apply region mask after toolRadius expansion so exclude boundaries
-  // aren't pushed back by the expansion.
+  // Apply region mask after toolRadius expansion.  coverageRegions is already
+  // a tool-centre domain, so both polarities must dilate by the remaining
+  // clearance (toolRadius + radialLeave) — no further erosion will happen.
   if (band.regionMask) {
     const scale = DEFAULT_CLIPPER_SCALE
     const domainPaths = coverageRegions
@@ -353,7 +354,7 @@ function generateRoughBandMoves(
     if (domain.length === 0) {
       return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
     }
-    const maskedDomain = resolveRegionDomainArea(domain, band.regionMask, 0)
+    const maskedDomain = resolveRegionDomainCentre(domain, band.regionMask, toolRadius + radialLeave)
       .filter((p) => p.length >= 2)
     if (maskedDomain.length === 0) {
       return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
@@ -539,8 +540,9 @@ function generateFinishBandMoves(
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   let coverageRegions = buildSurfaceCoverageRegions(band.subjectPaths, band.protectedPaths, band.regions, toolRadius)
-  // Apply region mask after toolRadius expansion so exclude boundaries
-  // aren't pushed back by the expansion.
+  // Apply region mask after toolRadius expansion.  coverageRegions is already
+  // a tool-centre domain, so both polarities must dilate by the remaining
+  // clearance (toolRadius + radialLeave) — no further erosion will happen.
   if (band.regionMask) {
     const scale = DEFAULT_CLIPPER_SCALE
     const domainPaths = coverageRegions
@@ -552,7 +554,7 @@ function generateFinishBandMoves(
     if (domain.length === 0) {
       return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
     }
-    const maskedDomain = resolveRegionDomainArea(domain, band.regionMask, 0)
+    const maskedDomain = resolveRegionDomainCentre(domain, band.regionMask, toolRadius + radialLeave)
       .filter((p) => p.length >= 2)
     if (maskedDomain.length === 0) {
       return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }

@@ -26,9 +26,14 @@ import type { ClipperPath } from './types'
  * receives already-valid geometry.  `centreInset` is `tool.radius +
  * stockToLeaveRadial`, computed once per operation.
  *
- * For an **include** region the resolver pre-dilates by `centreInset` to cancel
- * the generator's own erosion.  For an **exclude** region the raw paths are
- * subtracted — the generator's erosion supplies the required clearance.
+ * **Precondition:** the generator will subsequently erode the entire domain by
+ * `centreInset`.  For an **include** region the resolver pre-dilates by
+ * `centreInset` to cancel that erosion.  For an **exclude** region the raw
+ * paths are subtracted — the erosion supplies the required clearance.
+ *
+ * Callers that have already applied the tool radius (so the domain *is* the
+ * tool-centre path and no further `centreInset` erosion remains) must use
+ * {@link resolveRegionDomainCentre} instead.
  *
  * Ordered composition matches `buildRegionMask`: the first entry sets the
  * starting state (empty for include, full domain for exclude); later includes
@@ -56,6 +61,54 @@ export function resolveRegionDomainArea(
       accumulator = unionClipperPaths([...accumulator, ...dilated])
     } else {
       accumulator = differenceClipperPaths(accumulator, entry.paths)
+    }
+  }
+
+  // Always constrain to the original domain so coverage over-reach cannot
+  // introduce cuts the unmasked operation would never have made.
+  return intersectClipperPaths(accumulator, domain)
+}
+
+/**
+ * Resolve a region mask into a domain that is already a tool-centre path, so
+ * no further erosion by `centreInset` will happen and the resolver must provide
+ * the required clearance itself.
+ *
+ * Both polarities dilate the region by `centreInset`:
+ *
+ * - **include** `R`: intersect with `R ⊕ centreInset` — the centre may reach
+ *   `centreInset` beyond the region so the cut covers it (coverage).
+ * - **exclude** `X`: subtract `X ⊕ centreInset` — the centre stays
+ *   `centreInset` clear so the tool body never enters (containment).
+ *
+ * Ordered composition matches `buildRegionMask`: the first entry sets the
+ * starting state (empty for include, full domain for exclude); later includes
+ * add, later excludes remove.  The result is always constrained to the original
+ * `domain`, so `masked ⊆ unmasked` still holds.
+ *
+ * Null mask returns `domain` by reference.
+ */
+export function resolveRegionDomainCentre(
+  domain: ClipperPath[],
+  mask: RegionMask | null,
+  centreInset: number,
+): ClipperPath[] {
+  if (mask === null) return domain
+  if (domain.length === 0) return []
+
+  const entries = mask.entries
+  if (entries.length === 0) return domain
+
+  const firstMode = entries[0].mode
+  let accumulator: ClipperPath[] = firstMode === 'include' ? [] : domain
+
+  for (const entry of entries) {
+    if (entry.paths.length === 0) continue
+    const dilated = centreInset > 0 ? offsetClipperPaths(entry.paths, centreInset) : entry.paths
+    if (entry.mode === 'include') {
+      accumulator = unionClipperPaths([...accumulator, ...dilated])
+    } else {
+      accumulator = differenceClipperPaths(accumulator, dilated)
     }
   }
 
