@@ -586,9 +586,10 @@ function createTrochoidalFragmentPlanner(
  * then emit closed or open cut moves with safe transitions.
  *
  * The contour guide is already the tool-centre path — `resolveContourPaths`
- * offset by `tool.radius + stockToLeaveRadial`.  Include regions need no further
- * offset (0); exclude regions dilate by `contourExcludeClearance` so the tool
- * body clears the keep-out rather than merely the centre.
+ * offset by `tool.radius + stockToLeaveRadial` — so a region bounds it directly:
+ * both clearances are 0 and the cut sweeps a tool radius past the region line,
+ * exactly as a pocket's does. Offsetting either polarity would stop include and
+ * exclude spans of the same region from tiling.
  */
 function appendFragmentedContoursAtLevels(
   moves: ToolpathMove[],
@@ -599,11 +600,10 @@ function appendFragmentedContoursAtLevels(
   maxLinkDistance: number,
   regionMask: RegionMask | null,
   obstacleMaskForZ: (z: number) => RegionMask | null,
-  contourExcludeClearance = 0,
 ): ToolpathPoint | null {
   // Fragment by region mask once — region is Z-independent.
   const regionFragments = contours.flatMap((c) =>
-    resolveRegionDomainCurve(c, true, regionMask, 0, contourExcludeClearance))
+    resolveRegionDomainCurve(c, true, regionMask, 0))
 
   if (regionFragments.length === 0) return currentPosition
 
@@ -1104,15 +1104,21 @@ function generateEdgeRouteToolpathSingle(
   const trochoidalGuideOffset = radialLeave
     + trochoidalCutWidth / 2
     + tool.diameter * TROCHOIDAL_GUIDE_SAFETY_FRACTION
-  // The orbit radius, derived once. Region clearances are expressed against it:
-  // an include region is eroded by the orbit radius so the outermost tool centre
-  // lands on the region boundary, and an exclude region is dilated by the orbit
-  // radius plus the tool radius so the whole cutter clears it. Same reason
-  // trochoidalGuideOffset is computed once — two spellings of one distance is
-  // how a seam becomes a gouge.
-  const trochoidalOrbitRadius = (trochoidalCutWidth - tool.diameter) / 2
-  const trochoidalRegionIncludeClearance = -trochoidalOrbitRadius
-  const trochoidalRegionExcludeClearance = trochoidalOrbitRadius + tool.radius
+  // A region bounds the GUIDE — the orbit centre — in both polarities, so both
+  // clearances are zero. An include span runs until the orbit centre reaches the
+  // region boundary; an exclude span stops when it does. The orbit still swings
+  // the cutter a further half cut width either side, exactly as a pocket's tool
+  // sweeps a radius past the region line it was clipped to.
+  //
+  // Deliberately NOT offset by the orbit radius. Offsetting shortens include
+  // spans and lengthens exclude ones by the same amount, so a region used as an
+  // include on one pass and an exclude on another would leave an uncut band
+  // between them instead of tiling exactly.
+  //
+  // These are separate from trochoidalGuideOffset, which keeps the orbit off the
+  // retained wall, obstacles and tabs and is unchanged.
+  const trochoidalRegionIncludeClearance = 0
+  const trochoidalRegionExcludeClearance = 0
   // Keep guide-fragment endpoints one extra epsilon away from the tab's
   // cutter footprint. The orbit closes in place at each fragment endpoint;
   // a merely tangent endpoint is therefore an intersection, not safe margin.
@@ -1211,11 +1217,12 @@ function generateEdgeRouteToolpathSingle(
         )
         if (hasFatalTrochoidalWarning(warnings)) break
       } else {
-        // Fragment the band contours through the region mask.  Include offset is 0
-        // because the band contours are already tool-centre paths; exclude dilates
-        // by tool.radius so the tool body clears the region.
+        // Fragment the band contours through the region mask. Both offsets are 0:
+        // the band contours are already tool-centre paths, so a region bounds them
+        // directly and the cut sweeps a tool radius past the line, as a pocket's
+        // does. Offsetting either polarity would break include/exclude tiling.
         const regionFragments = contours.flatMap((c) =>
-          resolveRegionDomainCurve(c, true, regionMask, 0, tool.radius))
+          resolveRegionDomainCurve(c, true, regionMask, 0))
         const closedFrags = regionFragments.filter((f) => f.closed).map((f) => f.points)
         const openFrags = regionFragments.filter((f) => !f.closed)
 
@@ -1405,7 +1412,7 @@ function generateEdgeRouteToolpathSingle(
         } else {
           currentPosition = appendFragmentedContoursAtLevels(
             moves, currentPosition, contours, levels, safeZ, maxLinkDistance,
-            regionMask, obstacleMaskForZ, tool.radius,
+            regionMask, obstacleMaskForZ,
           )
         }
       }
@@ -1481,7 +1488,7 @@ function generateEdgeRouteToolpathSingle(
       } else {
         currentPosition = appendFragmentedContoursAtLevels(
           moves, currentPosition, contours, levels, safeZ, maxLinkDistance,
-          regionMask, obstacleMaskForZ, tool.radius,
+          regionMask, obstacleMaskForZ,
         )
       }
     }
