@@ -75,9 +75,9 @@ worker must not re-derive:
 | p1-region-domain-resolver | `feat/issue-452-p1-region-domain-resolver` | accepted | `e302911` | `8b96d33` |
 | p2-area-generators | `feat/issue-452-p2-area-generators` | accepted with gap | `6731fef` | `0b24579` |
 | p2b-centre-domain-containment | `feat/issue-452-p2b-centre-domain-containment` | accepted | `de7b117` + `a6f2359` | `03eecef` |
-| p3a-edge-route-curve-domain | `feat/issue-452-p3a-edge-route-curve-domain` | merged with OPEN REGRESSION | `8281de5` | `33baf96` |
-| p3b-carving-waterline-finish | `feat/issue-452-p3b-carving-waterline-finish` | dispatched | — | — |
-| p4-trochoidal-regions | `feat/issue-452-p4-trochoidal-regions` | pending | — | — |
+| p3a-edge-route-curve-domain | `feat/issue-452-p3a-edge-route-curve-domain` | accepted (regression fixed in p3b) | `8281de5` | `33baf96` |
+| p3b-carving-waterline-finish | `feat/issue-452-p3b-carving-waterline-finish` | accepted | `2607ce1` | `f85c52e` |
+| p4-trochoidal-regions | `feat/issue-452-p4-trochoidal-regions` | dispatched | — | — |
 | p5-delete-clippers | `feat/issue-452-p5-delete-clippers` | pending | — | — |
 
 Dependencies: p0 and p1 are independent of everything and of each other. p2, p3
@@ -92,9 +92,26 @@ and p4 each require p1. p5 requires p2, p3 and p4.
   stronger terms; if the pattern repeats, treat it as a launcher-level problem
   rather than a per-slice one.
 
-## OPEN REGRESSION — V-carve lost region masking in p3a (owned by p3b)
+## CLOSED — V-carve region regression (p3a → fixed in p3b `2607ce1`)
 
-**Do not open the PR until this is closed.**
+Fixed in `vcarve.ts` and `vcarveMedial/index.ts` by resolving the mask into the
+band domain before generation, mirroring pocket's seam. Guarded by
+`v_carve:`/`v_carve_medial: include region constrains cut area (regression
+guard)` in `camOperationSmoke.test.ts`, both observed failing before the fix.
+
+**Open semantic question for the user.** V-carve cut width is depth-dependent
+(half-width `d·slope`), so one 2D region cannot bound both the tool centre and
+the cut at every depth. p3b passes `centreInset = maxCarveDepth · slope`, which
+means the *full-depth* pass reaches the region boundary exactly while shallower
+passes over-reach by `(maxCarveDepth − currentDepth)·slope`. On a deep V-groove
+that is a visible surface bleed beyond the drawn line — bounded by the
+operation's own domain, so never a new cut, but worth a look before release.
+Exclude containment is unaffected and correct at every depth, because the
+generator's erosion tracks the depth-dependent width.
+
+The historical record of the regression follows.
+
+### What happened
 
 p3a removed the `applyRegionMaskToPaths` block at `resolver.ts:442`. For Edge
 Route that was correct — it was a duplicate, and a third semantic besides
