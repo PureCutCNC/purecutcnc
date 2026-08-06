@@ -15,6 +15,13 @@ discovers all `e2e/*.spec.ts` files. The fixture auto-navigates to the
 app, waits for the canvas, and fails the test on **any** `console.error`
 or uncaught page error.
 
+From an isolated worktree, use a different port and an owned server so the
+browser cannot silently exercise another checkout:
+
+```bash
+PURECUT_E2E_ISOLATED=1 PURECUT_E2E_PORT=1431 npm run test:e2e
+```
+
 ## CI gate
 
 Pull requests run three logical E2E lanes on separate runners. Each runner

@@ -475,6 +475,8 @@ export type OperationKind =
   | 'drilling'
 
 export type OperationPass = 'rough' | 'finish'
+
+export type EdgeStrategy = 'contour' | 'trochoidal'
 export type PocketPattern = 'offset' | 'parallel' | 'waterline'
 export type CutDirection = 'conventional' | 'climb'
 export type DrillType = 'simple' | 'peck' | 'dwell' | 'chip_breaking' | 'helical'
@@ -503,6 +505,12 @@ export interface Operation {
   rpm: number
   pocketPattern: PocketPattern
   pocketAngle: number
+  /** Edge-route roughing strategy. Missing values are legacy contour operations. */
+  edgeStrategy?: EdgeStrategy
+  /** Trochoidal channel width in the project's length units. */
+  trochoidalCutWidth?: number
+  /** Trochoidal guide advance as a ratio of cutter diameter. */
+  trochoidalAdvance?: number
   entryStrategy?: EntryStrategy
   entryRampAngle?: number
   entryHelixDiameterPercent?: number
@@ -535,6 +543,22 @@ export interface Operation {
    *  export-only preference — it does not affect the displayed or simulated
    *  toolpath. */
   arcFittingEnabled?: boolean
+}
+
+/**
+ * True for an Edge Route operation that generates trochoidal orbits rather than
+ * a plain offset contour.
+ *
+ * This is the single definition. The predicate gates generation, the tab pass in
+ * `useToolpathGeneration`, the booklet's setting rows, and the CAM panel's field
+ * visibility — and those must agree exactly, so none of them may re-spell it.
+ * Note the `pass` term: a finish pass is always a contour, even if a stale
+ * `edgeStrategy` survives on the operation from an earlier rough pass.
+ */
+export function isTrochoidalEdgeRoughing(operation: Operation): boolean {
+  return operation.pass === 'rough'
+    && (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside')
+    && operation.edgeStrategy === 'trochoidal'
 }
 
 // ============================================================

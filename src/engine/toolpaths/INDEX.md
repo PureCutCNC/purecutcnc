@@ -17,6 +17,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `surface.ts` — shared surface-toolpath helpers
 - `surfaceStepdown3d.ts` — shared imported-mesh stepdown resolver used by rough-surface and cleanup-surface operations
 - `tabs.ts` — holding-tab generation on profile cuts
+- `trochoidalEdge.ts` — pure bounded overlapping-orbit sampling around a validated Edge Route guide; generation integration owns entry, fragments, and safety validation
 - `multiFeature.ts` — ops that span multiple features (e.g. combined clearing)
 
 ## Supporting modules
@@ -25,6 +26,8 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `feed.ts` — shared `effectiveFeed` helper: applies a move's `feedScale` (for slot-feed pocket cuts) to the cut feed, and returns the plunge feed unmodified for plunge moves; used by the postprocessor, booklet time estimator, simulation playback, and the live-feed readout
 - `entry.ts` — clearance-aware plunge, helical, and zig-zag ramp entry synthesis for pocket, surface-clean, and rough-surface clearing operations, including deterministic fallback warnings and plunge-feed limiting
 - `geometry.ts` — toolpath-specific geometric helpers; owns the shared `DEFAULT_FLATTEN_*` sampling constants
+- `guideFragments.ts` — cyclic closed-guide fragmentation against pre-unioned keep-outs; preserves every safe span before entry-bearing motion is generated
+- `tabs.ts` also owns the shared tab footprint geometry (`expandedTabFootprints`) and `applyEdgeRouteTabs`, the edge-route tab pass that deliberately returns trochoidal results untouched — see `planning/TROCHOIDAL_EDGE_DESIGN.md`
 - `offsetSmoothing.ts` — emit-time corner fillet for the outer/wall clearing rings (`roundContourCorners`, `smoothClosedContours`, `cornerSmoothingRadius`); shared by pocket + surface clearing when `roundOutsideCorners` is enabled. Bounds the setback so acute corners leave no crescent; the offset-tree emitter keeps each region's wall-adjacent (root) outer ring sharp so no corner stock stacks into a chip (interior rings self-clean). Islands are rounded the opposite way — via `jtRound` Clipper offsets (see `buildInsetRegions` island join), so the tool wraps convex island corners smoothly without gouging.
 - `linearMoveOptimization.ts` — pure generation-stage finalizer that removes zero-length duplicate moves and merges contiguous, direction-preserving, collinear XY moves; applied after tabs but before clamp warnings
 - `arcReconstruction.ts` — recovers arcs/circles/beziers from flattened Clipper output: known-circle reconstruction, segment-preserving boolean reconstruction (annotation map), and the Clipper-offset simplification pipeline (Kasa fit + RDP)
@@ -38,9 +41,11 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 
 ## Tests
 - `linearMoveOptimization.test.ts` — zero-length removal, collinear merge, and boundary preservation
+- `trochoidalEdge.test.ts` — deterministic closed/open orbit sampling, seam closure, direction, normalized duplicate vertices, and fail-closed budgets. Integrated cut-direction parity (trochoidal vs contour, inside and outside), circular/multi-target guides, and overlapping tabs live in `toolpaths.test.ts`
 - `feed.test.ts` — shared effectiveFeed helper: cut/plunge/lead-in/lead-out move kinds, feedScale present/absent, and plunge ignores-feedScale invariance
 - `entry.test.ts` — helix pitch/direction, region/island clearance, no-core diameter bounds, bottom flattening, ramp fallback, and plunge-feed limiting
 - `geometry.test.ts` — shared nearest-neighbour ordering and squared-XY-distance behavior
+- `guideFragments.test.ts` — cyclic span splitting across disjoint, seam-crossing, and concave forbidden regions
 - `toolpaths.test.ts` — broad smoke tests across strategies
 - `resolverReadPath.test.ts` — resolved instance geometry and missing-definition behavior in toolpath resolution
 - `vcarveLineResolver.test.ts` — S2 closed-Line V-carve resolver tests: single Line, open-Line rejection, nested even-odd holes, disjoint Lines, mixed Subtract + Line, Subtract-only regression

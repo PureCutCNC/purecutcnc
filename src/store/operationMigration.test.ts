@@ -129,6 +129,18 @@ function legacyProjectWithRecursiveOp(): ProjectFormatInput {
   }
 }
 
+function legacyProjectWithEdgeRoute(): ProjectFormatInput {
+  const project = legacyProjectWithRecursiveOp()
+  project.operations = [{
+    ...recursiveOperation(),
+    id: 'edge-op',
+    kind: 'edge_route_inside',
+    pass: 'rough',
+    toolRef: 't1',
+  }]
+  return project
+}
+
 let passed = 0
 let failed = 0
 
@@ -169,6 +181,13 @@ test('no v_carve_recursive kind survives the load', () => {
     project.operations.every((o) => (o.kind as string) !== 'v_carve_recursive'),
     'a v_carve_recursive op leaked through normalization',
   )
+})
+
+test('legacy edge routes default to contour strategy on load', () => {
+  const project = normalizeProject(legacyProjectWithEdgeRoute())
+  const operation = project.operations.find((entry) => entry.id === 'edge-op')
+  assert(operation !== undefined, 'expected the legacy edge route to survive load')
+  assert(operation.edgeStrategy === 'contour', `expected contour default, got ${operation.edgeStrategy}`)
 })
 
 console.log(`\noperationMigration.test.ts: ${passed} passed, ${failed} failed`)

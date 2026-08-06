@@ -25,6 +25,28 @@ interface OperationDescription {
   exampleImageName: string
 }
 
+/**
+ * Catalog-key segment per kind: `cam.opDesc.<segment>.<slot>`.
+ *
+ * Lives beside the descriptions themselves because the UI renders one bullet
+ * per entry in `keyPoints` but takes the *text* from the catalog. If the two
+ * drift, the surplus bullets render blank — see operationDescriptions.test.ts,
+ * which holds them in step.
+ */
+export const OPERATION_DESCRIPTION_SEGMENT: Record<OperationKind, string> = {
+  pocket: 'pocket',
+  v_carve: 'vCarve',
+  v_carve_medial: 'vCarveMedial',
+  edge_route_inside: 'edgeRouteInside',
+  edge_route_outside: 'edgeRouteOutside',
+  surface_clean: 'surfaceClean',
+  rough_surface: 'roughSurface',
+  finish_surface: 'finishSurface',
+  finish_surface_cleanup: 'finishSurfaceCleanup',
+  follow_line: 'followLine',
+  drilling: 'drilling',
+}
+
 export const operationDescriptions: Record<OperationKind, OperationDescription> = {
   pocket: {
     title: 'Pocket',
@@ -74,12 +96,13 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     title: 'Edge Route Inside',
     shortSummary: 'Cut along the inside of a closed subtract profile',
     fullDescription:
-      'Edge Route Inside follows the inside edge of one or more closed subtract profiles, offset inward by the tool radius. Useful for slots, hollows, and interior profile cuts where the tool must stay inside the boundary.',
+      'Edge Route Inside follows the inside edge of one or more closed subtract profiles. A contour pass offsets inward by the tool radius; rough passes can instead use trochoidal loops to reduce radial engagement while leaving stock for a contour finish.',
     keyPoints: [
       'Requires one or more closed subtract profiles',
-      'Tool path is offset inward by the tool radius',
-      'Supports rough and finish passes',
-      'Optional closed regions act as XY filters',
+      'Contour or trochoidal roughing strategy',
+      'Trochoidal roughing uses Helix or Plunge entry; tabs require Helix',
+      'Finish passes always use a contour',
+      'Regions are supported by contour routing only',
     ],
     exampleImageName: 'edge-route-inside-example.png',
   },
@@ -87,12 +110,13 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     title: 'Edge Route Outside',
     shortSummary: 'Cut along the outside of a closed add/model profile',
     fullDescription:
-      'Edge Route Outside follows the outside edge of one or more closed add or model profiles, offset outward by the tool radius. Used to profile parts out of stock, leave clean shoulders around raised features, or cut perimeters.',
+      'Edge Route Outside follows the outside edge of one or more closed add or model profiles. A contour pass offsets outward by the tool radius; rough passes can instead use trochoidal loops to reduce radial engagement while leaving stock for a contour finish.',
     keyPoints: [
       'Requires one or more closed add or model profiles',
-      'Tool path is offset outward by the tool radius',
-      'Supports rough and finish passes',
-      'Optional closed regions act as XY filters',
+      'Contour or trochoidal roughing strategy',
+      'Trochoidal roughing uses Helix or Plunge entry; tabs require Helix',
+      'Finish passes always use a contour',
+      'Regions are supported by contour routing only',
     ],
     exampleImageName: 'edge-route-outside-example.png',
   },

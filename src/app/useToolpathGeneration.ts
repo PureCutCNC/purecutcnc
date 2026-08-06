@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyClampWarnings,
+  applyEdgeRouteTabs,
   applyTabsToEdgeRoute,
   applyTabWarnings,
   generateDrillingToolpath,
@@ -75,6 +76,9 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.rpm === b.rpm
     && a.pocketPattern === b.pocketPattern
     && a.pocketAngle === b.pocketAngle
+    && a.edgeStrategy === b.edgeStrategy
+    && a.trochoidalCutWidth === b.trochoidalCutWidth
+    && a.trochoidalAdvance === b.trochoidalAdvance
     && a.entryStrategy === b.entryStrategy
     && a.entryRampAngle === b.entryRampAngle
     && a.entryHelixDiameterPercent === b.entryHelixDiameterPercent
@@ -233,7 +237,9 @@ export function useToolpathGeneration(project: Project, selectedOperation: Opera
         // applyTabsToEdgeRoute raises that range to the tab tops. Run it on the adjusted
         // moves and every applied tab reports as lying outside the range it just created.
         const warned = applyTabWarnings(project, operation, generateEdgeRouteToolpath(project, operation))
-        result = applyClampWarnings(project, optimizeAndCapture(applyTabsToEdgeRoute(project, operation, warned)), operation)
+        // applyEdgeRouteTabs, not applyTabsToEdgeRoute: trochoidal roughing owns
+        // its own tab motion and must not be tabbed twice. See its docstring.
+        result = applyClampWarnings(project, optimizeAndCapture(applyEdgeRouteTabs(project, operation, warned)), operation)
       } else if (operation.kind === 'surface_clean') {
         result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, generateSurfaceCleanToolpath(project, operation))), operation)
       } else if (operation.kind === 'rough_surface') {

@@ -120,6 +120,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.useCurrentSelection': 'Aktuelle Auswahl verwenden',
   'cam.operation.targetUpdated': '✓ Ziel aktualisiert',
   'cam.operation.restMachining': 'Restbearbeitung',
+  'cam.operation.restTrochoidalUnavailable': 'Restbearbeitung ist für trochoidale Konturfräsung nicht verfügbar.',
   'cam.operation.createRestOp': 'Restoperation erstellen',
   'cam.operation.booklet': 'Broschüre',
   'cam.operation.exportPdf': 'PDF exportieren',
@@ -129,6 +130,13 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.noTool': 'Kein Werkzeug',
   'cam.operation.enabled': 'Aktiviert',
   'cam.operation.stepdown': 'Zustellung',
+  'cam.operation.edgeStrategy': 'Strategie',
+  'cam.operation.edgeStrategyContour': 'Kontur',
+  'cam.operation.edgeStrategyTrochoidal': 'Trochoidal',
+  'cam.operation.trochoidalCutWidth': 'Trochoidale Schnittbreite', 'cam.operation.trochoidalCutWidthBelowFloor': 'Schnittbreite liegt unter dem Minimum von {minimum} für dieses Werkzeug; es wird kein Werkzeugweg erzeugt.',
+  'cam.operation.trochoidalAdvancePercent': 'Vorschub pro Umlauf (% des Werkzeugdurchmessers)',
+  'cam.operation.trochoidalAdvanceDistance': 'Vorschub pro Umlauf (Strecke)',
+  'cam.operation.trochoidalAdvanceTooltip': 'Wird als Prozentsatz des Werkzeugdurchmessers gespeichert und folgt daher dem zugewiesenen Werkzeug. Die Distanz darunter ist abgeleitet.',
   'cam.operation.contourSpacing': 'Konturabstand',
   'cam.operation.stepoverRatio': 'Bahnabstand-Verhältnis',
   'cam.operation.advanced': 'Erweitert',
@@ -318,7 +326,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.library.failed': 'Werkzeugbibliothek konnte nicht geladen werden.',
 
   // ── Parameter reference diagram labels ──
-  'cam.paramRef.stepdown': 'Referenz für Zustellung',
+  'cam.paramRef.stepdown': 'Referenz für Zustellung', 'cam.paramRef.edgeStrategy': 'Strategie', 'cam.paramRef.trochoidalCutWidth': 'Trochoidale Schnittbreite', 'cam.paramRef.trochoidalAdvance': 'Vorschub pro Schleife',
   'cam.paramRef.stepover': 'Referenz für Bahnabstand',
   'cam.paramRef.maxDepth': 'Referenz für maximale Tiefe',
   'cam.paramRef.retractHeight': 'Referenz für Rückzugshöhe',
@@ -380,20 +388,20 @@ export const camDe: Record<keyof typeof camEn, string> = {
   // Edge route inside
   'cam.opDesc.edgeRouteInside.title': 'Kontur innen',
   'cam.opDesc.edgeRouteInside.fullDescription':
-    'Kontur innen folgt der Innenkante eines oder mehrerer geschlossener Abzieh-Profile, nach innen um den Werkzeugradius versetzt. Nützlich für Nuten, Aushöhlungen und innere Profilschnitte, bei denen das Werkzeug innerhalb der Begrenzung bleiben muss.',
+    'Kontur innen folgt der Innenkante eines oder mehrerer geschlossener Abzieh-Profile. Ein Konturdurchgang wird um den Werkzeugradius nach innen versetzt; Schruppdurchgänge können stattdessen trochoidale Schleifen verwenden, um den radialen Eingriff zu verringern und Aufmaß für einen Kontur-Schlichtgang zu lassen.',
   'cam.opDesc.edgeRouteInside.keyPoint.0': 'Erfordert ein oder mehrere geschlossene Abzieh-Profile',
-  'cam.opDesc.edgeRouteInside.keyPoint.1': 'Der Werkzeugweg ist nach innen um den Werkzeugradius versetzt',
-  'cam.opDesc.edgeRouteInside.keyPoint.2': 'Unterstützt Schrupp- und Schlichtdurchgänge',
-  'cam.opDesc.edgeRouteInside.keyPoint.3': 'Optionale geschlossene Bereiche wirken als XY-Filter',
+  'cam.opDesc.edgeRouteInside.keyPoint.1': 'Kontur- oder trochoidale Schruppstrategie',
+  'cam.opDesc.edgeRouteInside.keyPoint.2': 'Trochoidales Schruppen nutzt Helix- oder Senkrechteinstieg; Stege erfordern Helix',
+  'cam.opDesc.edgeRouteInside.keyPoint.3': 'Schlichtgänge nutzen immer die Kontur', 'cam.opDesc.edgeRouteInside.keyPoint.4': 'Bereiche werden nur von Konturfräsung unterstützt',
 
   // Edge route outside
   'cam.opDesc.edgeRouteOutside.title': 'Kontur außen',
   'cam.opDesc.edgeRouteOutside.fullDescription':
-    'Kontur außen folgt der Außenkante eines oder mehrerer geschlossener Hinzufügen- oder Modell-Profile, nach außen um den Werkzeugradius versetzt. Wird verwendet, um Teile aus dem Rohteil auszuprofilieren, saubere Schultern um erhöhte Features zu belassen oder Umrisse zu schneiden.',
+    'Kontur außen folgt der Außenkante eines oder mehrerer geschlossener Hinzufügen- oder Modell-Profile. Ein Konturdurchgang wird um den Werkzeugradius nach außen versetzt; Schruppdurchgänge können stattdessen trochoidale Schleifen verwenden, um den radialen Eingriff zu verringern und Aufmaß für einen Kontur-Schlichtgang zu lassen.',
   'cam.opDesc.edgeRouteOutside.keyPoint.0': 'Erfordert ein oder mehrere geschlossene Hinzufügen- oder Modell-Profile',
-  'cam.opDesc.edgeRouteOutside.keyPoint.1': 'Der Werkzeugweg ist nach außen um den Werkzeugradius versetzt',
-  'cam.opDesc.edgeRouteOutside.keyPoint.2': 'Unterstützt Schrupp- und Schlichtdurchgänge',
-  'cam.opDesc.edgeRouteOutside.keyPoint.3': 'Optionale geschlossene Bereiche wirken als XY-Filter',
+  'cam.opDesc.edgeRouteOutside.keyPoint.1': 'Kontur- oder trochoidale Schruppstrategie',
+  'cam.opDesc.edgeRouteOutside.keyPoint.2': 'Trochoidales Schruppen nutzt Helix- oder Senkrechteinstieg; Stege erfordern Helix',
+  'cam.opDesc.edgeRouteOutside.keyPoint.3': 'Schlichtgänge nutzen immer die Kontur', 'cam.opDesc.edgeRouteOutside.keyPoint.4': 'Bereiche werden nur von Konturfräsung unterstützt',
 
   // Surface clean
   'cam.opDesc.surfaceClean.title': 'Oberfläche säubern',

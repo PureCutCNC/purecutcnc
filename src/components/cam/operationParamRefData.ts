@@ -20,6 +20,9 @@ import { camT } from './camI18n'
 export const OPERATION_PARAM_REF_KINDS = [
   'stepdown',
   'stepover',
+  'edgeStrategy',
+  'trochoidalCutWidth',
+  'trochoidalAdvance',
   'maxDepth',
   'retractHeight',
   'peckDepth',
@@ -50,6 +53,9 @@ export type OperationParamRefKind = typeof OPERATION_PARAM_REF_KINDS[number]
 const OP_PARAM_REF_KEY: Record<OperationParamRefKind, keyof typeof camEn> = {
   stepdown: 'cam.paramRef.stepdown',
   stepover: 'cam.paramRef.stepover',
+  edgeStrategy: 'cam.paramRef.edgeStrategy',
+  trochoidalCutWidth: 'cam.paramRef.trochoidalCutWidth',
+  trochoidalAdvance: 'cam.paramRef.trochoidalAdvance',
   maxDepth: 'cam.paramRef.maxDepth',
   retractHeight: 'cam.paramRef.retractHeight',
   peckDepth: 'cam.paramRef.peckDepth',

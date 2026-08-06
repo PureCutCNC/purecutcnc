@@ -24,10 +24,19 @@
  * Move sets are hand-built rather than produced by toolpath generation: this
  * corpus tests the *export* stage, and hand-built geometry keeps each case
  * deterministic and pinned to the failure mode it is meant to cover.
+ *
+ * The trochoidal cases are the deliberate exception (issue #448). That strategy
+ * emits thousands of small-radius orbits per level, and the interaction that
+ * matters — whether a controller accepts the arcs fitted to *that* sampling —
+ * cannot be reproduced by hand-picked chords without simply re-implementing the
+ * sampler. It is generated from the real toolpath, which is still deterministic:
+ * the sampler is pure and takes no clock or randomness.
  */
 
-import { newProject, defaultTool } from '../../src/types/project'
-import type { Operation, Project, Units } from '../../src/types/project'
+import { newProject, defaultTool, rectProfile } from '../../src/types/project'
+import type { Operation, Project, SketchFeature, Units } from '../../src/types/project'
+import { projectWithFeatures } from '../../src/test/projectFixtures'
+import { generateEdgeRouteToolpath } from '../../src/engine/toolpaths/edge'
 import { normalizeToolForProject } from '../../src/engine/toolpaths/geometry'
 import { runPostProcessor } from '../../src/engine/gcode/postprocessor'
 import { BUNDLED_DEFINITIONS } from '../../src/engine/gcode/definitions'
@@ -133,6 +142,84 @@ function arcWithStraightLeads(): ToolpathMove[] {
   ])
 }
 
+/**
+ * Real trochoidal roughing motion around a 20 mm square (issue #448).
+ *
+ * Generated rather than hand-built: the point is the arcs the fitter derives
+ * from this sampler's own chord spacing and seam closure, which hand-picked
+ * chords cannot stand in for. Memoised because three corpus cases share it.
+ */
+let cachedTrochoidalMoves: ToolpathMove[] | null = null
+function trochoidalEdgeMoves(): ToolpathMove[] {
+  if (cachedTrochoidalMoves) return cachedTrochoidalMoves
+
+  const size = 20
+  const tool = { ...defaultTool('mm', 1), id: 't1', name: 'em6', diameter: 6, defaultStepdown: 2 }
+  const target: SketchFeature = {
+    id: 'target',
+    name: 'target',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(0, 0, size, size),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: 0,
+    z_bottom: -2,
+    visible: true,
+    locked: false,
+  }
+  const project = projectWithFeatures(
+    { ...newProject('Conformance trochoidal', 'mm'), tools: [tool] },
+    [target] as never,
+  )
+  const operation: Operation = {
+    id: 'op1',
+    name: 'Trochoidal',
+    kind: 'edge_route_outside',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['target'] },
+    toolRef: 't1',
+    stepdown: 2,
+    stepover: 0.4,
+    feed: 800,
+    plungeFeed: 300,
+    rpm: 18000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    roundOutsideCorners: false,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+    cutDirection: 'conventional',
+    machiningOrder: 'level_first',
+    edgeStrategy: 'trochoidal',
+    trochoidalCutWidth: 9,
+    trochoidalAdvance: 0.1,
+    entryStrategy: 'helix',
+    entryRampAngle: 5,
+  }
+
+  const result = generateEdgeRouteToolpath(project, operation)
+  if (result.moves.length === 0) {
+    throw new Error(
+      `trochoidal corpus fixture generated no motion: [${result.warnings.map((w) => w.code).join(', ')}]`,
+    )
+  }
+  cachedTrochoidalMoves = result.moves
+  return cachedTrochoidalMoves
+}
+
 export const CORPUS: CorpusCase[] = [
   {
     name: 'issue-447-small-radius-trochoidal',
@@ -230,6 +317,29 @@ export const CORPUS: CorpusCase[] = [
     units: 'mm',
     machineId: 'grbl',
     moves: leadInAndCut(issue447Points()),
+    operationOverrides: { arcFittingEnabled: false },
+  },
+  {
+    name: 'trochoidal-edge-outside',
+    covers: 'issue #448 - arcs fitted to real trochoidal orbit sampling; GRBL has '
+      + 'the tightest measured arc tolerance, so it is the binding case',
+    units: 'mm',
+    machineId: 'grbl',
+    moves: trochoidalEdgeMoves(),
+  },
+  {
+    name: 'trochoidal-edge-outside-linuxcnc',
+    covers: 'issue #448 - the same trochoidal output through a second arc dialect',
+    units: 'mm',
+    machineId: 'linuxcnc',
+    moves: trochoidalEdgeMoves(),
+  },
+  {
+    name: 'trochoidal-edge-outside-no-arcs',
+    covers: 'issue #448 - the raw G1 fallback a controller without arc support receives',
+    units: 'mm',
+    machineId: 'grbl',
+    moves: trochoidalEdgeMoves(),
     operationOverrides: { arcFittingEnabled: false },
   },
 ]

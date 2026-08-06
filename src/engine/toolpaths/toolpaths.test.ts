@@ -1656,6 +1656,454 @@ function testEdgeOutsideCombinedRoundCorners() {
   console.log('combined edge_route_outside round outside corners: PASSED')
 }
 
+function makeTrochoidalEdgeOperation(featureId: string, kind: 'edge_route_inside' | 'edge_route_outside'): Operation {
+  return makePocketOp({
+    kind,
+    target: { source: 'features', featureIds: [featureId] },
+    toolRef: 't1',
+    edgeStrategy: 'trochoidal',
+    trochoidalCutWidth: 6,
+    trochoidalAdvance: 0.1,
+    entryStrategy: 'helix',
+    entryRampAngle: 5,
+  })
+}
+
+function testTrochoidalOutsideTracksDifferentTargetSizes() {
+  console.log('Testing trochoidal outside follows 12/25/50 mm target geometry...')
+
+  for (const size of [12, 25, 50]) {
+    const tool = makeFlatEndmill('t1', 4)
+    const target = makeAddFeature('target', 0, 0, size, size, 0, -2)
+    const project = baseProject([tool], [target])
+    const result = generateEdgeRouteToolpath(project, makeTrochoidalEdgeOperation('target', 'edge_route_outside'))
+    const cuts = cutMoves(result.moves)
+    const expectedOuterReach = tool.diameter + tool.diameter * 0.01
+
+    assert(cuts.length > size * 20, `expected dense trochoidal cuts for ${size} mm target, got ${cuts.length}`)
+    assert(result.warnings.length === 0, `unexpected trochoidal warnings for ${size} mm target: ${result.warnings.map((warning) => warning.code).join(', ')}`)
+    const minX = Math.min(...cuts.map((move) => move.to.x))
+    const maxX = Math.max(...cuts.map((move) => move.to.x))
+    const minY = Math.min(...cuts.map((move) => move.to.y))
+    const maxY = Math.max(...cuts.map((move) => move.to.y))
+    assert(approx(minX, -expectedOuterReach, 0.05), `${size} mm target min X must follow its wall, got ${minX}`)
+    assert(approx(maxX, size + expectedOuterReach, 0.05), `${size} mm target max X must follow its wall, got ${maxX}`)
+    assert(approx(minY, -expectedOuterReach, 0.05), `${size} mm target min Y must follow its wall, got ${minY}`)
+    assert(approx(maxY, size + expectedOuterReach, 0.05), `${size} mm target max Y must follow its wall, got ${maxY}`)
+  }
+
+  console.log('trochoidal outside target differential: PASSED')
+}
+
+function testTrochoidalTabsFragmentBeforeMotionAndHelixReenter() {
+  console.log('Testing trochoidal tabs fragment the guide and re-enter with helixes...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const target = makeAddFeature('target', 0, 0, 40, 20, 0, -4)
+  const project = baseProject([tool], [target])
+  project.tabs = [{
+    id: 'tab',
+    name: 'tab',
+    x: 16,
+    y: -2,
+    w: 8,
+    h: 4,
+    z_top: -1,
+    z_bottom: -4,
+    visible: true,
+  }]
+  const result = generateEdgeRouteToolpath(project, makeTrochoidalEdgeOperation('target', 'edge_route_outside'))
+
+  assert(
+    result.warnings.every((warning) => warning.code === 'edgeTrochoidalSkippedSpan'),
+    `unexpected tab warnings: ${result.warnings.map((warning) => warning.code).join(', ')}`,
+  )
+  assert(result.moves.some((move) => move.kind === 'lead_in'), 'fragmented tab route must emit a helix entry')
+  assert(
+    result.moves.some((move) => move.kind === 'cut' && approx(move.to.z, -1)),
+    `first tab crossing keeps a local tab-top interval; cut Z values: ${[...new Set(cutMoves(result.moves).map((move) => move.to.z))].join(', ')}`,
+  )
+  const distanceToTab = (point: { x: number; y: number }) => Math.hypot(
+    Math.max(16 - point.x, 0, point.x - 24),
+    Math.max(-2 - point.y, 0, point.y - 2),
+  )
+  const protectedAtDepth = cutMoves(result.moves).filter((move) => (
+    move.to.z < -1 - 1e-6
+      && Math.min(distanceToTab(move.from), distanceToTab(move.to)) < tool.diameter / 2 - 1e-6
+  ))
+  assert(
+    protectedAtDepth.length === 0,
+    'deep trochoidal cuts must not enter the tab cutter keep-out',
+  )
+
+  const plungeResult = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
+    entryStrategy: 'plunge',
+  })
+  assert(plungeResult.moves.length === 0, 'fragmented tabs with plunge entry must fail closed')
+  assert(plungeResult.warnings.some((warning) => warning.code === 'edgeTrochoidalTabsRequireHelix'), 'fragmented tabs must explain the required helix entry')
+
+  console.log('trochoidal tab fragmentation and helix re-entry: PASSED')
+}
+
+function testTrochoidalOutsideFragmentsAroundTightObstacle() {
+  console.log('Testing trochoidal outside fragments around a tight obstacle...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const target = makeAddFeature('target', 0, 0, 20, 20, 0, -2)
+  const obstacle = makeAddFeature('obstacle', 22, 0, 20, 20, 0, -2)
+  const project = baseProject([tool], [target, obstacle])
+  const result = generateEdgeRouteToolpath(project, makeTrochoidalEdgeOperation('target', 'edge_route_outside'))
+
+  assert(result.moves.length > 0, 'tight obstacle leaves safe trochoidal fragments instead of an empty route')
+  assert(
+    result.warnings.every((warning) => warning.code === 'edgeTrochoidalSkippedSpan'),
+    `unexpected tight-obstacle warnings: ${result.warnings.map((warning) => warning.code).join(', ')}`,
+  )
+  const distanceToObstacle = (point: { x: number; y: number }) => Math.hypot(
+    Math.max(22 - point.x, 0, point.x - 42),
+    Math.max(0 - point.y, 0, point.y - 20),
+  )
+  const crossingCuts = cutMoves(result.moves).filter((move) => (
+    Math.min(distanceToObstacle(move.from), distanceToObstacle(move.to)) < tool.diameter / 2 - 1e-6
+  ))
+  assert(crossingCuts.length === 0, 'trochoidal output must not enter the obstacle cutter keep-out')
+
+  console.log('trochoidal tight-obstacle fragmentation: PASSED')
+}
+
+function testTrochoidalRejectsRegionMasksAndUnsafeWidths() {
+  console.log('Testing trochoidal rejects region clipping and undersized widths...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const target = makeAddFeature('target', 0, 0, 20, 20, 0, -2)
+  const region = makeRegionFeature('region', 0, 0, 10, 20)
+  const project = baseProject([tool], [target, region])
+
+  const regionResult = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
+    target: { source: 'features', featureIds: ['target', 'region'] },
+  })
+  assert(regionResult.moves.length === 0, 'region-masked trochoidal route must fail closed before post-clipping')
+  assert(regionResult.warnings.some((warning) => warning.code === 'edgeTrochoidalRegionUnsupported'), 'region-masked trochoid must explain the unsupported mask')
+
+  const narrowResult = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
+    trochoidalCutWidth: 4.5,
+  })
+  assert(narrowResult.moves.length === 0, 'cut width below 1.15D must fail closed')
+  assert(narrowResult.warnings.some((warning) => warning.code === 'edgeTrochoidalWidthTooSmall'), 'undersized cut width must be diagnosed')
+
+  console.log('trochoidal guards: PASSED')
+}
+
+/**
+ * Engagement handedness at the moves that come closest to the retained wall:
+ * the sign of cross(feed, towardWall).
+ *
+ * Deliberately relative, not absolute. Pinning "climb == negative cross" would
+ * bake in the Y-down/Y-up convention this very code gets wrong; comparing
+ * against the contour strategy — which has shipped for both cut directions —
+ * asks the only question that matters: does picking Climb produce the same
+ * engagement whichever strategy the user selected?
+ */
+function wallEngagementSign(
+  moves: ToolpathMove[],
+  towardWall: (point: { x: number; y: number }) => { distance: number; x: number; y: number },
+): number {
+  const cuts = moves.filter((move) => move.kind === 'cut' && approx(move.from.z, move.to.z))
+  let closest = Infinity
+  for (const move of cuts) {
+    closest = Math.min(closest, towardWall(move.from).distance, towardWall(move.to).distance)
+  }
+
+  let positive = 0
+  let negative = 0
+  for (const move of cuts) {
+    const midpoint = { x: (move.from.x + move.to.x) / 2, y: (move.from.y + move.to.y) / 2 }
+    const wall = towardWall(midpoint)
+    if (wall.distance > closest + 0.05) continue
+    const feedX = move.to.x - move.from.x
+    const feedY = move.to.y - move.from.y
+    if (Math.hypot(feedX, feedY) < 1e-12) continue
+    const cross = feedX * wall.y - feedY * wall.x
+    if (cross > 0) positive += 1
+    else if (cross < 0) negative += 1
+  }
+  assert(positive + negative > 0, 'no wall-adjacent cut moves were sampled')
+  return positive > negative ? 1 : -1
+}
+
+function testTrochoidalEngagementMatchesContourDirection() {
+  console.log('Testing trochoidal climb/conventional matches contour on both sides...')
+
+  const size = 30
+  // Outside: the retained part is the square, so "toward the wall" points at the
+  // nearest point of the square from a tool centre sitting outside it.
+  const outsideWall = (point: { x: number; y: number }) => {
+    const nearestX = Math.min(Math.max(point.x, 0), size)
+    const nearestY = Math.min(Math.max(point.y, 0), size)
+    return {
+      distance: Math.hypot(nearestX - point.x, nearestY - point.y),
+      x: nearestX - point.x,
+      y: nearestY - point.y,
+    }
+  }
+  // Inside: the retained wall is the pocket boundary, so it points outward at
+  // the nearest of the four edges.
+  const insideWall = (point: { x: number; y: number }) => {
+    const candidates = [
+      { x: 0, y: point.y }, { x: size, y: point.y },
+      { x: point.x, y: 0 }, { x: point.x, y: size },
+    ]
+    let best = candidates[0]
+    let bestDistance = Infinity
+    for (const candidate of candidates) {
+      const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y)
+      if (distance < bestDistance) {
+        bestDistance = distance
+        best = candidate
+      }
+    }
+    return { distance: bestDistance, x: best.x - point.x, y: best.y - point.y }
+  }
+
+  const cases = [
+    {
+      label: 'outside',
+      kind: 'edge_route_outside' as const,
+      feature: makeAddFeature('target', 0, 0, size, size, 0, -4),
+      wall: outsideWall,
+    },
+    {
+      label: 'inside',
+      kind: 'edge_route_inside' as const,
+      feature: makePocketFeature('target', 0, 0, size, size, 0, -4),
+      wall: insideWall,
+    },
+  ]
+
+  for (const { label, kind, feature, wall } of cases) {
+    for (const cutDirection of ['conventional', 'climb'] as const) {
+      const tool = makeFlatEndmill('t1', 6)
+      const project = baseProject([tool], [feature])
+      const base = makeTrochoidalEdgeOperation('target', kind)
+
+      const contour = generateEdgeRouteToolpath(project, {
+        ...base, edgeStrategy: 'contour', cutDirection,
+      })
+      const trochoidal = generateEdgeRouteToolpath(project, {
+        ...base, trochoidalCutWidth: 9, cutDirection,
+      })
+      assert(
+        trochoidal.warnings.length === 0,
+        `${label}/${cutDirection} trochoidal warnings: ${trochoidal.warnings.map((w) => w.code).join(', ')}`,
+      )
+
+      const contourSign = wallEngagementSign(contour.moves, wall)
+      const trochoidalSign = wallEngagementSign(trochoidal.moves, wall)
+      assert(
+        contourSign === trochoidalSign,
+        `${label} ${cutDirection}: trochoidal engagement is reversed relative to contour `
+          + `(contour ${contourSign > 0 ? '+' : '-'}, trochoidal ${trochoidalSign > 0 ? '+' : '-'})`,
+      )
+    }
+  }
+
+  console.log('trochoidal cut-direction parity with contour: PASSED')
+}
+
+function testTrochoidalCircularAndMultiTargetGuides() {
+  console.log('Testing trochoidal follows circular and multi-target guides...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const circle: SketchFeature = {
+    id: 'disc',
+    name: 'disc',
+    kind: 'circle',
+    folderId: null,
+    sketch: {
+      profile: circleProfile(20, 20, 12),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: 0,
+    z_bottom: -2,
+    visible: true,
+    locked: false,
+  }
+  const circularResult = generateEdgeRouteToolpath(
+    baseProject([tool], [circle]),
+    makeTrochoidalEdgeOperation('disc', 'edge_route_outside'),
+  )
+  assert(circularResult.warnings.length === 0, `circular guide warnings: ${circularResult.warnings.map((w) => w.code).join(', ')}`)
+  const circularCuts = cutMoves(circularResult.moves)
+  assert(circularCuts.length > 0, 'circular guide produced no cuts')
+  // Every cut must stay clear of the retained disc: radius + tool radius, less
+  // the 1% D safety allowance the guide offset builds in.
+  const minimumRadius = 12 + tool.diameter / 2 - tool.diameter * 0.01 - 1e-6
+  for (const move of circularCuts) {
+    const distance = Math.hypot(move.to.x - 20, move.to.y - 20)
+    assert(distance >= minimumRadius, `circular trochoidal cut entered the disc wall at radius ${distance}`)
+  }
+
+  // Two separate targets at the same depth take the combined-outside path.
+  const left = makeAddFeature('left', 0, 0, 14, 14, 0, -2)
+  const right = makeAddFeature('right', 30, 0, 14, 14, 0, -2)
+  const multiResult = generateEdgeRouteToolpath(
+    baseProject([tool], [left, right]),
+    {
+      ...makeTrochoidalEdgeOperation('left', 'edge_route_outside'),
+      target: { source: 'features', featureIds: ['left', 'right'] },
+    },
+  )
+  assert(multiResult.warnings.length === 0, `multi-target warnings: ${multiResult.warnings.map((w) => w.code).join(', ')}`)
+  const multiCuts = cutMoves(multiResult.moves)
+  assert(multiCuts.length > 0, 'multi-target guide produced no cuts')
+  const touchesLeft = multiCuts.some((move) => move.to.x < 14)
+  const touchesRight = multiCuts.some((move) => move.to.x > 30)
+  assert(touchesLeft && touchesRight, 'combined outside routing must cut around both targets')
+
+  console.log('trochoidal circular and multi-target guides: PASSED')
+}
+
+function testTrochoidalFeatureFirstSharesBudgetAndFailsAtomically() {
+  console.log('Testing trochoidal feature-first ordering, shared budget, and atomicity...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const left = makeAddFeature('left', 0, 0, 14, 14, 0, -2)
+  const right = makeAddFeature('right', 40, 0, 14, 14, 0, -2)
+  const project = baseProject([tool], [left, right])
+  const targets = { source: 'features' as const, featureIds: ['left', 'right'] }
+
+  const levelFirst = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('left', 'edge_route_outside'),
+    target: targets,
+    machiningOrder: 'level_first',
+  })
+  const featureFirst = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('left', 'edge_route_outside'),
+    target: targets,
+    machiningOrder: 'feature_first',
+  })
+
+  assert(featureFirst.warnings.length === 0, `feature-first warnings: ${featureFirst.warnings.map((w) => w.code).join(', ')}`)
+  assert(featureFirst.moves.length > 0, 'feature-first trochoidal produced no motion')
+
+  // Feature-first must finish one target before starting the other. Level-first
+  // interleaves them, so the X extent of each contiguous cut block separates the
+  // two orderings without depending on exact move counts.
+  const blockSpansBothTargets = (moves: ToolpathMove[]) => {
+    const groups = cutMoveGroups(moves)
+    return groups.some((group) => (
+      group.some((move) => move.to.x < 14) && group.some((move) => move.to.x > 40)
+    ))
+  }
+  assert(
+    !blockSpansBothTargets(featureFirst.moves),
+    'feature-first must not emit a cut block that spans both targets',
+  )
+  assert(
+    cutMoveGroups(featureFirst.moves).length > 1,
+    'feature-first must emit separate blocks per target',
+  )
+
+  // The 500,000-point budget belongs to the operation, not to each target. If it
+  // were re-created per sub-operation, two targets would quietly get twice the
+  // allowance — so an advance fine enough to exhaust one budget across both must
+  // fail, not silently succeed.
+  const starved = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('left', 'edge_route_outside'),
+    target: targets,
+    machiningOrder: 'feature_first',
+    trochoidalAdvance: 0.0005,
+  })
+  assert(starved.moves.length === 0, 'an operation-wide budget overrun must emit no motion')
+  assert(
+    starved.warnings.some((warning) => (
+      warning.code === 'edgeTrochoidalMoveBudget' || warning.code === 'edgeTrochoidalEntryBudget'
+    )),
+    `expected a budget warning, got [${starved.warnings.map((w) => w.code).join(', ')}]`,
+  )
+
+  // Atomicity: one target failing closed must refuse the whole operation rather
+  // than cutting the target that succeeded and warning about the other.
+  const regionProject = baseProject([tool], [left, right, makeRegionFeature('region', 0, 0, 10, 14)])
+  const partialFailure = generateEdgeRouteToolpath(regionProject, {
+    ...makeTrochoidalEdgeOperation('left', 'edge_route_outside'),
+    target: { source: 'features', featureIds: ['left', 'right', 'region'] },
+    machiningOrder: 'feature_first',
+  })
+  assert(
+    partialFailure.moves.length === 0,
+    'a target that fails closed must take the whole feature-first operation with it',
+  )
+  assert(
+    partialFailure.warnings.some((warning) => warning.code === 'edgeTrochoidalRegionUnsupported'),
+    'the atomic refusal must still explain which limitation was hit',
+  )
+
+  assert(levelFirst.moves.length > 0, 'level-first control case produced no motion')
+
+  console.log('trochoidal feature-first ordering, budget, and atomicity: PASSED')
+}
+
+function testTrochoidalOverlappingTabsUseHighestTop() {
+  console.log('Testing overlapping trochoidal tabs use the highest covering top...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const target = makeAddFeature('target', 0, 0, 40, 20, 0, -6)
+  const project = baseProject([tool], [target])
+  // Two overlapping tabs with different tops. The shallow tab-top interval must
+  // be cut at the HIGHER top (-1), never at -3, or the taller tab is machined
+  // away where the two overlap.
+  project.tabs = [
+    { id: 'low', name: 'low', x: 16, y: -2, w: 8, h: 4, z_top: -3, z_bottom: -6, visible: true },
+    { id: 'high', name: 'high', x: 20, y: -2, w: 8, h: 4, z_top: -1, z_bottom: -6, visible: true },
+  ]
+  const result = generateEdgeRouteToolpath(project, makeTrochoidalEdgeOperation('target', 'edge_route_outside'))
+
+  assert(
+    result.warnings.every((warning) => warning.code === 'edgeTrochoidalSkippedSpan'),
+    `unexpected overlapping-tab warnings: ${result.warnings.map((w) => w.code).join(', ')}`,
+  )
+  const cuts = cutMoves(result.moves)
+  // Each tab is judged against its OWN top: material above a tab's z_top is
+  // waste and must be cut, so the shallow tab is legitimately machined over at
+  // -2. Only cuts *below* a given tab's top may not enter that tab's footprint.
+  for (const tab of project.tabs) {
+    const distance = (point: { x: number; y: number }) => Math.hypot(
+      Math.max(tab.x - point.x, 0, point.x - (tab.x + tab.w)),
+      Math.max(tab.y - point.y, 0, point.y - (tab.y + tab.h)),
+    )
+    const violations = cuts.filter((move) => (
+      move.to.z < tab.z_top - 1e-6
+        && Math.min(distance(move.from), distance(move.to)) < tool.diameter / 2 - 1e-6
+    ))
+    assert(
+      violations.length === 0,
+      `${violations.length} cuts below tab "${tab.name}" (top ${tab.z_top}) entered its cutter keep-out`,
+    )
+  }
+
+  // The overlap itself is the point: the shallow tab's top interval must never
+  // be cut at -3 where the taller tab still stands, or 2 mm is taken off it.
+  const overlapCuts = cuts.filter((move) => (
+    move.to.x >= 20 && move.to.x <= 24 && move.to.y >= -2 && move.to.y <= 2
+  ))
+  for (const move of overlapCuts) {
+    assert(
+      move.to.z >= -1 - 1e-6,
+      `cut at ${move.to.z} inside the tab overlap must not go below the taller tab's top (-1)`,
+    )
+  }
+
+  console.log('trochoidal overlapping tabs: PASSED')
+}
+
 // ---------------------------------------------------------------------------
 // V-carve: feature_first emits independent per-feature toolpath
 // ---------------------------------------------------------------------------
@@ -2884,6 +3332,14 @@ try {
   testEdgeOutsideClipsAroundNonSelectedAddFeatures()
   testEdgeOutsideRoundCornersOptIn()
   testEdgeOutsideCombinedRoundCorners()
+  testTrochoidalOutsideTracksDifferentTargetSizes()
+  testTrochoidalTabsFragmentBeforeMotionAndHelixReenter()
+  testTrochoidalOutsideFragmentsAroundTightObstacle()
+  testTrochoidalRejectsRegionMasksAndUnsafeWidths()
+  testTrochoidalEngagementMatchesContourDirection()
+  testTrochoidalCircularAndMultiTargetGuides()
+  testTrochoidalFeatureFirstSharesBudgetAndFailsAtomically()
+  testTrochoidalOverlappingTabsUseHighestTop()
   testVCarveVisitsNearestResolvedRegionFirst()
   testVCarveDisjointFeaturesAreMachiningOrderInvariant()
   testSurfaceCleanMultiTargetProtectsTallerTarget()

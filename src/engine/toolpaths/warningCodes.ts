@@ -62,6 +62,22 @@ export type ToolpathWarningCode =
   | 'toolDiameterPositive'
   | 'stepdownPositive'
   | 'edgeRouteNoValidTargets'
+  // trochoidal edge route
+  | 'edgeTrochoidalWidthTooSmall'
+  | 'edgeTrochoidalWidthNarrow'
+  | 'edgeTrochoidalWidthLeavesCore'
+  | 'edgeTrochoidalAdvanceRange'
+  | 'edgeTrochoidalParametersInvalid'
+  | 'edgeTrochoidalEntryStrategyUnsupported'
+  | 'edgeTrochoidalRegionUnsupported'
+  | 'edgeTrochoidalInvalidGuide'
+  | 'edgeTrochoidalMoveBudget'
+  | 'edgeTrochoidalEntryBudget'
+  | 'edgeTrochoidalTabsRequireHelix'
+  | 'edgeTrochoidalTabUnsafe'
+  | 'edgeTrochoidalSkippedSpan'
+  | 'edgeTrochoidalNoSurvivingSpan'
+  | 'edgeTrochoidalSafetyCheck'
   // 3D surface roughing (stepdown)
   | 'targetsNotFound'
   | 'stepoverRatioRange'
@@ -174,6 +190,7 @@ export type ToolpathWarningCode =
   // store rest-operation creation
   | 'restOperationNotFound'
   | 'restOnlyPocketEdgeTargets'
+  | 'restTrochoidalUnsupported'
 
 export interface ToolpathWarning {
   code: ToolpathWarningCode

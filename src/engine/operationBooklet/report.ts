@@ -19,7 +19,7 @@ import type { Operation, OperationKind, OperationPass, OperationTarget, Project 
 // it maps structured warnings to localized text here via the i18n layer.
 import { translate } from '../../i18n/store'
 import { toolpathWarningTexts } from '../../i18n/warningText'
-import { getStockBounds } from '../../types/project'
+import { getStockBounds, isTrochoidalEdgeRoughing } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import type { Units } from '../../utils/units'
 import type { NormalizedTool, ToolpathResult } from '../toolpaths/types'
@@ -54,6 +54,12 @@ function machiningOrderLabel(order: NonNullable<Operation['machiningOrder']>): s
   return order === 'feature_first' ? translate('booklet.machiningOrder.featureFirst') : translate('booklet.machiningOrder.levelFirst')
 }
 
+function edgeStrategyLabel(strategy: NonNullable<Operation['edgeStrategy']>): string {
+  return strategy === 'trochoidal'
+    ? translate('booklet.edgeStrategy.trochoidal')
+    : translate('booklet.edgeStrategy.contour')
+}
+
 function operationSupportsCutDirection(kind: OperationKind): boolean {
   return (
     kind === 'pocket'
@@ -67,8 +73,10 @@ function operationSupportsCutDirection(kind: OperationKind): boolean {
   )
 }
 
-function operationSupportsMachiningOrder(kind: OperationKind): boolean {
-  return kind === 'pocket' || kind === 'edge_route_inside' || kind === 'edge_route_outside'
+function operationSupportsMachiningOrder(operation: Operation): boolean {
+  return operation.kind === 'pocket'
+    || operation.kind === 'edge_route_inside'
+    || operation.kind === 'edge_route_outside'
 }
 
 function operationUsesRoundOutsideCorners(operation: Operation): boolean {
@@ -241,18 +249,26 @@ function settingRows(operation: Operation, project: Project): OperationBookletRo
   ]
 
   if (operation.kind !== 'follow_line' && operation.kind !== 'drilling') {
-    rows.push(
-      { label: translate('booklet.label.stepdown'), value: lengthWithUnits(operation.stepdown, units) },
-      { label: translate('booklet.label.stepover'), value: formatLength(operation.stepover, units, { maximumFractionDigits: 4 }) },
-    )
+    rows.push({ label: translate('booklet.label.stepdown'), value: lengthWithUnits(operation.stepdown, units) })
+    if (!isTrochoidalEdgeRoughing(operation)) {
+      rows.push({ label: translate('booklet.label.stepover'), value: formatLength(operation.stepover, units, { maximumFractionDigits: 4 }) })
+    }
   }
 
   if (operationSupportsCutDirection(operation.kind)) {
     rows.push({ label: translate('booklet.label.cutDirection'), value: cutDirectionLabel(operation.cutDirection ?? 'conventional') })
   }
 
-  if (operationSupportsMachiningOrder(operation.kind)) {
+  if (operationSupportsMachiningOrder(operation)) {
     rows.push({ label: translate('booklet.label.machiningOrder'), value: machiningOrderLabel(operation.machiningOrder ?? 'level_first') })
+  }
+
+  if (isTrochoidalEdgeRoughing(operation)) {
+    rows.push(
+      { label: translate('booklet.label.edgeStrategy'), value: edgeStrategyLabel('trochoidal') },
+      { label: translate('booklet.label.trochoidalCutWidth'), value: lengthWithUnits(operation.trochoidalCutWidth ?? 0, units) },
+      { label: translate('booklet.label.trochoidalAdvance'), value: `${formatNumber(operation.trochoidalAdvance ?? 0, 3)} × D` },
+    )
   }
 
   if ((operation.roundOutsideCorners ?? false) && operationUsesRoundOutsideCorners(operation)) {

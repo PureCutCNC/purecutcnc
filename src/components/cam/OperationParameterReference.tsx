@@ -79,6 +79,55 @@ export function OperationParameterReference({
         </OpParamRefFrame>
       )
 
+    case 'edgeStrategy': {
+      // Both variants share the retained wall so the difference reads as the
+      // motion above it, not as two unrelated pictures.
+      if (variant === 'trochoidal') {
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__outline" d="M6 27h46" />
+            {[13, 21, 29, 37, 45].map((cx) => (
+              <circle key={cx} className="gear-reference__guide" cx={cx} cy="15" r="6" />
+            ))}
+            <path className="gear-reference__accent" d="M10 15h34" />
+            <path className="gear-reference__accent-fill" d="M46 15l-4.5-2.7v5.4z" />
+          </OpParamRefFrame>
+        )
+      }
+      return (
+        <OpParamRefFrame label={label}>
+          <path className="gear-reference__outline" d="M6 27h46" />
+          <path className="gear-reference__guide" d="M6 15h46" />
+          <path className="gear-reference__accent" d="M10 15h34" />
+          <path className="gear-reference__accent-fill" d="M46 15l-4.5-2.7v5.4z" />
+        </OpParamRefFrame>
+      )
+    }
+
+    case 'trochoidalCutWidth':
+      // The channel the orbit sweeps, measured across — not the cutter.
+      return (
+        <OpParamRefFrame label={label}>
+          <path className="gear-reference__outline" d="M6 29h46" />
+          <path className="gear-reference__guide" d="M6 9h46" strokeDasharray="2 2" />
+          <path className="gear-reference__guide" d="M6 25h46" strokeDasharray="2 2" />
+          <circle className="gear-reference__outline" cx="21" cy="17" r="8" />
+          <path className="gear-reference__accent" d="M44 11v12" />
+          <path className="gear-reference__accent-fill" d="M44 9l-2.6 3.6h5.2zM44 25l-2.6-3.6h5.2z" />
+        </OpParamRefFrame>
+      )
+
+    case 'trochoidalAdvance':
+      // Centre-to-centre distance between one orbit and the next.
+      return (
+        <OpParamRefFrame label={label}>
+          <circle className="gear-reference__guide" cx="22" cy="17" r="9" />
+          <circle className="gear-reference__outline" cx="31" cy="17" r="9" />
+          <path className="gear-reference__accent" d="M22 17h9" />
+          <path className="gear-reference__accent-fill" d="M22 17l3.3-2.4v4.8zM31 17l-3.3-2.4v4.8z" />
+        </OpParamRefFrame>
+      )
+
     case 'maxDepth':
       return (
         <OpParamRefFrame label={label}>

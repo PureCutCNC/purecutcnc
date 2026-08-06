@@ -255,6 +255,9 @@ export function normalizeOperation(rawOperation: Operation, project: Project, in
     waterlineMaxRingsPerBand: operation.waterlineMaxRingsPerBand ?? 0,
     waterlineTipStepdown: operation.waterlineTipStepdown ?? 0,
     arcFittingEnabled: operation.arcFittingEnabled ?? true,
+    edgeStrategy: (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside')
+      ? operation.edgeStrategy ?? 'contour'
+      : operation.edgeStrategy,
   }
 
   if (!isOperationTargetValid(project, normalized.kind, normalized.target)) {

@@ -17,25 +17,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../i18n/i18nContext'
 import type { OperationKind } from '../../types/project'
-import { operationDescriptions } from '../../types/operationDescriptions'
+import { OPERATION_DESCRIPTION_SEGMENT, operationDescriptions } from '../../types/operationDescriptions'
 import type { camEn } from '../../i18n/locales/en/cam'
 import { camT } from './camI18n'
 import { Icon } from '../Icon'
 
 /** camelCase segment used in cam.opDesc.<segment>.* catalog keys. */
-const OP_DESC_SEG: Record<OperationKind, string> = {
-  pocket: 'pocket',
-  v_carve: 'vCarve',
-  v_carve_medial: 'vCarveMedial',
-  edge_route_inside: 'edgeRouteInside',
-  edge_route_outside: 'edgeRouteOutside',
-  surface_clean: 'surfaceClean',
-  rough_surface: 'roughSurface',
-  finish_surface: 'finishSurface',
-  finish_surface_cleanup: 'finishSurfaceCleanup',
-  follow_line: 'followLine',
-  drilling: 'drilling',
-}
+const OP_DESC_SEG = OPERATION_DESCRIPTION_SEGMENT
 
 interface OperationButton {
   kind: OperationKind

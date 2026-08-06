@@ -29,7 +29,7 @@ import { circleProfile, defaultTool, newProject, rectProfile, type Operation, ty
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { flattenProfile } from './geometry'
 import { generateEdgeRouteToolpath } from './edge'
-import { applyTabsToEdgeRoute, applyTabWarnings, tabLayoutFreeFraction, toolCentreContours } from './tabs'
+import { applyEdgeRouteTabs, applyTabsToEdgeRoute, applyTabWarnings, tabLayoutFreeFraction, toolCentreContours } from './tabs'
 import type { ToolpathResult } from './types'
 
 // ── Harness ──────────────────────────────────────────────────────────
@@ -288,6 +288,63 @@ test('two tabs leave a small circle usable', () => {
   ]
   const free = tabLayoutFreeFraction(circle, rects, radius)
   assert(free > 0.4, `two tabs leave most of the path free, got ${free.toFixed(3)}`)
+})
+
+// ── Trochoidal bypass ────────────────────────────────────────────────
+
+/**
+ * The shared tab pass must not touch trochoidal output. That strategy plans its
+ * tab motion in the guide domain — fragmenting before any orbit exists, cutting
+ * the local tab-top interval, helically re-entering after — so a second pass
+ * splits finished orbits and lifts them with synthesised lead-ins.
+ *
+ * The regression this pins: the two passes expand the tab footprint by
+ * different clearances (tool radius + radial stock-to-leave here, orbit-derived
+ * in the generator), so once stock-to-leave is set the shared pass finds
+ * "unprotected" cut moves the generator deliberately placed and re-cuts them.
+ */
+test('applyEdgeRouteTabs leaves trochoidal output untouched', () => {
+  const { project, operation } = circleProject(30, [tab('t1', 60 - 4, 60 - 15 - 4, 8, 6)])
+  // Stock-to-leave large enough that the shared pass's expansion exceeds the
+  // generator's tab clearance — the exact configuration that used to corrupt it.
+  const trochoidal: Operation = {
+    ...operation,
+    pass: 'rough',
+    edgeStrategy: 'trochoidal',
+    trochoidalCutWidth: 9,
+    trochoidalAdvance: 0.1,
+    entryStrategy: 'helix',
+    entryRampAngle: 5,
+    stockToLeaveRadial: 0.4,
+  }
+  const generated = generateEdgeRouteToolpath(project, trochoidal)
+  assert(generated.moves.length > 0, 'trochoidal fixture generated no motion')
+
+  const viaEdgeRoutePass = applyEdgeRouteTabs(project, trochoidal, generated)
+  assert(
+    viaEdgeRoutePass.moves === generated.moves,
+    'applyEdgeRouteTabs must return trochoidal moves by identity, not re-tab them',
+  )
+
+  // And prove the bypass is load-bearing rather than vacuous: the shared pass
+  // really would rewrite this toolpath if it were still applied.
+  const viaSharedPass = applyTabsToEdgeRoute(project, trochoidal, generated)
+  assert(
+    viaSharedPass.moves.length !== generated.moves.length,
+    'shared tab pass no longer alters trochoidal output — this test is now vacuous, '
+      + 'confirm the bypass is still needed before deleting it',
+  )
+})
+
+test('applyEdgeRouteTabs still tabs a contour edge route', () => {
+  const { project, operation } = circleProject(30, [tab('t1', 60 - 4, 60 - 15 - 4, 8, 6)])
+  const contour: Operation = { ...operation, edgeStrategy: 'contour' }
+  const generated = generateEdgeRouteToolpath(project, contour)
+  const tabbed = applyEdgeRouteTabs(project, contour, generated)
+  assert(
+    tabbed.moves.length !== generated.moves.length,
+    'contour edge routes must still go through the shared tab pass',
+  )
 })
 
 // ── Summary ──────────────────────────────────────────────────────────

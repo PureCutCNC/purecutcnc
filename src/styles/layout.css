@@ -2248,6 +2248,15 @@
   margin-top: 2px;
 }
 
+/* Read-only value derived from another field (e.g. trochoidal advance shown as
+   a distance). Sits in the input column but reads as text, not an editable
+   control, so it is never mistaken for a second way to set the same number. */
+.properties-field .cam-field-derived {
+  color: var(--text-dim);
+  font-size: 13px;
+  align-self: center;
+}
+
 .properties-check {
   display: flex;
   align-items: center;
