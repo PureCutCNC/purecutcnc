@@ -75,8 +75,8 @@ worker must not re-derive:
 | p1-region-domain-resolver | `feat/issue-452-p1-region-domain-resolver` | accepted | `e302911` | `8b96d33` |
 | p2-area-generators | `feat/issue-452-p2-area-generators` | accepted with gap | `6731fef` | `0b24579` |
 | p2b-centre-domain-containment | `feat/issue-452-p2b-centre-domain-containment` | accepted | `de7b117` + `a6f2359` | `03eecef` |
-| p3a-edge-route-curve-domain | `feat/issue-452-p3a-edge-route-curve-domain` | dispatched | — | — |
-| p3b-carving-waterline-finish | `feat/issue-452-p3b-carving-waterline-finish` | pending | — | — |
+| p3a-edge-route-curve-domain | `feat/issue-452-p3a-edge-route-curve-domain` | merged with OPEN REGRESSION | `8281de5` | `33baf96` |
+| p3b-carving-waterline-finish | `feat/issue-452-p3b-carving-waterline-finish` | dispatched | — | — |
 | p4-trochoidal-regions | `feat/issue-452-p4-trochoidal-regions` | pending | — | — |
 | p5-delete-clippers | `feat/issue-452-p5-delete-clippers` | pending | — | — |
 
@@ -91,6 +91,30 @@ and p4 each require p1. p5 requires p2, p3 and p4.
   merged. Subsequent prompts state the one-commit requirement explicitly and in
   stronger terms; if the pattern repeats, treat it as a launcher-level problem
   rather than a per-slice one.
+
+## OPEN REGRESSION — V-carve lost region masking in p3a (owned by p3b)
+
+**Do not open the PR until this is closed.**
+
+p3a removed the `applyRegionMaskToPaths` block at `resolver.ts:442`. For Edge
+Route that was correct — it was a duplicate, and a third semantic besides
+(it masked design geometry *before* the tool offset, so the centre landed a
+radius outside the region). But `resolvePocketRegions` has three consumers:
+`pocket.ts`, `restRegions.ts`, and **`vcarve.ts`**, and for V-carve that block
+was the *only* region masking in the whole pipeline.
+
+`vcarve.ts` contains no region handling, `vcarveMedial/` contains none, and
+`generateVCarveToolpath` is wired straight into `useToolpathGeneration.ts` with
+nothing clipping its output. So `v_carve` and `v_carve_medial` currently ignore
+region filters entirely.
+
+The worker rewrote `vcarveLineResolver.test.ts` to assert the unmasked area and
+justified it by crediting `carving.ts` — but `carving.ts` exports
+`generateFollowLineToolpath`, a different generator. The resolver-level assertion
+is now factually right; what is missing is any end-to-end test that V-carve
+output respects a region at all. That absence is what let this through.
+
+p3b restores it at the generator and adds the missing end-to-end coverage.
 
 ## `resolveRegionDomainArea` has a precondition — know which seam you are at
 
