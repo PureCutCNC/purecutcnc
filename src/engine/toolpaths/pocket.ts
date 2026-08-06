@@ -50,10 +50,10 @@ import { cornerSmoothingRadius, roundContourCorners } from './offsetSmoothing'
 import { resolvePocketRegions } from './resolver'
 import {
   buildRegionMask,
-  clipToolpathResultToRegionMask,
-  entryDisabledByRegionMaskWarning,
   splitFeatureTargets,
 } from './regions'
+import { resolveRegionDomainArea } from './regionDomain'
+import { unionClipperPaths } from './modelProtection'
 import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 
 const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
@@ -1388,7 +1388,6 @@ function generateRoughBandMoves(
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
-  entryEnabled = true,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -1423,17 +1422,15 @@ function generateRoughBandMoves(
       }
     }
 
-    const entryPolicy = entryEnabled
-      ? withEntryHandoffFeedScale(
-        createEntryPolicy(
-          operation,
-          toolRadius * 2,
-          roughRegions,
-          (warning) => appendUniqueWarning(warnings, warning),
-        ),
-        slotScale,
-      )
-      : undefined
+    const entryPolicy = withEntryHandoffFeedScale(
+      createEntryPolicy(
+        operation,
+        toolRadius * 2,
+        roughRegions,
+        (warning) => appendUniqueWarning(warnings, warning),
+      ),
+      slotScale,
+    )
 
     const boundaryContours = applyContourDirection(buildContourLoops(roughRegions), direction)
     const segments = buildPocketParallelSegments(roughRegions, effectiveStepover, operation.pocketAngle)
@@ -1512,17 +1509,15 @@ function generateRoughBandMoves(
     .flatMap((region) => buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
     .map((region) => buildOffsetRegionTree(region, effectiveStepover, islandJoinType))
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
-  const entryPolicy = entryEnabled
-    ? withEntryHandoffFeedScale(
-      createEntryPolicy(
-        operation,
-        toolRadius * 2,
-        regionTrees.map((tree) => tree.region),
-        (warning) => appendUniqueWarning(warnings, warning),
-      ),
-      slotScale,
-    )
-    : undefined
+  const entryPolicy = withEntryHandoffFeedScale(
+    createEntryPolicy(
+      operation,
+      toolRadius * 2,
+      regionTrees.map((tree) => tree.region),
+      (warning) => appendUniqueWarning(warnings, warning),
+    ),
+    slotScale,
+  )
 
   // Keep XY travel at the global safe Z, but start the entry just above the
   // previous level's floor instead of at safe Z — otherwise a deep pocket
@@ -1585,7 +1580,6 @@ function generateFinishBandMoves(
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
-  entryEnabled = true,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -1614,17 +1608,15 @@ function generateFinishBandMoves(
     ? band.regions.flatMap((region) => buildInsetRegions(region, finishDelta))
     : []
   const slotScale = resolveSlotFeedScale(operation)
-  const entryPolicy = entryEnabled
-    ? withEntryHandoffFeedScale(
-      createEntryPolicy(
-        operation,
-        toolRadius * 2,
-        finishRegions,
-        (warning) => appendUniqueWarning(warnings, warning),
-      ),
-      slotScale,
-    )
-    : undefined
+  const entryPolicy = withEntryHandoffFeedScale(
+    createEntryPolicy(
+      operation,
+      toolRadius * 2,
+      finishRegions,
+      (warning) => appendUniqueWarning(warnings, warning),
+    ),
+    slotScale,
+  )
   let wallContours: Point[][] = []
   let wallOuterContours: Point[][] = []
   let wallFinalContours: Point[][] = []
@@ -1878,13 +1870,9 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
   const stepoverDistance = tool.diameter * operation.stepover
   const maxLinkDistance = tool.diameter
   const direction = operation.cutDirection ?? 'conventional'
+  const centreInset = tool.radius + Math.max(0, operation.stockToLeaveRadial ?? 0)
   const allMoves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
-  const entryGuardWarning = entryDisabledByRegionMaskWarning(operation, regionMask)
-  const entryEnabled = entryGuardWarning === null
-  if (entryGuardWarning) {
-    appendUniqueWarning(warnings, entryGuardWarning)
-  }
   const maxBandDepth = resolved.bands.reduce((max, band) => Math.max(max, Math.abs(band.topZ - band.bottomZ)), 0)
   const depthWarning = checkMaxCutDepthWarning(tool, maxBandDepth)
   if (depthWarning) {
@@ -1929,6 +1917,23 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
   }
 
   for (const band of resolved.bands) {
+    if (regionMask) {
+      const scale = DEFAULT_CLIPPER_SCALE
+      const outerPaths = band.regions.map((r) => toClipperPath(normalizeWinding(r.outer, false), scale))
+      const bandDomain = unionClipperPaths(outerPaths)
+      if (bandDomain.length === 0) continue
+
+      const maskedDomain = resolveRegionDomainArea(bandDomain, regionMask, centreInset)
+      if (maskedDomain.length === 0) continue
+
+      const islandPaths = band.regions.flatMap((r) =>
+        r.islands.map((island) => toClipperPath(normalizeWinding(island, false), scale)),
+      )
+      const polyTree = executeDifference(maskedDomain, islandPaths)
+      band.regions = polyTreeToRegions(polyTree, band.targetFeatureIds, band.islandFeatureIds, scale)
+      if (band.regions.length === 0) continue
+    }
+
     const result = operation.pass === 'finish'
       ? generateFinishBandMoves(
         band,
@@ -1939,7 +1944,6 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
         stepoverDistance,
         maxLinkDistance,
         direction,
-        entryEnabled,
       )
       : generateRoughBandMoves(
         band,
@@ -1951,7 +1955,6 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
         stepoverDistance,
         maxLinkDistance,
         direction,
-        entryEnabled,
       )
     const { moves, stepLevels, warnings: bandWarnings } = result
     moves.forEach((move) => allMoves.push(move))
@@ -1976,12 +1979,11 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
     bounds = updateBounds(bounds, move.to)
   }
 
-  const result: PocketToolpathResult = {
+  return {
     operationId: operation.id,
     moves: allMoves,
     warnings,
     bounds,
     stepLevels: [...allStepLevels].sort((a, b) => b - a),
   }
-  return clipToolpathResultToRegionMask(project, result, regionMask) as PocketToolpathResult
 }

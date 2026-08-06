@@ -31,7 +31,7 @@ const ALL_CODES = [
   'targetsMissingOrWrongRole', 'closedProfilesOnly', 'bandEmptySubject', 'bandNoRegions', 'resolverNoBands',
   'resolverOnlyInsideEdge', 'resolverOnlyPocketVcarve', 'resolverNoValidKindTargets', 'resolverNoValidSubtracts', 'resolverNoTargets',
   'cutDepthExceedsToolMax', 'cutDepthExceedsToolMaxForFeature',
-  'entryStrategyFallback', 'entryDisabledByRegionMask', 'entryHelixDiameterClamped', 'debug',
+  'entryStrategyFallback', 'entryHelixDiameterClamped', 'debug',
   'noToolAssigned', 'vBitAngleRange', 'maxCarveDepthPositive', 'toolDiameterPositive', 'stepdownPositive',
   'targetsNotFound', 'targetsMissing', 'stepoverRatioRange', 'operationStepoverRatioRange',
   'vcarveMedialWrongKind', 'vcarveMedialNeedsVBit', 'vcarveBandNoDepth', 'vcarveDegenerateRegion',

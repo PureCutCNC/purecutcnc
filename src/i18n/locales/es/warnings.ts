@@ -32,7 +32,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   "warnings.cutDepthExceedsToolMax": "La profundidad de corte {depth} {units} supera la profundidad máxima de corte de la herramienta {max} {units}",
   "warnings.cutDepthExceedsToolMaxForFeature": "{name}: La profundidad de corte {depth} {units} excede la profundidad máxima de corte de la herramienta {max} {units}",
   "warnings.entryStrategyFallback": "El movimiento de entrada seleccionado no cabe en la zona de mecanizado disponible; se utilizó una estrategia alternativa más segura.",
-  "warnings.entryDisabledByRegionMask": "Las entradas en rampa y helicoidales se desactivan cuando hay filtros de región activos; se utilizó una entrada de penetración.",
+
   "warnings.entryHelixDiameterClamped": "El diámetro de la entrada helicoidal se redujo de {requestedDiameter} a {actualDiameter} para que quepa en la zona de mecanizado.",
   "warnings.noToolAssigned": "No se ha asignado ninguna herramienta a esta operación",
   "warnings.vBitAngleRange": "El ángulo de la broca en V debe estar entre 0 y 180 grados",

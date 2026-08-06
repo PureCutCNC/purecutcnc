@@ -609,10 +609,6 @@ function testRoughSurfaceRegionMaskAllowsEntry(): void {
     result.moves.some((move) => move.kind === 'lead_in'),
     'region-masked rough_surface with helix entry should emit lead-in moves',
   )
-  assert(
-    !result.warnings.some((warning) => warning.code === 'entryDisabledByRegionMask'),
-    'region-masked rough_surface should not emit entryDisabledByRegionMask',
-  )
 }
 
 function testRoughSurfaceDefaultEntryMatchesExplicitPlunge(): void {
