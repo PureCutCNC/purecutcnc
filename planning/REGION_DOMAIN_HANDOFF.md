@@ -27,7 +27,7 @@ with `Closes #452`.
 - Base commit: `240e15be1d61649b0fc18221031a18012910c156`
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/452#issuecomment-5199629410
 - Manager session: 2026-08-05
-- Status: `slice in progress`
+- Status: `all slices merged — awaiting manual regression before the PR`
 - User authorization for credential-backed worker dispatch: `granted 2026-08-05 for all six slices of this issue`
 
 ## Global rules
@@ -78,7 +78,7 @@ worker must not re-derive:
 | p3a-edge-route-curve-domain | `feat/issue-452-p3a-edge-route-curve-domain` | accepted (regression fixed in p3b) | `8281de5` | `33baf96` |
 | p3b-carving-waterline-finish | `feat/issue-452-p3b-carving-waterline-finish` | accepted | `2607ce1` | `f85c52e` |
 | p4-trochoidal-regions | `feat/issue-452-p4-trochoidal-regions` | accepted | `c07d678` | `e242175` |
-| p5-delete-clippers | `feat/issue-452-p5-delete-clippers` | dispatched | — | — |
+| p5-delete-clippers | `feat/issue-452-p5-delete-clippers` | accepted | `3374d4b` | `17d5a61` |
 
 Dependencies: p0 and p1 are independent of everything and of each other. p2, p3
 and p4 each require p1. p5 requires p2, p3 and p4.
@@ -91,6 +91,34 @@ and p4 each require p1. p5 requires p2, p3 and p4.
   merged. Subsequent prompts state the one-commit requirement explicitly and in
   stronger terms; if the pattern repeats, treat it as a launcher-level problem
   rather than a per-slice one.
+
+## Before the PR opens — required manual regression
+
+All seven slices are merged and `npm run build` is green on the integration
+branch (165 unit test files). What is **not** yet done is a real look at the
+generated toolpaths. Two slices in this run shipped code whose unit tests passed
+while the safety property they claimed to check did not hold, so a green suite is
+not sufficient evidence here.
+
+Open a project with regions and check each of these in the app:
+
+1. **Pocket** with an include region — concentric offsets of the masked shape
+   with rounded corners and its own entry, not fragments stopping dead at the
+   region edge. This is the case from the issue thread screenshot.
+2. **Pocket / surface clean** with an exclude region — the cutter stays fully
+   out, not merely centred outside it.
+3. **V-carve** with an include region — watch the surface bleed described below;
+   this is the one open semantic question.
+4. **Edge Route (contour)** across a region boundary and across an obstacle —
+   spans retract, rapid, and descend through air. No vertical plunge into stock.
+5. **Trochoidal Edge Route** with both polarities — helical entry per surviving
+   span, short spans skipped with a located warning rather than failing the job.
+6. **Rest machining** with a region, since p5 changed its include semantics from
+   containment to coverage.
+
+Also worth deciding before release: whether exclude regions keeping the cutter
+fully out (rather than centre-out, as before) needs a release note. It removes
+less material than the old behaviour on existing projects.
 
 ## CLOSED — V-carve region regression (p3a → fixed in p3b `2607ce1`)
 
