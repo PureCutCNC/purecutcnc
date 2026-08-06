@@ -39,7 +39,7 @@ export const warningsEn = {
   'warnings.cutDepthExceedsToolMax': 'Cut depth {depth} {units} exceeds tool max cut depth {max} {units}',
   'warnings.cutDepthExceedsToolMaxForFeature': '{name}: Cut depth {depth} {units} exceeds tool max cut depth {max} {units}',
   'warnings.entryStrategyFallback': 'The selected entry move did not fit inside the available cutting area, so a safer fallback entry was used.',
-  'warnings.entryDisabledByRegionMask': 'Ramp and helix entries are disabled while region filters are active; a plunge entry was used.',
+
   'warnings.entryHelixDiameterClamped': 'The helix entry diameter was reduced from {requestedDiameter} to {actualDiameter} to fit the cutting area.',
   'warnings.noToolAssigned': 'No tool assigned to this operation',
   'warnings.vBitAngleRange': 'V-bit angle must be between 0 and 180 degrees',

@@ -17,9 +17,8 @@
 import ClipperLib from 'clipper-lib'
 import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
-import type { Operation, Point, Project, SketchFeature } from '../../types/project'
+import type { Point, Project, SketchFeature } from '../../types/project'
 import type { ClipperPath, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
-import type { ToolpathWarning } from './warningCodes'
 import {
   DEFAULT_CLIPPER_SCALE,
   flattenProfile,
@@ -200,22 +199,6 @@ export function buildRegionMask(regionFeatures: SketchFeature[]): RegionMask | n
       return included
     },
   }
-}
-
-/**
- * Region filters are applied at different seams across clearing generators,
- * including a post-generation clip that discards lead-ins and reconnects cut
- * fragments with safe-Z plunges. Until every consumer exposes one continuous
- * entry-clearance contract, masked operations retain their legacy plunge.
- */
-export function entryDisabledByRegionMaskWarning(
-  operation: Operation,
-  mask: RegionMask | null,
-): ToolpathWarning | null {
-  const requested = operation.entryStrategy ?? 'plunge'
-  return mask && requested !== 'plunge'
-    ? { code: 'entryDisabledByRegionMask', params: { requested } }
-    : null
 }
 
 export function buildMaskFromClipperPaths(paths: ClipperPath[]): RegionMask | null {

@@ -47,6 +47,7 @@ import {
   buildPocketParallelSegments,
   cutOffsetRegionRecursive,
   contourStartPoint,
+  executeDifference,
   generateStepLevels,
   orderClosedContoursGreedy,
   orderOpenSegmentsGreedy,
@@ -62,10 +63,10 @@ import {
 import { cornerSmoothingRadius, smoothClosedContours } from './offsetSmoothing'
 import {
   buildRegionMask,
-  clipToolpathResultToRegionMask,
-  entryDisabledByRegionMaskWarning,
   splitFeatureTargets,
 } from './regions'
+import { resolveRegionDomainArea } from './regionDomain'
+import { unionClipperPaths } from './modelProtection'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 
@@ -79,6 +80,7 @@ interface PolyTreeNode {
 interface SurfaceCleanBand extends ResolvedPocketBand {
   subjectPaths: ClipperPath[]
   protectedPaths: ClipperPath[]
+  regionMask: ReturnType<typeof buildRegionMask>
 }
 
 interface SurfaceCleanResult {
@@ -297,6 +299,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       regions,
       subjectPaths,
       protectedPaths,
+      regionMask,
     })
   }
 
@@ -323,7 +326,6 @@ function generateRoughBandMoves(
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
-  entryEnabled = true,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -337,7 +339,32 @@ function generateRoughBandMoves(
   }
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
-  const coverageRegions = buildSurfaceCoverageRegions(band.subjectPaths, band.protectedPaths, band.regions, toolRadius)
+  let coverageRegions = buildSurfaceCoverageRegions(band.subjectPaths, band.protectedPaths, band.regions, toolRadius)
+  // Apply region mask after toolRadius expansion so exclude boundaries
+  // aren't pushed back by the expansion.
+  if (band.regionMask) {
+    const scale = DEFAULT_CLIPPER_SCALE
+    const domainPaths = coverageRegions
+      .flatMap((r) => r.outer.length >= 3 ? [toClipperPath(normalizeWinding(r.outer, false), scale)] : [])
+    if (domainPaths.length === 0) {
+      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
+    }
+    const domain = unionClipperPaths(domainPaths).filter((p) => p.length >= 2)
+    if (domain.length === 0) {
+      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
+    }
+    const maskedDomain = resolveRegionDomainArea(domain, band.regionMask, 0)
+      .filter((p) => p.length >= 2)
+    if (maskedDomain.length === 0) {
+      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
+    }
+    const polyTree = executeDifference(maskedDomain, [])
+    coverageRegions = polyTreeToRegions(polyTree, band.targetFeatureIds, band.islandFeatureIds, scale)
+      .filter((r) => r.outer.length >= 3)
+    if (coverageRegions.length === 0) {
+      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
+    }
+  }
   const initialInset = radialLeave
   const stepLevels = generateStepLevels(band.topZ, effectiveBottom, stepdown)
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
@@ -356,14 +383,12 @@ function generateRoughBandMoves(
 
     const boundaryContours = applyContourDirection(buildContourLoops(roughRegions), direction)
     const segments = buildPocketParallelSegments(roughRegions, effectiveStepover, operation.pocketAngle)
-    const entryPolicy = entryEnabled
-      ? createEntryPolicy(
+    const entryPolicy = createEntryPolicy(
         operation,
         toolRadius * 2,
         roughRegions,
         (warning) => appendUniqueWarning(warnings, warning),
       )
-      : undefined
     if (segments.length === 0) {
       return {
         moves,
@@ -433,14 +458,12 @@ function generateRoughBandMoves(
     ? ClipperLib.JoinType.jtRound
     : ClipperLib.JoinType.jtMiter
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
-  const entryPolicy = entryEnabled
-    ? createEntryPolicy(
+  const entryPolicy = createEntryPolicy(
       operation,
       toolRadius * 2,
       coverageRegions,
       (warning) => appendUniqueWarning(warnings, warning),
     )
-    : undefined
 
   for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
     const z = stepLevels[levelIndex]
@@ -494,7 +517,6 @@ function generateFinishBandMoves(
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
-  entryEnabled = true,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -516,17 +538,40 @@ function generateFinishBandMoves(
   }
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
-  const coverageRegions = buildSurfaceCoverageRegions(band.subjectPaths, band.protectedPaths, band.regions, toolRadius)
+  let coverageRegions = buildSurfaceCoverageRegions(band.subjectPaths, band.protectedPaths, band.regions, toolRadius)
+  // Apply region mask after toolRadius expansion so exclude boundaries
+  // aren't pushed back by the expansion.
+  if (band.regionMask) {
+    const scale = DEFAULT_CLIPPER_SCALE
+    const domainPaths = coverageRegions
+      .flatMap((r) => r.outer.length >= 3 ? [toClipperPath(normalizeWinding(r.outer, false), scale)] : [])
+    if (domainPaths.length === 0) {
+      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
+    }
+    const domain = unionClipperPaths(domainPaths).filter((p) => p.length >= 2)
+    if (domain.length === 0) {
+      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
+    }
+    const maskedDomain = resolveRegionDomainArea(domain, band.regionMask, 0)
+      .filter((p) => p.length >= 2)
+    if (maskedDomain.length === 0) {
+      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
+    }
+    const polyTree = executeDifference(maskedDomain, [])
+    coverageRegions = polyTreeToRegions(polyTree, band.targetFeatureIds, band.islandFeatureIds, scale)
+      .filter((r) => r.outer.length >= 3)
+    if (coverageRegions.length === 0) {
+      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
+    }
+  }
   const finishDelta = radialLeave
   const finishRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, finishDelta))
-  const entryPolicy = entryEnabled
-    ? createEntryPolicy(
+  const entryPolicy = createEntryPolicy(
       operation,
       toolRadius * 2,
       finishRegions,
       (warning) => appendUniqueWarning(warnings, warning),
     )
-    : undefined
   const wallContours = operation.finishWalls ? applyContourDirection(buildContourLoops(finishRegions), direction) : []
   // Finish-floor rings are filleted when the option is on. This is a single-
   // level pass (no chip risk) and the floor rings run one stepover inside the
@@ -680,11 +725,6 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
   const direction = operation.cutDirection ?? 'conventional'
   const allMoves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
-  const entryGuardWarning = entryDisabledByRegionMaskWarning(operation, resolved.regionMask)
-  const entryEnabled = entryGuardWarning === null
-  if (entryGuardWarning) {
-    appendUniqueWarning(warnings, entryGuardWarning)
-  }
   const allStepLevels = new Set<number>()
   const maxBandDepth = resolved.bands.reduce((max, band) => Math.max(max, Math.abs(band.topZ - band.bottomZ)), 0)
   const depthWarning = checkMaxCutDepthWarning(tool, maxBandDepth)
@@ -703,7 +743,6 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
         stepoverDistance,
         maxLinkDistance,
         direction,
-        entryEnabled,
       )
       : generateRoughBandMoves(
         band,
@@ -715,7 +754,6 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
         stepoverDistance,
         maxLinkDistance,
         direction,
-        entryEnabled,
       )
 
     const { moves, stepLevels, warnings: bandWarnings } = result
@@ -730,12 +768,11 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
     bounds = updateBounds(bounds, move.to)
   }
 
-  const result: PocketToolpathResult = {
+  return {
     operationId: operation.id,
     moves: allMoves,
     warnings,
     bounds,
     stepLevels: [...allStepLevels].sort((a, b) => b - a),
   }
-  return clipToolpathResultToRegionMask(project, result, resolved.regionMask) as PocketToolpathResult
 }
