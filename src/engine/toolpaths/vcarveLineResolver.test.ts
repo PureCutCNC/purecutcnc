@@ -301,8 +301,11 @@ test('nested same-winding Lines resolve to even-odd hole area (800 sq units)', (
   assert(hasIslands, 'even-odd hole should appear as an island on a region')
 })
 
-test('region mask clips Line target to include-only area (200 sq units)', () => {
-  // 20×20 Line (area 400), clipped by 10×20 region covering the right half.
+test('region mask leaves Line target unmasked at resolver level (400 sq units)', () => {
+  // 20×20 Line (area 400), with a 10×20 region.  The resolver no longer
+  // pre-masks geometry — region application moved to the generators, and the
+  // V-carve generator (carving.ts) applies the mask post-generation until p3b
+  // migrates it to curve-domain fragmentation.
   const line = makeFeature('l1', 'line', closedProfile(20, 20))
   const region = makeFeature('reg', 'region', closedProfile(10, 20, 15, 10))
   const project = makeProject([line, region])
@@ -315,8 +318,8 @@ test('region mask clips Line target to include-only area (200 sq units)', () => 
     (sum, band) => sum + band.regions.reduce((s, r) => s + regionArea(r), 0),
     0,
   )
-  assert(approx(totalArea, 200),
-    `region-clipped area should be ~200, got ${totalArea}`)
+  assert(approx(totalArea, 400),
+    `resolver no longer pre-masks geometry; area should be ~400, got ${totalArea}`)
   // Region itself should not be a targetFeatureId — it's a mask, not a
   // machining target.
   const hasRegionAsTarget = result.bands.some((b) => b.targetFeatureIds.includes('reg'))

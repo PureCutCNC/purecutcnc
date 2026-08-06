@@ -15,8 +15,16 @@
  */
 
 import type { Point } from '../../types/project'
-import { DEFAULT_CLIPPER_SCALE } from './geometry'
-import { splitClosedGuideByForbiddenPaths, type ClosedGuideFragment } from './guideFragments'
+import { DEFAULT_CLIPPER_SCALE, samePointXY } from './geometry'
+import {
+  distinctSorted,
+  normalizeClipperPath,
+  pointAt,
+  pointInForbiddenPaths,
+  segmentIntersectionParameters,
+  splitClosedGuideByForbiddenPaths,
+  type ClosedGuideFragment,
+} from './guideFragments'
 import { differenceClipperPaths, intersectClipperPaths, offsetClipperPaths, unionClipperPaths } from './modelProtection'
 import type { RegionMask } from './regions'
 import type { ClipperPath } from './types'
@@ -222,7 +230,7 @@ function splitOpenGuideByAllowedPaths(guide: Point[], allowed: ClipperPath[]): C
   // Convert allowed ClipperPaths to world-space point arrays for the
   // even-odd containment test, matching splitClosedGuideByForbiddenPaths.
   const allowedWorld = allowed
-    .map((path) => normalizeWorldPath(path, DEFAULT_CLIPPER_SCALE))
+    .map((path) => normalizeClipperPath(path, DEFAULT_CLIPPER_SCALE))
     .filter((path) => path.length >= 3)
 
   if (allowedWorld.length === 0) return []
@@ -246,7 +254,7 @@ function splitOpenGuideByAllowedPaths(guide: Point[], allowed: ClipperPath[]): C
       for (let j = 0; j < path.length; j += 1) {
         const edgeFrom = path[j]
         const edgeTo = path[(j + 1) % path.length]
-        params.push(...segmentIntersectionParams(from, to, edgeFrom, edgeTo))
+        params.push(...segmentIntersectionParameters(from, to, edgeFrom, edgeTo))
       }
     }
 
@@ -257,7 +265,7 @@ function splitOpenGuideByAllowedPaths(guide: Point[], allowed: ClipperPath[]): C
       if (t1 - t0 <= 1e-9) continue
 
       const mid = pointAt(from, to, (t0 + t1) / 2)
-      if (!pointInPathsEvenOdd(mid, allowedWorld)) {
+      if (!pointInForbiddenPaths(mid, allowedWorld)) {
         finishCurrent()
         continue
       }
@@ -266,7 +274,7 @@ function splitOpenGuideByAllowedPaths(guide: Point[], allowed: ClipperPath[]): C
       const endPt = pointAt(from, to, t1)
       if (current === null) {
         current = [startPt, endPt]
-      } else if (sameWorldPoint(current.at(-1)!, startPt)) {
+      } else if (samePointXY(current.at(-1)!, startPt)) {
         current.push(endPt)
       } else {
         finishCurrent()
@@ -276,97 +284,4 @@ function splitOpenGuideByAllowedPaths(guide: Point[], allowed: ClipperPath[]): C
   }
   finishCurrent()
   return fragments
-}
-
-// ---------------------------------------------------------------------------
-// Lightweight geometry helpers — duplicated from guideFragments.ts to keep
-// that module's internals private.  Identical semantics, independent copies.
-// ---------------------------------------------------------------------------
-
-function sameWorldPoint(a: Point, b: Point): boolean {
-  return Math.abs(a.x - b.x) <= 1e-9 && Math.abs(a.y - b.y) <= 1e-9
-}
-
-function pointAt(from: Point, to: Point, t: number): Point {
-  return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t }
-}
-
-function distinctSorted(values: number[]): number[] {
-  const sorted = values.slice().sort((a, b) => a - b)
-  const result: number[] = []
-  for (const v of sorted) {
-    if (result.length === 0 || v - result.at(-1)! > 1e-9) result.push(v)
-  }
-  return result
-}
-
-function segmentIntersectionParams(
-  from: Point, to: Point,
-  eFrom: Point, eTo: Point,
-): number[] {
-  const dx = to.x - from.x
-  const dy = to.y - from.y
-  const eDx = eTo.x - eFrom.x
-  const eDy = eTo.y - eFrom.y
-  const denom = dx * eDy - dy * eDx
-  const ox = eFrom.x - from.x
-  const oy = eFrom.y - from.y
-
-  if (Math.abs(denom) <= 1e-9) {
-    const collinear = Math.abs(ox * dy - oy * dx) <= 1e-9
-    const len2 = dx * dx + dy * dy
-    if (!collinear || len2 <= 1e-9) return []
-    const tA = (ox * dx + oy * dy) / len2
-    const tB = ((eTo.x - from.x) * dx + (eTo.y - from.y) * dy) / len2
-    const lo = Math.max(0, Math.min(tA, tB))
-    const hi = Math.min(1, Math.max(tA, tB))
-    return hi - lo > 1e-9 ? [lo, hi] : []
-  }
-
-  const t = (ox * eDy - oy * eDx) / denom
-  const u = (ox * dy - oy * dx) / denom
-  if (t < -1e-9 || t > 1 + 1e-9 || u < -1e-9 || u > 1 + 1e-9) return []
-  return [Math.max(0, Math.min(1, t))]
-}
-
-function pointInWorldPath(point: Point, path: Point[]): boolean {
-  let inside = false
-  for (let i = 0; i < path.length; i += 1) {
-    const from = path[i]
-    const to = path[(i + 1) % path.length]
-    // Point-on-segment check
-    const dx = to.x - from.x
-    const dy = to.y - from.y
-    const cross = (point.x - from.x) * dy - (point.y - from.y) * dx
-    if (Math.abs(cross) <= 1e-9) {
-      const dot = (point.x - from.x) * dx + (point.y - from.y) * dy
-      if (dot >= -1e-9 && dot <= dx * dx + dy * dy + 1e-9) return true
-    }
-    if ((from.y > point.y) === (to.y > point.y)) continue
-    const cx = from.x + (point.y - from.y) * (to.x - from.x) / (to.y - from.y)
-    if (cx > point.x) inside = !inside
-  }
-  return inside
-}
-
-function pointInPathsEvenOdd(point: Point, paths: Point[][]): boolean {
-  let inside = false
-  for (const path of paths) {
-    if (pointInWorldPath(point, path)) inside = !inside
-  }
-  return inside
-}
-
-function normalizeWorldPath(path: ClipperPath, scale: number): Point[] {
-  const points: Point[] = []
-  for (const pt of path) {
-    const converted = { x: pt.X / scale, y: pt.Y / scale }
-    if (points.length === 0 || !sameWorldPoint(points.at(-1)!, converted)) {
-      points.push(converted)
-    }
-  }
-  if (points.length > 1 && sameWorldPoint(points[0], points.at(-1)!)) {
-    points.pop()
-  }
-  return points
 }
