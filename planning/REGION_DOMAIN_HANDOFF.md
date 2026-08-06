@@ -73,7 +73,8 @@ worker must not re-derive:
 | --- | --- | --- | --- | --- |
 | p0-rough-surface-guard | `feat/issue-452-p0-rough-surface-guard` | accepted | `330cd76` | `f62924a` |
 | p1-region-domain-resolver | `feat/issue-452-p1-region-domain-resolver` | accepted | `e302911` | `8b96d33` |
-| p2-area-generators | `feat/issue-452-p2-area-generators` | dispatched | — | — |
+| p2-area-generators | `feat/issue-452-p2-area-generators` | accepted with gap | `6731fef` | `0b24579` |
+| p2b-centre-domain-containment | `feat/issue-452-p2b-centre-domain-containment` | dispatched | — | — |
 | p3-curve-generators | `feat/issue-452-p3-curve-generators` | pending | — | — |
 | p4-trochoidal-regions | `feat/issue-452-p4-trochoidal-regions` | pending | — | — |
 | p5-delete-clippers | `feat/issue-452-p5-delete-clippers` | pending | — | — |
@@ -89,6 +90,31 @@ and p4 each require p1. p5 requires p2, p3 and p4.
   merged. Subsequent prompts state the one-commit requirement explicitly and in
   stronger terms; if the pattern repeats, treat it as a launcher-level problem
   rather than a per-slice one.
+
+## `resolveRegionDomainArea` has a precondition — know which seam you are at
+
+Its exclude branch subtracts the region **raw**, relying on the generator to
+erode the whole domain by `centreInset` afterwards. That erosion is what creates
+the clearance. The function is therefore only valid at a **pre-erosion** seam:
+
+- `pocket.ts` — passes `tool.radius + stockToLeaveRadial`, band generators inset
+  by the identical `initialInset`. Correct.
+- `surfaceStepdown3d.ts` — passes `initialInset`, then insets by `initialInset`
+  via `buildInsetRegions`. Correct.
+- `surface.ts` — **does not qualify.** `buildSurfaceCoverageRegions` has already
+  expanded by the tool radius, so `coverageRegions` *is* the tool-centre domain
+  and only `radialLeave` erosion remains. p2 passed `centreInset = 0` here, so
+  excludes got no clearance at all and the cutter swept a full tool radius into
+  excluded areas. p2b adds `resolveRegionDomainCentre` (both polarities dilate,
+  as in the curve case) and switches this seam to it.
+
+Masking *before* the expansion is not an alternative fix — `expand(subject \ X,
+toolRadius)` pushes the domain back toward `X` and puts the centre in deeper.
+
+Review lesson: p2's exclude tests asserted only that no cut **centre** landed
+inside the excluded polygon, which is the pre-#452 semantic and passes even when
+the tool body penetrates. Containment tests must assert distance `>= tool.radius
++ stockToLeaveRadial` from the exclude boundary, not mere non-containment.
 
 ## Debt to clear before the PR
 
