@@ -170,10 +170,19 @@ function buildClipperBoundingBox(guide: Point[], entries: Array<{ paths: Clipper
 /**
  * Resolve a region mask into curve-guide fragments.  A curve generator's guide
  * *is* the tool-centre path — no further erosion happens — so both polarities
- * dilate the region by `centreInset` and only the keep-side differs:
+ * offset the region and only the keep-side differs:
  *
- * - **include** `R`: keep the guide **inside** `R ⊕ centreInset`
- * - **exclude** `X`: keep the guide **outside** `X ⊕ centreInset`
+ * - **include** `R`: keep the guide **inside** `R ⊕ includeOffset`.  The include
+ *   offset is usually an **erosion** (negative) because the region bounds where
+ *   the tool centre may go, and a generator whose guide is offset from the tool
+ *   centre (e.g. a trochoidal orbit) must inset the region by that offset so
+ *   tool-centre containment stays identical to every other operation.
+ * - **exclude** `X`: keep the guide **outside** `X ⊕ excludeOffset`.  The exclude
+ *   offset is a **dilation** (positive) because the region must clear the tool
+ *   body.
+ *
+ * `excludeOffset` defaults to `includeOffset` so existing callers that pass a
+ * single offset get the same behaviour as before.
  *
  * Ordered composition matches `buildRegionMask`.  The composite allowed area is
  * built with Clipper boolean ops and then a single call to
@@ -183,13 +192,16 @@ export function resolveRegionDomainCurve(
   guide: Point[],
   closed: boolean,
   mask: RegionMask | null,
-  centreInset: number,
+  includeOffset: number,
+  excludeOffset?: number,
 ): ClosedGuideFragment[] {
   if (mask === null) return [{ points: guide, closed }]
   if (guide.length < 2) return []
 
   const entries = mask.entries
   if (entries.length === 0) return [{ points: guide, closed }]
+
+  const effectiveExclude = excludeOffset ?? includeOffset
 
   const firstMode = entries[0].mode
 
@@ -200,11 +212,12 @@ export function resolveRegionDomainCurve(
 
   for (const entry of entries) {
     if (entry.paths.length === 0) continue
-    const dilated = centreInset > 0 ? offsetClipperPaths(entry.paths, centreInset) : entry.paths
+    const offset = entry.mode === 'include' ? includeOffset : effectiveExclude
+    const offsetPaths = offset !== 0 ? offsetClipperPaths(entry.paths, offset) : entry.paths
     if (entry.mode === 'include') {
-      allowed = unionClipperPaths([...allowed, ...dilated])
+      allowed = unionClipperPaths([...allowed, ...offsetPaths])
     } else {
-      allowed = differenceClipperPaths(allowed, dilated)
+      allowed = differenceClipperPaths(allowed, offsetPaths)
     }
   }
 

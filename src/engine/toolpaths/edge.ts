@@ -472,7 +472,8 @@ function createTrochoidalFragmentPlanner(
   operation: Operation,
   warnings: ToolpathWarning[],
   regionMask: RegionMask | null = null,
-  regionClearance = 0,
+  regionIncludeClearance = 0,
+  regionExcludeClearance = 0,
 ): TrochoidalFragmentPlanner {
   return (contour, z, previousZ, orbitRadius) => {
     const activeTabs = activeTabsAtZ(tabs, z)
@@ -481,11 +482,14 @@ function createTrochoidalFragmentPlanner(
     let depthFragments = splitClosedGuideByForbiddenPaths(contour, forbidden)
 
     // Apply the region mask after tab/obstacle fragmentation so the guide is
-    // kept inside include regions and outside exclude regions — both with the
-    // orbit + cutter clearance needed to keep generated trochoids out.
-    if (regionMask && regionClearance > 0) {
+    // kept inside include regions and outside exclude regions.  The include
+    // offset is usually negative (erosion) so the tool centre reaches the
+    // region boundary; the exclude offset is a dilation so the tool body stays
+    // clear.  The guard checks mask existence, not offset sign — an erosion
+    // request must not be suppressed.
+    if (regionMask) {
       depthFragments = depthFragments.flatMap((fragment) =>
-        resolveRegionDomainCurve(fragment.points, fragment.closed, regionMask, regionClearance))
+        resolveRegionDomainCurve(fragment.points, fragment.closed, regionMask, regionIncludeClearance, regionExcludeClearance))
     }
 
     const hasOpenDepthFragment = depthFragments.some((fragment) => !fragment.closed)
@@ -536,9 +540,9 @@ function createTrochoidalFragmentPlanner(
       expandedTabPaths(crossingTabs, tabGuideClearance),
       'inside',
     )
-    const regionFilteredShallow = regionMask && regionClearance > 0
+    const regionFilteredShallow = regionMask
       ? shallowFragments.flatMap((fragment) =>
-        resolveRegionDomainCurve(fragment.points, fragment.closed, regionMask, regionClearance))
+        resolveRegionDomainCurve(fragment.points, fragment.closed, regionMask, regionIncludeClearance, regionExcludeClearance))
       : shallowFragments
     for (const fragment of regionFilteredShallow) {
       // Height comes from EVERY tab covering the span, not just the crossing
@@ -581,9 +585,10 @@ function createTrochoidalFragmentPlanner(
  * Fragment contours through the region mask and (per level) the obstacle set,
  * then emit closed or open cut moves with safe transitions.
  *
- * centreInset is 0 because the guide is already the tool-centre path —
- * `resolveContourPaths` offset by `tool.radius + stockToLeaveRadial` — so the
- * region should constrain it directly without further dilation.
+ * The contour guide is already the tool-centre path — `resolveContourPaths`
+ * offset by `tool.radius + stockToLeaveRadial`.  Include regions need no further
+ * offset (0); exclude regions dilate by `contourExcludeClearance` so the tool
+ * body clears the keep-out rather than merely the centre.
  */
 function appendFragmentedContoursAtLevels(
   moves: ToolpathMove[],
@@ -594,10 +599,11 @@ function appendFragmentedContoursAtLevels(
   maxLinkDistance: number,
   regionMask: RegionMask | null,
   obstacleMaskForZ: (z: number) => RegionMask | null,
+  contourExcludeClearance = 0,
 ): ToolpathPoint | null {
   // Fragment by region mask once — region is Z-independent.
   const regionFragments = contours.flatMap((c) =>
-    resolveRegionDomainCurve(c, true, regionMask, 0))
+    resolveRegionDomainCurve(c, true, regionMask, 0, contourExcludeClearance))
 
   if (regionFragments.length === 0) return currentPosition
 
@@ -1098,6 +1104,15 @@ function generateEdgeRouteToolpathSingle(
   const trochoidalGuideOffset = radialLeave
     + trochoidalCutWidth / 2
     + tool.diameter * TROCHOIDAL_GUIDE_SAFETY_FRACTION
+  // The orbit radius, derived once. Region clearances are expressed against it:
+  // an include region is eroded by the orbit radius so the outermost tool centre
+  // lands on the region boundary, and an exclude region is dilated by the orbit
+  // radius plus the tool radius so the whole cutter clears it. Same reason
+  // trochoidalGuideOffset is computed once — two spellings of one distance is
+  // how a seam becomes a gouge.
+  const trochoidalOrbitRadius = (trochoidalCutWidth - tool.diameter) / 2
+  const trochoidalRegionIncludeClearance = -trochoidalOrbitRadius
+  const trochoidalRegionExcludeClearance = trochoidalOrbitRadius + tool.radius
   // Keep guide-fragment endpoints one extra epsilon away from the tab's
   // cutter footprint. The orbit closes in place at each fragment endpoint;
   // a merely tangent endpoint is therefore an intersection, not safe margin.
@@ -1190,15 +1205,17 @@ function generateEdgeRouteToolpathSingle(
             operation,
             warnings,
             regionMask,
-            trochoidalGuideOffset,
+            trochoidalRegionIncludeClearance,
+            trochoidalRegionExcludeClearance,
           ),
         )
         if (hasFatalTrochoidalWarning(warnings)) break
       } else {
-        // Fragment the band contours through the region mask.  centreInset is 0
-        // because the band contours are already tool-centre paths.
+        // Fragment the band contours through the region mask.  Include offset is 0
+        // because the band contours are already tool-centre paths; exclude dilates
+        // by tool.radius so the tool body clears the region.
         const regionFragments = contours.flatMap((c) =>
-          resolveRegionDomainCurve(c, true, regionMask, 0))
+          resolveRegionDomainCurve(c, true, regionMask, 0, tool.radius))
         const closedFrags = regionFragments.filter((f) => f.closed).map((f) => f.points)
         const openFrags = regionFragments.filter((f) => !f.closed)
 
@@ -1381,13 +1398,14 @@ function generateEdgeRouteToolpathSingle(
               operation,
               warnings,
               regionMask,
-              trochoidalGuideOffset,
+              trochoidalRegionIncludeClearance,
+              trochoidalRegionExcludeClearance,
             ),
           )
         } else {
           currentPosition = appendFragmentedContoursAtLevels(
             moves, currentPosition, contours, levels, safeZ, maxLinkDistance,
-            regionMask, obstacleMaskForZ,
+            regionMask, obstacleMaskForZ, tool.radius,
           )
         }
       }
@@ -1455,14 +1473,15 @@ function generateEdgeRouteToolpathSingle(
             operation,
             warnings,
             regionMask,
-            trochoidalGuideOffset,
+            trochoidalRegionIncludeClearance,
+            trochoidalRegionExcludeClearance,
           ),
         )
         if (hasFatalTrochoidalWarning(warnings)) break
       } else {
         currentPosition = appendFragmentedContoursAtLevels(
           moves, currentPosition, contours, levels, safeZ, maxLinkDistance,
-          regionMask, obstacleMaskForZ,
+          regionMask, obstacleMaskForZ, tool.radius,
         )
       }
     }
