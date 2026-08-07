@@ -152,14 +152,30 @@ Open a project with regions and check each of these in the app:
 Items 1, 4 and 5 confirmed by user testing on 2026-08-06, including a clamp with
 an exclude region drawn around it.
 
-**A region is not a hard keep-out, and does not need to be.** A region bounds the
-tool *centre*, so the cutter overlaps the line by up to a tool radius (half a cut
-width on a trochoid) — the same overlap every operation has always had with a
-region line. Clamps are protected independently by `applyClampWarnings`, which
-warns and auto-lifts rapids for every strategy; that is unchanged by this work.
-Drawing an exclude region with any margin around an obstacle is therefore
-sufficient. Do not "fix" this by dilating exclude regions: see the tiling
-argument in the Edge Route section above.
+**A region is not a hard keep-out.** A region bounds the tool *centre* (the guide,
+for edge routing), so the cutter reaches up to a tool radius past the line — half
+a cut width on a trochoid. An exclude region must therefore be drawn at least
+that much larger than whatever it protects.
+
+Confirmed on a real project 2026-08-06: a 1/4" endmill at the default trochoidal
+width (`1.5 × D = 0.375"`) overlaps the region edge by `W/2 = 0.1875"`. A clamp
+inside that band was crossed by 30 cut moves and 3 rapids; growing the region by
+1/4" cleared it. An earlier note here claimed a region *was* effectively a
+keep-out — that was wrong, based on one test whose region happened to be drawn
+wide enough.
+
+Do **not** fix this by dilating exclude regions: it would break include/exclude
+tiling (see the Edge Route section above). The correct fix is that clamps should
+not depend on a hand-drawn region at all — no generator avoids them at generation
+time, they are only a post-pass in `clamps.ts` that warns and lifts rapids where
+it can. Clamp footprints belong in the forbidden set the generators already use
+for obstacles. Tracked separately, not in #452.
+
+Note also that `applyClampWarnings` refuses to auto-lift a rapid whose endpoint
+lies inside the clamp's expanded footprint (`clamp + clampClearanceXY +
+toolRadius`), because lifting would still descend into the clamp at the far end.
+So once cuts reach a clamp, neighbouring rapids stop lifting too — the warnings
+compound rather than appearing in isolation.
 
 ## CLOSED — V-carve region regression (p3a → fixed in p3b `2607ce1`)
 
