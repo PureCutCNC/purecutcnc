@@ -149,9 +149,17 @@ Open a project with regions and check each of these in the app:
 6. **Rest machining** with a region, since p5 changed its include semantics from
    containment to coverage.
 
-Also worth deciding before release: whether exclude regions keeping the cutter
-fully out (rather than centre-out, as before) needs a release note. It removes
-less material than the old behaviour on existing projects.
+Items 1, 4 and 5 confirmed by user testing on 2026-08-06, including a clamp with
+an exclude region drawn around it.
+
+**A region is not a hard keep-out, and does not need to be.** A region bounds the
+tool *centre*, so the cutter overlaps the line by up to a tool radius (half a cut
+width on a trochoid) — the same overlap every operation has always had with a
+region line. Clamps are protected independently by `applyClampWarnings`, which
+warns and auto-lifts rapids for every strategy; that is unchanged by this work.
+Drawing an exclude region with any margin around an obstacle is therefore
+sufficient. Do not "fix" this by dilating exclude regions: see the tiling
+argument in the Edge Route section above.
 
 ## CLOSED — V-carve region regression (p3a → fixed in p3b `2607ce1`)
 
