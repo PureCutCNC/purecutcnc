@@ -27,7 +27,7 @@ with `Closes #452`.
 - Base commit: `240e15be1d61649b0fc18221031a18012910c156`
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/452#issuecomment-5199629410
 - Manager session: 2026-08-05
-- Status: `all slices merged — awaiting manual regression before the PR`
+- Status: `PR opened 2026-08-06; partial manual regression done, remainder accepted by the user`
 - User authorization for credential-backed worker dispatch: `granted 2026-08-05 for all six slices of this issue`
 
 ## Global rules
@@ -149,8 +149,16 @@ Open a project with regions and check each of these in the app:
 6. **Rest machining** with a region, since p5 changed its include semantics from
    containment to coverage.
 
-Items 1, 4 and 5 confirmed by user testing on 2026-08-06, including a clamp with
-an exclude region drawn around it.
+**Verified 2026-08-06:** items 4 and 5 (contour and trochoidal Edge Route, both
+polarities, plus obstacle and clamp interaction). The Edge Route clearance rule
+below was found and fixed during that testing.
+
+**Not yet exercised in the app when the PR was opened:** item 1 (pocket include —
+the screenshot case from the issue), 2 (pocket / surface clean exclude), 3
+(V-carve include and its depth-dependent surface bleed), 6 (rest machining, whose
+include semantics changed from containment to coverage in p5). All are covered by
+unit tests but not by eye. The user accepted that risk to get the branch merged;
+if a region bug turns up in one of those four, start here.
 
 **A region is not a hard keep-out.** A region bounds the tool *centre* (the guide,
 for edge routing), so the cutter reaches up to a tool radius past the line — half
