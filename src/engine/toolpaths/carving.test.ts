@@ -474,42 +474,37 @@ function testRegionIncludeExcludePolarity(): void {
     (m.from.x > 20 && m.from.x < 25) || (m.to.x > 20 && m.to.x < 25))
   assert(!hasCutsInExclude, 'trochoidal cuts must not enter exclude region [20, 25]')
 
-  // The assertion that actually pins the swept half-width, and the reason this
-  // test exists.  A tool-CENTRE bound is far too loose to notice a wrong inset
-  // magnitude — the cutter body is what gouges.  Trace the arithmetic:
+  // The assertions that actually pin the region clearance, and the reason this
+  // test exists.  A one-sided "stays roughly inside" bound is far too loose to
+  // notice a wrong inset magnitude, so pin the tool centre on BOTH sides.
   //
-  //   exclude [20, 25] dilated by centreInset (W/2 = 3.5) -> forbidden [16.5, 28.5]
-  //   guide corridor therefore ends at x = 16.5
-  //   the orbit carries the tool centre orbitRadius (1.5) further  -> 18.0
-  //   the cutter body reaches toolRadius (2.0) beyond that         -> 20.0
+  // A region bounds the guide, undilated, so:
   //
-  // exactly the exclude boundary, because centreInset = W/2 = orbitRadius +
-  // toolRadius consumes the clearance precisely.  Substitute tool.radius for
-  // the swept half-width and the body reaches 20.5 — half a millimetre inside
-  // a region the user said to keep out of, with no other assertion disturbed.
-  const excludeXMin = 20
-  const toolRadius = toolDiameter / 2
-  const bodyReachT = Math.max(...cutsT.flatMap((m) => [m.from.x, m.to.x])) + toolRadius
-  assert(bodyReachT <= excludeXMin + 1e-6,
-    `trochoidal cutter body reaches x=${bodyReachT.toFixed(4)}, inside exclude region starting at ${excludeXMin}`)
-  // ...and it must genuinely reach the boundary, so an over-conservative inset
-  // cannot pass by simply cutting less than it should.
-  assert(bodyReachT >= excludeXMin - 1e-6,
-    `trochoidal cutter body stops at x=${bodyReachT.toFixed(4)}, short of the ${excludeXMin} exclude boundary it should just touch`)
-
-  // Swept-envelope check: the orbit extends ±halfWidth from the guide
-  // centreline.  With the include region dilating the allowed guide corridor,
-  // tool-centre XY must stay within halfWidth + orbitRadius of the original
-  // include boundary.
+  //   include [5, 15] clips the guide at exactly 5 and 15
+  //   the orbit carries the tool centre orbitRadius (1.5) past each end
+  //     -> tool centre spans [3.5, 16.5]
+  //   the cutter body reaches toolRadius (2.0) further -> [1.5, 18.5]
+  //
+  // so the cut overhangs the region by exactly the swept half-width, W/2 = 3.5,
+  // the same way a pocket's tool sweeps its radius past the line it was clipped
+  // to.  Dilate the region by the swept half-width instead and the tool centre
+  // runs to 18.0 and the body to 20.0 — a full cut width past the boundary, and
+  // the overhang that was visibly wrong on screen.
   const orbitRadius = (cutWidth - toolDiameter) / 2 // 1.5
-  const includeXMin = 5 - halfWidth - orbitRadius - 1e-6
-  const includeXMax = 15 + halfWidth + orbitRadius + 1e-6
-  for (const move of cutsT) {
-    for (const p of [move.from, move.to]) {
-      assert(p.x >= includeXMin && p.x <= includeXMax,
-        `trochoidal cut x=${p.x.toFixed(4)} outside swept include [${includeXMin.toFixed(2)}, ${includeXMax.toFixed(2)}]`)
-    }
-  }
+  const toolRadius = toolDiameter / 2
+  const centreMaxT = Math.max(...cutsT.flatMap((m) => [m.from.x, m.to.x]))
+  const centreMinT = Math.min(...cutsT.flatMap((m) => [m.from.x, m.to.x]))
+  assert(Math.abs(centreMaxT - (15 + orbitRadius)) <= 1e-6,
+    `trochoidal tool centre must stop at ${15 + orbitRadius} (include edge + orbit radius), got ${centreMaxT.toFixed(4)}`)
+  assert(Math.abs(centreMinT - (5 - orbitRadius)) <= 1e-6,
+    `trochoidal tool centre must start at ${5 - orbitRadius} (include edge − orbit radius), got ${centreMinT.toFixed(4)}`)
+  assert(Math.abs((centreMaxT + toolRadius) - (15 + halfWidth)) <= 1e-6,
+    `trochoidal cutter body must overhang the include region by exactly the swept half-width ${halfWidth}`)
+
+  // The exclude region is far enough away that the include edge binds first, so
+  // the cut must not come near it at all.
+  assert(centreMaxT + toolRadius <= 20 + 1e-6,
+    `trochoidal cutter body reaches x=${(centreMaxT + toolRadius).toFixed(4)}, inside the exclude region starting at 20`)
 
   // Direct mode contrast: same fixture, should have different cut extent
   const opD = makeCarveOp({
@@ -523,26 +518,21 @@ function testRegionIncludeExcludePolarity(): void {
   const cutsD = cutMoves(resultD.moves)
   assert(cutsD.length > 0, 'direct with regions must produce cuts')
 
-  // Direct mode uses tool.radius (2) for centreInset instead of halfWidth (3.5)
-  const directHalfWidth = toolDiameter / 2
-  const directIncludeXMin = 5 - directHalfWidth - 1e-6
-  const directIncludeXMax = 15 + directHalfWidth + 1e-6
+  // Direct has no orbit, so its tool centre stops ON the region boundary and the
+  // cut overhangs by exactly tool.radius. Same rule as trochoidal, different
+  // swept half-width — which is the point: one region contract, two cut widths.
+  const centreMaxD = Math.max(...cutsD.flatMap((m) => [m.from.x, m.to.x]))
+  const centreMinD = Math.min(...cutsD.flatMap((m) => [m.from.x, m.to.x]))
+  assert(Math.abs(centreMaxD - 15) <= 1e-6,
+    `direct tool centre must stop on the include boundary 15, got ${centreMaxD.toFixed(4)}`)
+  assert(Math.abs(centreMinD - 5) <= 1e-6,
+    `direct tool centre must start on the include boundary 5, got ${centreMinD.toFixed(4)}`)
+  assert(Math.abs((centreMaxD + toolRadius) - (15 + toolRadius)) <= 1e-6,
+    'direct cutter body must overhang the include region by exactly the tool radius')
 
-  for (const move of cutsD) {
-    for (const p of [move.from, move.to]) {
-      assert(p.x >= directIncludeXMin && p.x <= directIncludeXMax,
-        `direct cut point x=${p.x.toFixed(4)} outside include region`)
-    }
-  }
-
-  // The trochoidal cuts must have a wider X range than direct (halfWidth > tool.radius)
-  const trochXMin = Math.min(...cutsT.flatMap((m) => [m.from.x, m.to.x]))
-  const trochXMax = Math.max(...cutsT.flatMap((m) => [m.from.x, m.to.x]))
-  const directXMin = Math.min(...cutsD.flatMap((m) => [m.from.x, m.to.x]))
-  const directXMax = Math.max(...cutsD.flatMap((m) => [m.from.x, m.to.x]))
-
-  assert(trochXMax - trochXMin > directXMax - directXMin,
-    `trochoidal X span (${(trochXMax - trochXMin).toFixed(4)}) must exceed direct (${(directXMax - directXMin).toFixed(4)})`)
+  // Trochoidal still sweeps wider than direct — the orbit, not the region clearance.
+  assert(centreMaxT - centreMinT > centreMaxD - centreMinD,
+    `trochoidal X span (${(centreMaxT - centreMinT).toFixed(4)}) must exceed direct (${(centreMaxD - centreMinD).toFixed(4)})`)
 
   console.log('region include/exclude polarity: PASSED')
 }

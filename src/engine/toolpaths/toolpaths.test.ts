@@ -3175,15 +3175,16 @@ function testFollowLineRegionClipsOpenPath() {
 
   assert(cuts.length > 0, 'expected follow-line cut fragments')
 
-  // The include region [2,6] is resolved pre-generation with
-  // centreInset = tool.radius = 0.5, which dilates the allowed area to
-  // [1.5, 6.5].  The guide is fragmented against that dilated area
-  // (coverage — the tool centre may reach centreInset past the region so
-  // the cut surface fully covers it).  Assert tool-centre endpoints stay
-  // within the dilated region.
-  const centreInset = tool.diameter / 2 // 0.5, stockToLeaveRadial = 0
-  const xMin = 2 - centreInset - 1e-6
-  const xMax = 6 + centreInset + 1e-6
+  // A region bounds the GUIDE, and follow-line's guide IS the tool-centre path,
+  // so the include region [2,6] is used undilated: the tool centre stops ON the
+  // region boundary and the cutter sweeps its radius past it, exactly as a
+  // pocket's tool does. Assert tool-centre endpoints stay inside the raw region.
+  //
+  // This previously dilated by tool.radius in the name of coverage, which put the
+  // cut a full tool diameter past the boundary — visibly wrong on screen, and
+  // inconsistent with the trochoidal edge route's zero region clearance.
+  const xMin = 2 - 1e-6
+  const xMax = 6 + 1e-6
   for (const move of cuts) {
     assert(
       move.from.x >= xMin && move.from.x <= xMax &&

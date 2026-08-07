@@ -282,13 +282,20 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
   const moves: ToolpathMove[] = []
   let currentPosition: ToolpathPoint | null = null
 
-  // Follow-line's guide is the tool-centre path — no further erosion happens —
-  // so both polarities dilate the region by centreInset in resolveRegionDomainCurve.
-  // Under trochoidal the swept half-width replaces the tool radius, so the wider
-  // channel still lands the tool centre on the region boundary.
+  // A region bounds the GUIDE — which for follow-line IS the tool-centre path —
+  // in both polarities, so both clearances are zero. This matches the trochoidal
+  // edge route exactly (see `trochoidalRegionIncludeClearance` in `edge.ts`): a
+  // span runs until the tool centre reaches the region boundary, and the cutter
+  // then sweeps its radius past that line — half the cut width under trochoidal —
+  // the same way a pocket's tool sweeps past the region line it was clipped to.
+  //
+  // Deliberately NOT dilated by the swept half-width. Dilating lengthens include
+  // spans and shortens exclude ones by the same amount, so the cut ran a full cut
+  // width past an include boundary under trochoidal (and a full tool diameter
+  // under direct), and a region used as an include on one pass and an exclude on
+  // another double-cut the seam instead of tiling exactly.
+  const regionGuideClearance = 0
   const cutWidth = isTrochoidal ? (operation.trochoidalCutWidth ?? tool.diameter * 1.5) : 0
-  const sweptHalfWidth = isTrochoidal ? cutWidth / 2 : tool.radius
-  const centreInset = sweptHalfWidth + Math.max(0, operation.stockToLeaveRadial ?? 0)
 
   // Derived once and shared by both the orbit and the entry helix.  The entry
   // helix bores the cavity the first orbit continues out of, so deriving the
@@ -315,7 +322,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     }
 
     // Fragment the guide polyline by the region mask before generation.
-    const fragments = resolveRegionDomainCurve(flattened.points, flattened.closed, regionMask, centreInset)
+    const fragments = resolveRegionDomainCurve(flattened.points, flattened.closed, regionMask, regionGuideClearance)
     if (fragments.length === 0) continue
 
     const topZ = resolveDimensionRef(project, feature.z_top)

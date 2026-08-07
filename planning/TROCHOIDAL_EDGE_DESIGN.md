@@ -173,8 +173,18 @@ Engrave gains a trochoidal strategy under the same geometry model, but the guide
 and no `0.01 × D` allowance, because no wall is retained and there is nothing to
 gouge.
 
-`centreInset` becomes `sweptHalfWidth + stockToLeaveRadial`, where
-`sweptHalfWidth = cutWidth / 2` under trochoidal and `tool.radius` under direct.
+Regions bound the guide with **zero** clearance in both polarities and in both
+strategies, exactly as they do for the edge route: the span runs until the tool
+centre reaches the region boundary, and the cutter then sweeps its half-width
+past that line — `tool.radius` under direct, `cutWidth / 2` under trochoidal —
+the same way a pocket's tool sweeps past the line it was clipped to.
+
+Engrave originally dilated the region by the swept half-width, on the theory that
+the cut surface should fully cover the region. That put the cut a whole cut width
+past an include boundary under trochoidal, and a whole tool diameter under direct;
+both were visibly wrong against the region outline on screen. The dilation was
+removed in the #455 follow-up, which changed direct Engrave's region-masked output
+too.
 
 Open guides are supported here and only here — the stationary entry orbit **and**
 stationary exit orbit in `buildTrochoidalContour`'s `closed: false` branch exist
