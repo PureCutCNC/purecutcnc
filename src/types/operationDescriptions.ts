@@ -138,10 +138,10 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     title: 'Engrave',
     shortSummary: 'Trace open or closed sketch paths at a fixed depth',
     fullDescription:
-      'Engrave traces along any sketch path — open or closed — at a fixed carve depth. The tool follows the path centerline; no offset. Good for text, decorative lines, alignment marks, and following complex curves on the stock surface.',
+      'Engrave traces along any sketch path — open or closed — at a fixed carve depth. Direct follows the centerline for text, decorative lines, alignment marks, and following complex curves on the stock surface. Trochoidal cuts a wider channel with overlapping orbits, for functional slots (T-track, inlay, dado, wire routing) where the groove is meant to be wider than the cutter.',
     keyPoints: [
       'Accepts open or closed path features',
-      'Tool follows the path centerline (no offset)',
+      'Direct follows the centerline; Trochoidal cuts a wider slot',
       'Single-pass operation (no rough/finish split)',
       'Typically shallow; stepdown applies if carve depth exceeds it',
       'Optional closed regions act as XY filters',

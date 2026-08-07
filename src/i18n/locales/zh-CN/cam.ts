@@ -416,9 +416,9 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
 
   'cam.opDesc.followLine.title': '雕刻',
   'cam.opDesc.followLine.fullDescription':
-    '雕刻沿任意草图路径——开放或闭合——以固定切削深度走刀。刀具沿路径中心线运行，无偏移。适用于文字、装饰线条、定位标记以及沿毛坯表面跟随复杂曲线。',
+    '雕刻沿任意草图路径——开放或闭合——以固定切削深度走刀。直接模式沿中心线走刀，适用于文字、装饰线条、定位标记以及沿毛坯表面跟随复杂曲线。摆线模式通过重叠的圆形轨迹切出更宽的槽，用于功能性开槽（T形槽、镶嵌、槽口、线槽），即需要槽宽大于刀具直径的场合。',
   'cam.opDesc.followLine.keyPoint.0': '接受开放或闭合路径特征',
-  'cam.opDesc.followLine.keyPoint.1': '刀具沿路径中心线走刀（无偏移）',
+  'cam.opDesc.followLine.keyPoint.1': '直接模式沿中心线走刀；摆线模式切出更宽的槽',
   'cam.opDesc.followLine.keyPoint.2': '单工序操作（无粗/精加工分开）',
   'cam.opDesc.followLine.keyPoint.3': '通常较浅；若雕刻深度超过下刀步距则会分层',
   'cam.opDesc.followLine.keyPoint.4': '可选的闭合区域作为 XY 过滤器',
