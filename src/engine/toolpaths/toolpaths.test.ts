@@ -2234,6 +2234,70 @@ function testContourExcludeStopsAtRegionBoundary() {
   console.log('contour exclude stops at the region boundary: PASSED')
 }
 
+/**
+ * How far past an exclude-region boundary does each strategy's CUT actually
+ * reach? The region bounds the guide, so the answer is the cutter's half-width
+ * from the guide: tool.radius for a contour, cutWidth/2 for a trochoid (the
+ * orbit swings a further orbitRadius, and the stationary entry/exit orbits carry
+ * that overhang along the guide direction too).
+ *
+ * This is the number a user has to design an exclude region around, so pin it.
+ */
+function testEdgeExcludeOverhangByStrategy(): void {
+  console.log('Testing edge exclude overhang per strategy...')
+
+  const toolDiameter = 4
+  const toolRadius = toolDiameter / 2
+  const tool = makeFlatEndmill('t1', toolDiameter)
+  const target = makeAddFeature('target', 0, 0, 40, 40, 0, -2)
+  // Exclude the band x >= 30, crossing the outside contour on the right.
+  const region = makeRegionFeature('region', 30, -20, 40, 80, 'exclude')
+  const project = baseProject([tool], [target, region])
+
+  const overhangPast30 = (moves: ReturnType<typeof cutMoves>) =>
+    Math.max(...moves.flatMap((move) => [move.from.x - 30, move.to.x - 30]))
+
+  const contourResult = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
+    edgeStrategy: 'contour',
+    target: { source: 'features', featureIds: ['target', 'region'] },
+  })
+  const trochoidalResult = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
+    target: { source: 'features', featureIds: ['target', 'region'] },
+  })
+
+  const contourCuts = cutMoves(contourResult.moves)
+  const trochoidalCuts = cutMoves(trochoidalResult.moves)
+  assert(contourCuts.length > 0, 'contour must generate cuts')
+  assert(trochoidalCuts.length > 0, 'trochoidal must generate cuts')
+
+  const contourOverhang = overhangPast30(contourCuts)
+  const trochoidalOverhang = overhangPast30(trochoidalCuts)
+  const cutWidth = toolDiameter * 1.5
+
+  console.log(
+    `  contour guide overhang past exclude: ${contourOverhang.toFixed(4)} (tool radius ${toolRadius})`,
+  )
+  console.log(
+    `  trochoidal guide overhang past exclude: ${trochoidalOverhang.toFixed(4)} ` +
+    `(orbit radius ${(cutWidth - toolDiameter) / 2})`,
+  )
+
+  // The guide itself must stop at the boundary for both — anything past it is
+  // the orbit, not the guide.
+  assert(contourOverhang <= 0.05,
+    `contour guide overhang ${contourOverhang.toFixed(4)} — the guide should stop at the boundary`)
+  assert(trochoidalOverhang <= (cutWidth - toolDiameter) / 2 + 0.05,
+    `trochoidal guide overhang ${trochoidalOverhang.toFixed(4)} exceeds the orbit radius`)
+  // And trochoidal must reach further than contour — that difference is exactly
+  // why a region sized for a contour can still let a trochoid hit a clamp.
+  assert(trochoidalOverhang > contourOverhang,
+    'trochoidal must reach further past the exclude than contour')
+
+  console.log('edge exclude overhang per strategy: PASSED')
+}
+
 function testEdgeNoMaskByteIdenticalTrochoidal() {
   // A trochoidal edge route with no region produces the same output as one
   // with a null mask — byte-identical for the no-mask parity contract.
@@ -4087,6 +4151,7 @@ try {
   testTrochoidalIncludeLandsOnRegionBoundary()
   testTrochoidalExcludeStopsAtRegionBoundary()
   testContourExcludeStopsAtRegionBoundary()
+  testEdgeExcludeOverhangByStrategy()
   testEdgeNoMaskByteIdenticalTrochoidal()
   testEdgeNoMaskByteIdenticalContour()
   testTrochoidalNarrowWidthStillFails()
