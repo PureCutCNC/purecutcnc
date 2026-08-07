@@ -4,7 +4,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 
 ## Operations (per-strategy files)
 - `pocket.ts` — pocket clearing (offset-based clearing of an enclosed area)
-- `carving.ts` — engrave / carve along a path
+- `carving.ts` — engrave / carve along a path (`'direct'` centreline or `'trochoidal'` overlapping-orbit slot)
 - `drilling.ts` — drill-cycle generation
 - `edge.ts` — edge / profile-following cuts (outside/inside contour)
 - `vcarve.ts` — V-bit carving via inset-contour offset stepping (`v_carve`, "V-Carve offset")
@@ -51,7 +51,8 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `resolverReadPath.test.ts` — resolved instance geometry and missing-definition behavior in toolpath resolution
 - `vcarveLineResolver.test.ts` — S2 closed-Line V-carve resolver tests: single Line, open-Line rejection, nested even-odd holes, disjoint Lines, mixed Subtract + Line, Subtract-only regression
 - `clamps.test.ts` — clamp collision warnings, rapid auto-lift, per-move collision tagging
-	- `camOperationSmoke.test.ts` --- per-operation-kind smoke: pocket parallel/waterline patterns, drill-type differentiation (simple/peck/dwell/chip_breaking), post smoke for thin ops (v_carve, surface_clean, follow_line, v_carve_medial; closed-Line V-carve smoke); also documents the stock-target resolver gap
+	- `carving.test.ts` — direct-mode regression, open/closed guide orbits, swept envelope, region polarity, fail-closed width/V-bit/budget guards, and open-guide cut-direction parity
+- `camOperationSmoke.test.ts` --- per-operation-kind smoke: pocket parallel/waterline patterns, drill-type differentiation (simple/peck/dwell/chip_breaking), post smoke for thin ops (v_carve, surface_clean, follow_line, v_carve_medial; closed-Line V-carve smoke); also documents the stock-target resolver gap
 - `roughSurface.test.ts` / `finishSurface.test.ts` / `finishSurfaceCleanup.test.ts` / `meshSlicing.test.ts` / `vcarveMedial/vcarveMedial.test.ts` — strategy-specific
 - `surfaceOperationValidation.test.ts` — real cone and hard-edge fixture matrix across Rough, Parallel, Waterline, and Cleanup, using an independently rasterized target surface plus swept-cutter simulation to validate stock, peak coverage, projected passes, determinism, and stable-interior gouging
 - `pocketTessellationConsistency.test.ts` — regression for circle/arc sampling consistency (issue #359): full-circle and broken-circle pockets must have identical chord sagitta
