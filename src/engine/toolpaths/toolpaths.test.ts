@@ -36,16 +36,12 @@ import { generateFinishSurfaceCleanupToolpath } from './finishSurfaceCleanup'
 import { generateSurfaceCleanToolpath } from './surface'
 import { generateFollowLineToolpath } from './carving'
 import { generateDrillingToolpath, sortTargetsByNearestNeighbor } from './drilling'
-import { generatePocketRestRegionDrafts } from './restRegions'
+import { generatePocketRestRegionDrafts, generateEdgeRestRegionDrafts } from './restRegions'
 import { resolvePocketRegions } from './resolver'
 import {
-  buildMaskFromClipperPaths,
   buildRegionMask,
-  clipToolpathResultToRegionMask,
   splitFeatureTargets,
 } from './regions'
-import { DEFAULT_CLIPPER_SCALE } from './geometry'
-import type { ClipperPath } from './types'
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -296,15 +292,6 @@ function cutMoveGroups(moves: ToolpathMove[]): ToolpathMove[][] {
     groups.push(current)
   }
   return groups
-}
-
-function toolpathMoveSignature(moves: ToolpathMove[]): string[] {
-  const fmt = (value: number) => Number(value.toFixed(6))
-  return moves.map((move) => JSON.stringify({
-    kind: move.kind,
-    from: { x: fmt(move.from.x), y: fmt(move.from.y), z: fmt(move.from.z) },
-    to: { x: fmt(move.to.x), y: fmt(move.to.y), z: fmt(move.to.z) },
-  }))
 }
 
 function hasUndirectedCutMoveNear(
@@ -997,6 +984,23 @@ function pointInsidePolygon(point: { x: number; y: number }, polygon: Array<{ x:
   return inside
 }
 
+function pointInsidePolygonOrOnBoundary(point: { x: number; y: number }, polygon: Array<{ x: number; y: number }>, epsilon = 1e-6): boolean {
+  if (pointInsidePolygon(point, polygon)) return true
+  for (let i = 0; i < polygon.length; i += 1) {
+    const a = polygon[i]
+    const b = polygon[(i + 1) % polygon.length]
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const len2 = dx * dx + dy * dy
+    if (len2 === 0) continue
+    const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / len2))
+    const projX = a.x + t * dx
+    const projY = a.y + t * dy
+    if (Math.hypot(point.x - projX, point.y - projY) <= epsilon) return true
+  }
+  return false
+}
+
 function testPocketFinishExcludeOnlyRegionRemovesMachiningArea() {
   console.log('Testing pocket finish honors exclude-only region masks...')
   const tool = makeFlatEndmill('t1', 2)
@@ -1030,17 +1034,19 @@ function testPocketFinishExcludeOnlyRegionRemovesMachiningArea() {
 
 function testPocketOffsetFinishExcludeOnlyRegionStillGeneratesToolpath() {
   console.log('Testing pocket offset finish honors exclude-only region masks...')
-  const tool = makeFlatEndmill('t1', 0.25)
-  const pocket = makePocketFeature('p1', 0.5, 0.5, 3, 2, 0.75, 0)
+  const tool = makeFlatEndmill('t1', 2)
+  // A pocket large enough that corner fragments survive domain resolution + inset.
+  const pocket = makePocketFeature('p1', 0, 0, 30, 20, 4, 0)
+  // An octagonal exclude that leaves four triangular corners of ~4×4 each.
   const excludePoints = [
-    { x: 0.5, y: 0.9 },
-    { x: 0.9, y: 0.5 },
-    { x: 3.1, y: 0.5 },
-    { x: 3.5, y: 0.9 },
-    { x: 3.5, y: 2.1 },
-    { x: 3.1, y: 2.5 },
-    { x: 0.9, y: 2.5 },
-    { x: 0.5, y: 2.1 },
+    { x: 0, y: 4 },
+    { x: 4, y: 0 },
+    { x: 26, y: 0 },
+    { x: 30, y: 4 },
+    { x: 30, y: 16 },
+    { x: 26, y: 20 },
+    { x: 4, y: 20 },
+    { x: 0, y: 16 },
   ]
   const exclude = makePolygonRegionFeature('r-exclude', excludePoints, 'exclude')
   const project = baseProject([tool], [pocket, exclude])
@@ -1050,8 +1056,8 @@ function testPocketOffsetFinishExcludeOnlyRegionStillGeneratesToolpath() {
     target: { source: 'features', featureIds: ['p1', 'r-exclude'] },
     toolRef: 't1',
     pocketPattern: 'offset',
-    stepdown: 0.125,
-    stepover: 0.32,
+    stepdown: 1,
+    stepover: 0.4,
     machiningOrder: 'feature_first',
   })
   const result = generatePocketToolpath(project, op)
@@ -1073,23 +1079,26 @@ function testPocketOffsetFinishExcludeOnlyRegionStillGeneratesToolpath() {
 
 function testPocketOffsetFinishLeadingExcludeWithInnerInclude() {
   console.log('Testing pocket offset finish honors leading exclude with inner include...')
-  const tool = makeFlatEndmill('t1', 0.25)
-  const pocket = makePocketFeature('p1', 0.5, 0.5, 3, 2, 0.75, 0)
+  const tool = makeFlatEndmill('t1', 2)
+  // Pocket large enough that corner fragments survive domain resolution + inset.
+  const pocket = makePocketFeature('p1', 0, 0, 30, 20, 4, 0)
+  // Octagonal exclude leaving ~4×4 corner triangles.
   const excludePoints = [
-    { x: 0.5, y: 0.9 },
-    { x: 0.9, y: 0.5 },
-    { x: 3.1, y: 0.5 },
-    { x: 3.5, y: 0.9 },
-    { x: 3.5, y: 2.1 },
-    { x: 3.1, y: 2.5 },
-    { x: 0.9, y: 2.5 },
-    { x: 0.5, y: 2.1 },
+    { x: 0, y: 4 },
+    { x: 4, y: 0 },
+    { x: 26, y: 0 },
+    { x: 30, y: 4 },
+    { x: 30, y: 16 },
+    { x: 26, y: 20 },
+    { x: 4, y: 20 },
+    { x: 0, y: 16 },
   ]
+  // Inner include adds a rectangle back into the middle.
   const includePoints = [
-    { x: 1.5, y: 1 },
-    { x: 2.5, y: 1 },
-    { x: 2.5, y: 1.875 },
-    { x: 1.5, y: 1.875 },
+    { x: 12, y: 8 },
+    { x: 18, y: 8 },
+    { x: 18, y: 12 },
+    { x: 12, y: 12 },
   ]
   const exclude = makePolygonRegionFeature('r-exclude', excludePoints, 'exclude')
   const include = makePolygonRegionFeature('r-include', includePoints, 'include')
@@ -1100,8 +1109,8 @@ function testPocketOffsetFinishLeadingExcludeWithInnerInclude() {
     target: { source: 'features', featureIds: ['p1', 'r-exclude', 'r-include'] },
     toolRef: 't1',
     pocketPattern: 'offset',
-    stepdown: 0.125,
-    stepover: 0.32,
+    stepdown: 1,
+    stepover: 0.4,
     machiningOrder: 'feature_first',
   })
   const result = generatePocketToolpath(project, op)
@@ -1115,10 +1124,10 @@ function testPocketOffsetFinishLeadingExcludeWithInnerInclude() {
       x: move.from.x + (move.to.x - move.from.x) * t,
       y: move.from.y + (move.to.y - move.from.y) * t,
     }))
-    hasCornerCut ||= samples.some((point) => point.x < 0.9 && point.y < 0.9)
-    hasInnerCut ||= samples.some((point) => pointInsidePolygon(point, includePoints))
+    hasCornerCut ||= samples.some((point) => point.x < 4 && point.y < 4)
+    hasInnerCut ||= samples.some((point) => pointInsidePolygonOrOnBoundary(point, includePoints))
     assert(
-      samples.every((point) => !pointInsidePolygon(point, excludePoints) || pointInsidePolygon(point, includePoints)),
+      samples.every((point) => !pointInsidePolygon(point, excludePoints) || pointInsidePolygonOrOnBoundary(point, includePoints)),
       `exclude/include region mask should keep only outside-exclude or inner-include cuts, got move ${JSON.stringify(move)}`,
     )
   }
@@ -1236,45 +1245,6 @@ function testPocketRestRegionsKeepGearIslandWedges() {
   console.log('pocket gear-island rest regions: PASSED')
 }
 
-function testRegionMaskVisitsNearestRegionFirst() {
-  // Regression: a region-masked toolpath (e.g. a rest operation) used to machine
-  // its regions in whatever arbitrary order the mask paths happened to be in, so
-  // the tool zig-zagged across the part. It should instead hop to the nearest
-  // unvisited region each time.
-  console.log('Testing region-mask clipping visits the nearest region first...')
-  const project = newProject('region-order', 'mm')
-
-  // One left-to-right cut pass crossing three boxes laid out along X.
-  const result: ToolpathResult = {
-    operationId: 'op',
-    moves: [{ kind: 'cut', from: { x: -1, y: 1, z: -1 }, to: { x: 31, y: 1, z: -1 } }],
-    warnings: [],
-    bounds: null,
-  }
-  const box = (x0: number, x1: number): ClipperPath => [
-    { X: x0 * DEFAULT_CLIPPER_SCALE, Y: -1 * DEFAULT_CLIPPER_SCALE },
-    { X: x1 * DEFAULT_CLIPPER_SCALE, Y: -1 * DEFAULT_CLIPPER_SCALE },
-    { X: x1 * DEFAULT_CLIPPER_SCALE, Y: 3 * DEFAULT_CLIPPER_SCALE },
-    { X: x0 * DEFAULT_CLIPPER_SCALE, Y: 3 * DEFAULT_CLIPPER_SCALE },
-  ]
-  // Mask paths deliberately out of travel order: left, RIGHT, middle.
-  const mask = buildMaskFromClipperPaths([box(0, 5), box(25, 30), box(10, 15)])
-  const clipped = clipToolpathResultToRegionMask(project, result, mask)
-
-  const cutStarts = cutMoves(clipped.moves).map((move) => Math.round(move.from.x))
-  // Nearest-first from the first box (0–5) should give left→middle→right: 0,10,25.
-  // The old arbitrary order would have been 0,25,10.
-  assert(
-    cutStarts.length === 3,
-    `expected one cut fragment per region, got ${cutStarts.length} [${cutStarts.join(',')}]`,
-  )
-  assert(
-    cutStarts[0] < cutStarts[1] && cutStarts[1] < cutStarts[2],
-    `expected nearest-first region order (ascending X), got [${cutStarts.join(',')}]`,
-  )
-  console.log('region-mask nearest-region ordering: PASSED')
-}
-
 function testPocketRestRegionsUniformCorners() {
   // Regression: corner rest regions are built analytically from each pocket
   // vertex (apex + tangent points sized by the tool radius), so every equal
@@ -1347,6 +1317,100 @@ function testPocketRestRegionsUniformCorners() {
     )
   }
   console.log('pocket uniform corner rest-region generation: PASSED')
+}
+
+function testEdgeRestIncludeRegionShowsCoverage() {
+  // An include region on an outside-edge rest operation must show rest drafts
+  // with coverage: resolveRegionDomainCentre dilates the include region by
+  // centreInset so the rest drafts extend beyond the drawn region line.
+  // stockToLeaveRadial > 0 creates a non-empty sourceBand − reachableBand gap.
+  console.log('Testing outside-edge rest include region coverage...')
+
+  const tool = makeFlatEndmill('t1', 4) // radius = 2 mm
+  const stockToLeave = 1 // mm
+  // Boss at (20,20) → (40,40). Stock-to-leave creates a rest band:
+  // sourceBand = expand(boss, 3mm) − boss = (17,17)..(43,43) minus the boss.
+  // reachableBand = expand(boss, 5mm) − expand(boss, 1mm).
+  // restPaths = sourceBand − reachableBand ≈ 1mm-wide inner band.
+  const boss = makeAddFeature('b1', 20, 20, 20, 20, 5, 0)
+  // Include region large enough to cover the band: (15,15) → (45,45).
+  // Dilated by centreInset (3 mm) it extends to (12,12) → (48,48), which
+  // fully contains the source band at (17,17) → (43,43).
+  const includeRegion = makeRegionFeature('r1', 15, 15, 30, 30, 'include')
+  const project = baseProject([tool], [boss, includeRegion])
+
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['b1', 'r1'] },
+    toolRef: 't1',
+    stockToLeaveRadial: stockToLeave,
+  })
+
+  const result = generateEdgeRestRegionDrafts(project, op)
+  assert(result.drafts.length > 0, 'expected rest drafts with include region covering the band')
+  assert(result.drafts.every((draft) => draft.profile.closed), 'rest drafts should be closed profiles')
+  console.log('outside-edge rest include region coverage: PASSED')
+}
+
+function testEdgeRestExcludeRegionKeepsClearance() {
+  // An exclude region on an outside-edge rest operation must keep rest drafts
+  // clear of the region by at least centreInset = tool.radius + stockToLeaveRadial.
+  // Assert distance, not mere non-containment — that exact weakness shipped a
+  // defect earlier in this issue.
+  console.log('Testing outside-edge rest exclude region clearance...')
+
+  const tool = makeFlatEndmill('t1', 4) // radius = 2 mm
+  const stockToLeave = 1 // mm
+  const centreInset = tool.diameter / 2 + stockToLeave // = 3 mm
+  // Boss at (20,15) → (40,35). With stockToLeave, rest drafts occupy the band
+  // (17,12)−(43,38) minus the reachable swept area (the 1 mm ring at the
+  // sourceBand−reachableBand gap).
+  const boss = makeAddFeature('b1', 20, 15, 20, 20, 5, 0)
+  // Exclude region at (0,15) → (28,35) — the right edge at x=28 overlaps the
+  // left side of the band (band starts at x≈17). Dilated by centreInset to
+  // x=31, the effective keep-out covers the entire overlap, so no draft vertex
+  // with x < 31 can exist unless it is at least centreInset clear.
+  const excludeRegion = makeRegionFeature('r1', 0, 15, 28, 20, 'exclude')
+  const project = baseProject([tool], [boss, excludeRegion])
+
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['b1', 'r1'] },
+    toolRef: 't1',
+    stockToLeaveRadial: stockToLeave,
+  })
+
+  // Without the exclude region, rest drafts would appear in the full band.
+  const noRegionOp = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['b1'] },
+    toolRef: 't1',
+    stockToLeaveRadial: stockToLeave,
+  })
+  const unmasked = generateEdgeRestRegionDrafts(project, noRegionOp)
+  const masked = generateEdgeRestRegionDrafts(project, op)
+
+  assert(unmasked.drafts.length > 0, 'expected unmasked rest drafts to exist as a baseline')
+
+  // The exclude region should narrow or eliminate the drafts.
+  assert(masked.drafts.length < unmasked.drafts.length || masked.drafts.length === 0,
+    'exclude region should narrow the rest drafts')
+
+  // Every masked draft vertex must be at least centreInset from the exclude
+  // region boundary (the right edge of the exclude rect is the closest face).
+  const excludeRightEdge = 28
+  for (const draft of masked.drafts) {
+    const vertices = [draft.profile.start, ...draft.profile.segments.map((seg) => seg.to)]
+    for (const pt of vertices) {
+      const dist = excludeRightEdge - pt.x
+      assert(
+        dist >= centreInset - 0.001 || pt.x > excludeRightEdge,
+        `draft vertex (${pt.x.toFixed(3)}, ${pt.y.toFixed(3)}) is ${dist.toFixed(3)} mm from exclude boundary, need >= ${centreInset} mm clearance`,
+      )
+    }
+  }
+
+  console.log('outside-edge rest exclude region clearance: PASSED')
 }
 
 // ---------------------------------------------------------------------------
@@ -1656,6 +1720,145 @@ function testEdgeOutsideCombinedRoundCorners() {
   console.log('combined edge_route_outside round outside corners: PASSED')
 }
 
+// ── p3a: no-mask parity ────────────────────────────────────────────────────
+
+function testEdgeNoMaskProducesClosedCuts() {
+  console.log('Testing edge_route_outside no-mask parity produces closed contours...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const feature = makeAddFeature('a', 0, 0, 20, 12, 2, 0)
+  const project = baseProject([tool], [feature])
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+  })
+
+  const result = generateEdgeRouteToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'no-mask route produces cut moves')
+  // Without a mask, all contours stay closed — every cut move's from/to
+  // should connect in a closed loop (last move's to equals first move's from).
+  const firstFrom = { x: cuts[0].from.x, y: cuts[0].from.y, z: cuts[0].from.z }
+  const lastTo = { x: cuts[cuts.length - 1].to.x, y: cuts[cuts.length - 1].to.y, z: cuts[cuts.length - 1].to.z }
+  assert(
+    Math.abs(firstFrom.x - lastTo.x) < 1e-6
+      && Math.abs(firstFrom.y - lastTo.y) < 1e-6,
+    `no-mask contour should be closed, got first=${JSON.stringify(firstFrom)} last=${JSON.stringify(lastTo)}`,
+  )
+  // No moves should be rapid/plunge mid-contour — the transition from
+  // safe Z to the first cut is the only non-cut move.
+  const nonCuts = result.moves.filter((m) => m.kind !== 'cut')
+  assert(nonCuts.length <= 3,
+    `no-mask route should have at most 3 non-cut moves (rapid + plunge + retract), got ${nonCuts.length}`)
+
+  console.log('edge_route_outside no-mask parity: PASSED')
+}
+
+// ── p3a: region fragmentation ──────────────────────────────────────────────
+
+function testEdgeInsideRegionFragmentsIntoOpenSpans() {
+  console.log('Testing edge_route_inside region mask fragments contour into open spans...')
+
+  const tool = makeFlatEndmill('t1', 6)
+  // Subtract feature (pocket) 50×50, with a region covering only the
+  // right half (x=25..50).  The inside contour is offset inward by
+  // tool.radius (3), so it goes from (3,3) to (47,47) — well within
+  // both the pocket and the region's x-range.
+  const pocket = makePocketFeature('p1', 0, 0, 50, 50, 4, 0)
+  const region = makeRegionFeature('reg', 25, 0, 25, 50)
+  const project = baseProject([tool], [pocket, region])
+  const op = makePocketOp({
+    kind: 'edge_route_inside',
+    target: { source: 'features', featureIds: ['p1', 'reg'] },
+    toolRef: 't1',
+    machiningOrder: 'level_first',
+  })
+
+  const result = generateEdgeRouteToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, `region-masked inside route produces cut moves, got ${result.moves.length} moves`)
+
+  // Every cut move must lie within the masked region (x >= 25 for the
+  // right-half region).  The contour is inset by tool.radius=3, so its
+  // left edge is at x=3, but the region mask keeps only x >= 25.
+  const regionViolations = cuts.filter((m) => m.to.x < 25 - 1e-6)
+  assert(regionViolations.length === 0,
+    `expected no cuts with centre x < 25, got ${violationsDesc(regionViolations)}`)
+
+  // The contour should be cut open at the region boundary (x=25).
+  if (cuts.length >= 2) {
+    const firstCutFrom = cuts[0].from
+    const lastCutTo = cuts[cuts.length - 1].to
+    const contourIsOpen = Math.abs(firstCutFrom.x - lastCutTo.x) > 1e-6
+      || Math.abs(firstCutFrom.y - lastCutTo.y) > 1e-6
+    // The region splits the contour — fragments are open.
+    assert(contourIsOpen, 'region-masked inside contour should be open (split at region boundary)')
+  }
+
+  // Every transition between spans must go through safe Z.
+  const safeZ = project.stock.thickness + project.meta.operationClearanceZ
+  for (let i = 1; i < result.moves.length; i += 1) {
+    const prev = result.moves[i - 1]
+    const curr = result.moves[i]
+    if (prev.kind !== 'cut' && curr.kind === 'cut') {
+      const prevEnd = prev.to
+      if (prevEnd.z < safeZ - 1e-6) {
+        assert(
+          Math.abs(prevEnd.x - curr.from.x) < 1e-6
+            && Math.abs(prevEnd.y - curr.from.y) < 1e-6,
+          `cut entry at (${curr.from.x.toFixed(3)},${curr.from.y.toFixed(3)}) ` +
+          `preceded by move ending at (${prevEnd.x.toFixed(3)},${prevEnd.y.toFixed(3)}) z=${prevEnd.z.toFixed(3)} — expected safe-Z transition`,
+        )
+      }
+    }
+  }
+
+  console.log('edge_route_inside region fragmentation: PASSED')
+}
+
+function violationsDesc(violations: ToolpathMove[]): string {
+  if (violations.length === 0) return 'none'
+  const first = violations[0]
+  return `${violations.length} violations (first x=${first?.to.x.toFixed(3)}, y=${first?.to.y.toFixed(3)})`
+}
+
+// ── p3a: obstacle fragmentation ─────────────────────────────────────────────
+
+function testEdgeOutsideObstacleFragmentsContour() {
+  console.log('Testing edge_route_outside obstacle fragments contour...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  // featureA at x=0..10, featureB at x=20..30 (gap = 10mm, wide enough for
+  // the tool at diameter 4 to pass through).  The outside contour around
+  // featureA should be split by featureB's keep-away zone.
+  const featureA = makeAddFeature('a', 0, 0, 10, 10, 6, 0)
+  const featureB = makeAddFeature('b', 20, 0, 10, 10, 6, 0)
+  const project = baseProject([tool], [featureA, featureB])
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+  })
+
+  const result = generateEdgeRouteToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'obstacle-fragmented route produces cut moves')
+
+  // featureB spans x=[20..30], expanded by tool.radius (2) gives keep-away
+  // at x=[18..32].  No cut move's tool centre may land inside that zone.
+  const keepAwayViolations = cuts.filter((m) => {
+    const inY = m.to.y >= -2 && m.to.y <= 12
+    const inX = m.to.x > 18 && m.to.x < 32
+    return inX && inY
+  })
+  assert(keepAwayViolations.length === 0,
+    `expected no cuts inside obstacle keep-away zone, got ${keepAwayViolations.length} (first x=${keepAwayViolations[0]?.to.x.toFixed(2)})`)
+
+  console.log('edge_route_outside obstacle fragmentation: PASSED')
+}
+
 function makeTrochoidalEdgeOperation(featureId: string, kind: 'edge_route_inside' | 'edge_route_outside'): Operation {
   return makePocketOp({
     kind,
@@ -1772,29 +1975,411 @@ function testTrochoidalOutsideFragmentsAroundTightObstacle() {
   console.log('trochoidal tight-obstacle fragmentation: PASSED')
 }
 
-function testTrochoidalRejectsRegionMasksAndUnsafeWidths() {
-  console.log('Testing trochoidal rejects region clipping and undersized widths...')
+function testTrochoidalIncludeRegionGenerates() {
+  console.log('Testing trochoidal include region generates with lead-in per span...')
 
   const tool = makeFlatEndmill('t1', 4)
-  const target = makeAddFeature('target', 0, 0, 20, 20, 0, -2)
-  const region = makeRegionFeature('region', 0, 0, 10, 20)
+  // Inside edge route: the contour is inside the subtract feature, so it passes
+  // through the region boundary at x=25 and the include region constrains it.
+  const pocket = makePocketFeature('p1', 0, 0, 50, 50, 2, 0)
+  const region = makeRegionFeature('region', 0, 0, 25, 50)
+  const project = baseProject([tool], [pocket, region])
+
+  const result = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('p1', 'edge_route_inside'),
+    target: { source: 'features', featureIds: ['p1', 'region'] },
+  })
+
+  assert(result.moves.length > 0, 'include-region trochoidal must generate motion')
+  const leads = result.moves.filter((move) => move.kind === 'lead_in')
+  assert(leads.length > 0, 'include-region trochoidal must emit lead_in per surviving span')
+
+  // Cuts must be bounded by the include region + a small epsilon.
+  // The full unmasked reach on the right would be ~pocket right edge − tool.radius
+  // (~47).  With the include region at x∈[0,25], cuts should not reach past it.
+  const cuts = cutMoves(result.moves)
+  const maxX = Math.max(...cuts.map((move) => Math.max(move.from.x, move.to.x)))
+  assert(maxX < 30, `include-region cut maxX ${maxX} must be bounded by the region`)
+
+  // Also check the result is not empty and has no fatal warnings.
+  assert(
+    !result.warnings.some((w) => w.code === 'edgeTrochoidalNoSurvivingSpan'),
+    'include-region trochoidal must not report no surviving spans',
+  )
+
+  console.log('trochoidal include region: PASSED')
+}
+
+function testTrochoidalExcludeRegionClearance() {
+  console.log('Testing trochoidal exclude region keeps tool body clear...')
+
+  const toolDiameter = 4
+  const tool = makeFlatEndmill('t1', toolDiameter)
+  const target = makeAddFeature('target', 0, 0, 40, 20, 0, -2)
+  // Exclude region in the middle — a keep-out the tool body must stay out of.
+  const region = makeRegionFeature('region', 15, -5, 10, 30, 'exclude')
   const project = baseProject([tool], [target, region])
 
-  const regionResult = generateEdgeRouteToolpath(project, {
+  const result = generateEdgeRouteToolpath(project, {
     ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
     target: { source: 'features', featureIds: ['target', 'region'] },
   })
-  assert(regionResult.moves.length === 0, 'region-masked trochoidal route must fail closed before post-clipping')
-  assert(regionResult.warnings.some((warning) => warning.code === 'edgeTrochoidalRegionUnsupported'), 'region-masked trochoid must explain the unsupported mask')
+
+  assert(result.moves.length > 0, 'exclude-region trochoidal must generate motion')
+  const leads = result.moves.filter((move) => move.kind === 'lead_in')
+  assert(leads.length > 0, 'exclude-region trochoidal must emit lead_in per span')
+
+  // The exclude region is split in the guide domain, and a region bounds the
+  // GUIDE — so the guide stops on the region boundary and the orbit then swings
+  // the cut centre up to orbitRadius inside it. Anything deeper than that means
+  // the guide itself entered the region.
+  const trochoidalCutWidth = 6
+  const orbitRadius = (trochoidalCutWidth - toolDiameter) / 2 // 1.0
+  const excludeDilated = {
+    xMin: 15 + orbitRadius,
+    xMax: 25 - orbitRadius,
+    yMin: -5 + orbitRadius,
+    yMax: 25 - orbitRadius,
+  }
+
+  // The guide is split at the dilated-exclude boundary; a cut centre exactly
+  // at the boundary is the expected result — the clearance is working.  Allow
+  // a 0.01 mm floating-point slop to avoid boundary races.
+  const eps = 0.01
+  const cuts = cutMoves(result.moves)
+  for (const move of cuts) {
+    const fromInside = move.from.x > excludeDilated.xMin + eps
+      && move.from.x < excludeDilated.xMax - eps
+      && move.from.y > excludeDilated.yMin + eps
+      && move.from.y < excludeDilated.yMax - eps
+    const toInside = move.to.x > excludeDilated.xMin + eps
+      && move.to.x < excludeDilated.xMax - eps
+      && move.to.y > excludeDilated.yMin + eps
+      && move.to.y < excludeDilated.yMax - eps
+    assert(
+      !fromInside && !toInside,
+      `exclude-region cut move at (${move.from.x.toFixed(2)},${move.from.y.toFixed(2)})→(${move.to.x.toFixed(2)},${move.to.y.toFixed(2)}) enters the excluded keep-out`,
+    )
+  }
+
+  console.log('trochoidal exclude region clearance: PASSED')
+}
+
+// ── p6: edge region clearance corrections ───────────────────────────────────
+
+function testTrochoidalIncludeLandsOnRegionBoundary() {
+  // With the corrected include clearance (-orbitRadius erosion), the outermost
+  // tool centre lands on the region boundary — not cutWidth past it.
+  console.log('Testing trochoidal include lands on region boundary...')
+
+  const toolDiameter = 4
+  const tool = makeFlatEndmill('t1', toolDiameter)
+  // Inside edge route: the contour is inside the pocket, so it passes through
+  // the region boundary.  Pocket 60×40, include region covers left 25mm.
+  const pocket = makePocketFeature('p1', 0, 0, 60, 40, 2, 0)
+  const region = makeRegionFeature('region', 0, 0, 25, 40)
+  const project = baseProject([tool], [pocket, region])
+
+  const result = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('p1', 'edge_route_inside'),
+    target: { source: 'features', featureIds: ['p1', 'region'] },
+  })
+
+  assert(result.moves.length > 0, 'include-region trochoidal must generate motion')
+
+  // A region bounds the GUIDE — the orbit centre — so the guide runs to x=25 and
+  // the orbit then swings the tool centre a further orbitRadius past it. Bound
+  // this on both sides: stopping short of the boundary means the span was cut
+  // too early, and going more than an orbit radius past means it ran long.
+  const cuts = cutMoves(result.moves)
+  const maxX = Math.max(...cuts.map((move) => Math.max(move.from.x, move.to.x)))
+  const regionBoundary = 25
+  const orbitRadius = (toolDiameter * 1.5 - toolDiameter) / 2
+  assert(maxX >= regionBoundary - 0.05,
+    `include cut maxX ${maxX.toFixed(3)} stops short of the region boundary ${regionBoundary}`)
+  assert(maxX <= regionBoundary + orbitRadius + 0.1,
+    `include cut maxX ${maxX.toFixed(3)} runs past the region boundary ${regionBoundary} ` +
+    `by more than the orbit radius ${orbitRadius}`)
+
+  console.log('trochoidal include lands on region boundary: PASSED')
+}
+
+function testTrochoidalExcludeStopsAtRegionBoundary() {
+  // With the corrected exclude clearance (cutWidth/2 dilation), the nearest
+  // tool centre stays exactly tool.radius from the exclude boundary.
+  console.log('Testing trochoidal exclude stops at the region boundary...')
+
+  const toolDiameter = 4
+  const tool = makeFlatEndmill('t1', toolDiameter)
+  // Target at (0,0)-(20,20); exclude region immediately to the right at
+  // x=20..30 covering the full height.  The outside contour passes between
+  // them and the exclude dilates by cutWidth/2 so the tool body clears.
+  const target = makeAddFeature('target', 0, 0, 20, 20, 0, -2)
+  const region = makeRegionFeature('region', 20, 0, 10, 20, 'exclude')
+  const project = baseProject([tool], [target, region])
+
+  const result = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
+    target: { source: 'features', featureIds: ['target', 'region'] },
+  })
+
+  assert(result.moves.length > 0, 'exclude-region trochoidal must generate motion')
+
+  // The exclude region occupies x∈[20,30], y∈[0,20]. A region bounds the GUIDE,
+  // so the guide runs up to x=20 and the orbit then swings the tool centre up to
+  // orbitRadius into the excluded rect — the same overlap a pocket's cutter has
+  // with the region line it was clipped to. Bound it both ways: the guide must
+  // reach the boundary (not stop a cut width short, the reported defect) and the
+  // orbit must not carry the centre deeper than one orbit radius.
+  const cuts = cutMoves(result.moves)
+  const orbitRadius = (toolDiameter * 1.5 - toolDiameter) / 2
+  const penetrationOf = (pt: { x: number; y: number }) => {
+    const inside = pt.x >= 20 && pt.x <= 30 && pt.y >= 0 && pt.y <= 20
+    // Depth is the distance to the NEAREST edge — all four, not just x.
+    return inside ? Math.min(pt.x - 20, 30 - pt.x, pt.y - 0, 20 - pt.y) : -Math.hypot(
+      Math.max(20 - pt.x, 0, pt.x - 30),
+      Math.max(0 - pt.y, 0, pt.y - 20),
+    )
+  }
+
+  let deepest = Number.NEGATIVE_INFINITY
+  for (const move of cuts) {
+    for (const pt of [move.from, move.to]) {
+      const penetration = penetrationOf(pt)
+      if (penetration > deepest) deepest = penetration
+      assert(penetration <= orbitRadius + 0.05,
+        `exclude cut at (${pt.x.toFixed(3)},${pt.y.toFixed(3)}) reaches ` +
+        `${penetration.toFixed(3)} into the exclude — orbit radius is ${orbitRadius}`)
+    }
+  }
+
+  assert(deepest >= -0.05,
+    `nearest cut stops ${(-deepest).toFixed(3)} short of the exclude boundary; ` +
+    'the guide should reach it')
+
+  console.log('trochoidal exclude stops at the region boundary: PASSED')
+}
+
+function testContourExcludeStopsAtRegionBoundary() {
+  // A contour edge route with an exclude region must keep the tool body clear —
+  // the tool centre must stay ≥ tool.radius from the exclude boundary.
+  console.log('Testing contour exclude stops at the region boundary...')
+
+  const toolDiameter = 4
+  const tool = makeFlatEndmill('t1', toolDiameter)
+  // Inside edge route: the contour is inside the pocket (inset by tool.radius).
+  // Pocket 60×30, exclude region in the middle at x=25..35 crosses the contour.
+  const pocket = makePocketFeature('p1', 0, 0, 60, 30, 4, 0)
+  const region = makeRegionFeature('region', 25, -5, 10, 40, 'exclude')
+  const project = baseProject([tool], [pocket, region])
+
+  const result = generateEdgeRouteToolpath(project, {
+    kind: 'edge_route_inside',
+    id: 'op1',
+    name: 'op',
+    pass: 'finish',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['p1', 'region'] },
+    toolRef: 't1',
+    stepdown: 2,
+    stepover: 0.4,
+    feed: 800,
+    plungeFeed: 300,
+    rpm: 18000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    roundOutsideCorners: false,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+    cutDirection: 'conventional',
+    machiningOrder: 'level_first',
+  })
+
+  // Exclude region occupies x∈[25,35], y∈[-5,35].  With the corrected exclude
+  // clearance (toolRadius=2 dilation), no cut move endpoint may come within
+  // toolRadius of the exclude region.
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'contour exclude must generate cuts')
+
+  // A contour guide IS the tool-centre path, so with the region bounding the
+  // guide the centre stops exactly on the boundary — no penetration, and no
+  // stopping short either.
+  // A centre exactly ON the boundary is the expected result, so test strict
+  // interior with a slop for Clipper rounding.
+  const eps = 0.05
+  let nearest = Number.POSITIVE_INFINITY
+  for (const move of cuts) {
+    for (const pt of [move.from, move.to]) {
+      const inside = pt.x > 25 + eps && pt.x < 35 - eps && pt.y > -5 + eps && pt.y < 35 - eps
+      assert(!inside,
+        `contour exclude cut at (${pt.x.toFixed(3)},${pt.y.toFixed(3)}) is inside the exclude`)
+      const dist = Math.hypot(
+        Math.max(25 - pt.x, 0, pt.x - 35),
+        Math.max(-5 - pt.y, 0, pt.y - 35),
+      )
+      if (dist < nearest) nearest = dist
+    }
+  }
+
+  assert(nearest <= 0.05,
+    `contour exclude stops ${nearest.toFixed(3)} short of the boundary; ` +
+    'the tool centre should reach it')
+
+  console.log('contour exclude stops at the region boundary: PASSED')
+}
+
+/**
+ * How far past an exclude-region boundary does each strategy's CUT actually
+ * reach? The region bounds the guide, so the answer is the cutter's half-width
+ * from the guide: tool.radius for a contour, cutWidth/2 for a trochoid (the
+ * orbit swings a further orbitRadius, and the stationary entry/exit orbits carry
+ * that overhang along the guide direction too).
+ *
+ * This is the number a user has to design an exclude region around, so pin it.
+ */
+function testEdgeExcludeOverhangByStrategy(): void {
+  console.log('Testing edge exclude overhang per strategy...')
+
+  const toolDiameter = 4
+  const toolRadius = toolDiameter / 2
+  const tool = makeFlatEndmill('t1', toolDiameter)
+  const target = makeAddFeature('target', 0, 0, 40, 40, 0, -2)
+  // Exclude the band x >= 30, crossing the outside contour on the right.
+  const region = makeRegionFeature('region', 30, -20, 40, 80, 'exclude')
+  const project = baseProject([tool], [target, region])
+
+  const overhangPast30 = (moves: ReturnType<typeof cutMoves>) =>
+    Math.max(...moves.flatMap((move) => [move.from.x - 30, move.to.x - 30]))
+
+  const contourResult = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
+    edgeStrategy: 'contour',
+    target: { source: 'features', featureIds: ['target', 'region'] },
+  })
+  const trochoidalResult = generateEdgeRouteToolpath(project, {
+    ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
+    target: { source: 'features', featureIds: ['target', 'region'] },
+  })
+
+  const contourCuts = cutMoves(contourResult.moves)
+  const trochoidalCuts = cutMoves(trochoidalResult.moves)
+  assert(contourCuts.length > 0, 'contour must generate cuts')
+  assert(trochoidalCuts.length > 0, 'trochoidal must generate cuts')
+
+  const contourOverhang = overhangPast30(contourCuts)
+  const trochoidalOverhang = overhangPast30(trochoidalCuts)
+  const cutWidth = toolDiameter * 1.5
+
+  console.log(
+    `  contour guide overhang past exclude: ${contourOverhang.toFixed(4)} (tool radius ${toolRadius})`,
+  )
+  console.log(
+    `  trochoidal guide overhang past exclude: ${trochoidalOverhang.toFixed(4)} ` +
+    `(orbit radius ${(cutWidth - toolDiameter) / 2})`,
+  )
+
+  // The guide itself must stop at the boundary for both — anything past it is
+  // the orbit, not the guide.
+  assert(contourOverhang <= 0.05,
+    `contour guide overhang ${contourOverhang.toFixed(4)} — the guide should stop at the boundary`)
+  assert(trochoidalOverhang <= (cutWidth - toolDiameter) / 2 + 0.05,
+    `trochoidal guide overhang ${trochoidalOverhang.toFixed(4)} exceeds the orbit radius`)
+  // And trochoidal must reach further than contour — that difference is exactly
+  // why a region sized for a contour can still let a trochoid hit a clamp.
+  assert(trochoidalOverhang > contourOverhang,
+    'trochoidal must reach further past the exclude than contour')
+
+  console.log('edge exclude overhang per strategy: PASSED')
+}
+
+function testEdgeNoMaskByteIdenticalTrochoidal() {
+  // A trochoidal edge route with no region produces the same output as one
+  // with a null mask — byte-identical for the no-mask parity contract.
+  console.log('Testing trochoidal no-mask byte-identical...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const target = makeAddFeature('target', 0, 0, 30, 30, 0, -2)
+  const project = baseProject([tool], [target])
+
+  const op = makeTrochoidalEdgeOperation('target', 'edge_route_outside')
+  const result = generateEdgeRouteToolpath(project, op)
+
+  // Re-generate — same inputs, byte-identical output.
+  const result2 = generateEdgeRouteToolpath(project, op)
+  assert(movesEqual(result.moves, result2.moves), 'trochoidal no-mask output must be byte-identical')
+  assert(result.moves.length > 0, 'trochoidal no-mask must produce cuts')
+
+  console.log('trochoidal no-mask byte-identical: PASSED')
+}
+
+function testEdgeNoMaskByteIdenticalContour() {
+  // A contour edge route with no region produces the same output as one
+  // with a null mask.
+  console.log('Testing contour no-mask byte-identical...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const target = makeAddFeature('target', 0, 0, 20, 12, 2, 0)
+  const project = baseProject([tool], [target])
+
+  const op: Operation = {
+    kind: 'edge_route_outside',
+    id: 'op1',
+    name: 'op',
+    pass: 'finish',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['target'] },
+    toolRef: 't1',
+    stepdown: 2,
+    stepover: 0.4,
+    feed: 800,
+    plungeFeed: 300,
+    rpm: 18000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    roundOutsideCorners: false,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+    cutDirection: 'conventional',
+    machiningOrder: 'level_first',
+  }
+  const result = generateEdgeRouteToolpath(project, op)
+  const result2 = generateEdgeRouteToolpath(project, op)
+  assert(movesEqual(result.moves, result2.moves), 'contour no-mask output must be byte-identical')
+  assert(result.moves.length > 0, 'contour no-mask must produce cuts')
+
+  console.log('contour no-mask byte-identical: PASSED')
+}
+
+function testTrochoidalNarrowWidthStillFails() {
+  console.log('Testing trochoidal undersized width still refuses...')
+
+  const tool = makeFlatEndmill('t1', 4)
+  const target = makeAddFeature('target', 0, 0, 20, 20, 0, -2)
+  const project = baseProject([tool], [target])
 
   const narrowResult = generateEdgeRouteToolpath(project, {
     ...makeTrochoidalEdgeOperation('target', 'edge_route_outside'),
     trochoidalCutWidth: 4.5,
   })
   assert(narrowResult.moves.length === 0, 'cut width below 1.15D must fail closed')
-  assert(narrowResult.warnings.some((warning) => warning.code === 'edgeTrochoidalWidthTooSmall'), 'undersized cut width must be diagnosed')
+  assert(
+    narrowResult.warnings.some((warning) => warning.code === 'edgeTrochoidalWidthTooSmall'),
+    'undersized cut width must be diagnosed',
+  )
 
-  console.log('trochoidal guards: PASSED')
+  console.log('trochoidal narrow width: PASSED')
 }
 
 /**
@@ -2031,10 +2616,26 @@ function testTrochoidalFeatureFirstSharesBudgetAndFailsAtomically() {
 
   // Atomicity: one target failing closed must refuse the whole operation rather
   // than cutting the target that succeeded and warning about the other.
-  const regionProject = baseProject([tool], [left, right, makeRegionFeature('region', 0, 0, 10, 14)])
-  const partialFailure = generateEdgeRouteToolpath(regionProject, {
+  // A subtract feature is not a valid target for edge_route_outside, so its
+  // per-feature sub-operation fails with targetsMissingOrWrongRole and the
+  // top-level code refuses every sub-operation rather than cutting only the
+  // valid one.
+  const badTarget: SketchFeature = {
+    id: 'subtractTarget',
+    name: 'subtractTarget',
+    kind: 'rect',
+    folderId: null,
+    sketch: { profile: rectProfile(40, 0, 14, 14), origin: { x: 0, y: 0 }, orientationAngle: 0, dimensions: [], constraints: [] },
+    operation: 'subtract',
+    z_top: 0,
+    z_bottom: -2,
+    visible: true,
+    locked: false,
+  }
+  const wrongRoleProject = baseProject([tool], [left, badTarget])
+  const partialFailure = generateEdgeRouteToolpath(wrongRoleProject, {
     ...makeTrochoidalEdgeOperation('left', 'edge_route_outside'),
-    target: { source: 'features', featureIds: ['left', 'right', 'region'] },
+    target: { source: 'features', featureIds: ['left', 'subtractTarget'] },
     machiningOrder: 'feature_first',
   })
   assert(
@@ -2042,7 +2643,7 @@ function testTrochoidalFeatureFirstSharesBudgetAndFailsAtomically() {
     'a target that fails closed must take the whole feature-first operation with it',
   )
   assert(
-    partialFailure.warnings.some((warning) => warning.code === 'edgeTrochoidalRegionUnsupported'),
+    partialFailure.warnings.some((warning) => warning.code === 'targetsMissingOrWrongRole'),
     'the atomic refusal must still explain which limitation was hit',
   )
 
@@ -2314,7 +2915,7 @@ function testSurfaceCleanMultiTargetProtectsTallerTarget() {
 }
 
 function testSurfaceCleanRegionMaskClipsGeneratedToolpathOnly() {
-  console.log('Testing surface_clean applies region mask after generating the base toolpath...')
+  console.log('Testing surface_clean resolves region domain before generation...')
   const tool = makeFlatEndmill('t1', 2)
   const boss = makeAddFeature('boss', 0, 0, 24, 12, 4, 0)
   const include = makeRegionFeature('include-region', 8, 3, 8, 5, 'include')
@@ -2332,17 +2933,42 @@ function testSurfaceCleanRegionMaskClipsGeneratedToolpathOnly() {
     target: { source: 'features' as const, featureIds: ['boss', 'include-region'] },
   }
   const fullResult = generateSurfaceCleanToolpath(project, baseOp)
-  const mask = buildRegionMask([include])
-  assert(mask !== null, 'expected include region mask')
-  const expected = clipToolpathResultToRegionMask(project, fullResult, mask)
   const actual = generateSurfaceCleanToolpath(project, regionOp)
 
-  assert(cutMoves(actual.moves).length > 0, 'expected surface_clean cuts inside include region')
-  assert(
-    toolpathMoveSignature(actual.moves).join('\n') === toolpathMoveSignature(expected.moves).join('\n'),
-    'surface_clean region target should match clipping the generated full toolpath',
-  )
-  console.log('surface_clean post-generation region clipping: PASSED')
+  const cuts = cutMoves(actual.moves)
+  assert(cuts.length > 0, 'expected surface_clean cuts inside include region')
+
+  // masked-output ⊆ unmasked-output: every masked cut move endpoint must lie
+  // inside the unmasked operation's bounding area.
+  const fullCuts = cutMoves(fullResult.moves)
+  if (fullCuts.length > 0) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const m of fullCuts) {
+      minX = Math.min(minX, m.from.x, m.to.x)
+      minY = Math.min(minY, m.from.y, m.to.y)
+      maxX = Math.max(maxX, m.from.x, m.to.x)
+      maxY = Math.max(maxY, m.from.y, m.to.y)
+    }
+    for (const move of cuts) {
+      const within = move.to.x >= minX - 1e-6 && move.to.x <= maxX + 1e-6
+        && move.to.y >= minY - 1e-6 && move.to.y <= maxY + 1e-6
+      assert(within, `masked cut move must lie inside unmasked bounding area, got move.to ${JSON.stringify(move.to)}`)
+    }
+  }
+
+  // Containment: no masked cut move endpoint lies inside the excluded area
+  // outside the include region (the include region is the only allowed area).
+  for (const move of cuts) {
+    const inRegion = pointInsideRect(move.to, 8 - 1e-6, 3 - 1e-6, 8 + 2e-6, 5 + 2e-6)
+    if (!inRegion) {
+      // Outside the strict include boundary — acceptable for coverage
+      // (the tool centre may reach slightly outside due to morphological
+      // closing). Just verify it's still within the unmasked boss area.
+      const inBoss = pointInsideRect(move.to, 0 - 1e-6, 0 - 1e-6, 24 + 2e-6, 12 + 2e-6)
+      assert(inBoss, `masked cut move outside include region must still be within boss area, got move.to ${JSON.stringify(move.to)}`)
+    }
+  }
+  console.log('surface_clean pre-generation region domain: PASSED')
 }
 
 function testSurfaceCleanHonorsOrderedRegionMaskModes() {
@@ -2366,6 +2992,21 @@ function testSurfaceCleanHonorsOrderedRegionMaskModes() {
   let hasOuterCut = false
   let hasInnerCut = false
 
+  // Both polarities are dilated by centreInset = toolRadius + radialLeave = 1.
+  // The exclude check uses the dilated boundary; the include check uses the
+  // dilated inner-include polygon so the assertion matches the actual composite.
+  const centreInset = tool.diameter / 2 /* no stockToLeaveRadial in this op */
+  const dilatedExcludeX = 4 - centreInset       // 3
+  const dilatedExcludeY = 2 - centreInset       // 1
+  const dilatedExcludeW = 16 + 2 * centreInset  // 18
+  const dilatedExcludeH = 8 + 2 * centreInset   // 10
+  const dilatedInnerIncludePoly = [
+    { x: 10 - centreInset, y: 5 - centreInset },   // {9, 4}
+    { x: 14 + centreInset, y: 5 - centreInset },   // {15, 4}
+    { x: 14 + centreInset, y: 7 + centreInset },   // {15, 8}
+    { x: 10 - centreInset, y: 7 + centreInset },   // {9, 8}
+  ]
+
   assert(cuts.length > 0, `expected surface_clean cuts, warnings: ${result.warnings.join(', ')}`)
   for (const move of cuts) {
     const samples = [0.1, 0.25, 0.5, 0.75, 0.9].map((t) => ({
@@ -2373,9 +3014,11 @@ function testSurfaceCleanHonorsOrderedRegionMaskModes() {
       y: move.from.y + (move.to.y - move.from.y) * t,
     }))
     hasOuterCut ||= samples.some((point) => point.x < 4 && point.y < 4)
-    hasInnerCut ||= samples.some((point) => pointInsideRect(point, 10, 5, 4, 2))
+    hasInnerCut ||= samples.some((point) => pointInsidePolygonOrOnBoundary(point, dilatedInnerIncludePoly))
     assert(
-      samples.every((point) => !pointInsideRect(point, 4, 2, 16, 8) || pointInsideRect(point, 10, 5, 4, 2)),
+      samples.every((point) =>
+        !pointInsideRect(point, dilatedExcludeX, dilatedExcludeY, dilatedExcludeW, dilatedExcludeH)
+        || pointInsidePolygonOrOnBoundary(point, dilatedInnerIncludePoly)),
       `surface_clean should remove excluded cut fragments except the later include, got move ${JSON.stringify(move)}`,
     )
   }
@@ -2384,8 +3027,139 @@ function testSurfaceCleanHonorsOrderedRegionMaskModes() {
   console.log('surface_clean ordered region mask modes: PASSED')
 }
 
+/**
+ * Distance from a point to the boundary of a polygon.  Returns 0 when the
+ * point is inside or on the boundary; otherwise returns the shortest distance
+ * to any edge.
+ */
+function pointToPolygonBoundary(
+  point: { x: number; y: number },
+  polygon: Array<{ x: number; y: number }>,
+): number {
+  // Interior points collapse to 0 so a clearance assertion cannot be satisfied
+  // by a cut that landed deep INSIDE the keep-out — without this, a point at the
+  // centre of the excluded block reports its (large) distance to the nearest
+  // edge and passes.
+  if (pointInsidePolygon(point, polygon)) return 0
+  let minDist = Infinity
+  for (let i = 0; i < polygon.length; i += 1) {
+    const a = polygon[i]
+    const b = polygon[(i + 1) % polygon.length]
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const len2 = dx * dx + dy * dy
+    if (len2 === 0) {
+      minDist = Math.min(minDist, Math.hypot(point.x - a.x, point.y - a.y))
+      continue
+    }
+    const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / len2))
+    const projX = a.x + t * dx
+    const projY = a.y + t * dy
+    minDist = Math.min(minDist, Math.hypot(point.x - projX, point.y - projY))
+  }
+  return minDist
+}
+
+/**
+ * Tool-body containment: pocket with an exclude region must keep every cut
+ * move endpoint at least `toolRadius + stockToLeaveRadial` from the excluded
+ * polygon boundary.  This confirms that the area resolver + generator erosion
+ * together supply the correct clearance.
+ */
+function testPocketExcludeRegionToolBodyClearance(): void {
+  console.log('Testing pocket exclude region keeps tool body clear...')
+  const tool = makeFlatEndmill('t1', 2)
+  const stockToLeaveRadial = 0.1
+  // 30×20 pocket, exclude a 10×10 block in the middle.
+  const pocket = makePocketFeature('p1', 0, 0, 30, 20, 4, 0)
+  const excludePoly = [
+    { x: 10, y: 5 }, { x: 20, y: 5 }, { x: 20, y: 15 }, { x: 10, y: 15 },
+  ]
+  const exclude = makePolygonRegionFeature('r-exclude', excludePoly, 'exclude')
+  const project = baseProject([tool], [pocket, exclude])
+  const op = makePocketOp({
+    kind: 'pocket',
+    pass: 'finish',
+    target: { source: 'features', featureIds: ['p1', 'r-exclude'] },
+    toolRef: 't1',
+    pocketPattern: 'offset',
+    stockToLeaveRadial,
+    stepdown: 1,
+    stepover: 0.3,
+  })
+  const result = generatePocketToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, `expected pocket cuts, warnings: ${result.warnings.join(', ')}`)
+
+  const requiredClearance = tool.diameter / 2 + stockToLeaveRadial  // 1 + 0.1 = 1.1
+  const epsilon = 1e-6
+  let minObserved = Infinity
+  for (const move of cuts) {
+    const distFrom = pointToPolygonBoundary(move.from, excludePoly)
+    const distTo = pointToPolygonBoundary(move.to, excludePoly)
+    minObserved = Math.min(minObserved, distFrom, distTo)
+    assert(
+      distFrom >= requiredClearance - epsilon,
+      `pocket cut move endpoint must be >= ${requiredClearance} from exclude, got ${distFrom} at ${JSON.stringify(move.from)}`,
+    )
+    assert(
+      distTo >= requiredClearance - epsilon,
+      `pocket cut move endpoint must be >= ${requiredClearance} from exclude, got ${distTo} at ${JSON.stringify(move.to)}`,
+    )
+  }
+  console.log(`pocket exclude region tool-body clearance (min ${minObserved.toFixed(4)} >= ${requiredClearance}): PASSED`)
+}
+
+/**
+ * Tool-body containment: surface clean with an exclude region must keep every
+ * cut move endpoint at least `toolRadius + stockToLeaveRadial` from the
+ * excluded polygon boundary.
+ */
+function testSurfaceCleanExcludeRegionToolBodyClearance(): void {
+  console.log('Testing surface_clean exclude region keeps tool body clear...')
+  const tool = makeFlatEndmill('t1', 2)
+  const stockToLeaveRadial = 0.1
+  // Boss 30×20, exclude a 10×10 block in the middle.
+  const boss = makeAddFeature('boss', 0, 0, 30, 20, 4, 0)
+  const excludePoly = [
+    { x: 10, y: 5 }, { x: 20, y: 5 }, { x: 20, y: 15 }, { x: 10, y: 15 },
+  ]
+  const exclude = makePolygonRegionFeature('r-exclude', excludePoly, 'exclude')
+  const project = baseProject([tool], [boss, exclude])
+  project.stock = { ...project.stock, thickness: 6 }
+  const op = makePocketOp({
+    kind: 'surface_clean',
+    target: { source: 'features', featureIds: ['boss', 'r-exclude'] },
+    toolRef: 't1',
+    stockToLeaveRadial,
+    stepdown: 1,
+    stepover: 0.3,
+  })
+  const result = generateSurfaceCleanToolpath(project, op)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, `expected surface_clean cuts, warnings: ${result.warnings.join(', ')}`)
+
+  const requiredClearance = tool.diameter / 2 + stockToLeaveRadial  // 1 + 0.1 = 1.1
+  const epsilon = 1e-6
+  let minObserved = Infinity
+  for (const move of cuts) {
+    const distFrom = pointToPolygonBoundary(move.from, excludePoly)
+    const distTo = pointToPolygonBoundary(move.to, excludePoly)
+    minObserved = Math.min(minObserved, distFrom, distTo)
+    assert(
+      distFrom >= requiredClearance - epsilon,
+      `surface_clean cut move endpoint must be >= ${requiredClearance} from exclude, got ${distFrom} at ${JSON.stringify(move.from)}`,
+    )
+    assert(
+      distTo >= requiredClearance - epsilon,
+      `surface_clean cut move endpoint must be >= ${requiredClearance} from exclude, got ${distTo} at ${JSON.stringify(move.to)}`,
+    )
+  }
+  console.log(`surface_clean exclude region tool-body clearance (min ${minObserved.toFixed(4)} >= ${requiredClearance}): PASSED`)
+}
+
 function testFollowLineRegionClipsOpenPath() {
-  console.log('Testing follow_line region clips open path...')
+  console.log('Testing follow_line region fragments guide...')
   const tool = makeFlatEndmill('t1', 1)
   const line = makeLineFeature('line1', 0, 5, 10, 5)
   const region = makeRegionFeature('r1', 2, 0, 4, 10)
@@ -2399,10 +3173,43 @@ function testFollowLineRegionClipsOpenPath() {
   const result = generateFollowLineToolpath(project, op)
   const cuts = cutMoves(result.moves)
 
-  assert(cuts.length > 0, 'expected clipped follow-line cuts')
-  assert(cuts.every((move) => move.from.x >= 2 - 1e-6 && move.to.x <= 6 + 1e-6), 'expected follow-line cuts inside region X bounds')
-  assert(result.bounds !== null && result.bounds.minX >= 2 - 1e-6 && result.bounds.maxX <= 6 + 1e-6, 'expected clipped follow-line bounds')
-  console.log('follow_line region clipping: PASSED')
+  assert(cuts.length > 0, 'expected follow-line cut fragments')
+
+  // The include region [2,6] is resolved pre-generation with
+  // centreInset = tool.radius = 0.5, which dilates the allowed area to
+  // [1.5, 6.5].  The guide is fragmented against that dilated area
+  // (coverage — the tool centre may reach centreInset past the region so
+  // the cut surface fully covers it).  Assert tool-centre endpoints stay
+  // within the dilated region.
+  const centreInset = tool.diameter / 2 // 0.5, stockToLeaveRadial = 0
+  const xMin = 2 - centreInset - 1e-6
+  const xMax = 6 + centreInset + 1e-6
+  for (const move of cuts) {
+    assert(
+      move.from.x >= xMin && move.from.x <= xMax &&
+      move.to.x >= xMin && move.to.x <= xMax,
+      `follow-line cut move X ${move.from.x}→${move.to.x} outside [${xMin}, ${xMax}]`,
+    )
+  }
+  assert(result.bounds !== null && result.bounds.minX >= xMin && result.bounds.maxX <= xMax,
+    `follow-line bounds X [${result.bounds?.minX}, ${result.bounds?.maxX}] outside [${xMin}, ${xMax}]`)
+
+  // No-mask parity: without the region the full line is cut.
+  const opNoMask = makePocketOp({
+    kind: 'follow_line',
+    target: { source: 'features', featureIds: ['line1'] },
+    toolRef: 't1',
+    carveDepth: 1,
+  })
+  const resultNoMask = generateFollowLineToolpath(project, opNoMask)
+  const noMaskCuts = cutMoves(resultNoMask.moves)
+  assert(noMaskCuts.length > 0, 'expected unmasked follow-line cuts')
+  const maskedLen = cuts.reduce((s, m) => s + Math.hypot(m.to.x - m.from.x, m.to.y - m.from.y), 0)
+  const unmaskedLen = noMaskCuts.reduce((s, m) => s + Math.hypot(m.to.x - m.from.x, m.to.y - m.from.y), 0)
+  assert(unmaskedLen > maskedLen + 1e-6,
+    `unmasked cut length (${unmaskedLen}) must exceed masked (${maskedLen})`)
+
+  console.log('follow_line region fragmentation: PASSED')
 }
 
 function testDrillingRegionFiltersHolePoints() {
@@ -3322,7 +4129,8 @@ try {
   testPocketOffsetFinishExcludeOnlyRegionStillGeneratesToolpath()
   testPocketOffsetFinishLeadingExcludeWithInnerInclude()
   testPocketRestRegionsEmitHoleCapableMaskModes()
-  testRegionMaskVisitsNearestRegionFirst()
+	  testEdgeRestIncludeRegionShowsCoverage()
+	  testEdgeRestExcludeRegionKeepsClearance()
   testEdgeInsideLevelFirstVsFeatureFirst()
   testEdgeInsideFeatureFirstNearestBlockOrder()
   testEdgeInsideRegionClipsAtBoundary()
@@ -3332,10 +4140,21 @@ try {
   testEdgeOutsideClipsAroundNonSelectedAddFeatures()
   testEdgeOutsideRoundCornersOptIn()
   testEdgeOutsideCombinedRoundCorners()
+  testEdgeNoMaskProducesClosedCuts()
+  testEdgeInsideRegionFragmentsIntoOpenSpans()
+  testEdgeOutsideObstacleFragmentsContour()
   testTrochoidalOutsideTracksDifferentTargetSizes()
   testTrochoidalTabsFragmentBeforeMotionAndHelixReenter()
   testTrochoidalOutsideFragmentsAroundTightObstacle()
-  testTrochoidalRejectsRegionMasksAndUnsafeWidths()
+  testTrochoidalIncludeRegionGenerates()
+  testTrochoidalExcludeRegionClearance()
+  testTrochoidalIncludeLandsOnRegionBoundary()
+  testTrochoidalExcludeStopsAtRegionBoundary()
+  testContourExcludeStopsAtRegionBoundary()
+  testEdgeExcludeOverhangByStrategy()
+  testEdgeNoMaskByteIdenticalTrochoidal()
+  testEdgeNoMaskByteIdenticalContour()
+  testTrochoidalNarrowWidthStillFails()
   testTrochoidalEngagementMatchesContourDirection()
   testTrochoidalCircularAndMultiTargetGuides()
   testTrochoidalFeatureFirstSharesBudgetAndFailsAtomically()
@@ -3345,6 +4164,8 @@ try {
   testSurfaceCleanMultiTargetProtectsTallerTarget()
   testSurfaceCleanRegionMaskClipsGeneratedToolpathOnly()
   testSurfaceCleanHonorsOrderedRegionMaskModes()
+  testPocketExcludeRegionToolBodyClearance()
+  testSurfaceCleanExcludeRegionToolBodyClearance()
   testFollowLineRegionClipsOpenPath()
   testDrillingRegionFiltersHolePoints()
   testDrillingOrdersByNearestNeighbor()

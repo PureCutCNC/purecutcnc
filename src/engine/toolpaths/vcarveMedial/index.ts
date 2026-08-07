@@ -34,9 +34,12 @@ import type {
   ToolpathPoint,
   ToolpathResult,
 } from '../types'
-import { checkMaxCutDepthWarning, getOperationSafeZ, greedyNearestNeighbor, normalizeToolForProject } from '../geometry'
+import { checkMaxCutDepthWarning, DEFAULT_CLIPPER_SCALE, getOperationSafeZ, greedyNearestNeighbor, normalizeToolForProject, normalizeWinding, toClipperPath } from '../geometry'
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from '../multiFeature'
-import { updateBounds } from '../pocket'
+import { unionClipperPaths } from '../modelProtection'
+import { executeDifference, polyTreeToRegions, updateBounds } from '../pocket'
+import { resolveRegionDomainArea } from '../regionDomain'
+import { buildRegionMask, splitFeatureTargets } from '../regions'
 import { resolvePocketRegions } from '../resolver'
 import { computeMedialAxis } from './medialAxis'
 import { resolveMedialResolution } from './resolution'
@@ -150,11 +153,38 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
   let budgetWarned = false
   let currentPosition: ToolpathPoint | null = null
 
+  // Build the region mask from the operation's selected features and resolve
+  // it into each band's domain before generation.  The medial-axis V-carve
+  // inherits the same centreInset logic as the offset V-carve: maxCarveDepth·slope
+  // is the maximum carved half-width of the V-bit.
+  const regionMask = operation.target.source === 'features'
+    ? buildRegionMask(splitFeatureTargets(project, operation.target.featureIds).regionFeatures)
+    : null
+  const centreInset = operation.maxCarveDepth * slope
+
   for (const band of resolved.bands) {
     const maxBandDepth = Math.max(0, Math.min(operation.maxCarveDepth, band.topZ - band.bottomZ))
     if (!(maxBandDepth > 0)) {
       warnings.push({ code: 'vcarveBandNoDepth', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
       continue
+    }
+
+    // Apply the region mask to this band's domain.
+    if (regionMask) {
+      const scale = DEFAULT_CLIPPER_SCALE
+      const outerPaths = band.regions.map((r) => toClipperPath(normalizeWinding(r.outer, false), scale))
+      const bandDomain = unionClipperPaths(outerPaths)
+      if (bandDomain.length === 0) continue
+
+      const maskedDomain = resolveRegionDomainArea(bandDomain, regionMask, centreInset)
+      if (maskedDomain.length === 0) continue
+
+      const islandPaths = band.regions.flatMap((r) =>
+        r.islands.map((island) => toClipperPath(normalizeWinding(island, false), scale)),
+      )
+      const polyTree = executeDifference(maskedDomain, islandPaths)
+      band.regions = polyTreeToRegions(polyTree, band.targetFeatureIds, band.islandFeatureIds, scale)
+      if (band.regions.length === 0) continue
     }
 
     const sortedRegions = greedyNearestNeighbor(band.regions, {

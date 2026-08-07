@@ -599,18 +599,16 @@ function testRoughSurfaceHelixEntryUsesModelSafeRegions(): void {
   )
 }
 
-function testRoughSurfaceRegionMaskForcesPlungeEntry(): void {
-  console.log('Testing rough_surface region mask forces plunge entry...')
+function testRoughSurfaceRegionMaskAllowsEntry(): void {
+  console.log('Testing rough_surface region mask allows helix entry...')
   const { project, operation } = makeProject(['region1', 'model1'])
   operation.entryStrategy = 'helix'
   const result = generateRoughSurfaceToolpath(project, operation)
 
   assert(
-    result.warnings.some((warning) => warning.code === 'entryDisabledByRegionMask'),
-    'expected region-mask entry guard warning',
+    result.moves.some((move) => move.kind === 'lead_in'),
+    'region-masked rough_surface with helix entry should emit lead-in moves',
   )
-  assert(!result.moves.some((move) => move.kind === 'lead_in'), 'guarded operation should not emit lead-ins')
-  assert(result.moves.some((move) => move.kind === 'plunge'), 'guarded operation should retain plunge entries')
 }
 
 function testRoughSurfaceDefaultEntryMatchesExplicitPlunge(): void {
@@ -858,7 +856,7 @@ function testRoughSurfaceLinksOffsetRingsAtZ(): void {
 
 testRoughSurfaceGeneratesChangingZCuts()
 testRoughSurfaceHelixEntryUsesModelSafeRegions()
-testRoughSurfaceRegionMaskForcesPlungeEntry()
+testRoughSurfaceRegionMaskAllowsEntry()
 testRoughSurfaceDefaultEntryMatchesExplicitPlunge()
 testRoughSurfaceFindsModelWhenRegionIsFirst()
   testRoughSurfaceDefaultsLegacyModelFormatToStl()

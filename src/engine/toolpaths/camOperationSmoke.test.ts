@@ -27,7 +27,7 @@
  * Run with: npx tsx src/engine/toolpaths/camOperationSmoke.test.ts
  */
 
-import type { DrillType, Operation, Project, Segment, SketchFeature, Tool } from '../../types/project'
+import type { DrillType, Operation, Project, RegionMaskMode, Segment, SketchFeature, Tool } from '../../types/project'
 import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { runPostProcessor } from '../gcode/postprocessor'
@@ -1193,6 +1193,35 @@ test('follow_line: generates toolpath + posts to non-empty G-code', () => {
   assert(gcode.length > 0, 'follow_line should produce non-empty G-code')
 })
 
+function makeRegionFeature(
+  id: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  regionMaskMode?: RegionMaskMode,
+): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(x, y, w, h),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'region',
+    regionMaskMode,
+    z_top: 0,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+}
+
 function makeClosedLineFeature(
   id: string,
   cx: number,
@@ -1279,6 +1308,129 @@ test('v_carve_medial: generates toolpath + posts to non-empty G-code', () => {
 
   const gcode = postToolpath(project, op, result)
   assert(gcode.length > 0, 'v_carve_medial should produce non-empty G-code')
+})
+
+// =====================================================================
+// 3b. REGION MASKING — V-carve region domain regression guard (p3b task 1)
+// =====================================================================
+
+test('v_carve: include region constrains cut area (regression guard)', () => {
+  const tool = makeVBit('t1')
+  // 20×20 subtract at Z 0→-2
+  const feat = makeRectFeature('a', 0, 0, 20, 20, 0, -2)
+  // 10×10 include region centered within the subtract — only this subset
+  // should be carved.
+  const region = makeRegionFeature('reg', 5, 5, 10, 10, 'include')
+  const project = baseProject([tool], [feat, region])
+  const op = makePocketOp({
+    kind: 'v_carve',
+    target: { source: 'features', featureIds: ['a', 'reg'] },
+    toolRef: 't1',
+    maxCarveDepth: 2,
+    stepover: 0.3,
+  })
+
+  const result = generateVCarveToolpath(project, op)
+  assert(result.moves.length > 0, 'v_carve with include region should produce moves')
+  const cuts = result.moves.filter((m) => m.kind === 'cut')
+  assert(cuts.length > 0, 'v_carve with include region should produce cut moves')
+
+  // V-bit 60°: half-angle = 30°, slope = tan(30°) ≈ 0.577.
+  // Max carved half-width at depth 2 = 2 * 0.577 ≈ 1.155 mm.
+  // The include region is resolved with centreInset = maxCarveDepth * slope
+  // pre-dilating the region, then the generator erodes by currentDepth * slope
+  // (≤ centreInset), so tool-centre endpoints stay within the original region
+  // dilated by at most centreInset.
+  const slope = Math.tan((30 * Math.PI) / 180)
+  const maxHalfWidth = 2 * slope
+  const rMinX = 5 - maxHalfWidth - 1e-6
+  const rMinY = 5 - maxHalfWidth - 1e-6
+  const rMaxX = 15 + maxHalfWidth + 1e-6
+  const rMaxY = 15 + maxHalfWidth + 1e-6
+  for (const move of cuts) {
+    const fx = move.from.x
+    const fy = move.from.y
+    const tx = move.to.x
+    const ty = move.to.y
+    assert(
+      fx >= rMinX && fx <= rMaxX && fy >= rMinY && fy <= rMaxY &&
+      tx >= rMinX && tx <= rMaxX && ty >= rMinY && ty <= rMaxY,
+      `cut move (${fx.toFixed(4)},${fy.toFixed(4)})→(${tx.toFixed(4)},${ty.toFixed(4)}) outside region bounds`,
+    )
+  }
+
+  // Unmasked: same subtract but no region selected. Must produce strictly
+  // more cut area — the region removed a portion of the machining area.
+  const opNoRegion = makePocketOp({
+    kind: 'v_carve',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+    maxCarveDepth: 2,
+    stepover: 0.3,
+  })
+  const resultNoRegion = generateVCarveToolpath(project, opNoRegion)
+  const maskedDist = cuts.reduce((s, m) => s + Math.hypot(m.to.x - m.from.x, m.to.y - m.from.y), 0)
+  const unmaskedCuts = resultNoRegion.moves.filter((m) => m.kind === 'cut')
+  const unmaskedDist = unmaskedCuts.reduce((s, m) => s + Math.hypot(m.to.x - m.from.x, m.to.y - m.from.y), 0)
+  assert(
+    unmaskedDist > maskedDist + 1e-6,
+    `unmasked total cut distance (${unmaskedDist.toFixed(4)}) must exceed masked (${maskedDist.toFixed(4)})`,
+  )
+})
+
+test('v_carve_medial: include region constrains cut area (regression guard)', () => {
+  const tool = makeVBit('t1')
+  const feat = makeRectFeature('a', 0, 0, 20, 20, 0, -2)
+  const region = makeRegionFeature('reg', 5, 5, 10, 10, 'include')
+  const project = baseProject([tool], [feat, region])
+  const op = makePocketOp({
+    kind: 'v_carve_medial',
+    target: { source: 'features', featureIds: ['a', 'reg'] },
+    toolRef: 't1',
+    maxCarveDepth: 2,
+    stepover: 0.3,
+  })
+
+  const result = generateVCarveMedialToolpath(project, op)
+  assert(result.moves.length > 0, 'v_carve_medial with include region should produce moves')
+  const cuts = result.moves.filter((m) => m.kind === 'cut')
+  assert(cuts.length > 0, 'v_carve_medial with include region should produce cut moves')
+
+  // Same max-half-width logic as the v_carve test.
+  const slope = Math.tan((30 * Math.PI) / 180)
+  const maxHalfWidth = 2 * slope
+  const rMinX = 5 - maxHalfWidth - 1e-6
+  const rMinY = 5 - maxHalfWidth - 1e-6
+  const rMaxX = 15 + maxHalfWidth + 1e-6
+  const rMaxY = 15 + maxHalfWidth + 1e-6
+  for (const move of cuts) {
+    const fx = move.from.x
+    const fy = move.from.y
+    const tx = move.to.x
+    const ty = move.to.y
+    assert(
+      fx >= rMinX && fx <= rMaxX && fy >= rMinY && fy <= rMaxY &&
+      tx >= rMinX && tx <= rMaxX && ty >= rMinY && ty <= rMaxY,
+      `medial cut move (${fx.toFixed(4)},${fy.toFixed(4)})→(${tx.toFixed(4)},${ty.toFixed(4)}) outside region bounds`,
+    )
+  }
+
+  // Unmasked must produce strictly more cut distance.
+  const opNoRegion = makePocketOp({
+    kind: 'v_carve_medial',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+    maxCarveDepth: 2,
+    stepover: 0.3,
+  })
+  const resultNoRegion = generateVCarveMedialToolpath(project, opNoRegion)
+  const maskedDist = cuts.reduce((s, m) => s + Math.hypot(m.to.x - m.from.x, m.to.y - m.from.y), 0)
+  const unmaskedCuts = resultNoRegion.moves.filter((m) => m.kind === 'cut')
+  const unmaskedDist = unmaskedCuts.reduce((s, m) => s + Math.hypot(m.to.x - m.from.x, m.to.y - m.from.y), 0)
+  assert(
+    unmaskedDist > maskedDist + 1e-6,
+    `medial unmasked total cut distance (${unmaskedDist.toFixed(4)}) must exceed masked (${maskedDist.toFixed(4)})`,
+  )
 })
 
 // =====================================================================

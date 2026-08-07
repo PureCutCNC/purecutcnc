@@ -39,7 +39,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.cutDepthExceedsToolMax': 'Schnitttiefe {depth} {units} überschreitet die max. Schnitttiefe des Werkzeugs {max} {units}',
   'warnings.cutDepthExceedsToolMaxForFeature': '{name}: Schnitttiefe {depth} {units} überschreitet die max. Schnitttiefe des Werkzeugs {max} {units}',
   'warnings.entryStrategyFallback': 'Die gewählte Eintauchbewegung passte nicht in den verfügbaren Bearbeitungsbereich. Stattdessen wurde eine sichere Ausweichbewegung verwendet.',
-  'warnings.entryDisabledByRegionMask': 'Bei aktiven Bereichsfiltern sind Rampen- und Helix-Eintauchbewegungen deaktiviert; es wurde senkrecht eingetaucht.',
+
   'warnings.entryHelixDiameterClamped': 'Der Helixdurchmesser wurde von {requestedDiameter} auf {actualDiameter} verkleinert, damit er in den Bearbeitungsbereich passt.',
   'warnings.noToolAssigned': 'Dieser Operation ist kein Werkzeug zugewiesen',
   'warnings.vBitAngleRange': 'Der V-Nutfräser-Winkel muss zwischen 0 und 180 Grad liegen',
@@ -74,7 +74,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeTrochoidalAdvanceRange': 'Der trochoidale Vorschub pro Umlauf muss größer als 0 und höchstens ein Werkzeugdurchmesser sein.',
   'warnings.edgeTrochoidalParametersInvalid': 'Trochoidales Fräsen erfordert positive Werte für Vorschub, Eintauchvorschub und Drehzahl.',
   'warnings.edgeTrochoidalEntryStrategyUnsupported': 'Trochoidales Fräsen unterstützt nur Helix- oder Eintauch-Einstiege.',
-  'warnings.edgeTrochoidalRegionUnsupported': 'Trochoidale Konturfräsung unterstützt keine Regionsmasken.',
+
   'warnings.edgeTrochoidalInvalidGuide': 'Trochoidales Fräsen erfordert eine einzelne gültige geschlossene Führungskontur.',
   'warnings.edgeTrochoidalMoveBudget': 'Trochoidales Fräsen überschreitet das Operationslimit von 500.000 Punkten.',
   'warnings.edgeTrochoidalEntryBudget': 'Der trochoidale Einstieg nahe ({x}, {y}) überschreitet das Einstiegspunktlimit.',
@@ -155,8 +155,6 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.clampCrossedOne': 'Spannzwinge „{name}" wird von {count} Bewegung des Typs {moveKind} unterhalb der erforderlichen Freiraumhöhe gekreuzt (min. Z {minZ}, erforderliches Z {requiredZ}).',
   'warnings.clampCrossedMany': 'Spannzwinge „{name}" wird von {count} Bewegungen des Typs {moveKind} unterhalb der erforderlichen Freiraumhöhe gekreuzt (min. Z {minZ}, erforderliches Z {requiredZ}).',
   'warnings.clampTravelLimitExceeded': 'Spannzwinge „{name}" erfordert Freiraum-Z {requiredZ}, was das maximale Verfahr-Z {maxZ} des Projekts überschreitet.',
-  'warnings.regionClippedOne': 'Bereichsfilter beschnitt {count} Schnittbewegung.',
-  'warnings.regionClippedMany': 'Bereichsfilter beschnitt {count} Schnittbewegungen.',
   'warnings.moveKind.rapid': 'Eilgang',
   'warnings.moveKind.plunge': 'Eintauchen',
   'warnings.moveKind.lead_in': 'Anfahren',

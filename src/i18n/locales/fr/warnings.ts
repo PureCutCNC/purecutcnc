@@ -32,7 +32,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.cutDepthExceedsToolMax': 'La profondeur de coupe {depth} {units} dépasse la profondeur maximale de l’outil {max} {units}',
   'warnings.cutDepthExceedsToolMaxForFeature': '{name} : la profondeur de coupe {depth} {units} dépasse la profondeur maximale de l’outil {max} {units}',
   'warnings.entryStrategyFallback': 'Le mouvement d’entrée sélectionné ne tient pas dans la zone d’usinage disponible ; une stratégie de remplacement plus sûre a été utilisée.',
-  'warnings.entryDisabledByRegionMask': 'Les entrées en rampe et hélicoïdales sont désactivées lorsque des filtres de région sont actifs ; une entrée en plongée a été utilisée.',
+
   'warnings.entryHelixDiameterClamped': 'Le diamètre de l’entrée hélicoïdale a été réduit de {requestedDiameter} à {actualDiameter} pour tenir dans la zone d’usinage.',
   'warnings.noToolAssigned': 'Aucun outil n’est affecté à cette opération',
   'warnings.vBitAngleRange': 'L’angle de fraise en V doit être compris entre 0 et 180 degrés',
@@ -64,7 +64,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeTrochoidalAdvanceRange': 'L’avance trochoïdale doit être supérieure à 0 et ne pas dépasser un diamètre d’outil.',
   'warnings.edgeTrochoidalParametersInvalid': 'Le fraisage trochoïdal exige des valeurs positives pour l’avance, l’avance de plongée et le régime.',
   'warnings.edgeTrochoidalEntryStrategyUnsupported': 'Le fraisage trochoïdal ne prend en charge que les entrées hélicoïdale ou en plongée.',
-  'warnings.edgeTrochoidalRegionUnsupported': 'Le contournage trochoïdal ne prend pas en charge les masques de région.',
+
   'warnings.edgeTrochoidalInvalidGuide': 'Le fraisage trochoïdal exige un seul guide fermé valide.',
   'warnings.edgeTrochoidalMoveBudget': 'Le fraisage trochoïdal dépasse le budget de 500 000 points de l’opération.',
   'warnings.edgeTrochoidalEntryBudget': 'L’entrée trochoïdale près de ({x}, {y}) dépasse le budget de points d’entrée.',
@@ -138,8 +138,6 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.clampCrossedOne': 'La bride « {name} » est traversée par {count} mouvement {moveKind} sous le dégagement requis (Z min. {minZ}, Z requis {requiredZ}).',
   'warnings.clampCrossedMany': 'La bride « {name} » est traversée par {count} mouvements {moveKind} sous le dégagement requis (Z min. {minZ}, Z requis {requiredZ}).',
   'warnings.clampTravelLimitExceeded': 'La bride « {name} » exige un dégagement Z {requiredZ}, qui dépasse la course Z maximale du projet {maxZ}.',
-  'warnings.regionClippedOne': 'Le filtre de région a rogné {count} mouvement de coupe.',
-  'warnings.regionClippedMany': 'Le filtre de région a rogné {count} mouvements de coupe.',
   'warnings.moveKind.rapid': 'rapide',
   'warnings.moveKind.plunge': 'plongée',
   'warnings.moveKind.lead_in': 'entrée',

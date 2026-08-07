@@ -35,6 +35,7 @@ import {
 import { buildInsetRegions } from './pocket'
 import { differenceClipperPaths, intersectClipperPaths, unionClipperPaths, clipperPathsToPointContours } from './modelProtection'
 import { applyRegionMaskToPaths, buildRegionMask, type RegionMask, splitFeatureTargets } from './regions'
+import { resolveRegionDomainCentre } from './regionDomain'
 import { resolveInsideEdgeRegions, resolvePocketRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
 import type { ClipperPath, ClipperPoint, ResolvedPocketRegion, ResolvedPocketResult } from './types'
@@ -633,10 +634,13 @@ function generateOutsideEdgeRestRegionDrafts(project: Project, operation: Operat
   const sweptInner = offsetClosedPaths(centerPaths, -toolRadius, ClipperLib.JoinType.jtRound)
   let reachableBand = differenceClipperPaths(sweptOuter, sweptInner)
 
-  if (regionMask) {
-    sourceBand = applyRegionMaskToPaths(sourceBand, regionMask)
-    reachableBand = applyRegionMaskToPaths(reachableBand, regionMask)
-  }
+  // Bands are tool-centre domains (no downstream centreInset erosion), so the
+  // resolver must provide its own clearance: resolveRegionDomainCentre dilates
+  // both polarities by centreInset.  resolveRegionDomainArea would pre-dilate
+  // includes expecting the generator to erode, which never happens here.
+  const centreInset = toolRadius + radialLeave
+  sourceBand = resolveRegionDomainCentre(sourceBand, regionMask, centreInset)
+  reachableBand = resolveRegionDomainCentre(reachableBand, regionMask, centreInset)
 
   const restPaths = unionClipperPaths(differenceClipperPaths(sourceBand, reachableBand))
   const splitClearance = Math.max(3 / DEFAULT_CLIPPER_SCALE, toolRadius * 0.08)

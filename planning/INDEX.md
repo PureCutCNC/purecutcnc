@@ -33,6 +33,7 @@ architecture contracts.
 - [INTEGRATION_HANDOFF_TEMPLATE.md](INTEGRATION_HANDOFF_TEMPLATE.md) — optional execution-ledger template for explicitly delegated, multi-slice work.
 - [I18N_MULTI_LANGUAGE_HANDOFF.md](I18N_MULTI_LANGUAGE_HANDOFF.md) — active execution ledger for issue #314 (multi-language support) on `feat/issue-314-multi-language`.
 - [THEME_TOKENIZATION_HANDOFF.md](THEME_TOKENIZATION_HANDOFF.md) — colour policy and active execution ledger for issue #341 (complete theme tokenization).
+- [REGION_DOMAIN_HANDOFF.md](REGION_DOMAIN_HANDOFF.md) — active execution ledger for issue #452 (regions as a resolved operation domain) on `feat/issue-452-region-domain`.
 
 ## Export and simulation
 

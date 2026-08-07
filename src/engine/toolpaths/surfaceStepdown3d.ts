@@ -34,7 +34,8 @@ import {
 } from './pocket'
 import { loadSTLTransformedGeometry } from '../csg'
 import { getMeshSliceIndex, sliceMeshAtZDetailed } from './meshSlicing'
-import { applyRegionMaskToPaths, buildRegionMask, splitFeatureTargets } from './regions'
+import { buildRegionMask, splitFeatureTargets } from './regions'
+import { resolveRegionDomainArea } from './regionDomain'
 import { significantSilhouettePaths } from './silhouette'
 import {
   buildProtectedFootprintPaths,
@@ -256,7 +257,7 @@ export function resolve3DSurfaceStepdown(
   const silhouetteOffset = 2 * initialInset + Math.max(minStepover, OUTER_WALL_MARGIN)
   let outlinePaths = offsetClipperPaths(unionClipperPaths(modelSilhouettePaths), silhouetteOffset)
   if (regionMask) {
-    outlinePaths = applyRegionMaskToPaths(outlinePaths, regionMask)
+    outlinePaths = resolveRegionDomainArea(outlinePaths, regionMask, initialInset)
   }
 
   if (outlinePaths.length === 0) {

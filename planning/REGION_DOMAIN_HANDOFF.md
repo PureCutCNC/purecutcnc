@@ -1,0 +1,271 @@
+---
+status: current
+authoritative-for: issue #452 delegated slice execution state and ledger
+last-verified: 2026-08-05
+---
+
+# Integration Handoff — Region domain redesign (#452)
+
+> Execution ledger for delegated multi-slice work on issue #452. The GitHub
+> issue is the approved plan and source of truth; this file records execution
+> state only. Do not store tokens, raw environment values, or unredacted
+> provider debug output here.
+
+## Role and stop condition
+
+The integration manager turns the approved plan in
+[#452](https://github.com/PureCutCNC/purecutcnc/issues/452) into sequential
+worktree slices, independently reviews and verifies each slice, and merges only
+accepted commits into the integration branch. Stop condition: all six phases
+merged into the integration branch, green build, one PR opened against `main`
+with `Closes #452`.
+
+## Integration state
+
+- Integration branch: `feat/issue-452-region-domain`
+- Integration worktree: `/Users/frankp/Projects/worktrees/purecutcnc/optimistic-cannon-2e722c`
+- Base commit: `240e15be1d61649b0fc18221031a18012910c156`
+- Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/452#issuecomment-5199629410
+- Manager session: 2026-08-05
+- Status: `PR opened 2026-08-06; partial manual regression done, remainder accepted by the user`
+- User authorization for credential-backed worker dispatch: `granted 2026-08-05 for all six slices of this issue`
+
+## Global rules
+
+- One active implementation slice at a time.
+- Every worker runs in its own task worktree branched from the current
+  integration tip, never in the integration checkout.
+- The worker may use `bypassPermissions` only through the project launcher in
+  explicit implementation mode.
+- The manager owns worktree/branch creation, review, merge, cleanup, issue-plan
+  updates, browser regression, push, and PR decisions.
+- Reject any worker result without exactly one expected task commit, a clean
+  task worktree, scoped changes, and truthful required-check results.
+- `src/engine/toolpaths/**` is a protected path: full lane, never fast lane.
+  Every slice needs focused unit tests and a green `npm run build`.
+
+## Design contract for every slice
+
+The full model lives in the approved issue comment. The load-bearing points a
+worker must not re-derive:
+
+1. **Regions resolve into the operation's domain before generation.** No
+   post-generation move filtering. Generators become region-unaware.
+2. **The domain is typed.** Area operations intersect polygons; curve
+   operations split guides into ordered open spans; drilling filters points.
+   Never apply area intersection to a curve domain — it turns the region's edge
+   into a machined contour.
+3. **Polarity implies the mode; there is no new user-facing control.**
+   `include` → coverage (`D ∩ (R ⊕ r)`), `exclude` → containment (`D \ X`).
+4. **`r` is the operation's effective centre inset** (`tool.radius +
+   stockToLeaveRadial`), computed once per operation and reused. Two
+   approximations of one clearance is how a seam becomes a gouge.
+5. **`masked output ⊆ unmasked output`** in both polarities, always. Coverage
+   over-reach is bounded by the operation's own domain `D`, never by the region,
+   so a region can only narrow what gets cut and can never introduce a cut.
+6. **Entry clearance regions and link-containment checks must be built from the
+   masked domain**, not the original.
+7. **Region boundaries never become cutting moves in their own right.**
+
+## Slice ledger
+
+| Slice | Branch | Status | Commit | Merged |
+| --- | --- | --- | --- | --- |
+| p0-rough-surface-guard | `feat/issue-452-p0-rough-surface-guard` | accepted | `330cd76` | `f62924a` |
+| p1-region-domain-resolver | `feat/issue-452-p1-region-domain-resolver` | accepted | `e302911` | `8b96d33` |
+| p2-area-generators | `feat/issue-452-p2-area-generators` | accepted with gap | `6731fef` | `0b24579` |
+| p2b-centre-domain-containment | `feat/issue-452-p2b-centre-domain-containment` | accepted | `de7b117` + `a6f2359` | `03eecef` |
+| p3a-edge-route-curve-domain | `feat/issue-452-p3a-edge-route-curve-domain` | accepted (regression fixed in p3b) | `8281de5` | `33baf96` |
+| p3b-carving-waterline-finish | `feat/issue-452-p3b-carving-waterline-finish` | accepted | `2607ce1` | `f85c52e` |
+| p4-trochoidal-regions | `feat/issue-452-p4-trochoidal-regions` | accepted | `c07d678` | `e242175` |
+| p5-delete-clippers | `feat/issue-452-p5-delete-clippers` | accepted | `3374d4b` | `17d5a61` |
+| p6-edge-region-clearance | `feat/issue-452-p6-edge-region-clearance` | accepted | `a0689fd` + `41dfed3` | `1f8f4f6` |
+
+Dependencies: p0 and p1 are independent of everything and of each other. p2, p3
+and p4 each require p1. p5 requires p2, p3 and p4.
+
+## Worker protocol notes
+
+- **p0 reported `STATUS: complete` with `COMMIT: none`.** The diff, tests and
+  build gate were all correct and independently verified, but the worker left
+  the work staged-but-uncommitted. The manager committed the reviewed diff and
+  merged. Subsequent prompts state the one-commit requirement explicitly and in
+  stronger terms; if the pattern repeats, treat it as a launcher-level problem
+  rather than a per-slice one.
+
+## The Edge Route clearance rule (found by user testing, fixed in p6)
+
+Every operation behaves the same way at a region boundary: an **include** region
+lets the **tool centre** reach the line (the cut then sweeps a tool radius past,
+unavoidably); an **exclude** region keeps the **tool body** clear. Edge Route did
+not, and user testing caught it — trochoidal cut about a full cut width past an
+include boundary and stopped short of an exclude one.
+
+Cause: p4 used `trochoidalGuideOffset` (`= stockToLeave + cutWidth/2 + 0.01·D`)
+as the region clearance and **dilated by it in both polarities**. A trochoidal
+guide is not the tool-centre path — the tool centre orbits at `orbitRadius`
+around it — so the correct clearances are:
+
+- include → **erode** by `orbitRadius`
+- exclude → **dilate** by `orbitRadius + tool.radius`
+
+Contour Edge Route is the same rule with `orbitRadius = 0`: include `0`
+(already correct), exclude `tool.radius` (was `0`, so the kerf crossed an
+exclude boundary by a full radius — same defect class, fixed in the same slice).
+
+The approved plan said this from the start: *"where a generator has a
+centre-offset of its own — e.g. a trochoidal orbit radius — the domain should be
+inset by that offset so tool-centre containment stays identical."*
+
+`trochoidalGuideOffset` remains correct and unchanged for its original uses:
+retained wall, obstacles, tabs. Only the region clearance moved.
+
+Note that `resolveRegionDomainCurve` originally ignored negative offsets
+(`centreInset > 0` guard), so an erosion request silently did nothing. It now
+takes separate include/exclude offsets, with the exclude defaulting to the
+include so other callers are unchanged.
+
+## Before the PR opens — required manual regression
+
+All seven slices are merged and `npm run build` is green on the integration
+branch (165 unit test files). What is **not** yet done is a real look at the
+generated toolpaths. Two slices in this run shipped code whose unit tests passed
+while the safety property they claimed to check did not hold, so a green suite is
+not sufficient evidence here.
+
+Open a project with regions and check each of these in the app:
+
+1. **Pocket** with an include region — concentric offsets of the masked shape
+   with rounded corners and its own entry, not fragments stopping dead at the
+   region edge. This is the case from the issue thread screenshot.
+2. **Pocket / surface clean** with an exclude region — the cutter stays fully
+   out, not merely centred outside it.
+3. **V-carve** with an include region — watch the surface bleed described below;
+   this is the one open semantic question.
+4. **Edge Route (contour)** across a region boundary and across an obstacle —
+   spans retract, rapid, and descend through air. No vertical plunge into stock.
+5. **Trochoidal Edge Route** with both polarities — helical entry per surviving
+   span, short spans skipped with a located warning rather than failing the job.
+6. **Rest machining** with a region, since p5 changed its include semantics from
+   containment to coverage.
+
+**Verified 2026-08-06:** items 4 and 5 (contour and trochoidal Edge Route, both
+polarities, plus obstacle and clamp interaction). The Edge Route clearance rule
+below was found and fixed during that testing.
+
+**Not yet exercised in the app when the PR was opened:** item 1 (pocket include —
+the screenshot case from the issue), 2 (pocket / surface clean exclude), 3
+(V-carve include and its depth-dependent surface bleed), 6 (rest machining, whose
+include semantics changed from containment to coverage in p5). All are covered by
+unit tests but not by eye. The user accepted that risk to get the branch merged;
+if a region bug turns up in one of those four, start here.
+
+**A region is not a hard keep-out.** A region bounds the tool *centre* (the guide,
+for edge routing), so the cutter reaches up to a tool radius past the line — half
+a cut width on a trochoid. An exclude region must therefore be drawn at least
+that much larger than whatever it protects.
+
+Confirmed on a real project 2026-08-06: a 1/4" endmill at the default trochoidal
+width (`1.5 × D = 0.375"`) overlaps the region edge by `W/2 = 0.1875"`. A clamp
+inside that band was crossed by 30 cut moves and 3 rapids; growing the region by
+1/4" cleared it. An earlier note here claimed a region *was* effectively a
+keep-out — that was wrong, based on one test whose region happened to be drawn
+wide enough.
+
+Do **not** fix this by dilating exclude regions: it would break include/exclude
+tiling (see the Edge Route section above). The correct fix is that clamps should
+not depend on a hand-drawn region at all — no generator avoids them at generation
+time, they are only a post-pass in `clamps.ts` that warns and lifts rapids where
+it can. Clamp footprints belong in the forbidden set the generators already use
+for obstacles. Tracked separately, not in #452.
+
+Note also that `applyClampWarnings` refuses to auto-lift a rapid whose endpoint
+lies inside the clamp's expanded footprint (`clamp + clampClearanceXY +
+toolRadius`), because lifting would still descend into the clamp at the far end.
+So once cuts reach a clamp, neighbouring rapids stop lifting too — the warnings
+compound rather than appearing in isolation.
+
+## CLOSED — V-carve region regression (p3a → fixed in p3b `2607ce1`)
+
+Fixed in `vcarve.ts` and `vcarveMedial/index.ts` by resolving the mask into the
+band domain before generation, mirroring pocket's seam. Guarded by
+`v_carve:`/`v_carve_medial: include region constrains cut area (regression
+guard)` in `camOperationSmoke.test.ts`, both observed failing before the fix.
+
+**Open semantic question for the user.** V-carve cut width is depth-dependent
+(half-width `d·slope`), so one 2D region cannot bound both the tool centre and
+the cut at every depth. p3b passes `centreInset = maxCarveDepth · slope`, which
+means the *full-depth* pass reaches the region boundary exactly while shallower
+passes over-reach by `(maxCarveDepth − currentDepth)·slope`. On a deep V-groove
+that is a visible surface bleed beyond the drawn line — bounded by the
+operation's own domain, so never a new cut, but worth a look before release.
+Exclude containment is unaffected and correct at every depth, because the
+generator's erosion tracks the depth-dependent width.
+
+The historical record of the regression follows.
+
+### What happened
+
+p3a removed the `applyRegionMaskToPaths` block at `resolver.ts:442`. For Edge
+Route that was correct — it was a duplicate, and a third semantic besides
+(it masked design geometry *before* the tool offset, so the centre landed a
+radius outside the region). But `resolvePocketRegions` has three consumers:
+`pocket.ts`, `restRegions.ts`, and **`vcarve.ts`**, and for V-carve that block
+was the *only* region masking in the whole pipeline.
+
+`vcarve.ts` contains no region handling, `vcarveMedial/` contains none, and
+`generateVCarveToolpath` is wired straight into `useToolpathGeneration.ts` with
+nothing clipping its output. So `v_carve` and `v_carve_medial` currently ignore
+region filters entirely.
+
+The worker rewrote `vcarveLineResolver.test.ts` to assert the unmasked area and
+justified it by crediting `carving.ts` — but `carving.ts` exports
+`generateFollowLineToolpath`, a different generator. The resolver-level assertion
+is now factually right; what is missing is any end-to-end test that V-carve
+output respects a region at all. That absence is what let this through.
+
+p3b restores it at the generator and adds the missing end-to-end coverage.
+
+## `resolveRegionDomainArea` has a precondition — know which seam you are at
+
+Its exclude branch subtracts the region **raw**, relying on the generator to
+erode the whole domain by `centreInset` afterwards. That erosion is what creates
+the clearance. The function is therefore only valid at a **pre-erosion** seam:
+
+- `pocket.ts` — passes `tool.radius + stockToLeaveRadial`, band generators inset
+  by the identical `initialInset`. Correct.
+- `surfaceStepdown3d.ts` — passes `initialInset`, then insets by `initialInset`
+  via `buildInsetRegions`. Correct.
+- `surface.ts` — **does not qualify.** `buildSurfaceCoverageRegions` has already
+  expanded by the tool radius, so `coverageRegions` *is* the tool-centre domain
+  and only `radialLeave` erosion remains. p2 passed `centreInset = 0` here, so
+  excludes got no clearance at all and the cutter swept a full tool radius into
+  excluded areas. p2b adds `resolveRegionDomainCentre` (both polarities dilate,
+  as in the curve case) and switches this seam to it.
+
+Masking *before* the expansion is not an alternative fix — `expand(subject \ X,
+toolRadius)` pushes the domain back toward `X` and puts the centre in deeper.
+
+Review lesson: p2's exclude tests asserted only that no cut **centre** landed
+inside the excluded polygon, which is the pre-#452 semantic and passes even when
+the tool body penetrates. Containment tests must assert distance `>= tool.radius
++ stockToLeaveRadial` from the exclude boundary, not mere non-containment.
+
+## Debt to clear before the PR
+
+- `regionDomain.ts` duplicates ~90 lines of geometry predicates from
+  `guideFragments.ts` (`segmentIntersectionParams`, `pointInWorldPath`,
+  `distinctSorted`, `pointAt`, `sameWorldPoint`, `normalizeWorldPath`). The
+  copies are semantically identical — both use `XY_EPSILON = 1e-9`, verified at
+  review — but two copies of subtle geometry predicates will drift. p1's prompt
+  forbade touching `guideFragments.ts`, which forced the duplication; that was a
+  prompt defect, not a worker one. **p3 owns the fix**: export the shared helpers
+  from `guideFragments.ts` and delete the copies.
+
+## Notes
+
+- Dispatch from this worktree requires
+  `DEEPSEEK_AGENT_ENV_FILE=/Users/frankp/Projects/purecutcnc/.env.agent` —
+  `.env.agent` exists only in the primary checkout.
+- `--base feat/issue-452-region-domain` on every dispatch and finish; the script
+  default (`feat/core-arch-simplification`) is the wrong branch for this work.

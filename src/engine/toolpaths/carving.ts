@@ -27,7 +27,8 @@ import {
   resolveFeatureZSpan,
 } from './geometry'
 import { pushRapidAndPlunge, retractToSafe } from './pocket'
-import { buildRegionMask, clipToolpathResultToRegionMask, splitFeatureTargets } from './regions'
+import { resolveRegionDomainCurve } from './regionDomain'
+import { buildRegionMask, splitFeatureTargets } from './regions'
 
 function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): ToolpathBounds {
   if (!bounds) {
@@ -190,12 +191,20 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
   const moves: ToolpathMove[] = []
   let currentPosition: ToolpathPoint | null = null
 
+  // Follow-line's guide is the tool-centre path — no further erosion happens —
+  // so both polarities dilate the region by centreInset in resolveRegionDomainCurve.
+  const centreInset = tool.radius + Math.max(0, operation.stockToLeaveRadial ?? 0)
+
   for (const feature of targetFeatures) {
     const flattened = flattenProfile(feature.sketch.profile)
     if (flattened.points.length < 2) {
       warnings.push({ code: 'carveNotEnoughGeometry', params: { name: feature.name } })
       continue
     }
+
+    // Fragment the guide polyline by the region mask before generation.
+    const fragments = resolveRegionDomainCurve(flattened.points, flattened.closed, regionMask, centreInset)
+    if (fragments.length === 0) continue
 
     const topZ = resolveDimensionRef(project, feature.z_top)
     let carveZ = topZ - operation.carveDepth
@@ -205,21 +214,22 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     }
 
     const cutLevels = buildCarveLevels(topZ, carveZ, operation.stepdown, operation.pass === 'finish')
-    for (const levelZ of cutLevels) {
-      const entryPoint = profileStartPoint(flattened.points, levelZ)
-      currentPosition = pushRapidAndPlunge(moves, currentPosition, entryPoint, safeZ)
-      const cutMoves = toProfileCutMoves(flattened.points, levelZ, flattened.closed)
-      moves.push(...cutMoves)
-      currentPosition = cutMoves.at(-1)?.to ?? currentPosition
-      currentPosition = retractToSafe(moves, currentPosition, safeZ)
+    for (const fragment of fragments) {
+      for (const levelZ of cutLevels) {
+        const entryPoint = profileStartPoint(fragment.points, levelZ)
+        currentPosition = pushRapidAndPlunge(moves, currentPosition, entryPoint, safeZ)
+        const cutMoves = toProfileCutMoves(fragment.points, levelZ, fragment.closed)
+        moves.push(...cutMoves)
+        currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+        currentPosition = retractToSafe(moves, currentPosition, safeZ)
+      }
     }
   }
 
-  const result = {
+  return {
     operationId: operation.id,
     moves,
     warnings,
     bounds: computeBounds(moves),
   }
-  return clipToolpathResultToRegionMask(project, result, regionMask)
 }

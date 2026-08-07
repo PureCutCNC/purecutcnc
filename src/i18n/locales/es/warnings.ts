@@ -32,7 +32,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   "warnings.cutDepthExceedsToolMax": "La profundidad de corte {depth} {units} supera la profundidad máxima de corte de la herramienta {max} {units}",
   "warnings.cutDepthExceedsToolMaxForFeature": "{name}: La profundidad de corte {depth} {units} excede la profundidad máxima de corte de la herramienta {max} {units}",
   "warnings.entryStrategyFallback": "El movimiento de entrada seleccionado no cabe en la zona de mecanizado disponible; se utilizó una estrategia alternativa más segura.",
-  "warnings.entryDisabledByRegionMask": "Las entradas en rampa y helicoidales se desactivan cuando hay filtros de región activos; se utilizó una entrada de penetración.",
+
   "warnings.entryHelixDiameterClamped": "El diámetro de la entrada helicoidal se redujo de {requestedDiameter} a {actualDiameter} para que quepa en la zona de mecanizado.",
   "warnings.noToolAssigned": "No se ha asignado ninguna herramienta a esta operación",
   "warnings.vBitAngleRange": "El ángulo de la broca en V debe estar entre 0 y 180 grados",
@@ -64,7 +64,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   "warnings.edgeTrochoidalAdvanceRange": "El avance trocoidal debe ser mayor que 0 y no superar un diámetro de herramienta.",
   "warnings.edgeTrochoidalParametersInvalid": "El fresado trocoidal requiere valores positivos de avance, avance de penetración y RPM.",
   "warnings.edgeTrochoidalEntryStrategyUnsupported": "El fresado trocoidal solo admite entrada helicoidal o por penetración.",
-  "warnings.edgeTrochoidalRegionUnsupported": "El fresado de borde trocoidal no admite máscaras de región.",
+
   "warnings.edgeTrochoidalInvalidGuide": "El fresado trocoidal requiere una única guía cerrada válida.",
   "warnings.edgeTrochoidalMoveBudget": "El fresado trocoidal supera el presupuesto de 500.000 puntos de la operación.",
   "warnings.edgeTrochoidalEntryBudget": "La entrada trocoidal cerca de ({x}, {y}) supera el presupuesto de puntos de entrada.",
@@ -138,8 +138,6 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   "warnings.clampCrossedOne": "La mordaza \"{name}\" es atravesada por {count} movimiento {moveKind} por debajo de la holgura requerida (Z mínima {minZ}; Z requerida {requiredZ}).",
   "warnings.clampCrossedMany": "La mordaza \"{name}\" es atravesada por {count} movimientos {moveKind} por debajo de la holgura requerida (Z mínima {minZ}; Z requerida {requiredZ}).",
   "warnings.clampTravelLimitExceeded": "La mordaza \"{name}\" requiere una holgura Z de {requiredZ}, que supera el recorrido Z máximo del proyecto ({maxZ}).",
-  "warnings.regionClippedOne": "El filtro de región recortó el movimiento de corte de {count}.",
-  "warnings.regionClippedMany": "El filtro de región recortó los movimientos de corte de {count}.",
   "warnings.moveKind.rapid": "de avance rápido",
   "warnings.moveKind.plunge": "de penetración",
   "warnings.moveKind.lead_in": "de entrada",

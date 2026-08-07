@@ -17,9 +17,12 @@
 import ClipperLib from 'clipper-lib'
 import type { Operation, Point, Project } from '../../types/project'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
-import { applyContourDirection, checkMaxCutDepthWarning, getOperationSafeZ, greedyNearestNeighbor, normalizeToolForProject } from './geometry'
+import { applyContourDirection, checkMaxCutDepthWarning, DEFAULT_CLIPPER_SCALE, getOperationSafeZ, greedyNearestNeighbor, normalizeToolForProject, normalizeWinding, toClipperPath } from './geometry'
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
-import { buildContourLoops, buildInsetRegions, contourStartPoint, retractToSafe, toClosedCutMoves, transitionToCutEntry, updateBounds } from './pocket'
+import { unionClipperPaths } from './modelProtection'
+import { buildContourLoops, buildInsetRegions, contourStartPoint, executeDifference, polyTreeToRegions, retractToSafe, toClosedCutMoves, transitionToCutEntry, updateBounds } from './pocket'
+import { resolveRegionDomainArea } from './regionDomain'
+import { buildRegionMask, splitFeatureTargets } from './regions'
 import { resolvePocketRegions } from './resolver'
 
 function regionCentroid(region: { outer: Point[] }): { x: number; y: number } {
@@ -179,11 +182,42 @@ function generateVCarveToolpathSingle(project: Project, operation: Operation): T
   }
   let currentPosition: ToolpathPoint | null = null
 
+  // Build the region mask from the operation's selected features and resolve
+  // it into each band's domain before generation.  V-carve's cut width varies
+  // with depth: a V-bit at depth d cuts a half-width of d·slope, and
+  // buildInsetRegions erodes by currentDepth·slope.  We pass the maximum
+  // carved half-width (maxCarveDepth·slope) as centreInset so the widest pass
+  // still respects the region — shallower passes over-reach the region
+  // boundary by at most (maxCarveDepth - currentDepth)·slope, which is the
+  // coverage the include contract permits.
+  const regionMask = operation.target.source === 'features'
+    ? buildRegionMask(splitFeatureTargets(project, operation.target.featureIds).regionFeatures)
+    : null
+  const centreInset = operation.maxCarveDepth * slope
+
   for (const band of resolved.bands) {
     const maxBandDepth = Math.max(0, Math.min(operation.maxCarveDepth, band.topZ - band.bottomZ))
     if (!(maxBandDepth > 0)) {
       warnings.push({ code: 'vcarveBandNoDepth', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
       continue
+    }
+
+    // Apply the region mask to this band's domain.
+    if (regionMask) {
+      const scale = DEFAULT_CLIPPER_SCALE
+      const outerPaths = band.regions.map((r) => toClipperPath(normalizeWinding(r.outer, false), scale))
+      const bandDomain = unionClipperPaths(outerPaths)
+      if (bandDomain.length === 0) continue
+
+      const maskedDomain = resolveRegionDomainArea(bandDomain, regionMask, centreInset)
+      if (maskedDomain.length === 0) continue
+
+      const islandPaths = band.regions.flatMap((r) =>
+        r.islands.map((island) => toClipperPath(normalizeWinding(island, false), scale)),
+      )
+      const polyTree = executeDifference(maskedDomain, islandPaths)
+      band.regions = polyTreeToRegions(polyTree, band.targetFeatureIds, band.islandFeatureIds, scale)
+      if (band.regions.length === 0) continue
     }
 
     const vcarveJoinType = ClipperLib.JoinType.jtRound

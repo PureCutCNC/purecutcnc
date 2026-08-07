@@ -39,7 +39,7 @@ export const warningsEn = {
   'warnings.cutDepthExceedsToolMax': 'Cut depth {depth} {units} exceeds tool max cut depth {max} {units}',
   'warnings.cutDepthExceedsToolMaxForFeature': '{name}: Cut depth {depth} {units} exceeds tool max cut depth {max} {units}',
   'warnings.entryStrategyFallback': 'The selected entry move did not fit inside the available cutting area, so a safer fallback entry was used.',
-  'warnings.entryDisabledByRegionMask': 'Ramp and helix entries are disabled while region filters are active; a plunge entry was used.',
+
   'warnings.entryHelixDiameterClamped': 'The helix entry diameter was reduced from {requestedDiameter} to {actualDiameter} to fit the cutting area.',
   'warnings.noToolAssigned': 'No tool assigned to this operation',
   'warnings.vBitAngleRange': 'V-bit angle must be between 0 and 180 degrees',
@@ -74,7 +74,7 @@ export const warningsEn = {
   'warnings.edgeTrochoidalAdvanceRange': 'Trochoidal advance must be greater than 0 and no more than one tool diameter.',
   'warnings.edgeTrochoidalParametersInvalid': 'Trochoidal routing requires positive feed, plunge feed, and RPM values.',
   'warnings.edgeTrochoidalEntryStrategyUnsupported': 'Trochoidal routing supports Helix or Plunge entry only.',
-  'warnings.edgeTrochoidalRegionUnsupported': 'Trochoidal edge routing does not support region masks.',
+
   'warnings.edgeTrochoidalInvalidGuide': 'Trochoidal routing requires a single valid closed guide.',
   'warnings.edgeTrochoidalMoveBudget': 'Trochoidal routing exceeds the 500,000-point operation budget.',
   'warnings.edgeTrochoidalEntryBudget': 'The trochoidal entry near ({x}, {y}) exceeds the entry-point budget.',
@@ -155,8 +155,6 @@ export const warningsEn = {
   'warnings.clampCrossedOne': 'Clamp "{name}" is crossed by {count} {moveKind} move below required clearance (min Z {minZ}, required Z {requiredZ}).',
   'warnings.clampCrossedMany': 'Clamp "{name}" is crossed by {count} {moveKind} moves below required clearance (min Z {minZ}, required Z {requiredZ}).',
   'warnings.clampTravelLimitExceeded': 'Clamp "{name}" requires clearance Z {requiredZ}, which exceeds project max travel Z {maxZ}.',
-  'warnings.regionClippedOne': 'Region filter clipped {count} cut move.',
-  'warnings.regionClippedMany': 'Region filter clipped {count} cut moves.',
   'warnings.moveKind.rapid': 'rapid',
   'warnings.moveKind.plunge': 'plunge',
   'warnings.moveKind.lead_in': 'lead-in',

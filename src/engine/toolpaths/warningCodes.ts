@@ -34,7 +34,7 @@ export type ToolpathWarningCode =
   | 'cutDepthExceedsToolMax'
   // clearing-operation entry strategies
   | 'entryStrategyFallback'
-  | 'entryDisabledByRegionMask'
+
   | 'entryHelixDiameterClamped'
   // developer diagnostics (debugToolpath) — untranslated passthrough
   | 'debug'
@@ -69,7 +69,6 @@ export type ToolpathWarningCode =
   | 'edgeTrochoidalAdvanceRange'
   | 'edgeTrochoidalParametersInvalid'
   | 'edgeTrochoidalEntryStrategyUnsupported'
-  | 'edgeTrochoidalRegionUnsupported'
   | 'edgeTrochoidalInvalidGuide'
   | 'edgeTrochoidalMoveBudget'
   | 'edgeTrochoidalEntryBudget'
@@ -148,8 +147,6 @@ export type ToolpathWarningCode =
   // clamps / regions
   | 'clampCrossedOne'
   | 'clampCrossedMany'
-  | 'regionClippedOne'
-  | 'regionClippedMany'
   // surface-clean resolver
   | 'surfaceTargetsWrongRole'
   | 'surfaceClosedProfilesOnly'

@@ -54,7 +54,7 @@ import {
   unionClipperPathsEvenOdd,
 } from './modelProtection'
 import { retractToSafe, rotateContourToNearestEntry, toClosedCutMoves, toOpenCutMoves, transitionToCutEntry } from './pocket'
-import { buildRegionMask, clipToolpathResultToRegionMask } from './regions'
+import { buildRegionMask } from './regions'
 import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 
 const WATERLINE_LENGTH_EPSILON_MM = 0.01
@@ -1251,6 +1251,27 @@ export function generateFinishSurfaceWaterline(
   const adaptiveRefinementEnabled = operation.waterlineAdaptiveRefinement ?? true
 
   const regionMask = buildRegionMask(regionFeatures)
+  // Build the composite allowed area for pre-generation contour clipping.
+  // The waterline rings are tool-centre paths (already offset by toolOffset
+  // from the mesh surface), so both polarities dilate the region mask entries
+  // by toolOffset = tool.radius + stockToLeaveRadial.  Include entries add
+  // to the allowed set; exclude entries remove from it.
+  let compositeAllowedForRegion: ClipperPath[] | null = null
+  if (regionMask) {
+    const entries = regionMask.entries
+    if (entries.length > 0) {
+      compositeAllowedForRegion = entries[0].mode === 'include' ? [] : [...modelSilhouettePaths]
+      for (const entry of entries) {
+        if (entry.paths.length === 0) continue
+        const dilated = toolOffset > 0 ? offsetClipperPaths(entry.paths, toolOffset) : entry.paths
+        if (entry.mode === 'include') {
+          compositeAllowedForRegion = unionClipperPaths([...compositeAllowedForRegion, ...dilated])
+        } else {
+          compositeAllowedForRegion = differenceClipperPaths(compositeAllowedForRegion, dilated)
+        }
+      }
+    }
+  }
   const sliceIndex = getMeshSliceIndex(stlData as Parameters<typeof getMeshSliceIndex>[0])
   const sliceSampleEpsilon = Math.max(Math.abs(modelTopZ - effectiveBottom) * 1e-6, 1e-6)
 
@@ -1684,9 +1705,18 @@ export function generateFinishSurfaceWaterline(
       let emittedRingCut = false
       const protectionQueryZ = ringEntry.z
       const protectedAtLevel = protectedPathsAtZ(protectionQueryZ)
-      const envelopeClippedRaw = contourClipEnvelope
-        ? clipContourBoundariesToRegion([ringEntry.path], contourClipEnvelope)
+      // Pre-generation region mask: clip the closed contour ring to keep
+      // only the parts inside the composite allowed area.
+      const regionClipped = compositeAllowedForRegion
+        ? clipContourBoundariesToRegion([ringEntry.path], compositeAllowedForRegion)
         : { paths: [ringEntry.path], closed: [true] }
+      if (regionClipped.paths.length === 0) {
+        previousRingHadCut = false
+        continue
+      }
+      const envelopeClippedRaw = contourClipEnvelope
+        ? clipContourBoundariesToRegion(regionClipped.paths, contourClipEnvelope)
+        : regionClipped
       const envelopeClipped = contourClipEnvelope
         ? trimOpenContourCaps(
             envelopeClippedRaw.paths,
@@ -1964,25 +1994,15 @@ export function generateFinishSurfaceWaterline(
     }
   }
 
-  const regionClipped = clipToolpathResultToRegionMask(project, {
-    operationId: operation.id,
-    moves: allMoves,
-    warnings: [],
-    bounds: null,
-  }, regionMask)
-  if (regionClipped.warnings.length > 0) {
-    warnings.push(...regionClipped.warnings)
-  }
-
   const finalStepLevels = new Set<number>()
-  for (const move of regionClipped.moves) {
+  for (const move of allMoves) {
     if (move.kind !== 'cut') continue
     finalStepLevels.add(move.from.z)
     finalStepLevels.add(move.to.z)
   }
 
   return {
-    moves: regionClipped.moves,
+    moves: allMoves,
     stepLevels: finalStepLevels.size > 0 ? finalStepLevels : allStepLevels,
   }
 }

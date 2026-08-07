@@ -47,7 +47,7 @@ function normalizeClosedGuide(guide: Point[]): Point[] {
   return points
 }
 
-function normalizeClipperPath(path: ClipperPath, scale: number): Point[] {
+export function normalizeClipperPath(path: ClipperPath, scale: number): Point[] {
   const points: Point[] = []
   for (const point of path) {
     const converted = { x: point.X / scale, y: point.Y / scale }
@@ -90,7 +90,7 @@ function pointInPath(point: Point, path: Point[]): boolean {
  * Forbidden paths are already the result of a Clipper union. Even-odd parity
  * preserves any holes that Clipper represents as separate contours.
  */
-function pointInForbiddenPaths(point: Point, paths: Point[][]): boolean {
+export function pointInForbiddenPaths(point: Point, paths: Point[][]): boolean {
   let inside = false
   for (const path of paths) {
     if (pointInPath(point, path)) inside = !inside
@@ -98,7 +98,7 @@ function pointInForbiddenPaths(point: Point, paths: Point[][]): boolean {
   return inside
 }
 
-function segmentIntersectionParameters(from: Point, to: Point, edgeFrom: Point, edgeTo: Point): number[] {
+export function segmentIntersectionParameters(from: Point, to: Point, edgeFrom: Point, edgeTo: Point): number[] {
   const dx = to.x - from.x
   const dy = to.y - from.y
   const edgeDx = edgeTo.x - edgeFrom.x
@@ -125,7 +125,7 @@ function segmentIntersectionParameters(from: Point, to: Point, edgeFrom: Point, 
   return [Math.max(0, Math.min(1, t))]
 }
 
-function distinctSorted(values: number[]): number[] {
+export function distinctSorted(values: number[]): number[] {
   const sorted = values.sort((left, right) => left - right)
   const result: number[] = []
   for (const value of sorted) {
@@ -136,7 +136,7 @@ function distinctSorted(values: number[]): number[] {
   return result
 }
 
-function pointAt(from: Point, to: Point, t: number): Point {
+export function pointAt(from: Point, to: Point, t: number): Point {
   return {
     x: from.x + (to.x - from.x) * t,
     y: from.y + (to.y - from.y) * t,
