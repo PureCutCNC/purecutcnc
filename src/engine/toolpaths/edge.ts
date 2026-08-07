@@ -40,14 +40,20 @@ import { buildMaskFromClipperPaths, buildRegionMask, type RegionMask, splitFeatu
 import { resolveInsideEdgeRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
-import { helixAngularDirection, plungeLimitedFeedScale } from './entry'
+import { helixAngularDirection } from './entry'
+import {
+  appendTrochoidalEntry,
+  MAX_TROCHOIDAL_ENTRY_MOVES,
+  type TrochoidalOperationBudget,
+  trochoidalEntryMoveCount,
+  trochoidalEntryPoints,
+  trochoidalEntryStrategy,
+} from './trochoidalPath'
 import { splitClosedGuideByForbiddenPaths, type ClosedGuideFragment } from './guideFragments'
 import { resolveRegionDomainCurve } from './regionDomain'
 import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET } from './trochoidalEdge'
 import { expandedTabFootprints } from './tabs'
 
-const TROCHOIDAL_ENTRY_STEPS_PER_REVOLUTION = 36
-const MAX_TROCHOIDAL_ENTRY_MOVES = 20_000
 const TROCHOIDAL_GUIDE_SAFETY_FRACTION = 0.01
 
 const pointInPolygon = (ClipperLib.Clipper as unknown as {
@@ -57,10 +63,6 @@ const pointInPolygon = (ClipperLib.Clipper as unknown as {
 interface PreparedSafetyRegion {
   outer: ClipperPath
   islands: ClipperPath[]
-}
-
-interface TrochoidalOperationBudget {
-  remainingPoints: number
 }
 
 const offsetPaths = offsetKeepOutPaths
@@ -398,10 +400,6 @@ type TrochoidalFragmentPlanner = (
 
 const TROCHOIDAL_TAB_EPSILON = 1e-9
 
-function trochoidalEntryStrategy(operation: Operation): 'helix' | 'plunge' {
-  return operation.entryStrategy === 'plunge' ? 'plunge' : 'helix'
-}
-
 function pointInAnyPath(point: Point, paths: ClipperPath[]): boolean {
   const candidate = toClipperPoint(point)
   return paths.some((path) => pointInPolygon(candidate, path) !== 0)
@@ -680,86 +678,6 @@ function hasFatalTrochoidalWarning(warnings: ToolpathWarning[]): boolean {
     || warning.code === 'edgeFeatureNoCutDepth'
     || warning.code === 'edgeNoContourForFeature'
   ))
-}
-
-function appendTrochoidalEntry(
-  moves: ToolpathMove[],
-  from: ToolpathPoint,
-  entry: Point,
-  center: Point,
-  targetZ: number,
-  orbitRadius: number,
-  operation: Operation,
-  angularDirection: 1 | -1,
-): ToolpathPoint {
-  const points = trochoidalEntryPoints(from, entry, center, targetZ, orbitRadius, operation, angularDirection)
-  let current = from
-  for (const next of points) {
-    if (points.length === 1) {
-      moves.push({ kind: targetZ < current.z ? 'plunge' : 'rapid', from: current, to: next, source: 'trochoidal-entry' })
-    } else {
-      const angle = Math.min(45, Math.max(0.1, operation.entryRampAngle ?? 5))
-      moves.push({
-        kind: 'lead_in',
-        from: current,
-        to: next,
-        feedScale: plungeLimitedFeedScale(operation.feed, operation.plungeFeed, angle),
-        source: 'trochoidal-entry',
-      })
-    }
-    current = next
-  }
-  return current
-}
-
-/**
- * The entry helix bores the cavity the first orbit continues out of, so it must
- * share the orbit's angular direction exactly — a mismatch reverses the tool at
- * the handoff. `angularDirection` is therefore passed in rather than re-derived.
- */
-function trochoidalEntryPoints(
-  from: ToolpathPoint,
-  entry: Point,
-  center: Point,
-  targetZ: number,
-  orbitRadius: number,
-  operation: Operation,
-  angularDirection: 1 | -1,
-): ToolpathPoint[] {
-  const target = { x: entry.x, y: entry.y, z: targetZ }
-  if (targetZ >= from.z || trochoidalEntryStrategy(operation) === 'plunge') {
-    return [target]
-  }
-
-  const angle = Math.min(45, Math.max(0.1, operation.entryRampAngle ?? 5))
-  const pitch = 2 * Math.PI * orbitRadius * Math.tan(angle * Math.PI / 180)
-  const revolutions = Math.max(1, Math.ceil((from.z - targetZ) / pitch))
-  const steps = revolutions * TROCHOIDAL_ENTRY_STEPS_PER_REVOLUTION
-  const startAngle = Math.atan2(entry.y - center.y, entry.x - center.x)
-  const points: ToolpathPoint[] = []
-  for (let step = 1; step <= steps; step += 1) {
-    const progress = step / steps
-    const angleAtStep = startAngle + angularDirection * 2 * Math.PI * revolutions * progress
-    points.push({
-      x: center.x + Math.cos(angleAtStep) * orbitRadius,
-      y: center.y + Math.sin(angleAtStep) * orbitRadius,
-      z: from.z + (targetZ - from.z) * progress,
-    })
-  }
-  return points
-}
-
-function trochoidalEntryMoveCount(
-  fromZ: number,
-  targetZ: number,
-  orbitRadius: number,
-  operation: Operation,
-): number {
-  if (trochoidalEntryStrategy(operation) === 'plunge' || targetZ >= fromZ) return 0
-  const angle = Math.min(45, Math.max(0.1, operation.entryRampAngle ?? 5))
-  const pitch = 2 * Math.PI * orbitRadius * Math.tan(angle * Math.PI / 180)
-  if (!(pitch > 0)) return MAX_TROCHOIDAL_ENTRY_MOVES + 1
-  return Math.max(1, Math.ceil((fromZ - targetZ) / pitch)) * TROCHOIDAL_ENTRY_STEPS_PER_REVOLUTION
 }
 
 interface PreparedTrochoidalPath {
