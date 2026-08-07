@@ -77,6 +77,20 @@ export type ToolpathWarningCode =
   | 'edgeTrochoidalSkippedSpan'
   | 'edgeTrochoidalNoSurvivingSpan'
   | 'edgeTrochoidalSafetyCheck'
+  // engrave (follow_line) trochoidal
+  | 'carveTrochoidalWidthTooSmall'
+  | 'carveTrochoidalWidthNarrow'
+  | 'carveTrochoidalWidthLeavesCore'
+  | 'carveTrochoidalAdvanceRange'
+  | 'carveTrochoidalEntryStrategyUnsupported'
+  | 'carveTrochoidalInvalidGuide'
+  | 'carveTrochoidalMoveBudget'
+  | 'carveTrochoidalEntryBudget'
+  /** Fail closed, not warn. A V-bit has no constant cutting diameter, so
+   *  R = (W − D) / 2 computed from its nominal diameter produces a groove
+   *  that is wrong at every Z. The operation must refuse to generate a
+   *  toolpath rather than emit one that is not to size. */
+  | 'carveTrochoidalNeedsConstantDiameterTool'
   // 3D surface roughing (stepdown)
   | 'targetsNotFound'
   | 'stepoverRatioRange'

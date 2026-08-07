@@ -258,6 +258,9 @@ export function normalizeOperation(rawOperation: Operation, project: Project, in
     edgeStrategy: (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside')
       ? operation.edgeStrategy ?? 'contour'
       : operation.edgeStrategy,
+    carveStrategy: operation.kind === 'follow_line'
+      ? operation.carveStrategy ?? 'direct'
+      : operation.carveStrategy,
   }
 
   if (!isOperationTargetValid(project, normalized.kind, normalized.target)) {
