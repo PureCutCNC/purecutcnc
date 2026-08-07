@@ -24,8 +24,10 @@ import { normalizeLineEndings } from './textFormat'
  * same well-known idioms across every vendor's Autodesk post. Per issue #402,
  * this source is NEVER executed, `eval`'d, `require`'d, or run as JS in any
  * way: everything below is plain text pattern matching against a handful of
- * specific, well-documented call-site idioms and a flat `properties = {...}`
- * object literal. Anything not matched by one of these narrow patterns is
+ * specific, well-documented call-site idioms and a `properties = {...}`
+ * object literal whose values are either simple literals (flat legacy
+ * format) or nested `{title, description, value, ...}` objects (current
+ * Autodesk format). Anything not matched by one of these narrow patterns is
  * left at the generic default and reported `omitted` rather than guessed.
  */
 
@@ -56,19 +58,41 @@ function findCallSite(text: string, snippet: string): TextMatch | null {
 }
 
 interface CpsProperty {
-  value: string
+  value: string | null
   line: number
 }
 
 const PROPERTY_LINE = /^\s*(\w+):\s*(.+?),?\s*(\/\/.*)?$/
+const NESTED_VALUE_LINE = /^\s*value\s*:\s*(.+?),?\s*(\/\/.*)?$/
+
+/** Returns true when `raw` is a JS literal (quoted string, boolean/null keyword, or number). */
+function isLiteralValue(raw: string): boolean {
+  const t = raw.trim()
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) return true
+  if (t === 'true' || t === 'false' || t === 'null') return true
+  return /^-?\d+(\.\d+)?$/.test(t)
+}
+
+/** Strips one pair of matching outer quotes. Returns the input unchanged when not quoted. */
+function unquote(s: string): string {
+  const t = s.trim()
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) return t.slice(1, -1)
+  return t
+}
 
 /**
- * Extracts `properties = { key: value, // comment ... };` into a flat
- * key->value map. Deliberately line-oriented — never a general JS
- * object-literal parser — since every real-world .cps properties block is
- * one simple boolean/number/string literal per line. Lines that don't fit
- * that shape (e.g. an expression value, or `key :` with a space before the
- * colon) are silently skipped rather than mis-parsed.
+ * Extracts `properties = { key: value, ... };` into a key->value map.
+ * Handles two shapes:
+ *
+ * 1. Flat legacy format  — `key: literal,` (one literal per line).
+ * 2. Nested current format — `key: { title, description, value: literal, ... },`
+ *    where the `value` field is column-aligned (whitespace before the colon
+ *    tolerated). Inner fields (title/description/group/type/values/order/scope)
+ *    never leak into the returned map.
+ *
+ * A nested property whose `value` is an expression (e.g. `eFirmware.GRBL`,
+ * `100 * 60`) resolves to `null` — per the #402 no-evaluation contract it is
+ * never computed.
  */
 function extractProperties(text: string): Map<string, CpsProperty> {
   const properties = new Map<string, CpsProperty>()
@@ -79,12 +103,52 @@ function extractProperties(text: string): Map<string, CpsProperty> {
   if (bodyEnd === -1) return properties
   const body = text.slice(bodyStart, bodyEnd)
   const bodyStartLine = lineAt(text, bodyStart)
-  body.split('\n').forEach((rawLine, offset) => {
-    const match = PROPERTY_LINE.exec(rawLine)
-    if (!match) return
-    const [, key, value] = match
-    properties.set(key, { value: value.trim(), line: bodyStartLine + offset })
-  })
+  const lines = body.split('\n')
+
+  for (let i = 0; i < lines.length; i++) {
+    const match = PROPERTY_LINE.exec(lines[i])
+    if (!match) continue
+
+    const [, key, rawValue] = match
+    const trimmed = rawValue.trim()
+
+    if (trimmed === '{') {
+      // Nested format: brace-match to find the closing }, find the `value` field inside.
+      let depth = 0
+      let closeIdx = -1
+      for (let j = i; j < lines.length; j++) {
+        for (let k = 0; k < lines[j].length; k++) {
+          if (lines[j][k] === '{') depth++
+          else if (lines[j][k] === '}') {
+            depth--
+            if (depth === 0) { closeIdx = j; break }
+          }
+        }
+        if (closeIdx !== -1) break
+      }
+
+      if (closeIdx === -1) continue // malformed — skip this property
+
+      for (let j = i + 1; j < closeIdx; j++) {
+        const valueMatch = NESTED_VALUE_LINE.exec(lines[j])
+        if (!valueMatch) continue
+
+        const innerValue = valueMatch[1].trim()
+        if (isLiteralValue(innerValue)) {
+          properties.set(key, { value: unquote(innerValue), line: bodyStartLine + i })
+        } else {
+          properties.set(key, { value: null, line: bodyStartLine + i })
+        }
+        break
+      }
+
+      i = closeIdx // skip past this nested block
+    } else {
+      // Flat legacy format (unchanged).
+      properties.set(key, { value: trimmed, line: bodyStartLine + i })
+    }
+  }
+
   return properties
 }
 
@@ -185,24 +249,57 @@ export const autodeskCpsAdapter: SourceAdapter = {
       )
     }
 
-    const capabilities = findAssignment(fileText, 'capabilities')
-    if (!capabilities) {
+    const capabilitiesRe = /^capabilities\s*=\s*(.+?);/m
+    const capabilitiesMatch = capabilitiesRe.exec(fileText)
+    if (!capabilitiesMatch) {
       findings.push({
         status: 'conflicting',
         sourceField: 'capabilities',
         message: 'No top-level "capabilities = CAPABILITY_...;" assignment found; cannot confirm this post targets a 3-axis mill, so it cannot be treated as safe.',
         blocksStrict: true,
       })
-    } else if (capabilities.value !== 'CAPABILITY_MILLING') {
-      findings.push({
-        status: 'unsupported',
-        sourceField: 'capabilities',
-        message: `capabilities = ${capabilities.value} — this post targets a machine type other than 3-axis milling (e.g. turning/lathe, or a mill-turn combination). PureCutCNC is mill-only; diameter-mode axes, turret/live-tooling macros, and lathe-specific canned cycles are out of scope. Fields below were still extracted where literally present, for transparency, but this definition should not be used as-is.`,
-        blocksStrict: true,
-        sourceLocation: { line: capabilities.line },
-      })
     } else {
-      mapped('capabilities', undefined, 'capabilities = CAPABILITY_MILLING — confirms this post targets a 3-axis mill, the only PureCutCNC-supported machine type.', capabilities.line)
+      const capabilitiesLine = lineAt(fileText, capabilitiesMatch.index)
+      const flags = capabilitiesMatch[1].split('|').map((f) => f.trim()).filter(Boolean)
+      if (flags.length === 0) {
+        findings.push({
+          status: 'conflicting',
+          sourceField: 'capabilities',
+          message: 'No top-level "capabilities = CAPABILITY_...;" assignment found; cannot confirm this post targets a 3-axis mill, so it cannot be treated as safe.',
+          blocksStrict: true,
+        })
+      } else if (flags.length === 1 && flags[0] === 'CAPABILITY_TURNING') {
+        findings.push({
+          status: 'unsupported',
+          sourceField: 'capabilities',
+          message: `capabilities = ${flags[0]} — this post targets a machine type other than 3-axis milling (e.g. turning/lathe, or a mill-turn combination). PureCutCNC is mill-only; diameter-mode axes, turret/live-tooling macros, and lathe-specific canned cycles are out of scope. Fields below were still extracted where literally present, for transparency, but this definition should not be used as-is.`,
+          blocksStrict: true,
+          sourceLocation: { line: capabilitiesLine },
+        })
+      } else if (flags.includes('CAPABILITY_MILLING')) {
+        const otherMachineModes = flags.filter((f) => f !== 'CAPABILITY_MILLING' && f !== 'CAPABILITY_MACHINE_SIMULATION')
+        const ignoredFlags = flags.filter((f) => f === 'CAPABILITY_MACHINE_SIMULATION')
+        if (otherMachineModes.length > 0) {
+          findings.push({
+            status: 'conflicting',
+            sourceField: 'capabilities',
+            message: `capabilities = ${capabilitiesMatch[1].trim()} — CAPABILITY_MILLING is present but so are other machine-mode flags (${otherMachineModes.join(', ')}). This post serves multiple machine modes behind a machineMode switch, and static extraction cannot tell which branch a given idiom belongs to.`,
+            blocksStrict: true,
+            sourceLocation: { line: capabilitiesLine },
+          })
+        } else {
+          const extra = ignoredFlags.length > 0 ? ` (non-G-code flag${ignoredFlags.length > 1 ? 's' : ''} ${ignoredFlags.join(', ')} ignored)` : ''
+          mapped('capabilities', undefined, `capabilities = ${capabilitiesMatch[1].trim()} — confirms this post targets a 3-axis mill, the only PureCutCNC-supported machine type.${extra}`, capabilitiesLine)
+        }
+      } else {
+        findings.push({
+          status: 'unsupported',
+          sourceField: 'capabilities',
+          message: `capabilities = ${capabilitiesMatch[1].trim()} — this post does not declare CAPABILITY_MILLING. PureCutCNC is mill-only; this definition should not be used as-is.`,
+          blocksStrict: true,
+          sourceLocation: { line: capabilitiesLine },
+        })
+      }
     }
 
     // --- 2. properties = { ... } ---
@@ -219,16 +316,36 @@ export const autodeskCpsAdapter: SourceAdapter = {
 
     const showSequenceNumbers = properties.get('showSequenceNumbers')
     if (showSequenceNumbers) {
-      overrides.program!.lineNumbers = showSequenceNumbers.value === 'true'
-      mapped('properties.showSequenceNumbers', 'program.lineNumbers', `showSequenceNumbers: ${showSequenceNumbers.value} — writeBlock() only prefixes "N" + sequenceNumber when this is true.`, showSequenceNumbers.line)
+      if (showSequenceNumbers.value === null) {
+        omitted('properties.showSequenceNumbers', 'program.lineNumbers', 'showSequenceNumbers value is an expression this adapter refuses to evaluate; kept the generic default.')
+      } else if (showSequenceNumbers.value === 'toolChange') {
+        findings.push({
+          status: 'unsupported',
+          sourceField: 'properties.showSequenceNumbers',
+          targetField: 'program.lineNumbers',
+          message: 'showSequenceNumbers is "toolChange" — line numbers on tool-change blocks only. PureCutCNC has no per-block-type line-number toggle; kept the generic default.',
+          blocksStrict: false,
+          sourceLocation: { line: showSequenceNumbers.line },
+        })
+      } else {
+        overrides.program!.lineNumbers = showSequenceNumbers.value === 'true'
+        mapped('properties.showSequenceNumbers', 'program.lineNumbers', `showSequenceNumbers: ${showSequenceNumbers.value} — writeBlock() only prefixes "N" + sequenceNumber when this is true.`, showSequenceNumbers.line)
+      }
     } else {
       omitted('properties.showSequenceNumbers', 'program.lineNumbers', 'No showSequenceNumbers property found; kept the generic default.')
     }
 
     const sequenceNumberIncrement = properties.get('sequenceNumberIncrement')
-    if (sequenceNumberIncrement) {
-      overrides.program!.lineNumberIncrement = Number(sequenceNumberIncrement.value)
-      mapped('properties.sequenceNumberIncrement', 'program.lineNumberIncrement', `sequenceNumberIncrement: ${sequenceNumberIncrement.value}.`, sequenceNumberIncrement.line)
+    if (sequenceNumberIncrement && sequenceNumberIncrement.value !== null) {
+      const n = Number(sequenceNumberIncrement.value)
+      if (Number.isFinite(n)) {
+        overrides.program!.lineNumberIncrement = n
+        mapped('properties.sequenceNumberIncrement', 'program.lineNumberIncrement', `sequenceNumberIncrement: ${sequenceNumberIncrement.value}.`, sequenceNumberIncrement.line)
+      } else {
+        omitted('properties.sequenceNumberIncrement', 'program.lineNumberIncrement', `sequenceNumberIncrement value "${sequenceNumberIncrement.value}" could not be parsed as a finite number; kept the generic default.`)
+      }
+    } else if (sequenceNumberIncrement) {
+      omitted('properties.sequenceNumberIncrement', 'program.lineNumberIncrement', 'sequenceNumberIncrement value is an expression this adapter refuses to evaluate; kept the generic default.')
     } else {
       omitted('properties.sequenceNumberIncrement', 'program.lineNumberIncrement', 'No sequenceNumberIncrement property found; kept the generic default.')
     }

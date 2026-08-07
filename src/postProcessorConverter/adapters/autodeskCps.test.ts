@@ -167,3 +167,131 @@ assert(autodeskCpsAdapter.staticAnalysisOnly === true, 'staticAnalysisOnly shoul
 
   console.log('autodeskCps.test: edingcnc-turning.cps (lathe, refused) assertions passed')
 }
+
+// --- carbide3d.cps: nested-format properties (current Autodesk shape) ---
+{
+  const text = loadFixture('carbide3d.cps')
+  const result = autodeskCpsAdapter.convert(text, 'carbide3d.cps')
+  const definition = buildMachineDefinition(result.overrides, {
+    id: 'test-autodesk-cps-carbide3d',
+    name: 'Test Carbide3D (Grbl)',
+    description: 'Converted from carbide3d.cps',
+  })
+
+  // A1 — the reported bug: lineNumberIncrement must be the real nested value 1, not NaN or the generic default.
+  assert(definition.program.lineNumberIncrement === 1, `lineNumberIncrement: ${definition.program.lineNumberIncrement} (expected 1 — the real nested value)`)
+
+  // A2 — showSequenceNumbers: the real nested value "false".
+  assert(definition.program.lineNumbers === false, `lineNumbers: ${definition.program.lineNumbers} (expected false — the real nested value)`)
+
+  // B — capabilities gate: CAPABILITY_MILLING | CAPABILITY_MACHINE_SIMULATION must be mapped, non-blocking.
+  const capFinding = result.findings.find((f) => f.sourceField === 'capabilities')
+  assert(capFinding !== undefined, 'expected a findings entry for capabilities')
+  assert(capFinding?.status === 'mapped', `capabilities status: ${capFinding?.status} (expected mapped)`)
+  assert(capFinding?.blocksStrict === false, `capabilities blocksStrict: ${capFinding?.blocksStrict} (expected false)`)
+  assert(/CAPABILITY_MACHINE_SIMULATION/.test(capFinding?.message ?? ''), 'expected the ignored CAPABILITY_MACHINE_SIMULATION flag to appear in the message')
+
+  for (const finding of result.findings) {
+    assert(finding.message.length > 0, `finding for ${finding.sourceField} has an empty message`)
+    if (finding.status === 'unsupported' || finding.status === 'conflicting') {
+      assert(typeof finding.blocksStrict === 'boolean', `finding for ${finding.sourceField} (${finding.status}) must have a blocksStrict decision`)
+    }
+  }
+
+  console.log('autodeskCps.test: carbide3d.cps (nested format) assertions passed')
+}
+
+// --- inline: showSequenceNumbers with nested value "true" ---
+// Guards A2: without this, lineNumbers === false could pass even if the parser
+// still returns `{` and falls through to false (the bug that hides behind the NaN crash).
+{
+  const inlineSource = [
+    'capabilities = CAPABILITY_MILLING;',
+    'extension = "nc";',
+    'properties = {',
+    '  showSequenceNumbers: {',
+    '    title      : "Use sequence numbers",',
+    '    description: "Test.",',
+    '    group      : "formats",',
+    '    type       : "enum",',
+    '    values     : [',
+    '      {title:"Yes", id:"true"},',
+    '      {title:"No", id:"false"}',
+    '    ],',
+    '    value: "true",',
+    '    scope: "post"',
+    '  }',
+    '};',
+  ].join('\n')
+
+  const result = autodeskCpsAdapter.convert(inlineSource, 'inline-showseq-true.cps')
+  const definition = buildMachineDefinition(result.overrides, {
+    id: 'test-inline-showseq-true',
+    name: 'Test',
+    description: 'Inline test',
+  })
+
+  assert(definition.program.lineNumbers === true, `lineNumbers: ${definition.program.lineNumbers} (expected true — nested value "true")`)
+  console.log('autodeskCps.test: inline showSequenceNumbers "true" assertion passed')
+}
+
+// --- inline: expression-valued nested property resolves to null ---
+// Per the #402 no-evaluation contract: an expression value must be reported, never computed.
+{
+  // Deliberately on sequenceNumberIncrement — a property the adapter actually
+  // consumes. An expression on a property nobody reads cannot fail, so it would
+  // not test the null path at all.
+  const inlineSource = [
+    'capabilities = CAPABILITY_MILLING;',
+    'extension = "nc";',
+    'properties = {',
+    '  sequenceNumberIncrement: {',
+    '    title      : "Sequence number increment",',
+    '    description: "Test.",',
+    '    group      : "formats",',
+    '    type       : "integer",',
+    '    value: 100 * 60,',
+    '    scope: "post"',
+    '  }',
+    '};',
+  ].join('\n')
+
+  const result = autodeskCpsAdapter.convert(inlineSource, 'inline-expression.cps')
+  const definition = buildMachineDefinition(result.overrides, {
+    id: 'test-inline-expression',
+    name: 'Test',
+    description: 'Inline expression test',
+  })
+
+  // Never computed: 6000 is what evaluating `100 * 60` would have produced, and
+  // NaN is what Number() on the raw text produces. Both must be absent — the
+  // generic baseline default (10) survives instead.
+  assert(
+    definition.program.lineNumberIncrement === 10,
+    `lineNumberIncrement: ${definition.program.lineNumberIncrement} (expected the generic default 10 — the expression must not be evaluated to 6000 or coerced to NaN)`,
+  )
+
+  // ...and the refusal is reported rather than silently dropped (#402 contract).
+  const finding = result.findings.find((f) => f.sourceField === 'properties.sequenceNumberIncrement')
+  assert(finding !== undefined, 'expected a findings entry for the expression-valued sequenceNumberIncrement')
+  assert(finding?.status === 'omitted', `expression finding status: ${finding?.status} (expected omitted)`)
+  assert(/expression/.test(finding?.message ?? ''), `expected the finding to say the value is an expression; got: ${finding?.message}`)
+  console.log('autodeskCps.test: inline expression-valued property assertion passed')
+}
+
+// --- inline: capabilities = CAPABILITY_MILLING | CAPABILITY_JET yields conflicting + blocksStrict true ---
+{
+  const inlineSource = [
+    'capabilities = CAPABILITY_MILLING | CAPABILITY_JET;',
+    'extension = "nc";',
+    'properties = {};',
+  ].join('\n')
+
+  const result = autodeskCpsAdapter.convert(inlineSource, 'inline-milling-jet.cps')
+  const capFinding = result.findings.find((f) => f.sourceField === 'capabilities')
+  assert(capFinding !== undefined, 'expected a findings entry for capabilities')
+  assert(capFinding?.status === 'conflicting', `capabilities status: ${capFinding?.status} (expected conflicting)`)
+  assert(capFinding?.blocksStrict === true, `capabilities blocksStrict: ${capFinding?.blocksStrict} (expected true)`)
+  assert(/CAPABILITY_JET/.test(capFinding?.message ?? ''), 'expected CAPABILITY_JET to appear in the conflicting message')
+  console.log('autodeskCps.test: inline CAPABILITY_MILLING | CAPABILITY_JET assertion passed')
+}
