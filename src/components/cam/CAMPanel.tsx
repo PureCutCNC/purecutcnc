@@ -39,6 +39,7 @@ import type {
   Tool,
   ToolType,
 } from '../../types/project'
+import { isTrochoidalCarve } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
 import { createOperationBookletPdf } from '../../engine/operationBooklet'
@@ -1095,6 +1096,10 @@ export function CAMPanel({
     const isRoughEdgeRoute = selectedOperation.pass === 'rough'
       && (selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside')
     const isTrochoidalRoughEdge = isRoughEdgeRoute && selectedOperation.edgeStrategy === 'trochoidal'
+    // Shared predicate, not a second spelling of it: generation, this panel's
+    // field visibility, and the channel-width readout must agree exactly.
+    const isTrochoidalCarveOp = isTrochoidalCarve(selectedOperation)
+    const isTrochoidalOp = isTrochoidalRoughEdge || isTrochoidalCarveOp
     const trochoidalTool = selectedOperationTool && selectedOperationTool.units !== project.meta.units
       ? convertToolUnits(selectedOperationTool, project.meta.units)
       : selectedOperationTool
@@ -1108,14 +1113,15 @@ export function CAMPanel({
     // A pinned width can fall under the floor when the tool grows. The engine
     // refuses to generate in that case, so say so at the field rather than
     // leaving the user to find it in the warnings list.
-    const trochoidalCutWidthBelowFloor = isTrochoidalRoughEdge
+    const trochoidalCutWidthBelowFloor = isTrochoidalOp
       && trochoidalToolDiameter > 0
       && trochoidalCutWidth < trochoidalCutWidthFloor
     const supportsEntryStrategy = selectedOperation.kind === 'pocket'
       || selectedOperation.kind === 'surface_clean'
       || selectedOperation.kind === 'rough_surface'
       || isTrochoidalRoughEdge
-    const entryStrategy = isTrochoidalRoughEdge
+      || isTrochoidalCarveOp
+    const entryStrategy = isTrochoidalOp
       ? selectedOperation.entryStrategy === 'plunge' ? 'plunge' : 'helix'
       : selectedOperation.entryStrategy ?? 'plunge'
     return (
@@ -1345,7 +1351,21 @@ export function CAMPanel({
                       <OperationParameterReference kind="edgeStrategy" variant={selectedOperation.edgeStrategy ?? 'contour'} />
                     </label>
                   ) : null}
-                  {isTrochoidalRoughEdge ? (
+                  {selectedOperation.kind === 'follow_line' ? (
+                    <label className="properties-field">
+                      <span>{camT('cam.operation.carveStrategy')}</span>
+                      <Select
+                        value={selectedOperation.carveStrategy ?? 'direct'}
+                        options={[
+                          { value: 'direct', label: camT('cam.operation.carveStrategyDirect') },
+                          { value: 'trochoidal', label: camT('cam.operation.carveStrategyTrochoidal') },
+                        ]}
+                        onChange={(carveStrategy) => updateOperation(selectedOperation.id, { carveStrategy })}
+                      />
+                      <OperationParameterReference kind="edgeStrategy" variant={selectedOperation.carveStrategy === 'trochoidal' ? 'trochoidal' : 'contour'} />
+                    </label>
+                  ) : null}
+                  {isTrochoidalOp ? (
                     <>
                       <label className="properties-field">
                         <span>{camT('cam.operation.trochoidalCutWidth')}</span>
@@ -1390,6 +1410,28 @@ export function CAMPanel({
                           {formatLength(trochoidalAdvance * trochoidalToolDiameter, project.meta.units)}
                         </span>
                       </div>
+                      {isTrochoidalCarveOp ? (
+                        <>
+                          <div className="properties-field">
+                            <span>{camT('cam.operation.carveChannelWidth')}</span>
+                            <span className="cam-field-derived">{formatLength(trochoidalCutWidth, project.meta.units)}</span>
+                          </div>
+                          <div className="properties-field">
+                            <span />
+                            <span className="cam-field-message">
+                              {camT('cam.operation.carveChannelWidthNote', { width: formatLength(trochoidalCutWidth, project.meta.units) })}
+                            </span>
+                          </div>
+                          {trochoidalTool?.type === 'v_bit' ? (
+                            <div className="properties-field">
+                              <span />
+                              <span className="cam-field-message">
+                                {camT('cam.operation.carveTrochoidalNeedsConstantDiameterTool')}
+                              </span>
+                            </div>
+                          ) : null}
+                        </>
+                      ) : null}
                     </>
                   ) : null}
                   {selectedOperation.kind !== 'follow_line'
@@ -1423,7 +1465,7 @@ export function CAMPanel({
                           options={[
                             { value: 'plunge', label: camT('cam.operation.entryPlunge') },
                             { value: 'helix', label: camT('cam.operation.entryHelix') },
-                            ...(isTrochoidalRoughEdge ? [] : [{ value: 'ramp' as EntryStrategy, label: camT('cam.operation.entryRamp') }]),
+                            ...(isTrochoidalOp ? [] : [{ value: 'ramp' as EntryStrategy, label: camT('cam.operation.entryRamp') }]),
                           ]}
                           onChange={(value) => updateOperation(selectedOperation.id, { entryStrategy: value })}
                         />
@@ -1521,7 +1563,7 @@ export function CAMPanel({
                       <OperationParameterReference kind="rasterAngle" />
                     </label>
                   ) : null}
-                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside' || selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface' || selectedOperation.kind === 'finish_surface' || selectedOperation.kind === 'finish_surface_cleanup') ? (
+                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside' || selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface' || selectedOperation.kind === 'finish_surface' || selectedOperation.kind === 'finish_surface_cleanup' || isTrochoidalCarveOp) ? (
                     <label className="properties-field">
                       <span>{camT('cam.operation.cutDirection')}</span>
                       <Select

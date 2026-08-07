@@ -27,6 +27,7 @@ interface OperationSnapshot {
   kind?: unknown
   pass?: unknown
   edgeStrategy?: unknown
+  carveStrategy?: unknown
   trochoidalCutWidth?: unknown
   trochoidalAdvance?: unknown
   machiningOrder?: unknown
@@ -131,6 +132,79 @@ test.describe('CAM operation browser smoke', () => {
     expect(operations[0].machiningOrder).toBe(contourOperations[0]?.machiningOrder)
     expect(operations[0].target?.source).toBe('features')
     expect(operations[0].target?.featureIds).toEqual(['f-machinable-add'])
+  })
+
+  test('Engrave strategy dropdown switches between Direct and Trochoidal', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    const row = rowByName(app.page, 'Carve Target')
+    const menu = await openRowContextMenu(app.page, row)
+    await ui.contextMenu.item(menu, 'Create operation').hover()
+
+    const submenu = ui.contextMenu.submenu(app.page)
+    await expect(submenu).toBeVisible()
+    await expect(ui.contextMenu.item(submenu, 'Create Engraving')).toBeVisible()
+
+    await clickMenuItem(submenu, 'Create Engraving')
+
+    await expect(ui.operations.countBadge(app.page)).toHaveText('1')
+    const operationRow = ui.operations.rowByName(app.page, 'Engrave')
+    await expect(operationRow).toBeVisible()
+
+    // Strategy field defaults to Direct.
+    const strategyField = ui.cam.operationField(app.page, 'Strategy')
+    await expect(strategyField.locator('.ui-select__label')).toHaveText('Direct')
+
+    // Trochoidal fields not visible for Direct.
+    await expect(app.page.getByText('Trochoidal Cut Width', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Advance per Loop (% of tool diameter)', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Channel width', { exact: true })).toHaveCount(0)
+
+    // Switch to Trochoidal.
+    await strategyField.locator('.ui-select__trigger').click()
+    await app.page.getByRole('option', { name: 'Trochoidal (slot)', exact: true }).click()
+
+    // Trochoidal fields become visible.
+    await expect(app.page.getByText('Trochoidal Cut Width', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Advance per Loop (% of tool diameter)', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Advance per Loop (distance)', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Channel width', { exact: true })).toBeVisible()
+    // The channel-width note mentions the width.
+    await expect(app.page.getByText(/Trochoidal cuts a /)).toBeVisible()
+
+    // Advanced section: Entry, Cut Direction visible; Ramp excluded.
+    await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
+    await expect(app.page.getByText('Cut Direction', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Entry', { exact: true })).toBeVisible()
+    const entryField = ui.cam.operationField(app.page, 'Entry Strategy')
+    await expect(entryField.locator('.ui-select__label')).toHaveText('Helix')
+    await entryField.locator('.ui-select__trigger').click()
+    await expect(app.page.getByRole('option', { name: 'Ramp', exact: true })).toHaveCount(0)
+    await app.page.keyboard.press('Escape')
+
+    let project = await getProject(app.page)
+    let operations = project.operations as OperationSnapshot[]
+    expect(operations).toHaveLength(1)
+    expect(operations[0].kind).toBe('follow_line')
+    expect(operations[0].carveStrategy).toBe('trochoidal')
+    // Selecting the strategy must NOT pin the tool-derived settings.
+    expect(operations[0].trochoidalCutWidth).toBeUndefined()
+    expect(operations[0].trochoidalAdvance).toBeUndefined()
+    // entryStrategy is not stored until the user edits it; the UI shows Helix.
+
+    // Switch back to Direct.
+    await strategyField.locator('.ui-select__trigger').click()
+    await app.page.getByRole('option', { name: 'Direct', exact: true }).click()
+
+    // Trochoidal fields hide again.
+    await expect(app.page.getByText('Trochoidal Cut Width', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Channel width', { exact: true })).toHaveCount(0)
+    // Cut Direction is hidden for direct Engrave.
+    await expect(app.page.getByText('Cut Direction', { exact: true })).toHaveCount(0)
+
+    project = await getProject(app.page)
+    operations = project.operations as OperationSnapshot[]
+    expect(operations[0].carveStrategy).toBe('direct')
   })
 
   test('quick-op submenu splits 2D and 3D operations for an imported model', async ({ app, ui }) => {

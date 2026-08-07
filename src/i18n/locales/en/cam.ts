@@ -425,9 +425,9 @@ export const camEn = {
   // Engrave
   'cam.opDesc.followLine.title': 'Engrave',
   'cam.opDesc.followLine.fullDescription':
-    'Engrave traces along any sketch path — open or closed — at a fixed carve depth. The tool follows the path centerline; no offset. Good for text, decorative lines, alignment marks, and following complex curves on the stock surface.',
+    'Engrave traces along any sketch path — open or closed — at a fixed carve depth. Direct follows the centerline for text, decorative lines, alignment marks, and following complex curves on the stock surface. Trochoidal cuts a wider channel with overlapping orbits, for functional slots (T-track, inlay, dado, wire routing) where the groove is meant to be wider than the cutter.',
   'cam.opDesc.followLine.keyPoint.0': 'Accepts open or closed path features',
-  'cam.opDesc.followLine.keyPoint.1': 'Tool follows the path centerline (no offset)',
+  'cam.opDesc.followLine.keyPoint.1': 'Direct follows the centerline; Trochoidal cuts a wider slot',
   'cam.opDesc.followLine.keyPoint.2': 'Single-pass operation (no rough/finish split)',
   'cam.opDesc.followLine.keyPoint.3': 'Typically shallow; stepdown applies if carve depth exceeds it',
   'cam.opDesc.followLine.keyPoint.4': 'Optional closed regions act as XY filters',

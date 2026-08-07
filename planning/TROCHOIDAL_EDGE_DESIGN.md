@@ -1,10 +1,10 @@
 ---
 status: current
-authoritative-for: trochoidal Edge Route roughing — guide-domain fragmentation, clearance budget, and the pipeline stages it must bypass
-last-verified: 2026-08-06
+authoritative-for: trochoidal Edge Route roughing and trochoidal Engrave — guide-domain fragmentation, clearance budget, and the pipeline stages they must bypass
+last-verified: 2026-08-07
 ---
 
-# Trochoidal Edge Routing
+# Trochoidal Routing
 
 ## Purpose
 
@@ -166,6 +166,30 @@ Tab footprint geometry lives in `tabs.ts` (`expandedTabFootprints`), not beside
 it. Callers pass their own clearance because they answer different questions,
 but the footprint shape and the offset tolerance come from one place.
 
+## Engrave (follow_line) slot
+
+Engrave gains a trochoidal strategy under the same geometry model, but the guide
+**is** the unmodified feature centreline — there is no `guideOffset` derivation
+and no `0.01 × D` allowance, because no wall is retained and there is nothing to
+gouge.
+
+`centreInset` becomes `sweptHalfWidth + stockToLeaveRadial`, where
+`sweptHalfWidth = cutWidth / 2` under trochoidal and `tool.radius` under direct.
+
+Open guides are supported here and only here — the stationary entry orbit **and**
+stationary exit orbit in `buildTrochoidalContour`'s `closed: false` branch exist
+for this operation. An open engrave guide gets no Clipper CCW winding
+normalisation, so the cut-direction inversion logic is not the same as the edge
+case and is pinned by its own test in `carving.test.ts`.
+
+Trochoidal cannot keep the groove at tool width: `R = (W − D) / 2` requires
+`W > D`, so the feature necessarily widens the groove and is really slotting.
+That is why the option is labelled `Trochoidal (slot)` and carries a
+channel-width readout in the CAM panel.
+
+No tabs, no retained wall, no rest machining. The cut-width bounds, budget
+rules, and the geometry contract in § Geometry apply unchanged.
+
 ## Load-bearing constraints
 
 Each has a comment at its site pointing here.
@@ -228,7 +252,9 @@ it.
 ## Related
 
 - `src/engine/toolpaths/trochoidalEdge.ts` — the pure sampler
+- `src/engine/toolpaths/trochoidalPath.ts` — shared entry synthesis and point budget; both integrations consume it rather than re-deriving the clearance
 - `src/engine/toolpaths/guideFragments.ts` — cyclic guide splitting
 - `src/engine/toolpaths/edge.ts` — integration, clearances, safety backstop
+- `src/engine/toolpaths/carving.ts` — engrave integration
 - #447 — arc fitting; without it this exports as raw G1
 - #452 — region redesign; restores region support here

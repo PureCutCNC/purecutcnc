@@ -422,9 +422,9 @@ export const camDe: Record<keyof typeof camEn, string> = {
   // Engrave
   'cam.opDesc.followLine.title': 'Gravieren',
   'cam.opDesc.followLine.fullDescription':
-    'Gravieren fährt entlang eines beliebigen Skizzenpfads – offen oder geschlossen – mit fester Gravurtiefe. Das Werkzeug folgt der Mittellinie des Pfads; kein Versatz. Gut für Text, dekorative Linien, Ausrichtungsmarken und das Verfolgen komplexer Kurven auf der Rohteiloberfläche.',
+    'Gravieren fährt entlang eines beliebigen Skizzenpfads – offen oder geschlossen – mit fester Gravurtiefe. Direct folgt der Mittellinie für Text, dekorative Linien, Ausrichtungsmarken und das Verfolgen komplexer Kurven auf der Rohteiloberfläche. Trochoidal fräst einen breiteren Kanal mit überlappenden Kreisbahnen, für funktionale Nuten (T-Nut, Einlegearbeit, Dado, Kabelführung), bei denen die Nut breiter als der Fräser sein soll.',
   'cam.opDesc.followLine.keyPoint.0': 'Akzeptiert offene oder geschlossene Pfad-Features',
-  'cam.opDesc.followLine.keyPoint.1': 'Werkzeug folgt der Mittellinie des Pfads (kein Versatz)',
+  'cam.opDesc.followLine.keyPoint.1': 'Direct folgt der Mittellinie; Trochoidal fräst eine breitere Nut',
   'cam.opDesc.followLine.keyPoint.2': 'Einzeldurchgang-Operation (keine Schrupp-/Schlicht-Aufteilung)',
   'cam.opDesc.followLine.keyPoint.3': 'Meist flach; Zustellung greift, wenn die Gravurtiefe sie überschreitet',
   'cam.opDesc.followLine.keyPoint.4': 'Optionale geschlossene Bereiche wirken als XY-Filter',
