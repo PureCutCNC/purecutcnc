@@ -238,14 +238,17 @@ assert(autodeskCpsAdapter.staticAnalysisOnly === true, 'staticAnalysisOnly shoul
 // --- inline: expression-valued nested property resolves to null ---
 // Per the #402 no-evaluation contract: an expression value must be reported, never computed.
 {
+  // Deliberately on sequenceNumberIncrement — a property the adapter actually
+  // consumes. An expression on a property nobody reads cannot fail, so it would
+  // not test the null path at all.
   const inlineSource = [
     'capabilities = CAPABILITY_MILLING;',
     'extension = "nc";',
     'properties = {',
-    '  maximumSpindleSpeed: {',
-    '    title      : "Maximum spindle speed",',
+    '  sequenceNumberIncrement: {',
+    '    title      : "Sequence number increment",',
     '    description: "Test.",',
-    '    group      : "spindle",',
+    '    group      : "formats",',
     '    type       : "integer",',
     '    value: 100 * 60,',
     '    scope: "post"',
@@ -254,18 +257,25 @@ assert(autodeskCpsAdapter.staticAnalysisOnly === true, 'staticAnalysisOnly shoul
   ].join('\n')
 
   const result = autodeskCpsAdapter.convert(inlineSource, 'inline-expression.cps')
-  // The conversion must succeed — no crash trying to compute 100 * 60.
-  // The generic default for maximumSpindleSpeed is left untouched; no expression evaluation happened.
   const definition = buildMachineDefinition(result.overrides, {
     id: 'test-inline-expression',
     name: 'Test',
     description: 'Inline expression test',
   })
-  // The adapter does not look up maximumSpindleSpeed; the property resolves to null in the map
-  // but is never consumed. The key invariant is that the conversion completes without error
-  // and never evaluates the expression (it did not compute 6000).
-  assert(typeof definition.feedSpeed.spindleOnCW === 'string', 'spindleOnCW must stay the generic default — no crash, no expression evaluation')
-  assert(result.findings.length > 0, 'expected findings from the inline expression source')
+
+  // Never computed: 6000 is what evaluating `100 * 60` would have produced, and
+  // NaN is what Number() on the raw text produces. Both must be absent — the
+  // generic baseline default (10) survives instead.
+  assert(
+    definition.program.lineNumberIncrement === 10,
+    `lineNumberIncrement: ${definition.program.lineNumberIncrement} (expected the generic default 10 — the expression must not be evaluated to 6000 or coerced to NaN)`,
+  )
+
+  // ...and the refusal is reported rather than silently dropped (#402 contract).
+  const finding = result.findings.find((f) => f.sourceField === 'properties.sequenceNumberIncrement')
+  assert(finding !== undefined, 'expected a findings entry for the expression-valued sequenceNumberIncrement')
+  assert(finding?.status === 'omitted', `expression finding status: ${finding?.status} (expected omitted)`)
+  assert(/expression/.test(finding?.message ?? ''), `expected the finding to say the value is an expression; got: ${finding?.message}`)
   console.log('autodeskCps.test: inline expression-valued property assertion passed')
 }
 
