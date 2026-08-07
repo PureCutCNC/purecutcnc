@@ -77,6 +77,7 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.pocketPattern === b.pocketPattern
     && a.pocketAngle === b.pocketAngle
     && a.edgeStrategy === b.edgeStrategy
+    && a.carveStrategy === b.carveStrategy
     && a.trochoidalCutWidth === b.trochoidalCutWidth
     && a.trochoidalAdvance === b.trochoidalAdvance
     && a.entryStrategy === b.entryStrategy

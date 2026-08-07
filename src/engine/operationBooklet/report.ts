@@ -19,7 +19,7 @@ import type { Operation, OperationKind, OperationPass, OperationTarget, Project 
 // it maps structured warnings to localized text here via the i18n layer.
 import { translate } from '../../i18n/store'
 import { toolpathWarningTexts } from '../../i18n/warningText'
-import { getStockBounds, isTrochoidalEdgeRoughing } from '../../types/project'
+import { getStockBounds, isTrochoidalCarve, isTrochoidalEdgeRoughing } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import type { Units } from '../../utils/units'
 import type { NormalizedTool, ToolpathResult } from '../toolpaths/types'
@@ -237,7 +237,7 @@ function stockSizeSummary(project: Project): string {
   return `${lengthWithUnits(width, units)} x ${lengthWithUnits(height, units)} x ${lengthWithUnits(project.stock.thickness, units)}`
 }
 
-function settingRows(operation: Operation, project: Project): OperationBookletRow[] {
+function settingRows(operation: Operation, project: Project, tool: NormalizedTool | null): OperationBookletRow[] {
   const units = project.meta.units
   const rows: OperationBookletRow[] = [
     { label: translate('booklet.label.kind'), value: operationKindLabel(operation.kind) },
@@ -255,7 +255,9 @@ function settingRows(operation: Operation, project: Project): OperationBookletRo
     }
   }
 
-  if (operationSupportsCutDirection(operation.kind)) {
+  // Trochoidal Engrave derives its orbit sense from cutDirection, so the
+  // booklet must report it even though a direct Engrave has no such setting.
+  if (operationSupportsCutDirection(operation.kind) || isTrochoidalCarve(operation)) {
     rows.push({ label: translate('booklet.label.cutDirection'), value: cutDirectionLabel(operation.cutDirection ?? 'conventional') })
   }
 
@@ -268,6 +270,18 @@ function settingRows(operation: Operation, project: Project): OperationBookletRo
       { label: translate('booklet.label.edgeStrategy'), value: edgeStrategyLabel('trochoidal') },
       { label: translate('booklet.label.trochoidalCutWidth'), value: lengthWithUnits(operation.trochoidalCutWidth ?? 0, units) },
       { label: translate('booklet.label.trochoidalAdvance'), value: `${formatNumber(operation.trochoidalAdvance ?? 0, 3)} × D` },
+    )
+  }
+
+  // Without these rows the printout reads as a plain Engrave, and whoever runs
+  // the job expects a tool-width groove. The cut width IS the channel width, so
+  // it is resolved against the tool the same way the panel resolves it — an
+  // unset value must print the real 1.5 x D, never 0.
+  if (isTrochoidalCarve(operation)) {
+    rows.push(
+      { label: translate('booklet.label.edgeStrategy'), value: translate('booklet.carveStrategy.trochoidal') },
+      { label: translate('booklet.label.trochoidalCutWidth'), value: lengthWithUnits(operation.trochoidalCutWidth ?? (tool ? tool.diameter * 1.5 : 0), units) },
+      { label: translate('booklet.label.trochoidalAdvance'), value: `${formatNumber(operation.trochoidalAdvance ?? 0.1, 3)} × D` },
     )
   }
 
@@ -373,7 +387,7 @@ export function buildOperationBookletReport(input: OperationBookletInput): Opera
     targetSummary: targetSummary(input.project, input.operation.target),
     targetFeatureNames: targetFeatureNames(input.project, input.operation.target),
     toolRows: toolRows(input.tool, input.project.meta.units),
-    settingRows: settingRows(input.operation, input.project),
+    settingRows: settingRows(input.operation, input.project, input.tool),
     warnings: reportWarnings(input.tool, input.toolpath),
     toolpathStats: statsRows(input.toolpath, input.operation, input.project.meta.units, input.tool),
   }

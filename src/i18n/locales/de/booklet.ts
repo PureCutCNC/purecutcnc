@@ -40,6 +40,7 @@ export const bookletDe: Record<keyof typeof bookletEn, string> = {
   'booklet.machiningOrder.levelFirst': 'Ebene zuerst',
   'booklet.edgeStrategy.contour': 'Kontur',
   'booklet.edgeStrategy.trochoidal': 'Trochoidal',
+  'booklet.carveStrategy.trochoidal': 'Trochoidal (Nut)',
   'booklet.target.stock': 'Rohteil',
   'booklet.target.missingFeature': 'Fehlendes Feature {id}',
   'booklet.units.inch': 'Zoll',
