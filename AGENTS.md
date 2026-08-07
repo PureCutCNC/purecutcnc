@@ -209,11 +209,22 @@ and delegated workers (Codex, opencode, the DeepSeek worker, etc.) alike.
 
 ## Execution Modes
 
-Delegation is optional. Use the simplest mode that fits the approved issue and
-the user's direction:
+Two independent choices: **where** the work happens, and **who** does it.
 
-- **Direct implementation (default):** one agent owns discovery, edits,
-  verification, and delivery on the issue branch.
+**Where — default to an isolated worktree.** New work starts in its own `git worktree` on its own branch unless the user says otherwise. This includes fast-lane changes: the reason is parallelism, not diff size. A worktree lets several branches be in flight at once without one agent's edits, build artifacts, or checkout state disturbing another's, and a one-line fix benefits from that as much as a large change does. Create it outside the repository directory, and do not commit the path.
+
+A fresh worktree has no `node_modules`. Symlinking the primary checkout's copy avoids a full install:
+
+```bash
+ln -s <primary-checkout>/node_modules node_modules
+```
+
+**Do not symlink when the branch changes `package.json` or `package-lock.json`.** A dependency change needs its own real install; a symlinked tree resolves against the primary checkout's dependency set and would build against the wrong one.
+
+**Who — delegation is optional. Use the simplest mode that fits the approved issue and the user's direction:**
+
+- **Direct implementation:** one agent owns discovery, edits, verification, and
+  delivery on the issue branch.
 - **Built-in subagents (in-process):** subagents provided by the agent's own
   harness (its built-in task/subagent mechanism — same model, same session) may
   be used proactively for parallel research and for bounded implementation
@@ -222,8 +233,6 @@ the user's direction:
   tree, so overlapping edits conflict. No explicit authorization needed — the
   explicit-authorization rule in **Delegated slices** applies only to the
   external worker harness.
-- **Isolated worktree:** use when the user requests isolation or concurrent work
-  would otherwise disturb the active checkout.
 - **Delegated slices (external worker):** use only when the user explicitly
   authorizes delegation and the task divides into bounded, independently
   reviewable slices. Follow
