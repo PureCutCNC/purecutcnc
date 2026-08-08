@@ -15,6 +15,7 @@
  */
 
 import type { Operation, Point, Project } from '../../types/project'
+import { isTrochoidalCarve } from '../../types/project'
 import type { ToolpathWarning } from './warningCodes'
 import { expandFeatureGeometry } from '../../text'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
@@ -29,6 +30,14 @@ import {
 import { pushRapidAndPlunge, retractToSafe } from './pocket'
 import { resolveRegionDomainCurve } from './regionDomain'
 import { buildRegionMask, splitFeatureTargets } from './regions'
+import { helixAngularDirection } from './entry'
+import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET } from './trochoidalEdge'
+import {
+  appendTrochoidalEntry,
+  MAX_TROCHOIDAL_ENTRY_MOVES,
+  trochoidalEntryMoveCount,
+  type TrochoidalOperationBudget,
+} from './trochoidalPath'
 
 function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): ToolpathBounds {
   if (!bounds) {
@@ -112,6 +121,30 @@ function buildCarveLevels(topZ: number, finalZ: number, stepdown: number, single
   return levels.length > 0 ? levels : [finalZ]
 }
 
+/**
+ * Returns true when any of the seven fatal carve-trochoidal warning codes is
+ * present.  When true the operation must refuse to emit moves — an all-or-nothing
+ * result matching the edge-route contract.
+ */
+function hasFatalCarveTrochoidalWarning(warnings: ToolpathWarning[]): boolean {
+  return warnings.some((warning) => (
+    warning.code === 'carveTrochoidalNeedsConstantDiameterTool'
+    || warning.code === 'carveTrochoidalWidthTooSmall'
+    || warning.code === 'carveTrochoidalAdvanceRange'
+    || warning.code === 'carveTrochoidalEntryStrategyUnsupported'
+    || warning.code === 'carveTrochoidalInvalidGuide'
+    || warning.code === 'carveTrochoidalMoveBudget'
+    || warning.code === 'carveTrochoidalEntryBudget'
+  ))
+}
+
+interface PreparedCarvePath {
+  built: ReturnType<typeof buildTrochoidalContour>
+  z: number
+  entryStartZ: number
+  closed: boolean
+}
+
 export function generateFollowLineToolpath(project: Project, operation: Operation): ToolpathResult {
   if (operation.kind !== 'follow_line') {
     return {
@@ -163,6 +196,53 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     }
   }
 
+  const isTrochoidal = isTrochoidalCarve(operation)
+
+  // -- Trochoidal guards (fail closed) ---------------------------------------
+  if (isTrochoidal) {
+    // A V-bit has no constant cutting diameter, so R = (W − D) / 2 computed
+    // from its nominal diameter produces a groove that is wrong at every Z.
+    // Check the raw toolRecord.type before normalizeToolForProject unit
+    // handling changes nothing about type.
+    if (toolRecord.type === 'v_bit') {
+      return {
+        operationId: operation.id,
+        moves: [],
+        warnings: [{ code: 'carveTrochoidalNeedsConstantDiameterTool' }],
+        bounds: null,
+      }
+    }
+
+    const cutWidth = operation.trochoidalCutWidth ?? tool.diameter * 1.5
+    if (!(cutWidth >= tool.diameter * 1.15)) {
+      return {
+        operationId: operation.id,
+        moves: [],
+        warnings: [{ code: 'carveTrochoidalWidthTooSmall' }],
+        bounds: null,
+      }
+    }
+
+    const advanceFraction = operation.trochoidalAdvance ?? 0.1
+    if (!(advanceFraction > 0 && advanceFraction <= 1)) {
+      return {
+        operationId: operation.id,
+        moves: [],
+        warnings: [{ code: 'carveTrochoidalAdvanceRange' }],
+        bounds: null,
+      }
+    }
+
+    if (operation.entryStrategy !== undefined && operation.entryStrategy !== 'helix' && operation.entryStrategy !== 'plunge') {
+      return {
+        operationId: operation.id,
+        moves: [],
+        warnings: [{ code: 'carveTrochoidalEntryStrategyUnsupported' }],
+        bounds: null,
+      }
+    }
+  }
+
   const splitTargets = splitFeatureTargets(project, operation.target.featureIds)
   const regionMask = buildRegionMask(splitTargets.regionFeatures)
   const targetFeatures = splitTargets.machiningFeatures
@@ -187,13 +267,52 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     }
   }
 
+  // -- Non-fatal trochoidal width warnings -----------------------------------
+  if (isTrochoidal) {
+    const cutWidth = operation.trochoidalCutWidth ?? tool.diameter * 1.5
+    if (cutWidth < tool.diameter * 1.25) {
+      warnings.push({ code: 'carveTrochoidalWidthNarrow' })
+    }
+    if (cutWidth > tool.diameter * 2) {
+      warnings.push({ code: 'carveTrochoidalWidthLeavesCore' })
+    }
+  }
+
   const safeZ = getOperationSafeZ(project, targetFeatures.map((feature) => resolveFeatureZSpan(project, feature)))
   const moves: ToolpathMove[] = []
   let currentPosition: ToolpathPoint | null = null
 
-  // Follow-line's guide is the tool-centre path — no further erosion happens —
-  // so both polarities dilate the region by centreInset in resolveRegionDomainCurve.
-  const centreInset = tool.radius + Math.max(0, operation.stockToLeaveRadial ?? 0)
+  // A region bounds the GUIDE — which for follow-line IS the tool-centre path —
+  // in both polarities, so both clearances are zero. This matches the trochoidal
+  // edge route exactly (see `trochoidalRegionIncludeClearance` in `edge.ts`): a
+  // span runs until the tool centre reaches the region boundary, and the cutter
+  // then sweeps its radius past that line — half the cut width under trochoidal —
+  // the same way a pocket's tool sweeps past the region line it was clipped to.
+  //
+  // Deliberately NOT dilated by the swept half-width. Dilating lengthens include
+  // spans and shortens exclude ones by the same amount, so the cut ran a full cut
+  // width past an include boundary under trochoidal (and a full tool diameter
+  // under direct), and a region used as an include on one pass and an exclude on
+  // another double-cut the seam instead of tiling exactly.
+  const regionGuideClearance = 0
+  const cutWidth = isTrochoidal ? (operation.trochoidalCutWidth ?? tool.diameter * 1.5) : 0
+
+  // Derived once and shared by both the orbit and the entry helix.  The entry
+  // helix bores the cavity the first orbit continues out of, so deriving the
+  // direction at two independent sites would risk a reversal at the handoff.
+  // 'internal' is the correct cut side: a slot is a channel with material on
+  // both sides.
+  const orbitRadius = isTrochoidal ? (cutWidth - tool.diameter) / 2 : 0
+  const advanceFraction = isTrochoidal ? (operation.trochoidalAdvance ?? 0.1) : 0
+  const advance = isTrochoidal ? advanceFraction * tool.diameter : 0
+  const angularDirection = isTrochoidal
+    ? helixAngularDirection(operation.cutDirection ?? 'conventional', 'internal')
+    : (1 as 1 | -1)
+
+  // One budget per operation, threaded through every target and every fragment.
+  const budget: TrochoidalOperationBudget | undefined = isTrochoidal
+    ? { remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET }
+    : undefined
 
   for (const feature of targetFeatures) {
     const flattened = flattenProfile(feature.sketch.profile)
@@ -203,7 +322,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     }
 
     // Fragment the guide polyline by the region mask before generation.
-    const fragments = resolveRegionDomainCurve(flattened.points, flattened.closed, regionMask, centreInset)
+    const fragments = resolveRegionDomainCurve(flattened.points, flattened.closed, regionMask, regionGuideClearance)
     if (fragments.length === 0) continue
 
     const topZ = resolveDimensionRef(project, feature.z_top)
@@ -214,16 +333,128 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     }
 
     const cutLevels = buildCarveLevels(topZ, carveZ, operation.stepdown, operation.pass === 'finish')
-    for (const fragment of fragments) {
-      for (const levelZ of cutLevels) {
-        const entryPoint = profileStartPoint(fragment.points, levelZ)
-        currentPosition = pushRapidAndPlunge(moves, currentPosition, entryPoint, safeZ)
-        const cutMoves = toProfileCutMoves(fragment.points, levelZ, fragment.closed)
+
+    if (isTrochoidal) {
+      // ---- Trochoidal branch ------------------------------------------------
+      // Prepare every fragment at every level first, then append moves.
+      // A bad guide or a budget overflow must not leave a partially cut slot.
+      const prepared: PreparedCarvePath[] = []
+      let remainingPoints = budget!.remainingPoints
+      let preparationFailed = false
+
+      for (const fragment of fragments) {
+        if (preparationFailed) break
+        let previousZ = topZ
+        for (const levelZ of cutLevels) {
+          const entryStartZ = previousZ
+          const entryMoves = trochoidalEntryMoveCount(entryStartZ, levelZ, orbitRadius, operation)
+          const fragX = fragment.points[0]?.x ?? 0
+          const fragY = fragment.points[0]?.y ?? 0
+
+          if (entryMoves > MAX_TROCHOIDAL_ENTRY_MOVES || entryMoves + 3 >= remainingPoints) {
+            warnings.push({ code: 'carveTrochoidalEntryBudget', params: { x: fragX, y: fragY } })
+            preparationFailed = true
+            break
+          }
+
+          const built = buildTrochoidalContour(fragment.points, {
+            orbitRadius,
+            advance,
+            toolDiameter: tool.diameter,
+            angularDirection,
+            closed: fragment.closed,
+            maxPoints: remainingPoints - entryMoves - 3,
+          })
+
+          if (built.error || built.points.length < 2 || !built.entryCenter) {
+            warnings.push({
+              code: built.error === 'move-budget' ? 'carveTrochoidalMoveBudget' : 'carveTrochoidalInvalidGuide',
+              params: { x: fragX, y: fragY },
+            })
+            preparationFailed = true
+            break
+          }
+
+          const consumedPoints = entryMoves + built.points.length + 3
+          if (consumedPoints > remainingPoints) {
+            warnings.push({ code: 'carveTrochoidalMoveBudget', params: { x: fragX, y: fragY } })
+            preparationFailed = true
+            break
+          }
+
+          remainingPoints -= consumedPoints
+          prepared.push({ built, z: levelZ, entryStartZ, closed: fragment.closed })
+          previousZ = levelZ
+        }
+      }
+
+      budget!.remainingPoints = remainingPoints
+
+      if (hasFatalCarveTrochoidalWarning(warnings)) {
+        return { operationId: operation.id, moves: [], warnings, bounds: null }
+      }
+
+      // Append phase — per prepared path.
+      for (const path of prepared) {
+        const { built, z, entryStartZ, closed } = path
+        const entry = built.points[0]
+
+        // Skip retract when the tool is already at the entry XY (successive
+        // levels of the same fragment).  For the first level of a fragment the
+        // tool must retract, rapid across, and plunge.
+        const sameEntry = currentPosition
+          && Math.abs(currentPosition.x - entry.x) <= 1e-9
+          && Math.abs(currentPosition.y - entry.y) <= 1e-9
+
+        if (!sameEntry) {
+          currentPosition = retractToSafe(moves, currentPosition, safeZ)
+          const rapidFrom = currentPosition ?? { x: entry.x, y: entry.y, z: safeZ }
+          const rapidTo = { x: entry.x, y: entry.y, z: safeZ }
+          if (!currentPosition || rapidFrom.x !== rapidTo.x || rapidFrom.y !== rapidTo.y) {
+            moves.push({ kind: 'rapid', from: rapidFrom, to: rapidTo, source: 'trochoidal-transition' })
+          }
+          currentPosition = rapidTo
+          if (entryStartZ < safeZ) {
+            const surfacePoint = { x: entry.x, y: entry.y, z: entryStartZ }
+            moves.push({ kind: 'plunge', from: currentPosition, to: surfacePoint, source: 'trochoidal-transition' })
+            currentPosition = surfacePoint
+          }
+        }
+
+        if (Math.abs((currentPosition as ToolpathPoint).z - z) > 1e-9) {
+          currentPosition = appendTrochoidalEntry(
+            moves,
+            currentPosition as ToolpathPoint,
+            entry,
+            built.entryCenter as Point,
+            z,
+            orbitRadius,
+            operation,
+            angularDirection,
+          )
+        }
+
+        const cutMoves = toProfileCutMoves(built.points, z, closed)
         moves.push(...cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
-        currentPosition = retractToSafe(moves, currentPosition, safeZ)
+      }
+    } else {
+      // ---- Direct mode (unchanged from pre-trochoidal) ----------------------
+      for (const fragment of fragments) {
+        for (const levelZ of cutLevels) {
+          const entryPoint = profileStartPoint(fragment.points, levelZ)
+          currentPosition = pushRapidAndPlunge(moves, currentPosition, entryPoint, safeZ)
+          const cutMoves = toProfileCutMoves(fragment.points, levelZ, fragment.closed)
+          moves.push(...cutMoves)
+          currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+          currentPosition = retractToSafe(moves, currentPosition, safeZ)
+        }
       }
     }
+  }
+
+  if (isTrochoidal && hasFatalCarveTrochoidalWarning(warnings)) {
+    return { operationId: operation.id, moves: [], warnings, bounds: null }
   }
 
   return {

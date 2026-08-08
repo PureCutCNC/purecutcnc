@@ -35,6 +35,7 @@ export const bookletEn = {
   'booklet.machiningOrder.levelFirst': 'Level first',
   'booklet.edgeStrategy.contour': 'Contour',
   'booklet.edgeStrategy.trochoidal': 'Trochoidal',
+  'booklet.carveStrategy.trochoidal': 'Trochoidal (slot)',
   'booklet.target.stock': 'Stock',
   'booklet.target.missingFeature': 'Missing feature {id}',
   'booklet.units.inch': 'Inch',

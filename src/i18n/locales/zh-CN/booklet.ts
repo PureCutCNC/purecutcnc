@@ -37,6 +37,7 @@ export const bookletZhCN: Record<keyof typeof bookletEn, string> = {
   'booklet.machiningOrder.levelFirst': '按层优先',
   'booklet.edgeStrategy.contour': '轮廓',
   'booklet.edgeStrategy.trochoidal': '摆线',
+  'booklet.carveStrategy.trochoidal': '摆线（槽）',
   'booklet.target.stock': '毛坯',
   'booklet.target.missingFeature': '缺少特征 {id}',
   'booklet.units.inch': '英寸',

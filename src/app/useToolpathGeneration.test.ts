@@ -141,6 +141,7 @@ function testOperationComputationEquals() {
     ['pocketPattern', { pocketPattern: 'parallel' }],
     ['pocketAngle', { pocketAngle: 45 }],
     ['edgeStrategy', { edgeStrategy: 'trochoidal' }],
+    ['carveStrategy', { carveStrategy: 'trochoidal' }],
     ['trochoidalCutWidth', { trochoidalCutWidth: 6 }],
     ['trochoidalAdvance', { trochoidalAdvance: 0.1 }],
     ['entryStrategy', { entryStrategy: 'helix' }],

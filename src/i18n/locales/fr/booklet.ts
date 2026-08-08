@@ -37,6 +37,7 @@ export const bookletFr: Record<keyof typeof bookletEn, string> = {
   'booklet.machiningOrder.levelFirst': 'Niveau d’abord',
   'booklet.edgeStrategy.contour': 'Contour',
   'booklet.edgeStrategy.trochoidal': 'Trochoïdal',
+  'booklet.carveStrategy.trochoidal': 'Trochoïdale (rainure)',
   'booklet.target.stock': 'Brut',
   'booklet.target.missingFeature': 'Entité manquante {id}',
   'booklet.units.inch': 'Pouce',

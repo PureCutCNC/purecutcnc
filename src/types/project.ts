@@ -477,6 +477,7 @@ export type OperationKind =
 export type OperationPass = 'rough' | 'finish'
 
 export type EdgeStrategy = 'contour' | 'trochoidal'
+export type CarveStrategy = 'direct' | 'trochoidal'
 export type PocketPattern = 'offset' | 'parallel' | 'waterline'
 export type CutDirection = 'conventional' | 'climb'
 export type DrillType = 'simple' | 'peck' | 'dwell' | 'chip_breaking' | 'helical'
@@ -507,6 +508,8 @@ export interface Operation {
   pocketAngle: number
   /** Edge-route roughing strategy. Missing values are legacy contour operations. */
   edgeStrategy?: EdgeStrategy
+  /** Engrave (follow_line) strategy. Missing values are legacy direct operations. */
+  carveStrategy?: CarveStrategy
   /** Trochoidal channel width in the project's length units. */
   trochoidalCutWidth?: number
   /** Trochoidal guide advance as a ratio of cutter diameter. */
@@ -559,6 +562,18 @@ export function isTrochoidalEdgeRoughing(operation: Operation): boolean {
   return operation.pass === 'rough'
     && (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside')
     && operation.edgeStrategy === 'trochoidal'
+}
+
+/**
+ * True for an Engrave (follow_line) operation that generates trochoidal orbits
+ * rather than a direct centreline trace.
+ *
+ * This is the single definition. The predicate gates generation, the CAM panel's
+ * field visibility, and the channel-width readout — and those must agree exactly,
+ * so none of them may re-spell it.
+ */
+export function isTrochoidalCarve(operation: Operation): boolean {
+  return operation.kind === 'follow_line' && operation.carveStrategy === 'trochoidal'
 }
 
 // ============================================================
