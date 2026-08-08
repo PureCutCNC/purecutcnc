@@ -33,7 +33,8 @@ This skill automates that documented flow; it does not replace those rules.
 4. **Review the real diff, not the report.** The worker ends with a
    `STATUS/COMMIT/CHANGED_FILES/CHECKS/RISKS` block — that is a report, not
    acceptance. Inspect the actual worktree diff, the commit, and the build/test
-   output. Re-dispatch a correction slice if needed.
+   output, then run the checks in "Verify before you accept" below. Re-dispatch a
+   correction slice if needed.
 5. **Merge after approval.** Once you (and the user, when they want to see it)
    accept the diff, run `scripts/finish-task.sh` to merge `--no-ff` into the
    integration branch and tear down the worktree.
@@ -82,6 +83,110 @@ of `[note]`/`[tool]`/`[gen]` lines.
 - `[tool]` lines are tool calls observed by the harness — the model cannot
   fake or forget them, so they are the reliable liveness signal. `[note]`
   lines are the worker narrating its phases.
+
+## Verify before you accept
+
+A green build is not evidence the change is correct. On #455 every slice compiled,
+passed its own tests, passed `npm run build`, and passed e2e — and the user still
+found two real bugs within five minutes of using the app. Neither was a worker
+mistake. Both were review-design mistakes: the review checked the *control* rather
+than the *effect*, and checked against the *plan* rather than against the
+*neighbouring shipped feature*.
+
+Run these on every slice that touches engine output or a user-facing control.
+Cheapest first; stop when the slice genuinely has no surface for one.
+
+### 1. Engine probe — numbers, no browser
+
+Dump what the generator actually produces and diff it. Build the probe from the
+slice's own test fixtures (take everything above the first `test*` function) so it
+uses real project/tool/feature shapes rather than hand-rolled ones.
+
+- **For any "unchanged" claim**, dump output as JSON on both branches and `diff`
+  them across a fixture matrix — do not read the worker's regression test. On #455
+  this confirmed direct mode byte-identical across 12 fixtures (open, closed,
+  region-masked, multi-target, V-bit, multi-level stepdown).
+- **For new geometry**, print the quantity that would physically go wrong — where
+  the *cutter body* ends up, not where the tool centre is. A tool-centre bound is
+  usually too loose to notice a wrong magnitude.
+- **Compare against the nearest shipped analogue** on the same input. Trochoidal
+  Engrave mirrors trochoidal Edge Route; the region overhang was a divergence from
+  it, and measuring the two side by side would have shown it immediately. Any
+  divergence must be explainable as deliberate, or it is a bug.
+
+This has zero tooling risk and is where geometry defects actually live.
+
+### 2. Assert the output changes — a permanent test, not scratch
+
+For **every new operation parameter**, assert the generated toolpath differs when
+the parameter differs. This catches the entire class of "the control writes the
+field but nothing recomputes."
+
+That bug is easy to ship because the field, the UI, and the generator can all be
+correct while the change never reaches the generator.
+`operationComputationEquals` in `src/app/useToolpathGeneration.ts` gates
+regeneration off an explicit allowlist, and its comment says so directly: *"Any new
+computation-relevant field added to Operation must be listed here."* Adding a field
+to `Operation` and not to that list produces exactly this symptom.
+
+**Whenever a slice adds a field to `Operation`, grep for every consumer before
+accepting.** Use a sibling field as the probe — `grep -rl trochoidalCutWidth src`
+found the allowlist *and* the operation booklet, which was also missing the new
+strategy.
+
+### 3. Drive the real app
+
+A scratch Playwright spec, not the browser extension: it reuses the repo's
+fixtures and seeding seam, runs headless, and exits cleanly. Exercise the new
+control end to end, assert the output changed, and screenshot it to eyeball.
+
+**Always use a dedicated port and an isolated server.** The default 1420 with
+`reuseExistingServer` will silently attach to a dev server from another checkout
+and test the wrong code.
+
+```bash
+PURECUT_E2E_PORT=1439 PURECUT_E2E_ISOLATED=1 npx playwright test <spec>
+```
+
+**Port hygiene — Playwright and Vite do leave strays that block the port.** Check
+before, and always clean up after, even when the run passed:
+
+```bash
+lsof -ti tcp:1439 | xargs -r kill
+```
+
+Delete the scratch spec once it has served its purpose; anything worth keeping
+belongs in `e2e/*.smoke.spec.ts` as a real test.
+
+### 4. Mutation-check the assertions that matter
+
+A passing test constrains nothing until you have watched it fail. For the two or
+three invariants the issue calls load-bearing, break the code on purpose and
+confirm the test catches it.
+
+On #455 the worker's region-polarity test passed 9/9 — and still passed with the
+swept-half-width substitution *deleted entirely*, the one line the issue named as
+"the one place a wrong sign silently cuts outside an include region."
+
+**Restore from a `cp` backup, never `git checkout <file>`.** If the fix under test
+is still uncommitted, `git checkout` discards it, and the next "mutation caught"
+result is really just the reverted code. That happened, and it looked like a pass.
+
+```bash
+cp src/path/file.ts /tmp/file.fixed.ts   # before mutating
+# …mutate, run the test, confirm it fails…
+cp /tmp/file.fixed.ts src/path/file.ts   # restore
+```
+
+### Reviewing i18n
+
+Diff locale files by **parsing key/value pairs on both sides and comparing the
+dicts** — never by eyeballing the rendered diff. A worker repairing a parse error
+with a Python heredoc silently swapped one space for U+00A0 inside an unrelated
+pre-existing French string; it is invisible in `git diff`. Confirm each locale
+gained only the intended keys and that no existing value changed. Note that locale
+files do not share a quote style — `es/*` uses double quotes where others use
+single — so match the file, not the sibling.
 
 ## Commands
 
