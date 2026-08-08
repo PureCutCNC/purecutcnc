@@ -265,11 +265,14 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
     rows.push({ label: translate('booklet.label.machiningOrder'), value: machiningOrderLabel(operation.machiningOrder ?? 'level_first') })
   }
 
+  // Neither field is seeded at creation: unset means "follow the tool", and the
+  // engine re-derives it on every run. The booklet is read at the machine, so it
+  // must print the width that will actually be cut, never a placeholder zero.
   if (isTrochoidalEdgeRoughing(operation)) {
     rows.push(
       { label: translate('booklet.label.edgeStrategy'), value: edgeStrategyLabel('trochoidal') },
-      { label: translate('booklet.label.trochoidalCutWidth'), value: lengthWithUnits(operation.trochoidalCutWidth ?? 0, units) },
-      { label: translate('booklet.label.trochoidalAdvance'), value: `${formatNumber(operation.trochoidalAdvance ?? 0, 3)} × D` },
+      { label: translate('booklet.label.trochoidalCutWidth'), value: lengthWithUnits(operation.trochoidalCutWidth ?? (tool ? tool.diameter * 1.5 : 0), units) },
+      { label: translate('booklet.label.trochoidalAdvance'), value: `${formatNumber(operation.trochoidalAdvance ?? 0.1, 3)} × D` },
     )
   }
 
