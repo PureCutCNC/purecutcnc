@@ -8,7 +8,13 @@ const useIsolatedServer = process.env.PURECUT_E2E_ISOLATED === '1'
 export default defineConfig({
   testDir: './e2e',
   forbidOnly: isCI,
-  retries: 0,
+  // One retry on CI only. The dev server serves the app as ~450+ on-demand ESM
+  // module requests, and on a 2-vCPU runner with two workers loading pages at
+  // once that waterfall can outrun the 60s navigation budget — `page.goto` then
+  // times out waiting for `load` before any test code runs. That is runner
+  // capacity, not a product defect, and with retries at 0 a single wobble failed
+  // the whole lane. Local runs stay at 0 so a real flake is still visible here.
+  retries: isCI ? 1 : 0,
   workers: isCI ? 2 : undefined,
   // fullyParallel runs tests within each file concurrently — great locally
   // but on CI's 2-vCPU runners the Vite dev server gets overwhelmed when
