@@ -116,26 +116,28 @@ export function createClampsSlice(
       set((s) => {
         if (ids.length === 0) return {}
         const idSet = new Set(ids)
+        // No-op when none of the requested IDs exist.
+        if (!s.project.clamps.some((clamp) => idSet.has(clamp.id))) return {}
         const hasWidth = patch.w !== undefined
         const hasHeight = patch.h !== undefined
+        const nextClamps = s.project.clamps.map((clamp) => {
+          if (!idSet.has(clamp.id)) return clamp
+          const next = { ...clamp, ...patch }
+          // Center-preserving: shift x/y so the centre stays fixed.
+          if (hasWidth && patch.w !== undefined) {
+            next.x = clamp.x + clamp.w / 2 - patch.w / 2
+          }
+          if (hasHeight && patch.h !== undefined) {
+            next.y = clamp.y + clamp.h / 2 - patch.h / 2
+          }
+          return next
+        })
+        // No-op when the patch produces no entity change.
+        if (JSON.stringify(nextClamps) === JSON.stringify(s.project.clamps)) return {}
         const nextProject = {
           ...s.project,
-          clamps: s.project.clamps.map((clamp) => {
-            if (!idSet.has(clamp.id)) return clamp
-            const next = { ...clamp, ...patch }
-            // Center-preserving: shift x/y so the centre stays fixed.
-            if (hasWidth && patch.w !== undefined) {
-              next.x = clamp.x + clamp.w / 2 - patch.w / 2
-            }
-            if (hasHeight && patch.h !== undefined) {
-              next.y = clamp.y + clamp.h / 2 - patch.h / 2
-            }
-            return next
-          }),
+          clamps: nextClamps,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
-        }
-        if (projectsEqual(nextProject, s.project)) {
-          return {}
         }
         return {
           project: nextProject,
@@ -176,6 +178,8 @@ export function createClampsSlice(
       set((s) => {
         if (ids.length === 0) return {}
         const idSet = new Set(ids)
+        // No-op when none of the requested IDs exist.
+        if (!s.project.clamps.some((clamp) => idSet.has(clamp.id))) return {}
         const nextProject = {
           ...s.project,
           clamps: s.project.clamps.filter((clamp) => !idSet.has(clamp.id)),
@@ -184,25 +188,45 @@ export function createClampsSlice(
         if (projectsEqual(nextProject, s.project)) {
           return {}
         }
-        // Sanitize: remove deleted IDs from the clamp selection, keep a valid primary.
-        const remainingIds = (s.selection.selectedClampIds ?? []).filter((clampId) => !idSet.has(clampId))
-        const primaryId = s.selection.selectedNode?.type === 'clamp' ? s.selection.selectedNode.clampId : null
-        const primarySurvived = primaryId !== null && !idSet.has(primaryId)
-        const nextPrimaryId = primarySurvived ? primaryId : remainingIds.at(-1) ?? null
-        const nextSelection: SelectionState = {
-          ...s.selection,
-          selectedFeatureId: null,
-          selectedFeatureIds: [],
-          selectedTabIds: [],
-          selectedClampIds: remainingIds,
-          selectedNode: nextPrimaryId ? { type: 'clamp', clampId: nextPrimaryId } : null,
-          mode: 'feature',
-          activeControl: null,
-          groupFolderId: null,
+        // Remove deleted IDs from the clamp collection.
+        const remainingIds = s.selection.selectedClampIds.filter((clampId) => !idSet.has(clampId))
+        const nodeType = s.selection.selectedNode?.type
+        // If the clamp family is active, repair/clear its primary.  If another
+        // family or tree node is active, preserve that unrelated selection.
+        if (nodeType === 'clamp' || nodeType === 'clamps_root') {
+          const primaryId =
+            s.selection.selectedNode?.type === 'clamp' ? s.selection.selectedNode.clampId : null
+          const primarySurvived = primaryId !== null && !idSet.has(primaryId)
+          const nextPrimaryId = primarySurvived ? primaryId : remainingIds.at(-1) ?? null
+          const nextSelection: SelectionState = {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: [],
+            selectedClampIds: remainingIds,
+            selectedNode: nextPrimaryId ? { type: 'clamp', clampId: nextPrimaryId } : null,
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          }
+          return {
+            project: nextProject,
+            selection: nextSelection,
+            history: {
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
+              future: [],
+              transactionStart: null,
+            },
+          }
         }
+        // Another family or tree node is active — sanitize to repair
+        // references but preserve the active selection.
         return {
           project: nextProject,
-          selection: nextSelection,
+          selection: sanitizeSelection(nextProject, {
+            ...s.selection,
+            selectedClampIds: remainingIds,
+          }),
           history: {
             past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],

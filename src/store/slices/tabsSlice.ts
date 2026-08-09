@@ -202,26 +202,28 @@ export function createTabsSlice(
       set((s) => {
         if (ids.length === 0) return {}
         const idSet = new Set(ids)
+        // No-op when none of the requested IDs exist.
+        if (!s.project.tabs.some((tab) => idSet.has(tab.id))) return {}
         const hasWidth = patch.w !== undefined
         const hasHeight = patch.h !== undefined
+        const nextTabs = s.project.tabs.map((tab) => {
+          if (!idSet.has(tab.id)) return tab
+          const next = { ...tab, ...patch }
+          // Center-preserving: shift x/y so the centre stays fixed.
+          if (hasWidth && patch.w !== undefined) {
+            next.x = tab.x + tab.w / 2 - patch.w / 2
+          }
+          if (hasHeight && patch.h !== undefined) {
+            next.y = tab.y + tab.h / 2 - patch.h / 2
+          }
+          return next
+        })
+        // No-op when the patch produces no entity change.
+        if (JSON.stringify(nextTabs) === JSON.stringify(s.project.tabs)) return {}
         const nextProject = {
           ...s.project,
-          tabs: s.project.tabs.map((tab) => {
-            if (!idSet.has(tab.id)) return tab
-            const next = { ...tab, ...patch }
-            // Center-preserving: shift x/y so the centre stays fixed.
-            if (hasWidth && patch.w !== undefined) {
-              next.x = tab.x + tab.w / 2 - patch.w / 2
-            }
-            if (hasHeight && patch.h !== undefined) {
-              next.y = tab.y + tab.h / 2 - patch.h / 2
-            }
-            return next
-          }),
+          tabs: nextTabs,
           meta: { ...s.project.meta, modified: new Date().toISOString() },
-        }
-        if (projectsEqual(nextProject, s.project)) {
-          return {}
         }
         return {
           project: nextProject,
@@ -262,6 +264,8 @@ export function createTabsSlice(
       set((s) => {
         if (ids.length === 0) return {}
         const idSet = new Set(ids)
+        // No-op when none of the requested IDs exist.
+        if (!s.project.tabs.some((tab) => idSet.has(tab.id))) return {}
         const nextProject = {
           ...s.project,
           tabs: s.project.tabs.filter((tab) => !idSet.has(tab.id)),
@@ -270,25 +274,45 @@ export function createTabsSlice(
         if (projectsEqual(nextProject, s.project)) {
           return {}
         }
-        // Sanitize: remove deleted IDs from the tab selection, keep a valid primary.
-        const remainingIds = (s.selection.selectedTabIds ?? []).filter((tabId) => !idSet.has(tabId))
-        const primaryId = s.selection.selectedNode?.type === 'tab' ? s.selection.selectedNode.tabId : null
-        const primarySurvived = primaryId !== null && !idSet.has(primaryId)
-        const nextPrimaryId = primarySurvived ? primaryId : remainingIds.at(-1) ?? null
-        const nextSelection: SelectionState = {
-          ...s.selection,
-          selectedFeatureId: null,
-          selectedFeatureIds: [],
-          selectedTabIds: remainingIds,
-          selectedClampIds: [],
-          selectedNode: nextPrimaryId ? { type: 'tab', tabId: nextPrimaryId } : null,
-          mode: 'feature',
-          activeControl: null,
-          groupFolderId: null,
+        // Remove deleted IDs from the tab collection.
+        const remainingIds = s.selection.selectedTabIds.filter((tabId) => !idSet.has(tabId))
+        const nodeType = s.selection.selectedNode?.type
+        // If the tab family is active, repair/clear its primary.  If another
+        // family or tree node is active, preserve that unrelated selection.
+        if (nodeType === 'tab' || nodeType === 'tabs_root') {
+          const primaryId =
+            s.selection.selectedNode?.type === 'tab' ? s.selection.selectedNode.tabId : null
+          const primarySurvived = primaryId !== null && !idSet.has(primaryId)
+          const nextPrimaryId = primarySurvived ? primaryId : remainingIds.at(-1) ?? null
+          const nextSelection: SelectionState = {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: remainingIds,
+            selectedClampIds: [],
+            selectedNode: nextPrimaryId ? { type: 'tab', tabId: nextPrimaryId } : null,
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          }
+          return {
+            project: nextProject,
+            selection: nextSelection,
+            history: {
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
+              future: [],
+              transactionStart: null,
+            },
+          }
         }
+        // Another family or tree node is active — sanitize to repair
+        // references but preserve the active selection.
         return {
           project: nextProject,
-          selection: nextSelection,
+          selection: sanitizeSelection(nextProject, {
+            ...s.selection,
+            selectedTabIds: remainingIds,
+          }),
           history: {
             past: [...s.history.past, cloneProject(s.project)].slice(-100),
             future: [],

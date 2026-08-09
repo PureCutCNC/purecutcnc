@@ -18,17 +18,19 @@
  * Bulk selection and mutation tests for issue #468 slice S1.
  *
  * Covers: family exclusivity, additive toggle within family, incompatible
- * additive ignore, visible-only family Select All, center-preserving bulk
- * dimension updates, selection sanitization after bulk delete, and one-step
- * undo for bulk operations.
+ * additive ignore (both directions), visible-only family Select All,
+ * center-preserving bulk dimension updates, selection sanitization after bulk
+ * delete, one-step undo for bulk operations, sanitizeSelection as centralized
+ * invariant boundary, and bulk-mutation no-op checks.
  *
  * Run with: npx tsx src/store/bulkSelection.test.ts
  */
 
 import { useProjectStore } from './projectStore'
 import type { ProjectStore, SelectionState } from './types'
-import type { Project, Tab, Clamp } from '../types/project'
-import { newProject } from '../types/project'
+import type { Project, Tab, Clamp, FeatureInstance } from '../types/project'
+import { IDENTITY_MATRIX, newProject } from '../types/project'
+import { sanitizeSelection } from './slices/selectionSlice'
 
 // ── Assertion helpers ──
 
@@ -80,6 +82,10 @@ function historyLen(): number {
   return useProjectStore.getState().history.past.length
 }
 
+function store() {
+  return useProjectStore.getState()
+}
+
 // ── Fixture helpers ──
 
 function projectWithTabsAndClamps(): Project {
@@ -95,6 +101,54 @@ function projectWithTabsAndClamps(): Project {
     { id: 'cl3', name: 'Clamp 3', type: 'step_clamp' as const, x: 50, y: 50, w: 12, h: 12, height: 8, visible: false },
   ]
   return { ...p, tabs, clamps }
+}
+
+function projectWithFeatures(): Project {
+  const p = newProject()
+  const f1: FeatureInstance = {
+    id: 'f1',
+    definitionId: 'def1',
+    name: 'Rect 1',
+    transform: IDENTITY_MATRIX,
+    constraints: [],
+    z_top: 5,
+    z_bottom: 0,
+    folderId: null,
+    visible: true,
+    locked: false,
+  }
+  const f2: FeatureInstance = {
+    id: 'f2',
+    definitionId: 'def2',
+    name: 'Rect 2',
+    transform: IDENTITY_MATRIX,
+    constraints: [],
+    z_top: 5,
+    z_bottom: 0,
+    folderId: null,
+    visible: true,
+    locked: false,
+  }
+  return {
+    ...p,
+    features: [f1, f2],
+    featureDefinitions: {
+      def1: {
+        id: 'def1',
+        kind: 'rect' as const,
+        profile: { start: { x: 0, y: 0 }, closed: true, segments: [] },
+        dimensions: [],
+        operation: 'add' as const,
+      },
+      def2: {
+        id: 'def2',
+        kind: 'rect' as const,
+        profile: { start: { x: 0, y: 0 }, closed: true, segments: [] },
+        dimensions: [],
+        operation: 'add' as const,
+      },
+    },
+  }
 }
 
 // ── Test runner ──
@@ -121,36 +175,33 @@ console.log('\n1. Family exclusivity')
 
 test('selectTab clears feature IDs and sets tab IDs', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().selectTab('tb1')
+  store().selectTab('tb1')
   const sel = selection()
   assertEq(sel.selectedFeatureIds.length, 0, 'feature IDs cleared')
-  assertEq((sel.selectedTabIds ?? []).length, 1, 'tab ID set')
-  assertEq((sel.selectedTabIds ?? [])[0], 'tb1', 'correct tab selected')
-  assert((sel.selectedClampIds ?? []).length === 0, 'clamp IDs empty')
+  assertEq(sel.selectedTabIds.length, 1, 'tab ID set')
+  assertEq(sel.selectedTabIds[0], 'tb1', 'correct tab selected')
+  assert(sel.selectedClampIds.length === 0, 'clamp IDs empty')
   assert(sel.selectedNode?.type === 'tab' && sel.selectedNode.tabId === 'tb1', 'primary is tab')
 })
 
 test('selectClamp clears tab IDs and sets clamp IDs', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().selectTab('tb1')
-  useProjectStore.getState().selectClamp('cl1')
+  store().selectTab('tb1')
+  store().selectClamp('cl1')
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 0, 'tab IDs cleared')
-  assertEq((sel.selectedClampIds ?? []).length, 1, 'clamp ID set')
+  assertEq(sel.selectedTabIds.length, 0, 'tab IDs cleared')
+  assertEq(sel.selectedClampIds.length, 1, 'clamp ID set')
   assert(sel.selectedFeatureIds.length === 0, 'feature IDs empty')
   assert(sel.selectedNode?.type === 'clamp' && sel.selectedNode.clampId === 'cl1', 'primary is clamp')
 })
 
 test('selectFeature clears tab and clamp IDs', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().selectTab('tb1')
-  // selectFeature with feature ID that doesn't exist is a no-op but still switches family
-  // Actually selectFeature only switches family if we pass a real feature ID. Let me use a
-  // different approach: verify that a project root selection clears arrays.
-  useProjectStore.getState().selectFeaturesRoot()
+  store().selectTab('tb1')
+  store().selectFeaturesRoot()
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 0, 'tab IDs cleared')
-  assertEq((sel.selectedClampIds ?? []).length, 0, 'clamp IDs cleared')
+  assertEq(sel.selectedTabIds.length, 0, 'tab IDs cleared')
+  assertEq(sel.selectedClampIds.length, 0, 'clamp IDs cleared')
 })
 
 // ============================================================================
@@ -160,78 +211,78 @@ console.log('\n2. Same-family additive toggle')
 
 test('additive tab toggles into selection', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectTab('tb1')
-  store.selectTab('tb2', true)
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 2, 'both tabs selected')
-  assert((sel.selectedTabIds ?? []).includes('tb1'), 'tb1 in selection')
-  assert((sel.selectedTabIds ?? []).includes('tb2'), 'tb2 in selection')
+  assertEq(sel.selectedTabIds.length, 2, 'both tabs selected')
+  assert(sel.selectedTabIds.includes('tb1'), 'tb1 in selection')
+  assert(sel.selectedTabIds.includes('tb2'), 'tb2 in selection')
   assert(sel.selectedNode?.type === 'tab' && sel.selectedNode.tabId === 'tb2', 'primary updated to tb2')
 })
 
 test('additive tab toggles out of selection', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectTab('tb1')
-  store.selectTab('tb2', true)
-  store.selectTab('tb1', true) // toggle off tb1
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  s.selectTab('tb1', true)
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 1, 'one tab deselected')
-  assert((sel.selectedTabIds ?? []).includes('tb2'), 'tb2 still selected')
-  assert(!(sel.selectedTabIds ?? []).includes('tb1'), 'tb1 deselected')
+  assertEq(sel.selectedTabIds.length, 1, 'one tab deselected')
+  assert(sel.selectedTabIds.includes('tb2'), 'tb2 still selected')
+  assert(!sel.selectedTabIds.includes('tb1'), 'tb1 deselected')
 })
 
 test('additive toggle preserves primary when sibling toggled off', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectTab('tb1')
-  store.selectTab('tb2', true)
-  store.selectTab('tb1', true) // toggle off tb1 (not primary)
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  s.selectTab('tb1', true)
   const sel = selection()
   assert(sel.selectedNode?.type === 'tab' && sel.selectedNode.tabId === 'tb2', 'primary still tb2')
 })
 
 test('additive toggle of primary falls back to remaining member', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectTab('tb1')
-  store.selectTab('tb2', true) // primary is now tb2
-  store.selectTab('tb2', true) // toggle off primary
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  s.selectTab('tb2', true)
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 1, 'one tab remaining')
-  assert((sel.selectedTabIds ?? []).includes('tb1'), 'tb1 still selected')
+  assertEq(sel.selectedTabIds.length, 1, 'one tab remaining')
+  assert(sel.selectedTabIds.includes('tb1'), 'tb1 still selected')
   assert(sel.selectedNode?.type === 'tab' && sel.selectedNode.tabId === 'tb1', 'primary fell back to tb1')
 })
 
 test('additive toggle of last member clears selection', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectTab('tb1')
-  store.selectTab('tb1', true)
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb1', true)
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 0, 'no tabs selected')
+  assertEq(sel.selectedTabIds.length, 0, 'no tabs selected')
   assertEq(sel.selectedNode, null, 'no primary node')
 })
 
 test('additive clamp toggles into selection', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectClamp('cl1')
-  store.selectClamp('cl2', true)
+  const s = store()
+  s.selectClamp('cl1')
+  s.selectClamp('cl2', true)
   const sel = selection()
-  assertEq((sel.selectedClampIds ?? []).length, 2, 'both clamps selected')
+  assertEq(sel.selectedClampIds.length, 2, 'both clamps selected')
 })
 
 test('additive clamp toggles out of selection', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectClamp('cl1')
-  store.selectClamp('cl2', true)
-  store.selectClamp('cl1', true)
+  const s = store()
+  s.selectClamp('cl1')
+  s.selectClamp('cl2', true)
+  s.selectClamp('cl1', true)
   const sel = selection()
-  assertEq((sel.selectedClampIds ?? []).length, 1, 'cl1 deselected')
-  assert((sel.selectedClampIds ?? []).includes('cl2'), 'cl2 still selected')
+  assertEq(sel.selectedClampIds.length, 1, 'cl1 deselected')
+  assert(sel.selectedClampIds.includes('cl2'), 'cl2 still selected')
 })
 
 // ============================================================================
@@ -241,7 +292,6 @@ console.log('\n3. Incompatible additive attempts')
 
 test('additive tab on feature selection is ignored', () => {
   resetStore(projectWithTabsAndClamps())
-  // Simulate a feature-family selection with no feature/tab/clamp mix
   useProjectStore.setState((s) => ({
     selection: {
       ...s.selection,
@@ -252,33 +302,131 @@ test('additive tab on feature selection is ignored', () => {
       selectedNode: { type: 'features_root' },
     },
   }))
-  // Attempt additive tab — should be ignored since current node is not tab/tabs_root
-  useProjectStore.getState().selectTab('tb1', true)
+  store().selectTab('tb1', true)
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 0, 'tab not added to feature-family selection')
+  assertEq(sel.selectedTabIds.length, 0, 'tab not added to feature-family selection')
   assert(sel.selectedNode?.type === 'features_root', 'primary unchanged')
 })
 
 test('additive clamp on tab selection is ignored', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectTab('tb1')
-  store.selectClamp('cl1', true) // additive on non-clamp family
+  const s = store()
+  s.selectTab('tb1')
+  s.selectClamp('cl1', true)
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 1, 'tab selection preserved')
-  assertEq((sel.selectedClampIds ?? []).length, 0, 'clamp not added')
+  assertEq(sel.selectedTabIds.length, 1, 'tab selection preserved')
+  assertEq(sel.selectedClampIds.length, 0, 'clamp not added')
   assert(sel.selectedNode?.type === 'tab', 'primary still tab')
 })
 
 test('plain click switches family from tab to clamp', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectTab('tb1')
-  store.selectClamp('cl1') // plain click, not additive
+  const s = store()
+  s.selectTab('tb1')
+  s.selectClamp('cl1')
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 0, 'tab IDs cleared')
-  assertEq((sel.selectedClampIds ?? []).length, 1, 'clamp ID set')
+  assertEq(sel.selectedTabIds.length, 0, 'tab IDs cleared')
+  assertEq(sel.selectedClampIds.length, 1, 'clamp ID set')
   assert(sel.selectedNode?.type === 'clamp', 'family switched to clamp')
+})
+
+// ── Adversarial: selectFeature additive from tab/clamp family ──
+
+test('additive feature on tab selection is true no-op', () => {
+  // Build a project with both features and tabs.
+  const p = projectWithTabsAndClamps()
+  const pWithFeatures = projectWithFeatures()
+  const combined: Project = {
+    ...p,
+    features: pWithFeatures.features,
+    featureDefinitions: pWithFeatures.featureDefinitions,
+    featureTree: pWithFeatures.featureTree,
+  }
+  resetStore(combined)
+  store().selectTab('tb1')
+  store().selectTab('tb2', true)
+  // Attempt additive feature selection — must be ignored entirely.
+  store().selectFeature('f1', true)
+  const sel = selection()
+  assertEq(sel.selectedFeatureIds.length, 0, 'feature not added')
+  assertEq(sel.selectedTabIds.length, 2, 'tab selection fully preserved')
+  assert(sel.selectedNode?.type === 'tab', 'primary still tab')
+})
+
+test('additive feature on clamp selection is true no-op', () => {
+  const p = projectWithTabsAndClamps()
+  const pWithFeatures = projectWithFeatures()
+  const combined: Project = {
+    ...p,
+    features: pWithFeatures.features,
+    featureDefinitions: pWithFeatures.featureDefinitions,
+    featureTree: pWithFeatures.featureTree,
+  }
+  resetStore(combined)
+  store().selectClamp('cl1')
+  store().selectClamp('cl2', true)
+  store().selectFeature('f1', true)
+  const sel = selection()
+  assertEq(sel.selectedFeatureIds.length, 0, 'feature not added')
+  assertEq(sel.selectedClampIds.length, 2, 'clamp selection fully preserved')
+  assert(sel.selectedNode?.type === 'clamp', 'primary still clamp')
+})
+
+test('additive feature with null node but tab IDs present is true no-op', () => {
+  resetStore(projectWithTabsAndClamps())
+  // Simulate pending workflow: tab IDs present, primary node is null.
+  useProjectStore.setState((s) => ({
+    selection: {
+      ...s.selection,
+      selectedFeatureIds: [],
+      selectedFeatureId: null,
+      selectedTabIds: ['tb1'],
+      selectedClampIds: [],
+      selectedNode: null,
+    },
+  }))
+  store().selectFeature('f1', true)
+  const sel = selection()
+  assertEq(sel.selectedFeatureIds.length, 0, 'feature not added')
+  assertEq(sel.selectedTabIds.length, 1, 'tab selection preserved')
+})
+
+test('additive feature with null node but clamp IDs present is true no-op', () => {
+  resetStore(projectWithTabsAndClamps())
+  useProjectStore.setState((s) => ({
+    selection: {
+      ...s.selection,
+      selectedFeatureIds: [],
+      selectedFeatureId: null,
+      selectedTabIds: [],
+      selectedClampIds: ['cl1'],
+      selectedNode: null,
+    },
+  }))
+  store().selectFeature('f1', true)
+  const sel = selection()
+  assertEq(sel.selectedFeatureIds.length, 0, 'feature not added')
+  assertEq(sel.selectedClampIds.length, 1, 'clamp selection preserved')
+})
+
+test('additive feature succeeds when null node and only feature IDs present', () => {
+  resetStore(projectWithFeatures())
+  // Simulate pending-feature-workflow: feature IDs present, primary node null.
+  useProjectStore.setState((s) => ({
+    selection: {
+      ...s.selection,
+      selectedFeatureIds: ['f1'],
+      selectedFeatureId: 'f1',
+      selectedTabIds: [],
+      selectedClampIds: [],
+      selectedNode: null,
+    },
+  }))
+  store().selectFeature('f2', true)
+  const sel = selection()
+  assertEq(sel.selectedFeatureIds.length, 2, 'f2 added to feature selection')
+  assert(sel.selectedFeatureIds.includes('f1'), 'f1 still in selection')
+  assert(sel.selectedFeatureIds.includes('f2'), 'f2 added to selection')
 })
 
 // ============================================================================
@@ -288,41 +436,41 @@ console.log('\n4. Visible-only Select All')
 
 test('selectAllTabs selects only visible tabs', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().selectAllTabs()
+  store().selectAllTabs()
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 2, 'two visible tabs selected')
-  assert((sel.selectedTabIds ?? []).includes('tb1'), 'visible tb1 selected')
-  assert((sel.selectedTabIds ?? []).includes('tb2'), 'visible tb2 selected')
-  assert(!(sel.selectedTabIds ?? []).includes('tb3'), 'hidden tb3 not selected')
+  assertEq(sel.selectedTabIds.length, 2, 'two visible tabs selected')
+  assert(sel.selectedTabIds.includes('tb1'), 'visible tb1 selected')
+  assert(sel.selectedTabIds.includes('tb2'), 'visible tb2 selected')
+  assert(!sel.selectedTabIds.includes('tb3'), 'hidden tb3 not selected')
 })
 
 test('selectAllClamps selects only visible clamps', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().selectAllClamps()
+  store().selectAllClamps()
   const sel = selection()
-  assertEq((sel.selectedClampIds ?? []).length, 2, 'two visible clamps selected')
-  assert((sel.selectedClampIds ?? []).includes('cl1'), 'visible cl1 selected')
-  assert((sel.selectedClampIds ?? []).includes('cl2'), 'visible cl2 selected')
-  assert(!(sel.selectedClampIds ?? []).includes('cl3'), 'hidden cl3 not selected')
+  assertEq(sel.selectedClampIds.length, 2, 'two visible clamps selected')
+  assert(sel.selectedClampIds.includes('cl1'), 'visible cl1 selected')
+  assert(sel.selectedClampIds.includes('cl2'), 'visible cl2 selected')
+  assert(!sel.selectedClampIds.includes('cl3'), 'hidden cl3 not selected')
 })
 
 test('selectAllTabs replaces previous clamp selection', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectClamp('cl1')
-  store.selectAllTabs()
+  const s = store()
+  s.selectClamp('cl1')
+  s.selectAllTabs()
   const sel = selection()
-  assertEq((sel.selectedClampIds ?? []).length, 0, 'clamp selection cleared')
-  assertEq((sel.selectedTabIds ?? []).length, 2, 'tab selection set')
+  assertEq(sel.selectedClampIds.length, 0, 'clamp selection cleared')
+  assertEq(sel.selectedTabIds.length, 2, 'tab selection set')
 })
 
 test('selectAllTabs with no visible tabs yields empty selection', () => {
   const p = projectWithTabsAndClamps()
   p.tabs = p.tabs.map((t) => ({ ...t, visible: false }))
   resetStore(p)
-  useProjectStore.getState().selectAllTabs()
+  store().selectAllTabs()
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 0, 'no tabs selected')
+  assertEq(sel.selectedTabIds.length, 0, 'no tabs selected')
   assertEq(sel.selectedNode, null, 'no primary node')
 })
 
@@ -333,25 +481,23 @@ console.log('\n5. Center-preserving bulk dimensions')
 
 test('updateTabs preserves center on width change', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().updateTabs(['tb1'], { w: 20 })
+  store().updateTabs(['tb1'], { w: 20 })
   const tab = project().tabs.find((t) => t.id === 'tb1')!
-  // Original center x = 10 + 10/2 = 15
   assertEq(tab.w, 20, 'width updated')
   assertEq(tab.x + tab.w / 2, 15, 'center x preserved')
 })
 
 test('updateTabs preserves center on height change', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().updateTabs(['tb1'], { h: 20 })
+  store().updateTabs(['tb1'], { h: 20 })
   const tab = project().tabs.find((t) => t.id === 'tb1')!
-  // Original center y = 10 + 10/2 = 15
   assertEq(tab.h, 20, 'height updated')
   assertEq(tab.y + tab.h / 2, 15, 'center y preserved')
 })
 
 test('updateTabs preserves center on both dimensions change', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().updateTabs(['tb1'], { w: 20, h: 20 })
+  store().updateTabs(['tb1'], { w: 20, h: 20 })
   const tab = project().tabs.find((t) => t.id === 'tb1')!
   assertEq(tab.w, 20, 'width updated')
   assertEq(tab.h, 20, 'height updated')
@@ -361,7 +507,7 @@ test('updateTabs preserves center on both dimensions change', () => {
 
 test('updateTabs keeps width and height independent', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().updateTabs(['tb1'], { w: 20 })
+  store().updateTabs(['tb1'], { w: 20 })
   const tab = project().tabs.find((t) => t.id === 'tb1')!
   assertEq(tab.w, 20, 'width updated')
   assertEq(tab.h, 10, 'height unchanged')
@@ -369,7 +515,7 @@ test('updateTabs keeps width and height independent', () => {
 
 test('updateTabs bulk applies to all specified IDs', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().updateTabs(['tb1', 'tb2'], { w: 20 })
+  store().updateTabs(['tb1', 'tb2'], { w: 20 })
   const t1 = project().tabs.find((t) => t.id === 'tb1')!
   const t2 = project().tabs.find((t) => t.id === 'tb2')!
   const t3 = project().tabs.find((t) => t.id === 'tb3')!
@@ -380,7 +526,7 @@ test('updateTabs bulk applies to all specified IDs', () => {
 
 test('updateClamps preserves center on width change', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().updateClamps(['cl1'], { w: 24 })
+  store().updateClamps(['cl1'], { w: 24 })
   const clamp = project().clamps.find((c) => c.id === 'cl1')!
   assertEq(clamp.w, 24, 'width updated')
   assertEq(clamp.x + clamp.w / 2, 10 + 12 / 2, 'center x preserved')
@@ -389,7 +535,7 @@ test('updateClamps preserves center on width change', () => {
 test('updateTabs with empty IDs does not change history', () => {
   resetStore(projectWithTabsAndClamps())
   const before = historyLen()
-  useProjectStore.getState().updateTabs([], { w: 20 })
+  store().updateTabs([], { w: 20 })
   assertEq(historyLen(), before, 'no history entry for empty update')
 })
 
@@ -400,48 +546,64 @@ console.log('\n6. Selection sanitization after bulk delete')
 
 test('deleteTabs removes deleted IDs from selection', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectTab('tb1')
-  store.selectTab('tb2', true)
-  store.deleteTabs(['tb1'])
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  s.deleteTabs(['tb1'])
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 1, 'one tab remains selected')
-  assert((sel.selectedTabIds ?? []).includes('tb2'), 'tb2 still selected')
-  assert(!(sel.selectedTabIds ?? []).includes('tb1'), 'tb1 removed')
+  assertEq(sel.selectedTabIds.length, 1, 'one tab remains selected')
+  assert(sel.selectedTabIds.includes('tb2'), 'tb2 still selected')
+  assert(!sel.selectedTabIds.includes('tb1'), 'tb1 removed')
 })
 
 test('deleteTabs clears selection when all selected are deleted', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectTab('tb1')
-  store.selectTab('tb2', true)
-  store.deleteTabs(['tb1', 'tb2'])
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  s.deleteTabs(['tb1', 'tb2'])
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 0, 'no tabs selected')
+  assertEq(sel.selectedTabIds.length, 0, 'no tabs selected')
   assertEq(sel.selectedNode, null, 'primary cleared')
 })
 
 test('deleteTabs promotes other member when primary is deleted', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectTab('tb1')
-  store.selectTab('tb2', true) // primary is tb2
-  store.deleteTabs(['tb2'])
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  s.deleteTabs(['tb2'])
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 1, 'one tab remains')
-  assert((sel.selectedTabIds ?? []).includes('tb1'), 'tb1 remains')
+  assertEq(sel.selectedTabIds.length, 1, 'one tab remains')
+  assert(sel.selectedTabIds.includes('tb1'), 'tb1 remains')
   assert(sel.selectedNode?.type === 'tab' && sel.selectedNode.tabId === 'tb1', 'primary fell back to tb1')
 })
 
 test('deleteClamps sanitizes selection', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectClamp('cl1')
-  store.selectClamp('cl2', true)
-  store.deleteClamps(['cl1', 'cl2'])
+  const s = store()
+  s.selectClamp('cl1')
+  s.selectClamp('cl2', true)
+  s.deleteClamps(['cl1', 'cl2'])
   const sel = selection()
-  assertEq((sel.selectedClampIds ?? []).length, 0, 'all deleted clamps removed')
+  assertEq(sel.selectedClampIds.length, 0, 'all deleted clamps removed')
   assertEq(sel.selectedNode, null, 'primary cleared')
+})
+
+test('deleteTabs preserves unrelated feature selection', () => {
+  resetStore(projectWithTabsAndClamps())
+  // Select a tab so there are IDs in the collection, then switch to feature family.
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  // Now switch to a features_root node (feature family).
+  s.selectFeaturesRoot()
+  // Delete tabs while feature family is active.
+  s.deleteTabs(['tb1'])
+  const sel = selection()
+  // Feature selection should be preserved, tab IDs cleaned up.
+  assertEq(sel.selectedTabIds.length, 0, 'deleted tabs removed from collection')
+  assert(sel.selectedNode?.type === 'features_root', 'feature root preserved')
 })
 
 // ============================================================================
@@ -452,34 +614,34 @@ console.log('\n7. One-step undo for bulk operations')
 test('updateTabs creates one history entry', () => {
   resetStore(projectWithTabsAndClamps())
   const before = historyLen()
-  useProjectStore.getState().updateTabs(['tb1', 'tb2'], { w: 20 })
+  store().updateTabs(['tb1', 'tb2'], { w: 20 })
   assertEq(historyLen(), before + 1, 'one history entry created')
 })
 
 test('deleteTabs creates one history entry', () => {
   resetStore(projectWithTabsAndClamps())
   const before = historyLen()
-  useProjectStore.getState().deleteTabs(['tb1', 'tb2'])
+  store().deleteTabs(['tb1', 'tb2'])
   assertEq(historyLen(), before + 1, 'one history entry for bulk delete')
 })
 
 test('undo restores bulk-deleted tabs with selection', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectTab('tb1')
-  store.selectTab('tb2', true)
-  store.deleteTabs(['tb1', 'tb2'])
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  s.deleteTabs(['tb1', 'tb2'])
   assertEq(project().tabs.length, 1, 'one tab remaining after delete')
-  store.undo()
+  s.undo()
   assertEq(project().tabs.length, 3, 'all three tabs restored')
 })
 
 test('undo restores bulk-updated dimensions', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.updateTabs(['tb1'], { w: 20 })
+  const s = store()
+  s.updateTabs(['tb1'], { w: 20 })
   assertEq(project().tabs.find((t) => t.id === 'tb1')!.w, 20, 'width changed')
-  store.undo()
+  s.undo()
   assertEq(project().tabs.find((t) => t.id === 'tb1')!.w, 10, 'width restored')
 })
 
@@ -490,37 +652,238 @@ console.log('\n8. Bulk selection helpers')
 
 test('selectTabs sets exact ID set', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().selectTabs(['tb1', 'tb3'])
+  store().selectTabs(['tb1', 'tb3'])
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 2, 'two tabs selected')
-  assert((sel.selectedTabIds ?? []).includes('tb1'), 'tb1 selected')
-  assert((sel.selectedTabIds ?? []).includes('tb3'), 'tb3 selected')
-  assert((sel.selectedClampIds ?? []).length === 0, 'clamp IDs cleared')
+  assertEq(sel.selectedTabIds.length, 2, 'two tabs selected')
+  assert(sel.selectedTabIds.includes('tb1'), 'tb1 selected')
+  assert(sel.selectedTabIds.includes('tb3'), 'tb3 selected')
+  assert(sel.selectedClampIds.length === 0, 'clamp IDs cleared')
 })
 
 test('selectTabs filters out nonexistent IDs', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().selectTabs(['tb1', 'nonexistent'])
+  store().selectTabs(['tb1', 'nonexistent'])
   const sel = selection()
-  assertEq((sel.selectedTabIds ?? []).length, 1, 'only valid IDs kept')
-  assert((sel.selectedTabIds ?? []).includes('tb1'), 'valid ID kept')
+  assertEq(sel.selectedTabIds.length, 1, 'only valid IDs kept')
+  assert(sel.selectedTabIds.includes('tb1'), 'valid ID kept')
 })
 
 test('selectTabs replaces previous clamp selection', () => {
   resetStore(projectWithTabsAndClamps())
-  const store = useProjectStore.getState()
-  store.selectClamp('cl1')
-  store.selectTabs(['tb1'])
+  const s = store()
+  s.selectClamp('cl1')
+  s.selectTabs(['tb1'])
   const sel = selection()
-  assertEq((sel.selectedClampIds ?? []).length, 0, 'clamp IDs cleared')
-  assertEq((sel.selectedTabIds ?? []).length, 1, 'tab IDs set')
+  assertEq(sel.selectedClampIds.length, 0, 'clamp IDs cleared')
+  assertEq(sel.selectedTabIds.length, 1, 'tab IDs set')
 })
 
 test('selectClamps deduplicates IDs', () => {
   resetStore(projectWithTabsAndClamps())
-  useProjectStore.getState().selectClamps(['cl1', 'cl1', 'cl2'])
+  store().selectClamps(['cl1', 'cl1', 'cl2'])
   const sel = selection()
-  assertEq((sel.selectedClampIds ?? []).length, 2, 'duplicates filtered')
+  assertEq(sel.selectedClampIds.length, 2, 'duplicates filtered')
+})
+
+// ============================================================================
+// 9. Bulk mutation no-op checks
+// ============================================================================
+console.log('\n9. Bulk mutation no-op checks')
+
+test('updateTabs with nonexistent IDs does not change history', () => {
+  resetStore(projectWithTabsAndClamps())
+  const before = historyLen()
+  store().updateTabs(['nonexistent'], { w: 20 })
+  assertEq(historyLen(), before, 'no history entry for nonexistent IDs')
+})
+
+test('updateTabs with identical patch does not change history', () => {
+  resetStore(projectWithTabsAndClamps())
+  const before = historyLen()
+  // tb1 already has w: 10
+  store().updateTabs(['tb1'], { w: 10 })
+  assertEq(historyLen(), before, 'no history entry for identical patch')
+})
+
+test('updateClamps with nonexistent IDs does not change history', () => {
+  resetStore(projectWithTabsAndClamps())
+  const before = historyLen()
+  store().updateClamps(['nonexistent'], { w: 24 })
+  assertEq(historyLen(), before, 'no history entry for nonexistent clamp IDs')
+})
+
+test('updateClamps with identical patch does not change history', () => {
+  resetStore(projectWithTabsAndClamps())
+  const before = historyLen()
+  // cl1 already has w: 12
+  store().updateClamps(['cl1'], { w: 12 })
+  assertEq(historyLen(), before, 'no history entry for identical clamp patch')
+})
+
+test('deleteTabs with nonexistent IDs does not change history', () => {
+  resetStore(projectWithTabsAndClamps())
+  const before = historyLen()
+  store().deleteTabs(['nonexistent'])
+  assertEq(historyLen(), before, 'no history entry for nonexistent tab delete')
+})
+
+test('deleteClamps with nonexistent IDs does not change history', () => {
+  resetStore(projectWithTabsAndClamps())
+  const before = historyLen()
+  store().deleteClamps(['nonexistent'])
+  assertEq(historyLen(), before, 'no history entry for nonexistent clamp delete')
+})
+
+// ============================================================================
+// 10. sanitizeSelection — centralized invariant boundary
+// ============================================================================
+console.log('\n10. sanitizeSelection tests')
+
+function emptySel(overrides: Partial<SelectionState> = {}): SelectionState {
+  return {
+    mode: 'feature',
+    selectedFeatureId: null,
+    selectedFeatureIds: [],
+    selectedTabIds: [],
+    selectedClampIds: [],
+    selectedNode: null,
+    hoveredFeatureId: null,
+    sketchEditTool: null,
+    activeControl: null,
+    groupFolderId: null,
+    ...overrides,
+  }
+}
+
+test('sanitizeSelection filters nonexistent feature IDs', () => {
+  const p = projectWithFeatures()
+  const sel = emptySel({
+    selectedFeatureIds: ['f1', 'nonexistent'],
+    selectedFeatureId: 'nonexistent',
+    selectedNode: { type: 'feature', featureId: 'nonexistent' },
+  })
+  const result = sanitizeSelection(p, sel)
+  assertEq(result.selectedFeatureIds.length, 1, 'only valid IDs kept')
+  assert(result.selectedFeatureIds.includes('f1'), 'f1 kept')
+  assertEq(result.selectedFeatureId, 'f1', 'primary fell back to valid ID')
+})
+
+test('sanitizeSelection filters nonexistent tab IDs', () => {
+  const p = projectWithTabsAndClamps()
+  const sel = emptySel({
+    selectedTabIds: ['tb1', 'nonexistent'],
+    selectedNode: { type: 'tab', tabId: 'tb1' },
+  })
+  const result = sanitizeSelection(p, sel)
+  assertEq(result.selectedTabIds.length, 1, 'only valid tab IDs kept')
+  assert(result.selectedTabIds.includes('tb1'), 'tb1 kept')
+  assert(result.selectedNode?.type === 'tab' && result.selectedNode.tabId === 'tb1', 'primary preserved')
+})
+
+test('sanitizeSelection enforces single-family: tab primary drops features', () => {
+  const p = projectWithTabsAndClamps()
+  // Malformed: feature IDs present with a tab primary.
+  const sel = emptySel({
+    selectedFeatureIds: ['f1'],
+    selectedFeatureId: 'f1',
+    selectedTabIds: ['tb1'],
+    selectedNode: { type: 'tab', tabId: 'tb1' },
+  })
+  const result = sanitizeSelection(p, sel)
+  assertEq(result.selectedFeatureIds.length, 0, 'feature IDs dropped')
+  assertEq(result.selectedTabIds.length, 1, 'tab IDs kept')
+  assert(result.selectedNode?.type === 'tab', 'primary is tab')
+})
+
+test('sanitizeSelection enforces single-family: clamp primary drops features', () => {
+  const p = projectWithTabsAndClamps()
+  const sel = emptySel({
+    selectedFeatureIds: ['f1'],
+    selectedTabIds: [],
+    selectedClampIds: ['cl1'],
+    selectedNode: { type: 'clamp', clampId: 'cl1' },
+  })
+  const result = sanitizeSelection(p, sel)
+  assertEq(result.selectedFeatureIds.length, 0, 'feature IDs dropped')
+  assertEq(result.selectedClampIds.length, 1, 'clamp IDs kept')
+  assert(result.selectedNode?.type === 'clamp', 'primary is clamp')
+})
+
+test('sanitizeSelection: invalid tab primary falls back deterministically', () => {
+  const p = projectWithTabsAndClamps()
+  const sel = emptySel({
+    selectedTabIds: ['tb1', 'tb2'],
+    selectedNode: { type: 'tab', tabId: 'deleted_tab' },
+  })
+  const result = sanitizeSelection(p, sel)
+  assertEq(result.selectedTabIds.length, 2, 'tab collection preserved')
+  assert(result.selectedNode?.type === 'tab', 'primary is tab')
+  assert(result.selectedTabIds.includes(result.selectedNode!.tabId), 'primary belongs to collection')
+})
+
+test('sanitizeSelection: invalid feature primary falls back deterministically', () => {
+  const p = projectWithFeatures()
+  const sel = emptySel({
+    selectedFeatureIds: ['f1', 'f2'],
+    selectedFeatureId: 'deleted',
+    selectedNode: { type: 'feature', featureId: 'deleted' },
+  })
+  const result = sanitizeSelection(p, sel)
+  assertEq(result.selectedFeatureIds.length, 2, 'feature collection preserved')
+  assert(result.selectedNode?.type === 'feature', 'primary is a feature')
+  assertEq(result.selectedFeatureId, 'f2', 'primary fell back to last surviving ID')
+})
+
+test('sanitizeSelection preserves pending workflow (features + null node)', () => {
+  const p = projectWithFeatures()
+  const sel = emptySel({
+    selectedFeatureIds: ['f1'],
+    selectedFeatureId: 'f1',
+    selectedNode: null,
+  })
+  const result = sanitizeSelection(p, sel)
+  assertEq(result.selectedFeatureIds.length, 1, 'feature IDs preserved')
+  assert(result.selectedNode?.type === 'feature', 'primary resolved from collection')
+  assertEq(result.selectedFeatureId, 'f1', 'primary ID resolved')
+})
+
+test('sanitizeSelection resolves mixed-family without primary to features first', () => {
+  const p = projectWithTabsAndClamps()
+  // Mixed collections, no primary node.
+  const sel = emptySel({
+    selectedFeatureIds: ['f1'],
+    selectedTabIds: ['tb1'],
+    selectedClampIds: ['cl1'],
+    selectedNode: null,
+  })
+  const result = sanitizeSelection(p, sel)
+  // Features win in the fallback order.
+  // (f1 doesn't exist in this project, so features are empty anyway)
+  // Tabs win because feature IDs are all filtered.
+  assertEq(result.selectedFeatureIds.length, 0, 'nonexistent features filtered')
+  assertEq(result.selectedTabIds.length, 1, 'tabs survive as fallback')
+  assertEq(result.selectedClampIds.length, 0, 'clamps dropped (tabs won)')
+})
+
+test('sanitizeSelection: empty everything with non-family primary keeps it', () => {
+  const p = projectWithTabsAndClamps()
+  const sel = emptySel({
+    selectedNode: { type: 'features_root' },
+  })
+  const result = sanitizeSelection(p, sel)
+  assertEq(result.selectedNode?.type, 'features_root', 'non-family root node preserved')
+})
+
+test('sanitizeSelection: tab primary with empty collection clears everything', () => {
+  const p = projectWithTabsAndClamps()
+  // All tab IDs are nonexistent → collection is empty.
+  const sel = emptySel({
+    selectedTabIds: ['nonexistent'],
+    selectedNode: { type: 'tab', tabId: 'nonexistent' },
+  })
+  const result = sanitizeSelection(p, sel)
+  assertEq(result.selectedTabIds.length, 0, 'tab IDs empty')
+  assertEq(result.selectedNode, null, 'primary cleared')
 })
 
 // ============================================================================

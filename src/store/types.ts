@@ -51,9 +51,9 @@ export interface SelectionState {
   selectedFeatureId: string | null
   selectedFeatureIds: string[]
   /** Multi-selected tab IDs when the active family is tabs. */
-  selectedTabIds?: string[]
+  selectedTabIds: string[]
   /** Multi-selected clamp IDs when the active family is clamps. */
-  selectedClampIds?: string[]
+  selectedClampIds: string[]
   selectedNode: SelectedNode
   hoveredFeatureId: string | null
   sketchEditTool: SketchEditTool | null

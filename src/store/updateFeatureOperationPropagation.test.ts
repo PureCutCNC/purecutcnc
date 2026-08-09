@@ -42,6 +42,8 @@ function resetStore(project?: Project): void {
     selection: {
       selectedFeatureIds: [],
       selectedFeatureId: null,
+      selectedTabIds: [],
+      selectedClampIds: [],
       selectedNode: null,
       mode: 'feature' as const,
       sketchEditTool: null,

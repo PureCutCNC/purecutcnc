@@ -770,7 +770,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 label={tab.name}
                 kind="tab"
                 depth={1}
-                isSelected={(selection.selectedTabIds ?? []).includes(tab.id)}
+                isSelected={selection.selectedTabIds.includes(tab.id)}
                 isDragging={false}
                 visible={tab.visible}
                 onClick={(event) => selectTab(tab.id, event.metaKey || event.ctrlKey || event.shiftKey)}
@@ -779,14 +779,14 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 onToggleVisible={() => updateTab(tab.id, { visible: !tab.visible })}
                 onContextMenu={(event) => {
                   event.preventDefault()
-                  if (!(selection.selectedTabIds ?? []).includes(tab.id)) {
+                  if (!selection.selectedTabIds.includes(tab.id)) {
                     selectTab(tab.id)
                   }
                   onTabContextMenu?.(tab.id, event.clientX, event.clientY)
                 }}
                 onEditEntry={onEditTab ? () => onEditTab(tab.id) : undefined}
                 onMoreMenu={tabletShell && onTabContextMenu ? (x, y) => {
-                  if (!(selection.selectedTabIds ?? []).includes(tab.id)) {
+                  if (!selection.selectedTabIds.includes(tab.id)) {
                     selectTab(tab.id)
                   }
                   onTabContextMenu(tab.id, x, y)
@@ -820,7 +820,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 label={clamp.name}
                 kind="clamp"
                 depth={1}
-                isSelected={(selection.selectedClampIds ?? []).includes(clamp.id)}
+                isSelected={selection.selectedClampIds.includes(clamp.id)}
                 isDragging={false}
                 visible={clamp.visible}
                 onClick={(event) => selectClamp(clamp.id, event.metaKey || event.ctrlKey || event.shiftKey)}
@@ -829,14 +829,14 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 onToggleVisible={() => updateClamp(clamp.id, { visible: !clamp.visible })}
                 onContextMenu={(event) => {
                   event.preventDefault()
-                  if (!(selection.selectedClampIds ?? []).includes(clamp.id)) {
+                  if (!selection.selectedClampIds.includes(clamp.id)) {
                     selectClamp(clamp.id)
                   }
                   onClampContextMenu?.(clamp.id, event.clientX, event.clientY)
                 }}
                 onEditEntry={onEditClamp ? () => onEditClamp(clamp.id) : undefined}
                 onMoreMenu={tabletShell && onClampContextMenu ? (x, y) => {
-                  if (!(selection.selectedClampIds ?? []).includes(clamp.id)) {
+                  if (!selection.selectedClampIds.includes(clamp.id)) {
                     selectClamp(clamp.id)
                   }
                   onClampContextMenu(clamp.id, x, y)

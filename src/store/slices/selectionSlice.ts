@@ -75,132 +75,162 @@ export function emptySelection(): SelectionState {
   }
 }
 
+/**
+ * Centralized selection invariant boundary.
+ *
+ * - Filters nonexistent IDs from every collection.
+ * - Enforces single-family exclusivity: never returns more than one non-empty
+ *   family collection (features, tabs, or clamps).
+ * - Resolves the family from a valid primary node first; when the primary is
+ *   invalid or absent, falls back to any non-empty collection (features first,
+ *   then tabs, then clamps).
+ * - Preserves valid pending-feature-workflow state where selectedFeatureIds is
+ *   non-empty but selectedNode is null.
+ * - When given deliberately malformed mixed-family input, resolves
+ *   deterministically based on the valid primary family.
+ */
 export function sanitizeSelection(project: Project, selection: SelectionState): SelectionState {
-  const selectedNode = selection.selectedNode
-  const selectedFeatureIds = selection.selectedFeatureIds.filter((featureId) =>
-    project.features.some((feature) => feature.id === featureId)
+  const validFeatureIds = selection.selectedFeatureIds.filter((id) =>
+    project.features.some((f) => f.id === id),
   )
-  const selectedFeatureId =
-    selection.selectedFeatureId && selectedFeatureIds.includes(selection.selectedFeatureId)
-      ? selection.selectedFeatureId
-      : selectedFeatureIds.at(-1) ?? null
-
-  const selectedTabIds = (selection.selectedTabIds ?? []).filter((tabId) =>
-    project.tabs.some((tab) => tab.id === tabId)
+  const validTabIds = selection.selectedTabIds.filter((id) =>
+    project.tabs.some((t) => t.id === id),
   )
-  const selectedClampIds = (selection.selectedClampIds ?? []).filter((clampId) =>
-    project.clamps.some((clamp) => clamp.id === clampId)
+  const validClampIds = selection.selectedClampIds.filter((id) =>
+    project.clamps.some((c) => c.id === id),
   )
 
-  if (selectedNode?.type === 'feature') {
-    if (selectedFeatureIds.length === 0 || !selectedFeatureId) {
-      return {
-        ...selection,
-        mode: 'feature',
-        selectedFeatureId: null,
-        selectedFeatureIds: [],
-        selectedTabIds,
-        selectedClampIds,
-        selectedNode: null,
-        hoveredFeatureId: null,
-        sketchEditTool: null,
-        activeControl: null,
-        groupFolderId: null,
-      }
-    }
+  const primaryNode = selection.selectedNode
+  const primaryType = primaryNode?.type
+
+  // Resolve the active family and enforce single-family exclusivity.
+  type Family = 'feature' | 'tab' | 'clamp'
+  let activeFamily: Family | null = null
+  let resolvedFeatureIds: string[] = []
+  let resolvedTabIds: string[] = []
+  let resolvedClampIds: string[] = []
+  let resolvedPrimaryNode: SelectionState['selectedNode'] = null
+  let resolvedMode: SelectionState['mode'] = 'feature'
+
+  // 1. If the primary node declares a family AND its corresponding collection
+  //    is non-empty, that family is authoritative.
+  if (primaryType === 'feature' && validFeatureIds.length > 0) {
+    activeFamily = 'feature'
+  } else if (primaryType === 'tab' && validTabIds.length > 0) {
+    activeFamily = 'tab'
+  } else if (primaryType === 'clamp' && validClampIds.length > 0) {
+    activeFamily = 'clamp'
   }
 
-  if (selectedNode?.type === 'tab') {
-    if (selectedTabIds.length === 0 || !selectedTabIds.includes(selectedNode.tabId)) {
-      const nextPrimaryId = selectedTabIds.at(-1) ?? null
-      return {
-        ...selection,
-        mode: 'feature',
-        selectedFeatureId: null,
-        selectedFeatureIds: [],
-        selectedTabIds,
-        selectedClampIds: [],
-        selectedNode: nextPrimaryId ? { type: 'tab', tabId: nextPrimaryId } : null,
-        hoveredFeatureId: null,
-        sketchEditTool: null,
-        activeControl: null,
-        groupFolderId: null,
-      }
+  if (activeFamily === 'feature') {
+    resolvedFeatureIds = validFeatureIds
+    resolvedTabIds = []
+    resolvedClampIds = []
+    const primaryId =
+      selection.selectedFeatureId && validFeatureIds.includes(selection.selectedFeatureId)
+        ? selection.selectedFeatureId
+        : validFeatureIds.at(-1) ?? null
+    resolvedPrimaryNode = primaryId ? { type: 'feature', featureId: primaryId } : null
+    // Preserve sketch_edit mode when editing a single feature.
+    if (validFeatureIds.length === 1 && primaryNode?.type === 'feature') {
+      resolvedMode = selection.mode
     }
-  }
-
-  if (selectedNode?.type === 'clamp') {
-    if (selectedClampIds.length === 0 || !selectedClampIds.includes(selectedNode.clampId)) {
-      const nextPrimaryId = selectedClampIds.at(-1) ?? null
-      return {
-        ...selection,
-        mode: 'feature',
-        selectedFeatureId: null,
-        selectedFeatureIds: [],
-        selectedTabIds: [],
-        selectedClampIds,
-        selectedNode: nextPrimaryId ? { type: 'clamp', clampId: nextPrimaryId } : null,
-        hoveredFeatureId: null,
-        sketchEditTool: null,
-        activeControl: null,
-        groupFolderId: null,
-      }
+  } else if (activeFamily === 'tab') {
+    resolvedFeatureIds = []
+    resolvedTabIds = validTabIds
+    resolvedClampIds = []
+    const primaryId =
+      primaryNode && primaryNode.type === 'tab' && validTabIds.includes(primaryNode.tabId)
+        ? primaryNode.tabId
+        : validTabIds.at(-1) ?? null
+    resolvedPrimaryNode = primaryId ? { type: 'tab', tabId: primaryId } : null
+  } else if (activeFamily === 'clamp') {
+    resolvedFeatureIds = []
+    resolvedTabIds = []
+    resolvedClampIds = validClampIds
+    const primaryId =
+      primaryNode && primaryNode.type === 'clamp' && validClampIds.includes(primaryNode.clampId)
+        ? primaryNode.clampId
+        : validClampIds.at(-1) ?? null
+    resolvedPrimaryNode = primaryId ? { type: 'clamp', clampId: primaryId } : null
+  } else {
+    // 2. No valid family primary — fall back to any non-empty collection.
+    //    Features have priority; feature IDs with null primary is a valid
+    //    pending-workflow state.
+    if (validFeatureIds.length > 0) {
+      resolvedFeatureIds = validFeatureIds
+      resolvedTabIds = []
+      resolvedClampIds = []
+      const primaryId =
+        selection.selectedFeatureId && validFeatureIds.includes(selection.selectedFeatureId)
+          ? selection.selectedFeatureId
+          : validFeatureIds.at(-1) ?? null
+      resolvedPrimaryNode = primaryId ? { type: 'feature', featureId: primaryId } : null
+    } else if (validTabIds.length > 0) {
+      resolvedTabIds = validTabIds
+      resolvedClampIds = []
+      const primaryId = validTabIds.at(-1) ?? null
+      resolvedPrimaryNode = primaryId ? { type: 'tab', tabId: primaryId } : null
+    } else if (validClampIds.length > 0) {
+      resolvedClampIds = validClampIds
+      const primaryId = validClampIds.at(-1) ?? null
+      resolvedPrimaryNode = primaryId ? { type: 'clamp', clampId: primaryId } : null
+    } else {
+      // 3. Nothing valid — validate and keep the non-family node, or null.
+      resolvedPrimaryNode = validateNonFamilyNode(project, primaryNode)
     }
   }
 
   const hoveredFeatureId =
-    selection.hoveredFeatureId && project.features.some((feature) => feature.id === selection.hoveredFeatureId)
+    selection.hoveredFeatureId && project.features.some((f) => f.id === selection.hoveredFeatureId)
       ? selection.hoveredFeatureId
       : null
 
-  const safeSelectedNode =
-    selectedNode?.type === 'folder'
-      ? project.featureFolders.some((folder) => folder.id === selectedNode.folderId)
-        ? selectedNode
-        : null
-      : selectedNode?.type === 'tab'
-        ? project.tabs.some((tab) => tab.id === selectedNode.tabId)
-          ? selectedNode
-          : null
-      : selectedNode?.type === 'tabs_root'
-        ? selectedNode
-      : selectedNode?.type === 'clamp'
-        ? project.clamps.some((clamp) => clamp.id === selectedNode.clampId)
-          ? selectedNode
-          : null
-      : selectedNode?.type === 'clamps_root'
-        ? selectedNode
-      : selectedNode?.type === 'origin'
-        ? selectedNode
-      : selectedNode?.type === 'backdrop'
-        ? project.backdrop
-          ? selectedNode
-          : null
-      : selectedNode?.type === 'features_root'
-        ? selectedNode
-      : selectedNode?.type === 'regions_root'
-        ? selectedNode
-      : selectedNode
-
   return {
-    ...selection,
-    mode:
-      selectedFeatureIds.length === 1 && selection.selectedNode?.type === 'feature'
-        ? selection.mode
-        : 'feature',
-    selectedFeatureId,
-    selectedFeatureIds,
-    selectedTabIds: safeSelectedNode?.type === 'tab' ? selectedTabIds : [],
-    selectedClampIds: safeSelectedNode?.type === 'clamp' ? selectedClampIds : [],
-    selectedNode:
-      selectedFeatureId
-        ? { type: 'feature', featureId: selectedFeatureId }
-        : selection.selectedNode?.type === 'feature'
-          ? null
-          : safeSelectedNode,
+    mode: resolvedMode,
+    selectedFeatureId:
+      resolvedPrimaryNode?.type === 'feature' ? resolvedPrimaryNode.featureId : null,
+    selectedFeatureIds: resolvedFeatureIds,
+    selectedTabIds: resolvedTabIds,
+    selectedClampIds: resolvedClampIds,
+    selectedNode: resolvedPrimaryNode,
     hoveredFeatureId,
-    sketchEditTool: selection.mode === 'sketch_edit' ? selection.sketchEditTool : null,
+    sketchEditTool: resolvedMode === 'sketch_edit' ? selection.sketchEditTool : null,
     activeControl: null,
+    groupFolderId:
+      selection.groupFolderId && resolvedPrimaryNode?.type === 'feature'
+        ? selection.groupFolderId
+        : null,
+  }
+}
+
+/** Validate a non-family selectedNode (folder, root, backdrop, etc.) against the project. */
+function validateNonFamilyNode(
+  project: Project,
+  node: SelectionState['selectedNode'],
+): SelectionState['selectedNode'] {
+  if (!node) return null
+  switch (node.type) {
+    case 'folder':
+      return project.featureFolders.some((f) => f.id === node.folderId) ? node : null
+    case 'tab':
+      return project.tabs.some((t) => t.id === node.tabId) ? node : null
+    case 'clamp':
+      return project.clamps.some((c) => c.id === node.clampId) ? node : null
+    case 'backdrop':
+      return project.backdrop ? node : null
+    case 'project':
+    case 'grid':
+    case 'stock':
+    case 'origin':
+    case 'features_root':
+    case 'regions_root':
+    case 'construction_root':
+    case 'tabs_root':
+    case 'clamps_root':
+      return node
+    default:
+      return null
   }
 }
 
@@ -378,6 +408,26 @@ export function createSelectionSlice(
               activeControl: null,
               groupFolderId: null,
             },
+          }
+        }
+
+        // Guard: incompatible additive from a different family is a true no-op.
+        // Determine the active family from the selected ID collections as well as
+        // the primary node, because pending workflows can legitimately have
+        // feature IDs with selectedNode: null.
+        if (additive && id) {
+          const nodeType = s.selection.selectedNode?.type
+          const hasTabSelection = s.selection.selectedTabIds.length > 0
+          const hasClampSelection = s.selection.selectedClampIds.length > 0
+          if (
+            nodeType === 'tab' ||
+            nodeType === 'tabs_root' ||
+            nodeType === 'clamp' ||
+            nodeType === 'clamps_root' ||
+            hasTabSelection ||
+            hasClampSelection
+          ) {
+            return {}
           }
         }
 
@@ -686,10 +736,10 @@ export function createSelectionSlice(
         }
 
         if (additive) {
-          const nextIds = (s.selection.selectedTabIds ?? []).includes(id)
-            ? (s.selection.selectedTabIds ?? []).filter((tabId) => tabId !== id)
-            : [...(s.selection.selectedTabIds ?? []), id]
-          const wasSelected = (s.selection.selectedTabIds ?? []).includes(id)
+          const nextIds = s.selection.selectedTabIds.includes(id)
+            ? s.selection.selectedTabIds.filter((tabId) => tabId !== id)
+            : [...s.selection.selectedTabIds, id]
+          const wasSelected = s.selection.selectedTabIds.includes(id)
           const nextPrimaryId =
             nextIds.length === 0
               ? null
@@ -748,10 +798,10 @@ export function createSelectionSlice(
         }
 
         if (additive) {
-          const nextIds = (s.selection.selectedClampIds ?? []).includes(id)
-            ? (s.selection.selectedClampIds ?? []).filter((clampId) => clampId !== id)
-            : [...(s.selection.selectedClampIds ?? []), id]
-          const wasSelected = (s.selection.selectedClampIds ?? []).includes(id)
+          const nextIds = s.selection.selectedClampIds.includes(id)
+            ? s.selection.selectedClampIds.filter((clampId) => clampId !== id)
+            : [...s.selection.selectedClampIds, id]
+          const wasSelected = s.selection.selectedClampIds.includes(id)
           const nextPrimaryId =
             nextIds.length === 0
               ? null

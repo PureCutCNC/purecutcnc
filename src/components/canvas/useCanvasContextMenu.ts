@@ -105,7 +105,7 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
     const world = canvasToWorld(point.cx, point.cy, vt)
     const hitClampId = findHitClampId(world, project.clamps)
     if (hitClampId) {
-      if (!(selection.selectedClampIds ?? []).includes(hitClampId)) {
+      if (!selection.selectedClampIds.includes(hitClampId)) {
         selectClamp(hitClampId)
       }
       onClampContextMenu?.(hitClampId, clientX, clientY)
@@ -114,7 +114,7 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
 
     const hitTabId = findHitTabId(world, project.tabs)
     if (hitTabId) {
-      if (!(selection.selectedTabIds ?? []).includes(hitTabId)) {
+      if (!selection.selectedTabIds.includes(hitTabId)) {
         selectTab(hitTabId)
       }
       onTabContextMenu?.(hitTabId, clientX, clientY)
