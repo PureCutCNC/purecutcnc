@@ -162,8 +162,14 @@ export function constrainZ(
  *
  * Returns `true` when the edit would satisfy z_bottom ≤ z_top for all items.
  *
- * When `patch.top` is present, requires `patch.top >= getBottom(item)` for every item.
- * When `patch.bottom` is present, requires `patch.bottom <= getTop(item)` for every item.
+ * Per item, the effective range is computed as:
+ *   effectiveTop    = patch.top    ?? getTop(item)
+ *   effectiveBottom = patch.bottom ?? getBottom(item)
+ *
+ * The patch is valid only when effectiveTop >= effectiveBottom for every item.
+ * This correctly rejects combined patches that would cross the opposite endpoint
+ * (e.g. an atomic range move {top:3, bottom:4} for an item with {top:5, bottom:2}),
+ * which the old separate-top/bottom check would incorrectly accept.
  */
 export function validateZEdits<T>(
   items: T[],
@@ -171,17 +177,10 @@ export function validateZEdits<T>(
   getBottom: (item: T) => number,
   patch: { top?: number; bottom?: number },
 ): boolean {
-  if (patch.top !== undefined) {
-    const top = patch.top
-    for (const item of items) {
-      if (top < getBottom(item)) return false
-    }
-  }
-  if (patch.bottom !== undefined) {
-    const bottom = patch.bottom
-    for (const item of items) {
-      if (bottom > getTop(item)) return false
-    }
+  for (const item of items) {
+    const effectiveTop = patch.top ?? getTop(item)
+    const effectiveBottom = patch.bottom ?? getBottom(item)
+    if (effectiveTop < effectiveBottom) return false
   }
   return true
 }

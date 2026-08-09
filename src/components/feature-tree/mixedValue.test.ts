@@ -302,10 +302,32 @@ check('validateZEdits: empty items returns true (vacuously valid)', () => {
   assert(validateZEdits([], (i: ZItem) => i.z_top, (i: ZItem) => i.z_bottom, { top: 5 }) === true, 'no items to violate')
 })
 
-check('validateZEdits: both top and bottom commit validated independently', () => {
+check('validateZEdits: both top and bottom commit validated per-item with effective range', () => {
   const items: ZItem[] = [{ z_top: 5, z_bottom: 0 }]
+  // Combined patch: effectiveTop=6, effectiveBottom=3, 6>=3 → valid
   assert(validateZEdits(items, (i) => i.z_top, (i) => i.z_bottom, { top: 6, bottom: 3 }) === true, 'both valid')
-  assert(validateZEdits(items, (i) => i.z_top, (i) => i.z_bottom, { top: 6, bottom: 7 }) === false, 'bottom > top2')
+  // Combined patch: effectiveTop=6, effectiveBottom=7, 6<7 → invalid
+  assert(validateZEdits(items, (i) => i.z_top, (i) => i.z_bottom, { top: 6, bottom: 7 }) === false, 'bottom > effective top')
+})
+
+check('validateZEdits: combined patch crossing opposite endpoint per-item is rejected', () => {
+  // Item: z_top=5, z_bottom=2. Patch: {top:3, bottom:4}
+  // Old separate check: top=3 >= bottom=2 ✓ AND bottom=4 <= top=5 ✓ → accepted (bug)
+  // New per-item: effectiveTop=3, effectiveBottom=4, 3<4 → rejected ✓
+  const items: ZItem[] = [{ z_top: 5, z_bottom: 2 }]
+  assert(validateZEdits(items, (i) => i.z_top, (i) => i.z_bottom, { top: 3, bottom: 4 }) === false, 'crossing range rejected')
+})
+
+check('validateZEdits: combined patch crossing opposite endpoint for one item is rejected', () => {
+  // Item A has z_top=2, z_bottom=1. With patch {top:3, bottom:4}:
+  //   effectiveTop=3, effectiveBottom=4, 3<4 → rejected.
+  // Even though item B {z_top:5, z_bottom:0} would be fine with the patch,
+  // the edit fails for item A and the entire batch is rejected.
+  const items: ZItem[] = [
+    { z_top: 2, z_bottom: 1 },
+    { z_top: 5, z_bottom: 0 },
+  ]
+  assert(validateZEdits(items, (i) => i.z_top, (i) => i.z_bottom, { top: 3, bottom: 4 }) === false, 'item A crossing')
 })
 
 check('validateZEdits: clamp bottom fixed at 0, top must be >= 0', () => {
@@ -344,6 +366,35 @@ check('zHandleAriaBounds: bottom opposite above domainMax uses domainMax', () =>
 check('zHandleAriaBounds: top opposite below domainMin uses domainMin', () => {
   const bounds = zHandleAriaBounds(true, 3, 20, 1)
   assert(bounds.valuemin === 3 && bounds.valuemax === 20, 'lower is domainMin not out-of-bounds bottom')
+})
+
+// ── Mixed opposite pointer — fabricated domainMin regression ─────────
+
+check('constrainZ: top with null opposite (mixed bottom) — only domain constrains, not fabricated 0', () => {
+  // Before the fix, a null zBottom was substituted as domainMin (0),
+  // which artificially constrained the top handle to >= 0.
+  // The correct behavior: only domainMin/domainMax apply, never fabricate an opposite.
+  assert(constrainZ(5, true, 0, 20, null) === 5, 'top value in range passes through')
+  // Even a negative value within a shifted domain should be allowed when opposite is null.
+  assert(constrainZ(-2, true, -5, 20, null) === -2, 'negative top within negative-shifted domain unconstrained by opposite')
+})
+
+check('constrainZ: bottom with null opposite (mixed top) — only domain constrains, not fabricated domainMin', () => {
+  // Before the fix, a null zTop was substituted as domainMin (0),
+  // which constrained the bottom handle to <= 0.
+  assert(constrainZ(15, false, 0, 20, null) === 15, 'bottom value in range passes through')
+  // When domainMin is shifted, null opposite must NOT clamp to the wrong bound.
+  assert(constrainZ(8, false, 3, 20, null) === 8, 'bottom above domainMin unconstrained by null opposite')
+})
+
+check('constrainZ: top with known opposite constrains against it, never against domainMin', () => {
+  // Known bottom=5, top dragged to 2 → clamped to >=5.
+  assert(constrainZ(2, true, 0, 20, 5) === 5, 'top clamped to known bottom')
+})
+
+check('constrainZ: bottom with known opposite constrains against it, never against domainMin', () => {
+  // Known top=3, bottom dragged to 7 → clamped to <=3.
+  assert(constrainZ(7, false, 0, 20, 3) === 3, 'bottom clamped to known top')
 })
 
 // ── Report ──────────────────────────────────────────────────────────

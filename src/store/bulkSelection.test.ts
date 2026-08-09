@@ -1197,6 +1197,77 @@ test('bulk tab Z edit on overlapping z_top/z_bottom equal is valid', () => {
 })
 
 // ============================================================================
+// 13. Combined Z patch per-item validation (validateZEdits v2)
+// ============================================================================
+console.log('\n13. Combined Z patch per-item validation')
+
+test('validateZEdits rejects crossing combined patch (top=3, bottom=4 for item with top=5, bottom=2)', () => {
+  // Old separate-check would accept this: top=3 >= bottom=2 ✓, bottom=4 <= top=5 ✓.
+  // New per-item: effectiveTop=3, effectiveBottom=4, 3<4 → rejected.
+  const items = [{ z_top: 5, z_bottom: 2 }]
+  assert(
+    validateZEdits(items, (i) => i.z_top, (i) => i.z_bottom, { top: 3, bottom: 4 }) === false,
+    'crossing combined patch rejected',
+  )
+})
+
+test('validateZEdits accepts valid combined range move (top=8, bottom=6 for item with top=5, bottom=2)', () => {
+  const items = [{ z_top: 5, z_bottom: 2 }]
+  assert(
+    validateZEdits(items, (i) => i.z_top, (i) => i.z_bottom, { top: 8, bottom: 6 }) === true,
+    'valid range move accepted',
+  )
+})
+
+test('validateZEdits per-item: one of three items crossing rejects all', () => {
+  const items = [
+    { z_top: 10, z_bottom: 0 },
+    { z_top: 2, z_bottom: 1 },   // effectiveTop=3, effectiveBottom=4 → 3<4 FAIL
+    { z_top: 5, z_bottom: 0 },
+  ]
+  assert(
+    validateZEdits(items, (i) => i.z_top, (i) => i.z_bottom, { top: 3, bottom: 4 }) === false,
+    'one crossing item rejects entire batch',
+  )
+})
+
+// ============================================================================
+// 14. Line operation Z eligibility (bottom locked at zero)
+// ============================================================================
+console.log('\n14. Line operation Z eligibility')
+
+test('line operation feature has bottom conceptually locked at zero', () => {
+  // Simulate what PropertiesPanel does: line operation features are treated
+  // as open for Z purposes, even when the profile is closed.
+  // validateZEdits with getBottom() => 0 for line features.
+  const lineItems = [
+    { op: 'line' as const, z_top: 3 },
+    { op: 'line' as const, z_top: 5 },
+  ]
+  // Top=2 >= bottom(0) → should pass.
+  assert(
+    validateZEdits(lineItems, (i) => i.z_top, () => 0, { top: 2 }) === true,
+    'line top=2 valid (>=0)',
+  )
+  // Top=-1 < bottom(0) → should fail.
+  assert(
+    validateZEdits(lineItems, (i) => i.z_top, () => 0, { top: -1 }) === false,
+    'line top=-1 < 0 rejected',
+  )
+})
+
+test('closed profile with add operation has editable bottom', () => {
+  const closedItems = [
+    { op: 'add' as const, z_top: 5, z_bottom: 2 },
+  ]
+  // Bottom edit: effectiveTop=5, effectiveBottom=3 → 5>=3 valid.
+  assert(
+    validateZEdits(closedItems, (i) => i.z_top, (i) => i.z_bottom, { bottom: 3 }) === true,
+    'closed add bottom edit valid',
+  )
+})
+
+// ============================================================================
 // Results
 // ============================================================================
 console.log(`\n${passed} passed, ${failed} failed`)

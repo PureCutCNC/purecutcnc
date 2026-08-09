@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useRef, useState, useMemo } from 'react'
+import { useRef, useState, useMemo, useEffect } from 'react'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { useI18n } from '../../i18n/i18nContext'
 import { constrainZ, zHandleAriaBounds } from './mixedValue'
@@ -55,8 +55,9 @@ export interface ZRangeSliderProps {
   /** When true the bottom handle is locked — only the field is editable. */
   bottomLocked?: boolean
   mixedPlaceholder?: string
-  /** Called once per user gesture with the changed fields. */
-  onCommit: (patch: { top?: number; bottom?: number }) => void
+  /** Called once per user gesture with the changed fields.
+   *  Return `false` to signal rejection — the slider will restore its display. */
+  onCommit: (patch: { top?: number; bottom?: number }) => boolean
 }
 
 export function ZRangeSlider({
@@ -95,6 +96,26 @@ export function ZRangeSlider({
     [domainMin, domainMax, zTop],
   )
 
+  // Sync input fields from props so Undo/Redo and external store changes
+  // refresh the displayed values without requiring a remount.
+  useEffect(() => {
+    if (topInputRef.current) {
+      topInputRef.current.value = zTop !== null ? formatLength(zTop, units) : ''
+    }
+    if (botInputRef.current) {
+      botInputRef.current.value = zBottom !== null ? formatLength(zBottom, units) : ''
+    }
+  }, [zTop, zBottom, units])
+
+  // Clean up active window listeners on unmount to prevent leaks.
+  useEffect(() => {
+    return () => {
+      if (cleanupRef.current) {
+        cleanupRef.current()
+      }
+    }
+  }, [])
+
   function handlePointerDown(handle: 'top' | 'bottom', event: React.PointerEvent) {
     event.preventDefault()
     event.stopPropagation()
@@ -106,7 +127,9 @@ export function ZRangeSlider({
       // Fall through to window-level tracking.
     }
 
-    // Mutable locals that track the live drag values.
+    // Mutable locals that track the live drag values.  Start from the
+    // displayed position (falls back to domainMin only for display — the
+    // constraint below uses the real committed values, not this fallback).
     let curTop = effectiveTop
     let curBot = effectiveBot
 
@@ -119,11 +142,13 @@ export function ZRangeSlider({
       const z = Math.round(percentToZ(percent, domainMin, domainMax) * 10000) / 10000
 
       if (handle === 'top') {
-        // Top must be >= bottom and <= domainMax; never push bottom.
-        curTop = constrainZ(z, true, domainMin, domainMax, curBot)
+        // Constrain only against the ACTUAL committed zBottom (may be null
+        // when mixed — then only domain bounds apply).  Never substitute
+        // domainMin as a fabricated opposite constraint.
+        curTop = constrainZ(z, true, domainMin, domainMax, zBottom)
       } else {
-        // Bottom must be <= top and >= domainMin; never push top.
-        curBot = constrainZ(z, false, domainMin, domainMax, curTop)
+        // Constrain only against the ACTUAL committed zTop (may be null).
+        curBot = constrainZ(z, false, domainMin, domainMax, zTop)
       }
 
       setDragTop(curTop)
@@ -138,10 +163,17 @@ export function ZRangeSlider({
       cleanup()
 
       // Commit only the handle that moved, in one atomic callback.
+      let accepted = true
       if (handle === 'top' && Math.abs(curTop - (zTop ?? domainMin)) > 1e-10) {
-        onCommit({ top: curTop })
+        accepted = onCommit({ top: curTop }) !== false
       } else if (handle === 'bottom' && Math.abs(curBot - (zBottom ?? domainMin)) > 1e-10) {
-        onCommit({ bottom: curBot })
+        accepted = onCommit({ bottom: curBot }) !== false
+      }
+
+      if (!accepted) {
+        // Restore field display to committed values on rejection.
+        if (topInputRef.current) topInputRef.current.value = zTop !== null ? formatLength(zTop, units) : ''
+        if (botInputRef.current) botInputRef.current.value = zBottom !== null ? formatLength(zBottom, units) : ''
       }
 
       setDragTop(null)
@@ -192,7 +224,10 @@ export function ZRangeSlider({
         return
       }
       if (committedValue === null || next !== committedValue) {
-        onCommit(isTop ? { top: next } : { bottom: next })
+        const accepted = onCommit(isTop ? { top: next } : { bottom: next })
+        if (!accepted) {
+          reset(el)
+        }
       } else {
         reset(el)
       }

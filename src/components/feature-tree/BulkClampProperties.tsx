@@ -52,13 +52,14 @@ export function BulkClampProperties({ selectedClamps, units, onClose }: BulkClam
   const selectionKey = useMemo(() => `bulk-clamps-${ids.join(',')}`, [ids])
 
   const handleZCommit = useCallback(
-    (patch: { top?: number; bottom?: number }) => {
+    (patch: { top?: number; bottom?: number }): boolean => {
       // Clamp Z top = height (physical height above zero).
       // Clamp Z bottom is fixed at 0 — validate against it, ignore bottom commits.
-      if (!validateZEdits(selectedClamps, (c) => c.height, () => 0, patch)) return
+      if (!validateZEdits(selectedClamps, (c) => c.height, () => 0, patch)) return false
       if (patch.top !== undefined) {
         updateClamps(ids, { height: patch.top })
       }
+      return true
     },
     [ids, selectedClamps, updateClamps],
   )

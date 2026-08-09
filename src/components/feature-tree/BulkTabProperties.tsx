@@ -26,14 +26,14 @@ import { commonNumber, commonBoolean, zDomainMax, validateZEdits } from './mixed
 interface BulkTabPropertiesProps {
   selectedTabs: Tab[]
   units: 'mm' | 'inch'
+  stockThickness: number
   onClose: () => void
 }
 
-export function BulkTabProperties({ selectedTabs, units, onClose }: BulkTabPropertiesProps) {
+export function BulkTabProperties({ selectedTabs, units, stockThickness, onClose }: BulkTabPropertiesProps) {
   const { t } = useI18n()
   const updateTabs = useProjectStore((s) => s.updateTabs)
   const deleteTabs = useProjectStore((s) => s.deleteTabs)
-  const stockThickness = useProjectStore((s) => s.project.stock.thickness)
 
   const ids = useMemo(() => selectedTabs.map((tab) => tab.id), [selectedTabs])
 
@@ -54,14 +54,15 @@ export function BulkTabProperties({ selectedTabs, units, onClose }: BulkTabPrope
   const selectionKey = useMemo(() => `bulk-tabs-${ids.join(',')}`, [ids])
 
   const handleZCommit = useCallback(
-    (patch: { top?: number; bottom?: number }) => {
-      if (!validateZEdits(selectedTabs, (t) => t.z_top, (t) => t.z_bottom, patch)) return
+    (patch: { top?: number; bottom?: number }): boolean => {
+      if (!validateZEdits(selectedTabs, (t) => t.z_top, (t) => t.z_bottom, patch)) return false
       const storePatch: Partial<Tab> = {}
       if (patch.top !== undefined) storePatch.z_top = patch.top
       if (patch.bottom !== undefined) storePatch.z_bottom = patch.bottom
       if (Object.keys(storePatch).length > 0) {
         updateTabs(ids, storePatch)
       }
+      return true
     },
     [ids, selectedTabs, updateTabs],
   )

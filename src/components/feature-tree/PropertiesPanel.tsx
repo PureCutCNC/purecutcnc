@@ -20,7 +20,7 @@ import { ExpandedPanelContext } from '../layout/expandedPanelContext'
 import { Select } from '../Select'
 import { DisclosureSection } from '../common/DisclosureSection'
 import { ZRangeSlider } from './ZRangeSlider'
-import { clampDomainMax } from './mixedValue'
+import { clampDomainMax, validateZEdits } from './mixedValue'
 import { ModelOrientationSection } from './ModelOrientationSection'
 import { BulkTabProperties } from './BulkTabProperties'
 import { BulkClampProperties } from './BulkClampProperties'
@@ -87,6 +87,8 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const updateFeatures = useProjectStore((s) => s.updateFeatures)
   const deleteFeature = useProjectStore((s) => s.deleteFeature)
   const deleteFeatures = useProjectStore((s) => s.deleteFeatures)
+  const beginHistoryTransaction = useProjectStore((s) => s.beginHistoryTransaction)
+  const commitHistoryTransaction = useProjectStore((s) => s.commitHistoryTransaction)
   const enterSketchEdit = useProjectStore((s) => s.enterSketchEdit)
   const enterStockSketchEdit = useProjectStore((s) => s.enterStockSketchEdit)
   const enterTabEdit = useProjectStore((s) => s.enterTabEdit)
@@ -156,8 +158,15 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
       : '__mixed__'
   const selectedZEditableFeatures = allSelectedFeatures.filter(isMachinable)
   const selectedZEditableFeatureIds = selectedZEditableFeatures.map((feature) => feature.id)
-  const selectedClosedEditableFeatures = selectedZEditableFeatures.filter((feature) => feature.sketch.profile.closed)
-  const selectedOpenEditableFeatures = selectedZEditableFeatures.filter((feature) => !feature.sketch.profile.closed)
+  // Line-operation features (including closed profiles) are treated as
+  // open for Z purposes: they are engraved paths with bottom locked at
+  // zero, never bottom-editable.
+  const selectedClosedEditableFeatures = selectedZEditableFeatures.filter(
+    (feature) => feature.sketch.profile.closed && feature.operation !== 'line',
+  )
+  const selectedOpenEditableFeatures = selectedZEditableFeatures.filter(
+    (feature) => !feature.sketch.profile.closed || feature.operation === 'line',
+  )
   const hasOpenEditableFeatures = selectedOpenEditableFeatures.length > 0
   const commonSelectedZTop =
     selectedZEditableFeatures.length > 0 &&
@@ -932,7 +941,8 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             units={units}
             bottomLocked
             onCommit={(patch) => {
-              if (patch.top !== undefined) updateClamp(selectedClamp.id, { height: patch.top })
+              if (patch.top !== undefined) { updateClamp(selectedClamp.id, { height: patch.top }) }
+              return true
             }}
           />
           <label className="properties-check">
@@ -958,7 +968,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
 
   if (selection.selectedTabIds.length > 1) {
     const selectedTabs = project.tabs.filter((t) => selection.selectedTabIds.includes(t.id))
-    return <BulkTabProperties selectedTabs={selectedTabs} units={units} onClose={closeExpanded} />
+    return <BulkTabProperties selectedTabs={selectedTabs} units={units} stockThickness={project.stock.thickness} onClose={closeExpanded} />
   }
 
   if (selectedTab) {
@@ -984,6 +994,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             onCommit={(patch) => {
               if (patch.top !== undefined) updateTab(selectedTab.id, { z_top: patch.top })
               if (patch.bottom !== undefined) updateTab(selectedTab.id, { z_bottom: patch.bottom })
+              return true
             }}
           />
           <label className="properties-check">
@@ -1116,6 +1127,16 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 bottomLocked={hasOpenEditableFeatures && selectedClosedEditableFeatures.length === 0}
                 mixedPlaceholder={t('featureTree.properties.select.mixedValues')}
                 onCommit={(patch) => {
+                  // Validate per-item before any store mutation.
+                  // Treat undefined z_bottom as 0 (open/line features conceptually sit on the bed).
+                  if (!validateZEdits(
+                    selectedZEditableFeatures,
+                    (f) => typeof f.z_top === 'number' ? f.z_top : 0,
+                    (f) => typeof f.z_bottom === 'number' ? f.z_bottom : 0,
+                    patch,
+                  )) return false
+
+                  beginHistoryTransaction()
                   if (patch.top !== undefined) {
                     updateFeatures(selectedZEditableFeatureIds, { z_top: patch.top })
                   }
@@ -1126,6 +1147,8 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                       updateFeatures(closedIds, { z_bottom: patch.bottom })
                     }
                   }
+                  commitHistoryTransaction()
+                  return true
                 }}
               />
             ) : (
@@ -1382,6 +1405,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               bottomLocked
               onCommit={(patch) => {
                 if (patch.top !== undefined) updateFeature(selectedFeature.id, { z_top: patch.top })
+                return true
               }}
             />
           ) : (
@@ -1395,6 +1419,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               onCommit={(patch) => {
                 if (patch.top !== undefined) updateFeature(selectedFeature.id, { z_top: patch.top })
                 if (patch.bottom !== undefined) updateFeature(selectedFeature.id, { z_bottom: patch.bottom })
+                return true
               }}
             />
           )}
