@@ -1288,6 +1288,157 @@ test('plain click on feature from project still replaces selection', () => {
 })
 
 // ============================================================================
+// 14. Cross-family placement transition tests (S2-FINAL-CORRECTION)
+// ============================================================================
+console.log('\n14. Cross-family placement transition tests')
+
+function assertPlacementClears(placement: 'tab' | 'clamp', expectedRoot: string) {
+  const sel = selection()
+  assert(sel.selectedFeatureIds.length === 0 && sel.selectedFeatureId === null, `${placement}: feature IDs cleared`)
+  assert(sel.selectedNode?.type === expectedRoot, `${placement}: ${expectedRoot}`)
+}
+
+test('startAddTabPlacement and startAddClampPlacement clear incompatible family IDs', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectClamp('cl1')
+  s.selectClamp('cl2', true)
+  s.startAddTabPlacement()
+  let sel = selection()
+  assertEq(sel.selectedClampIds.length, 0, 'tab placement: clamp IDs cleared')
+  assertEq(sel.selectedTabIds.length, 0, 'tab placement: tab IDs empty')
+  assertPlacementClears('tab', 'tabs_root')
+  resetStore(projectWithTabsAndClamps())
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  s.startAddClampPlacement()
+  sel = selection()
+  assertEq(sel.selectedTabIds.length, 0, 'clamp placement: tab IDs cleared')
+  assertEq(sel.selectedClampIds.length, 0, 'clamp placement: clamp IDs empty')
+  assertPlacementClears('clamp', 'clamps_root')
+})
+
+test('startAddTabPlacement and startAddClampPlacement clear a selected feature ID', () => {
+  const p = projectWithFeatures()
+  resetStore(p)
+  const s = store()
+  s.selectFeature('f1')
+  s.selectFeature('f2', true)
+  s.startAddTabPlacement()
+  assertPlacementClears('tab', 'tabs_root')
+  resetStore(p)
+  s.selectFeature('f1')
+  s.selectFeature('f2', true)
+  s.startAddClampPlacement()
+  assertPlacementClears('clamp', 'clamps_root')
+})
+
+// ============================================================================
+// 15. Tab/clamp copy completion selection (S2-FINAL-CORRECTION)
+// ============================================================================
+console.log('\n15. Tab/clamp copy completion selection')
+
+test('tab copy completion selects created IDs and clears incompatible family', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectClamp('cl1')
+  s.selectClamp('cl2', true)
+  s.startCopyTab('tb1')
+  useProjectStore.setState((prev) => ({
+    pendingMove: prev.pendingMove ? { ...prev.pendingMove, fromPoint: { x: 0, y: 0 } } : null,
+  }))
+  const beforeIds = project().tabs.map((t) => t.id)
+  s.completePendingMove({ x: 5, y: 5 })
+  const createdIds = project().tabs.map((t) => t.id).filter((id) => !beforeIds.includes(id))
+  assertEq(createdIds.length, 1, 'one new tab created')
+  const sel = selection()
+  assert(sel.selectedTabIds.length === 1 && sel.selectedTabIds.includes(createdIds[0]), 'selectedTabIds correct')
+  assertEq(sel.selectedClampIds.length, 0, 'clamp IDs cleared')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedFeatureId, null, 'selectedFeatureId null')
+  assert(sel.selectedNode?.type === 'tab' && sel.selectedNode.tabId === createdIds[0], 'primary created tab')
+})
+
+test('clamp copy completion selects created IDs and clears incompatible family', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  s.startCopyClamp('cl1')
+  useProjectStore.setState((prev) => ({
+    pendingMove: prev.pendingMove ? { ...prev.pendingMove, fromPoint: { x: 0, y: 0 } } : null,
+  }))
+  const beforeIds = project().clamps.map((c) => c.id)
+  s.completePendingMove({ x: 5, y: 5 })
+  const createdIds = project().clamps.map((c) => c.id).filter((id) => !beforeIds.includes(id))
+  assertEq(createdIds.length, 1, 'one new clamp created')
+  const sel = selection()
+  assertEq(sel.selectedClampIds.length, 1, 'selectedClampIds has created clamp')
+  assert(sel.selectedClampIds.includes(createdIds[0]), 'selectedClampIds includes created clamp ID')
+  assertEq(sel.selectedTabIds.length, 0, 'tab IDs cleared')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedFeatureId, null, 'selectedFeatureId null')
+  assert(sel.selectedNode?.type === 'clamp' && sel.selectedNode.clampId === createdIds[0], 'primary is created clamp')
+})
+
+test('tab move completion retains homogeneous source selection', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.startMoveTab('tb1')
+  useProjectStore.setState((prev) => ({
+    pendingMove: prev.pendingMove ? { ...prev.pendingMove, fromPoint: { x: 0, y: 0 } } : null,
+  }))
+  s.completePendingMove({ x: 5, y: 5 })
+  const sel = selection()
+  assertEq(sel.selectedTabIds.length, 1, 'selectedTabIds preserved')
+  assert(sel.selectedTabIds.includes('tb1'), 'tb1 still selected')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedClampIds.length, 0, 'no clamp IDs')
+})
+
+// ============================================================================
+// 16. Strengthened start move/copy with incompatible family seed (S2-FINAL-CORRECTION)
+// ============================================================================
+console.log('\n16. Strengthened start move/copy with incompatible family seed')
+
+function assertTabSelectedForMove(sel: SelectionState, tabId: string, label: string) {
+  assert(sel.selectedClampIds.length === 0 && sel.selectedFeatureIds.length === 0, `${label}: other families cleared`)
+  assertEq(sel.selectedTabIds.length, 1, `${label}: tab IDs set`)
+  assert(sel.selectedTabIds.includes(tabId), `${label}: correct tab ID`)
+  assertEq(sel.selectedFeatureId, null, `${label}: selectedFeatureId null`)
+}
+
+test('startMoveTab and startCopyTab clear clamp family when clamps were selected', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectClamp('cl1'); s.selectClamp('cl2', true)
+  s.startMoveTab('tb1')
+  assertTabSelectedForMove(selection(), 'tb1', 'moveTab')
+  resetStore(projectWithTabsAndClamps())
+  s.selectClamp('cl1'); s.selectClamp('cl2', true)
+  s.startCopyTab('tb1')
+  assertTabSelectedForMove(selection(), 'tb1', 'copyTab')
+})
+
+function assertClampSelectedForMove(sel: SelectionState, clampId: string, label: string) {
+  assert(sel.selectedTabIds.length === 0 && sel.selectedFeatureIds.length === 0, `${label}: other families cleared`)
+  assertEq(sel.selectedClampIds.length, 1, `${label}: clamp IDs set`)
+  assert(sel.selectedClampIds.includes(clampId), `${label}: ${clampId} selected`)
+}
+
+test('startMoveClamp and startCopyClamp clear tab family when tabs were selected', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectTab('tb1'); s.selectTab('tb2', true)
+  s.startMoveClamp('cl1')
+  assertClampSelectedForMove(selection(), 'cl1', 'moveClamp')
+  resetStore(projectWithTabsAndClamps())
+  s.selectTab('tb1'); s.selectTab('tb2', true)
+  s.startCopyClamp('cl1')
+  assertClampSelectedForMove(selection(), 'cl1', 'copyClamp')
+})
+
+// ============================================================================
 // Results
 // ============================================================================
 console.log(`\n${passed} passed, ${failed} failed`)

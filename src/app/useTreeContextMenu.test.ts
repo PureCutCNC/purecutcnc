@@ -137,6 +137,36 @@ function setSelectedFeatureIds(featureIds: string[]) {
   })
 }
 
+function setSelectedTabIds(tabIds: string[]) {
+  const previous = useProjectStore.getState().selection
+  useProjectStore.setState({
+    selection: {
+      ...previous,
+      mode: 'feature',
+      selectedFeatureId: null,
+      selectedFeatureIds: [],
+      selectedTabIds: tabIds,
+      selectedClampIds: [],
+      selectedNode: tabIds[0] ? { type: 'tab', tabId: tabIds[0] } : null,
+    },
+  })
+}
+
+function setSelectedClampIds(clampIds: string[]) {
+  const previous = useProjectStore.getState().selection
+  useProjectStore.setState({
+    selection: {
+      ...previous,
+      mode: 'feature',
+      selectedFeatureId: null,
+      selectedFeatureIds: [],
+      selectedTabIds: [],
+      selectedClampIds: clampIds,
+      selectedNode: clampIds[0] ? { type: 'clamp', clampId: clampIds[0] } : null,
+    },
+  })
+}
+
 function testOpenFeatureContextMenuDerivesFeatureAndSelection() {
   console.log('Testing feature context menu entity and selection derivation...')
 
@@ -227,10 +257,128 @@ function testEntityRouting() {
   console.log('context menu entity routing: PASSED')
 }
 
+function testTabContextMenuCarriesFullSelection() {
+  console.log('Testing tab context menu carries full selection...')
+
+  const tab1 = makeTab('tab-1')
+  const tab2 = makeTab('tab-2')
+  const project = makeProject({ tabs: [tab1, tab2] })
+  setSelectedTabIds(['tab-1', 'tab-2'])
+
+  let didOpen = false
+  const result = renderUseTreeContextMenu({ project }, (current) => {
+    if (!didOpen) {
+      didOpen = true
+      current.openTabContextMenu('tab-1', 12, 34)
+    }
+  })
+
+  const contextMenu = result.treeContextMenu
+  if (!contextMenu) throw new Error('tab context menu did not open')
+  assert(contextMenu.entityType === 'tab', 'tab context menu opens')
+  assert(contextMenu.ids.length === 2, 'context menu keeps both selected tab ids')
+  assert(contextMenu.ids.includes('tab-1'), 'ids contain tab-1')
+  assert(contextMenu.ids.includes('tab-2'), 'ids contain tab-2')
+  assert(result.menuTab?.id === 'tab-1', 'menuTab resolves the primary tab')
+  assert(result.menuHasMultipleSelection === true, 'multiple-selection flag is true')
+  assert(result.menuFeature === null, 'feature entity stays null')
+  assert(result.menuClamp === null, 'clamp entity stays null')
+
+  console.log('tab context menu full selection: PASSED')
+}
+
+function testUnselectedTabRemainsSingleton() {
+  console.log('Testing unselected tab remains singleton...')
+
+  const tab1 = makeTab('tab-1')
+  const tab2 = makeTab('tab-2')
+  const project = makeProject({ tabs: [tab1, tab2] })
+  setSelectedTabIds(['tab-2']) // tab-1 is NOT in the selection
+
+  let didOpen = false
+  const result = renderUseTreeContextMenu({ project }, (current) => {
+    if (!didOpen) {
+      didOpen = true
+      current.openTabContextMenu('tab-1', 12, 34)
+    }
+  })
+
+  const contextMenu2 = result.treeContextMenu
+  if (!contextMenu2) throw new Error('tab context menu did not open')
+  assert(contextMenu2.entityType === 'tab', 'tab context menu opens')
+  assert(contextMenu2.ids.length === 1, 'context menu has single tab id')
+  assert(contextMenu2.ids.includes('tab-1'), 'ids contain tab-1')
+  assert(!contextMenu2.ids.includes('tab-2'), 'ids do NOT contain unselected tab-2')
+  assert(result.menuHasMultipleSelection === false, 'multiple-selection flag is false')
+
+  console.log('unselected tab singleton: PASSED')
+}
+
+function testClampContextMenuCarriesFullSelection() {
+  console.log('Testing clamp context menu carries full selection...')
+
+  const clamp1 = makeClamp('clamp-1')
+  const clamp2 = makeClamp('clamp-2')
+  const project = makeProject({ clamps: [clamp1, clamp2] })
+  setSelectedClampIds(['clamp-1', 'clamp-2'])
+
+  let didOpen = false
+  const result = renderUseTreeContextMenu({ project }, (current) => {
+    if (!didOpen) {
+      didOpen = true
+      current.openClampContextMenu('clamp-1', 12, 34)
+    }
+  })
+
+  const contextMenu3 = result.treeContextMenu
+  if (!contextMenu3) throw new Error('clamp context menu did not open')
+  assert(contextMenu3.entityType === 'clamp', 'clamp context menu opens')
+  assert(contextMenu3.ids.length === 2, 'context menu keeps both selected clamp ids')
+  assert(contextMenu3.ids.includes('clamp-1'), 'ids contain clamp-1')
+  assert(contextMenu3.ids.includes('clamp-2'), 'ids contain clamp-2')
+  assert(result.menuClamp?.id === 'clamp-1', 'menuClamp resolves the primary clamp')
+  assert(result.menuHasMultipleSelection === true, 'multiple-selection flag is true')
+  assert(result.menuFeature === null, 'feature entity stays null')
+  assert(result.menuTab === null, 'tab entity stays null')
+
+  console.log('clamp context menu full selection: PASSED')
+}
+
+function testUnselectedClampRemainsSingleton() {
+  console.log('Testing unselected clamp remains singleton...')
+
+  const clamp1 = makeClamp('clamp-1')
+  const clamp2 = makeClamp('clamp-2')
+  const project = makeProject({ clamps: [clamp1, clamp2] })
+  setSelectedClampIds(['clamp-2']) // clamp-1 is NOT in the selection
+
+  let didOpen = false
+  const result = renderUseTreeContextMenu({ project }, (current) => {
+    if (!didOpen) {
+      didOpen = true
+      current.openClampContextMenu('clamp-1', 12, 34)
+    }
+  })
+
+  const contextMenu4 = result.treeContextMenu
+  if (!contextMenu4) throw new Error('clamp context menu did not open')
+  assert(contextMenu4.entityType === 'clamp', 'clamp context menu opens')
+  assert(contextMenu4.ids.length === 1, 'context menu has single clamp id')
+  assert(contextMenu4.ids.includes('clamp-1'), 'ids contain clamp-1')
+  assert(!contextMenu4.ids.includes('clamp-2'), 'ids do NOT contain unselected clamp-2')
+  assert(result.menuHasMultipleSelection === false, 'multiple-selection flag is false')
+
+  console.log('unselected clamp singleton: PASSED')
+}
+
 try {
   testOpenFeatureContextMenuDerivesFeatureAndSelection()
   testCloseTreeContextMenuResetsState()
   testEntityRouting()
+  testTabContextMenuCarriesFullSelection()
+  testUnselectedTabRemainsSingleton()
+  testClampContextMenuCarriesFullSelection()
+  testUnselectedClampRemainsSingleton()
   console.log('\nAll useTreeContextMenu tests PASSED.')
 } catch (e) {
   console.error(e)
