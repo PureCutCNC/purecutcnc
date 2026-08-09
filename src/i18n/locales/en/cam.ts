@@ -225,7 +225,7 @@ export const camEn = {
 
   // ── Tool panel chrome ──
   'cam.tools.addTool': 'Add Tool',
-  'cam.tools.importFromLibrary': 'Import from Library',
+  'cam.tools.importFromLibrary': 'Import from library…',
   'cam.tools.loading': 'Loading...',
   'cam.tools.loadingLibrary': 'Loading bundled tool library...',
   'cam.tools.allTypes': 'All Types',
@@ -472,4 +472,22 @@ export const camEn = {
   'cam.opDesc.finishSurfaceCleanup.keyPoint.2': 'Offset or parallel pattern for floors',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.3': 'Typically run after 3D Surface Rough as the final pass',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.4': 'Optional closed regions act as XY filters',
+  // ── Library import dialog ──
+  'cam.tools.dialogTitle': 'Import tools from library',
+  'cam.tools.searchPlaceholder': 'Search by name or diameter…',
+  'cam.tools.searchAria': 'Search library tools',
+  'cam.tools.inProject': 'In project',
+  'cam.tools.new': 'New',
+  'cam.tools.selectedCount.one': '1 tool selected',
+  'cam.tools.selectedCount.other': '{count} tools selected',
+  'cam.tools.importAction.one': 'Import tool',
+  'cam.tools.importAction.other': 'Import {count} tools',
+  'cam.tools.loadingDialog': 'Loading tool library…',
+  'cam.tools.loadError': 'Failed to load the tool library.',
+  'cam.tools.retry': 'Retry',
+  'cam.tools.noMatch': 'No library tools match the current filters.',
+  'cam.tools.clearFilters': 'Clear filters',
+  'cam.tools.allImported': 'All matching library tools are already in the project.',
+  'cam.tools.noImportable': 'The selected tools are already in the project.',
+  'cam.tools.close': 'Close',
 } as const satisfies Record<string, string>

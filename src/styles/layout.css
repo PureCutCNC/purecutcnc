@@ -3516,6 +3516,248 @@
   background: var(--accent-soft);
 }
 
+/* ── Tool Library Import Dialog ──────────────────────────── */
+
+.dialog--tool-library {
+  max-width: 760px;
+  max-height: 80vh;
+}
+
+.dialog--tool-library form {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dialog-body--tool-library {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.tl-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.tl-search {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.tl-search-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface-panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.tl-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent);
+}
+
+.tl-search-input::placeholder {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+.tl-filter-selects {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.tl-filter-selects .ui-select {
+  min-width: 130px;
+}
+
+.tl-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.tl-results {
+  overflow-y: auto;
+  min-height: 120px;
+}
+
+.tl-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  min-height: 44px;
+  box-sizing: border-box;
+}
+
+.tl-row:hover:not(.tl-row--imported) {
+  background: var(--surface-hover);
+}
+
+.tl-row--selected {
+  background: var(--accent-soft);
+}
+
+.tl-row--selected:hover:not(.tl-row--imported) {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.tl-row--imported {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.tl-row--imported .tl-row__name,
+.tl-row--imported .tl-row__meta {
+  color: var(--text-dim);
+}
+
+.tl-row__check {
+  grid-row: 1 / 3;
+  grid-column: 1;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.tl-row--imported .tl-row__check {
+  cursor: default;
+}
+
+.tl-row__name {
+  grid-row: 1;
+  grid-column: 2;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl-row__meta {
+  grid-row: 2;
+  grid-column: 2;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl-row__status {
+  grid-row: 1 / 3;
+  grid-column: 3;
+  align-self: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.tl-row--imported .tl-row__status {
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent-strong);
+}
+
+/* States: loading, error, no-match, all-imported */
+.tl-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px 20px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+  min-height: 140px;
+}
+
+.tl-status--error {
+  color: var(--danger-text);
+}
+
+.tl-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2.5px solid color-mix(in srgb, var(--text-dim) 22%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tl-spin 0.7s linear infinite;
+}
+
+@keyframes tl-spin {
+  to { transform: rotate(360deg); }
+}
+
+.tl-footer-count {
+  margin-right: auto;
+  font-size: 13px;
+  color: var(--text-dim);
+  align-self: center;
+}
+
+.tl-footer-message {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--danger-text);
+  align-self: center;
+}
+
+/* Compact: filters stack vertically */
+@media (max-width: 600px) {
+  .dialog--tool-library {
+    max-width: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+    border: none;
+  }
+
+  .tl-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tl-filter-selects {
+    flex-wrap: wrap;
+  }
+
+  .tl-filter-selects .ui-select {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
 .cam-library-browser {
   display: grid;
   gap: 0;

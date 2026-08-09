@@ -222,7 +222,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // ── Tool panel chrome ──
   'cam.tools.addTool': 'Werkzeug hinzufügen',
-  'cam.tools.importFromLibrary': 'Aus Bibliothek importieren',
+  'cam.tools.importFromLibrary': 'Aus Bibliothek importieren…',
   'cam.tools.loading': 'Wird geladen…',
   'cam.tools.loadingLibrary': 'Mitgelieferte Werkzeugbibliothek wird geladen…',
   'cam.tools.allTypes': 'Alle Typen',
@@ -469,4 +469,22 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.opDesc.finishSurfaceCleanup.keyPoint.2': 'Offset- oder Parallel-Muster für Böden',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.3': 'Wird normalerweise nach 3D-Oberfläche schruppen als letzter Durchgang ausgeführt',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.4': 'Optionale geschlossene Bereiche wirken als XY-Filter',
+  // ── Bibliothek-Import-Dialog ──
+  'cam.tools.dialogTitle': 'Werkzeuge aus der Bibliothek importieren',
+  'cam.tools.searchPlaceholder': 'Nach Name oder Durchmesser suchen…',
+  'cam.tools.searchAria': 'Werkzeugbibliothek durchsuchen',
+  'cam.tools.inProject': 'Im Projekt',
+  'cam.tools.new': 'Neu',
+  'cam.tools.selectedCount.one': '1 Werkzeug ausgewählt',
+  'cam.tools.selectedCount.other': '{count} Werkzeuge ausgewählt',
+  'cam.tools.importAction.one': 'Werkzeug importieren',
+  'cam.tools.importAction.other': '{count} Werkzeuge importieren',
+  'cam.tools.loadingDialog': 'Werkzeugbibliothek wird geladen…',
+  'cam.tools.loadError': 'Fehler beim Laden der Werkzeugbibliothek.',
+  'cam.tools.retry': 'Wiederholen',
+  'cam.tools.noMatch': 'Keine Bibliothekswerkzeuge entsprechen den aktuellen Filtern.',
+  'cam.tools.clearFilters': 'Filter zurücksetzen',
+  'cam.tools.allImported': 'Alle passenden Bibliothekswerkzeuge sind bereits im Projekt.',
+  'cam.tools.noImportable': 'Die ausgewählten Werkzeuge sind bereits im Projekt.',
+  'cam.tools.close': 'Schließen',
 }
