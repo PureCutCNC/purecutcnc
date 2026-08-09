@@ -21,6 +21,7 @@ import {
   buildImportInput,
   countImportableSelected,
   filterLibraryEntries,
+  filterLibraryEntryStates,
   toolMatchesLibraryEntry,
   type LibraryEntryState,
 } from './toolLibraryDialogModel'
@@ -94,12 +95,9 @@ describe('toolMatchesLibraryEntry', () => {
     assert.equal(toolMatchesLibraryEntry(tool, entry), false)
   })
 
-  it('rejects a tool with different maxCutDepth', () => {
-    // maxCutDepth is NOT checked by toolMatchesLibraryEntry
-    // (it is not in the equality check)
+  it('does not check maxCutDepth', () => {
     const entry = makeEntry({ maxCutDepth: 2.0 })
     const tool = makeTool({ maxCutDepth: 1.0 })
-    // Everything else matches, so it should match
     assert.equal(toolMatchesLibraryEntry(tool, entry), true)
   })
 })
@@ -151,7 +149,6 @@ describe('filterLibraryEntries', () => {
 
   it('matches partial diameter', () => {
     const result = filterLibraryEntries(entries, { search: '6', type: 'all', units: 'all' })
-    // "6" matches "6mm Endmill" AND diameter 6
     assert.equal(result.length, 1)
     assert.equal(result[0]!.key, 'e2')
   })
@@ -164,6 +161,33 @@ describe('filterLibraryEntries', () => {
   it('is case-insensitive', () => {
     const result = filterLibraryEntries(entries, { search: 'endmill', type: 'all', units: 'all' })
     assert.equal(result.length, 2)
+  })
+})
+
+// ── filterLibraryEntryStates ─────────────────────────────────────────
+
+describe('filterLibraryEntryStates', () => {
+  const annotated: LibraryEntryState[] = [
+    { ...makeEntry({ key: 'a', name: 'Aluminum Specific Tool', type: 'flat_endmill' }), alreadyImported: false },
+    { ...makeEntry({ key: 'b', name: 'Roughing Mill', type: 'ball_endmill' }), alreadyImported: true },
+    { ...makeEntry({ key: 'c', name: 'Finish Endmill', type: 'flat_endmill' }), alreadyImported: false },
+  ]
+
+  it('filters annotated entries by type', () => {
+    const result = filterLibraryEntryStates(annotated, { search: '', type: 'ball_endmill', units: 'all' })
+    assert.equal(result.length, 1)
+    assert.equal(result[0]!.key, 'b')
+  })
+
+  it('filters annotated entries by search', () => {
+    const result = filterLibraryEntryStates(annotated, { search: 'Aluminum', type: 'all', units: 'all' })
+    assert.equal(result.length, 1)
+    assert.equal(result[0]!.key, 'a')
+  })
+
+  it('returns empty when nothing matches', () => {
+    const result = filterLibraryEntryStates(annotated, { search: 'nonexistent', type: 'all', units: 'all' })
+    assert.equal(result.length, 0)
   })
 })
 
@@ -230,6 +254,16 @@ describe('countImportableSelected', () => {
     const entries = [state('a', false), state('b', false)]
     assert.equal(countImportableSelected(entries, new Set()), 0)
   })
+
+  it('counts selected entries even when they are not in the filtered view', () => {
+    // Regression: selection must survive filter changes.
+    // The full annotated list contains both 'a' and 'b'; 'b' is selected.
+    // This simulates a search that hides 'b' — the count must still include it.
+    const fullList = [state('a', false), state('b', false)]
+    // 'b' is selected but not in the filtered subset used for rendering
+    const selectedKeys = new Set(['b'])
+    assert.equal(countImportableSelected(fullList, selectedKeys), 1)
+  })
 })
 
 // ── buildImportInput ──────────────────────────────────────────────────
@@ -274,8 +308,19 @@ describe('buildImportInput', () => {
     assert.equal(buildImportInput(entries, new Set()).length, 0)
   })
 
+  it('includes selected entries not in the filtered view', () => {
+    // Regression: import must include selected entries even when hidden by filters.
+    const fullList: LibraryEntryState[] = [
+      { ...makeEntry({ key: 'e1', name: 'Visible' }), alreadyImported: false },
+      { ...makeEntry({ key: 'e2', name: 'Hidden' }), alreadyImported: false },
+    ]
+    const selectedKeys = new Set(['e2'])
+    const result = buildImportInput(fullList, selectedKeys)
+    assert.equal(result.length, 1)
+    assert.equal(result[0]!.name, 'Hidden')
+  })
+
   it('produces input compatible with importTools', () => {
-    // The return type is Array<Omit<Tool, 'id'>> — verify only Tool fields survive
     const entries: LibraryEntryState[] = [{ ...makeEntry({ key: 'k' }), alreadyImported: false }]
     const [result] = buildImportInput(entries, new Set(['k']))
     assert.ok(result !== undefined)

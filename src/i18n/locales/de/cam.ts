@@ -487,4 +487,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.tools.allImported': 'Alle passenden Bibliothekswerkzeuge sind bereits im Projekt.',
   'cam.tools.noImportable': 'Die ausgewählten Werkzeuge sind bereits im Projekt.',
   'cam.tools.close': 'Schließen',
+  'cam.tools.fluteCount.one': '{count} Schneide',
+  'cam.tools.fluteCount.other': '{count} Schneiden',
+  'cam.tools.maxCutDepthPrefix': 'max',
 }

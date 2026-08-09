@@ -490,4 +490,7 @@ export const camEn = {
   'cam.tools.allImported': 'All matching library tools are already in the project.',
   'cam.tools.noImportable': 'The selected tools are already in the project.',
   'cam.tools.close': 'Close',
+  'cam.tools.fluteCount.one': '{count} flute',
+  'cam.tools.fluteCount.other': '{count} flutes',
+  'cam.tools.maxCutDepthPrefix': 'max',
 } as const satisfies Record<string, string>

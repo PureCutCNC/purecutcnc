@@ -31,7 +31,7 @@ import {
   annotateEntryStates,
   buildImportInput,
   countImportableSelected,
-  filterLibraryEntries,
+  filterLibraryEntryStates,
   type LibraryEntryState,
   type LibraryFilterValues,
 } from './toolLibraryDialogModel'
@@ -53,6 +53,21 @@ function toolTypeLabel(type: ToolType): string {
 function toolUnitsLabel(units: Tool['units']): string {
   return units === 'inch' ? 'in' : 'mm'
 }
+
+function materialLabel(material: Tool['material']): string {
+  switch (material) {
+    case 'carbide':
+      return camT('cam.tool.materialCarbide')
+    case 'hss':
+      return camT('cam.tool.materialHss')
+  }
+}
+
+const DIALOG_TITLE_ID = 'tool-library-dialog-title'
+
+/** Focusable selectors scoped to the dialog for the focus trap. */
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 export interface ToolLibraryDialogProps {
   /** The full unfiltered library entry list. */
@@ -119,6 +134,37 @@ export function ToolLibraryDialog({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
+  // Contained Tab / Shift+Tab focus trap.
+  useEffect(() => {
+    function handleTabTrap(event: KeyboardEvent) {
+      if (event.key !== 'Tab') return
+
+      const container = dialogRef.current
+      if (!container) return
+
+      const focusable = container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+      if (focusable.length === 0) return
+
+      const first = focusable[0]!
+      const last = focusable[focusable.length - 1]!
+
+      if (event.shiftKey) {
+        if (document.activeElement === first) {
+          event.preventDefault()
+          last.focus()
+        }
+      } else {
+        if (document.activeElement === last) {
+          event.preventDefault()
+          first.focus()
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleTabTrap)
+    return () => window.removeEventListener('keydown', handleTabTrap)
+  }, [loading, error])
+
   // Restore focus to the trigger on unmount.
   useEffect(() => {
     return () => {
@@ -131,24 +177,28 @@ export function ToolLibraryDialog({
     [search, typeFilter, unitsFilter],
   )
 
-  const filteredEntries = useMemo(
-    () => filterLibraryEntries(libraryEntries, filters),
-    [libraryEntries, filters],
+  // Full annotated list — used for selection, count, and import.
+  // Selections survive filter changes because these operate on this full list.
+  const fullAnnotated: LibraryEntryState[] = useMemo(
+    () => annotateEntryStates(libraryEntries, projectTools),
+    [libraryEntries, projectTools],
   )
 
-  const annotatedEntries: LibraryEntryState[] = useMemo(
-    () => annotateEntryStates(filteredEntries, projectTools),
-    [filteredEntries, projectTools],
+  // Filtered subset — used for rendering only.
+  const filteredAnnotated: LibraryEntryState[] = useMemo(
+    () => filterLibraryEntryStates(fullAnnotated, filters),
+    [fullAnnotated, filters],
   )
 
+  // Count and import operate on the FULL annotated list.
   const importableCount = useMemo(
-    () => countImportableSelected(annotatedEntries, selectedKeys),
-    [annotatedEntries, selectedKeys],
+    () => countImportableSelected(fullAnnotated, selectedKeys),
+    [fullAnnotated, selectedKeys],
   )
 
   const allImported = useMemo(
-    () => annotatedEntries.length > 0 && annotatedEntries.every((e) => e.alreadyImported),
-    [annotatedEntries],
+    () => filteredAnnotated.length > 0 && filteredAnnotated.every((e) => e.alreadyImported),
+    [filteredAnnotated],
   )
 
   function toggleSelection(key: string) {
@@ -164,13 +214,6 @@ export function ToolLibraryDialog({
     })
   }
 
-  function handleRowKeyDown(key: string, event: React.KeyboardEvent) {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      toggleSelection(key)
-    }
-  }
-
   function handleBackdropClick(event: React.MouseEvent) {
     if (event.target === event.currentTarget) {
       onClose()
@@ -179,7 +222,7 @@ export function ToolLibraryDialog({
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
-    const input = buildImportInput(annotatedEntries, selectedKeys)
+    const input = buildImportInput(fullAnnotated, selectedKeys)
     if (input.length === 0) {
       setImportMessage(camT('cam.tools.noImportable'))
       return
@@ -189,7 +232,7 @@ export function ToolLibraryDialog({
       setImportMessage(camT('cam.tools.noImportable'))
       return
     }
-    onClose()
+    // Parent owns the close on success (handles tool selection + dialog close).
   }
 
   function handleClearFilters() {
@@ -199,8 +242,8 @@ export function ToolLibraryDialog({
   }
 
   const hasActiveFilters = search !== '' || typeFilter !== 'all' || unitsFilter !== 'all'
-  const showNoMatch = !loading && !error && annotatedEntries.length === 0 && hasActiveFilters
-  const showAllImported = !loading && !error && allImported && !hasActiveFilters
+  const showNoMatch = !loading && !error && filteredAnnotated.length === 0 && hasActiveFilters
+  const showAllImported = !loading && !error && allImported
   const searchInputId = 'tool-library-search'
 
   return createPortal(
@@ -209,12 +252,12 @@ export function ToolLibraryDialog({
         className="dialog dialog--tool-library"
         role="dialog"
         aria-modal="true"
-        aria-label={camT('cam.tools.dialogTitle')}
+        aria-labelledby={DIALOG_TITLE_ID}
         ref={dialogRef}
       >
         <form onSubmit={handleSubmit}>
           <div className="dialog-header">
-            <h2 className="dialog-title">{camT('cam.tools.dialogTitle')}</h2>
+            <h2 id={DIALOG_TITLE_ID} className="dialog-title">{camT('cam.tools.dialogTitle')}</h2>
             <button
               className="dialog-close"
               type="button"
@@ -291,35 +334,21 @@ export function ToolLibraryDialog({
                 <div className="tl-status">
                   <span>{camT('cam.tools.allImported')}</span>
                 </div>
-              ) : annotatedEntries.length === 0 ? (
+              ) : filteredAnnotated.length === 0 ? (
                 <div className="tl-status">
                   <span>{camT('cam.tools.noMatch')}</span>
                 </div>
               ) : (
-                annotatedEntries.map((entry) => {
+                filteredAnnotated.map((entry) => {
                   const isSelected = selectedKeys.has(entry.key)
                   return (
-                    <div
+                    <label
                       key={entry.key}
                       className={[
                         'tl-row',
                         entry.alreadyImported ? 'tl-row--imported' : '',
                         isSelected ? 'tl-row--selected' : '',
                       ].join(' ')}
-                      role="checkbox"
-                      aria-checked={isSelected}
-                      aria-disabled={entry.alreadyImported}
-                      tabIndex={0}
-                      onClick={() => {
-                        if (!entry.alreadyImported) {
-                          toggleSelection(entry.key)
-                        }
-                      }}
-                      onKeyDown={(event) => {
-                        if (!entry.alreadyImported) {
-                          handleRowKeyDown(entry.key, event)
-                        }
-                      }}
                     >
                       <input
                         type="checkbox"
@@ -327,7 +356,6 @@ export function ToolLibraryDialog({
                         checked={isSelected}
                         disabled={entry.alreadyImported}
                         onChange={() => toggleSelection(entry.key)}
-                        tabIndex={-1}
                       />
                       <span className="tl-row__name">{entry.name}</span>
                       <span className="tl-row__meta">
@@ -337,17 +365,17 @@ export function ToolLibraryDialog({
                         {' '}
                         {toolUnitsLabel(entry.units)}
                         {entry.maxCutDepth > 0
-                          ? ` · max ${formatLength(entry.maxCutDepth, entry.units)} ${toolUnitsLabel(entry.units)}`
+                          ? ` · ${camT('cam.tools.maxCutDepthPrefix')} ${formatLength(entry.maxCutDepth, entry.units)} ${toolUnitsLabel(entry.units)}`
                           : ''}
                         {' · '}
-                        {entry.flutes} {entry.flutes === 1 ? 'flute' : 'flutes'}
+                        {camTPlural(entry.flutes, 'cam.tools.fluteCount.one', 'cam.tools.fluteCount.other')}
                         {' · '}
-                        {entry.material === 'carbide' ? 'Carbide' : 'HSS'}
+                        {materialLabel(entry.material)}
                       </span>
                       <span className="tl-row__status">
                         {entry.alreadyImported ? camT('cam.tools.inProject') : camT('cam.tools.new')}
                       </span>
-                    </div>
+                    </label>
                   )
                 })
               )}

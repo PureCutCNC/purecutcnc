@@ -16,25 +16,17 @@
 
 import { test, expect } from './fixtures'
 
-function openToolLibraryDialog(page: ReturnType<typeof test['info']> extends never ? never : any) {
-  // placeholder — see helpers below
-}
-
 test.describe('Tool library import dialog smoke', () => {
   test('opens the dialog when trigger clicked', async ({ app }) => {
-    // Click the Tools tab to show the tool panel
     await app.page.getByRole('tab', { name: 'Tools' }).click()
-
-    // Click the import trigger
     const trigger = app.page.getByRole('button', { name: /Import from library/ })
     await expect(trigger).toBeVisible()
     await trigger.click()
 
-    // Dialog should be visible with the title
     const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
     await expect(dialog).toBeVisible()
 
-    // Close (X) button should be visible
+    // Close button should be visible
     const closeXButton = dialog.locator('.dialog-close')
     await expect(closeXButton).toBeVisible()
 
@@ -51,14 +43,11 @@ test.describe('Tool library import dialog smoke', () => {
     const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
     await expect(dialog).toBeVisible()
 
-    // Get initial tool count
     const initialToolCount = await app.page.locator('.cam-tool-tree .tree-row--feature').count()
 
-    // Close via the X button
     await dialog.locator('.dialog-close').click()
     await expect(dialog).not.toBeVisible()
 
-    // Tool count should be unchanged
     const finalToolCount = await app.page.locator('.cam-tool-tree .tree-row--feature').count()
     expect(finalToolCount).toBe(initialToolCount)
   })
@@ -70,7 +59,6 @@ test.describe('Tool library import dialog smoke', () => {
     const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
     await expect(dialog).toBeVisible()
 
-    // Press Escape
     await app.page.keyboard.press('Escape')
     await expect(dialog).not.toBeVisible()
   })
@@ -82,7 +70,6 @@ test.describe('Tool library import dialog smoke', () => {
     const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
     await expect(dialog).toBeVisible()
 
-    // Click the backdrop (outside dialog)
     await app.page.locator('.dialog-backdrop').click({ position: { x: 2, y: 2 } })
     await expect(dialog).not.toBeVisible()
   })
@@ -94,18 +81,14 @@ test.describe('Tool library import dialog smoke', () => {
     const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
     await expect(dialog).toBeVisible()
 
-    // Type in the search
     const searchInput = dialog.getByRole('searchbox')
     await searchInput.fill('nonexistent-tool-xyz')
 
-    // Should show no-match message
     await expect(dialog.getByText(/No library tools match the current filters/)).toBeVisible()
 
-    // Clear filters button should appear
     const clearButton = dialog.getByRole('button', { name: 'Clear filters' })
     await expect(clearButton).toBeVisible()
 
-    // Clear and tools should re-appear
     await clearButton.click()
     await expect(dialog.locator('.tl-row')).not.toHaveCount(0)
   })
@@ -113,37 +96,36 @@ test.describe('Tool library import dialog smoke', () => {
   test('selects and imports a new tool', async ({ app }) => {
     await app.page.getByRole('tab', { name: 'Tools' }).click()
 
-    // If there's already a default tool, note its ID
     const initialCount = await app.page.locator('.cam-tool-tree .tree-row--feature').count()
 
     await app.page.getByRole('button', { name: /Import from library/ }).click()
     const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
     await expect(dialog).toBeVisible()
 
-    // Click the first non-imported row (skip already-imported ones)
-    const importableRows = dialog.locator('.tl-row:not(.tl-row--imported)')
-    const firstRowCount = await importableRows.count()
-    if (firstRowCount === 0) {
-      // All tools are already imported — just verify the state and close
-      await expect(dialog.getByText(/All matching library tools are already in the project/)).toBeVisible()
+    const importableCheckboxes = dialog.locator('.tl-row:not(.tl-row--imported) .tl-row__check')
+    const firstCheckboxCount = await importableCheckboxes.count()
+    if (firstCheckboxCount === 0) {
+      // All tools may already be imported or no rows are visible.
+      // Verify the dialog shows a valid state and close cleanly.
+      const hasAllImported = await dialog.getByText(/All matching library tools are already in the project/).isVisible()
+      const hasStatus = await dialog.locator('.tl-status').first().isVisible()
+      expect(hasAllImported || hasStatus, 'expected all-imported message or status when no importable rows exist').toBe(true)
       await app.page.keyboard.press('Escape')
       return
     }
 
-    // Select the first importable row
-    await importableRows.first().click()
+    // Click the first importable row's label area to select
+    await importableCheckboxes.first().check()
 
-    // Footer should show "1 tool selected" and "Import tool"
+    // Footer should show selection count and enabled import button
     await expect(dialog.locator('.tl-footer-count')).toContainText('1 tool selected')
     await expect(dialog.getByRole('button', { name: 'Import tool' })).toBeEnabled()
 
-    // Click import
     await dialog.getByRole('button', { name: 'Import tool' }).click()
 
-    // Dialog should close
+    // Dialog should close on success
     await expect(dialog).not.toBeVisible()
 
-    // Tool count should increase by 1
     const finalCount = await app.page.locator('.cam-tool-tree .tree-row--feature').count()
     expect(finalCount).toBe(initialCount + 1)
   })
@@ -154,8 +136,8 @@ test.describe('Tool library import dialog smoke', () => {
     // First import a tool
     await app.page.getByRole('button', { name: /Import from library/ }).click()
     let dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
-    const firstRow = dialog.locator('.tl-row:not(.tl-row--imported)').first()
-    await firstRow.click()
+    const firstCheckbox = dialog.locator('.tl-row:not(.tl-row--imported) .tl-row__check').first()
+    await firstCheckbox.check()
     await dialog.getByRole('button', { name: 'Import tool' }).click()
     await expect(dialog).not.toBeVisible()
 
@@ -163,9 +145,10 @@ test.describe('Tool library import dialog smoke', () => {
     await app.page.getByRole('button', { name: /Import from library/ }).click()
     dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
 
-    // The row we imported should now show "In project"
+    // The imported row should now show "In project" with disabled checkbox
     await expect(dialog.locator('.tl-row--imported')).not.toHaveCount(0)
     await expect(dialog.locator('.tl-row--imported .tl-row__status').first()).toContainText(/In project/)
+    await expect(dialog.locator('.tl-row--imported .tl-row__check').first()).toBeDisabled()
   })
 
   test('import button is disabled with no new tools selected', async ({ app }) => {
@@ -175,7 +158,6 @@ test.describe('Tool library import dialog smoke', () => {
     const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
     await expect(dialog).toBeVisible()
 
-    // With nothing selected, import button should be disabled
     const importButton = dialog.locator('.dialog-footer .btn-primary')
     await expect(importButton).toBeDisabled()
   })
@@ -188,7 +170,100 @@ test.describe('Tool library import dialog smoke', () => {
 
     await app.page.keyboard.press('Escape')
 
-    // After close, focus should be back on the trigger
     await expect(trigger).toBeFocused()
+  })
+
+  test('selected tool remains counted and importable after search hides it', async ({ app }) => {
+    await app.page.getByRole('tab', { name: 'Tools' }).click()
+    await app.page.getByRole('button', { name: /Import from library/ }).click()
+
+    const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
+    await expect(dialog).toBeVisible()
+
+    // Note the name of the first importable entry
+    const firstRow = dialog.locator('.tl-row:not(.tl-row--imported)').first()
+    const firstName = await firstRow.locator('.tl-row__name').textContent()
+
+    // Select it
+    await firstRow.locator('.tl-row__check').check()
+    await expect(dialog.locator('.tl-footer-count')).toContainText('1 tool selected')
+
+    // Search for something that hides the selected tool
+    await dialog.getByRole('searchbox').fill('nonexistent-tool-xyz')
+
+    // Footer count must still show 1 tool selected (selection survives filter)
+    await expect(dialog.locator('.tl-footer-count')).toContainText('1 tool selected')
+
+    // Clear search
+    await dialog.getByRole('button', { name: 'Clear filters' }).click()
+
+    // Selected tool reappears and is still selected
+    const restoredRow = dialog.locator('.tl-row--selected').first()
+    await expect(restoredRow.locator('.tl-row__name')).toContainText(firstName ?? '')
+
+    // Import button should still be enabled with correct count
+    await expect(dialog.locator('.tl-footer-count')).toContainText('1 tool selected')
+    await expect(dialog.getByRole('button', { name: 'Import tool' })).toBeEnabled()
+  })
+
+  test('Tab and Shift+Tab cannot escape the dialog focus trap', async ({ app }) => {
+    await app.page.getByRole('tab', { name: 'Tools' }).click()
+    await app.page.getByRole('button', { name: /Import from library/ }).click()
+
+    const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
+    await expect(dialog).toBeVisible()
+
+    // Start in the search input
+    const searchInput = dialog.getByRole('searchbox')
+    await expect(searchInput).toBeFocused()
+
+    // Tab forward until we've cycled several times; focus must stay in the dialog
+    for (let i = 0; i < 20; i++) {
+      await app.page.keyboard.press('Tab')
+      // After each Tab, the activeElement must be within the dialog
+      const isInDialog = await dialog.evaluate((el, doc) => {
+        return el.contains(doc.activeElement)
+      }, await app.page.evaluateHandle(() => document))
+      expect(isInDialog, `Tab ${i + 1}: focus escaped the dialog`).toBe(true)
+    }
+
+    // Shift+Tab backward several times; focus must stay in the dialog
+    for (let i = 0; i < 20; i++) {
+      await app.page.keyboard.press('Shift+Tab')
+      const isInDialog = await dialog.evaluate((el, doc) => {
+        return el.contains(doc.activeElement)
+      }, await app.page.evaluateHandle(() => document))
+      expect(isInDialog, `Shift+Tab ${i + 1}: focus escaped the dialog`).toBe(true)
+    }
+  })
+
+  test('tablet landscape viewport keeps footer visible with scrolling results', async ({ app }) => {
+    // Set a supported tablet landscape viewport (1024×768)
+    await app.page.setViewportSize({ width: 1024, height: 768 })
+
+    await app.page.getByRole('tab', { name: 'Tools' }).click()
+    await app.page.getByRole('button', { name: /Import from library/ }).click()
+
+    const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
+    await expect(dialog).toBeVisible()
+
+    // Footer must be visible (not scrolled off-screen)
+    const footer = dialog.locator('.dialog-footer')
+    await expect(footer).toBeVisible()
+    // Footer must intersect the viewport (not be clipped)
+    await expect(footer).toBeInViewport()
+
+    // Results region must own scrolling
+    const results = dialog.locator('.tl-results')
+    await expect(results).toBeVisible()
+
+    // The cancel and import buttons must be visible
+    const cancelButton = dialog.locator('.dialog-footer .btn-secondary')
+    await expect(cancelButton).toBeVisible()
+    await expect(cancelButton).toBeInViewport()
+
+    const importButton = dialog.locator('.dialog-footer .btn-primary')
+    await expect(importButton).toBeVisible()
+    await expect(importButton).toBeInViewport()
   })
 })

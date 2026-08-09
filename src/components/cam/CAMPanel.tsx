@@ -805,9 +805,9 @@ export function CAMPanel({
     }
   }
 
-  async function handleOpenLibraryDialog() {
-    await ensureBundledLibraryLoaded()
+  function handleOpenLibraryDialog() {
     setShowLibraryDialog(true)
+    void ensureBundledLibraryLoaded()
   }
 
   function handleLibraryDialogClose() {

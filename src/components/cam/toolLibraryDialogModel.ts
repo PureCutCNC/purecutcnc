@@ -70,6 +70,24 @@ function searchTermsMatch(terms: string[], haystack: string): boolean {
   return terms.some((term) => normal.includes(term))
 }
 
+/** Shared filter logic for any entry with name, type, units, diameter. */
+function entryMatchesFilters(
+  entry: { name: string; type: ToolType; units: Tool['units']; diameter: number },
+  filters: LibraryFilterValues,
+): boolean {
+  const { type, units, search } = filters
+  const searchTerms = normalizeSearch(search).split(' ').filter(Boolean)
+
+  if (type !== 'all' && entry.type !== type) return false
+  if (units !== 'all' && entry.units !== units) return false
+  if (searchTerms.length > 0) {
+    const diameterStr = String(entry.diameter)
+    const haystack = `${entry.name} ${diameterStr}`
+    if (!searchTermsMatch(searchTerms, haystack)) return false
+  }
+  return true
+}
+
 /**
  * Apply type, units, and free-text search filters to a library entry list.
  * Search matches tool name and diameter (as a formatted decimal string).
@@ -78,19 +96,19 @@ export function filterLibraryEntries(
   entries: ToolLibraryEntry[],
   filters: LibraryFilterValues,
 ): ToolLibraryEntry[] {
-  const { type, units, search } = filters
-  const searchTerms = normalizeSearch(search).split(' ').filter(Boolean)
+  return entries.filter((entry) => entryMatchesFilters(entry, filters))
+}
 
-  return entries.filter((entry) => {
-    if (type !== 'all' && entry.type !== type) return false
-    if (units !== 'all' && entry.units !== units) return false
-    if (searchTerms.length > 0) {
-      const diameterStr = String(entry.diameter)
-      const haystack = `${entry.name} ${diameterStr}`
-      if (!searchTermsMatch(searchTerms, haystack)) return false
-    }
-    return true
-  })
+/**
+ * Filter already-annotated entries using the same filter contract.
+ * Used for the display-only filtered view; selection/count/import
+ * operate on the full annotated list so selections survive filter changes.
+ */
+export function filterLibraryEntryStates(
+  entries: LibraryEntryState[],
+  filters: LibraryFilterValues,
+): LibraryEntryState[] {
+  return entries.filter((entry) => entryMatchesFilters(entry, filters))
 }
 
 /**
@@ -109,6 +127,7 @@ export function annotateEntryStates(
 
 /**
  * Count selected entries that are NOT yet in the project.
+ * Operates on the full annotated list — selections survive filtering.
  */
 export function countImportableSelected(
   entries: LibraryEntryState[],
@@ -125,6 +144,7 @@ export function countImportableSelected(
 
 /**
  * Build the input array for importTools() from the selected importable entries.
+ * Operates on the full annotated list — selections survive filtering.
  */
 export function buildImportInput(
   entries: LibraryEntryState[],

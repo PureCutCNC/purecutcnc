@@ -386,4 +386,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   "cam.tools.allImported": "Todas las herramientas coincidentes de la biblioteca ya están en el proyecto.",
   "cam.tools.noImportable": "Las herramientas seleccionadas ya están en el proyecto.",
   "cam.tools.close": "Cerrar",
+  "cam.tools.fluteCount.one": "{count} estría",
+  "cam.tools.fluteCount.other": "{count} estrías",
+  "cam.tools.maxCutDepthPrefix": "máx",
 }

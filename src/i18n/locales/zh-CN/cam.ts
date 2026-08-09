@@ -476,4 +476,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.tools.allImported': '所有匹配的库刀具已在项目中。',
   'cam.tools.noImportable': '所选刀具已在项目中。',
   'cam.tools.close': '关闭',
+  'cam.tools.fluteCount.one': '{count} 刃',
+  'cam.tools.fluteCount.other': '{count} 刃',
+  'cam.tools.maxCutDepthPrefix': '最大',
 }
