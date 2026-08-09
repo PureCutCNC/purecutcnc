@@ -19,7 +19,7 @@ The integration manager turns issue #468 into sequential worker slices, independ
 - Base commit: `f18f2e4a8633f75fd2bc6236643e094ec833cdfe`
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/468
 - Manager session: 2026-08-09
-- Status: `S1 accepted; preparing S2`
+- Status: `combined review found integration blockers; correction dispatch pending`
 - User authorization for credential-backed worker dispatch: approved in the active Codex task on 2026-08-09
 
 ## Global rules
@@ -38,7 +38,7 @@ The integration manager turns issue #468 into sequential worker slices, independ
 | Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | S1 | Homogeneous selection, tab/clamp bulk store actions, tree/canvas interaction | `1e3913d` | `feat/issue-468-selection-foundation` / removed after merge | `done` | `accepted` | `052b9b0`; merge `458708d` | 70 focused tests; 167-file test suite; build | Locale catalog audit clean; global Select All unchanged; manager corrections covered both-direction incompatible additive selection and deletion sanitization |
-| S2 | Bulk property panels, generalized Z-range editor, rendered workflow coverage | `458708d` | `feat/issue-468-bulk-properties-z-range` / `issue-468-slices/bulk-properties-z-range` | `not started` | `pending` | `-` | focused tests; build; isolated e2e | Depends on accepted S1 APIs |
+| S2 | Bulk property panels, generalized Z-range editor, rendered workflow coverage | `71000c9` | `feat/issue-468-bulk-properties-z-range` / removed after merge | `done` | `accepted` | `e4e418c`; merge `10f3501` | 65 helper tests; 70 store tests; build; 25 isolated e2e | Locale audit clean; manager mutations proved mixed Line/closed-feature bottom validation and mixed-top slider constraints are covered |
 
 ## Slice instructions
 
@@ -127,9 +127,10 @@ PURECUT_E2E_PORT=1468 PURECUT_E2E_ISOLATED=1 npx playwright test <focused issue 
 
 ## Integration verification
 
-- Accepted commits and merge order: S1 `052b9b0` merged as `458708d`; S2 pending
-- Repository checks: pending
-- Browser/tablet checks: pending
+- Accepted commits and merge order: S1 `052b9b0` merged as `458708d`; S2 `e4e418c` merged as `10f3501`
+- Repository checks: full `npm run build` passed at integration merge `10f3501` (168 structural test files plus production bundle)
+- Browser/tablet checks: focused issue #468 suite passed 25/25 with isolated Vite server, including touch/coarse-pointer selection; full suite passed 114/115 and exposed a relevant multi-feature localization regression
+- Correction blockers: family leakage in tab/clamp add/move/copy transitions; singleton tab/clamp actions exposed during multi-selection; issue #468 E2E omitted from CI lanes; additive feature selection inconsistent from non-family nodes; multi-feature mixed placeholder count regression
 - Known limitations or deferred work: smooth tabs remain in issue #414
 
 ## User-review handoff
