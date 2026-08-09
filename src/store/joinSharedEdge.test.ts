@@ -60,7 +60,7 @@ function test(name: string, fn: () => void): void {
 function resetStore(): void {
   useProjectStore.setState({
     project: newProject(),
-    selection: { selectedFeatureIds: [] },
+    selection: { selectedFeatureIds: [], selectedTabIds: [], selectedClampIds: [] },
     pendingShapeAction: null,
     history: { past: [], future: [], transactionStart: null },
   } as unknown as Partial<ProjectStore>)

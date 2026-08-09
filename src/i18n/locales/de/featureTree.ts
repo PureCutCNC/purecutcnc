@@ -128,6 +128,8 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
 
   // ── TreeRow: other buttons ──
   'featureTree.treeRow.selectAllInFolder': 'Alle Features im Ordner auswählen',
+  'featureTree.treeRow.selectAllTabs': 'Alle Laschen auswählen',
+  'featureTree.treeRow.selectAllClamps': 'Alle Spanner auswählen',
   'featureTree.treeRow.group': 'Features gruppieren',
   'featureTree.treeRow.ungroup': 'Gruppierung der Features aufheben',
   'featureTree.treeRow.editSketch': 'Skizze bearbeiten',

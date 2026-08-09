@@ -50,6 +50,10 @@ export interface SelectionState {
   mode: SelectionMode
   selectedFeatureId: string | null
   selectedFeatureIds: string[]
+  /** Multi-selected tab IDs when the active family is tabs. */
+  selectedTabIds: string[]
+  /** Multi-selected clamp IDs when the active family is clamps. */
+  selectedClampIds: string[]
   selectedNode: SelectedNode
   hoveredFeatureId: string | null
   sketchEditTool: SketchEditTool | null
@@ -380,7 +384,9 @@ export interface ProjectStore {
 
   addClamp: () => string
   updateClamp: (id: string, patch: Partial<Clamp>) => void
+  updateClamps: (ids: string[], patch: Partial<Clamp>) => void
   deleteClamp: (id: string) => void
+  deleteClamps: (ids: string[]) => void
   setAllClampsVisible: (visible: boolean) => void
   startAddClampPlacement: () => void
   startMoveClamp: (clampId: string) => void
@@ -390,7 +396,9 @@ export interface ProjectStore {
   enterTabEdit: (id: string) => void
   moveTabControl: (tabId: string, control: SketchControlRef, point: Point) => void
   updateTab: (id: string, patch: Partial<Tab>) => void
+  updateTabs: (ids: string[], patch: Partial<Tab>) => void
   deleteTab: (id: string) => void
+  deleteTabs: (ids: string[]) => void
   setAllTabsVisible: (visible: boolean) => void
   startAddTabPlacement: () => void
   startMoveTab: (tabId: string) => void
@@ -429,8 +437,12 @@ export interface ProjectStore {
   selectTabsRoot: () => void
   selectClampsRoot: () => void
   selectFeatureFolder: (id: string) => void
-  selectTab: (id: string) => void
-  selectClamp: (id: string) => void
+  selectTab: (id: string, additive?: boolean) => void
+  selectClamp: (id: string, additive?: boolean) => void
+  selectTabs: (ids: string[]) => void
+  selectClamps: (ids: string[]) => void
+  selectAllTabs: () => void
+  selectAllClamps: () => void
   hoverFeature: (id: string | null) => void
   enterSketchEdit: (id: string) => void
   enterClampEdit: (id: string) => void

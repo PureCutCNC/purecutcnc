@@ -73,6 +73,8 @@ function makeSelection(ids: string[], overrides: Partial<SelectionState> = {}): 
     mode: 'feature',
     selectedFeatureId: ids[0] ?? null,
     selectedFeatureIds: ids,
+    selectedTabIds: [],
+    selectedClampIds: [],
     selectedNode: ids[0] ? { type: 'feature', featureId: ids[0] } : null,
     hoveredFeatureId: null,
     sketchEditTool: null,

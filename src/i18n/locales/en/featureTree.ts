@@ -133,6 +133,8 @@ export const featureTreeEn = {
 
   // ── TreeRow: other buttons ──
   'featureTree.treeRow.selectAllInFolder': 'Select all features in folder',
+  'featureTree.treeRow.selectAllTabs': 'Select all tabs',
+  'featureTree.treeRow.selectAllClamps': 'Select all clamps',
   'featureTree.treeRow.group': 'Group features',
   'featureTree.treeRow.ungroup': 'Ungroup features',
   'featureTree.treeRow.editSketch': 'Edit sketch',

@@ -97,6 +97,8 @@ export const featureTreeEs: Record<keyof typeof featureTreeEn, string> = {
   "featureTree.treeRow.operation.menuRegionTooltip": "Máscara de región: el elemento filtra las operaciones de mecanizado",
   "featureTree.treeRow.operation.menuConstructionTooltip": "Construcción: geometría de referencia del croquis, nunca se mecaniza",
   "featureTree.treeRow.selectAllInFolder": "Seleccionar todos los elementos de la carpeta",
+  "featureTree.treeRow.selectAllTabs": "Seleccionar todas las pestañas",
+  "featureTree.treeRow.selectAllClamps": "Seleccionar todas las mordazas",
   "featureTree.treeRow.group": "Agrupar elementos",
   "featureTree.treeRow.ungroup": "Desagrupar elementos",
   "featureTree.treeRow.editSketch": "Editar croquis",

@@ -134,6 +134,8 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
 
   // ── TreeRow: other buttons ──
   'featureTree.treeRow.selectAllInFolder': '选中文件夹中的所有特征',
+  'featureTree.treeRow.selectAllTabs': '选中所有桥接',
+  'featureTree.treeRow.selectAllClamps': '选中所有夹具',
   'featureTree.treeRow.group': '成组特征',
   'featureTree.treeRow.ungroup': '取消成组',
   'featureTree.treeRow.editSketch': '编辑草图',
