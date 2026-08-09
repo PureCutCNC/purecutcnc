@@ -21,7 +21,7 @@ import { convertLength } from '../../utils/units'
 import { useI18n } from '../../i18n/i18nContext'
 import { DraftNumberInput } from './DraftNumberInput'
 import { ZRangeSlider } from './ZRangeSlider'
-import { commonNumber, commonBoolean, zDomainMax } from './mixedValue'
+import { commonNumber, commonBoolean, clampDomainMax, validateZEdits } from './mixedValue'
 
 interface BulkClampPropertiesProps {
   selectedClamps: Clamp[]
@@ -42,7 +42,9 @@ export function BulkClampProperties({ selectedClamps, units, onClose }: BulkClam
   const commonVisible = commonBoolean(selectedClamps, (c) => c.visible)
 
   const allHeights = selectedClamps.map((c) => c.height)
-  const effectiveDomainMax = zDomainMax(allHeights, convertLength(10, 'mm', units))
+  const clampFloor = convertLength(5, 'mm', units)
+  const clampHeadroom = convertLength(5, 'mm', units)
+  const effectiveDomainMax = clampDomainMax(allHeights, clampFloor, clampHeadroom)
   const minimumSize = convertLength(0.1, 'mm', units)
 
   const mixedPlaceholder = t('featureTree.properties.select.mixedValues')
@@ -52,12 +54,13 @@ export function BulkClampProperties({ selectedClamps, units, onClose }: BulkClam
   const handleZCommit = useCallback(
     (patch: { top?: number; bottom?: number }) => {
       // Clamp Z top = height (physical height above zero).
-      // Clamp Z bottom is fixed at 0 — ignore bottom commits.
-      if (patch.top !== undefined && patch.top >= 0) {
+      // Clamp Z bottom is fixed at 0 — validate against it, ignore bottom commits.
+      if (!validateZEdits(selectedClamps, (c) => c.height, () => 0, patch)) return
+      if (patch.top !== undefined) {
         updateClamps(ids, { height: patch.top })
       }
     },
-    [ids, updateClamps],
+    [ids, selectedClamps, updateClamps],
   )
 
   return (

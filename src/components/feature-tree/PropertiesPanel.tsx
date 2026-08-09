@@ -20,6 +20,7 @@ import { ExpandedPanelContext } from '../layout/expandedPanelContext'
 import { Select } from '../Select'
 import { DisclosureSection } from '../common/DisclosureSection'
 import { ZRangeSlider } from './ZRangeSlider'
+import { clampDomainMax } from './mixedValue'
 import { ModelOrientationSection } from './ModelOrientationSection'
 import { BulkTabProperties } from './BulkTabProperties'
 import { BulkClampProperties } from './BulkClampProperties'
@@ -906,10 +907,10 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   }
 
   if (selectedClamp) {
-    const clampDomainMax = Math.max(
-      selectedClamp.height,
-      project.stock.thickness,
-      convertLength(10, 'mm', units),
+    const clampDomain = clampDomainMax(
+      [selectedClamp.height],
+      convertLength(5, 'mm', units),
+      convertLength(5, 'mm', units),
     )
     return (
       <div className="properties-panel">
@@ -927,7 +928,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             zTop={selectedClamp.height}
             zBottom={0}
             domainMin={0}
-            domainMax={clampDomainMax}
+            domainMax={clampDomain}
             units={units}
             bottomLocked
             onCommit={(patch) => {

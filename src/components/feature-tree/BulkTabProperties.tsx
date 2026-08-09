@@ -21,7 +21,7 @@ import { convertLength } from '../../utils/units'
 import { useI18n } from '../../i18n/i18nContext'
 import { DraftNumberInput } from './DraftNumberInput'
 import { ZRangeSlider } from './ZRangeSlider'
-import { commonNumber, commonBoolean, zDomainMax } from './mixedValue'
+import { commonNumber, commonBoolean, zDomainMax, validateZEdits } from './mixedValue'
 
 interface BulkTabPropertiesProps {
   selectedTabs: Tab[]
@@ -33,6 +33,7 @@ export function BulkTabProperties({ selectedTabs, units, onClose }: BulkTabPrope
   const { t } = useI18n()
   const updateTabs = useProjectStore((s) => s.updateTabs)
   const deleteTabs = useProjectStore((s) => s.deleteTabs)
+  const stockThickness = useProjectStore((s) => s.project.stock.thickness)
 
   const ids = useMemo(() => selectedTabs.map((tab) => tab.id), [selectedTabs])
 
@@ -45,7 +46,7 @@ export function BulkTabProperties({ selectedTabs, units, onClose }: BulkTabPrope
   const allZTops = selectedTabs.map((tab) => tab.z_top)
   const allZBottoms = selectedTabs.map((tab) => tab.z_bottom)
 
-  const effectiveDomainMax = zDomainMax([...allZTops, ...allZBottoms], convertLength(5, 'mm', units))
+  const effectiveDomainMax = zDomainMax([...allZTops, ...allZBottoms], stockThickness)
   const minimumSize = convertLength(0.1, 'mm', units)
 
   const mixedPlaceholder = t('featureTree.properties.select.mixedValues')
@@ -54,22 +55,10 @@ export function BulkTabProperties({ selectedTabs, units, onClose }: BulkTabPrope
 
   const handleZCommit = useCallback(
     (patch: { top?: number; bottom?: number }) => {
+      if (!validateZEdits(selectedTabs, (t) => t.z_top, (t) => t.z_bottom, patch)) return
       const storePatch: Partial<Tab> = {}
-      if (patch.top !== undefined) {
-        // Validate z_bottom <= z_top for every selected tab.
-        const top = patch.top
-        storePatch.z_top = top
-        for (const tab of selectedTabs) {
-          if (top < tab.z_bottom) return
-        }
-      }
-      if (patch.bottom !== undefined) {
-        const bottom = patch.bottom
-        storePatch.z_bottom = bottom
-        for (const tab of selectedTabs) {
-          if (bottom > tab.z_top) return
-        }
-      }
+      if (patch.top !== undefined) storePatch.z_top = patch.top
+      if (patch.bottom !== undefined) storePatch.z_bottom = patch.bottom
       if (Object.keys(storePatch).length > 0) {
         updateTabs(ids, storePatch)
       }

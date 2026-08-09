@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-import { useRef, useState } from 'react'
+import { useRef, useState, useMemo } from 'react'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { useI18n } from '../../i18n/i18nContext'
+import { constrainZ, zHandleAriaBounds } from './mixedValue'
 
 // Fraction of track height reserved as visual margin at each end.
 const EDGE_MARGIN = 0.08
@@ -85,8 +86,14 @@ export function ZRangeSlider({
   const topPercent = zToPercent(effectiveTop, domainMin, domainMax)
   const botPercent = zToPercent(effectiveBot, domainMin, domainMax)
 
-  // Minimum separation so handles never sit at exactly the same position.
-  const minSep = Math.max((domainMax - domainMin) * 0.001, 1e-6)
+  const topAria = useMemo(
+    () => zHandleAriaBounds(true, domainMin, domainMax, zBottom),
+    [domainMin, domainMax, zBottom],
+  )
+  const botAria = useMemo(
+    () => zHandleAriaBounds(false, domainMin, domainMax, zTop),
+    [domainMin, domainMax, zTop],
+  )
 
   function handlePointerDown(handle: 'top' | 'bottom', event: React.PointerEvent) {
     event.preventDefault()
@@ -112,11 +119,11 @@ export function ZRangeSlider({
       const z = Math.round(percentToZ(percent, domainMin, domainMax) * 10000) / 10000
 
       if (handle === 'top') {
-        // Constrain at the bottom handle — never push it.
-        curTop = Math.max(domainMin, Math.min(z, curBot - minSep))
+        // Top must be >= bottom and <= domainMax; never push bottom.
+        curTop = constrainZ(z, true, domainMin, domainMax, curBot)
       } else {
-        // Constrain at the top handle — never push it.
-        curBot = Math.min(domainMax, Math.max(z, curTop + minSep))
+        // Bottom must be <= top and >= domainMin; never push top.
+        curBot = constrainZ(z, false, domainMin, domainMax, curTop)
       }
 
       setDragTop(curTop)
@@ -204,8 +211,8 @@ export function ZRangeSlider({
     }
   }
 
-  const topHandlers = makeFieldHandlers(true, zTop, zBottom)
-  const botHandlers = makeFieldHandlers(false, zBottom, zTop)
+  const topHandlers = topLocked ? undefined : makeFieldHandlers(true, zTop, zBottom)
+  const botHandlers = bottomLocked ? undefined : makeFieldHandlers(false, zBottom, zTop)
 
   const placeholder = mixedPlaceholder ?? '—'
 
@@ -226,8 +233,8 @@ export function ZRangeSlider({
             onPointerDown={(e) => handlePointerDown('top', e)}
             role="slider"
             aria-label={t('featureTree.zRange.handleTopAria')}
-            aria-valuemin={bottomLocked ? domainMin : domainMin}
-            aria-valuemax={domainMax}
+            aria-valuemin={topAria.valuemin}
+            aria-valuemax={topAria.valuemax}
             aria-valuenow={effectiveTop}
             tabIndex={0}
           />
@@ -239,8 +246,8 @@ export function ZRangeSlider({
             onPointerDown={(e) => handlePointerDown('bottom', e)}
             role="slider"
             aria-label={t('featureTree.zRange.handleBottomAria')}
-            aria-valuemin={domainMin}
-            aria-valuemax={domainMax}
+            aria-valuemin={botAria.valuemin}
+            aria-valuemax={botAria.valuemax}
             aria-valuenow={effectiveBot}
             tabIndex={0}
           />
@@ -256,8 +263,10 @@ export function ZRangeSlider({
         placeholder={zTop === null ? placeholder : undefined}
         spellCheck={false}
         data-numeric-entry="true"
-        onBlur={topHandlers.onBlur}
-        onKeyDown={topHandlers.onKeyDown}
+        disabled={topLocked}
+        readOnly={topLocked}
+        onBlur={topHandlers?.onBlur}
+        onKeyDown={topHandlers?.onKeyDown}
       />
 
       <span className="z-range-slider__label z-range-slider__label--bot">{t('featureTree.zRange.zBottom')}</span>
@@ -271,8 +280,10 @@ export function ZRangeSlider({
         placeholder={zBottom === null ? placeholder : undefined}
         spellCheck={false}
         data-numeric-entry="true"
-        onBlur={botHandlers.onBlur}
-        onKeyDown={botHandlers.onKeyDown}
+        disabled={bottomLocked}
+        readOnly={bottomLocked}
+        onBlur={botHandlers?.onBlur}
+        onKeyDown={botHandlers?.onKeyDown}
       />
     </div>
   )

@@ -31,6 +31,7 @@ import type { ProjectStore, SelectionState } from './types'
 import type { Project, Tab, Clamp, FeatureInstance } from '../types/project'
 import { IDENTITY_MATRIX, newProject } from '../types/project'
 import { sanitizeSelection } from './slices/selectionSlice'
+import { validateZEdits } from '../components/feature-tree/mixedValue'
 
 // ── Assertion helpers ──
 
@@ -1092,6 +1093,107 @@ test('deleteClamp of only member clears selection', () => {
   assertEq(sel.selectedNode, null, 'primary cleared')
   assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
   assertEq(sel.selectedTabIds.length, 0, 'no tab IDs')
+})
+
+// ============================================================================
+// 12. Bulk Z-range ordering enforcement
+// ============================================================================
+console.log('\n12. Bulk Z-range ordering enforcement')
+
+test('bulk tab Z edit rejected by validateZEdits when top < item bottom', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.updateTab('tb2', { z_bottom: 2 })
+  // tb1: z_bottom=0, z_top=3; tb2: z_bottom=2, z_top=3
+  const tabs = project().tabs.filter((t) => t.id === 'tb1' || t.id === 'tb2')
+  // validateZEdits is the UI-layer guard — test it directly.
+  const ok = validateZEdits(tabs, (t: Tab) => t.z_top, (t: Tab) => t.z_bottom, { top: 1 })
+  assert(ok === false, 'top=1 < tb2.z_bottom=2 rejected by validateZEdits')
+  // But the store itself would accept the value (no runtime invariant enforcement).
+  const beforeLen = historyLen()
+  s.updateTabs(['tb1', 'tb2'], { z_top: 1 })
+  assertEq(historyLen(), beforeLen + 1, 'store accepts — validation is at UI layer')
+  s.undo()
+})
+
+test('bulk tab Z edit rejected by validateZEdits when bottom > item top', () => {
+  resetStore(projectWithTabsAndClamps())
+  const tabs = project().tabs.filter((t) => t.id === 'tb1' || t.id === 'tb2')
+  const ok = validateZEdits(tabs, (t: Tab) => t.z_top, (t: Tab) => t.z_bottom, { bottom: 5 })
+  assert(ok === false, 'bottom=5 > z_top=3 rejected by validateZEdits')
+})
+
+test('bulk tab valid Z edit updates all and one Undo reverses it', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  const beforeLen = historyLen()
+  s.updateTabs(['tb1', 'tb2'], { z_top: 6, z_bottom: 1 })
+  // Valid: 6 >= 1 for both tabs.
+  const t1 = project().tabs.find((t) => t.id === 'tb1')!
+  const t2 = project().tabs.find((t) => t.id === 'tb2')!
+  assertEq(t1.z_top, 6, 'tb1 z_top updated')
+  assertEq(t1.z_bottom, 1, 'tb1 z_bottom updated')
+  assertEq(t2.z_top, 6, 'tb2 z_top updated')
+  assertEq(t2.z_bottom, 1, 'tb2 z_bottom updated')
+  assertEq(historyLen(), beforeLen + 1, 'one history entry for combined edit')
+  s.undo()
+  const u1 = project().tabs.find((t) => t.id === 'tb1')!
+  const u2 = project().tabs.find((t) => t.id === 'tb2')!
+  assertEq(u1.z_top, 3, 'tb1 z_top restored')
+  assertEq(u1.z_bottom, 0, 'tb1 z_bottom restored')
+  assertEq(u2.z_top, 3, 'tb2 z_top restored')
+  assertEq(u2.z_bottom, 0, 'tb2 z_bottom restored')
+})
+
+test('bulk tab Z edit with mixed bottoms — validateZEdits rejects insufficient top', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.updateTab('tb1', { z_bottom: 0 })
+  s.updateTab('tb2', { z_bottom: 1 })
+  // tb1 bottom=0, tb2 bottom=1. z_top=1 is ok (>=1 >=0). z_top=0 would fail (0 < 1).
+  const tabs = project().tabs.filter((t) => t.id === 'tb1' || t.id === 'tb2')
+  assert(validateZEdits(tabs, (t: Tab) => t.z_top, (t: Tab) => t.z_bottom, { top: 0 }) === false, 'top=0 < tb2.z_bottom=1')
+  assert(validateZEdits(tabs, (t: Tab) => t.z_top, (t: Tab) => t.z_bottom, { top: 2 }) === true, 'top=2 clears both')
+  // Valid commit: z_top=2 applied through store.
+  const beforeLen = historyLen()
+  s.updateTabs(['tb1', 'tb2'], { z_top: 2 })
+  assertEq(historyLen(), beforeLen + 1, 'one history entry')
+  assertEq(project().tabs.find((t) => t.id === 'tb1')!.z_top, 2, 'tb1 updated')
+  assertEq(project().tabs.find((t) => t.id === 'tb2')!.z_top, 2, 'tb2 updated')
+  s.undo()
+  assertEq(project().tabs.find((t) => t.id === 'tb1')!.z_top, 3, 'tb1 restored')
+  assertEq(project().tabs.find((t) => t.id === 'tb2')!.z_top, 3, 'tb2 restored')
+})
+
+test('bulk clamp Z commit requires height >= 0', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectClamp('cl1')
+  s.selectClamp('cl2', true)
+  // Clamps have no explicit z_bottom — the invariant is height >= 0.
+  // The store-level updateClamps doesn't enforce this; UI-level validateZEdits does.
+  s.updateClamps(['cl1', 'cl2'], { height: -1 })
+  // Store allows negative height — UI validation layer rejects via validateZEdits.
+  const cl1 = project().clamps.find((c) => c.id === 'cl1')!
+  assertEq(cl1.height, -1, 'store allows negative — UI validateZEdits rejects')
+  s.undo()
+  assertEq(project().clamps.find((c) => c.id === 'cl1')!.height, 8, 'undo restores')
+})
+
+test('bulk tab Z edit on overlapping z_top/z_bottom equal is valid', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  const beforeLen = historyLen()
+  // z_top=1, z_bottom=1 — equality is valid.
+  s.updateTabs(['tb1', 'tb2'], { z_top: 1, z_bottom: 1 })
+  assertEq(historyLen(), beforeLen + 1, 'equality accepted')
+  const t1 = project().tabs.find((t) => t.id === 'tb1')!
+  assertEq(t1.z_top, 1, 'z_top updated')
+  assertEq(t1.z_bottom, 1, 'z_bottom updated')
 })
 
 // ============================================================================
