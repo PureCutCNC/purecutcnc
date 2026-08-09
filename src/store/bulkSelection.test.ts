@@ -525,6 +525,26 @@ test('additive clamp from tab IDs + null node is true no-op (deep compare)', () 
   assert(JSON.stringify(before) === JSON.stringify(after), 'selection unchanged — byte-for-byte')
 })
 
+// ── Non-family node additive guards (regression: stock, project, grid, etc.) ──
+
+test('additive tab on non-family node (stock) is no-op (deep compare)', () => {
+  resetStore(projectWithTabsAndClamps())
+  store().selectStock()
+  const before = selectionSnapshot()
+  store().selectTab('tb1', true)
+  const after = selection()
+  assert(JSON.stringify(before) === JSON.stringify(after), 'selection unchanged — byte-for-byte')
+})
+
+test('additive clamp on non-family node (stock) is no-op (deep compare)', () => {
+  resetStore(projectWithTabsAndClamps())
+  store().selectStock()
+  const before = selectionSnapshot()
+  store().selectClamp('cl1', true)
+  const after = selection()
+  assert(JSON.stringify(before) === JSON.stringify(after), 'selection unchanged — byte-for-byte')
+})
+
 // ============================================================================
 // 4. Visible-only family Select All
 // ============================================================================

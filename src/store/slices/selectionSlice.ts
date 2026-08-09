@@ -737,19 +737,15 @@ export function createSelectionSlice(
         }
 
         // Incompatible additive attempt — current family is not tabs.
-        // Determine the active family from all three selected ID collections plus
-        // the primary node (a pending workflow may have feature/clamp IDs with a
-        // null primary).
+        // Preserve when any non-tab node is selected, or when feature/clamp
+        // IDs are active (including a pending feature workflow with null primary).
         if (additive) {
           const nodeType = s.selection.selectedNode?.type
-          const isFeatureNode =
-            nodeType === 'feature' || nodeType === 'features_root' ||
-            nodeType === 'regions_root' || nodeType === 'construction_root' ||
-            nodeType === 'folder'
-          const isClampNode = nodeType === 'clamp' || nodeType === 'clamps_root'
+          const isNonTabNode = nodeType != null && nodeType !== 'tab' && nodeType !== 'tabs_root'
           const hasFeatureIds = s.selection.selectedFeatureIds.length > 0
           const hasClampIds = s.selection.selectedClampIds.length > 0
-          if (isFeatureNode || isClampNode || hasFeatureIds || hasClampIds) {
+          const hasFeaturePrimary = s.selection.selectedFeatureId !== null
+          if (isNonTabNode || hasFeatureIds || hasClampIds || hasFeaturePrimary) {
             return {}
           }
         }
@@ -811,19 +807,15 @@ export function createSelectionSlice(
         }
 
         // Incompatible additive attempt — current family is not clamps.
-        // Determine the active family from all three selected ID collections plus
-        // the primary node (a pending workflow may have feature/tab IDs with a
-        // null primary).
+        // Preserve when any non-clamp node is selected, or when feature/tab
+        // IDs are active (including a pending feature workflow with null primary).
         if (additive) {
           const nodeType = s.selection.selectedNode?.type
-          const isFeatureNode =
-            nodeType === 'feature' || nodeType === 'features_root' ||
-            nodeType === 'regions_root' || nodeType === 'construction_root' ||
-            nodeType === 'folder'
-          const isTabNode = nodeType === 'tab' || nodeType === 'tabs_root'
+          const isNonClampNode = nodeType != null && nodeType !== 'clamp' && nodeType !== 'clamps_root'
           const hasFeatureIds = s.selection.selectedFeatureIds.length > 0
           const hasTabIds = s.selection.selectedTabIds.length > 0
-          if (isFeatureNode || isTabNode || hasFeatureIds || hasTabIds) {
+          const hasFeaturePrimary = s.selection.selectedFeatureId !== null
+          if (isNonClampNode || hasFeatureIds || hasTabIds || hasFeaturePrimary) {
             return {}
           }
         }
