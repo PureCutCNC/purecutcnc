@@ -21,7 +21,7 @@
  */
 
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
-import { circleProfile, defaultTool, newProject } from '../../types/project'
+import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
 import type { Operation, SketchFeature } from '../../types/project'
 import { replaceProjectFeatures } from '../../test/projectFixtures'
 import { normalizeToolForProject } from '../toolpaths/geometry'
@@ -1432,6 +1432,157 @@ function testCaptureMotionTrace(): void {
   assert(withoutTrace.motionTraces === undefined, 'motionTraces absent when captureMotionTrace=false')
 }
 
+// ── Entry positioning: no fed move travels while descending (#467) ──
+
+interface EmittedMotion {
+  command: string
+  lineIndex: number
+  x: number | null
+  y: number | null
+  z: number | null
+}
+
+/**
+ * Replays the emitted program the way a controller would — modal motion
+ * command, modal axis words — and returns the motion blocks. Must be run over
+ * the whole program: a modal `X.. Y..` line carries the command from an earlier
+ * block, so replaying a slice misreads the first motion in it.
+ */
+function emittedMotions(gcode: string): EmittedMotion[] {
+  const motions: EmittedMotion[] = []
+  let command: string | null = null
+  let x: number | null = null
+  let y: number | null = null
+  let z: number | null = null
+
+  gcode.split('\n').forEach((raw, lineIndex) => {
+    const line = raw.split(';')[0].trim()
+    if (line.length === 0) return
+
+    const commandMatch = line.match(/^(G0?[0123])\b/)
+    if (commandMatch) {
+      command = commandMatch[1]
+    }
+
+    const xMatch = line.match(/X(-?[\d.]+)/)
+    const yMatch = line.match(/Y(-?[\d.]+)/)
+    const zMatch = line.match(/Z(-?[\d.]+)/)
+    if (!xMatch && !yMatch && !zMatch) return
+    if (command === null) return
+
+    if (xMatch) x = parseFloat(xMatch[1])
+    if (yMatch) y = parseFloat(yMatch[1])
+    if (zMatch) z = parseFloat(zMatch[1])
+    motions.push({ command, lineIndex, x, y, z })
+  })
+
+  return motions
+}
+
+function pocketOperation(id: string, name: string): Operation {
+  return {
+    id, name, kind: 'pocket', pass: 'rough',
+    enabled: true, showToolpath: true, debugToolpath: false,
+    target: { source: 'features', featureIds: ['pocket-feature'] }, toolRef: 't1',
+    stepdown: 1, stepover: 0.4, feed: 600, plungeFeed: 180, rpm: 12000,
+    pocketPattern: 'offset', pocketAngle: 0, stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0, finishWalls: true, finishFloor: true,
+    carveDepth: 1, maxCarveDepth: 1, cutDirection: 'climb',
+    machiningOrder: 'level_first', debugShowRejectedCorners: false,
+  }
+}
+
+/**
+ * The full app pipeline — generate, optimize, postprocess — for two operations.
+ * `optimizeLinearMoves` used to delete the zero-length rapid that marks each
+ * operation's entry point, so the first fed move of the program travelled
+ * diagonally across the workpiece at plunge feed while descending to full
+ * depth, cutting the stock wherever it crossed the surface (issue #467).
+ *
+ * Asserts the shape the machine needs: rapid first, then a vertical plunge.
+ */
+function testOperationEntryRapidsSurviveOptimization(): void {
+  console.log('Testing every operation starts with a rapid, then a vertical plunge...')
+
+  const project = newProject('Entry Test', 'mm')
+  const toolRecord = { ...defaultTool('mm', 1), id: 't1', name: '6 mm Endmill' }
+  project.tools = [toolRecord]
+  const tool = normalizeToolForProject(toolRecord, project)
+
+  const pocketFeature: SketchFeature = {
+    id: 'pocket-feature',
+    name: 'Pocket',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(20, 20, 40, 30),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 0,
+    z_bottom: -3,
+    visible: true,
+    locked: false,
+  }
+  replaceProjectFeatures(project, [pocketFeature])
+
+  const operations = [
+    pocketOperation('op1', 'First Pocket'),
+    pocketOperation('op2', 'Second Pocket'),
+  ].map((operation) => {
+    const toolpath = optimizeLinearMoves(generatePocketToolpath(project, operation))
+    assert(toolpath.moves.length > 0, `${operation.name} should produce moves`)
+    return { operation, tool, toolpath }
+  })
+
+  const gcode = runPostProcessor({
+    project,
+    definition: testDefinition(['; Operation {operationIndex}: {operationName}']),
+    operations,
+    options: { emitToolChanges: true, emitCoolant: false, programName: project.meta.name },
+  }).gcode
+
+  const motions = emittedMotions(gcode)
+  assert(motions.length > 0, 'program should emit motion')
+  assert(motions[0].command === 'G0', `program must open with a rapid, got ${motions[0].command}`)
+
+  // Every fed move must be either a constant-Z cut or a pure-Z plunge. A G1
+  // that changes XY *and* descends is the gouge this test exists to catch.
+  // This covers operations 2..n; operation 1 has no preceding motion to
+  // compare against, which is what the opening-rapid assertion above is for.
+  let previous: EmittedMotion | null = null
+  let sawPlunge = false
+  for (const motion of motions) {
+    if (motion.command === 'G1' && previous !== null) {
+      const movedXY = motion.x !== previous.x || motion.y !== previous.y
+      const descended = motion.z !== null && previous.z !== null && motion.z < previous.z
+      assert(
+        !(movedXY && descended),
+        `G1 to (${motion.x}, ${motion.y}, ${motion.z}) travels in XY while descending from `
+        + `(${previous.x}, ${previous.y}, ${previous.z})`,
+      )
+      if (descended) sawPlunge = true
+    }
+    previous = motion
+  }
+  assert(sawPlunge, 'expected at least one fed descent (the plunge) in the program')
+
+  // The second operation must reposition too, not carry the first one's end
+  // point into its own plunge. Modal G0 means its first block is often a bare
+  // "X.. Y.." line, so this reads the replayed command, not the raw text.
+  const headerLine = gcode.split('\n').findIndex((line) => line.includes('; Operation 2:'))
+  assert(headerLine > 0, 'second operation header should be emitted')
+  const secondEntry = motions.find((motion) => motion.lineIndex > headerLine)
+  assert(secondEntry !== undefined, 'second operation should emit motion')
+  assert(
+    secondEntry!.command === 'G0',
+    `second operation must open with a rapid, got ${secondEntry!.command}`,
+  )
+}
+
 testArcOutputIJ()
 testArcOutputR()
 testArcDisabledLinearFallback()
@@ -1443,5 +1594,6 @@ testArcNoRegressionLinear()
 testArcMixedRapidAndCut()
 testArcMoveCountReflectsFittedOutput()
 testCaptureMotionTrace()
+testOperationEntryRapidsSurviveOptimization()
 
 console.log('gcode postprocessor tests passed')

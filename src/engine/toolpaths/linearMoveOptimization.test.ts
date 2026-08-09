@@ -99,6 +99,84 @@ function testAllMovesZeroLength() {
   console.log('All moves zero-length: PASSED')
 }
 
+/**
+ * The entry marker every generator opens an operation with: a zero-length rapid
+ * at safe Z that tells the postprocessor to establish XY and Z before the
+ * plunge. Removing it as a duplicate made the first fed move travel diagonally
+ * across the workpiece at plunge feed (issue #467).
+ */
+function testZeroLengthRapidPreserved() {
+  console.log('Testing zero-length rapid entry marker is preserved...')
+
+  const r = optimizeLinearMoves(
+    result({
+      moves: [
+        move('rapid', 10, 20, 10, 20, 5), // entry marker — zero-length
+        { kind: 'plunge' as const, from: pt(10, 20, 5), to: pt(10, 20, -1) },
+        move('cut', 10, 20, 30, 20, -1),
+      ],
+    }),
+  )
+
+  assert(r.moves.length === 3, 'zero-length rapid kept alongside plunge and cut')
+  assert(r.moves[0].kind === 'rapid', 'marker still first')
+  assert(
+    r.moves[0].from.x === 10 && r.moves[0].from.y === 20 && r.moves[0].from.z === 5,
+    'marker start untouched',
+  )
+  assert(
+    r.moves[0].to.x === 10 && r.moves[0].to.y === 20 && r.moves[0].to.z === 5,
+    'marker stays zero-length',
+  )
+  assert(r.moves[1].kind === 'plunge', 'plunge follows the marker')
+
+  console.log('Zero-length rapid preserved: PASSED')
+}
+
+function testZeroLengthNonRapidStillRemoved() {
+  console.log('Testing zero-length plunge and lead_in are still removed...')
+
+  const r = optimizeLinearMoves(
+    result({
+      moves: [
+        move('rapid', 0, 0, 10, 20, 5),
+        { kind: 'plunge' as const, from: pt(10, 20, 5), to: pt(10, 20, 5) }, // zero-length
+        move('lead_in', 10, 20, 10, 20, 5), // zero-length
+        move('cut', 10, 20, 30, 20, -1),
+      ],
+    }),
+  )
+
+  assert(r.moves.length === 2, 'zero-length plunge and lead_in removed')
+  assert(r.moves[0].kind === 'rapid', 'non-zero rapid kept')
+  assert(r.moves[1].kind === 'cut', 'cut kept')
+
+  console.log('Zero-length non-rapid still removed: PASSED')
+}
+
+function testPreservedMarkerDoesNotMerge() {
+  console.log('Testing a preserved marker never merges with the rapid after it...')
+
+  const r = optimizeLinearMoves(
+    result({
+      moves: [
+        move('rapid', 10, 20, 10, 20, 5), // entry marker — zero-length
+        move('rapid', 10, 20, 40, 20, 5), // real travel from the same point
+        move('rapid', 40, 20, 60, 20, 5), // collinear continuation
+      ],
+    }),
+  )
+
+  assert(r.moves.length === 2, 'marker kept separate, the two real rapids merged')
+  assert(
+    r.moves[0].from.x === 10 && r.moves[0].to.x === 10,
+    'marker did not absorb the travel that follows it',
+  )
+  assert(r.moves[1].from.x === 10 && r.moves[1].to.x === 60, 'real rapids merged')
+
+  console.log('Preserved marker does not merge: PASSED')
+}
+
 // ── Collinear merge ──────────────────────────────────────────────────
 
 function testCollinearMergeSameFeedScale() {
@@ -581,6 +659,9 @@ function testLeadInOutPreserved() {
 try {
   testZeroLengthMovesRemoved()
   testAllMovesZeroLength()
+  testZeroLengthRapidPreserved()
+  testZeroLengthNonRapidStillRemoved()
+  testPreservedMarkerDoesNotMerge()
   testCollinearMergeSameFeedScale()
   testCollinearMergeUndefinedFeedScale()
   testCollinearMergeDiagonal()

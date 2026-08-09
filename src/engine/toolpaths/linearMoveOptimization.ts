@@ -36,7 +36,7 @@ export function optimizeLinearMoves(result: ToolpathResult): ToolpathResult {
   const optimized: ToolpathMove[] = []
 
   for (const move of result.moves) {
-    if (isZeroLength(move)) {
+    if (isZeroLength(move) && !isPositioningDirective(move)) {
       continue
     }
 
@@ -65,6 +65,30 @@ export function optimizeLinearMoves(result: ToolpathResult): ToolpathResult {
     moves: optimized,
     bounds: computeBounds(optimized),
   }
+}
+
+/**
+ * A zero-length rapid is a positioning directive, never noise.
+ *
+ * Generators open an operation with `from === null` — nothing is known about
+ * where the machine is — and mark the entry point with a rapid whose `from`
+ * equals its `to` at safe Z (`pushRapidAndPlunge` in `pocket.ts`,
+ * `rapidToEntryStart` and `emitCenterLockedCircularBore` in `entry.ts`). The
+ * postprocessor reads that marker and emits G0 to safe Z, then G0 to the entry
+ * XY, before the plunge descends.
+ *
+ * Dropping it as a duplicate left the first fed move of every operation to do
+ * the travelling: one `G1 X Y Z` at plunge feed, diagonally across the
+ * workpiece while descending, cutting the stock wherever it crossed the
+ * surface (issue #467). Keeping it costs one move per operation and nothing
+ * downstream — `emitRapid` compares against its own tracked machine position
+ * and emits only the axes that actually change, or no line at all.
+ *
+ * Zero-length `cut` / `plunge` / `lead_in` moves carry no such meaning and are
+ * still removed.
+ */
+function isPositioningDirective(move: ToolpathMove): boolean {
+  return move.kind === 'rapid'
 }
 
 function isZeroLength(move: ToolpathMove): boolean {
