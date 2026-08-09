@@ -240,6 +240,8 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.multi.ungroup': '取消分组',
   'featureTree.properties.multi.deleteGroup': '删除分组',
   'featureTree.properties.multi.featuresCount': '{count} 个特征',
+  'featureTree.properties.multi.tabsCount': '{count} 个连接桥',
+  'featureTree.properties.multi.clampsCount': '{count} 个夹具',
   'featureTree.properties.multi.editSketchDisabled': '编辑草图仅适用于单个特征',
   'featureTree.properties.multi.openProfiles': '开放轮廓',
   'featureTree.properties.multi.containsModel': '包含模型特征',

@@ -236,6 +236,12 @@ export const tree = {
   /** Feature rows only (excludes folders, section headers, etc.). */
   featureRows: (page: Page) => page.locator('.tree-row.tree-row--feature'),
 
+  /** Tab rows only. */
+  tabRows: (page: Page) => page.locator('.tree-row.tree-row--tab'),
+
+  /** Clamp rows only. */
+  clampRows: (page: Page) => page.locator('.tree-row.tree-row--clamp'),
+
   /** Feature-folder rows only. */
   folderRows: (page: Page) => page.locator('.tree-row.tree-row--folder'),
 
@@ -376,6 +382,19 @@ export const properties = {
   /** "Manage machines…" action in the project properties. */
   manageMachines: (page: Page) =>
     page.locator('.properties-panel').getByRole('button', { name: 'Manage machines…' }),
+
+  /** Z-range slider component within the properties panel. */
+  zRangeSlider: (page: Page) => page.locator('.properties-panel .z-range-slider'),
+
+  /** Z-range slider top field input. */
+  zRangeTopField: (page: Page) => page.locator('.properties-panel .z-range-slider__field--top'),
+
+  /** Z-range slider bottom field input. */
+  zRangeBottomField: (page: Page) => page.locator('.properties-panel .z-range-slider__field--bot'),
+
+  /** Delete Selected button in bulk panels. */
+  deleteSelectedButton: (page: Page) =>
+    page.locator('.properties-panel').getByRole('button', { name: 'Delete Selected' }),
 }
 
 // ── Project unit conversion dialog ─────────────────────────────────
