@@ -3693,7 +3693,19 @@
   color: var(--accent-strong);
 }
 
-/* States: loading, error, no-match, all-imported */
+/* Compact banner shown above result rows when every visible entry is already
+   imported — explains the disabled state without replacing the rows. */
+.tl-banner {
+  padding: 7px 20px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 550;
+  text-align: center;
+}
+
+/* States: loading, error, no-match */
 .tl-status {
   display: flex;
   flex-direction: column;

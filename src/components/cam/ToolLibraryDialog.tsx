@@ -243,7 +243,6 @@ export function ToolLibraryDialog({
 
   const hasActiveFilters = search !== '' || typeFilter !== 'all' || unitsFilter !== 'all'
   const showNoMatch = !loading && !error && filteredAnnotated.length === 0 && hasActiveFilters
-  const showAllImported = !loading && !error && allImported
   const searchInputId = 'tool-library-search'
 
   return createPortal(
@@ -330,54 +329,57 @@ export function ToolLibraryDialog({
                     {camT('cam.tools.clearFilters')}
                   </button>
                 </div>
-              ) : showAllImported ? (
-                <div className="tl-status">
-                  <span>{camT('cam.tools.allImported')}</span>
-                </div>
               ) : filteredAnnotated.length === 0 ? (
                 <div className="tl-status">
                   <span>{camT('cam.tools.noMatch')}</span>
                 </div>
               ) : (
-                filteredAnnotated.map((entry) => {
-                  const isSelected = selectedKeys.has(entry.key)
-                  return (
-                    <label
-                      key={entry.key}
-                      className={[
-                        'tl-row',
-                        entry.alreadyImported ? 'tl-row--imported' : '',
-                        isSelected ? 'tl-row--selected' : '',
-                      ].join(' ')}
-                    >
-                      <input
-                        type="checkbox"
-                        className="tl-row__check"
-                        checked={isSelected}
-                        disabled={entry.alreadyImported}
-                        onChange={() => toggleSelection(entry.key)}
-                      />
-                      <span className="tl-row__name">{entry.name}</span>
-                      <span className="tl-row__meta">
-                        {toolTypeLabel(entry.type)}
-                        {' · ⌀'}
-                        {formatLength(entry.diameter, entry.units)}
-                        {' '}
-                        {toolUnitsLabel(entry.units)}
-                        {entry.maxCutDepth > 0
-                          ? ` · ${camT('cam.tools.maxCutDepthPrefix')} ${formatLength(entry.maxCutDepth, entry.units)} ${toolUnitsLabel(entry.units)}`
-                          : ''}
-                        {' · '}
-                        {camTPlural(entry.flutes, 'cam.tools.fluteCount.one', 'cam.tools.fluteCount.other')}
-                        {' · '}
-                        {materialLabel(entry.material)}
-                      </span>
-                      <span className="tl-row__status">
-                        {entry.alreadyImported ? camT('cam.tools.inProject') : camT('cam.tools.new')}
-                      </span>
-                    </label>
-                  )
-                })
+                <>
+                  {allImported && (
+                    <div className="tl-banner" role="status">
+                      {camT('cam.tools.allImported')}
+                    </div>
+                  )}
+                  {filteredAnnotated.map((entry) => {
+                    const isSelected = selectedKeys.has(entry.key)
+                    return (
+                      <label
+                        key={entry.key}
+                        className={[
+                          'tl-row',
+                          entry.alreadyImported ? 'tl-row--imported' : '',
+                          isSelected ? 'tl-row--selected' : '',
+                        ].join(' ')}
+                      >
+                        <input
+                          type="checkbox"
+                          className="tl-row__check"
+                          checked={isSelected}
+                          disabled={entry.alreadyImported}
+                          onChange={() => toggleSelection(entry.key)}
+                        />
+                        <span className="tl-row__name">{entry.name}</span>
+                        <span className="tl-row__meta">
+                          {toolTypeLabel(entry.type)}
+                          {' · ⌀'}
+                          {formatLength(entry.diameter, entry.units)}
+                          {' '}
+                          {toolUnitsLabel(entry.units)}
+                          {entry.maxCutDepth > 0
+                            ? ` · ${camT('cam.tools.maxCutDepthPrefix')} ${formatLength(entry.maxCutDepth, entry.units)} ${toolUnitsLabel(entry.units)}`
+                            : ''}
+                          {' · '}
+                          {camTPlural(entry.flutes, 'cam.tools.fluteCount.one', 'cam.tools.fluteCount.other')}
+                          {' · '}
+                          {materialLabel(entry.material)}
+                        </span>
+                        <span className="tl-row__status">
+                          {entry.alreadyImported ? camT('cam.tools.inProject') : camT('cam.tools.new')}
+                        </span>
+                      </label>
+                    )
+                  })}
+                </>
               )}
             </div>
           </div>

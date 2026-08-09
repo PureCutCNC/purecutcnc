@@ -102,14 +102,16 @@ test.describe('Tool library import dialog smoke', () => {
     const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
     await expect(dialog).toBeVisible()
 
+    // Wait for rows to render (either imported or importable).
+    await expect(dialog.locator('.tl-row').first()).toBeVisible()
+
     const importableCheckboxes = dialog.locator('.tl-row:not(.tl-row--imported) .tl-row__check')
     const firstCheckboxCount = await importableCheckboxes.count()
     if (firstCheckboxCount === 0) {
-      // All tools may already be imported or no rows are visible.
-      // Verify the dialog shows a valid state and close cleanly.
-      const hasAllImported = await dialog.getByText(/All matching library tools are already in the project/).isVisible()
-      const hasStatus = await dialog.locator('.tl-status').first().isVisible()
-      expect(hasAllImported || hasStatus, 'expected all-imported message or status when no importable rows exist').toBe(true)
+      // Every visible row is already imported — the all-imported banner must be
+      // visible AND the imported rows must still be rendered (not replaced).
+      await expect(dialog.locator('.tl-banner')).toBeVisible()
+      await expect(dialog.locator('.tl-row--imported')).not.toHaveCount(0)
       await app.page.keyboard.press('Escape')
       return
     }
@@ -128,6 +130,55 @@ test.describe('Tool library import dialog smoke', () => {
 
     const finalCount = await app.page.locator('.cam-tool-tree .tree-row--feature').count()
     expect(finalCount).toBe(initialCount + 1)
+  })
+
+  test('imported rows render alongside all-imported banner', async ({ app }) => {
+    // Regression: when every filtered entry is already imported the dialog
+    // must show a compact banner AND still render each imported row with its
+    // disabled checkbox and In-project label — not replace the rows.
+    await app.page.getByRole('tab', { name: 'Tools' }).click()
+    await app.page.getByRole('button', { name: /Import from library/ }).click()
+
+    const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
+    await expect(dialog).toBeVisible()
+
+    // Wait for rows to render before counting.
+    await expect(dialog.locator('.tl-row').first()).toBeVisible()
+
+    // Import every visible importable tool so the next open sees all-imported.
+    const importableChecks = dialog.locator('.tl-row:not(.tl-row--imported) .tl-row__check')
+    const importCount = await importableChecks.count()
+    if (importCount > 0) {
+      for (let i = 0; i < importCount; i++) {
+        await importableChecks.nth(i).check()
+      }
+      // Use the import button label that matches (may include count).
+      await dialog.locator('.dialog-footer .btn-primary').click()
+      await expect(dialog).not.toBeVisible()
+
+      // Re-open: now every row visible under the current filter should be imported.
+      await app.page.getByRole('button', { name: /Import from library/ }).click()
+    }
+
+    // Re-query in case dialog was re-opened.
+    const currentDialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
+    await expect(currentDialog).toBeVisible()
+
+    // If all visible rows are imported the banner must be present.
+    const nonImportedRows = currentDialog.locator('.tl-row:not(.tl-row--imported)')
+    if ((await nonImportedRows.count()) === 0) {
+      await expect(currentDialog.locator('.tl-banner')).toBeVisible()
+      await expect(currentDialog.locator('.tl-banner')).toContainText(/already in the project/)
+    }
+
+    // Imported rows must be rendered with disabled checkboxes and status labels.
+    const importedRows = currentDialog.locator('.tl-row--imported')
+    if ((await importedRows.count()) > 0) {
+      const firstImportedCheck = importedRows.first().locator('.tl-row__check')
+      await expect(firstImportedCheck).toBeDisabled()
+      const firstStatus = importedRows.first().locator('.tl-row__status')
+      await expect(firstStatus).toContainText(/In project/)
+    }
   })
 
   test('disables already-imported tools', async ({ app }) => {
@@ -237,33 +288,105 @@ test.describe('Tool library import dialog smoke', () => {
     }
   })
 
-  test('tablet landscape viewport keeps footer visible with scrolling results', async ({ app }) => {
-    // Set a supported tablet landscape viewport (1024×768)
-    await app.page.setViewportSize({ width: 1024, height: 768 })
+  test('shows loading state while tool-library.json response is pending', async ({ app }) => {
+    // Gate the bundled library response behind a promise so we can observe
+    // the loading state before any rows appear.
+    let releaseResponse: () => void
+    const gate = new Promise<void>((resolve) => {
+      releaseResponse = resolve
+    })
 
+    await app.page.route('**/tool-library.json', async (route) => {
+      await gate
+      await route.continue()
+    })
+
+    try {
+      await app.page.getByRole('tab', { name: 'Tools' }).click()
+      await app.page.getByRole('button', { name: /Import from library/ }).click()
+
+      const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
+      await expect(dialog).toBeVisible()
+
+      // The loading status must be visible while the response is held.
+      await expect(dialog.locator('.tl-status')).toBeVisible()
+      await expect(dialog.locator('.tl-spinner')).toBeVisible()
+      await expect(dialog.getByText(/Loading tool library/)).toBeVisible()
+
+      // Rows must NOT be present yet.
+      await expect(dialog.locator('.tl-row')).toHaveCount(0)
+
+      // Release the response.
+      releaseResponse!()
+
+      // Rows must appear after the response resolves.
+      await expect(dialog.locator('.tl-row')).not.toHaveCount(0)
+    } finally {
+      // Always unroute so subsequent tests are not affected.
+      await app.page.unroute('**/tool-library.json')
+      // If the test failed before releasing, release now so the route
+      // handler can exit and the page can continue.
+      releaseResponse!()
+    }
+  })
+})
+
+test.describe('Tool library import dialog — tablet', () => {
+  test.use({
+    viewport: { width: 1024, height: 768 },
+    hasTouch: true,
+  })
+
+  test('enters tablet shell mode with touch targets and scrolling results', async ({ app }) => {
+    // The app shell must reflect tablet mode (width >= 900 + pointer: coarse).
+    const shell = app.page.locator('.app-shell')
+    await expect(shell).toHaveAttribute('data-shell-mode', 'tablet')
+
+    // On tablet the right panel is a hidden slide-in drawer — open it first.
+    await app.page.getByRole('button', { name: 'Open operations panel' }).click()
     await app.page.getByRole('tab', { name: 'Tools' }).click()
     await app.page.getByRole('button', { name: /Import from library/ }).click()
 
     const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
     await expect(dialog).toBeVisible()
 
-    // Footer must be visible (not scrolled off-screen)
+    // Footer must be visible and in the viewport.
     const footer = dialog.locator('.dialog-footer')
     await expect(footer).toBeVisible()
-    // Footer must intersect the viewport (not be clipped)
     await expect(footer).toBeInViewport()
 
-    // Results region must own scrolling
+    // The results region must be configured as the vertical overflow owner.
     const results = dialog.locator('.tl-results')
-    await expect(results).toBeVisible()
+    const overflowY = await results.evaluate((el) => window.getComputedStyle(el).overflowY)
+    expect(['auto', 'scroll']).toContain(overflowY)
 
-    // The cancel and import buttons must be visible
-    const cancelButton = dialog.locator('.dialog-footer .btn-secondary')
-    await expect(cancelButton).toBeVisible()
-    await expect(cancelButton).toBeInViewport()
+    // The results region must fill or exceed its visible bounds — content
+    // is at least as tall as the container even when the default project
+    // already has tools imported.
+    const scrollHeight = await results.evaluate((el) => el.scrollHeight)
+    const clientHeight = await results.evaluate((el) => el.clientHeight)
+    expect(scrollHeight).toBeGreaterThanOrEqual(clientHeight)
 
-    const importButton = dialog.locator('.dialog-footer .btn-primary')
-    await expect(importButton).toBeVisible()
-    await expect(importButton).toBeInViewport()
+    // Representative interactive targets must be >= 44 CSS px.
+    // Search input — touch-sized on tablet.
+    const searchInput = dialog.getByRole('searchbox')
+    const searchBox = await searchInput.boundingBox()
+    expect(searchBox).not.toBeNull()
+    expect(searchBox!.height).toBeGreaterThanOrEqual(44)
+
+    // Footer action buttons.
+    const cancelBtn = dialog.locator('.dialog-footer .btn-secondary')
+    const cancelBox = await cancelBtn.boundingBox()
+    expect(cancelBox).not.toBeNull()
+    expect(cancelBox!.height).toBeGreaterThanOrEqual(44)
+
+    const importBtn = dialog.locator('.dialog-footer .btn-primary')
+    const importBox = await importBtn.boundingBox()
+    expect(importBox).not.toBeNull()
+    expect(importBox!.height).toBeGreaterThanOrEqual(44)
+
+    // Both footer buttons must be in the viewport.
+    await expect(cancelBtn).toBeInViewport()
+    await expect(importBtn).toBeInViewport()
   })
 })
