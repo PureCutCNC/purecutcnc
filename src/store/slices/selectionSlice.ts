@@ -161,11 +161,18 @@ export function sanitizeSelection(project: Project, selection: SelectionState): 
       resolvedFeatureIds = validFeatureIds
       resolvedTabIds = []
       resolvedClampIds = []
-      const primaryId =
-        selection.selectedFeatureId && validFeatureIds.includes(selection.selectedFeatureId)
-          ? selection.selectedFeatureId
-          : validFeatureIds.at(-1) ?? null
-      resolvedPrimaryNode = primaryId ? { type: 'feature', featureId: primaryId } : null
+      // Pending-workflow shape: valid feature IDs but both selectedFeatureId
+      // and selectedNode are null.  Preserve that shape — do NOT promote it
+      // into an ordinary feature-primary selection.
+      if (selection.selectedFeatureId === null && selection.selectedNode === null) {
+        resolvedPrimaryNode = null
+      } else {
+        const primaryId =
+          selection.selectedFeatureId && validFeatureIds.includes(selection.selectedFeatureId)
+            ? selection.selectedFeatureId
+            : validFeatureIds.at(-1) ?? null
+        resolvedPrimaryNode = primaryId ? { type: 'feature', featureId: primaryId } : null
+      }
     } else if (validTabIds.length > 0) {
       resolvedTabIds = validTabIds
       resolvedClampIds = []
@@ -730,9 +737,21 @@ export function createSelectionSlice(
         }
 
         // Incompatible additive attempt — current family is not tabs.
-        const nodeType = s.selection.selectedNode?.type
-        if (additive && nodeType !== 'tab' && nodeType !== 'tabs_root' && nodeType != null) {
-          return {}
+        // Determine the active family from all three selected ID collections plus
+        // the primary node (a pending workflow may have feature/clamp IDs with a
+        // null primary).
+        if (additive) {
+          const nodeType = s.selection.selectedNode?.type
+          const isFeatureNode =
+            nodeType === 'feature' || nodeType === 'features_root' ||
+            nodeType === 'regions_root' || nodeType === 'construction_root' ||
+            nodeType === 'folder'
+          const isClampNode = nodeType === 'clamp' || nodeType === 'clamps_root'
+          const hasFeatureIds = s.selection.selectedFeatureIds.length > 0
+          const hasClampIds = s.selection.selectedClampIds.length > 0
+          if (isFeatureNode || isClampNode || hasFeatureIds || hasClampIds) {
+            return {}
+          }
         }
 
         if (additive) {
@@ -792,9 +811,21 @@ export function createSelectionSlice(
         }
 
         // Incompatible additive attempt — current family is not clamps.
-        const nodeType = s.selection.selectedNode?.type
-        if (additive && nodeType !== 'clamp' && nodeType !== 'clamps_root' && nodeType != null) {
-          return {}
+        // Determine the active family from all three selected ID collections plus
+        // the primary node (a pending workflow may have feature/tab IDs with a
+        // null primary).
+        if (additive) {
+          const nodeType = s.selection.selectedNode?.type
+          const isFeatureNode =
+            nodeType === 'feature' || nodeType === 'features_root' ||
+            nodeType === 'regions_root' || nodeType === 'construction_root' ||
+            nodeType === 'folder'
+          const isTabNode = nodeType === 'tab' || nodeType === 'tabs_root'
+          const hasFeatureIds = s.selection.selectedFeatureIds.length > 0
+          const hasTabIds = s.selection.selectedTabIds.length > 0
+          if (isFeatureNode || isTabNode || hasFeatureIds || hasTabIds) {
+            return {}
+          }
         }
 
         if (additive) {

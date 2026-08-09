@@ -78,6 +78,11 @@ function selection(): SelectionState {
   return useProjectStore.getState().selection
 }
 
+function selectionSnapshot(): SelectionState {
+  // Deep-clone so later mutations don't affect the snapshot.
+  return JSON.parse(JSON.stringify(useProjectStore.getState().selection))
+}
+
 function historyLen(): number {
   return useProjectStore.getState().history.past.length
 }
@@ -427,6 +432,97 @@ test('additive feature succeeds when null node and only feature IDs present', ()
   assertEq(sel.selectedFeatureIds.length, 2, 'f2 added to feature selection')
   assert(sel.selectedFeatureIds.includes('f1'), 'f1 still in selection')
   assert(sel.selectedFeatureIds.includes('f2'), 'f2 added to selection')
+})
+
+// ── Cross-family additive with null primary: tab/clamp from non-tab/non-clamp IDs ──
+
+test('additive tab from feature IDs + null node is true no-op (deep compare)', () => {
+  const p = projectWithTabsAndClamps()
+  const pWithFeatures = projectWithFeatures()
+  const combined: Project = {
+    ...p,
+    features: pWithFeatures.features,
+    featureDefinitions: pWithFeatures.featureDefinitions,
+    featureTree: pWithFeatures.featureTree,
+  }
+  resetStore(combined)
+  // Set up feature IDs with null primary — simulates a pending feature workflow.
+  useProjectStore.setState((s) => ({
+    selection: {
+      ...s.selection,
+      selectedFeatureIds: ['f1', 'f2'],
+      selectedFeatureId: null,
+      selectedTabIds: [],
+      selectedClampIds: [],
+      selectedNode: null,
+    },
+  }))
+  const before = selectionSnapshot()
+  store().selectTab('tb1', true)
+  const after = selection()
+  assert(JSON.stringify(before) === JSON.stringify(after), 'selection unchanged — byte-for-byte')
+})
+
+test('additive clamp from feature IDs + null node is true no-op (deep compare)', () => {
+  const p = projectWithTabsAndClamps()
+  const pWithFeatures = projectWithFeatures()
+  const combined: Project = {
+    ...p,
+    features: pWithFeatures.features,
+    featureDefinitions: pWithFeatures.featureDefinitions,
+    featureTree: pWithFeatures.featureTree,
+  }
+  resetStore(combined)
+  useProjectStore.setState((s) => ({
+    selection: {
+      ...s.selection,
+      selectedFeatureIds: ['f1', 'f2'],
+      selectedFeatureId: null,
+      selectedTabIds: [],
+      selectedClampIds: [],
+      selectedNode: null,
+    },
+  }))
+  const before = selectionSnapshot()
+  store().selectClamp('cl1', true)
+  const after = selection()
+  assert(JSON.stringify(before) === JSON.stringify(after), 'selection unchanged — byte-for-byte')
+})
+
+test('additive tab from clamp IDs + null node is true no-op (deep compare)', () => {
+  resetStore(projectWithTabsAndClamps())
+  useProjectStore.setState((s) => ({
+    selection: {
+      ...s.selection,
+      selectedFeatureIds: [],
+      selectedFeatureId: null,
+      selectedTabIds: [],
+      selectedClampIds: ['cl1'],
+      selectedNode: null,
+    },
+  }))
+  const before = selectionSnapshot()
+  store().selectTab('tb1', true)
+  const after = selection()
+  assert(JSON.stringify(before) === JSON.stringify(after), 'selection unchanged — byte-for-byte')
+})
+
+test('additive clamp from tab IDs + null node is true no-op (deep compare)', () => {
+  resetStore(projectWithTabsAndClamps())
+  useProjectStore.setState((s) => ({
+    selection: {
+      ...s.selection,
+      selectedFeatureIds: [],
+      selectedFeatureId: null,
+      selectedTabIds: ['tb1'],
+      selectedClampIds: [],
+      selectedNode: null,
+    },
+  }))
+  const before = selectionSnapshot()
+  store().selectClamp('cl1', true)
+  const after = selection()
+  assert(JSON.stringify(before) === JSON.stringify(after), 'selection unchanged — byte-for-byte')
 })
 
 // ============================================================================
@@ -834,17 +930,18 @@ test('sanitizeSelection: invalid feature primary falls back deterministically', 
   assertEq(result.selectedFeatureId, 'f2', 'primary fell back to last surviving ID')
 })
 
-test('sanitizeSelection preserves pending workflow (features + null node)', () => {
+test('sanitizeSelection preserves pending workflow (features + null primary)', () => {
   const p = projectWithFeatures()
   const sel = emptySel({
     selectedFeatureIds: ['f1'],
-    selectedFeatureId: 'f1',
+    selectedFeatureId: null,
     selectedNode: null,
   })
   const result = sanitizeSelection(p, sel)
   assertEq(result.selectedFeatureIds.length, 1, 'feature IDs preserved')
-  assert(result.selectedNode?.type === 'feature', 'primary resolved from collection')
-  assertEq(result.selectedFeatureId, 'f1', 'primary ID resolved')
+  assert(result.selectedFeatureIds.includes('f1'), 'f1 survives')
+  assertEq(result.selectedNode, null, 'primary remains null')
+  assertEq(result.selectedFeatureId, null, 'selectedFeatureId remains null')
 })
 
 test('sanitizeSelection resolves mixed-family without primary to features first', () => {
