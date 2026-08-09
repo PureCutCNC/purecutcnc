@@ -397,6 +397,47 @@ check('constrainZ: bottom with known opposite constrains against it, never again
   assert(constrainZ(7, false, 0, 20, 3) === 3, 'bottom clamped to known top')
 })
 
+// ── validateZEdits effective-ranges per-item ─────────────────────────
+
+check('validateZEdits: effective ranges with varied per-item getTop/getBottom', () => {
+  // Item A: z_top=10, z_bottom=8 → effective range 8..10
+  // Item B: z_top=5,  z_bottom=0 → effective range 0..5
+  const items = [
+    { closed: true, z_top: 10, z_bottom: 8 },
+    { closed: true, z_top: 5, z_bottom: 0 },
+  ]
+  // Top patch: effectiveTop=4, effectiveBottom = item bottom → A: 4<8 REJECTED
+  assert(
+    validateZEdits(items, (i) => i.z_top, (i) => i.z_bottom, { top: 4 }) === false,
+    'top=4 < item A effectiveBottom=8',
+  )
+  // Bottom-only patch: effectiveBottom=6 → A: 10>=6 OK, B: 5<6 REJECTED
+  assert(
+    validateZEdits(items, (i) => i.z_top, (i) => i.z_bottom, { bottom: 6 }) === false,
+    'bottom=6 > item B effectiveTop=5',
+  )
+})
+
+check('validateZEdits: Line features with getBottom()=>0 unblock valid bottom for closed', () => {
+  // Mixed selection: one Line (bottom conceptually 0, top=2) + one closed (top=5, bottom=0).
+  // Bottom-only patch: validateItems=closed only → Line excluded.
+  const closed = [{ z_top: 5, z_bottom: 0 }]
+  assert(
+    validateZEdits(closed, (i) => i.z_top, (i) => i.z_bottom, { bottom: 3 }) === true,
+    'bottom=3 for closed feature with top=5 is valid',
+  )
+  // If Line were included (top=2, getBottom=0): effectiveTop=2 < effectiveBottom=3 → rejected.
+  // This is the exact scenario PropertiesPanel avoids by scoping validateItems to closed only.
+  const mixed = [
+    { z_top: 2, z_bottom: 0 },
+    { z_top: 5, z_bottom: 0 },
+  ]
+  assert(
+    validateZEdits(mixed, (i) => i.z_top, (i) => i.z_bottom, { bottom: 3 }) === false,
+    'bottom=3 > Line effectiveTop=2 — rejected when Line is in validateItems',
+  )
+})
+
 // ── Report ──────────────────────────────────────────────────────────
 
 const total = passed + failed

@@ -60,8 +60,17 @@ export interface ZRangeSliderProps {
   onCommit: (patch: { top?: number; bottom?: number }) => boolean
 }
 
-export function ZRangeSlider({
-  selectionKey,
+interface ZRangeSliderInnerProps extends Omit<ZRangeSliderProps, 'selectionKey'> {}
+
+/**
+ * Thin wrapper that remounts the inner slider whenever `selectionKey` changes,
+ * resetting all internal drag state, draft input state, and listener refs.
+ */
+export function ZRangeSlider({ selectionKey, ...innerProps }: ZRangeSliderProps) {
+  return <ZRangeSliderInner key={selectionKey} {...innerProps} />
+}
+
+function ZRangeSliderInner({
   zTop,
   zBottom,
   domainMin = 0,
@@ -71,7 +80,7 @@ export function ZRangeSlider({
   bottomLocked = false,
   mixedPlaceholder,
   onCommit,
-}: ZRangeSliderProps) {
+}: ZRangeSliderInnerProps) {
   const { t } = useI18n()
   const trackRef = useRef<HTMLDivElement>(null)
   const topInputRef = useRef<HTMLInputElement>(null)
@@ -82,7 +91,10 @@ export function ZRangeSlider({
   const [dragTop, setDragTop] = useState<number | null>(null)
   const [dragBot, setDragBot] = useState<number | null>(null)
 
-  const effectiveTop = dragTop ?? zTop ?? domainMin
+  // Distinct display fallbacks so mixed handles are independently reachable:
+  // unknown top → domainMax, unknown bottom → domainMin.
+  // Neither fallback acts as a real opposite constraint (drag uses null opposite).
+  const effectiveTop = dragTop ?? zTop ?? domainMax
   const effectiveBot = dragBot ?? zBottom ?? domainMin
   const topPercent = zToPercent(effectiveTop, domainMin, domainMax)
   const botPercent = zToPercent(effectiveBot, domainMin, domainMax)
@@ -162,9 +174,12 @@ export function ZRangeSlider({
       if (e.pointerId !== pointerId) return
       cleanup()
 
-      // Commit only the handle that moved, in one atomic callback.
+      // Commit only the handle whose value actually changed from its
+      // display-fallback position (domainMax for unknown top, domainMin
+      // for unknown bottom).  This keeps a no-drag click from triggering
+      // a spurious commit when values are mixed.
       let accepted = true
-      if (handle === 'top' && Math.abs(curTop - (zTop ?? domainMin)) > 1e-10) {
+      if (handle === 'top' && Math.abs(curTop - (zTop ?? domainMax)) > 1e-10) {
         accepted = onCommit({ top: curTop }) !== false
       } else if (handle === 'bottom' && Math.abs(curBot - (zBottom ?? domainMin)) > 1e-10) {
         accepted = onCommit({ bottom: curBot }) !== false
@@ -252,7 +267,7 @@ export function ZRangeSlider({
   const placeholder = mixedPlaceholder ?? '—'
 
   return (
-    <div className="z-range-slider" key={selectionKey}>
+    <div className="z-range-slider">
       <span className="z-range-slider__label z-range-slider__label--top">{t('featureTree.zRange.zTop')}</span>
 
       <div className="z-range-slider__track" ref={trackRef}>

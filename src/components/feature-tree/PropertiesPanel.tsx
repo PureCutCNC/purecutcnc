@@ -1127,12 +1127,26 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 bottomLocked={hasOpenEditableFeatures && selectedClosedEditableFeatures.length === 0}
                 mixedPlaceholder={t('featureTree.properties.select.mixedValues')}
                 onCommit={(patch) => {
-                  // Validate per-item before any store mutation.
-                  // Treat undefined z_bottom as 0 (open/line features conceptually sit on the bed).
+                  // Per-item effective bottom: closed add/subtract/text/model
+                  // features use their real z_bottom; open/Line features always
+                  // conceptually sit on the bed (0), never a stale stored non-zero.
+                  const getBottom = (f: (typeof selectedZEditableFeatures)[number]) =>
+                    (f.sketch.profile.closed && f.operation !== 'line')
+                      ? (typeof f.z_bottom === 'number' ? f.z_bottom : 0)
+                      : 0
+
+                  // Top or combined patch: validate every Z-editable feature.
+                  // Bottom-only patch: validate only closed editable features
+                  // (open/Line features are not bottom-edited and must not block
+                  // a valid closed-feature bottom edit).
+                  const validateItems = patch.top !== undefined
+                    ? selectedZEditableFeatures
+                    : selectedClosedEditableFeatures
+
                   if (!validateZEdits(
-                    selectedZEditableFeatures,
+                    validateItems,
                     (f) => typeof f.z_top === 'number' ? f.z_top : 0,
-                    (f) => typeof f.z_bottom === 'number' ? f.z_bottom : 0,
+                    getBottom,
                     patch,
                   )) return false
 
