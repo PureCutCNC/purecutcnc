@@ -19,7 +19,7 @@ The integration manager turns issue #468 into sequential worker slices, independ
 - Base commit: `f18f2e4a8633f75fd2bc6236643e094ec833cdfe`
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/468
 - Manager session: 2026-08-09
-- Status: `preparing`
+- Status: `S1 accepted; preparing S2`
 - User authorization for credential-backed worker dispatch: approved in the active Codex task on 2026-08-09
 
 ## Global rules
@@ -37,8 +37,8 @@ The integration manager turns issue #468 into sequential worker slices, independ
 
 | Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| S1 | Homogeneous selection, tab/clamp bulk store actions, tree/canvas interaction | `f18f2e4` | `feat/issue-468-selection-foundation` / `issue-468-slices/selection-foundation` | `not started` | `pending` | `-` | focused store/UI tests; build | Global Select All unchanged |
-| S2 | Bulk property panels, generalized Z-range editor, rendered workflow coverage | `after S1` | `feat/issue-468-bulk-properties-z-range` / `issue-468-slices/bulk-properties-z-range` | `not started` | `pending` | `-` | focused tests; build; isolated e2e | Depends on accepted S1 APIs |
+| S1 | Homogeneous selection, tab/clamp bulk store actions, tree/canvas interaction | `1e3913d` | `feat/issue-468-selection-foundation` / removed after merge | `done` | `accepted` | `052b9b0`; merge `458708d` | 70 focused tests; 167-file test suite; build | Locale catalog audit clean; global Select All unchanged; manager corrections covered both-direction incompatible additive selection and deletion sanitization |
+| S2 | Bulk property panels, generalized Z-range editor, rendered workflow coverage | `458708d` | `feat/issue-468-bulk-properties-z-range` / `issue-468-slices/bulk-properties-z-range` | `not started` | `pending` | `-` | focused tests; build; isolated e2e | Depends on accepted S1 APIs |
 
 ## Slice instructions
 
@@ -127,7 +127,7 @@ PURECUT_E2E_PORT=1468 PURECUT_E2E_ISOLATED=1 npx playwright test <focused issue 
 
 ## Integration verification
 
-- Accepted commits and merge order: pending
+- Accepted commits and merge order: S1 `052b9b0` merged as `458708d`; S2 pending
 - Repository checks: pending
 - Browser/tablet checks: pending
 - Known limitations or deferred work: smooth tabs remain in issue #414
