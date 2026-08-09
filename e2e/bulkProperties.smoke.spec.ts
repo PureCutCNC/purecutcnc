@@ -261,57 +261,70 @@ test.describe('Bulk properties browser smoke', () => {
   })
 
   // ====================================================================
-  // 2. Tablet canvas multi-select — tabs
+  // 2. Tablet canvas multi-select — taps without modifiers
   // ====================================================================
 
-  test('tablet canvas multi-select clicks two tab entities and shows bulk panel', async ({ app, ui }) => {
-    await seedProject(app.page, BULK_FIXTURE_JSON)
-    await app.page.setViewportSize({ width: 1024, height: 768 })
+  test.describe('Tablet (touch) canvas multi-select', () => {
+    test.use({ hasTouch: true, viewport: { width: 1024, height: 768 } })
 
-    const canvas = app.page.locator('canvas.sketch-canvas')
-    const box = await canvas.boundingBox()
-    if (!box) throw new Error('Canvas not found')
+    test('coarse-pointer media query matches', async ({ app }) => {
+      const coarse = await app.page.evaluate(() =>
+        window.matchMedia('(pointer: coarse)').matches,
+      )
+      expect(coarse).toBe(true)
+    })
 
-    // Tab A centre (44, 84) — first click selects it.
-    const ptA = worldToPixel(44, 84, box)
-    await canvas.click({ position: ptA })
+    test('tap Tab A then Tab C selects two tabs and shows bulk panel', async ({ app, ui }) => {
+      await seedProject(app.page, BULK_FIXTURE_JSON)
 
-    // Tab C centre (163, 83) — additive click with modifier key.
-    const ptC = worldToPixel(163, 83, box)
-    const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
-    await canvas.click({ position: ptC, modifiers: [mod as 'Meta' | 'Control'] })
+      // The tablet command bar renders a "Multi" button for multi-select mode.
+      const multiBtn = app.page.getByRole('button', { name: 'Multi', exact: true })
+      await expect(multiBtn).toBeVisible()
+      await multiBtn.click()
+      await expect(multiBtn).toHaveClass(/active/)
 
-    // Two tab rows selected, bulk panel visible.
-    await expect(app.page.locator(selectedTabRows())).toHaveCount(2)
-    await expect(ui.properties.panel(app.page)).toContainText('2 Tabs')
-    await expect(ui.properties.zRangeSlider(app.page)).toBeAttached()
-  })
+      const canvas = app.page.locator('canvas.sketch-canvas')
+      const box = await canvas.boundingBox()
+      if (!box) throw new Error('Canvas not found')
 
-  // ====================================================================
-  // 3. Tablet canvas multi-select — clamps
-  // ====================================================================
+      // Tab A centre (44, 84) — first tap.
+      const ptA = worldToPixel(44, 84, box)
+      await canvas.tap({ position: ptA })
 
-  test('tablet canvas multi-select clicks two clamp entities and shows bulk panel', async ({ app, ui }) => {
-    await seedProject(app.page, BULK_FIXTURE_JSON)
-    await app.page.setViewportSize({ width: 1024, height: 768 })
+      // Tab C centre (163, 83) — second tap adds to selection.
+      const ptC = worldToPixel(163, 83, box)
+      await canvas.tap({ position: ptC })
 
-    const canvas = app.page.locator('canvas.sketch-canvas')
-    const box = await canvas.boundingBox()
-    if (!box) throw new Error('Canvas not found')
+      // Two tab rows selected, bulk panel visible.
+      await expect(app.page.locator(selectedTabRows())).toHaveCount(2)
+      await expect(ui.properties.panel(app.page)).toContainText('2 Tabs')
+      await expect(ui.properties.zRangeSlider(app.page)).toBeAttached()
+    })
 
-    const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
+    test('tap Clamp A then Clamp B selects two clamps and shows bulk panel', async ({ app, ui }) => {
+      await seedProject(app.page, BULK_FIXTURE_JSON)
 
-    // Clamp A centre (56, 46) — first click selects it.
-    const ptA = worldToPixel(56, 46, box)
-    await canvas.click({ position: ptA })
+      const multiBtn = app.page.getByRole('button', { name: 'Multi', exact: true })
+      await expect(multiBtn).toBeVisible()
+      await multiBtn.click()
+      await expect(multiBtn).toHaveClass(/active/)
 
-    // Clamp B centre (157, 45) — additive with modifier key.
-    const ptB = worldToPixel(157, 45, box)
-    await canvas.click({ position: ptB, modifiers: [mod as 'Meta' | 'Control'] })
+      const canvas = app.page.locator('canvas.sketch-canvas')
+      const box = await canvas.boundingBox()
+      if (!box) throw new Error('Canvas not found')
 
-    await expect(app.page.locator(selectedClampRows())).toHaveCount(2)
-    await expect(ui.properties.panel(app.page)).toContainText('2 Clamps')
-    await expect(ui.properties.zRangeSlider(app.page)).toBeAttached()
+      // Clamp A centre (56, 46) — first tap.
+      const ptA = worldToPixel(56, 46, box)
+      await canvas.tap({ position: ptA })
+
+      // Clamp B centre (157, 45) — second tap adds to selection.
+      const ptB = worldToPixel(157, 45, box)
+      await canvas.tap({ position: ptB })
+
+      await expect(app.page.locator(selectedClampRows())).toHaveCount(2)
+      await expect(ui.properties.panel(app.page)).toContainText('2 Clamps')
+      await expect(ui.properties.zRangeSlider(app.page)).toBeAttached()
+    })
   })
 
   // ====================================================================
@@ -321,26 +334,29 @@ test.describe('Bulk properties browser smoke', () => {
   test('mixed-visibility tab bulk panel has indeterminate checkbox, opening causes no mutation', async ({ app, ui }) => {
     await seedProject(app.page, BULK_FIXTURE_JSON)
 
+    // Snapshot the complete project BEFORE any selection.
+    const before = await getProject(app.page)
+
     // Select visible Tab A, then modifier-select hidden Tab D.
     await ui.tree.tabRows(app.page).nth(0).click()
     await ui.tree.tabRows(app.page).nth(3).click({ modifiers: [modKey as 'Meta' | 'Control'] })
-
-    const before = await getProject(app.page)
 
     // Bulk visibility checkbox must be indeterminate (visible + hidden).
     const bulkCheckbox = ui.properties.panel(app.page).locator('input[type="checkbox"]').last()
     const indeterminate = await bulkCheckbox.evaluate((el: HTMLInputElement) => el.indeterminate)
     expect(indeterminate).toBe(true)
 
-    // Opening the panel must not mutate the project.
+    // Snapshot the complete project after the panel is open.
     const after = await getProject(app.page)
-    // Compare tabs: same count, same properties per tab.
-    const tabsBefore = getArray(before, 'tabs')
-    const tabsAfter = getArray(after, 'tabs')
-    expect(tabsAfter).toHaveLength(tabsBefore.length)
-    for (let i = 0; i < tabsBefore.length; i++) {
-      expect(tabsAfter[i]).toEqual(tabsBefore[i])
+    // Normalise volatile timestamps before deep comparison.
+    const normalize = (p: Record<string, unknown>) => {
+      const meta = p.meta as Record<string, unknown> | undefined
+      if (meta) { meta.modified = '<normalized>' }
     }
+    normalize(before)
+    normalize(after)
+    // The complete project must be deeply equal — no mutation from opening the panel.
+    expect(after).toEqual(before)
   })
 
   // ====================================================================
@@ -350,23 +366,26 @@ test.describe('Bulk properties browser smoke', () => {
   test('mixed-visibility clamp bulk panel has indeterminate checkbox, opening causes no mutation', async ({ app, ui }) => {
     await seedProject(app.page, BULK_FIXTURE_JSON)
 
+    // Snapshot the complete project BEFORE any selection.
+    const before = await getProject(app.page)
+
     // Select visible Clamp A, then modifier-select hidden Clamp C.
     await ui.tree.clampRows(app.page).nth(0).click()
     await ui.tree.clampRows(app.page).nth(2).click({ modifiers: [modKey as 'Meta' | 'Control'] })
-
-    const before = await getProject(app.page)
 
     const bulkCheckbox = ui.properties.panel(app.page).locator('input[type="checkbox"]').last()
     const indeterminate = await bulkCheckbox.evaluate((el: HTMLInputElement) => el.indeterminate)
     expect(indeterminate).toBe(true)
 
     const after = await getProject(app.page)
-    const clampsBefore = getArray(before, 'clamps')
-    const clampsAfter = getArray(after, 'clamps')
-    expect(clampsAfter).toHaveLength(clampsBefore.length)
-    for (let i = 0; i < clampsBefore.length; i++) {
-      expect(clampsAfter[i]).toEqual(clampsBefore[i])
+    const normalize = (p: Record<string, unknown>) => {
+      const meta = p.meta as Record<string, unknown> | undefined
+      if (meta) { meta.modified = '<normalized>' }
     }
+    normalize(before)
+    normalize(after)
+    // The complete project must be deeply equal — no mutation from opening the panel.
+    expect(after).toEqual(before)
   })
 
   // ====================================================================
@@ -463,22 +482,26 @@ test.describe('Bulk properties browser smoke', () => {
   test('mixed Line+closed selection can edit bottom for closed feature only, Line stays at 0', async ({ app, ui }) => {
     await seedProject(app.page, BULK_FIXTURE_JSON)
 
-    // Select Pad A (closed, z_top=12, z_bottom=0) and Line Path (z_top=3).
+    // Select Pad A (closed, z_top=12, z_bottom=0) by first feature row.
     await ui.tree.featureRows(app.page).nth(0).click()
-    await ui.tree.featureRows(app.page).nth(2).click({ modifiers: [modKey as 'Meta' | 'Control'] })
+    // Select Line Path (z_top=3, z_bottom=0) by name to avoid brittle ordinal.
+    await ui.tree.rowByName(app.page, 'Line Path').click({ modifiers: [modKey as 'Meta' | 'Control'] })
 
-    // Set z_bottom=2 — valid for Pad A (12>=2), Line not bottom-edited.
-    // Pick value 2 which is below Line top=3 so validation against non-target is caught.
+    // Line top is 3, closed top is 12. Use bottom=4 which is ABOVE Line's top
+    // but below the closed feature's top. If validation incorrectly includes
+    // the non-target Line feature, bottom=4 > Line top=3 would be rejected
+    // and Line's bottom would not stay at 0.
     await ui.properties.zRangeBottomField(app.page).click()
-    await ui.properties.zRangeBottomField(app.page).fill('2')
+    await ui.properties.zRangeBottomField(app.page).fill('4')
     await ui.properties.zRangeBottomField(app.page).blur()
 
     const project = await getProject(app.page)
     const features = getArray(project, 'features')
     const pad = features.find((f) => str(f.id) === 'f-1')!
     const line = features.find((f) => str(f.id) === 'f-3')!
-    expect(num(pad.z_bottom)).toBe(2)
-    // Line z_bottom stays at its stored value (undefined/0).
+    // Closed feature bottom becomes 4.
+    expect(num(pad.z_bottom)).toBe(4)
+    // Line bottom stays at 0 — validation correctly excluded the non-target.
     expect(num(line.z_bottom)).toBe(0)
     expect(num(line.z_top)).toBe(3)
   })
@@ -507,7 +530,6 @@ test.describe('Bulk properties browser smoke', () => {
 
     function zToTrackY(z: number): number {
       const range = domainMax - domainMin
-      if (range <= 0) return trackBox.y + trackBox.height / 2
       const usable = 1 - 2 * EDGE_MARGIN
       const fraction = 1 - Math.max(0, Math.min(range, z - domainMin)) / range
       const percent = EDGE_MARGIN + fraction * usable

@@ -60,7 +60,7 @@ export interface ZRangeSliderProps {
   onCommit: (patch: { top?: number; bottom?: number }) => boolean
 }
 
-interface ZRangeSliderInnerProps extends Omit<ZRangeSliderProps, 'selectionKey'> {}
+type ZRangeSliderInnerProps = Omit<ZRangeSliderProps, 'selectionKey'>
 
 /**
  * Thin wrapper that remounts the inner slider whenever `selectionKey` changes,
