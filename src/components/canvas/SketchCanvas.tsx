@@ -141,7 +141,9 @@ import { useCanvasGestures } from '../../sketch/useCanvasGestures'
 import { useStableEvent } from '../../hooks/useStableEvent'
 import { useRafScheduler } from '../../hooks/useRafScheduler'
 import { useShellMode, isTabletMode } from '../layout/useShellMode'
+import { CanvasWorkflowAction, CanvasWorkflowCancel, CanvasWorkflowConfirm } from './CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
+import { CANVAS_SHORTCUT, withShortcut } from './canvasShortcuts'
 import { OverlapFeaturePicker } from './OverlapFeaturePicker'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
 import { useOverlapFeaturePicker } from './useOverlapFeaturePicker'
@@ -2612,6 +2614,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setPendingTransformPreviewPointRef,
     setPendingOffsetPreviewPointRef,
     setPendingOffsetRawPreviewPointRef,
+    setPendingShapeActionKeepOriginals,
+    setPendingTransformKeepOriginals,
     setCopyCountDraft,
     setOperationDimEdit,
     copyCountDraft,
@@ -2877,23 +2881,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           actions={(
             <>
               {offset.offsetDistanceEditActive ? (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={offset.commitOffsetDistanceEditFromPanel}
-                >{t('canvas.offset.confirm')}</button>
+                <CanvasWorkflowConfirm label={t('canvas.offset.confirm')} onClick={offset.commitOffsetDistanceEditFromPanel} />
               ) : (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn"
-                  onClick={offset.triggerDimensionFromOffsetPanel}
-                >{t('canvas.offset.distanceButton')}</button>
+                <CanvasWorkflowAction shortcut={CANVAS_SHORTCUT.dimensions} label={t('canvas.offset.distanceButton')} onClick={offset.triggerDimensionFromOffsetPanel} />
               )}
-              <button
-                type="button"
-                className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={offset.cancelOffsetFromPanel}
-              >{t('canvas.offset.cancel')}</button>
+              <CanvasWorkflowCancel label={t('canvas.offset.cancel')} onClick={offset.cancelOffsetFromPanel} />
             </>
           )}
         >
@@ -2942,17 +2934,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           moveLabel={t('canvas.join.moveLabel')}
           actions={(
             <>
-              <button
-                type="button"
-                className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                disabled={pendingShapeAction.entityIds.length < 2}
-                onClick={completeJoinFromPanel}
-              >{t('canvas.join.confirm')}</button>
-              <button
-                type="button"
-                className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={cancelJoinFromPanel}
-              >{t('canvas.join.cancel')}</button>
+              <CanvasWorkflowConfirm label={t('canvas.join.confirm')} disabled={pendingShapeAction.entityIds.length < 2} onClick={completeJoinFromPanel} />
+              <CanvasWorkflowCancel label={t('canvas.join.cancel')} onClick={cancelJoinFromPanel} />
             </>
           )}
         >
@@ -2971,7 +2954,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   joinWorkflowPanel.focusCanvasAfterAction()
                 }}
               />
-              <span>{t('canvas.join.keepOriginals')}</span>
+              <span>{withShortcut(t('canvas.join.keepOriginals'), CANVAS_SHORTCUT.keepOriginals)}</span>
             </label>
           </div>
         </CanvasWorkflowPanel>
@@ -2989,25 +2972,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           actions={(
             <>
               {pendingShapeAction.phase === 'cutters' ? (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  disabled={pendingShapeAction.cutterIds.length === 0}
-                  onClick={confirmCutCuttersFromTabletPanel}
-                >{t('canvas.cut.next')}</button>
+                <CanvasWorkflowAction variant="confirm" shortcut={CANVAS_SHORTCUT.dimensions} label={t('canvas.cut.next')} disabled={pendingShapeAction.cutterIds.length === 0} onClick={confirmCutCuttersFromTabletPanel} />
               ) : (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  disabled={pendingShapeAction.targetIds.length === 0}
-                  onClick={completeCutFromTabletPanel}
-                >{t('canvas.cut.confirm')}</button>
+                <CanvasWorkflowConfirm label={t('canvas.cut.confirm')} disabled={pendingShapeAction.targetIds.length === 0} onClick={completeCutFromTabletPanel} />
               )}
-              <button
-                type="button"
-                className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={cancelCutFromTabletPanel}
-              >{t('canvas.cut.cancel')}</button>
+              <CanvasWorkflowCancel label={t('canvas.cut.cancel')} onClick={cancelCutFromTabletPanel} />
             </>
           )}
         >
@@ -3030,7 +2999,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                   cutWorkflowPanel.focusCanvasAfterAction()
                 }}
               />
-              <span>{t('canvas.cut.keepOriginals')}</span>
+              <span>{withShortcut(t('canvas.cut.keepOriginals'), CANVAS_SHORTCUT.keepOriginals)}</span>
             </label>
           </div>
         </CanvasWorkflowPanel>
@@ -3095,46 +3064,35 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           actions={(
             <>
               {creation.creationDimEditActive && (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={creation.commitCreationDimensionEdit}
-                >{t('canvas.common.confirm')}</button>
+                <CanvasWorkflowConfirm label={t('canvas.common.confirm')} onClick={creation.commitCreationDimensionEdit} />
               )}
               {(pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline') && 'points' in pendingAdd && pendingAdd.points.length >= 2 && creationTarget !== 'region' && !creation.creationDimEditActive && (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={creation.finishOpenPathFromPanel}
-                >{t('canvas.common.finish')}</button>
+                <CanvasWorkflowConfirm label={t('canvas.common.finish')} onClick={creation.finishOpenPathFromPanel} />
               )}
               {pendingAdd.shape === 'composite' && pendingAdd.segments.length >= 1 && !pendingAdd.pendingArcEnd && creationTarget !== 'region' && !creation.creationDimEditActive && (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={creation.finishOpenCompositeFromPanel}
-                >{t('canvas.common.finish')}</button>
+                <CanvasWorkflowConfirm label={t('canvas.common.finish')} onClick={creation.finishOpenCompositeFromPanel} />
               )}
-              {pendingAdd.shape === 'gear' && pendingAdd.outsideRadius !== null && !creation.creationDimEditActive && (<button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={creation.completeGearFromPanel}>{t('canvas.creation.confirmGear')}</button>)}
+              {pendingAdd.shape === 'gear' && pendingAdd.outsideRadius !== null && !creation.creationDimEditActive && (
+                <CanvasWorkflowAction variant="confirm" icon="check" label={t('canvas.creation.confirmGear')} onClick={creation.completeGearFromPanel} />
+              )}
               {creation.creationCanDimEdit && !creation.creationDimEditActive && (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn"
+                <CanvasWorkflowAction
+                  shortcut={CANVAS_SHORTCUT.dimensions}
+                  label={pendingAdd.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2 ? t('canvas.creation.widthButton') : (pendingAdd.shape === 'ngon' || pendingAdd.shape === 'gear') ? t('canvas.creation.radiusButton') : t('canvas.creation.dimensionsButton')}
                   onClick={creation.triggerDimensionFromCreationPanel}
-                >{pendingAdd.shape === 'slot' && 'points' in pendingAdd && pendingAdd.points.length >= 2 ? t('canvas.creation.widthButton') : (pendingAdd.shape === 'ngon' || pendingAdd.shape === 'gear') ? t('canvas.creation.radiusButton') : t('canvas.creation.dimensionsButton')}</button>
+                />
               )}
               {((creation.creationPanelHasPoints && pendingAdd.shape !== 'slot') || (pendingAdd.shape === 'composite' && pendingAdd.start)) && !creation.creationDimEditActive && (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn"
+                <CanvasWorkflowAction
+                  icon="undo"
+                  // Backspace only undoes a point for the multi-point shapes; other
+                  // shapes have the button but no key, so they get no hint.
+                  shortcut={pendingAdd.shape === 'polygon' || pendingAdd.shape === 'spline' || pendingAdd.shape === 'composite' ? CANVAS_SHORTCUT.undo : undefined}
+                  label={t('canvas.common.undo')}
                   onClick={creation.undoFromCreationPanel}
-                >{t('canvas.common.undo')}</button>
+                />
               )}
-              <button
-                type="button"
-                className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={creation.cancelCreationFromPanel}
-              >{t('canvas.common.cancel')}</button>
+              <CanvasWorkflowCancel label={t('canvas.common.cancel')} onClick={creation.cancelCreationFromPanel} />
             </>
           )}
         >
@@ -3144,17 +3102,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                 type="button"
                 className={`tablet-cmd-btn ${pendingAdd.currentMode === 'line' ? 'tablet-cmd-btn--active' : ''}`}
                 onClick={() => creation.setCompositeModeFromPanel('line')}
-              >{t('canvas.composite.mode.line')}</button>
+              >{withShortcut(t('canvas.composite.mode.line'), CANVAS_SHORTCUT.compositeLine)}</button>
               <button
                 type="button"
                 className={`tablet-cmd-btn ${pendingAdd.currentMode === 'arc' ? 'tablet-cmd-btn--active' : ''}`}
                 onClick={() => creation.setCompositeModeFromPanel('arc')}
-              >{t('canvas.composite.mode.arc')}</button>
+              >{withShortcut(t('canvas.composite.mode.arc'), CANVAS_SHORTCUT.compositeArc)}</button>
               <button
                 type="button"
                 className={`tablet-cmd-btn ${pendingAdd.currentMode === 'spline' ? 'tablet-cmd-btn--active' : ''}`}
                 onClick={() => creation.setCompositeModeFromPanel('spline')}
-              >{t('canvas.composite.mode.spline')}</button>
+              >{withShortcut(t('canvas.composite.mode.spline'), CANVAS_SHORTCUT.compositeSpline)}</button>
             </div>
           )}
           {creation.creationDimEditActive && dimEdit.dimensionEdit && (
@@ -3474,7 +3432,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           panelRef={creation.placementWorkflowPanel.panelRef}
           handleProps={creation.placementWorkflowPanel.handleProps}
           actions={
-            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelPendingAdd}>{t('canvas.placement.cancel')}</button>
+            <CanvasWorkflowCancel label={t('canvas.placement.cancel')} onClick={cancelPendingAdd} />
           }
         >
           {null}
@@ -3495,11 +3453,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           handleProps={constraint.constraintWorkflowPanel.handleProps}
           actions={constraint.constraintDistanceReady ? (
             <>
-              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={constraint.commitConstraintFromPanel}>{t('canvas.constraint.confirm')}</button>
-              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={constraint.cancelConstraintFromPanel}>{t('canvas.constraint.cancel')}</button>
+              <CanvasWorkflowConfirm label={t('canvas.constraint.confirm')} onClick={constraint.commitConstraintFromPanel} />
+              <CanvasWorkflowCancel label={t('canvas.constraint.cancel')} onClick={constraint.cancelConstraintFromPanel} />
             </>
           ) : (
-            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={constraint.cancelConstraintFromPanel}>{t('canvas.constraint.cancel')}</button>
+            <CanvasWorkflowCancel label={t('canvas.constraint.cancel')} onClick={constraint.cancelConstraintFromPanel} />
           )}
         >
           {constraint.constraintDistanceReady && constraint.constraintDistanceInput != null && (
@@ -3556,16 +3514,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           actions={(
             <>
               {move.moveDistanceEditActive && (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={move.commitMoveDistanceEditFromPanel}
-                >{t('canvas.move.confirm')}</button>
+                <CanvasWorkflowConfirm label={t('canvas.move.confirm')} onClick={move.commitMoveDistanceEditFromPanel} />
               )}
               {!move.moveDistanceEditActive && pendingMove.mode === 'copy' && pendingMove.fromPoint && pendingMove.toPoint && (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn tablet-cmd-btn--confirm"
+                <CanvasWorkflowConfirm
+                  label={t('canvas.move.confirm')}
                   onClick={() => {
                     const n = Math.max(1, Math.floor(Number(copyCountDraft) || 1))
                     completePendingMove(pendingMove.toPoint!, n)
@@ -3573,13 +3526,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                     setCopyCountDraft('1')
                     move.moveWorkflowPanel.focusCanvasAfterAction()
                   }}
-                >{t('canvas.move.confirm')}</button>
+                />
               )}
-              <button
-                type="button"
-                className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={move.cancelMoveFromPanel}
-              >{t('canvas.move.cancel')}</button>
+              <CanvasWorkflowCancel label={t('canvas.move.cancel')} onClick={move.cancelMoveFromPanel} />
             </>
           )}
         >
@@ -3678,33 +3627,17 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           actions={(
             <>
               {transformExact.transformExactEditActive && (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={transformExact.commitTransformExactEditFromPanel}
-                >{t('canvas.transform.confirm')}</button>
+                <CanvasWorkflowConfirm label={t('canvas.transform.confirm')} onClick={transformExact.commitTransformExactEditFromPanel} />
               )}
               {!transformExact.transformExactEditActive && !transformExact.rotateCopyCountPromptActive
                 && ((pendingTransform.mode === 'resize' && pendingTransform.referenceStart && pendingTransform.referenceEnd)
                   || (pendingTransform.mode === 'rotate' && pendingTransform.referenceStart && pendingTransform.referenceEnd)) && (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn"
-                  onClick={transformExact.triggerDimensionFromTransformPanel}
-                >{pendingTransform.mode === 'resize' ? t('canvas.transform.scaleButton') : t('canvas.transform.angleButton')}</button>
+                <CanvasWorkflowAction shortcut={CANVAS_SHORTCUT.dimensions} label={pendingTransform.mode === 'resize' ? t('canvas.transform.scaleButton') : t('canvas.transform.angleButton')} onClick={transformExact.triggerDimensionFromTransformPanel} />
               )}
               {!transformExact.transformExactEditActive && transformExact.rotateCopyCountPromptActive && (
-                <button
-                  type="button"
-                  className="tablet-cmd-btn tablet-cmd-btn--confirm"
-                  onClick={transformExact.commitRotateCopyFromPanel}
-                >{t('canvas.transform.confirm')}</button>
+                <CanvasWorkflowConfirm label={t('canvas.transform.confirm')} onClick={transformExact.commitRotateCopyFromPanel} />
               )}
-              <button
-                type="button"
-                className="tablet-cmd-btn tablet-cmd-btn--cancel"
-                onClick={transformExact.cancelTransformFromPanel}
-              >{t('canvas.transform.cancel')}</button>
+              <CanvasWorkflowCancel label={t('canvas.transform.cancel')} onClick={transformExact.cancelTransformFromPanel} />
             </>
           )}
         >
@@ -3794,7 +3727,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
                         transformExact.transformWorkflowPanel.focusCanvasAfterAction()
                       }}
                     />
-                    <span>{t('canvas.transform.keepOriginals')}</span>
+                    <span>{withShortcut(t('canvas.transform.keepOriginals'), CANVAS_SHORTCUT.keepOriginals)}</span>
                   </label>
                 </div>
               )}
@@ -3810,7 +3743,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           panelRef={tapeWorkflowPanel.panelRef}
           handleProps={tapeWorkflowPanel.handleProps}
           actions={(
-            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={() => { clearTapeMeasure(); tapeWorkflowPanel.focusCanvasAfterAction() }}>{t('canvas.tape.done')}</button>
+            <CanvasWorkflowCancel label={t('canvas.tape.done')} onClick={() => { clearTapeMeasure(); tapeWorkflowPanel.focusCanvasAfterAction() }} />
           )}
         >
           <div className="canvas-workflow-panel__summary">
@@ -3826,7 +3759,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           panelRef={dimensionWorkflowPanel.panelRef}
           handleProps={dimensionWorkflowPanel.handleProps}
           actions={(
-            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={() => { cancelPendingDimension(); dimensionWorkflowPanel.focusCanvasAfterAction() }}>{t('canvas.dimension.addCancel')}</button>
+            <CanvasWorkflowCancel label={t('canvas.dimension.addCancel')} onClick={() => { cancelPendingDimension(); dimensionWorkflowPanel.focusCanvasAfterAction() }} />
           )}
         >
           <div className="canvas-workflow-panel__summary">
@@ -3842,7 +3775,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           panelRef={dimensionDeleteWorkflowPanel.panelRef}
           handleProps={dimensionDeleteWorkflowPanel.handleProps}
           actions={(
-            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={() => { setDimensionDeleteArmed(false); dimensionDeleteWorkflowPanel.focusCanvasAfterAction() }}>{t('canvas.dimension.deleteDone')}</button>
+            <CanvasWorkflowAction variant="confirm" icon="check" shortcut={CANVAS_SHORTCUT.cancel} label={t('canvas.dimension.deleteDone')} onClick={() => { setDimensionDeleteArmed(false); dimensionDeleteWorkflowPanel.focusCanvasAfterAction() }} />
           )}
         >
           <div className="canvas-workflow-panel__summary">
@@ -3859,7 +3792,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           handleProps={clipboardPlacementWorkflowPanel.handleProps}
           actionRowProps={clipboardPlacementWorkflowPanel.actionRowProps}
           actions={(
-            <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelClipboardPlacement}>{t('canvas.paste.cancel')}</button>
+            <CanvasWorkflowCancel label={t('canvas.paste.cancel')} onClick={cancelClipboardPlacement} />
           )}
         >
           <div className="canvas-workflow-panel__summary">
@@ -3888,24 +3821,24 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           handleProps={editWorkflowPanel.handleProps}
           actions={editFilletActive ? (
             <>
-              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={commitFilletFromPanel}>{t('canvas.edit.apply')}</button>
-              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelFilletFromPanel}>{t('canvas.edit.cancel')}</button>
+              <CanvasWorkflowConfirm label={t('canvas.edit.apply')} onClick={commitFilletFromPanel} />
+              <CanvasWorkflowCancel label={t('canvas.edit.cancel')} onClick={cancelFilletFromPanel} />
             </>
           ) : editDimEditActive ? (
             <>
-              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={commitEditDimensionFromPanel}>{t('canvas.edit.confirm')}</button>
-              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelEditDimensionFromPanel}>{t('canvas.edit.cancel')}</button>
+              <CanvasWorkflowConfirm label={t('canvas.edit.confirm')} onClick={commitEditDimensionFromPanel} />
+              <CanvasWorkflowCancel label={t('canvas.edit.cancel')} onClick={cancelEditDimensionFromPanel} />
             </>
           ) : (
             <>
               {dimEdit.armedForDimension && (
-                <button type="button" className="tablet-cmd-btn" onClick={() => { triggerDimensionEdit(); dimEdit.setArmedForDimension(false) }}>{t('canvas.edit.dimensionButton')}</button>
+                <CanvasWorkflowAction shortcut={CANVAS_SHORTCUT.dimensions} label={t('canvas.edit.dimensionButton')} onClick={() => { triggerDimensionEdit(); dimEdit.setArmedForDimension(false) }} />
               )}
               {fillet.filletCornerPicked && !editFilletActive && (
-                <button type="button" className="tablet-cmd-btn" onClick={() => fillet.enterFilletRadiusEdit()}>{selection.sketchEditTool === 'chamfer' ? t('canvas.edit.distanceButton') : t('canvas.edit.radiusButton')}</button>
+                <CanvasWorkflowAction label={selection.sketchEditTool === 'chamfer' ? t('canvas.edit.distanceButton') : t('canvas.edit.radiusButton')} onClick={() => fillet.enterFilletRadiusEdit()} />
               )}
-              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--confirm" onClick={applyEditFromPanel}>{t('canvas.edit.apply')}</button>
-              <button type="button" className="tablet-cmd-btn tablet-cmd-btn--cancel" onClick={cancelEditFromPanel}>{t('canvas.edit.cancel')}</button>
+              <CanvasWorkflowConfirm label={t('canvas.edit.apply')} onClick={applyEditFromPanel} />
+              <CanvasWorkflowCancel label={t('canvas.edit.cancel')} onClick={cancelEditFromPanel} />
             </>
           )}
         >
