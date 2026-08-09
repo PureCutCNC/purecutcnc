@@ -66,8 +66,11 @@ export function CanvasWorkflowAction({
         onClick={onClick}
         disabled={disabled}
         tabIndex={tabIndex}
+        // The key belongs in aria-keyshortcuts, not in the accessible name: baking
+        // it into the label makes a screen reader read "Cancel Esc" on every focus,
+        // and it silently rewrites the name every consumer matches this button by.
         aria-keyshortcuts={shortcut}
-        aria-label={hinted}
+        aria-label={label}
         title={hinted}
       >
         <Icon id={icon} size={18} />

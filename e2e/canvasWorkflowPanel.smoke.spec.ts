@@ -53,10 +53,14 @@ test('panel actions state their shortcut and stay out of the tab order', async (
   const dimensions = panel.getByRole('button', { name: 'Dimensions (Tab)' })
   await expect(dimensions).toBeVisible()
 
-  // Icon-only actions put the key in the accessible name instead.
-  const cancel = panel.getByRole('button', { name: 'Cancel (Esc)' })
+  // Icon-only actions keep a clean accessible name and expose the key via
+  // aria-keyshortcuts, with the combined form only in the tooltip. Asserting the
+  // exact name here is deliberate: widening it to "Cancel (Esc)" is what broke
+  // every existing consumer matching this button by role and name.
+  const cancel = panel.getByRole('button', { name: 'Cancel', exact: true })
   await expect(cancel).toBeVisible()
   await expect(cancel).toHaveAttribute('aria-keyshortcuts', 'Esc')
+  await expect(cancel).toHaveAttribute('title', 'Cancel (Esc)')
 
   // Both have a key mapped, so neither is a tab stop.
   await expect(dimensions).toHaveAttribute('tabindex', '-1')
