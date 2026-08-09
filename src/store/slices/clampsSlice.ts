@@ -22,7 +22,7 @@ import { convertLength } from '../../utils/units'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { duplicateClampName } from '../helpers/naming'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
-import { emptySelection, sanitizeSelection } from './selectionSlice'
+import { sanitizeSelection } from './selectionSlice'
 
 export type ClampsSlice = Pick<
   ProjectStore,
@@ -159,10 +159,7 @@ export function createClampsSlice(
         if (projectsEqual(nextProject, s.project)) {
           return {}
         }
-        const nextSelection =
-          s.selection.selectedNode?.type === 'clamp' && s.selection.selectedNode.clampId === id
-            ? emptySelection()
-            : sanitizeSelection(nextProject, s.selection)
+        const nextSelection = sanitizeSelection(nextProject, s.selection)
         return {
           project: nextProject,
           selection: nextSelection,

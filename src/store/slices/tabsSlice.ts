@@ -22,7 +22,7 @@ import { flattenProfile } from '../../engine/toolpaths/geometry'
 import { tabLayoutFreeFraction, toolCentreContours, type TabRect } from '../../engine/toolpaths/tabs'
 import { convertLength } from '../../utils/units'
 import { nextUniqueGeneratedId } from '../helpers/ids'
-import { emptySelection, sanitizeSelection } from './selectionSlice'
+import { sanitizeSelection } from './selectionSlice'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
 import { resolveFeatureInstance } from '../helpers/resolveFeatures'
 
@@ -245,10 +245,7 @@ export function createTabsSlice(
         if (projectsEqual(nextProject, s.project)) {
           return {}
         }
-        const nextSelection =
-          s.selection.selectedNode?.type === 'tab' && s.selection.selectedNode.tabId === id
-            ? emptySelection()
-            : sanitizeSelection(nextProject, s.selection)
+        const nextSelection = sanitizeSelection(nextProject, s.selection)
         return {
           project: nextProject,
           selection: nextSelection,

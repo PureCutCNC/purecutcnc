@@ -220,10 +220,6 @@ function validateNonFamilyNode(
   switch (node.type) {
     case 'folder':
       return project.featureFolders.some((f) => f.id === node.folderId) ? node : null
-    case 'tab':
-      return project.tabs.some((t) => t.id === node.tabId) ? node : null
-    case 'clamp':
-      return project.clamps.some((c) => c.id === node.clampId) ? node : null
     case 'backdrop':
       return project.backdrop ? node : null
     case 'project':

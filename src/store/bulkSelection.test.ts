@@ -1003,6 +1003,97 @@ test('sanitizeSelection: tab primary with empty collection clears everything', (
   assertEq(result.selectedNode, null, 'primary cleared')
 })
 
+test('sanitizeSelection: existing tab primary + empty tab IDs clears primary', () => {
+  const p = projectWithTabsAndClamps()
+  // The tab node EXISTS in the project but has no selected IDs.
+  const sel = emptySel({
+    selectedTabIds: [],
+    selectedNode: { type: 'tab', tabId: 'tb1' },
+  })
+  const result = sanitizeSelection(p, sel)
+  assertEq(result.selectedTabIds.length, 0, 'tab IDs empty')
+  assertEq(result.selectedClampIds.length, 0, 'clamp IDs empty')
+  assertEq(result.selectedFeatureIds.length, 0, 'feature IDs empty')
+  assertEq(result.selectedNode, null, 'primary cleared — family node with empty collection')
+  assertEq(result.selectedFeatureId, null, 'selectedFeatureId null')
+})
+
+test('sanitizeSelection: existing clamp primary + empty clamp IDs clears primary', () => {
+  const p = projectWithTabsAndClamps()
+  // The clamp node EXISTS in the project but has no selected IDs.
+  const sel = emptySel({
+    selectedClampIds: [],
+    selectedNode: { type: 'clamp', clampId: 'cl1' },
+  })
+  const result = sanitizeSelection(p, sel)
+  assertEq(result.selectedClampIds.length, 0, 'clamp IDs empty')
+  assertEq(result.selectedTabIds.length, 0, 'tab IDs empty')
+  assertEq(result.selectedFeatureIds.length, 0, 'feature IDs empty')
+  assertEq(result.selectedNode, null, 'primary cleared — family node with empty collection')
+  assertEq(result.selectedFeatureId, null, 'selectedFeatureId null')
+})
+
+// ============================================================================
+// 11. Single-delete selection promotion (deleteTab / deleteClamp)
+// ============================================================================
+console.log('\n11. Single-delete selection promotion')
+
+test('deleteTab of primary from two-tab selection promotes sibling', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  // tb2 is primary (last added), delete it.
+  s.deleteTab('tb2')
+  const sel = selection()
+  assertEq(sel.selectedTabIds.length, 1, 'one tab remains selected')
+  assert(sel.selectedTabIds.includes('tb1'), 'sibling tb1 remains')
+  assert(!sel.selectedTabIds.includes('tb2'), 'deleted tb2 gone')
+  assert(sel.selectedNode?.type === 'tab' && sel.selectedNode.tabId === 'tb1', 'sibling promoted to primary')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs leaked')
+  assertEq(sel.selectedClampIds.length, 0, 'no clamp IDs leaked')
+})
+
+test('deleteTab of only member clears selection', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectTab('tb1')
+  s.deleteTab('tb1')
+  const sel = selection()
+  assertEq(sel.selectedTabIds.length, 0, 'no tabs selected')
+  assertEq(sel.selectedNode, null, 'primary cleared')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedClampIds.length, 0, 'no clamp IDs')
+})
+
+test('deleteClamp of primary from two-clamp selection promotes sibling', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectClamp('cl1')
+  s.selectClamp('cl2', true)
+  // cl2 is primary (last added), delete it.
+  s.deleteClamp('cl2')
+  const sel = selection()
+  assertEq(sel.selectedClampIds.length, 1, 'one clamp remains selected')
+  assert(sel.selectedClampIds.includes('cl1'), 'sibling cl1 remains')
+  assert(!sel.selectedClampIds.includes('cl2'), 'deleted cl2 gone')
+  assert(sel.selectedNode?.type === 'clamp' && sel.selectedNode.clampId === 'cl1', 'sibling promoted to primary')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs leaked')
+  assertEq(sel.selectedTabIds.length, 0, 'no tab IDs leaked')
+})
+
+test('deleteClamp of only member clears selection', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectClamp('cl1')
+  s.deleteClamp('cl1')
+  const sel = selection()
+  assertEq(sel.selectedClampIds.length, 0, 'no clamps selected')
+  assertEq(sel.selectedNode, null, 'primary cleared')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedTabIds.length, 0, 'no tab IDs')
+})
+
 // ============================================================================
 // Results
 // ============================================================================
