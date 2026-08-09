@@ -155,6 +155,8 @@ export function createPendingAddSlice(
       set((s) => ({
         pendingAdd: { shape: 'clamp', anchor: null, session: nextPlacementSession() },
         pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
         sketchEditSession: null,
         selection: {
           ...resetFeaturePlacementSelection(s.selection),
@@ -346,6 +348,8 @@ export function createPendingAddSlice(
               ...s.selection,
               selectedFeatureId: null,
               selectedFeatureIds: [],
+              selectedTabIds: [id],
+              selectedClampIds: [],
               selectedNode: { type: 'tab', tabId: id },
               mode: 'feature',
               activeControl: null,
@@ -387,6 +391,8 @@ export function createPendingAddSlice(
               ...s.selection,
               selectedFeatureId: null,
               selectedFeatureIds: [],
+              selectedTabIds: [],
+              selectedClampIds: [id],
               selectedNode: { type: 'clamp', clampId: id },
               mode: 'feature',
               activeControl: null,

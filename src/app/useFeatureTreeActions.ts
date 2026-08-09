@@ -42,6 +42,8 @@ type FeatureTreeActionStore = Pick<
   | 'deleteFeatures'
   | 'deleteTab'
   | 'deleteClamp'
+  | 'deleteTabs'
+  | 'deleteClamps'
   | 'startMoveFeature'
   | 'startCopyFeature'
   | 'startResizeFeature'
@@ -91,10 +93,12 @@ export interface FeatureTreeActions {
   copyTab: (tabId: string) => void
   moveTab: (tabId: string) => void
   deleteTab: (tabId: string) => void
+  deleteTabs: (tabIds: string[]) => void
   editClamp: (clampId: string) => void
   copyClamp: (clampId: string) => void
   moveClamp: (clampId: string) => void
   deleteClamp: (clampId: string) => void
+  deleteClamps: (clampIds: string[]) => void
 }
 
 export function createFeatureTreeActions({
@@ -113,6 +117,8 @@ export function createFeatureTreeActions({
     deleteFeatures,
     deleteTab,
     deleteClamp,
+    deleteTabs,
+    deleteClamps,
     startMoveFeature,
     startCopyFeature,
     startResizeFeature,
@@ -244,6 +250,10 @@ export function createFeatureTreeActions({
       deleteTab(tabId)
       closeTreeContextMenu()
     },
+    deleteTabs: (tabIds: string[]) => {
+      deleteTabs(tabIds)
+      closeTreeContextMenu()
+    },
     editClamp: (clampId: string) => {
       enterClampEdit(clampId)
       setCenterTab('sketch')
@@ -257,6 +267,10 @@ export function createFeatureTreeActions({
     },
     deleteClamp: (clampId: string) => {
       deleteClamp(clampId)
+      closeTreeContextMenu()
+    },
+    deleteClamps: (clampIds: string[]) => {
+      deleteClamps(clampIds)
       closeTreeContextMenu()
     },
   }
@@ -277,6 +291,8 @@ export function useFeatureTreeActions({
     deleteFeatures,
     deleteTab,
     deleteClamp,
+    deleteTabs,
+    deleteClamps,
     startMoveFeature,
     startCopyFeature,
     startResizeFeature,
@@ -313,6 +329,8 @@ export function useFeatureTreeActions({
       deleteFeatures,
       deleteTab,
       deleteClamp,
+      deleteTabs,
+      deleteClamps,
       startMoveFeature,
       startCopyFeature,
       startResizeFeature,
@@ -341,8 +359,10 @@ export function useFeatureTreeActions({
     beginConstraint,
     closeTreeContextMenu,
     deleteClamp,
+    deleteClamps,
     deleteFeatures,
     deleteTab,
+    deleteTabs,
     enterClampEdit,
     enterSketchEdit,
     enterTabEdit,

@@ -784,7 +784,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                   }
                   onTabContextMenu?.(tab.id, event.clientX, event.clientY)
                 }}
-                onEditEntry={onEditTab ? () => onEditTab(tab.id) : undefined}
+                onEditEntry={onEditTab && selection.selectedTabIds.length <= 1 ? () => onEditTab(tab.id) : undefined}
                 onMoreMenu={tabletShell && onTabContextMenu ? (x, y) => {
                   if (!selection.selectedTabIds.includes(tab.id)) {
                     selectTab(tab.id)
@@ -834,7 +834,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                   }
                   onClampContextMenu?.(clamp.id, event.clientX, event.clientY)
                 }}
-                onEditEntry={onEditClamp ? () => onEditClamp(clamp.id) : undefined}
+                onEditEntry={onEditClamp && selection.selectedClampIds.length <= 1 ? () => onEditClamp(clamp.id) : undefined}
                 onMoreMenu={tabletShell && onClampContextMenu ? (x, y) => {
                   if (!selection.selectedClampIds.includes(clamp.id)) {
                     selectClamp(clamp.id)

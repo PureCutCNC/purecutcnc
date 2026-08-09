@@ -156,13 +156,21 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
   }, [])
 
   const openClampContextMenu = useCallback((clampId: string, x: number, y: number) => {
+    const nextSelection = useProjectStore.getState().selection
+    const clampIds = nextSelection.selectedClampIds.includes(clampId)
+      ? nextSelection.selectedClampIds
+      : [clampId]
     setMenuPosition(null)
-    setTreeContextMenu({ entityType: 'clamp', ids: [clampId], primaryId: clampId, x, y })
+    setTreeContextMenu({ entityType: 'clamp', ids: clampIds, primaryId: clampId, x, y })
   }, [])
 
   const openTabContextMenu = useCallback((tabId: string, x: number, y: number) => {
+    const nextSelection = useProjectStore.getState().selection
+    const tabIds = nextSelection.selectedTabIds.includes(tabId)
+      ? nextSelection.selectedTabIds
+      : [tabId]
     setMenuPosition(null)
-    setTreeContextMenu({ entityType: 'tab', ids: [tabId], primaryId: tabId, x, y })
+    setTreeContextMenu({ entityType: 'tab', ids: tabIds, primaryId: tabId, x, y })
   }, [])
 
   const closeTreeContextMenu = useCallback(() => {
@@ -198,7 +206,7 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     onDismiss: closeTreeContextMenu,
   })
 
-  const menuHasMultipleSelection = treeContextMenu?.entityType === 'feature' && (treeContextMenu?.ids.length ?? 0) > 1
+  const menuHasMultipleSelection = (treeContextMenu?.ids.length ?? 0) > 1
   const menuCanUseAsStock =
     treeContextMenu?.entityType === 'feature' &&
     !menuHasMultipleSelection &&

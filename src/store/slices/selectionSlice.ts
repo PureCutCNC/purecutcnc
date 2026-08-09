@@ -422,13 +422,23 @@ export function createSelectionSlice(
           const nodeType = s.selection.selectedNode?.type
           const hasTabSelection = s.selection.selectedTabIds.length > 0
           const hasClampSelection = s.selection.selectedClampIds.length > 0
+          // Non-family nodes (stock, project, grid, origin, backdrop) signal
+          // a non-feature selection — additive feature gestures are incompatible
+          // and must be ignored, symmetric with tab/clamp additive guards.
+          const isNonFamilyNode =
+            nodeType === 'project' ||
+            nodeType === 'grid' ||
+            nodeType === 'stock' ||
+            nodeType === 'origin' ||
+            nodeType === 'backdrop'
           if (
             nodeType === 'tab' ||
             nodeType === 'tabs_root' ||
             nodeType === 'clamp' ||
             nodeType === 'clamps_root' ||
             hasTabSelection ||
-            hasClampSelection
+            hasClampSelection ||
+            isNonFamilyNode
           ) {
             return {}
           }

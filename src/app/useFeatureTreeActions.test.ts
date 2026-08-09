@@ -44,6 +44,8 @@ function makeActions(
     deleteFeatures: noop,
     deleteTab: noop,
     deleteClamp: noop,
+    deleteTabs: noop,
+    deleteClamps: noop,
     startMoveFeature: noop,
     startCopyFeature: noop,
     startResizeFeature: noop,

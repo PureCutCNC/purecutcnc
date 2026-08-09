@@ -1095,6 +1095,199 @@ test('deleteClamp of only member clears selection', () => {
 })
 
 // ============================================================================
+// 12. Creation and transition selection invariants (S2-CORRECTION)
+// ============================================================================
+console.log('\n12. Creation and transition selection invariants')
+
+test('placePendingAddAt tab sets selectedTabIds', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  // Start tab placement then place it — the selection must include the new tab.
+  s.startAddTabPlacement()
+  const anchor = { x: 0, y: 0 }
+  const point = { x: 20, y: 20 }
+  // Set anchor first.
+  useProjectStore.setState((prev) => ({
+    pendingAdd: prev.pendingAdd && 'anchor' in prev.pendingAdd
+      ? { ...prev.pendingAdd, anchor }
+      : prev.pendingAdd,
+  }))
+  s.placePendingAddAt(point)
+  const sel = selection()
+  assert(sel.selectedTabIds.length >= 1, 'new tab ID should be in selectedTabIds')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs leaked')
+  assertEq(sel.selectedClampIds.length, 0, 'no clamp IDs leaked')
+  assert(sel.selectedNode?.type === 'tab', 'primary is tab')
+})
+
+test('placePendingAddAt clamp sets selectedClampIds', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.startAddClampPlacement()
+  const anchor = { x: 0, y: 0 }
+  const point = { x: 20, y: 20 }
+  useProjectStore.setState((prev) => ({
+    pendingAdd: prev.pendingAdd && 'anchor' in prev.pendingAdd
+      ? { ...prev.pendingAdd, anchor }
+      : prev.pendingAdd,
+  }))
+  s.placePendingAddAt(point)
+  const sel = selection()
+  assert(sel.selectedClampIds.length >= 1, 'new clamp ID should be in selectedClampIds')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs leaked')
+  assertEq(sel.selectedTabIds.length, 0, 'no tab IDs leaked')
+  assert(sel.selectedNode?.type === 'clamp', 'primary is clamp')
+})
+
+test('startAddTabPlacement clears incompatible family IDs', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  // First select a feature, then start tab placement.
+  s.selectFeaturesRoot()
+  s.startAddTabPlacement()
+  const sel = selection()
+  assertEq(sel.selectedFeatureIds.length, 0, 'feature IDs cleared')
+  assertEq(sel.selectedFeatureId, null, 'selectedFeatureId cleared')
+  assert(sel.selectedNode?.type === 'tabs_root', 'primary is tabs_root')
+})
+
+test('startAddClampPlacement clears incompatible family IDs', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectFeaturesRoot()
+  s.startAddClampPlacement()
+  const sel = selection()
+  assertEq(sel.selectedFeatureIds.length, 0, 'feature IDs cleared')
+  assertEq(sel.selectedFeatureId, null, 'selectedFeatureId cleared')
+  assert(sel.selectedNode?.type === 'clamps_root', 'primary is clamps_root')
+})
+
+test('startMoveTab sets selectedTabIds and clears other families', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.startMoveTab('tb1')
+  const sel = selection()
+  assertEq(sel.selectedTabIds.length, 1, 'selectedTabIds includes tab')
+  assert(sel.selectedTabIds.includes('tb1'), 'tb1 in selectedTabIds')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedClampIds.length, 0, 'no clamp IDs')
+  assertEq(sel.selectedFeatureId, null, 'selectedFeatureId null')
+  assert(sel.selectedNode?.type === 'tab' && sel.selectedNode.tabId === 'tb1', 'primary is tab')
+})
+
+test('startCopyTab sets selectedTabIds and clears other families', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.startCopyTab('tb1')
+  const sel = selection()
+  assertEq(sel.selectedTabIds.length, 1, 'selectedTabIds includes tab')
+  assert(sel.selectedTabIds.includes('tb1'), 'tb1 in selectedTabIds')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedClampIds.length, 0, 'no clamp IDs')
+})
+
+test('startMoveClamp sets selectedClampIds and clears other families', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.startMoveClamp('cl1')
+  const sel = selection()
+  assertEq(sel.selectedClampIds.length, 1, 'selectedClampIds includes clamp')
+  assert(sel.selectedClampIds.includes('cl1'), 'cl1 in selectedClampIds')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedTabIds.length, 0, 'no tab IDs')
+  assert(sel.selectedNode?.type === 'clamp' && sel.selectedNode.clampId === 'cl1', 'primary is clamp')
+})
+
+test('startCopyClamp sets selectedClampIds and clears other families', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.startCopyClamp('cl1')
+  const sel = selection()
+  assertEq(sel.selectedClampIds.length, 1, 'selectedClampIds includes clamp')
+  assert(sel.selectedClampIds.includes('cl1'), 'cl1 in selectedClampIds')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedTabIds.length, 0, 'no tab IDs')
+})
+
+// ============================================================================
+// 13. Non-family node additive feature guard (S2-CORRECTION)
+// ============================================================================
+console.log('\n13. Non-family node additive feature guard')
+
+function testNonFamilyAdditiveIgnored(nodeType: string, setupFn: () => void) {
+  resetStore(projectWithTabsAndClamps())
+  setupFn()
+  const before = selectionSnapshot()
+  store().selectFeature('f1', true)
+  const after = selection()
+  assert(JSON.stringify(before) === JSON.stringify(after),
+    `additive feature on ${nodeType} must be byte-for-byte no-op`)
+}
+
+test('additive feature on stock is no-op', () => {
+  testNonFamilyAdditiveIgnored('stock', () => store().selectStock())
+})
+
+test('additive feature on project is no-op', () => {
+  testNonFamilyAdditiveIgnored('project', () => store().selectProject())
+})
+
+test('additive feature on grid is no-op', () => {
+  testNonFamilyAdditiveIgnored('grid', () => store().selectGrid())
+})
+
+test('additive feature on origin is no-op', () => {
+  testNonFamilyAdditiveIgnored('origin', () => store().selectOrigin())
+})
+
+test('additive feature on backdrop is no-op', () => {
+  // backdrop needs a backdrop set on the project
+  resetStore(projectWithTabsAndClamps())
+  useProjectStore.setState((s) => ({
+    project: {
+      ...s.project,
+      backdrop: {
+        name: 'Test',
+        width: 100,
+        height: 100,
+        visible: true,
+        imageDataUrl: '',
+        mimeType: 'image/png',
+        orientationAngle: 90,
+        opacity: 0.6,
+        intrinsicWidth: 100,
+        intrinsicHeight: 100,
+        center: { x: 50, y: 50 } as { x: number; y: number },
+      },
+    },
+  }))
+  store().selectBackdrop()
+  const before = selectionSnapshot()
+  store().selectFeature('f1', true)
+  const after = selection()
+  assert(JSON.stringify(before) === JSON.stringify(after),
+    'additive feature on backdrop must be byte-for-byte no-op')
+})
+
+test('plain click on feature from stock still replaces selection', () => {
+  resetStore(projectWithFeatures())
+  store().selectStock()
+  store().selectFeature('f1')
+  const sel = selection()
+  assertEq(sel.selectedFeatureIds.length, 1, 'feature selected')
+  assert(sel.selectedNode?.type === 'feature', 'primary switched to feature')
+})
+
+test('plain click on feature from project still replaces selection', () => {
+  resetStore(projectWithFeatures())
+  store().selectProject()
+  store().selectFeature('f1')
+  const sel = selection()
+  assertEq(sel.selectedFeatureIds.length, 1, 'feature selected')
+  assert(sel.selectedNode?.type === 'feature', 'primary switched to feature')
+})
+
+// ============================================================================
 // Results
 // ============================================================================
 console.log(`\n${passed} passed, ${failed} failed`)
