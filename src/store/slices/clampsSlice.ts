@@ -16,7 +16,7 @@
 
 import type { StateCreator } from 'zustand'
 import type { Clamp } from '../../types/project'
-import type { ProjectStore } from '../types'
+import type { ProjectStore, SelectionState } from '../types'
 import { getStockBounds } from '../../types/project'
 import { convertLength } from '../../utils/units'
 import { nextUniqueGeneratedId } from '../helpers/ids'
@@ -28,7 +28,9 @@ export type ClampsSlice = Pick<
   ProjectStore,
   | 'addClamp'
   | 'updateClamp'
+  | 'updateClamps'
   | 'deleteClamp'
+  | 'deleteClamps'
   | 'setAllClampsVisible'
   | 'duplicateClamp'
   | 'moveClampControl'
@@ -73,6 +75,8 @@ export function createClampsSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [id],
           selectedNode: { type: 'clamp', clampId: id },
           mode: 'feature',
           activeControl: null,
@@ -93,6 +97,41 @@ export function createClampsSlice(
         const nextProject = {
           ...s.project,
           clamps: s.project.clamps.map((clamp) => (clamp.id === id ? { ...clamp, ...patch } : clamp)),
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        }
+        if (projectsEqual(nextProject, s.project)) {
+          return {}
+        }
+        return {
+          project: nextProject,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }),
+
+    updateClamps: (ids, patch) =>
+      set((s) => {
+        if (ids.length === 0) return {}
+        const idSet = new Set(ids)
+        const hasWidth = patch.w !== undefined
+        const hasHeight = patch.h !== undefined
+        const nextProject = {
+          ...s.project,
+          clamps: s.project.clamps.map((clamp) => {
+            if (!idSet.has(clamp.id)) return clamp
+            const next = { ...clamp, ...patch }
+            // Center-preserving: shift x/y so the centre stays fixed.
+            if (hasWidth && patch.w !== undefined) {
+              next.x = clamp.x + clamp.w / 2 - patch.w / 2
+            }
+            if (hasHeight && patch.h !== undefined) {
+              next.y = clamp.y + clamp.h / 2 - patch.h / 2
+            }
+            return next
+          }),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
         if (projectsEqual(nextProject, s.project)) {
@@ -133,6 +172,45 @@ export function createClampsSlice(
         }
       }),
 
+    deleteClamps: (ids) =>
+      set((s) => {
+        if (ids.length === 0) return {}
+        const idSet = new Set(ids)
+        const nextProject = {
+          ...s.project,
+          clamps: s.project.clamps.filter((clamp) => !idSet.has(clamp.id)),
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        }
+        if (projectsEqual(nextProject, s.project)) {
+          return {}
+        }
+        // Sanitize: remove deleted IDs from the clamp selection, keep a valid primary.
+        const remainingIds = (s.selection.selectedClampIds ?? []).filter((clampId) => !idSet.has(clampId))
+        const primaryId = s.selection.selectedNode?.type === 'clamp' ? s.selection.selectedNode.clampId : null
+        const primarySurvived = primaryId !== null && !idSet.has(primaryId)
+        const nextPrimaryId = primarySurvived ? primaryId : remainingIds.at(-1) ?? null
+        const nextSelection: SelectionState = {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: remainingIds,
+          selectedNode: nextPrimaryId ? { type: 'clamp', clampId: nextPrimaryId } : null,
+          mode: 'feature',
+          activeControl: null,
+          groupFolderId: null,
+        }
+        return {
+          project: nextProject,
+          selection: nextSelection,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }),
+
     duplicateClamp: (id) => {
       const state = get()
       const sourceClamp = state.project.clamps.find((clamp) => clamp.id === id)
@@ -159,6 +237,8 @@ export function createClampsSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [nextId],
           selectedNode: { type: 'clamp', clampId: nextId },
           mode: 'feature',
           hoveredFeatureId: null,

@@ -74,6 +74,8 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     selectFeature,
     selectTab,
     selectClamp,
+    selectAllTabs,
+    selectAllClamps,
     selectStock,
     hoverFeature,
   } = useProjectStore()
@@ -756,6 +758,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onAddTab={() => startAddTabPlacement()}
           onShowAll={() => setAllTabsVisible(true)}
           onHideAll={() => setAllTabsVisible(false)}
+          onSelectAll={() => selectAllTabs()}
         />
         {tabsCollapsed ? null : project.tabs.length === 0 ? (
           <div className="feature-tree-empty">{t('featureTree.tree.empty.tabs')}</div>
@@ -767,21 +770,25 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 label={tab.name}
                 kind="tab"
                 depth={1}
-                isSelected={selection.selectedNode?.type === 'tab' && selection.selectedNode.tabId === tab.id}
+                isSelected={(selection.selectedTabIds ?? []).includes(tab.id)}
                 isDragging={false}
                 visible={tab.visible}
-                onClick={() => selectTab(tab.id)}
+                onClick={(event) => selectTab(tab.id, event.metaKey || event.ctrlKey || event.shiftKey)}
                 onMouseEnter={() => hoverFeature(null)}
                 onMouseLeave={() => hoverFeature(null)}
                 onToggleVisible={() => updateTab(tab.id, { visible: !tab.visible })}
                 onContextMenu={(event) => {
                   event.preventDefault()
-                  selectTab(tab.id)
+                  if (!(selection.selectedTabIds ?? []).includes(tab.id)) {
+                    selectTab(tab.id)
+                  }
                   onTabContextMenu?.(tab.id, event.clientX, event.clientY)
                 }}
                 onEditEntry={onEditTab ? () => onEditTab(tab.id) : undefined}
                 onMoreMenu={tabletShell && onTabContextMenu ? (x, y) => {
-                  selectTab(tab.id)
+                  if (!(selection.selectedTabIds ?? []).includes(tab.id)) {
+                    selectTab(tab.id)
+                  }
                   onTabContextMenu(tab.id, x, y)
                 } : undefined}
               />
@@ -801,6 +808,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           onAddClamp={() => startAddClampPlacement()}
           onShowAll={() => setAllClampsVisible(true)}
           onHideAll={() => setAllClampsVisible(false)}
+          onSelectAll={() => selectAllClamps()}
         />
         {clampsCollapsed ? null : project.clamps.length === 0 ? (
           <div className="feature-tree-empty">{t('featureTree.tree.empty.clamps')}</div>
@@ -812,21 +820,25 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 label={clamp.name}
                 kind="clamp"
                 depth={1}
-                isSelected={selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id}
+                isSelected={(selection.selectedClampIds ?? []).includes(clamp.id)}
                 isDragging={false}
                 visible={clamp.visible}
-                onClick={() => selectClamp(clamp.id)}
+                onClick={(event) => selectClamp(clamp.id, event.metaKey || event.ctrlKey || event.shiftKey)}
                 onMouseEnter={() => hoverFeature(null)}
                 onMouseLeave={() => hoverFeature(null)}
                 onToggleVisible={() => updateClamp(clamp.id, { visible: !clamp.visible })}
                 onContextMenu={(event) => {
                   event.preventDefault()
-                  selectClamp(clamp.id)
+                  if (!(selection.selectedClampIds ?? []).includes(clamp.id)) {
+                    selectClamp(clamp.id)
+                  }
                   onClampContextMenu?.(clamp.id, event.clientX, event.clientY)
                 }}
                 onEditEntry={onEditClamp ? () => onEditClamp(clamp.id) : undefined}
                 onMoreMenu={tabletShell && onClampContextMenu ? (x, y) => {
-                  selectClamp(clamp.id)
+                  if (!(selection.selectedClampIds ?? []).includes(clamp.id)) {
+                    selectClamp(clamp.id)
+                  }
                   onClampContextMenu(clamp.id, x, y)
                 } : undefined}
               />
@@ -859,6 +871,7 @@ interface TreeRowProps {
   grouped?: boolean
   onToggleGrouped?: () => void
   onSelectAllFeatures?: () => void
+  onSelectAll?: () => void
   onToggleOperation?: (operation: FeatureOperation) => void
   onAddFolder?: () => void
   onAddTab?: () => void
@@ -900,6 +913,7 @@ function TreeRow({
   onToggleGrouped,
   onToggleVisible,
   onSelectAllFeatures,
+  onSelectAll,
   onToggleOperation,
   onAddFolder,
   onAddTab,
@@ -1352,6 +1366,30 @@ function TreeRow({
             }}
             title={t('featureTree.treeRow.selectAllInFolder')}
             aria-label={t('featureTree.treeRow.selectAllInFolder')}
+          >
+            <svg viewBox="0 0 14 14" width="12" height="12" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
+              <rect x="1.5" y="1.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2.5 1.5" />
+            </svg>
+          </button>
+        ) : null}
+        {onSelectAll ? (
+          <button
+            type="button"
+            className="tree-action-btn"
+            onClick={(event) => {
+              event.stopPropagation()
+              onSelectAll()
+            }}
+            title={
+              kind === 'tabs' ? t('featureTree.treeRow.selectAllTabs')
+              : kind === 'clamps' ? t('featureTree.treeRow.selectAllClamps')
+              : t('featureTree.treeRow.selectAllInFolder')
+            }
+            aria-label={
+              kind === 'tabs' ? t('featureTree.treeRow.selectAllTabs')
+              : kind === 'clamps' ? t('featureTree.treeRow.selectAllClamps')
+              : t('featureTree.treeRow.selectAllInFolder')
+            }
           >
             <svg viewBox="0 0 14 14" width="12" height="12" focusable="false" aria-hidden="true" style={{ display: 'block' }}>
               <rect x="1.5" y="1.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2.5 1.5" />

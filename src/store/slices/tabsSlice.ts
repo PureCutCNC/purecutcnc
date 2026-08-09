@@ -16,7 +16,7 @@
 
 import type { StateCreator } from 'zustand'
 import type { Tab, Project, SketchFeature, Operation } from '../../types/project'
-import type { ProjectStore } from '../types'
+import type { ProjectStore, SelectionState } from '../types'
 import { getProfileBounds } from '../../types/project'
 import { flattenProfile } from '../../engine/toolpaths/geometry'
 import { tabLayoutFreeFraction, toolCentreContours, type TabRect } from '../../engine/toolpaths/tabs'
@@ -30,7 +30,9 @@ export type TabsSlice = Pick<
   ProjectStore,
   | 'moveTabControl'
   | 'updateTab'
+  | 'updateTabs'
   | 'deleteTab'
+  | 'deleteTabs'
   | 'setAllTabsVisible'
   | 'autoPlaceTabsForOperation'
 >
@@ -196,6 +198,41 @@ export function createTabsSlice(
         }
       }),
 
+    updateTabs: (ids, patch) =>
+      set((s) => {
+        if (ids.length === 0) return {}
+        const idSet = new Set(ids)
+        const hasWidth = patch.w !== undefined
+        const hasHeight = patch.h !== undefined
+        const nextProject = {
+          ...s.project,
+          tabs: s.project.tabs.map((tab) => {
+            if (!idSet.has(tab.id)) return tab
+            const next = { ...tab, ...patch }
+            // Center-preserving: shift x/y so the centre stays fixed.
+            if (hasWidth && patch.w !== undefined) {
+              next.x = tab.x + tab.w / 2 - patch.w / 2
+            }
+            if (hasHeight && patch.h !== undefined) {
+              next.y = tab.y + tab.h / 2 - patch.h / 2
+            }
+            return next
+          }),
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        }
+        if (projectsEqual(nextProject, s.project)) {
+          return {}
+        }
+        return {
+          project: nextProject,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }),
+
     deleteTab: (id) =>
       set((s) => {
         const nextProject = {
@@ -210,6 +247,45 @@ export function createTabsSlice(
           s.selection.selectedNode?.type === 'tab' && s.selection.selectedNode.tabId === id
             ? emptySelection()
             : sanitizeSelection(nextProject, s.selection)
+        return {
+          project: nextProject,
+          selection: nextSelection,
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
+          },
+        }
+      }),
+
+    deleteTabs: (ids) =>
+      set((s) => {
+        if (ids.length === 0) return {}
+        const idSet = new Set(ids)
+        const nextProject = {
+          ...s.project,
+          tabs: s.project.tabs.filter((tab) => !idSet.has(tab.id)),
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        }
+        if (projectsEqual(nextProject, s.project)) {
+          return {}
+        }
+        // Sanitize: remove deleted IDs from the tab selection, keep a valid primary.
+        const remainingIds = (s.selection.selectedTabIds ?? []).filter((tabId) => !idSet.has(tabId))
+        const primaryId = s.selection.selectedNode?.type === 'tab' ? s.selection.selectedNode.tabId : null
+        const primarySurvived = primaryId !== null && !idSet.has(primaryId)
+        const nextPrimaryId = primarySurvived ? primaryId : remainingIds.at(-1) ?? null
+        const nextSelection: SelectionState = {
+          ...s.selection,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          selectedTabIds: remainingIds,
+          selectedClampIds: [],
+          selectedNode: nextPrimaryId ? { type: 'tab', tabId: nextPrimaryId } : null,
+          mode: 'feature',
+          activeControl: null,
+          groupFolderId: null,
+        }
         return {
           project: nextProject,
           selection: nextSelection,
@@ -331,6 +407,8 @@ export function createTabsSlice(
             ...s.selection,
             selectedFeatureId: null,
             selectedFeatureIds: [],
+            selectedTabIds: [createdTabs[createdTabs.length - 1].id],
+            selectedClampIds: [],
             selectedNode: { type: 'tab', tabId: createdTabs[createdTabs.length - 1].id },
             mode: 'feature',
             hoveredFeatureId: null,

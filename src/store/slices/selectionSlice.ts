@@ -44,6 +44,10 @@ export type SelectionSlice = Pick<
   | 'selectFeatureFolder'
   | 'selectTab'
   | 'selectClamp'
+  | 'selectTabs'
+  | 'selectClamps'
+  | 'selectAllTabs'
+  | 'selectAllClamps'
   | 'hoverFeature'
   | 'enterSketchEdit'
   | 'enterClampEdit'
@@ -61,6 +65,8 @@ export function emptySelection(): SelectionState {
     mode: 'feature',
     selectedFeatureId: null,
     selectedFeatureIds: [],
+    selectedTabIds: [],
+    selectedClampIds: [],
     selectedNode: null,
     hoveredFeatureId: null,
     sketchEditTool: null,
@@ -79,6 +85,13 @@ export function sanitizeSelection(project: Project, selection: SelectionState): 
       ? selection.selectedFeatureId
       : selectedFeatureIds.at(-1) ?? null
 
+  const selectedTabIds = (selection.selectedTabIds ?? []).filter((tabId) =>
+    project.tabs.some((tab) => tab.id === tabId)
+  )
+  const selectedClampIds = (selection.selectedClampIds ?? []).filter((clampId) =>
+    project.clamps.some((clamp) => clamp.id === clampId)
+  )
+
   if (selectedNode?.type === 'feature') {
     if (selectedFeatureIds.length === 0 || !selectedFeatureId) {
       return {
@@ -86,7 +99,47 @@ export function sanitizeSelection(project: Project, selection: SelectionState): 
         mode: 'feature',
         selectedFeatureId: null,
         selectedFeatureIds: [],
+        selectedTabIds,
+        selectedClampIds,
         selectedNode: null,
+        hoveredFeatureId: null,
+        sketchEditTool: null,
+        activeControl: null,
+        groupFolderId: null,
+      }
+    }
+  }
+
+  if (selectedNode?.type === 'tab') {
+    if (selectedTabIds.length === 0 || !selectedTabIds.includes(selectedNode.tabId)) {
+      const nextPrimaryId = selectedTabIds.at(-1) ?? null
+      return {
+        ...selection,
+        mode: 'feature',
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedTabIds,
+        selectedClampIds: [],
+        selectedNode: nextPrimaryId ? { type: 'tab', tabId: nextPrimaryId } : null,
+        hoveredFeatureId: null,
+        sketchEditTool: null,
+        activeControl: null,
+        groupFolderId: null,
+      }
+    }
+  }
+
+  if (selectedNode?.type === 'clamp') {
+    if (selectedClampIds.length === 0 || !selectedClampIds.includes(selectedNode.clampId)) {
+      const nextPrimaryId = selectedClampIds.at(-1) ?? null
+      return {
+        ...selection,
+        mode: 'feature',
+        selectedFeatureId: null,
+        selectedFeatureIds: [],
+        selectedTabIds: [],
+        selectedClampIds,
+        selectedNode: nextPrimaryId ? { type: 'clamp', clampId: nextPrimaryId } : null,
         hoveredFeatureId: null,
         sketchEditTool: null,
         activeControl: null,
@@ -137,6 +190,8 @@ export function sanitizeSelection(project: Project, selection: SelectionState): 
         : 'feature',
     selectedFeatureId,
     selectedFeatureIds,
+    selectedTabIds: safeSelectedNode?.type === 'tab' ? selectedTabIds : [],
+    selectedClampIds: safeSelectedNode?.type === 'clamp' ? selectedClampIds : [],
     selectedNode:
       selectedFeatureId
         ? { type: 'feature', featureId: selectedFeatureId }
@@ -201,6 +256,8 @@ export function createSelectionSlice(
               ...s.selection,
               selectedFeatureId: nextPrimaryId,
               selectedFeatureIds: nextIds,
+              selectedTabIds: [],
+              selectedClampIds: [],
               selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
               mode: 'feature',
               activeControl: null,
@@ -239,6 +296,8 @@ export function createSelectionSlice(
                   ...s.selection,
                   selectedFeatureId: null,
                   selectedFeatureIds: [],
+                  selectedTabIds: [],
+                  selectedClampIds: [],
                   selectedNode: null,
                   mode: 'feature',
                   activeControl: null,
@@ -253,6 +312,8 @@ export function createSelectionSlice(
                 ...s.selection,
                 selectedFeatureId: null,
                 selectedFeatureIds: [...pendingShapeAction.cutterIds],
+                selectedTabIds: [],
+                selectedClampIds: [],
                 selectedNode: null,
                 mode: 'feature',
                 activeControl: null,
@@ -274,6 +335,8 @@ export function createSelectionSlice(
                 ...s.selection,
                 selectedFeatureId: id,
                 selectedFeatureIds: nextCutterIds,
+                selectedTabIds: [],
+                selectedClampIds: [],
                 selectedNode: { type: 'feature', featureId: id },
                 mode: 'feature',
                 activeControl: null,
@@ -308,6 +371,8 @@ export function createSelectionSlice(
               ...s.selection,
               selectedFeatureId: nextPrimaryId,
               selectedFeatureIds: nextSelectedIds,
+              selectedTabIds: [],
+              selectedClampIds: [],
               selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
               mode: 'feature',
               activeControl: null,
@@ -321,6 +386,8 @@ export function createSelectionSlice(
           pendingShapeAction: null,
           selection: {
             ...s.selection,
+            selectedTabIds: [],
+            selectedClampIds: [],
             ...(id
               ? additive
                 ? (() => {
@@ -403,6 +470,8 @@ export function createSelectionSlice(
           pendingShapeAction: joinMode && s.pendingShapeAction ? { ...s.pendingShapeAction, entityIds: validJoinIds } : null,
           selection: {
             ...s.selection,
+            selectedTabIds: [],
+            selectedClampIds: [],
             selectedFeatureId: nextPrimaryId,
             selectedFeatureIds: validJoinIds,
             selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
@@ -421,6 +490,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'project' },
           mode: 'feature',
           activeControl: null,
@@ -437,6 +508,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'grid' },
           mode: 'feature',
           groupFolderId: null,
@@ -452,6 +525,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'stock' },
           mode: 'feature',
           groupFolderId: null,
@@ -467,6 +542,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'origin' },
           mode: 'feature',
           activeControl: null,
@@ -483,6 +560,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'backdrop' },
           mode: 'feature',
           activeControl: null,
@@ -498,6 +577,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'features_root' },
           mode: 'feature',
           activeControl: null,
@@ -513,6 +594,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'tabs_root' },
           mode: 'feature',
           activeControl: null,
@@ -528,6 +611,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'regions_root' },
           mode: 'feature',
           activeControl: null,
@@ -543,6 +628,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'construction_root' },
           mode: 'feature',
           activeControl: null,
@@ -558,6 +645,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'clamps_root' },
           mode: 'feature',
           activeControl: null,
@@ -573,6 +662,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'folder', folderId: id },
           mode: 'feature',
           activeControl: null,
@@ -581,35 +672,215 @@ export function createSelectionSlice(
         sketchEditSession: null,
       })),
 
-    selectTab: (id) =>
-      set((s) => ({
-        pendingOffset: null,
-        selection: {
-          ...s.selection,
-          selectedFeatureId: null,
-          selectedFeatureIds: [],
-          selectedNode: { type: 'tab', tabId: id },
-          mode: 'feature',
-          activeControl: null,
-          groupFolderId: null,
-        },
-        sketchEditSession: null,
-      })),
+    selectTab: (id, additive = false) =>
+      set((s) => {
+        const tabExists = s.project.tabs.some((tab) => tab.id === id)
+        if (!tabExists) {
+          return {}
+        }
 
-    selectClamp: (id) =>
-      set((s) => ({
-        pendingOffset: null,
-        selection: {
-          ...s.selection,
-          selectedFeatureId: null,
-          selectedFeatureIds: [],
-          selectedNode: { type: 'clamp', clampId: id },
-          mode: 'feature',
-          activeControl: null,
-          groupFolderId: null,
-        },
-        sketchEditSession: null,
-      })),
+        // Incompatible additive attempt — current family is not tabs.
+        const nodeType = s.selection.selectedNode?.type
+        if (additive && nodeType !== 'tab' && nodeType !== 'tabs_root' && nodeType != null) {
+          return {}
+        }
+
+        if (additive) {
+          const nextIds = (s.selection.selectedTabIds ?? []).includes(id)
+            ? (s.selection.selectedTabIds ?? []).filter((tabId) => tabId !== id)
+            : [...(s.selection.selectedTabIds ?? []), id]
+          const wasSelected = (s.selection.selectedTabIds ?? []).includes(id)
+          const nextPrimaryId =
+            nextIds.length === 0
+              ? null
+              : wasSelected
+                ? (s.selection.selectedNode?.type === 'tab' && s.selection.selectedNode.tabId === id
+                    ? nextIds.at(-1) ?? null
+                    : s.selection.selectedNode?.type === 'tab'
+                      ? s.selection.selectedNode.tabId
+                      : nextIds.at(-1) ?? null)
+                : id
+          return {
+            pendingOffset: null,
+            selection: {
+              ...s.selection,
+              selectedFeatureId: null,
+              selectedFeatureIds: [],
+              selectedTabIds: nextIds,
+              selectedClampIds: [],
+              selectedNode: nextPrimaryId ? { type: 'tab', tabId: nextPrimaryId } : null,
+              mode: 'feature',
+              activeControl: null,
+              groupFolderId: null,
+            },
+            sketchEditSession: null,
+          }
+        }
+
+        return {
+          pendingOffset: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: [id],
+            selectedClampIds: [],
+            selectedNode: { type: 'tab', tabId: id },
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          },
+          sketchEditSession: null,
+        }
+      }),
+
+    selectClamp: (id, additive = false) =>
+      set((s) => {
+        const clampExists = s.project.clamps.some((clamp) => clamp.id === id)
+        if (!clampExists) {
+          return {}
+        }
+
+        // Incompatible additive attempt — current family is not clamps.
+        const nodeType = s.selection.selectedNode?.type
+        if (additive && nodeType !== 'clamp' && nodeType !== 'clamps_root' && nodeType != null) {
+          return {}
+        }
+
+        if (additive) {
+          const nextIds = (s.selection.selectedClampIds ?? []).includes(id)
+            ? (s.selection.selectedClampIds ?? []).filter((clampId) => clampId !== id)
+            : [...(s.selection.selectedClampIds ?? []), id]
+          const wasSelected = (s.selection.selectedClampIds ?? []).includes(id)
+          const nextPrimaryId =
+            nextIds.length === 0
+              ? null
+              : wasSelected
+                ? (s.selection.selectedNode?.type === 'clamp' && s.selection.selectedNode.clampId === id
+                    ? nextIds.at(-1) ?? null
+                    : s.selection.selectedNode?.type === 'clamp'
+                      ? s.selection.selectedNode.clampId
+                      : nextIds.at(-1) ?? null)
+                : id
+          return {
+            pendingOffset: null,
+            selection: {
+              ...s.selection,
+              selectedFeatureId: null,
+              selectedFeatureIds: [],
+              selectedTabIds: [],
+              selectedClampIds: nextIds,
+              selectedNode: nextPrimaryId ? { type: 'clamp', clampId: nextPrimaryId } : null,
+              mode: 'feature',
+              activeControl: null,
+              groupFolderId: null,
+            },
+            sketchEditSession: null,
+          }
+        }
+
+        return {
+          pendingOffset: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: [],
+            selectedClampIds: [id],
+            selectedNode: { type: 'clamp', clampId: id },
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          },
+          sketchEditSession: null,
+        }
+      }),
+
+    selectTabs: (ids) =>
+      set((s) => {
+        const nextIds = ids.filter((id, index) => {
+          return ids.indexOf(id) === index && s.project.tabs.some((tab) => tab.id === id)
+        })
+        const nextPrimaryId = nextIds.at(-1) ?? null
+        return {
+          pendingOffset: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: nextIds,
+            selectedClampIds: [],
+            selectedNode: nextPrimaryId ? { type: 'tab', tabId: nextPrimaryId } : null,
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          },
+        }
+      }),
+
+    selectClamps: (ids) =>
+      set((s) => {
+        const nextIds = ids.filter((id, index) => {
+          return ids.indexOf(id) === index && s.project.clamps.some((clamp) => clamp.id === id)
+        })
+        const nextPrimaryId = nextIds.at(-1) ?? null
+        return {
+          pendingOffset: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: [],
+            selectedClampIds: nextIds,
+            selectedNode: nextPrimaryId ? { type: 'clamp', clampId: nextPrimaryId } : null,
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          },
+        }
+      }),
+
+    selectAllTabs: () =>
+      set((s) => {
+        const visibleIds = s.project.tabs.filter((tab) => tab.visible).map((tab) => tab.id)
+        const nextPrimaryId = visibleIds.at(-1) ?? null
+        return {
+          pendingOffset: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: visibleIds,
+            selectedClampIds: [],
+            selectedNode: nextPrimaryId ? { type: 'tab', tabId: nextPrimaryId } : null,
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          },
+          sketchEditSession: null,
+        }
+      }),
+
+    selectAllClamps: () =>
+      set((s) => {
+        const visibleIds = s.project.clamps.filter((clamp) => clamp.visible).map((clamp) => clamp.id)
+        const nextPrimaryId = visibleIds.at(-1) ?? null
+        return {
+          pendingOffset: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: [],
+            selectedClampIds: visibleIds,
+            selectedNode: nextPrimaryId ? { type: 'clamp', clampId: nextPrimaryId } : null,
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          },
+          sketchEditSession: null,
+        }
+      }),
 
     hoverFeature: (id) =>
       set((s) => {
@@ -631,6 +902,8 @@ export function createSelectionSlice(
             ...s.selection,
             selectedFeatureId: id,
             selectedFeatureIds: [id],
+            selectedTabIds: [],
+            selectedClampIds: [],
             selectedNode: { type: 'feature', featureId: id },
             mode: 'sketch_edit',
             sketchEditTool: null,
@@ -654,6 +927,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [id],
           selectedNode: { type: 'clamp', clampId: id },
           mode: 'sketch_edit',
           sketchEditTool: null,
@@ -676,6 +951,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [id],
+          selectedClampIds: [],
           selectedNode: { type: 'tab', tabId: id },
           mode: 'sketch_edit',
           sketchEditTool: null,
