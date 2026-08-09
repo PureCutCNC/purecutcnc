@@ -146,39 +146,43 @@ test.describe('Tool library import dialog smoke', () => {
     await expect(dialog.locator('.tl-row').first()).toBeVisible()
 
     // Import every visible importable tool so the next open sees all-imported.
+    // A project that already has every tool imported skips this block naturally.
     const importableChecks = dialog.locator('.tl-row:not(.tl-row--imported) .tl-row__check')
     const importCount = await importableChecks.count()
     if (importCount > 0) {
       for (let i = 0; i < importCount; i++) {
         await importableChecks.nth(i).check()
       }
-      // Use the import button label that matches (may include count).
       await dialog.locator('.dialog-footer .btn-primary').click()
       await expect(dialog).not.toBeVisible()
 
       // Re-open: now every row visible under the current filter should be imported.
       await app.page.getByRole('button', { name: /Import from library/ }).click()
+      // Wait for the re-opened dialog's rows to fully render.
+      await expect(
+        app.page.getByRole('dialog', { name: 'Import tools from library' }).locator('.tl-row').first(),
+      ).toBeVisible()
     }
 
-    // Re-query in case dialog was re-opened.
-    const currentDialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
-    await expect(currentDialog).toBeVisible()
+    // Re-query the dialog — this is either the re-opened dialog (import path)
+    // or the still-open initial dialog (already-all-imported path).
+    const currentDialog = app.page.getByRole('dialog', {
+      name: 'Import tools from library',
+    })
 
-    // If all visible rows are imported the banner must be present.
-    const nonImportedRows = currentDialog.locator('.tl-row:not(.tl-row--imported)')
-    if ((await nonImportedRows.count()) === 0) {
-      await expect(currentDialog.locator('.tl-banner')).toBeVisible()
-      await expect(currentDialog.locator('.tl-banner')).toContainText(/already in the project/)
-    }
+    // 1. Every visible row must be imported — zero non-imported rows remain.
+    await expect(currentDialog.locator('.tl-row:not(.tl-row--imported)')).toHaveCount(0)
 
-    // Imported rows must be rendered with disabled checkboxes and status labels.
+    // 2. The compact all-imported banner must be visible with its localized copy.
+    await expect(currentDialog.locator('.tl-banner')).toBeVisible()
+    await expect(currentDialog.locator('.tl-banner')).toContainText(/already in the project/)
+
+    // 3. Imported rows must remain rendered with a disabled checkbox and
+    //    an "In project" status label — the banner augments, not replaces them.
     const importedRows = currentDialog.locator('.tl-row--imported')
-    if ((await importedRows.count()) > 0) {
-      const firstImportedCheck = importedRows.first().locator('.tl-row__check')
-      await expect(firstImportedCheck).toBeDisabled()
-      const firstStatus = importedRows.first().locator('.tl-row__status')
-      await expect(firstStatus).toContainText(/In project/)
-    }
+    await expect(importedRows.first()).toBeVisible()
+    await expect(importedRows.first().locator('.tl-row__check')).toBeDisabled()
+    await expect(importedRows.first().locator('.tl-row__status')).toContainText(/In project/)
   })
 
   test('disables already-imported tools', async ({ app }) => {
