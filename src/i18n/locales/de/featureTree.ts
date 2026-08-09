@@ -234,6 +234,8 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.properties.multi.ungroup': 'Gruppierung aufheben',
   'featureTree.properties.multi.deleteGroup': 'Gruppe löschen',
   'featureTree.properties.multi.featuresCount': '{count} Features',
+  'featureTree.properties.multi.tabsCount': '{count} Laschen',
+  'featureTree.properties.multi.clampsCount': '{count} Spannpratzen',
   'featureTree.properties.multi.editSketchDisabled': 'Skizze bearbeiten ist nur für ein einzelnes Feature verfügbar',
   'featureTree.properties.multi.openProfiles': 'Offene Profile',
   'featureTree.properties.multi.containsModel': 'Enthält Modell-Features',

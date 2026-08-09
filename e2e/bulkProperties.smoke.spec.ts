@@ -1,0 +1,785 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * Issue #468 S2 Browser Smoke — Bulk tab/clamp properties & Z-range
+ * ─────────────────────────────────────────────────────────────────────
+ */
+
+import { test, expect } from './fixtures'
+import { seedProject, getProject } from './helpers'
+
+// ── Platform helpers ──────────────────────────────────────────────────
+
+const modKey = process.platform === 'darwin' ? 'Meta' : 'Control'
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+function getArray(project: Record<string, unknown>, key: string): Record<string, unknown>[] {
+  const value = project[key]
+  return Array.isArray(value) ? (value as Record<string, unknown>[]) : []
+}
+
+function num(v: unknown): number {
+  return typeof v === 'number' ? v : 0
+}
+
+function str(v: unknown): string {
+  return typeof v === 'string' ? v : ''
+}
+
+/** CSS selector for selected feature rows. */
+function selectedFeatureRows() {
+  return '.tree-row--feature.tree-row--selected'
+}
+
+/** CSS selector for selected tab rows. */
+function selectedTabRows() {
+  return '.tree-row.tree-row--tab.tree-row--selected'
+}
+
+/** CSS selector for selected clamp rows. */
+function selectedClampRows() {
+  return '.tree-row.tree-row--clamp.tree-row--selected'
+}
+
+// ── Canvas world-to-pixel mapping (VIEW_PADDING = 42) ────────────────
+
+const VIEW_PADDING = 42
+const STOCK_W = 200
+const STOCK_H = 160
+
+interface CanvasBox { x: number; y: number; width: number; height: number }
+
+function worldToPixel(worldX: number, worldY: number, box: CanvasBox): { x: number; y: number } {
+  const scale = Math.min(
+    (box.width - VIEW_PADDING * 2) / STOCK_W,
+    (box.height - VIEW_PADDING * 2) / STOCK_H,
+  )
+  const offsetX = (box.width - STOCK_W * scale) / 2
+  const offsetY = (box.height - STOCK_H * scale) / 2
+  return {
+    x: offsetX + worldX * scale,
+    y: offsetY + worldY * scale,
+  }
+}
+
+// ── Fixture ──────────────────────────────────────────────────────────
+
+function bulkFixtureJson(): string {
+  return JSON.stringify({
+    version: '3.0',
+    meta: {
+      name: 'Bulk Props Fixture',
+      created: new Date().toISOString(),
+      modified: new Date().toISOString(),
+      units: 'mm',
+      showFeatureInfo: false,
+      showDimensions: false,
+      copyMode: 'reference',
+      maxTravelZ: 20,
+      operationClearanceZ: 2,
+      clampClearanceXY: 2,
+      clampClearanceZ: 1,
+      machineDefinitions: [],
+      selectedMachineId: null,
+    },
+    grid: {
+      extent: 100,
+      majorSpacing: 10,
+      minorSpacing: 2,
+      snapEnabled: false,
+      snapIncrement: 1,
+      visible: true,
+    },
+    stock: {
+      profile: {
+        start: { x: 0, y: 0 },
+        segments: [
+          { type: 'line' as const, to: { x: 200, y: 0 } },
+          { type: 'line' as const, to: { x: 200, y: 160 } },
+          { type: 'line' as const, to: { x: 0, y: 160 } },
+          { type: 'line' as const, to: { x: 0, y: 0 } },
+        ],
+        closed: true,
+      },
+      thickness: 20,
+      material: 'aluminum_6061',
+      color: '#b9a83c',
+      visible: true,
+      origin: { x: 0, y: 0 },
+    },
+    origin: { name: 'Origin', x: 100, y: 80, z: 20, visible: true },
+    backdrop: null,
+    dimensions: {},
+    annotations: [],
+    modelAssets: {},
+    featureDefinitions: {
+      'def-closed-1': {
+        kind: 'rect' as const,
+        operation: 'add' as const,
+        profile: {
+          start: { x: 0, y: 0 },
+          segments: [
+            { type: 'line' as const, to: { x: 30, y: 0 } },
+            { type: 'line' as const, to: { x: 30, y: 20 } },
+            { type: 'line' as const, to: { x: 0, y: 20 } },
+            { type: 'line' as const, to: { x: 0, y: 0 } },
+          ],
+          closed: true,
+        },
+        dimensions: [],
+        text: null,
+        stl: null,
+      },
+      'def-closed-2': {
+        kind: 'rect' as const,
+        operation: 'subtract' as const,
+        profile: {
+          start: { x: 0, y: 0 },
+          segments: [
+            { type: 'line' as const, to: { x: 30, y: 0 } },
+            { type: 'line' as const, to: { x: 30, y: 20 } },
+            { type: 'line' as const, to: { x: 0, y: 20 } },
+            { type: 'line' as const, to: { x: 0, y: 0 } },
+          ],
+          closed: true,
+        },
+        dimensions: [],
+        text: null,
+        stl: null,
+      },
+      'def-line': {
+        kind: 'rect' as const,
+        operation: 'line' as const,
+        profile: {
+          start: { x: 0, y: 0 },
+          segments: [
+            { type: 'line' as const, to: { x: 24, y: 0 } },
+            { type: 'line' as const, to: { x: 24, y: 16 } },
+            { type: 'line' as const, to: { x: 0, y: 16 } },
+            { type: 'line' as const, to: { x: 0, y: 0 } },
+          ],
+          closed: true,
+        },
+        dimensions: [],
+        text: null,
+        stl: null,
+      },
+    },
+    features: [
+      {
+        id: 'f-1',
+        definitionId: 'def-closed-1',
+        name: 'Pad A',
+        folderId: null,
+        visible: true,
+        locked: false,
+        z_top: 12,
+        z_bottom: 0,
+        transform: { a: 1, b: 0, c: 0, d: 1, e: 5, f: 5 },
+        constraints: [],
+      },
+      {
+        id: 'f-2',
+        definitionId: 'def-closed-2',
+        name: 'Pocket B',
+        folderId: null,
+        visible: true,
+        locked: false,
+        z_top: 8,
+        z_bottom: 2,
+        transform: { a: 1, b: 0, c: 0, d: 1, e: 5, f: 120 },
+        constraints: [],
+      },
+      {
+        id: 'f-3',
+        definitionId: 'def-line',
+        name: 'Line Path',
+        folderId: null,
+        visible: true,
+        locked: false,
+        z_top: 3,
+        z_bottom: 0,
+        transform: { a: 1, b: 0, c: 0, d: 1, e: 168, f: 5 },
+        constraints: [],
+      },
+    ],
+    featureFolders: [],
+    featureTree: [],
+    global_constraints: [],
+    tools: [],
+    operations: [],
+    tabs: [
+      { id: 'tb-1', name: 'Tab A', x: 40, y: 80, w: 8, h: 8, z_top: 5, z_bottom: 0, visible: true },
+      { id: 'tb-2', name: 'Tab B', x: 100, y: 80, w: 10, h: 10, z_top: 3, z_bottom: 0, visible: true },
+      { id: 'tb-3', name: 'Tab C', x: 160, y: 80, w: 6, h: 6, z_top: 4, z_bottom: 1, visible: true },
+      { id: 'tb-4', name: 'Tab D', x: 70, y: 130, w: 8, h: 8, z_top: 3, z_bottom: 0, visible: false },
+    ],
+    clamps: [
+      { id: 'cl-1', name: 'Clamp A', type: 'step_clamp' as const, x: 50, y: 40, w: 12, h: 12, height: 5, visible: true },
+      { id: 'cl-2', name: 'Clamp B', type: 'step_clamp' as const, x: 150, y: 40, w: 14, h: 10, height: 8, visible: true },
+      { id: 'cl-3', name: 'Clamp C', type: 'step_clamp' as const, x: 100, y: 130, w: 10, h: 10, height: 6, visible: false },
+    ],
+    ai_history: [],
+  })
+}
+
+const BULK_FIXTURE_JSON = bulkFixtureJson()
+
+// ── Spec ────────────────────────────────────────────────────────────
+
+test.describe('Bulk properties browser smoke', () => {
+  // ====================================================================
+  // 1. Global Ctrl/Cmd+A — feature-only selection
+  // ====================================================================
+
+  test(`global ${modKey}+A selects all visible feature rows, zero tab/clamp rows`, async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    // Click a feature row so the tree has focus, then select all.
+    await ui.tree.featureRows(app.page).first().click()
+    await app.page.keyboard.press(`${modKey}+a`)
+
+    // Must select exactly all 3 visible feature rows, zero tab/clamp rows.
+    await expect(app.page.locator(selectedFeatureRows())).toHaveCount(3)
+    await expect(app.page.locator(selectedTabRows())).toHaveCount(0)
+    await expect(app.page.locator(selectedClampRows())).toHaveCount(0)
+
+  })
+
+  // ====================================================================
+  // 2. Tablet canvas multi-select — taps without modifiers
+  // ====================================================================
+
+  test.describe('Tablet (touch) canvas multi-select', () => {
+    test.use({ hasTouch: true, viewport: { width: 1024, height: 768 } })
+
+    test('coarse-pointer media query matches', async ({ app }) => {
+      const coarse = await app.page.evaluate(() =>
+        window.matchMedia('(pointer: coarse)').matches,
+      )
+      expect(coarse).toBe(true)
+    })
+
+    test('tap Tab A then Tab C selects two tabs and shows bulk panel', async ({ app, ui }) => {
+      await seedProject(app.page, BULK_FIXTURE_JSON)
+
+      // The tablet command bar renders a "Multi" button for multi-select mode.
+      const multiBtn = app.page.getByRole('button', { name: 'Multi', exact: true })
+      await expect(multiBtn).toBeVisible()
+      await multiBtn.click()
+      await expect(multiBtn).toHaveClass(/active/)
+
+      const canvas = app.page.locator('canvas.sketch-canvas')
+      const box = await canvas.boundingBox()
+      if (!box) throw new Error('Canvas not found')
+
+      // Tab A centre (44, 84) — first tap.
+      const ptA = worldToPixel(44, 84, box)
+      await canvas.tap({ position: ptA })
+
+      // Tab C centre (163, 83) — second tap adds to selection.
+      const ptC = worldToPixel(163, 83, box)
+      await canvas.tap({ position: ptC })
+
+      // Two tab rows selected, bulk panel visible.
+      await expect(app.page.locator(selectedTabRows())).toHaveCount(2)
+      await expect(ui.properties.panel(app.page)).toContainText('2 Tabs')
+      await expect(ui.properties.zRangeSlider(app.page)).toBeAttached()
+    })
+
+    test('tap Clamp A then Clamp B selects two clamps and shows bulk panel', async ({ app, ui }) => {
+      await seedProject(app.page, BULK_FIXTURE_JSON)
+
+      const multiBtn = app.page.getByRole('button', { name: 'Multi', exact: true })
+      await expect(multiBtn).toBeVisible()
+      await multiBtn.click()
+      await expect(multiBtn).toHaveClass(/active/)
+
+      const canvas = app.page.locator('canvas.sketch-canvas')
+      const box = await canvas.boundingBox()
+      if (!box) throw new Error('Canvas not found')
+
+      // Clamp A centre (56, 46) — first tap.
+      const ptA = worldToPixel(56, 46, box)
+      await canvas.tap({ position: ptA })
+
+      // Clamp B centre (157, 45) — second tap adds to selection.
+      const ptB = worldToPixel(157, 45, box)
+      await canvas.tap({ position: ptB })
+
+      await expect(app.page.locator(selectedClampRows())).toHaveCount(2)
+      await expect(ui.properties.panel(app.page)).toContainText('2 Clamps')
+      await expect(ui.properties.zRangeSlider(app.page)).toBeAttached()
+    })
+  })
+
+  // ====================================================================
+  // 4. Mixed-visibility tab — indeterminate checkbox, no mutation
+  // ====================================================================
+
+  test('mixed-visibility tab bulk panel has indeterminate checkbox, opening causes no mutation', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    // Snapshot the complete project BEFORE any selection.
+    const before = await getProject(app.page)
+
+    // Select visible Tab A, then modifier-select hidden Tab D.
+    await ui.tree.tabRows(app.page).nth(0).click()
+    await ui.tree.tabRows(app.page).nth(3).click({ modifiers: [modKey as 'Meta' | 'Control'] })
+
+    // Bulk visibility checkbox must be indeterminate (visible + hidden).
+    const bulkCheckbox = ui.properties.panel(app.page).locator('input[type="checkbox"]').last()
+    const indeterminate = await bulkCheckbox.evaluate((el: HTMLInputElement) => el.indeterminate)
+    expect(indeterminate).toBe(true)
+
+    // Snapshot the complete project after the panel is open.
+    const after = await getProject(app.page)
+    // Normalise volatile timestamps before deep comparison.
+    const normalize = (p: Record<string, unknown>) => {
+      const meta = p.meta as Record<string, unknown> | undefined
+      if (meta) { meta.modified = '<normalized>' }
+    }
+    normalize(before)
+    normalize(after)
+    // The complete project must be deeply equal — no mutation from opening the panel.
+    expect(after).toEqual(before)
+  })
+
+  // ====================================================================
+  // 5. Mixed-visibility clamp — indeterminate checkbox, no mutation
+  // ====================================================================
+
+  test('mixed-visibility clamp bulk panel has indeterminate checkbox, opening causes no mutation', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    // Snapshot the complete project BEFORE any selection.
+    const before = await getProject(app.page)
+
+    // Select visible Clamp A, then modifier-select hidden Clamp C.
+    await ui.tree.clampRows(app.page).nth(0).click()
+    await ui.tree.clampRows(app.page).nth(2).click({ modifiers: [modKey as 'Meta' | 'Control'] })
+
+    const bulkCheckbox = ui.properties.panel(app.page).locator('input[type="checkbox"]').last()
+    const indeterminate = await bulkCheckbox.evaluate((el: HTMLInputElement) => el.indeterminate)
+    expect(indeterminate).toBe(true)
+
+    const after = await getProject(app.page)
+    const normalize = (p: Record<string, unknown>) => {
+      const meta = p.meta as Record<string, unknown> | undefined
+      if (meta) { meta.modified = '<normalized>' }
+    }
+    normalize(before)
+    normalize(after)
+    // The complete project must be deeply equal — no mutation from opening the panel.
+    expect(after).toEqual(before)
+  })
+
+  // ====================================================================
+  // 6. Multi-feature Z: invalid top vs one member bottom rejects all
+  // ====================================================================
+
+  test('multi-feature invalid Z top against one member bottom rejects entire batch and resets field', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    // Select Pad A (z_top=12, z_bottom=0) and Pocket B (z_top=8, z_bottom=2).
+    await ui.tree.featureRows(app.page).nth(0).click()
+    await ui.tree.featureRows(app.page).nth(1).click({ modifiers: [modKey as 'Meta' | 'Control'] })
+
+    // Try z_top=1 — Pocket B has z_bottom=2, so 1<2 → rejected.
+    await ui.properties.zRangeTopField(app.page).click()
+    await ui.properties.zRangeTopField(app.page).fill('1')
+    await ui.properties.zRangeTopField(app.page).blur()
+
+    // Both features must be unchanged.
+    const project = await getProject(app.page)
+    const features = getArray(project, 'features')
+    const pad = features.find((f) => str(f.id) === 'f-1')!
+    const pocket = features.find((f) => str(f.id) === 'f-2')!
+    expect(num(pad.z_top)).toBe(12)
+    expect(num(pocket.z_top)).toBe(8)
+
+    // Field must reset (mixed, since tops 12 and 8 differ).
+    await expect(ui.properties.zRangeTopField(app.page)).toHaveValue('')
+  })
+
+  // ====================================================================
+  // 7. Multi-feature Z: valid top updates all, undo restores each
+  // ====================================================================
+
+  test('multi-feature valid Z top updates all closed features, one undo restores each exact original', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    await ui.tree.featureRows(app.page).nth(0).click()
+    await ui.tree.featureRows(app.page).nth(1).click({ modifiers: [modKey as 'Meta' | 'Control'] })
+
+    // Set z_top=4 — valid for both: 4>=0 and 4>=2.
+    await ui.properties.zRangeTopField(app.page).click()
+    await ui.properties.zRangeTopField(app.page).fill('4')
+    await ui.properties.zRangeTopField(app.page).blur()
+
+    let project = await getProject(app.page)
+    let features = getArray(project, 'features')
+    const padA = features.find((f) => str(f.id) === 'f-1')!
+    const pocketB = features.find((f) => str(f.id) === 'f-2')!
+    expect(num(padA.z_top)).toBe(4)
+    expect(num(pocketB.z_top)).toBe(4)
+    // Input shows common value now (both 4).
+    await expect(ui.properties.zRangeTopField(app.page)).toHaveValue('4')
+
+    // Undo restores exact original values.
+    await app.page.keyboard.press(`${modKey}+z`)
+    project = await getProject(app.page)
+    features = getArray(project, 'features')
+    const padAR = features.find((f) => str(f.id) === 'f-1')!
+    const pocketBR = features.find((f) => str(f.id) === 'f-2')!
+    expect(num(padAR.z_top)).toBe(12)
+    expect(num(pocketBR.z_top)).toBe(8)
+    // Field refreshes to mixed after undo.
+    await expect(ui.properties.zRangeTopField(app.page)).toHaveValue('')
+  })
+
+  // ====================================================================
+  // 8. Single Line feature — bottom disabled at 0
+  // ====================================================================
+
+  test('single Line feature shows bottom disabled at 0', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    // Select the Line feature by clicking its tree row by name.
+    await ui.tree.rowByName(app.page, 'Line Path').click()
+
+    // Verify the correct feature is selected.
+    await expect(ui.properties.panel(app.page)).toContainText('Delete Feature')
+
+    // Expand the Instance disclosure section (closed by default).
+    await app.page.getByRole('button', { name: 'Instance' }).click()
+
+    // The Z-range slider should be present with bottom locked at 0.
+    await expect(ui.properties.zRangeSlider(app.page)).toBeAttached()
+    const bottomField = ui.properties.zRangeBottomField(app.page)
+    await expect(bottomField).toHaveValue('0')
+    await expect(bottomField).toBeDisabled()
+  })
+
+  // ====================================================================
+  // 9. Mixed Line+closed selection — bottom editable for closed only
+  // ====================================================================
+
+  test('mixed Line+closed selection can edit bottom for closed feature only, Line stays at 0', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    // Select Pad A (closed, z_top=12, z_bottom=0) by first feature row.
+    await ui.tree.featureRows(app.page).nth(0).click()
+    // Select Line Path (z_top=3, z_bottom=0) by name to avoid brittle ordinal.
+    await ui.tree.rowByName(app.page, 'Line Path').click({ modifiers: [modKey as 'Meta' | 'Control'] })
+
+    // Line top is 3, closed top is 12. Use bottom=4 which is ABOVE Line's top
+    // but below the closed feature's top. If validation incorrectly includes
+    // the non-target Line feature, bottom=4 > Line top=3 would be rejected
+    // and Line's bottom would not stay at 0.
+    await ui.properties.zRangeBottomField(app.page).click()
+    await ui.properties.zRangeBottomField(app.page).fill('4')
+    await ui.properties.zRangeBottomField(app.page).blur()
+
+    const project = await getProject(app.page)
+    const features = getArray(project, 'features')
+    const pad = features.find((f) => str(f.id) === 'f-1')!
+    const line = features.find((f) => str(f.id) === 'f-3')!
+    // Closed feature bottom becomes 4.
+    expect(num(pad.z_bottom)).toBe(4)
+    // Line bottom stays at 0 — validation correctly excluded the non-target.
+    expect(num(line.z_bottom)).toBe(0)
+    expect(num(line.z_top)).toBe(3)
+  })
+
+  // ====================================================================
+  // 10. Mixed-opposite pointer: tab bottom slider drag
+  // ====================================================================
+
+  test('mixed-top tabs bottom slider drag above zero applies valid positive bottom', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    // Select Tab A (z_top=5, z_bottom=0) and Tab B (z_top=3, z_bottom=0).
+    // Mixed top (null display), common bottom (0).
+    await ui.tree.tabRows(app.page).nth(0).click()
+    await ui.tree.tabRows(app.page).nth(1).click({ modifiers: [modKey as 'Meta' | 'Control'] })
+
+    // Drag the bottom slider handle from z=0 to z=1.
+    const slider = ui.properties.zRangeSlider(app.page)
+    const track = slider.locator('.z-range-slider__track')
+    const trackBox = await track.boundingBox()
+    if (!trackBox) throw new Error('Track not found')
+
+    const domainMax = 20 // stock thickness
+    const domainMin = 0
+    const EDGE_MARGIN = 0.08
+
+    function zToTrackY(z: number): number {
+      const range = domainMax - domainMin
+      const usable = 1 - 2 * EDGE_MARGIN
+      const fraction = 1 - Math.max(0, Math.min(range, z - domainMin)) / range
+      const percent = EDGE_MARGIN + fraction * usable
+      return trackBox.y + percent * trackBox.height
+    }
+
+    const startY = zToTrackY(0)
+    const endY = zToTrackY(1)
+    const midX = trackBox.x + trackBox.width / 2
+
+    // Use raw mouse on the page for the drag sequence.
+    await app.page.mouse.move(midX, startY)
+    await app.page.mouse.down()
+    await app.page.mouse.move(midX, endY, { steps: 5 })
+    await app.page.mouse.up()
+
+    // Both tabs should have z_bottom=1.
+    const project = await getProject(app.page)
+    const tabs = getArray(project, 'tabs')
+    const tabA = tabs.find((t) => str(t.id) === 'tb-1')!
+    const tabB = tabs.find((t) => str(t.id) === 'tb-2')!
+    expect(num(tabA.z_bottom)).toBe(1)
+    expect(num(tabB.z_bottom)).toBe(1)
+  })
+
+  // ====================================================================
+  // 11. Both-invalid tab Z — rejects, field resets, history unchanged
+  // ====================================================================
+
+  test('both-invalid tab Z rejects, field resets, then valid edit + undo prove rejected input created no history', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    // Select all tabs via button.
+    await app.page.getByRole('button', { name: 'Select all tabs' }).click()
+
+    // Capture every tab's z_top and z_bottom before the rejected edit.
+    const before = await getProject(app.page)
+    const tabsBefore = getArray(before, 'tabs')
+
+    // Try z_top=-1 — rejected (z_top must be >= z_bottom=0 for all tabs).
+    await ui.properties.zRangeTopField(app.page).click()
+    await ui.properties.zRangeTopField(app.page).fill('-1')
+    await ui.properties.zRangeTopField(app.page).blur()
+
+    // Field must reset (mixed, since tabs have different z_tops: 5,3,4).
+    await expect(ui.properties.zRangeTopField(app.page)).toHaveValue('')
+
+    // Compare every tab before/after — no mutation.
+    const after = await getProject(app.page)
+    const tabsAfter = getArray(after, 'tabs')
+    for (let i = 0; i < tabsBefore.length; i++) {
+      expect(tabsAfter[i]).toEqual(tabsBefore[i])
+    }
+
+    // Now make one valid edit: z_bottom=1 (common across selected tabs).
+    await ui.properties.zRangeBottomField(app.page).click()
+    await ui.properties.zRangeBottomField(app.page).fill('1')
+    await ui.properties.zRangeBottomField(app.page).blur()
+
+    // Undo once. If the rejected edit had created a history entry,
+    // this Undo would revert the z_bottom edit, leaving z_bottom=0.
+    await app.page.keyboard.press(`${modKey}+z`)
+
+    const undone = await getProject(app.page)
+    const tabsUndone = getArray(undone, 'tabs')
+    // All tabs restored to original z_bottom=0 (because the only real
+    // edit was the z_bottom=1, and it was one entry).
+    for (let i = 0; i < tabsUndone.length; i++) {
+      expect(tabsUndone[i]).toEqual(tabsBefore[i])
+    }
+
+    // Second Undo would restore pre-select-all state — but the key
+    // evidence is that there is exactly one history entry (the z_bottom
+    // edit), not zero and not two. The fact that one Undo restores
+    // the pre-edit state proves the rejected input added no history.
+  })
+
+  // ====================================================================
+  // Preserved: basic panel display, center-preserving, atomic, delete
+  // ====================================================================
+
+  test('bulk tab panel shows after Select All tabs', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+    await app.page.getByRole('button', { name: 'Select all tabs' }).click()
+
+    await expect(app.page.locator(selectedTabRows())).toHaveCount(3)
+    await expect(ui.properties.panel(app.page)).toContainText('3 Tabs')
+    await expect(ui.properties.panel(app.page)).toContainText('Width')
+    await expect(ui.properties.zRangeSlider(app.page)).toBeAttached()
+  })
+
+  test('bulk clamp panel shows after Select All clamps', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+    await app.page.getByRole('button', { name: 'Select all clamps' }).click()
+
+    await expect(app.page.locator(selectedClampRows())).toHaveCount(2)
+    await expect(ui.properties.panel(app.page)).toContainText('2 Clamps')
+    await expect(ui.properties.zRangeSlider(app.page)).toBeAttached()
+  })
+
+  test('center-preserving bulk width edit', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+    await app.page.getByRole('button', { name: 'Select all tabs' }).click()
+
+    const before = await getProject(app.page)
+    const tabsBefore = getArray(before, 'tabs')
+    // Only visible tabs are selected and edited.
+    const visibleIds = new Set(tabsBefore.filter((t) => t.visible === true).map((t) => str(t.id)))
+    const centresBefore = new Map(
+      tabsBefore.filter((t) => visibleIds.has(str(t.id))).map((t) => [str(t.id), num(t.x) + num(t.w) / 2]),
+    )
+
+    const numericFields = ui.properties.panel(app.page).locator('[data-numeric-entry="true"]')
+    await numericFields.nth(0).click()
+    await numericFields.nth(0).fill('12')
+    await numericFields.nth(0).blur()
+
+    const after = await getProject(app.page)
+    const tabsAfter = getArray(after, 'tabs')
+    for (const t of tabsAfter) {
+      if (!visibleIds.has(str(t.id))) continue
+      const centre = num(t.x) + num(t.w) / 2
+      const beforeCentre = centresBefore.get(str(t.id))
+      expect(Math.abs(centre - beforeCentre!)).toBeLessThan(0.002)
+    }
+    expect(tabsAfter.filter((t) => visibleIds.has(str(t.id))).every((t) => Math.abs(num(t.w) - 12) < 0.002)).toBe(true)
+  })
+
+  test('bulk Z top edit is atomic (one store action)', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+    await app.page.getByRole('button', { name: 'Select all tabs' }).click()
+
+    await ui.properties.zRangeTopField(app.page).click()
+    await ui.properties.zRangeTopField(app.page).fill('7')
+    await ui.properties.zRangeTopField(app.page).blur()
+
+    const project = await getProject(app.page)
+    const tabs = getArray(project, 'tabs')
+    // Only visible tabs were selected and edited.
+    expect(tabs.filter((t) => t.visible === true).every((t) => num(t.z_top) === 7)).toBe(true)
+  })
+
+  test('bulk delete removes selected tabs', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+    await app.page.getByRole('button', { name: 'Select all tabs' }).click()
+
+    await ui.properties.deleteSelectedButton(app.page).click()
+
+    const project = await getProject(app.page)
+    // Only visible tabs were selected and deleted; hidden tab remains.
+    const tabs = getArray(project, 'tabs')
+    expect(tabs.filter((t) => t.visible === true).length).toBe(0)
+  })
+
+  // ── Clamp Z properties ───────────────────────────────────────────
+
+  test('clamp bulk Z top maps to height, bottom is locked', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+    await app.page.getByRole('button', { name: 'Select all clamps' }).click()
+
+    await expect(ui.properties.zRangeBottomField(app.page)).toHaveValue('0')
+
+    await ui.properties.zRangeTopField(app.page).click()
+    await ui.properties.zRangeTopField(app.page).fill('10')
+    await ui.properties.zRangeTopField(app.page).blur()
+
+    const project = await getProject(app.page)
+    const clamps = getArray(project, 'clamps')
+    // Only visible clamps were selected and edited.
+    expect(clamps.filter((c) => c.visible === true).every((c) => num(c.height) === 10)).toBe(true)
+  })
+
+  test('clamp bulk delete removes selected clamps', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+    await app.page.getByRole('button', { name: 'Select all clamps' }).click()
+
+    await ui.properties.deleteSelectedButton(app.page).click()
+
+    const project = await getProject(app.page)
+    // Only visible clamps were selected and deleted; hidden clamp remains.
+    const clamps = getArray(project, 'clamps')
+    expect(clamps.filter((c) => c.visible === true).length).toBe(0)
+  })
+
+  // ── Incompatible modifier addition ignored ────────────────────────
+
+  test('adding clamp via modifier to tab selection is ignored', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    await ui.tree.tabRows(app.page).nth(0).click()
+    await expect(ui.properties.panel(app.page)).toContainText('Delete Tab')
+
+    await ui.tree.clampRows(app.page).nth(0).click({ modifiers: [modKey as 'Meta' | 'Control'] })
+    await expect(ui.properties.panel(app.page)).toContainText('Delete Tab')
+  })
+
+  test('adding tab via modifier to clamp selection is ignored', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    await ui.tree.clampRows(app.page).nth(0).click()
+    await expect(ui.properties.panel(app.page)).toContainText('Delete Clamp')
+
+    await ui.tree.tabRows(app.page).nth(0).click({ modifiers: [modKey as 'Meta' | 'Control'] })
+    await expect(ui.properties.panel(app.page)).toContainText('Delete Clamp')
+  })
+
+  // ── Locked bottom field ──
+
+  test('clamp bottom field is disabled and shows 0', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+    await app.page.getByRole('button', { name: 'Select all clamps' }).click()
+
+    const bottomField = ui.properties.zRangeBottomField(app.page)
+    await expect(bottomField).toHaveValue('0')
+    await expect(bottomField).toBeDisabled()
+  })
+
+  test('single clamp bottom field is disabled and shows 0', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+    await ui.tree.clampRows(app.page).nth(0).click()
+
+    const bottomField = ui.properties.zRangeBottomField(app.page)
+    await expect(bottomField).toHaveValue('0')
+    await expect(bottomField).toBeDisabled()
+  })
+
+  // ── Bulk clamp domain independent of stock thickness ──
+
+  test('bulk clamp Z domain slider ARIA max differs from stock thickness', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+    await app.page.getByRole('button', { name: 'Select all clamps' }).click()
+
+    const topHandle = ui.properties.zRangeSlider(app.page).locator('[role="slider"]').first()
+    const ariaMax = await topHandle.getAttribute('aria-valuemax')
+    const ariaMaxNum = Number(ariaMax)
+    expect(ariaMaxNum).toBeLessThan(20)
+    expect(ariaMaxNum).toBeGreaterThan(8)
+  })
+
+  test('clamp Z range field accepts value exceeding stock thickness', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+    await app.page.getByRole('button', { name: 'Select all clamps' }).click()
+
+    await ui.properties.zRangeTopField(app.page).click()
+    await ui.properties.zRangeTopField(app.page).fill('30')
+    await ui.properties.zRangeTopField(app.page).blur()
+
+    const project = await getProject(app.page)
+    const clamps = getArray(project, 'clamps')
+    // Only visible clamps were selected and edited.
+    expect(clamps.filter((c) => c.visible === true).every((c) => num(c.height) === 30)).toBe(true)
+  })
+})

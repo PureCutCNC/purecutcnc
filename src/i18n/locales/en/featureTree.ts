@@ -239,6 +239,8 @@ export const featureTreeEn = {
   'featureTree.properties.multi.ungroup': 'Ungroup',
   'featureTree.properties.multi.deleteGroup': 'Delete Group',
   'featureTree.properties.multi.featuresCount': '{count} Features',
+  'featureTree.properties.multi.tabsCount': '{count} Tabs',
+  'featureTree.properties.multi.clampsCount': '{count} Clamps',
   'featureTree.properties.multi.editSketchDisabled': 'Edit Sketch is only available for a single feature',
   'featureTree.properties.multi.openProfiles': 'Open profiles',
   'featureTree.properties.multi.containsModel': 'Contains model features',

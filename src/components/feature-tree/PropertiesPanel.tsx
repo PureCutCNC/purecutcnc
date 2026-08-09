@@ -20,14 +20,19 @@ import { ExpandedPanelContext } from '../layout/expandedPanelContext'
 import { Select } from '../Select'
 import { DisclosureSection } from '../common/DisclosureSection'
 import { ZRangeSlider } from './ZRangeSlider'
+import { clampDomainMax, validateZEdits } from './mixedValue'
 import { ModelOrientationSection } from './ModelOrientationSection'
+import { BulkTabProperties } from './BulkTabProperties'
+import { BulkClampProperties } from './BulkClampProperties'
+import { DraftTextInput } from './DraftTextInput'
+import { DraftNumberInput } from './DraftNumberInput'
 import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { isMachinable, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
 import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
-import { convertLength, formatLength, parseLengthInput } from '../../utils/units'
+import { convertLength, formatLength } from '../../utils/units'
 import { MachineDefinitionManagerDialog } from '../machine/MachineDefinitionManagerDialog'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
 import { machineSnapshotStatus } from '../../machine/registry'
@@ -36,130 +41,6 @@ import { useRequestUnitConversion } from '../project/UnitConversionContext'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
-
-interface DraftTextInputProps {
-  value: string
-  disabled?: boolean
-  onCommit?: (value: string) => void
-}
-
-function DraftTextInput({ value, disabled = false, onCommit }: DraftTextInputProps) {
-  function reset(element: HTMLInputElement) {
-    element.value = value
-  }
-
-  function commit(element: HTMLInputElement) {
-    if (!onCommit) {
-      reset(element)
-      return
-    }
-
-    if (element.value !== value) {
-      onCommit(element.value)
-    } else {
-      reset(element)
-    }
-  }
-
-  return (
-    <input
-      key={disabled ? value : undefined}
-      type="text"
-      defaultValue={value}
-      disabled={disabled}
-      spellCheck={false}
-      onBlur={(event) => commit(event.currentTarget)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.currentTarget.blur()
-          return
-        }
-
-        if (event.key === 'Escape') {
-          reset(event.currentTarget)
-          event.currentTarget.blur()
-        }
-      }}
-    />
-  )
-}
-
-interface DraftNumberInputProps {
-  value: number | null
-  units: 'mm' | 'inch'
-  min?: number
-  max?: number
-  disabled?: boolean
-  placeholder?: string
-  onCommit: (value: number) => void
-  validate?: (value: number) => boolean
-}
-
-function DraftNumberInput({
-  value,
-  units,
-  min,
-  max,
-  disabled = false,
-  placeholder,
-  onCommit,
-  validate,
-}: DraftNumberInputProps) {
-  function reset(element: HTMLInputElement) {
-    element.value = value === null ? '' : formatLength(value, units)
-  }
-
-  function isValid(next: number) {
-    if (!Number.isFinite(next)) return false
-    if (min !== undefined && next < min) return false
-    if (max !== undefined && next > max) return false
-    if (validate && !validate(next)) return false
-    return true
-  }
-
-  function commit(element: HTMLInputElement) {
-    if (element.value.trim() === '') {
-      reset(element)
-      return
-    }
-
-    const next = parseLengthInput(element.value, units)
-    if (next === null || !isValid(next)) {
-      reset(element)
-      return
-    }
-
-    if (value === null || next !== value) {
-      onCommit(next)
-    } else {
-      reset(element)
-    }
-  }
-
-  return (
-    <input
-      type="text"
-      inputMode="decimal"
-      defaultValue={value === null ? '' : formatLength(value, units)}
-      placeholder={placeholder}
-      disabled={disabled}
-      spellCheck={false}
-      data-numeric-entry="true"
-      onBlur={(event) => commit(event.currentTarget)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.currentTarget.blur()
-          return
-        }
-
-        if (event.key === 'Escape') {
-          reset(event.currentTarget)
-          event.currentTarget.blur()
-        }
-      }}
-    />
-  )
-}
 
 /**
  * Memoised because `App` subscribes to the whole store without a selector and
@@ -206,6 +87,8 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const updateFeatures = useProjectStore((s) => s.updateFeatures)
   const deleteFeature = useProjectStore((s) => s.deleteFeature)
   const deleteFeatures = useProjectStore((s) => s.deleteFeatures)
+  const beginHistoryTransaction = useProjectStore((s) => s.beginHistoryTransaction)
+  const commitHistoryTransaction = useProjectStore((s) => s.commitHistoryTransaction)
   const enterSketchEdit = useProjectStore((s) => s.enterSketchEdit)
   const enterStockSketchEdit = useProjectStore((s) => s.enterStockSketchEdit)
   const enterTabEdit = useProjectStore((s) => s.enterTabEdit)
@@ -275,8 +158,15 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
       : '__mixed__'
   const selectedZEditableFeatures = allSelectedFeatures.filter(isMachinable)
   const selectedZEditableFeatureIds = selectedZEditableFeatures.map((feature) => feature.id)
-  const selectedClosedEditableFeatures = selectedZEditableFeatures.filter((feature) => feature.sketch.profile.closed)
-  const selectedOpenEditableFeatures = selectedZEditableFeatures.filter((feature) => !feature.sketch.profile.closed)
+  // Line-operation features (including closed profiles) are treated as
+  // open for Z purposes: they are engraved paths with bottom locked at
+  // zero, never bottom-editable.
+  const selectedClosedEditableFeatures = selectedZEditableFeatures.filter(
+    (feature) => feature.sketch.profile.closed && feature.operation !== 'line',
+  )
+  const selectedOpenEditableFeatures = selectedZEditableFeatures.filter(
+    (feature) => !feature.sketch.profile.closed || feature.operation === 'line',
+  )
   const hasOpenEditableFeatures = selectedOpenEditableFeatures.length > 0
   const commonSelectedZTop =
     selectedZEditableFeatures.length > 0 &&
@@ -296,14 +186,6 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const selectedNumericZTops = selectedZEditableFeatures
     .map((feature) => feature.z_top)
     .filter((value): value is number => typeof value === 'number')
-  const multiEditMinZTop =
-    selectedNumericZBottoms.length === selectedClosedEditableFeatures.length
-      ? Math.max(...selectedNumericZBottoms)
-      : null
-  const multiEditMaxZBottom =
-    selectedNumericZTops.length === selectedZEditableFeatures.length
-      ? Math.min(...selectedNumericZTops)
-      : null
   // The project embeds only its own snapshot; the picker lists the current
   // application library, plus the embedded machine when it is not in it.
   const selectedMachine = getActiveMachineDefinition(project)
@@ -1028,8 +910,17 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     )
   }
 
+  if (selection.selectedClampIds.length > 1) {
+    const selectedClamps = project.clamps.filter((c) => selection.selectedClampIds.includes(c.id))
+    return <BulkClampProperties selectedClamps={selectedClamps} units={units} onClose={closeExpanded} />
+  }
+
   if (selectedClamp) {
-    const minimumClampSize = convertLength(0.1, 'mm', units)
+    const clampDomain = clampDomainMax(
+      [selectedClamp.height],
+      convertLength(5, 'mm', units),
+      convertLength(5, 'mm', units),
+    )
     return (
       <div className="properties-panel">
         <div className="properties-group">
@@ -1041,27 +932,19 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               onCommit={(next) => updateClamp(selectedClamp.id, { name: next })}
             />
           </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.zTop")}</span>
-            <DraftNumberInput
-              key={`clamp-height-${selectedClamp.id}-${selectedClamp.height}`}
-              value={selectedClamp.height}
-              units={units}
-              min={minimumClampSize}
-              onCommit={(next) => updateClamp(selectedClamp.id, { height: next })}
-            />
-          </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.zBottom")}</span>
-            <DraftNumberInput
-              key={`clamp-zbottom-${selectedClamp.id}`}
-              value={0}
-              units={units}
-              min={0}
-              max={0}
-              onCommit={() => {}}
-            />
-          </label>
+          <ZRangeSlider
+            selectionKey={`clamp-${selectedClamp.id}`}
+            zTop={selectedClamp.height}
+            zBottom={0}
+            domainMin={0}
+            domainMax={clampDomain}
+            units={units}
+            bottomLocked
+            onCommit={(patch) => {
+              if (patch.top !== undefined) { updateClamp(selectedClamp.id, { height: patch.top }) }
+              return true
+            }}
+          />
           <label className="properties-check">
             <input
               type="checkbox"
@@ -1083,7 +966,13 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
     )
   }
 
+  if (selection.selectedTabIds.length > 1) {
+    const selectedTabs = project.tabs.filter((t) => selection.selectedTabIds.includes(t.id))
+    return <BulkTabProperties selectedTabs={selectedTabs} units={units} stockThickness={project.stock.thickness} onClose={closeExpanded} />
+  }
+
   if (selectedTab) {
+    const tabDomainMax = Math.max(selectedTab.z_top, project.stock.thickness, convertLength(5, 'mm', units))
     return (
       <div className="properties-panel">
         <div className="properties-group">
@@ -1095,28 +984,19 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               onCommit={(next) => updateTab(selectedTab.id, { name: next })}
             />
           </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.zTop")}</span>
-            <DraftNumberInput
-              key={`tab-ztop-${selectedTab.id}-${selectedTab.z_top}`}
-              value={selectedTab.z_top}
-              units={units}
-              min={0}
-              validate={(next) => next >= selectedTab.z_bottom}
-              onCommit={(next) => updateTab(selectedTab.id, { z_top: next })}
-            />
-          </label>
-          <label className="properties-field">
-            <span>{t("featureTree.properties.zBottom")}</span>
-            <DraftNumberInput
-              key={`tab-zbottom-${selectedTab.id}-${selectedTab.z_bottom}`}
-              value={selectedTab.z_bottom}
-              units={units}
-              min={0}
-              validate={(next) => next <= selectedTab.z_top}
-              onCommit={(next) => updateTab(selectedTab.id, { z_bottom: next })}
-            />
-          </label>
+          <ZRangeSlider
+            selectionKey={`tab-${selectedTab.id}`}
+            zTop={selectedTab.z_top}
+            zBottom={selectedTab.z_bottom}
+            domainMin={0}
+            domainMax={tabDomainMax}
+            units={units}
+            onCommit={(patch) => {
+              if (patch.top !== undefined) updateTab(selectedTab.id, { z_top: patch.top })
+              if (patch.bottom !== undefined) updateTab(selectedTab.id, { z_bottom: patch.bottom })
+              return true
+            }}
+          />
           <label className="properties-check">
             <input
               type="checkbox"
@@ -1232,59 +1112,59 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               </label>
             ) : null}
             {selectedZEditableFeatures.length > 0 ? (
-              <>
-                <label className="properties-field">
-                  <span>{t("featureTree.properties.zTop")}</span>
-                  <DraftNumberInput
-                    key={`multi-feature-ztop-${selectedZEditableFeatureIds.join(',')}-${commonSelectedZTop ?? 'mixed'}-${commonSelectedZBottom ?? 'mixed'}`}
-                    value={commonSelectedZTop}
-                    units={units}
-                    min={0}
-                    placeholder={t('featureTree.properties.select.mixedValues')}
-                    validate={(next) => multiEditMinZTop === null || next >= multiEditMinZTop}
-                    onCommit={(next) => updateFeatures(selectedZEditableFeatureIds, { z_top: next })}
-                  />
-                </label>
-                {hasOpenEditableFeatures && selectedClosedEditableFeatures.length === 0 ? (
-                  <label className="properties-field">
-                    <span>{t("featureTree.properties.zBottom")}</span>
-                    <DraftNumberInput
-                      key={`multi-feature-zbottom-open-${selectedZEditableFeatureIds.join(',')}`}
-                      value={0}
-                      units={units}
-                      min={0}
-                      max={0}
-                      onCommit={() => {}}
-                    />
-                  </label>
-                ) : hasOpenEditableFeatures ? (
-                  <label className="properties-field">
-                    <span>{t("featureTree.properties.zBottom")}</span>
-                    <DraftNumberInput
-                      key={`multi-feature-zbottom-mixed-${selectedZEditableFeatureIds.join(',')}-${commonSelectedZBottom ?? 'mixed'}`}
-                      value={commonSelectedZBottom}
-                      units={units}
-                      min={0}
-                      placeholder={t('featureTree.properties.select.mixedValues')}
-                      validate={(next) => multiEditMaxZBottom === null || next <= multiEditMaxZBottom}
-                      onCommit={(next) => updateFeatures(selectedClosedEditableFeatures.map((f) => f.id), { z_bottom: next })}
-                    />
-                  </label>
-                ) : (
-                  <label className="properties-field">
-                    <span>{t("featureTree.properties.zBottom")}</span>
-                    <DraftNumberInput
-                      key={`multi-feature-zbottom-${selectedZEditableFeatureIds.join(',')}-${commonSelectedZTop ?? 'mixed'}-${commonSelectedZBottom ?? 'mixed'}`}
-                      value={commonSelectedZBottom}
-                      units={units}
-                      min={0}
-                      placeholder={t('featureTree.properties.select.mixedValues')}
-                      validate={(next) => multiEditMaxZBottom === null || next <= multiEditMaxZBottom}
-                      onCommit={(next) => updateFeatures(selectedZEditableFeatureIds, { z_bottom: next })}
-                    />
-                  </label>
+              <ZRangeSlider
+                selectionKey={`features-${selectedZEditableFeatureIds.join(',')}`}
+                zTop={commonSelectedZTop}
+                zBottom={hasOpenEditableFeatures && selectedClosedEditableFeatures.length === 0 ? 0 : commonSelectedZBottom}
+                domainMin={0}
+                domainMax={Math.max(
+                  project.stock.thickness,
+                  ...selectedNumericZTops,
+                  ...(hasOpenEditableFeatures && selectedClosedEditableFeatures.length === 0 ? [] : selectedNumericZBottoms),
+                  convertLength(1, 'mm', units),
                 )}
-              </>
+                units={units}
+                bottomLocked={hasOpenEditableFeatures && selectedClosedEditableFeatures.length === 0}
+                mixedPlaceholder={t('featureTree.properties.select.mixedValues')}
+                onCommit={(patch) => {
+                  // Per-item effective bottom: closed add/subtract/text/model
+                  // features use their real z_bottom; open/Line features always
+                  // conceptually sit on the bed (0), never a stale stored non-zero.
+                  const getBottom = (f: (typeof selectedZEditableFeatures)[number]) =>
+                    (f.sketch.profile.closed && f.operation !== 'line')
+                      ? (typeof f.z_bottom === 'number' ? f.z_bottom : 0)
+                      : 0
+
+                  // Top or combined patch: validate every Z-editable feature.
+                  // Bottom-only patch: validate only closed editable features
+                  // (open/Line features are not bottom-edited and must not block
+                  // a valid closed-feature bottom edit).
+                  const validateItems = patch.top !== undefined
+                    ? selectedZEditableFeatures
+                    : selectedClosedEditableFeatures
+
+                  if (!validateZEdits(
+                    validateItems,
+                    (f) => typeof f.z_top === 'number' ? f.z_top : 0,
+                    getBottom,
+                    patch,
+                  )) return false
+
+                  beginHistoryTransaction()
+                  if (patch.top !== undefined) {
+                    updateFeatures(selectedZEditableFeatureIds, { z_top: patch.top })
+                  }
+                  if (patch.bottom !== undefined && !(hasOpenEditableFeatures && selectedClosedEditableFeatures.length === 0)) {
+                    // Bottom applies only to closed editable features in a mixed selection.
+                    const closedIds = selectedClosedEditableFeatures.map((f) => f.id)
+                    if (closedIds.length > 0) {
+                      updateFeatures(closedIds, { z_bottom: patch.bottom })
+                    }
+                  }
+                  commitHistoryTransaction()
+                  return true
+                }}
+              />
             ) : (
               <label className="properties-field">
                 <span>{t("featureTree.properties.zRange")}</span>
@@ -1529,64 +1409,33 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               </label>
             </>
           ) : !selectedFeature.sketch.profile.closed || selectedFeature.operation === 'line' ? (
-            <>
-              <label className="properties-field">
-                <span>{t("featureTree.properties.zTop")}</span>
-                <DraftNumberInput
-                  key={`feature-ztop-${selectedFeature.id}-${zTop}`}
-                    value={zTop}
-                    units={units}
-                    min={0}
-                    onCommit={(next) => updateFeature(selectedFeature.id, { z_top: next })}
-                />
-              </label>
-              <label className="properties-field">
-                <span>{t("featureTree.properties.zBottom")}</span>
-                <DraftNumberInput
-                  key={`feature-zbottom-open-${selectedFeature.id}`}
-                    value={0}
-                    units={units}
-                    min={0}
-                    max={0}
-                    onCommit={() => {}}
-                />
-              </label>
-            </>
-          ) : project.stock.thickness > 0 ? (
             <ZRangeSlider
-              featureId={selectedFeature.id}
+              selectionKey={`feature-${selectedFeature.id}`}
               zTop={zTop}
-              zBottom={zBottom}
-              stockThickness={project.stock.thickness}
+              zBottom={0}
+              domainMin={0}
+              domainMax={Math.max(zTop, project.stock.thickness, convertLength(1, 'mm', units))}
               units={units}
-              onCommitZTop={(next) => updateFeature(selectedFeature.id, { z_top: next })}
-              onCommitZBottom={(next) => updateFeature(selectedFeature.id, { z_bottom: next })}
+              bottomLocked
+              onCommit={(patch) => {
+                if (patch.top !== undefined) updateFeature(selectedFeature.id, { z_top: patch.top })
+                return true
+              }}
             />
           ) : (
-            <>
-              <label className="properties-field">
-                <span>{t("featureTree.properties.zTop")}</span>
-                <DraftNumberInput
-                  key={`feature-ztop-${selectedFeature.id}-${zTop}-${zBottom}`}
-                    value={zTop}
-                    units={units}
-                    min={0}
-                    validate={(next) => next >= zBottom}
-                    onCommit={(next) => updateFeature(selectedFeature.id, { z_top: next })}
-                />
-              </label>
-              <label className="properties-field">
-                <span>{t("featureTree.properties.zBottom")}</span>
-                <DraftNumberInput
-                  key={`feature-zbottom-${selectedFeature.id}-${zTop}-${zBottom}`}
-                    value={zBottom}
-                    units={units}
-                    min={0}
-                    validate={(next) => next <= zTop}
-                    onCommit={(next) => updateFeature(selectedFeature.id, { z_bottom: next })}
-                />
-              </label>
-            </>
+            <ZRangeSlider
+              selectionKey={`feature-${selectedFeature.id}`}
+              zTop={zTop}
+              zBottom={zBottom}
+              domainMin={0}
+              domainMax={Math.max(zTop, zBottom, project.stock.thickness, convertLength(1, 'mm', units))}
+              units={units}
+              onCommit={(patch) => {
+                if (patch.top !== undefined) updateFeature(selectedFeature.id, { z_top: patch.top })
+                if (patch.bottom !== undefined) updateFeature(selectedFeature.id, { z_bottom: patch.bottom })
+                return true
+              }}
+            />
           )}
           <label className="properties-field">
             <span>{t("featureTree.properties.folder")}</span>

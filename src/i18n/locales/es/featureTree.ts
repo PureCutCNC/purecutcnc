@@ -185,6 +185,8 @@ export const featureTreeEs: Record<keyof typeof featureTreeEn, string> = {
   "featureTree.properties.multi.ungroup": "Desagrupar",
   "featureTree.properties.multi.deleteGroup": "Eliminar grupo",
   "featureTree.properties.multi.featuresCount": "{count} elementos",
+  "featureTree.properties.multi.tabsCount": "{count} lengüetas",
+  "featureTree.properties.multi.clampsCount": "{count} mordazas",
   "featureTree.properties.multi.editSketchDisabled": "Editar croquis solo está disponible para un solo elemento",
   "featureTree.properties.multi.openProfiles": "Abrir perfiles",
   "featureTree.properties.multi.containsModel": "Contiene elementos de modelo",
