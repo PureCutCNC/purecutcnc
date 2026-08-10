@@ -126,6 +126,34 @@ export async function getFeatureCount(page: Page): Promise<number> {
   })
 }
 
+/** Select the given features and open the Join workflow panel. */
+export async function startJoinFeatures(page: Page, ids: string[]): Promise<void> {
+  await page.evaluate(async (featureIds: string[]) => {
+    const w = window as unknown as { __pcTest: { startJoinFeatures: (ids: string[]) => Promise<void> } }
+    await w.__pcTest.startJoinFeatures(featureIds)
+  }, ids)
+}
+
+/** Open the Rotate workflow panel on a feature, before any reference is picked. */
+export async function startRotateFeature(page: Page, featureId: string): Promise<void> {
+  await page.evaluate(async (id: string) => {
+    const w = window as unknown as { __pcTest: { startRotateFeature: (featureId: string) => Promise<void> } }
+    await w.__pcTest.startRotateFeature(id)
+  }, featureId)
+}
+
+/** Read keep-originals off whichever workflow currently owns it. */
+export async function getKeepOriginals(
+  page: Page,
+): Promise<{ shapeAction: boolean | null; transform: boolean | null }> {
+  return page.evaluate(async () => {
+    const w = window as unknown as {
+      __pcTest: { getKeepOriginals: () => Promise<{ shapeAction: boolean | null; transform: boolean | null }> }
+    }
+    return w.__pcTest.getKeepOriginals()
+  })
+}
+
 // ── Feature tree ────────────────────────────────────────────────────
 
 /** Count feature rows currently rendered. */
