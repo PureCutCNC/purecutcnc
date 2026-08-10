@@ -26,8 +26,10 @@
  * Run with: npx tsx src/engine/toolpaths/tabSmoothing.test.ts
  */
 
-import { defaultTool, newProject, type Operation, type Project, type Tab } from '../../types/project'
-import { applyTabsToEdgeRoute } from './tabs'
+import { defaultTool, newProject, rectProfile, type Operation, type Project, type Tab } from '../../types/project'
+import { projectWithFeatures } from '../../test/projectFixtures'
+import { generateEdgeRouteToolpath } from './edge'
+import { applyEdgeRouteTabs, applyTabsToEdgeRoute } from './tabs'
 import { optimizeLinearMoves } from './linearMoveOptimization'
 import { smoothTabZAt } from './tabProfile'
 import type { ToolpathMove, ToolpathResult } from './types'
@@ -567,6 +569,92 @@ test('a smooth tab only affects passes that are below its top', () => {
 
   assert(out.moves.length === 1, 'a pass above the tab top is left alone')
   assertClose(out.moves[0].to.z, 6, 1e-9, 'and stays at its own depth')
+})
+
+// ── Trochoidal Edge Route falls back, and says so ────────────────────
+
+test('a smooth tab on a trochoidal Edge Route warns instead of silently stepping', () => {
+  const project = projectWithFeatures(projectWithTabs([tab('tb1', 56, 16, 8, 8, 'smooth')]), [
+    {
+      id: 'f1',
+      name: 'Boss',
+      kind: 'rect',
+      folderId: null,
+      sketch: {
+        profile: rectProfile(20, 20, 80, 60),
+        origin: { x: 0, y: 0 },
+        orientationAngle: 0,
+        dimensions: [],
+        constraints: [],
+      },
+      operation: 'add',
+      z_top: 12,
+      z_bottom: 0,
+      visible: true,
+      locked: false,
+    },
+  ] as never)
+
+  const trochoidal: Operation = {
+    ...operation(),
+    kind: 'edge_route_outside',
+    toolRef: 't1',
+    edgeStrategy: 'trochoidal',
+    trochoidalCutWidth: 9,
+    trochoidalAdvance: 0.35,
+    entryStrategy: 'helix',
+  }
+
+  const generated = generateEdgeRouteToolpath({ ...project, tabs: projectWithTabs([tab('tb1', 56, 16, 8, 8, 'smooth')]).tabs }, trochoidal)
+  const codes = generated.warnings.map((warning) => warning.code)
+  assert(
+    codes.includes('edgeTrochoidalSmoothTabFallback'),
+    `expected the smooth-tab fallback warning, got ${JSON.stringify(codes)}`,
+  )
+
+  // And the shared pass must still decline to touch trochoidal output at all —
+  // the guide-domain design owns tab motion there.
+  const afterTabs = applyEdgeRouteTabs(project, trochoidal, generated)
+  assert(afterTabs.moves === generated.moves, 'the shared tab pass leaves trochoidal output untouched')
+})
+
+test('a rectangular tab on a trochoidal Edge Route raises no fallback warning', () => {
+  const project = projectWithFeatures(projectWithTabs([tab('tb1', 56, 16, 8, 8, 'rect')]), [
+    {
+      id: 'f1',
+      name: 'Boss',
+      kind: 'rect',
+      folderId: null,
+      sketch: {
+        profile: rectProfile(20, 20, 80, 60),
+        origin: { x: 0, y: 0 },
+        orientationAngle: 0,
+        dimensions: [],
+        constraints: [],
+      },
+      operation: 'add',
+      z_top: 12,
+      z_bottom: 0,
+      visible: true,
+      locked: false,
+    },
+  ] as never)
+
+  const trochoidal: Operation = {
+    ...operation(),
+    kind: 'edge_route_outside',
+    toolRef: 't1',
+    edgeStrategy: 'trochoidal',
+    trochoidalCutWidth: 9,
+    trochoidalAdvance: 0.35,
+    entryStrategy: 'helix',
+  }
+
+  const codes = generateEdgeRouteToolpath(
+    { ...project, tabs: projectWithTabs([tab('tb1', 56, 16, 8, 8, 'rect')]).tabs },
+    trochoidal,
+  ).warnings.map((warning) => warning.code)
+  assert(!codes.includes('edgeTrochoidalSmoothTabFallback'), 'no fallback warning for a rectangular tab')
 })
 
 // ── Summary ──────────────────────────────────────────────────────────

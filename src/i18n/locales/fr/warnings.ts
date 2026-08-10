@@ -70,6 +70,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeTrochoidalEntryBudget': 'L’entrée trochoïdale près de ({x}, {y}) dépasse le budget de points d’entrée.',
   'warnings.edgeTrochoidalTabsRequireHelix': 'Le fraisage trochoïdal exige une entrée hélicoïdale lorsque des attaches sont actives.',
   'warnings.edgeTrochoidalTabUnsafe': 'Le dégagement de l’attache trochoïdale est dangereux près de ({x}, {y}).',
+  'warnings.edgeTrochoidalSmoothTabFallback': 'L’attache « {name} » est définie sur Adoucie, mais le contournage trochoïdal l’usine comme Rectangulaire. Le parcours d’outil franchit cette attache par paliers au lieu de monter en rampe.',
   'warnings.edgeTrochoidalSkippedSpan': 'Le tronçon trochoïdal près de ({x}, {y}) est trop court pour une entrée hélicoïdale sûre et a été ignoré.',
   'warnings.edgeTrochoidalNoSurvivingSpan': 'Aucun tronçon de guide trochoïdal près de ({x}, {y}) ne peut créer une cavité d’entrée sûre.',
   'warnings.edgeTrochoidalSafetyCheck': 'La vérification de sécurité trochoïdale a échoué près de ({x}, {y}) ; aucun parcours n’a été généré.',

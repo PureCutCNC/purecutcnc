@@ -74,6 +74,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeTrochoidalEntryBudget': '({x}, {y}) 附近的摆线入口超过了入口点预算。',
   'warnings.edgeTrochoidalTabsRequireHelix': '启用连接桥时，摆线加工需要螺旋进入。',
   'warnings.edgeTrochoidalTabUnsafe': '({x}, {y}) 附近的摆线连接桥间隙不安全。',
+  'warnings.edgeTrochoidalSmoothTabFallback': '凸台“{name}”设置为平滑，但摆线轮廓加工按矩形方式切削。刀路在此凸台上采用阶梯抬刀，而非斜坡过渡。',
   'warnings.edgeTrochoidalSkippedSpan': '({x}, {y}) 附近的摆线路段太短，无法安全螺旋进入，已跳过。',
   'warnings.edgeTrochoidalNoSurvivingSpan': '({x}, {y}) 附近没有可安全建立入口腔的摆线引导段。',
   'warnings.edgeTrochoidalSafetyCheck': '({x}, {y}) 附近的摆线安全验证失败；未生成刀路。',

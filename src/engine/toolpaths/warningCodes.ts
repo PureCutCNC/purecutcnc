@@ -74,6 +74,12 @@ export type ToolpathWarningCode =
   | 'edgeTrochoidalEntryBudget'
   | 'edgeTrochoidalTabsRequireHelix'
   | 'edgeTrochoidalTabUnsafe'
+  /** A smooth tab was used on a trochoidal Edge Route. Trochoidal roughing owns
+   *  its own tab motion in the guide domain — it fragments the guide around each
+   *  tab before any orbit exists — so the shared smooth ramp cannot apply. The
+   *  conservative rectangular hold is used instead, and this says so: a smooth
+   *  selection is never silently ignored. */
+  | 'edgeTrochoidalSmoothTabFallback'
   | 'edgeTrochoidalSkippedSpan'
   | 'edgeTrochoidalNoSurvivingSpan'
   | 'edgeTrochoidalSafetyCheck'

@@ -80,6 +80,7 @@ export const warningsEn = {
   'warnings.edgeTrochoidalEntryBudget': 'The trochoidal entry near ({x}, {y}) exceeds the entry-point budget.',
   'warnings.edgeTrochoidalTabsRequireHelix': 'Trochoidal routing requires Helix entry when tabs are active.',
   'warnings.edgeTrochoidalTabUnsafe': 'Trochoidal tab clearance is unsafe near ({x}, {y}).',
+  'warnings.edgeTrochoidalSmoothTabFallback': 'Tab "{name}" is set to Smooth, but trochoidal Edge Route cuts it as Rectangular. The toolpath steps over this tab instead of ramping.',
   'warnings.edgeTrochoidalSkippedSpan': 'The trochoidal span near ({x}, {y}) is too short for a safe helical entry and was skipped.',
   'warnings.edgeTrochoidalNoSurvivingSpan': 'No trochoidal guide span near ({x}, {y}) can safely establish an entry cavity.',
   'warnings.edgeTrochoidalSafetyCheck': 'Trochoidal safety verification failed near ({x}, {y}); no path was generated.',
