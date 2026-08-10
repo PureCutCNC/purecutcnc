@@ -356,6 +356,23 @@ test('a rect tab overlapping a smooth tab keeps the rectangular envelope', () =>
   assertClose(zAtX(out.moves, 60), 5, 1e-9, 'the smooth tab still reaches its own peak')
 })
 
+test('a crossing buried inside one long move is still found', () => {
+  // The move is sampled at a few points to decide which crossings touch it. A
+  // small tab far from every sample point — here the move spans 0..200 and the
+  // footprint is 120..140, while the midpoint sample sits at 100 — is exactly
+  // what a sample-only test would miss, leaving the tab uncut.
+  const project = projectWithTabs([tab('tb1', 120, 40, 20, 20, 'smooth')])
+  const out = applyTabsToEdgeRoute(
+    project,
+    operation(),
+    result([{ kind: 'cut', from: { x: 0, y: 50, z: CUT_Z }, to: { x: 200, y: 50, z: CUT_Z } }]),
+  )
+
+  assertClose(zAtX(out.moves, 130), TAB_TOP, 1e-9, 'the buried crossing still peaks at z_top')
+  assertClose(zAtX(out.moves, 120), CUT_Z, 1e-9, 'and enters at the cut Z')
+  assertClose(zAtX(out.moves, 140), CUT_Z, 1e-9, 'and exits at the cut Z')
+})
+
 // ── Safety differential ──────────────────────────────────────────────
 // The strongest statement available: recompute the required envelope in the
 // test, independently of the engine, and check every emitted point against it.
