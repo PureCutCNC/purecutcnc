@@ -44,6 +44,10 @@ export type SelectionSlice = Pick<
   | 'selectFeatureFolder'
   | 'selectTab'
   | 'selectClamp'
+  | 'selectTabs'
+  | 'selectClamps'
+  | 'selectAllTabs'
+  | 'selectAllClamps'
   | 'hoverFeature'
   | 'enterSketchEdit'
   | 'enterClampEdit'
@@ -61,6 +65,8 @@ export function emptySelection(): SelectionState {
     mode: 'feature',
     selectedFeatureId: null,
     selectedFeatureIds: [],
+    selectedTabIds: [],
+    selectedClampIds: [],
     selectedNode: null,
     hoveredFeatureId: null,
     sketchEditTool: null,
@@ -69,83 +75,165 @@ export function emptySelection(): SelectionState {
   }
 }
 
+/**
+ * Centralized selection invariant boundary.
+ *
+ * - Filters nonexistent IDs from every collection.
+ * - Enforces single-family exclusivity: never returns more than one non-empty
+ *   family collection (features, tabs, or clamps).
+ * - Resolves the family from a valid primary node first; when the primary is
+ *   invalid or absent, falls back to any non-empty collection (features first,
+ *   then tabs, then clamps).
+ * - Preserves valid pending-feature-workflow state where selectedFeatureIds is
+ *   non-empty but selectedNode is null.
+ * - When given deliberately malformed mixed-family input, resolves
+ *   deterministically based on the valid primary family.
+ */
 export function sanitizeSelection(project: Project, selection: SelectionState): SelectionState {
-  const selectedNode = selection.selectedNode
-  const selectedFeatureIds = selection.selectedFeatureIds.filter((featureId) =>
-    project.features.some((feature) => feature.id === featureId)
+  const validFeatureIds = selection.selectedFeatureIds.filter((id) =>
+    project.features.some((f) => f.id === id),
   )
-  const selectedFeatureId =
-    selection.selectedFeatureId && selectedFeatureIds.includes(selection.selectedFeatureId)
-      ? selection.selectedFeatureId
-      : selectedFeatureIds.at(-1) ?? null
+  const validTabIds = selection.selectedTabIds.filter((id) =>
+    project.tabs.some((t) => t.id === id),
+  )
+  const validClampIds = selection.selectedClampIds.filter((id) =>
+    project.clamps.some((c) => c.id === id),
+  )
 
-  if (selectedNode?.type === 'feature') {
-    if (selectedFeatureIds.length === 0 || !selectedFeatureId) {
-      return {
-        ...selection,
-        mode: 'feature',
-        selectedFeatureId: null,
-        selectedFeatureIds: [],
-        selectedNode: null,
-        hoveredFeatureId: null,
-        sketchEditTool: null,
-        activeControl: null,
-        groupFolderId: null,
+  const primaryNode = selection.selectedNode
+  const primaryType = primaryNode?.type
+
+  // Resolve the active family and enforce single-family exclusivity.
+  type Family = 'feature' | 'tab' | 'clamp'
+  let activeFamily: Family | null = null
+  let resolvedFeatureIds: string[] = []
+  let resolvedTabIds: string[] = []
+  let resolvedClampIds: string[] = []
+  let resolvedPrimaryNode: SelectionState['selectedNode'] = null
+  let resolvedMode: SelectionState['mode'] = 'feature'
+
+  // 1. If the primary node declares a family AND its corresponding collection
+  //    is non-empty, that family is authoritative.
+  if (primaryType === 'feature' && validFeatureIds.length > 0) {
+    activeFamily = 'feature'
+  } else if (primaryType === 'tab' && validTabIds.length > 0) {
+    activeFamily = 'tab'
+  } else if (primaryType === 'clamp' && validClampIds.length > 0) {
+    activeFamily = 'clamp'
+  }
+
+  if (activeFamily === 'feature') {
+    resolvedFeatureIds = validFeatureIds
+    resolvedTabIds = []
+    resolvedClampIds = []
+    const primaryId =
+      selection.selectedFeatureId && validFeatureIds.includes(selection.selectedFeatureId)
+        ? selection.selectedFeatureId
+        : validFeatureIds.at(-1) ?? null
+    resolvedPrimaryNode = primaryId ? { type: 'feature', featureId: primaryId } : null
+    // Preserve sketch_edit mode when editing a single feature.
+    if (validFeatureIds.length === 1 && primaryNode?.type === 'feature') {
+      resolvedMode = selection.mode
+    }
+  } else if (activeFamily === 'tab') {
+    resolvedFeatureIds = []
+    resolvedTabIds = validTabIds
+    resolvedClampIds = []
+    const primaryId =
+      primaryNode && primaryNode.type === 'tab' && validTabIds.includes(primaryNode.tabId)
+        ? primaryNode.tabId
+        : validTabIds.at(-1) ?? null
+    resolvedPrimaryNode = primaryId ? { type: 'tab', tabId: primaryId } : null
+  } else if (activeFamily === 'clamp') {
+    resolvedFeatureIds = []
+    resolvedTabIds = []
+    resolvedClampIds = validClampIds
+    const primaryId =
+      primaryNode && primaryNode.type === 'clamp' && validClampIds.includes(primaryNode.clampId)
+        ? primaryNode.clampId
+        : validClampIds.at(-1) ?? null
+    resolvedPrimaryNode = primaryId ? { type: 'clamp', clampId: primaryId } : null
+  } else {
+    // 2. No valid family primary — fall back to any non-empty collection.
+    //    Features have priority; feature IDs with null primary is a valid
+    //    pending-workflow state.
+    if (validFeatureIds.length > 0) {
+      resolvedFeatureIds = validFeatureIds
+      resolvedTabIds = []
+      resolvedClampIds = []
+      // Pending-workflow shape: valid feature IDs but both selectedFeatureId
+      // and selectedNode are null.  Preserve that shape — do NOT promote it
+      // into an ordinary feature-primary selection.
+      if (selection.selectedFeatureId === null && selection.selectedNode === null) {
+        resolvedPrimaryNode = null
+      } else {
+        const primaryId =
+          selection.selectedFeatureId && validFeatureIds.includes(selection.selectedFeatureId)
+            ? selection.selectedFeatureId
+            : validFeatureIds.at(-1) ?? null
+        resolvedPrimaryNode = primaryId ? { type: 'feature', featureId: primaryId } : null
       }
+    } else if (validTabIds.length > 0) {
+      resolvedTabIds = validTabIds
+      resolvedClampIds = []
+      const primaryId = validTabIds.at(-1) ?? null
+      resolvedPrimaryNode = primaryId ? { type: 'tab', tabId: primaryId } : null
+    } else if (validClampIds.length > 0) {
+      resolvedClampIds = validClampIds
+      const primaryId = validClampIds.at(-1) ?? null
+      resolvedPrimaryNode = primaryId ? { type: 'clamp', clampId: primaryId } : null
+    } else {
+      // 3. Nothing valid — validate and keep the non-family node, or null.
+      resolvedPrimaryNode = validateNonFamilyNode(project, primaryNode)
     }
   }
 
   const hoveredFeatureId =
-    selection.hoveredFeatureId && project.features.some((feature) => feature.id === selection.hoveredFeatureId)
+    selection.hoveredFeatureId && project.features.some((f) => f.id === selection.hoveredFeatureId)
       ? selection.hoveredFeatureId
       : null
 
-  const safeSelectedNode =
-    selectedNode?.type === 'folder'
-      ? project.featureFolders.some((folder) => folder.id === selectedNode.folderId)
-        ? selectedNode
-        : null
-      : selectedNode?.type === 'tab'
-        ? project.tabs.some((tab) => tab.id === selectedNode.tabId)
-          ? selectedNode
-          : null
-      : selectedNode?.type === 'tabs_root'
-        ? selectedNode
-      : selectedNode?.type === 'clamp'
-        ? project.clamps.some((clamp) => clamp.id === selectedNode.clampId)
-          ? selectedNode
-          : null
-      : selectedNode?.type === 'clamps_root'
-        ? selectedNode
-      : selectedNode?.type === 'origin'
-        ? selectedNode
-      : selectedNode?.type === 'backdrop'
-        ? project.backdrop
-          ? selectedNode
-          : null
-      : selectedNode?.type === 'features_root'
-        ? selectedNode
-      : selectedNode?.type === 'regions_root'
-        ? selectedNode
-      : selectedNode
-
   return {
-    ...selection,
-    mode:
-      selectedFeatureIds.length === 1 && selection.selectedNode?.type === 'feature'
-        ? selection.mode
-        : 'feature',
-    selectedFeatureId,
-    selectedFeatureIds,
-    selectedNode:
-      selectedFeatureId
-        ? { type: 'feature', featureId: selectedFeatureId }
-        : selection.selectedNode?.type === 'feature'
-          ? null
-          : safeSelectedNode,
+    mode: resolvedMode,
+    selectedFeatureId:
+      resolvedPrimaryNode?.type === 'feature' ? resolvedPrimaryNode.featureId : null,
+    selectedFeatureIds: resolvedFeatureIds,
+    selectedTabIds: resolvedTabIds,
+    selectedClampIds: resolvedClampIds,
+    selectedNode: resolvedPrimaryNode,
     hoveredFeatureId,
-    sketchEditTool: selection.mode === 'sketch_edit' ? selection.sketchEditTool : null,
+    sketchEditTool: resolvedMode === 'sketch_edit' ? selection.sketchEditTool : null,
     activeControl: null,
+    groupFolderId:
+      selection.groupFolderId && resolvedPrimaryNode?.type === 'feature'
+        ? selection.groupFolderId
+        : null,
+  }
+}
+
+/** Validate a non-family selectedNode (folder, root, backdrop, etc.) against the project. */
+function validateNonFamilyNode(
+  project: Project,
+  node: SelectionState['selectedNode'],
+): SelectionState['selectedNode'] {
+  if (!node) return null
+  switch (node.type) {
+    case 'folder':
+      return project.featureFolders.some((f) => f.id === node.folderId) ? node : null
+    case 'backdrop':
+      return project.backdrop ? node : null
+    case 'project':
+    case 'grid':
+    case 'stock':
+    case 'origin':
+    case 'features_root':
+    case 'regions_root':
+    case 'construction_root':
+    case 'tabs_root':
+    case 'clamps_root':
+      return node
+    default:
+      return null
   }
 }
 
@@ -201,6 +289,8 @@ export function createSelectionSlice(
               ...s.selection,
               selectedFeatureId: nextPrimaryId,
               selectedFeatureIds: nextIds,
+              selectedTabIds: [],
+              selectedClampIds: [],
               selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
               mode: 'feature',
               activeControl: null,
@@ -239,6 +329,8 @@ export function createSelectionSlice(
                   ...s.selection,
                   selectedFeatureId: null,
                   selectedFeatureIds: [],
+                  selectedTabIds: [],
+                  selectedClampIds: [],
                   selectedNode: null,
                   mode: 'feature',
                   activeControl: null,
@@ -253,6 +345,8 @@ export function createSelectionSlice(
                 ...s.selection,
                 selectedFeatureId: null,
                 selectedFeatureIds: [...pendingShapeAction.cutterIds],
+                selectedTabIds: [],
+                selectedClampIds: [],
                 selectedNode: null,
                 mode: 'feature',
                 activeControl: null,
@@ -274,6 +368,8 @@ export function createSelectionSlice(
                 ...s.selection,
                 selectedFeatureId: id,
                 selectedFeatureIds: nextCutterIds,
+                selectedTabIds: [],
+                selectedClampIds: [],
                 selectedNode: { type: 'feature', featureId: id },
                 mode: 'feature',
                 activeControl: null,
@@ -308,6 +404,8 @@ export function createSelectionSlice(
               ...s.selection,
               selectedFeatureId: nextPrimaryId,
               selectedFeatureIds: nextSelectedIds,
+              selectedTabIds: [],
+              selectedClampIds: [],
               selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
               mode: 'feature',
               activeControl: null,
@@ -316,11 +414,43 @@ export function createSelectionSlice(
           }
         }
 
+        // Guard: incompatible additive from a different family is a true no-op.
+        // Determine the active family from the selected ID collections as well as
+        // the primary node, because pending workflows can legitimately have
+        // feature IDs with selectedNode: null.
+        if (additive && id) {
+          const nodeType = s.selection.selectedNode?.type
+          const hasTabSelection = s.selection.selectedTabIds.length > 0
+          const hasClampSelection = s.selection.selectedClampIds.length > 0
+          // Non-family nodes (stock, project, grid, origin, backdrop) signal
+          // a non-feature selection — additive feature gestures are incompatible
+          // and must be ignored, symmetric with tab/clamp additive guards.
+          const isNonFamilyNode =
+            nodeType === 'project' ||
+            nodeType === 'grid' ||
+            nodeType === 'stock' ||
+            nodeType === 'origin' ||
+            nodeType === 'backdrop'
+          if (
+            nodeType === 'tab' ||
+            nodeType === 'tabs_root' ||
+            nodeType === 'clamp' ||
+            nodeType === 'clamps_root' ||
+            hasTabSelection ||
+            hasClampSelection ||
+            isNonFamilyNode
+          ) {
+            return {}
+          }
+        }
+
         return {
           pendingOffset: null,
           pendingShapeAction: null,
           selection: {
             ...s.selection,
+            selectedTabIds: [],
+            selectedClampIds: [],
             ...(id
               ? additive
                 ? (() => {
@@ -403,6 +533,8 @@ export function createSelectionSlice(
           pendingShapeAction: joinMode && s.pendingShapeAction ? { ...s.pendingShapeAction, entityIds: validJoinIds } : null,
           selection: {
             ...s.selection,
+            selectedTabIds: [],
+            selectedClampIds: [],
             selectedFeatureId: nextPrimaryId,
             selectedFeatureIds: validJoinIds,
             selectedNode: nextPrimaryId ? { type: 'feature', featureId: nextPrimaryId } : null,
@@ -421,6 +553,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'project' },
           mode: 'feature',
           activeControl: null,
@@ -437,6 +571,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'grid' },
           mode: 'feature',
           groupFolderId: null,
@@ -452,6 +588,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'stock' },
           mode: 'feature',
           groupFolderId: null,
@@ -467,6 +605,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'origin' },
           mode: 'feature',
           activeControl: null,
@@ -483,6 +623,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'backdrop' },
           mode: 'feature',
           activeControl: null,
@@ -498,6 +640,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'features_root' },
           mode: 'feature',
           activeControl: null,
@@ -513,6 +657,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'tabs_root' },
           mode: 'feature',
           activeControl: null,
@@ -528,6 +674,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'regions_root' },
           mode: 'feature',
           activeControl: null,
@@ -543,6 +691,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'construction_root' },
           mode: 'feature',
           activeControl: null,
@@ -558,6 +708,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'clamps_root' },
           mode: 'feature',
           activeControl: null,
@@ -573,6 +725,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [],
           selectedNode: { type: 'folder', folderId: id },
           mode: 'feature',
           activeControl: null,
@@ -581,35 +735,231 @@ export function createSelectionSlice(
         sketchEditSession: null,
       })),
 
-    selectTab: (id) =>
-      set((s) => ({
-        pendingOffset: null,
-        selection: {
-          ...s.selection,
-          selectedFeatureId: null,
-          selectedFeatureIds: [],
-          selectedNode: { type: 'tab', tabId: id },
-          mode: 'feature',
-          activeControl: null,
-          groupFolderId: null,
-        },
-        sketchEditSession: null,
-      })),
+    selectTab: (id, additive = false) =>
+      set((s) => {
+        const tabExists = s.project.tabs.some((tab) => tab.id === id)
+        if (!tabExists) {
+          return {}
+        }
 
-    selectClamp: (id) =>
-      set((s) => ({
-        pendingOffset: null,
-        selection: {
-          ...s.selection,
-          selectedFeatureId: null,
-          selectedFeatureIds: [],
-          selectedNode: { type: 'clamp', clampId: id },
-          mode: 'feature',
-          activeControl: null,
-          groupFolderId: null,
-        },
-        sketchEditSession: null,
-      })),
+        // Incompatible additive attempt — current family is not tabs.
+        // Preserve when any non-tab node is selected, or when feature/clamp
+        // IDs are active (including a pending feature workflow with null primary).
+        if (additive) {
+          const nodeType = s.selection.selectedNode?.type
+          const isNonTabNode = nodeType != null && nodeType !== 'tab' && nodeType !== 'tabs_root'
+          const hasFeatureIds = s.selection.selectedFeatureIds.length > 0
+          const hasClampIds = s.selection.selectedClampIds.length > 0
+          const hasFeaturePrimary = s.selection.selectedFeatureId !== null
+          if (isNonTabNode || hasFeatureIds || hasClampIds || hasFeaturePrimary) {
+            return {}
+          }
+        }
+
+        if (additive) {
+          const nextIds = s.selection.selectedTabIds.includes(id)
+            ? s.selection.selectedTabIds.filter((tabId) => tabId !== id)
+            : [...s.selection.selectedTabIds, id]
+          const wasSelected = s.selection.selectedTabIds.includes(id)
+          const nextPrimaryId =
+            nextIds.length === 0
+              ? null
+              : wasSelected
+                ? (s.selection.selectedNode?.type === 'tab' && s.selection.selectedNode.tabId === id
+                    ? nextIds.at(-1) ?? null
+                    : s.selection.selectedNode?.type === 'tab'
+                      ? s.selection.selectedNode.tabId
+                      : nextIds.at(-1) ?? null)
+                : id
+          return {
+            pendingOffset: null,
+            selection: {
+              ...s.selection,
+              selectedFeatureId: null,
+              selectedFeatureIds: [],
+              selectedTabIds: nextIds,
+              selectedClampIds: [],
+              selectedNode: nextPrimaryId ? { type: 'tab', tabId: nextPrimaryId } : null,
+              mode: 'feature',
+              activeControl: null,
+              groupFolderId: null,
+            },
+            sketchEditSession: null,
+          }
+        }
+
+        return {
+          pendingOffset: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: [id],
+            selectedClampIds: [],
+            selectedNode: { type: 'tab', tabId: id },
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          },
+          sketchEditSession: null,
+        }
+      }),
+
+    selectClamp: (id, additive = false) =>
+      set((s) => {
+        const clampExists = s.project.clamps.some((clamp) => clamp.id === id)
+        if (!clampExists) {
+          return {}
+        }
+
+        // Incompatible additive attempt — current family is not clamps.
+        // Preserve when any non-clamp node is selected, or when feature/tab
+        // IDs are active (including a pending feature workflow with null primary).
+        if (additive) {
+          const nodeType = s.selection.selectedNode?.type
+          const isNonClampNode = nodeType != null && nodeType !== 'clamp' && nodeType !== 'clamps_root'
+          const hasFeatureIds = s.selection.selectedFeatureIds.length > 0
+          const hasTabIds = s.selection.selectedTabIds.length > 0
+          const hasFeaturePrimary = s.selection.selectedFeatureId !== null
+          if (isNonClampNode || hasFeatureIds || hasTabIds || hasFeaturePrimary) {
+            return {}
+          }
+        }
+
+        if (additive) {
+          const nextIds = s.selection.selectedClampIds.includes(id)
+            ? s.selection.selectedClampIds.filter((clampId) => clampId !== id)
+            : [...s.selection.selectedClampIds, id]
+          const wasSelected = s.selection.selectedClampIds.includes(id)
+          const nextPrimaryId =
+            nextIds.length === 0
+              ? null
+              : wasSelected
+                ? (s.selection.selectedNode?.type === 'clamp' && s.selection.selectedNode.clampId === id
+                    ? nextIds.at(-1) ?? null
+                    : s.selection.selectedNode?.type === 'clamp'
+                      ? s.selection.selectedNode.clampId
+                      : nextIds.at(-1) ?? null)
+                : id
+          return {
+            pendingOffset: null,
+            selection: {
+              ...s.selection,
+              selectedFeatureId: null,
+              selectedFeatureIds: [],
+              selectedTabIds: [],
+              selectedClampIds: nextIds,
+              selectedNode: nextPrimaryId ? { type: 'clamp', clampId: nextPrimaryId } : null,
+              mode: 'feature',
+              activeControl: null,
+              groupFolderId: null,
+            },
+            sketchEditSession: null,
+          }
+        }
+
+        return {
+          pendingOffset: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: [],
+            selectedClampIds: [id],
+            selectedNode: { type: 'clamp', clampId: id },
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          },
+          sketchEditSession: null,
+        }
+      }),
+
+    selectTabs: (ids) =>
+      set((s) => {
+        const nextIds = ids.filter((id, index) => {
+          return ids.indexOf(id) === index && s.project.tabs.some((tab) => tab.id === id)
+        })
+        const nextPrimaryId = nextIds.at(-1) ?? null
+        return {
+          pendingOffset: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: nextIds,
+            selectedClampIds: [],
+            selectedNode: nextPrimaryId ? { type: 'tab', tabId: nextPrimaryId } : null,
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          },
+        }
+      }),
+
+    selectClamps: (ids) =>
+      set((s) => {
+        const nextIds = ids.filter((id, index) => {
+          return ids.indexOf(id) === index && s.project.clamps.some((clamp) => clamp.id === id)
+        })
+        const nextPrimaryId = nextIds.at(-1) ?? null
+        return {
+          pendingOffset: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: [],
+            selectedClampIds: nextIds,
+            selectedNode: nextPrimaryId ? { type: 'clamp', clampId: nextPrimaryId } : null,
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          },
+        }
+      }),
+
+    selectAllTabs: () =>
+      set((s) => {
+        const visibleIds = s.project.tabs.filter((tab) => tab.visible).map((tab) => tab.id)
+        const nextPrimaryId = visibleIds.at(-1) ?? null
+        return {
+          pendingOffset: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: visibleIds,
+            selectedClampIds: [],
+            selectedNode: nextPrimaryId ? { type: 'tab', tabId: nextPrimaryId } : null,
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          },
+          sketchEditSession: null,
+        }
+      }),
+
+    selectAllClamps: () =>
+      set((s) => {
+        const visibleIds = s.project.clamps.filter((clamp) => clamp.visible).map((clamp) => clamp.id)
+        const nextPrimaryId = visibleIds.at(-1) ?? null
+        return {
+          pendingOffset: null,
+          selection: {
+            ...s.selection,
+            selectedFeatureId: null,
+            selectedFeatureIds: [],
+            selectedTabIds: [],
+            selectedClampIds: visibleIds,
+            selectedNode: nextPrimaryId ? { type: 'clamp', clampId: nextPrimaryId } : null,
+            mode: 'feature',
+            activeControl: null,
+            groupFolderId: null,
+          },
+          sketchEditSession: null,
+        }
+      }),
 
     hoverFeature: (id) =>
       set((s) => {
@@ -631,6 +981,8 @@ export function createSelectionSlice(
             ...s.selection,
             selectedFeatureId: id,
             selectedFeatureIds: [id],
+            selectedTabIds: [],
+            selectedClampIds: [],
             selectedNode: { type: 'feature', featureId: id },
             mode: 'sketch_edit',
             sketchEditTool: null,
@@ -654,6 +1006,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [],
+          selectedClampIds: [id],
           selectedNode: { type: 'clamp', clampId: id },
           mode: 'sketch_edit',
           sketchEditTool: null,
@@ -676,6 +1030,8 @@ export function createSelectionSlice(
           ...s.selection,
           selectedFeatureId: null,
           selectedFeatureIds: [],
+          selectedTabIds: [id],
+          selectedClampIds: [],
           selectedNode: { type: 'tab', tabId: id },
           mode: 'sketch_edit',
           sketchEditTool: null,

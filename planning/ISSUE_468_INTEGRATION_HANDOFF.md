@@ -1,0 +1,141 @@
+---
+status: current
+authoritative-for: delegated execution state for issue 468 bulk tab and clamp editing
+last-verified: 2026-08-09
+---
+
+# Integration Handoff — Issue #468 Bulk Tab and Clamp Editing
+
+> The approved GitHub issue remains the plan and source of truth. This file records delegated slice execution only.
+
+## Role and stop condition
+
+The integration manager turns issue #468 into sequential worker slices, independently reviews and verifies each slice, and delivers one pull request only after the complete behavior and required checks pass.
+
+## Integration state
+
+- Integration branch: `feat/issue-468-bulk-tabs-clamps`
+- Integration worktree: `/Users/frankp/Projects/worktrees/purecutcnc/issue-468-integration`
+- Base commit: `f18f2e4a8633f75fd2bc6236643e094ec833cdfe`
+- Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/468
+- Manager session: 2026-08-09; completed directly on 2026-08-10
+- Status: `all slices accepted and merged; gates green; PR opened`
+- User authorization for credential-backed worker dispatch: approved in the active Codex task on 2026-08-09. The final correction (S3) was implemented directly by the manager session rather than dispatched, after the delegated run exhausted its usage allowance.
+
+## Global rules
+
+- One active implementation slice at a time.
+- Every worker runs in its own task worktree branched from the current integration tip.
+- Selection is homogeneous: features, tabs, or clamps, never a mixed family.
+- Incompatible additive selection is ignored; a plain click may replace the active family.
+- Global Cmd/Ctrl+A remains visible-feature-only. Tree Select All actions are explicit, family-scoped, visible-only replacement commands.
+- Selection state remains transient; no `.camj` schema or toolpath-output changes are allowed.
+- Every bulk project mutation is one history entry and undo step.
+- The manager owns the real diff review, verification, integration, cleanup, push, and PR.
+
+## Slice ledger
+
+| Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| S1 | Homogeneous selection, tab/clamp bulk store actions, tree/canvas interaction | `1e3913d` | `feat/issue-468-selection-foundation` / removed after merge | `done` | `accepted` | `052b9b0`; merge `458708d` | 70 focused tests; 167-file test suite; build | Locale catalog audit clean; global Select All unchanged; manager corrections covered both-direction incompatible additive selection and deletion sanitization |
+| S2 | Bulk property panels, generalized Z-range editor, rendered workflow coverage | `71000c9` | `feat/issue-468-bulk-properties-z-range` / removed after merge | `done` | `accepted` | `e4e418c`; merge `10f3501` | 65 helper tests; 70 store tests; build; 25 isolated e2e | Locale audit clean; manager mutations proved mixed Line/closed-feature bottom validation and mixed-top slider constraints are covered |
+| S3 | Cross-family leakage in placement/copy transitions, tab/clamp bulk context-menu routing, CI lane registration | `c6204cd` | `feat/issue-468-bulk-properties-z-range` | `done` | `accepted` | `0a55e5c`; merge `e94361d` | 92 store tests; 27 isolated e2e; build | Worker commits `09b6883`/`35e1aaa` were clean but their new tests could not fail for the stated reason; manager rewrote both (see below) and verified each by mutation |
+
+## Slice instructions
+
+### S1 — Selection and mutation foundation
+
+**Goal:** Implement homogeneous feature/tab/clamp selection and atomic tab/clamp bulk mutations, then expose the selection semantics through the project tree and canvas without changing properties-panel behavior yet.
+
+**Allowed files:**
+
+- `src/store/types.ts`
+- `src/store/slices/selectionSlice.ts`
+- `src/store/slices/tabsSlice.ts`
+- `src/store/slices/clampsSlice.ts`
+- focused new or existing store selection/mutation tests
+- `src/app/useFeatureTreeActions.ts` and its focused test
+- `src/components/feature-tree/FeatureTree.tsx`
+- `src/components/canvas/useClickPlacement.ts`
+- `src/components/canvas/useCanvasContextMenu.ts`
+- focused tree/canvas tests
+- `src/i18n/locales/*/featureTree.ts`
+- nearest `INDEX.md` files only if responsibilities or files change
+
+**Forbidden files:**
+
+- `src/components/feature-tree/PropertiesPanel.tsx`
+- `src/components/feature-tree/ZRangeSlider.tsx`
+- `src/types/project.ts`
+- `src/engine/**`
+- `src/engine/gcode/**`
+- `package.json` and `package-lock.json`
+
+**Invariants:**
+
+- Incompatible additive selection leaves the current selection byte-for-byte unchanged.
+- Plain selection may switch family; same-family additive selection toggles membership and maintains a valid primary node.
+- Global Cmd/Ctrl+A remains visible-feature-only and never selects tabs or clamps.
+- Tabs/Clamps Select All selects only visible rows in that family and replaces the old selection.
+- Context menus on selected members preserve the full selection.
+- Bulk updates/deletes are atomic, center-preserving for width/height changes, and sanitize selection after deletion.
+
+**Required checks:**
+
+```bash
+npx tsx <focused selection and bulk-mutation test files>
+scripts/build-summary.sh
+```
+
+### S2 — Bulk properties and generalized Z range
+
+**Goal:** Build homogeneous multi-selection panels for tabs and clamps and generalize the Z-range slider for feature/tab/clamp single and bulk editing, with rendered desktop/tablet coverage.
+
+**Allowed files:**
+
+- `src/components/feature-tree/PropertiesPanel.tsx`
+- `src/components/feature-tree/ZRangeSlider.tsx`
+- focused new feature-tree component/helper files and tests
+- feature-tree and shared styles needed by the controls
+- `src/i18n/locales/*/featureTree.ts`
+- `e2e/*.smoke.spec.ts`
+- nearest `INDEX.md` files when responsibilities or files change
+- S1 store files only if manager review identifies a concrete missing API
+
+**Forbidden files:**
+
+- `src/types/project.ts`
+- `src/engine/**`
+- `src/engine/gcode/**`
+- `package.json` and `package-lock.json`
+
+**Invariants:**
+
+- Mixed values stay visibly mixed until the user commits a common value.
+- Opening a bulk panel never mutates project data.
+- Width and height commits preserve each selected tab/clamp center and never force a square.
+- Closed machinable features and tabs expose top/bottom Z; open features lock bottom to 0; clamps keep their height-above-zero model; regions/construction retain their current presentation.
+- One UI commit calls one atomic bulk store action and creates one undo step.
+- Single-item behavior remains intact.
+
+**Required checks:**
+
+```bash
+npx tsx <focused feature-tree and store test files>
+scripts/build-summary.sh
+PURECUT_E2E_PORT=1468 PURECUT_E2E_ISOLATED=1 npx playwright test <focused issue 468 spec>
+```
+
+## Integration verification
+
+- Accepted commits and merge order: S1 `052b9b0` merged as `458708d`; S2 `e4e418c` merged as `10f3501`; S3 `0a55e5c` merged as `e94361d`; `origin/main` merged as `b203aed`
+- Repository checks: full `npm run build` passed at `b203aed` (structural test suite plus production bundle)
+- Browser/tablet checks: full isolated e2e suite passed 138/139 at `b203aed`; focused issue #468 spec passed 27/27
+- The single full-suite failure is `toolLibraryDialog.smoke.spec.ts:457`, which fails identically on clean `main` (`71eeb80`) and passes in isolation on both. Clean `main`'s own full-suite run failed 6 tests, all of which pass in isolation — the suite has pre-existing order/timing flakiness that is unrelated to this branch.
+- Correction blockers, all resolved: family leakage in tab/clamp add/move/copy transitions; singleton tab/clamp actions exposed during multi-selection; issue #468 E2E omitted from CI lanes (now registered in `test:e2e:project-input`); additive feature selection inconsistent from non-family nodes; multi-feature mixed placeholder count regression
+- S3 review gaps, both closed and mutation-verified: the tab/clamp copy tests used a single copy, so `selectedTabIds`/`selectedClampIds` were indistinguishable from `[created.at(-1)]` — they now copy three times and assert the whole created-ID list in order; the tablet clamp test dispatched a synthetic `el.click()` on the properties panel, bypassing touch routing — it now opens the tablet project drawer and taps the real clamp-row "More actions" button.
+- Known limitations or deferred work: smooth tabs remain in issue #414
+
+## User-review handoff
+
+All three slices are merged and verified. The branch is ready for user review; see the PR for the behaviour summary and the manual check list.

@@ -14,63 +14,119 @@
  * limitations under the License.
  */
 
-import { useRef, useState } from 'react'
+import { useRef, useState, useMemo, useEffect } from 'react'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { useI18n } from '../../i18n/i18nContext'
+import { constrainZ, snapDragZ, zHandleAriaBounds } from './mixedValue'
 
-// Fraction of track height reserved as visual margin at each end, so handles
-// sit a bit in from the edges even at min/max Z values.
+// Fraction of track height reserved as visual margin at each end.
 const EDGE_MARGIN = 0.08
 
-function zToPercent(z: number, stockThickness: number): number {
+function zToPercent(z: number, domainMin: number, domainMax: number): number {
+  const range = domainMax - domainMin
+  if (range <= 0) return 50
   const usable = 1 - 2 * EDGE_MARGIN
-  const fraction = 1 - Math.max(0, Math.min(stockThickness, z)) / stockThickness
+  const fraction = 1 - Math.max(0, Math.min(range, z - domainMin)) / range
   return (EDGE_MARGIN + fraction * usable) * 100
 }
 
-function percentToZ(percent: number, stockThickness: number): number {
+function percentToZ(percent: number, domainMin: number, domainMax: number): number {
+  const range = domainMax - domainMin
+  if (range <= 0) return domainMin
   const usable = 1 - 2 * EDGE_MARGIN
   const fraction = (percent / 100 - EDGE_MARGIN) / usable
-  return stockThickness * (1 - Math.max(0, Math.min(1, fraction)))
+  return domainMax - range * Math.max(0, Math.min(1, fraction))
 }
 
-interface ZRangeSliderProps {
-  featureId: string
-  zTop: number
-  zBottom: number
-  stockThickness: number
+export interface ZRangeSliderProps {
+  /** When this changes the component remounts, resetting all internal state. */
+  selectionKey: string
+  /** Current top value. `null` means mixed / not applicable — field shows placeholder. */
+  zTop: number | null
+  /** Current bottom value. `null` means mixed / not applicable — field shows placeholder. */
+  zBottom: number | null
+  /** Minimum domain value (default 0). */
+  domainMin?: number
+  /** Maximum domain value. Must be >= the largest displayed value. */
+  domainMax: number
   units: 'mm' | 'inch'
-  onCommitZTop: (value: number) => void
-  onCommitZBottom: (value: number) => void
+  /** When true the top handle is locked — only the field is editable. */
+  topLocked?: boolean
+  /** When true the bottom handle is locked — only the field is editable. */
+  bottomLocked?: boolean
+  mixedPlaceholder?: string
+  /** Called once per user gesture with the changed fields.
+   *  Return `false` to signal rejection — the slider will restore its display. */
+  onCommit: (patch: { top?: number; bottom?: number }) => boolean
 }
 
-export function ZRangeSlider({
-  featureId,
+type ZRangeSliderInnerProps = Omit<ZRangeSliderProps, 'selectionKey'>
+
+/**
+ * Thin wrapper that remounts the inner slider whenever `selectionKey` changes,
+ * resetting all internal drag state, draft input state, and listener refs.
+ */
+export function ZRangeSlider({ selectionKey, ...innerProps }: ZRangeSliderProps) {
+  return <ZRangeSliderInner key={selectionKey} {...innerProps} />
+}
+
+function ZRangeSliderInner({
   zTop,
   zBottom,
-  stockThickness,
+  domainMin = 0,
+  domainMax,
   units,
-  onCommitZTop,
-  onCommitZBottom,
-}: ZRangeSliderProps) {
+  topLocked = false,
+  bottomLocked = false,
+  mixedPlaceholder,
+  onCommit,
+}: ZRangeSliderInnerProps) {
   const { t } = useI18n()
   const trackRef = useRef<HTMLDivElement>(null)
   const topInputRef = useRef<HTMLInputElement>(null)
   const botInputRef = useRef<HTMLInputElement>(null)
-  // Holds the cleanup function for active window listeners so we can remove
-  // them if the component unmounts mid-drag.
   const cleanupRef = useRef<(() => void) | null>(null)
 
-  // null = not dragging (use prop values); non-null = active drag display values
+  // Non-null = actively dragging; null = use prop values for display.
   const [dragTop, setDragTop] = useState<number | null>(null)
   const [dragBot, setDragBot] = useState<number | null>(null)
 
-  // During drag, use drag state; otherwise derive positions directly from props.
-  const effectiveTop = dragTop ?? zTop
-  const effectiveBot = dragBot ?? zBottom
+  // Distinct display fallbacks so mixed handles are independently reachable:
+  // unknown top → domainMax, unknown bottom → domainMin.
+  // Neither fallback acts as a real opposite constraint (drag uses null opposite).
+  const effectiveTop = dragTop ?? zTop ?? domainMax
+  const effectiveBot = dragBot ?? zBottom ?? domainMin
+  const topPercent = zToPercent(effectiveTop, domainMin, domainMax)
+  const botPercent = zToPercent(effectiveBot, domainMin, domainMax)
 
-  const topPercent = zToPercent(effectiveTop, stockThickness)
-  const botPercent = zToPercent(effectiveBot, stockThickness)
+  const topAria = useMemo(
+    () => zHandleAriaBounds(true, domainMin, domainMax, zBottom),
+    [domainMin, domainMax, zBottom],
+  )
+  const botAria = useMemo(
+    () => zHandleAriaBounds(false, domainMin, domainMax, zTop),
+    [domainMin, domainMax, zTop],
+  )
+
+  // Sync input fields from props so Undo/Redo and external store changes
+  // refresh the displayed values without requiring a remount.
+  useEffect(() => {
+    if (topInputRef.current) {
+      topInputRef.current.value = zTop !== null ? formatLength(zTop, units) : ''
+    }
+    if (botInputRef.current) {
+      botInputRef.current.value = zBottom !== null ? formatLength(zBottom, units) : ''
+    }
+  }, [zTop, zBottom, units])
+
+  // Clean up active window listeners on unmount to prevent leaks.
+  useEffect(() => {
+    return () => {
+      if (cleanupRef.current) {
+        cleanupRef.current()
+      }
+    }
+  }, [])
 
   function handlePointerDown(handle: 'top' | 'bottom', event: React.PointerEvent) {
     event.preventDefault()
@@ -80,12 +136,12 @@ export function ZRangeSlider({
     try {
       ;(event.currentTarget as Element).setPointerCapture(pointerId)
     } catch {
-      // Fall back to window-level tracking below.
+      // Fall through to window-level tracking.
     }
 
-    // Minimum Z separation between handles (sub-unit, just prevents exact overlap)
-    const minSep = 1e-6
-    // Mutable locals that track the live drag values in the closure.
+    // Mutable locals that track the live drag values.  Start from the
+    // displayed position (falls back to domainMin only for display — the
+    // constraint below uses the real committed values, not this fallback).
     let curTop = effectiveTop
     let curBot = effectiveBot
 
@@ -95,31 +151,21 @@ export function ZRangeSlider({
       if (!track) return
       const rect = track.getBoundingClientRect()
       const percent = ((e.clientY - rect.top) / rect.height) * 100
-      const z = Math.round(percentToZ(percent, stockThickness) * 10000) / 10000
+      const z = snapDragZ(percentToZ(percent, domainMin, domainMax), units)
 
       if (handle === 'top') {
-        if (z <= curBot) {
-          // Push bottom handle down with the top handle.
-          curTop = Math.max(z, 0)
-          curBot = Math.max(curTop - minSep, 0)
-        } else {
-          curTop = Math.min(z, stockThickness)
-        }
+        // Constrain only against the ACTUAL committed zBottom (may be null
+        // when mixed — then only domain bounds apply).  Never substitute
+        // domainMin as a fabricated opposite constraint.
+        curTop = constrainZ(z, true, domainMin, domainMax, zBottom)
       } else {
-        if (z >= curTop) {
-          // Push top handle up with the bottom handle.
-          curBot = Math.min(z, stockThickness)
-          curTop = Math.min(curBot + minSep, stockThickness)
-        } else {
-          curBot = Math.max(z, 0)
-        }
+        // Constrain only against the ACTUAL committed zTop (may be null).
+        curBot = constrainZ(z, false, domainMin, domainMax, zTop)
       }
 
       setDragTop(curTop)
       setDragBot(curBot)
 
-      // Direct DOM update so the field shows live value during drag without
-      // going through the React render cycle.
       if (topInputRef.current) topInputRef.current.value = formatLength(curTop, units)
       if (botInputRef.current) botInputRef.current.value = formatLength(curBot, units)
     }
@@ -128,10 +174,22 @@ export function ZRangeSlider({
       if (e.pointerId !== pointerId) return
       cleanup()
 
-      // Commit only values that actually changed relative to the last committed
-      // props, so we don't push spurious store updates.
-      if (Math.abs(curTop - zTop) > 1e-10) onCommitZTop(curTop)
-      if (Math.abs(curBot - zBottom) > 1e-10) onCommitZBottom(curBot)
+      // Commit only the handle whose value actually changed from its
+      // display-fallback position (domainMax for unknown top, domainMin
+      // for unknown bottom).  This keeps a no-drag click from triggering
+      // a spurious commit when values are mixed.
+      let accepted = true
+      if (handle === 'top' && Math.abs(curTop - (zTop ?? domainMax)) > 1e-10) {
+        accepted = onCommit({ top: curTop }) !== false
+      } else if (handle === 'bottom' && Math.abs(curBot - (zBottom ?? domainMin)) > 1e-10) {
+        accepted = onCommit({ bottom: curBot }) !== false
+      }
+
+      if (!accepted) {
+        // Restore field display to committed values on rejection.
+        if (topInputRef.current) topInputRef.current.value = zTop !== null ? formatLength(zTop, units) : ''
+        if (botInputRef.current) botInputRef.current.value = zBottom !== null ? formatLength(zBottom, units) : ''
+      }
 
       setDragTop(null)
       setDragBot(null)
@@ -144,7 +202,6 @@ export function ZRangeSlider({
       cleanupRef.current = null
     }
 
-    // Remove any stale listeners from a previous interrupted drag.
     if (cleanupRef.current) cleanupRef.current()
     cleanupRef.current = cleanup
 
@@ -153,14 +210,13 @@ export function ZRangeSlider({
     window.addEventListener('pointercancel', onUp)
   }
 
-  // Build blur/keydown handlers that mirror DraftNumberInput behaviour.
   function makeFieldHandlers(
     isTop: boolean,
-    committedValue: number,
-    otherCommittedValue: number,
+    committedValue: number | null,
+    otherCommittedValue: number | null,
   ) {
     function reset(el: HTMLInputElement) {
-      el.value = formatLength(committedValue, units)
+      el.value = committedValue !== null ? formatLength(committedValue, units) : ''
     }
 
     function commit(el: HTMLInputElement) {
@@ -169,27 +225,24 @@ export function ZRangeSlider({
         return
       }
       const next = parseLengthInput(el.value, units)
-      if (
-        next === null ||
-        !Number.isFinite(next) ||
-        next < 0 ||
-        next > stockThickness
-      ) {
+      if (next === null || !Number.isFinite(next) || next < domainMin) {
         reset(el)
         return
       }
-      // Cross-handle constraint
-      if (isTop && next < otherCommittedValue) {
+      // Cross-handle constraint: only enforced when the other value is known.
+      if (isTop && otherCommittedValue !== null && next < otherCommittedValue) {
         reset(el)
         return
       }
-      if (!isTop && next > otherCommittedValue) {
+      if (!isTop && otherCommittedValue !== null && next > otherCommittedValue) {
         reset(el)
         return
       }
-      if (next !== committedValue) {
-        if (isTop) onCommitZTop(next)
-        else onCommitZBottom(next)
+      if (committedValue === null || next !== committedValue) {
+        const accepted = onCommit(isTop ? { top: next } : { bottom: next })
+        if (!accepted) {
+          reset(el)
+        }
       } else {
         reset(el)
       }
@@ -208,8 +261,10 @@ export function ZRangeSlider({
     }
   }
 
-  const topHandlers = makeFieldHandlers(true, zTop, zBottom)
-  const botHandlers = makeFieldHandlers(false, zBottom, zTop)
+  const topHandlers = topLocked ? undefined : makeFieldHandlers(true, zTop, zBottom)
+  const botHandlers = bottomLocked ? undefined : makeFieldHandlers(false, zBottom, zTop)
+
+  const placeholder = mixedPlaceholder ?? '—'
 
   return (
     <div className="z-range-slider">
@@ -221,56 +276,64 @@ export function ZRangeSlider({
           className="z-range-slider__filled"
           style={{ top: `${topPercent}%`, height: `${Math.max(0, botPercent - topPercent)}%` }}
         />
-        <div
-          className="z-range-slider__handle"
-          style={{ top: `${topPercent}%` }}
-          onPointerDown={(e) => handlePointerDown('top', e)}
-          role="slider"
-          aria-label={t('featureTree.zRange.handleTopAria')}
-          aria-valuemin={zBottom}
-          aria-valuemax={stockThickness}
-          aria-valuenow={effectiveTop}
-          tabIndex={0}
-        />
-        <div
-          className="z-range-slider__handle"
-          style={{ top: `${botPercent}%` }}
-          onPointerDown={(e) => handlePointerDown('bottom', e)}
-          role="slider"
-          aria-label={t('featureTree.zRange.handleBottomAria')}
-          aria-valuemin={0}
-          aria-valuemax={zTop}
-          aria-valuenow={effectiveBot}
-          tabIndex={0}
-        />
+        {!topLocked ? (
+          <div
+            className="z-range-slider__handle"
+            style={{ top: `${topPercent}%` }}
+            onPointerDown={(e) => handlePointerDown('top', e)}
+            role="slider"
+            aria-label={t('featureTree.zRange.handleTopAria')}
+            aria-valuemin={topAria.valuemin}
+            aria-valuemax={topAria.valuemax}
+            aria-valuenow={effectiveTop}
+            tabIndex={0}
+          />
+        ) : null}
+        {!bottomLocked ? (
+          <div
+            className="z-range-slider__handle"
+            style={{ top: `${botPercent}%` }}
+            onPointerDown={(e) => handlePointerDown('bottom', e)}
+            role="slider"
+            aria-label={t('featureTree.zRange.handleBottomAria')}
+            aria-valuemin={botAria.valuemin}
+            aria-valuemax={botAria.valuemax}
+            aria-valuenow={effectiveBot}
+            tabIndex={0}
+          />
+        ) : null}
       </div>
 
       <input
-        key={`${featureId}-zrs-top-${zTop}-${zBottom}`}
         ref={topInputRef}
         className="z-range-slider__field z-range-slider__field--top"
         type="text"
         inputMode="decimal"
-        defaultValue={formatLength(zTop, units)}
+        defaultValue={zTop !== null ? formatLength(zTop, units) : ''}
+        placeholder={zTop === null ? placeholder : undefined}
         spellCheck={false}
         data-numeric-entry="true"
-        onBlur={topHandlers.onBlur}
-        onKeyDown={topHandlers.onKeyDown}
+        disabled={topLocked}
+        readOnly={topLocked}
+        onBlur={topHandlers?.onBlur}
+        onKeyDown={topHandlers?.onKeyDown}
       />
 
       <span className="z-range-slider__label z-range-slider__label--bot">{t('featureTree.zRange.zBottom')}</span>
 
       <input
-        key={`${featureId}-zrs-bot-${zTop}-${zBottom}`}
         ref={botInputRef}
         className="z-range-slider__field z-range-slider__field--bot"
         type="text"
         inputMode="decimal"
-        defaultValue={formatLength(zBottom, units)}
+        defaultValue={zBottom !== null ? formatLength(zBottom, units) : ''}
+        placeholder={zBottom === null ? placeholder : undefined}
         spellCheck={false}
         data-numeric-entry="true"
-        onBlur={botHandlers.onBlur}
-        onKeyDown={botHandlers.onKeyDown}
+        disabled={bottomLocked}
+        readOnly={bottomLocked}
+        onBlur={botHandlers?.onBlur}
+        onKeyDown={botHandlers?.onKeyDown}
       />
     </div>
   )

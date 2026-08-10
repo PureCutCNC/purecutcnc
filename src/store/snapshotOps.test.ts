@@ -45,7 +45,7 @@ function assert(condition: unknown, message: string): asserts condition {
 function resetStore(project?: Project): void {
   useProjectStore.setState({
     project: project ?? newProject(),
-    selection: { selectedFeatureIds: [] },
+    selection: { selectedFeatureIds: [], selectedTabIds: [], selectedClampIds: [] },
     history: { past: [], future: [], transactionStart: null },
   } as unknown as Partial<ProjectStore>)
 }

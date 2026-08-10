@@ -353,40 +353,52 @@ export function FeatureContextMenu({
         </>
       ) : menuTab ? (
         <>
-          <button className="feature-context-menu__item" type="button" onClick={() => actions.editTab(menuTab.id)}>
-            {t('featureTree.contextMenu.editSketch')}
-          </button>
-          <button className="feature-context-menu__item" type="button" onClick={() => actions.copyTab(menuTab.id)}>
-            {t('featureTree.contextMenu.copy')}
-          </button>
-          <button className="feature-context-menu__item" type="button" onClick={() => actions.moveTab(menuTab.id)}>
-            {t('featureTree.contextMenu.move')}
-          </button>
+          {!menuHasMultipleSelection ? (
+            <button className="feature-context-menu__item" type="button" onClick={() => actions.editTab(menuTab.id)}>
+              {t('featureTree.contextMenu.editSketch')}
+            </button>
+          ) : null}
+          {!menuHasMultipleSelection ? (
+            <button className="feature-context-menu__item" type="button" onClick={() => actions.copyTab(menuTab.id)}>
+              {t('featureTree.contextMenu.copy')}
+            </button>
+          ) : null}
+          {!menuHasMultipleSelection ? (
+            <button className="feature-context-menu__item" type="button" onClick={() => actions.moveTab(menuTab.id)}>
+              {t('featureTree.contextMenu.move')}
+            </button>
+          ) : null}
           <button
             className="feature-context-menu__item feature-context-menu__item--danger"
             type="button"
-            onClick={() => actions.deleteTab(menuTab.id)}
+            onClick={() => menuHasMultipleSelection ? actions.deleteTabs([...ids]) : actions.deleteTab(menuTab.id)}
           >
-            {t('featureTree.contextMenu.delete')}
+            {menuHasMultipleSelection ? t('featureTree.contextMenu.deleteSelected') : t('featureTree.contextMenu.delete')}
           </button>
         </>
       ) : menuClamp ? (
         <>
-          <button className="feature-context-menu__item" type="button" onClick={() => actions.editClamp(menuClamp.id)}>
-            {t('featureTree.contextMenu.editSketch')}
-          </button>
-          <button className="feature-context-menu__item" type="button" onClick={() => actions.copyClamp(menuClamp.id)}>
-            {t('featureTree.contextMenu.copy')}
-          </button>
-          <button className="feature-context-menu__item" type="button" onClick={() => actions.moveClamp(menuClamp.id)}>
-            {t('featureTree.contextMenu.move')}
-          </button>
+          {!menuHasMultipleSelection ? (
+            <button className="feature-context-menu__item" type="button" onClick={() => actions.editClamp(menuClamp.id)}>
+              {t('featureTree.contextMenu.editSketch')}
+            </button>
+          ) : null}
+          {!menuHasMultipleSelection ? (
+            <button className="feature-context-menu__item" type="button" onClick={() => actions.copyClamp(menuClamp.id)}>
+              {t('featureTree.contextMenu.copy')}
+            </button>
+          ) : null}
+          {!menuHasMultipleSelection ? (
+            <button className="feature-context-menu__item" type="button" onClick={() => actions.moveClamp(menuClamp.id)}>
+              {t('featureTree.contextMenu.move')}
+            </button>
+          ) : null}
           <button
             className="feature-context-menu__item feature-context-menu__item--danger"
             type="button"
-            onClick={() => actions.deleteClamp(menuClamp.id)}
+            onClick={() => menuHasMultipleSelection ? actions.deleteClamps([...ids]) : actions.deleteClamp(menuClamp.id)}
           >
-            {t('featureTree.contextMenu.delete')}
+            {menuHasMultipleSelection ? t('featureTree.contextMenu.deleteSelected') : t('featureTree.contextMenu.delete')}
           </button>
         </>
       ) : null}
