@@ -23,6 +23,7 @@ import { createPortal } from 'react-dom'
 import type { SelectionState } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary'
+import { ToolLibraryDialog } from './ToolLibraryDialog'
 import { Select } from '../Select'
 import { OperationAddMenu } from './OperationAddMenu'
 import { OperationParameterReference } from './OperationParameterReference'
@@ -265,23 +266,6 @@ function toolTypeLabel(type: ToolType): string {
 
 function toolUnitsLabel(units: Tool['units']): string {
   return units === 'inch' ? 'in' : 'mm'
-}
-
-function toolMatchesLibraryEntry(tool: Tool, libraryEntry: ToolLibraryEntry): boolean {
-  return (
-    tool.name === libraryEntry.name
-    && tool.units === libraryEntry.units
-    && tool.type === libraryEntry.type
-    && tool.diameter === libraryEntry.diameter
-    && tool.vBitAngle === libraryEntry.vBitAngle
-    && tool.flutes === libraryEntry.flutes
-    && tool.material === libraryEntry.material
-    && tool.defaultRpm === libraryEntry.defaultRpm
-    && tool.defaultFeed === libraryEntry.defaultFeed
-    && tool.defaultPlungeFeed === libraryEntry.defaultPlungeFeed
-    && tool.defaultStepdown === libraryEntry.defaultStepdown
-    && tool.defaultStepover === libraryEntry.defaultStepover
-  )
 }
 
 function toolInProjectUnits(tool: Tool | null, units: Project['meta']['units']): Tool | null {
@@ -595,9 +579,7 @@ export function CAMPanel({
   const [libraryTools, setLibraryTools] = useState<ToolLibraryEntry[]>([])
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryError, setLibraryError] = useState<string | null>(null)
-  const [showLibraryBrowser, setShowLibraryBrowser] = useState(false)
-  const [libraryTypeFilter, setLibraryTypeFilter] = useState<ToolType | 'all'>('all')
-  const [libraryUnitsFilter, setLibraryUnitsFilter] = useState<Tool['units'] | 'all'>('all')
+  const [showLibraryDialog, setShowLibraryDialog] = useState(false)
   const [showAddOperationMenu, setShowAddOperationMenu] = useState(false)
   const [selectedNewOperationKind, setSelectedNewOperationKind] = useState<OperationKind | null>(null)
   const [targetUpdateMessage, setTargetUpdateMessage] = useState<{
@@ -616,6 +598,7 @@ export function CAMPanel({
   } | null>(null)
   const [exportingBookletOperationId, setExportingBookletOperationId] = useState<string | null>(null)
   const [expandedCamSection, setExpandedCamSection] = useState<null | 'operation' | 'tool'>(null)
+  const importLibraryButtonRef = useRef<HTMLButtonElement>(null)
   const shellMode = useShellMode()
   const tabletShell = isTabletMode(shellMode)
   const [dragOperationId, setDragOperationId] = useState<string | null>(null)
@@ -651,15 +634,6 @@ export function CAMPanel({
   const selectedTool = selectedToolId
     ? project.tools.find((tool) => tool.id === selectedToolId) ?? null
     : null
-
-  const filteredLibraryTools = useMemo(
-    () => libraryTools.filter((libraryTool) => {
-      if (libraryTypeFilter !== 'all' && libraryTool.type !== libraryTypeFilter) return false
-      if (libraryUnitsFilter !== 'all' && libraryTool.units !== libraryUnitsFilter) return false
-      return true
-    }),
-    [libraryTools, libraryTypeFilter, libraryUnitsFilter]
-  )
 
   const selectedOperationId =
     selectedOperationIdProp && project.operations.some((operation) => operation.id === selectedOperationIdProp)
@@ -831,32 +805,22 @@ export function CAMPanel({
     }
   }
 
-  async function handleOpenLibraryBrowser() {
-    if (!showLibraryBrowser) {
-      await ensureBundledLibraryLoaded()
-    }
-    setShowLibraryBrowser((prev) => !prev)
+  function handleOpenLibraryDialog() {
+    setShowLibraryDialog(true)
+    void ensureBundledLibraryLoaded()
   }
 
-  function handleImportLibraryTool(entry: ToolLibraryEntry) {
-    const importedIds = importTools([{
-      name: entry.name,
-      units: entry.units,
-      type: entry.type,
-      diameter: entry.diameter,
-      vBitAngle: entry.vBitAngle,
-      flutes: entry.flutes,
-      material: entry.material,
-      defaultRpm: entry.defaultRpm,
-      defaultFeed: entry.defaultFeed,
-      defaultPlungeFeed: entry.defaultPlungeFeed,
-      defaultStepdown: entry.defaultStepdown,
-      defaultStepover: entry.defaultStepover,
-      maxCutDepth: entry.maxCutDepth,
-    }])
+  function handleLibraryDialogClose() {
+    setShowLibraryDialog(false)
+  }
+
+  function handleLibraryImport(tools: Array<Omit<Tool, 'id'>>): string[] {
+    const importedIds = importTools(tools)
     if (importedIds.length > 0) {
       setSelectedToolId(importedIds[0] ?? null)
+      setShowLibraryDialog(false)
     }
+    return importedIds
   }
 
   async function handleAddOperation(kind: OperationKind, mode: OperationPass | 'pair' = 'rough') {
@@ -2263,66 +2227,14 @@ export function CAMPanel({
                     {camT('cam.tools.addTool')}
                   </button>
                   <button
-                    className={['cam-header-action', showLibraryBrowser ? 'cam-header-action--active' : ''].join(' ')}
+                    className="cam-header-action"
                     type="button"
-                    onClick={handleOpenLibraryBrowser}
-                    disabled={libraryLoading}
-                    title={libraryLoading ? camT('cam.tools.loadingLibrary') : undefined}
+                    onClick={handleOpenLibraryDialog}
+                    ref={importLibraryButtonRef}
                   >
-                    {libraryLoading ? camT('cam.tools.loading') : camT('cam.tools.importFromLibrary')}
+                    {camT('cam.tools.importFromLibrary')}
                   </button>
                 </div>
-                {showLibraryBrowser ? (
-                  <div className="cam-library-browser">
-                    <div className="cam-library-browser__filters">
-                      <select
-                        value={libraryTypeFilter}
-                        onChange={(event) => setLibraryTypeFilter(event.target.value as ToolType | 'all')}
-                      >
-                        <option value="all">{camT('cam.tools.allTypes')}</option>
-                        <option value="flat_endmill">{toolTypeLabel('flat_endmill')}</option>
-                        <option value="ball_endmill">{toolTypeLabel('ball_endmill')}</option>
-                        <option value="v_bit">{toolTypeLabel('v_bit')}</option>
-                        <option value="drill">{toolTypeLabel('drill')}</option>
-                      </select>
-                      <select
-                        value={libraryUnitsFilter}
-                        onChange={(event) => setLibraryUnitsFilter(event.target.value as Tool['units'] | 'all')}
-                      >
-                        <option value="all">{camT('cam.tools.allUnits')}</option>
-                        <option value="mm">mm</option>
-                        <option value="inch">in</option>
-                      </select>
-                    </div>
-                    {libraryError ? (
-                      <div className="cam-section-note">{libraryError}</div>
-                    ) : filteredLibraryTools.length === 0 ? (
-                      <div className="cam-section-note">{camT('cam.tools.noFilterMatch')}</div>
-                    ) : (
-                      <div className="cam-library-browser__list">
-                        {filteredLibraryTools.map((entry) => {
-                          const alreadyImported = project.tools.some((tool) => toolMatchesLibraryEntry(tool, entry))
-                          return (
-                            <div key={entry.key} className={['cam-library-tool', alreadyImported ? 'cam-library-tool--imported' : ''].join(' ')}>
-                              <span className="cam-library-tool__name">{entry.name}</span>
-                              <span className="cam-library-tool__meta">
-                                {toolTypeLabel(entry.type)} · ⌀{formatLength(entry.diameter, entry.units)} {toolUnitsLabel(entry.units)}{entry.maxCutDepth > 0 ? ` · max ${formatLength(entry.maxCutDepth, entry.units)} ${toolUnitsLabel(entry.units)}` : ''}
-                              </span>
-                              <button
-                                className="cam-header-action"
-                                type="button"
-                                disabled={alreadyImported}
-                                onClick={() => handleImportLibraryTool(entry)}
-                              >
-                                {alreadyImported ? camT('cam.tools.imported') : camT('cam.tools.import')}
-                              </button>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                ) : null}
                 <div className="cam-section-body cam-section-body--stack">
                   <div className="feature-tree-panel cam-tool-tree">
                     {project.tools.length === 0 ? (
@@ -2430,6 +2342,24 @@ export function CAMPanel({
           </div>
         </div>,
         document.body,
+      )}
+
+      {showLibraryDialog && (
+        <ToolLibraryDialog
+          libraryEntries={libraryTools}
+          loading={libraryLoading}
+          error={libraryError}
+          onRetry={() => {
+            setLibraryError(null)
+            setLibraryTools([])
+            void ensureBundledLibraryLoaded()
+          }}
+          projectTools={project.tools}
+          projectUnits={project.meta.units}
+          onImport={handleLibraryImport}
+          onClose={handleLibraryDialogClose}
+          triggerRef={importLibraryButtonRef}
+        />
       )}
 
     </div>
