@@ -1320,6 +1320,56 @@
   }
 }
 
+/* ── Tool Library import dialog ──────────────────────────── */
+
+@media (pointer: coarse) {
+  .tl-row {
+    min-height: 52px;
+    padding: 10px 16px;
+  }
+
+  .tl-row__check {
+    width: 24px;
+    height: 24px;
+  }
+
+  .tl-search-input {
+    height: 44px;
+    font-size: 16px;
+  }
+
+  .tl-filter-selects .ui-select__trigger {
+    height: 44px;
+    font-size: 15px;
+  }
+}
+
+[data-shell-mode="tablet"] .dialog--tool-library,
+[data-shell-mode="tablet-compact"] .dialog--tool-library {
+  max-width: 100%;
+  max-height: 100vh;
+  border-radius: 0;
+  border: none;
+}
+
+[data-shell-mode="tablet"] .tl-filters,
+[data-shell-mode="tablet-compact"] .tl-filters {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 14px 16px;
+}
+
+[data-shell-mode="tablet"] .tl-filter-selects,
+[data-shell-mode="tablet-compact"] .tl-filter-selects {
+  flex-wrap: wrap;
+}
+
+[data-shell-mode="tablet"] .tl-filter-selects .ui-select,
+[data-shell-mode="tablet-compact"] .tl-filter-selects .ui-select {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ── Tablet portrait rotate overlay ─────────────────────── */
 
 .tablet-rotate-overlay {
