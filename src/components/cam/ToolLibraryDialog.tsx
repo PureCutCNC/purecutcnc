@@ -123,15 +123,20 @@ export function ToolLibraryDialog({
     searchRef.current?.focus()
   }, [])
 
-  // Escape key closes the dialog.
+  // Escape key closes the dialog — unless a Type/Units dropdown is open, in
+  // which case Escape belongs to that dropdown. `Select` closes itself without
+  // stopping propagation, so without this guard one Escape would dismiss the
+  // dropdown and the whole dialog at once. The listener runs in the capture
+  // phase because `Select`'s own React onKeyDown fires at the root container
+  // first and would have already cleared `ui-select--open` by the bubble phase.
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose()
-      }
+      if (event.key !== 'Escape') return
+      if (dialogRef.current?.querySelector('.ui-select--open')) return
+      onClose()
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [onClose])
 
   // Contained Tab / Shift+Tab focus trap.

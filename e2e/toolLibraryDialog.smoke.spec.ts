@@ -333,6 +333,119 @@ test.describe('Tool library import dialog smoke', () => {
       releaseResponse!()
     }
   })
+
+  test('filter bar and results span the full dialog width', async ({ app }) => {
+    await app.page.getByRole('tab', { name: 'Tools' }).click()
+    await app.page.getByRole('button', { name: /Import from library/ }).click()
+
+    const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('.tl-row').first()).toBeVisible()
+
+    // The shared `.dialog-body` is a two-column (320px 1fr) form grid. The
+    // tool-library body must override that to a single column, or the filter
+    // bar is stranded in a dead 320px column beside a half-width result list.
+    const layout = await app.page.evaluate(() => {
+      const width = (selector: string) =>
+        Math.round(document.querySelector(selector)!.getBoundingClientRect().width)
+      return {
+        body: width('.dialog-body--tool-library'),
+        filters: width('.tl-filters'),
+        results: width('.tl-results'),
+      }
+    })
+
+    expect(layout.filters).toBe(layout.body)
+    expect(layout.results).toBe(layout.body)
+  })
+
+  test('Escape closes an open filter dropdown before the dialog', async ({ app }) => {
+    await app.page.getByRole('tab', { name: 'Tools' }).click()
+    await app.page.getByRole('button', { name: /Import from library/ }).click()
+
+    const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
+    await expect(dialog).toBeVisible()
+
+    const typeSelect = dialog.locator('.tl-filter-selects .ui-select').first()
+    await typeSelect.locator('.ui-select__trigger').click()
+    const dropdown = typeSelect.locator('.ui-select__dropdown')
+    await expect(dropdown).toBeVisible()
+
+    // The dropdown must not be clipped by the dialog body's overflow.
+    const clipped = await app.page.evaluate(() => {
+      const dd = document.querySelector('.dialog--tool-library .ui-select__dropdown')!
+      const body = document.querySelector('.dialog-body--tool-library')!
+      return dd.getBoundingClientRect().bottom > body.getBoundingClientRect().bottom + 1
+        && getComputedStyle(body).overflow !== 'visible'
+    })
+    expect(clipped).toBe(false)
+
+    // First Escape dismisses the dropdown only.
+    await app.page.keyboard.press('Escape')
+    await expect(dropdown).toHaveCount(0)
+    await expect(dialog).toBeVisible()
+
+    // Second Escape closes the dialog.
+    await app.page.keyboard.press('Escape')
+    await expect(dialog).not.toBeVisible()
+  })
+
+  test('result list scrolls when the library is larger than the dialog', async ({ app }) => {
+    // Serve a library big enough to overflow any supported dialog height so
+    // the assertion cannot pass by accident on a short bundled list.
+    await app.page.route('**/tool-library.json', async (route) => {
+      const tools = Array.from({ length: 60 }, (_, i) => ({
+        key: `scroll_probe_${i}`,
+        name: `Scroll Probe ${i}`,
+        units: 'inch',
+        type: 'flat_endmill',
+        diameter: 0.1 + i * 0.01,
+        flutes: 2,
+        material: 'carbide',
+        defaultRpm: 18000,
+        defaultFeed: 30,
+        defaultPlungeFeed: 12,
+        defaultStepdown: 0.1,
+        defaultStepover: 0.4,
+        maxCutDepth: 1,
+      }))
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ name: 'Scroll Probe', version: '1', tools }),
+      })
+    })
+
+    try {
+      await app.page.getByRole('tab', { name: 'Tools' }).click()
+      await app.page.getByRole('button', { name: /Import from library/ }).click()
+
+      const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
+      await expect(dialog).toBeVisible()
+      await expect(dialog.locator('.tl-row')).toHaveCount(60)
+
+      const results = dialog.locator('.tl-results')
+      const scroll = await results.evaluate((el) => {
+        el.scrollTop = el.scrollHeight
+        return {
+          scrollHeight: el.scrollHeight,
+          clientHeight: el.clientHeight,
+          scrollTop: el.scrollTop,
+        }
+      })
+
+      // The list overflows and the results region — not the page — absorbs it.
+      expect(scroll.scrollHeight).toBeGreaterThan(scroll.clientHeight)
+      expect(scroll.scrollTop).toBeGreaterThan(0)
+
+      // The last row is reachable, and the footer stays put while scrolling.
+      await expect(dialog.locator('.tl-row').last()).toBeInViewport()
+      await expect(dialog.locator('.dialog-footer')).toBeInViewport()
+      await expect(dialog.locator('.tl-filters')).toBeInViewport()
+    } finally {
+      await app.page.unroute('**/tool-library.json')
+    }
+  })
 })
 
 test.describe('Tool library import dialog — tablet', () => {
@@ -364,12 +477,20 @@ test.describe('Tool library import dialog — tablet', () => {
     const overflowY = await results.evaluate((el) => window.getComputedStyle(el).overflowY)
     expect(['auto', 'scroll']).toContain(overflowY)
 
-    // The results region must fill or exceed its visible bounds — content
-    // is at least as tall as the container even when the default project
-    // already has tools imported.
+    // The results region must be the element that actually overflows —
+    // never the dialog body, the form, or the page. `scrollHeight >=
+    // clientHeight` is true of every element and would pass even if the
+    // rows were silently clipped, so assert the region is strictly taller
+    // than its box and that scrolling it moves.
     const scrollHeight = await results.evaluate((el) => el.scrollHeight)
     const clientHeight = await results.evaluate((el) => el.clientHeight)
-    expect(scrollHeight).toBeGreaterThanOrEqual(clientHeight)
+    expect(scrollHeight).toBeGreaterThan(clientHeight)
+
+    const scrollTop = await results.evaluate((el) => {
+      el.scrollTop = el.scrollHeight
+      return el.scrollTop
+    })
+    expect(scrollTop).toBeGreaterThan(0)
 
     // Representative interactive targets must be >= 44 CSS px.
     // Search input — touch-sized on tablet.

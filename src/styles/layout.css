@@ -3518,24 +3518,37 @@
 
 /* ── Tool Library Import Dialog ──────────────────────────── */
 
+/* The whole dialog is one <form>, so it is the single child of `.dialog`'s
+   auto/1fr/auto grid and lands in the leading `auto` row. Give it a
+   shrinkable row of its own, and make every nested row shrinkable too —
+   an `auto` or bare `1fr` row anywhere in this chain floors at the row
+   list's content height, which pushes the footer off-screen and leaves
+   `.tl-results` unable to scroll. */
 .dialog--tool-library {
   max-width: 760px;
   max-height: 80vh;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .dialog--tool-library form {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
   overflow: hidden;
 }
 
+/* Single full-width column — the base `.dialog-body` is a two-column
+   (320px 1fr) form grid, which would otherwise strand the filter bar in a
+   dead 320px column beside the results. Overflow stays visible so the
+   Type/Units dropdowns can paint past the filter bar; `.tl-results` owns
+   the scrolling and the form still clips at the dialog edge. */
 .dialog-body--tool-library {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   gap: 0;
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .tl-filters {
@@ -3545,6 +3558,8 @@
   padding: 14px 20px;
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
+  position: relative;
+  z-index: 1;
 }
 
 .tl-search {
@@ -3772,86 +3787,6 @@
     flex: 1;
     min-width: 0;
   }
-}
-
-.cam-library-browser {
-  display: grid;
-  gap: 0;
-  border-top: 1px solid var(--line-strong);
-  border-bottom: 1px solid var(--line-strong);
-  background: var(--surface-translucent);
-}
-
-.cam-library-browser__filters {
-  display: flex;
-  gap: 6px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--line-strong);
-}
-
-.cam-library-browser__filters select {
-  flex: 1;
-  min-width: 0;
-  height: 26px;
-  padding: 0 6px;
-  border-radius: 6px;
-  border: 1px solid var(--line-strong);
-  background: var(--surface-translucent);
-  color: var(--text);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.cam-library-browser__list {
-  display: grid;
-  max-height: 220px;
-  overflow-y: auto;
-}
-
-.cam-library-tool {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-rows: auto auto;
-  align-items: center;
-  gap: 1px 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--line-strong);
-}
-
-.cam-library-tool:last-child {
-  border-bottom: none;
-}
-
-.cam-library-tool--imported {
-  opacity: 0.45;
-}
-
-.cam-library-tool__name {
-  grid-row: 1;
-  grid-column: 1;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cam-library-tool__meta {
-  grid-row: 2;
-  grid-column: 1;
-  font-size: 11px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cam-library-tool button {
-  grid-row: 1 / 3;
-  grid-column: 2;
-  align-self: center;
 }
 
 @media (max-width: 920px) {
