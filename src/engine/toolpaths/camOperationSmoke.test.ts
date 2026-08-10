@@ -27,18 +27,26 @@
  * Run with: npx tsx src/engine/toolpaths/camOperationSmoke.test.ts
  */
 
+import { readFileSync } from 'node:fs'
 import type { DrillType, Operation, Project, RegionMaskMode, Segment, SketchFeature, Tool } from '../../types/project'
 import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
+import { normalizeProject } from '../../store/projectStore'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { runPostProcessor } from '../gcode/postprocessor'
+import { parseGcodeMotion } from '../gcode/gcodeMotionParser'
 import { validateMachineDefinition } from '../gcode/types'
 import type { MachineDefinition } from '../gcode/types'
 import { getOperationClearance, getOperationSafeZ, normalizeToolForProject } from './geometry'
 import type { ToolpathResult } from './types'
+import { optimizeLinearMoves } from './linearMoveOptimization'
 import { generatePocketToolpath } from './pocket'
 import { generateDrillingToolpath } from './drilling'
 import { generateVCarveToolpath } from './vcarve'
+import { generateEdgeRouteToolpath } from './edge'
 import { generateSurfaceCleanToolpath } from './surface'
+import { generateRoughSurfaceToolpath } from './roughSurface'
+import { generateFinishSurfaceToolpath } from './finishSurface'
+import { generateFinishSurfaceCleanupToolpath } from './finishSurfaceCleanup'
 import { generateFollowLineToolpath } from './carving'
 import { generateVCarveMedialToolpath } from './vcarveMedial'
 
@@ -284,6 +292,62 @@ function baseProject(tools: Tool[], features: SketchFeature[]): Project {
   }, features)
 }
 
+/**
+ * Asserts issue #467's invariant against the emitted program: an operation
+ * positions itself with a rapid before it cuts, so no fed move may travel in
+ * XY while descending.
+ *
+ * `parseGcodeMotion` replays the program the way a controller does — modal
+ * motion mode, modal axis words — starting from an assumed origin. That
+ * starting assumption is the whole point rather than a limitation: a real
+ * machine begins wherever the previous program left it, so an opening
+ * `G1 X.. Y.. Z-3` parses as a fed move that both travels and descends, which
+ * is exactly the gouge. A correct program opens with `G0 Z<safe>` and
+ * `G0 X.. Y..`, and every fed move that follows starts where the machine is.
+ *
+ * Checking the G-code rather than the moves is deliberate: it catches the
+ * defect wherever it was introduced — generator, optimizer, or postprocessor.
+ *
+ * The second assertion is stated as self-consistency rather than as the flat
+ * "no fed move descends while travelling in XY" the pocket-only regression test
+ * uses. That flat rule does not generalise: helical bores and V-carve ramps
+ * descend while moving in XY *by design*, and asserting otherwise fails four
+ * legitimate fixtures. What is true for every kind is that emission must not
+ * invent a 3D diagonal the toolpath never contained — which is exactly the
+ * #467 gouge, where a pure-Z plunge became a diagonal `G1` across the stock.
+ */
+function assertEntrySafe(gcode: string, toolpath: ToolpathResult, label: string): void {
+  const parsed = parseGcodeMotion(gcode, 'ij', ';', '')
+  assert(
+    parsed.status === 'verified',
+    `${label}: emitted G-code should parse cleanly, got "${parsed.status}"`
+    + `${parsed.warnings.length > 0 ? ` (${parsed.warnings[0]})` : ''}`,
+  )
+  assert(parsed.moves.length > 0, `${label}: program should emit motion`)
+  assert(
+    parsed.moves[0].kind === 'rapid',
+    `${label}: program must open with a rapid, got ${parsed.moves[0].kind}`,
+  )
+
+  const ramps = (from: { x: number; y: number; z: number }, to: { x: number; y: number; z: number }): boolean => (
+    (!approx(from.x, to.x) || !approx(from.y, to.y)) && to.z < from.z - 1e-6
+  )
+
+  // Does the operation legitimately ramp? Helix entries, V-carve, and 3D
+  // surface passes do; pocket, edge route, and drilling do not.
+  const toolpathRamps = toolpath.moves.some((move) => move.kind !== 'rapid' && ramps(move.from, move.to))
+  if (toolpathRamps) return
+
+  for (const move of parsed.moves) {
+    if (move.kind === 'rapid') continue
+    assert(
+      !ramps(move.from, move.to),
+      `${label}: emitted a descending XY diagonal the toolpath never contained — `
+      + `(${move.from.x}, ${move.from.y}, ${move.from.z}) → (${move.to.x}, ${move.to.y}, ${move.to.z})`,
+    )
+  }
+}
+
 /** Post a toolpath through the real postprocessor and return the G-code string. */
 function postToolpath(
   project: Project,
@@ -291,13 +355,18 @@ function postToolpath(
   toolpath: ToolpathResult,
 ): string {
   const toolRecord = project.tools.find((t) => t.id === operation.toolRef!)!
+  // The app never posts a raw toolpath — `useToolpathGeneration` always runs
+  // the optimizer first. Posting `toolpath` unchanged exercised a pipeline that
+  // does not exist, which is how the component behind #467 stayed absent from
+  // every per-kind smoke test (issue #470).
+  const optimized = optimizeLinearMoves(toolpath)
   const result = runPostProcessor({
     project,
     definition: testMachineDefinition(),
     operations: [{
       operation,
       tool: normalizeToolForProject(toolRecord, project),
-      toolpath,
+      toolpath: optimized,
     }],
     options: {
       emitToolChanges: true,
@@ -305,6 +374,7 @@ function postToolpath(
       programName: project.meta.name,
     },
   })
+  assertEntrySafe(result.gcode, optimized, `${operation.kind} (${operation.name})`)
   return result.gcode
 }
 
@@ -1434,7 +1504,108 @@ test('v_carve_medial: include region constrains cut area (regression guard)', ()
 })
 
 // =====================================================================
-// 4. STOCK TARGET — discovered gap (no resolver supports stock target)
+// 4. EDGE ROUTE — inside + outside
+// =====================================================================
+//
+// Edge route emits its own entry moves instead of going through `entry.ts`,
+// so nothing above covers it, and it is the most used operation after pocket.
+// Added with the #470 entry-safety assertion, which every `postToolpath` call
+// now runs.
+// =====================================================================
+
+console.log('\nEdge route inside + outside')
+
+test('edge_route_outside: generates toolpath + posts', () => {
+  const tool = makeFlatEndmill('t1', 4)
+  const boss: SketchFeature = { ...makeRectFeature('b1', 20, 20, 20, 20, 0, -4), operation: 'add' }
+  const project = baseProject([tool], [boss])
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['b1'] },
+    toolRef: 't1',
+  })
+
+  const result = generateEdgeRouteToolpath(project, op)
+  assert(result.moves.length > 0, 'outside edge route should produce moves')
+  assert(result.moves.some((m) => m.kind === 'cut'), 'outside edge route should produce cut moves')
+
+  const gcode = postToolpath(project, op, result)
+  assert(gcode.includes('M30'), 'G-code should include program end')
+})
+
+test('edge_route_inside: generates toolpath + posts', () => {
+  const tool = makeFlatEndmill('t1', 4)
+  const feat = makeRectFeature('a', 0, 0, 30, 30, 0, -4)
+  const project = baseProject([tool], [feat])
+  const op = makePocketOp({
+    kind: 'edge_route_inside',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+  })
+
+  const result = generateEdgeRouteToolpath(project, op)
+  assert(result.moves.length > 0, 'inside edge route should produce moves')
+  assert(result.moves.some((m) => m.kind === 'cut'), 'inside edge route should produce cut moves')
+
+  const gcode = postToolpath(project, op, result)
+  assert(gcode.includes('M30'), 'G-code should include program end')
+})
+
+// =====================================================================
+// 5. 3D SURFACE — rough, finish, cleanup
+// =====================================================================
+//
+// These need a real imported mesh, so they reuse the `.camj` fixtures
+// `surfaceOperationValidation.test.ts` already ships rather than building
+// geometry inline. Generation is synchronous, so they fit a smoke test.
+// Added with the #470 entry-safety assertion.
+// =====================================================================
+
+console.log('\n3D surface operations')
+
+function loadFixture(name: string): Project {
+  const raw = readFileSync(new URL(`../test-fixtures/${name}`, import.meta.url), 'utf8')
+  return normalizeProject(JSON.parse(raw) as Project)
+}
+
+function fixtureOperation(project: Project, kind: Operation['kind']): Operation {
+  const op = project.operations.find((candidate) => candidate.kind === kind)
+  assert(op !== undefined, `fixture should contain a ${kind} operation`)
+  return op!
+}
+
+test('rough_surface: generates toolpath + posts', () => {
+  const project = loadFixture('3d-imported-block-test3.camj')
+  const op = fixtureOperation(project, 'rough_surface')
+  const result = generateRoughSurfaceToolpath(project, op)
+  assert(result.moves.length > 0, 'rough surface should produce moves')
+
+  const gcode = postToolpath(project, op, result)
+  assert(gcode.includes('M30'), 'G-code should include program end')
+})
+
+test('finish_surface: generates toolpath + posts', () => {
+  const project = loadFixture('3d-imported-block-test3.camj')
+  const op = fixtureOperation(project, 'finish_surface')
+  const result = generateFinishSurfaceToolpath(project, op)
+  assert(result.moves.length > 0, 'finish surface should produce moves')
+
+  const gcode = postToolpath(project, op, result)
+  assert(gcode.includes('M30'), 'G-code should include program end')
+})
+
+test('finish_surface_cleanup: generates toolpath + posts', () => {
+  const project = loadFixture('model-in-pocket.camj')
+  const op = fixtureOperation(project, 'finish_surface_cleanup')
+  const result = generateFinishSurfaceCleanupToolpath(project, op)
+  assert(result.moves.length > 0, 'finish surface cleanup should produce moves')
+
+  const gcode = postToolpath(project, op, result)
+  assert(gcode.includes('M30'), 'G-code should include program end')
+})
+
+// =====================================================================
+// 6. STOCK TARGET — discovered gap (no resolver supports stock target)
 // =====================================================================
 //
 // AUDIT FINDING: `resolvePocketRegions` (resolver.ts:235) requires
