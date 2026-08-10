@@ -186,23 +186,6 @@ function buildChains(moves: ToolpathMove[]): { chains: Chain[]; chainOf: Map<num
   return { chains, chainOf }
 }
 
-function chainPointAt(moves: ToolpathMove[], chain: Chain, memberIndices: number[], arc: number): Point {
-  for (let position = 0; position < memberIndices.length; position += 1) {
-    const length = chain.moveLength[position]
-    const start = chain.startDistance[position]
-    if (arc <= start + length + ARC_EPSILON || position === memberIndices.length - 1) {
-      const move = moves[memberIndices[position]]
-      const t = length > 0 ? Math.min(1, Math.max(0, (arc - start) / length)) : 0
-      return {
-        x: move.from.x + (move.to.x - move.from.x) * t,
-        y: move.from.y + (move.to.y - move.from.y) * t,
-      }
-    }
-  }
-  const first = moves[memberIndices[0]]
-  return { x: first.from.x, y: first.from.y }
-}
-
 /**
  * Measure every tab crossing of every cut chain, once, before anything is
  * emitted. This is the step that makes the result independent of how the source
@@ -500,44 +483,4 @@ export function splitCutMoveWithSmoothTabs(
   }
 
   return result.length > 0 ? result : [{ ...move, from: { ...actualFrom } }]
-}
-
-/**
- * Highest Z the planned envelope requires anywhere on `chainIndex` at `arc`.
- * Exposed for tests and diagnostics: the safety assertion "no emitted segment
- * is below the analytic envelope" needs the analytic envelope.
- */
-export function envelopeZAt(plan: SmoothTabPlan, chainIndex: number, arc: number): number {
-  const chain = plan.chains[chainIndex]
-  const activeRect = chain.rectIntervals.filter(
-    (interval) => arc >= interval.start - ARC_EPSILON && arc <= interval.end + ARC_EPSILON,
-  )
-  const activeSmooth = chain.smoothCrossings.filter((crossing) =>
-    crossingContains(crossing, arc, chain.totalLength))
-  return requiredZ(arc, chain.baseZ, chain.totalLength, activeRect, activeSmooth)
-}
-
-/** Chain lookup for tests: which chain a source move landed in, if any. */
-export function chainIndexOfMove(plan: SmoothTabPlan, moveIndex: number): number | undefined {
-  return plan.chainOf.get(moveIndex)
-}
-
-/** Total arc length of a planned chain — tests measure crossings against it. */
-export function chainLength(plan: SmoothTabPlan, chainIndex: number): number {
-  return plan.chains[chainIndex].totalLength
-}
-
-/** Arc-length point lookup for tests that need the XY of an envelope query. */
-export function chainPoint(
-  plan: SmoothTabPlan,
-  moves: ToolpathMove[],
-  chainIndex: number,
-  arc: number,
-): Point {
-  const memberIndices: number[] = []
-  for (const [moveIndex, index] of plan.chainOf) {
-    if (index === chainIndex) memberIndices.push(moveIndex)
-  }
-  memberIndices.sort((left, right) => left - right)
-  return chainPointAt(moves, plan.chains[chainIndex], memberIndices, arc)
 }
