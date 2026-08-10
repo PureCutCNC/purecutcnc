@@ -18,7 +18,7 @@ output belong here.
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/414
   (maintainer comment "Maintainer plan — PR 2: smooth tabs")
 - Manager session: 2026-08-10
-- Status: `slice in progress` (S1-S4 accepted; S5 with a worker)
+- Status: `ready for user review`
 - User authorization for credential-backed worker dispatch: granted 2026-08-10
   ("use management skill and dispatch agents as needed")
 
@@ -59,8 +59,8 @@ output belong here.
 | S2 | Pure smooth Z profile helper (`tabProfile.ts`) | `d560c58` | manager-owned (integration checkout) | `n/a` | `n/a` | `d763c8c` | `npm test` | Raised cosine, exact endpoints/peak/zero-slope joins, chord-tolerance-derived sample count |
 | S3 | Chain-level smooth crossing integration (`tabSmoothing.ts`) | `d763c8c` | manager-owned (integration checkout) | `n/a` | `n/a` | `fe25189`, `3975e13` | `npm test` (172 files) | Rect-only projects never reach the planner, so rect output is preserved by construction; verified byte-identical across 12 fixtures |
 | S4 | Trochoidal smooth-tab fallback warning + design-doc contract | `fe25189` | manager-owned (integration checkout) | `n/a` | `n/a` | `2d78d5e` | `npm test`, `docs:check` | Touches `locales/*/warnings.ts`; S5 touches `locales/*/featureTree.ts` — different files, so they ran concurrently without conflict |
-| S5 | Localized Rectangular/Smooth control, single + bulk tab panels | `d560c58` | `feat/issue-414-tab-shape-ui` | `in progress` | `pending` | `-` | `npm test`, `npm run build` | Touches `locales/*/featureTree.ts` only |
-| S6 | Verification, e2e, INDEX updates, PR | `-` | manager-owned (integration checkout) | `n/a` | `n/a` | `-` | `npm run build`, `npm run test:e2e` | Includes rect-output differential probe and mutation checks |
+| S5 | Localized Rectangular/Smooth control, single + bulk tab panels | `fe25189` | `feat/issue-414-tab-shape-ui` (merged, removed) | `complete` | `accepted` | `ede7854` | `npm test`, `npm run build` | Locale diff verified by parsing key/value pairs: 275 -> 279 keys per locale, no existing value altered |
+| S6 | Verification, e2e, INDEX updates, PR | `ede7854` | manager-owned (integration checkout) | `n/a` | `n/a` | `5f73483` | `npm run build`, full e2e 145/145 | Rect differential re-run after every slice landed; still byte-identical |
 
 ## Verification contract (manager-owned, not delegated)
 
@@ -121,3 +121,37 @@ Verified the emission by mutation, and diffed all five `warnings.ts` locales by
 **parsing key/value pairs and comparing the objects** rather than reading the
 rendered diff: exactly one key added per locale, 153 -> 154, no existing value
 altered. That check is the one that catches an invisible U+00A0 substitution.
+
+### S5 — accepted (`ede7854`)
+
+The control reads through `tabShape()` in both panels, the patch object carries
+only `shape`, and the hint states the trade-off the plan asked for. Locale diff
+verified by parsing key/value pairs: exactly four keys per locale, 275 -> 279, no
+existing value altered.
+
+The worker's own unit tests are good — they even assert that the naive
+`commonValue(tabs, t => t.shape)` *would* read mixed, which is the trap. But they
+exercise the helpers, not the panel, so an added e2e assertion checks the
+user-visible outcome for a pair of legacy tabs.
+
+**A correction worth recording.** That e2e assertion was first written claiming it
+would catch the panel switching to raw `tab.shape`. It does not, and the mutation
+proved it: `normalizeTab` resolves the missing field at *load*, so the panel never
+receives an unresolved tab. Neither layer's removal alone fails the e2e; removing
+both does, and each layer individually is caught by its own unit test. The comment
+now says exactly that. A test whose comment overstates what it constrains is worse
+than no comment, because the next reader trusts it.
+
+Also fixed a cross-slice terminology split: the S4 warning said "Weich"/"Adoucie"
+where the S5 control says "Sanft"/"Lisse". Same setting, two names, in the two
+places a user sees it back to back.
+
+## Final verification
+
+- `npm run build` green — 173 test files.
+- Full isolated e2e suite: **145/145** (`PURECUT_E2E_PORT=1439 PURECUT_E2E_ISOLATED=1`).
+- Rect differential re-run after every slice landed: still byte-identical to `main`
+  across all 12 fixtures.
+- One flaky failure seen mid-run, `src/import/classifier.test.ts`'s
+  `elapsedMs < 3_000` bound, was load contention from running a build concurrently
+  with a worker; it passes three times in a row on a quiet machine and is unrelated.
