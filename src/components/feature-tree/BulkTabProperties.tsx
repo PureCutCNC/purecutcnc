@@ -15,13 +15,14 @@
  */
 
 import { useMemo, useCallback } from 'react'
-import type { Tab } from '../../types/project'
+import type { Tab, TabShape } from '../../types/project'
+import { tabShape } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { convertLength } from '../../utils/units'
 import { useI18n } from '../../i18n/i18nContext'
 import { DraftNumberInput } from './DraftNumberInput'
 import { ZRangeSlider } from './ZRangeSlider'
-import { commonNumber, commonBoolean, zDomainMax, validateZEdits } from './mixedValue'
+import { commonNumber, commonBoolean, commonValue, zDomainMax, validateZEdits } from './mixedValue'
 
 interface BulkTabPropertiesProps {
   selectedTabs: Tab[]
@@ -42,6 +43,7 @@ export function BulkTabProperties({ selectedTabs, units, stockThickness, onClose
   const commonZTop = commonNumber(selectedTabs, (tab) => tab.z_top)
   const commonZBottom = commonNumber(selectedTabs, (tab) => tab.z_bottom)
   const commonVisible = commonBoolean(selectedTabs, (tab) => tab.visible)
+  const commonShape = commonValue(selectedTabs, (tab) => tabShape(tab))
 
   const allZTops = selectedTabs.map((tab) => tab.z_top)
   const allZBottoms = selectedTabs.map((tab) => tab.z_bottom)
@@ -106,6 +108,24 @@ export function BulkTabProperties({ selectedTabs, units, stockThickness, onClose
           mixedPlaceholder={mixedPlaceholder}
           onCommit={handleZCommit}
         />
+        <label className="properties-field">
+          <span>{t('featureTree.properties.tabShape')}</span>
+          <select
+            value={commonShape ?? ''}
+            onChange={(event) => {
+              const next = event.target.value as TabShape
+              if (next) updateTabs(ids, { shape: next })
+            }}
+            data-testid="bulk-tab-shape"
+          >
+            {commonShape === null ? (
+              <option value="" disabled>{mixedPlaceholder}</option>
+            ) : null}
+            <option value="rect">{t('featureTree.properties.tabShape.rect')}</option>
+            <option value="smooth">{t('featureTree.properties.tabShape.smooth')}</option>
+          </select>
+        </label>
+        <span className="properties-hint">{t('featureTree.properties.tabShape.hint')}</span>
         <label className="properties-check">
           <input
             type="checkbox"

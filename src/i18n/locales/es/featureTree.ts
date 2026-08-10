@@ -289,6 +289,11 @@ export const featureTreeEs: Record<keyof typeof featureTreeEn, string> = {
   "featureTree.contextMenu.addToFolderMixedTooltip": "Los elementos, las regiones y la geometría de construcción se guardan en carpetas separadas; seleccione un solo tipo",
   "featureTree.contextMenu.joinDisabledTooltip": "Seleccione dos o más elementos para combinar",
   "featureTree.contextMenu.useAsStockDisabledTooltip": "El elemento debe ser una operación de adición con un perfil cerrado",
+  "featureTree.properties.tabShape": "Forma",
+  "featureTree.properties.tabShape.rect": "Rectangular",
+  "featureTree.properties.tabShape.smooth": "Suave",
+  "featureTree.properties.tabShape.hint": "Suave reduce el movimiento brusco en Z pero deja menos material que Rectangular para el mismo tamaño.",
+
   "featureTree.zRange.zTop": "Z superior",
   "featureTree.zRange.zBottom": "Z inferior",
   "featureTree.zRange.handleTopAria": "Tirador Z superior",
