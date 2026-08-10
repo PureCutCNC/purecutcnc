@@ -4148,6 +4148,14 @@
   padding: 2px 0;
 }
 
+.properties-hint {
+  display: block;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 2px 0;
+}
+
 /* ── A1.1: progressive-disclosure "Advanced" section ──────── */
 
 .disclosure-section {

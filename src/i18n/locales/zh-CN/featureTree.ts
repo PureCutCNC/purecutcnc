@@ -373,6 +373,12 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.contextMenu.joinDisabledTooltip': '选择两个或更多特征以合并',
   'featureTree.contextMenu.useAsStockDisabledTooltip': '特征必须是闭合轮廓的添加操作',
 
+  // ── Properties: tab shape ──
+  'featureTree.properties.tabShape': '形状',
+  'featureTree.properties.tabShape.rect': '矩形',
+  'featureTree.properties.tabShape.smooth': '平滑',
+  'featureTree.properties.tabShape.hint': '平滑减少Z轴急动，但相同尺寸下比矩形留下的材料更少。',
+
   // ── Z-range slider ──
   'featureTree.zRange.zTop': 'Z 顶',
   'featureTree.zRange.zBottom': 'Z 底',
