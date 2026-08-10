@@ -159,6 +159,30 @@ if (import.meta.env.DEV) {
       const { useProjectStore } = await _pcTestStore()
       return useProjectStore.getState().project.features.length
     },
+    /** Selects the given features and opens the Join workflow panel. */
+    startJoinFeatures: async (ids: string[]) => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().selectFeatures(ids)
+      useProjectStore.getState().startJoinSelectedFeatures()
+    },
+    /**
+     * Opens the Rotate workflow panel. Before any reference point is picked its
+     * body renders as an all-false fragment, which is the case the panel's :empty
+     * collapse has to catch.
+     */
+    startRotateFeature: async (featureId: string) => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().startRotateFeature(featureId)
+    },
+    /** Reads keep-originals off whichever workflow currently owns it. */
+    getKeepOriginals: async () => {
+      const { useProjectStore } = await _pcTestStore()
+      const state = useProjectStore.getState()
+      return {
+        shapeAction: state.pendingShapeAction?.keepOriginals ?? null,
+        transform: state.pendingTransform?.keepOriginals ?? null,
+      }
+    },
   }
 }
 
@@ -188,6 +212,9 @@ declare global {
       cancelPendingAdd: () => Promise<void>
       getPendingAddShape: () => Promise<string | null>
       getFeatureCount: () => Promise<number>
+      startJoinFeatures: (ids: string[]) => Promise<void>
+      startRotateFeature: (featureId: string) => Promise<void>
+      getKeepOriginals: () => Promise<{ shapeAction: boolean | null; transform: boolean | null }>
     }
   }
 }

@@ -15,6 +15,7 @@
  */
 
 import type { FeatureKind } from '../../types/project'
+import { CanvasWorkflowCancel } from './CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
@@ -54,11 +55,7 @@ export function OverlapFeaturePicker({ picker }: OverlapFeaturePickerProps) {
         className="overlap-feature-picker__panel"
         moveLabel={t('canvas.overlap.moveLabel')}
         actions={(
-          <button
-            type="button"
-            className="tablet-cmd-btn tablet-cmd-btn--cancel"
-            onClick={picker.cancel}
-          >{t('canvas.overlap.cancel')}</button>
+          <CanvasWorkflowCancel label={t('canvas.overlap.cancel')} onClick={picker.cancel} />
         )}
       >
         <div className="overlap-feature-picker__list" aria-label={t('canvas.overlap.listAria')}>

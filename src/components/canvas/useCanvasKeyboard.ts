@@ -131,6 +131,8 @@ export interface CanvasKeyboardCtx {
   setPendingTransformPreviewPointRef: (nextPoint: PendingPreviewPoint | null) => void
   setPendingOffsetPreviewPointRef: (nextPoint: PendingPreviewPoint | null) => void
   setPendingOffsetRawPreviewPointRef: (nextPoint: PendingPreviewPoint | null) => void
+  setPendingShapeActionKeepOriginals: (keepOriginals: boolean) => void
+  setPendingTransformKeepOriginals: (keepOriginals: boolean) => void
   setCopyCountDraft: Dispatch<SetStateAction<string>>
   setOperationDimEdit: Dispatch<SetStateAction<OperationDimEdit | null>>
   copyCountDraft: string
@@ -203,6 +205,8 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     setPendingTransformPreviewPointRef,
     setPendingOffsetPreviewPointRef,
     setPendingOffsetRawPreviewPointRef,
+    setPendingShapeActionKeepOriginals,
+    setPendingTransformKeepOriginals,
     setCopyCountDraft,
     setOperationDimEdit,
     copyCountDraft,
@@ -713,6 +717,31 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
       event.preventDefault()
       confirmCutCutters()
       return
+    }
+
+    // K toggles "keep originals" wherever that checkbox is on screen: the join and
+    // cut panels always, the transform panel only in the phases that render it.
+    // Modifier-free like the `c` constraint binding, so Cmd/Ctrl/Alt+K stay free.
+    if (
+      (event.key === 'k' || event.key === 'K')
+      && !event.metaKey
+      && !event.ctrlKey
+      && !event.altKey
+    ) {
+      if (pendingShapeAction) {
+        event.preventDefault()
+        setPendingShapeActionKeepOriginals(!pendingShapeAction.keepOriginals)
+        return
+      }
+      const transformOffersKeepOriginals = !!pendingTransform && (
+        (pendingTransform.mode === 'rotate' && !!pendingTransform.referenceStart && !!pendingTransform.referenceEnd)
+        || (pendingTransform.mode === 'mirror' && !!pendingTransform.referenceStart)
+      )
+      if (pendingTransform && transformOffersKeepOriginals) {
+        event.preventDefault()
+        setPendingTransformKeepOriginals(!pendingTransform.keepOriginals)
+        return
+      }
     }
 
     if (event.key === 'Escape' && pendingSketchEditRef.current) {
