@@ -931,4 +931,69 @@ test.describe('Bulk properties browser smoke', () => {
       })
     })
   })
+
+  // ====================================================================
+  // Canvas renders EVERY selected tab/clamp, not just the primary
+  // ====================================================================
+
+  test.describe('Canvas multi-selection highlight', () => {
+    /**
+     * Samples the rendered pixel at a canvas position. Tab/clamp footprints use
+     * a distinct fill when selected, so watching ONE footprint centre across
+     * selection states tells us what the canvas actually painted. Comparing the
+     * same point (rather than two different footprints) keeps whatever is drawn
+     * underneath constant, so the only variable is the selection styling.
+     */
+    async function sampleAt(page: import('@playwright/test').Page, pt: { x: number; y: number }) {
+      return page.evaluate(({ x, y }) => {
+        const canvas = document.querySelector('canvas.sketch-canvas') as HTMLCanvasElement
+        const ctx = canvas.getContext('2d')!
+        const rect = canvas.getBoundingClientRect()
+        const dpr = canvas.width / rect.width
+        const d = ctx.getImageData(Math.round(x * dpr), Math.round(y * dpr), 1, 1).data
+        return `${d[0]},${d[1]},${d[2]},${d[3]}`
+      }, pt)
+    }
+
+    test('a tab stays painted as selected once it is no longer the primary', async ({ app }) => {
+      await seedProject(app.page, BULK_FIXTURE_JSON)
+      const canvas = app.page.locator('canvas.sketch-canvas')
+      const box = (await canvas.boundingBox())!
+      const a = worldToPixel(44, 84, box)   // Tab A centre
+      const b = worldToPixel(105, 85, box)  // Tab B centre
+
+      const unselected = await sampleAt(app.page, a)
+
+      await canvas.click({ position: a })
+      await expect(app.page.locator(selectedTabRows())).toHaveCount(1)
+      const selectedAlone = await sampleAt(app.page, a)
+      expect(selectedAlone).not.toBe(unselected)
+
+      // Shift-click Tab B. Tab A is still selected but is no longer the
+      // primary node, so a canvas that keys off selectedNode repaints it as
+      // unselected while the tree still shows both.
+      await canvas.click({ position: b, modifiers: ['Shift'] })
+      await expect(app.page.locator(selectedTabRows())).toHaveCount(2)
+      expect(await sampleAt(app.page, a)).toBe(selectedAlone)
+    })
+
+    test('a clamp stays painted as selected once it is no longer the primary', async ({ app }) => {
+      await seedProject(app.page, BULK_FIXTURE_JSON)
+      const canvas = app.page.locator('canvas.sketch-canvas')
+      const box = (await canvas.boundingBox())!
+      const a = worldToPixel(56, 46, box)   // Clamp A centre
+      const b = worldToPixel(157, 45, box)  // Clamp B centre
+
+      const unselected = await sampleAt(app.page, a)
+
+      await canvas.click({ position: a })
+      await expect(app.page.locator(selectedClampRows())).toHaveCount(1)
+      const selectedAlone = await sampleAt(app.page, a)
+      expect(selectedAlone).not.toBe(unselected)
+
+      await canvas.click({ position: b, modifiers: ['Shift'] })
+      await expect(app.page.locator(selectedClampRows())).toHaveCount(2)
+      expect(await sampleAt(app.page, a)).toBe(selectedAlone)
+    })
+  })
 })

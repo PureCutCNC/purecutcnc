@@ -1143,7 +1143,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     for (const clamp of project.clamps) {
       if (!clamp.visible) continue
-      const selected = selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id
+      const selected = selection.selectedClampIds.includes(clamp.id)
       drawClampFootprint(ctx, clamp, vt, selected, collidingClampIdSet.has(clamp.id))
       if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'clamp' && selection.selectedNode.clampId === clamp.id) {
         drawSketchControls(ctx, rectProfile(clamp.x, clamp.y, clamp.w, clamp.h), vt, selection.activeControl, canvasPalette)
@@ -1152,7 +1152,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     for (const tab of project.tabs) {
       if (!tab.visible) continue
-      const selected = selection.selectedNode?.type === 'tab' && selection.selectedNode.tabId === tab.id
+      const selected = selection.selectedTabIds.includes(tab.id)
       drawTabFootprint(ctx, tab, vt, selected)
       if (selection.mode === 'sketch_edit' && selection.selectedNode?.type === 'tab' && selection.selectedNode.tabId === tab.id) {
         drawSketchControls(ctx, rectProfile(tab.x, tab.y, tab.w, tab.h), vt, selection.activeControl, canvasPalette)
