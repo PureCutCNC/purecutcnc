@@ -1338,47 +1338,52 @@ test('startAddTabPlacement and startAddClampPlacement clear a selected feature I
 // ============================================================================
 console.log('\n15. Tab/clamp copy completion selection')
 
-test('tab copy completion selects created IDs and clears incompatible family', () => {
-  resetStore(projectWithTabsAndClamps())
+// A multi-copy (copyCount > 1) is what makes "every created ID is selected"
+// falsifiable: with a single copy, selecting the whole created set and selecting
+// only the last one are the same array.
+const COPY_COUNT = 3
+
+// Copies `sourceId` COPY_COUNT times and returns the IDs that appeared.
+function copyEntity(family: 'tab' | 'clamp', sourceId: string): string[] {
   const s = store()
-  s.selectClamp('cl1')
-  s.selectClamp('cl2', true)
-  s.startCopyTab('tb1')
+  const ids = () => (family === 'tab' ? project().tabs : project().clamps).map((e) => e.id)
+  if (family === 'tab') s.startCopyTab(sourceId)
+  else s.startCopyClamp(sourceId)
   useProjectStore.setState((prev) => ({
     pendingMove: prev.pendingMove ? { ...prev.pendingMove, fromPoint: { x: 0, y: 0 } } : null,
   }))
-  const beforeIds = project().tabs.map((t) => t.id)
-  s.completePendingMove({ x: 5, y: 5 })
-  const createdIds = project().tabs.map((t) => t.id).filter((id) => !beforeIds.includes(id))
-  assertEq(createdIds.length, 1, 'one new tab created')
+  const beforeIds = ids()
+  s.completePendingMove({ x: 5, y: 5 }, COPY_COUNT)
+  return ids().filter((id) => !beforeIds.includes(id))
+}
+
+function assertCopySelection(family: 'tab' | 'clamp', createdIds: string[]): void {
   const sel = selection()
-  assert(sel.selectedTabIds.length === 1 && sel.selectedTabIds.includes(createdIds[0]), 'selectedTabIds correct')
-  assertEq(sel.selectedClampIds.length, 0, 'clamp IDs cleared')
+  const node = sel.selectedNode
+  const own = family === 'tab' ? sel.selectedTabIds : sel.selectedClampIds
+  const other = family === 'tab' ? sel.selectedClampIds : sel.selectedTabIds
+  const primary = node?.type === 'tab' ? node.tabId : node?.type === 'clamp' ? node.clampId : null
+  assertEq(createdIds.length, COPY_COUNT, `${COPY_COUNT} new ${family}s created`)
+  assertEq(own.join(','), createdIds.join(','), `every created ${family} selected in order, not just the last`)
+  assertEq(other.length, 0, `incompatible family cleared for ${family} copy`)
   assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
   assertEq(sel.selectedFeatureId, null, 'selectedFeatureId null')
-  assert(sel.selectedNode?.type === 'tab' && sel.selectedNode.tabId === createdIds[0], 'primary created tab')
+  assertEq(node?.type, family, `primary node is a ${family}`)
+  assertEq(primary, createdIds.at(-1) ?? null, `primary is the last created ${family}`)
+}
+
+test('tab copy completion selects every created ID and clears incompatible family', () => {
+  resetStore(projectWithTabsAndClamps())
+  store().selectClamp('cl1')
+  store().selectClamp('cl2', true)
+  assertCopySelection('tab', copyEntity('tab', 'tb1'))
 })
 
-test('clamp copy completion selects created IDs and clears incompatible family', () => {
+test('clamp copy completion selects every created ID and clears incompatible family', () => {
   resetStore(projectWithTabsAndClamps())
-  const s = store()
-  s.selectTab('tb1')
-  s.selectTab('tb2', true)
-  s.startCopyClamp('cl1')
-  useProjectStore.setState((prev) => ({
-    pendingMove: prev.pendingMove ? { ...prev.pendingMove, fromPoint: { x: 0, y: 0 } } : null,
-  }))
-  const beforeIds = project().clamps.map((c) => c.id)
-  s.completePendingMove({ x: 5, y: 5 })
-  const createdIds = project().clamps.map((c) => c.id).filter((id) => !beforeIds.includes(id))
-  assertEq(createdIds.length, 1, 'one new clamp created')
-  const sel = selection()
-  assertEq(sel.selectedClampIds.length, 1, 'selectedClampIds has created clamp')
-  assert(sel.selectedClampIds.includes(createdIds[0]), 'selectedClampIds includes created clamp ID')
-  assertEq(sel.selectedTabIds.length, 0, 'tab IDs cleared')
-  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
-  assertEq(sel.selectedFeatureId, null, 'selectedFeatureId null')
-  assert(sel.selectedNode?.type === 'clamp' && sel.selectedNode.clampId === createdIds[0], 'primary is created clamp')
+  store().selectTab('tb1')
+  store().selectTab('tb2', true)
+  assertCopySelection('clamp', copyEntity('clamp', 'cl1'))
 })
 
 test('tab move completion retains homogeneous source selection', () => {

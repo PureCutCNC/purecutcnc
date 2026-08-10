@@ -842,10 +842,10 @@ test.describe('Bulk properties browser smoke', () => {
       }
     })
 
-    test.describe('tablet clamp canvas multi-select + bulk panel delete', () => {
+    test.describe('tablet clamp canvas multi-select + More-menu delete', () => {
       test.use({ hasTouch: true, viewport: { width: 1024, height: 768 } })
 
-      test('canvas tap multi-selects clamps, bulk panel Delete Selected + Undo restores', async ({ app, ui }) => {
+      test('canvas tap multi-selects clamps, row More menu Delete Selected + Undo restores', async ({ app, ui }) => {
         await seedProject(app.page, BULK_FIXTURE_JSON)
 
         // Verify tablet shell is active.
@@ -882,11 +882,35 @@ test.describe('Bulk properties browser smoke', () => {
         const editSketchBtn = ui.properties.panel(app.page).getByRole('button', { name: 'Edit Sketch' })
         await expect(editSketchBtn).toHaveCount(0)
 
-        // Delete Selected via dispatchEvent: the button is functional but may be
-        // clipped by the tablet viewport. Dispatch a real click event in the page.
-        await ui.properties.deleteSelectedButton(app.page).evaluate((el) => {
-          (el as HTMLElement).click()
-        })
+        // Open the context menu the way a tablet user does: the "⋮" More-actions
+        // button on a selected clamp row. There is no right-click on touch, so
+        // this button is the only real routing path into the bulk menu. The tree
+        // lives in the tablet project drawer, which must be opened first — the
+        // rows are in the DOM but translated outside the viewport while closed.
+        await ui.tree.openProjectPanelButton(app.page).tap()
+
+        const selectedClampRow = app.page.locator(selectedClampRows()).nth(1)
+        const moreButton = ui.tree.rowMoreButton(selectedClampRow)
+        await expect(moreButton).toBeVisible()
+        await moreButton.tap()
+
+        const menu = ui.contextMenu.container(app.page)
+        await expect(menu).toBeVisible()
+
+        // Opening the menu on an already-selected row must not collapse the
+        // selection back to one clamp.
+        await expect(app.page.locator(selectedClampRows())).toHaveCount(2)
+
+        // Singleton actions must be absent while several clamps are selected.
+        await expect(ui.contextMenu.item(menu, 'Edit Sketch')).not.toBeAttached()
+        await expect(ui.contextMenu.item(menu, 'Copy')).not.toBeAttached()
+        await expect(ui.contextMenu.item(menu, 'Move')).not.toBeAttached()
+
+        const deleteItem = ui.contextMenu.item(menu, 'Delete Selected')
+        await expect(deleteItem).toBeVisible()
+        await deleteItem.tap()
+
+        await expect(menu).not.toBeVisible()
 
         // Only cl-1 and cl-2 should be deleted; cl-3 (hidden) survives.
         const after = await getProject(app.page)
