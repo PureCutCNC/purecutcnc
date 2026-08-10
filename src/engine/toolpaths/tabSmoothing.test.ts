@@ -571,6 +571,31 @@ test('a smooth tab only affects passes that are below its top', () => {
   assertClose(out.moves[0].to.z, 6, 1e-9, 'and stays at its own depth')
 })
 
+// ── Every strategy the shared pass owns ──────────────────────────────
+
+test('finish-surface passes ramp exactly like contour Edge Route', () => {
+  // `useToolpathGeneration` routes finish_surface and finish_surface_cleanup
+  // through `applyTabsToEdgeRoute` too, so smooth motion has to reach them. If
+  // this ever diverges from the edge-route result, one of the two is wrong.
+  const project = projectWithTabs([tab('tb1', 40, 40, 20, 20, 'smooth')])
+  const reference = applyTabsToEdgeRoute(project, operation(), result(straightPass(1)))
+
+  for (const kind of ['finish_surface', 'finish_surface_cleanup', 'pocket'] as const) {
+    const out = applyTabsToEdgeRoute(project, { ...operation(), kind }, result(straightPass(1)))
+    assert(out.moves.length === reference.moves.length, `${kind} emits the same move count`)
+    for (let index = 0; index < out.moves.length; index += 1) {
+      assertClose(out.moves[index].to.z, reference.moves[index].to.z, 1e-9, `${kind} matches at move ${index}`)
+    }
+  }
+})
+
+test('an unsupported operation kind is left alone entirely', () => {
+  const project = projectWithTabs([tab('tb1', 40, 40, 20, 20, 'smooth')])
+  const input = result(straightPass(1))
+  const out = applyTabsToEdgeRoute(project, { ...operation(), kind: 'drilling' }, input)
+  assert(out === input, 'drilling is not a tab-bearing operation and is returned untouched')
+})
+
 // ── Trochoidal Edge Route falls back, and says so ────────────────────
 
 test('a smooth tab on a trochoidal Edge Route warns instead of silently stepping', () => {
