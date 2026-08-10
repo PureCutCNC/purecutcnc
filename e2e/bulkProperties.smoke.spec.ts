@@ -1060,6 +1060,25 @@ test.describe('Bulk properties browser smoke', () => {
     expect(str(tabA.shape)).toBe('smooth')
   })
 
+  test('two legacy tabs read as Rectangular, not as mixed', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    // Neither fixture tab carries a `shape` key — they are legacy records, which
+    // is what every project saved before this feature looks like. Opening them
+    // together must read Rectangular, never "Mixed values".
+    //
+    // Two layers have to hold for that: `normalizeTab` resolves the missing
+    // field at load, and the panel resolves again through `tabShape()`. Either
+    // alone is sufficient, so this asserts the user-visible outcome rather than
+    // pinning one mechanism — swapping the panel to raw `tab.shape` still passes
+    // here, because normalization has already filled the field in by then.
+    await ui.tree.tabRows(app.page).nth(0).click()
+    await ui.tree.tabRows(app.page).nth(1).click({ modifiers: [modKey as 'Meta' | 'Control'] })
+
+    const bulkSelect = ui.properties.panel(app.page).locator('[data-testid="bulk-tab-shape"]')
+    await expect(bulkSelect).toHaveValue('rect')
+  })
+
   test('bulk tab shape select shows mixed state and applies to all', async ({ app, ui }) => {
     await seedProject(app.page, BULK_FIXTURE_JSON)
 
