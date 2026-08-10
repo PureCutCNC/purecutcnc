@@ -134,6 +134,22 @@ export function clampDomainMax(
 }
 
 /**
+ * Snaps a dragged Z value to a sensible increment in project units: 0.01" or
+ * 0.1 mm.
+ *
+ * Dragging otherwise lands on full display precision (4 decimals for inch, 3
+ * for mm), which is finer than anyone dials a cut depth to and makes the
+ * handles feel twitchy. Callers snap BEFORE applying `constrainZ`, so the exact
+ * domain bounds stay reachable even when they are not on the increment.
+ *
+ * Typed input is deliberately not snapped — entering 0.125" must still work.
+ */
+export function snapDragZ(value: number, units: 'mm' | 'inch'): number {
+  const factor = units === 'inch' ? 100 : 10
+  return Math.round(value * factor) / factor
+}
+
+/**
  * Pure constraint for a Z-range handle value.
  *
  * - `isTop`: the handle is the Z-top — constrained to [max(opposite, domainMin), domainMax].

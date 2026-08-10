@@ -22,7 +22,7 @@
  * Run with: npx tsx src/components/feature-tree/mixedValue.test.ts
  */
 
-import { commonNumber, commonBoolean, minValue, maxValue, zDomainMax, clampDomainMax, constrainZ, validateZEdits, zHandleAriaBounds } from './mixedValue'
+import { commonNumber, commonBoolean, minValue, maxValue, zDomainMax, clampDomainMax, constrainZ, snapDragZ, validateZEdits, zHandleAriaBounds } from './mixedValue'
 
 let passed = 0
 let failed = 0
@@ -436,6 +436,38 @@ check('validateZEdits: Line features with getBottom()=>0 unblock valid bottom fo
     validateZEdits(mixed, (i) => i.z_top, (i) => i.z_bottom, { bottom: 3 }) === false,
     'bottom=3 > Line effectiveTop=2 — rejected when Line is in validateItems',
   )
+})
+
+// ── snapDragZ ───────────────────────────────────────────────────────
+
+check('snapDragZ rounds to 0.1 in mm', () => {
+  assert(snapDragZ(3.4567891, 'mm') === 3.5, '3.4567891mm → 3.5')
+  assert(snapDragZ(3.44, 'mm') === 3.4, '3.44mm → 3.4')
+  assert(snapDragZ(0.04, 'mm') === 0, '0.04mm → 0')
+  assert(snapDragZ(12, 'mm') === 12, 'whole values are unchanged')
+})
+
+check('snapDragZ rounds to 0.01 in inch', () => {
+  assert(snapDragZ(0.4567891, 'inch') === 0.46, '0.4567891" → 0.46')
+  assert(snapDragZ(0.754, 'inch') === 0.75, '0.754" → 0.75')
+  assert(snapDragZ(0.004, 'inch') === 0, '0.004" → 0')
+  assert(snapDragZ(0.75, 'inch') === 0.75, 'values already on the increment are unchanged')
+})
+
+check('snapDragZ keeps the inch increment finer than the mm one', () => {
+  // 0.125" is representable at inch precision but not at mm precision — the
+  // two units must not share a single rounding factor.
+  assert(snapDragZ(0.125, 'inch') !== snapDragZ(0.125, 'mm'), 'inch and mm snap differently')
+  assert(snapDragZ(0.125, 'mm') === 0.1, '0.125 in mm → 0.1')
+})
+
+check('snapDragZ never returns a value needing more decimals than displayed', () => {
+  for (const raw of [1.23456, 7.891011, 0.0499, 19.9999]) {
+    const mm = snapDragZ(raw, 'mm')
+    assert(Math.abs(mm * 10 - Math.round(mm * 10)) < 1e-9, `${raw}mm snapped to 1 decimal`)
+    const inch = snapDragZ(raw, 'inch')
+    assert(Math.abs(inch * 100 - Math.round(inch * 100)) < 1e-9, `${raw}" snapped to 2 decimals`)
+  }
 })
 
 // ── Report ──────────────────────────────────────────────────────────

@@ -996,4 +996,42 @@ test.describe('Bulk properties browser smoke', () => {
       expect(await sampleAt(app.page, a)).toBe(selectedAlone)
     })
   })
+
+  // ====================================================================
+  // Z slider drag snaps to a usable increment (0.1 mm / 0.01 in)
+  // ====================================================================
+
+  test('dragging the Z handle lands on a 0.1 mm increment, not full precision', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    // Single tab, so the committed value is unambiguous.
+    await ui.tree.tabRows(app.page).nth(0).click()
+    const slider = ui.properties.zRangeSlider(app.page)
+    const track = slider.locator('.z-range-slider__track')
+    const trackBox = await track.boundingBox()
+    if (!trackBox) throw new Error('Track not found')
+
+    const domainMax = 20 // stock thickness
+    const EDGE_MARGIN = 0.08
+    function zToTrackY(z: number): number {
+      const fraction = 1 - Math.max(0, Math.min(domainMax, z)) / domainMax
+      return trackBox!.y + (EDGE_MARGIN + fraction * (1 - 2 * EDGE_MARGIN)) * trackBox!.height
+    }
+
+    // Aim deliberately between increments — a raw drag would commit something
+    // like 1.2346, which is finer than the field ever displays.
+    const midX = trackBox.x + trackBox.width / 2
+    await app.page.mouse.move(midX, zToTrackY(0))
+    await app.page.mouse.down()
+    await app.page.mouse.move(midX, zToTrackY(1.23456), { steps: 5 })
+    await app.page.mouse.up()
+
+    const tabs = getArray(await getProject(app.page), 'tabs')
+    const committed = num(tabs.find((t) => str(t.id) === 'tb-1')!.z_bottom)
+
+    // It actually moved...
+    expect(committed).toBeGreaterThan(0)
+    // ...and landed on a tenth of a millimetre.
+    expect(Math.abs(committed * 10 - Math.round(committed * 10))).toBeLessThan(1e-9)
+  })
 })

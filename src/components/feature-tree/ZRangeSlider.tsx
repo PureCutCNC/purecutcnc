@@ -17,7 +17,7 @@
 import { useRef, useState, useMemo, useEffect } from 'react'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { useI18n } from '../../i18n/i18nContext'
-import { constrainZ, zHandleAriaBounds } from './mixedValue'
+import { constrainZ, snapDragZ, zHandleAriaBounds } from './mixedValue'
 
 // Fraction of track height reserved as visual margin at each end.
 const EDGE_MARGIN = 0.08
@@ -151,7 +151,7 @@ function ZRangeSliderInner({
       if (!track) return
       const rect = track.getBoundingClientRect()
       const percent = ((e.clientY - rect.top) / rect.height) * 100
-      const z = Math.round(percentToZ(percent, domainMin, domainMax) * 10000) / 10000
+      const z = snapDragZ(percentToZ(percent, domainMin, domainMax), units)
 
       if (handle === 'top') {
         // Constrain only against the ACTUAL committed zBottom (may be null
