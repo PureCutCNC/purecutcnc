@@ -264,6 +264,13 @@ export const tree = {
 
   /** The action buttons wrapper inside a row. */
   actions: (row: Locator) => row.locator('.tree-row-actions'),
+
+  /**
+   * The "⋮" more-actions button inside a row. Rendered only by the tablet
+   * shell, where it is the touch replacement for right-click and opens the
+   * same context menu.
+   */
+  rowMoreButton: (row: Locator) => row.locator('.tree-action-btn--more'),
 }
 
 // ── Linked badge ────────────────────────────────────────────────────

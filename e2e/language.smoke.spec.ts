@@ -49,6 +49,7 @@ function buildPropertiesLocalizationProject(): string {
   const linkedB = project.features.find((feature) => feature.id === 'f-linked-b')
   if (!linkedB) throw new Error('linked fixture must include f-linked-b')
   linkedB.z_top = 4
+  linkedB.z_bottom = 1
 
   project.featureDefinitions['def-imported-model'] = {
     id: 'def-imported-model',

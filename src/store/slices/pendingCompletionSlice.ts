@@ -354,6 +354,8 @@ export function createPendingCompletionSlice(
                     ...s.selection,
                     selectedFeatureId: null,
                     selectedFeatureIds: [],
+                    selectedTabIds: createdTabs.map((t) => t.id),
+                    selectedClampIds: [],
                     selectedNode: createdTabs.at(-1)
                       ? { type: 'tab', tabId: createdTabs.at(-1)!.id }
                       : s.selection.selectedNode,
@@ -403,6 +405,8 @@ export function createPendingCompletionSlice(
                   ...s.selection,
                   selectedFeatureId: null,
                   selectedFeatureIds: [],
+                  selectedTabIds: [],
+                  selectedClampIds: createdClamps.map((c) => c.id),
                   selectedNode: createdClamps.at(-1)
                     ? { type: 'clamp', clampId: createdClamps.at(-1)!.id }
                     : s.selection.selectedNode,

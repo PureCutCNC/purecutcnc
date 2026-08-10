@@ -782,4 +782,153 @@ test.describe('Bulk properties browser smoke', () => {
     // Only visible clamps were selected and edited.
     expect(clamps.filter((c) => c.visible === true).every((c) => num(c.height) === 30)).toBe(true)
   })
+
+  // ====================================================================
+  // S2-FINAL-CORRECTION: context-menu routing + Delete Selected + Undo
+  // ====================================================================
+
+  test.describe('Context-menu routing and bulk delete with Undo', () => {
+    test('desktop tab context-menu: multi-select hides singleton actions, Delete Selected + Undo restores', async ({ app, ui }) => {
+      await seedProject(app.page, BULK_FIXTURE_JSON)
+
+      // Multi-select Tab A (nth 0) and Tab B (nth 1) via desktop modifier-click.
+      await ui.tree.tabRows(app.page).nth(0).click()
+      await ui.tree.tabRows(app.page).nth(1).click({ modifiers: [modKey as 'Meta' | 'Control'] })
+      await expect(app.page.locator(selectedTabRows())).toHaveCount(2)
+
+      // Snapshot the project before delete.
+      const before = await getProject(app.page)
+      const tabsBefore = getArray(before, 'tabs')
+      expect(tabsBefore.length).toBe(4)
+
+      // Right-click on the second selected tab row to open the context menu.
+      await ui.tree.tabRows(app.page).nth(1).click({ button: 'right' })
+      const menu = ui.contextMenu.container(app.page)
+      await expect(menu).toBeVisible()
+
+      // Singleton actions must be absent in multi-selection mode.
+      await expect(ui.contextMenu.item(menu, 'Edit Sketch')).not.toBeAttached()
+      await expect(ui.contextMenu.item(menu, 'Copy')).not.toBeAttached()
+      await expect(ui.contextMenu.item(menu, 'Move')).not.toBeAttached()
+
+      // Delete Selected must be present.
+      const deleteItem = ui.contextMenu.item(menu, 'Delete Selected')
+      await expect(deleteItem).toBeVisible()
+
+      // Perform the bulk delete.
+      await deleteItem.click()
+
+      // Context menu should close after the action.
+      await expect(menu).not.toBeVisible()
+
+      // Only the two selected tabs (tb-1, tb-2) should be deleted.
+      const after = await getProject(app.page)
+      const tabsAfter = getArray(after, 'tabs')
+      const deletedIds = new Set(['tb-1', 'tb-2'])
+      const remaining = tabsAfter.filter((t) => !deletedIds.has(str(t.id)))
+      expect(remaining.length).toBe(2) // tb-3 and tb-4 survive
+      expect(tabsAfter.every((t) => !deletedIds.has(str(t.id)))).toBe(true)
+
+      // Undo restores the deleted tabs.
+      await app.page.keyboard.press(`${modKey}+z`)
+
+      const restored = await getProject(app.page)
+      const tabsRestored = getArray(restored, 'tabs')
+      expect(tabsRestored.length).toBe(4)
+      // All original tab IDs must be present.
+      const restoredIds = new Set(tabsRestored.map((t) => str(t.id)))
+      for (const id of ['tb-1', 'tb-2', 'tb-3', 'tb-4']) {
+        expect(restoredIds.has(id)).toBe(true)
+      }
+    })
+
+    test.describe('tablet clamp canvas multi-select + More-menu delete', () => {
+      test.use({ hasTouch: true, viewport: { width: 1024, height: 768 } })
+
+      test('canvas tap multi-selects clamps, row More menu Delete Selected + Undo restores', async ({ app, ui }) => {
+        await seedProject(app.page, BULK_FIXTURE_JSON)
+
+        // Verify tablet shell is active.
+        const coarse = await app.page.evaluate(() =>
+          window.matchMedia('(pointer: coarse)').matches,
+        )
+        expect(coarse).toBe(true)
+
+        // Enter tablet multi-select mode.
+        const multiBtn = app.page.getByRole('button', { name: 'Multi', exact: true })
+        await expect(multiBtn).toBeVisible()
+        await multiBtn.click()
+        await expect(multiBtn).toHaveClass(/active/)
+
+        // Tap Clamp A and Clamp B on the canvas to multi-select.
+        const canvas = app.page.locator('canvas.sketch-canvas')
+        const box = await canvas.boundingBox()
+        if (!box) throw new Error('Canvas not found')
+
+        // Clamp A centre (56, 46) and Clamp B centre (157, 45).
+        await canvas.tap({ position: worldToPixel(56, 46, box) })
+        await canvas.tap({ position: worldToPixel(157, 45, box) })
+
+        // Two clamps selected, bulk panel visible.
+        await expect(app.page.locator(selectedClampRows())).toHaveCount(2)
+        await expect(ui.properties.panel(app.page)).toContainText('2 Clamps')
+
+        // Snapshot before delete.
+        const before = await getProject(app.page)
+        const clampsBefore = getArray(before, 'clamps')
+        expect(clampsBefore.length).toBe(3)
+
+        // Singleton Edit Sketch button must be absent/hidden in bulk panel.
+        const editSketchBtn = ui.properties.panel(app.page).getByRole('button', { name: 'Edit Sketch' })
+        await expect(editSketchBtn).toHaveCount(0)
+
+        // Open the context menu the way a tablet user does: the "⋮" More-actions
+        // button on a selected clamp row. There is no right-click on touch, so
+        // this button is the only real routing path into the bulk menu. The tree
+        // lives in the tablet project drawer, which must be opened first — the
+        // rows are in the DOM but translated outside the viewport while closed.
+        await ui.tree.openProjectPanelButton(app.page).tap()
+
+        const selectedClampRow = app.page.locator(selectedClampRows()).nth(1)
+        const moreButton = ui.tree.rowMoreButton(selectedClampRow)
+        await expect(moreButton).toBeVisible()
+        await moreButton.tap()
+
+        const menu = ui.contextMenu.container(app.page)
+        await expect(menu).toBeVisible()
+
+        // Opening the menu on an already-selected row must not collapse the
+        // selection back to one clamp.
+        await expect(app.page.locator(selectedClampRows())).toHaveCount(2)
+
+        // Singleton actions must be absent while several clamps are selected.
+        await expect(ui.contextMenu.item(menu, 'Edit Sketch')).not.toBeAttached()
+        await expect(ui.contextMenu.item(menu, 'Copy')).not.toBeAttached()
+        await expect(ui.contextMenu.item(menu, 'Move')).not.toBeAttached()
+
+        const deleteItem = ui.contextMenu.item(menu, 'Delete Selected')
+        await expect(deleteItem).toBeVisible()
+        await deleteItem.tap()
+
+        await expect(menu).not.toBeVisible()
+
+        // Only cl-1 and cl-2 should be deleted; cl-3 (hidden) survives.
+        const after = await getProject(app.page)
+        const clampsAfter = getArray(after, 'clamps')
+        expect(clampsAfter.length).toBe(1)
+        expect(str(clampsAfter[0].id)).toBe('cl-3')
+
+        // Undo restores all three clamps.
+        await app.page.keyboard.press(`${modKey}+z`)
+
+        const restored = await getProject(app.page)
+        const clampsRestored = getArray(restored, 'clamps')
+        expect(clampsRestored.length).toBe(3)
+        const restoredIds = new Set(clampsRestored.map((c) => str(c.id)))
+        for (const id of ['cl-1', 'cl-2', 'cl-3']) {
+          expect(restoredIds.has(id)).toBe(true)
+        }
+      })
+    })
+  })
 })

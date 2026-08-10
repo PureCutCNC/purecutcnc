@@ -1095,6 +1095,355 @@ test('deleteClamp of only member clears selection', () => {
 })
 
 // ============================================================================
+// 12. Creation and transition selection invariants (S2-CORRECTION)
+// ============================================================================
+console.log('\n12. Creation and transition selection invariants')
+
+test('placePendingAddAt tab sets selectedTabIds', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  // Start tab placement then place it — the selection must include the new tab.
+  s.startAddTabPlacement()
+  const anchor = { x: 0, y: 0 }
+  const point = { x: 20, y: 20 }
+  // Set anchor first.
+  useProjectStore.setState((prev) => ({
+    pendingAdd: prev.pendingAdd && 'anchor' in prev.pendingAdd
+      ? { ...prev.pendingAdd, anchor }
+      : prev.pendingAdd,
+  }))
+  s.placePendingAddAt(point)
+  const sel = selection()
+  assert(sel.selectedTabIds.length >= 1, 'new tab ID should be in selectedTabIds')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs leaked')
+  assertEq(sel.selectedClampIds.length, 0, 'no clamp IDs leaked')
+  assert(sel.selectedNode?.type === 'tab', 'primary is tab')
+})
+
+test('placePendingAddAt clamp sets selectedClampIds', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.startAddClampPlacement()
+  const anchor = { x: 0, y: 0 }
+  const point = { x: 20, y: 20 }
+  useProjectStore.setState((prev) => ({
+    pendingAdd: prev.pendingAdd && 'anchor' in prev.pendingAdd
+      ? { ...prev.pendingAdd, anchor }
+      : prev.pendingAdd,
+  }))
+  s.placePendingAddAt(point)
+  const sel = selection()
+  assert(sel.selectedClampIds.length >= 1, 'new clamp ID should be in selectedClampIds')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs leaked')
+  assertEq(sel.selectedTabIds.length, 0, 'no tab IDs leaked')
+  assert(sel.selectedNode?.type === 'clamp', 'primary is clamp')
+})
+
+test('startAddTabPlacement clears incompatible family IDs', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  // First select a feature, then start tab placement.
+  s.selectFeaturesRoot()
+  s.startAddTabPlacement()
+  const sel = selection()
+  assertEq(sel.selectedFeatureIds.length, 0, 'feature IDs cleared')
+  assertEq(sel.selectedFeatureId, null, 'selectedFeatureId cleared')
+  assert(sel.selectedNode?.type === 'tabs_root', 'primary is tabs_root')
+})
+
+test('startAddClampPlacement clears incompatible family IDs', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectFeaturesRoot()
+  s.startAddClampPlacement()
+  const sel = selection()
+  assertEq(sel.selectedFeatureIds.length, 0, 'feature IDs cleared')
+  assertEq(sel.selectedFeatureId, null, 'selectedFeatureId cleared')
+  assert(sel.selectedNode?.type === 'clamps_root', 'primary is clamps_root')
+})
+
+test('startMoveTab sets selectedTabIds and clears other families', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.startMoveTab('tb1')
+  const sel = selection()
+  assertEq(sel.selectedTabIds.length, 1, 'selectedTabIds includes tab')
+  assert(sel.selectedTabIds.includes('tb1'), 'tb1 in selectedTabIds')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedClampIds.length, 0, 'no clamp IDs')
+  assertEq(sel.selectedFeatureId, null, 'selectedFeatureId null')
+  assert(sel.selectedNode?.type === 'tab' && sel.selectedNode.tabId === 'tb1', 'primary is tab')
+})
+
+test('startCopyTab sets selectedTabIds and clears other families', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.startCopyTab('tb1')
+  const sel = selection()
+  assertEq(sel.selectedTabIds.length, 1, 'selectedTabIds includes tab')
+  assert(sel.selectedTabIds.includes('tb1'), 'tb1 in selectedTabIds')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedClampIds.length, 0, 'no clamp IDs')
+})
+
+test('startMoveClamp sets selectedClampIds and clears other families', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.startMoveClamp('cl1')
+  const sel = selection()
+  assertEq(sel.selectedClampIds.length, 1, 'selectedClampIds includes clamp')
+  assert(sel.selectedClampIds.includes('cl1'), 'cl1 in selectedClampIds')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedTabIds.length, 0, 'no tab IDs')
+  assert(sel.selectedNode?.type === 'clamp' && sel.selectedNode.clampId === 'cl1', 'primary is clamp')
+})
+
+test('startCopyClamp sets selectedClampIds and clears other families', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.startCopyClamp('cl1')
+  const sel = selection()
+  assertEq(sel.selectedClampIds.length, 1, 'selectedClampIds includes clamp')
+  assert(sel.selectedClampIds.includes('cl1'), 'cl1 in selectedClampIds')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedTabIds.length, 0, 'no tab IDs')
+})
+
+// ============================================================================
+// 13. Non-family node additive feature guard (S2-CORRECTION)
+// ============================================================================
+console.log('\n13. Non-family node additive feature guard')
+
+function testNonFamilyAdditiveIgnored(nodeType: string, setupFn: () => void) {
+  resetStore(projectWithTabsAndClamps())
+  setupFn()
+  const before = selectionSnapshot()
+  store().selectFeature('f1', true)
+  const after = selection()
+  assert(JSON.stringify(before) === JSON.stringify(after),
+    `additive feature on ${nodeType} must be byte-for-byte no-op`)
+}
+
+test('additive feature on stock is no-op', () => {
+  testNonFamilyAdditiveIgnored('stock', () => store().selectStock())
+})
+
+test('additive feature on project is no-op', () => {
+  testNonFamilyAdditiveIgnored('project', () => store().selectProject())
+})
+
+test('additive feature on grid is no-op', () => {
+  testNonFamilyAdditiveIgnored('grid', () => store().selectGrid())
+})
+
+test('additive feature on origin is no-op', () => {
+  testNonFamilyAdditiveIgnored('origin', () => store().selectOrigin())
+})
+
+test('additive feature on backdrop is no-op', () => {
+  // backdrop needs a backdrop set on the project
+  resetStore(projectWithTabsAndClamps())
+  useProjectStore.setState((s) => ({
+    project: {
+      ...s.project,
+      backdrop: {
+        name: 'Test',
+        width: 100,
+        height: 100,
+        visible: true,
+        imageDataUrl: '',
+        mimeType: 'image/png',
+        orientationAngle: 90,
+        opacity: 0.6,
+        intrinsicWidth: 100,
+        intrinsicHeight: 100,
+        center: { x: 50, y: 50 } as { x: number; y: number },
+      },
+    },
+  }))
+  store().selectBackdrop()
+  const before = selectionSnapshot()
+  store().selectFeature('f1', true)
+  const after = selection()
+  assert(JSON.stringify(before) === JSON.stringify(after),
+    'additive feature on backdrop must be byte-for-byte no-op')
+})
+
+test('plain click on feature from stock still replaces selection', () => {
+  resetStore(projectWithFeatures())
+  store().selectStock()
+  store().selectFeature('f1')
+  const sel = selection()
+  assertEq(sel.selectedFeatureIds.length, 1, 'feature selected')
+  assert(sel.selectedNode?.type === 'feature', 'primary switched to feature')
+})
+
+test('plain click on feature from project still replaces selection', () => {
+  resetStore(projectWithFeatures())
+  store().selectProject()
+  store().selectFeature('f1')
+  const sel = selection()
+  assertEq(sel.selectedFeatureIds.length, 1, 'feature selected')
+  assert(sel.selectedNode?.type === 'feature', 'primary switched to feature')
+})
+
+// ============================================================================
+// 14. Cross-family placement transition tests (S2-FINAL-CORRECTION)
+// ============================================================================
+console.log('\n14. Cross-family placement transition tests')
+
+function assertPlacementClears(placement: 'tab' | 'clamp', expectedRoot: string) {
+  const sel = selection()
+  assert(sel.selectedFeatureIds.length === 0 && sel.selectedFeatureId === null, `${placement}: feature IDs cleared`)
+  assert(sel.selectedNode?.type === expectedRoot, `${placement}: ${expectedRoot}`)
+}
+
+test('startAddTabPlacement and startAddClampPlacement clear incompatible family IDs', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectClamp('cl1')
+  s.selectClamp('cl2', true)
+  s.startAddTabPlacement()
+  let sel = selection()
+  assertEq(sel.selectedClampIds.length, 0, 'tab placement: clamp IDs cleared')
+  assertEq(sel.selectedTabIds.length, 0, 'tab placement: tab IDs empty')
+  assertPlacementClears('tab', 'tabs_root')
+  resetStore(projectWithTabsAndClamps())
+  s.selectTab('tb1')
+  s.selectTab('tb2', true)
+  s.startAddClampPlacement()
+  sel = selection()
+  assertEq(sel.selectedTabIds.length, 0, 'clamp placement: tab IDs cleared')
+  assertEq(sel.selectedClampIds.length, 0, 'clamp placement: clamp IDs empty')
+  assertPlacementClears('clamp', 'clamps_root')
+})
+
+test('startAddTabPlacement and startAddClampPlacement clear a selected feature ID', () => {
+  const p = projectWithFeatures()
+  resetStore(p)
+  const s = store()
+  s.selectFeature('f1')
+  s.selectFeature('f2', true)
+  s.startAddTabPlacement()
+  assertPlacementClears('tab', 'tabs_root')
+  resetStore(p)
+  s.selectFeature('f1')
+  s.selectFeature('f2', true)
+  s.startAddClampPlacement()
+  assertPlacementClears('clamp', 'clamps_root')
+})
+
+// ============================================================================
+// 15. Tab/clamp copy completion selection (S2-FINAL-CORRECTION)
+// ============================================================================
+console.log('\n15. Tab/clamp copy completion selection')
+
+// A multi-copy (copyCount > 1) is what makes "every created ID is selected"
+// falsifiable: with a single copy, selecting the whole created set and selecting
+// only the last one are the same array.
+const COPY_COUNT = 3
+
+// Copies `sourceId` COPY_COUNT times and returns the IDs that appeared.
+function copyEntity(family: 'tab' | 'clamp', sourceId: string): string[] {
+  const s = store()
+  const ids = () => (family === 'tab' ? project().tabs : project().clamps).map((e) => e.id)
+  if (family === 'tab') s.startCopyTab(sourceId)
+  else s.startCopyClamp(sourceId)
+  useProjectStore.setState((prev) => ({
+    pendingMove: prev.pendingMove ? { ...prev.pendingMove, fromPoint: { x: 0, y: 0 } } : null,
+  }))
+  const beforeIds = ids()
+  s.completePendingMove({ x: 5, y: 5 }, COPY_COUNT)
+  return ids().filter((id) => !beforeIds.includes(id))
+}
+
+function assertCopySelection(family: 'tab' | 'clamp', createdIds: string[]): void {
+  const sel = selection()
+  const node = sel.selectedNode
+  const own = family === 'tab' ? sel.selectedTabIds : sel.selectedClampIds
+  const other = family === 'tab' ? sel.selectedClampIds : sel.selectedTabIds
+  const primary = node?.type === 'tab' ? node.tabId : node?.type === 'clamp' ? node.clampId : null
+  assertEq(createdIds.length, COPY_COUNT, `${COPY_COUNT} new ${family}s created`)
+  assertEq(own.join(','), createdIds.join(','), `every created ${family} selected in order, not just the last`)
+  assertEq(other.length, 0, `incompatible family cleared for ${family} copy`)
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedFeatureId, null, 'selectedFeatureId null')
+  assertEq(node?.type, family, `primary node is a ${family}`)
+  assertEq(primary, createdIds.at(-1) ?? null, `primary is the last created ${family}`)
+}
+
+test('tab copy completion selects every created ID and clears incompatible family', () => {
+  resetStore(projectWithTabsAndClamps())
+  store().selectClamp('cl1')
+  store().selectClamp('cl2', true)
+  assertCopySelection('tab', copyEntity('tab', 'tb1'))
+})
+
+test('clamp copy completion selects every created ID and clears incompatible family', () => {
+  resetStore(projectWithTabsAndClamps())
+  store().selectTab('tb1')
+  store().selectTab('tb2', true)
+  assertCopySelection('clamp', copyEntity('clamp', 'cl1'))
+})
+
+test('tab move completion retains homogeneous source selection', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.startMoveTab('tb1')
+  useProjectStore.setState((prev) => ({
+    pendingMove: prev.pendingMove ? { ...prev.pendingMove, fromPoint: { x: 0, y: 0 } } : null,
+  }))
+  s.completePendingMove({ x: 5, y: 5 })
+  const sel = selection()
+  assertEq(sel.selectedTabIds.length, 1, 'selectedTabIds preserved')
+  assert(sel.selectedTabIds.includes('tb1'), 'tb1 still selected')
+  assertEq(sel.selectedFeatureIds.length, 0, 'no feature IDs')
+  assertEq(sel.selectedClampIds.length, 0, 'no clamp IDs')
+})
+
+// ============================================================================
+// 16. Strengthened start move/copy with incompatible family seed (S2-FINAL-CORRECTION)
+// ============================================================================
+console.log('\n16. Strengthened start move/copy with incompatible family seed')
+
+function assertTabSelectedForMove(sel: SelectionState, tabId: string, label: string) {
+  assert(sel.selectedClampIds.length === 0 && sel.selectedFeatureIds.length === 0, `${label}: other families cleared`)
+  assertEq(sel.selectedTabIds.length, 1, `${label}: tab IDs set`)
+  assert(sel.selectedTabIds.includes(tabId), `${label}: correct tab ID`)
+  assertEq(sel.selectedFeatureId, null, `${label}: selectedFeatureId null`)
+}
+
+test('startMoveTab and startCopyTab clear clamp family when clamps were selected', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectClamp('cl1'); s.selectClamp('cl2', true)
+  s.startMoveTab('tb1')
+  assertTabSelectedForMove(selection(), 'tb1', 'moveTab')
+  resetStore(projectWithTabsAndClamps())
+  s.selectClamp('cl1'); s.selectClamp('cl2', true)
+  s.startCopyTab('tb1')
+  assertTabSelectedForMove(selection(), 'tb1', 'copyTab')
+})
+
+function assertClampSelectedForMove(sel: SelectionState, clampId: string, label: string) {
+  assert(sel.selectedTabIds.length === 0 && sel.selectedFeatureIds.length === 0, `${label}: other families cleared`)
+  assertEq(sel.selectedClampIds.length, 1, `${label}: clamp IDs set`)
+  assert(sel.selectedClampIds.includes(clampId), `${label}: ${clampId} selected`)
+}
+
+test('startMoveClamp and startCopyClamp clear tab family when tabs were selected', () => {
+  resetStore(projectWithTabsAndClamps())
+  const s = store()
+  s.selectTab('tb1'); s.selectTab('tb2', true)
+  s.startMoveClamp('cl1')
+  assertClampSelectedForMove(selection(), 'cl1', 'moveClamp')
+  resetStore(projectWithTabsAndClamps())
+  s.selectTab('tb1'); s.selectTab('tb2', true)
+  s.startCopyClamp('cl1')
+  assertClampSelectedForMove(selection(), 'cl1', 'copyClamp')
+})
+
+// ============================================================================
 // Results
 // ============================================================================
 console.log(`\n${passed} passed, ${failed} failed`)
