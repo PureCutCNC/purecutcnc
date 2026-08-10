@@ -167,6 +167,7 @@ function buildAutoTabsForFeature(
       z_top: zTop,
       z_bottom: zBottom,
       visible: true,
+      shape: 'rect',
     })
   }
 
