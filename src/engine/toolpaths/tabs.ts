@@ -15,8 +15,8 @@
  */
 
 import ClipperLib from 'clipper-lib'
-import type { Operation, Point, Project, Tab } from '../../types/project'
-import { isTrochoidalEdgeRoughing, rectProfile, sampleProfilePoints } from '../../types/project'
+import type { Operation, Point, Project, Tab, TabShape } from '../../types/project'
+import { isTrochoidalEdgeRoughing, rectProfile, sampleProfilePoints, tabShape } from '../../types/project'
 import type { ClipperPath, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
   DEFAULT_CLIPPER_SCALE,
@@ -27,6 +27,8 @@ import {
   toClipperPath,
 } from './geometry'
 import { unionClipperPaths } from './modelProtection'
+import { planSmoothTabMotion, splitCutMoveWithSmoothTabs } from './tabSmoothing'
+import { convertLength } from '../../utils/units'
 
 interface PreservedObstacle {
   id: string
@@ -34,7 +36,20 @@ interface PreservedObstacle {
   points: Point[]
   zTop: number
   zBottom: number
+  shape: TabShape
 }
+
+/**
+ * How far a smooth ramp's straight-line approximation may deviate from the true
+ * curve, in millimetres, converted to project units at the call site.
+ *
+ * 0.01 mm sits an order of magnitude below any hobby CNC's positioning
+ * resolution and well inside the arc tolerances the controller conformance
+ * harness measures (GRBL/FluidNC 0.005 mm, LinuxCNC ~0.028 mm), so the sampled
+ * ramp is indistinguishable from the ideal curve on the machine while keeping
+ * the emitted move count modest — roughly 28 segments for a 3 mm tab.
+ */
+const SMOOTH_TAB_CHORD_TOLERANCE_MM = 0.01
 
 // Round join, not miter: the raised zone is the set of tool-centre positions whose
 // swept disc would touch the tab, i.e. the Minkowski sum of the tab rect with a
@@ -97,9 +112,14 @@ function buildTabObstacles(project: Project): PreservedObstacle[] {
   return project.tabs.map((tab) => ({
     id: tab.id,
     name: tab.name,
+    // The footprint stays rectangular whatever the shape. Smooth tabs change how
+    // Z moves across the footprint, never which XY the footprint occupies — so
+    // hit-testing, cutter-envelope expansion, layout coverage, overlap warnings,
+    // and auto-placement all keep working off one rectangle.
     points: sampleProfilePoints(rectProfile(tab.x, tab.y, tab.w, tab.h)),
     zTop: tab.z_top,
     zBottom: tab.z_bottom,
+    shape: tabShape(tab),
   }))
 }
 
@@ -431,10 +451,23 @@ export function applyTabsToEdgeRoute(project: Project, operation: Operation, res
     return result
   }
 
+  // A project with no smooth tab never reaches the chain-based planner at all.
+  // Rectangular output is then preserved by construction rather than by a test
+  // that has to notice a divergence — the same code runs that ran before #414.
+  const hasSmoothTab = obstacles.some((obstacle) => obstacle.shape === 'smooth')
+  const smoothPlan = hasSmoothTab
+    ? planSmoothTabMotion(
+        result.moves,
+        obstacles,
+        convertLength(SMOOTH_TAB_CHORD_TOLERANCE_MM, 'mm', project.meta.units),
+        { pointInPolygon, clipSegmentPolygon2D },
+      )
+    : null
+
   const adjustedMoves: ToolpathMove[] = []
   let changed = false
 
-  for (const move of result.moves) {
+  for (const [moveIndex, move] of result.moves.entries()) {
     const previousTo = adjustedMoves.at(-1)?.to ?? null
     const actualFrom =
       previousTo && pointsEqualXY(previousTo, move.from)
@@ -442,7 +475,9 @@ export function applyTabsToEdgeRoute(project: Project, operation: Operation, res
         : move.from
 
     if (move.kind === 'cut' && Math.abs(move.from.z - move.to.z) <= 1e-9) {
-      const splitMoves = splitCutMoveAcrossTabsFrom(move, obstacles, actualFrom)
+      const splitMoves = smoothPlan
+        ? splitCutMoveWithSmoothTabs(smoothPlan, moveIndex, move, actualFrom)
+        : splitCutMoveAcrossTabsFrom(move, obstacles, actualFrom)
       if (
         splitMoves.length !== 1
         || splitMoves[0].kind !== move.kind

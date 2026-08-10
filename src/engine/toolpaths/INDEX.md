@@ -17,6 +17,8 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `surface.ts` — shared surface-toolpath helpers
 - `surfaceStepdown3d.ts` — shared imported-mesh stepdown resolver used by rough-surface and cleanup-surface operations
 - `tabs.ts` — holding-tab generation on profile cuts
+- `tabProfile.ts` — the pure Z profile a **smooth** tab imposes on one crossing: a normalized raised cosine with exact cut-Z at both footprint boundaries, exact `z_top` at the crossing centre, zero-slope joins at all three, and a sample count derived per crossing from a chord tolerance
+- `tabSmoothing.ts` — chain-level smooth-tab motion. Measures each crossing in path distance along whole connected coplanar cut chains (rejoining a crossing that wraps a closed loop's seam) before sampling, so the emitted Z envelope depends on the crossing geometry rather than on how the source path was split into moves
 - `trochoidalEdge.ts` — pure bounded overlapping-orbit sampling around a validated Edge Route guide; generation integration owns entry, fragments, and safety validation
 - `multiFeature.ts` — ops that span multiple features (e.g. combined clearing)
 
@@ -42,6 +44,8 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 
 ## Tests
 - `linearMoveOptimization.test.ts` — zero-length removal, entry-marker (zero-length rapid) preservation, collinear merge, and boundary preservation
+- `tabProfile.test.ts` — exact endpoints/peak, zero-slope joins, monotonicity, truncated-crossing clamps, and a measured (not assumed) chord-error bound on the derived sample count
+- `tabSmoothing.test.ts` — smooth-tab machine motion: rectangular tabs still step, a smooth crossing ramps with no vertical step, re-segmenting the same XY path tracks the same ideal curve, closed-loop seams stay one continuous crossing, overlapping rect/smooth tabs take the highest envelope, and every emitted segment is checked against an independently recomputed analytic envelope
 - `trochoidalEdge.test.ts` — deterministic closed/open orbit sampling, seam closure, direction, normalized duplicate vertices, and fail-closed budgets. Integrated cut-direction parity (trochoidal vs contour, inside and outside), circular/multi-target guides, and overlapping tabs live in `toolpaths.test.ts`
 - `feed.test.ts` — shared effectiveFeed helper: cut/plunge/lead-in/lead-out move kinds, feedScale present/absent, and plunge ignores-feedScale invariance
 - `entry.test.ts` — helix pitch/direction, region/island clearance, no-core diameter bounds, bottom flattening, ramp fallback, and plunge-feed limiting
