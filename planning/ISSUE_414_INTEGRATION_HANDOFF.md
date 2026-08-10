@@ -18,7 +18,7 @@ output belong here.
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/414
   (maintainer comment "Maintainer plan — PR 2: smooth tabs")
 - Manager session: 2026-08-10
-- Status: `slice in progress`
+- Status: `slice in progress` (S1-S4 accepted; S5 with a worker)
 - User authorization for credential-backed worker dispatch: granted 2026-08-10
   ("use management skill and dispatch agents as needed")
 
@@ -55,11 +55,11 @@ output belong here.
 
 | Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| S1 | `Tab.shape` field, rect-preserving normalization, creation defaults | `3a8a3ac` | `feat/issue-414-tab-shape-field` / `worktrees/purecutcnc/tab-shape-field` | `not started` | `pending` | `-` | `npm test`, `npm run build` | Data model only; no engine or UI behaviour change |
-| S2 | Pure smooth Z profile helper (`tabProfile.ts`) | `-` | manager-owned (integration checkout) | `n/a` | `n/a` | `-` | `npm test` | Safety-critical geometry; not delegated |
-| S3 | Chain-level smooth crossing integration in `tabs.ts` | `-` | manager-owned (integration checkout) | `n/a` | `n/a` | `-` | `npm test`, `npm run build` | Safety-critical; rect branch must stay byte-identical |
-| S4 | Trochoidal smooth-tab fallback warning + design-doc contract | `-` | `feat/issue-414-trochoidal-smooth-fallback` | `not started` | `pending` | `-` | `npm test`, `npm run build` | Touches 5 locales — must not run concurrently with S5 |
-| S5 | Localized Rectangular/Smooth control, single + bulk tab panels | `-` | `feat/issue-414-tab-shape-ui` | `not started` | `pending` | `-` | `npm test`, `npm run build` | Touches 5 locales — must not run concurrently with S4 |
+| S1 | `Tab.shape` field, rect-preserving normalization, creation defaults | `3a8a3ac` | `feat/issue-414-tab-shape-field` (merged, removed) | `complete` | `accepted` | `d560c58` | `npm test`, `npm run build` | Manager verified persistence with a real `saveProject()` -> JSON -> decode -> normalize probe (the worker's own round-trip test never crossed JSON) and mutation-checked the rect default |
+| S2 | Pure smooth Z profile helper (`tabProfile.ts`) | `d560c58` | manager-owned (integration checkout) | `n/a` | `n/a` | `d763c8c` | `npm test` | Raised cosine, exact endpoints/peak/zero-slope joins, chord-tolerance-derived sample count |
+| S3 | Chain-level smooth crossing integration (`tabSmoothing.ts`) | `d763c8c` | manager-owned (integration checkout) | `n/a` | `n/a` | `fe25189`, `3975e13` | `npm test` (172 files) | Rect-only projects never reach the planner, so rect output is preserved by construction; verified byte-identical across 12 fixtures |
+| S4 | Trochoidal smooth-tab fallback warning + design-doc contract | `fe25189` | manager-owned (integration checkout) | `n/a` | `n/a` | `2d78d5e` | `npm test`, `docs:check` | Touches `locales/*/warnings.ts`; S5 touches `locales/*/featureTree.ts` — different files, so they ran concurrently without conflict |
+| S5 | Localized Rectangular/Smooth control, single + bulk tab panels | `d560c58` | `feat/issue-414-tab-shape-ui` | `in progress` | `pending` | `-` | `npm test`, `npm run build` | Touches `locales/*/featureTree.ts` only |
 | S6 | Verification, e2e, INDEX updates, PR | `-` | manager-owned (integration checkout) | `n/a` | `n/a` | `-` | `npm run build`, `npm run test:e2e` | Includes rect-output differential probe and mutation checks |
 
 ## Verification contract (manager-owned, not delegated)
@@ -81,4 +81,43 @@ output belong here.
 
 ## Ledger notes
 
-_(appended per slice as work is accepted)_
+### S1 — accepted (`d560c58`)
+
+Diff was exactly the four production lines plus a test. Two manager checks beyond
+the worker's report:
+
+- **Real persistence probe.** The worker's round-trip test called
+  `normalizeProject` twice, which never crosses JSON and so proves nothing about
+  saving. Driving `saveProject()` -> JSON text -> `decodeProjectFormat` ->
+  `normalizeProject` confirms `smooth` survives, `rect` survives, and a legacy
+  tab with no key at all is written back as `rect`.
+- **Mutation.** Flipping `tabShape()` to default unknown/missing to `'smooth'`
+  failed 3 of 8 tests. Restored from a `cp` backup.
+
+One process note for later slices: the mutation was applied while the dispatch
+script's own build gate was still running in the same worktree, so that gate
+reported a spurious failure. Re-running it on the restored tree passed. Do not
+touch a worktree while its gate is in flight.
+
+### S2/S3 — the geometry core (manager-owned)
+
+- **Rect differential.** 12 fixtures (inside/outside, circle/rect, 4 tabs,
+  overlapping tabs of different heights, corner-straddling tab, multi-level
+  stepdown, radial stock-to-leave, trochoidal at 17k moves, full-coverage
+  warning, non-intersecting tab, malformed Z range, inch units) dumped as JSON on
+  `main` and on the branch: **180,056 lines, byte-identical**.
+- **Mutations, all caught:** deleting the closed-loop seam wrap-join, replacing
+  the overlap `Math.max` with last-wins, and removing the truncated-crossing
+  clamp each failed a test. Restored from `cp` backups.
+- The overlap mutation initially failed only one assertion, which was too weak —
+  a per-x lookup that maxes over overlapping segments can hide a wrong envelope.
+  Added a safety-differential test that recomputes the analytic envelope
+  independently and checks every emitted segment against it; the mutation then
+  failed two.
+
+### S4 — trochoidal fallback (manager-owned)
+
+Verified the emission by mutation, and diffed all five `warnings.ts` locales by
+**parsing key/value pairs and comparing the objects** rather than reading the
+rendered diff: exactly one key added per locale, 153 -> 154, no existing value
+altered. That check is the one that catches an invisible U+00A0 substitution.
