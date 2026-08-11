@@ -16,6 +16,12 @@
 
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { ToolpathVisibility } from '../toolpathVisibility'
+import {
+  buildToolpathOverlayLayers,
+  moveMatchesZFilter,
+  movesForToolpathLayer,
+  type ToolpathOverlayLayerKey,
+} from '../viewport3d/toolpathOverlay'
 import { getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
 import {
   getProfileBounds,
@@ -583,33 +589,22 @@ export function drawToolpath(
   emphasized: boolean,
   visibility: ToolpathVisibility,
 ): void {
-  const layers: Array<{
-    kinds: ToolpathResult['moves'][number]['kind'][]
-    stroke: string
-    lineWidth: number
-    dash: number[]
-    visible: boolean
-    horizontalOnly?: boolean
-    retractOnly?: boolean
-  }> = [
-    { kinds: ['cut'], stroke: canvasColors().toolpathCut, lineWidth: 2.1, dash: [], visible: visibility.cuts },
-    { kinds: ['lead_in', 'lead_out'], stroke: canvasColors().toolpathCut, lineWidth: 2.1, dash: [], visible: visibility.leadIns },
-    { kinds: ['rapid'], stroke: canvasColors().toolpathRapid, lineWidth: 1.3, dash: [8, 6], visible: visibility.rapids, horizontalOnly: true },
-    { kinds: ['plunge'], stroke: canvasColors().toolpathPlunge, lineWidth: 1.5, dash: [3, 4], visible: visibility.plunges },
-    { kinds: ['rapid'], stroke: canvasColors().toolpathRapid, lineWidth: 1.3, dash: [8, 6], visible: visibility.retractions, retractOnly: true },
-  ]
+  // Layer membership comes from the shared declaration both renderers use; only
+  // the styling below is 2D's own. This file used to re-declare the five layers
+  // inline, which is how the 3D and 2D views drifted apart in issue #482.
+  const styleFor: Record<ToolpathOverlayLayerKey, { stroke: string; lineWidth: number; dash: number[] }> = {
+    cuts: { stroke: canvasColors().toolpathCut, lineWidth: 2.1, dash: [] },
+    leadIns: { stroke: canvasColors().toolpathCut, lineWidth: 2.1, dash: [] },
+    rapids: { stroke: canvasColors().toolpathRapid, lineWidth: 1.3, dash: [8, 6] },
+    plunges: { stroke: canvasColors().toolpathPlunge, lineWidth: 1.5, dash: [3, 4] },
+    retractions: { stroke: canvasColors().toolpathRapid, lineWidth: 1.3, dash: [8, 6] },
+  }
 
-  for (const layer of layers) {
-    if (!layer.visible) continue
+  for (const schemaLayer of buildToolpathOverlayLayers(visibility)) {
+    if (!schemaLayer.visible) continue
 
-    let moves = toolpath.moves.filter((move) => layer.kinds.includes(move.kind))
-
-    if (layer.horizontalOnly) {
-      moves = moves.filter((move) => Math.abs(move.from.z - move.to.z) < 1e-9)
-    }
-    if (layer.retractOnly) {
-      moves = moves.filter((move) => move.to.z > move.from.z + 1e-9)
-    }
+    const layer = styleFor[schemaLayer.key]
+    const moves = movesForToolpathLayer(toolpath.moves, schemaLayer)
 
     if (moves.length === 0) {
       continue
@@ -743,7 +738,9 @@ export function drawToolpath(
     // Respect visibility toggles
     if (move.kind === 'cut' && !visibility.cuts) continue
     if (move.kind === 'rapid') {
-      const isRetraction = move.to.z > move.from.z + 1e-9
+      // Same split as the line layers, via the same predicate — the arrow code
+      // having its own copy is how the two fell out of step (issue #482).
+      const isRetraction = moveMatchesZFilter(move, 'retract')
       if (isRetraction && !visibility.retractions) continue
       if (!isRetraction && !visibility.rapids) continue
     }

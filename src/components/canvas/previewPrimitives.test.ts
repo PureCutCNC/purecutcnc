@@ -70,13 +70,12 @@ drawLineFeatureBatch(ctx, [lineFeature('a', 0), lineFeature('b', 20)], {
 assert(beginPathCount === 1, 'Line batch starts one canvas path')
 assert(strokeCount === 1, 'Line batch issues one stroke for multiple features')
 
-// --- drawToolpath: lead-ins are in their own layer, gated by leadIns ---
+interface RecordedSegment { fromX: number; fromY: number; toX: number; toY: number }
 
-function testDrawToolpathLayerSplit(): void {
-  console.log('Testing drawToolpath separates lead_in moves into a leadIns layer...')
-
-  const segments: Array<{ fromX: number; fromY: number; toX: number; toY: number }> = []
-  const mockCtx = {
+/** A canvas stub that records the line segments drawToolpath strokes. */
+function recordingContext(): { ctx: CanvasRenderingContext2D; segments: RecordedSegment[] } {
+  const segments: RecordedSegment[] = []
+  const ctx = {
     beginPath: () => undefined,
     moveTo: (x: number, y: number) => { segments.push({ fromX: x, fromY: y, toX: -1, toY: -1 }) },
     lineTo: (x: number, y: number) => {
@@ -89,6 +88,15 @@ function testDrawToolpathLayerSplit(): void {
     lineWidth: 0,
     globalAlpha: 1,
   } as unknown as CanvasRenderingContext2D
+  return { ctx, segments }
+}
+
+// --- drawToolpath: lead-ins are in their own layer, gated by leadIns ---
+
+function testDrawToolpathLayerSplit(): void {
+  console.log('Testing drawToolpath separates lead_in moves into a leadIns layer...')
+
+  const { ctx: mockCtx, segments } = recordingContext()
 
   const toolpath: ToolpathResult = {
     operationId: 'test-op',
@@ -128,6 +136,50 @@ function testDrawToolpathLayerSplit(): void {
   assert(segments.findIndex((s) => s.fromX === 20 && s.toX === 30) !== -1, 'lead_in move renders when both visible')
 }
 
+// --- Issue #482: the 2D canvas draws descending rapids too ---
+
+/**
+ * A rapid that descends while travelling in XY is a visible diagonal in plan
+ * view, and it used to be dropped: the `rapids` layer took only level moves and
+ * `retractions` only ascents, so this move belonged to neither. It is the shape
+ * a rapid takes when it dives into material on the way somewhere.
+ */
+function testDrawToolpathDrawsDescendingRapids(): void {
+  console.log('Testing drawToolpath draws a descending rapid (issue #482)...')
+
+  const descending = { kind: 'rapid' as const, from: { x: 0, y: 0, z: 10 }, to: { x: 40, y: 0, z: 2 } }
+  const ascending = { kind: 'rapid' as const, from: { x: 50, y: 0, z: 2 }, to: { x: 60, y: 0, z: 10 } }
+  const toolpath: ToolpathResult = {
+    operationId: 'test-op',
+    moves: [descending, ascending],
+    warnings: [],
+    bounds: null,
+  }
+  const vt: ViewTransform = { scale: 1, offsetX: 0, offsetY: 0 }
+  const allOff: ToolpathVisibility = { cuts: false, leadIns: false, rapids: false, plunges: false, retractions: false, directions: false }
+  const found = (segments: RecordedSegment[], fromX: number, toX: number): boolean =>
+    segments.some((s) => s.fromX === fromX && s.toX === toX)
+
+  // Rapids on, retractions off: the descent draws, the retraction does not.
+  const rapidsOnly = recordingContext()
+  drawToolpath(rapidsOnly.ctx, toolpath, vt, false, { ...allOff, rapids: true })
+  assert(found(rapidsOnly.segments, 0, 40), 'descending rapid renders when rapids visible')
+  assert(!found(rapidsOnly.segments, 50, 60), 'ascending rapid does NOT render when retractions hidden')
+
+  // Retractions on, rapids off: the mirror image.
+  const retractionsOnly = recordingContext()
+  drawToolpath(retractionsOnly.ctx, toolpath, vt, false, { ...allOff, retractions: true })
+  assert(!found(retractionsOnly.segments, 0, 40), 'descending rapid does NOT render when rapids hidden')
+  assert(found(retractionsOnly.segments, 50, 60), 'ascending rapid renders when retractions visible')
+
+  // Everything off: nothing at all, so the assertions above cannot pass by
+  // some other layer happening to draw the same segment.
+  const nothing = recordingContext()
+  drawToolpath(nothing.ctx, toolpath, vt, false, allOff)
+  assert(nothing.segments.length === 0, 'no rapid renders when both toggles are off')
+}
+
 testDrawToolpathLayerSplit()
+testDrawToolpathDrawsDescendingRapids()
 
 console.log('previewPrimitives.test.ts passed')
