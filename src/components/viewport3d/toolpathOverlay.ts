@@ -21,22 +21,64 @@ export const DEFAULT_TOOLPATH_LINE_SEGMENTS_PER_CHUNK = 16384
 
 export type ToolpathOverlayLayerKey = 'cuts' | 'leadIns' | 'rapids' | 'plunges' | 'retractions'
 
+/** Z tolerance separating a retraction from level or descending motion. */
+export const TOOLPATH_LAYER_Z_EPSILON = 1e-9
+
+/**
+ * Which half of a `rapid`'s Z motion a layer claims. The two values partition
+ * every rapid move: `retract` takes ascents, `nonRetract` takes everything else
+ * — level travel *and descents*.
+ *
+ * This used to be two independent booleans (`horizontalOnly`, `retractOnly`),
+ * which admitted a move matching neither: a rapid that descends is not level
+ * and not a retraction, so it belonged to no layer and was silently dropped
+ * from both renderers. That hid a rapid plunging into material — exactly the
+ * motion the preview exists to catch (issue #482). A single discriminant makes
+ * "every rapid lands in exactly one layer" structural instead of incidental.
+ */
+export type ToolpathLayerZFilter = 'nonRetract' | 'retract'
+
 export interface ToolpathOverlayLayer {
   key: ToolpathOverlayLayerKey
   kinds: ToolpathMoveKind[]
   visible: boolean
-  horizontalOnly?: boolean
-  retractOnly?: boolean
+  zFilter?: ToolpathLayerZFilter
 }
 
+/** True when `move` belongs to a layer carrying `zFilter` (undefined takes all). */
+export function moveMatchesZFilter(
+  move: Pick<ToolpathMove, 'from' | 'to'>,
+  zFilter: ToolpathLayerZFilter | undefined,
+): boolean {
+  if (!zFilter) return true
+  const isRetraction = move.to.z > move.from.z + TOOLPATH_LAYER_Z_EPSILON
+  return zFilter === 'retract' ? isRetraction : !isRetraction
+}
+
+/**
+ * The semantic layer set shared by both toolpath renderers. Order is paint
+ * order, and both the 3D overlay and the 2D canvas consume this list rather
+ * than declaring their own — they map each key to their own styling, so the two
+ * views cannot disagree about what a layer contains.
+ */
 export function buildToolpathOverlayLayers(visibility: ToolpathVisibility): ToolpathOverlayLayer[] {
   return [
     { key: 'cuts', kinds: ['cut'], visible: visibility.cuts },
     { key: 'leadIns', kinds: ['lead_in', 'lead_out'], visible: visibility.leadIns },
-    { key: 'rapids', kinds: ['rapid'], visible: visibility.rapids, horizontalOnly: true },
+    { key: 'rapids', kinds: ['rapid'], visible: visibility.rapids, zFilter: 'nonRetract' },
     { key: 'plunges', kinds: ['plunge'], visible: visibility.plunges },
-    { key: 'retractions', kinds: ['rapid'], visible: visibility.retractions, retractOnly: true },
+    { key: 'retractions', kinds: ['rapid'], visible: visibility.retractions, zFilter: 'retract' },
   ]
+}
+
+/** Moves a layer draws: kind membership then its share of the Z split. */
+export function movesForToolpathLayer(
+  moves: readonly ToolpathMove[],
+  layer: Pick<ToolpathOverlayLayer, 'kinds' | 'zFilter'>,
+): ToolpathMove[] {
+  return moves.filter(
+    (move) => layer.kinds.includes(move.kind) && moveMatchesZFilter(move, layer.zFilter),
+  )
 }
 
 export interface ToolpathLinePositionChunk {

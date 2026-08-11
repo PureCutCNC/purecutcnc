@@ -25,7 +25,11 @@ import type { ToolpathVisibility } from '../toolpathVisibility'
 import {
   buildToolpathLinePositionChunks,
   buildToolpathOverlayLayers,
+  moveMatchesZFilter,
+  movesForToolpathLayer,
   toolpathPointToWorldTuple,
+  TOOLPATH_LAYER_Z_EPSILON,
+  type ToolpathOverlayLayerKey,
 } from './toolpathOverlay'
 
 function assert(condition: boolean, message: string): void {
@@ -142,5 +146,81 @@ function testOverlayLayersVisibilityGating(): void {
 
 testOverlayLayersKinds()
 testOverlayLayersVisibilityGating()
+
+// --- Issue #482: every rapid belongs to exactly one layer ---
+
+function rapidFromTo(fromZ: number, toZ: number): ToolpathMove {
+  return { kind: 'rapid', from: { x: 0, y: 0, z: fromZ }, to: { x: 5, y: 5, z: toZ } }
+}
+
+/**
+ * The partition property. Stated over all three signs of `to.z - from.z`
+ * rather than as a case for the descending one: the previous code passed for
+ * level and ascending rapids and silently dropped descents, so only the
+ * exhaustive form catches a predicate pair that stops covering the space.
+ */
+function testEveryRapidLandsInExactlyOneLayer(): void {
+  console.log('Testing every rapid belongs to exactly one layer (issue #482)...')
+
+  const vis: ToolpathVisibility = { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }
+  const layers = buildToolpathOverlayLayers(vis)
+
+  const cases: Array<{ label: string; move: ToolpathMove; expected: ToolpathOverlayLayerKey }> = [
+    { label: 'descending rapid (plunge into material)', move: rapidFromTo(10, 2), expected: 'rapids' },
+    { label: 'level rapid (traverse)', move: rapidFromTo(10, 10), expected: 'rapids' },
+    { label: 'ascending rapid (retraction)', move: rapidFromTo(2, 10), expected: 'retractions' },
+    // Sub-tolerance drift must not read as a retraction.
+    { label: 'near-level rapid', move: rapidFromTo(10, 10 + TOOLPATH_LAYER_Z_EPSILON / 2), expected: 'rapids' },
+  ]
+
+  for (const { label, move, expected } of cases) {
+    const claiming = layers.filter((layer) => movesForToolpathLayer([move], layer).length === 1)
+    assert(
+      claiming.length === 1,
+      `${label}: expected exactly 1 layer to draw it, got ${claiming.length} (${claiming.map((l) => l.key).join(', ') || 'none'})`,
+    )
+    assert(
+      claiming[0].key === expected,
+      `${label}: expected the ${expected} layer, got ${claiming[0].key}`,
+    )
+  }
+}
+
+/** A descending rapid must follow the Rapids toggle, not the Retractions one. */
+function testDescendingRapidFollowsTheRapidsToggle(): void {
+  console.log('Testing a descending rapid is gated by the Rapids toggle...')
+
+  const base: ToolpathVisibility = { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }
+  const descending = rapidFromTo(10, 2)
+
+  function drawn(vis: ToolpathVisibility): boolean {
+    return buildToolpathOverlayLayers(vis)
+      .filter((layer) => layer.visible)
+      .some((layer) => movesForToolpathLayer([descending], layer).length === 1)
+  }
+
+  assert(drawn(base), 'drawn when rapids=true')
+  assert(!drawn({ ...base, rapids: false }), 'hidden when rapids=false')
+  assert(drawn({ ...base, retractions: false }), 'still drawn when only retractions=false')
+}
+
+function testZFilterPredicate(): void {
+  console.log('Testing moveMatchesZFilter partitions rapids...')
+
+  for (const [fromZ, toZ] of [[10, 2], [10, 10], [2, 10]] as const) {
+    const move = rapidFromTo(fromZ, toZ)
+    const inNonRetract = moveMatchesZFilter(move, 'nonRetract')
+    const inRetract = moveMatchesZFilter(move, 'retract')
+    assert(
+      inNonRetract !== inRetract,
+      `z ${fromZ}→${toZ}: the two filters must partition, got nonRetract=${inNonRetract} retract=${inRetract}`,
+    )
+    assert(moveMatchesZFilter(move, undefined), `z ${fromZ}→${toZ}: an absent filter takes every move`)
+  }
+}
+
+testEveryRapidLandsInExactlyOneLayer()
+testDescendingRapidFollowsTheRapidsToggle()
+testZFilterPredicate()
 
 console.log('toolpathOverlay tests passed')
