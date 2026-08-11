@@ -51,6 +51,28 @@ output belong here.
 - No user-tunable curve parameters in this PR. The persisted choice is only
   `rect` or `smooth`.
 
+## What the two shapes actually emit
+
+Captured from the running app's 3D toolpath preview, front view (looking along
+-Y, so the Z profile is seen edge-on). Same part, same tab size, same 6 mm
+endmill — only `shape` differs between the left and right tab.
+
+![Rectangular tab steps up, rides flat and steps down; smooth tab ramps up and back down continuously](images/smooth-tabs-rect-vs-smooth.png)
+
+Closer, on the ramp itself. The rise eases in at the footprint boundary rather
+than starting with a corner — that is the zero-slope join, and it is why Z
+velocity starts at zero instead of demanding a step change:
+
+![Close-up of a smooth tab ramp easing in at the footprint boundary](images/smooth-tabs-ramp-closeup.png)
+
+Three stepdown passes crossing the same tab (12 mm stock, 3 mm stepdown, 9 mm
+tabs). The rectangular tab gives three vertical risers onto one shared flat top;
+the smooth tab gives three ramps converging on a single peak. Every pass reaches
+`z_top` exactly and each is subdivided for its own rise — 28, 40 and 48 sloped
+moves for climbs of 3, 6 and 9 mm — which a fixed per-move sample count cannot do:
+
+![Three stepdown passes crossing one rectangular and one smooth tab](images/smooth-tabs-multipass.png)
+
 ## Slice ledger
 
 | Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
