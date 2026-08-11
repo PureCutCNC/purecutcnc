@@ -1630,7 +1630,9 @@ export function CAMPanel({
                         <DraftLengthInput
                           value={selectedOperation.retractHeight ?? (project.stock.thickness + 1)}
                           units={project.meta.units}
-                          min={0}
+                          // Absolute project Z, so the stock top is the floor: below it the
+                          // generator would clamp and warn anyway (issue #479).
+                          min={project.stock.thickness}
                           onCommit={(value) => updateOperation(selectedOperation.id, { retractHeight: value })}
                         />
                         <OperationParameterReference kind="retractHeight" />

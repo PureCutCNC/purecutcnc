@@ -152,6 +152,7 @@ export type ToolpathWarningCode =
   | 'drillHelicalBoreTooSmall'
   | 'drillHelicalBoreTooLarge'
   | 'drillHelicalBoreUnmachinable'
+  | 'drillRetractBelowStockTop'
   // carving (follow-line)
   | 'carveDepthClamped'
   | 'carveNotEnoughGeometry'

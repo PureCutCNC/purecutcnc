@@ -150,6 +150,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.drillHelicalBoreTooSmall': 'Kreisdurchmesser ({holeDiameter}) ist nicht größer als der Werkzeugdurchmesser ({toolDiameter}); helikales Bohren übersprungen — Bohrung muss größer als der Schaftfräser sein',
   'warnings.drillHelicalBoreTooLarge': 'Kreisdurchmesser ({holeDiameter}) überschreitet 2× Werkzeugdurchmesser ({maxDiameter}); helikales Bohren ist auf 2× Schaftfräserdurchmesser begrenzt — Innenkonturfräsen verwenden',
   'warnings.drillHelicalBoreUnmachinable': 'Die angeforderte helikale Bohrung kann innerhalb des Bewegungslimits nicht erzeugt werden; keine Ausgabe für dieses Ziel',
+  'warnings.drillRetractBelowStockTop': 'Rückzugshöhe ({requested}) liegt unterhalb der Materialoberkante; auf {clamped} angehoben, damit das Werkzeug nicht im Eilgang in das Werkstück eintaucht. Die Rückzugshöhe ist eine absolute Z-Koordinate im Projektsystem, kein Abstand über dem Rohteil.',
   'warnings.drillTargetsNotCircles': 'Einige ausgewählte Ziel-Features sind keine Kreise und wurden übersprungen',
   // carving (follow-line)
   'warnings.carveDepthClamped': '{name} Gravurtiefe überschreitet die Rohteilunterseite; auf Z 0 begrenzt',
