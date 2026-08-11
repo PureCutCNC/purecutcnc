@@ -373,6 +373,44 @@ test('a crossing buried inside one long move is still found', () => {
   assertClose(zAtX(out.moves, 140), CUT_Z, 1e-9, 'and exits at the cut Z')
 })
 
+test('every stepdown pass over one tab reaches z_top exactly, with its own ramp', () => {
+  // Any part thicker than one stepdown crosses the same tab several times, each
+  // pass from a different depth. Each has a different climb over the same
+  // footprint, so each needs its own subdivision — and every one of them has to
+  // land on z_top exactly, not merely near it.
+  const tabTop = 9
+  const project = projectWithTabs([tab('tb1', 40, 40, 20, 20, 'smooth', tabTop)])
+
+  let previousSampleCount = 0
+  for (const passZ of [6, 3, 0]) {
+    const out = applyTabsToEdgeRoute(
+      project,
+      operation(),
+      result([{ kind: 'cut', from: { x: 0, y: 50, z: passZ }, to: { x: 100, y: 50, z: passZ } }]),
+    )
+
+    const peak = Math.max(...out.moves.flatMap((move) => [move.from.z, move.to.z]))
+    assertClose(peak, tabTop, 1e-9, `pass at Z=${passZ} reaches z_top exactly`)
+    assertClose(zAtX(out.moves, 40), passZ, 1e-9, `pass at Z=${passZ} enters at its own depth`)
+    assertClose(zAtX(out.moves, 60), passZ, 1e-9, `pass at Z=${passZ} exits at its own depth`)
+    assert(
+      verticalTransitions(out.moves).length === 0,
+      `pass at Z=${passZ} ramps without any vertical move`,
+    )
+
+    // Subdivision adapts: a deeper pass climbs further over the same footprint,
+    // so it is sampled more finely. A fixed per-move count could not do this.
+    const sampleCount = cutMoves(out.moves).filter(
+      (move) => Math.abs(move.from.z - move.to.z) > 1e-9,
+    ).length
+    assert(
+      sampleCount > previousSampleCount,
+      `deeper pass at Z=${passZ} is sampled more finely (${sampleCount} vs ${previousSampleCount})`,
+    )
+    previousSampleCount = sampleCount
+  }
+})
+
 // ── Safety differential ──────────────────────────────────────────────
 // The strongest statement available: recompute the required envelope in the
 // test, independently of the engine, and check every emitted point against it.
