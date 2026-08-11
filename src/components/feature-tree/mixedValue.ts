@@ -56,6 +56,24 @@ export function commonBoolean<T>(
 }
 
 /**
+ * Returns the common value of type V across `items` via `accessor`, or `null`
+ * when values are mixed or the array is empty.
+ */
+export function commonValue<T, V>(
+  items: T[],
+  accessor: (item: T) => V | undefined | null,
+): V | null {
+  if (items.length === 0) return null
+  const first = accessor(items[0]!)
+  if (first === undefined || first === null) return null
+  for (let i = 1; i < items.length; i++) {
+    const value = accessor(items[i]!)
+    if (value !== first) return null
+  }
+  return first
+}
+
+/**
  * Returns the minimum numeric value from `items` via `accessor`.
  * Returns `null` when the array is empty or every value is null/undefined.
  */

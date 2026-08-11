@@ -20,7 +20,7 @@ import { validateMachineDefinition } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { getBundledMachine, isBundledMachineId } from '../../machine/registry'
 import { convertLength } from '../../utils/units'
-import { defaultTool, inferFeatureKind, newProject, profileVertices } from '../../types/project'
+import { defaultTool, inferFeatureKind, newProject, profileVertices, tabShape } from '../../types/project'
 import type {
   Clamp,
   FeatureDefinition,
@@ -305,6 +305,7 @@ export function normalizeTab(tab: Tab, units: Project['meta']['units'], index: n
     z_top: Math.max(zTop, zBottom),
     z_bottom: Math.min(zTop, zBottom),
     visible: tab.visible ?? true,
+    shape: tabShape(tab),
   }
 }
 

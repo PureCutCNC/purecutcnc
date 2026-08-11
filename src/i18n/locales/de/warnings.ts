@@ -80,6 +80,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeTrochoidalEntryBudget': 'Der trochoidale Einstieg nahe ({x}, {y}) überschreitet das Einstiegspunktlimit.',
   'warnings.edgeTrochoidalTabsRequireHelix': 'Trochoidales Fräsen erfordert bei Stegen einen Helix-Einstieg.',
   'warnings.edgeTrochoidalTabUnsafe': 'Der Sicherheitsabstand am trochoidalen Steg ist nahe ({x}, {y}) unsicher.',
+  'warnings.edgeTrochoidalSmoothTabFallback': 'Haltesteg „{name}" ist auf Sanft gesetzt, wird bei trochoidaler Kantenbearbeitung aber als Rechteckig gefräst. Der Werkzeugweg stuft über diesen Steg, statt zu rampen.',
   'warnings.edgeTrochoidalSkippedSpan': 'Die trochoidale Strecke nahe ({x}, {y}) ist für einen sicheren Helix-Einstieg zu kurz und wurde übersprungen.',
   'warnings.edgeTrochoidalNoSurvivingSpan': 'Keine trochoidale Führungsstrecke nahe ({x}, {y}) kann sicher eine Einstiegskavität herstellen.',
   'warnings.edgeTrochoidalSafetyCheck': 'Die trochoidale Sicherheitsprüfung ist nahe ({x}, {y}) fehlgeschlagen; kein Werkzeugweg wurde erzeugt.',

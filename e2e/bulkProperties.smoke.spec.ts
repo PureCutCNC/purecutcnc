@@ -1034,4 +1034,77 @@ test.describe('Bulk properties browser smoke', () => {
     // ...and landed on a tenth of a millimetre.
     expect(Math.abs(committed * 10 - Math.round(committed * 10))).toBeLessThan(1e-9)
   })
+
+  // ====================================================================
+  // Tab shape control (single + bulk)
+  // ====================================================================
+
+  test('single tab shape select defaults to Rectangular and switches to Smooth', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    // Select Tab A.
+    await ui.tree.tabRows(app.page).nth(0).click()
+
+    // Shape select must be present and default to Rectangular.
+    const shapeSelect = ui.properties.panel(app.page).locator('[data-testid="tab-shape"]')
+    await expect(shapeSelect).toBeAttached()
+    await expect(shapeSelect).toHaveValue('rect')
+
+    // Switch to Smooth.
+    await shapeSelect.selectOption('smooth')
+
+    // Verify the project data was updated.
+    const project = await getProject(app.page)
+    const tabs = getArray(project, 'tabs')
+    const tabA = tabs.find((t) => str(t.id) === 'tb-1')!
+    expect(str(tabA.shape)).toBe('smooth')
+  })
+
+  test('two legacy tabs read as Rectangular, not as mixed', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    // Neither fixture tab carries a `shape` key — they are legacy records, which
+    // is what every project saved before this feature looks like. Opening them
+    // together must read Rectangular, never "Mixed values".
+    //
+    // Two layers have to hold for that: `normalizeTab` resolves the missing
+    // field at load, and the panel resolves again through `tabShape()`. Either
+    // alone is sufficient, so this asserts the user-visible outcome rather than
+    // pinning one mechanism — swapping the panel to raw `tab.shape` still passes
+    // here, because normalization has already filled the field in by then.
+    await ui.tree.tabRows(app.page).nth(0).click()
+    await ui.tree.tabRows(app.page).nth(1).click({ modifiers: [modKey as 'Meta' | 'Control'] })
+
+    const bulkSelect = ui.properties.panel(app.page).locator('[data-testid="bulk-tab-shape"]')
+    await expect(bulkSelect).toHaveValue('rect')
+  })
+
+  test('bulk tab shape select shows mixed state and applies to all', async ({ app, ui }) => {
+    await seedProject(app.page, BULK_FIXTURE_JSON)
+
+    // First set Tab A to smooth so we have mixed shapes.
+    await ui.tree.tabRows(app.page).nth(0).click()
+    const singleSelect = ui.properties.panel(app.page).locator('[data-testid="tab-shape"]')
+    await singleSelect.selectOption('smooth')
+
+    // Now multi-select Tab A (smooth) and Tab B (legacy/rect).
+    await ui.tree.tabRows(app.page).nth(0).click()
+    await ui.tree.tabRows(app.page).nth(1).click({ modifiers: [modKey as 'Meta' | 'Control'] })
+
+    // Bulk shape select should be present and show mixed (empty value).
+    const bulkSelect = ui.properties.panel(app.page).locator('[data-testid="bulk-tab-shape"]')
+    await expect(bulkSelect).toBeAttached()
+    await expect(bulkSelect).toHaveValue('')
+
+    // Select Rectangular for all.
+    await bulkSelect.selectOption('rect')
+
+    // Both tabs should now be rect.
+    const project = await getProject(app.page)
+    const tabs = getArray(project, 'tabs')
+    const tabA = tabs.find((t) => str(t.id) === 'tb-1')!
+    const tabB = tabs.find((t) => str(t.id) === 'tb-2')!
+    expect(str(tabA.shape ?? 'rect')).toBe('rect')
+    expect(str(tabB.shape ?? 'rect')).toBe('rect')
+  })
 })

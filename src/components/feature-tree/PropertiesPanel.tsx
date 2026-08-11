@@ -26,7 +26,8 @@ import { BulkTabProperties } from './BulkTabProperties'
 import { BulkClampProperties } from './BulkClampProperties'
 import { DraftTextInput } from './DraftTextInput'
 import { DraftNumberInput } from './DraftNumberInput'
-import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection } from '../../types/project'
+import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfIntersection, tabShape } from '../../types/project'
+import type { TabShape } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { isMachinable, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
@@ -997,6 +998,18 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               return true
             }}
           />
+          <label className="properties-field">
+            <span>{t('featureTree.properties.tabShape')}</span>
+            <select
+              value={tabShape(selectedTab)}
+              onChange={(event) => updateTab(selectedTab.id, { shape: event.target.value as TabShape })}
+              data-testid="tab-shape"
+            >
+              <option value="rect">{t('featureTree.properties.tabShape.rect')}</option>
+              <option value="smooth">{t('featureTree.properties.tabShape.smooth')}</option>
+            </select>
+          </label>
+          <span className="properties-hint">{t('featureTree.properties.tabShape.hint')}</span>
           <label className="properties-check">
             <input
               type="checkbox"

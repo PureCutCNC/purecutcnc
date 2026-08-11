@@ -598,6 +598,8 @@ export interface Clamp {
 // Tabs
 // ============================================================
 
+export type TabShape = 'rect' | 'smooth'
+
 export interface Tab {
   id: string
   name: string
@@ -608,6 +610,18 @@ export interface Tab {
   z_top: number
   z_bottom: number
   visible: boolean
+  shape?: TabShape
+}
+
+/**
+ * Resolved tab shape. Anything not explicitly `'smooth'` — a legacy tab with no
+ * field at all, or an unrecognised future value — is rectangular. Defaulting the
+ * unknown case to rectangular is the safe direction: a smooth tab of the same
+ * nominal size leaves materially less holding cross-section, so a misread value
+ * must never silently reduce the material holding the part.
+ */
+export function tabShape(tab: Tab): TabShape {
+  return tab.shape === 'smooth' ? 'smooth' : 'rect'
 }
 
 // ============================================================

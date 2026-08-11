@@ -17,7 +17,7 @@
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import type { Operation, Point, Project, SketchFeature, Tab } from '../../types/project'
-import { isTrochoidalEdgeRoughing } from '../../types/project'
+import { isTrochoidalEdgeRoughing, tabShape } from '../../types/project'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import type { ClipperPath, ResolvedPocketRegion, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
@@ -426,6 +426,29 @@ function validateTrochoidalTabs(tabs: Tab[], warnings: ToolpathWarning[]): boole
     params: { x: invalid.x, y: invalid.y },
   })
   return false
+}
+
+/**
+ * Report every smooth tab that a trochoidal Edge Route will machine as
+ * rectangular instead.
+ *
+ * Trochoidal roughing builds its own tab motion in the guide domain — it
+ * fragments the guide around each tab before an orbit exists, cuts the local
+ * tab-top interval, and helically re-enters afterwards. There is no single cut
+ * chain crossing the footprint for a smooth profile to be measured along, so the
+ * shared ramp cannot be applied here without inventing an unproven vertical
+ * re-entry into stock (see `applyEdgeRouteTabs` and
+ * `planning/TROCHOIDAL_EDGE_DESIGN.md`).
+ *
+ * Falling back to the rectangular hold is the safe answer — it leaves more
+ * material, not less. Saying so is the required part: a user who picked Smooth
+ * must never be left believing the machine is ramping when it is stepping.
+ */
+function reportTrochoidalSmoothTabFallback(tabs: Tab[], warnings: ToolpathWarning[]): void {
+  for (const tab of tabs) {
+    if (tabShape(tab) !== 'smooth') continue
+    warnings.push({ code: 'edgeTrochoidalSmoothTabFallback', params: { name: tab.name } })
+  }
 }
 
 function activeTabsAtZ(tabs: Tab[], z: number): Tab[] {
@@ -968,6 +991,9 @@ function generateEdgeRouteToolpathSingle(
   const trochoidalTabs = isTrochoidal ? project.tabs : []
   if (isTrochoidal && !validateTrochoidalTabs(trochoidalTabs, warnings)) {
     return { operationId: operation.id, moves: [], warnings, bounds: null }
+  }
+  if (isTrochoidal) {
+    reportTrochoidalSmoothTabFallback(trochoidalTabs, warnings)
   }
   if (isTrochoidal && trochoidalCutWidth < tool.diameter * 1.25) {
     warnings.push({ code: 'edgeTrochoidalWidthNarrow' })

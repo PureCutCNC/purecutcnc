@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: trochoidal Edge Route roughing and trochoidal Engrave — guide-domain fragmentation, clearance budget, and the pipeline stages they must bypass
-last-verified: 2026-08-07
+last-verified: 2026-08-10
 ---
 
 # Trochoidal Routing
@@ -165,6 +165,28 @@ channel. That is the honest consequence of the ordering the user picked.
 Tab footprint geometry lives in `tabs.ts` (`expandedTabFootprints`), not beside
 it. Callers pass their own clearance because they answer different questions,
 but the footprint shape and the offset tolerance come from one place.
+
+### Smooth tabs are conservatively rectangular here (issue #414)
+
+A tab may be `rect` or `smooth`. A smooth tab keeps the same rectangular
+footprint but ramps Z continuously across each crossing instead of stepping —
+implemented in `tabSmoothing.ts`, driven from the shared tab pass.
+
+**Trochoidal does not ramp.** The smooth profile is measured along a connected
+cut chain crossing the footprint, and trochoidal roughing has no such chain: it
+fragments the guide around each tab *before* any orbit exists, cuts the tab-top
+interval inline, and helically re-enters afterwards. Applying the ramp here would
+mean inventing the very vertical re-entry into stock that the guide-domain design
+exists to prevent.
+
+So a smooth tab on a trochoidal Edge Route gets the rectangular treatment
+described above, unchanged. That direction is the safe one — the rectangular hold
+leaves *more* material than the ramp, not less.
+
+What is **not** allowed is doing that silently. Each smooth tab on a trochoidal
+operation emits `edgeTrochoidalSmoothTabFallback` naming the tab, so a user who
+chose Smooth is never left believing the machine ramps when it steps. Removing
+that warning while keeping the fallback is a regression, not a simplification.
 
 ## Engrave (follow_line) slot
 

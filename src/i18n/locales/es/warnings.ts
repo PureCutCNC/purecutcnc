@@ -70,6 +70,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   "warnings.edgeTrochoidalEntryBudget": "La entrada trocoidal cerca de ({x}, {y}) supera el presupuesto de puntos de entrada.",
   "warnings.edgeTrochoidalTabsRequireHelix": "El fresado trocoidal requiere entrada helicoidal cuando hay pestañas activas.",
   "warnings.edgeTrochoidalTabUnsafe": "La holgura de la pestaña trocoidal no es segura cerca de ({x}, {y}).",
+  "warnings.edgeTrochoidalSmoothTabFallback": "La pestaña \"{name}\" está configurada como Suave, pero el contorneado trocoidal la mecaniza como Rectangular. La trayectoria salta esta pestaña en escalón en lugar de subir en rampa.",
   "warnings.edgeTrochoidalSkippedSpan": "El tramo trocoidal cerca de ({x}, {y}) es demasiado corto para una entrada helicoidal segura y se omitió.",
   "warnings.edgeTrochoidalNoSurvivingSpan": "Ningún tramo de guía trocoidal cerca de ({x}, {y}) puede crear de forma segura una cavidad de entrada.",
   "warnings.edgeTrochoidalSafetyCheck": "La verificación de seguridad trocoidal falló cerca de ({x}, {y}); no se generó ninguna trayectoria.",

@@ -372,6 +372,12 @@ export const featureTreeEn = {
   'featureTree.contextMenu.joinDisabledTooltip': 'Select two or more features to join',
   'featureTree.contextMenu.useAsStockDisabledTooltip': 'Feature must be an add operation with a closed profile',
 
+  // ── Properties: tab shape ──
+  'featureTree.properties.tabShape': 'Shape',
+  'featureTree.properties.tabShape.rect': 'Rectangular',
+  'featureTree.properties.tabShape.smooth': 'Smooth',
+  'featureTree.properties.tabShape.hint': 'Smooth reduces abrupt Z motion but leaves less material than Rectangular at the same size.',
+
   // ── Z-range slider ──
   'featureTree.zRange.zTop': 'Z Top',
   'featureTree.zRange.zBottom': 'Z Bottom',

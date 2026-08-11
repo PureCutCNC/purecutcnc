@@ -367,6 +367,12 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.contextMenu.joinDisabledTooltip': 'Wählen Sie zwei oder mehr Features zum Vereinigen aus',
   'featureTree.contextMenu.useAsStockDisabledTooltip': 'Feature muss eine Hinzufügen-Operation mit geschlossenem Profil sein',
 
+  // ── Properties: tab shape ──
+  'featureTree.properties.tabShape': 'Form',
+  'featureTree.properties.tabShape.rect': 'Rechteckig',
+  'featureTree.properties.tabShape.smooth': 'Sanft',
+  'featureTree.properties.tabShape.hint': 'Sanft reduziert abrupte Z-Bewegungen, lässt aber bei gleicher Größe weniger Material als Rechteckig.',
+
   // ── Z-range slider ──
   'featureTree.zRange.zTop': 'Z oben',
   'featureTree.zRange.zBottom': 'Z unten',
