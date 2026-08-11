@@ -181,6 +181,19 @@ Always run `npm run build` from the project root to verify changes compile befor
 
 `npm run test:e2e` is a separate PR CI gate, not part of `npm run build`. User-facing UI or workflow changes should add or extend an `e2e/*.smoke.spec.ts` test when the behavior depends on rendered DOM, menu wiring, dialogs, or browser-only boot paths. If lower-level structural tests are sufficient, say so in the PR description so the lack of e2e coverage is deliberate.
 
+### Performance assertions measure CPU time, never wall clock
+
+`scripts/run-tests.ts` runs test files in a parallel pool of up to 10 processes, so wall-clock timings vary with unrelated load and cannot distinguish *"the algorithm regressed"* from *"the machine is busy"* — and `build` is a required status check, so a wall-clock assertion intermittently blocks merges. This cost three issues in a week (#383, #386); on the same fixture, wall clock drifted 102ms → 202ms under 8-core saturation while CPU time held 126ms → 112ms.
+
+So: measure with `process.cpuUsage()`, take the **minimum** across a few repetitions (contention and GC can only ever add cost), and build the fixture outside the measured region.
+
+Then pick the comparison to match what the test actually guards — check this before writing the assertion, because the wrong instrument passes against the very regression it exists to catch:
+
+- **A complexity property → assert the shape of the cost curve.** A ratio between two input sizes is machine-independent, so it neither flakes on a slow runner nor needs revisiting when hardware changes. Reference: `bestNonFittingCpuMs` in `src/engine/toolpaths/arcReconstruction.test.ts`.
+- **A constant factor → assert an absolute CPU budget.** When the guarded work is already in the same complexity class as its regression — a cheap reject that gates expensive per-pair work, say — the ratio barely moves and a ratio assertion is blind. Reference: `bestClassifyCpuMs` in `src/import/classifier.test.ts`, where dropping a bbox gate cost 12x in absolute CPU but moved the ratio only 3.19x → 4.07x, inside the baseline's own run-to-run spread.
+
+An absolute budget is machine-speed dependent, which is a real cost but a *different* one from the contention flake above. Where you use one, record in the test the measured baseline, the measured regression, and the headroom either side, so the next reader can re-derive the number instead of guessing at it. And verify the assertion actually fails against the regression it guards, by temporarily reintroducing the slow path.
+
 ## Git & Branching
 
 - **Never commit directly to `main`.** All work lands through a feature branch + PR — even a one-line fix. This holds even when a request says "commit here", "commit and push", or "no PR": "no PR" means *don't open a PR yet*, not *commit onto `main`*. Branch first (`git checkout -b feat/<change>`), commit there, push the branch.
