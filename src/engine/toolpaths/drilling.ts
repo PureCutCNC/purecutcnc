@@ -211,8 +211,11 @@ function emitSimplePlunge(
   safeZ: number,
   retractZ: number,
 ): ToolpathPoint {
+  // Same safe-Z ordering as emitDrillCycle (see comment there).
   const aboveSafe: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
-  if (current && (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z)) {
+  if (!current) {
+    moves.push({ kind: 'rapid', from: aboveSafe, to: aboveSafe })
+  } else if (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z) {
     moves.push({ kind: 'rapid', from: current, to: aboveSafe })
   }
   const rapidStart: ToolpathPoint = { x: center.x, y: center.y, z: retractZ }
@@ -237,9 +240,16 @@ function emitDrillCycle(
   drillType: DrillType,
   peckDepth: number,
 ): ToolpathPoint {
-  // Rapid above the hole at safeZ — skip if we're already there (first hole, no prior position)
+  // Establish { hole centre, safeZ } before any descent. When this is the first
+  // hole `current` is null, so the postprocessor has no known machine location
+  // and would emit Z before XY — putting the traverse to the first hole at
+  // retract height instead of the clearance plane. A zero-length rapid tells it
+  // to position XY and Z at safeZ first; `optimizeLinearMoves` preserves it as
+  // the operation's entry marker. Same pattern as `emitCenterLockedCircularBore`.
   const aboveSafe: ToolpathPoint = { x: center.x, y: center.y, z: safeZ }
-  if (current && (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z)) {
+  if (!current) {
+    moves.push({ kind: 'rapid', from: aboveSafe, to: aboveSafe })
+  } else if (current.x !== aboveSafe.x || current.y !== aboveSafe.y || current.z !== aboveSafe.z) {
     moves.push({ kind: 'rapid', from: current, to: aboveSafe })
   }
 
@@ -381,12 +391,32 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
   const featureSpans = sortedTargets.map((target) => target.span)
   const safeZ = getOperationSafeZ(project, featureSpans)
 
-  // Default retract height is just above the highest feature top, below safe Z.
+  // The retract plane is where every rapid descent stops before the fed plunge
+  // begins, so it must never sit inside material: below it the tool would enter
+  // the part at rapid, and the first hole's XY traverse would cross the stock at
+  // that height (issue #479). Clamp up to the material surface first, then cap at
+  // the clearance plane. The two bounds can never fight — `getOperationSafeZ` is
+  // `max(stockTop, highestFeatureMax) + clearance`, and every target that passes
+  // the `bottomZ >= topZ` guard has `span.max === span.top`, so
+  // `safeZ === materialTopZ + clearance >= materialTopZ`.
   const defaultRetractOffset = 1 // small offset in project units
   const highestTop = featureSpans.reduce((max, span) => Math.max(max, span.top), 0)
-  const retractZ = operation.retractHeight !== undefined
-    ? Math.min(safeZ, operation.retractHeight)
-    : Math.min(safeZ, highestTop + defaultRetractOffset)
+  const materialTopZ = Math.max(project.stock.thickness, highestTop)
+  const requestedRetractZ = operation.retractHeight ?? materialTopZ + defaultRetractOffset
+  const retractZ = Math.min(safeZ, Math.max(requestedRetractZ, materialTopZ))
+
+  // Only an explicit operator value earns a warning. The default above is
+  // already at or above the surface, so clamping it would be reporting our own
+  // arithmetic back to the user.
+  if (operation.retractHeight !== undefined && operation.retractHeight < materialTopZ) {
+    warnings.push({
+      code: 'drillRetractBelowStockTop',
+      params: {
+        requested: Number(operation.retractHeight.toFixed(4)),
+        clamped: Number(retractZ.toFixed(4)),
+      },
+    })
+  }
 
   const moves: ToolpathMove[] = []
   const drillCycles: DrillCycle[] = []

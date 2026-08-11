@@ -656,6 +656,39 @@ test('drilling helical: spiral lead_in descent, bottom flatten, no canned cycle'
   assert(!/G73/.test(gcode), 'helical G-code should not contain G73')
 })
 
+test('drilling: a retract height inside the stock is clamped before posting', () => {
+  // Issue #479 — `retractHeight` is an absolute project Z, so a value below the
+  // stock top used to rapid the drill into the part. Runs through postToolpath
+  // so the shared assertEntrySafe check sees it too.
+  const drill = makeDrill('t1', 3)
+  const circle = makeCircleFeature('c1', 20, 20, 2.5, 20, 14)
+  const project = baseProject([drill], [circle])
+  const op = makePocketOp({
+    kind: 'drilling',
+    target: { source: 'features', featureIds: ['c1'] },
+    toolRef: 't1',
+    stepdown: 2,
+    drillType: 'simple',
+    retractHeight: 2, // 18 mm inside a 20 mm stock
+  })
+
+  const result = generateDrillingToolpath(project, op)
+  assert(
+    result.warnings.some((w) => w.code === 'drillRetractBelowStockTop'),
+    'a retract height below the stock top should warn',
+  )
+  for (const move of result.moves) {
+    if (move.kind !== 'rapid') continue
+    assert(
+      move.to.z >= project.stock.thickness - 1e-6,
+      `no rapid should descend into the stock, got Z${move.to.z}`,
+    )
+  }
+
+  const gcode = postToolpath(project, op, result)
+  assert(gcode.length > 0, 'clamped drilling should produce non-empty G-code')
+})
+
 test('drilling helical: unsupported tool falls back with warning', () => {
   // Use a drill tool instead of flat_endmill
   const drill = makeDrill('t1', 3)
