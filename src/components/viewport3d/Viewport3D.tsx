@@ -29,7 +29,14 @@ import { applyClampHighlight, applyTabHighlight, buildOriginTriad, buildScene } 
 import { getStockBounds, rectProfile } from '../../types/project'
 import { getFeaturesWorldBounds } from '../canvas/scenePrimitives'
 import { getFeatureGeometryProfiles } from '../../text'
-import { buildToolpathLinePositionChunks, buildToolpathOverlayLayers, toolpathPointToWorldTuple } from './toolpathOverlay'
+import {
+  buildToolpathLinePositionChunks,
+  buildToolpathOverlayLayers,
+  moveMatchesZFilter,
+  movesForToolpathLayer,
+  toolpathPointToWorldTuple,
+  type ToolpathLayerZFilter,
+} from './toolpathOverlay'
 import { useTheme } from '../../theme/themeContext'
 import type { ThreeThemePalette } from '../../theme/palette'
 import { createOrbitControls, type OrbitControls } from './orbitControls'
@@ -183,7 +190,9 @@ function buildToolpathDirectionMarkers(
     // Respect visibility toggles
     if (move.kind === 'cut' && !visibility.cuts) continue
     if (move.kind === 'rapid') {
-      const isRetraction = move.to.z > move.from.z + 1e-9
+      // Same split as the line layers, via the same predicate — the arrow code
+      // having its own copy is how the two fell out of step (issue #482).
+      const isRetraction = moveMatchesZFilter(move, 'retract')
       if (isRetraction && !visibility.retractions) continue
       if (!isRetraction && !visibility.rapids) continue
     }
@@ -278,8 +287,7 @@ function buildToolpathOverlay(
     opacity: number
     linewidth: number
     visible: boolean
-    horizontalOnly?: boolean
-    retractOnly?: boolean
+    zFilter?: ToolpathLayerZFilter
   }> = schemaLayers.map((layer) => {
     const color =
       layer.key === 'cuts' || layer.key === 'leadIns' ? palette.toolpathCut
@@ -294,21 +302,14 @@ function buildToolpathOverlay(
       : layer.key === 'rapids' || layer.key === 'retractions' ? 1.8
       : 2.0
     const linewidth = emphasized ? baseLinewidth + 0.5 : Math.max(1.2, baseLinewidth - 0.5)
-    return { kinds: layer.kinds, color, opacity, linewidth, visible: layer.visible, horizontalOnly: layer.horizontalOnly, retractOnly: layer.retractOnly }
+    return { kinds: layer.kinds, color, opacity, linewidth, visible: layer.visible, zFilter: layer.zFilter }
   })
 
   const objects: THREE.Object3D[] = []
   for (const layer of layers) {
     if (!layer.visible) continue
 
-    let moves = toolpath.moves.filter((move) => layer.kinds.includes(move.kind))
-
-    if (layer.horizontalOnly) {
-      moves = moves.filter((move) => Math.abs(move.from.z - move.to.z) < 1e-9)
-    }
-    if (layer.retractOnly) {
-      moves = moves.filter((move) => move.to.z > move.from.z + 1e-9)
-    }
+    const moves = movesForToolpathLayer(toolpath.moves, layer)
 
     if (moves.length === 0) {
       continue
