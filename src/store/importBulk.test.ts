@@ -60,12 +60,38 @@ function importFixture(count: number, options?: Parameters<typeof makeImport>[1]
   })
 }
 
+/**
+ * Lowest CPU time, in ms, across `reps` bulk imports of the same fixture.
+ *
+ * Measures CPU time (`process.cpuUsage`) rather than wall clock, because
+ * `scripts/run-tests.ts` executes test files in a parallel pool of up to 10
+ * processes. Wall clock counts time this process spends descheduled while
+ * sibling test files run; CPU time does not. Measured on this fixture:
+ *
+ *   wall clock   15ms idle  ->  33ms under 8-core saturation
+ *   CPU time     16ms idle  ->  17ms under 8-core saturation
+ *
+ * Minimum rather than mean, since contention and GC can only ever add cost.
+ * The fixture is built once, and the store reset outside the measured region,
+ * so only `importShapes` is timed.
+ */
+function bestImportCpuMs(count: number, reps = 5): number {
+  const fixture = makeImport(count, { repeatedNames: true })
+  let best = Infinity
+  for (let rep = 0; rep < reps; rep += 1) {
+    resetStore()
+    const before = process.cpuUsage()
+    useProjectStore.getState().importShapes({ fileName: 'synthetic.dxf', sourceType: 'dxf', ...fixture })
+    const delta = process.cpuUsage(before)
+    best = Math.min(best, (delta.user + delta.system) / 1000)
+  }
+  return best
+}
+
 function test2980RepeatedNamesBulkImport(): void {
   resetStore()
   const historyBefore = useProjectStore.getState().history.past.length
-  const start = performance.now()
   const ids = importFixture(2980, { repeatedNames: true })
-  const elapsed = performance.now() - start
   const state = useProjectStore.getState()
   const { features, featureDefinitions, featureFolders } = state.project
 
@@ -91,8 +117,36 @@ function test2980RepeatedNamesBulkImport(): void {
   assert(state.selection.selectedFeatureIds.length === 0, 'large import does not select thousands of children')
   assert(state.selection.selectedNode?.type === 'folder', 'large import selects a folder representative')
   assert(state.history.past.length === historyBefore + 1, 'bulk import records one undo snapshot')
-  assert(elapsed < 5000, `2,980 repeated-name contours import within 5s (was ${elapsed.toFixed(0)}ms)`)
-  console.log(`  2,980 repeated-name contours imported in ${elapsed.toFixed(0)}ms`)
+
+  // An ABSOLUTE CPU budget, not a scaling ratio. What this guards is the
+  // suffix cursor in `createNameAllocator`: without it, every repeated name
+  // rescans from suffix 2, making name allocation quadratic in batch size.
+  // That IS a complexity change, so a ratio can see it in principle — but at
+  // this fixture size the whole import is only tens of ms, and the ratio
+  // measured 1.75..2.67x across trials against a regressed 3.57x, too narrow
+  // a gap to assert on. Measured with the cursor removed:
+  //
+  //                              CPU at 2,980   ratio 1,490 -> 2,980
+  //     current                     17..37ms          2.30x
+  //     suffix cursor removed          306ms          3.57x
+  //
+  // The ~8x gap in absolute CPU is the sharper instrument here. Sizing the
+  // fixture up until a ratio became stable would cost far more suite time than
+  // this test is worth.
+  //
+  // The `current` range is the spread over 12 full `npm test` runs, 8 idle and
+  // 4 under 8-core saturation — the two are indistinguishable, which is the
+  // whole point of measuring CPU. The budget is roughly the geometric
+  // mid-point of the two rows, leaving ~3x either way. Tradeoff, stated
+  // honestly: an absolute budget is machine-speed
+  // dependent in a way a ratio is not. It is NOT contention dependent, which
+  // is the part that made the old `elapsed < 5000` wall-clock assertion a
+  // latent flake.
+  const cpuMs = bestImportCpuMs(2980)
+  assert(cpuMs < 100,
+    `2,980 repeated-name contours imported in ${cpuMs.toFixed(0)}ms CPU (budget 100ms) — `
+    + 'check that repeated-name allocation is still linear in batch size')
+  console.log(`  2,980 repeated-name contours imported in ${cpuMs.toFixed(0)}ms CPU`)
 }
 
 function testThresholdBoundaryAndManyLayers(): void {
