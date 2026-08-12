@@ -127,6 +127,20 @@ export type ToolpathWarningCode =
   | 'tabsOutsideCutZList'
   | 'tabsOutsideCutZListMore'
   | 'tabsBlockFinalDepth'
+  // corner relief (dogbone / T-bone / longest edge)
+  /** Adjacent edges are too short to hold the notch this style would cut. */
+  | 'cornerReliefCornerTooTight'
+  /** The pass's own tool-centre path never turns this corner, so there is no
+   *  descend point on it. */
+  | 'cornerReliefNoWallPath'
+  /** The general guard: the main path never cut at the descend point at or below
+   *  the deepest relief level, so descending there would enter uncut material. */
+  | 'cornerReliefCornerNotCut'
+  /** The descend point or the excursion falls inside a tab footprint. */
+  | 'cornerReliefCornerObstructed'
+  /** The operation's tool carries no usable stepdown, so a relief pass would be
+   *  one full-depth slot per corner. Relief is skipped instead. */
+  | 'cornerReliefNoStepdown'
   // surface clean / finish bands
   | 'surfaceNoCleanupRegion'
   | 'surfaceNoCleanupSegments'

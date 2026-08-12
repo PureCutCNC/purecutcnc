@@ -326,6 +326,10 @@ export function defaultOperationForTarget(
     } : {}),
     pocketSlotFeedPercent: 100,
     roundOutsideCorners: true,
+    // Off by default. Relief changes the cut geometry of the corner, so it is
+    // always an explicit choice — unlike roundOutsideCorners, which only
+    // affects how the tool travels through a corner it already cleared.
+    cornerRelief: 'none',
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
     finishWalls: true,

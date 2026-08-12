@@ -17,6 +17,7 @@
 export * from './arcReconstruction'
 export * from './clamps'
 export * from './carving'
+export * from './cornerRelief'
 export * from './drilling'
 export * from './edge'
 export * from './entry'

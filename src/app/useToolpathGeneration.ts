@@ -85,6 +85,7 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.entryHelixDiameterPercent === b.entryHelixDiameterPercent
     && a.pocketSlotFeedPercent === b.pocketSlotFeedPercent
     && a.roundOutsideCorners === b.roundOutsideCorners
+    && a.cornerRelief === b.cornerRelief
     && a.stockToLeaveRadial === b.stockToLeaveRadial
     && a.stockToLeaveAxial === b.stockToLeaveAxial
     && a.finishWalls === b.finishWalls

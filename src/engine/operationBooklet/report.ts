@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { Operation, OperationKind, OperationPass, OperationTarget, Project } from '../../types/project'
+import type { CornerReliefStyle, Operation, OperationKind, OperationPass, OperationTarget, Project } from '../../types/project'
 // Presentation exception: the booklet report is a user-facing document, so
 // it maps structured warnings to localized text here via the i18n layer.
 import { translate } from '../../i18n/store'
@@ -77,6 +77,27 @@ function operationSupportsMachiningOrder(operation: Operation): boolean {
   return operation.kind === 'pocket'
     || operation.kind === 'edge_route_inside'
     || operation.kind === 'edge_route_outside'
+}
+
+/**
+ * The style is printed with its material cost spelled out, not as a bare word.
+ *
+ * A T-bone removes about 2.3× what a dogbone does and slots a full cutter radius
+ * into one wall — that is the style's defining trade-off rather than a surprise,
+ * so whoever reads the booklet at the machine sees it alongside the setting.
+ */
+function cornerReliefLabel(style: Exclude<CornerReliefStyle, 'none'>): string {
+  if (style === 't_bone') return translate('booklet.cornerRelief.tBone')
+  if (style === 'longest_edge') return translate('booklet.cornerRelief.longestEdge')
+  return translate('booklet.cornerRelief.dogbone')
+}
+
+function operationUsesCornerRelief(operation: Operation): boolean {
+  return (
+    operation.kind === 'pocket'
+    || operation.kind === 'edge_route_inside'
+    || operation.kind === 'edge_route_outside'
+  )
 }
 
 function operationUsesRoundOutsideCorners(operation: Operation): boolean {
@@ -290,6 +311,11 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
 
   if ((operation.roundOutsideCorners ?? false) && operationUsesRoundOutsideCorners(operation)) {
     rows.push({ label: translate('booklet.label.roundOutsideCorners'), value: translate('booklet.value.enabled') })
+  }
+
+  const cornerRelief = operation.cornerRelief ?? 'none'
+  if (cornerRelief !== 'none' && operationUsesCornerRelief(operation)) {
+    rows.push({ label: translate('booklet.label.cornerRelief'), value: cornerReliefLabel(cornerRelief) })
   }
 
   if (operation.kind === 'pocket' || operation.kind === 'surface_clean' || operation.kind === 'finish_surface' || operation.kind === 'finish_surface_cleanup') {

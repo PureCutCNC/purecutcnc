@@ -127,6 +127,12 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   // surface clean / finish bands
   'warnings.surfaceNoCleanupRegion': 'Kein bearbeitbarer paralleler Säuberungsbereich für Band {topZ} -> {bottomZ}',
   'warnings.surfaceNoCleanupSegments': 'Keine bearbeitbaren parallelen Säuberungssegmente für Band {topZ} -> {bottomZ}',
+  // Eckenfreistellung
+  'warnings.cornerReliefCornerTooTight': 'Eckenfreistellung bei ({x}, {y}) übersprungen: die angrenzenden Kanten sind zu kurz für die Freistellungskerbe',
+  'warnings.cornerReliefNoWallPath': 'Eckenfreistellung bei ({x}, {y}) übersprungen: der Werkzeugweg dieser Operation führt nicht um diese Ecke',
+  'warnings.cornerReliefCornerNotCut': 'Eckenfreistellung bei ({x}, {y}) übersprungen: die Operation schneidet dort nicht auf volle Tiefe, ein Eintauchen würde in ungeschnittenes Material gehen',
+  'warnings.cornerReliefCornerObstructed': 'Eckenfreistellung bei ({x}, {y}) übersprungen: eine Haltebrücke deckt die Ecke ab',
+  'warnings.cornerReliefNoStepdown': 'Eckenfreistellung übersprungen: Werkzeug {tool} hat keine Schnitttiefe, der Freistellungsdurchgang würde in einem Schritt auf volle Tiefe schneiden',
   'warnings.surfaceNoOffsetContours': 'Keine bearbeitbaren Offset-Konturen für Band {topZ} -> {bottomZ}',
   'warnings.surfaceFinishBothDisabled': 'Schlichtoperation hat sowohl Wände schlichten als auch Boden schlichten deaktiviert',
   'warnings.surfaceCleanWrongKind': 'Nur Oberfläche-säubern-Operationen können vom Oberfläche-säubern-Resolver aufgelöst werden',
