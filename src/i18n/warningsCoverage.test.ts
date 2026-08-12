@@ -57,6 +57,8 @@ const ALL_CODES = [
   'tabOnlyEdgeRoute', 'tabsOverlapAmbiguous', 'tabNoIntersect', 'tabAboveStockTop', 'tabBelowStockBottom',
   'tabInvalidZRange', 'tabOutsideCutZ', 'tabsOutsideCutZ', 'tabsOutsideCutZList', 'tabsOutsideCutZListMore',
   'tabsBlockFinalDepth',
+  'cornerReliefCornerTooTight', 'cornerReliefNoWallPath', 'cornerReliefCornerNotCut',
+  'cornerReliefCornerObstructed', 'cornerReliefNoStepdown',
   'surfaceNoCleanupRegion', 'surfaceNoCleanupSegments', 'surfaceNoOffsetContours', 'surfaceFinishBothDisabled',
   'surfaceCleanWrongKind', 'surfaceCleanNoTargets', 'surfaceCleanNoValidTargets',
   'surfaceBandNoFinishDepth', 'surfaceBandNoRoughDepth', 'surfaceNoFinishContours',

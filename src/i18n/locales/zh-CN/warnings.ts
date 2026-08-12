@@ -118,6 +118,12 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.tabsBlockFinalDepth': '凸台覆盖了“{name}”的整个最后一刀，因此始终未切到最终深度，工件不会被切离。请减少凸台数量或缩小凸台宽度。',
   'warnings.surfaceNoCleanupRegion': '深度带 {topZ} -> {bottomZ} 没有可加工的平行清理区域',
   'warnings.surfaceNoCleanupSegments': '深度带 {topZ} -> {bottomZ} 没有可加工的平行清理段',
+  // 拐角让位
+  'warnings.cornerReliefCornerTooTight': '({x}, {y}) 处跳过拐角让位：相邻边太短，无法容纳让位缺口',
+  'warnings.cornerReliefNoWallPath': '({x}, {y}) 处跳过拐角让位：本操作的刀具路径不经过该拐角',
+  'warnings.cornerReliefCornerNotCut': '({x}, {y}) 处跳过拐角让位：操作在该处未切至全深度，下刀会进入未切削的材料',
+  'warnings.cornerReliefCornerObstructed': '({x}, {y}) 处跳过拐角让位：有连接片覆盖该拐角',
+  'warnings.cornerReliefNoStepdown': '跳过拐角让位：刀具 {tool} 未设置下刀深度，让位行程会一次切至全深度',
   'warnings.surfaceNoOffsetContours': '深度带 {topZ} -> {bottomZ} 没有可加工的偏置轮廓',
   'warnings.surfaceFinishBothDisabled': '精加工操作的“精修壁面”和“精修底面”均已禁用',
   'warnings.surfaceCleanWrongKind': '曲面清理解析器仅支持曲面清理加工操作',

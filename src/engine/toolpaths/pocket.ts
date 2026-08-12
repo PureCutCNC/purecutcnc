@@ -45,6 +45,12 @@ import {
   resolveFeatureZSpan,
   toClipperPath,
 } from './geometry'
+import {
+  collectReliefCorners,
+  generateCornerReliefPass,
+  resolveReliefStepdown,
+  type ReliefLoop,
+} from './cornerRelief'
 import { isFeatureFirst, mergePocketToolpathResults, perFeatureOperations } from './multiFeature'
 import { cornerSmoothingRadius, roundContourCorners } from './offsetSmoothing'
 import { resolvePocketRegions } from './resolver'
@@ -1805,6 +1811,102 @@ function generateFinishBandMoves(
   }
 }
 
+/**
+ * Clipper join type this pocket pass uses for its islands when offsetting to the
+ * tool-centre wall path.
+ *
+ * Corner relief locates its descend point on the pass's own tool-centre path, so
+ * this has to agree exactly with what the band generators pass to
+ * `buildInsetRegions` — a rounded island join moves the path, and a descend point
+ * that is not on the emitted path is rejected by the guard.
+ */
+function pocketWallIslandJoinType(operation: Operation): number {
+  const roundsIslands = operation.pass === 'finish'
+    // generateFinishBandMoves' shouldRoundPocketWalls
+    ? operation.kind === 'pocket' && operation.finishWalls && operation.roundOutsideCorners === true
+    // generateRoughBandMoves rounds islands for the offset ring tree only; the
+    // parallel pattern builds its boundary contours with plain miter joins.
+    : operation.roundOutsideCorners === true
+      && !(operation.kind === 'pocket' && operation.pocketPattern === 'parallel')
+  return roundsIslands ? ClipperLib.JoinType.jtRound : ClipperLib.JoinType.jtMiter
+}
+
+/**
+ * Append the corner-relief pass for every band the operation actually cut.
+ *
+ * Runs after the whole main path so the descend guard reads the complete emitted
+ * move stream: a deeper band that already cut through a corner position has
+ * genuinely opened that column, and it is the emitted moves — not the settings —
+ * that decide whether a corner is relieved.
+ */
+function appendPocketCornerRelief(
+  allMoves: ToolpathMove[],
+  warnings: ToolpathWarning[],
+  bands: Array<{ band: ResolvedPocketBand; effectiveBottom: number }>,
+  operation: Operation,
+  toolRadius: number,
+  reliefStepdown: number,
+  safeZ: number,
+): void {
+  const style = operation.cornerRelief ?? 'none'
+  if (style === 'none' || bands.length === 0) return
+
+  const radialLeave = Math.max(0, operation.stockToLeaveRadial ?? 0)
+  const wallInset = toolRadius + radialLeave
+  const islandJoinType = pocketWallIslandJoinType(operation)
+  const slotScale = resolveSlotFeedScale(operation)
+  const mainPathMoves = [...allMoves]
+  const reliefMoves: ToolpathMove[] = []
+  let position: ToolpathPoint | null = null
+
+  for (const { band, effectiveBottom } of bands) {
+    const levels = generateStepLevels(band.topZ, effectiveBottom, reliefStepdown)
+    if (levels.length === 0) continue
+
+    // The cleared region is the nominal region eroded by the radial stock this
+    // pass leaves, so the relief is sized to the wall this pass really produces.
+    const clearedRegions = radialLeave > 0
+      ? band.regions.flatMap((region) => buildInsetRegions(region, radialLeave))
+      : band.regions
+    const clearedLoops: ReliefLoop[] = clearedRegions.flatMap((region) => [
+      { points: region.outer, clearedInside: true },
+      // An island is a hole in the cleared region: its reflex corners (an
+      // L-shaped island's notch) trap a cutter exactly like a boundary corner,
+      // while its convex corners are wrapped and need nothing.
+      ...region.islands.map((island) => ({ points: island, clearedInside: false })),
+    ])
+    const wallLoops = buildContourLoops(band.regions.flatMap((region) => buildInsetRegions(
+      region,
+      wallInset,
+      ClipperLib.JoinType.jtMiter,
+      islandJoinType,
+    )))
+
+    const found = collectReliefCorners({
+      style,
+      toolRadius,
+      clearedLoops,
+      wallLoops,
+    })
+    found.warnings.forEach((warning) => appendUniqueWarning(warnings, warning))
+
+    const pass = generateCornerReliefPass(position, {
+      corners: found.corners,
+      levels,
+      safeZ,
+      mainPathMoves,
+      ...(slotScale !== null ? { feedScale: slotScale } : {}),
+      ...(operation.debugToolpath ? { source: 'cornerRelief' } : {}),
+    })
+    pass.warnings.forEach((warning) => appendUniqueWarning(warnings, warning))
+    reliefMoves.push(...pass.moves)
+    position = pass.endPosition
+  }
+
+  retractToSafe(reliefMoves, position, safeZ)
+  allMoves.push(...reliefMoves)
+}
+
 export function generatePocketToolpath(project: Project, operation: Operation): PocketToolpathResult {
   if (isFeatureFirst(operation)) {
     const parts = perFeatureOperations(operation, project).map((subOp) =>
@@ -1879,6 +1981,15 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
     warnings.push(depthWarning)
   }
   const allStepLevels = new Set<number>()
+  // Bands whose main path was actually generated, for the corner-relief pass.
+  // Skipped bands are left out so a band that produced no moves at all does not
+  // also produce one "corner never cut" warning per corner.
+  const reliefBands: Array<{ band: ResolvedPocketBand; effectiveBottom: number }> = []
+  const reliefStyle = operation.cornerRelief ?? 'none'
+  const reliefStepdown = reliefStyle === 'none' ? null : resolveReliefStepdown(tool)
+  if (reliefStyle !== 'none' && reliefStepdown === null) {
+    warnings.push({ code: 'cornerReliefNoStepdown', params: { tool: tool.name } })
+  }
 
   const formatZ = (value: number) => Number(value.toFixed(6)).toString()
   const formatFeatureSpan = (featureId: string) => {
@@ -1960,6 +2071,12 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
     moves.forEach((move) => allMoves.push(move))
     stepLevels.forEach((level) => allStepLevels.add(level))
     warnings.push(...bandWarnings)
+    if (reliefStepdown !== null && moves.length > 0) {
+      const reliefBottom = resolveBandBottomZ(band, operation)
+      if (reliefBottom !== null) {
+        reliefBands.push({ band, effectiveBottom: reliefBottom })
+      }
+    }
     if (operation.debugToolpath) {
       warnings.push({ code: 'debug', params: { text: `Debug: band ${formatZ(band.topZ)} -> ${formatZ(band.bottomZ)} cut levels = ${
           stepLevels.length > 0 ? stepLevels.map((level) => formatZ(level)).join(', ') : 'none'
@@ -1973,6 +2090,18 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
     }
   }
 
+  if (reliefStepdown !== null) {
+    appendPocketCornerRelief(
+      allMoves,
+      warnings,
+      reliefBands,
+      operation,
+      tool.radius,
+      reliefStepdown,
+      safeZ,
+    )
+  }
+
   let bounds: ToolpathBounds | null = null
   for (const move of allMoves) {
     bounds = updateBounds(bounds, move.from)
@@ -1984,6 +2113,9 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
     moves: allMoves,
     warnings,
     bounds,
+    // Deliberately not extended with the relief pass's own levels: stepLevels
+    // reports the main path's cut levels, which rest-machining and the level
+    // readout are built around. The relief pass derives its levels from the tool.
     stepLevels: [...allStepLevels].sort((a, b) => b - a),
   }
 }

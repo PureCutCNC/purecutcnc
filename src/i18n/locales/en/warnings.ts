@@ -127,6 +127,12 @@ export const warningsEn = {
   // surface clean / finish bands
   'warnings.surfaceNoCleanupRegion': 'No machinable parallel cleanup region for band {topZ} -> {bottomZ}',
   'warnings.surfaceNoCleanupSegments': 'No machinable parallel cleanup segments for band {topZ} -> {bottomZ}',
+  // corner relief
+  'warnings.cornerReliefCornerTooTight': 'Corner relief skipped at ({x}, {y}): the adjacent edges are too short to hold the relief notch',
+  'warnings.cornerReliefNoWallPath': 'Corner relief skipped at ({x}, {y}): this operation’s tool path does not turn that corner',
+  'warnings.cornerReliefCornerNotCut': 'Corner relief skipped at ({x}, {y}): the operation never cuts there at full depth, so descending would enter uncut material',
+  'warnings.cornerReliefCornerObstructed': 'Corner relief skipped at ({x}, {y}): a tab covers the corner',
+  'warnings.cornerReliefNoStepdown': 'Corner relief skipped: tool {tool} has no stepdown, so the relief pass would cut to full depth in one step',
   'warnings.surfaceNoOffsetContours': 'No machinable offset contours for band {topZ} -> {bottomZ}',
   'warnings.surfaceFinishBothDisabled': 'Finish operation has both Finish Walls and Finish Floor disabled',
   'warnings.surfaceCleanWrongKind': 'Only surface-clean operations can be resolved by the surface-clean resolver',
