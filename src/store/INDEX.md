@@ -48,7 +48,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `projectFormat.ts` — validates format 3.0 projects and performs the one-way 1.0/2.0/2.1 legacy conversion without retaining baked rows
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `buildShapeFeature.ts` — shared feature builder for the addRect/Circle/Ellipse/… constructors; consolidates duplicated shape-construction logic
-  - `manualFeatureOperation.ts` — resolves existing world-space Add/Subtract instances and applies the shared strict-containment classifier to default a newly-created closed feature
+  - `manualFeatureOperation.ts` — resolves existing world-space Add/Subtract instances and applies the shared strict-containment classifier to default a newly-created closed feature; also `inferLineTopZFromEnclosingFeature` (issue #351) picks a newly-created Line's initial `z_top` from the smallest enclosing solid (subtract floor / add top)
   - `ids.ts` — ID generation/uniqueness
   - `normalize.ts` — lower-level project normalization helpers: cloning, ID deduplication, cache clearing, equality checks, and feature tree/sync helpers
   - `polygonSplit.ts` — splits polygons (e.g. for boolean ops)
@@ -73,9 +73,10 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `geometryFidelity.test.ts` — per-FeatureKind × transform-class resolveProfile fidelity, edit round-trip, duplicate-as-reference, per-kind store transforms
 - `helpers/clipping.test.ts` — join-connectivity predicates (issue #271): shared-edge, corner-contact, disjoint, overlap, and hole-forming union cases for featuresOverlap and the grouping helpers
 - `instanceTransforms.test.ts` — instance transform matrix composition
-- `joinSharedEdge.test.ts` — store-level join of edge-adjacent closed features (issue #271): grouping, session click-to-add, merge result, keepOriginals
-- `linkedConstraintResolve.test.ts` — linked constraint re-solve through resolved instances after definition edits; direct-edit regression; no-drift idempotency
-- `openProfileJoin.test.ts` — open-profile joining behavior
+  - `joinSharedEdge.test.ts` — store-level join of edge-adjacent closed features (issue #271): grouping, session click-to-add, merge result, keepOriginals
+  - `linkedConstraintResolve.test.ts` — linked constraint re-solve through resolved instances after definition edits; direct-edit regression; no-drift idempotency
+  - `lineTopZFromEnclosingFeature.test.ts` — Line `z_top` inheritance from the smallest enclosing solid (issue #351): subtract floor / add top, nested innermost wins, on-wall inheritance, construction keeps default, store wiring for closed primitives, open polylines, and open composites
+  - `openProfileJoin.test.ts` — open-profile joining behavior
 - `polygonSplit.test.ts` — polygon splitting
 - `profileEdit.test.ts` — profile and segment-editing helper behavior
 - `projectStoreTransform.test.ts` — project transform actions

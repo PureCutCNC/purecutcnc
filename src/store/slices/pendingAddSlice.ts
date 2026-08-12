@@ -23,6 +23,7 @@ import { createDefinitionForFeature, createFeatureInstance } from '../helpers/fe
 import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createTextFeatureAt } from '../helpers/naming'
 import { isConstruction } from '../helpers/featureRoles'
+import { inferLineTopZFromEnclosingFeature } from '../helpers/manualFeatureOperation'
 import { resolvedProjectFeatures } from '../helpers/resolveFeatures'
 import { clonePoint } from '../../geometry/profile'
 import { pointsEqual } from '../helpers/geometry'
@@ -529,6 +530,11 @@ export function createPendingAddSlice(
 
       const depth = Math.min(state.project.stock.thickness, 10)
       const openPathOperation = state.creationTarget === 'construction' ? 'construction' as const : 'line' as const
+      // A Line engraves on its enclosing solid's surface (pocket floor or
+      // add top); inherit that Z so Follow Line doesn't carve in the air
+      // inside a pocket. Construction paths keep the stock-derived default.
+      // The inference runs on the actual committed profile (spline-segment
+      // or line-segment) so containment is computed against the real curve.
       if (state.pendingAdd.shape === 'spline') {
         if (state.pendingAdd.points.length < 2) return
         const id = nextUniqueGeneratedId(state.project, 'f')
@@ -537,6 +543,14 @@ export function createPendingAddSlice(
         for (let index = 1; index < points.length; index += 1) {
           segments = appendSplineDraftSegment(points[0], segments, points[index])
         }
+        const profile = {
+          start: points[0],
+          segments,
+          closed: false,
+        }
+        const lineTopZ = openPathOperation === 'line'
+          ? inferLineTopZFromEnclosingFeature(state.project, profile, depth)
+          : depth
 
         const feature: SketchFeature = {
           id,
@@ -546,18 +560,14 @@ export function createPendingAddSlice(
           kind: 'spline',
           folderId: null,
           sketch: {
-            profile: {
-              start: points[0],
-              segments,
-              closed: false,
-            },
+            profile,
             origin: { x: 0, y: 0 },
             orientationAngle: 90,
             dimensions: [],
             constraints: [],
           },
           operation: openPathOperation,
-          z_top: depth,
+          z_top: lineTopZ,
           z_bottom: 0,
           visible: true,
           locked: false,
@@ -571,6 +581,14 @@ export function createPendingAddSlice(
           type: 'line' as const,
           to: point,
         }))
+        const profile = {
+          start,
+          segments,
+          closed: false,
+        }
+        const lineTopZ = openPathOperation === 'line'
+          ? inferLineTopZFromEnclosingFeature(state.project, profile, depth)
+          : depth
         const feature: SketchFeature = {
           id,
           name: openPathOperation === 'construction'
@@ -579,18 +597,14 @@ export function createPendingAddSlice(
           kind: 'polygon',
           folderId: null,
           sketch: {
-            profile: {
-              start,
-              segments,
-              closed: false,
-            },
+            profile,
             origin: { x: 0, y: 0 },
             orientationAngle: 90,
             dimensions: [],
             constraints: [],
           },
           operation: openPathOperation,
-          z_top: depth,
+          z_top: lineTopZ,
           z_bottom: 0,
           visible: true,
           locked: false,
@@ -795,6 +809,17 @@ export function createPendingAddSlice(
       const depth = Math.min(state.project.stock.thickness, 10)
       const id = nextUniqueGeneratedId(state.project, 'f')
       const openCompositeOperation = state.creationTarget === 'construction' ? 'construction' as const : 'line' as const
+      const profile = {
+        start: clonePoint(state.pendingAdd.start),
+        segments: openSegments.map(cloneSegment),
+        closed: false,
+      }
+      // A Line engraves on its enclosing solid's surface (pocket floor or
+      // add top); inherit that Z so Follow Line doesn't carve in the air
+      // inside a pocket. Construction paths keep the stock-derived default.
+      const lineTopZ = openCompositeOperation === 'line'
+        ? inferLineTopZFromEnclosingFeature(state.project, profile, depth)
+        : depth
       const feature: SketchFeature = {
         id,
         name: openCompositeOperation === 'construction'
@@ -803,18 +828,14 @@ export function createPendingAddSlice(
         kind: 'composite',
         folderId: null,
         sketch: {
-          profile: {
-            start: clonePoint(state.pendingAdd.start),
-            segments: openSegments.map(cloneSegment),
-            closed: false,
-          },
+          profile,
           origin: { x: 0, y: 0 },
           orientationAngle: 90,
           dimensions: [],
           constraints: [],
         },
         operation: openCompositeOperation,
-        z_top: depth,
+        z_top: lineTopZ,
         z_bottom: 0,
         visible: true,
         locked: false,

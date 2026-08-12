@@ -18,7 +18,7 @@ import type { CreationTarget } from '../types'
 import type { FeatureOperation, Project, SketchFeature, SketchProfile } from '../../types/project'
 import { isConstruction, isRegion } from './featureRoles'
 import { nextUniqueGeneratedId } from './ids'
-import { inferManualFeatureOperation } from './manualFeatureOperation'
+import { inferLineTopZFromEnclosingFeature, inferManualFeatureOperation } from './manualFeatureOperation'
 import { resolvedProjectFeatures } from './resolveFeatures'
 
 export type ShapeKind = 'rect' | 'circle' | 'ellipse' | 'polygon' | 'spline' | 'composite'
@@ -49,6 +49,12 @@ export function buildShapeFeature(
         ? `Construction ${resolvedProjectFeatures(project).filter(isConstruction).length + 1}`
         : baseName
   const id = nextUniqueGeneratedId(project, 'f')
+  // A Line engraves on its enclosing solid's surface: a subtract's floor
+  // (z_bottom) or an add's top (z_top). Inherit that Z when the Line is
+  // created inside one; otherwise keep the stock-derived default (issue #351).
+  const zTop = operation === 'line'
+    ? inferLineTopZFromEnclosingFeature(project, profile, depth)
+    : depth
   return {
     id,
     name: resolvedName,
@@ -62,7 +68,7 @@ export function buildShapeFeature(
       constraints: [],
     },
     operation,
-    z_top: depth,
+    z_top: zTop,
     z_bottom: 0,
     visible: true,
     locked: false,
