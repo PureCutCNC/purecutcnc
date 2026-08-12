@@ -114,6 +114,12 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.tabsBlockFinalDepth': 'Les attaches couvrent toute la dernière passe de « {name} » : elle n’atteint jamais la profondeur finale et la pièce ne sera pas détachée. Utilisez moins d’attaches ou des attaches plus étroites.',
   'warnings.surfaceNoCleanupRegion': 'Aucune région de nettoyage parallèle usinable pour la bande {topZ} -> {bottomZ}',
   'warnings.surfaceNoCleanupSegments': 'Aucun segment de nettoyage parallèle usinable pour la bande {topZ} -> {bottomZ}',
+  // dégagement de coin
+  'warnings.cornerReliefCornerTooTight': 'Dégagement de coin ignoré en ({x}, {y}) : les arêtes adjacentes sont trop courtes pour recevoir l’encoche de dégagement',
+  'warnings.cornerReliefNoWallPath': 'Dégagement de coin ignoré en ({x}, {y}) : le parcours de cette opération ne contourne pas ce coin',
+  'warnings.cornerReliefCornerNotCut': 'Dégagement de coin ignoré en ({x}, {y}) : l’opération n’y coupe pas à pleine profondeur, une descente entrerait dans de la matière non coupée',
+  'warnings.cornerReliefCornerObstructed': 'Dégagement de coin ignoré en ({x}, {y}) : une attache recouvre le coin',
+  'warnings.cornerReliefNoStepdown': 'Dégagement de coin ignoré : l’outil {tool} n’a pas de profondeur de passe, la passe de dégagement couperait à pleine profondeur en une seule fois',
   'warnings.surfaceNoOffsetContours': 'Aucun contour décalé usinable pour la bande {topZ} -> {bottomZ}',
   'warnings.surfaceFinishBothDisabled': 'L’opération de finition a les options Finition des parois et Finition du fond désactivées',
   'warnings.surfaceCleanWrongKind': 'Seules les opérations de nettoyage de surface peuvent être résolues par ce résolveur',

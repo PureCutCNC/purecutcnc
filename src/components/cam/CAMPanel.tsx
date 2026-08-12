@@ -1571,6 +1571,30 @@ export function CAMPanel({
                       <span>{camT('cam.operation.roundOutsideCorners')}</span>
                     </label>
                   ) : null}
+                  {(selectedOperation.kind === 'pocket'
+                    || selectedOperation.kind === 'edge_route_inside'
+                    || selectedOperation.kind === 'edge_route_outside') ? (
+                    <label
+                      className="properties-field"
+                      title={camT('cam.operation.cornerReliefTooltip')}
+                    >
+                      <span>{camT('cam.operation.cornerRelief')}</span>
+                      <Select
+                        value={selectedOperation.cornerRelief ?? 'none'}
+                        options={[
+                          { value: 'none', label: camT('cam.operation.cornerReliefNone') },
+                          { value: 'dogbone', label: camT('cam.operation.cornerReliefDogbone') },
+                          { value: 't_bone', label: camT('cam.operation.cornerReliefTBone') },
+                          { value: 'longest_edge', label: camT('cam.operation.cornerReliefLongestEdge') },
+                        ]}
+                        onChange={(value) => updateOperation(selectedOperation.id, { cornerRelief: value })}
+                      />
+                      <OperationParameterReference
+                        kind="cornerRelief"
+                        variant={selectedOperation.cornerRelief ?? 'none'}
+                      />
+                    </label>
+                  ) : null}
                   {selectedOperation.kind === 'drilling' ? (
                     <>
                       <label className="properties-field">

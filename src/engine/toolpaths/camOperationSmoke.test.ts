@@ -407,6 +407,85 @@ test('pocket parallel pattern: generates non-empty toolpath + posts', () => {
   assert(gcode.includes('M30'), 'G-code should include program end')
 })
 
+// Relief adds descend-and-excurse motion at every inside corner, appended after
+// the main path. Posting it here rather than only asserting on moves is what puts
+// it under `postToolpath`'s #467 entry check: each corner opens with a rapid to
+// the descend point and then a pure-Z plunge, and a regression that merged those
+// into one diagonal fed move would be a gouge into the corner.
+for (const cornerRelief of ['dogbone', 't_bone', 'longest_edge'] as const) {
+  test(`pocket corner relief (${cornerRelief}): generates non-empty toolpath + posts`, () => {
+    const tool = makeFlatEndmill('t1', 4)
+    const feat = makeRectFeature('a', 0, 0, 24, 16, 0, -4)
+    const project = baseProject([tool], [feat])
+    const op = makePocketOp({
+      kind: 'pocket',
+      target: { source: 'features', featureIds: ['a'] },
+      toolRef: 't1',
+      cornerRelief,
+    })
+
+    const result = generatePocketToolpath(project, op)
+    const plain = generatePocketToolpath(project, { ...op, cornerRelief: 'none' })
+    assert(result.moves.length > plain.moves.length, `${cornerRelief} should append a relief pass`)
+    assert(
+      result.warnings.length === plain.warnings.length,
+      `${cornerRelief} should not warn on a plain rectangular pocket: ${JSON.stringify(result.warnings)}`,
+    )
+
+    const gcode = postToolpath(project, op, result)
+    assert(gcode.length > 0, `${cornerRelief} relief should produce non-empty G-code`)
+    assert(gcode.includes('M30'), 'G-code should include program end')
+  })
+}
+
+test('edge route outside corner relief: generates non-empty toolpath + posts', () => {
+  const tool = makeFlatEndmill('t1', 4)
+  // An L-shaped part: one concave corner, which is the only one relief acts on.
+  const part: SketchFeature = {
+    id: 'l',
+    name: 'l',
+    kind: 'polygon',
+    folderId: null,
+    sketch: {
+      profile: {
+        start: { x: 0, y: 0 },
+        segments: [
+          { type: 'line', to: { x: 40, y: 0 } },
+          { type: 'line', to: { x: 40, y: 40 } },
+          { type: 'line', to: { x: 20, y: 40 } },
+          { type: 'line', to: { x: 20, y: 20 } },
+          { type: 'line', to: { x: 0, y: 20 } },
+        ],
+        closed: true,
+      },
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'add',
+    z_top: 0,
+    z_bottom: -4,
+    visible: true,
+    locked: false,
+  }
+  const project = baseProject([tool], [part])
+  const op = makePocketOp({
+    kind: 'edge_route_outside',
+    target: { source: 'features', featureIds: ['l'] },
+    toolRef: 't1',
+    cornerRelief: 'dogbone',
+  })
+
+  const result = generateEdgeRouteToolpath(project, op)
+  const plain = generateEdgeRouteToolpath(project, { ...op, cornerRelief: 'none' })
+  assert(result.moves.length > plain.moves.length, 'the concave corner should be relieved')
+
+  const gcode = postToolpath(project, op, result)
+  assert(gcode.length > 0, 'outside relief should produce non-empty G-code')
+  assert(gcode.includes('M30'), 'G-code should include program end')
+})
+
 test('pocket waterline pattern: generates non-empty toolpath + posts', () => {
   const tool = makeFlatEndmill('t1', 4)
   const feat = makeRectFeature('a', 0, 0, 20, 20, 0, -4)

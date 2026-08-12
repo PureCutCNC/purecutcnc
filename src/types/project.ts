@@ -483,6 +483,15 @@ export type CutDirection = 'conventional' | 'climb'
 export type DrillType = 'simple' | 'peck' | 'dwell' | 'chip_breaking' | 'helical'
 export type MachiningOrder = 'level_first' | 'feature_first'
 export type EntryStrategy = 'plunge' | 'helix' | 'ramp'
+/**
+ * Corner-relief style for a clearing operation (issue #203).
+ *
+ * `'none'` is the load-bearing default: it must be what a saved operation
+ * without the field normalizes to, or every already-saved pocket would silently
+ * change its cut geometry. Because the field is optional with a `'none'`
+ * default there is no `.camj` version bump and no migration.
+ */
+export type CornerReliefStyle = 'none' | 'dogbone' | 't_bone' | 'longest_edge'
 
 export type OperationTarget =
   | { source: 'features'; featureIds: string[] }
@@ -523,6 +532,12 @@ export interface Operation {
    *  first finish-floor cut. Undefined or 100 disables the reduction. */
   pocketSlotFeedPercent?: number
   roundOutsideCorners?: boolean
+  /** Corner-relief style cut as a dedicated stepped pass appended after the
+   *  operation's main path. Missing or `'none'` emits no relief at all — a
+   *  legacy operation must produce byte-identical G-code. Applies to Pocket and
+   *  both Edge Route kinds; the relieved corners are the convex corners of
+   *  whatever region that operation clears, so no operation kind is named. */
+  cornerRelief?: CornerReliefStyle
   stockToLeaveRadial: number
   stockToLeaveAxial: number
   finishWalls: boolean

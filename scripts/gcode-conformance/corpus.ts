@@ -31,12 +31,20 @@
  * cannot be reproduced by hand-picked chords without simply re-implementing the
  * sampler. It is generated from the real toolpath, which is still deterministic:
  * the sampler is pure and takes no clock or randomness.
+ *
+ * The corner-relief cases (issue #203) are generated for the same reason. A
+ * relief excursion is an *exactly antiparallel* out-and-back, repeated once per
+ * level and bracketed by a pure-Z plunge — a reversal is the run shape an arc
+ * fitter can degenerate on, and the surrounding motion is what decides whether
+ * the fitter sees the reversal at all. Hand-picking those points would be
+ * asserting the emitted shape rather than exporting it.
  */
 
 import { newProject, defaultTool, rectProfile } from '../../src/types/project'
 import type { Operation, Project, SketchFeature, Units } from '../../src/types/project'
 import { projectWithFeatures } from '../../src/test/projectFixtures'
 import { generateEdgeRouteToolpath } from '../../src/engine/toolpaths/edge'
+import { generatePocketToolpath } from '../../src/engine/toolpaths/pocket'
 import { normalizeToolForProject } from '../../src/engine/toolpaths/geometry'
 import { runPostProcessor } from '../../src/engine/gcode/postprocessor'
 import { BUNDLED_DEFINITIONS } from '../../src/engine/gcode/definitions'
@@ -220,6 +228,85 @@ function trochoidalEdgeMoves(): ToolpathMove[] {
   return cachedTrochoidalMoves
 }
 
+/**
+ * A pocket with corner relief on, generated from the real toolpath.
+ *
+ * Deliberately a pocket rather than an edge route: the relief pass is appended
+ * after a main path full of fitted offset rings, so the export sees the
+ * reversals in the company of arcs the fitter is already working on. Two levels,
+ * so the plunge-between-levels pattern appears too. Memoised because the arcs-on
+ * and arcs-off cases share it.
+ */
+let cachedCornerReliefMoves: ToolpathMove[] | null = null
+function cornerReliefMoves(): ToolpathMove[] {
+  if (cachedCornerReliefMoves) return cachedCornerReliefMoves
+
+  const tool = { ...defaultTool('mm', 1), id: 't1', name: 'em6', diameter: 6, defaultStepdown: 2 }
+  const target: SketchFeature = {
+    id: 'target',
+    name: 'target',
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(0, 0, 40, 26),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 0,
+    z_bottom: -4,
+    visible: true,
+    locked: false,
+  }
+  const project = projectWithFeatures(
+    { ...newProject('Conformance corner relief', 'mm'), tools: [tool] },
+    [target] as never,
+  )
+  const operation: Operation = {
+    id: 'op1',
+    name: 'Corner relief',
+    kind: 'pocket',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['target'] },
+    toolRef: 't1',
+    stepdown: 2,
+    stepover: 0.4,
+    feed: 800,
+    plungeFeed: 300,
+    rpm: 18000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    roundOutsideCorners: false,
+    cornerRelief: 'dogbone',
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 1,
+    maxCarveDepth: 1,
+    cutDirection: 'conventional',
+    machiningOrder: 'level_first',
+  }
+
+  const result = generatePocketToolpath(project, operation)
+  if (result.moves.length === 0) {
+    throw new Error(
+      `corner relief corpus fixture generated no motion: [${result.warnings.map((w) => w.code).join(', ')}]`,
+    )
+  }
+  const plain = generatePocketToolpath(project, { ...operation, cornerRelief: 'none' })
+  if (result.moves.length <= plain.moves.length) {
+    throw new Error('corner relief corpus fixture emitted no relief pass — the case would prove nothing')
+  }
+  cachedCornerReliefMoves = result.moves
+  return cachedCornerReliefMoves
+}
+
 export const CORPUS: CorpusCase[] = [
   {
     name: 'issue-447-small-radius-trochoidal',
@@ -340,6 +427,22 @@ export const CORPUS: CorpusCase[] = [
     units: 'mm',
     machineId: 'grbl',
     moves: trochoidalEdgeMoves(),
+    operationOverrides: { arcFittingEnabled: false },
+  },
+  {
+    name: 'pocket-corner-relief',
+    covers: 'issue #203 - exactly antiparallel relief excursions and their '
+      + 'between-level plunges, among the fitted arcs of the pocket rings',
+    units: 'mm',
+    machineId: 'grbl',
+    moves: cornerReliefMoves(),
+  },
+  {
+    name: 'pocket-corner-relief-no-arcs',
+    covers: 'issue #203 - the same relief motion as raw G1, for a controller without arcs',
+    units: 'mm',
+    machineId: 'grbl',
+    moves: cornerReliefMoves(),
     operationOverrides: { arcFittingEnabled: false },
   },
 ]

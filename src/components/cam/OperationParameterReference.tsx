@@ -349,6 +349,57 @@ export function OperationParameterReference({
         </OpParamRefFrame>
       )
 
+    case 'cornerRelief': {
+      // Two pocket walls meeting at a corner (outline), the tool-centre path one
+      // cutter radius inside them (guide), and the cutter where the relief
+      // excursion ends (accent). Every position here is the real geometry at a
+      // 90° corner with r = 6: the path corner sits at (r, r) from the wall
+      // corner, a dogbone ends r along the bisector, a T-bone r along a wall.
+      const walls = <path className="gear-reference__outline" d="M14 5V26H50" />
+      const toolPath = <path className="gear-reference__guide" d="M20 5V20H50" />
+
+      if (variant === 'dogbone') {
+        return (
+          <OpParamRefFrame label={label}>
+            {walls}
+            {toolPath}
+            <circle className="gear-reference__accent" cx="18.24" cy="21.76" r="6" />
+            <path className="gear-reference__accent" d="M20 20L18.24 21.76" />
+          </OpParamRefFrame>
+        )
+      }
+      if (variant === 't_bone') {
+        return (
+          <OpParamRefFrame label={label}>
+            {walls}
+            {toolPath}
+            <circle className="gear-reference__accent" cx="20" cy="26" r="6" />
+            <path className="gear-reference__accent" d="M20 20V26" />
+          </OpParamRefFrame>
+        )
+      }
+      if (variant === 'longest_edge') {
+        // Drawn on a corner whose upright wall is the longer one, because that
+        // is the whole difference from a plain T-bone: the slot goes there.
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__outline" d="M14 5V26H34" />
+            <path className="gear-reference__guide" d="M20 5V20H34" />
+            <circle className="gear-reference__accent" cx="14" cy="20" r="6" />
+            <path className="gear-reference__accent" d="M20 20H14" />
+          </OpParamRefFrame>
+        )
+      }
+      // none — the stock a plain corner leaves behind
+      return (
+        <OpParamRefFrame label={label}>
+          {walls}
+          {toolPath}
+          <path className="gear-reference__accent-fill" d="M14 26h4.5v-4.5H14z" />
+        </OpParamRefFrame>
+      )
+    }
+
     case 'finishWalls':
       return (
         <OpParamRefFrame label={label}>

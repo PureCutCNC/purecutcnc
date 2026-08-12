@@ -31,8 +31,15 @@ import {
   normalizeWinding,
   offsetKeepOutPaths,
   resolveFeatureZSpan,
+  signedArea,
   toClipperPath,
 } from './geometry'
+import {
+  collectReliefCorners,
+  generateCornerReliefPass,
+  resolveReliefStepdown,
+  type ReliefLoop,
+} from './cornerRelief'
 import { unionClipperPaths } from './modelProtection'
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { buildInsetRegions, buildOuterContours, cutClosedContours, resolveBandBottomZ } from './pocket'
@@ -412,6 +419,13 @@ function appendUniqueTrochoidalWarning(warnings: ToolpathWarning[], warning: Too
       && entry.params?.y === warning.params?.y
   ))
   if (!existing) warnings.push(warning)
+}
+
+function appendUniqueWarning(warnings: ToolpathWarning[], warning: ToolpathWarning): void {
+  const key = `${warning.code}:${JSON.stringify(warning.params ?? {})}`
+  if (!warnings.some((entry) => `${entry.code}:${JSON.stringify(entry.params ?? {})}` === key)) {
+    warnings.push(warning)
+  }
 }
 
 function validateTrochoidalTabs(tabs: Tab[], warnings: ToolpathWarning[]): boolean {
@@ -845,6 +859,103 @@ function appendTrochoidalContoursAtLevels(
   return nextPosition
 }
 
+/**
+ * One span of an edge route that corner relief can act on: the boundary of the
+ * region it clears, the tool-centre path around that boundary, and the Z range.
+ *
+ * Collected as the main path is generated and consumed once afterwards, so the
+ * descend guard sees the whole emitted move stream and a target that generated
+ * nothing contributes no spurious per-corner warnings.
+ */
+interface EdgeReliefSpan {
+  clearedLoops: ReliefLoop[]
+  wallLoops: Point[][]
+  topZ: number
+  bottomZ: number
+}
+
+/**
+ * Boundary loops of the region an *outside* route clears — the material outside
+ * the part.
+ *
+ * Always taken through one Clipper offset, even at zero radial stock, because
+ * that normalises winding: the source may be a raw flattened profile of either
+ * orientation, and after the round trip outers are CCW and enclosed voids CW, so
+ * which side the cleared material lies on follows from the signed area. The
+ * relieved corners then come out as the concave corners of the part outline
+ * without this code ever naming the operation kind.
+ */
+function outsideClearedLoops(paths: ClipperPath[], radialLeave: number): ReliefLoop[] {
+  return offsetPaths(paths, Math.max(0, radialLeave) * DEFAULT_CLIPPER_SCALE, ClipperLib.JoinType.jtMiter)
+    .map((path) => fromClipperPath(path))
+    .filter((points) => points.length >= 3)
+    .map((points) => ({ points, clearedInside: signedArea(points) < 0 }))
+}
+
+/** The tool-centre path an outside route follows, as plain loops. */
+function outsideWallLoops(paths: ClipperPath[], wallOffset: number, joinType: number): Point[][] {
+  return offsetPaths(paths, wallOffset * DEFAULT_CLIPPER_SCALE, joinType)
+    .map((path) => fromClipperPath(path))
+    .filter((points) => points.length >= 3)
+}
+
+/**
+ * Append the corner-relief pass for an edge route.
+ *
+ * Tab footprints are passed as keep-outs rather than left to the emitted-move
+ * guard: `applyEdgeRouteTabs` runs on this result *after* generation, so at this
+ * point the contour still reads as cut at full depth right through a tab.
+ */
+function appendEdgeCornerRelief(
+  moves: ToolpathMove[],
+  warnings: ToolpathWarning[],
+  spans: EdgeReliefSpan[],
+  operation: Operation,
+  toolRadius: number,
+  reliefStepdown: number,
+  safeZ: number,
+  tabs: Tab[],
+  radialLeave: number,
+): void {
+  const style = operation.cornerRelief ?? 'none'
+  if (style === 'none' || spans.length === 0) return
+
+  const keepOut = expandedTabFootprints(tabs, toolRadius + radialLeave)
+    .map((path) => fromClipperPath(path))
+    .filter((points) => points.length >= 3)
+  const mainPathMoves = [...moves]
+  const reliefMoves: ToolpathMove[] = []
+  let position: ToolpathPoint | null = null
+
+  for (const span of spans) {
+    const levels = generateStepLevels(span.topZ, span.bottomZ, reliefStepdown)
+    if (levels.length === 0) continue
+
+    const found = collectReliefCorners({
+      style,
+      toolRadius,
+      clearedLoops: span.clearedLoops,
+      wallLoops: span.wallLoops,
+    })
+    found.warnings.forEach((warning) => appendUniqueWarning(warnings, warning))
+
+    const pass = generateCornerReliefPass(position, {
+      corners: found.corners,
+      levels,
+      safeZ,
+      mainPathMoves,
+      keepOut,
+      ...(operation.debugToolpath ? { source: 'cornerRelief' } : {}),
+    })
+    pass.warnings.forEach((warning) => appendUniqueWarning(warnings, warning))
+    reliefMoves.push(...pass.moves)
+    position = pass.endPosition
+  }
+
+  retractToSafe(reliefMoves, position, safeZ)
+  moves.push(...reliefMoves)
+}
+
 export function generateEdgeRouteToolpath(project: Project, operation: Operation): ToolpathResult {
   if (operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') {
     return {
@@ -1099,6 +1210,20 @@ function generateEdgeRouteToolpathSingle(
   const insideOrbitDirection = helixAngularDirection(direction, 'internal')
   const outsideOrbitDirection = helixAngularDirection(outsideDirection, 'external')
 
+  // Corner relief steps down at the tool's own stepdown, never at
+  // operation.stepdown — which the panel hides and generation ignores on a
+  // finish pass, so it can hold a stale value. See resolveReliefStepdown.
+  const reliefStyle = operation.cornerRelief ?? 'none'
+  const reliefStepdown = reliefStyle === 'none' ? null : resolveReliefStepdown(tool)
+  if (reliefStyle !== 'none' && reliefStepdown === null) {
+    warnings.push({ code: 'cornerReliefNoStepdown', params: { tool: tool.name } })
+  }
+  const reliefSpans: EdgeReliefSpan[] = []
+  // The tool-centre path an outside route follows always sits at r + radial
+  // stock from the part — the trochoidal guide offset is a different distance,
+  // and relief has to descend on the wall path, not on the orbit centre line.
+  const reliefWallOffset = tool.radius + radialLeave
+
   if (operation.kind === 'edge_route_inside') {
     const resolved = resolveInsideEdgeRegions(project, operation)
     warnings.push(...resolved.warnings)
@@ -1123,6 +1248,27 @@ function generateEdgeRouteToolpathSingle(
         operation.pass === 'finish'
           ? [effectiveBottom]
           : generateStepLevels(band.topZ, effectiveBottom, operation.stepdown)
+
+      if (reliefStepdown !== null) {
+        // An inside route follows only the outer boundary of each region — it
+        // never travels around an island — so only boundary corners are offered.
+        // The wall path is the tool-centre offset, which for trochoidal roughing
+        // is not the guide the orbits were built from.
+        const clearedRegions = radialLeave > 0
+          ? band.regions.flatMap((region) => buildInsetRegions(region, radialLeave))
+          : band.regions
+        reliefSpans.push({
+          clearedLoops: clearedRegions
+            .map((region) => region.outer)
+            .filter((points) => points.length >= 3)
+            .map((points) => ({ points, clearedInside: true })),
+          wallLoops: isTrochoidal
+            ? buildOuterContours(band.regions.flatMap((region) => buildInsetRegions(region, reliefWallOffset)))
+            : rawContours,
+          topZ: band.topZ,
+          bottomZ: effectiveBottom,
+        })
+      }
 
       if (isTrochoidal) {
         const safeRegions = prepareSafetyRegions(band.regions.flatMap((region) => buildInsetRegions(
@@ -1191,6 +1337,20 @@ function generateEdgeRouteToolpathSingle(
     }
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
+
+    if (reliefStepdown !== null) {
+      appendEdgeCornerRelief(
+        moves,
+        warnings,
+        reliefSpans,
+        operation,
+        tool.radius,
+        reliefStepdown,
+        safeZ,
+        project.tabs,
+        radialLeave,
+      )
+    }
 
     let bounds: ToolpathBounds | null = null
     for (const move of moves) {
@@ -1306,6 +1466,15 @@ function generateEdgeRouteToolpathSingle(
             ? [referenceTarget.bottomZ]
             : generateStepLevels(referenceTarget.topZ, referenceTarget.bottomZ, operation.stepdown)
 
+        if (reliefStepdown !== null) {
+          reliefSpans.push({
+            clearedLoops: outsideClearedLoops(combinedPaths, radialLeave),
+            wallLoops: outsideWallLoops(combinedPaths, reliefWallOffset, outsideJoinType),
+            topZ: referenceTarget.topZ,
+            bottomZ: referenceTarget.bottomZ,
+          })
+        }
+
         if (isTrochoidal) {
           const retainedWall = offsetPaths(
             combinedPaths,
@@ -1368,6 +1537,10 @@ function generateEdgeRouteToolpathSingle(
   }
 
   if (moves.length === 0 && !(isTrochoidal && hasFatalTrochoidalWarning(warnings))) {
+    // The combined attempt above can register a relief span and still emit no
+    // moves (every contour masked out, say). Per-target generation replaces it
+    // rather than adding a second span over the same corners.
+    reliefSpans.length = 0
     for (const target of routableTargets) {
       const rawContours = resolveContourPaths(target.contourPaths)
       if (rawContours.length === 0) {
@@ -1380,6 +1553,15 @@ function generateEdgeRouteToolpathSingle(
         operation.pass === 'finish'
           ? [target.bottomZ]
           : generateStepLevels(target.topZ, target.bottomZ, operation.stepdown)
+
+      if (reliefStepdown !== null) {
+        reliefSpans.push({
+          clearedLoops: outsideClearedLoops(target.contourPaths, radialLeave),
+          wallLoops: outsideWallLoops(target.contourPaths, reliefWallOffset, outsideJoinType),
+          topZ: target.topZ,
+          bottomZ: target.bottomZ,
+        })
+      }
 
       if (isTrochoidal) {
         const retainedWall = offsetPaths(
@@ -1443,6 +1625,20 @@ function generateEdgeRouteToolpathSingle(
   }
 
   currentPosition = retractToSafe(moves, currentPosition, safeZ)
+
+  if (reliefStepdown !== null) {
+    appendEdgeCornerRelief(
+      moves,
+      warnings,
+      reliefSpans,
+      operation,
+      tool.radius,
+      reliefStepdown,
+      safeZ,
+      project.tabs,
+      radialLeave,
+    )
+  }
 
   let bounds: ToolpathBounds | null = null
   for (const move of moves) {

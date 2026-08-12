@@ -114,6 +114,12 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   "warnings.tabsBlockFinalDepth": "Las pestañas cubren toda la pasada final de \"{name}\", por lo que nunca alcanza la profundidad final y la pieza no quedará separada. Use menos pestañas o pestañas más estrechas.",
   "warnings.surfaceNoCleanupRegion": "No hay región de limpieza paralela mecanizable para la banda {topZ} -> {bottomZ}",
   "warnings.surfaceNoCleanupSegments": "No hay segmentos de limpieza paralela mecanizables para la banda {topZ} -> {bottomZ}",
+  // relieve de esquinas
+  "warnings.cornerReliefCornerTooTight": "Relieve de esquina omitido en ({x}, {y}): las aristas adyacentes son demasiado cortas para alojar la muesca de relieve.",
+  "warnings.cornerReliefNoWallPath": "Relieve de esquina omitido en ({x}, {y}): la trayectoria de esta operación no rodea esa esquina.",
+  "warnings.cornerReliefCornerNotCut": "Relieve de esquina omitido en ({x}, {y}): la operación no corta ahí a plena profundidad, por lo que descender entraría en material sin cortar.",
+  "warnings.cornerReliefCornerObstructed": "Relieve de esquina omitido en ({x}, {y}): una lengüeta cubre la esquina.",
+  "warnings.cornerReliefNoStepdown": "Relieve de esquina omitido: la herramienta {tool} no tiene profundidad de pasada, por lo que la pasada de relieve cortaría a plena profundidad en un solo paso.",
   "warnings.surfaceNoOffsetContours": "No hay contornos de desfase mecanizables para la banda {topZ} -> {bottomZ}",
   "warnings.surfaceFinishBothDisabled": "La operación de acabado tiene desactivadas las opciones de Acabado de Paredes y Acabado de Suelo.",
   "warnings.surfaceCleanWrongKind": "Solo las operaciones de limpieza de superficie pueden resolverse con el resolutor de limpieza de superficie.",
