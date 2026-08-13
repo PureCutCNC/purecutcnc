@@ -109,7 +109,15 @@ function parseToolLibraryEntry(value: unknown, index: number): ToolLibraryEntry 
   }
 }
 
-function parseToolLibraryFile(value: unknown): ToolLibraryFile {
+/**
+ * Parse a tool-library payload, dropping any entry that fails validation.
+ *
+ * Exported for the structural test over `public/tool-library.json`: the drop is
+ * silent by design at runtime (one bad entry must not take the whole library
+ * down), which is exactly why a test has to assert that no bundled entry is
+ * being dropped. `loadBundledToolLibrary` needs `fetch`, so it cannot serve.
+ */
+export function parseToolLibraryFile(value: unknown): ToolLibraryFile {
   if (!isRecord(value) || !Array.isArray(value.tools)) {
     throw new Error('Tool library JSON is missing a valid tools array.')
   }

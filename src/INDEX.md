@@ -31,6 +31,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 
 ## Loose files
 - `toolLibrary.ts` — built-in tool definitions and tool-library helpers
+- `toolLibrary.test.ts` — structural test over `public/tool-library.json`: every entry must survive parsing (the parser drops invalid ones silently), keys and names are unique, and every V-bit's `maxCutDepth` reaches its own cone height so it can cut a full-diameter countersink
 
 ## Conventions
 - Strict TS, no `any`. See `types/project.ts` for canonical data shapes.
