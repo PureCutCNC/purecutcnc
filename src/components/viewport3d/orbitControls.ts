@@ -232,8 +232,17 @@ export function createOrbitControls(
 
     if (dragMode === 'rotate') {
       onPresetChange(null)
+      // The top/bottom presets park `up` on a horizontal axis, which is only
+      // valid while the camera looks straight down it. Free orbit hands control
+      // back to the Y-up spherical parametrisation, so restore world up before
+      // moving phi — otherwise `up` ends up parallel to the view direction at
+      // eye level and `lookAt` mirrors the scene. Issue #493.
+      cameraUp = [...VIEW_PRESETS.iso.up]
       spherical.theta -= dx * 0.01
-      spherical.phi = Math.max(0.05, Math.min(Math.PI - 0.05, spherical.phi + dy * 0.01))
+      // Direct manipulation: dragging down tips the model towards the viewer
+      // (the camera climbs), matching pan, horizontal orbit, and every
+      // comparable CAD/CAM viewer. Issue #493.
+      spherical.phi = Math.max(0.05, Math.min(Math.PI - 0.05, spherical.phi - dy * 0.01))
     } else {
       onPresetChange(null)
       panByPixels(dx, dy)

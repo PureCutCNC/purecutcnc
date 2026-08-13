@@ -419,3 +419,95 @@ test('wheel zoom at radius limit does not move target', () => {
     'origin screen Y must not jump when zoom is clamped',
   )
 })
+// ---- orbit direction (issue #493) ----
+
+/** Fires a complete left-button drag: pointerdown, one pointermove, pointerup. */
+function dispatchDrag(
+  listeners: ListenerStore,
+  dx: number,
+  dy: number,
+  startX = 400,
+  startY = 300,
+) {
+  const base = {
+    pointerType: 'mouse',
+    pointerId: 1,
+    button: 0,
+    shiftKey: false,
+    preventDefault() {},
+  }
+  const down = { ...base, clientX: startX, clientY: startY } as unknown as Event
+  const moved = { ...base, clientX: startX + dx, clientY: startY + dy } as unknown as Event
+  listeners['pointerdown']?.forEach(fn => fn(down))
+  listeners['pointermove']?.forEach(fn => fn(moved))
+  listeners['pointerup']?.forEach(fn => fn(moved))
+}
+
+function makeListeningControls(cam: THREE.PerspectiveCamera) {
+  const listeners: ListenerStore = {}
+  const el = makeListeningElement(listeners)
+  const controls = createOrbitControls(cam, el, {
+    onChange: () => {},
+    onPresetChange: () => {},
+    isInteractionBlocked: () => false,
+  })
+  return { listeners, controls }
+}
+
+test('orbit follows the cursor: dragging down raises the camera', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const { listeners } = makeListeningControls(cam)
+
+  const heightBefore = cam.position.y
+  dispatchDrag(listeners, 0, 60)
+
+  // Direct manipulation: drag down tips the model towards the viewer, which
+  // lifts the camera. The inverted sign sends it under the table instead.
+  assert.ok(
+    cam.position.y > heightBefore,
+    `dragging down must raise the camera (was ${heightBefore}, now ${cam.position.y})`,
+  )
+})
+
+test('orbit follows the cursor: dragging right moves the model right', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const { listeners } = makeListeningControls(cam)
+
+  // Probe off the vertical orbit axis, on the near side so it is the point the
+  // user feels they have grabbed.
+  const probe = new THREE.Vector3(30, 0, 30)
+  const before = projectToScreen(probe, cam)
+  dispatchDrag(listeners, 40, 0)
+  const after = projectToScreen(probe, cam)
+
+  assert.ok(
+    after.x > before.x,
+    `dragging right must move the near face right (was ${before.x}, now ${after.x})`,
+  )
+})
+
+test('orbiting away from the top preset never mirrors the view', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const { listeners, controls } = makeListeningControls(cam)
+  controls.setPreset('top')
+
+  // A point on +X, off the orbit axis. Screen right stays +X for every polar
+  // angle in the clamped range, so this must remain right of centre the whole
+  // way down. A stale top-view `up` puts it left of centre once the camera
+  // crosses eye level.
+  const probe = new THREE.Vector3(40, 0, 0)
+  assert.ok(
+    projectToScreen(probe, cam).x > 400,
+    'probe must start right of centre at the top preset',
+  )
+
+  // Drag up to descend from top-down, through eye level, to the bottom clamp.
+  for (let step = 0; step < 40; step++) {
+    dispatchDrag(listeners, 0, -10)
+    const screen = projectToScreen(probe, cam)
+    assert.ok(
+      screen.x > 400,
+      `view mirrored while orbiting from top (step ${step}, screen x ${screen.x})`,
+    )
+  }
+})
