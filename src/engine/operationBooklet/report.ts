@@ -24,6 +24,7 @@ import { formatLength } from '../../utils/units'
 import type { Units } from '../../utils/units'
 import type { NormalizedTool, ToolpathResult } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
+import { countersinkTipDepth } from '../toolpaths/drilling'
 import type { OperationBookletInput, OperationBookletReport, OperationBookletRow } from './types'
 
 function operationKindLabel(kind: OperationKind): string {
@@ -336,6 +337,19 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
       { label: translate('booklet.label.dwellTime'), value: `${formatNumber(operation.dwellTime ?? 0, 3)} s` },
       { label: translate('booklet.label.retractHeight'), value: lengthWithUnits(operation.retractHeight ?? 0, units) },
     )
+    // The setup sheet has to carry the dimension the operator measures — the
+    // mouth diameter — plus the depth the machine will actually plunge, which is
+    // derived from the fitted V-bit and so is not visible in any stored setting.
+    if (operation.drillType === 'countersink') {
+      const mouthDiameter = operation.countersinkDiameter ?? 0
+      const depth = tool?.type === 'v_bit' && tool.vBitAngle !== null
+        ? countersinkTipDepth(mouthDiameter, tool.vBitAngle)
+        : null
+      rows.push(
+        { label: translate('booklet.label.countersinkDiameter'), value: lengthWithUnits(mouthDiameter, units) },
+        { label: translate('booklet.label.countersinkDepth'), value: depth === null ? '—' : lengthWithUnits(depth, units) },
+      )
+    }
   }
 
   if (operation.kind === 'follow_line') {

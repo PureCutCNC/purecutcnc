@@ -30,6 +30,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.drillType.dwell': 'Verweilen (G82)',
   'cam.drillType.chipBreaking': 'Spanbruch (G73)',
   'cam.drillType.helical': 'Helikal',
+  'cam.drillType.countersink': 'Senken',
 
   // ── Operation kind labels (full, for the Kind field and operationValidity) ──
   'cam.opLabel.pocket': 'Tasche',
@@ -171,6 +172,10 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.drillType': 'Bohrtyp',
   'cam.operation.peckDepth': 'Entspantiefe',
   'cam.operation.dwellTime': 'Verweilzeit (s)',
+  'cam.operation.countersinkDiameter': 'Senkdurchmesser',
+  'cam.operation.countersinkDepth': 'Senktiefe',
+  'cam.operation.countersinkNeedsVBit': 'Zum Senken wird ein V-Nutfräser benötigt. Weisen Sie dieser Operation einen zu.',
+  'cam.operation.countersinkExceedsTool': 'Der Senkdurchmesser ist größer als der V-Nutfräser ({toolDiameter}); das Werkzeug kann die Senkung nicht so weit öffnen.',
   'cam.operation.retractHeight': 'Rückzugshöhe',
   'cam.operation.finishWalls': 'Wände schlichten',
   'cam.operation.finishFloor': 'Boden schlichten',
@@ -359,6 +364,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.paramRef.adaptiveRefinement': 'Referenz für adaptive Verfeinerung',
   'cam.paramRef.maxRings': 'Referenz für maximale Ringe',
   'cam.paramRef.drillType': 'Referenz für Bohrtyp',
+  'cam.paramRef.countersinkDiameter': 'Referenz für Senkdurchmesser',
 
   // ── Operation descriptions (OperationAddMenu expanded cards) ──
   // Pocket

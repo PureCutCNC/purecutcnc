@@ -85,6 +85,8 @@ export const bookletEn = {
   'booklet.label.peckDepth': 'Peck Depth',
   'booklet.label.dwellTime': 'Dwell Time',
   'booklet.label.retractHeight': 'Retract Height',
+  'booklet.label.countersinkDiameter': 'Countersink Diameter',
+  'booklet.label.countersinkDepth': 'Countersink Depth',
   'booklet.label.carveDepth': 'Carve Depth',
   'booklet.label.stockToLeaveRadial': 'Stock To Leave Radial',
   'booklet.label.stockToLeaveAxial': 'Stock To Leave Axial',

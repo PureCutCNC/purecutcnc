@@ -43,6 +43,7 @@ import type {
 import { isTrochoidalCarve } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
+import { countersinkTipDepth } from '../../engine/toolpaths/drilling'
 import { createOperationBookletPdf } from '../../engine/operationBooklet'
 import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
 import { platform } from '../../platform'
@@ -339,6 +340,8 @@ function drillTypeLabel(type: DrillType): string {
       return camT('cam.drillType.chipBreaking')
     case 'helical':
       return camT('cam.drillType.helical')
+    case 'countersink':
+      return camT('cam.drillType.countersink')
   }
 }
 
@@ -1080,6 +1083,26 @@ export function CAMPanel({
     const trochoidalCutWidthBelowFloor = isTrochoidalOp
       && trochoidalToolDiameter > 0
       && trochoidalCutWidth < trochoidalCutWidthFloor
+    // Countersink (issue #489). The depth is derived, never entered: it comes
+    // from the requested mouth diameter and the V-bit's included angle. Both the
+    // normalization and the formula are the engine's own, so the number shown
+    // here is the number that will be cut.
+    const isCountersinkDrill = selectedOperation.kind === 'drilling' && selectedOperation.drillType === 'countersink'
+    const countersinkTool = isCountersinkDrill && selectedOperationTool
+      ? normalizeToolForProject(selectedOperationTool, project)
+      : null
+    const countersinkDiameter = selectedOperation.countersinkDiameter ?? 0
+    const countersinkAngle = countersinkTool?.type === 'v_bit' ? countersinkTool.vBitAngle : null
+    const countersinkDepth = countersinkAngle !== null && countersinkDiameter > 0
+      ? countersinkTipDepth(countersinkDiameter, countersinkAngle)
+      : null
+    // The two conditions the operator can fix at this field. Everything else the
+    // engine rejects (per-target hole size, max cut depth) surfaces in the
+    // warnings list, which already renders below.
+    const countersinkNeedsVBit = isCountersinkDrill && countersinkTool !== null && countersinkTool.type !== 'v_bit'
+    const countersinkExceedsTool = isCountersinkDrill
+      && countersinkTool?.type === 'v_bit'
+      && countersinkDiameter > countersinkTool.diameter
     const supportsEntryStrategy = selectedOperation.kind === 'pocket'
       || selectedOperation.kind === 'surface_clean'
       || selectedOperation.kind === 'rough_surface'
@@ -1607,6 +1630,7 @@ export function CAMPanel({
                             { value: 'dwell', label: drillTypeLabel('dwell') },
                             { value: 'chip_breaking', label: drillTypeLabel('chip_breaking') },
                             { value: 'helical', label: drillTypeLabel('helical') },
+                            { value: 'countersink', label: drillTypeLabel('countersink') },
                           ]}
                           onChange={(value) => updateOperation(selectedOperation.id, { drillType: value })}
                         />
@@ -1634,6 +1658,42 @@ export function CAMPanel({
                           />
                           <OperationParameterReference kind="dwell" />
                         </label>
+                      ) : null}
+                      {isCountersinkDrill ? (
+                        <>
+                          <label className="properties-field">
+                            <span>{camT('cam.operation.countersinkDiameter')}</span>
+                            <DraftLengthInput
+                              value={countersinkDiameter}
+                              units={project.meta.units}
+                              min={0}
+                              onCommit={(value) => updateOperation(selectedOperation.id, { countersinkDiameter: value })}
+                            />
+                            <OperationParameterReference kind="countersinkDiameter" />
+                          </label>
+                          <div className="properties-field">
+                            <span>{camT('cam.operation.countersinkDepth')}</span>
+                            <span className="cam-field-derived">
+                              {countersinkDepth !== null ? formatLength(countersinkDepth, project.meta.units) : '—'}
+                            </span>
+                          </div>
+                          {countersinkNeedsVBit ? (
+                            <div className="properties-field">
+                              <span />
+                              <span className="cam-field-message">{camT('cam.operation.countersinkNeedsVBit')}</span>
+                            </div>
+                          ) : null}
+                          {countersinkExceedsTool ? (
+                            <div className="properties-field">
+                              <span />
+                              <span className="cam-field-message">
+                                {camT('cam.operation.countersinkExceedsTool', {
+                                  toolDiameter: formatLength(countersinkTool?.diameter ?? 0, project.meta.units),
+                                })}
+                              </span>
+                            </div>
+                          ) : null}
+                        </>
                       ) : null}
                       {selectedOperation.drillType === 'helical' ? (
                         <label className="properties-field">

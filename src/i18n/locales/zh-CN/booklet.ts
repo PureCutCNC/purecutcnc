@@ -87,6 +87,8 @@ export const bookletZhCN: Record<keyof typeof bookletEn, string> = {
   'booklet.label.peckDepth': '啄钻深度',
   'booklet.label.dwellTime': '停留时间',
   'booklet.label.retractHeight': '回退高度',
+  'booklet.label.countersinkDiameter': '锪孔直径',
+  'booklet.label.countersinkDepth': '锪孔深度',
   'booklet.label.carveDepth': '雕刻深度',
   'booklet.label.stockToLeaveRadial': '径向留量',
   'booklet.label.stockToLeaveAxial': '轴向留量',

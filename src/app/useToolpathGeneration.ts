@@ -97,6 +97,7 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.drillType === b.drillType
     && a.peckDepth === b.peckDepth
     && a.dwellTime === b.dwellTime
+    && a.countersinkDiameter === b.countersinkDiameter
     && a.retractHeight === b.retractHeight
     && a.debugToolpath === b.debugToolpath
     && a.debugShowRejectedCorners === b.debugShowRejectedCorners

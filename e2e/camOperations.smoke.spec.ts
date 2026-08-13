@@ -34,6 +34,7 @@ interface OperationSnapshot {
   entryStrategy?: unknown
   entryRampAngle?: unknown
   entryHelixDiameterPercent?: unknown
+  countersinkDiameter?: unknown
   target?: {
     source?: unknown
     featureIds?: unknown
@@ -350,5 +351,60 @@ test.describe('CAM operation browser smoke', () => {
     expect(operations[0].kind).toBe('drilling')
     expect((operations[0] as Record<string, unknown>).drillType).toBe('helical')
     expect(operations[0].entryRampAngle).toBe(8)
+  })
+
+  test('countersink drilling: select Countersink, edit the diameter, see the V-bit requirement', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Drill Target'))
+    await ui.contextMenu.item(menu, 'Create operation').hover()
+    const submenu = ui.contextMenu.submenu(app.page)
+    await expect(submenu).toBeVisible()
+    await clickMenuItem(submenu, 'Create Drilling')
+
+    await expect(ui.operations.countBadge(app.page)).toHaveText('1')
+    await expect(ui.operations.rowByName(app.page, 'Drill')).toBeVisible()
+
+    // Precondition for the hint asserted below: a Drilling operation is fitted a
+    // drill or (since the bundled library ships no drills) an endmill — never a
+    // V-bit, because the mode is chosen after the tool. The operator assigns the
+    // V-bit themselves, and until they do the panel has to say so.
+    const seeded = await getProject(app.page)
+    const seededOps = seeded.operations as Array<OperationSnapshot & { toolRef?: unknown }>
+    const seededTools = seeded.tools as Array<{ id?: unknown; type?: unknown }>
+    const fittedTool = seededTools.find((tool) => tool.id === seededOps[0].toolRef)
+    expect(fittedTool).toBeDefined()
+    expect(fittedTool?.type).not.toBe('v_bit')
+
+    await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
+
+    const drillTypeField = app.page.getByText('Drill Type', { exact: true }).locator('..')
+    await drillTypeField.locator('.ui-select__trigger').click()
+    await app.page.getByRole('option', { name: 'Countersink', exact: true }).click()
+    await expect(drillTypeField.locator('.ui-select__label')).toHaveText('Countersink')
+
+    // Countersink owns the diameter field; the other modes' fields stay hidden.
+    const diameterField = app.page.getByText('Countersink Diameter', { exact: true }).locator('..')
+    await expect(diameterField).toBeVisible()
+    await expect(app.page.getByText('Peck Depth', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Dwell Time (s)', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Ramp Angle (°)', { exact: true })).toHaveCount(0)
+
+    // Depth is derived, so with a drill fitted there is nothing to derive from —
+    // the panel says so at the field rather than only in the warnings list.
+    await expect(app.page.getByText('Countersink Depth', { exact: true }).locator('..')).toContainText('—')
+    await expect(
+      app.page.getByText('Countersinking needs a V-bit. Assign one to this operation.', { exact: true }),
+    ).toBeVisible()
+
+    await diameterField.locator('input').fill('0.25')
+    await diameterField.locator('input').blur()
+
+    const project = await getProject(app.page)
+    const operations = project.operations as OperationSnapshot[]
+    expect(operations).toHaveLength(1)
+    expect(operations[0].kind).toBe('drilling')
+    expect((operations[0] as Record<string, unknown>).drillType).toBe('countersink')
+    expect(operations[0].countersinkDiameter).toBe(0.25)
   })
 })

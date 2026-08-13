@@ -331,6 +331,9 @@ function convertOperation(operation: Operation, from: Units, to: Units): Operati
     peckDepth: operation.peckDepth === undefined
       ? undefined
       : convertLength(operation.peckDepth, from, to),
+    countersinkDiameter: operation.countersinkDiameter === undefined
+      ? undefined
+      : convertLength(operation.countersinkDiameter, from, to),
     retractHeight: operation.retractHeight === undefined
       ? undefined
       : convertLength(operation.retractHeight, from, to),

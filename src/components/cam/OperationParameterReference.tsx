@@ -517,6 +517,18 @@ export function OperationParameterReference({
           </OpParamRefFrame>
         )
       }
+      if (variant === 'countersink') {
+        // The cone seat sits on top of the existing hole; the plunge stops at
+        // the tip depth rather than running through the part.
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__outline" d="M12 5h34" />
+            <path className="gear-reference__outline" d="M12 5l11 9v14M46 5l-11 9v14" />
+            <path className="gear-reference__accent" d="M29 5v9" />
+            <path className="gear-reference__accent-fill" d="M29 17l-2.6-4.5h5.2z" />
+          </OpParamRefFrame>
+        )
+      }
       // simple (default)
       return (
         <OpParamRefFrame label={label}>
@@ -526,5 +538,17 @@ export function OperationParameterReference({
         </OpParamRefFrame>
       )
     }
+
+    case 'countersinkDiameter':
+      // The measured dimension is the mouth across the top of the cone — the
+      // finished diameter a screw head seats into — not the depth below it.
+      return (
+        <OpParamRefFrame label={label}>
+          <path className="gear-reference__outline" d="M6 7h46" />
+          <path className="gear-reference__outline" d="M18 7l11 9v13M40 7l-11 9v13" />
+          <path className="gear-reference__accent" d="M19 4h20" />
+          <path className="gear-reference__accent-fill" d="M17 4l4.4-2.4v4.8zM41 4l-4.4-2.4v4.8z" />
+        </OpParamRefFrame>
+      )
   }
 }

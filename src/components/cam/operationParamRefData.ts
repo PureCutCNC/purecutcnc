@@ -47,6 +47,7 @@ export const OPERATION_PARAM_REF_KINDS = [
   'adaptiveRefinement',
   'maxRings',
   'drillType',
+  'countersinkDiameter',
 ] as const
 
 export type OperationParamRefKind = typeof OPERATION_PARAM_REF_KINDS[number]
@@ -81,6 +82,7 @@ const OP_PARAM_REF_KEY: Record<OperationParamRefKind, keyof typeof camEn> = {
   adaptiveRefinement: 'cam.paramRef.adaptiveRefinement',
   maxRings: 'cam.paramRef.maxRings',
   drillType: 'cam.paramRef.drillType',
+  countersinkDiameter: 'cam.paramRef.countersinkDiameter',
 }
 
 export function operationParamRefLabel(kind: OperationParamRefKind): string {

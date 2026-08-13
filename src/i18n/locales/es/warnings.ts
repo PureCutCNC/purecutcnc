@@ -144,6 +144,12 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   "warnings.drillHelicalBoreUnmachinable": "El taladrado helicoidal solicitado no puede generarse dentro del límite de movimientos; no se produce salida para este objetivo",
   "warnings.drillRetractBelowStockTop": "La altura de retracción ({requested}) está por debajo de la cara superior del material; elevada a {clamped} para que la herramienta no entre en la pieza en avance rápido. La altura de retracción es una Z absoluta en coordenadas del proyecto, no una distancia sobre el material.",
   "warnings.drillTargetsNotCircles": "Algunos elementos objetivo seleccionados no son círculos y se omitieron.",
+  // avellanado
+  "warnings.drillCountersinkNeedsVBit": "El avellanado requiere una fresa en V; asigna una a esta operación: no se mecanizó ningún avellanado.",
+  "warnings.drillCountersinkDiameterPositive": "El diámetro de avellanado debe ser mayor que cero: no se mecanizó ningún avellanado.",
+  "warnings.drillCountersinkExceedsToolDiameter": "El diámetro de avellanado ({requested}) supera el de la fresa en V ({toolDiameter}); la herramienta no puede abrir la boca hasta ese tamaño: no se mecanizó ningún avellanado.",
+  "warnings.drillCountersinkDepthExceedsToolMax": "La penetración del avellanado {depth} {units} supera la profundidad de corte máxima de la herramienta {max} {units}: no se mecanizó ningún avellanado.",
+  "warnings.drillCountersinkNotLargerThanHole": "{name}: el diámetro de avellanado ({requested}) no supera el diámetro del agujero ({holeDiameter}); no hay asiento que mecanizar: omitido.",
   "warnings.carveDepthClamped": "{name}: la profundidad de tallado supera la base del material en bruto; se limita a Z 0.",
   "warnings.carveNotEnoughGeometry": "{name} no contiene suficiente geometría para el tallado de seguimiento de línea",
   "warnings.carveDepthPositive": "La profundidad de tallado debe ser mayor que cero",

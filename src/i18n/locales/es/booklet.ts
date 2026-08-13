@@ -87,6 +87,8 @@ export const bookletEs: Record<keyof typeof bookletEn, string> = {
   "booklet.label.peckDepth": "Profundidad de picoteo",
   "booklet.label.dwellTime": "Tiempo de permanencia",
   "booklet.label.retractHeight": "Altura de retracción",
+  "booklet.label.countersinkDiameter": "Diámetro de avellanado",
+  "booklet.label.countersinkDepth": "Profundidad de avellanado",
   "booklet.label.carveDepth": "Profundidad de tallado",
   "booklet.label.stockToLeaveRadial": "Material a dejar radial",
   "booklet.label.stockToLeaveAxial": "Material a dejar axial",
