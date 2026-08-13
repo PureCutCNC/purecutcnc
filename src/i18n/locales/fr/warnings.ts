@@ -144,6 +144,12 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.drillHelicalBoreUnmachinable': 'Le perçage hélicoïdal demandé ne peut pas être généré dans la limite de mouvements ; aucune sortie produite pour cette cible',
   'warnings.drillRetractBelowStockTop': 'La hauteur de retrait ({requested}) est sous la face supérieure de la matière ; relevée à {clamped} pour que l’outil n’entre pas dans la pièce en avance rapide. La hauteur de retrait est un Z absolu en coordonnées projet, pas une distance au-dessus du brut.',
   'warnings.drillTargetsNotCircles': 'Certaines entités cibles ne sont pas des cercles et ont été ignorées',
+  // fraisurage
+  'warnings.drillCountersinkNeedsVBit': 'Le fraisurage nécessite une fraise en V ; affectez-en une à cette opération — aucune fraisure n’a été usinée',
+  'warnings.drillCountersinkDiameterPositive': 'Le diamètre de fraisure doit être supérieur à zéro — aucune fraisure n’a été usinée',
+  'warnings.drillCountersinkExceedsToolDiameter': 'Le diamètre de fraisure ({requested}) dépasse celui de la fraise en V ({toolDiameter}) ; l’outil ne peut pas ouvrir la fraisure jusque-là — aucune fraisure n’a été usinée',
+  'warnings.drillCountersinkDepthExceedsToolMax': 'La plongée de fraisurage {depth} {units} dépasse la profondeur de coupe maximale de l’outil {max} {units} — aucune fraisure n’a été usinée',
+  'warnings.drillCountersinkNotLargerThanHole': '{name} : le diamètre de fraisure ({requested}) ne dépasse pas le diamètre du trou ({holeDiameter}) ; il n’y a pas de portée à usiner — ignoré',
   'warnings.carveDepthClamped': 'La profondeur de gravure de {name} dépasse le bas du brut ; limitée à Z 0',
   'warnings.carveNotEnoughGeometry': '{name} ne contient pas assez de géométrie pour une gravure suivant une ligne',
   'warnings.carveDepthPositive': 'La profondeur de gravure doit être supérieure à zéro',

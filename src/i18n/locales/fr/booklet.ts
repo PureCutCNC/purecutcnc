@@ -87,6 +87,8 @@ export const bookletFr: Record<keyof typeof bookletEn, string> = {
   'booklet.label.peckDepth': 'Profondeur de débourrage',
   'booklet.label.dwellTime': 'Temporisation',
   'booklet.label.retractHeight': 'Hauteur de retrait',
+  'booklet.label.countersinkDiameter': 'Diamètre de fraisure',
+  'booklet.label.countersinkDepth': 'Profondeur de fraisure',
   'booklet.label.carveDepth': 'Profondeur de gravure',
   'booklet.label.stockToLeaveRadial': 'Surépaisseur radiale',
   'booklet.label.stockToLeaveAxial': 'Surépaisseur axiale',

@@ -16,7 +16,7 @@
 
 import type { DrillType, Operation, Point, Project, SketchFeature, SketchProfile } from '../../types/project'
 import type { ToolpathWarning } from './warningCodes'
-import type { DrillCycle, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
+import type { DrillCycle, NormalizedTool, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import {
   checkMaxCutDepthWarning,
   greedyNearestNeighbor,
@@ -229,6 +229,113 @@ function emitSimplePlunge(
   return retract
 }
 
+/**
+ * Depth below the surface a V-bit tip must reach for a countersink that opens
+ * to `mouthDiameter` (issue #489).
+ *
+ * A cone of included angle θ opens to radius `d · tan(θ/2)` at depth `d`, so
+ * reaching the requested mouth radius takes `d = (D/2) / tan(θ/2)`. The V-bit is
+ * treated as an ideal point — this release does not model a tip flat, matching
+ * the rest of the tool model.
+ *
+ * Returns `null` when the angle cannot produce a usable cone.
+ */
+export function countersinkTipDepth(mouthDiameter: number, includedAngleDegrees: number): number | null {
+  // The angle domain is checked here rather than left to the arithmetic: at
+  // exactly 180° `Math.tan` returns 1.6e16 instead of Infinity, so the division
+  // would yield a plausible-looking sub-nanometre depth for a cutter that is
+  // flat. Callers that render the depth (the CAM panel, the booklet) rely on
+  // this returning null for a tool that cannot countersink at all.
+  if (!(includedAngleDegrees > 0 && includedAngleDegrees < 180)) return null
+  const slope = Math.tan((includedAngleDegrees * Math.PI) / 360)
+  if (!(slope > 1e-9) || !Number.isFinite(slope)) return null
+  const depth = mouthDiameter / (2 * slope)
+  return Number.isFinite(depth) && depth > 0 ? depth : null
+}
+
+/**
+ * Validate the countersink-specific tool and setting constraints once for the
+ * whole operation. Everything checked here is target-independent — the derived
+ * depth comes from the requested mouth diameter and the V-bit angle alone — so a
+ * failure means the operation emits no motion at all rather than an approximate
+ * cut on some targets.
+ */
+function resolveCountersinkDepth(
+  tool: NormalizedTool,
+  operation: Operation,
+): { depth: number; mouthDiameter: number } | { warning: ToolpathWarning } {
+  if (tool.type !== 'v_bit') {
+    return { warning: { code: 'drillCountersinkNeedsVBit' } }
+  }
+
+  const angle = tool.vBitAngle
+  if (!(angle !== null && angle > 0 && angle < 180)) {
+    return { warning: { code: 'vBitAngleRange' } }
+  }
+
+  const mouthDiameter = operation.countersinkDiameter ?? 0
+  if (!(mouthDiameter > 0)) {
+    return { warning: { code: 'drillCountersinkDiameterPositive' } }
+  }
+
+  // The cone only exists out to the cutter's own diameter; past that the tool
+  // has no cutting edge and the shank would rub.
+  if (mouthDiameter - tool.diameter > 1e-9) {
+    return {
+      warning: {
+        code: 'drillCountersinkExceedsToolDiameter',
+        params: {
+          requested: Number(mouthDiameter.toFixed(4)),
+          toolDiameter: Number(tool.diameter.toFixed(4)),
+        },
+      },
+    }
+  }
+
+  const depth = countersinkTipDepth(mouthDiameter, angle)
+  if (depth === null) {
+    return { warning: { code: 'vBitInvalidSlope' } }
+  }
+
+  // maxCutDepth of 0 means "unset", the same convention checkMaxCutDepthWarning
+  // uses. Unlike that helper this fails closed: the plunge is the entire cut.
+  if (tool.maxCutDepth > 0 && depth > tool.maxCutDepth) {
+    return {
+      warning: {
+        code: 'drillCountersinkDepthExceedsToolMax',
+        params: {
+          depth: depth.toFixed(3),
+          max: tool.maxCutDepth.toFixed(3),
+          units: tool.units,
+        },
+      },
+    }
+  }
+
+  return { depth, mouthDiameter }
+}
+
+/**
+ * One countersink: a single direct plunge to the derived depth below this
+ * target's own top face, then a retract to safe Z.
+ *
+ * The motion itself is an ordinary simple plunge — deliberately so. Countersink
+ * output must stay expanded G0/G1, never a canned cycle, because no G8x cycle
+ * describes "plunge to a depth derived from a cone angle". The caller records no
+ * `DrillCycle` for it, which is what keeps the postprocessor on the linear path.
+ */
+function emitCountersinkPlunge(
+  moves: ToolpathMove[],
+  current: ToolpathPoint | null,
+  center: Point,
+  topZ: number,
+  tipDepth: number,
+  safeZ: number,
+  retractZ: number,
+): ToolpathPoint {
+  return emitSimplePlunge(moves, current, center, topZ - tipDepth, safeZ, retractZ)
+}
+
 function emitDrillCycle(
   moves: ToolpathMove[],
   current: ToolpathPoint | null,
@@ -360,6 +467,9 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     if (tool.type !== 'flat_endmill') {
       warnings.push({ code: 'drillHelicalToolUnsupported' })
     }
+  } else if (drillType === 'countersink') {
+    // Validated below against the V-bit's geometry — a drill bit is the wrong
+    // tool here, so the drillNotDrillBit advice would be actively misleading.
   } else if (tool.type !== 'drill') {
     warnings.push({ code: 'drillNotDrillBit' })
   }
@@ -370,6 +480,22 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
 
   if ((drillType === 'peck' || drillType === 'chip_breaking') && !(peckDepth > 0)) {
     warnings.push({ code: 'drillPeckDepthPositive' })
+  }
+
+  // Countersinking fails closed: an unusable tool or diameter produces warnings
+  // and no motion, never a plunge to some approximated depth.
+  let countersink: { depth: number; mouthDiameter: number } | null = null
+  if (drillType === 'countersink') {
+    const resolved = resolveCountersinkDepth(tool, operation)
+    if ('warning' in resolved) {
+      return {
+        operationId: operation.id,
+        moves: [],
+        warnings: [...warnings, resolved.warning],
+        bounds: null,
+      }
+    }
+    countersink = resolved
   }
 
   // Precompute and sort targets by nearest-neighbor travel
@@ -430,9 +556,52 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     const topZ = target.span.top
     const bottomZ = target.span.bottom
 
-    const depthWarning = checkMaxCutDepthWarning(tool, topZ - bottomZ)
-    if (depthWarning) {
-      warnings.push({ code: 'cutDepthExceedsToolMaxForFeature', params: { name: target.feature.name, ...depthWarning.params } })
+    // A countersink never cuts the feature's full depth — the V-bit only opens
+    // the mouth — so the hole's own depth says nothing about the tool's limit.
+    // `resolveCountersinkDepth` has already checked the depth that is cut.
+    if (countersink === null) {
+      const depthWarning = checkMaxCutDepthWarning(tool, topZ - bottomZ)
+      if (depthWarning) {
+        warnings.push({ code: 'cutDepthExceedsToolMaxForFeature', params: { name: target.feature.name, ...depthWarning.params } })
+      }
+    }
+
+    if (countersink !== null) {
+      const holeRadius = getCircleRadius(target.feature.sketch.profile)
+      if (holeRadius === null) {
+        // getCircleCenter already accepted this profile, so this is unreachable
+        // in practice; skip rather than guess at a diameter. Do not mutate
+        // currentPosition — the tool has not visited this centre.
+        warnings.push({ code: 'drillTargetsNotCircles' })
+        continue
+      }
+
+      const holeDiameter = holeRadius * 2
+      // A mouth no wider than the hole leaves the cone's rim inside the bore:
+      // there is no seat to cut, and the plunge would only rub the wall.
+      if (countersink.mouthDiameter - holeDiameter <= 1e-9) {
+        warnings.push({
+          code: 'drillCountersinkNotLargerThanHole',
+          params: {
+            name: target.feature.name,
+            requested: Number(countersink.mouthDiameter.toFixed(4)),
+            holeDiameter: Number(holeDiameter.toFixed(4)),
+          },
+        })
+        continue
+      }
+
+      currentPosition = emitCountersinkPlunge(
+        moves,
+        currentPosition,
+        target.center,
+        topZ,
+        countersink.depth,
+        safeZ,
+        retractZ,
+      )
+      // No drillCycles entry — countersinking stays on the expanded G0/G1 path.
+      continue
     }
 
     if (drillType === 'helical' && tool.type === 'flat_endmill') {

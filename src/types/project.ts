@@ -480,7 +480,16 @@ export type EdgeStrategy = 'contour' | 'trochoidal'
 export type CarveStrategy = 'direct' | 'trochoidal'
 export type PocketPattern = 'offset' | 'parallel' | 'waterline'
 export type CutDirection = 'conventional' | 'climb'
-export type DrillType = 'simple' | 'peck' | 'dwell' | 'chip_breaking' | 'helical'
+/**
+ * Drilling mode (issue #489 added `countersink`).
+ *
+ * `simple` is the load-bearing default: a saved operation without a `drillType`
+ * must normalize to it, or every already-saved drilling operation would change
+ * its motion. `countersink` is the one mode that is not a hole-making cycle —
+ * it seats a screw head with a single V-bit plunge and deliberately emits no
+ * canned cycle (see `generateDrillingToolpath`).
+ */
+export type DrillType = 'simple' | 'peck' | 'dwell' | 'chip_breaking' | 'helical' | 'countersink'
 export type MachiningOrder = 'level_first' | 'feature_first'
 export type EntryStrategy = 'plunge' | 'helix' | 'ramp'
 /**
@@ -549,6 +558,12 @@ export interface Operation {
   drillType?: DrillType
   peckDepth?: number
   dwellTime?: number
+  /** Finished countersink mouth diameter in project length units, used only by
+   *  the `countersink` drill type. It is the primary input because it is the
+   *  dimension a fastener needs; the plunge depth is derived from it and the
+   *  V-bit's included angle. Missing on every operation saved before issue #489,
+   *  which is safe: those are not countersink operations. */
+  countersinkDiameter?: number
   retractHeight?: number
   debugShowRejectedCorners?: boolean
   waterlineAdaptiveRefinement?: boolean

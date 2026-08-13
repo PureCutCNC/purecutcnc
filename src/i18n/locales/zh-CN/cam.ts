@@ -36,6 +36,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.drillType.dwell': '暂停（G82）',
   'cam.drillType.chipBreaking': '断屑（G73）',
   'cam.drillType.helical': '螺旋',
+  'cam.drillType.countersink': '锪孔',
 
   // ── Operation kind labels ──
   'cam.opLabel.pocket': '挖槽',
@@ -175,6 +176,10 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.drillType': '钻孔类型',
   'cam.operation.peckDepth': '啄钻深度',
   'cam.operation.dwellTime': '暂停时间（秒）',
+  'cam.operation.countersinkDiameter': '锪孔直径',
+  'cam.operation.countersinkDepth': '锪孔深度',
+  'cam.operation.countersinkNeedsVBit': '锪孔需要 V 型刀。请为此工序指定一把。',
+  'cam.operation.countersinkExceedsTool': '锪孔直径大于 V 型刀直径（{toolDiameter}）；刀具无法加工到该口径。',
   'cam.operation.retractHeight': '退刀高度',
   'cam.operation.finishWalls': '精修侧壁',
   'cam.operation.finishFloor': '精修底面',
@@ -360,6 +365,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.paramRef.adaptiveRefinement': '自适应细化参考',
   'cam.paramRef.maxRings': '最大环数参考',
   'cam.paramRef.drillType': '钻孔类型参考',
+  'cam.paramRef.countersinkDiameter': '锪孔直径参考',
 
   // ── Operation descriptions ──
   'cam.opDesc.pocket.title': '挖槽',

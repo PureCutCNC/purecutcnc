@@ -159,6 +159,7 @@ function testOperationComputationEquals() {
     ['drillType', { drillType: 'peck' }],
     ['peckDepth', { peckDepth: 0.75 }],
     ['dwellTime', { dwellTime: 0.25 }],
+    ['countersinkDiameter', { countersinkDiameter: 6 }],
     ['retractHeight', { retractHeight: 4 }],
     ['debugToolpath', { debugToolpath: true }],
     ['debugShowRejectedCorners', { debugShowRejectedCorners: true }],

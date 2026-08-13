@@ -158,6 +158,12 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.drillHelicalBoreUnmachinable': 'Die angeforderte helikale Bohrung kann innerhalb des Bewegungslimits nicht erzeugt werden; keine Ausgabe für dieses Ziel',
   'warnings.drillRetractBelowStockTop': 'Rückzugshöhe ({requested}) liegt unterhalb der Materialoberkante; auf {clamped} angehoben, damit das Werkzeug nicht im Eilgang in das Werkstück eintaucht. Die Rückzugshöhe ist eine absolute Z-Koordinate im Projektsystem, kein Abstand über dem Rohteil.',
   'warnings.drillTargetsNotCircles': 'Einige ausgewählte Ziel-Features sind keine Kreise und wurden übersprungen',
+  // Senken
+  'warnings.drillCountersinkNeedsVBit': 'Senken erfordert einen V-Nutfräser; weisen Sie dieser Operation einen zu — es wurde keine Senkung gefertigt',
+  'warnings.drillCountersinkDiameterPositive': 'Der Senkdurchmesser muss größer als null sein — es wurde keine Senkung gefertigt',
+  'warnings.drillCountersinkExceedsToolDiameter': 'Der Senkdurchmesser ({requested}) ist größer als der V-Nutfräser ({toolDiameter}); das Werkzeug kann die Senkung nicht so weit öffnen — es wurde keine Senkung gefertigt',
+  'warnings.drillCountersinkDepthExceedsToolMax': 'Die Senktiefe {depth} {units} überschreitet die maximale Schnitttiefe des Werkzeugs {max} {units} — es wurde keine Senkung gefertigt',
+  'warnings.drillCountersinkNotLargerThanHole': '{name}: Der Senkdurchmesser ({requested}) ist nicht größer als der Bohrungsdurchmesser ({holeDiameter}); es gibt keinen Sitz zu fertigen — übersprungen',
   // carving (follow-line)
   'warnings.carveDepthClamped': '{name} Gravurtiefe überschreitet die Rohteilunterseite; auf Z 0 begrenzt',
   'warnings.carveNotEnoughGeometry': '{name} enthält nicht genug Geometrie für die Gravur entlang der Linie',

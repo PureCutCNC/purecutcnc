@@ -167,6 +167,13 @@ export type ToolpathWarningCode =
   | 'drillHelicalBoreTooLarge'
   | 'drillHelicalBoreUnmachinable'
   | 'drillRetractBelowStockTop'
+  // countersinking (issue #489) — every one of these fails closed: the target,
+  // or the whole operation, emits no motion rather than an approximate cut.
+  | 'drillCountersinkNeedsVBit'
+  | 'drillCountersinkDiameterPositive'
+  | 'drillCountersinkExceedsToolDiameter'
+  | 'drillCountersinkDepthExceedsToolMax'
+  | 'drillCountersinkNotLargerThanHole'
   // carving (follow-line)
   | 'carveDepthClamped'
   | 'carveNotEnoughGeometry'

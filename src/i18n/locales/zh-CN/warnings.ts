@@ -148,6 +148,12 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.drillHelicalBoreUnmachinable': '请求的螺旋镗孔无法在移动限制内生成；此目标未产生输出',
   'warnings.drillRetractBelowStockTop': '退刀高度（{requested}）低于材料上表面；已提高到 {clamped}，以免刀具以快速移动进入工件。退刀高度是项目坐标系中的绝对 Z 值，而不是高出毛坯的距离。',
   'warnings.drillTargetsNotCircles': '部分选定的目标特征不是圆形，已跳过',
+  // 锪孔
+  'warnings.drillCountersinkNeedsVBit': '锪孔需要 V 型刀；请为此工序指定一把——未生成锪孔',
+  'warnings.drillCountersinkDiameterPositive': '锪孔直径必须大于零——未生成锪孔',
+  'warnings.drillCountersinkExceedsToolDiameter': '锪孔直径（{requested}）大于 V 型刀直径（{toolDiameter}）；刀具无法加工到该口径——未生成锪孔',
+  'warnings.drillCountersinkDepthExceedsToolMax': '锪孔下刀深度 {depth} {units} 超过刀具最大切削深度 {max} {units}——未生成锪孔',
+  'warnings.drillCountersinkNotLargerThanHole': '{name}：锪孔直径（{requested}）未大于孔径（{holeDiameter}），没有可加工的沉头座——已跳过',
   'warnings.carveDepthClamped': '{name} 的雕刻深度超过毛坯底面；已钳制到 Z 0',
   'warnings.carveNotEnoughGeometry': '{name} 不包含足够的几何用于沿线雕刻',
   'warnings.carveDepthPositive': '雕刻深度必须大于零',

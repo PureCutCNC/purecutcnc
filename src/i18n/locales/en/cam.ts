@@ -34,6 +34,7 @@ export const camEn = {
   'cam.drillType.dwell': 'Dwell (G82)',
   'cam.drillType.chipBreaking': 'Chip breaking (G73)',
   'cam.drillType.helical': 'Helical',
+  'cam.drillType.countersink': 'Countersink',
 
   // ── Operation kind labels (full, for the Kind field and operationValidity) ──
   'cam.opLabel.pocket': 'Pocket',
@@ -174,6 +175,10 @@ export const camEn = {
   'cam.operation.drillType': 'Drill Type',
   'cam.operation.peckDepth': 'Peck Depth',
   'cam.operation.dwellTime': 'Dwell Time (s)',
+  'cam.operation.countersinkDiameter': 'Countersink Diameter',
+  'cam.operation.countersinkDepth': 'Countersink Depth',
+  'cam.operation.countersinkNeedsVBit': 'Countersinking needs a V-bit. Assign one to this operation.',
+  'cam.operation.countersinkExceedsTool': 'Countersink diameter is wider than the V-bit ({toolDiameter}); the cutter cannot open the mouth that far.',
   'cam.operation.retractHeight': 'Retract Height',
   'cam.operation.finishWalls': 'Finish Walls',
   'cam.operation.finishFloor': 'Finish Floor',
@@ -362,6 +367,7 @@ export const camEn = {
   'cam.paramRef.adaptiveRefinement': 'Adaptive refinement reference',
   'cam.paramRef.maxRings': 'Max rings reference',
   'cam.paramRef.drillType': 'Drill type reference',
+  'cam.paramRef.countersinkDiameter': 'Countersink diameter reference',
 
   // ── Operation descriptions (OperationAddMenu expanded cards) ──
   // Pocket

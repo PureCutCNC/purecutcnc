@@ -179,6 +179,7 @@ const anchoredAngleDim: DimensionAnnotation = {
     carveDepth: 25.4,
     maxCarveDepth: 50.8,
     peckDepth: 12.7,
+    countersinkDiameter: 6.35,
     retractHeight: 76.2,
     waterlineMicroStepover: 2.54,
     waterlineRefinementThreshold: 5.08,
@@ -342,6 +343,7 @@ const anchoredAngleDim: DimensionAnnotation = {
   assert(approx(inch.operations[0].maxCarveDepth, 2), 'operation max carve depth converts')
   assert(approx(inch.operations[0].peckDepth ?? 0, 0.5), 'operation peck depth converts')
   assert(approx(inch.operations[0].retractHeight ?? 0, 3), 'operation retract height converts')
+  assert(approx(inch.operations[0].countersinkDiameter ?? 0, 0.25), 'operation countersink diameter converts')
   assert(approx(inch.tabs[0].x, 1) && approx(inch.tabs[0].w, 0.5), 'tab lengths convert')
   assert(approx(inch.clamps[0].x, 1) && approx(inch.clamps[0].height, 0.5), 'clamp lengths convert')
   assert(inch.tools[0].units === 'mm' && inch.tools[0].diameter === tool.diameter, 'tool records retain independent units')

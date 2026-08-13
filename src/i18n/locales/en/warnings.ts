@@ -158,6 +158,12 @@ export const warningsEn = {
   'warnings.drillHelicalBoreUnmachinable': 'The requested helical bore cannot be generated within the move limit; no output produced for this target',
   'warnings.drillRetractBelowStockTop': 'Retract height ({requested}) is below the top of the material; raised to {clamped} so the tool does not enter the part at rapid. Retract height is an absolute Z in project coordinates, not a distance above the stock.',
   'warnings.drillTargetsNotCircles': 'Some selected target features are not circles and were skipped',
+  // countersinking
+  'warnings.drillCountersinkNeedsVBit': 'Countersinking requires a V-bit; assign one to this operation — no countersink was cut',
+  'warnings.drillCountersinkDiameterPositive': 'Countersink diameter must be greater than zero — no countersink was cut',
+  'warnings.drillCountersinkExceedsToolDiameter': 'Countersink diameter ({requested}) is wider than the V-bit ({toolDiameter}); the cutter cannot open the mouth that far — no countersink was cut',
+  'warnings.drillCountersinkDepthExceedsToolMax': 'Countersink plunge {depth} {units} exceeds the tool max cut depth {max} {units} — no countersink was cut',
+  'warnings.drillCountersinkNotLargerThanHole': '{name}: countersink diameter ({requested}) does not exceed the hole diameter ({holeDiameter}); there is no seat to cut — skipped',
   // carving (follow-line)
   'warnings.carveDepthClamped': '{name} carve depth exceeds stock bottom; clamped to Z 0',
   'warnings.carveNotEnoughGeometry': '{name} does not contain enough geometry for follow-line carving',

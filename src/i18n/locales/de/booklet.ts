@@ -90,6 +90,8 @@ export const bookletDe: Record<keyof typeof bookletEn, string> = {
   'booklet.label.peckDepth': 'Entspantiefe',
   'booklet.label.dwellTime': 'Verweilzeit',
   'booklet.label.retractHeight': 'Rückzugshöhe',
+  'booklet.label.countersinkDiameter': 'Senkdurchmesser',
+  'booklet.label.countersinkDepth': 'Senktiefe',
   'booklet.label.carveDepth': 'Gravurtiefe',
   'booklet.label.stockToLeaveRadial': 'Aufmaß radial',
   'booklet.label.stockToLeaveAxial': 'Aufmaß axial',

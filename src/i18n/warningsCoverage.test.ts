@@ -67,6 +67,8 @@ const ALL_CODES = [
   'drillPeckDepthPositive', 'drillNotDrillBit', 'drillHelicalToolUnsupported',
   'drillHelicalBoreTooSmall', 'drillHelicalBoreTooLarge', 'drillHelicalBoreUnmachinable', 'drillTargetsNotCircles',
   'drillRetractBelowStockTop',
+  'drillCountersinkNeedsVBit', 'drillCountersinkDiameterPositive', 'drillCountersinkExceedsToolDiameter',
+  'drillCountersinkDepthExceedsToolMax', 'drillCountersinkNotLargerThanHole',
   'carveDepthClamped', 'carveNotEnoughGeometry', 'carveDepthPositive', 'carveNoTargets', 'carveWrongKind',
   'carveNoValidTargets',
   'restOnlyEdgeRoute', 'restOnlyPocket', 'restNoValidOutsideTargets',

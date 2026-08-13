@@ -348,6 +348,10 @@ export function defaultOperationForTarget(
       drillType: 'simple' as const,
       peckDepth: convertLength(2, 'mm', project.meta.units),
       dwellTime: 0.5,
+      // Seeded like peckDepth and dwellTime: inert until the matching drill type
+      // is chosen, so switching to Countersink starts from a usable M3-head
+      // diameter instead of a zero that only produces a warning.
+      countersinkDiameter: convertLength(6, 'mm', project.meta.units),
       retractHeight: project.stock.thickness + convertLength(1, 'mm', project.meta.units),
     } : {}),
   }
