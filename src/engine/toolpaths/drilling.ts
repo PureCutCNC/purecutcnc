@@ -299,7 +299,15 @@ function resolveCountersinkDepth(
 
   // maxCutDepth of 0 means "unset", the same convention checkMaxCutDepthWarning
   // uses. Unlike that helper this fails closed: the plunge is the entire cut.
-  if (tool.maxCutDepth > 0 && depth > tool.maxCutDepth) {
+  //
+  // The tolerance is load-bearing, not defensive rounding. A V-bit cannot plunge
+  // past its own cone height, so `maxCutDepth` for one is naturally authored as
+  // exactly D / (2·tan(θ/2)) — and asking that bit for its full diameter derives
+  // that same number in floating point, where it lands one ULP high: a 90° Ø12
+  // bit yields 6.000000000000001 against a limit of 6. Without the epsilon the
+  // most ordinary countersink there is — full diameter on a correctly described
+  // tool — fails closed. Same 1e-9 the geometry comparisons here already use.
+  if (tool.maxCutDepth > 0 && depth - tool.maxCutDepth > 1e-9) {
     return {
       warning: {
         code: 'drillCountersinkDepthExceedsToolMax',

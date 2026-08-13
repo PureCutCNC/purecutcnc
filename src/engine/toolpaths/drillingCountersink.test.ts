@@ -397,6 +397,34 @@ test('plunge deeper than the tool’s max cut depth produces no countersink', ()
   assert(plunges(allowed.moves).length === 1, 'an unset max cut depth should not reject the countersink')
 })
 
+test('a tool limited to exactly its cone height still cuts a full-diameter countersink', () => {
+  // The natural way to describe a V-bit: it cannot plunge past its own cone
+  // height, so maxCutDepth is exactly D / (2·tan(θ/2)) — here 12 / 2 = 6.
+  // Asking that same bit for its full 12 mm mouth re-derives 6 in floating
+  // point as 6.000000000000001, so an exact `>` comparison would reject the
+  // most ordinary countersink the tool can make.
+  const derived = 12 / (2 * Math.tan(Math.PI / 4))
+  assert(derived > 6, `sanity: the derivation must land above 6 to make this bite, got ${derived}`)
+
+  const project = fixture(vBit(90, 12, 6), [circleFeature('h1', 20, 20, 1.5)])
+  const result = generateDrillingToolpath(project, drillOp({ drillType: 'countersink', countersinkDiameter: 12 }))
+
+  const cut = plunges(result.moves)
+  assert(cut.length === 1, `expected the countersink to cut, got ${cut.length} plunges`)
+  assert(
+    !result.warnings.some((w) => w.code === 'drillCountersinkDepthExceedsToolMax'),
+    'a plunge at exactly the tool limit must not be rejected',
+  )
+  assert(approx(cut[0].to.z, STOCK_THICKNESS - 6, 1e-9), `should plunge to the full 6 mm, got ${cut[0].to.z}`)
+
+  // The tolerance must stay tight enough to still catch a real overrun.
+  const overrun = generateDrillingToolpath(
+    fixture(vBit(90, 12, 5.9), [circleFeature('h1', 20, 20, 1.5)]),
+    drillOp({ drillType: 'countersink', countersinkDiameter: 12 }),
+  )
+  assertNoCut(overrun, 'drillCountersinkDepthExceedsToolMax', '0.1 mm past the limit')
+})
+
 test('mouth no wider than the hole skips that target and leaves the others cut', () => {
   const project = fixture(vBit(90), [
     circleFeature('h1', 20, 20, 4),   // 8 mm hole — a 6 mm mouth cannot seat in it
