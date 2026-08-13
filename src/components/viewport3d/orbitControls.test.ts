@@ -588,3 +588,36 @@ test('the top preset is a true plan view — no perspective skew', () => {
   const smear = Math.hypot(wallTop.x - wallBottom.x, wallTop.y - wallBottom.y)
   assert.ok(smear < 0.5, `a vertical wall must not smear in plan view (smeared ${smear} px)`)
 })
+
+test('the horizon stays level while orbiting out of the top preset', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const { listeners, controls } = makeListeningControls(cam)
+  controls.setPreset('top')
+
+  // Degrees the horizon sits off level. Screen-right lies in the world
+  // horizontal plane for a level camera, so its component along world up is the
+  // roll. Well defined at the pole, unlike projecting world up itself.
+  const rollDeg = () => {
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).normalize()
+    return THREE.MathUtils.radToDeg(
+      Math.asin(Math.min(1, Math.abs(right.dot(new THREE.Vector3(0, 1, 0))))),
+    )
+  }
+
+  // A real drag is never perfectly vertical, and the sideways component is what
+  // tips a stale preset up-vector over. Held pointer, incremental moves — the
+  // gesture from the bug report. Issue #493.
+  const base = { pointerType: 'mouse', pointerId: 1, button: 0, shiftKey: false, preventDefault() {} }
+  let x = 400
+  let y = 300
+  listeners['pointerdown']?.forEach(fn => fn({ ...base, clientX: x, clientY: y } as unknown as Event))
+  for (let step = 1; step <= 26; step++) {
+    x += 4
+    y -= 10
+    listeners['pointermove']?.forEach(fn => fn({ ...base, clientX: x, clientY: y } as unknown as Event))
+    assert.ok(
+      rollDeg() < 1,
+      `horizon tumbled ${rollDeg()}° off level after ${step} drag steps out of the top preset`,
+    )
+  }
+})
