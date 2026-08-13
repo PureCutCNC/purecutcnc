@@ -555,3 +555,36 @@ test('horizontal drag at the top preset spins the plan view instead of orbiting'
     'top view must keep looking essentially straight down while it spins',
   )
 })
+
+test('the top preset is a true plan view — no perspective skew', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const { controls } = makeListeningControls(cam)
+  controls.setPreset('top')
+  // A 200x200 plate, 20mm thick, centred on the origin.
+  controls.fitToBounds(new THREE.Box3(new THREE.Vector3(-100, 0, -100), new THREE.Vector3(100, 20, 100)))
+
+  const centreX = 400
+  const centreY = 300
+  const left = projectToScreen(new THREE.Vector3(-100, 0, 0), cam)
+  const right = projectToScreen(new THREE.Vector3(100, 0, 0), cam)
+  const near = projectToScreen(new THREE.Vector3(0, 0, 100), cam)
+  const far = projectToScreen(new THREE.Vector3(0, 0, -100), cam)
+
+  // Looking exactly down the vertical, opposite edges sit equidistant from the
+  // centre. Parked even a couple of degrees off, the plate reads as a trapezoid
+  // and features with depth show one wall. Issue #493.
+  assert.ok(
+    Math.abs((centreX - left.x) - (right.x - centreX)) < 0.5,
+    `plate must be symmetric across screen X (left ${centreX - left.x}, right ${right.x - centreX})`,
+  )
+  assert.ok(
+    Math.abs((centreY - far.y) - (near.y - centreY)) < 0.5,
+    `plate must be symmetric across screen Y (far ${centreY - far.y}, near ${near.y - centreY})`,
+  )
+
+  // A vertical wall over the orbit axis projects to a point, not a smear.
+  const wallTop = projectToScreen(new THREE.Vector3(0, 20, 0), cam)
+  const wallBottom = projectToScreen(new THREE.Vector3(0, 0, 0), cam)
+  const smear = Math.hypot(wallTop.x - wallBottom.x, wallTop.y - wallBottom.y)
+  assert.ok(smear < 0.5, `a vertical wall must not smear in plan view (smeared ${smear} px)`)
+})
