@@ -51,14 +51,19 @@ export const VIEW_PRESETS: Record<ViewPreset, ViewPresetSpherical> = {
     phi: DEFAULT_CAMERA_SPHERICAL.phi,
     up: [0, 1, 0],
   },
+  // Exactly vertical, so these are true plan views: no perspective skew, and a
+  // part with depth shows no wall thickness. Their own `up` keeps `lookAt` well
+  // defined at the pole, where world up would be parallel to the view direction.
+  // Free orbit clamps phi off the pole before it renders, so the epsilon these
+  // used to carry is not needed here. Issue #493.
   top: {
     theta: 0,
-    phi: 0.05,
+    phi: 0,
     up: [0, 0, -1],
   },
   bottom: {
     theta: 0,
-    phi: Math.PI - 0.05,
+    phi: Math.PI,
     up: [0, 0, 1],
   },
   front: {

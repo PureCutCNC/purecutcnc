@@ -16,6 +16,7 @@
 
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
+import * as THREE from 'three'
 import {
   VIEW_PRESETS,
   VIEW_PRESET_ORDER,
@@ -32,10 +33,33 @@ test('VIEW_PRESETS has an entry for every preset', () => {
   assert.equal(Object.keys(VIEW_PRESETS).length, ALL_PRESETS.length)
 })
 
-test('every preset has a valid spherical phi in the open range (0, π)', () => {
+test('every preset has a spherical phi in the closed range [0, π]', () => {
   for (const preset of ALL_PRESETS) {
     const { phi } = VIEW_PRESETS[preset]
-    assert.ok(phi > 0 && phi < Math.PI, `${preset} phi ${phi} must be in (0, π)`)
+    assert.ok(phi >= 0 && phi <= Math.PI, `${preset} phi ${phi} must be in [0, π]`)
+  }
+})
+
+// This replaces an older `phi` strictly-inside-(0, π) check. That was a proxy
+// for "lookAt must be well defined", which is really a statement about `up`, not
+// about phi: the poles are only unusable when `up` is parallel to the view
+// direction. Top and Bottom carry a perpendicular `up` of their own so they can
+// sit exactly on the pole and give a true plan view. Asserting the real property
+// is strictly stronger — the old check passed anything off-pole, including a
+// preset whose `up` pointed straight down its own view direction. Issue #493.
+test('every preset keeps up non-parallel to the view direction', () => {
+  for (const preset of ALL_PRESETS) {
+    const { theta, phi, up } = VIEW_PRESETS[preset]
+    const eye = new THREE.Vector3(
+      Math.sin(phi) * Math.sin(theta),
+      Math.cos(phi),
+      Math.sin(phi) * Math.cos(theta),
+    )
+    const cross = new THREE.Vector3().crossVectors(new THREE.Vector3(...up), eye)
+    assert.ok(
+      cross.length() > 0.1,
+      `${preset} up ${JSON.stringify(up)} is parallel to its view direction — lookAt is undefined`,
+    )
   }
 })
 

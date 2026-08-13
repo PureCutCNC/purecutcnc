@@ -419,3 +419,205 @@ test('wheel zoom at radius limit does not move target', () => {
     'origin screen Y must not jump when zoom is clamped',
   )
 })
+// ---- orbit direction (issue #493) ----
+
+/** Fires a complete left-button drag: pointerdown, one pointermove, pointerup. */
+function dispatchDrag(
+  listeners: ListenerStore,
+  dx: number,
+  dy: number,
+  startX = 400,
+  startY = 300,
+) {
+  const base = {
+    pointerType: 'mouse',
+    pointerId: 1,
+    button: 0,
+    shiftKey: false,
+    preventDefault() {},
+  }
+  const down = { ...base, clientX: startX, clientY: startY } as unknown as Event
+  const moved = { ...base, clientX: startX + dx, clientY: startY + dy } as unknown as Event
+  listeners['pointerdown']?.forEach(fn => fn(down))
+  listeners['pointermove']?.forEach(fn => fn(moved))
+  listeners['pointerup']?.forEach(fn => fn(moved))
+}
+
+function makeListeningControls(cam: THREE.PerspectiveCamera) {
+  const listeners: ListenerStore = {}
+  const el = makeListeningElement(listeners)
+  const controls = createOrbitControls(cam, el, {
+    onChange: () => {},
+    onPresetChange: () => {},
+    isInteractionBlocked: () => false,
+  })
+  return { listeners, controls }
+}
+
+test('orbit follows the cursor: dragging down raises the camera', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const { listeners } = makeListeningControls(cam)
+
+  const heightBefore = cam.position.y
+  dispatchDrag(listeners, 0, 60)
+
+  // Direct manipulation: drag down tips the model towards the viewer, which
+  // lifts the camera. The inverted sign sends it under the table instead.
+  assert.ok(
+    cam.position.y > heightBefore,
+    `dragging down must raise the camera (was ${heightBefore}, now ${cam.position.y})`,
+  )
+})
+
+test('orbit follows the cursor: dragging right moves the model right', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const { listeners } = makeListeningControls(cam)
+
+  // Probe off the vertical orbit axis, on the near side so it is the point the
+  // user feels they have grabbed.
+  const probe = new THREE.Vector3(30, 0, 30)
+  const before = projectToScreen(probe, cam)
+  dispatchDrag(listeners, 40, 0)
+  const after = projectToScreen(probe, cam)
+
+  assert.ok(
+    after.x > before.x,
+    `dragging right must move the near face right (was ${before.x}, now ${after.x})`,
+  )
+})
+
+test('orbiting away from the top preset never mirrors the view', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const { listeners, controls } = makeListeningControls(cam)
+  controls.setPreset('top')
+
+  // A point on +X, off the orbit axis. Screen right stays +X for every polar
+  // angle in the clamped range, so this must remain right of centre the whole
+  // way down. A stale top-view `up` puts it left of centre once the camera
+  // crosses eye level.
+  const probe = new THREE.Vector3(40, 0, 0)
+  assert.ok(
+    projectToScreen(probe, cam).x > 400,
+    'probe must start right of centre at the top preset',
+  )
+
+  // Drag up to descend from top-down, through eye level, to the bottom clamp.
+  for (let step = 0; step < 40; step++) {
+    dispatchDrag(listeners, 0, -10)
+    const screen = projectToScreen(probe, cam)
+    assert.ok(
+      screen.x > 400,
+      `view mirrored while orbiting from top (step ${step}, screen x ${screen.x})`,
+    )
+  }
+})
+
+test('horizontal drag at the top preset spins the plan view instead of orbiting', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const { listeners, controls } = makeListeningControls(cam)
+  controls.setPreset('top')
+
+  // Two marks on the material, both well clear of the view axis looking down.
+  const a = new THREE.Vector3(40, 0, 0)
+  const b = new THREE.Vector3(0, 0, 40)
+  const screenAngle = () => {
+    const pa = projectToScreen(a, cam)
+    const pb = projectToScreen(b, cam)
+    return Math.atan2(pb.y - pa.y, pb.x - pa.x)
+  }
+
+  const forwardBefore = new THREE.Vector3()
+  cam.getWorldDirection(forwardBefore)
+  const angleBefore = screenAngle()
+
+  dispatchDrag(listeners, 50, 0)
+
+  const forwardAfter = new THREE.Vector3()
+  cam.getWorldDirection(forwardAfter)
+  let spinDeg = THREE.MathUtils.radToDeg(screenAngle() - angleBefore)
+  while (spinDeg > 180) spinDeg -= 360
+  while (spinDeg < -180) spinDeg += 360
+
+  // Looking straight down, "turn left" has no meaning beyond roll, so a fixed-up
+  // orbit spins the image in place. Verified against SketchUp; three.js
+  // OrbitControls does the same. This is intended behaviour, not a defect.
+  //
+  // It is guarded because the obvious way to "fix" a spinning top view is to let
+  // a preset up-vector survive into free orbit, which pins screen-right — and
+  // that is exactly the stale-up bug the mirror test above covers. Restoring one
+  // silently restores the other. Issue #493.
+  assert.ok(
+    Math.abs(spinDeg) > 20,
+    `top view must spin under a horizontal drag (spun ${spinDeg}°)`,
+  )
+  assert.ok(
+    THREE.MathUtils.radToDeg(forwardBefore.angleTo(forwardAfter)) < 5,
+    'top view must keep looking essentially straight down while it spins',
+  )
+})
+
+test('the top preset is a true plan view — no perspective skew', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const { controls } = makeListeningControls(cam)
+  controls.setPreset('top')
+  // A 200x200 plate, 20mm thick, centred on the origin.
+  controls.fitToBounds(new THREE.Box3(new THREE.Vector3(-100, 0, -100), new THREE.Vector3(100, 20, 100)))
+
+  const centreX = 400
+  const centreY = 300
+  const left = projectToScreen(new THREE.Vector3(-100, 0, 0), cam)
+  const right = projectToScreen(new THREE.Vector3(100, 0, 0), cam)
+  const near = projectToScreen(new THREE.Vector3(0, 0, 100), cam)
+  const far = projectToScreen(new THREE.Vector3(0, 0, -100), cam)
+
+  // Looking exactly down the vertical, opposite edges sit equidistant from the
+  // centre. Parked even a couple of degrees off, the plate reads as a trapezoid
+  // and features with depth show one wall. Issue #493.
+  assert.ok(
+    Math.abs((centreX - left.x) - (right.x - centreX)) < 0.5,
+    `plate must be symmetric across screen X (left ${centreX - left.x}, right ${right.x - centreX})`,
+  )
+  assert.ok(
+    Math.abs((centreY - far.y) - (near.y - centreY)) < 0.5,
+    `plate must be symmetric across screen Y (far ${centreY - far.y}, near ${near.y - centreY})`,
+  )
+
+  // A vertical wall over the orbit axis projects to a point, not a smear.
+  const wallTop = projectToScreen(new THREE.Vector3(0, 20, 0), cam)
+  const wallBottom = projectToScreen(new THREE.Vector3(0, 0, 0), cam)
+  const smear = Math.hypot(wallTop.x - wallBottom.x, wallTop.y - wallBottom.y)
+  assert.ok(smear < 0.5, `a vertical wall must not smear in plan view (smeared ${smear} px)`)
+})
+
+test('the horizon stays level while orbiting out of the top preset', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const { listeners, controls } = makeListeningControls(cam)
+  controls.setPreset('top')
+
+  // Degrees the horizon sits off level. Screen-right lies in the world
+  // horizontal plane for a level camera, so its component along world up is the
+  // roll. Well defined at the pole, unlike projecting world up itself.
+  const rollDeg = () => {
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).normalize()
+    return THREE.MathUtils.radToDeg(
+      Math.asin(Math.min(1, Math.abs(right.dot(new THREE.Vector3(0, 1, 0))))),
+    )
+  }
+
+  // A real drag is never perfectly vertical, and the sideways component is what
+  // tips a stale preset up-vector over. Held pointer, incremental moves — the
+  // gesture from the bug report. Issue #493.
+  const base = { pointerType: 'mouse', pointerId: 1, button: 0, shiftKey: false, preventDefault() {} }
+  let x = 400
+  let y = 300
+  listeners['pointerdown']?.forEach(fn => fn({ ...base, clientX: x, clientY: y } as unknown as Event))
+  for (let step = 1; step <= 26; step++) {
+    x += 4
+    y -= 10
+    listeners['pointermove']?.forEach(fn => fn({ ...base, clientX: x, clientY: y } as unknown as Event))
+    assert.ok(
+      rollDeg() < 1,
+      `horizon tumbled ${rollDeg()}° off level after ${step} drag steps out of the top preset`,
+    )
+  }
+})
