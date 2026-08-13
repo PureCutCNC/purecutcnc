@@ -511,3 +511,47 @@ test('orbiting away from the top preset never mirrors the view', () => {
     )
   }
 })
+
+test('horizontal drag at the top preset spins the plan view instead of orbiting', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const { listeners, controls } = makeListeningControls(cam)
+  controls.setPreset('top')
+
+  // Two marks on the material, both well clear of the view axis looking down.
+  const a = new THREE.Vector3(40, 0, 0)
+  const b = new THREE.Vector3(0, 0, 40)
+  const screenAngle = () => {
+    const pa = projectToScreen(a, cam)
+    const pb = projectToScreen(b, cam)
+    return Math.atan2(pb.y - pa.y, pb.x - pa.x)
+  }
+
+  const forwardBefore = new THREE.Vector3()
+  cam.getWorldDirection(forwardBefore)
+  const angleBefore = screenAngle()
+
+  dispatchDrag(listeners, 50, 0)
+
+  const forwardAfter = new THREE.Vector3()
+  cam.getWorldDirection(forwardAfter)
+  let spinDeg = THREE.MathUtils.radToDeg(screenAngle() - angleBefore)
+  while (spinDeg > 180) spinDeg -= 360
+  while (spinDeg < -180) spinDeg += 360
+
+  // Looking straight down, "turn left" has no meaning beyond roll, so a fixed-up
+  // orbit spins the image in place. Verified against SketchUp; three.js
+  // OrbitControls does the same. This is intended behaviour, not a defect.
+  //
+  // It is guarded because the obvious way to "fix" a spinning top view is to let
+  // a preset up-vector survive into free orbit, which pins screen-right — and
+  // that is exactly the stale-up bug the mirror test above covers. Restoring one
+  // silently restores the other. Issue #493.
+  assert.ok(
+    Math.abs(spinDeg) > 20,
+    `top view must spin under a horizontal drag (spun ${spinDeg}°)`,
+  )
+  assert.ok(
+    THREE.MathUtils.radToDeg(forwardBefore.angleTo(forwardAfter)) < 5,
+    'top view must keep looking essentially straight down while it spins',
+  )
+})
