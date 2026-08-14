@@ -16,7 +16,7 @@ available; do not treat one-off diagnostics as normal quality gates.
 
 ## Optional delegated-agent harness
 
-- [`dispatch-task.sh`](dispatch-task.sh), [`finish-task.sh`](finish-task.sh), and [`worker-status.sh`](worker-status.sh) — provider-neutral integration-manager worktree lifecycle. `claude-deepseek` remains the default provider; select `--provider dsh` for DeepSeek Harness.
+- [`dispatch-task.sh`](dispatch-task.sh), [`finish-task.sh`](finish-task.sh), and [`worker-status.sh`](worker-status.sh) — provider-neutral integration-manager worktree lifecycle. `claude-deepseek` remains the default provider; select `--provider dsh` for DeepSeek Harness. `dispatch-task.sh --handoff REPO_PATH` gives either provider a compact bootstrap to read a tracked in-worktree handoff; direct stdin is reserved for a small instruction.
 - [`run-claude-deepseek-agent.sh`](run-claude-deepseek-agent.sh) — credential-backed Claude/DeepSeek leaf launcher.
 - [`run-dsh-agent.sh`](run-dsh-agent.sh) — DeepSeek Harness leaf launcher using DSH's own credential store and sandbox modes.
 - [`claude-deepseek-agent-prompt.md`](claude-deepseek-agent-prompt.md) — bounded provider-neutral worker prompt template (historic filename retained for compatibility).

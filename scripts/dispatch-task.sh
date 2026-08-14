@@ -13,16 +13,19 @@ readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly CLAUDE_DEEPSEEK_LEAF="$SCRIPT_DIR/run-claude-deepseek-agent.sh"
 readonly DSH_LEAF="$SCRIPT_DIR/run-dsh-agent.sh"
 readonly DEFAULT_BASE="feat/core-arch-simplification"
+readonly MAX_DIRECT_PROMPT_BYTES=4096
 WORKTREE_BASE="${PURECUT_WORKTREE_BASE:-$(dirname "$REPO_ROOT")/worktrees/$(basename "$REPO_ROOT")}"
 
 usage() {
   cat <<'EOF'
 Usage:
-  Implement: scripts/dispatch-task.sh --issue NN --task-slug SLUG [--base BRANCH] [--provider PROVIDER] < prompt.md
-  Review:    scripts/dispatch-task.sh --mode review --worktree DIR [--provider PROVIDER] < prompt.md
+  Implement: scripts/dispatch-task.sh --issue NN --task-slug SLUG [--base BRANCH] [--provider PROVIDER] [--handoff REPO_PATH] < brief.txt
+  Review:    scripts/dispatch-task.sh --mode review --worktree DIR [--provider PROVIDER] [--handoff REPO_PATH] < brief.txt
 
 Orchestrate one bounded external-worker session and verify the result. The
-prompt is piped on stdin (fill scripts/claude-deepseek-agent-prompt.md first).
+brief instruction is piped on stdin. For a detailed task, use --handoff with a
+tracked path relative to the task worktree; the provider receives a compact
+bootstrap that tells it to read that file.
 
 Implement mode (default):
   Creates a worktree at $PURECUT_WORKTREE_BASE/SLUG on a new branch
@@ -35,6 +38,8 @@ Options:
   --task-slug SLUG    Short kebab-case slug (implement mode; worktree dir + branch).
   --base BRANCH       Integration branch to branch from (default: feat/core-arch-simplification).
   --provider NAME     claude-deepseek (default) or dsh.
+  --handoff REPO_PATH Optional tracked, relative handoff path in the task
+                      worktree. The full file stays out of command arguments.
   --mode MODE         implement (default) or review.
   --worktree DIR      Existing worktree to review (review mode only).
   --skip-build        Skip the post-worker build gate (implement mode).
@@ -58,6 +63,7 @@ fail() { printf 'dispatch-task: %s\n' "$*" >&2; exit 1; }
 
 mode="implement"
 provider="claude-deepseek"
+handoff=""
 issue=""
 slug=""
 base="$DEFAULT_BASE"
@@ -71,6 +77,7 @@ while [[ $# -gt 0 ]]; do
     --task-slug)    [[ $# -ge 2 ]] || fail "--task-slug requires a value"; slug="$2"; shift 2 ;;
     --base)         [[ $# -ge 2 ]] || fail "--base requires a branch"; base="$2"; shift 2 ;;
     --provider)     [[ $# -ge 2 ]] || fail "--provider requires claude-deepseek or dsh"; provider="$2"; shift 2 ;;
+    --handoff)      [[ $# -ge 2 ]] || fail "--handoff requires a tracked repository path"; handoff="$2"; shift 2 ;;
     --mode)         [[ $# -ge 2 ]] || fail "--mode requires implement or review"; mode="$2"; shift 2 ;;
     --worktree)     [[ $# -ge 2 ]] || fail "--worktree requires a directory"; review_worktree="$2"; shift 2 ;;
     --skip-build)   skip_build=true; shift ;;
@@ -111,9 +118,41 @@ esac
 # Buffer the prompt so it can be fed to either leaf without changing its
 # contract. The provider receives it only when the leaf is invoked below.
 prompt_file="$(mktemp -t dispatch-task-prompt)"
-trap 'rm -f "$prompt_file"' EXIT
+worker_prompt_file="$prompt_file"
+trap 'rm -f "$prompt_file" "$worker_prompt_file"' EXIT
 cat > "$prompt_file"
 [[ -s "$prompt_file" ]] || fail "the piped prompt is empty"
+prompt_bytes="$(wc -c < "$prompt_file" | tr -d '[:space:]')"
+[[ "$prompt_bytes" -le "$MAX_DIRECT_PROMPT_BYTES" ]] \
+  || fail "the brief instruction exceeds ${MAX_DIRECT_PROMPT_BYTES} bytes; store the full task in a tracked handoff and use --handoff REPO_PATH"
+
+validate_handoff() {
+  local worktree="$1"
+  [[ -n "$handoff" ]] || return 0
+  [[ "$handoff" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] \
+    || fail "--handoff must be a relative repository path without spaces or shell characters: $handoff"
+  [[ "$handoff" != ./* && "$handoff" != */./* && "$handoff" != */ && "$handoff" != *//* ]] \
+    || fail "--handoff must be a normalized relative file path: $handoff"
+  [[ "/$handoff/" != *"/../"* ]] \
+    || fail "--handoff must not contain parent-directory traversal: $handoff"
+  git -C "$worktree" ls-files --error-unmatch -- "$handoff" >/dev/null 2>&1 \
+    || fail "--handoff must name a tracked file in the task worktree: $handoff"
+  [[ -f "$worktree/$handoff" && ! -L "$worktree/$handoff" ]] \
+    || fail "--handoff must name a regular tracked file in the task worktree: $handoff"
+}
+
+prepare_worker_prompt() {
+  local worktree="$1"
+  [[ -n "$handoff" ]] || return 0
+  validate_handoff "$worktree"
+  worker_prompt_file="$(mktemp -t dispatch-task-worker-prompt)"
+  {
+    printf 'Read the complete task handoff at %s in the current worktree.\n' "$handoff"
+    printf 'That tracked file is the primary specification; follow it exactly.\n\n'
+    printf 'Short manager instruction:\n'
+    cat "$prompt_file"
+  } > "$worker_prompt_file"
+}
 
 if [[ "$provider" == "claude-deepseek" ]]; then
   # The Claude/DeepSeek leaf reads the canonical credential file in the primary
@@ -132,7 +171,7 @@ run_review() {
     leaf_args+=(--output-format text)
   fi
   [[ -n "$progress_log" ]] && leaf_args+=(--progress-log "$progress_log")
-  "$leaf" "${leaf_args[@]}" < "$prompt_file" || status=$?
+  "$leaf" "${leaf_args[@]}" < "$worker_prompt_file" || status=$?
   progress_mark "[dispatch] done provider=$provider worker_exit=$status build=n/a"
   return "$status"
 }
@@ -140,6 +179,7 @@ run_review() {
 if [[ "$mode" == "review" ]]; then
   [[ -n "$review_worktree" ]] || fail "review mode requires --worktree DIR (an existing worktree)"
   [[ -d "$review_worktree" ]] || fail "--worktree is not a directory: $review_worktree"
+  prepare_worker_prompt "$review_worktree"
   printf '== review worker (%s, read-only) in %s ==\n' "$provider" "$review_worktree" >&2
   run_review
   exit $?
@@ -172,12 +212,13 @@ printf '== progress log: %s ==\n' "$progress_log" >&2
 printf '== poll with: scripts/worker-status.sh --slug %s ==\n' "$slug" >&2
 
 printf '== dispatching implement worker (%s) ==\n' "$provider" >&2
+prepare_worker_prompt "$worktree_dir"
 worker_status=0
 leaf_args=(--mode implement --worktree "$worktree_dir" --progress-log "$progress_log")
 if [[ "$provider" == "claude-deepseek" ]]; then
   leaf_args+=(--allow-bypass --output-format text)
 fi
-"$leaf" "${leaf_args[@]}" < "$prompt_file" || worker_status=$?
+"$leaf" "${leaf_args[@]}" < "$worker_prompt_file" || worker_status=$?
 if [[ "$worker_status" -ne 0 ]]; then
   printf '\n!! worker exited non-zero (%s); worktree left in place for inspection !!\n' \
     "$worker_status" >&2

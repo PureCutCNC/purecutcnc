@@ -19,13 +19,17 @@ This skill automates that documented flow; it does not replace those rules.
 1. **Analyze & plan in a GitHub issue.** Open an issue, write the plan in it,
    get the user's approval before implementing. No `planning/*_Plan.md` files —
    the issue is the plan of record. (See the issue-driven gate in AGENTS.md.)
-2. **Write the handoff prompt.** Copy `scripts/claude-deepseek-agent-prompt.md`
-   and fill every bracketed field for the slice (slice id, summary, allowed/
-   forbidden files, invariants, required checks, plan + handoff paths). Those
-   referenced paths must be **tracked files visible in the worktree** — never
-   `work/` (gitignored, absent from worktrees). Save to a temp file.
-3. **Select a provider and request permission (see below), then dispatch.** Pipe
-   the prompt into `scripts/dispatch-task.sh`. It creates the worktree+branch, runs the worker,
+2. **Write the handoff.** Copy `scripts/claude-deepseek-agent-prompt.md` and
+   fill every bracketed field for the slice (slice id, summary, allowed/
+   forbidden files, invariants, required checks, plan + handoff paths). Save the
+   completed handoff at a **tracked path visible in the task worktree** — never
+   `work/` (gitignored, absent from worktrees). The selected base must already
+   contain that file. Keep stdin to a brief instruction; direct prompts are
+   capped at 4 KiB.
+3. **Select a provider and request permission (see below), then dispatch.** Pass
+   `--handoff REPO_PATH` and pipe the brief instruction into
+   `scripts/dispatch-task.sh`. It validates the path in the actual worktree,
+   creates one compact provider-neutral bootstrap, runs the worker,
    runs an independent build gate, and reports — it does **not** merge.
    Run it in the background (redirect output to a file) and watch the slice's
    progress log instead of blocking a foreground call on the whole run (see
@@ -197,14 +201,19 @@ single — so match the file, not the sibling.
 ## Commands
 
 ```
-# Dispatch one implement slice (after approval). Prompt on stdin.
-scripts/dispatch-task.sh --issue NN --task-slug SLUG [--base BRANCH] [--provider claude-deepseek|dsh] < prompt.md
+# Dispatch one implement slice (after approval). The detailed handoff is tracked;
+# stdin holds only a short manager instruction.
+printf '%s\n' 'Implement the assigned slice and report results.' | \
+  scripts/dispatch-task.sh --issue NN --task-slug SLUG \
+  [--base BRANCH] [--provider claude-deepseek|dsh] --handoff REPO_PATH
 #   default --base: feat/core-arch-simplification
 #   creates worktree at $PURECUT_WORKTREE_BASE/SLUG on feat/issue-NN-SLUG
 #   runs the worker, then `npm run build` as an independent gate; never merges.
 
 # Read-only review of an existing worktree (optional helper).
-scripts/dispatch-task.sh --mode review --worktree DIR [--provider claude-deepseek|dsh] < prompt.md
+printf '%s\n' 'Review the assigned diff and report findings.' | \
+  scripts/dispatch-task.sh --mode review --worktree DIR \
+  [--provider claude-deepseek|dsh] --handoff REPO_PATH
 
 # Poll a running dispatch (instant; see "Watching a dispatched worker").
 scripts/worker-status.sh --slug SLUG

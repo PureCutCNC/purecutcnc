@@ -1,8 +1,12 @@
-# Delegated implementation-worker prompt template
+# Delegated implementation-worker handoff template
 
-Use this as the complete prompt supplied to either supported leaf launcher through
-`scripts/dispatch-task.sh`. Replace only the bracketed fields before dispatching
-a slice.
+For a detailed slice, save a completed copy at a **tracked path in the selected
+base/worktree**, then dispatch every provider with `--handoff REPO_PATH` and a
+short stdin instruction. The dispatcher gives the provider a compact bootstrap;
+the full handoff never becomes a command-line argument. Direct stdin prompts are
+reserved for small tasks.
+
+Replace only the bracketed fields before dispatching a slice.
 
 ```text
 You are the implementation worker for slice [SLICE_ID] of [TOPIC].
