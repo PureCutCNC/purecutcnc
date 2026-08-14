@@ -92,7 +92,7 @@ uncertainty may restore full feed.
 | S1 | Pure engagement estimator + feed quantization + telemetry types | `c969e0e` | `feat/issue-498-engagement-core` / removed | `complete` | `accepted` | `b59178f`, merged `620229d` | both passed | 945 insertions across the 4 allowed files |
 | S2 | Operation mode field + pocket wiring + regeneration allowlist | `a44eec5` | `feat/issue-498-engagement-pocket` / retained | `complete` | **rejected — 3 blockers** | `2a8a5e3`, NOT merged | both passed | branch kept; corrections build on it |
 | S2b | engagement.ts: nominal deadband, bucket ladder, capsule geometry | `-` | `-` | `not started` | `pending` | `-` | `-` | fixes blockers 1 and 3 |
-| S2c | pocket.ts: per-band caching + parallel-pattern clamp | `-` | `-` | `not started` | `pending` | `-` | `-` | fixes blocker 2; needs S2b's API |
+| S2c | Capsule early-out, per-band cache, pointwise never-raise clamp | `417f43c` | `feat/issue-498-engagement-perf` / retained | `complete` | **rejected — per-level feed drift** | `7df0fdc`, NOT merged | all passed | blockers 2 and 3 addressed; new defect found |
 | S3 | CAM panel control + booklet row + i18n (en/de/es/fr) | `-` | `-` | `not started` | `pending` | `-` | `-` | user-facing surface kept in one slice so the locale review happens once |
 
 The original S2 (standalone oracle) was dropped: the S1 review already cross-validated
@@ -163,6 +163,54 @@ change. Three compounding causes:
 3. *No per-band caching.* Cost scales linearly with level count, so the index is
    rebuilt at every Z. #498's plan called for classifying once per band because the
    ring tree is Z-invariant; that was not implemented. Worth 5–6× on deep pockets.
+
+### S2c review — two blockers fixed, one new defect, not merged
+
+| Check | Result |
+| --- | --- |
+| Legacy byte-identical vs pre-slice branch | pass, all 11 fixtures |
+| Never-raise (geometric, by midpoint containment) | **0 raised** across all fixtures, including the parallel pattern that was 38/102 and 54/140 |
+| Independent oracle vs the modified estimator | 56/56 — the early-out drops no coverage it shouldn't |
+| Generation cost | `rect-offset` 9.4× → **2.5×**, `multilevel` 39× → **7.8×**, `parallel` 33× → **11.9×**, 200 mm six-level 40× → **14.5×** (4909 ms → 1796 ms) |
+| `rect-round` (tessellated arcs) | 26× → 204× → **53.9×** — improved over S2b, still worse than the disc model it replaced |
+
+Legacy timings are unchanged, and the mode defaults to `'legacy'`, so the
+remaining cost is opt-in.
+
+**New defect — the emitted feed ratchets down with depth on identical geometry.**
+The offset ring tree is Z-invariant, and legacy proves it: every level emits
+exactly 60 fed moves with byte-identical XY sequences. Engagement mode emits
+126 / 120 / 118 / 110 / 102 moves at successive levels, with differing XY splits
+and the same 1362.1 mm of path at each:
+
+| Z | full feed | slot feed |
+| --- | --- | --- |
+| −0.8 | 64.6% | 35.4% |
+| −1.6 | 56.1% | 43.9% |
+| −2.4 | 49.1% | 50.9% |
+| −3.2 | 41.3% | 58.7% |
+| −4.0 | 28.8% | 71.2% |
+
+The same ring, at the same XY, against the same material, is cut 71% slow at the
+bottom and 35% slow at the top. Monotonic in depth, which no physical reading
+explains.
+
+Most likely mechanism, inferred rather than proven: the per-band cache is looked
+up by segment coordinate identity, and a growing share of moves at deeper levels
+miss it. `pocket.ts` resolves a miss to `Math.PI` — full engagement, therefore
+slot feed — as a deliberate conservative fallback. The drift direction, the
+per-level split differences, and the identical path length all fit.
+
+**The fallback is what hid it.** Safe-but-silent turned a cache-correctness bug
+into an invisible cycle-time bug: the build passes, every test passes, legacy
+stays byte-identical, and the never-raise check is clean, because being wrong in
+the slow direction violates nothing anyone asserted. A miss should be loud — a
+warning, or a test-visible counter — even while it stays conservative at runtime.
+
+**The invariant the next slice must assert**, which the worker's cache test
+missed by testing cache-versus-recompute rather than level-versus-level: *for a
+Z-invariant ring tree, the emitted `feedScale` pattern must be identical at every
+level.* That is a one-line property over the dump and it fails today.
 
 ### Measurement finding: rounding corners lowers peak tool load
 
