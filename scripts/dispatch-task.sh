@@ -129,8 +129,8 @@ prompt_bytes="$(wc -c < "$prompt_file" | tr -d '[:space:]')"
 validate_handoff() {
   local worktree="$1"
   [[ -n "$handoff" ]] || return 0
-  [[ "$handoff" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] \
-    || fail "--handoff must be a relative repository path without spaces or shell characters: $handoff"
+  [[ "$handoff" != /* && "$handoff" != *$'\n'* && "$handoff" != *$'\r'* ]] \
+    || fail "--handoff must be a relative repository path without line breaks: $handoff"
   [[ "$handoff" != ./* && "$handoff" != */./* && "$handoff" != */ && "$handoff" != *//* ]] \
     || fail "--handoff must be a normalized relative file path: $handoff"
   [[ "/$handoff/" != *"/../"* ]] \

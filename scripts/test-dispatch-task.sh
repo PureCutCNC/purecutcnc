@@ -50,7 +50,10 @@ mkdir -p "$TEMP_DIR/wt/handoffs"
 cat > "$TEMP_DIR/wt/handoffs/slice.md" <<'EOF'
 This is the complete tracked handoff. It must not be included in the provider command.
 EOF
-git -C "$TEMP_DIR/wt" add handoffs/slice.md
+cat > "$TEMP_DIR/wt/handoffs/slice handoff.md" <<'EOF'
+This tracked handoff verifies that spaces in safe repository paths work.
+EOF
+git -C "$TEMP_DIR/wt" add handoffs
 git -C "$TEMP_DIR/wt" -c user.name=test -c user.email=test@example.com \
   commit -qm 'add handoff fixture'
 
@@ -84,6 +87,12 @@ assert_not_contains() {
   [[ "$haystack" != *"$needle"* ]] || fail "expected output not to contain: $needle"
 }
 assert_not_contains "$dsh_handoff_output" 'This is the complete tracked handoff.'
+
+spaced_handoff_output="$(printf 'review the assigned slice\n' | PATH="$TEMP_DIR/bin:$PATH" \
+  DEEPSEEK_AGENT_ENV_FILE="$TEMP_DIR/agent.env" "$DISPATCH" \
+    --provider dsh --mode review --worktree "$TEMP_DIR/wt" --handoff 'handoffs/slice handoff.md')"
+assert_contains "$spaced_handoff_output" 'Read the complete task handoff at handoffs/slice handoff.md in the current worktree.'
+assert_not_contains "$spaced_handoff_output" 'This tracked handoff verifies'
 
 claude_handoff_output="$(printf 'review the assigned slice\n' | PATH="$TEMP_DIR/bin:$PATH" \
   DEEPSEEK_AGENT_ENV_FILE="$TEMP_DIR/agent.env" "$DISPATCH" \
