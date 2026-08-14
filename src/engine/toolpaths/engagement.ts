@@ -25,50 +25,51 @@
  * entirely in already-cut space is `0`. An index with no prior sweep nearby
  * reports `π` — virgin material is full engagement, never zero.
  *
- * Prior sweeps are modelled as chains of discs of the tool radius, spaced so
- * the under-covered lens between consecutive discs stays below a stated
- * fraction of the tool radius (see `DISC_UNDERCOVER_FRACTION`). This is exact
- * per disc (closed form below), and its error is conservative by construction:
- * under-covering a prior sweep reports more uncut material, therefore more
- * engagement, therefore a lower feed.
- *
- * Conservative bias is a hard rule: sampling gaps, index misses, and
- * degenerate or zero-length input all resolve toward MORE engagement.
- * Nothing about uncertainty may restore full feed.
+ * Prior sweeps are modelled as capsules — one per swept straight segment —
+ * each the union of three exact pieces: the radius-r disc at each endpoint
+ * and the rectangular body between them. The covered angular interval of a
+ * query circle is the union of those pieces' closed forms below, clipped to
+ * the leading semicircle; the uncovered measure is the engagement. Because
+ * every piece is exact, the estimate carries no systematic geometric bias:
+ * conservative bias lives where uncertainty does — degenerate input,
+ * zero-length sweeps, and anything an index cannot see all resolve toward
+ * MORE engagement — and the feed map adds a deadband
+ * (`ENGAGEMENT_ESTIMATE_EPSILON`) over the closed form's floating-point
+ * dust.
  */
 
 /**
- * Closed form for one disc. Query centre `C`, tool radius `r`, prior disc
+ * Closed form for one endpoint disc. Query centre `C`, tool radius `r`, disc
  * centre `Q`: let `v = Q − C`, `D = |v|`, `φ = atan2(v.y, v.x)`. A cutter
- * circle point `P(θ) = C + r·u(θ)` lies inside the prior disc iff
+ * circle point `P(θ) = C + r·u(θ)` lies inside the disc iff
  *
  *   |r·u − v|² ≤ r²  ⟺  u·v ≥ D² / (2r)  ⟺  cos(θ − φ) ≥ D / (2r)
  *
  * so the covered angular interval is the single arc `[φ − h, φ + h]` with
  * `h = arccos(D / (2r))`, non-empty only when `D ≤ 2r`. When `D = 0` the
- * cutter circle lies entirely inside the prior disc (covered measure `2π`);
+ * cutter circle lies entirely inside the disc (covered measure `2π`);
  * `atan2` is undefined there, so that case is special-cased.
- *
- * Validation identity: for a straight pass parallel to a prior pass at radial
- * depth `a_e`, the union of covered arcs over the wall reproduces the analytic
- * wrap angle exactly: engagement = `arccos(1 − a_e/r)` (0 at `a_e = 0`,
- * `π/2` at `a_e = r`, `π` at `a_e = 2r`).
  */
 
 /**
- * Stated bound on the under-covered lens between consecutive discs of a swept
- * segment, as a fraction of the tool radius. Two discs at spacing `s` leave a
- * lens of radial depth `r − sqrt(r² − (s/2)²)` between them; requiring that
- * depth to stay below `ε·r` gives the disc spacing
+ * Closed form for the rectangular body. With `e` the unit vector along
+ * `A→B`, `n` its perpendicular, `w = C − A`, `L = |B − A|`, and `α` the
+ * angle of a circumference point measured **from `e`**, a point
+ * `P(α) = C + r·u(α)` lies in the rectangle iff both hold:
  *
- *   s = 2r · sqrt(2ε − ε²)
+ *   along:  e·w + r·cos α ∈ [0, L]  →  cos α ∈ [(−e·w)/r, (L − e·w)/r]
+ *   perp:   |n·w + r·sin α| ≤ r     →  sin α ∈ [(−r − n·w)/r, (r − n·w)/r]
  *
- * With `ε = 2e-4` the spacing is ≈ `0.04·r` and the worst-case engagement
- * error of the chain (a query centred midway between two discs on the same
- * centreline) is `2·arcsin(s / (4r))` ≈ `0.02` rad, which sets the tight
- * tolerance of the validation tests.
+ * Each bound is an interval constraint on `cos α` or `sin α`, so each yields
+ * a union of at most two arcs on `[0, 2π)`; the covered set is the
+ * intersection of the two, then unioned with the endpoint discs. Every
+ * acos/asin argument is clamped into `[−1, 1]` first.
+ *
+ * Validation identity: for a straight pass parallel to a prior pass at
+ * radial depth `a_e`, the covered arcs reproduce the analytic wrap angle:
+ * engagement = `arccos(1 − a_e/r)` (0 at `a_e = 0`, `π/2` at `a_e = r`,
+ * `π` at `a_e = 2r`).
  */
-const DISC_UNDERCOVER_FRACTION = 2e-4
 
 /** Segments shorter than this sweep no measurable material and are not indexed. */
 const ZERO_LENGTH_EPS = 1e-9
@@ -77,30 +78,148 @@ const ZERO_LENGTH_EPS = 1e-9
 const DEGENERATE_DIRECTION_EPS = 1e-12
 
 /**
- * Number of feed-scale buckets emitted by `engagementFeedScale`. Small on
+ * Number of feed-scale buckets emitted by `engagementFeedScale`; the ladder's
+ * top rung is 1.0 (full feed) and its bottom rung is the slot scale. Small on
  * purpose: arc fitting refuses to join two moves whose `feedScale` differs at
  * all (`sameRun`, `src/engine/gcode/arcFitting.ts`), so a continuously varying
  * scale would shatter every arc run into linear moves.
  */
 export const ENGAGEMENT_FEED_BUCKET_COUNT = 6
 
-interface PriorDisc {
-  x: number
-  y: number
+/**
+ * Worst-case over-report of the engagement estimate, in radians — the
+ * deadband `engagementFeedScale` treats as "at nominal". Derived from the
+ * evaluation geometry of the closed forms above, not guessed: every interval
+ * bound is an acos/asin argument assembled from coordinate differences, and
+ * near `±1` those functions amplify an argument error `δ` into an angle
+ * error `√(2δ)` (acos(1 − δ) ≈ √(2δ)). A bound argument passes through at
+ * most ~8 rounded operations, each contributing ≤ 1 ulp = 2⁻⁵², and that
+ * count is doubled for margin, so `δ ≤ 16·2⁻⁵²` and the worst-case angle
+ * error is `√(2·16·2⁻⁵²)` ≈ 8.4e-8 rad. A real straight ring run measured
+ * 4.16e-8 rad above nominal — dust of exactly this kind — and this deadband
+ * covers it with ~2× margin.
+ */
+export const ENGAGEMENT_ESTIMATE_EPSILON = Math.sqrt(2 * 16 * Number.EPSILON)
+
+/** One swept straight segment, stored as a capsule of the tool radius. */
+interface PriorSweep {
+  ax: number
+  ay: number
+  bx: number
+  by: number
 }
 
 /**
- * Spatial index over previously swept segments: each segment is stored as a
- * chain of discs of the tool radius (spacing bounded by the under-cover
- * fraction above), and each disc is inserted into every grid cell its bbox
- * inflated by one tool diameter covers — so a query at distance ≤ 2r from a
- * disc always finds it in its own cell's bucket. Mirrors the grid approach of
- * `PriorCutIndex` in `pocket.ts`.
+ * Interval `[u, v]` with `u ≤ v ≤ u + 2π`, normalized into arcs inside
+ * `[0, 2π)`: one arc when it fits, two when it wraps past `2π`.
+ */
+function arcsInRange(u: number, v: number): Array<[number, number]> {
+  const width = v - u
+  if (width >= 2 * Math.PI) return [[0, 2 * Math.PI]]
+  let lo = u
+  while (lo < 0) lo += 2 * Math.PI
+  while (lo >= 2 * Math.PI) lo -= 2 * Math.PI
+  const hi = lo + width
+  if (hi <= 2 * Math.PI) return [[lo, hi]]
+  return [
+    [lo, 2 * Math.PI],
+    [0, hi - 2 * Math.PI],
+  ]
+}
+
+/** Intersection of two arc sets: pairwise interval overlap, dropping empties. */
+function intersectArcSets(
+  a: Array<[number, number]>,
+  b: Array<[number, number]>,
+): Array<[number, number]> {
+  const out: Array<[number, number]> = []
+  for (const [aLo, aHi] of a) {
+    for (const [bLo, bHi] of b) {
+      const lo = Math.max(aLo, bLo)
+      const hi = Math.min(aHi, bHi)
+      if (lo < hi) out.push([lo, hi])
+    }
+  }
+  return out
+}
+
+/**
+ * The angular set `{α : cos α ∈ [cLo, cHi] and sin α ∈ [sLo, sHi]}` on
+ * `[0, 2π)`, as arcs. The caller checks the raw intervals are non-empty;
+ * every acos/asin argument is clamped into `[−1, 1]`. Each constraint
+ * contributes at most two arcs, the intersection at most eight.
+ */
+function rectangleBodyArcs(
+  cLo: number,
+  cHi: number,
+  sLo: number,
+  sHi: number,
+): Array<[number, number]> {
+  const loC = Math.max(-1, Math.min(1, cLo))
+  const hiC = Math.max(-1, Math.min(1, cHi))
+  const loS = Math.max(-1, Math.min(1, sLo))
+  const hiS = Math.max(-1, Math.min(1, sHi))
+  let cosSet: Array<[number, number]> = [[0, 2 * Math.PI]]
+  if (loC > -1) {
+    const a = Math.acos(loC)
+    cosSet = intersectArcSets(cosSet, arcsInRange(-a, a))
+  }
+  if (hiC < 1) {
+    const b = Math.acos(hiC)
+    cosSet = intersectArcSets(cosSet, arcsInRange(b, 2 * Math.PI - b))
+  }
+  let sinSet: Array<[number, number]> = [[0, 2 * Math.PI]]
+  if (loS > -1) {
+    const a = Math.asin(loS)
+    sinSet = intersectArcSets(sinSet, arcsInRange(a, Math.PI - a))
+  }
+  if (hiS < 1) {
+    const b = Math.asin(hiS)
+    sinSet = intersectArcSets(sinSet, arcsInRange(Math.PI - b, 2 * Math.PI + b))
+  }
+  return intersectArcSets(cosSet, sinSet)
+}
+
+/**
+ * Clip a covered arc `[arcLo, arcHi]` (absolute angles, width ≤ 2π) to the
+ * leading semicircle `[−π/2, π/2]` in ψ-relative coordinates and append the
+ * pieces to `intervals`. The arc may wrap past π; the two-branch clip is
+ * exhaustive for widths up to 2π.
+ */
+function pushLeadingClip(
+  arcLo: number,
+  arcHi: number,
+  psi: number,
+  intervals: Array<[number, number]>,
+): void {
+  let s = arcLo - psi
+  while (s < -Math.PI) s += 2 * Math.PI
+  while (s >= Math.PI) s -= 2 * Math.PI
+  const hi = s + (arcHi - arcLo)
+  const firstLo = Math.max(s, -Math.PI / 2)
+  const firstHi = Math.min(hi, Math.PI / 2)
+  if (firstLo < firstHi) intervals.push([firstLo, firstHi])
+  if (hi > (3 * Math.PI) / 2) {
+    const wrapHi = hi - 2 * Math.PI
+    if (wrapHi > -Math.PI / 2) intervals.push([-Math.PI / 2, wrapHi])
+  }
+}
+
+/**
+ * Spatial index over previously swept capsules. Each swept segment is stored
+ * once per grid cell its own extent covers — the cells the centreline
+ * crosses (supercover), each dilated by its 8 neighbours so the radius-r
+ * tube is fully indexed — not per cell of a 2r-padded bbox. A query scans
+ * only the 3×3 cell block around its own cell, which is exact: a sweep
+ * point within `2r` of the query lies at most one cell away (cell size
+ * `2r`), and its cell holds the sweep because the sweep is indexed by its
+ * own extent. A capsule spanning many cells is still found because it is
+ * indexed in each of them. Insertion cost is O(cells the extent covers),
+ * which removes the 9×-per-disc cost of the former disc chain.
  */
 export class SweptMaterialIndex {
-  private readonly cells = new Map<string, PriorDisc[]>()
+  private readonly cells = new Map<string, PriorSweep[]>()
   private readonly radius: number
-  private readonly discSpacing: number
   private readonly cellSize: number
 
   constructor(toolRadius: number) {
@@ -108,46 +227,75 @@ export class SweptMaterialIndex {
       throw new RangeError(`SweptMaterialIndex: toolRadius must be a positive finite number, got ${toolRadius}`)
     }
     this.radius = toolRadius
-    this.discSpacing =
-      2 * toolRadius * Math.sqrt(2 * DISC_UNDERCOVER_FRACTION - DISC_UNDERCOVER_FRACTION * DISC_UNDERCOVER_FRACTION)
     this.cellSize = 2 * toolRadius
   }
 
   /**
-   * Record a swept straight segment `A → B` (a prior cut move at this level).
-   * The segment is stored as a chain of discs of the tool radius with both
-   * endpoints included. Zero-length segments are skipped — an unindexed sweep
-   * resolves toward more engagement, which is the conservative direction.
+   * Record a swept straight segment `A → B` (a prior cut move at this level)
+   * as one capsule, indexed by the cells its extent covers. Zero-length
+   * segments are skipped — an unindexed sweep resolves toward more
+   * engagement, which is the conservative direction.
    */
   addSweptSegment(ax: number, ay: number, bx: number, by: number): void {
-    const dx = bx - ax
-    const dy = by - ay
-    const length = Math.hypot(dx, dy)
-    if (length <= ZERO_LENGTH_EPS) return
-    const discCount = Math.max(2, Math.ceil(length / this.discSpacing) + 1)
-    for (let disc = 0; disc < discCount; disc += 1) {
-      const t = disc / (discCount - 1)
-      this.insertDisc(ax + dx * t, ay + dy * t)
+    if (Math.hypot(bx - ax, by - ay) <= ZERO_LENGTH_EPS) return
+    const sweep: PriorSweep = { ax, ay, bx, by }
+    for (const key of this.extentCellKeys(sweep)) {
+      const bucket = this.cells.get(key)
+      if (bucket) {
+        bucket.push(sweep)
+      } else {
+        this.cells.set(key, [sweep])
+      }
     }
   }
 
-  private insertDisc(x: number, y: number): void {
-    const pad = this.cellSize
-    const colMin = Math.floor((x - pad) / this.cellSize)
-    const colMax = Math.floor((x + pad) / this.cellSize)
-    const rowMin = Math.floor((y - pad) / this.cellSize)
-    const rowMax = Math.floor((y + pad) / this.cellSize)
-    for (let col = colMin; col <= colMax; col += 1) {
-      for (let row = rowMin; row <= rowMax; row += 1) {
-        const key = `${col},${row}`
-        const bucket = this.cells.get(key)
-        if (bucket) {
-          bucket.push({ x, y })
-        } else {
-          this.cells.set(key, [{ x, y }])
+  /**
+   * Cells whose extent the capsule covers: the supercover cells the
+   * centreline crosses, each dilated by its 8 neighbours so every point of
+   * the radius-r tube sits in an indexed cell.
+   */
+  private extentCellKeys(sweep: PriorSweep): string[] {
+    const c = this.cellSize
+    const dx = sweep.bx - sweep.ax
+    const dy = sweep.by - sweep.ay
+    const minX = Math.min(sweep.ax, sweep.bx)
+    const maxX = Math.max(sweep.ax, sweep.bx)
+    const minY = Math.min(sweep.ay, sweep.by)
+    const maxY = Math.max(sweep.ay, sweep.by)
+    // Grid-line crossing parameters: t where x(t) or y(t) equals k·c.
+    const crossings: number[] = [0, 1]
+    if (Math.abs(dx) > ZERO_LENGTH_EPS) {
+      for (let k = Math.floor(minX / c) + 1; k * c < maxX; k += 1) {
+        const t = (k * c - sweep.ax) / dx
+        if (t > 0 && t < 1) crossings.push(t)
+      }
+    }
+    if (Math.abs(dy) > ZERO_LENGTH_EPS) {
+      for (let k = Math.floor(minY / c) + 1; k * c < maxY; k += 1) {
+        const t = (k * c - sweep.ay) / dy
+        if (t > 0 && t < 1) crossings.push(t)
+      }
+    }
+    crossings.sort((p, q) => p - q)
+    const keys = new Set<string>()
+    for (let i = 0; i + 1 < crossings.length; i += 1) {
+      const t = (crossings[i] + crossings[i + 1]) / 2
+      const col = Math.floor((sweep.ax + dx * t) / c)
+      const row = Math.floor((sweep.ay + dy * t) / c)
+      for (let dc = -1; dc <= 1; dc += 1) {
+        for (let dr = -1; dr <= 1; dr += 1) {
+          keys.add(`${col + dc},${row + dr}`)
         }
       }
     }
+    return Array.from(keys)
+  }
+
+  /** Number of stored cell entries — the index-size proxy for complexity checks. */
+  storedEntryCount(): number {
+    let total = 0
+    for (const bucket of this.cells.values()) total += bucket.length
+    return total
   }
 
   /**
@@ -155,11 +303,11 @@ export class SweptMaterialIndex {
    * `(dirX, dirY)` (need not be unit length): the measure of the leading
    * semicircle lying in material not yet swept, in `[0, π]`.
    *
-   * The covered arcs of every prior disc in the query cell are unioned, then
-   * clipped to the leading semicircle; engagement is the uncovered measure.
-   * Degenerate input (non-finite coordinates, a zero-length direction, or no
-   * prior sweep in range) resolves to `π` — full engagement — per the
-   * conservative-bias rule.
+   * The covered arcs of every capsule in the 3×3 cell block around the
+   * query cell are unioned, then clipped to the leading semicircle;
+   * engagement is the uncovered measure. Degenerate input (non-finite
+   * coordinates, a zero-length direction, or no prior sweep in range)
+   * resolves to `π` — full engagement — per the conservative-bias rule.
    */
   engagementAt(x: number, y: number, dirX: number, dirY: number): number {
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(dirX) || !Number.isFinite(dirY)) {
@@ -168,37 +316,21 @@ export class SweptMaterialIndex {
     const dirLength = Math.hypot(dirX, dirY)
     if (dirLength <= DEGENERATE_DIRECTION_EPS) return Math.PI
     const psi = Math.atan2(dirY / dirLength, dirX / dirLength)
-    const bucket = this.cells.get(`${Math.floor(x / this.cellSize)},${Math.floor(y / this.cellSize)}`)
-    if (!bucket) return Math.PI
-
-    const twoR = 2 * this.radius
+    const col = Math.floor(x / this.cellSize)
+    const row = Math.floor(y / this.cellSize)
     const intervals: Array<[number, number]> = []
-    for (const disc of bucket) {
-      const vx = disc.x - x
-      const vy = disc.y - y
-      const dSq = vx * vx + vy * vy
-      if (dSq > twoR * twoR) continue
-      if (vx === 0 && vy === 0) {
-        // The cutter circle lies inside the prior disc: everything covered.
-        return 0
-      }
-      const d = Math.sqrt(dSq)
-      const h = Math.acos(Math.min(1, Math.max(-1, d / twoR)))
-      // Covered arc [φ − h, φ + h], shifted so the leading semicircle is
-      // [−π/2, π/2].
-      let a = Math.atan2(vy, vx) - psi - h
-      while (a < -Math.PI) a += 2 * Math.PI
-      while (a >= Math.PI) a -= 2 * Math.PI
-      const b = a + 2 * h
-      // Intersect [a, b] with [−π/2, π/2]; the arc may wrap past π.
-      const firstLo = Math.max(a, -Math.PI / 2)
-      const firstHi = Math.min(b, Math.PI / 2)
-      if (firstLo < firstHi) intervals.push([firstLo, firstHi])
-      if (b > (3 * Math.PI) / 2) {
-        const wrapHi = b - 2 * Math.PI
-        if (wrapHi > -Math.PI / 2) intervals.push([-Math.PI / 2, wrapHi])
+    let foundAny = false
+    for (let dc = -1; dc <= 1; dc += 1) {
+      for (let dr = -1; dr <= 1; dr += 1) {
+        const bucket = this.cells.get(`${col + dc},${row + dr}`)
+        if (!bucket) continue
+        foundAny = true
+        for (const sweep of bucket) {
+          if (this.appendCapsuleArcs(sweep, x, y, psi, intervals)) return 0
+        }
       }
     }
+    if (!foundAny) return Math.PI
 
     intervals.sort((p, q) => p[0] - q[0])
     let covered = 0
@@ -217,6 +349,70 @@ export class SweptMaterialIndex {
     }
     if (hasCurrent) covered += currentHi - currentLo
     return Math.min(Math.PI, Math.max(0, Math.PI - covered))
+  }
+
+  /**
+   * Append the covered arcs of one swept capsule (both endpoint discs and
+   * the rectangular body); return true when the whole cutter circle is
+   * covered (engagement 0).
+   */
+  private appendCapsuleArcs(
+    sweep: PriorSweep,
+    x: number,
+    y: number,
+    psi: number,
+    intervals: Array<[number, number]>,
+  ): boolean {
+    if (this.appendDiscArcs(sweep.ax, sweep.ay, x, y, psi, intervals)) return true
+    if (this.appendDiscArcs(sweep.bx, sweep.by, x, y, psi, intervals)) return true
+    const dx = sweep.bx - sweep.ax
+    const dy = sweep.by - sweep.ay
+    const length = Math.hypot(dx, dy)
+    const ex = dx / length
+    const ey = dy / length
+    const nx = -ey
+    const ny = ex
+    const wx = x - sweep.ax
+    const wy = y - sweep.ay
+    const along = ex * wx + ey * wy
+    const perp = nx * wx + ny * wy
+    const r = this.radius
+    const cLo = -along / r
+    const cHi = (length - along) / r
+    const sLo = -(r + perp) / r
+    const sHi = (r - perp) / r
+    if (cLo > cHi || sLo > sHi) return false // the rectangle covers no cutter-circle point
+    const phiE = Math.atan2(ey, ex)
+    for (const [lo, hi] of rectangleBodyArcs(cLo, cHi, sLo, sHi)) {
+      pushLeadingClip(phiE + lo, phiE + hi, psi, intervals)
+    }
+    return false
+  }
+
+  /**
+   * Append the covered arcs of one endpoint disc (closed form in the module
+   * doc); return true when the query centre sits exactly on the disc centre
+   * — the cutter circle lies inside the disc, so everything is covered.
+   */
+  private appendDiscArcs(
+    px: number,
+    py: number,
+    x: number,
+    y: number,
+    psi: number,
+    intervals: Array<[number, number]>,
+  ): boolean {
+    const vx = px - x
+    const vy = py - y
+    const dSq = vx * vx + vy * vy
+    const twoR = 2 * this.radius
+    if (dSq > twoR * twoR) return false
+    if (vx === 0 && vy === 0) return true
+    const d = Math.sqrt(dSq)
+    const h = Math.acos(Math.min(1, Math.max(-1, d / twoR)))
+    const arcLo = Math.atan2(vy, vx) - h
+    pushLeadingClip(arcLo, arcLo + 2 * h, psi, intervals)
+    return false
   }
 }
 
@@ -241,30 +437,33 @@ function continuousFeedScale(engagement: number, nominal: number, slotScale: num
 }
 
 /**
- * Map an engagement to a `feedScale`: exactly `1` at or below the nominal
- * engagement implied by the operation's stepover, then linear interpolation
- * from 1 down to `slotScale` (the feed at full-slot engagement) between
- * nominal and `π`, then quantization to `ENGAGEMENT_FEED_BUCKET_COUNT`
- * buckets rounding DOWN — toward the lower feed, so quantization is itself
- * conservative.
+ * Map an engagement to a `feedScale`. At or below the nominal engagement
+ * implied by the operation's stepover — plus `ENGAGEMENT_ESTIMATE_EPSILON`,
+ * the deadband covering the estimator's worst-case over-report — the scale
+ * is exactly `1`. Above that it interpolates linearly from 1 down to
+ * `slotScale` (the feed at full-slot engagement) between nominal and `π`,
+ * then quantizes to `ENGAGEMENT_FEED_BUCKET_COUNT` buckets whose top rung is
+ * 1.0 and whose bottom rung is `slotScale`, rounding DOWN — toward the
+ * lower feed, so quantization is itself conservative.
  *
  * The quantization is not a preference: arc fitting refuses to join moves
- * whose `feedScale` differs at all, so a continuous scale would shatter every
- * arc run into linear moves. Hysteresis between buckets and a minimum
+ * whose `feedScale` differs at all, so a continuous scale would shatter
+ * every arc run into linear moves. Hysteresis between buckets and a minimum
  * fragment length are applied by `EngagementFeedQuantizer`.
  *
- * Degenerate inputs: engagement ≤ nominal (including NaN) → `1`; `slotScale`
- * is clamped to `[0, 1]` (≥ 1 → always 1); nominal ≥ π → always 1.
+ * Degenerate inputs: engagement ≤ nominal + deadband (including NaN) → `1`;
+ * `slotScale` is clamped to `[0, 1]` (≥ 1 → always 1); nominal ≥ π → always
+ * 1.
  */
 export function engagementFeedScale(engagement: number, nominal: number, slotScale: number): number {
-  if (!(engagement > nominal)) return 1
+  if (!(engagement > nominal + ENGAGEMENT_ESTIMATE_EPSILON)) return 1
   const clampedSlot = Math.min(1, Math.max(0, slotScale))
   if (clampedSlot >= 1) return 1
   if (!(nominal < Math.PI)) return 1
   const continuous = continuousFeedScale(engagement, nominal, clampedSlot)
   const bucketWidth = (1 - clampedSlot) / (ENGAGEMENT_FEED_BUCKET_COUNT - 1)
   const bucket = Math.min(
-    ENGAGEMENT_FEED_BUCKET_COUNT - 2,
+    ENGAGEMENT_FEED_BUCKET_COUNT - 1,
     Math.max(0, Math.floor((continuous - clampedSlot) / bucketWidth + 1e-12)),
   )
   return clampedSlot + bucket * bucketWidth
@@ -292,7 +491,11 @@ const DEFAULT_HYSTERESIS_FRACTION = 0.25
  * - Hysteresis: drops to a lower bucket are immediate (a feed reduction is
  *   never delayed), rises to a higher bucket require the raw scale to sit
  *   past a hysteresis margin inside the target bucket, so a bucket boundary
- *   crossed repeatedly does not alternate.
+ *   crossed repeatedly does not alternate. The top rung (scale 1) is
+ *   special: `ENGAGEMENT_ESTIMATE_EPSILON` inside `engagementFeedScale` is
+ *   its margin — engagement within the estimator's worst-case error of
+ *   nominal counts as exactly 1 and rises to full feed with no further
+ *   margin.
  * - Minimum fragment length: no emitted stretch is shorter than
  *   `minFragmentLength`; a shorter stretch is merged into its lower-scale
  *   neighbour, so the merge itself also resolves toward the lower feed.
@@ -346,9 +549,13 @@ export class EngagementFeedQuantizer {
     }
     // Engagement fell: rise only past the hysteresis margin inside the target
     // bucket and only after the current stretch has reached the minimum
-    // fragment length. Otherwise hold the current (lower) feed.
+    // fragment length. The top rung (scale 1) uses the deadband as its
+    // margin; a NaN sample never rises (NaN comparisons are false). Otherwise
+    // hold the current (lower) feed.
     const continuous = continuousFeedScale(clamped, this.nominal, this.slotScale)
-    if (continuous >= rawScale + this.hysteresisFraction * this.bucketWidth && this.heldDistance >= this.minFragmentLength) {
+    const effective = clamped <= this.nominal + ENGAGEMENT_ESTIMATE_EPSILON ? 1 : continuous
+    const margin = rawScale >= 1 ? 0 : this.hysteresisFraction * this.bucketWidth
+    if (effective >= rawScale + margin && this.heldDistance >= this.minFragmentLength) {
       this.emitted.push({ scale: this.currentScale, distance: this.heldDistance })
       this.currentScale = rawScale
       this.heldDistance = safeDistance

@@ -15,6 +15,7 @@
  */
 
 import {
+  ENGAGEMENT_ESTIMATE_EPSILON,
   ENGAGEMENT_FEED_BUCKET_COUNT,
   EngagementFeedQuantizer,
   EngagementTelemetryAccumulator,
@@ -37,6 +38,92 @@ function assert(condition: boolean, message: string): void {
 
 function approx(a: number, b: number, epsilon = 1e-9): boolean {
   return Math.abs(a - b) < epsilon
+}
+
+/** 32-bit LCG (Numerical Recipes constants) with a constant seed — the
+ *  determinism rules forbid Math.random. */
+function makeLcg(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0
+    return state / 4294967296
+  }
+}
+
+/**
+ * Independent swept-stock reference for the capsule equivalence check: the
+ * same swept segments as a chain of discs at spacing `spacing`, evaluated
+ * with the disc closed form from the domain contract. Deliberately
+ * brute-force (no spatial index) — it exists only to grade the production
+ * estimator, which must not grade its own homework. A chain under-covers
+ * the true swept capsule by a lens of radial depth `r − √(r² − (s/2)²)`
+ * between consecutive discs, so its worst-case engagement over-report is
+ * `2·arcsin(s / (4r))` ≈ 0.0025 rad at `s = r/200`.
+ */
+class DiscChainReference {
+  private readonly discs: Array<{ x: number; y: number }> = []
+  private readonly radius: number
+  private readonly spacing: number
+
+  constructor(radius: number, spacing: number) {
+    this.radius = radius
+    this.spacing = spacing
+  }
+
+  addSweptSegment(ax: number, ay: number, bx: number, by: number): void {
+    const dx = bx - ax
+    const dy = by - ay
+    const length = Math.hypot(dx, dy)
+    if (length <= 1e-12) return
+    const discCount = Math.max(2, Math.ceil(length / this.spacing) + 1)
+    for (let disc = 0; disc < discCount; disc += 1) {
+      const t = disc / (discCount - 1)
+      this.discs.push({ x: ax + dx * t, y: ay + dy * t })
+    }
+  }
+
+  engagementAt(x: number, y: number, dirX: number, dirY: number): number {
+    const dirLength = Math.hypot(dirX, dirY)
+    const psi = Math.atan2(dirY / dirLength, dirX / dirLength)
+    const twoR = 2 * this.radius
+    const intervals: Array<[number, number]> = []
+    for (const disc of this.discs) {
+      const vx = disc.x - x
+      const vy = disc.y - y
+      const dSq = vx * vx + vy * vy
+      if (dSq > twoR * twoR) continue
+      if (vx === 0 && vy === 0) return 0
+      const h = Math.acos(Math.min(1, Math.max(-1, Math.sqrt(dSq) / twoR)))
+      let a = Math.atan2(vy, vx) - psi - h
+      while (a < -Math.PI) a += 2 * Math.PI
+      while (a >= Math.PI) a -= 2 * Math.PI
+      const b = a + 2 * h
+      const firstLo = Math.max(a, -Math.PI / 2)
+      const firstHi = Math.min(b, Math.PI / 2)
+      if (firstLo < firstHi) intervals.push([firstLo, firstHi])
+      if (b > (3 * Math.PI) / 2) {
+        const wrapHi = b - 2 * Math.PI
+        if (wrapHi > -Math.PI / 2) intervals.push([-Math.PI / 2, wrapHi])
+      }
+    }
+    intervals.sort((p, q) => p[0] - q[0])
+    let covered = 0
+    let currentLo = 0
+    let currentHi = 0
+    let hasCurrent = false
+    for (const [lo, hi] of intervals) {
+      if (!hasCurrent || lo > currentHi) {
+        if (hasCurrent) covered += currentHi - currentLo
+        currentLo = lo
+        currentHi = hi
+        hasCurrent = true
+      } else if (hi > currentHi) {
+        currentHi = hi
+      }
+    }
+    if (hasCurrent) covered += currentHi - currentLo
+    return Math.min(Math.PI, Math.max(0, Math.PI - covered))
+  }
 }
 
 // ── Fixture helpers ─────────────────────────────────────────────
@@ -69,8 +156,11 @@ function wallEngagementAt(index: SweptMaterialIndex, radialDepth: number, xPosit
 console.log('Testing wall validation identity against arccos(1 − a_e/r)...')
 {
   const r = 1
-  // Query x positions deliberately include phases both on and between the
-  // disc-chain centres; the between-disc phase bounds the chain error.
+  // Query x positions deliberately include arbitrary phases along the wall:
+  // the capsule model is exact at every phase, so the identity must now hold
+  // to floating-point precision (the former disc chain only reached its
+  // 0.03 rad tolerance at favourable phases — the capsule rewrite makes this
+  // MORE accurate, and the tolerance is tightened to prove it).
   const xPositions = [0.31, 0.77, 1.13, 0.32]
   const index = wallIndex(r, 10 * r)
   const depthCases = [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75].map((f) => f * r)
@@ -78,7 +168,7 @@ console.log('Testing wall validation identity against arccos(1 − a_e/r)...')
     const expected = Math.acos(Math.min(1, Math.max(-1, 1 - a_e / r)))
     const measured = wallEngagementAt(index, a_e, xPositions)
     assert(
-      Math.abs(measured - expected) <= 0.03,
+      Math.abs(measured - expected) <= 1e-9,
       `wall identity at a_e = ${a_e}r: expected ${expected.toFixed(4)}, measured ${measured.toFixed(4)}`,
     )
   }
@@ -86,12 +176,14 @@ console.log('Testing wall validation identity against arccos(1 − a_e/r)...')
   const fullSlot = wallEngagementAt(index, 2 * r, xPositions)
   assert(Math.abs(fullSlot - Math.PI) <= 0.001, `a_e = 2r should be π exactly, measured ${fullSlot.toFixed(4)}`)
 
-  // D = 0 special case: the query centre exactly on a prior disc centre (the
-  // cutter circle lies inside the disc, everything covered) must give exactly
-  // 0 — for any motion direction, since the whole circle is covered.
+  // Fully-covered special case: the query centre exactly on the swept
+  // capsule's centreline (the cutter circle lies inside the capsule,
+  // everything covered) must give exactly 0 — for any motion direction,
+  // since the whole circle is covered.
   const onDiscIndex = new SweptMaterialIndex(r)
   onDiscIndex.addSweptSegment(-1, 0, 1, 0)
-  // Recompute a disc centre with the same expression the chain uses.
+  // An interior point of the swept centreline (discX was the former disc
+  // chain's centre and remains a valid interior point).
   const discCount = Math.ceil(2 / (2 * r * Math.sqrt(2 * 2e-4 - 4e-8))) + 1
   const discX = -1 + 2 * (26 / (discCount - 1))
   assert(onDiscIndex.engagementAt(discX, 0, 1, 0) === 0, 'query exactly on a prior disc centre must give exactly 0')
@@ -109,7 +201,7 @@ console.log('Testing wall identity is scale-invariant (r = 3)...')
     const expected = Math.acos(Math.min(1, Math.max(-1, 1 - a_e / r)))
     const measured = wallEngagementAt(index, a_e, xPositions)
     assert(
-      Math.abs(measured - expected) <= 0.03,
+      Math.abs(measured - expected) <= 1e-9,
       `r=3 wall identity at a_e = ${f}r: expected ${expected.toFixed(4)}, measured ${measured.toFixed(4)}`,
     )
   }
@@ -290,6 +382,66 @@ console.log('Testing engagementFeedScale anchors and quantization...')
   assert(approx(engagementFeedScale(Math.PI, nominal, -0.5), 0), 'negative slotScale should clamp to 0 at π')
 }
 
+// ── 5b. Nominal-boundary deadband ──
+//
+// The measured cliff defect: a real straight ring run reported engagement
+// 4.16e-8 rad above nominal — dust from the estimator's own floating-point
+// evaluation — and the old boundary (scale 1 only for engagement ≤ nominal)
+// charged it a full feed bucket, running every straight pass 12% slow.
+// The deadband treats anything within ENGAGEMENT_ESTIMATE_EPSILON of nominal
+// as at nominal, i.e. scale exactly 1.
+
+console.log('Testing the deadband around nominal...')
+{
+  const nominal = Math.PI / 2
+  const slotScale = 0.4
+  assert(
+    engagementFeedScale(nominal + ENGAGEMENT_ESTIMATE_EPSILON / 2, nominal, slotScale) === 1,
+    'engagement inside the tolerance must map to exactly 1',
+  )
+  assert(
+    engagementFeedScale(nominal + ENGAGEMENT_ESTIMATE_EPSILON, nominal, slotScale) === 1,
+    'the tolerance edge itself must map to exactly 1',
+  )
+  // The number from the field: 4.16e-8 rad above nominal, measured on a real
+  // straight ring run, sits inside the deadband.
+  assert(
+    engagementFeedScale(nominal + 4.16e-8, nominal, slotScale) === 1,
+    'the measured 4.16e-8 rad field over-report must map to exactly 1',
+  )
+  assert(
+    engagementFeedScale(nominal - ENGAGEMENT_ESTIMATE_EPSILON, nominal, slotScale) === 1,
+    'below nominal the scale must stay exactly 1',
+  )
+  assert(
+    engagementFeedScale(nominal + 2 * ENGAGEMENT_ESTIMATE_EPSILON, nominal, slotScale) < 1,
+    'outside the tolerance the scale must step down',
+  )
+}
+
+// ── 5c. Bucket ladder: 1.0 is a rung, π maps to slotScale exactly ──
+
+console.log('Testing the bucket ladder includes 1.0 as its top rung...')
+{
+  const nominal = Math.PI / 2
+  const slotScale = 0.4
+  const distinct = new Set<number>()
+  let previous = Infinity
+  for (let engagement = 0; engagement <= Math.PI; engagement += 0.0005) {
+    const scale = engagementFeedScale(engagement, nominal, slotScale)
+    distinct.add(scale)
+    assert(scale <= previous + 1e-12, `ladder must be monotone, ${previous} → ${scale} at ${engagement}`)
+    previous = scale
+  }
+  assert(distinct.has(1), '1.0 must be a member of the emitted scale set')
+  assert(
+    distinct.size === ENGAGEMENT_FEED_BUCKET_COUNT,
+    `the ladder must emit exactly the stated ${ENGAGEMENT_FEED_BUCKET_COUNT} buckets, got ${distinct.size}: ${[...distinct].sort((a, b) => a - b).join(', ')}`,
+  )
+  // The value at π must be exactly slotScale — not slotScale minus a step.
+  assert(engagementFeedScale(Math.PI, nominal, slotScale) === slotScale, 'the value at π must be exactly slotScale')
+}
+
 // ── 6. Determinism: identical input sequences, identical output ──
 
 console.log('Testing determinism across independent index instances...')
@@ -432,6 +584,36 @@ console.log('Testing quantizer minimum fragment length...')
   assert(approx(merged[0].distance, 2.1, 1e-9), 'mid-stream merge must keep the total distance')
 }
 
+// ── 8b. Quantizer recovers to full feed through the deadband ──
+//
+// With 1.0 as the ladder's top rung, a straight run whose engagement sits
+// within the deadband of nominal must rise back to full feed after a spike —
+// the deadband is the top rung's hysteresis margin. Without this, a pocket
+// that ever hits a corner would stay at the slot feed forever, the same
+// 12%-slow symptom the cliff defect produces.
+
+console.log('Testing the quantizer rises back to full feed on a deadbanded straight run...')
+{
+  const nominal = Math.PI / 2
+  const slotScale = 0.4
+  const quantizer = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 0.5 })
+  quantizer.push(Math.PI, 1.0) // corner spike: slot feed
+  quantizer.push(nominal + 4.16e-8, 1.0) // the measured straight-run dust: full feed
+  const fragments = quantizer.fragments()
+  assert(fragments.length === 2, `spike then straight run should emit two fragments, got ${fragments.length}`)
+  assert(approx(fragments[0].scale, 0.4, 1e-12), 'the spike fragment must hold the slot scale')
+  assert(approx(fragments[1].scale, 1, 1e-12), 'the deadbanded straight run must rise back to scale 1')
+  assert(approx(fragments[1].distance, 1, 1e-9), 'the risen fragment must keep its distance')
+
+  // Just outside the deadband the rise lands on the next rung down, not 1.
+  const outside = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 0.5 })
+  outside.push(Math.PI, 1.0)
+  outside.push(nominal + 2 * ENGAGEMENT_ESTIMATE_EPSILON, 1.0)
+  const stepped = outside.fragments()
+  assert(stepped.length === 2, 'a real excess must still step the ladder, not jump to 1')
+  assert(stepped[1].scale < 1, 'a real excess above the deadband must not restore full feed')
+}
+
 // ── 9. Telemetry accumulator ──
 
 console.log('Testing engagement telemetry...')
@@ -489,6 +671,88 @@ console.log('Testing degenerate inputs...')
     threw = true
   }
   assert(threw, 'NaN tool radius must throw (fail closed)')
+}
+
+// ── 11. Capsule model matches a fine disc-chain reference ──
+//
+// The equivalence proof for the capsule rewrite: the same swept segments are
+// graded twice — once by the production estimator (one exact capsule per
+// segment) and once by DiscChainReference (a fine disc chain). The reference
+// under-covers the true capsule by a lens of radial depth r − √(r² − (s/2)²)
+// between consecutive discs; at s = r/200 its worst-case engagement
+// over-report is 2·arcsin(s/(4r)) ≈ 0.0025 rad, so the capsule estimate must
+// agree within 0.005 rad. Segments and queries come from a fixed-seed LCG —
+// never Math.random, per the determinism rules.
+
+console.log('Testing capsule model against a fine disc-chain reference...')
+{
+  const r = 1
+  const rand = makeLcg(0x498)
+  const segments: Array<[number, number, number, number]> = []
+  for (let i = 0; i < 12; i += 1) {
+    const ax = (rand() - 0.5) * 8
+    const ay = (rand() - 0.5) * 4
+    const length = 0.2 + rand() * 3
+    const angle = rand() * 2 * Math.PI
+    segments.push([ax, ay, ax + length * Math.cos(angle), ay + length * Math.sin(angle)])
+  }
+  const capsules = new SweptMaterialIndex(r)
+  const reference = new DiscChainReference(r, r / 200)
+  for (const segment of segments) {
+    capsules.addSweptSegment(...segment)
+    reference.addSweptSegment(...segment)
+  }
+  let maxError = 0
+  for (let i = 0; i < 50; i += 1) {
+    const qx = (rand() - 0.5) * 10
+    const qy = (rand() - 0.5) * 6
+    const angle = rand() * 2 * Math.PI
+    const got = capsules.engagementAt(qx, qy, Math.cos(angle), Math.sin(angle))
+    const want = reference.engagementAt(qx, qy, Math.cos(angle), Math.sin(angle))
+    const error = Math.abs(got - want)
+    if (error > maxError) maxError = error
+    assert(
+      error <= 0.005,
+      `capsule estimate ${got.toFixed(5)} must match the disc-chain reference ${want.toFixed(5)} within 0.005 rad at query ${i}`,
+    )
+  }
+  console.log(`  (max capsule/reference error ${maxError.toFixed(5)} rad, reference bias bound 0.0025 rad)`)
+}
+
+// ── 12. Index size is O(segments), not O(path length) ──
+//
+// The complexity fix, asserted on entry count — never wall clock (AGENTS.md
+// § Build & Verify — wall-clock assertions cost #383 and #386). The former
+// disc chain stored ~2500 discs × 9 cells = 22,500 entries for one 100·r
+// segment, which made generation 9×–40× slower than legacy. The capsule
+// index stores one entry per cell the sweep's own extent covers.
+
+console.log('Testing the index stores a small per-segment constant of entries...')
+{
+  const r = 1
+  const index = new SweptMaterialIndex(r)
+  index.addSweptSegment(-50 * r, 0, 50 * r, 0) // one segment, length 100·r
+  const entries = index.storedEntryCount()
+  // Derivation: the axis-aligned centreline crosses ceil(100r / 2r) + 1 = 51
+  // cells (cell size 2r), and the radius-r tube dilates each crossed cell to
+  // its 3-row neighbourhood, so ≤ 3 × 51 = 153 entries — a small constant
+  // per segment, independent of path length beyond the cells it actually
+  // covers.
+  assert(entries <= 160, `one 100·r segment must store ≤ 160 entries, got ${entries}`)
+  assert(entries > 0, 'a 100·r segment must actually be indexed')
+
+  // The bound scales with the number of segments: six axis-aligned segments
+  // of mixed length (≤ 100r each, parallel walls spaced 5r apart so their
+  // extents barely overlap) stay under 160 entries per segment.
+  const mixed = new SweptMaterialIndex(r)
+  const lengths = [100, 40, 70, 5, 90, 20]
+  for (let i = 0; i < lengths.length; i += 1) {
+    mixed.addSweptSegment(0, 5 * r * i, lengths[i] * r, 5 * r * i)
+  }
+  assert(
+    mixed.storedEntryCount() <= 160 * lengths.length,
+    `entries must be bounded by a small constant × segment count, got ${mixed.storedEntryCount()} for ${lengths.length} segments`,
+  )
 }
 
 // ── Summary ──
