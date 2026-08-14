@@ -16,6 +16,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
+import { pocketSlotFeedPercent } from '../../theme/palette'
 import { toolpathHasEngagementTelemetry } from '../toolpathVisibility'
 import type { OpenProfileEndpoint, SketchControlRef } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
@@ -1162,7 +1163,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     for (const toolpath of toolpaths) {
       if (toolpath.moves.length > 0) {
-        drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId, toolpathVisibility ?? { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true })
+        // Colour rungs derive from the toolpath's own operation slot feed so
+        // the thresholds match the scales that operation emitted (issue #498 S5).
+        const slotFeedPercent = pocketSlotFeedPercent(project.operations.find((op) => op.id === toolpath.operationId))
+        drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId, toolpathVisibility ?? { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }, slotFeedPercent === null ? 1 : slotFeedPercent / 100)
       }
     }
 
@@ -2868,6 +2872,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           feedColoursDefault={
             toolpaths.some((toolpath) => toolpath.operationId === selectedOperationId && toolpathHasEngagementTelemetry(toolpath))
           }
+          slotFeedPercent={pocketSlotFeedPercent(project.operations.find((op) => op.id === selectedOperationId))}
         />
       )}
       <ConstraintEditPanel constraint={constraint} />

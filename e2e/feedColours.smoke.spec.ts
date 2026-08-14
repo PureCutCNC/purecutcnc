@@ -15,7 +15,7 @@
  */
 
 /**
- * Feed-coloured toolpath smoke (issue #498 S4).
+ * Feed-coloured toolpath smoke (issue #498 S4, extended by S5).
  *
  * Asserts the load-bearing rendering contract on the sketch canvas pixels:
  * with the feed-colour toggle on, a pocket in `engagement_feed` mode draws its
@@ -23,7 +23,8 @@
  * exactly one. Pixel comparisons are between full-canvas samples of the same
  * fixture with only the toggle flipped, so the test needs no colour math — any
  * palette change re-verifies against the live ramp rather than against
- * hardcoded values.
+ * hardcoded values. The S5 test adds a non-40% slot feed and pins the legend
+ * to the rungs the engine actually emits for that setting.
  */
 
 import type { Locator, Page } from '@playwright/test'
@@ -53,8 +54,10 @@ function resolvedRectProfile(cx: number, cy: number, w: number, h: number) {
  * variant emits the full bucket ladder (verified against the engine: distinct
  * cut scales 0.88 / 0.64 / 0.40 plus full-feed moves); the legacy variant
  * emits no scaled moves at all, so its cuts must stay a single colour.
+ * `slotPercent` varies the engagement ladder's slot feed (issue #498 S5): the
+ * emitted rungs and the legend both derive from it.
  */
-function buildFeedColoursProjectJson(mode: 'legacy' | 'engagement_feed'): string {
+function buildFeedColoursProjectJson(mode: 'legacy' | 'engagement_feed', slotPercent = 40): string {
   const now = '2026-01-01T00:00:00.000Z'
   return JSON.stringify({
     version: '3.0',
@@ -159,7 +162,7 @@ function buildFeedColoursProjectJson(mode: 'legacy' | 'engagement_feed'): string
         pocketPattern: 'offset',
         pocketAngle: 0,
         ...(mode === 'engagement_feed'
-          ? { pocketSlotFeedPercent: 40, pocketEngagementMode: 'engagement_feed' }
+          ? { pocketSlotFeedPercent: slotPercent, pocketEngagementMode: 'engagement_feed' }
           : { pocketEngagementMode: 'legacy' }),
         roundOutsideCorners: false,
         stockToLeaveRadial: 0,
@@ -232,6 +235,41 @@ test.describe('Feed-coloured toolpath smoke', () => {
     // feed-colour toggle on (engagement mode).
     await ui.operations.rowByName(app.page, 'Pocket A').click()
     await expect(feedToggle).toHaveAttribute('aria-pressed', 'true')
+
+    // Baseline: explicit off.
+    await feedToggle.click()
+    await expect(feedToggle).toHaveAttribute('aria-pressed', 'false')
+    const offGroups = await sampleCanvas(app.page, ui.canvas.sketch(app.page))
+
+    // Toggle on — the cut layer must gain at least two distinct ramp colours.
+    await feedToggle.click()
+    await expect(feedToggle).toHaveAttribute('aria-pressed', 'true')
+    const sketchCanvas = ui.canvas.sketch(app.page)
+    await expect.poll(async () => {
+      const onGroups = await dominantPixelGroups(sketchCanvas)
+      return onGroups.filter((key) => !offGroups.has(key)).length
+    }, { timeout: 10000 }).toBeGreaterThanOrEqual(2)
+  })
+
+  test('engagement_feed pocket at 75% slot feed renders the derived ramp and legend', async ({ app, ui }) => {
+    await seedProject(app.page, buildFeedColoursProjectJson('engagement_feed', 75))
+
+    const panel = ui.toolpathVis.sketchPanel(app.page)
+    await expect(panel).toBeVisible({ timeout: 30000 })
+
+    const feedToggle = ui.toolpathVis.sketchItems(app.page).filter({ hasText: 'Feed colours' })
+    await expect(feedToggle).toHaveCount(1)
+
+    // Selecting the operation emphasizes its toolpath and defaults the
+    // feed-colour toggle on (engagement mode).
+    await ui.operations.rowByName(app.page, 'Pocket A').click()
+    await expect(feedToggle).toHaveAttribute('aria-pressed', 'true')
+
+    // The legend prints the rungs derived from the 75% slot feed, not the
+    // hardcoded 40% ladder the engine no longer emits (issue #498 S5).
+    await expect(panel.locator('.viewport-toolpath-vis__legend-step')).toHaveText([
+      '100%', '95%', '90%', '85%', '80%', '75%',
+    ])
 
     // Baseline: explicit off.
     await feedToggle.click()

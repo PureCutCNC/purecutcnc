@@ -15,6 +15,7 @@
  */
 
 import type { ResolvedTheme } from './theme'
+import type { Operation } from '../types/project'
 
 /**
  * Every colour the 2D sketch canvas draws with. `CanvasRenderingContext2D`
@@ -446,30 +447,69 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
 }
 
 // ---------------------------------------------------------------------------
-// Feed-colour ramp (issue #498 S4)
+// Feed-colour ramp (issue #498 S4/S5)
 //
-// The engagement engine quantizes cut feeds to exactly these scales. Each maps
-// to a colour step derived by interpolating between `toolpathCut` (full feed,
-// step 0) and `toolpathCutSlow` (slowest bucket, last step), per theme and per
-// representation. Ordering is carried by lightness, not hue, so the ramp
-// survives greyscale and print. Step 0 is `toolpathCut` by construction — a
-// move with `feedScale` absent or 1 renders exactly like it always has.
+// The engagement engine quantizes cut feeds to a fixed number of buckets whose
+// rungs depend on the operation's slot-feed scale: rung k = slot + k·(1−slot)/5
+// for k = 0…5 — top rung 1 (full feed), bottom rung the slot scale. Each rung
+// maps to a colour step derived by interpolating between `toolpathCut` (full
+// feed, step 0) and `toolpathCutSlow` (slowest bucket, last step), per theme
+// and per representation. Ordering is carried by lightness, not hue, so the
+// ramp survives greyscale and print. Step 0 is `toolpathCut` by construction —
+// a move with `feedScale` absent or 1 renders exactly like it always has.
 // ---------------------------------------------------------------------------
 
-/** Emitted feed-scale buckets, full feed to slowest (matches the engine's quantizer). */
-export const FEED_COLOUR_SCALES: readonly number[] = [1, 0.88, 0.76, 0.64, 0.52, 0.4]
+/** Number of rungs the engine quantizer emits (ENGAGEMENT_FEED_BUCKET_COUNT);
+ *  fixed by the engine, not per operation. */
+const FEED_COLOUR_RUNG_COUNT = 6
 
-/** Ramp step index for an emitted feed scale; absent or >= 1 is full feed (step 0). */
-export function feedColourStep(feedScale: number | undefined): number {
+/**
+ * The operation's pocket slot-feed percentage (1-99), or null when it has no
+ * scaled-feed ladder in force — non-pocket, unset, or 100%. Mirrors the
+ * engine's `resolveSlotFeedScale` gate, which skips all slot-feed work in
+ * those cases so the emitted move stream carries no scaled feeds at all.
+ */
+export function pocketSlotFeedPercent(operation: Operation | null | undefined): number | null {
+  if (!operation || operation.kind !== 'pocket') return null
+  const percent = operation.pocketSlotFeedPercent
+  if (percent === undefined || !(percent > 0) || percent >= 100) return null
+  return percent
+}
+
+/** Emitted feed-scale rungs for a slot-feed scale (fraction of full feed at
+ *  full-slot engagement), full feed down to the slowest. Matches the engine
+ *  quantizer exactly: rung k = slot + k·(1−slot)/(count−1), k = 0…count−1,
+ *  computed with the same arithmetic so a rung the engine emits compares equal
+ *  to its threshold here. At slotScale 1 every rung is 1 — the engine emits no
+ *  scaled moves there. */
+export function feedColourScales(slotScale: number): readonly number[] {
+  const clamped = Math.min(1, Math.max(0, slotScale))
+  const bucketWidth = (1 - clamped) / (FEED_COLOUR_RUNG_COUNT - 1)
+  const rungs: number[] = []
+  for (let k = 0; k < FEED_COLOUR_RUNG_COUNT; k += 1) {
+    rungs[FEED_COLOUR_RUNG_COUNT - 1 - k] = clamped + k * bucketWidth
+  }
+  return rungs
+}
+
+/** Ramp step index for an emitted feed scale under a slot-feed scale; absent
+ *  or >= 1 is full feed (step 0). Thresholds are the rungs themselves, so
+ *  every rung the engine emits maps to its own distinct step. */
+export function feedColourStep(feedScale: number | undefined, slotScale: number): number {
   if (feedScale === undefined || feedScale >= 1) {
     return 0
   }
-  for (let index = 0; index < FEED_COLOUR_SCALES.length; index += 1) {
-    if (feedScale >= FEED_COLOUR_SCALES[index] - 1e-9) {
-      return index
+  const clamped = Math.min(1, Math.max(0, slotScale))
+  if (clamped >= 1) {
+    return 0
+  }
+  const bucketWidth = (1 - clamped) / (FEED_COLOUR_RUNG_COUNT - 1)
+  for (let k = FEED_COLOUR_RUNG_COUNT - 1; k >= 0; k -= 1) {
+    if (feedScale >= clamped + k * bucketWidth - 1e-9) {
+      return FEED_COLOUR_RUNG_COUNT - 1 - k
     }
   }
-  return FEED_COLOUR_SCALES.length - 1
+  return FEED_COLOUR_RUNG_COUNT - 1
 }
 
 interface Rgb { r: number; g: number; b: number }
@@ -500,7 +540,7 @@ function mixChannel(from: number, to: number, t: number): number {
 export function canvasFeedColour(step: number, palette: CanvasThemePalette): string {
   const cut = parseRgbChannels(palette.toolpathCut)
   const slow = parseRgbChannels(palette.toolpathCutSlow)
-  const t = Math.min(1, Math.max(0, step / (FEED_COLOUR_SCALES.length - 1)))
+  const t = Math.min(1, Math.max(0, step / (FEED_COLOUR_RUNG_COUNT - 1)))
   return `rgba(${mixChannel(cut.r, slow.r, t)}, ${mixChannel(cut.g, slow.g, t)}, ${mixChannel(cut.b, slow.b, t)}, ${alphaOf(palette.toolpathCut)})`
 }
 
@@ -508,7 +548,7 @@ export function canvasFeedColour(step: number, palette: CanvasThemePalette): str
 export function threeFeedColour(step: number, palette: ThreeThemePalette): number {
   const cut = palette.toolpathCut
   const slow = palette.toolpathCutSlow
-  const t = Math.min(1, Math.max(0, step / (FEED_COLOUR_SCALES.length - 1)))
+  const t = Math.min(1, Math.max(0, step / (FEED_COLOUR_RUNG_COUNT - 1)))
   const r = mixChannel((cut >> 16) & 0xff, (slow >> 16) & 0xff, t)
   const g = mixChannel((cut >> 8) & 0xff, (slow >> 8) & 0xff, t)
   const b = mixChannel(cut & 0xff, slow & 0xff, t)

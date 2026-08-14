@@ -589,6 +589,10 @@ export function drawToolpath(
   vt: ViewTransform,
   emphasized: boolean,
   visibility: ToolpathVisibility,
+  // Fraction of full feed at full-slot engagement for this toolpath's
+  // operation (issue #498 S5). Optional for un-threaded callers, which keep
+  // the pre-S5 40% ladder; the renderers pass the operation's real slot feed.
+  slotScale = 0.4,
 ): void {
   // Layer membership comes from the shared declaration both renderers use; only
   // the styling below is 2D's own. This file used to re-declare the five layers
@@ -603,6 +607,8 @@ export function drawToolpath(
   // Feed colours are on when the toggle says so, or by default for the
   // selected engagement-mode operation (issue #498 S4). A move whose
   // feedScale is absent or 1 maps to step 0, which is toolpathCut exactly.
+  // The ladder is derived from the toolpath's own slot feed (S5), so the
+  // thresholds match what the engine emitted for this toolpath.
   const feedColoursOn = visibility.feedColours ?? (emphasized && toolpathHasEngagementTelemetry(toolpath))
 
   for (const schemaLayer of buildToolpathOverlayLayers(visibility)) {
@@ -637,7 +643,7 @@ export function drawToolpath(
       // plunges and retractions keep their existing tokens.
       const byStep = new Map<number, ToolpathMove[]>()
       for (const move of moves) {
-        const step = feedColourStep(move.feedScale)
+        const step = feedColourStep(move.feedScale, slotScale)
         const stepMoves = byStep.get(step)
         if (stepMoves) {
           stepMoves.push(move)

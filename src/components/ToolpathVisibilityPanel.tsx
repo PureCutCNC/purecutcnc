@@ -18,7 +18,7 @@ import type { ToolpathVisibility } from './toolpathVisibility'
 import { useI18n } from '../i18n/i18nContext'
 import type { MessageKey } from '../i18n/locales/en'
 import { useTheme } from '../theme/themeContext'
-import { FEED_COLOUR_SCALES, canvasFeedColour } from '../theme/palette'
+import { feedColourScales, canvasFeedColour } from '../theme/palette'
 import { Icon } from './Icon'
 
 interface ToolpathVisibilityPanelProps {
@@ -33,6 +33,13 @@ interface ToolpathVisibilityPanelProps {
    * visibility object carries no explicit `feedColours` value.
    */
   feedColoursDefault?: boolean
+  /**
+   * The selected operation's slot-feed percentage (1-99), or null when no
+   * ladder is in force. The legend prints the feed rungs derived from it, so
+   * it matches what the engine actually emits (issue #498 S5); null hides the
+   * legend because there is no ladder to print.
+   */
+  slotFeedPercent?: number | null
 }
 
 const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch: string }> = [
@@ -46,7 +53,7 @@ const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch
   { key: 'feedColours', labelKey: 'appShell.toolpath.feedColours', swatch: 'viewport-toolpath-vis__swatch--cuts' },
 ]
 
-export function ToolpathVisibilityPanel({ visibility, onChange, className, expanded, onExpandedChange, feedColoursDefault }: ToolpathVisibilityPanelProps) {
+export function ToolpathVisibilityPanel({ visibility, onChange, className, expanded, onExpandedChange, feedColoursDefault, slotFeedPercent = null }: ToolpathVisibilityPanelProps) {
   const { t } = useI18n()
   const { palette } = useTheme()
 
@@ -87,13 +94,13 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
           )
         })
       ) : null}
-      {expanded ? (
+      {expanded && slotFeedPercent !== null ? (
         <div
           className="viewport-toolpath-vis__legend"
           aria-label={t('appShell.toolpath.feedLegend')}
           style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 10px 6px' }}
         >
-          {FEED_COLOUR_SCALES.map((scale, step) => (
+          {feedColourScales(slotFeedPercent / 100).map((scale, step) => (
             <span
               key={scale}
               className="viewport-toolpath-vis__legend-step"

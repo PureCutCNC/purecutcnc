@@ -39,7 +39,7 @@ import {
   type ToolpathOverlayLayerKey,
 } from './toolpathOverlay'
 import { useTheme } from '../../theme/themeContext'
-import { feedColourStep, threeFeedColour, type ThreeThemePalette } from '../../theme/palette'
+import { feedColourStep, pocketSlotFeedPercent, threeFeedColour, type ThreeThemePalette } from '../../theme/palette'
 import { createOrbitControls, type OrbitControls } from './orbitControls'
 import type { ViewPreset } from './viewPresets'
 import { ViewPresetMenu } from './ViewPresetMenu'
@@ -280,6 +280,7 @@ function buildToolpathOverlay(
   visibility: ToolpathVisibility,
   palette: ThreeThemePalette,
   resolution: THREE.Vector2,
+  slotScale: number,
 ): THREE.Object3D[] {
   const schemaLayers = buildToolpathOverlayLayers(visibility)
   const layers: Array<{
@@ -309,6 +310,8 @@ function buildToolpathOverlay(
   // Feed colours are on when the toggle says so, or by default for the
   // selected engagement-mode operation (issue #498 S4). A move whose
   // feedScale is absent or 1 maps to step 0, which is toolpathCut exactly.
+  // The ladder is derived from the toolpath's own slot feed (S5), so the
+  // thresholds match what the engine emitted for this toolpath.
   const feedColoursOn = visibility.feedColours ?? (emphasized && toolpathHasEngagementTelemetry(toolpath))
 
   const objects: THREE.Object3D[] = []
@@ -345,7 +348,7 @@ function buildToolpathOverlay(
       // plunges and retractions keep their existing tokens.
       const byStep = new Map<number, ToolpathResult['moves']>()
       for (const move of moves) {
-        const step = feedColourStep(move.feedScale)
+        const step = feedColourStep(move.feedScale, slotScale)
         const stepMoves = byStep.get(step)
         if (stepMoves) {
           stepMoves.push(move)
@@ -406,14 +409,19 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
 
   const { project, selection, projectKey } = useProjectStore()
+  // The toolpath overlay effect reads the project through this ref so the
+  // per-toolpath slot-feed lookup stays fresh without rebuilding overlays on
+  // unrelated project edits (toolpaths already change when the slot feed does).
+  const projectRef = useRef(project)
   // Mirror the zoom-window state into refs for the orbit-controls callback and
   // pointer handlers (which read them outside render). Write after commit, not
   // during render, so we don't touch refs while rendering.
   useLayoutEffect(() => {
     threePaletteRef.current = threePalette
+    projectRef.current = project
     zoomWindowActiveRef.current = zoomWindowActive
     zoomWindowBoxRef.current = zoomWindowBox
-  }, [threePalette, zoomWindowActive, zoomWindowBox])
+  }, [threePalette, zoomWindowActive, zoomWindowBox, project])
 
   // Reset the zoom-window box during render when the tool deactivates (React-
   // recommended adjust-state-during-render; the ref mirror above nulls
@@ -814,9 +822,22 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       mount?.clientWidth || window.innerWidth,
       mount?.clientHeight || window.innerHeight,
     )
-    const nextObjects = toolpaths.flatMap((toolpath) => (
-      toolpath.moves.length > 0 ? buildToolpathOverlay(toolpath, toolpath.operationId === selectedOperationId, toolpathVisibility, threePalette, resolution) : []
-    ))
+    const nextObjects = toolpaths.flatMap((toolpath) => {
+      if (toolpath.moves.length === 0) {
+        return []
+      }
+      // Colour rungs derive from the toolpath's own operation slot feed so the
+      // thresholds match the scales that operation emitted (issue #498 S5).
+      const slotFeedPercent = pocketSlotFeedPercent(projectRef.current.operations.find((op) => op.id === toolpath.operationId))
+      return buildToolpathOverlay(
+        toolpath,
+        toolpath.operationId === selectedOperationId,
+        toolpathVisibility,
+        threePalette,
+        resolution,
+        slotFeedPercent === null ? 1 : slotFeedPercent / 100,
+      )
+    })
     if (nextObjects.length === 0) {
       return
     }
@@ -895,9 +916,11 @@ useImperativeHandle(ref, () => ({
     : null
 
   // The feed-colour toggle's auto default: on when the selected operation is
-  // an engagement-mode pocket, off otherwise (issue #498 S4).
+  // an engagement-mode pocket, off otherwise (issue #498 S4). The legend rungs
+  // derive from the selected operation's slot feed (issue #498 S5).
   const selectedToolpathForLegend = toolpaths.find((toolpath) => toolpath.operationId === selectedOperationId) ?? null
   const feedColoursDefault = selectedToolpathForLegend !== null && toolpathHasEngagementTelemetry(selectedToolpathForLegend)
+  const selectedSlotFeedPercent = pocketSlotFeedPercent(project.operations.find((op) => op.id === selectedOperationId))
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
@@ -958,6 +981,7 @@ useImperativeHandle(ref, () => ({
           expanded={toolpathPanelExpanded}
           onExpandedChange={onToolpathPanelExpandedChange}
           feedColoursDefault={feedColoursDefault}
+          slotFeedPercent={selectedSlotFeedPercent}
         />
       )}
       <div className="viewport-presets">
