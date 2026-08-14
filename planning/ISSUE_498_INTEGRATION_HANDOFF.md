@@ -530,3 +530,74 @@ machine-speed-dependent CPU budget, unrelated to this slice. If the gate fails
 only on that file, re-run once and say so rather than trying to fix it.
 
 **Manager review record:** pending.
+
+### S6 — The reduced feed is held far past the cut that justified it
+
+**Do not start before S5 lands.** Same files, and the ladder fix should merge clean.
+
+**Defect.** The inner region of a pocket runs entirely at slot feed even where the
+measured engagement is nearly zero. Measured on the 60 mm square fixture, tool
+radius 3, stepover 2.4, slot feed 40%, walking the real emitted moves and
+querying the estimator against everything cut before each one:
+
+| Move | Ring half-width | Engagement | Emitted scale |
+| --- | --- | --- | --- |
+| 2 | 0.60 | 180° | 0.40 |
+| 3 | 0.60 | 129° | 0.40 |
+| 4 | 0.60 | 76° | 0.40 |
+| 5 | 0.60 | **6°** | 0.40 |
+| 6 | link | 180° | 0.40 |
+| 7–9 | 3.00 | 100° | 0.40 |
+| 10 | 3.00 | 30° | 0.40 |
+| 12–15 | 5.40 | **78° = exactly nominal** | 0.40 |
+
+**Mechanism, and it is not one bug but two rules composing.** The 3.4 mm diagonal
+links between rings are genuine full-width slots — 180° measured — so reducing
+their feed is correct. What follows is not: the quantizer's minimum fragment
+length (one tool diameter, 6 mm) plus its rise hysteresis hold the reduced feed
+into the *following* ring. Measured directly:
+
+```
+slot burst 4.8 mm, then 130 mm at exactly nominal
+  -> scale 0.40 for 15.6 mm, then 1.00 for 118.8 mm
+```
+
+So recovery costs about 11 mm of full-feed cutting. On a large ring that is
+noise. On the inner rings it is everything, because a link arrives every ring and
+the perimeter between links is too short to recover in:
+
+| Ring half-width | Perimeter | vs the 6 mm minimum fragment |
+| --- | --- | --- |
+| 0.60 | **4.8 mm** | shorter than a single fragment — can never hold its own |
+| 3.00 | 24 mm | ~4 fragments |
+| 5.40 | 43 mm | ~7 fragments |
+
+**Not a safety defect** — it errs slow, and the links really are slotting. It is a
+cycle-time cost and a legibility cost: the display makes the inner half of every
+pocket look uniformly dangerous when the engagement there varies from 180° to 6°.
+
+*A hypothesis that measurement killed, recorded so nobody re-runs it:* the rise
+condition compares the continuous scale against the target bucket plus a margin,
+and the top bucket is 1.0, which suggested the quantizer could never return to
+full feed at all. It can — the test above returns at 118.8 mm. The defect is
+delayed recovery, not a stuck floor.
+
+**Two candidate fixes**, either or both:
+
+1. Scale the minimum fragment length to the local ring perimeter rather than
+   fixing it at one tool diameter, so a short ring can hold its own fragment.
+2. Let a rise to **full feed** skip the hysteresis margin. Hysteresis exists to
+   stop chatter at bucket boundaries; 1.0 is not a boundary, it is the ceiling.
+   Bucket-to-bucket changes keep the current rule.
+
+**Invariants that must survive:** never-raise versus legacy (currently 0
+violations across 11 fixtures), depth invariance (currently spread 0.0000),
+byte-identical legacy output, and the controller-friendliness rule that
+originally motivated the minimum fragment — no short alternating fragments, and
+no collapse in arc-fittable run length.
+
+**Required tests:** a long nominal-engagement stretch following a link recovers
+full feed within a stated bounded distance; and the innermost ring, whose
+engagement genuinely varies 180° → 6°, emits more than one feed value.
+
+**Manager review record:** pending.
