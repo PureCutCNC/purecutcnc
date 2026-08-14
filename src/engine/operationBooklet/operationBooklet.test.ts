@@ -490,6 +490,48 @@ function testFeedTimeUsesScaledSlotFeed(): void {
   )
 }
 
+function testReportIncludesEngagementModeRow(): void {
+  console.log('Testing operation booklet reports the engagement feed mode...')
+  const { project, operation, toolpath } = fixture()
+  const tool = normalizeToolForProject(project.tools[0], project)
+
+  const engagement = buildOperationBookletReport({
+    project,
+    operation: { ...operation, pocketEngagementMode: 'engagement_feed' },
+    tool,
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    engagement.settingRows.some((row) => row.label === translate('booklet.label.engagementMode') && row.value === translate('booklet.engagementMode.engagementFeed')),
+    'engagement mode should be reported when set to engagement feed',
+  )
+
+  const legacy = buildOperationBookletReport({
+    project,
+    operation: { ...operation, pocketEngagementMode: 'legacy' },
+    tool,
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    !legacy.settingRows.some((row) => row.label === translate('booklet.label.engagementMode')),
+    'legacy engagement mode should not be reported',
+  )
+
+  const unset = buildOperationBookletReport({
+    project,
+    operation,
+    tool,
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    !unset.settingRows.some((row) => row.label === translate('booklet.label.engagementMode')),
+    'an unset engagement mode should default to legacy and not be reported',
+  )
+}
+
 async function testGermanLabelLayout(): Promise<void> {
   console.log('Testing German booklet label layout...')
   const { project, operation, toolpath } = fixture()
@@ -559,6 +601,7 @@ async function testGermanPdfSmoke(): Promise<void> {
 testReportContent()
 testFeedTimeFallsBackToToolDefaultFeed()
 testFeedTimeUsesScaledSlotFeed()
+testReportIncludesEngagementModeRow()
 testReportIncludesEnabledRoundOutsideCorners()
 testReportIncludesTrochoidalSettings()
 testReportIncludesTrochoidalEdgeSettingsResolvedFromTool()
