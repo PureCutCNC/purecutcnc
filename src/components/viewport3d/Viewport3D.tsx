@@ -20,7 +20,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
-import type { ToolpathVisibility } from '../toolpathVisibility'
+import { toolpathHasEngagementTelemetry, type ToolpathVisibility } from '../toolpathVisibility'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
 import { modelFeatures } from '../../store/helpers/featureRoles'
@@ -36,9 +36,10 @@ import {
   movesForToolpathLayer,
   toolpathPointToWorldTuple,
   type ToolpathLayerZFilter,
+  type ToolpathOverlayLayerKey,
 } from './toolpathOverlay'
 import { useTheme } from '../../theme/themeContext'
-import type { ThreeThemePalette } from '../../theme/palette'
+import { feedColourStep, threeFeedColour, type ThreeThemePalette } from '../../theme/palette'
 import { createOrbitControls, type OrbitControls } from './orbitControls'
 import type { ViewPreset } from './viewPresets'
 import { ViewPresetMenu } from './ViewPresetMenu'
@@ -282,6 +283,7 @@ function buildToolpathOverlay(
 ): THREE.Object3D[] {
   const schemaLayers = buildToolpathOverlayLayers(visibility)
   const layers: Array<{
+    key: ToolpathOverlayLayerKey
     kinds: ToolpathResult['moves'][number]['kind'][]
     color: number
     opacity: number
@@ -302,8 +304,12 @@ function buildToolpathOverlay(
       : layer.key === 'rapids' || layer.key === 'retractions' ? 1.8
       : 2.0
     const linewidth = emphasized ? baseLinewidth + 0.5 : Math.max(1.2, baseLinewidth - 0.5)
-    return { kinds: layer.kinds, color, opacity, linewidth, visible: layer.visible, zFilter: layer.zFilter }
+    return { key: layer.key, kinds: layer.kinds, color, opacity, linewidth, visible: layer.visible, zFilter: layer.zFilter }
   })
+  // Feed colours are on when the toggle says so, or by default for the
+  // selected engagement-mode operation (issue #498 S4). A move whose
+  // feedScale is absent or 1 maps to step 0, which is toolpathCut exactly.
+  const feedColoursOn = visibility.feedColours ?? (emphasized && toolpathHasEngagementTelemetry(toolpath))
 
   const objects: THREE.Object3D[] = []
   for (const layer of layers) {
@@ -315,22 +321,45 @@ function buildToolpathOverlay(
       continue
     }
 
-    const material = new LineMaterial({
-      color: layer.color,
-      linewidth: layer.linewidth,
-      worldUnits: false,
-      resolution,
-      transparent: true,
-      opacity: emphasized ? layer.opacity : Math.max(layer.opacity * 0.55, 0.45),
-      depthWrite: false,
-      depthTest: false,
-    })
+    const pushLines = (layerMoves: ToolpathResult['moves'], color: number): void => {
+      const material = new LineMaterial({
+        color,
+        linewidth: layer.linewidth,
+        worldUnits: false,
+        resolution,
+        transparent: true,
+        opacity: emphasized ? layer.opacity : Math.max(layer.opacity * 0.55, 0.45),
+        depthWrite: false,
+        depthTest: false,
+      })
 
-    for (const chunk of buildToolpathLinePositionChunks(moves)) {
-      const geometry = new LineSegmentsGeometry()
-      geometry.setPositions(chunk.positions)
-      objects.push(new LineSegments2(geometry, material))
+      for (const chunk of buildToolpathLinePositionChunks(layerMoves)) {
+        const geometry = new LineSegmentsGeometry()
+        geometry.setPositions(chunk.positions)
+        objects.push(new LineSegments2(geometry, material))
+      }
     }
+
+    if (layer.key === 'cuts' && feedColoursOn) {
+      // One material per emitted feed bucket. Cuts only — lead-ins, rapids,
+      // plunges and retractions keep their existing tokens.
+      const byStep = new Map<number, ToolpathResult['moves']>()
+      for (const move of moves) {
+        const step = feedColourStep(move.feedScale)
+        const stepMoves = byStep.get(step)
+        if (stepMoves) {
+          stepMoves.push(move)
+        } else {
+          byStep.set(step, [move])
+        }
+      }
+      for (const [step, stepMoves] of byStep) {
+        pushLines(stepMoves, threeFeedColour(step, palette))
+      }
+      continue
+    }
+
+    pushLines(moves, layer.color)
   }
 
   if (emphasized && visibility.directions) {
@@ -865,6 +894,11 @@ useImperativeHandle(ref, () => ({
       }
     : null
 
+  // The feed-colour toggle's auto default: on when the selected operation is
+  // an engagement-mode pocket, off otherwise (issue #498 S4).
+  const selectedToolpathForLegend = toolpaths.find((toolpath) => toolpath.operationId === selectedOperationId) ?? null
+  const feedColoursDefault = selectedToolpathForLegend !== null && toolpathHasEngagementTelemetry(selectedToolpathForLegend)
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
@@ -923,6 +957,7 @@ useImperativeHandle(ref, () => ({
           onChange={onToolpathVisibilityChange}
           expanded={toolpathPanelExpanded}
           onExpandedChange={onToolpathPanelExpandedChange}
+          feedColoursDefault={feedColoursDefault}
         />
       )}
       <div className="viewport-presets">

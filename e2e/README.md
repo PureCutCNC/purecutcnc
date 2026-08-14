@@ -1,8 +1,11 @@
 # e2e — Browser Smoke (Playwright)
 
 Thin, repeatable browser smoke run before manual testing sessions and in PR CI.
-Covers DOM render + menu→action wiring. Does **NOT** assert geometry,
-pixels, or WebGL canvas contents — those are owned by `npm test`.
+Covers DOM render + menu→action wiring. Does **NOT** assert geometry or
+WebGL canvas contents — those are owned by `npm test`. One deliberate
+exception: `feedColours.smoke.spec.ts` samples 2D canvas pixels, because
+the feed-colour ramp (issue #498) is a rendering contract that only pixels
+can prove.
 
 ## Quick start
 

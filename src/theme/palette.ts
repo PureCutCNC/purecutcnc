@@ -67,6 +67,9 @@ export interface CanvasThemePalette {
 
   // Toolpath move kinds (kept consistent with the 3D overlay and CSS legend).
   toolpathCut: string
+  /** Slowest feed step of the feed-colour ramp (issue #498); intermediate
+   *  steps are interpolated from toolpathCut. Dark themes go brighter. */
+  toolpathCutSlow: string
   toolpathRapid: string
   toolpathPlunge: string
   toolpathCollision: string
@@ -133,6 +136,9 @@ export interface ThreeThemePalette {
   gridMajor: number
   /** Toolpath overlay colours; kept in step with the canvas + CSS legend. */
   toolpathCut: number
+  /** Slowest feed step of the feed-colour ramp (issue #498); matches the
+   *  canvas representation so both views render the same ramp. */
+  toolpathCutSlow: number
   toolpathRapid: number
   toolpathPlunge: number
   /** Fallback stock material when the project defines no stock colour. */
@@ -229,6 +235,7 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       handleGuide: 'rgba(125, 159, 189, 0.55)',
 
       toolpathCut: 'rgba(255, 115, 92, 0.96)',
+      toolpathCutSlow: 'rgba(255, 224, 170, 0.96)',
       toolpathRapid: 'rgba(124, 184, 222, 0.8)',
       toolpathPlunge: 'rgba(213, 131, 223, 0.95)',
       toolpathCollision: 'rgba(227, 91, 91, 0.95)',
@@ -284,6 +291,7 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       gridMajorCenter: 0x334455,
       gridMajor: 0x51657a,
       toolpathCut: 0xff735c,
+      toolpathCutSlow: 0xffe0aa,
       toolpathRapid: 0x78b8de,
       toolpathPlunge: 0xd583df,
       stockDefault: 0xb5beca,
@@ -350,6 +358,7 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       handleGuide: 'rgba(90, 120, 150, 0.5)',
 
       toolpathCut: 'rgba(214, 74, 52, 0.96)',
+      toolpathCutSlow: 'rgba(122, 22, 22, 0.96)',
       toolpathRapid: 'rgba(56, 132, 184, 0.85)',
       toolpathPlunge: 'rgba(168, 74, 182, 0.95)',
       toolpathCollision: 'rgba(200, 60, 60, 0.95)',
@@ -405,6 +414,7 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       gridMajorCenter: 0x94a3b8,
       gridMajor: 0xb4c0d0,
       toolpathCut: 0xd64a34,
+      toolpathCutSlow: 0x7a1616,
       toolpathRapid: 0x3884b8,
       toolpathPlunge: 0xa84ab6,
       stockDefault: 0xc2cad4,
@@ -433,4 +443,74 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       lineSubtract: 0x224d99,
     },
   },
+}
+
+// ---------------------------------------------------------------------------
+// Feed-colour ramp (issue #498 S4)
+//
+// The engagement engine quantizes cut feeds to exactly these scales. Each maps
+// to a colour step derived by interpolating between `toolpathCut` (full feed,
+// step 0) and `toolpathCutSlow` (slowest bucket, last step), per theme and per
+// representation. Ordering is carried by lightness, not hue, so the ramp
+// survives greyscale and print. Step 0 is `toolpathCut` by construction — a
+// move with `feedScale` absent or 1 renders exactly like it always has.
+// ---------------------------------------------------------------------------
+
+/** Emitted feed-scale buckets, full feed to slowest (matches the engine's quantizer). */
+export const FEED_COLOUR_SCALES: readonly number[] = [1, 0.88, 0.76, 0.64, 0.52, 0.4]
+
+/** Ramp step index for an emitted feed scale; absent or >= 1 is full feed (step 0). */
+export function feedColourStep(feedScale: number | undefined): number {
+  if (feedScale === undefined || feedScale >= 1) {
+    return 0
+  }
+  for (let index = 0; index < FEED_COLOUR_SCALES.length; index += 1) {
+    if (feedScale >= FEED_COLOUR_SCALES[index] - 1e-9) {
+      return index
+    }
+  }
+  return FEED_COLOUR_SCALES.length - 1
+}
+
+interface Rgb { r: number; g: number; b: number }
+
+function parseRgbChannels(color: string): Rgb {
+  const match = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(color)
+  if (match) {
+    return { r: Number(match[1]), g: Number(match[2]), b: Number(match[3]) }
+  }
+  const hex = color.replace('#', '')
+  return {
+    r: Number.parseInt(hex.slice(0, 2), 16),
+    g: Number.parseInt(hex.slice(2, 4), 16),
+    b: Number.parseInt(hex.slice(4, 6), 16),
+  }
+}
+
+function alphaOf(color: string): string {
+  const match = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\)/.exec(color)
+  return match ? match[4] : '1'
+}
+
+function mixChannel(from: number, to: number, t: number): number {
+  return Math.round(from + (to - from) * t)
+}
+
+/** Canvas-rep colour for a ramp step (0 = full feed). Preserves the cut token's alpha. */
+export function canvasFeedColour(step: number, palette: CanvasThemePalette): string {
+  const cut = parseRgbChannels(palette.toolpathCut)
+  const slow = parseRgbChannels(palette.toolpathCutSlow)
+  const t = Math.min(1, Math.max(0, step / (FEED_COLOUR_SCALES.length - 1)))
+  return `rgba(${mixChannel(cut.r, slow.r, t)}, ${mixChannel(cut.g, slow.g, t)}, ${mixChannel(cut.b, slow.b, t)}, ${alphaOf(palette.toolpathCut)})`
+}
+
+/** Three-rep colour for a ramp step (0 = full feed). */
+export function threeFeedColour(step: number, palette: ThreeThemePalette): number {
+  const cut = palette.toolpathCut
+  const slow = palette.toolpathCutSlow
+  const t = Math.min(1, Math.max(0, step / (FEED_COLOUR_SCALES.length - 1)))
+  const r = mixChannel((cut >> 16) & 0xff, (slow >> 16) & 0xff, t)
+  const g = mixChannel((cut >> 8) & 0xff, (slow >> 8) & 0xff, t)
+  const b = mixChannel(cut & 0xff, slow & 0xff, t)
+  return (r << 16) | (g << 8) | b
 }

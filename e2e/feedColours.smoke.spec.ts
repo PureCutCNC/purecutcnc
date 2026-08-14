@@ -1,0 +1,282 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Feed-coloured toolpath smoke (issue #498 S4).
+ *
+ * Asserts the load-bearing rendering contract on the sketch canvas pixels:
+ * with the feed-colour toggle on, a pocket in `engagement_feed` mode draws its
+ * cut segments in more than one distinct colour; a legacy pocket draws them in
+ * exactly one. Pixel comparisons are between full-canvas samples of the same
+ * fixture with only the toggle flipped, so the test needs no colour math — any
+ * palette change re-verifies against the live ramp rather than against
+ * hardcoded values.
+ */
+
+import type { Locator, Page } from '@playwright/test'
+import { test, expect } from './fixtures'
+import { seedProject } from './helpers'
+
+/** A pixel colour is "dominant" when it covers at least this many canvas
+ *  pixels — antialiased edges and single-pixel noise fall below it, interior
+ *  runs of the 2.5px emphasized cut lines sit far above it. */
+const MIN_GROUP_PIXELS = 30
+
+function resolvedRectProfile(cx: number, cy: number, w: number, h: number) {
+  return {
+    start: { x: cx, y: cy },
+    segments: [
+      { type: 'line' as const, to: { x: cx + w, y: cy } },
+      { type: 'line' as const, to: { x: cx + w, y: cy + h } },
+      { type: 'line' as const, to: { x: cx, y: cy + h } },
+      { type: 'line' as const, to: { x: cx, y: cy } },
+    ],
+    closed: true,
+  }
+}
+
+/**
+ * The two fixture variants differ only in pocket feed mode. The engagement
+ * variant emits the full bucket ladder (verified against the engine: distinct
+ * cut scales 0.88 / 0.64 / 0.40 plus full-feed moves); the legacy variant
+ * emits no scaled moves at all, so its cuts must stay a single colour.
+ */
+function buildFeedColoursProjectJson(mode: 'legacy' | 'engagement_feed'): string {
+  const now = '2026-01-01T00:00:00.000Z'
+  return JSON.stringify({
+    version: '3.0',
+    meta: {
+      name: `Feed Colours ${mode} Fixture`,
+      created: now,
+      modified: now,
+      units: 'inch',
+      showFeatureInfo: true,
+      showDimensions: true,
+      copyMode: 'reference',
+      maxTravelZ: 2,
+      operationClearanceZ: 0.2,
+      clampClearanceXY: 0.5,
+      clampClearanceZ: 0.2,
+      machineId: 'grbl',
+    },
+    grid: {
+      extent: 200,
+      majorSpacing: 1,
+      minorSpacing: 0.25,
+      snapEnabled: false,
+      snapIncrement: 0.25,
+      visible: true,
+    },
+    stock: {
+      profile: resolvedRectProfile(0, 0, 24, 16),
+      thickness: 0.2,
+      material: 'aluminum_6061',
+      color: '#b9a83c',
+      visible: true,
+      origin: { x: 0, y: 0 },
+    },
+    // Origin marker invisible so it cannot vary under toolpath pixels.
+    origin: { name: 'Origin', x: 12, y: 8, z: 2, visible: false },
+    backdrop: null,
+    dimensions: {},
+    annotations: [],
+    modelAssets: {},
+    featureDefinitions: {
+      'def-machinable-subtract': {
+        id: 'def-machinable-subtract',
+        kind: 'rect',
+        profile: resolvedRectProfile(9, 6, 6, 4),
+        dimensions: [],
+        text: null,
+        stl: null,
+        operation: 'subtract',
+      },
+    },
+    features: [
+      {
+        id: 'f-machinable-subtract',
+        name: 'Machinable Subtract',
+        definitionId: 'def-machinable-subtract',
+        transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+        constraints: [],
+        folderId: null,
+        z_top: 0.2,
+        z_bottom: 0,
+        visible: true,
+        locked: false,
+      },
+    ],
+    featureFolders: [],
+    featureTree: [],
+    global_constraints: [],
+    tools: [
+      {
+        id: 'tool-1',
+        name: 'Quarter Inch Endmill',
+        units: 'inch',
+        type: 'flat_endmill',
+        diameter: 0.25,
+        vBitAngle: null,
+        flutes: 2,
+        material: 'carbide',
+        defaultRpm: 18000,
+        defaultFeed: 60,
+        defaultPlungeFeed: 30,
+        defaultStepdown: 0.1,
+        defaultStepover: 0.125,
+        maxCutDepth: 1,
+      },
+    ],
+    operations: [
+      {
+        id: 'op-pocket-a',
+        name: 'Pocket A',
+        kind: 'pocket',
+        pass: 'rough',
+        enabled: true,
+        showToolpath: true,
+        debugToolpath: false,
+        target: { source: 'features', featureIds: ['f-machinable-subtract'] },
+        toolRef: 'tool-1',
+        stepdown: 0.1,
+        stepover: 0.125,
+        feed: 60,
+        plungeFeed: 30,
+        rpm: 18000,
+        pocketPattern: 'offset',
+        pocketAngle: 0,
+        ...(mode === 'engagement_feed'
+          ? { pocketSlotFeedPercent: 40, pocketEngagementMode: 'engagement_feed' }
+          : { pocketEngagementMode: 'legacy' }),
+        roundOutsideCorners: false,
+        stockToLeaveRadial: 0,
+        stockToLeaveAxial: 0,
+        finishWalls: false,
+        finishFloor: false,
+        carveDepth: 0,
+        maxCarveDepth: 0,
+      },
+    ],
+    tabs: [],
+    clamps: [],
+    ai_history: [],
+  })
+}
+
+const ENGAGEMENT_FIXTURE_JSON = buildFeedColoursProjectJson('engagement_feed')
+const LEGACY_FIXTURE_JSON = buildFeedColoursProjectJson('legacy')
+
+/** Distinct pixel colours covering at least MIN_GROUP_PIXELS each. */
+async function dominantPixelGroups(sketchCanvas: Locator): Promise<string[]> {
+  return sketchCanvas.evaluate((canvas, minGroup) => {
+    const element = canvas as HTMLCanvasElement
+    const ctx = element.getContext('2d')
+    if (!ctx) {
+      throw new Error('sketch canvas has no 2d context')
+    }
+    const data = ctx.getImageData(0, 0, element.width, element.height).data
+    const counts = new Map<string, number>()
+    for (let index = 0; index < data.length; index += 4) {
+      const key = `${data[index]},${data[index + 1]},${data[index + 2]},${data[index + 3]}`
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    const groups: string[] = []
+    for (const [key, count] of counts) {
+      if (count >= minGroup) {
+        groups.push(key)
+      }
+    }
+    return groups
+  }, MIN_GROUP_PIXELS)
+}
+
+/** Wait for the canvas to repaint after a toggle click. */
+async function waitForPaint(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+}
+
+async function sampleCanvas(page: Page, sketchCanvas: Locator): Promise<Set<string>> {
+  // Keep the pointer off the canvas so no hover feedback lands in the sample.
+  await page.mouse.move(0, 0)
+  await waitForPaint(page)
+  return new Set(await dominantPixelGroups(sketchCanvas))
+}
+
+test.describe('Feed-coloured toolpath smoke', () => {
+  test('engagement_feed pocket renders cut segments in multiple colours with the toggle on', async ({ app, ui }) => {
+    await seedProject(app.page, ENGAGEMENT_FIXTURE_JSON)
+
+    // The panel only renders once the generated toolpath exists.
+    const panel = ui.toolpathVis.sketchPanel(app.page)
+    await expect(panel).toBeVisible({ timeout: 30000 })
+
+    const feedToggle = ui.toolpathVis.sketchItems(app.page).filter({ hasText: 'Feed colours' })
+    await expect(feedToggle).toHaveCount(1)
+
+    // Selecting the operation emphasizes its toolpath and defaults the
+    // feed-colour toggle on (engagement mode).
+    await ui.operations.rowByName(app.page, 'Pocket A').click()
+    await expect(feedToggle).toHaveAttribute('aria-pressed', 'true')
+
+    // Baseline: explicit off.
+    await feedToggle.click()
+    await expect(feedToggle).toHaveAttribute('aria-pressed', 'false')
+    const offGroups = await sampleCanvas(app.page, ui.canvas.sketch(app.page))
+
+    // Toggle on — the cut layer must gain at least two distinct ramp colours.
+    await feedToggle.click()
+    await expect(feedToggle).toHaveAttribute('aria-pressed', 'true')
+    const sketchCanvas = ui.canvas.sketch(app.page)
+    await expect.poll(async () => {
+      const onGroups = await dominantPixelGroups(sketchCanvas)
+      return onGroups.filter((key) => !offGroups.has(key)).length
+    }, { timeout: 10000 }).toBeGreaterThanOrEqual(2)
+  })
+
+  test('legacy pocket renders cut segments in exactly one colour with the toggle on', async ({ app, ui }) => {
+    await seedProject(app.page, LEGACY_FIXTURE_JSON)
+
+    const panel = ui.toolpathVis.sketchPanel(app.page)
+    await expect(panel).toBeVisible({ timeout: 30000 })
+
+    const feedToggle = ui.toolpathVis.sketchItems(app.page).filter({ hasText: 'Feed colours' })
+    await expect(feedToggle).toHaveCount(1)
+
+    // A legacy operation defaults the feed-colour toggle off.
+    await ui.operations.rowByName(app.page, 'Pocket A').click()
+    await expect(feedToggle).toHaveAttribute('aria-pressed', 'false')
+
+    const offGroups = await sampleCanvas(app.page, ui.canvas.sketch(app.page))
+
+    // Toggle on — legacy cuts carry no feed scale, so nothing may change.
+    await feedToggle.click()
+    await expect(feedToggle).toHaveAttribute('aria-pressed', 'true')
+    const onGroups = await sampleCanvas(app.page, ui.canvas.sketch(app.page))
+    expect([...onGroups].sort()).toEqual([...offGroups].sort())
+
+    // Guard against a vacuous pass: the off sample must contain real cut
+    // pixels, proven by hiding the cuts layer and seeing the canvas change.
+    const sketchCanvas = ui.canvas.sketch(app.page)
+    const offKeys = [...offGroups].sort().join('|')
+    await ui.toolpathVis.sketchItems(app.page).first().click()
+    await expect.poll(async () => {
+      const hiddenGroups = await dominantPixelGroups(sketchCanvas)
+      return [...hiddenGroups].sort().join('|') !== offKeys
+    }, { timeout: 10000 }).toBe(true)
+  })
+})

@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-import type { ToolpathResult } from '../../engine/toolpaths/types'
-import type { ToolpathVisibility } from '../toolpathVisibility'
+import type { ToolpathMove, ToolpathResult } from '../../engine/toolpaths/types'
+import { toolpathHasEngagementTelemetry, type ToolpathVisibility } from '../toolpathVisibility'
 import {
   buildToolpathOverlayLayers,
   moveMatchesZFilter,
@@ -42,6 +42,7 @@ import { appendProfilePath, traceProfilePath } from './profilePrimitives'
 import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 import { canvasColors, canvasRgba, parseRgb } from './canvasPalette'
+import { canvasFeedColour, feedColourStep } from '../../theme/palette'
 
 export function featureUsesSketchFill(operation: SketchFeature['operation']): boolean {
   return operation !== 'line' && operation !== 'construction'
@@ -599,6 +600,10 @@ export function drawToolpath(
     plunges: { stroke: canvasColors().toolpathPlunge, lineWidth: 1.5, dash: [3, 4] },
     retractions: { stroke: canvasColors().toolpathRapid, lineWidth: 1.3, dash: [8, 6] },
   }
+  // Feed colours are on when the toggle says so, or by default for the
+  // selected engagement-mode operation (issue #498 S4). A move whose
+  // feedScale is absent or 1 maps to step 0, which is toolpathCut exactly.
+  const feedColoursOn = visibility.feedColours ?? (emphasized && toolpathHasEngagementTelemetry(toolpath))
 
   for (const schemaLayer of buildToolpathOverlayLayers(visibility)) {
     if (!schemaLayer.visible) continue
@@ -610,20 +615,43 @@ export function drawToolpath(
       continue
     }
 
-    ctx.beginPath()
-    for (const move of moves) {
-      const from = worldToCanvas({ x: move.from.x, y: move.from.y }, vt)
-      const to = worldToCanvas({ x: move.to.x, y: move.to.y }, vt)
-      ctx.moveTo(from.cx, from.cy)
-      ctx.lineTo(to.cx, to.cy)
+    const strokePath = (layerMoves: ToolpathMove[], stroke: string): void => {
+      ctx.beginPath()
+      for (const move of layerMoves) {
+        const from = worldToCanvas({ x: move.from.x, y: move.from.y }, vt)
+        const to = worldToCanvas({ x: move.to.x, y: move.to.y }, vt)
+        ctx.moveTo(from.cx, from.cy)
+        ctx.lineTo(to.cx, to.cy)
+      }
+      ctx.strokeStyle = stroke
+      ctx.globalAlpha = emphasized ? 1 : 0.34
+      ctx.lineWidth = emphasized ? layer.lineWidth + 0.35 : Math.max(1, layer.lineWidth - 0.35)
+      ctx.setLineDash(layer.dash)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.globalAlpha = 1
     }
-    ctx.strokeStyle = layer.stroke
-    ctx.globalAlpha = emphasized ? 1 : 0.34
-    ctx.lineWidth = emphasized ? layer.lineWidth + 0.35 : Math.max(1, layer.lineWidth - 0.35)
-    ctx.setLineDash(layer.dash)
-    ctx.stroke()
-    ctx.setLineDash([])
-    ctx.globalAlpha = 1
+
+    if (schemaLayer.key === 'cuts' && feedColoursOn) {
+      // One stroke per emitted feed bucket. Cuts only — lead-ins, rapids,
+      // plunges and retractions keep their existing tokens.
+      const byStep = new Map<number, ToolpathMove[]>()
+      for (const move of moves) {
+        const step = feedColourStep(move.feedScale)
+        const stepMoves = byStep.get(step)
+        if (stepMoves) {
+          stepMoves.push(move)
+        } else {
+          byStep.set(step, [move])
+        }
+      }
+      for (const [step, stepMoves] of byStep) {
+        strokePath(stepMoves, canvasFeedColour(step, canvasColors()))
+      }
+      continue
+    }
+
+    strokePath(moves, layer.stroke)
   }
 
   // Collision warning overlay: segments that cross a clamp zone below required

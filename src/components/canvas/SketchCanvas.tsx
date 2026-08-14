@@ -16,6 +16,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
+import { toolpathHasEngagementTelemetry } from '../toolpathVisibility'
 import type { OpenProfileEndpoint, SketchControlRef } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import { previewOffsetFeatures } from '../../store/helpers/derivedFeatures'
@@ -2864,6 +2865,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           className="sketch-toolpath-vis"
           expanded={toolpathPanelExpanded}
           onExpandedChange={onToolpathPanelExpandedChange}
+          feedColoursDefault={
+            toolpaths.some((toolpath) => toolpath.operationId === selectedOperationId && toolpathHasEngagementTelemetry(toolpath))
+          }
         />
       )}
       <ConstraintEditPanel constraint={constraint} />
