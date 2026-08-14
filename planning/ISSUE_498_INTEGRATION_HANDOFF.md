@@ -91,9 +91,10 @@ uncertainty may restore full feed.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | S1 | Pure engagement estimator + feed quantization + telemetry types | `c969e0e` | `feat/issue-498-engagement-core` / removed | `complete` | `accepted` | `b59178f`, merged `620229d` | both passed | 945 insertions across the 4 allowed files |
 | S2 | Operation mode field + pocket wiring + regeneration allowlist | `a44eec5` | `feat/issue-498-engagement-pocket` / retained | `complete` | **rejected — 3 blockers** | `2a8a5e3`, NOT merged | both passed | branch kept; corrections build on it |
-| S2b | engagement.ts: nominal deadband, bucket ladder, capsule geometry | `-` | `-` | `not started` | `pending` | `-` | `-` | fixes blockers 1 and 3 |
-| S2c | Capsule early-out, per-band cache, pointwise never-raise clamp | `417f43c` | `feat/issue-498-engagement-perf` / retained | `complete` | **rejected — per-level feed drift** | `7df0fdc`, NOT merged | all passed | blockers 2 and 3 addressed; new defect found |
-| S3 | CAM panel control + booklet row + i18n (en/de/es/fr) | `-` | `-` | `not started` | `pending` | `-` | `-` | user-facing surface kept in one slice so the locale review happens once |
+| S2b | engagement.ts: nominal deadband, bucket ladder, capsule geometry | `2a8a5e3` | `feat/issue-498-engagement-fix` / removed | `complete` | `accepted` | `873f53d` | all passed | fixed blocker 1 at the source; capsules made the estimator exact |
+| S2c | Capsule early-out, per-band cache, pointwise never-raise clamp | `417f43c` | `feat/issue-498-engagement-perf` / removed | `complete` | `accepted after S2d` | `7df0fdc` | all passed | fixed blockers 2 and 3; introduced the depth drift S2d then fixed |
+| S2d | Depth-invariant classification, level-scoped clamp, loud cache misses | `7df0fdc` | `feat/issue-498-engagement-cache` / removed | `complete` | `accepted` | `6262dfa`, chain merged `c8fdf85` | all passed | closes every open blocker; chain merged to the integration branch |
+| S3 | CAM panel control + booklet row + i18n (en/de/es/fr) | `c8fdf85` | pending | `not started` | `pending` | `-` | see S3 instructions | user-facing surface kept in one slice so the locale review happens once; first slice dispatched via the DSH provider |
 
 The original S2 (standalone oracle) was dropped: the S1 review already cross-validated
 the estimator against an independently written brute-force sampler, so a dedicated
@@ -305,3 +306,80 @@ Caveat on the measurement: the probe has no region boundary, so the wall-adjacen
 ## User-review handoff
 
 Filled in after the final accepted slice.
+
+### S2d review — accepted, all blockers closed
+
+Verified with `scripts/pocket-output-probe.ts` across its 11-fixture matrix.
+
+| Check | Result |
+| --- | --- |
+| Depth dependence (the S2d target) | **spread 0.0000** on the five-level fixture, was 0.2149; no fixture newly depth-dependent |
+| Legacy byte-identical vs pre-S2 baseline | pass |
+| Never-raise (geometric) | 0 raised |
+| Generation cost, 200 mm six-level pocket | **4.1×** legacy (477 ms), from 40× / 4909 ms at S2 |
+| `rect-round` (tessellated arcs) | 28.6× (657 ms), back in line with the disc model's 26× and far below S2b's 204× |
+
+Cost across the whole chain, as a factor over legacy:
+
+| Fixture | S2 | S2b | S2c | S2d |
+| --- | --- | --- | --- | --- |
+| rect-offset | 9.4× | 7.2× | 2.5× | 4.1× |
+| rect-round | 26× | 204× | 53.9× | 28.6× |
+| rect-multilevel | 39× | 28.8× | 7.8× | 5.6× |
+| rect-parallel | 33× | 19.7× | 11.9× | 15.0× |
+| 200 mm, 6 levels | 40× | 18.6× | 14.5× | **4.1×** |
+
+Legacy timings are unchanged throughout and the mode defaults to `'legacy'`, so
+every remaining cost is opt-in.
+
+The worker's residual risk is stated as an explicit number rather than left
+open: the multi-region island fixture still takes **exactly 2** cache misses,
+each resolving conservatively to `π`, which matches the 0.0178 mean-feed spread
+the probe measures there. A pinned number is reviewable; an unbounded one is not.
+
+## Slice instructions
+
+### S3 — CAM panel control, booklet row, and locales
+
+**Goal:** expose `pocketEngagementMode` in the UI so the feature can be tried in
+the real app, and report it in the operation booklet. Engine behaviour is already
+complete and merged — this slice adds no toolpath logic.
+
+**Allowed files:**
+
+- `src/components/cam/CAMPanel.tsx`
+- `src/engine/operationBooklet/report.ts`
+- `src/i18n/locales/{en,de,es,fr}/*.ts`
+- one e2e spec under `e2e/` if the control needs coverage
+- `src/components/cam/operationValidity.test.ts` and the booklet test, if the new row needs assertions
+
+**Forbidden files:**
+
+- `src/engine/toolpaths/**` — the engine is done; changing it here would escape review
+- `src/types/project.ts`, `src/store/**`, `src/app/**` — the field, its default and
+  the regeneration allowlist all already exist and are verified
+- `planning/**` other than reading
+
+**Invariants:**
+
+- The control follows the existing pocket-field pattern in `CAMPanel.tsx`; it is
+  visible only for pocket operations, exactly like the slot-feed percentage.
+- The mode is opt-in and defaults to `'legacy'`. A project saved before this
+  slice must open unchanged and generate an identical toolpath.
+- The booklet row appears only when the mode is not `'legacy'`, mirroring how
+  `pocketSlotFeedPercent` is reported only when below 100 (`report.ts`).
+- Every user-visible string is translated in **all four** locales. Add only the
+  new keys; do not touch an existing value. `es/*` uses double quotes where the
+  other locales use single — match each file, not its sibling.
+
+**Required checks:**
+
+```bash
+npx tsx scripts/run-tests.ts
+scripts/build-summary.sh
+```
+
+**Manager review record:** pending. The locale diff will be reviewed by parsing
+key/value pairs on both sides and comparing dictionaries, never by reading the
+rendered diff — an invisible U+00A0 substitution has slipped through that way
+before.
