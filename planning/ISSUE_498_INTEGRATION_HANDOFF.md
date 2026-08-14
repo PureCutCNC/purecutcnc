@@ -89,7 +89,7 @@ uncertainty may restore full feed.
 
 | Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| S1 | Pure engagement estimator + feed quantization + telemetry types | `e1ded37` | `feat/issue-498-engagement-core` / `worktrees/purecutcnc/engagement-core` | `not started` | `pending` | `-` | `npx tsx scripts/run-tests.ts src/engine/toolpaths/engagement.test.ts`, `scripts/build-summary.sh` | pure module, no pocket integration |
+| S1 | Pure engagement estimator + feed quantization + telemetry types | `c969e0e` | `feat/issue-498-engagement-core` / removed | `complete` | `accepted` | `b59178f`, merged `620229d` | both passed | 945 insertions across the 4 allowed files |
 | S2 | Independent swept-stock oracle + cross-validation | `-` | `-` | `not started` | `pending` | `-` | `-` | must not reuse S1's estimator internals |
 | S3 | Operation mode field + pocket wiring + regeneration allowlist | `-` | `-` | `not started` | `pending` | `-` | `-` | scoped after S1/S2 land |
 | S4 | CAM panel control + i18n (en/de/es/fr) | `-` | `-` | `not started` | `pending` | `-` | `-` | scoped after S3 |
@@ -134,11 +134,29 @@ scripts/build-summary.sh
 
 **Manager review record:**
 
-- Worker invocation: `pending`
-- Worker-reported completion: `pending`
-- Diff/commit review: `pending`
-- Correction attempts: `none`
-- Acceptance decision: `pending`
+- Worker invocation: 2026-08-14, exit 0, independent build gate passed, one commit, clean worktree, changes confined to the four allowed files.
+- Worker-reported completion: STATUS complete, COMMIT `b59178f`, both required checks reported passing. Treated as a report, not acceptance.
+- Diff/commit review: **accepted.** Reviewed the module in full. Grid lookup proven sound (a disc within `2r` of a query always lands in the query's own cell, since discs are inserted across a bbox padded by one cell size). Arc wrap handling correct: `h ≤ π/2` bounds the arc below `π` wide, so the single wrap branch at `b > 3π/2` is exhaustive. No `any`, no non-null assertions, licence header present.
+- Independent verification (manager probe, written before the worker's output existed, brute-force sampling the leading semicircle rather than unioning arcs — a different algorithm answering the same question): validation identity holds across `a_e ∈ [0, 2r]`; estimator agrees with the oracle to ~2e-4 rad; virgin material reports `π`; conservative bias holds; feed map emits exactly 6 distinct values.
+- **Own-trail handling is structural, not heuristic.** A prior kerf directly behind the tool cannot intersect the leading semicircle at all, because `h ≤ π/2` keeps its covered arc entirely outside `[−π/2, π/2]`. The estimator therefore needs no analogue of `PriorCutIndex`'s `ownTrailLateralTolerance`. Verified: a straight slot trailing its own kerf reports exactly `π`.
+- Mutation checks (`cp` backup, never `git checkout`): inverting `π − covered` → covered, widening the leading-semicircle clip to the full circle, and removing the bucket quantization were each caught by the worker's tests. The bucket mutation is the important one — it is the arc-fitting constraint, and the test rejects any scale outside the 6-bucket set.
+- Correction attempts: none required.
+- Acceptance decision: `accepted`, merged as `620229d`.
+
+**Finding that changes #499 — ring corners spike, and the worker's risk note was wrong.**
+
+The worker flagged that its own analysis of concentric corners showed "engagement dips, never a spike", which would have undercut #497 failure mode 1 and all of #499. Measured directly on a 60 mm square pocket, `r = 3`, stepover `2.4`, in the generator's real `inner-first` ring order:
+
+| Position | Engagement |
+| --- | --- |
+| Straight run | `1.3695` rad — reproduces `nominalEngagement(2.4, 3) = 1.3694` to four decimals |
+| Near corner, max | `2.9404` rad (168°) — a `+π/2` spike, essentially slotting |
+
+The spike is identical on every interior ring, so it is structural rather than an artifact of one ring, and it decays back to nominal over roughly two tool diameters of path either side of the corner. Physically consistent: on a straight run the inner ring's kerf swallows the tool's whole inboard flank, leaving only the outboard arc engaged, whereas at the corner the inner kerf sits a diagonal `stepover·√2` away and stops covering the tool.
+
+Two consequences. The straight-run agreement is strong independent evidence the estimator is right on a realistic pattern, not just on synthetic fixtures. And **#499's reopen trigger is satisfied on the geometry alone** — a 90° over-engagement running two tool diameters per corner is not a short transient that reduced feed fully answers. Confirm against S3's real-project telemetry before reopening.
+
+Caveat on the measurement: the probe has no region boundary, so the wall-adjacent ring 0 counts retained material beyond the wall as stock and overstates its engagement. Rings 1+ are unaffected — under `inner-first` their outboard side genuinely is uncut stock — and they carry the finding.
 
 ## Integration verification
 
