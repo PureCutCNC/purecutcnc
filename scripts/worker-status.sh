@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # worker-status.sh — cheap, bounded status probe for a dispatched slice.
-# Reads the progress log written by dispatch-task.sh / run-claude-deepseek-agent.sh
-# and reports the worker's state plus its recent activity. Designed for a manager
-# to poll every 30-60s instead of blocking on (or killing) a long dispatch:
-# judge the worker by idle time since its last progress entry, never by total
-# wall-clock runtime — a healthy slice can run 10+ minutes.
+# Reads the progress log written by dispatch-task.sh and its provider leaves and
+# reports the worker's state plus its recent marker. Designed for a manager to
+# poll every 30-60s instead of blocking on (or killing) a long dispatch: judge
+# the worker by idle time since its last marker, never by total wall-clock runtime.
 
 set -euo pipefail
 
@@ -21,12 +20,15 @@ Usage: scripts/worker-status.sh --slug SLUG [options]
 
 Report the state of a dispatched worker from its progress log:
   state=waiting     log not created yet (dispatch still setting up)
-  state=running     worker active; idle= shows seconds since the last entry
-  state=stale       no progress for --stale-after seconds — inspect the log
+  state=running     worker active; idle= shows seconds since the last marker
+  state=stale       no marker for --stale-after seconds — inspect the log
                     tail and worktree before deciding anything; do not kill
                     on this signal alone
   state=verifying   worker exited; independent build gate in progress
   state=done        dispatch finished; read the dispatch report
+
+DSH emits process-alive heartbeats, not tool-level activity, so inspect its
+final response and worktree before treating a long-running DSH worker as healthy.
 
 Options:
   --slug SLUG         Locate the log at $PURECUT_WORKTREE_BASE/SLUG.progress.log.
@@ -82,7 +84,7 @@ fi
 
 printf 'state=%s idle=%ss log=%s\n' "$state" "$idle" "$log"
 if [[ "$state" == "stale" ]]; then
-  printf 'no progress for %ss — inspect the log tail and worktree before acting; do not kill on this alone\n' "$idle"
+  printf 'no marker for %ss — inspect the log tail and worktree before acting; do not kill on this alone\n' "$idle"
 fi
 printf -- '--- last %s entries ---\n' "$lines"
 tail -n "$lines" "$log"

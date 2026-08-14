@@ -1,6 +1,12 @@
-# DeepSeek implementation-worker prompt template
+# Delegated implementation-worker handoff template
 
-Use this as the complete prompt supplied to `scripts/run-claude-deepseek-agent.sh`. Replace only the bracketed fields before dispatching a slice.
+For a detailed slice, save a completed copy at a **tracked path in the selected
+base/worktree**, then dispatch every provider with `--handoff REPO_PATH` and a
+short stdin instruction. The dispatcher gives the provider a compact bootstrap;
+the full handoff never becomes a command-line argument. Direct stdin prompts are
+reserved for small tasks.
+
+Replace only the bracketed fields before dispatching a slice.
 
 ```text
 You are the implementation worker for slice [SLICE_ID] of [TOPIC].
@@ -37,7 +43,7 @@ Required invariants: [INVARIANTS]
 Required checks: [REQUIRED_CHECKS]
 
 Rules:
-- Narrate your progress: before each phase (reading context, editing a group of files, running a check, committing), print one short line saying what you are about to do. These lines stream to the manager while you work; do not batch them up for the end.
+- Narrate your progress in the final report. Claude/DeepSeek streams observed tool activity; DSH headless returns only its final response, so its manager log can prove process liveness but not individual tool calls.
 - Make the smallest change that satisfies the slice.
 - Do not perform unrelated cleanup or change public/frozen contracts unless this slice explicitly permits it.
 - Do not edit the detailed integration handoff unless this slice explicitly assigns documentation.
