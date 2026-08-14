@@ -515,6 +515,14 @@ export interface EngagementFeedFragment {
 const DEFAULT_HYSTERESIS_FRACTION = 0.25
 
 /**
+ * Tolerance for minimum-fragment comparisons. A ring's scaled minimum is
+ * `perimeter / 8`, which a fragment distance summed from chunk lengths can
+ * undershoot by one ulp; the tolerance is far below any meaningful precision
+ * and only keeps an exact-boundary fragment from being merged away.
+ */
+const MIN_FRAGMENT_EPSILON = 1e-9
+
+/**
  * Stateful feed quantization for one operation: consumes a sequence of
  * (engagement, distance) samples along a path and emits stretches of constant
  * `feedScale` with two controller-friendliness guarantees —
@@ -527,22 +535,38 @@ const DEFAULT_HYSTERESIS_FRACTION = 0.25
  *   its margin — engagement within the estimator's worst-case error of
  *   nominal counts as exactly 1 and rises to full feed with no further
  *   margin.
- * - Minimum fragment length: no emitted stretch is shorter than
- *   `minFragmentLength`; a shorter stretch is merged into its lower-scale
- *   neighbour, so the merge itself also resolves toward the lower feed.
+ * - Minimum fragment length: no emitted stretch is shorter than its own
+ *   minimum fragment length — the tightest `minFragmentLength` carried by any
+ *   of its chunks, overridable per ring via `setMinFragmentLength`; a shorter
+ *   stretch is merged into its lower-scale neighbour, so the merge itself also
+ *   resolves toward the lower feed.
  *
  * Both guarantees are conservative: while in doubt the quantizer holds the
  * lower feed.
  */
+/**
+ * One quantized stretch, tracking the minimum fragment length in force while
+ * it was accumulated. The emitted `EngagementFeedFragment` keeps only the
+ * scale and distance; the per-stretch minimum length is internal, so the
+ * merge in `fragments` can judge a stretch against the tightest minimum that
+ * applied to any of its chunks rather than one global constant.
+ */
+interface QuantizedFragment {
+  scale: number
+  distance: number
+  minFragmentLength: number
+}
+
 export class EngagementFeedQuantizer {
   private readonly nominal: number
   private readonly slotScale: number
-  private readonly minFragmentLength: number
   private readonly hysteresisFraction: number
   private readonly bucketWidth: number
-  private readonly emitted: EngagementFeedFragment[] = []
+  private readonly emitted: QuantizedFragment[] = []
   private currentScale: number | null = null
   private heldDistance = 0
+  private minFragmentLength: number
+  private heldMinFragmentLength: number
 
   constructor(options: {
     nominal: number
@@ -553,8 +577,20 @@ export class EngagementFeedQuantizer {
     this.nominal = options.nominal
     this.slotScale = Math.min(1, Math.max(0, options.slotScale))
     this.minFragmentLength = Math.max(0, options.minFragmentLength)
+    this.heldMinFragmentLength = this.minFragmentLength
     this.hysteresisFraction = options.hysteresis ?? DEFAULT_HYSTERESIS_FRACTION
     this.bucketWidth = (1 - this.slotScale) / (ENGAGEMENT_FEED_BUCKET_COUNT - 1)
+  }
+
+  /**
+   * Override the minimum fragment length for subsequent chunks. The pocket
+   * scales a ring's minimum down to its perimeter so a short ring can hold its
+   * own fragment; a stretch accumulates the tightest minimum any of its chunks
+   * carried, and both the rise gate and the `fragments` merge judge the
+   * stretch against that.
+   */
+  setMinFragmentLength(length: number): void {
+    this.minFragmentLength = Math.max(0, length)
   }
 
   /** Feed the next sample: `distance` path units travelled at `engagement` radians. */
@@ -565,43 +601,50 @@ export class EngagementFeedQuantizer {
     if (this.currentScale === null) {
       this.currentScale = rawScale
       this.heldDistance = safeDistance
+      this.heldMinFragmentLength = this.minFragmentLength
       return
     }
     if (rawScale === this.currentScale) {
       this.heldDistance += safeDistance
+      this.heldMinFragmentLength = Math.min(this.heldMinFragmentLength, this.minFragmentLength)
       return
     }
     if (rawScale < this.currentScale) {
       // Engagement rose: drop the feed immediately (conservative).
-      this.emitted.push({ scale: this.currentScale, distance: this.heldDistance })
+      this.emitted.push({ scale: this.currentScale, distance: this.heldDistance, minFragmentLength: this.heldMinFragmentLength })
       this.currentScale = rawScale
       this.heldDistance = safeDistance
+      this.heldMinFragmentLength = this.minFragmentLength
       return
     }
     // Engagement fell: rise only past the hysteresis margin inside the target
-    // bucket and only after the current stretch has reached the minimum
-    // fragment length. The top rung (scale 1) uses the deadband as its
-    // margin; a NaN sample never rises (NaN comparisons are false). Otherwise
-    // hold the current (lower) feed.
+    // bucket and only after the current stretch has reached its own minimum
+    // fragment length (the tightest of its chunks). The top rung (scale 1)
+    // uses the deadband as its margin; a NaN sample never rises (NaN
+    // comparisons are false). Otherwise hold the current (lower) feed.
     const continuous = continuousFeedScale(clamped, this.nominal, this.slotScale)
     const effective = clamped <= this.nominal + ENGAGEMENT_ESTIMATE_EPSILON ? 1 : continuous
     const margin = rawScale >= 1 ? 0 : this.hysteresisFraction * this.bucketWidth
-    if (effective >= rawScale + margin && this.heldDistance >= this.minFragmentLength) {
-      this.emitted.push({ scale: this.currentScale, distance: this.heldDistance })
+    if (effective >= rawScale + margin && this.heldDistance >= this.heldMinFragmentLength - MIN_FRAGMENT_EPSILON) {
+      this.emitted.push({ scale: this.currentScale, distance: this.heldDistance, minFragmentLength: this.heldMinFragmentLength })
       this.currentScale = rawScale
       this.heldDistance = safeDistance
+      this.heldMinFragmentLength = this.minFragmentLength
     } else {
       this.heldDistance += safeDistance
+      this.heldMinFragmentLength = Math.min(this.heldMinFragmentLength, this.minFragmentLength)
     }
   }
 
-  /** Emitted stretches, with every stretch shorter than the minimum fragment length merged away. */
+  /** Emitted stretches, with every stretch shorter than its own minimum fragment length merged away. */
   fragments(): EngagementFeedFragment[] {
-    const result = this.emitted.slice()
-    if (this.currentScale !== null) result.push({ scale: this.currentScale, distance: this.heldDistance })
+    const result: QuantizedFragment[] = this.emitted.slice()
+    if (this.currentScale !== null) {
+      result.push({ scale: this.currentScale, distance: this.heldDistance, minFragmentLength: this.heldMinFragmentLength })
+    }
     for (let i = 0; i < result.length; ) {
       const fragment = result[i]
-      if (result.length === 1 || fragment.distance >= this.minFragmentLength) {
+      if (result.length === 1 || fragment.distance >= fragment.minFragmentLength - MIN_FRAGMENT_EPSILON) {
         i += 1
         continue
       }
@@ -612,10 +655,11 @@ export class EngagementFeedQuantizer {
       result.splice(Math.min(i, targetIndex), 2, {
         scale: Math.min(fragment.scale, target.scale),
         distance: fragment.distance + target.distance,
+        minFragmentLength: Math.min(fragment.minFragmentLength, target.minFragmentLength),
       })
       if (targetIndex < i) i = targetIndex
     }
-    return result
+    return result.map(({ scale, distance }) => ({ scale, distance }))
   }
 }
 

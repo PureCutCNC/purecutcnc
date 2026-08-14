@@ -304,6 +304,24 @@ const ENGAGEMENT_SAMPLE_BASE_LENGTH = 0.5
 const ENGAGEMENT_SAMPLE_CORNER_LENGTH = 0.25
 const ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK = 3
 
+/**
+ * Minimum fragment length for one ring, scaled from the fixed one-tool-diameter
+ * floor. A ring's natural feed pattern — the nominal straight run between two
+ * corners — is half a side, i.e. `perimeter / 8` for a square ring. On a ring
+ * whose perimeter is under eight tool diameters that natural run is shorter
+ * than one tool diameter, so a fixed minimum would forbid the run from ever
+ * holding its own fragment and the reduced corner feed would run the whole
+ * ring. Capping at one tool diameter keeps the floor unchanged on rings large
+ * enough to care.
+ */
+const ENGAGEMENT_MIN_FRAGMENT_PERIMETER_DIVISOR = 8
+
+/** Minimum fragment length for a ring of the given perimeter; links (null) keep the tool-diameter floor. */
+function ringMinFragmentLength(toolDiameter: number, ringPerimeter: number | null): number {
+  if (ringPerimeter === null || !Number.isFinite(ringPerimeter)) return toolDiameter
+  return Math.min(toolDiameter, ringPerimeter / ENGAGEMENT_MIN_FRAGMENT_PERIMETER_DIVISOR)
+}
+
 // ── Engagement cache probes ───────────────────────────────────────────
 //
 // Call-count probes for the once-per-band classification cache. Cost
@@ -769,6 +787,7 @@ function applyEngagementFeedToLevel(
     t1: number
     length: number
     scale: number
+    minFragmentLength: number
   }
 
   // Pass B: sample each chunk (max over interior points), feed the quantizer
@@ -782,16 +801,19 @@ function applyEngagementFeedToLevel(
     const cut = cuts[cutIndex]
     const cached = cache?.chunksForMove(cut.move.from.x, cut.move.from.y, cut.move.to.x, cut.move.to.y) ?? null
     if (cached !== null) {
+      const chunkMinFragmentLength = ringMinFragmentLength(toolDiameter, cached.ringPerimeter)
+      quantizer?.setMinFragmentLength(chunkMinFragmentLength)
       for (const chunk of cached.chunks) {
         const chunkLength = (chunk.t1 - chunk.t0) * cut.length
         if (chunkLength <= 1e-12) continue
         quantizer?.push(chunk.engagement, chunkLength)
         telemetry.addSample(chunk.engagement, chunkLength)
-        chunks.push({ move: cut.move, cutIndex, t0: chunk.t0, t1: chunk.t1, length: chunkLength, scale: 1 })
+        chunks.push({ move: cut.move, cutIndex, t0: chunk.t0, t1: chunk.t1, length: chunkLength, scale: 1, minFragmentLength: chunkMinFragmentLength })
       }
       continue
     }
     if (cache !== null) engagementCacheMissCount += 1
+    quantizer?.setMinFragmentLength(minFragmentLength)
     const boundaries = engagementChunkBoundaries(
       cut.length,
       cut.refinedStart,
@@ -820,7 +842,7 @@ function applyEngagementFeedToLevel(
       }
       quantizer?.push(engagement, chunkLength)
       telemetry.addSample(engagement, chunkLength)
-      chunks.push({ move: cut.move, cutIndex, t0, t1, length: chunkLength, scale: 1 })
+      chunks.push({ move: cut.move, cutIndex, t0, t1, length: chunkLength, scale: 1, minFragmentLength })
     }
     index?.addSweptSegment(cut.move.from.x, cut.move.from.y, cut.move.to.x, cut.move.to.y)
   }
@@ -859,15 +881,17 @@ function applyEngagementFeedToLevel(
 
   // Pass D: minimum fragment length over the emitted stream. A maximal run of
   // one scale — broken by non-cut moves, so the runs below are what a
-  // controller actually sees — must not be shorter than the configured
-  // minimum. Merge any shorter run into its lower-scale neighbour, the same
-  // rule `EngagementFeedQuantizer.fragments` applies to its own stretches.
+  // controller actually sees — must not be shorter than its own minimum (the
+  // tightest of its chunks' per-ring minima). Merge any shorter run into its
+  // lower-scale neighbour, the same rule `EngagementFeedQuantizer.fragments`
+  // applies to its own stretches.
   if (quantizer) {
     interface ScaleRun {
       scale: number
       start: number
       end: number
       length: number
+      minFragmentLength: number
     }
     const runs: ScaleRun[] = []
     let runStart = 0
@@ -878,10 +902,12 @@ function applyEngagementFeedToLevel(
           && cuts[chunks[chunkIndex].cutIndex].moveIndex - cuts[chunks[chunkIndex - 1].cutIndex].moveIndex > 1)
       if (!breaks) continue
       let length = 0
+      let minFragmentLength = Infinity
       for (let chunkIndex2 = runStart; chunkIndex2 < chunkIndex; chunkIndex2 += 1) {
         length += chunks[chunkIndex2].length
+        if (chunks[chunkIndex2].minFragmentLength < minFragmentLength) minFragmentLength = chunks[chunkIndex2].minFragmentLength
       }
-      runs.push({ scale: chunks[runStart].scale, start: runStart, end: chunkIndex, length })
+      runs.push({ scale: chunks[runStart].scale, start: runStart, end: chunkIndex, length, minFragmentLength })
       runStart = chunkIndex
     }
     // Two runs are emitted as one stretch only when their cut moves sit next
@@ -893,7 +919,7 @@ function applyEngagementFeedToLevel(
       return leftCut === rightCut || cuts[rightCut].moveIndex - cuts[leftCut].moveIndex === 1
     }
     for (let runIndex = 0; runIndex < runs.length; ) {
-      if (runs.length === 1 || runs[runIndex].length >= minFragmentLength) {
+      if (runs.length === 1 || runs[runIndex].length >= runs[runIndex].minFragmentLength - 1e-9) {
         runIndex += 1
         continue
       }
@@ -922,6 +948,7 @@ function applyEngagementFeedToLevel(
       }
       target.scale = mergedScale
       target.length += runs[runIndex].length
+      target.minFragmentLength = Math.min(runs[runIndex].minFragmentLength, target.minFragmentLength)
       target.start = mergedStart
       target.end = mergedEnd
       runs.splice(runIndex, 1)
@@ -1794,7 +1821,12 @@ export interface OffsetBandEngagementClassification {
     fromY: number,
     toX: number,
     toY: number,
-  ): { chunks: ReadonlyArray<{ t0: number; t1: number; engagement: number }>; isLink: boolean } | null
+  ): {
+    chunks: ReadonlyArray<{ t0: number; t1: number; engagement: number }>
+    isLink: boolean
+    /** Perimeter of the ring contour this segment lies on, or null for a link. */
+    ringPerimeter: number | null
+  } | null
   /** Stored cell entries of every swept-material index the build created —
    * the once-per-band index-size proxy for cost assertions. */
   indexEntryCount: number
@@ -1838,6 +1870,7 @@ export function buildOffsetBandEngagementClassification(
   const refineSpan = toolDiameter * ENGAGEMENT_SAMPLE_CORNER_SPAN
   const segmentChunks = new Map<string, Array<{ t0: number; t1: number; engagement: number }>>()
   const linkSegmentKeys = new Set<string>()
+  const segmentRingPerimeter = new Map<string, number>()
   let indexEntryCount = 0
   let segmentCount = 0
 
@@ -1867,6 +1900,7 @@ export function buildOffsetBandEngagementClassification(
     refinedStart: boolean,
     refinedEnd: boolean,
     isLink: boolean,
+    ringPerimeter: number | null,
   ): void => {
     const dx = to.x - from.x
     const dy = to.y - from.y
@@ -1897,6 +1931,7 @@ export function buildOffsetBandEngagementClassification(
     const key = `${from.x},${from.y}->${to.x},${to.y}`
     segmentChunks.set(key, chunks)
     if (isLink) linkSegmentKeys.add(key)
+    if (ringPerimeter !== null) segmentRingPerimeter.set(key, ringPerimeter)
     segmentCount += 1
   }
 
@@ -1935,6 +1970,7 @@ export function buildOffsetBandEngagementClassification(
         const length = Math.hypot(dx, dy)
         pairs.push({ from: last, to: first, dirX: length > 0 ? dx / length : 0, dirY: length > 0 ? dy / length : 0, length })
       }
+      const perimeter = pairs.reduce((sum, pair) => sum + pair.length, 0)
       for (let index = 0; index < pairs.length; index += 1) {
         const pair = pairs[index]
         if (pair.length <= 1e-9) continue
@@ -1945,7 +1981,7 @@ export function buildOffsetBandEngagementClassification(
         // junctions resolve toward more sampling.
         const refinedStart = index === 0 || junctionAngle(prev, pair) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
         const refinedEnd = index === pairs.length - 1 || junctionAngle(pair, next) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
-        classifySegment(pair.from, pair.to, scope, refinedStart, refinedEnd, false)
+        classifySegment(pair.from, pair.to, scope, refinedStart, refinedEnd, false, perimeter)
       }
       for (const pair of pairs) {
         if (pair.length <= 1e-9) continue
@@ -2017,7 +2053,7 @@ export function buildOffsetBandEngagementClassification(
       if (position !== null) {
         const linkLength = Math.hypot(startPoint.x - position.x, startPoint.y - position.y)
         if (linkLength > XY_ALIGN_EPS && linkLength <= maxLinkDistance) {
-          classifySegment(position, startPoint, canonicalIndex, true, true, true)
+          classifySegment(position, startPoint, canonicalIndex, true, true, true, null)
           canonicalIndex.addSweptSegment(position.x, position.y, startPoint.x, startPoint.y)
         }
       }
@@ -2043,7 +2079,7 @@ export function buildOffsetBandEngagementClassification(
       const key = `${fromX},${fromY}->${toX},${toY}`
       const chunks = segmentChunks.get(key)
       if (chunks === undefined) return null
-      return { chunks, isLink: linkSegmentKeys.has(key) }
+      return { chunks, isLink: linkSegmentKeys.has(key), ringPerimeter: segmentRingPerimeter.get(key) ?? null }
     },
     indexEntryCount,
     segmentCount,

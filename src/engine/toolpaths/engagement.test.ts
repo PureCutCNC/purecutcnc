@@ -614,6 +614,41 @@ console.log('Testing the quantizer rises back to full feed on a deadbanded strai
   assert(stepped[1].scale < 1, 'a real excess above the deadband must not restore full feed')
 }
 
+// ── 8c. A long nominal stretch after a link recovers within a bounded distance ──
+//
+// S6's delayed-recovery defect: a genuine full-width link (180°) drops the
+// feed to the slot scale, and a fixed one-tool-diameter minimum fragment
+// length held that reduced feed into the following ring until a full tool
+// diameter of the ring had been cut at slot feed. With the per-ring minimum,
+// the reduced feed must end with the link itself — at most one tool diameter —
+// and the long nominal stretch must run at full feed.
+
+console.log('Testing a long nominal stretch after a slot link recovers full feed within a bounded distance...')
+{
+  const nominal = Math.PI / 2
+  const slotScale = 0.4
+  const quantizer = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 6 })
+  // The link leaves a short ring (perimeter 4.8 mm → minimum fragment 0.6 mm)
+  // and enters a long ring whose minimum is one tool diameter.
+  quantizer.setMinFragmentLength(0.6)
+  quantizer.push(Math.PI, 4.8)
+  quantizer.setMinFragmentLength(6)
+  let remaining = 130
+  while (remaining > 1e-9) {
+    const step = Math.min(3, remaining)
+    quantizer.push(nominal, step)
+    remaining -= step
+  }
+  const fragments = quantizer.fragments()
+  assert(fragments.length === 2, `link then nominal stretch should emit two fragments, got ${fragments.length}`)
+  assert(approx(fragments[0].scale, 0.4, 1e-12), 'the link fragment must hold the slot scale')
+  assert(approx(fragments[1].scale, 1, 1e-12), 'the nominal stretch must recover to full feed')
+  assert(
+    fragments[0].distance <= 6 + 1e-9,
+    `the reduced feed must not extend past the link by more than one tool diameter, got ${fragments[0].distance.toFixed(2)}`,
+  )
+}
+
 // ── 9. Telemetry accumulator ──
 
 console.log('Testing engagement telemetry...')

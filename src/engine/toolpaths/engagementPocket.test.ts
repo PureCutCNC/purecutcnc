@@ -376,31 +376,43 @@ test('corner spike lowers the emitted feed within one tool diameter of interior 
 
 // ── 4. Controller friendliness ────────────────────────────────────────
 
-/** Maximal runs of one scale over consecutive cut moves; non-cut moves break a run. */
-function maximalScaleRuns(moves: ToolpathMove[]): Array<{ scale: number; length: number }> {
-  const runs: Array<{ scale: number; length: number }> = []
+/**
+ * Maximal runs of one scale over consecutive cut moves; non-cut moves break a
+ * run. `minHalfSide` is the smallest ring half-side the run touches (the
+ * largest coordinate magnitude of any of its moves), which on the offset
+ * pattern is the run's local ring size and therefore its scaled minimum
+ * fragment length.
+ */
+function maximalScaleRuns(moves: ToolpathMove[]): Array<{ scale: number; length: number; minHalfSide: number }> {
+  const runs: Array<{ scale: number; length: number; minHalfSide: number }> = []
   let currentScale: number | null = null
   let currentLength = 0
+  let currentMinHalfSide = Number.POSITIVE_INFINITY
+  const flush = (): void => {
+    if (currentScale !== null) runs.push({ scale: currentScale, length: currentLength, minHalfSide: currentMinHalfSide })
+    currentScale = null
+    currentLength = 0
+    currentMinHalfSide = Number.POSITIVE_INFINITY
+  }
   for (const move of moves) {
     if (move.kind !== 'cut') {
-      if (currentScale !== null) {
-        runs.push({ scale: currentScale, length: currentLength })
-        currentScale = null
-        currentLength = 0
-      }
+      flush()
       continue
     }
     const scale = move.feedScale ?? 1
     const length = Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y)
+    const halfSide = Math.max(Math.abs(move.from.x), Math.abs(move.from.y), Math.abs(move.to.x), Math.abs(move.to.y))
     if (scale === currentScale) {
       currentLength += length
+      currentMinHalfSide = Math.min(currentMinHalfSide, halfSide)
     } else {
-      if (currentScale !== null) runs.push({ scale: currentScale, length: currentLength })
+      flush()
       currentScale = scale
       currentLength = length
+      currentMinHalfSide = halfSide
     }
   }
-  if (currentScale !== null) runs.push({ scale: currentScale, length: currentLength })
+  flush()
   return runs
 }
 
@@ -416,12 +428,46 @@ test('controller friendliness: bounded distinct scales and minimum fragment leng
       `${spec.name}: ${stampedScales.size} distinct feedScale values exceed the ${ENGAGEMENT_FEED_BUCKET_COUNT}-bucket bound`,
     )
     for (const run of maximalScaleRuns(engagement.moves)) {
+      // The offset pattern scales a ring's minimum fragment length down to its
+      // half-side (perimeter/8) so a short ring can hold its own fragment; the
+      // parallel pattern has no ring tree and keeps the tool-diameter floor.
+      const minFragment = spec.pattern === 'offset'
+        ? Math.min(MIN_FRAGMENT_LENGTH, run.minHalfSide)
+        : MIN_FRAGMENT_LENGTH
       assert(
-        run.length >= MIN_FRAGMENT_LENGTH - 1e-9,
-        `${spec.name}: scale run ${run.scale} of ${run.length} is shorter than the ${MIN_FRAGMENT_LENGTH} minimum fragment length`,
+        run.length >= minFragment - 1e-9,
+        `${spec.name}: scale run ${run.scale} of ${run.length} is shorter than the ${minFragment} minimum fragment length`,
       )
     }
   }
+})
+
+// ── 4b. A short ring with genuinely varying engagement emits more than one feed value ──
+//
+// S6's second acceptance test, restated against the production estimator. Ring
+// 5.40 (half-side 5.40 mm) is the innermost ring whose measured engagement
+// actually varies: each side's middle reports exactly the nominal wrap angle
+// (78.46° — feed scale 1.0) while each corner reports 161° (a full-width slot,
+// feed scale below 1.0). Its 4.8 mm-wide sibling is, per the conservative
+// own-trail exclusion, a genuine full slot at every point and correctly stays
+// at the slot scale; this ring is where the reduced feed was previously held
+// past the cut that justified it, and it must now emit both scales instead of
+// running its whole perimeter at slot feed.
+
+test('the innermost ring whose engagement genuinely varies emits more than one feed value', () => {
+  const { engagement } = results.get('offset-single') as CachedResult
+  const scales = new Set<number>()
+  let sampled = 0
+  for (const move of engagement.moves) {
+    if (move.kind !== 'cut') continue
+    if (endpointRing(move.from) !== 9 && endpointRing(move.to) !== 9) continue
+    scales.add(move.feedScale ?? 1)
+    sampled += 1
+  }
+  assert(sampled > 0, 'ring 5.40 must be present in the offset-single fixture')
+  assert(scales.size > 1, `ring 5.40 must emit more than one feed value, got ${[...scales].sort((a, b) => a - b).join(', ')}`)
+  assert(scales.has(1), 'ring 5.40 must recover to full feed on its nominal runs')
+  assert(Math.min(...scales) < 1, 'ring 5.40 must still emit a reduced feed at its corners')
 })
 
 // ── 5. Conservative composition ───────────────────────────────────────
