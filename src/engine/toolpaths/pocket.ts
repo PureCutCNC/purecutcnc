@@ -314,16 +314,26 @@ const ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK = 3
 
 let engagementBandCacheBuildCount = 0
 let engagementCacheLevelUseCount = 0
+let engagementCacheMissCount = 0
 
-/** Read the per-band cache probe counters (builds and level uses so far). */
-export function engagementCacheProbeCounts(): { bandCacheBuilds: number; cacheLevelUses: number } {
-  return { bandCacheBuilds: engagementBandCacheBuildCount, cacheLevelUses: engagementCacheLevelUseCount }
+/** Read the per-band cache probe counters (builds, level uses, and misses so far). */
+export function engagementCacheProbeCounts(): {
+  bandCacheBuilds: number
+  cacheLevelUses: number
+  cacheMisses: number
+} {
+  return {
+    bandCacheBuilds: engagementBandCacheBuildCount,
+    cacheLevelUses: engagementCacheLevelUseCount,
+    cacheMisses: engagementCacheMissCount,
+  }
 }
 
 /** Reset the per-band cache probe counters. Tests call this before measuring. */
 export function resetEngagementCacheProbeCounts(): void {
   engagementBandCacheBuildCount = 0
   engagementCacheLevelUseCount = 0
+  engagementCacheMissCount = 0
 }
 
 /**
@@ -559,7 +569,11 @@ interface SlotFeedSpan {
  * moves — computed by running the shipped classifier itself over a clone, so
  * the spans are byte-for-byte what a legacy generation of the same level
  * emits. The engagement path clamps against these geometrically (see
- * `applyEngagementFeedToLevel`).
+ * `applyEngagementFeedToLevel`). Only the current level's spans are returned:
+ * the clone carries every earlier level's engagement-stamped fragments too,
+ * and letting those leak into the clamp would make deeper levels clamp
+ * against their own shallower siblings' output — a Z-invariant ring tree
+ * would then emit a depth-dependent feed (the S2d drift defect).
  */
 function legacySlotSpans(
   moves: ToolpathMove[],
@@ -571,7 +585,8 @@ function legacySlotSpans(
   const clone = moves.map((move) => ({ ...move, from: { ...move.from }, to: { ...move.to } }))
   applySlotFeedToLevel(clone, startIndex, scale, slotDistance, ownTrailTolerance)
   const spans: SlotFeedSpan[] = []
-  for (const move of clone) {
+  for (let index = startIndex; index < clone.length; index += 1) {
+    const move = clone[index]
     if (move.kind === 'cut' && move.feedScale !== undefined) {
       spans.push({ from: move.from, to: move.to, scale: move.feedScale })
     }
@@ -767,7 +782,7 @@ function applyEngagementFeedToLevel(
     const cut = cuts[cutIndex]
     const cached = cache?.chunksForMove(cut.move.from.x, cut.move.from.y, cut.move.to.x, cut.move.to.y) ?? null
     if (cached !== null) {
-      for (const chunk of cached) {
+      for (const chunk of cached.chunks) {
         const chunkLength = (chunk.t1 - chunk.t0) * cut.length
         if (chunkLength <= 1e-12) continue
         quantizer?.push(chunk.engagement, chunkLength)
@@ -776,6 +791,7 @@ function applyEngagementFeedToLevel(
       }
       continue
     }
+    if (cache !== null) engagementCacheMissCount += 1
     const boundaries = engagementChunkBoundaries(
       cut.length,
       cut.refinedStart,
@@ -1767,14 +1783,18 @@ export interface OffsetBandEngagementClassification {
   /**
    * Cached chunks of the canonical segment `(fromX, fromY) → (toX, toY)`, or
    * null when the segment is unknown (the conservative fallback is full
-   * engagement, handled by the caller).
+   * engagement, handled by the caller). `isLink` marks the inter-ring
+   * transition cuts — classified against the canonical emission order, which
+   * is the one thing about them that varies with the position-seeded level
+   * traversal, so callers validating against a recomputation know where a
+   * contour ends and a link begins.
    */
   chunksForMove(
     fromX: number,
     fromY: number,
     toX: number,
     toY: number,
-  ): ReadonlyArray<{ t0: number; t1: number; engagement: number }> | null
+  ): { chunks: ReadonlyArray<{ t0: number; t1: number; engagement: number }>; isLink: boolean } | null
   /** Stored cell entries of every swept-material index the build created —
    * the once-per-band index-size proxy for cost assertions. */
   indexEntryCount: number
@@ -1790,6 +1810,17 @@ export interface OffsetBandEngagementClassification {
  * order or move index. `smoothRadius`/`depth` mirror `cutOffsetRegionNode`'s
  * emit-time smoothing so the classified geometry is the geometry the level
  * loop actually cuts.
+ *
+ * The inter-ring LINK cuts are classified too, by replaying the emission
+ * traversal once with a null seed — children in index order, each contour
+ * rotated to the nearest vertex of the carried position exactly as
+ * `cutCurrentRegion` rotates it, contours ordered greedily with rotation
+ * preserved — against an index holding everything cut earlier in that
+ * canonical order. A level whose position-seeded traversal reproduces the
+ * canonical one (every level of a Z-invariant band whose rotation seed is
+ * level-stable, e.g. concentric rings) then hits the cache for its whole
+ * move stream; a link the canonical traversal did not emit stays a miss and
+ * resolves conservatively to full engagement at the caller.
  */
 export function buildOffsetBandEngagementClassification(
   regionTrees: OffsetRegionNode[],
@@ -1801,10 +1832,12 @@ export function buildOffsetBandEngagementClassification(
 ): OffsetBandEngagementClassification {
   const { toolRadius, direction, smoothRadius } = options
   const toolDiameter = toolRadius * 2
+  const maxLinkDistance = toolDiameter
   const baseStep = toolDiameter * ENGAGEMENT_SAMPLE_BASE_LENGTH
   const refinedStep = toolDiameter * ENGAGEMENT_SAMPLE_CORNER_LENGTH
   const refineSpan = toolDiameter * ENGAGEMENT_SAMPLE_CORNER_SPAN
   const segmentChunks = new Map<string, Array<{ t0: number; t1: number; engagement: number }>>()
+  const linkSegmentKeys = new Set<string>()
   let indexEntryCount = 0
   let segmentCount = 0
 
@@ -1818,6 +1851,54 @@ export function buildOffsetBandEngagementClassification(
 
   const junctionAngle = (p: CanonicalPair, q: CanonicalPair): number =>
     Math.acos(Math.min(1, Math.max(-1, p.dirX * q.dirX + p.dirY * q.dirY)))
+
+  /**
+   * Sample one straight segment's engagement chunks against `priorIndex` and
+   * store them under the segment's coordinate key — the canonical segment
+   * identity the level loop looks up by. `refinedStart`/`refinedEnd` select
+   * the fine sampling near direction changes; both ends of a link refine
+   * (its junction neighbours are whatever the level order cuts before and
+   * after, and unknown junctions resolve toward more sampling).
+   */
+  const classifySegment = (
+    from: Point,
+    to: Point,
+    priorIndex: SweptMaterialIndex,
+    refinedStart: boolean,
+    refinedEnd: boolean,
+    isLink: boolean,
+  ): void => {
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    const length = Math.hypot(dx, dy)
+    if (length <= 1e-9) return
+    const boundaries = engagementChunkBoundaries(
+      length,
+      refinedStart,
+      refinedEnd,
+      baseStep,
+      refinedStep,
+      refineSpan,
+    )
+    const chunks: Array<{ t0: number; t1: number; engagement: number }> = []
+    for (let boundary = 0; boundary + 1 < boundaries.length; boundary += 1) {
+      const t0 = boundaries[boundary] / length
+      const t1 = boundaries[boundary + 1] / length
+      const chunkLength = (t1 - t0) * length
+      if (chunkLength <= 1e-12) continue
+      let engagement = 0
+      for (let point = 0; point < ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK; point += 1) {
+        const t = t0 + ((t1 - t0) * (point + 1)) / (ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK + 1)
+        const sample = priorIndex.engagementAt(from.x + dx * t, from.y + dy * t, dx / length, dy / length)
+        if (sample > engagement) engagement = sample
+      }
+      chunks.push({ t0, t1, engagement })
+    }
+    const key = `${from.x},${from.y}->${to.x},${to.y}`
+    segmentChunks.set(key, chunks)
+    if (isLink) linkSegmentKeys.add(key)
+    segmentCount += 1
+  }
 
   /**
    * Classify this node's own contours against `scope` and insert their
@@ -1864,35 +1945,7 @@ export function buildOffsetBandEngagementClassification(
         // junctions resolve toward more sampling.
         const refinedStart = index === 0 || junctionAngle(prev, pair) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
         const refinedEnd = index === pairs.length - 1 || junctionAngle(pair, next) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
-        const boundaries = engagementChunkBoundaries(
-          pair.length,
-          refinedStart,
-          refinedEnd,
-          baseStep,
-          refinedStep,
-          refineSpan,
-        )
-        const chunks: Array<{ t0: number; t1: number; engagement: number }> = []
-        for (let boundary = 0; boundary + 1 < boundaries.length; boundary += 1) {
-          const t0 = boundaries[boundary] / pair.length
-          const t1 = boundaries[boundary + 1] / pair.length
-          const chunkLength = (t1 - t0) * pair.length
-          if (chunkLength <= 1e-12) continue
-          let engagement = 0
-          for (let point = 0; point < ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK; point += 1) {
-            const t = t0 + ((t1 - t0) * (point + 1)) / (ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK + 1)
-            const sample = scope.engagementAt(
-              pair.from.x + (pair.to.x - pair.from.x) * t,
-              pair.from.y + (pair.to.y - pair.from.y) * t,
-              pair.dirX,
-              pair.dirY,
-            )
-            if (sample > engagement) engagement = sample
-          }
-          chunks.push({ t0, t1, engagement })
-        }
-        segmentChunks.set(`${pair.from.x},${pair.from.y}->${pair.to.x},${pair.to.y}`, chunks)
-        segmentCount += 1
+        classifySegment(pair.from, pair.to, scope, refinedStart, refinedEnd, false)
       }
       for (const pair of pairs) {
         if (pair.length <= 1e-9) continue
@@ -1904,35 +1957,93 @@ export function buildOffsetBandEngagementClassification(
   }
 
   /**
-   * Inner-first traversal: classify every child subtree first (each against
-   * its own fresh index — its certain priors are exactly its own
-   * descendants), then fold all descendants into this node's scope, then
-   * classify this node's own contours. Every segment lands in exactly two
-   * indexes (its own node's and its parent's), so the build cost stays a
-   * small constant per segment.
+   * The contours this node cuts at one level, in the canonical emission
+   * order: the wall/outer contour smoothed exactly as `cutOffsetRegionNode`
+   * smooths it (interior rings only), each contour rotated to the nearest
+   * vertex of the carried position (inner-first carries no child anchors),
+   * direction applied exactly as `cutClosedContours` applies it, and the
+   * whole set ordered greedily with rotation preserved.
    */
-  const classifyNode = (node: OffsetRegionNode, depth: number): Array<[number, number, number, number]> => {
-    const scope = new SweptMaterialIndex(toolRadius)
-    const all: Array<[number, number, number, number]> = []
-    for (const child of node.children) {
-      const childSegments = classifyNode(child, depth + 1)
-      for (const [ax, ay, bx, by] of childSegments) {
-        scope.addSweptSegment(ax, ay, bx, by)
-      }
-      all.push(...childSegments)
-    }
-    all.push(...classifyContours(node, depth, scope))
-    indexEntryCount += scope.storedEntryCount()
-    return all
+  const canonicalNodeContours = (node: OffsetRegionNode, depth: number, position: Point | null): Point[][] => {
+    const outer = node.region.outer.length >= 3 ? node.region.outer : null
+    const smoothed = outer
+      ? [smoothRadius !== null && depth > 0 ? roundContourCorners(outer, smoothRadius) : outer]
+      : []
+    const islands = node.region.islands.filter((island) => island.length >= 3)
+    const contours = applyContourDirection([...smoothed, ...islands], direction)
+    const prepared = contours.map((contour) => rotateContourToBestEntry(contour, position, []))
+    return orderClosedContoursGreedyPreservingRotation(prepared, position)
   }
 
-  for (const tree of regionTrees) {
-    classifyNode(tree, 0)
+  /**
+   * The canonical emission-order index: everything cut earlier in the
+   * canonical traversal. Link classification samples against this, mirroring
+   * the per-level index of the uncached path. A node's own contours join it
+   * only once the whole node is classified — the same own-trail exclusion
+   * `classifyContours` applies — so a link between two contours of one node
+   * under-reports its priors and over-reports engagement, the conservative
+   * direction (and the emission order of those contours is position-seeded
+   * anyway).
+   */
+  const canonicalIndex = new SweptMaterialIndex(toolRadius)
+
+  /**
+   * Inner-first traversal with two outputs: the ring-segment classification
+   * (each node against its own fresh scope — its certain priors are exactly
+   * its own descendants, folded after every child subtree is classified) and
+   * the canonical walk position threading, which classifies every emitted
+   * link cut — the direct transition from the carried position to the next
+   * contour's start, emitted exactly when `transitionToCutEntry` would emit
+   * a cut link (within `maxLinkDistance`, not a same-XY plunge).
+   */
+  const classifyNode = (
+    node: OffsetRegionNode,
+    depth: number,
+    entry: Point | null,
+  ): { end: Point | null; segments: Array<[number, number, number, number]> } => {
+    const scope = new SweptMaterialIndex(toolRadius)
+    const segments: Array<[number, number, number, number]> = []
+    let position = entry
+    for (const child of orderNodesGreedy(node.children, position)) {
+      const childResult = classifyNode(child, depth + 1, position)
+      position = childResult.end
+      for (const [ax, ay, bx, by] of childResult.segments) {
+        scope.addSweptSegment(ax, ay, bx, by)
+      }
+      segments.push(...childResult.segments)
+    }
+    for (const contour of canonicalNodeContours(node, depth, position)) {
+      const startPoint = contour[0]
+      if (position !== null) {
+        const linkLength = Math.hypot(startPoint.x - position.x, startPoint.y - position.y)
+        if (linkLength > XY_ALIGN_EPS && linkLength <= maxLinkDistance) {
+          classifySegment(position, startPoint, canonicalIndex, true, true, true)
+          canonicalIndex.addSweptSegment(position.x, position.y, startPoint.x, startPoint.y)
+        }
+      }
+      position = { x: startPoint.x, y: startPoint.y }
+    }
+    const own = classifyContours(node, depth, scope)
+    for (const [ax, ay, bx, by] of own) {
+      canonicalIndex.addSweptSegment(ax, ay, bx, by)
+    }
+    segments.push(...own)
+    indexEntryCount += scope.storedEntryCount()
+    return { end: position, segments }
   }
+
+  let bandPosition: Point | null = null
+  for (const tree of regionTrees) {
+    bandPosition = classifyNode(tree, 0, bandPosition).end
+  }
+  indexEntryCount += canonicalIndex.storedEntryCount()
 
   return {
     chunksForMove(fromX, fromY, toX, toY) {
-      return segmentChunks.get(`${fromX},${fromY}->${toX},${toY}`) ?? null
+      const key = `${fromX},${fromY}->${toX},${toY}`
+      const chunks = segmentChunks.get(key)
+      if (chunks === undefined) return null
+      return { chunks, isLink: linkSegmentKeys.has(key) }
     },
     indexEntryCount,
     segmentCount,

@@ -680,16 +680,22 @@ test('cache equivalence: cached per-band classification equals recomputation on 
   // Independent recomputation: a fresh incremental index walked in each
   // level's real emission order, sampling at the cached chunk boundaries.
   // Two production semantics the reference mirrors exactly:
-  //  - moves outside the ring tree — the entry helix and the cut links that
-  //    hop between rings — are cache misses, and production resolves them to
-  //    full engagement (conservative; they cut virgin strips), indexing none
-  //    of them. The reference skips them the same way, and a served-distance
-  //    bound below proves that only those fringe moves miss;
+  //  - moves outside the ring tree — the entry helix and any link cut the
+  //    canonical traversal did not reproduce (a level whose position-seeded
+  //    order diverges emits different links) — are cache misses, and
+  //    production resolves them to full engagement (conservative; they cut
+  //    virgin strips), indexing none of them. The reference skips them the
+  //    same way, and a served-distance bound below proves that only those
+  //    fringe moves miss;
   //  - a contour's own segments are inserted only once the whole contour is
   //    classified (the canonical model excludes the tool's own trail, which
   //    only over-reports engagement — the conservative direction). Consecutive
   //    cut moves of one contour share an endpoint, so the reference groups
-  //    them by that and inserts per contour.
+  //    them by that and inserts per contour. A served LINK is the boundary
+  //    between two contours — production classifies it against everything cut
+  //    earlier, including the contour it just left, so the reference flushes
+  //    before comparing one; the shared endpoint alone cannot mark the
+  //    boundary because a link and the ring it leaves share a vertex.
   for (const level of levels) {
     const reference = new SweptMaterialIndex(3)
     let totalCutDistance = 0
@@ -707,13 +713,17 @@ test('cache equivalence: cached per-band classification equals recomputation on 
       const dirX = (move.to.x - move.from.x) / length
       const dirY = (move.to.y - move.from.y) / length
       const cached = cache.chunksForMove(move.from.x, move.from.y, move.to.x, move.to.y)
-      if (cached === null) continue
+      if (cached === null) {
+        flushContour()
+        continue
+      }
       servedDistance += length
+      if (cached.isLink) flushContour()
       const previous = contour[contour.length - 1]
       if (previous !== undefined && (previous.to.x !== move.from.x || previous.to.y !== move.from.y)) {
         flushContour()
       }
-      for (const chunk of cached) {
+      for (const chunk of cached.chunks) {
         let engagement = 0
         for (let point = 0; point < 3; point += 1) {
           const t = chunk.t0 + ((chunk.t1 - chunk.t0) * (point + 1)) / 4
@@ -730,7 +740,7 @@ test('cache equivalence: cached per-band classification equals recomputation on 
           `cached engagement ${chunk.engagement} must equal the emission-order recomputation ${engagement}`,
         )
       }
-      contour.push(move)
+      if (!cached.isLink) contour.push(move)
     }
     flushContour()
     // The ring path is 2π·(7 + 4.6 + 2.2) = 86.7 mm per lobe (260 mm total,
@@ -769,6 +779,100 @@ test('cost probe: the swept-material index is built once per band and reused per
     parallelCounts.bandCacheBuilds === 0 && parallelCounts.cacheLevelUses === 0,
     'the parallel pattern has no ring tree and must not build a band classification',
   )
+})
+
+// ── 5c. Depth invariance and miss observability (S2d) ─────────────────
+//
+// The band's ring tree is Z-invariant, so the emitted feed pattern must be
+// too. S2c's cache already classified every ring segment once per band, but
+// the emitted stream still drifted with depth for two reasons: the
+// never-raise clamp's `legacySlotSpans` collected spans from the whole
+// accumulated move array, so each deeper level clamped against its own
+// shallower siblings' engagement-stamped fragments (measured: the span set
+// grew 3 → 95 → 184 → 272 → 356 over five levels, and the slot-feed share
+// grew 35.4% → 71.2%); and the inter-ring link cuts were never classified,
+// so every level resolved them to full engagement. Both are fixed: the
+// clamp is level-scoped and the canonical traversal classifies links too.
+// The depth-invariance property below failed before the fix (fed sequences
+// differed at every level) and passes after it. Cache misses are counted
+// and asserted so a silent conservative fallback can never hide a
+// classification regression again.
+
+test('depth invariance: every level emits the same fed-move count, XY sequence, and feedScale sequence', () => {
+  const spec = specByName('offset-multi')
+  const { project, operation } = buildFixture(spec)
+  const engagement = generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
+  const levels: ToolpathMove[][] = []
+  for (const move of engagement.moves) {
+    if (move.kind !== 'cut') continue
+    const existing = levels.find((level) => level[0].from.z === move.from.z)
+    if (existing) existing.push(move)
+    else levels.push([move])
+  }
+  assert(levels.length >= 2, `the fixture must cut at least two step levels, got ${levels.length}`)
+  const fedPattern = (level: ToolpathMove[]): string[] =>
+    level
+      .filter((move) => move.feedScale !== undefined)
+      .map((move) => `${move.feedScale}:${move.from.x},${move.from.y}>${move.to.x},${move.to.y}`)
+  const first = fedPattern(levels[0])
+  assert(first.length > 0, 'the fixture must emit some fed moves')
+  for (let index = 1; index < levels.length; index += 1) {
+    const other = fedPattern(levels[index])
+    assert(
+      other.length === first.length,
+      `level ${index}: fed-move count ${other.length} must equal level 0's ${first.length}`,
+    )
+    assert(
+      JSON.stringify(other) === JSON.stringify(first),
+      `level ${index}: the fed XY and feedScale sequence must match level 0's`,
+    )
+  }
+})
+
+test('cache misses are observable: zero on the canonical fixtures, a known number where the traversal diverges', () => {
+  // A plain offset pocket, a multi-level pocket, and an island pocket: the
+  // canonical (null-seeded) traversal reproduces every emitted level, so
+  // every cut move — ring segment and link alike — hits the cache.
+  for (const name of ['offset-single', 'offset-multi', 'offset-island-single']) {
+    const spec = specByName(name)
+    const { project, operation } = buildFixture(spec)
+    resetEngagementCacheProbeCounts()
+    generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
+    const counts = engagementCacheProbeCounts()
+    assert(
+      counts.cacheMisses === 0,
+      `${name}: every emitted cut must hit the canonical cache, got ${counts.cacheMisses} misses`,
+    )
+  }
+  // The parallel pattern has no ring tree, builds no canonical cache, and
+  // classifies per level — nothing can miss.
+  for (const name of ['parallel-single', 'parallel-multi']) {
+    const spec = specByName(name)
+    const { project, operation } = buildFixture(spec)
+    resetEngagementCacheProbeCounts()
+    generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
+    const counts = engagementCacheProbeCounts()
+    assert(
+      counts.bandCacheBuilds === 0 && counts.cacheMisses === 0,
+      `${name}: the parallel pattern builds no cache and must record no misses`,
+    )
+  }
+  // The island multi-level band legitimately cannot be fully cached: level 1
+  // is seeded from level 0's carried position, which rotates the two island
+  // rings differently than the canonical traversal, so their two links miss
+  // and resolve conservatively to full engagement. The number is pinned — a
+  // known miss count is reviewable, an unbounded one is not.
+  {
+    const spec = specByName('offset-island-multi')
+    const { project, operation } = buildFixture(spec)
+    resetEngagementCacheProbeCounts()
+    generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
+    const counts = engagementCacheProbeCounts()
+    assert(
+      counts.cacheMisses === 2,
+      `the island multi-level band's two island-ring links miss the canonical cache, got ${counts.cacheMisses} misses`,
+    )
+  }
 })
 
 // ── 6. Determinism ────────────────────────────────────────────────────
