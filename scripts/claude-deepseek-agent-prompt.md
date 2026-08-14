@@ -43,7 +43,7 @@ Required invariants: [INVARIANTS]
 Required checks: [REQUIRED_CHECKS]
 
 Rules:
-- Narrate your progress in the final report. Claude/DeepSeek streams observed tool activity; DSH headless returns only its final response, so its manager log can prove process liveness but not individual tool calls.
+- Narrate your progress in the final report. Claude/DeepSeek streams observed tool activity. DSH tails its local active session artifact for observed assistant, tool-call, and tool-result events; process-alive heartbeats remain a fallback, not proof of tool activity.
 - Make the smallest change that satisfies the slice.
 - Do not perform unrelated cleanup or change public/frozen contracts unless this slice explicitly permits it.
 - Do not edit the detailed integration handoff unless this slice explicitly assigns documentation.

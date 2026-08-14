@@ -74,10 +74,12 @@ raw event stream is kept beside it at `….progress.log.ndjson`). Long slices
 are normal: a healthy worker can run 10+ minutes while emitting a steady drip
 of `[note]`/`[tool]`/`[gen]` lines.
 
-DSH headless only returns its final response. Its leaf writes `[start]`,
-`[heartbeat]`, and `[exit]` markers; a heartbeat means the DSH process remains
-alive, **not** that the worker made tool-level progress. Inspect the worktree and
-final response before treating a long DSH run as healthy.
+DSH's leaf tails DSH's active local session artifact and writes observed
+`[assistant]`, `[tool]`, and `[tool-result]` entries as they arrive. Its
+`[heartbeat]` marker remains a fallback: it means the DSH process remains alive,
+**not** that the worker made tool-level progress. The full raw session remains
+under `~/.dsh`; rendered manager-log payloads are normalized and bounded.
+Inspect the worktree and final response before treating a long DSH run as healthy.
 
 - Dispatch in the background with output redirected to a file; do not block a
   foreground shell call (with its own timeout) on the whole slice.
@@ -92,7 +94,8 @@ final response before treating a long DSH run as healthy.
   - `verifying` — worker done, independent build gate running.
   - `done` — read the dispatch report and start the review.
 - For Claude/DeepSeek, `[tool]` lines are observed tool calls and `[note]` lines
-  are worker narration. DSH does not expose either stream through headless mode.
+  are worker narration. For DSH, `[assistant]`, `[tool]`, and `[tool-result]`
+  are observed from its session artifact, while `[heartbeat]` is liveness only.
 
 ## Verify before you accept
 

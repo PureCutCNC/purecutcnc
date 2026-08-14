@@ -27,8 +27,10 @@ Report the state of a dispatched worker from its progress log:
   state=verifying   worker exited; independent build gate in progress
   state=done        dispatch finished; read the dispatch report
 
-DSH emits process-alive heartbeats, not tool-level activity, so inspect its
-final response and worktree before treating a long-running DSH worker as healthy.
+DSH tails its own active session artifact for observed assistant, tool-call, and
+tool-result events. Its process-alive heartbeat is only a fallback, not
+tool-level activity; inspect the final response and worktree before treating a
+long-running DSH worker as healthy.
 
 Options:
   --slug SLUG         Locate the log at $PURECUT_WORKTREE_BASE/SLUG.progress.log.
