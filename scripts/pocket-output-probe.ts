@@ -33,10 +33,14 @@
  *      the arc-run proxy: maximal contiguous cut runs sharing a `feedScale`.
  *      That last one is what `sameRun` in `arcFitting.ts` keys on, so a
  *      collapse in run length predicts lost G2/G3 output before export.
+ *   4. "Did it become depth-dependent" — an offset ring tree is reused at every
+ *      Z, so levels cutting the same path length should be fed the same. See
+ *      `levels` below; it caught a cache defect nothing else did.
  *
  * Usage:
  *   npx tsx scripts/pocket-output-probe.ts dump <project.camj|builtin> <out.json> ['{"field":value}']
  *   npx tsx scripts/pocket-output-probe.ts compare <baseline.json> <candidate.json>
+ *   npx tsx scripts/pocket-output-probe.ts levels <baseline.json> <candidate.json>
  *
  * The optional third argument to `dump` is a JSON object of Operation field
  * overrides applied to every pocket operation, so one project file yields a
@@ -351,14 +355,120 @@ function compare(baselinePath: string, candidatePath: string): void {
   }
 }
 
+/** Per-level cut length and length-weighted mean feed scale. */
+interface LevelStat {
+  z: number
+  length: number
+  meanScale: number
+}
+
+/**
+ * Summarise each step level by *length-weighted mean feed scale*, not by
+ * comparing move arrays.
+ *
+ * Array comparison is the wrong instrument here and gave a false clean result
+ * before this was corrected: a change that alters where moves are split makes
+ * every level's array differ from every other, so a shape-then-feed comparison
+ * silently excludes exactly the levels it was built to inspect. Weighting by
+ * path length is immune to how the path happens to be chopped up — the same
+ * reason the never-raise check compares geometrically.
+ */
+function levelStats(moves: DumpedMove[]): LevelStat[] {
+  const byLevel = new Map<number, { length: number; weighted: number }>()
+  for (const move of moves) {
+    // Entry moves descend continuously, so each would land in its own "level"
+    // and swamp the comparison. Only fed cutting at a settled Z is meaningful.
+    if (!CUT_KINDS.has(move[0])) continue
+    if (Math.abs(move[3] - move[6]) > 1e-9) continue
+    const distance = Math.hypot(move[4] - move[1], move[5] - move[2])
+    if (distance <= 0) continue
+    const z = Number(move[6].toFixed(3))
+    const entry = byLevel.get(z) ?? { length: 0, weighted: 0 }
+    entry.length += distance
+    entry.weighted += distance * (move[7] ?? 1)
+    byLevel.set(z, entry)
+  }
+  return [...byLevel.entries()]
+    .map(([z, entry]) => ({ z, length: entry.length, meanScale: entry.weighted / entry.length }))
+    .sort((a, b) => b.z - a.z)
+}
+
+/**
+ * Depth dependence, measured against a baseline rather than in absolute terms.
+ *
+ * An offset ring tree is built once and reused at every Z, so the levels that
+ * repeat the same XY path should also be fed identically. But *universal* depth
+ * invariance is the wrong property to assert, and asserting it produced four
+ * false positives before this was corrected: the bottom level legitimately
+ * carries the finish-floor pass, and helix entry descends continuously so
+ * grouping its moves by Z is meaningless. Both show up in legacy output.
+ *
+ * The real property is comparative: **a change must not make a level fed
+ * differently from its identically-shaped siblings when the baseline fed them
+ * the same.** That cancels the finish-floor and entry artifacts, because the
+ * baseline exhibits them too.
+ *
+ * This caught a per-band cache whose miss rate grew with depth, silently
+ * charging slot feed to 71% of the bottom level and 35% of the top. Nothing
+ * else caught it: being wrong in the *slow* direction breaks no assertion.
+ */
+function levels(baselinePath: string, candidatePath: string): void {
+  const baseline = JSON.parse(readFileSync(baselinePath, 'utf8')) as Dump
+  const candidate = JSON.parse(readFileSync(candidatePath, 'utf8')) as Dump
+  const SPREAD_TOLERANCE = 0.02
+  let failures = 0
+
+  for (const [label, base] of Object.entries(baseline)) {
+    const other = candidate[label]
+    if (!other) continue
+    const baseStats = levelStats(base.moves)
+    const candidateStats = levelStats(other.moves)
+    if (candidateStats.length < 2) {
+      console.log(`  ${label}: single level, skipped`)
+      continue
+    }
+
+    // Only levels cutting the same length of path are comparable; the bottom
+    // level legitimately carries the finish-floor pass and is excluded here
+    // rather than treated as a defect.
+    const topLength = candidateStats[0].length
+    const comparable = candidateStats.filter((stat) => Math.abs(stat.length - topLength) < 1e-6)
+    const baseComparable = baseStats.filter((stat) => Math.abs(stat.length - baseStats[0].length) < 1e-6)
+    if (comparable.length < 2) {
+      console.log(`  ${label}: fewer than two comparable levels, skipped`)
+      continue
+    }
+
+    const spread = (stats: LevelStat[]): number =>
+      Math.max(...stats.map((s) => s.meanScale)) - Math.min(...stats.map((s) => s.meanScale))
+    const baseSpread = baseComparable.length >= 2 ? spread(baseComparable) : 0
+    const candidateSpread = spread(comparable)
+
+    if (candidateSpread <= Math.max(baseSpread, SPREAD_TOLERANCE)) {
+      console.log(`  ${label}: OK — ${comparable.length} comparable levels, mean-feed spread ${candidateSpread.toFixed(4)}`)
+    } else {
+      failures += 1
+      console.log(`  ${label}: *** DEPTH-DEPENDENT *** mean-feed spread ${candidateSpread.toFixed(4)} (baseline ${baseSpread.toFixed(4)})`)
+      for (const stat of comparable) {
+        console.log(`      Z=${String(stat.z).padStart(6)}  length=${stat.length.toFixed(1)}mm  mean feed=${stat.meanScale.toFixed(4)}`)
+      }
+    }
+  }
+  console.log(failures === 0 ? '\nRESULT: no new depth dependence' : `\nRESULT: ${failures} operation(s) newly depth-dependent`)
+  if (failures > 0) process.exitCode = 1
+}
+
 const [mode, first, second, third] = process.argv.slice(2)
 if (mode === 'dump' && first && second) {
   dump(first, second, third)
 } else if (mode === 'compare' && first && second) {
   compare(first, second)
+} else if (mode === 'levels' && first && second) {
+  levels(first, second)
 } else {
   console.error('usage:')
   console.error('  pocket-output-probe.ts dump <project.camj|builtin> <out.json> [\'{"field":value}\']')
   console.error('  pocket-output-probe.ts compare <baseline.json> <candidate.json>')
+  console.error('  pocket-output-probe.ts levels <baseline.json> <candidate.json>')
   process.exitCode = 1
 }
