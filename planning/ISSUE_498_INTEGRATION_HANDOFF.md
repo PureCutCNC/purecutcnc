@@ -383,3 +383,82 @@ scripts/build-summary.sh
 key/value pairs on both sides and comparing dictionaries, never by reading the
 rendered diff — an invisible U+00A0 substitution has slipped through that way
 before.
+
+### S4 — Colour the toolpath by feed
+
+**Goal:** make engagement feed visible. Today the viewport draws every cut in one
+colour, so the feature's entire effect is invisible in the app — the only way to
+see it is to export G-code and read `F` words. #498's plan anticipated this
+("optional debug colouring alongside the existing `debugToolpath` affordances");
+this slice delivers it in **both** the Sketch canvas and the 3D view.
+
+**Allowed files:**
+
+- `src/theme/palette.ts` — one new token, see below
+- `src/components/canvas/previewPrimitives.ts` — Sketch canvas cut drawing
+- `src/components/viewport3d/Viewport3D.tsx` — 3D cut drawing
+- `src/components/toolpathVisibility.ts` and `src/components/ToolpathVisibilityPanel.tsx` — the toggle and legend
+- `src/i18n/locales/*/…` — **all five locales**, `en de es fr zh-CN`
+- one e2e spec under `e2e/`, plus a unit test for the ramp mapping
+
+**Forbidden files:**
+
+- `src/engine/toolpaths/**` — no generator changes; `feedScale` already carries everything needed
+- `src/types/project.ts`, `src/store/**` — this is view state, not project state
+- `planning/**` other than reading
+
+**Design, already decided — implement it, do not redesign it:**
+
+1. **One new token, not six.** Add `toolpathCutSlow` beside `toolpathCut` in
+   `palette.ts`, in **both** representations (the `rgba()` string used by the
+   canvas and the numeric `0x…` used by three.js) and **both** themes. Derive the
+   intermediate steps by interpolating between `toolpathCut` and
+   `toolpathCutSlow`. Six new token pairs would be six chances to drift.
+2. **Ramp on lightness.** Dark theme: full feed keeps today's coral, slower cuts
+   get brighter through amber toward near-white. Light theme: same ordering
+   inverted, coral toward deep red/near-black. Ordering must be carried by
+   lightness, not hue — that is what makes it survive colour-blindness and
+   greyscale, and the operation booklet prints.
+3. **Discrete, six steps**, matching the emitted buckets exactly
+   (`1.00, 0.88, 0.76, 0.64, 0.52, 0.40`). The legend shows a swatch per step
+   with its percentage, so a colour on screen maps to a number.
+4. **Cut moves only.** Rapids, plunges, lead-ins and retractions keep their
+   existing tokens. Plunges never carry `feedScale` — `effectiveFeed` ignores it
+   by design — so colouring them would be a lie.
+5. **A toggle, in the existing toolpath legend row.** Default it **on** when the
+   selected operation has `pocketEngagementMode === 'engagement_feed'`, off
+   otherwise. Always-on would silently redefine what red means for every user,
+   including everyone who never enables the mode.
+
+**Invariants:**
+
+- **A move with `feedScale` absent or `1` renders in exactly today's
+  `toolpathCut`.** Legacy projects, and every non-pocket operation, must look
+  pixel-identical to before this slice. This is the load-bearing property.
+- No colour literals anywhere — `scripts/check-color-literals.ts` runs in the
+  build gate and will reject them. Everything goes through the palette.
+- Both themes are updated together; a token added to one and not the other is a
+  type error by construction, so let the compiler help you.
+- Only the new keys are added to each locale; no existing value changes. `es/*`
+  uses double quotes where the others use single — match each file, not its sibling.
+
+**Required checks:**
+
+```bash
+npx tsx scripts/run-tests.ts
+scripts/build-summary.sh
+```
+
+**Required tests:**
+
+- Unit: the bucket→colour mapping is monotone in lightness, and `feedScale`
+  absent or `1` yields exactly the `toolpathCut` value, in both themes.
+- e2e: with the toggle on, a pocket in `engagement_feed` mode renders cut
+  segments in more than one distinct colour; with the mode `legacy` it renders
+  exactly one. Use `PURECUT_E2E_PORT` and `PURECUT_E2E_ISOLATED=1` — the default
+  port silently attaches to a dev server from another checkout.
+
+**Manager review record:** pending. Locale diffs will be verified by parsing
+key/value pairs and comparing dictionaries, with a guard that rejects a parse
+returning implausibly few keys — a single-quote-only parser silently read zero
+keys from `es/*` during S3 and reported it as clean.
