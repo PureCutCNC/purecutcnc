@@ -90,9 +90,97 @@ uncertainty may restore full feed.
 | Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | S1 | Pure engagement estimator + feed quantization + telemetry types | `c969e0e` | `feat/issue-498-engagement-core` / removed | `complete` | `accepted` | `b59178f`, merged `620229d` | both passed | 945 insertions across the 4 allowed files |
-| S2 | Independent swept-stock oracle + cross-validation | `-` | `-` | `not started` | `pending` | `-` | `-` | must not reuse S1's estimator internals |
-| S3 | Operation mode field + pocket wiring + regeneration allowlist | `-` | `-` | `not started` | `pending` | `-` | `-` | scoped after S1/S2 land |
-| S4 | CAM panel control + i18n (en/de/es/fr) | `-` | `-` | `not started` | `pending` | `-` | `-` | scoped after S3 |
+| S2 | Operation mode field + pocket wiring + regeneration allowlist | `a44eec5` | `feat/issue-498-engagement-pocket` / retained | `complete` | **rejected — 3 blockers** | `2a8a5e3`, NOT merged | both passed | branch kept; corrections build on it |
+| S2b | engagement.ts: nominal deadband, bucket ladder, capsule geometry | `-` | `-` | `not started` | `pending` | `-` | `-` | fixes blockers 1 and 3 |
+| S2c | pocket.ts: per-band caching + parallel-pattern clamp | `-` | `-` | `not started` | `pending` | `-` | `-` | fixes blocker 2; needs S2b's API |
+| S3 | CAM panel control + booklet row + i18n (en/de/es/fr) | `-` | `-` | `not started` | `pending` | `-` | `-` | user-facing surface kept in one slice so the locale review happens once |
+
+The original S2 (standalone oracle) was dropped: the S1 review already cross-validated
+the estimator against an independently written brute-force sampler, so a dedicated
+oracle slice would have repeated work already done.
+
+### S2 review — rejected, three blockers
+
+Verified by generating real toolpaths across a 12-fixture matrix and measuring them.
+None of this was visible from the diff, the worker's tests, or the build gate; all
+three required running the generator and looking at the output.
+
+**What passed.** Legacy output is byte-identical across all 12 fixtures, checked by
+diffing dumped move streams rather than by reading the worker's regression test. The
+`operationComputationEquals` allowlist is wired correctly. Fixtures with
+`pocketSlotFeedPercent: 100` produce zero scaled moves and +0.0% time, so the
+"nothing to interpolate toward" rule holds. Corner detection works: the reduced-feed
+bands wrap every ring corner and run out about two tool diameters, matching the
+independent measurement taken before the slice existed. No emitted run is shorter
+than the minimum fragment length — an early fragmentation concern of mine was
+unfounded, and Pass D does its job.
+
+**Blocker 1 — a straight run at nominal engagement is charged a full bucket.**
+`engagementFeedScale` returns 1 only for `engagement <= nominal`, and quantization
+rounds down, but a real straight run measures **4.16e-8 rad above nominal** — dust
+from S1's deliberately conservative disc under-coverage. That dust costs 12% feed:
+`scale(nominal + 1e-6) = 0.88`. The bucket ladder tops out at 0.88 and never includes
+1.0, so there is no gentle rung to land on. Cost: **+30.4% estimated cycle time**
+across the matrix (+46% on a plain square pocket), almost all of it on straight runs
+where nothing is wrong. Fix: a deadband at nominal sized to at least the estimator's
+own error bound, and a bucket ladder whose top rung is 1.0.
+
+*Manager error worth recording:* this exact discontinuity was noted during the S1
+code review and judged "conservative-safe". In isolation it is a 12% rounding choice;
+composed with an estimator biased to over-report, it fires on every cut. Reviewing a
+quantizer in isolation from the estimator that feeds it was the mistake.
+
+**Blocker 2 — engagement mode raises feeds above legacy on the parallel pattern.**
+Compared geometrically (each engagement move's midpoint matched to the legacy segment
+containing it — an index-wise comparison is invalid because the two modes split moves
+differently): `rect/parallel-basic` 38/102 moves raised, `rect/parallel-45` 54/140,
+`rect/offset-round` 3/1796. The worker's clamp against a replica legacy index does not
+hold on the parallel pattern. Safety-relevant: cutting faster than today where the
+shipped classifier said "slotting".
+
+**Blocker 3 — toolpath generation is 9× to 40× slower.** CPU time, 5 iterations:
+
+| Fixture | Legacy | Engagement | Factor |
+| --- | --- | --- | --- |
+| rect-offset | 24 ms | 227 ms | 9.4× |
+| rect-round | 14 ms | 356 ms | 26× |
+| rect-multilevel | 13 ms | 510 ms | 39× |
+| rect-parallel | 4.5 ms | 148 ms | 33× |
+| 200 mm pocket, 6 levels | 122 ms | 4909 ms | 40× |
+
+Five seconds on a moderate pocket, in an app that regenerates on every parameter
+change. Three compounding causes:
+
+1. *The disc-chain model, which is a manager specification error.* Prior sweeps are
+   chained discs at `0.04·r`, so a 200 mm job builds ~130,000 discs **per level**. The
+   external review originally proposed exact angular intervals over swept **capsules**
+   — one capsule per segment, O(segments) rather than O(path length). That was traded
+   away for "simpler to verify, conservative by construction" without ever measuring
+   the cost. The disc model is correct; it is just the wrong complexity class.
+2. *Nine-cell insertion.* Each disc is inserted into every cell its `2r`-padded bbox
+   touches. Inserting into one cell and querying the 3×3 neighbourhood is identical in
+   correctness and roughly 9× cheaper, since inserts dominate.
+3. *No per-band caching.* Cost scales linearly with level count, so the index is
+   rebuilt at every Z. #498's plan called for classifying once per band because the
+   ring tree is Z-invariant; that was not implemented. Worth 5–6× on deep pockets.
+
+### Measurement finding: rounding corners lowers peak tool load
+
+Not previously claimed anywhere in the repo. `roundOutsideCorners` is documented in
+`offsetSmoothing.ts` and the strategy INDEX purely as a stock-left-behind and
+chip-stacking concern. Measured, it also reduces the engagement spike: sharp corners
+reach the bottom feed bucket (0.40, full-slot), while the same corners with rounding
+on reach only 0.64–0.76, and cycle-time cost drops from +46.3% to +31.7%. The tool
+sweeps an arc instead of pivoting in place.
+
+The wall-adjacent root ring stays sharp and still spikes — which is `pocket.ts:1276`
+behaving exactly as documented, since filleting the root ring would leave stock against
+the wall. The estimator found that asymmetry from geometry alone, which is further
+evidence it tracks real physics rather than noise.
+
+Consequence for #499: if rounding already takes the spike from 0.40 to 0.64, corner
+unwinding has materially less headroom on rounded pockets than on sharp ones. That
+belongs in its reopen trigger.
 
 ## Slice instructions
 
