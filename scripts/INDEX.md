@@ -16,10 +16,11 @@ available; do not treat one-off diagnostics as normal quality gates.
 
 ## Optional delegated-agent harness
 
-- [`dispatch-task.sh`](dispatch-task.sh), [`finish-task.sh`](finish-task.sh), and [`worker-status.sh`](worker-status.sh) — integration-manager worktree lifecycle.
-- [`run-claude-deepseek-agent.sh`](run-claude-deepseek-agent.sh) — credential-backed leaf launcher.
-- [`claude-deepseek-agent-prompt.md`](claude-deepseek-agent-prompt.md) — bounded worker prompt template.
-- [`test-claude-deepseek-agent.sh`](test-claude-deepseek-agent.sh) and [`worker-progress-filter.jq`](worker-progress-filter.jq) — harness tests and progress filtering.
+- [`dispatch-task.sh`](dispatch-task.sh), [`finish-task.sh`](finish-task.sh), and [`worker-status.sh`](worker-status.sh) — provider-neutral integration-manager worktree lifecycle. `claude-deepseek` remains the default provider; select `--provider dsh` for DeepSeek Harness.
+- [`run-claude-deepseek-agent.sh`](run-claude-deepseek-agent.sh) — credential-backed Claude/DeepSeek leaf launcher.
+- [`run-dsh-agent.sh`](run-dsh-agent.sh) — DeepSeek Harness leaf launcher using DSH's own credential store and sandbox modes.
+- [`claude-deepseek-agent-prompt.md`](claude-deepseek-agent-prompt.md) — bounded provider-neutral worker prompt template (historic filename retained for compatibility).
+- [`test-claude-deepseek-agent.sh`](test-claude-deepseek-agent.sh), [`test-dsh-agent.sh`](test-dsh-agent.sh), [`test-dispatch-task.sh`](test-dispatch-task.sh), and [`worker-progress-filter.jq`](worker-progress-filter.jq) — harness tests and Claude progress filtering.
 
 Use this path only after explicit delegation approval and follow
 [`manager-delegate`](../.agents/skills/manager-delegate/SKILL.md). Direct

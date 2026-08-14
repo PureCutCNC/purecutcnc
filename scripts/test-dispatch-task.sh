@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+
+set -euo pipefail
+
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly DISPATCH="$SCRIPT_DIR/dispatch-task.sh"
+readonly TEMP_DIR="$(mktemp -d)"
+
+cleanup() {
+  rm -rf "$TEMP_DIR"
+}
+trap cleanup EXIT
+
+fail() {
+  printf 'test-dispatch-task: %s\n' "$*" >&2
+  exit 1
+}
+
+assert_contains() {
+  local haystack="$1"
+  local needle="$2"
+  [[ "$haystack" == *"$needle"* ]] || fail "expected output to contain: $needle"
+}
+
+mkdir -p "$TEMP_DIR/bin"
+cat > "$TEMP_DIR/bin/claude" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'provider=claude\n'
+printf 'args:\n'
+printf '<%s>\n' "$@"
+cat
+EOF
+cat > "$TEMP_DIR/bin/dsh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'provider=dsh sandbox=<%s>\n' "${DSH_PERMISSION_MODE:-}"
+printf 'args:\n'
+printf '<%s>\n' "$@"
+EOF
+chmod +x "$TEMP_DIR/bin/claude" "$TEMP_DIR/bin/dsh"
+
+cat > "$TEMP_DIR/agent.env" <<'EOF'
+DEEPSEEK_API_KEY=test-secret
+EOF
+chmod 600 "$TEMP_DIR/agent.env"
+git init -q "$TEMP_DIR/wt"
+
+# ---- omitted provider preserves the Claude/DeepSeek dispatch path ----
+claude_output="$(printf 'default task\n' | PATH="$TEMP_DIR/bin:$PATH" \
+  DEEPSEEK_AGENT_ENV_FILE="$TEMP_DIR/agent.env" "$DISPATCH" --mode review --worktree "$TEMP_DIR/wt")"
+assert_contains "$claude_output" 'provider=claude'
+assert_contains "$claude_output" '<--permission-mode>'
+assert_contains "$claude_output" '<plan>'
+assert_contains "$claude_output" 'default task'
+
+# ---- explicit DSH provider selects the DSH leaf and read-only mode ----
+dsh_output="$(printf 'dsh task\n' | PATH="$TEMP_DIR/bin:$PATH" \
+  DEEPSEEK_AGENT_ENV_FILE="$TEMP_DIR/agent.env" "$DISPATCH" \
+    --provider dsh --mode review --worktree "$TEMP_DIR/wt")"
+assert_contains "$dsh_output" 'provider=dsh sandbox=<read-only>'
+assert_contains "$dsh_output" '<--profile>'
+assert_contains "$dsh_output" '<headless>'
+assert_contains "$dsh_output" 'dsh task'
+
+if invalid_provider_error="$(printf 'task\n' | "$DISPATCH" --provider invalid --mode review --worktree "$TEMP_DIR/wt" 2>&1)"; then
+  fail 'dispatch unexpectedly accepted an invalid provider'
+fi
+assert_contains "$invalid_provider_error" '--provider must be claude-deepseek or dsh'
+
+printf 'test-dispatch-task: passed\n'

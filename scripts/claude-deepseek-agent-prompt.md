@@ -1,6 +1,8 @@
-# DeepSeek implementation-worker prompt template
+# Delegated implementation-worker prompt template
 
-Use this as the complete prompt supplied to `scripts/run-claude-deepseek-agent.sh`. Replace only the bracketed fields before dispatching a slice.
+Use this as the complete prompt supplied to either supported leaf launcher through
+`scripts/dispatch-task.sh`. Replace only the bracketed fields before dispatching
+a slice.
 
 ```text
 You are the implementation worker for slice [SLICE_ID] of [TOPIC].
@@ -37,7 +39,7 @@ Required invariants: [INVARIANTS]
 Required checks: [REQUIRED_CHECKS]
 
 Rules:
-- Narrate your progress: before each phase (reading context, editing a group of files, running a check, committing), print one short line saying what you are about to do. These lines stream to the manager while you work; do not batch them up for the end.
+- Narrate your progress in the final report. Claude/DeepSeek streams observed tool activity; DSH headless returns only its final response, so its manager log can prove process liveness but not individual tool calls.
 - Make the smallest change that satisfies the slice.
 - Do not perform unrelated cleanup or change public/frozen contracts unless this slice explicitly permits it.
 - Do not edit the detailed integration handoff unless this slice explicitly assigns documentation.
