@@ -601,3 +601,82 @@ full feed within a stated bounded distance; and the innermost ring, whose
 engagement genuinely varies 180° → 6°, emits more than one feed value.
 
 **Manager review record:** pending.
+
+### S7 — Rename to "Feed Reduction" and default the slot feed to 60%
+
+**Do not start before S6 lands.** S6 touches the quantizer; this touches its
+naming and default. Sequential, not parallel.
+
+**Why the rename is safe.** `pocketEngagementMode` does not exist on `main` — it
+was introduced by S2 on this unmerged branch, so no released `.camj` carries it.
+`pocketSlotFeedPercent` is **shipped and must not be renamed**.
+
+*One caveat: a project saved during testing on this branch may already contain
+`pocketEngagementMode`. After the rename such a file loads with the field ignored
+and silently falls back to the default — no data loss, but a tester's saved
+setting will revert. Worth knowing rather than debugging twice.*
+
+**Renames:**
+
+| From | To |
+| --- | --- |
+| `pocketEngagementMode` | `pocketFeedReduction` |
+| type `PocketEngagementMode` | `PocketFeedReduction` |
+| value `'legacy'` | `'slots_only'` |
+| value `'engagement_feed'` | `'engagement'` |
+| label "Engagement Mode" | **"Feed Reduction"** |
+| option "Legacy" | **"Slots only"** |
+| option "Engagement Feed" | **"By engagement"** |
+
+`'slots_only'` stays the default and remains what `undefined` normalizes to; the
+behaviour must not change with this slice.
+
+**Default change:** `operationDefaults.ts` sets `pocketSlotFeedPercent: 100` for
+new operations, which makes the whole feature inert until someone finds it.
+Change it to **60**. Measured cost on the fixture matrix in `slots_only` mode:
+
+| Pattern | Δ cycle time |
+| --- | --- |
+| offset (the default pattern) | **+0.3%** |
+| island / neck | +1.7% to +2.7% |
+| parallel | **+8.5% to +10%** |
+
+The parallel figure is the one to be aware of: there the boundary contour and the
+first fill line are both classified as slotting, so a much larger share of the
+path takes the reduction. Existing saved projects are unaffected — nothing
+backfills this field on load, verified against `projectFormat.ts` and `camj.ts`.
+
+**Every consumer must move together.** A rename that misses one is a silent
+defect, and one of these is load-bearing beyond compilation:
+
+- `src/types/project.ts` (type and field)
+- `src/store/helpers/operationDefaults.ts` (both the rename and the 60)
+- **`src/app/useToolpathGeneration.ts` — `operationComputationEquals`.** This is
+  the allowlist that gates regeneration. A field missing from it saves and
+  displays correctly while the toolpath never recomputes.
+- `src/engine/toolpaths/pocket.ts`, `src/engine/toolpaths/types.ts` (doc comment)
+- `src/engine/operationBooklet/report.ts`
+- `src/components/cam/CAMPanel.tsx`, `src/components/toolpathVisibility.ts`,
+  `src/components/ToolpathVisibilityPanel.tsx`
+- `src/i18n/locales/*/…` — all **five** locales; only the affected keys change
+- tests: `engagementPocket.test.ts`, `operationBooklet.test.ts`,
+  `e2e/feedColours.smoke.spec.ts`
+
+**Forbidden:** any behaviour change. This slice renames and re-defaults only.
+
+**Invariants:** never-raise versus legacy, depth invariance, and the
+`slots_only`-mode move stream must be identical to today's `legacy`-mode stream
+apart from the slot-feed percentage itself. Prove the last one by dumping with
+`pocketSlotFeedPercent: 100` on both sides and diffing.
+
+**Note on tooling:** file-wide regex renames are forbidden. Use exact-match edits
+or `scripts/edit-lines.ts`.
+
+**Required checks:**
+
+```bash
+npx tsx scripts/run-tests.ts
+scripts/build-summary.sh
+```
+
+**Manager review record:** pending.
