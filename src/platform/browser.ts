@@ -131,14 +131,11 @@ export const browserPlatform: PlatformApi = {
   async saveProjectFile(suggestedName: string, content: string): Promise<string | null> {
     const baseName = suggestedName.replace(/\.camj(\.json)?$/i, '')
 
-    // Desktop browsers with the File System Access API can handle the custom
-    // .camj extension natively.  On mobile/tablet browsers we save as
-    // .camj.json so iOS recognises the file in the picker (it needs a known
-    // UTI — .json qualifies, .camj alone does not).
-    if (typeof window.showSaveFilePicker === 'function') {
-      return saveFile(content, `${baseName}.camj`, 'application/json', 'PureCutCNC Project', ['.camj'])
-    }
-    return saveFile(content, `${baseName}.camj.json`, 'application/json', 'PureCutCNC Project', ['.camj.json'])
+    // iOS needs the registered .json UTI for a saved project to appear in its
+    // file picker. Desktop browsers can download a custom .camj extension
+    // regardless of File System Access API support.
+    const extension = window.matchMedia('(pointer: coarse)').matches ? '.camj.json' : '.camj'
+    return saveFile(content, `${baseName}${extension}`, 'application/json', 'PureCutCNC Project', [extension])
   },
 
   async saveTextFile(
