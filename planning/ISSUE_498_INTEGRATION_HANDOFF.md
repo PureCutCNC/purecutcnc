@@ -18,7 +18,7 @@ output belong here.
 - Umbrella: https://github.com/PureCutCNC/purecutcnc/issues/497
 - Manager session: 2026-08-14
 - Status: `slice in progress`
-- User authorization for credential-backed worker dispatch: pending — requested before first dispatch
+- User authorization for credential-backed worker dispatch: granted 2026-08-14 as standing authorization for every slice of #498 (credential read, DeepSeek network egress, confined `bypassPermissions` worker). Review and merge remain manager-owned; no slice merges without an independent diff review.
 
 ## Global rules
 
