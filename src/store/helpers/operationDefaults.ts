@@ -325,6 +325,9 @@ export function defaultOperationForTarget(
       entryRampAngle: 5,
     } : {}),
     pocketSlotFeedPercent: 100,
+    // Seeded like pocketSlotFeedPercent: inert until a UI control exposes the
+    // engagement mode, so a newly created pocket changes no behaviour.
+    pocketEngagementMode: 'legacy',
     roundOutsideCorners: true,
     // Off by default. Relief changes the cut geometry of the corner, so it is
     // always an explicit choice — unlike roundOutsideCorners, which only

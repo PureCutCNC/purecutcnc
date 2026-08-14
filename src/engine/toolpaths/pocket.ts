@@ -53,6 +53,12 @@ import {
 } from './cornerRelief'
 import { isFeatureFirst, mergePocketToolpathResults, perFeatureOperations } from './multiFeature'
 import { cornerSmoothingRadius, roundContourCorners } from './offsetSmoothing'
+import {
+  EngagementFeedQuantizer,
+  EngagementTelemetryAccumulator,
+  SweptMaterialIndex,
+  nominalEngagement,
+} from './engagement'
 import { resolvePocketRegions } from './resolver'
 import {
   buildRegionMask,
@@ -287,6 +293,18 @@ const SLOT_FEED_ADJACENCY_FACTOR = 1.05
 const SLOT_FEED_OWN_TRAIL_FACTOR = 0.45
 
 /**
+ * Sampling resolution for the engagement feed path, as fractions of the tool
+ * diameter. The measured ring-corner spike peaks within about one diameter of
+ * the corner and decays over roughly two; the legacy slot-feed chunking
+ * (a quarter of the slot distance) is too coarse to resolve it.
+ */
+const ENGAGEMENT_SAMPLE_CORNER_ANGLE = Math.PI / 8
+const ENGAGEMENT_SAMPLE_CORNER_SPAN = 2
+const ENGAGEMENT_SAMPLE_BASE_LENGTH = 0.5
+const ENGAGEMENT_SAMPLE_CORNER_LENGTH = 0.25
+const ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK = 3
+
+/**
  * Resolve the operation's slot-feed percentage into a cut-feed multiplier.
  * Returns null when the reduction is disabled (non-pocket kinds, undefined,
  * out-of-range, or 100%), which callers use to skip all slot-feed work so the
@@ -504,6 +522,378 @@ function applySlotFeedToLevel(
   moves.length = startIndex
   for (const move of stamped) {
     moves.push(move)
+  }
+}
+
+/**
+ * Engagement-scaled feed application for one Z level, used when the
+ * operation's pocketEngagementMode is 'engagement_feed' (issue #498).
+ * Composes with `applySlotFeedToLevel`'s structure rather than adding a
+ * second pass: one traversal of the level's moves, one splitting rule
+ * (split where the emitted scale changes), the tail rebuilt once.
+ *
+ * Sampling resolution — the load-bearing part. The corner spike the manager
+ * measured on a 60 mm square pocket (2.94 rad within about one tool diameter
+ * of every interior ring corner, decaying to nominal over roughly two
+ * diameters) is invisible to `applySlotFeedToLevel`'s quarter-slot-distance
+ * chunks. So each cut move is chunked at half a tool diameter, refined to a
+ * quarter diameter within two diameters of a move end whose direction changes
+ * by at least ENGAGEMENT_SAMPLE_CORNER_ANGLE, and each chunk reports the
+ * maximum engagement across three interior points — a spike between chunk
+ * midpoints is still seen. Every one of those choices biases toward more
+ * engagement, therefore lower feed.
+ *
+ * The chunk samples feed an `EngagementFeedQuantizer` (hysteresis and a
+ * minimum fragment length, because arc fitting refuses to join moves whose
+ * feedScale differs at all) and the operation's telemetry accumulator. Moves
+ * are split where the emitted scale changes; a maximal run of one scale that
+ * falls below the minimum fragment length is merged into its lower-scale
+ * neighbour. Moves at scale 1 carry no feedScale (absent means full feed, as
+ * everywhere else). With `slotScale` null — no pocketSlotFeedPercent anchor to
+ * interpolate toward — samples are recorded for telemetry only and the move
+ * stream is untouched.
+ *
+ * Conservative composition with the shipped slot feed is structural, not
+ * hoped-for: the legacy classifier runs alongside the estimator at the same
+ * chunk granularity `applySlotFeedToLevel` uses, and any chunk overlapping a
+ * legacy slotting chunk is clamped to `slotScale`. The legacy slot distance
+ * carries a 10% margin, so its slotting stretches are wider than the
+ * estimator's near-π regions — without the clamp the engagement path would
+ * emit a higher feed there, which this mode must never do.
+ */
+function applyEngagementFeedToLevel(
+  moves: ToolpathMove[],
+  startIndex: number,
+  slotScale: number | null,
+  toolDiameter: number,
+  stepoverDistance: number,
+  slotDistance: number,
+  ownTrailTolerance: number,
+  telemetry: EngagementTelemetryAccumulator,
+): void {
+  if (startIndex >= moves.length) return
+  const toolRadius = toolDiameter / 2
+  const nominal = nominalEngagement(stepoverDistance, toolRadius)
+  const minFragmentLength = toolDiameter
+  const baseStep = toolDiameter * ENGAGEMENT_SAMPLE_BASE_LENGTH
+  const refinedStep = toolDiameter * ENGAGEMENT_SAMPLE_CORNER_LENGTH
+  const refineSpan = toolDiameter * ENGAGEMENT_SAMPLE_CORNER_SPAN
+  const index = new SweptMaterialIndex(toolRadius)
+  const legacyIndex = slotScale === null
+    ? null
+    : new PriorCutIndex(slotDistance, slotDistance, ownTrailTolerance, slotDistance / 4)
+  const quantizer = slotScale === null
+    ? null
+    : new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength })
+
+  interface LevelCut {
+    move: ToolpathMove
+    moveIndex: number
+    dirX: number
+    dirY: number
+    length: number
+    refinedStart: boolean
+    refinedEnd: boolean
+  }
+
+  // Pass A: collect the cut moves' geometry so sampling can refine near
+  // direction changes at either end of a move. The previous/next CUT move
+  // defines the junction angle even when a rapid sits in between.
+  const cuts: LevelCut[] = []
+  for (let moveIndex = startIndex; moveIndex < moves.length; moveIndex += 1) {
+    const move = moves[moveIndex]
+    if (move.kind !== 'cut') continue
+    const dx = move.to.x - move.from.x
+    const dy = move.to.y - move.from.y
+    const length = Math.hypot(dx, dy)
+    if (length <= 1e-9) continue
+    cuts.push({
+      move,
+      moveIndex,
+      dirX: dx / length,
+      dirY: dy / length,
+      length,
+      refinedStart: false,
+      refinedEnd: false,
+    })
+  }
+  for (let cutIndex = 0; cutIndex < cuts.length; cutIndex += 1) {
+    const cut = cuts[cutIndex]
+    const junctionAngle = (other: LevelCut): number => {
+      const dot = Math.min(1, Math.max(-1, cut.dirX * other.dirX + cut.dirY * other.dirY))
+      return Math.acos(dot)
+    }
+    // Unknown neighbours (level start/end) refine too: no evidence about the
+    // junction resolves toward more sampling, not less.
+    cut.refinedStart = cutIndex === 0 || junctionAngle(cuts[cutIndex - 1]) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
+    cut.refinedEnd = cutIndex === cuts.length - 1 || junctionAngle(cuts[cutIndex + 1]) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
+  }
+
+  interface SampledChunk {
+    move: ToolpathMove
+    cutIndex: number
+    t0: number
+    t1: number
+    length: number
+    scale: number
+    /** Legacy slot-feed classification of this chunk, captured during the walk
+     *  while the legacy index holds exactly the moves legacy had classified
+     *  from at this point. */
+    legacySlotting: boolean
+  }
+
+  // Pass B: sample each chunk (max over interior points), feed the quantizer
+  // and telemetry, and index the move once it is cut.
+  const chunks: SampledChunk[] = []
+  for (let cutIndex = 0; cutIndex < cuts.length; cutIndex += 1) {
+    const cut = cuts[cutIndex]
+    const boundaries = engagementChunkBoundaries(
+      cut.length,
+      cut.refinedStart,
+      cut.refinedEnd,
+      baseStep,
+      refinedStep,
+      refineSpan,
+    )
+    for (let boundary = 0; boundary + 1 < boundaries.length; boundary += 1) {
+      const t0 = boundaries[boundary] / cut.length
+      const t1 = boundaries[boundary + 1] / cut.length
+      const chunkLength = (t1 - t0) * cut.length
+      if (chunkLength <= 1e-12) continue
+      let engagement = 0
+      for (let point = 0; point < ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK; point += 1) {
+        const t = t0 + ((t1 - t0) * (point + 1)) / (ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK + 1)
+        const sample = index.engagementAt(
+          cut.move.from.x + (cut.move.to.x - cut.move.from.x) * t,
+          cut.move.from.y + (cut.move.to.y - cut.move.from.y) * t,
+          cut.dirX,
+          cut.dirY,
+        )
+        if (sample > engagement) engagement = sample
+      }
+      // Legacy slot classification for the composition clamp, evaluated now —
+      // with the legacy index holding exactly the moves applySlotFeedToLevel
+      // had classified from at this point — at the legacy classifier's own
+      // chunk midpoints overlapping this chunk.
+      let legacySlotting = false
+      if (legacyIndex !== null) {
+        const legacyChunkCount = Math.max(1, Math.ceil(cut.length / (slotDistance / 4)))
+        const firstLegacyChunk = Math.floor(t0 * legacyChunkCount)
+        const lastLegacyChunk = Math.floor((t1 - 1e-12) * legacyChunkCount)
+        for (let legacyChunk = firstLegacyChunk; legacyChunk <= lastLegacyChunk; legacyChunk += 1) {
+          const t = (legacyChunk + 0.5) / legacyChunkCount
+          if (!legacyIndex.isNearPrior(
+            cut.move.from.x + (cut.move.to.x - cut.move.from.x) * t,
+            cut.move.from.y + (cut.move.to.y - cut.move.from.y) * t,
+            cut.dirX,
+            cut.dirY,
+          )) {
+            legacySlotting = true
+            break
+          }
+        }
+      }
+      quantizer?.push(engagement, chunkLength)
+      telemetry.addSample(engagement, chunkLength)
+      chunks.push({ move: cut.move, cutIndex, t0, t1, length: chunkLength, scale: 1, legacySlotting })
+    }
+    index.addSweptSegment(cut.move.from.x, cut.move.from.y, cut.move.to.x, cut.move.to.y)
+    legacyIndex?.insert({ ax: cut.move.from.x, ay: cut.move.from.y, bx: cut.move.to.x, by: cut.move.to.y })
+  }
+
+  // Pass C: assign each chunk the quantizer's emitted scale by walking both
+  // sequences by cumulative distance (both sum the same pushed distances).
+  if (quantizer && slotScale !== null && legacyIndex !== null) {
+    const fragments = quantizer.fragments()
+    let fragmentIndex = 0
+    let remaining = fragments[0]?.distance ?? 0
+    for (const chunk of chunks) {
+      while (fragmentIndex < fragments.length && remaining <= 1e-9) {
+        fragmentIndex += 1
+        remaining += fragments[fragmentIndex]?.distance ?? 0
+      }
+      chunk.scale = fragments[Math.min(fragmentIndex, fragments.length - 1)]?.scale ?? 1
+      remaining -= chunk.length
+    }
+    // Conservative composition with the shipped slot feed: clamp any chunk
+    // whose span overlaps a legacy slotting chunk to the slot scale. The
+    // verdict was captured during the walk at the legacy classifier's own
+    // chunk midpoints, so a legacy-slotting point can never sit under an
+    // unclamped engagement chunk.
+    for (const chunk of chunks) {
+      if (chunk.legacySlotting) chunk.scale = Math.min(chunk.scale, slotScale)
+    }
+  }
+
+  // Pass D: minimum fragment length over the emitted stream. A maximal run of
+  // one scale — broken by non-cut moves, so the runs below are what a
+  // controller actually sees — must not be shorter than the configured
+  // minimum. Merge any shorter run into its lower-scale neighbour, the same
+  // rule `EngagementFeedQuantizer.fragments` applies to its own stretches.
+  if (quantizer) {
+    interface ScaleRun {
+      scale: number
+      start: number
+      end: number
+      length: number
+    }
+    const runs: ScaleRun[] = []
+    let runStart = 0
+    for (let chunkIndex = 1; chunkIndex <= chunks.length; chunkIndex += 1) {
+      const breaks = chunkIndex === chunks.length
+        || chunks[chunkIndex].scale !== chunks[chunkIndex - 1].scale
+        || (chunks[chunkIndex].cutIndex !== chunks[chunkIndex - 1].cutIndex
+          && cuts[chunks[chunkIndex].cutIndex].moveIndex - cuts[chunks[chunkIndex - 1].cutIndex].moveIndex > 1)
+      if (!breaks) continue
+      let length = 0
+      for (let chunkIndex2 = runStart; chunkIndex2 < chunkIndex; chunkIndex2 += 1) {
+        length += chunks[chunkIndex2].length
+      }
+      runs.push({ scale: chunks[runStart].scale, start: runStart, end: chunkIndex, length })
+      runStart = chunkIndex
+    }
+    // Two runs are emitted as one stretch only when their cut moves sit next
+    // to each other in the stream — a non-cut move between them breaks what a
+    // controller sees, so merging across one cannot repair a short run.
+    const isAdjacent = (left: ScaleRun, right: ScaleRun): boolean => {
+      const leftCut = chunks[left.end - 1].cutIndex
+      const rightCut = chunks[right.start].cutIndex
+      return leftCut === rightCut || cuts[rightCut].moveIndex - cuts[leftCut].moveIndex === 1
+    }
+    for (let runIndex = 0; runIndex < runs.length; ) {
+      if (runs.length === 1 || runs[runIndex].length >= minFragmentLength) {
+        runIndex += 1
+        continue
+      }
+      const next = runs[runIndex + 1]
+      const prev = runs[runIndex - 1]
+      const adjacentBefore = prev !== undefined && isAdjacent(prev, runs[runIndex])
+      const adjacentAfter = next !== undefined && isAdjacent(runs[runIndex], next)
+      // Prefer a directly adjacent neighbour (only there does the merge grow
+      // the emitted stretch); among adjacent ones prefer the lower scale, the
+      // same rule EngagementFeedQuantizer.fragments uses. A run bounded by
+      // non-cut moves on both sides keeps its scale — it is a lone fed
+      // stretch, not an alternation.
+      const targetIndex = adjacentAfter && (!adjacentBefore || next.scale <= prev.scale)
+        ? runIndex + 1
+        : adjacentBefore
+          ? runIndex - 1
+          : (next && (!prev || next.scale <= prev.scale) ? runIndex + 1 : runIndex - 1)
+      const target = runs[targetIndex]
+      const mergedScale = Math.min(runs[runIndex].scale, target.scale)
+      // Relabel the whole merged span, target included: the lower scale
+      // extends over both runs, so the emitted chunks match the run table.
+      const mergedStart = Math.min(runs[runIndex].start, target.start)
+      const mergedEnd = Math.max(runs[runIndex].end, target.end)
+      for (let chunkIndex = mergedStart; chunkIndex < mergedEnd; chunkIndex += 1) {
+        chunks[chunkIndex].scale = mergedScale
+      }
+      target.scale = mergedScale
+      target.length += runs[runIndex].length
+      target.start = mergedStart
+      target.end = mergedEnd
+      runs.splice(runIndex, 1)
+      if (targetIndex < runIndex) runIndex = targetIndex
+    }
+  }
+
+  // Pass E: rebuild the level's moves, splitting where the scale changes —
+  // the same tail rebuild as applySlotFeedToLevel.
+  const stamped: ToolpathMove[] = []
+  let chunkCursor = 0
+  for (let moveIndex = startIndex; moveIndex < moves.length; moveIndex += 1) {
+    const move = moves[moveIndex]
+    const moveChunks: SampledChunk[] = []
+    while (chunkCursor < chunks.length && chunks[chunkCursor].move === move) {
+      moveChunks.push(chunks[chunkCursor])
+      chunkCursor += 1
+    }
+    if (moveChunks.length === 0) {
+      stamped.push(move)
+      continue
+    }
+    let fragmentStartT = 0
+    let fragmentScale: number | null = null
+    const emitFragment = (t0: number, t1: number, scale: number) => {
+      const from = interpolateMovePoint(move, t0)
+      const to = interpolateMovePoint(move, t1)
+      stamped.push(scale < 1 ? { ...move, from, to, feedScale: scale } : { ...move, from, to })
+    }
+    for (const chunk of moveChunks) {
+      if (fragmentScale === null) {
+        fragmentScale = chunk.scale
+      } else if (chunk.scale !== fragmentScale) {
+        emitFragment(fragmentStartT, chunk.t0, fragmentScale)
+        fragmentStartT = chunk.t0
+        fragmentScale = chunk.scale
+      }
+    }
+    emitFragment(fragmentStartT, 1, fragmentScale ?? 1)
+  }
+
+  moves.length = startIndex
+  for (const move of stamped) {
+    moves.push(move)
+  }
+}
+
+/**
+ * Chunk boundaries along a cut move of the given length: a refined region
+ * (refinedStep) spans refineSpan from each end that needs it, the middle uses
+ * baseStep. Each region contributes a whole number of equal chunks, so the
+ * boundaries are deterministic; overlapping refined regions on a short move
+ * resolve to the head region only.
+ */
+function engagementChunkBoundaries(
+  length: number,
+  refinedStart: boolean,
+  refinedEnd: boolean,
+  baseStep: number,
+  refinedStep: number,
+  refineSpan: number,
+): number[] {
+  const boundaries: number[] = [0]
+  const appendChunks = (from: number, to: number, step: number) => {
+    if (to - from <= 0) return
+    const count = Math.max(1, Math.ceil((to - from) / step))
+    for (let index = 1; index < count; index += 1) {
+      boundaries.push(from + ((to - from) * index) / count)
+    }
+  }
+  const headEnd = refinedStart ? Math.min(refineSpan, length) : 0
+  const tailStart = Math.max(refinedEnd ? length - refineSpan : length, headEnd)
+  appendChunks(0, headEnd, refinedStep)
+  appendChunks(headEnd, tailStart, baseStep)
+  appendChunks(tailStart, length, refinedStep)
+  boundaries.push(length)
+  return boundaries
+}
+
+/** Per-level feed application: the engagement path, or the shipped slot feed. */
+function applyLevelFeed(
+  moves: ToolpathMove[],
+  startIndex: number,
+  operation: Operation,
+  slotScale: number | null,
+  slotDistance: number,
+  ownTrailTolerance: number,
+  toolDiameter: number,
+  stepoverDistance: number,
+  telemetry: EngagementTelemetryAccumulator | null,
+): void {
+  if (telemetry !== null && operation.pocketEngagementMode === 'engagement_feed') {
+    applyEngagementFeedToLevel(
+      moves,
+      startIndex,
+      slotScale,
+      toolDiameter,
+      stepoverDistance,
+      slotDistance,
+      ownTrailTolerance,
+      telemetry,
+    )
+  } else if (slotScale !== null) {
+    applySlotFeedToLevel(moves, startIndex, slotScale, slotDistance, ownTrailTolerance)
   }
 }
 
@@ -1394,6 +1784,7 @@ function generateRoughBandMoves(
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
+  telemetry: EngagementTelemetryAccumulator | null = null,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -1492,9 +1883,17 @@ function generateRoughBandMoves(
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
 
-      if (slotScale !== null) {
-        applySlotFeedToLevel(moves, levelStartIndex, slotScale, slotDistance, effectiveStepover * SLOT_FEED_OWN_TRAIL_FACTOR)
-      }
+      applyLevelFeed(
+        moves,
+        levelStartIndex,
+        operation,
+        slotScale,
+        slotDistance,
+        effectiveStepover * SLOT_FEED_OWN_TRAIL_FACTOR,
+        toolRadius * 2,
+        effectiveStepover,
+        telemetry,
+      )
 
       currentPosition = retractToSafe(moves, currentPosition, safeZ)
     }
@@ -1567,9 +1966,17 @@ function generateRoughBandMoves(
       )
     }
 
-    if (slotScale !== null) {
-      applySlotFeedToLevel(moves, levelStartIndex, slotScale, slotDistance, effectiveStepover * SLOT_FEED_OWN_TRAIL_FACTOR)
-    }
+    applyLevelFeed(
+      moves,
+      levelStartIndex,
+      operation,
+      slotScale,
+      slotDistance,
+      effectiveStepover * SLOT_FEED_OWN_TRAIL_FACTOR,
+      toolRadius * 2,
+      effectiveStepover,
+      telemetry,
+    )
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
@@ -1586,6 +1993,7 @@ function generateFinishBandMoves(
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
+  telemetry: EngagementTelemetryAccumulator | null = null,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -1730,13 +2138,21 @@ function generateFinishBandMoves(
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
     }
 
-    if (slotScale !== null) {
-      const slotDistance = Math.max(
-        toolRadius * 2 * SLOT_FEED_ENGAGEMENT_FACTOR,
-        floorStepover * SLOT_FEED_ADJACENCY_FACTOR,
-      )
-      applySlotFeedToLevel(moves, floorStartIndex, slotScale, slotDistance, floorStepover * SLOT_FEED_OWN_TRAIL_FACTOR)
-    }
+    const slotDistance = Math.max(
+      toolRadius * 2 * SLOT_FEED_ENGAGEMENT_FACTOR,
+      floorStepover * SLOT_FEED_ADJACENCY_FACTOR,
+    )
+    applyLevelFeed(
+      moves,
+      floorStartIndex,
+      operation,
+      slotScale,
+      slotDistance,
+      floorStepover * SLOT_FEED_OWN_TRAIL_FACTOR,
+      toolRadius * 2,
+      floorStepover,
+      telemetry,
+    )
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
@@ -1909,15 +2325,46 @@ function appendPocketCornerRelief(
 
 export function generatePocketToolpath(project: Project, operation: Operation): PocketToolpathResult {
   if (isFeatureFirst(operation)) {
-    const parts = perFeatureOperations(operation, project).map((subOp) =>
-      generatePocketToolpathSingle(project, subOp),
+    const parts = perFeatureOperations(operation, project)
+    const sharedTelemetry = createSharedEngagementTelemetry(project, operation)
+    const merged = mergePocketToolpathResults(
+      operation.id,
+      parts.map((subOp) => generatePocketToolpathSingle(project, subOp, sharedTelemetry)),
+      { orderBlocks: 'nearest' },
     )
-    return mergePocketToolpathResults(operation.id, parts, { orderBlocks: 'nearest' })
+    return sharedTelemetry
+      ? { ...merged, engagementTelemetry: sharedTelemetry.toTelemetry() }
+      : merged
   }
   return generatePocketToolpathSingle(project, operation)
 }
 
-function generatePocketToolpathSingle(project: Project, operation: Operation): PocketToolpathResult {
+/** Shared engagement telemetry for feature-first pockets: one accumulator fed
+ * by every per-feature part so the merged result reports operation totals.
+ * Mirrors generatePocketToolpathSingle's tool/stepover validation; when the
+ * operation could not cut anyway there is nothing to measure. */
+function createSharedEngagementTelemetry(
+  project: Project,
+  operation: Operation,
+): EngagementTelemetryAccumulator | null {
+  if (!(operation.kind === 'pocket' && operation.pocketEngagementMode === 'engagement_feed')) return null
+  const toolRecord = operation.toolRef
+    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
+    : null
+  if (!toolRecord) return null
+  const tool = normalizeToolForProject(toolRecord, project)
+  if (!(tool.diameter > 0)) return null
+  if (!(operation.stepover > 0 && operation.stepover <= 1)) return null
+  return new EngagementTelemetryAccumulator(
+    nominalEngagement(Math.max(tool.diameter * operation.stepover, 1 / DEFAULT_CLIPPER_SCALE), tool.radius),
+  )
+}
+
+function generatePocketToolpathSingle(
+  project: Project,
+  operation: Operation,
+  sharedTelemetry?: EngagementTelemetryAccumulator | null,
+): PocketToolpathResult {
   const resolved = resolvePocketRegions(project, operation)
   const regionMask = operation.target.source === 'features'
     ? buildRegionMask(splitFeatureTargets(project, operation.target.featureIds).regionFeatures)
@@ -1971,6 +2418,12 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
   const entryClearance = getOperationClearance(project)
   const stepoverDistance = tool.diameter * operation.stepover
   const maxLinkDistance = tool.diameter
+  const engagementMode = operation.kind === 'pocket' && operation.pocketEngagementMode === 'engagement_feed'
+  const telemetry = sharedTelemetry ?? (engagementMode
+    ? new EngagementTelemetryAccumulator(
+      nominalEngagement(Math.max(stepoverDistance, 1 / DEFAULT_CLIPPER_SCALE), tool.radius),
+    )
+    : null)
   const direction = operation.cutDirection ?? 'conventional'
   const centreInset = tool.radius + Math.max(0, operation.stockToLeaveRadial ?? 0)
   const allMoves: ToolpathMove[] = []
@@ -2055,6 +2508,7 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
         stepoverDistance,
         maxLinkDistance,
         direction,
+        telemetry,
       )
       : generateRoughBandMoves(
         band,
@@ -2066,6 +2520,7 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
         stepoverDistance,
         maxLinkDistance,
         direction,
+        telemetry,
       )
     const { moves, stepLevels, warnings: bandWarnings } = result
     moves.forEach((move) => allMoves.push(move))
@@ -2117,5 +2572,6 @@ function generatePocketToolpathSingle(project: Project, operation: Operation): P
     // reports the main path's cut levels, which rest-machining and the level
     // readout are built around. The relief pass derives its levels from the tool.
     stepLevels: [...allStepLevels].sort((a, b) => b - a),
+    ...(telemetry ? { engagementTelemetry: telemetry.toTelemetry() } : {}),
   }
 }
