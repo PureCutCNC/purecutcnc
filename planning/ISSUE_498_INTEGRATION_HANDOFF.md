@@ -462,3 +462,71 @@ scripts/build-summary.sh
 key/value pairs and comparing dictionaries, with a guard that rejects a parse
 returning implausibly few keys — a single-quote-only parser silently read zero
 keys from `es/*` during S3 and reported it as clean.
+
+### S5 — Derive the feed-colour ladder from the operation's slot feed
+
+**Defect.** `FEED_COLOUR_SCALES` in `src/theme/palette.ts` is a hardcoded
+constant `[1, 0.88, 0.76, 0.64, 0.52, 0.4]`. Those are the rungs for a **40%**
+slot feed only. The real ladder is a function of the operation's
+`pocketSlotFeedPercent`:
+
+```
+rung_k = slot + k × (1 − slot) / 5,   k = 0…5
+```
+
+At a 75% slot feed the engine emits `1.0 … 0.75`, but the hardcoded thresholds
+map `0.75` to colour step 3 of 5 — a mid-ramp colour instead of the slowest —
+while `0.95/0.90` collapse into step 1 and `0.85/0.80` into step 2. Six rungs
+squash into four, the extreme never renders, and the legend prints six
+percentages the engine never emits.
+
+*This came from the S4 handoff, which stated the ladder as literal numbers taken
+from a 40% fixture instead of as a function of the setting. The S4 unit test
+asserts against the same constant, so it passes and cannot detect the defect —
+a test built on the code's own wrong assumption. Fixing the constant without
+fixing the test's premise would leave the trap in place.*
+
+**Engine output is correct and must not change.** The emitted `feedScale` values
+are right at every slot-feed setting; this is a display-mapping defect only. No
+G-code changes.
+
+**Allowed files:** `src/theme/palette.ts`, `src/theme/feedColourRamp.test.ts`,
+`src/components/ToolpathVisibilityPanel.tsx`,
+`src/components/canvas/previewPrimitives.ts`,
+`src/components/canvas/SketchCanvas.tsx`,
+`src/components/viewport3d/Viewport3D.tsx`, `e2e/feedColours.smoke.spec.ts`
+
+**Forbidden files:** `src/engine/**`, `src/types/project.ts`, `src/store/**`,
+`src/i18n/**` (no new strings needed), `planning/**` other than reading
+
+**Required:**
+
+1. Replace the constant with a derivation from a slot scale — e.g.
+   `feedColourScales(slotScale)` returning the six rungs — and thread the
+   selected operation's `pocketSlotFeedPercent` through to both the legend and
+   the colour-step mapping. An operation with no slot feed, or 100, emits no
+   scaled moves at all, so it must render exactly as today.
+2. The legend prints the rungs actually in force for the selected operation.
+3. `feedColourStep` takes the slot scale so its thresholds match what the engine
+   emits.
+4. **Rewrite the ramp test to be falsifiable across settings**, not against a
+   constant: for slot feeds of at least 40%, 60% and 75%, every rung the formula
+   produces must map to its own distinct colour step, the top rung must be
+   exactly `toolpathCut`, and the bottom rung exactly `toolpathCutSlow`. The
+   current test would pass against the broken code; the new one must fail against
+   it. Verify that by reverting to the constant and watching the test fail.
+5. Extend `e2e/feedColours.smoke.spec.ts` to cover a non-40% slot feed.
+
+**Required checks:**
+
+```bash
+npx tsx src/theme/feedColourRamp.test.ts
+npx tsx scripts/run-tests.ts
+scripts/build-summary.sh
+```
+
+Note: `src/import/classifier.test.ts` fails intermittently (~1 run in 5) from a
+machine-speed-dependent CPU budget, unrelated to this slice. If the gate fails
+only on that file, re-run once and say so rather than trying to fix it.
+
+**Manager review record:** pending.
