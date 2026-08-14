@@ -221,6 +221,8 @@ export class SweptMaterialIndex {
   private readonly cells = new Map<string, PriorSweep[]>()
   private readonly radius: number
   private readonly cellSize: number
+  private scannedCount = 0
+  private trigTestedCount = 0
 
   constructor(toolRadius: number) {
     if (!Number.isFinite(toolRadius) || toolRadius <= 0) {
@@ -299,6 +301,17 @@ export class SweptMaterialIndex {
   }
 
   /**
+   * Cumulative capsule-query counters since construction: how many stored
+   * capsules a query's 3×3 cell scan iterated, and how many of those reached
+   * the trigonometric path (i.e. survived the squared-distance rejection).
+   * Cost assertions count these — never wall clocks (AGENTS.md § Build &
+   * Verify).
+   */
+  queryStats(): { capsulesScanned: number; capsulesTrigTested: number } {
+    return { capsulesScanned: this.scannedCount, capsulesTrigTested: this.trigTestedCount }
+  }
+
+  /**
    * Engagement in radians at cutter centre `(x, y)` moving in direction
    * `(dirX, dirY)` (need not be unit length): the measure of the leading
    * semicircle lying in material not yet swept, in `[0, π]`.
@@ -326,6 +339,7 @@ export class SweptMaterialIndex {
         if (!bucket) continue
         foundAny = true
         for (const sweep of bucket) {
+          this.scannedCount += 1
           if (this.appendCapsuleArcs(sweep, x, y, psi, intervals)) return 0
         }
       }
@@ -355,6 +369,14 @@ export class SweptMaterialIndex {
    * Append the covered arcs of one swept capsule (both endpoint discs and
    * the rectangular body); return true when the whole cutter circle is
    * covered (engagement 0).
+   *
+   * Cheap rejection first: the capsule meets the cutter circle exactly when
+   * the query centre lies within `2r` of the segment, so a squared
+   * point-to-segment distance — a handful of operations — gates all three
+   * trigonometric blocks. Exact, not approximate: a capsule point within
+   * `r` of the query exists iff the closest segment point is within `2r`.
+   * This is what keeps a cell holding thousands of short segments from
+   * paying the full closed-form cost per capsule.
    */
   private appendCapsuleArcs(
     sweep: PriorSweep,
@@ -363,10 +385,19 @@ export class SweptMaterialIndex {
     psi: number,
     intervals: Array<[number, number]>,
   ): boolean {
-    if (this.appendDiscArcs(sweep.ax, sweep.ay, x, y, psi, intervals)) return true
-    if (this.appendDiscArcs(sweep.bx, sweep.by, x, y, psi, intervals)) return true
     const dx = sweep.bx - sweep.ax
     const dy = sweep.by - sweep.ay
+    const lengthSq = dx * dx + dy * dy
+    const t = lengthSq > 0
+      ? Math.max(0, Math.min(1, ((x - sweep.ax) * dx + (y - sweep.ay) * dy) / lengthSq))
+      : 0
+    const px = sweep.ax + dx * t - x
+    const py = sweep.ay + dy * t - y
+    const twoR = 2 * this.radius
+    if (px * px + py * py > twoR * twoR) return false
+    this.trigTestedCount += 1
+    if (this.appendDiscArcs(sweep.ax, sweep.ay, x, y, psi, intervals)) return true
+    if (this.appendDiscArcs(sweep.bx, sweep.by, x, y, psi, intervals)) return true
     const length = Math.hypot(dx, dy)
     const ex = dx / length
     const ey = dy / length

@@ -304,6 +304,28 @@ const ENGAGEMENT_SAMPLE_BASE_LENGTH = 0.5
 const ENGAGEMENT_SAMPLE_CORNER_LENGTH = 0.25
 const ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK = 3
 
+// ── Engagement cache probes ───────────────────────────────────────────
+//
+// Call-count probes for the once-per-band classification cache. Cost
+// assertions count work — never wall clocks (AGENTS.md § Build & Verify) —
+// so tests reset and read these counters instead of timing generation. Only
+// `resetEngagementCacheProbeCounts` and `engagementCacheProbeCounts` are
+// public; the counters advance only inside pocket generation.
+
+let engagementBandCacheBuildCount = 0
+let engagementCacheLevelUseCount = 0
+
+/** Read the per-band cache probe counters (builds and level uses so far). */
+export function engagementCacheProbeCounts(): { bandCacheBuilds: number; cacheLevelUses: number } {
+  return { bandCacheBuilds: engagementBandCacheBuildCount, cacheLevelUses: engagementCacheLevelUseCount }
+}
+
+/** Reset the per-band cache probe counters. Tests call this before measuring. */
+export function resetEngagementCacheProbeCounts(): void {
+  engagementBandCacheBuildCount = 0
+  engagementCacheLevelUseCount = 0
+}
+
 /**
  * Resolve the operation's slot-feed percentage into a cut-feed multiplier.
  * Returns null when the reduction is disabled (non-pocket kinds, undefined,
@@ -525,6 +547,97 @@ function applySlotFeedToLevel(
   }
 }
 
+/** One reduced-feed span of the legacy slot-feed stream, in level coordinates. */
+interface SlotFeedSpan {
+  from: ToolpathPoint
+  to: ToolpathPoint
+  scale: number
+}
+
+/**
+ * The reduced-feed spans the shipped slot-feed pass stamps over one level's
+ * moves — computed by running the shipped classifier itself over a clone, so
+ * the spans are byte-for-byte what a legacy generation of the same level
+ * emits. The engagement path clamps against these geometrically (see
+ * `applyEngagementFeedToLevel`).
+ */
+function legacySlotSpans(
+  moves: ToolpathMove[],
+  startIndex: number,
+  scale: number,
+  slotDistance: number,
+  ownTrailTolerance: number,
+): SlotFeedSpan[] {
+  const clone = moves.map((move) => ({ ...move, from: { ...move.from }, to: { ...move.to } }))
+  applySlotFeedToLevel(clone, startIndex, scale, slotDistance, ownTrailTolerance)
+  const spans: SlotFeedSpan[] = []
+  for (const move of clone) {
+    if (move.kind === 'cut' && move.feedScale !== undefined) {
+      spans.push({ from: move.from, to: move.to, scale: move.feedScale })
+    }
+  }
+  return spans
+}
+
+/** Squared distance from (px, py) to the segment A→B. */
+function pointSegmentDistanceSq(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax
+  const dy = by - ay
+  const lenSq = dx * dx + dy * dy
+  const t = lenSq > 0
+    ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq))
+    : 0
+  const qx = ax + dx * t - px
+  const qy = ay + dy * t - py
+  return qx * qx + qy * qy
+}
+
+/** Two-fold signed-area orientation test. */
+function orientation(ax: number, ay: number, bx: number, by: number, cx: number, cy: number): number {
+  return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+}
+
+/** Overlap tolerance for the pointwise clamp: retraced paths share exact
+ * contour vertices, so 1e-9 in distance (1e-18 squared) covers only float
+ * dust and never distinct parallel paths. */
+const CLAMP_OVERLAP_EPS_SQ = 1e-18
+
+/** Do the two segments share a point, within float dust? */
+function segmentsTouch(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  cx: number,
+  cy: number,
+  dx: number,
+  dy: number,
+): boolean {
+  const o1 = orientation(ax, ay, bx, by, cx, cy)
+  const o2 = orientation(ax, ay, bx, by, dx, dy)
+  const o3 = orientation(cx, cy, dx, dy, ax, ay)
+  const o4 = orientation(cx, cy, dx, dy, bx, by)
+  // Proper crossing: opposite sides both ways.
+  if (((o1 > 0 && o2 < 0) || (o1 < 0 && o2 > 0)) && ((o3 > 0 && o4 < 0) || (o3 < 0 && o4 > 0))) {
+    return true
+  }
+  // Collinear overlap (retraced paths share exact contour vertices) shows up
+  // as an endpoint lying on the other segment.
+  return Math.min(
+    pointSegmentDistanceSq(ax, ay, cx, cy, dx, dy),
+    pointSegmentDistanceSq(bx, by, cx, cy, dx, dy),
+    pointSegmentDistanceSq(cx, cy, ax, ay, bx, by),
+    pointSegmentDistanceSq(dx, dy, ax, ay, bx, by),
+  ) <= CLAMP_OVERLAP_EPS_SQ
+}
+
 /**
  * Engagement-scaled feed application for one Z level, used when the
  * operation's pocketEngagementMode is 'engagement_feed' (issue #498).
@@ -553,13 +666,16 @@ function applySlotFeedToLevel(
  * interpolate toward — samples are recorded for telemetry only and the move
  * stream is untouched.
  *
- * Conservative composition with the shipped slot feed is structural, not
- * hoped-for: the legacy classifier runs alongside the estimator at the same
- * chunk granularity `applySlotFeedToLevel` uses, and any chunk overlapping a
- * legacy slotting chunk is clamped to `slotScale`. The legacy slot distance
- * carries a 10% margin, so its slotting stretches are wider than the
- * estimator's near-π regions — without the clamp the engagement path would
- * emit a higher feed there, which this mode must never do.
+ * Conservative composition with the shipped slot feed is geometric and
+ * pointwise. The shipped classifier stamps its own spans over the level's
+ * moves (`legacySlotSpans`), and any engagement chunk whose span shares a
+ * point with a stamped span is clamped to the stamped scale. A chunkwise
+ * verdict — the earlier form — cannot hold the never-raise invariant when the
+ * two chunkings disagree: a later move retracing a legacy slot span (the
+ * parallel pattern's boundary contour and first fill line) is classified
+ * "near prior" by the legacy index and escapes unclamped, emitting full feed
+ * where legacy reduced it. Matching spans geometrically closes that hole:
+ * wherever legacy slowed, engagement may only slow further.
  */
 function applyEngagementFeedToLevel(
   moves: ToolpathMove[],
@@ -570,18 +686,20 @@ function applyEngagementFeedToLevel(
   slotDistance: number,
   ownTrailTolerance: number,
   telemetry: EngagementTelemetryAccumulator,
+  cache: OffsetBandEngagementClassification | null,
 ): void {
   if (startIndex >= moves.length) return
+  if (cache !== null) engagementCacheLevelUseCount += 1
   const toolRadius = toolDiameter / 2
   const nominal = nominalEngagement(stepoverDistance, toolRadius)
   const minFragmentLength = toolDiameter
   const baseStep = toolDiameter * ENGAGEMENT_SAMPLE_BASE_LENGTH
   const refinedStep = toolDiameter * ENGAGEMENT_SAMPLE_CORNER_LENGTH
   const refineSpan = toolDiameter * ENGAGEMENT_SAMPLE_CORNER_SPAN
-  const index = new SweptMaterialIndex(toolRadius)
-  const legacyIndex = slotScale === null
-    ? null
-    : new PriorCutIndex(slotDistance, slotDistance, ownTrailTolerance, slotDistance / 4)
+  const index = cache === null ? new SweptMaterialIndex(toolRadius) : null
+  const slotSpans = slotScale === null
+    ? []
+    : legacySlotSpans(moves, startIndex, slotScale, slotDistance, ownTrailTolerance)
   const quantizer = slotScale === null
     ? null
     : new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength })
@@ -636,17 +754,28 @@ function applyEngagementFeedToLevel(
     t1: number
     length: number
     scale: number
-    /** Legacy slot-feed classification of this chunk, captured during the walk
-     *  while the legacy index holds exactly the moves legacy had classified
-     *  from at this point. */
-    legacySlotting: boolean
   }
 
   // Pass B: sample each chunk (max over interior points), feed the quantizer
-  // and telemetry, and index the move once it is cut.
+  // and telemetry, and index the move once it is cut. With a per-band cache
+  // the chunk classification is looked up by canonical segment identity —
+  // computed once, reused at every level — and no index is built or queried
+  // here. A cache miss (a segment the canonical traversal did not emit) is
+  // resolved conservatively: full engagement π, never a restored feed.
   const chunks: SampledChunk[] = []
   for (let cutIndex = 0; cutIndex < cuts.length; cutIndex += 1) {
     const cut = cuts[cutIndex]
+    const cached = cache?.chunksForMove(cut.move.from.x, cut.move.from.y, cut.move.to.x, cut.move.to.y) ?? null
+    if (cached !== null) {
+      for (const chunk of cached) {
+        const chunkLength = (chunk.t1 - chunk.t0) * cut.length
+        if (chunkLength <= 1e-12) continue
+        quantizer?.push(chunk.engagement, chunkLength)
+        telemetry.addSample(chunk.engagement, chunkLength)
+        chunks.push({ move: cut.move, cutIndex, t0: chunk.t0, t1: chunk.t1, length: chunkLength, scale: 1 })
+      }
+      continue
+    }
     const boundaries = engagementChunkBoundaries(
       cut.length,
       cut.refinedStart,
@@ -660,50 +789,29 @@ function applyEngagementFeedToLevel(
       const t1 = boundaries[boundary + 1] / cut.length
       const chunkLength = (t1 - t0) * cut.length
       if (chunkLength <= 1e-12) continue
-      let engagement = 0
-      for (let point = 0; point < ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK; point += 1) {
-        const t = t0 + ((t1 - t0) * (point + 1)) / (ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK + 1)
-        const sample = index.engagementAt(
-          cut.move.from.x + (cut.move.to.x - cut.move.from.x) * t,
-          cut.move.from.y + (cut.move.to.y - cut.move.from.y) * t,
-          cut.dirX,
-          cut.dirY,
-        )
-        if (sample > engagement) engagement = sample
-      }
-      // Legacy slot classification for the composition clamp, evaluated now —
-      // with the legacy index holding exactly the moves applySlotFeedToLevel
-      // had classified from at this point — at the legacy classifier's own
-      // chunk midpoints overlapping this chunk.
-      let legacySlotting = false
-      if (legacyIndex !== null) {
-        const legacyChunkCount = Math.max(1, Math.ceil(cut.length / (slotDistance / 4)))
-        const firstLegacyChunk = Math.floor(t0 * legacyChunkCount)
-        const lastLegacyChunk = Math.floor((t1 - 1e-12) * legacyChunkCount)
-        for (let legacyChunk = firstLegacyChunk; legacyChunk <= lastLegacyChunk; legacyChunk += 1) {
-          const t = (legacyChunk + 0.5) / legacyChunkCount
-          if (!legacyIndex.isNearPrior(
+      let engagement = cache !== null ? Math.PI : 0
+      if (index !== null) {
+        for (let point = 0; point < ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK; point += 1) {
+          const t = t0 + ((t1 - t0) * (point + 1)) / (ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK + 1)
+          const sample = index.engagementAt(
             cut.move.from.x + (cut.move.to.x - cut.move.from.x) * t,
             cut.move.from.y + (cut.move.to.y - cut.move.from.y) * t,
             cut.dirX,
             cut.dirY,
-          )) {
-            legacySlotting = true
-            break
-          }
+          )
+          if (sample > engagement) engagement = sample
         }
       }
       quantizer?.push(engagement, chunkLength)
       telemetry.addSample(engagement, chunkLength)
-      chunks.push({ move: cut.move, cutIndex, t0, t1, length: chunkLength, scale: 1, legacySlotting })
+      chunks.push({ move: cut.move, cutIndex, t0, t1, length: chunkLength, scale: 1 })
     }
-    index.addSweptSegment(cut.move.from.x, cut.move.from.y, cut.move.to.x, cut.move.to.y)
-    legacyIndex?.insert({ ax: cut.move.from.x, ay: cut.move.from.y, bx: cut.move.to.x, by: cut.move.to.y })
+    index?.addSweptSegment(cut.move.from.x, cut.move.from.y, cut.move.to.x, cut.move.to.y)
   }
 
   // Pass C: assign each chunk the quantizer's emitted scale by walking both
   // sequences by cumulative distance (both sum the same pushed distances).
-  if (quantizer && slotScale !== null && legacyIndex !== null) {
+  if (quantizer) {
     const fragments = quantizer.fragments()
     let fragmentIndex = 0
     let remaining = fragments[0]?.distance ?? 0
@@ -715,13 +823,21 @@ function applyEngagementFeedToLevel(
       chunk.scale = fragments[Math.min(fragmentIndex, fragments.length - 1)]?.scale ?? 1
       remaining -= chunk.length
     }
-    // Conservative composition with the shipped slot feed: clamp any chunk
-    // whose span overlaps a legacy slotting chunk to the slot scale. The
-    // verdict was captured during the walk at the legacy classifier's own
-    // chunk midpoints, so a legacy-slotting point can never sit under an
-    // unclamped engagement chunk.
-    for (const chunk of chunks) {
-      if (chunk.legacySlotting) chunk.scale = Math.min(chunk.scale, slotScale)
+    // Pointwise conservative composition with the shipped slot feed: clamp any
+    // chunk whose span shares a point with a legacy slot span. Geometry, not
+    // chunk indices — a later move retracing a stamped span must inherit the
+    // stamp, which a per-chunk legacy verdict cannot see.
+    if (slotSpans.length > 0) {
+      for (const chunk of chunks) {
+        const from = interpolateMovePoint(chunk.move, chunk.t0)
+        const to = interpolateMovePoint(chunk.move, chunk.t1)
+        for (const span of slotSpans) {
+          if (segmentsTouch(from.x, from.y, to.x, to.y, span.from.x, span.from.y, span.to.x, span.to.y)) {
+            chunk.scale = Math.min(chunk.scale, span.scale)
+            break
+          }
+        }
+      }
     }
   }
 
@@ -809,6 +925,22 @@ function applyEngagementFeedToLevel(
       chunkCursor += 1
     }
     if (moveChunks.length === 0) {
+      // Cuts too short to chunk still carry the pointwise clamp: wherever
+      // legacy slowed, engagement may only slow further.
+      if (move.kind === 'cut' && slotSpans.length > 0 && move.feedScale === undefined) {
+        let lowest = 1
+        let touched = false
+        for (const span of slotSpans) {
+          if (pointSegmentDistanceSq(move.from.x, move.from.y, span.from.x, span.from.y, span.to.x, span.to.y) <= CLAMP_OVERLAP_EPS_SQ) {
+            touched = true
+            lowest = Math.min(lowest, span.scale)
+          }
+        }
+        if (touched && lowest < 1) {
+          stamped.push({ ...move, feedScale: lowest })
+          continue
+        }
+      }
       stamped.push(move)
       continue
     }
@@ -880,6 +1012,7 @@ function applyLevelFeed(
   toolDiameter: number,
   stepoverDistance: number,
   telemetry: EngagementTelemetryAccumulator | null,
+  cache: OffsetBandEngagementClassification | null = null,
 ): void {
   if (telemetry !== null && operation.pocketEngagementMode === 'engagement_feed') {
     applyEngagementFeedToLevel(
@@ -891,6 +1024,7 @@ function applyLevelFeed(
       slotDistance,
       ownTrailTolerance,
       telemetry,
+      cache,
     )
   } else if (slotScale !== null) {
     applySlotFeedToLevel(moves, startIndex, slotScale, slotDistance, ownTrailTolerance)
@@ -1594,7 +1728,7 @@ export function cutClosedContours(
   return nextPosition
 }
 
-interface OffsetRegionNode {
+export interface OffsetRegionNode {
   region: ResolvedPocketRegion
   children: OffsetRegionNode[]
 }
@@ -1605,7 +1739,7 @@ interface OffsetRegionNode {
  * several step levels build the tree once and traverse it per level instead
  * of redoing the Clipper offsets at every level.
  */
-function buildOffsetRegionTree(
+export function buildOffsetRegionTree(
   region: ResolvedPocketRegion,
   stepoverDistance: number,
   islandJoinType: number = ClipperLib.JoinType.jtMiter,
@@ -1614,6 +1748,194 @@ function buildOffsetRegionTree(
   return {
     region,
     children: childRegions.map((child) => buildOffsetRegionTree(child, stepoverDistance, islandJoinType)),
+  }
+}
+
+/**
+ * Engagement classification of one band's offset rings, computed ONCE per
+ * band and reused at every Z level (issue #498 slice S2c). The ring tree is
+ * Z-invariant, so the engagement of a ring segment depends only on which
+ * sweeps were cut before it — and the set that is *certainly* prior in every
+ * level's emission order is exactly the ring's own descendants (inner-first
+ * traversal cuts them all first). Sibling subtrees, sibling contours, and
+ * other trees are cut in an order seeded from the position carried out of the
+ * previous level — it varies per level — so they are excluded from the prior
+ * set. Exclusion over-reports engagement, which resolves toward a lower feed:
+ * the conservative direction.
+ */
+export interface OffsetBandEngagementClassification {
+  /**
+   * Cached chunks of the canonical segment `(fromX, fromY) → (toX, toY)`, or
+   * null when the segment is unknown (the conservative fallback is full
+   * engagement, handled by the caller).
+   */
+  chunksForMove(
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+  ): ReadonlyArray<{ t0: number; t1: number; engagement: number }> | null
+  /** Stored cell entries of every swept-material index the build created —
+   * the once-per-band index-size proxy for cost assertions. */
+  indexEntryCount: number
+  /** Number of canonical segments classified. */
+  segmentCount: number
+}
+
+/**
+ * Build the per-band engagement classification. Traverses each ring tree in
+ * canonical order — children in index order, contours unrotated from their
+ * canonical start, direction applied exactly as `cutClosedContours` applies
+ * it — and keys every segment by its canonical identity, never by emission
+ * order or move index. `smoothRadius`/`depth` mirror `cutOffsetRegionNode`'s
+ * emit-time smoothing so the classified geometry is the geometry the level
+ * loop actually cuts.
+ */
+export function buildOffsetBandEngagementClassification(
+  regionTrees: OffsetRegionNode[],
+  options: {
+    toolRadius: number
+    direction: CutDirection
+    smoothRadius: number | null
+  },
+): OffsetBandEngagementClassification {
+  const { toolRadius, direction, smoothRadius } = options
+  const toolDiameter = toolRadius * 2
+  const baseStep = toolDiameter * ENGAGEMENT_SAMPLE_BASE_LENGTH
+  const refinedStep = toolDiameter * ENGAGEMENT_SAMPLE_CORNER_LENGTH
+  const refineSpan = toolDiameter * ENGAGEMENT_SAMPLE_CORNER_SPAN
+  const segmentChunks = new Map<string, Array<{ t0: number; t1: number; engagement: number }>>()
+  let indexEntryCount = 0
+  let segmentCount = 0
+
+  interface CanonicalPair {
+    from: Point
+    to: Point
+    dirX: number
+    dirY: number
+    length: number
+  }
+
+  const junctionAngle = (p: CanonicalPair, q: CanonicalPair): number =>
+    Math.acos(Math.min(1, Math.max(-1, p.dirX * q.dirX + p.dirY * q.dirY)))
+
+  /**
+   * Classify this node's own contours against `scope` and insert their
+   * segments. Segments are inserted per contour, after the whole contour is
+   * classified: the node's contours are cut in a position-seeded order that
+   * varies per level, so no contour may count another as prior. Excluding a
+   * contour's own trail too is deliberate — at a bend the trail sits slightly
+   * off directly-behind and covers a small arc (≈0.008 rad), and excluding it
+   * over-reports engagement, the conservative direction.
+   */
+  const classifyContours = (node: OffsetRegionNode, depth: number, scope: SweptMaterialIndex): Array<[number, number, number, number]> => {
+    const outer = node.region.outer.length >= 3 ? node.region.outer : null
+    const smoothed = outer
+      ? [smoothRadius !== null && depth > 0 ? roundContourCorners(outer, smoothRadius) : outer]
+      : []
+    const islands = node.region.islands.filter((island) => island.length >= 3)
+    const contours = applyContourDirection([...smoothed, ...islands], direction)
+    const own: Array<[number, number, number, number]> = []
+    for (const contour of contours) {
+      const pairs: CanonicalPair[] = []
+      for (let index = 0; index + 1 < contour.length; index += 1) {
+        const from = contour[index]
+        const to = contour[index + 1]
+        const dx = to.x - from.x
+        const dy = to.y - from.y
+        const length = Math.hypot(dx, dy)
+        pairs.push({ from, to, dirX: length > 0 ? dx / length : 0, dirY: length > 0 ? dy / length : 0, length })
+      }
+      const first = contour[0]
+      const last = contour[contour.length - 1]
+      if (first.x !== last.x || first.y !== last.y) {
+        const dx = first.x - last.x
+        const dy = first.y - last.y
+        const length = Math.hypot(dx, dy)
+        pairs.push({ from: last, to: first, dirX: length > 0 ? dx / length : 0, dirY: length > 0 ? dy / length : 0, length })
+      }
+      for (let index = 0; index < pairs.length; index += 1) {
+        const pair = pairs[index]
+        if (pair.length <= 1e-9) continue
+        const prev = pairs[(index + pairs.length - 1) % pairs.length]
+        const next = pairs[(index + 1) % pairs.length]
+        // The first and last segment of a contour face unknown neighbours —
+        // whatever ring the level order cuts before and after — and unknown
+        // junctions resolve toward more sampling.
+        const refinedStart = index === 0 || junctionAngle(prev, pair) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
+        const refinedEnd = index === pairs.length - 1 || junctionAngle(pair, next) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
+        const boundaries = engagementChunkBoundaries(
+          pair.length,
+          refinedStart,
+          refinedEnd,
+          baseStep,
+          refinedStep,
+          refineSpan,
+        )
+        const chunks: Array<{ t0: number; t1: number; engagement: number }> = []
+        for (let boundary = 0; boundary + 1 < boundaries.length; boundary += 1) {
+          const t0 = boundaries[boundary] / pair.length
+          const t1 = boundaries[boundary + 1] / pair.length
+          const chunkLength = (t1 - t0) * pair.length
+          if (chunkLength <= 1e-12) continue
+          let engagement = 0
+          for (let point = 0; point < ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK; point += 1) {
+            const t = t0 + ((t1 - t0) * (point + 1)) / (ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK + 1)
+            const sample = scope.engagementAt(
+              pair.from.x + (pair.to.x - pair.from.x) * t,
+              pair.from.y + (pair.to.y - pair.from.y) * t,
+              pair.dirX,
+              pair.dirY,
+            )
+            if (sample > engagement) engagement = sample
+          }
+          chunks.push({ t0, t1, engagement })
+        }
+        segmentChunks.set(`${pair.from.x},${pair.from.y}->${pair.to.x},${pair.to.y}`, chunks)
+        segmentCount += 1
+      }
+      for (const pair of pairs) {
+        if (pair.length <= 1e-9) continue
+        scope.addSweptSegment(pair.from.x, pair.from.y, pair.to.x, pair.to.y)
+        own.push([pair.from.x, pair.from.y, pair.to.x, pair.to.y])
+      }
+    }
+    return own
+  }
+
+  /**
+   * Inner-first traversal: classify every child subtree first (each against
+   * its own fresh index — its certain priors are exactly its own
+   * descendants), then fold all descendants into this node's scope, then
+   * classify this node's own contours. Every segment lands in exactly two
+   * indexes (its own node's and its parent's), so the build cost stays a
+   * small constant per segment.
+   */
+  const classifyNode = (node: OffsetRegionNode, depth: number): Array<[number, number, number, number]> => {
+    const scope = new SweptMaterialIndex(toolRadius)
+    const all: Array<[number, number, number, number]> = []
+    for (const child of node.children) {
+      const childSegments = classifyNode(child, depth + 1)
+      for (const [ax, ay, bx, by] of childSegments) {
+        scope.addSweptSegment(ax, ay, bx, by)
+      }
+      all.push(...childSegments)
+    }
+    all.push(...classifyContours(node, depth, scope))
+    indexEntryCount += scope.storedEntryCount()
+    return all
+  }
+
+  for (const tree of regionTrees) {
+    classifyNode(tree, 0)
+  }
+
+  return {
+    chunksForMove(fromX, fromY, toX, toY) {
+      return segmentChunks.get(`${fromX},${fromY}->${toX},${toY}`) ?? null
+    },
+    indexEntryCount,
+    segmentCount,
   }
 }
 
@@ -1914,6 +2236,19 @@ function generateRoughBandMoves(
     .flatMap((region) => buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
     .map((region) => buildOffsetRegionTree(region, effectiveStepover, islandJoinType))
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
+  // The engagement classification is level-invariant — same ring tree, same
+  // cut directions at every level — so it is computed once per band and every
+  // level looks its chunks up by canonical segment identity. (The parallel
+  // pattern has no ring tree and its segment order is position-seeded per
+  // level, so it keeps classifying per level.)
+  const engagementCache = telemetry !== null && operation.pocketEngagementMode === 'engagement_feed'
+    ? buildOffsetBandEngagementClassification(regionTrees, {
+      toolRadius,
+      direction,
+      smoothRadius: smoothRadius ?? null,
+    })
+    : null
+  if (engagementCache !== null) engagementBandCacheBuildCount += 1
   const entryPolicy = withEntryHandoffFeedScale(
     createEntryPolicy(
       operation,
@@ -1976,6 +2311,7 @@ function generateRoughBandMoves(
       toolRadius * 2,
       effectiveStepover,
       telemetry,
+      engagementCache,
     )
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)

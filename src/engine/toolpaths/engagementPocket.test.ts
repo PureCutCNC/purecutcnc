@@ -29,11 +29,20 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import ClipperLib from 'clipper-lib'
 import type { Operation, Project, SketchFeature, Tool } from '../../types/project'
-import { defaultTool, newProject, rectProfile } from '../../types/project'
+import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
-import { ENGAGEMENT_FEED_BUCKET_COUNT } from './engagement'
-import { generatePocketToolpath } from './pocket'
+import { ENGAGEMENT_FEED_BUCKET_COUNT, SweptMaterialIndex } from './engagement'
+import {
+  buildInsetRegions,
+  buildOffsetBandEngagementClassification,
+  buildOffsetRegionTree,
+  engagementCacheProbeCounts,
+  generatePocketToolpath,
+  resetEngagementCacheProbeCounts,
+} from './pocket'
+import { resolvePocketRegions } from './resolver'
 import type { PocketToolpathResult, ToolpathMove, ToolpathPoint } from './types'
 
 function assert(condition: boolean, message: string): asserts condition {
@@ -439,6 +448,66 @@ function profileScaleAt(profile: Array<{ at: number; scale: number }>, distance:
   return scale
 }
 
+/** Squared distance from (px, py) to the segment A→B. */
+function pointSegmentDistanceSq(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax
+  const dy = by - ay
+  const lenSq = dx * dx + dy * dy
+  const t = lenSq > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq)) : 0
+  const qx = ax + dx * t - px
+  const qy = ay + dy * t - py
+  return qx * qx + qy * qy
+}
+
+/**
+ * Never-raise, measured geometrically (issue #498 slice S2c): every engagement
+ * cut move's midpoint is matched to every legacy cut segment covering it — an
+ * index-wise comparison is invalid because the two modes split moves
+ * differently — and the engagement scale must never exceed the lowest legacy
+ * scale at that physical location. Fails on the shipped chunkwise clamp, whose
+ * legacy verdicts are captured per chunk and miss a legacy slot span that a
+ * later move retraces (the parallel pattern's boundary contour and first fill
+ * line).
+ */
+test('never-raise, geometric: no engagement move exceeds the legacy scale covering its midpoint', () => {
+  for (const [name, overrides] of [
+    ['parallel slot 40', { pocketPattern: 'parallel' as const, pocketAngle: 0, pocketSlotFeedPercent: 40 }],
+    ['parallel 45 slot 40', { pocketPattern: 'parallel' as const, pocketAngle: 45, pocketSlotFeedPercent: 40 }],
+    ['offset roundOutsideCorners slot 40', { pocketPattern: 'offset' as const, roundOutsideCorners: true, pocketSlotFeedPercent: 40 }],
+  ] as Array<[string, Partial<Operation>]>) {
+    const spec = specByName(overrides.pocketPattern === 'parallel' ? 'parallel-single' : 'offset-single')
+    const { project, operation } = buildFixture(spec, overrides)
+    const legacy = generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'legacy' })
+    const engagement = generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
+    const legacyCuts = legacy.moves.filter((move) => move.kind === 'cut')
+    for (const move of engagement.moves) {
+      if (move.kind !== 'cut') continue
+      const mx = (move.from.x + move.to.x) / 2
+      const my = (move.from.y + move.to.y) / 2
+      let lowestLegacy = 1
+      let covered = false
+      for (const candidate of legacyCuts) {
+        if (pointSegmentDistanceSq(mx, my, candidate.from.x, candidate.from.y, candidate.to.x, candidate.to.y) <= 1e-12) {
+          covered = true
+          lowestLegacy = Math.min(lowestLegacy, candidate.feedScale ?? 1)
+        }
+      }
+      assert(covered, `${name}: engagement midpoint (${mx.toFixed(2)}, ${my.toFixed(2)}) is covered by no legacy cut segment`)
+      assert(
+        (move.feedScale ?? 1) <= lowestLegacy + 1e-12,
+        `${name}: engagement scale ${move.feedScale ?? 1} exceeds the legacy scale ${lowestLegacy} covering its midpoint (${mx.toFixed(2)}, ${my.toFixed(2)})`,
+      )
+    }
+  }
+})
+
 test('conservative composition: engagement mode never carries a higher feedScale than legacy', () => {
   for (const spec of FIXTURES) {
     const { legacyAbsent, engagement } = results.get(spec.name) as CachedResult
@@ -464,6 +533,242 @@ test('conservative composition: engagement mode never carries a higher feedScale
       )
     }
   }
+})
+
+// ── 5b. Per-band classification cache ─────────────────────────────────
+//
+// The offset ring tree is Z-invariant, so the engagement classification of a
+// ring segment is computed once per band and every level looks it up by
+// canonical segment identity — never by emission order, which the greedy
+// traversal reseeds per level. Two proofs: (1) on a three-lobe fixture the
+// per-level ring orders actually differ, and the cached classification still
+// equals an independent emission-order recomputation at every chunk of every
+// level; (2) call-count probes show the swept-material index is built once
+// per band and reused per level (cost counted, never timed).
+
+function makeCircleFeature(id: string, cx: number, cy: number, r: number, zTop: number, zBottom: number): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'circle',
+    folderId: null,
+    sketch: {
+      profile: circleProfile(cx, cy, r),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: zTop,
+    z_bottom: zBottom,
+    visible: true,
+    locked: false,
+  }
+}
+
+/** Three-lobe pocket: circles at x = −22, 0, 22, radius 10, so adjacent lobe
+ * rings stay ≥ 8 mm apart — beyond the 2r = 6 mm cross-lobe influence — while
+ * the lobes share one band, so the level-to-level tree order is free to vary. */
+function buildThreeLobeFixture(): { project: Project; operation: Operation } {
+  const zTop = 4
+  const features = [
+    makeCircleFeature('lobe-1', -22, 0, 10, zTop, 0),
+    makeCircleFeature('lobe-2', 0, 0, 10, zTop, 0),
+    makeCircleFeature('lobe-3', 22, 0, 10, zTop, 0),
+  ]
+  const project = projectWithFeatures({
+    ...newProject('three-lobe', 'mm'),
+    tools: [makeTool()],
+  }, features)
+  const operation: Operation = {
+    id: 'op-1',
+    name: 'op',
+    kind: 'pocket',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['lobe-1', 'lobe-2', 'lobe-3'] },
+    toolRef: 'tool-1',
+    stepdown: 2,
+    stepover: 0.4,
+    feed: 800,
+    plungeFeed: 300,
+    rpm: 18000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    pocketSlotFeedPercent: 40,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 2,
+    maxCarveDepth: 2,
+    cutDirection: 'conventional',
+    machiningOrder: 'level_first',
+  }
+  return { project, operation }
+}
+
+test('cache equivalence: cached per-band classification equals recomputation on a multi-lobe fixture', () => {
+  const { project, operation } = buildThreeLobeFixture()
+  // The raw (unsplit) move stream: engagement mode without a slot anchor emits
+  // exactly the generated moves, so per-level cut sequences come from here.
+  const raw = generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed', pocketSlotFeedPercent: undefined })
+  const rawCuts = raw.moves.filter((move) => move.kind === 'cut')
+  // The level cut sequences, in emission order, grouped by level z.
+  const levels: ToolpathMove[][] = []
+  for (const move of rawCuts) {
+    const existing = levels.find((level) => level[0].from.z === move.from.z)
+    if (existing) {
+      existing.push(move)
+    } else {
+      levels.push([move])
+    }
+  }
+  assert(levels.length >= 2, `the fixture must cut at least two step levels, got ${levels.length}`)
+
+  // Level ordering actually differs: label each move by its lobe (nearest
+  // circle centre) and compare the label sequences.
+  const lobeCenters = [
+    { x: -22, y: 0 },
+    { x: 0, y: 0 },
+    { x: 22, y: 0 },
+  ]
+  const labelSequence = (level: ToolpathMove[]): number[] =>
+    level.map((move) => {
+      const mx = (move.from.x + move.to.x) / 2
+      const my = (move.from.y + move.to.y) / 2
+      let best = 0
+      let bestDistance = Number.POSITIVE_INFINITY
+      lobeCenters.forEach((center, index) => {
+        const distance = Math.hypot(mx - center.x, my - center.y)
+        if (distance < bestDistance) {
+          bestDistance = distance
+          best = index
+        }
+      })
+      return best
+    })
+  const firstLabels = labelSequence(levels[0])
+  const secondLabels = labelSequence(levels[1])
+  assert(
+    JSON.stringify(firstLabels) !== JSON.stringify(secondLabels),
+    `level ordering must actually differ between levels (got ${firstLabels.join('')} vs ${secondLabels.join('')})`,
+  )
+
+  // Build the same band classification the generator builds, from the same
+  // resolved regions (initial inset = tool radius, no radial stock, mitered
+  // islands, no corner rounding).
+  const band = resolvePocketRegions(project, operation).bands[0]
+  if (!band) throw new Error('the fixture must resolve one band')
+  // Exact generator values: the stepover is the tool diameter times the ratio
+  // (6 × 0.4, not the 2.4 literal — a 1-ulp difference changes smoothed
+  // contours, and the cache keys are exact float strings).
+  const trees = band.regions
+    .flatMap((region) => buildInsetRegions(region, 3, ClipperLib.JoinType.jtMiter, ClipperLib.JoinType.jtMiter))
+    .map((region) => buildOffsetRegionTree(region, 6 * 0.4, ClipperLib.JoinType.jtMiter))
+  const cache = buildOffsetBandEngagementClassification(trees, {
+    toolRadius: 3,
+    direction: 'conventional',
+    smoothRadius: null,
+  })
+  assert(cache.segmentCount > 0, 'the band classification must classify segments')
+  assert(cache.indexEntryCount > 0, 'the band classification must build swept-material indexes')
+
+  // Independent recomputation: a fresh incremental index walked in each
+  // level's real emission order, sampling at the cached chunk boundaries.
+  // Two production semantics the reference mirrors exactly:
+  //  - moves outside the ring tree — the entry helix and the cut links that
+  //    hop between rings — are cache misses, and production resolves them to
+  //    full engagement (conservative; they cut virgin strips), indexing none
+  //    of them. The reference skips them the same way, and a served-distance
+  //    bound below proves that only those fringe moves miss;
+  //  - a contour's own segments are inserted only once the whole contour is
+  //    classified (the canonical model excludes the tool's own trail, which
+  //    only over-reports engagement — the conservative direction). Consecutive
+  //    cut moves of one contour share an endpoint, so the reference groups
+  //    them by that and inserts per contour.
+  for (const level of levels) {
+    const reference = new SweptMaterialIndex(3)
+    let totalCutDistance = 0
+    let servedDistance = 0
+    let contour: ToolpathMove[] = []
+    const flushContour = (): void => {
+      for (const done of contour) {
+        reference.addSweptSegment(done.from.x, done.from.y, done.to.x, done.to.y)
+      }
+      contour = []
+    }
+    for (const move of level) {
+      const length = Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y)
+      totalCutDistance += length
+      const dirX = (move.to.x - move.from.x) / length
+      const dirY = (move.to.y - move.from.y) / length
+      const cached = cache.chunksForMove(move.from.x, move.from.y, move.to.x, move.to.y)
+      if (cached === null) continue
+      servedDistance += length
+      const previous = contour[contour.length - 1]
+      if (previous !== undefined && (previous.to.x !== move.from.x || previous.to.y !== move.from.y)) {
+        flushContour()
+      }
+      for (const chunk of cached) {
+        let engagement = 0
+        for (let point = 0; point < 3; point += 1) {
+          const t = chunk.t0 + ((chunk.t1 - chunk.t0) * (point + 1)) / 4
+          const sample = reference.engagementAt(
+            move.from.x + (move.to.x - move.from.x) * t,
+            move.from.y + (move.to.y - move.from.y) * t,
+            dirX,
+            dirY,
+          )
+          if (sample > engagement) engagement = sample
+        }
+        assert(
+          Math.abs(engagement - chunk.engagement) <= 1e-9,
+          `cached engagement ${chunk.engagement} must equal the emission-order recomputation ${engagement}`,
+        )
+      }
+      contour.push(move)
+    }
+    flushContour()
+    // The ring path is 2π·(7 + 4.6 + 2.2) = 86.7 mm per lobe (260 mm total,
+    // measured 259.8 with tessellation chords); the only cut distance outside
+    // it is the six stepover-length links between rings (6 × 2.4 = 14.4 mm).
+    // The cache must serve the whole ring path.
+    assert(
+      servedDistance >= totalCutDistance - 20,
+      `the cache must serve the ring path (served ${servedDistance.toFixed(1)} of ${totalCutDistance.toFixed(1)} mm)`,
+    )
+  }
+})
+
+test('cost probe: the swept-material index is built once per band and reused per level', () => {
+  const spec = specByName('offset-multi')
+  const { project, operation } = buildFixture(spec)
+  resetEngagementCacheProbeCounts()
+  generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
+  const engagementCounts = engagementCacheProbeCounts()
+  assert(
+    engagementCounts.bandCacheBuilds === 1,
+    `the band classification must be built once per band, got ${engagementCounts.bandCacheBuilds} builds`,
+  )
+  assert(
+    engagementCounts.cacheLevelUses === 2,
+    `both step levels must consume the one build, got ${engagementCounts.cacheLevelUses} level uses`,
+  )
+  resetEngagementCacheProbeCounts()
+  generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'legacy' })
+  const legacyCounts = engagementCacheProbeCounts()
+  assert(legacyCounts.bandCacheBuilds === 0 && legacyCounts.cacheLevelUses === 0, 'legacy mode must build no classification')
+  resetEngagementCacheProbeCounts()
+  generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed', pocketPattern: 'parallel' })
+  const parallelCounts = engagementCacheProbeCounts()
+  assert(
+    parallelCounts.bandCacheBuilds === 0 && parallelCounts.cacheLevelUses === 0,
+    'the parallel pattern has no ring tree and must not build a band classification',
+  )
 })
 
 // ── 6. Determinism ────────────────────────────────────────────────────

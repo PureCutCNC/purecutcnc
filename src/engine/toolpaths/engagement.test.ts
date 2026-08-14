@@ -755,6 +755,53 @@ console.log('Testing the index stores a small per-segment constant of entries...
   )
 }
 
+// ── 13. Early capsule rejection: far capsules never reach the trig path ──
+//
+// The capsule trig (two endpoint discs + the rectangle body, each an
+// acos/asin block) is gated by an exact squared point-to-segment distance
+// test. The measured rect-round regression (26× → 203.7× legacy on thousands
+// of sub-millimetre segments) is exactly the case this test models: a dense
+// cluster of short segments whose cell the query scans but whose capsules are
+// all farther than 2r away. Assert on the counted work — capsules scanned vs
+// capsules reaching the trig path — never on wall clocks (AGENTS.md § Build &
+// Verify).
+
+console.log('Testing the early rejection gates the trig path...')
+{
+  const r = 1
+  const rand = makeLcg(0x51)
+  const dense = new SweptMaterialIndex(r)
+  const segmentCount = 400
+  // All segments inside the single cell column 1 (x ∈ [2r, 3r]), row 0:
+  // short tessellated strokes like a rounded-corner polyline contributes.
+  for (let i = 0; i < segmentCount; i += 1) {
+    const ax = 2 * r + (rand() * 0.9 + 0.05) * r
+    const ay = (rand() - 0.5) * r
+    const angle = rand() * 2 * Math.PI
+    const length = 0.25 * r
+    dense.addSweptSegment(ax, ay, ax + length * Math.cos(angle), ay + length * Math.sin(angle))
+  }
+  // Query in the adjacent column: its 3×3 scan covers the cluster's cell, so
+  // every capsule is scanned (a capsule is stored once per cell its extent
+  // covers plus each cell's 8 neighbours, hence ≥ segmentCount scans) — and
+  // every capsule is beyond 2r (the cluster ends at 3.25r, the query sits at
+  // 5.5r), so none may reach the trig path.
+  const farEngagement = dense.engagementAt(5.5 * r, 0, 1, 0)
+  const farStats = dense.queryStats()
+  assert(farStats.capsulesScanned >= segmentCount, `the far query must scan at least all ${segmentCount} capsules, got ${farStats.capsulesScanned}`)
+  assert(farStats.capsulesTrigTested === 0, 'no capsule beyond 2r may reach the trig path')
+  assert(approx(farEngagement, Math.PI), 'far from the cluster the engagement must still be exactly π')
+
+  // A query inside the cluster does reach the trig path and sees the coverage.
+  const nearEngagement = dense.engagementAt(2.5 * r, 0, 1, 0)
+  const nearStats = dense.queryStats()
+  assert(nearStats.capsulesTrigTested > farStats.capsulesTrigTested, 'the near query must push capsules past the rejection')
+  assert(nearEngagement < Math.PI, 'the near query must see the cluster coverage')
+  console.log(
+    `  (scanned ${nearStats.capsulesScanned}, trig-tested ${nearStats.capsulesTrigTested}; far query tested ${farStats.capsulesTrigTested}/${farStats.capsulesScanned})`,
+  )
+}
+
 // ── Summary ──
 
 console.log(`\nengagement.ts tests: ${passed} passed, ${failed} failed, ${passed + failed} total`)
