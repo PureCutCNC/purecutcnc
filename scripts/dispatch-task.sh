@@ -48,9 +48,10 @@ Options:
                       only writes one when this is set explicitly).
   --help              Show this help.
 
-Progress: Claude/DeepSeek logs observed worker events. DSH logs only lifecycle
-and process-alive heartbeats, not tool activity. Dispatch in the background and
-poll scripts/worker-status.sh --slug SLUG instead of killing a long run.
+Progress: Claude/DeepSeek logs observed worker events. DSH tails its own active
+session artifact for observed assistant, tool-call, and tool-result events;
+process-alive heartbeats remain a fallback. Dispatch in the background and poll
+scripts/worker-status.sh --slug SLUG instead of killing a long run.
 
 Permissions: every provider sends the prompt to its configured external service,
 so get explicit approval first. claude-deepseek reads .env.agent and runs a
