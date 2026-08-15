@@ -32,7 +32,6 @@ export const shellEn = {
   'file.saveProjectDirty': 'Save project with unsaved changes',
   'file.undo': 'Undo',
   'file.redo': 'Redo',
-
   'shell.topBar.openProjectPanel': 'Open project panel',
   'shell.topBar.openOperationsPanel': 'Open operations panel',
   'shell.topBar.operations': 'Operations',
@@ -48,7 +47,6 @@ export const shellEn = {
   'shell.topBar.zoomToModel': 'Zoom to model',
   'shell.topBar.zoomSelected': 'Zoom selected',
   'shell.topBar.cancelZoomSelected': 'Cancel zoom selected',
-
   'shell.snap.enable': 'Enable snapping',
   'shell.snap.disable': 'Disable snapping',
   'shell.snap.settingsTooltip': 'Snap settings',
@@ -71,7 +69,6 @@ export const shellEn = {
   'shell.snap.intersectionShort': 'Intersection',
   'shell.snap.perpendicular': 'Snap perpendicular',
   'shell.snap.perpendicularShort': 'Perpendicular',
-
   'shell.measure.tooltip': 'Measure & dimensions',
   'shell.measure.aria': 'Measure and dimensions',
   'shell.measure.tapeMeasure': 'Tape measure',
@@ -95,7 +92,6 @@ export const shellEn = {
   'shell.measure.showDimensionsCount.other': 'Show dimensions ({count})',
   'shell.measure.hideDimensionsCount.one': 'Hide dimensions ({count})',
   'shell.measure.hideDimensionsCount.other': 'Hide dimensions ({count})',
-
   'appearance.tooltip': 'Appearance',
   'appearance.heading': 'Appearance',
   'appearance.menuAria': 'Appearance theme',
@@ -111,19 +107,16 @@ export const shellEn = {
   'appearance.lightFamily': 'Light family',
   'appearance.manageThemes': 'Manage themes…',
   'appearance.manageThemesDetail': 'Create, edit, import, export',
-
   'language.tooltip': 'Language',
   'language.heading': 'Language',
   'language.menuAria': 'Interface language',
   'language.current': 'Language: {name}',
   'language.customHeading': 'Custom languages',
-
   'mobileBlocker.eyebrow': 'Desktop Browser Only',
   'mobileBlocker.title': 'PureCutCNC is not supported on phones.',
   'mobileBlocker.body': 'The browser app is designed for a desktop-sized workspace and does not behave well on phone screens. Use a desktop browser or install a desktop build for macOS, Windows, or Linux.',
   'mobileBlocker.downloads': 'Desktop Downloads',
   'mobileBlocker.website': 'Project Website',
-
   'platform.confirmDiscard': 'You have unsaved changes. Discard them and continue?',
   'platform.readProjectFailed': 'Failed to read project file.',
   'platform.openProjectFailed': 'Failed to open project file.',

@@ -32,7 +32,6 @@ export const shellDe: Record<keyof typeof shellEn, string> = {
   'file.saveProjectDirty': 'Projekt mit nicht gespeicherten Änderungen speichern',
   'file.undo': 'Rückgängig',
   'file.redo': 'Wiederholen',
-
   'shell.topBar.openProjectPanel': 'Projektbereich öffnen',
   'shell.topBar.openOperationsPanel': 'Operationsbereich öffnen',
   'shell.topBar.operations': 'Operationen',
@@ -48,7 +47,6 @@ export const shellDe: Record<keyof typeof shellEn, string> = {
   'shell.topBar.zoomToModel': 'Auf Modell zoomen',
   'shell.topBar.zoomSelected': 'Auswahl zoomen',
   'shell.topBar.cancelZoomSelected': 'Auswahl-Zoom abbrechen',
-
   'shell.snap.enable': 'Fang aktivieren',
   'shell.snap.disable': 'Fang deaktivieren',
   'shell.snap.settingsTooltip': 'Fang-Einstellungen',
@@ -71,7 +69,6 @@ export const shellDe: Record<keyof typeof shellEn, string> = {
   'shell.snap.intersectionShort': 'Schnittpunkt',
   'shell.snap.perpendicular': 'Lot fangen',
   'shell.snap.perpendicularShort': 'Lot',
-
   'shell.measure.tooltip': 'Messen & Bemaßung',
   'shell.measure.aria': 'Messen und Bemaßung',
   'shell.measure.tapeMeasure': 'Maßband',
@@ -95,7 +92,6 @@ export const shellDe: Record<keyof typeof shellEn, string> = {
   'shell.measure.showDimensionsCount.other': 'Bemaßungen anzeigen ({count})',
   'shell.measure.hideDimensionsCount.one': 'Bemaßungen ausblenden ({count})',
   'shell.measure.hideDimensionsCount.other': 'Bemaßungen ausblenden ({count})',
-
   'appearance.tooltip': 'Darstellung',
   'appearance.heading': 'Darstellung',
   'appearance.menuAria': 'Farbschema der Darstellung',
@@ -111,19 +107,16 @@ export const shellDe: Record<keyof typeof shellEn, string> = {
   'appearance.lightFamily': 'Helle Familie',
   'appearance.manageThemes': 'Farbschemata verwalten…',
   'appearance.manageThemesDetail': 'Erstellen, bearbeiten, importieren, exportieren',
-
   'language.tooltip': 'Sprache',
   'language.heading': 'Sprache',
   'language.menuAria': 'Oberflächensprache',
   'language.current': 'Sprache: {name}',
   'language.customHeading': 'Eigene Sprachen',
-
   'mobileBlocker.eyebrow': 'Nur Desktop-Browser',
   'mobileBlocker.title': 'PureCutCNC wird auf Telefonen nicht unterstützt.',
   'mobileBlocker.body': 'Die Browser-App ist für einen Arbeitsbereich in Desktop-Größe ausgelegt und funktioniert auf Telefon-Bildschirmen nicht gut. Verwenden Sie einen Desktop-Browser oder installieren Sie eine Desktop-Version für macOS, Windows oder Linux.',
   'mobileBlocker.downloads': 'Desktop-Downloads',
   'mobileBlocker.website': 'Projekt-Website',
-
   'platform.confirmDiscard': 'Sie haben nicht gespeicherte Änderungen. Verwerfen und fortfahren?',
   'platform.readProjectFailed': 'Projektdatei konnte nicht gelesen werden.',
   'platform.openProjectFailed': 'Projektdatei konnte nicht geöffnet werden.',

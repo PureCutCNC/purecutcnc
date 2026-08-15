@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { printEn } from '../en/print'
+import type { printEn } from '../en/print'
 
 /** Spanish design-print footer content. */
 export const printEs: Record<keyof typeof printEn, string> = {

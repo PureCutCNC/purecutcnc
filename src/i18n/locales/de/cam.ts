@@ -91,8 +91,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.panel.emptyTool': 'Wählen Sie ein Werkzeug, um seine Eigenschaften zu bearbeiten.',
   'cam.panel.operations': 'Operationen',
   'cam.panel.tools': 'Werkzeuge',
-  'cam.panel.operationsEmpty':
-    'Wählen Sie kompatible Geometrie, dann fügen Sie eine Operation hinzu. Tasche und Innenkontur erfordern Abzieh-Features. Außenkontur erfordert Hinzufügen-Features. Oberfläche säubern akzeptiert Hinzufügen-Features.',
+  'cam.panel.operationsEmpty': 'Wählen Sie kompatible Geometrie, dann fügen Sie eine Operation hinzu. Tasche und Innenkontur erfordern Abzieh-Features. Außenkontur erfordert Hinzufügen-Features. Oberfläche säubern akzeptiert Hinzufügen-Features.',
   'cam.panel.cam': 'CAM',
   'cam.panel.properties': 'Eigenschaften',
   'cam.panel.export': 'Exportieren',
@@ -134,7 +133,8 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.edgeStrategy': 'Strategie',
   'cam.operation.edgeStrategyContour': 'Kontur',
   'cam.operation.edgeStrategyTrochoidal': 'Trochoidal',
-  'cam.operation.trochoidalCutWidth': 'Trochoidale Schnittbreite', 'cam.operation.trochoidalCutWidthBelowFloor': 'Schnittbreite liegt unter dem Minimum von {minimum} für dieses Werkzeug; es wird kein Werkzeugweg erzeugt.',
+  'cam.operation.trochoidalCutWidth': 'Trochoidale Schnittbreite',
+  'cam.operation.trochoidalCutWidthBelowFloor': 'Schnittbreite liegt unter dem Minimum von {minimum} für dieses Werkzeug; es wird kein Werkzeugweg erzeugt.',
   'cam.operation.trochoidalAdvancePercent': 'Vorschub pro Umlauf (% des Werkzeugdurchmessers)',
   'cam.operation.trochoidalAdvanceDistance': 'Vorschub pro Umlauf (Strecke)',
   'cam.operation.trochoidalAdvanceTooltip': 'Wird als Prozentsatz des Werkzeugdurchmessers gespeichert und folgt daher dem zugewiesenen Werkzeug. Die Distanz darunter ist abgeleitet.',
@@ -183,24 +183,20 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.feed': 'Vorschub',
   'cam.operation.plungeFeed': 'Eintauchvorschub',
   'cam.operation.slotFeed': 'Nutvorschub (%)',
-  'cam.operation.slotFeedTooltip':
-    'Vorschub-Prozentsatz für voll im Eingriff befindliche (nutende) Schnitte: die innerste Schleife jedes Abschnitts, ungeräumte Übergänge, der parallele Randdurchgang und die erste Fülllinie. 100 deaktiviert die Reduzierung.',
+  'cam.operation.slotFeedTooltip': 'Vorschub-Prozentsatz für voll im Eingriff befindliche (nutende) Schnitte: die innerste Schleife jedes Abschnitts, ungeräumte Übergänge, der parallele Randdurchgang und die erste Fülllinie. 100 deaktiviert die Reduzierung.',
   'cam.operation.rpm': 'Drehzahl',
   'cam.operation.stockToLeaveRadial': 'Aufmaß radial',
   'cam.operation.stockToLeaveAxial': 'Aufmaß axial',
   'cam.operation.adaptiveRefinement': 'Adaptive Verfeinerung',
-  'cam.operation.adaptiveRefinementTooltip':
-    'Fügt projizierte Wasserlinien-Ringe auf flachen Neigungen und Modellspitzen hinzu.',
+  'cam.operation.adaptiveRefinementTooltip': 'Fügt projizierte Wasserlinien-Ringe auf flachen Neigungen und Modellspitzen hinzu.',
   'cam.operation.adaptiveSpacing': 'Adaptiver Abstand',
   'cam.operation.adaptiveSpacingTooltip': 'Abstand der projizierten Ringe in Projekteinheiten.',
   'cam.operation.maxRingsBand': 'Max. Ringe / Band',
-  'cam.operation.maxRingsTooltip':
-    'Maximale Anzahl projizierter Ringe in einem Band oder einer Spitze. 0 für die Standardgrenze verwenden.',
+  'cam.operation.maxRingsTooltip': 'Maximale Anzahl projizierter Ringe in einem Band oder einer Spitze. 0 für die Standardgrenze verwenden.',
   'cam.operation.tabs': 'Haltestege',
   'cam.operation.autoPlaceTabs': 'Haltestege automatisch platzieren',
   'cam.operation.arcFitting': 'Bogenanpassung (G2/G3)',
-  'cam.operation.arcFittingTip':
-    'Nur Export: Fasst aufeinanderfolgende lineare Bewegungen, die einen Kreisbogen annähern, zu G2/G3-Bögen zusammen, wenn die Steuerung dies unterstützt. Beeinflusst nicht den angezeigten oder simulierten Werkzeugweg.',
+  'cam.operation.arcFittingTip': 'Nur Export: Fasst aufeinanderfolgende lineare Bewegungen, die einen Kreisbogen annähern, zu G2/G3-Bögen zusammen, wenn die Steuerung dies unterstützt. Beeinflusst nicht den angezeigten oder simulierten Werkzeugweg.',
 
   // ── Region note ──
   'cam.regionNote.badge': 'Maske',
@@ -301,8 +297,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.hint.vCarveWrongFeature': '{kind} akzeptiert nur geschlossene Abzieh- oder Linien-Features plus optionale geschlossene Bereiche',
 
   // ── Validation hints: rough_surface ──
-  'cam.hint.roughSurfaceNoModel':
-    'Oberflächenschruppen erfordert mindestens ein importiertes Modell-Feature; geschlossene Bereiche sind optionale Filter',
+  'cam.hint.roughSurfaceNoModel': 'Oberflächenschruppen erfordert mindestens ein importiertes Modell-Feature; geschlossene Bereiche sind optionale Filter',
 
   // ── Validation hints: finish_surface / finish_surface_cleanup ──
   'cam.hint.finishSurfaceCount': '{kind} erfordert genau ein importiertes Modell-Feature; geschlossene Bereiche sind optionale Filter',
@@ -338,7 +333,10 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.library.failed': 'Werkzeugbibliothek konnte nicht geladen werden.',
 
   // ── Parameter reference diagram labels ──
-  'cam.paramRef.stepdown': 'Referenz für Zustellung', 'cam.paramRef.edgeStrategy': 'Strategie', 'cam.paramRef.trochoidalCutWidth': 'Trochoidale Schnittbreite', 'cam.paramRef.trochoidalAdvance': 'Vorschub pro Schleife',
+  'cam.paramRef.stepdown': 'Referenz für Zustellung',
+  'cam.paramRef.edgeStrategy': 'Strategie',
+  'cam.paramRef.trochoidalCutWidth': 'Trochoidale Schnittbreite',
+  'cam.paramRef.trochoidalAdvance': 'Vorschub pro Schleife',
   'cam.paramRef.stepover': 'Referenz für Bahnabstand',
   'cam.paramRef.maxDepth': 'Referenz für maximale Tiefe',
   'cam.paramRef.retractHeight': 'Referenz für Rückzugshöhe',
@@ -369,8 +367,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   // ── Operation descriptions (OperationAddMenu expanded cards) ──
   // Pocket
   'cam.opDesc.pocket.title': 'Tasche',
-  'cam.opDesc.pocket.fullDescription':
-    'Tasche räumt das Innere eines oder mehrerer geschlossener Abzieh-Profile bis zu einem festen Z aus. Wählen Sie zwischen Offset- (konzentrisch, von außen nach innen) oder Parallel-Muster (Scanlinien); Parallel nimmt einen einstellbaren Winkel.',
+  'cam.opDesc.pocket.fullDescription': 'Tasche räumt das Innere eines oder mehrerer geschlossener Abzieh-Profile bis zu einem festen Z aus. Wählen Sie zwischen Offset- (konzentrisch, von außen nach innen) oder Parallel-Muster (Scanlinien); Parallel nimmt einen einstellbaren Winkel.',
   'cam.opDesc.pocket.keyPoint.0': 'Erfordert ein oder mehrere geschlossene Abzieh-Profile',
   'cam.opDesc.pocket.keyPoint.1': 'Offset- oder Parallel-Räummuster',
   'cam.opDesc.pocket.keyPoint.2': 'Unterstützt Schrupp- und Schlichtdurchgänge',
@@ -379,8 +376,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // V-Carve offset
   'cam.opDesc.vCarve.title': 'V-Gravur Offset',
-  'cam.opDesc.vCarve.fullDescription':
-    'V-Gravur Offset folgt zunehmend schmaleren, nach innen versetzten Konturen eines geschlossenen Profils und senkt Z bei jedem Durchgang, sodass die schräge Flanke des V-Nutfräsers eine saubere V-Nut fräst, die zur Mittellinie ausläuft. Die Tiefe pro Durchgang ergibt sich aus dem Konturabstand und dem halben V-Winkel.',
+  'cam.opDesc.vCarve.fullDescription': 'V-Gravur Offset folgt zunehmend schmaleren, nach innen versetzten Konturen eines geschlossenen Profils und senkt Z bei jedem Durchgang, sodass die schräge Flanke des V-Nutfräsers eine saubere V-Nut fräst, die zur Mittellinie ausläuft. Die Tiefe pro Durchgang ergibt sich aus dem Konturabstand und dem halben V-Winkel.',
   'cam.opDesc.vCarve.keyPoint.0': 'Erfordert ein oder mehrere geschlossene Abzieh-Profile',
   'cam.opDesc.vCarve.keyPoint.1': 'Erfordert einen V-Nutfräser (zuerst den Spitzenwinkel am Werkzeug festlegen)',
   'cam.opDesc.vCarve.keyPoint.2': 'Einzeldurchgang-Operation (keine Schrupp-/Schlicht-Aufteilung)',
@@ -389,8 +385,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // V-Carve medial
   'cam.opDesc.vCarveMedial.title': 'V-Gravur Mittelachse',
-  'cam.opDesc.vCarveMedial.fullDescription':
-    'V-Gravur Mittelachse berechnet die echte Mittelachse eines geschlossenen Profils aus dem Voronoi-Diagramm seiner Begrenzung und fräst eine V-Nut, deren Tiefe exakt der lokalen halben Breite folgt. Scharfe Ecken erhalten Skelettspitzen, die bis zur Oberfläche ansteigen, für klare Spitzen; glatte Kurven bleiben dank geometrischer Filterung sauber. Die Abtastauflösung passt sich automatisch an die Größe jeder Form an.',
+  'cam.opDesc.vCarveMedial.fullDescription': 'V-Gravur Mittelachse berechnet die echte Mittelachse eines geschlossenen Profils aus dem Voronoi-Diagramm seiner Begrenzung und fräst eine V-Nut, deren Tiefe exakt der lokalen halben Breite folgt. Scharfe Ecken erhalten Skelettspitzen, die bis zur Oberfläche ansteigen, für klare Spitzen; glatte Kurven bleiben dank geometrischer Filterung sauber. Die Abtastauflösung passt sich automatisch an die Größe jeder Form an.',
   'cam.opDesc.vCarveMedial.keyPoint.0': 'Erfordert ein oder mehrere geschlossene Abzieh-Profile',
   'cam.opDesc.vCarveMedial.keyPoint.1': 'Erfordert einen V-Nutfräser (zuerst den Spitzenwinkel am Werkzeug festlegen)',
   'cam.opDesc.vCarveMedial.keyPoint.2': 'Exakte Tiefe: Die V-Flanken berühren überall entlang des Skeletts beide Wände',
@@ -401,26 +396,25 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // Edge route inside
   'cam.opDesc.edgeRouteInside.title': 'Kontur innen',
-  'cam.opDesc.edgeRouteInside.fullDescription':
-    'Kontur innen folgt der Innenkante eines oder mehrerer geschlossener Abzieh-Profile. Ein Konturdurchgang wird um den Werkzeugradius nach innen versetzt; Schruppdurchgänge können stattdessen trochoidale Schleifen verwenden, um den radialen Eingriff zu verringern und Aufmaß für einen Kontur-Schlichtgang zu lassen.',
+  'cam.opDesc.edgeRouteInside.fullDescription': 'Kontur innen folgt der Innenkante eines oder mehrerer geschlossener Abzieh-Profile. Ein Konturdurchgang wird um den Werkzeugradius nach innen versetzt; Schruppdurchgänge können stattdessen trochoidale Schleifen verwenden, um den radialen Eingriff zu verringern und Aufmaß für einen Kontur-Schlichtgang zu lassen.',
   'cam.opDesc.edgeRouteInside.keyPoint.0': 'Erfordert ein oder mehrere geschlossene Abzieh-Profile',
   'cam.opDesc.edgeRouteInside.keyPoint.1': 'Kontur- oder trochoidale Schruppstrategie',
   'cam.opDesc.edgeRouteInside.keyPoint.2': 'Trochoidales Schruppen nutzt Helix- oder Senkrechteinstieg; Stege erfordern Helix',
-  'cam.opDesc.edgeRouteInside.keyPoint.3': 'Schlichtgänge nutzen immer die Kontur', 'cam.opDesc.edgeRouteInside.keyPoint.4': 'Bereiche werden nur von Konturfräsung unterstützt',
+  'cam.opDesc.edgeRouteInside.keyPoint.3': 'Schlichtgänge nutzen immer die Kontur',
+  'cam.opDesc.edgeRouteInside.keyPoint.4': 'Bereiche werden nur von Konturfräsung unterstützt',
 
   // Edge route outside
   'cam.opDesc.edgeRouteOutside.title': 'Kontur außen',
-  'cam.opDesc.edgeRouteOutside.fullDescription':
-    'Kontur außen folgt der Außenkante eines oder mehrerer geschlossener Hinzufügen- oder Modell-Profile. Ein Konturdurchgang wird um den Werkzeugradius nach außen versetzt; Schruppdurchgänge können stattdessen trochoidale Schleifen verwenden, um den radialen Eingriff zu verringern und Aufmaß für einen Kontur-Schlichtgang zu lassen.',
+  'cam.opDesc.edgeRouteOutside.fullDescription': 'Kontur außen folgt der Außenkante eines oder mehrerer geschlossener Hinzufügen- oder Modell-Profile. Ein Konturdurchgang wird um den Werkzeugradius nach außen versetzt; Schruppdurchgänge können stattdessen trochoidale Schleifen verwenden, um den radialen Eingriff zu verringern und Aufmaß für einen Kontur-Schlichtgang zu lassen.',
   'cam.opDesc.edgeRouteOutside.keyPoint.0': 'Erfordert ein oder mehrere geschlossene Hinzufügen- oder Modell-Profile',
   'cam.opDesc.edgeRouteOutside.keyPoint.1': 'Kontur- oder trochoidale Schruppstrategie',
   'cam.opDesc.edgeRouteOutside.keyPoint.2': 'Trochoidales Schruppen nutzt Helix- oder Senkrechteinstieg; Stege erfordern Helix',
-  'cam.opDesc.edgeRouteOutside.keyPoint.3': 'Schlichtgänge nutzen immer die Kontur', 'cam.opDesc.edgeRouteOutside.keyPoint.4': 'Bereiche werden nur von Konturfräsung unterstützt',
+  'cam.opDesc.edgeRouteOutside.keyPoint.3': 'Schlichtgänge nutzen immer die Kontur',
+  'cam.opDesc.edgeRouteOutside.keyPoint.4': 'Bereiche werden nur von Konturfräsung unterstützt',
 
   // Surface clean
   'cam.opDesc.surfaceClean.title': 'Oberfläche säubern',
-  'cam.opDesc.surfaceClean.fullDescription':
-    'Oberfläche säubern bearbeitet die flache Oberseite eines oder mehrerer Hinzufügen-/Modell-Features im Bereich um alle höheren Hinzufügen-Features, die darauf sitzen. Es erzeugt ein Band von Säuberungsdurchgängen auf jeder Stufenhöhe – nützlich zum Schlichten von Podesten, Terrassen und gestuften Oberflächen. Das Muster kann Offset oder Parallel sein.',
+  'cam.opDesc.surfaceClean.fullDescription': 'Oberfläche säubern bearbeitet die flache Oberseite eines oder mehrerer Hinzufügen-/Modell-Features im Bereich um alle höheren Hinzufügen-Features, die darauf sitzen. Es erzeugt ein Band von Säuberungsdurchgängen auf jeder Stufenhöhe – nützlich zum Schlichten von Podesten, Terrassen und gestuften Oberflächen. Das Muster kann Offset oder Parallel sein.',
   'cam.opDesc.surfaceClean.keyPoint.0': 'Erfordert ein oder mehrere geschlossene Hinzufügen- oder Modell-Features',
   'cam.opDesc.surfaceClean.keyPoint.1': 'Räumt die Fläche zwischen höheren Features auf jeder Stufenhöhe',
   'cam.opDesc.surfaceClean.keyPoint.2': 'Offset- oder Parallel-Räummuster',
@@ -429,8 +423,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // Engrave
   'cam.opDesc.followLine.title': 'Gravieren',
-  'cam.opDesc.followLine.fullDescription':
-    'Gravieren fährt entlang eines beliebigen Skizzenpfads – offen oder geschlossen – mit fester Gravurtiefe. Direct folgt der Mittellinie für Text, dekorative Linien, Ausrichtungsmarken und das Verfolgen komplexer Kurven auf der Rohteiloberfläche. Trochoidal fräst einen breiteren Kanal mit überlappenden Kreisbahnen, für funktionale Nuten (T-Nut, Einlegearbeit, Dado, Kabelführung), bei denen die Nut breiter als der Fräser sein soll.',
+  'cam.opDesc.followLine.fullDescription': 'Gravieren fährt entlang eines beliebigen Skizzenpfads – offen oder geschlossen – mit fester Gravurtiefe. Direct folgt der Mittellinie für Text, dekorative Linien, Ausrichtungsmarken und das Verfolgen komplexer Kurven auf der Rohteiloberfläche. Trochoidal fräst einen breiteren Kanal mit überlappenden Kreisbahnen, für funktionale Nuten (T-Nut, Einlegearbeit, Dado, Kabelführung), bei denen die Nut breiter als der Fräser sein soll.',
   'cam.opDesc.followLine.keyPoint.0': 'Akzeptiert offene oder geschlossene Pfad-Features',
   'cam.opDesc.followLine.keyPoint.1': 'Direct folgt der Mittellinie; Trochoidal fräst eine breitere Nut',
   'cam.opDesc.followLine.keyPoint.2': 'Einzeldurchgang-Operation (keine Schrupp-/Schlicht-Aufteilung)',
@@ -439,19 +432,16 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // Drilling
   'cam.opDesc.drilling.title': 'Bohren',
-  'cam.opDesc.drilling.fullDescription':
-    'Bohren erzeugt ein Loch in der Mitte jedes ausgewählten Kreis-Features mit einem festen Bohrzyklus. Wählen Sie die Bohrmethode (einfach G81, Tiefloch G83, Verweilen G82, Spanbruch G73) und die Tiefe an der Operation.',
+  'cam.opDesc.drilling.fullDescription': 'Bohren erzeugt ein Loch in der Mitte jedes ausgewählten Kreis-Features mit einem festen Bohrzyklus. Wählen Sie die Bohrmethode (einfach G81, Tiefloch G83, Verweilen G82, Spanbruch G73) und die Tiefe an der Operation.',
   'cam.opDesc.drilling.keyPoint.0': 'Erfordert ein oder mehrere Kreis-Features',
-  'cam.opDesc.drilling.keyPoint.1':
-    'Vier Zyklustypen: einfach (G81), Tiefloch (G83), Verweilen (G82), Spanbruch (G73)',
+  'cam.opDesc.drilling.keyPoint.1': 'Vier Zyklustypen: einfach (G81), Tiefloch (G83), Verweilen (G82), Spanbruch (G73)',
   'cam.opDesc.drilling.keyPoint.2': 'Tiefloch- und Spanbruchzyklen verwenden ein Entspan-Inkrement',
   'cam.opDesc.drilling.keyPoint.3': 'Schnell für wiederholte Lochmuster',
   'cam.opDesc.drilling.keyPoint.4': 'Optionale geschlossene Bereiche filtern, welche Löcher gebohrt werden',
 
   // 3D Surface rough
   'cam.opDesc.roughSurface.title': '3D-Oberfläche schruppen',
-  'cam.opDesc.roughSurface.fullDescription':
-    'Oberflächenschruppen schneidet das importierte 3D-Modell auf konstanten Z-Ebenen (Wasserlinien-Stil) und räumt jede Ebene mit Offset-Durchgängen aus, wobei radiales und axiales Aufmaß für das Schlichten verbleibt. Verwenden Sie größere Zustellung und größeren Bahnabstand für mehr Tempo; folgen Sie mit einer Schlichtoperation für Genauigkeit.',
+  'cam.opDesc.roughSurface.fullDescription': 'Oberflächenschruppen schneidet das importierte 3D-Modell auf konstanten Z-Ebenen (Wasserlinien-Stil) und räumt jede Ebene mit Offset-Durchgängen aus, wobei radiales und axiales Aufmaß für das Schlichten verbleibt. Verwenden Sie größere Zustellung und größeren Bahnabstand für mehr Tempo; folgen Sie mit einer Schlichtoperation für Genauigkeit.',
   'cam.opDesc.roughSurface.keyPoint.0': 'Erfordert ein importiertes 3D-Modell',
   'cam.opDesc.roughSurface.keyPoint.1': 'Wasserlinien-Ebenenschnitt mit Offset-Räumung pro Ebene',
   'cam.opDesc.roughSurface.keyPoint.2': 'Berücksichtigt radiales und axiales Aufmaß für den Schlichtdurchgang',
@@ -460,8 +450,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // 3D Surface finish
   'cam.opDesc.finishSurface.title': '3D-Oberfläche schlichten',
-  'cam.opDesc.finishSurface.fullDescription':
-    'Oberflächenschlichten erzeugt die endgültige Oberfläche eines importierten 3D-Modells. Wählen Sie Parallel (Scanlinien in einstellbarem Winkel) für flachere Geometrie oder Wasserlinie (Konturen bei konstantem Z) für steilere Wände. Verwenden Sie einen kleinen Bahnabstand für Parallel oder eine kleine Zustellung für Wasserlinie.',
+  'cam.opDesc.finishSurface.fullDescription': 'Oberflächenschlichten erzeugt die endgültige Oberfläche eines importierten 3D-Modells. Wählen Sie Parallel (Scanlinien in einstellbarem Winkel) für flachere Geometrie oder Wasserlinie (Konturen bei konstantem Z) für steilere Wände. Verwenden Sie einen kleinen Bahnabstand für Parallel oder eine kleine Zustellung für Wasserlinie.',
   'cam.opDesc.finishSurface.keyPoint.0': 'Erfordert ein importiertes 3D-Modell',
   'cam.opDesc.finishSurface.keyPoint.1': 'Parallel- (Scanlinie) oder Wasserlinien-Muster (konstantes Z)',
   'cam.opDesc.finishSurface.keyPoint.2': 'Einzeldurchgang-Operation (keine Schrupp-/Schlicht-Aufteilung – diese Operation ist das Schlichten)',
@@ -470,8 +459,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // 3D Surface cleanup
   'cam.opDesc.finishSurfaceCleanup.title': '3D-Oberfläche nacharbeiten',
-  'cam.opDesc.finishSurfaceCleanup.fullDescription':
-    'Oberflächen-Nacharbeit gibt reine Schlicht-Durchgänge für Wände und Boden auf dem tiefsten beibehaltenen Z jeder von der 3D-Schruppoperation gelassenen Stufe aus. Es dedupliziert wiederholte Wand-/Boden-Spalten über Ebenen hinweg, sodass jede einmal auf ihrer tiefsten wirksamen Tiefe geschnitten wird – zum Nacharbeiten von Schrupp-Terrassen ohne erneutes Schruppen.',
+  'cam.opDesc.finishSurfaceCleanup.fullDescription': 'Oberflächen-Nacharbeit gibt reine Schlicht-Durchgänge für Wände und Boden auf dem tiefsten beibehaltenen Z jeder von der 3D-Schruppoperation gelassenen Stufe aus. Es dedupliziert wiederholte Wand-/Boden-Spalten über Ebenen hinweg, sodass jede einmal auf ihrer tiefsten wirksamen Tiefe geschnitten wird – zum Nacharbeiten von Schrupp-Terrassen ohne erneutes Schruppen.',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.0': 'Erfordert ein importiertes 3D-Modell',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.1': 'Unabhängige Schalter für Wände schlichten und Boden schlichten',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.2': 'Offset- oder Parallel-Muster für Böden',

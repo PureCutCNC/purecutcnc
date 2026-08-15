@@ -55,7 +55,6 @@ export const themeManagerEn = {
   'themeManager.systemPrefersDark': 'This device currently prefers dark.',
   'themeManager.systemPrefersLight': 'This device currently prefers light.',
   'themeManager.done': 'Done',
-
   'themeEditor.title': 'Edit Theme',
   'themeEditor.dialogAria': 'Edit theme {name}',
   'themeEditor.previewingLive': 'Previewing your edits live.',
@@ -83,7 +82,6 @@ export const themeManagerEn = {
   'themeEditor.baseValueTitle': 'Base value: {value}',
   'themeEditor.resetFieldAria': 'Reset {label} to base value',
   'themeEditor.resetFieldTitle': 'Reset to base ({value})',
-
   'themePreview.panelTitle': 'Panel & text',
   'themePreview.panelText': 'Primary text on a panel surface.',
   'themePreview.panelTextDim': 'Muted guidance text for hints.',

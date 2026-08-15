@@ -94,8 +94,7 @@ export const camEn = {
   'cam.panel.emptyTool': 'Select a tool to edit its properties.',
   'cam.panel.operations': 'Operations',
   'cam.panel.tools': 'Tools',
-  'cam.panel.operationsEmpty':
-    'Select compatible geometry, then add an operation. Pocket and inside route require subtract features. Outside route requires add features. Surface clean accepts add features.',
+  'cam.panel.operationsEmpty': 'Select compatible geometry, then add an operation. Pocket and inside route require subtract features. Outside route requires add features. Surface clean accepts add features.',
   'cam.panel.cam': 'CAM',
   'cam.panel.properties': 'Properties',
   'cam.panel.export': 'Export',
@@ -137,7 +136,8 @@ export const camEn = {
   'cam.operation.edgeStrategy': 'Strategy',
   'cam.operation.edgeStrategyContour': 'Contour',
   'cam.operation.edgeStrategyTrochoidal': 'Trochoidal',
-  'cam.operation.trochoidalCutWidth': 'Trochoidal Cut Width', 'cam.operation.trochoidalCutWidthBelowFloor': 'Cut width is below the {minimum} minimum for this tool; no toolpath will be generated.',
+  'cam.operation.trochoidalCutWidth': 'Trochoidal Cut Width',
+  'cam.operation.trochoidalCutWidthBelowFloor': 'Cut width is below the {minimum} minimum for this tool; no toolpath will be generated.',
   'cam.operation.trochoidalAdvancePercent': 'Advance per Loop (% of tool diameter)',
   'cam.operation.trochoidalAdvanceDistance': 'Advance per Loop (distance)',
   'cam.operation.trochoidalAdvanceTooltip': 'Stored as a percentage of tool diameter, so it follows the assigned tool. The distance below is derived.',
@@ -186,24 +186,20 @@ export const camEn = {
   'cam.operation.feed': 'Feed',
   'cam.operation.plungeFeed': 'Plunge Feed',
   'cam.operation.slotFeed': 'Slot Feed (%)',
-  'cam.operation.slotFeedTooltip':
-    "Feed percentage for fully engaged (slotting) cuts: each section's innermost loop, uncleared crossings, the parallel boundary pass, and the first fill line. 100 disables the reduction.",
+  'cam.operation.slotFeedTooltip': "Feed percentage for fully engaged (slotting) cuts: each section's innermost loop, uncleared crossings, the parallel boundary pass, and the first fill line. 100 disables the reduction.",
   'cam.operation.rpm': 'RPM',
   'cam.operation.stockToLeaveRadial': 'Stock To Leave Radial',
   'cam.operation.stockToLeaveAxial': 'Stock To Leave Axial',
   'cam.operation.adaptiveRefinement': 'Adaptive refinement',
-  'cam.operation.adaptiveRefinementTooltip':
-    'Adds projected waterline rings on shallow slopes and model tips.',
+  'cam.operation.adaptiveRefinementTooltip': 'Adds projected waterline rings on shallow slopes and model tips.',
   'cam.operation.adaptiveSpacing': 'Adaptive Spacing',
   'cam.operation.adaptiveSpacingTooltip': 'Projected ring spacing in project units.',
   'cam.operation.maxRingsBand': 'Max Rings / Band',
-  'cam.operation.maxRingsTooltip':
-    'Maximum projected rings in one band or tip. Use 0 for the default cap.',
+  'cam.operation.maxRingsTooltip': 'Maximum projected rings in one band or tip. Use 0 for the default cap.',
   'cam.operation.tabs': 'Tabs',
   'cam.operation.autoPlaceTabs': 'Auto place tabs',
   'cam.operation.arcFitting': 'Arc fitting (G2/G3)',
-  'cam.operation.arcFittingTip':
-    'Export-only: fits contiguous linear moves that approximate a circular path into G2/G3 arc moves where the controller supports it. Does not affect the displayed or simulated toolpath.',
+  'cam.operation.arcFittingTip': 'Export-only: fits contiguous linear moves that approximate a circular path into G2/G3 arc moves where the controller supports it. Does not affect the displayed or simulated toolpath.',
 
   // ── Region note ──
   'cam.regionNote.badge': 'mask',
@@ -304,8 +300,7 @@ export const camEn = {
   'cam.hint.vCarveWrongFeature': '{kind} only accepts closed subtract or line features plus optional closed regions',
 
   // ── Validation hints: rough_surface ──
-  'cam.hint.roughSurfaceNoModel':
-    'Rough surface requires at least one imported model feature; closed regions are optional filters',
+  'cam.hint.roughSurfaceNoModel': 'Rough surface requires at least one imported model feature; closed regions are optional filters',
 
   // ── Validation hints: finish_surface / finish_surface_cleanup ──
   'cam.hint.finishSurfaceCount': '{kind} requires exactly one imported model feature; closed regions are optional filters',
@@ -341,7 +336,10 @@ export const camEn = {
   'cam.library.failed': 'Failed to load tool library.',
 
   // ── Parameter reference diagram labels ──
-  'cam.paramRef.stepdown': 'Stepdown reference', 'cam.paramRef.edgeStrategy': 'Strategy', 'cam.paramRef.trochoidalCutWidth': 'Trochoidal Cut Width', 'cam.paramRef.trochoidalAdvance': 'Advance per Loop',
+  'cam.paramRef.stepdown': 'Stepdown reference',
+  'cam.paramRef.edgeStrategy': 'Strategy',
+  'cam.paramRef.trochoidalCutWidth': 'Trochoidal Cut Width',
+  'cam.paramRef.trochoidalAdvance': 'Advance per Loop',
   'cam.paramRef.stepover': 'Stepover reference',
   'cam.paramRef.maxDepth': 'Max depth reference',
   'cam.paramRef.retractHeight': 'Retract height reference',
@@ -372,8 +370,7 @@ export const camEn = {
   // ── Operation descriptions (OperationAddMenu expanded cards) ──
   // Pocket
   'cam.opDesc.pocket.title': 'Pocket',
-  'cam.opDesc.pocket.fullDescription':
-    'Pocket clears the interior of one or more closed subtract profiles down to a fixed Z. Choose between offset (concentric, outside-in) or parallel (scanline) patterns; parallel takes a configurable angle.',
+  'cam.opDesc.pocket.fullDescription': 'Pocket clears the interior of one or more closed subtract profiles down to a fixed Z. Choose between offset (concentric, outside-in) or parallel (scanline) patterns; parallel takes a configurable angle.',
   'cam.opDesc.pocket.keyPoint.0': 'Requires one or more closed subtract profiles',
   'cam.opDesc.pocket.keyPoint.1': 'Offset or parallel clearing pattern',
   'cam.opDesc.pocket.keyPoint.2': 'Supports rough and finish passes',
@@ -382,8 +379,7 @@ export const camEn = {
 
   // V-Carve offset
   'cam.opDesc.vCarve.title': 'V-Carve Offset',
-  'cam.opDesc.vCarve.fullDescription':
-    "V-Carve Offset follows progressively narrower inset contours of a closed profile, lowering Z on each pass so the V-bit's angled flank carves a clean V-groove that tapers to the centerline. Depth per pass is derived from contour spacing and the V-bit half-angle.",
+  'cam.opDesc.vCarve.fullDescription': "V-Carve Offset follows progressively narrower inset contours of a closed profile, lowering Z on each pass so the V-bit's angled flank carves a clean V-groove that tapers to the centerline. Depth per pass is derived from contour spacing and the V-bit half-angle.",
   'cam.opDesc.vCarve.keyPoint.0': 'Requires one or more closed subtract profiles',
   'cam.opDesc.vCarve.keyPoint.1': 'Requires a V-bit tool (set the tip angle on the tool first)',
   'cam.opDesc.vCarve.keyPoint.2': 'Single-pass operation (no rough/finish split)',
@@ -392,8 +388,7 @@ export const camEn = {
 
   // V-Carve medial
   'cam.opDesc.vCarveMedial.title': 'V-Carve Medial',
-  'cam.opDesc.vCarveMedial.fullDescription':
-    "V-Carve Medial computes the true medial axis of a closed profile from the Voronoi diagram of its boundary and cuts a V-groove whose depth exactly tracks the local half-width. Sharp corners receive skeleton tips that rise to the surface for crisp points; smooth curves stay clean thanks to geometric filtering. Sampling resolution adjusts automatically to each shape's size.",
+  'cam.opDesc.vCarveMedial.fullDescription': "V-Carve Medial computes the true medial axis of a closed profile from the Voronoi diagram of its boundary and cuts a V-groove whose depth exactly tracks the local half-width. Sharp corners receive skeleton tips that rise to the surface for crisp points; smooth curves stay clean thanks to geometric filtering. Sampling resolution adjusts automatically to each shape's size.",
   'cam.opDesc.vCarveMedial.keyPoint.0': 'Requires one or more closed subtract profiles',
   'cam.opDesc.vCarveMedial.keyPoint.1': 'Requires a V-bit tool (set the tip angle on the tool first)',
   'cam.opDesc.vCarveMedial.keyPoint.2': 'Exact depth: V flanks touch both walls everywhere along the skeleton',
@@ -404,26 +399,25 @@ export const camEn = {
 
   // Edge route inside
   'cam.opDesc.edgeRouteInside.title': 'Edge Route Inside',
-  'cam.opDesc.edgeRouteInside.fullDescription':
-    'Edge Route Inside follows the inside edge of one or more closed subtract profiles. A contour pass offsets inward by the tool radius; rough passes can instead use trochoidal loops to reduce radial engagement while leaving stock for a contour finish.',
+  'cam.opDesc.edgeRouteInside.fullDescription': 'Edge Route Inside follows the inside edge of one or more closed subtract profiles. A contour pass offsets inward by the tool radius; rough passes can instead use trochoidal loops to reduce radial engagement while leaving stock for a contour finish.',
   'cam.opDesc.edgeRouteInside.keyPoint.0': 'Requires one or more closed subtract profiles',
   'cam.opDesc.edgeRouteInside.keyPoint.1': 'Contour or trochoidal roughing strategy',
   'cam.opDesc.edgeRouteInside.keyPoint.2': 'Trochoidal roughing uses Helix or Plunge entry; tabs require Helix',
-  'cam.opDesc.edgeRouteInside.keyPoint.3': 'Finish passes always use a contour', 'cam.opDesc.edgeRouteInside.keyPoint.4': 'Regions are supported by contour routing only',
+  'cam.opDesc.edgeRouteInside.keyPoint.3': 'Finish passes always use a contour',
+  'cam.opDesc.edgeRouteInside.keyPoint.4': 'Regions are supported by contour routing only',
 
   // Edge route outside
   'cam.opDesc.edgeRouteOutside.title': 'Edge Route Outside',
-  'cam.opDesc.edgeRouteOutside.fullDescription':
-    'Edge Route Outside follows the outside edge of one or more closed add or model profiles. A contour pass offsets outward by the tool radius; rough passes can instead use trochoidal loops to reduce radial engagement while leaving stock for a contour finish.',
+  'cam.opDesc.edgeRouteOutside.fullDescription': 'Edge Route Outside follows the outside edge of one or more closed add or model profiles. A contour pass offsets outward by the tool radius; rough passes can instead use trochoidal loops to reduce radial engagement while leaving stock for a contour finish.',
   'cam.opDesc.edgeRouteOutside.keyPoint.0': 'Requires one or more closed add or model profiles',
   'cam.opDesc.edgeRouteOutside.keyPoint.1': 'Contour or trochoidal roughing strategy',
   'cam.opDesc.edgeRouteOutside.keyPoint.2': 'Trochoidal roughing uses Helix or Plunge entry; tabs require Helix',
-  'cam.opDesc.edgeRouteOutside.keyPoint.3': 'Finish passes always use a contour', 'cam.opDesc.edgeRouteOutside.keyPoint.4': 'Regions are supported by contour routing only',
+  'cam.opDesc.edgeRouteOutside.keyPoint.3': 'Finish passes always use a contour',
+  'cam.opDesc.edgeRouteOutside.keyPoint.4': 'Regions are supported by contour routing only',
 
   // Surface clean
   'cam.opDesc.surfaceClean.title': 'Surface Clean',
-  'cam.opDesc.surfaceClean.fullDescription':
-    'Surface Clean machines the flat top surface of one or more add/model features in the area around any taller add features that sit on top of them. It produces a band of cleanup passes at each step height — useful for finishing pads, terraces, and stepped surfaces. Pattern can be offset or parallel.',
+  'cam.opDesc.surfaceClean.fullDescription': 'Surface Clean machines the flat top surface of one or more add/model features in the area around any taller add features that sit on top of them. It produces a band of cleanup passes at each step height — useful for finishing pads, terraces, and stepped surfaces. Pattern can be offset or parallel.',
   'cam.opDesc.surfaceClean.keyPoint.0': 'Requires one or more closed add or model features',
   'cam.opDesc.surfaceClean.keyPoint.1': 'Clears the area between taller features at each step height',
   'cam.opDesc.surfaceClean.keyPoint.2': 'Offset or parallel clearing pattern',
@@ -432,8 +426,7 @@ export const camEn = {
 
   // Engrave
   'cam.opDesc.followLine.title': 'Engrave',
-  'cam.opDesc.followLine.fullDescription':
-    'Engrave traces along any sketch path — open or closed — at a fixed carve depth. Direct follows the centerline for text, decorative lines, alignment marks, and following complex curves on the stock surface. Trochoidal cuts a wider channel with overlapping orbits, for functional slots (T-track, inlay, dado, wire routing) where the groove is meant to be wider than the cutter.',
+  'cam.opDesc.followLine.fullDescription': 'Engrave traces along any sketch path — open or closed — at a fixed carve depth. Direct follows the centerline for text, decorative lines, alignment marks, and following complex curves on the stock surface. Trochoidal cuts a wider channel with overlapping orbits, for functional slots (T-track, inlay, dado, wire routing) where the groove is meant to be wider than the cutter.',
   'cam.opDesc.followLine.keyPoint.0': 'Accepts open or closed path features',
   'cam.opDesc.followLine.keyPoint.1': 'Direct follows the centerline; Trochoidal cuts a wider slot',
   'cam.opDesc.followLine.keyPoint.2': 'Single-pass operation (no rough/finish split)',
@@ -442,19 +435,16 @@ export const camEn = {
 
   // Drilling
   'cam.opDesc.drilling.title': 'Drill',
-  'cam.opDesc.drilling.fullDescription':
-    'Drilling produces a hole at the center of each selected circle feature using a canned drill cycle. Choose the drilling method (simple G81, peck G83, dwell G82, chip-breaking G73) and depth on the operation.',
+  'cam.opDesc.drilling.fullDescription': 'Drilling produces a hole at the center of each selected circle feature using a canned drill cycle. Choose the drilling method (simple G81, peck G83, dwell G82, chip-breaking G73) and depth on the operation.',
   'cam.opDesc.drilling.keyPoint.0': 'Requires one or more circle features',
-  'cam.opDesc.drilling.keyPoint.1':
-    'Four cycle types: simple (G81), peck (G83), dwell (G82), chip-breaking (G73)',
+  'cam.opDesc.drilling.keyPoint.1': 'Four cycle types: simple (G81), peck (G83), dwell (G82), chip-breaking (G73)',
   'cam.opDesc.drilling.keyPoint.2': 'Peck and chip-breaking cycles use a peck increment',
   'cam.opDesc.drilling.keyPoint.3': 'Fast for repeated hole patterns',
   'cam.opDesc.drilling.keyPoint.4': 'Optional closed regions filter which holes are drilled',
 
   // 3D Surface rough
   'cam.opDesc.roughSurface.title': '3D Surface Rough',
-  'cam.opDesc.roughSurface.fullDescription':
-    'Rough Surface slices the imported 3D model at constant Z levels (waterline-style) and clears each level with offset passes, leaving radial and axial stock for finishing. Use larger stepdown and stepover for speed; follow with a finish operation for accuracy.',
+  'cam.opDesc.roughSurface.fullDescription': 'Rough Surface slices the imported 3D model at constant Z levels (waterline-style) and clears each level with offset passes, leaving radial and axial stock for finishing. Use larger stepdown and stepover for speed; follow with a finish operation for accuracy.',
   'cam.opDesc.roughSurface.keyPoint.0': 'Requires an imported 3D model',
   'cam.opDesc.roughSurface.keyPoint.1': 'Waterline-style level slicing with offset clearing per level',
   'cam.opDesc.roughSurface.keyPoint.2': 'Honors radial and axial stock-to-leave for the finish pass',
@@ -463,8 +453,7 @@ export const camEn = {
 
   // 3D Surface finish
   'cam.opDesc.finishSurface.title': '3D Surface Finish',
-  'cam.opDesc.finishSurface.fullDescription':
-    'Finish Surface produces the final surface on an imported 3D model. Choose parallel (scanlines at a configurable angle) for shallower geometry or waterline (constant-Z contours) for steeper walls. Use a small stepover for parallel or small stepdown for waterline.',
+  'cam.opDesc.finishSurface.fullDescription': 'Finish Surface produces the final surface on an imported 3D model. Choose parallel (scanlines at a configurable angle) for shallower geometry or waterline (constant-Z contours) for steeper walls. Use a small stepover for parallel or small stepdown for waterline.',
   'cam.opDesc.finishSurface.keyPoint.0': 'Requires an imported 3D model',
   'cam.opDesc.finishSurface.keyPoint.1': 'Parallel (scanline) or waterline (constant-Z) pattern',
   'cam.opDesc.finishSurface.keyPoint.2': 'Single-pass operation (no rough/finish split — this op is the finish)',
@@ -473,8 +462,7 @@ export const camEn = {
 
   // 3D Surface cleanup
   'cam.opDesc.finishSurfaceCleanup.title': '3D Surface Cleanup',
-  'cam.opDesc.finishSurfaceCleanup.fullDescription':
-    'Surface Cleanup emits finish-only wall and floor passes at the deepest retained Z of each step left by the 3D rough operation. It deduplicates repeated wall/floor columns across levels so each is cut once at its lowest effective depth — cleaning up rough-surface terraces without re-roughing.',
+  'cam.opDesc.finishSurfaceCleanup.fullDescription': 'Surface Cleanup emits finish-only wall and floor passes at the deepest retained Z of each step left by the 3D rough operation. It deduplicates repeated wall/floor columns across levels so each is cut once at its lowest effective depth — cleaning up rough-surface terraces without re-roughing.',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.0': 'Requires an imported 3D model',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.1': 'Independent Finish Walls and Finish Floor toggles',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.2': 'Offset or parallel pattern for floors',

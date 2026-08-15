@@ -95,8 +95,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.panel.emptyTool': '选择一把刀具以编辑其属性。',
   'cam.panel.operations': '加工操作',
   'cam.panel.tools': '刀具',
-  'cam.panel.operationsEmpty':
-    '选择兼容的图形，然后添加加工操作。挖槽和内缘走刀需要减法特征。外缘走刀需要加法特征。表面清理接受加法特征。',
+  'cam.panel.operationsEmpty': '选择兼容的图形，然后添加加工操作。挖槽和内缘走刀需要减法特征。外缘走刀需要加法特征。表面清理接受加法特征。',
   'cam.panel.cam': 'CAM',
   'cam.panel.properties': '属性',
   'cam.panel.export': '导出',
@@ -138,7 +137,8 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.edgeStrategy': '策略',
   'cam.operation.edgeStrategyContour': '轮廓',
   'cam.operation.edgeStrategyTrochoidal': '摆线',
-  'cam.operation.trochoidalCutWidth': '摆线切削宽度', 'cam.operation.trochoidalCutWidthBelowFloor': '切削宽度低于该刀具的最小值 {minimum}，将不会生成刀具路径。',
+  'cam.operation.trochoidalCutWidth': '摆线切削宽度',
+  'cam.operation.trochoidalCutWidthBelowFloor': '切削宽度低于该刀具的最小值 {minimum}，将不会生成刀具路径。',
   'cam.operation.trochoidalAdvancePercent': '每圈推进量（刀具直径百分比）',
   'cam.operation.trochoidalAdvanceDistance': '每圈推进量（距离）',
   'cam.operation.trochoidalAdvanceTooltip': '按刀具直径的百分比存储，因此会随所选刀具变化。下方距离为推导值。',
@@ -187,8 +187,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.feed': '进给',
   'cam.operation.plungeFeed': '插铣进给',
   'cam.operation.slotFeed': '满刀进给（%）',
-  'cam.operation.slotFeedTooltip':
-    '满刀切削时的进给百分比：每段最内层环、未清理的交叉区域、平行边界通道和第一条填充线。100 表示不降低进给。',
+  'cam.operation.slotFeedTooltip': '满刀切削时的进给百分比：每段最内层环、未清理的交叉区域、平行边界通道和第一条填充线。100 表示不降低进给。',
   'cam.operation.rpm': '转速',
   'cam.operation.stockToLeaveRadial': '径向余量',
   'cam.operation.stockToLeaveAxial': '轴向余量',
@@ -201,8 +200,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.tabs': '桥接',
   'cam.operation.autoPlaceTabs': '自动放置桥接',
   'cam.operation.arcFitting': '圆弧拟合 (G2/G3)',
-  'cam.operation.arcFittingTip':
-    '仅导出：将近似圆弧路径的连续线性移动拟合为 G2/G3 圆弧移动（需要控制器支持）。不影响显示或模拟的刀路。',
+  'cam.operation.arcFittingTip': '仅导出：将近似圆弧路径的连续线性移动拟合为 G2/G3 圆弧移动（需要控制器支持）。不影响显示或模拟的刀路。',
 
   // ── Region note ──
   'cam.regionNote.badge': '掩膜',
@@ -339,7 +337,10 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.library.failed': '加载刀具库失败。',
 
   // ── Parameter reference diagram labels ──
-  'cam.paramRef.stepdown': '下刀步距参考', 'cam.paramRef.edgeStrategy': '策略', 'cam.paramRef.trochoidalCutWidth': '摆线切削宽度', 'cam.paramRef.trochoidalAdvance': '每圈进给',
+  'cam.paramRef.stepdown': '下刀步距参考',
+  'cam.paramRef.edgeStrategy': '策略',
+  'cam.paramRef.trochoidalCutWidth': '摆线切削宽度',
+  'cam.paramRef.trochoidalAdvance': '每圈进给',
   'cam.paramRef.stepover': '横向步距参考',
   'cam.paramRef.maxDepth': '最大深度参考',
   'cam.paramRef.retractHeight': '退刀高度参考',
@@ -369,26 +370,21 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
 
   // ── Operation descriptions ──
   'cam.opDesc.pocket.title': '挖槽',
-  'cam.opDesc.pocket.fullDescription':
-    '挖槽将闭合减法轮廓内部清除至固定 Z 深度。可选择偏移（同心、由外向内）或平行（扫描线）模式；平行模式可配置角度。',
+  'cam.opDesc.pocket.fullDescription': '挖槽将闭合减法轮廓内部清除至固定 Z 深度。可选择偏移（同心、由外向内）或平行（扫描线）模式；平行模式可配置角度。',
   'cam.opDesc.pocket.keyPoint.0': '需要一个或多个闭合的减法轮廓',
   'cam.opDesc.pocket.keyPoint.1': '偏移或平行清除模式',
   'cam.opDesc.pocket.keyPoint.2': '支持粗加工和精加工',
   'cam.opDesc.pocket.keyPoint.3': '建议使用平底立铣刀以获得干净的底面',
   'cam.opDesc.pocket.keyPoint.4': '可选的闭合区域作为 XY 过滤器',
-
   'cam.opDesc.vCarve.title': 'V雕（偏移）',
-  'cam.opDesc.vCarve.fullDescription':
-    'V雕（偏移）沿闭合轮廓逐步缩小的内缩轮廓走刀，每刀降低 Z 高度，使 V形刀的斜面切出干净的 V形槽，逐渐收窄至中心线。每刀深度由轮廓间距和 V形刀半角计算得出。',
+  'cam.opDesc.vCarve.fullDescription': 'V雕（偏移）沿闭合轮廓逐步缩小的内缩轮廓走刀，每刀降低 Z 高度，使 V形刀的斜面切出干净的 V形槽，逐渐收窄至中心线。每刀深度由轮廓间距和 V形刀半角计算得出。',
   'cam.opDesc.vCarve.keyPoint.0': '需要一个或多个闭合的减法轮廓',
   'cam.opDesc.vCarve.keyPoint.1': '需要 V形刀（请先在刀具上设置刀尖角度）',
   'cam.opDesc.vCarve.keyPoint.2': '单工序操作（无粗/精加工分开）',
   'cam.opDesc.vCarve.keyPoint.3': '适用于雕刻、标牌和装饰性边缘',
   'cam.opDesc.vCarve.keyPoint.4': '可选的闭合区域作为 XY 过滤器',
-
   'cam.opDesc.vCarveMedial.title': 'V雕（中轴）',
-  'cam.opDesc.vCarveMedial.fullDescription':
-    'V雕（中轴）从闭合轮廓的 Voronoi 图计算真实中轴，并切削出深度精确跟踪局部半宽的 V形槽。尖角处中轴骨架升起至表面以获得锐利端点；光滑曲线通过几何过滤保持干净。采样分辨率自动适配每个形状的尺寸。',
+  'cam.opDesc.vCarveMedial.fullDescription': 'V雕（中轴）从闭合轮廓的 Voronoi 图计算真实中轴，并切削出深度精确跟踪局部半宽的 V形槽。尖角处中轴骨架升起至表面以获得锐利端点；光滑曲线通过几何过滤保持干净。采样分辨率自动适配每个形状的尺寸。',
   'cam.opDesc.vCarveMedial.keyPoint.0': '需要一个或多个闭合的减法轮廓',
   'cam.opDesc.vCarveMedial.keyPoint.1': '需要 V形刀（请先在刀具上设置刀尖角度）',
   'cam.opDesc.vCarveMedial.keyPoint.2': '精确深度：V形刀两侧沿骨架处处贴合轮廓壁',
@@ -396,71 +392,57 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.opDesc.vCarveMedial.keyPoint.4': '尖角处锐利零深度端点；光滑曲线无伪影',
   'cam.opDesc.vCarveMedial.keyPoint.5': '单工序操作（无粗/精加工分开）',
   'cam.opDesc.vCarveMedial.keyPoint.6': '可选的闭合区域作为 XY 过滤器',
-
   'cam.opDesc.edgeRouteInside.title': '内缘走刀',
-  'cam.opDesc.edgeRouteInside.fullDescription':
-    '内缘走刀沿一个或多个闭合减法轮廓的内侧边缘走刀。轮廓走刀按刀具半径向内偏移；粗加工也可使用摆线环来降低径向吃刀量，并为轮廓精加工留出余量。',
+  'cam.opDesc.edgeRouteInside.fullDescription': '内缘走刀沿一个或多个闭合减法轮廓的内侧边缘走刀。轮廓走刀按刀具半径向内偏移；粗加工也可使用摆线环来降低径向吃刀量，并为轮廓精加工留出余量。',
   'cam.opDesc.edgeRouteInside.keyPoint.0': '需要一个或多个闭合的减法轮廓',
   'cam.opDesc.edgeRouteInside.keyPoint.1': '支持轮廓或摆线粗加工策略',
   'cam.opDesc.edgeRouteInside.keyPoint.2': '摆线粗加工使用螺旋或垂直下刀；连接桥要求螺旋下刀',
-  'cam.opDesc.edgeRouteInside.keyPoint.3': '精加工始终使用轮廓走刀', 'cam.opDesc.edgeRouteInside.keyPoint.4': '区域仅由轮廓走刀支持',
-
+  'cam.opDesc.edgeRouteInside.keyPoint.3': '精加工始终使用轮廓走刀',
+  'cam.opDesc.edgeRouteInside.keyPoint.4': '区域仅由轮廓走刀支持',
   'cam.opDesc.edgeRouteOutside.title': '外缘走刀',
-  'cam.opDesc.edgeRouteOutside.fullDescription':
-    '外缘走刀沿一个或多个闭合加法或模型轮廓的外侧边缘走刀。轮廓走刀按刀具半径向外偏移；粗加工也可使用摆线环来降低径向吃刀量，并为轮廓精加工留出余量。',
+  'cam.opDesc.edgeRouteOutside.fullDescription': '外缘走刀沿一个或多个闭合加法或模型轮廓的外侧边缘走刀。轮廓走刀按刀具半径向外偏移；粗加工也可使用摆线环来降低径向吃刀量，并为轮廓精加工留出余量。',
   'cam.opDesc.edgeRouteOutside.keyPoint.0': '需要一个或多个闭合的加法或模型轮廓',
   'cam.opDesc.edgeRouteOutside.keyPoint.1': '支持轮廓或摆线粗加工策略',
   'cam.opDesc.edgeRouteOutside.keyPoint.2': '摆线粗加工使用螺旋或垂直下刀；连接桥要求螺旋下刀',
-  'cam.opDesc.edgeRouteOutside.keyPoint.3': '精加工始终使用轮廓走刀', 'cam.opDesc.edgeRouteOutside.keyPoint.4': '区域仅由轮廓走刀支持',
-
+  'cam.opDesc.edgeRouteOutside.keyPoint.3': '精加工始终使用轮廓走刀',
+  'cam.opDesc.edgeRouteOutside.keyPoint.4': '区域仅由轮廓走刀支持',
   'cam.opDesc.surfaceClean.title': '表面清理',
-  'cam.opDesc.surfaceClean.fullDescription':
-    '表面清理加工一个或多个加法/模型特征的平坦顶面，清除位于其上方的更高加法特征周围的区域。在每个台阶高度产生一圈清理刀路——适用于修整平台、阶梯和台阶表面。模式可选偏移或平行。',
+  'cam.opDesc.surfaceClean.fullDescription': '表面清理加工一个或多个加法/模型特征的平坦顶面，清除位于其上方的更高加法特征周围的区域。在每个台阶高度产生一圈清理刀路——适用于修整平台、阶梯和台阶表面。模式可选偏移或平行。',
   'cam.opDesc.surfaceClean.keyPoint.0': '需要一个或多个闭合的加法或模型特征',
   'cam.opDesc.surfaceClean.keyPoint.1': '在每个台阶高度清除较高特征之间的区域',
   'cam.opDesc.surfaceClean.keyPoint.2': '偏移或平行清除模式',
   'cam.opDesc.surfaceClean.keyPoint.3': '支持粗加工和精加工',
   'cam.opDesc.surfaceClean.keyPoint.4': '可选的闭合区域作为 XY 过滤器',
-
   'cam.opDesc.followLine.title': '雕刻',
-  'cam.opDesc.followLine.fullDescription':
-    '雕刻沿任意草图路径——开放或闭合——以固定切削深度走刀。直接模式沿中心线走刀，适用于文字、装饰线条、定位标记以及沿毛坯表面跟随复杂曲线。摆线模式通过重叠的圆形轨迹切出更宽的槽，用于功能性开槽（T形槽、镶嵌、槽口、线槽），即需要槽宽大于刀具直径的场合。',
+  'cam.opDesc.followLine.fullDescription': '雕刻沿任意草图路径——开放或闭合——以固定切削深度走刀。直接模式沿中心线走刀，适用于文字、装饰线条、定位标记以及沿毛坯表面跟随复杂曲线。摆线模式通过重叠的圆形轨迹切出更宽的槽，用于功能性开槽（T形槽、镶嵌、槽口、线槽），即需要槽宽大于刀具直径的场合。',
   'cam.opDesc.followLine.keyPoint.0': '接受开放或闭合路径特征',
   'cam.opDesc.followLine.keyPoint.1': '直接模式沿中心线走刀；摆线模式切出更宽的槽',
   'cam.opDesc.followLine.keyPoint.2': '单工序操作（无粗/精加工分开）',
   'cam.opDesc.followLine.keyPoint.3': '通常较浅；若雕刻深度超过下刀步距则会分层',
   'cam.opDesc.followLine.keyPoint.4': '可选的闭合区域作为 XY 过滤器',
-
   'cam.opDesc.drilling.title': '钻孔',
-  'cam.opDesc.drilling.fullDescription':
-    '钻孔使用固定循环在每个选定圆形特征的中心钻出一个孔。在操作中选择钻孔方式（简单 G81、啄钻 G83、暂停 G82、断屑 G73）和深度。',
+  'cam.opDesc.drilling.fullDescription': '钻孔使用固定循环在每个选定圆形特征的中心钻出一个孔。在操作中选择钻孔方式（简单 G81、啄钻 G83、暂停 G82、断屑 G73）和深度。',
   'cam.opDesc.drilling.keyPoint.0': '需要一个或多个圆形特征',
   'cam.opDesc.drilling.keyPoint.1': '四种循环类型：简单（G81）、啄钻（G83）、暂停（G82）、断屑（G73）',
   'cam.opDesc.drilling.keyPoint.2': '啄钻和断屑循环使用啄钻增量',
   'cam.opDesc.drilling.keyPoint.3': '适合重复孔模式',
   'cam.opDesc.drilling.keyPoint.4': '可选的闭合区域过滤要钻孔的位置',
-
   'cam.opDesc.roughSurface.title': '3D 曲面粗加工',
-  'cam.opDesc.roughSurface.fullDescription':
-    '曲面粗加工以恒定 Z 层（水平线风格）切片导入的 3D 模型，并用偏移刀路清除每一层，为精加工留出径向和轴向余量。使用较大的下刀步距和横向步距以提高速度；后续使用精加工操作以保证精度。',
+  'cam.opDesc.roughSurface.fullDescription': '曲面粗加工以恒定 Z 层（水平线风格）切片导入的 3D 模型，并用偏移刀路清除每一层，为精加工留出径向和轴向余量。使用较大的下刀步距和横向步距以提高速度；后续使用精加工操作以保证精度。',
   'cam.opDesc.roughSurface.keyPoint.0': '需要一个导入的 3D 模型',
   'cam.opDesc.roughSurface.keyPoint.1': '水平线风格分层切片，每层偏移清除',
   'cam.opDesc.roughSurface.keyPoint.2': '为精加工保留径向和轴向余量',
   'cam.opDesc.roughSurface.keyPoint.3': '单工序操作（无粗/精加工分开——此操作本身就是粗加工）',
   'cam.opDesc.roughSurface.keyPoint.4': '可选的闭合区域作为 XY 过滤器',
-
   'cam.opDesc.finishSurface.title': '3D 曲面精加工',
-  'cam.opDesc.finishSurface.fullDescription':
-    '曲面精加工在导入的 3D 模型上生成最终表面。选择平行（可配置角度的扫描线）用于较浅的几何体，或水平线（恒定 Z 轮廓）用于较陡的壁面。平行模式使用较小的横向步距，水平线模式使用较小的下刀步距。',
+  'cam.opDesc.finishSurface.fullDescription': '曲面精加工在导入的 3D 模型上生成最终表面。选择平行（可配置角度的扫描线）用于较浅的几何体，或水平线（恒定 Z 轮廓）用于较陡的壁面。平行模式使用较小的横向步距，水平线模式使用较小的下刀步距。',
   'cam.opDesc.finishSurface.keyPoint.0': '需要一个导入的 3D 模型',
   'cam.opDesc.finishSurface.keyPoint.1': '平行（扫描线）或水平线（恒定 Z）模式',
   'cam.opDesc.finishSurface.keyPoint.2': '单工序操作（无粗/精加工分开——此操作就是精加工）',
   'cam.opDesc.finishSurface.keyPoint.3': '通常在 3D 曲面粗加工之后运行',
   'cam.opDesc.finishSurface.keyPoint.4': '可选的闭合区域作为 XY 过滤器',
-
   'cam.opDesc.finishSurfaceCleanup.title': '3D 曲面清理',
-  'cam.opDesc.finishSurfaceCleanup.fullDescription':
-    '曲面清理在 3D 粗加工操作留下的每个台阶的最深保留 Z 处生成仅精修的壁面和底面刀路。它去重跨层的重复壁/底柱，使每处在最低有效深度仅切削一次——清理粗加工留下的阶梯而不重新粗加工。',
+  'cam.opDesc.finishSurfaceCleanup.fullDescription': '曲面清理在 3D 粗加工操作留下的每个台阶的最深保留 Z 处生成仅精修的壁面和底面刀路。它去重跨层的重复壁/底柱，使每处在最低有效深度仅切削一次——清理粗加工留下的阶梯而不重新粗加工。',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.0': '需要一个导入的 3D 模型',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.1': '独立的精修侧壁和精修底面开关',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.2': '底面的偏移或平行模式',

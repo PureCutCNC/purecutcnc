@@ -44,7 +44,6 @@ export const languageManagerDe: Record<keyof typeof languageManagerEn, string> =
   'langManager.importPlaceholderIssues.one': '„{name}" mit {count} Platzhalter-Abweichung importiert – zum Prüfen den Editor öffnen.',
   'langManager.importPlaceholderIssues.other': '„{name}" mit {count} Platzhalter-Abweichungen importiert – zum Prüfen den Editor öffnen.',
   'langManager.deleted': '„{name}" gelöscht.',
-
   'langEditor.title': 'Sprache bearbeiten – {name}',
   'langEditor.nameLabel': 'Sprachname',
   'langEditor.tagLabel': 'BCP-47-Sprach-Tag',

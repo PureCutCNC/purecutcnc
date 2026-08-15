@@ -26,7 +26,6 @@ export const sketchDe: Record<keyof typeof sketchEn, string> = {
   'sketch.target.line': 'Linie',
   'sketch.target.region': 'Bereich',
   'sketch.target.construction': 'Konstruktion',
-
   'sketch.shape.rectangle': 'Rechteck',
   'sketch.shape.circle': 'Kreis',
   'sketch.shape.ellipse': 'Ellipse',
@@ -39,13 +38,11 @@ export const sketchDe: Record<keyof typeof sketchEn, string> = {
   'sketch.shape.gear': 'Zahnrad',
   'sketch.shape.roundedRect': 'abgerundetes Rechteck',
   'sketch.shape.chamferedRect': 'angefastes Rechteck',
-
   'sketch.creation.addShape': '{target} {shape} hinzufügen',
   'sketch.creation.cancel': '{shape} abbrechen',
   'sketch.creation.cancelTool': '{shape}-Werkzeug abbrechen',
   'sketch.creation.chooseTarget': '{target}-Form wählen',
   'sketch.creation.closeDrawer': 'Formen-Schublade schließen',
-
   'sketch.transform.copy': 'Ausgewählte Features kopieren',
   'sketch.transform.cancelCopy': 'Kopieren abbrechen',
   'sketch.transform.move': 'Ausgewählte Features verschieben',
@@ -57,19 +54,16 @@ export const sketchDe: Record<keyof typeof sketchEn, string> = {
   'sketch.transform.cancelRotate': 'Drehen abbrechen',
   'sketch.transform.mirror': 'Ausgewählte Features spiegeln',
   'sketch.transform.cancelMirror': 'Spiegeln abbrechen',
-
   'sketch.boolean.join': 'Geschlossene Features vereinigen',
   'sketch.boolean.cancelJoin': 'Vereinigen abbrechen',
   'sketch.boolean.cut': 'Features abziehen',
   'sketch.boolean.cancelCut': 'Abziehen abbrechen',
   'sketch.boolean.offset': 'Offset-Feature erstellen',
   'sketch.boolean.cancelOffset': 'Offset abbrechen',
-
   'sketch.arrange.align': 'Ausgewählte Features ausrichten',
   'sketch.arrange.distribute': 'Ausgewählte Features verteilen',
   'sketch.arrange.closeAlignMenu': 'Ausrichtungsmenü schließen',
   'sketch.arrange.closeDistributeMenu': 'Verteilungsmenü schließen',
-
   'sketch.edit.addPoint': 'Punkt hinzufügen',
   'sketch.edit.cancelAddPoint': 'Punkt hinzufügen abbrechen',
   'sketch.edit.deletePoint': 'Punkt löschen',
@@ -88,22 +82,18 @@ export const sketchDe: Record<keyof typeof sketchEn, string> = {
   'sketch.edit.extend': 'Auf Ziel dehnen',
   'sketch.edit.cancelExtend': 'Dehnen abbrechen',
   'sketch.edit.extendDisabled': 'Dehnen – nur offene Profile',
-
   'sketch.constraint.add': 'Bedingung hinzufügen',
   'sketch.constraint.cancel': 'Bedingung abbrechen',
-
   'sketch.align.left': 'Links ausrichten',
   'sketch.align.centerHorizontal': 'Horizontal zentrieren',
   'sketch.align.right': 'Rechts ausrichten',
   'sketch.align.top': 'Oben ausrichten',
   'sketch.align.centerVertical': 'Vertikal zentrieren',
   'sketch.align.bottom': 'Unten ausrichten',
-
   'sketch.distribute.horizontalGaps': 'Horizontal verteilen (gleiche Abstände)',
   'sketch.distribute.horizontalCenters': 'Horizontal verteilen (gleiche Zentren)',
   'sketch.distribute.verticalGaps': 'Vertikal verteilen (gleiche Abstände)',
   'sketch.distribute.verticalCenters': 'Vertikal verteilen (gleiche Zentren)',
-
   'sketch.backdrop.move': 'Hintergrund verschieben',
   'sketch.backdrop.cancelMove': 'Hintergrund verschieben abbrechen',
   'sketch.backdrop.delete': 'Hintergrund löschen',

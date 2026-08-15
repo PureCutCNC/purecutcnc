@@ -32,13 +32,11 @@ export const viewportZhCN: Record<keyof typeof viewportEn, string> = {
   'viewport.presets.left': '左视图',
   'viewport.presets.iso': '等轴测视图',
   'viewport.presets.free': '自定义视图',
-
   'viewport.viewMenu.ariaLabel': '摄像机视图',
   'viewport.viewMenu.headingStandard': '标准视图',
   'viewport.viewMenu.headingActions': '操作',
   'viewport.viewMenu.fit': '适配模型',
   'viewport.viewMenu.reset': '重置视图',
-
   'viewport.sim.modeLabel': '仿真模式',
   'viewport.sim.modeSelected': '已选中',
   'viewport.sim.modeVisible': '可见',
@@ -64,7 +62,6 @@ export const viewportZhCN: Record<keyof typeof viewportEn, string> = {
   'viewport.sim.stepTooltip': '刀具每帧移动的最大距离。越小运动越平滑，越大播放越快。',
   'viewport.sim.feedTooltip': '当前移动的切削进给。缩小的槽切会在此显示其缩放后的进给；颜色点标记移动类型（快速移动无进给）。',
   'viewport.sim.moveKindIdle': '空闲',
-
   'viewport.about.ariaLabel': '关于 PureCutCNC',
   'viewport.about.title': '关于',
   'viewport.about.close': '关闭',
@@ -78,7 +75,6 @@ export const viewportZhCN: Record<keyof typeof viewportEn, string> = {
   'viewport.about.license': '许可证（Apache-2.0）',
   'viewport.about.supportText': 'PureCutCNC 始终免费 — 但开发和维护需要实际的时间和金钱。如果它对您有帮助，一杯咖啡就能让它持续下去。',
   'viewport.about.buyCoffee': '请开发者喝杯咖啡',
-
   'viewport.empty.title': '开始设计零件',
   'viewport.empty.subtitle': '绘制形状、导入文件或打开一个成品示例，查看完整的工作流程。',
   'viewport.empty.drawTitle': '绘制形状',
@@ -86,7 +82,6 @@ export const viewportZhCN: Record<keyof typeof viewportEn, string> = {
   'viewport.empty.importTitle': '导入文件',
   'viewport.empty.importMeta': 'SVG、DXF、OBJ、STL 或 CAMJ 文件',
   'viewport.empty.examplesLabel': '打开示例…',
-
   'viewport.error.eyebrow': '出了些问题',
   'viewport.error.title': '抱歉 — PureCutCNC 无法在此设备上启动。',
   'viewport.error.body': '这通常意味着您的浏览器或操作系统不支持该应用所需的 3D 图形功能。请尝试在较新的台式机或平板上使用最新版本的 Chrome、Edge 或 Firefox，或使用我们的桌面版。',
@@ -94,7 +89,6 @@ export const viewportZhCN: Record<keyof typeof viewportEn, string> = {
   'viewport.error.reload': '重新加载',
   'viewport.error.desktopDownloads': '桌面版下载',
   'viewport.error.projectWebsite': '项目网站',
-
   'viewport.error.userAgent': '用户代理：',
   'viewport.error.timestamp': '时间戳：',
 }

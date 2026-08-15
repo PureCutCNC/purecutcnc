@@ -31,7 +31,6 @@ export const sketchEn = {
   'sketch.target.line': 'line',
   'sketch.target.region': 'region',
   'sketch.target.construction': 'construction',
-
   'sketch.shape.rectangle': 'rectangle',
   'sketch.shape.circle': 'circle',
   'sketch.shape.ellipse': 'ellipse',
@@ -44,13 +43,11 @@ export const sketchEn = {
   'sketch.shape.gear': 'gear',
   'sketch.shape.roundedRect': 'rounded rectangle',
   'sketch.shape.chamferedRect': 'chamfered rectangle',
-
   'sketch.creation.addShape': 'Add {target} {shape}',
   'sketch.creation.cancel': 'Cancel {shape}',
   'sketch.creation.cancelTool': 'Cancel {shape} tool',
   'sketch.creation.chooseTarget': 'Choose {target} shape',
   'sketch.creation.closeDrawer': 'Close shape drawer',
-
   'sketch.transform.copy': 'Copy selected features',
   'sketch.transform.cancelCopy': 'Cancel copy',
   'sketch.transform.move': 'Move selected features',
@@ -62,19 +59,16 @@ export const sketchEn = {
   'sketch.transform.cancelRotate': 'Cancel rotate',
   'sketch.transform.mirror': 'Mirror selected features',
   'sketch.transform.cancelMirror': 'Cancel mirror',
-
   'sketch.boolean.join': 'Join closed features',
   'sketch.boolean.cancelJoin': 'Cancel join',
   'sketch.boolean.cut': 'Cut features',
   'sketch.boolean.cancelCut': 'Cancel cut',
   'sketch.boolean.offset': 'Create offset feature',
   'sketch.boolean.cancelOffset': 'Cancel offset',
-
   'sketch.arrange.align': 'Align selected features',
   'sketch.arrange.distribute': 'Distribute selected features',
   'sketch.arrange.closeAlignMenu': 'Close alignment menu',
   'sketch.arrange.closeDistributeMenu': 'Close distribute menu',
-
   'sketch.edit.addPoint': 'Add point',
   'sketch.edit.cancelAddPoint': 'Cancel add point',
   'sketch.edit.deletePoint': 'Delete point',
@@ -93,22 +87,18 @@ export const sketchEn = {
   'sketch.edit.extend': 'Extend to target',
   'sketch.edit.cancelExtend': 'Cancel extend',
   'sketch.edit.extendDisabled': 'Extend — open profiles only',
-
   'sketch.constraint.add': 'Add constraint',
   'sketch.constraint.cancel': 'Cancel constraint',
-
   'sketch.align.left': 'Align left',
   'sketch.align.centerHorizontal': 'Align center horizontally',
   'sketch.align.right': 'Align right',
   'sketch.align.top': 'Align top',
   'sketch.align.centerVertical': 'Align center vertically',
   'sketch.align.bottom': 'Align bottom',
-
   'sketch.distribute.horizontalGaps': 'Distribute horizontally (equal gaps)',
   'sketch.distribute.horizontalCenters': 'Distribute horizontally (equal centers)',
   'sketch.distribute.verticalGaps': 'Distribute vertically (equal gaps)',
   'sketch.distribute.verticalCenters': 'Distribute vertically (equal centers)',
-
   'sketch.backdrop.move': 'Move backdrop',
   'sketch.backdrop.cancelMove': 'Cancel move backdrop',
   'sketch.backdrop.delete': 'Delete backdrop',

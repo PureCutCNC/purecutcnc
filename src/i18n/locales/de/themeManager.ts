@@ -57,7 +57,6 @@ export const themeManagerDe: Record<keyof typeof themeManagerEn, string> = {
   'themeManager.systemPrefersDark': 'Dieses Gerät bevorzugt derzeit Dunkel.',
   'themeManager.systemPrefersLight': 'Dieses Gerät bevorzugt derzeit Hell.',
   'themeManager.done': 'Fertig',
-
   'themeEditor.title': 'Farbschema bearbeiten',
   'themeEditor.dialogAria': 'Farbschema {name} bearbeiten',
   'themeEditor.previewingLive': 'Ihre Änderungen werden live in der Vorschau angezeigt.',
@@ -85,7 +84,6 @@ export const themeManagerDe: Record<keyof typeof themeManagerEn, string> = {
   'themeEditor.baseValueTitle': 'Basiswert: {value}',
   'themeEditor.resetFieldAria': '{label} auf Basiswert zurücksetzen',
   'themeEditor.resetFieldTitle': 'Auf Basis zurücksetzen ({value})',
-
   'themePreview.panelTitle': 'Bereich & Text',
   'themePreview.panelText': 'Primärtext auf einer Bereichsfläche.',
   'themePreview.panelTextDim': 'Gedämpfter Hinweistext für Tipps.',

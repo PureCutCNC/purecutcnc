@@ -52,7 +52,6 @@ export const themeManagerZhCN: Record<keyof typeof themeManagerEn, string> = {
   'themeManager.systemPrefersDark': '此设备当前偏好深色模式。',
   'themeManager.systemPrefersLight': '此设备当前偏好浅色模式。',
   'themeManager.done': '完成',
-
   'themeEditor.title': '编辑主题',
   'themeEditor.dialogAria': '编辑主题 {name}',
   'themeEditor.previewingLive': '正在实时预览你的编辑。',
@@ -80,7 +79,6 @@ export const themeManagerZhCN: Record<keyof typeof themeManagerEn, string> = {
   'themeEditor.baseValueTitle': '基础值：{value}',
   'themeEditor.resetFieldAria': '将 {label} 重置为基础值',
   'themeEditor.resetFieldTitle': '重置为基础值（{value}）',
-
   'themePreview.panelTitle': '面板与文本',
   'themePreview.panelText': '面板表面上的主要文本。',
   'themePreview.panelTextDim': '用于提示的弱化辅助文本。',

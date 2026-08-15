@@ -44,7 +44,6 @@ export const languageManagerZhCN: Record<keyof typeof languageManagerEn, string>
   'langManager.importPlaceholderIssues.one': '已导入“{name}”，存在 {count} 处占位符不匹配 — 请打开编辑器检查。',
   'langManager.importPlaceholderIssues.other': '已导入“{name}”，存在 {count} 处占位符不匹配 — 请打开编辑器检查。',
   'langManager.deleted': '已删除“{name}”。',
-
   'langEditor.title': '编辑语言 — {name}',
   'langEditor.nameLabel': '语言名称',
   'langEditor.tagLabel': 'BCP-47 语言标签',
