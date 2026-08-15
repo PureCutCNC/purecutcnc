@@ -152,6 +152,38 @@ console.log('Testing agreement with the brute-force oracle on pseudo-random geom
   }
 }
 
+// ── 2b. Grid boundaries and long sweeps keep the exact candidate domain ─────
+
+console.log('Testing grid-boundary and long-diagonal candidate coverage...')
+{
+  const cases = [
+    {
+      name: 'vertical sweep on a cell boundary',
+      segments: [[0, -8 * RADIUS, 0, 8 * RADIUS]] as Array<[number, number, number, number]>,
+      query: [1.5 * RADIUS, 0, 1, 0] as const,
+    },
+    {
+      name: 'long diagonal crossing many cells',
+      segments: [[-8 * RADIUS, -8 * RADIUS, 8 * RADIUS, 8 * RADIUS]] as Array<[number, number, number, number]>,
+      query: [0.8 * RADIUS, -0.2 * RADIUS, 0.6, -0.8] as const,
+    },
+    {
+      name: 'near-endpoint sweep across a cell boundary',
+      segments: [[-7 * RADIUS, 0.75 * RADIUS, 0.25 * RADIUS, 0.75 * RADIUS]] as Array<[number, number, number, number]>,
+      query: [1.1 * RADIUS, 0, 1, 0] as const,
+    },
+  ]
+  for (const fixture of cases) {
+    const [cx, cy, dirX, dirY] = fixture.query
+    const measured = indexOf(RADIUS, fixture.segments).engagementAt(cx, cy, dirX, dirY)
+    const expected = oracleEngagement(cx, cy, dirX, dirY, RADIUS, fixture.segments)
+    assert(
+      Math.abs(measured - expected) <= ORACLE_TOLERANCE,
+      `${fixture.name}: estimator ${measured.toFixed(4)} vs oracle ${expected.toFixed(4)}`,
+    )
+  }
+}
+
 // ── 3. Domain invariants the oracle also has to satisfy ─────────────────────
 
 console.log('Testing the domain invariants (virgin material, own trail, out of range)...')
