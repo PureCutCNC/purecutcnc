@@ -899,3 +899,65 @@ bound you achieve); plus an arc-run assertion against the table above.
 today), depth invariance (no new dependence), byte-identical `slots_only` output.
 
 **Manager review record:** pending.
+
+### S9 review — accepted, but it was not the dominant cause
+
+Rule 1 chosen (refuse a merge that lowers a fragment by more than one rung).
+Invariants hold: 0 raised versus `slots_only`, no new depth dependence, run count
++20%/+9.5% (bound +25%), longest run 72 (floor 50). Merged as `78c8b34`.
+
+Effect was small — over-slowed path, before → after S9:
+
+| Fixture | Before | After |
+| --- | --- | --- |
+| pocket-feed-reduction | 10.6″ | 10.0″ |
+| pocket-feed-reduction-2 | 14.7″ | 13.1″ |
+| pocket-feed-reduction-3 | 8.1″ | 7.3″ |
+| pocket-feed-reduction-parallel | 6.1″ | 6.1″ |
+| pocket-feed-reduction-parallel-2 | 6.9″ | 6.8″ |
+
+### What has now been ruled out, with evidence
+
+**1. The metric is sound.** Concern: the manager's probe samples one midpoint per
+move while production classifies per chunk (`toolDiameter × 0.5`, three interior
+points, max per chunk), so a long move with varying engagement could be misjudged.
+Re-measured at production's own granularity: `10.0″ → 8.9″` on test1 and
+`6.8″ → 7.0″` on test7. The gap is minor; **the over-slowing is real**, about 20%
+of path on offset and 12% on parallel.
+
+**2. The fragment merge is not the dominant cause.** S9 targeted it directly and
+recovered ~0.6″ of 10.6″.
+
+**3. The per-band cache's order divergence is not the cause.** The S9 worker's
+RISKS block attributed the residual to the cache classifying against a canonical
+traversal whose engagement differs from emission order. Production's own
+`engagementTelemetry` disproves it — production and emission-order truth agree:
+
+| Fixture | production `distanceAboveNominal` | emission-order truth |
+| --- | --- | --- |
+| test1 | 30.8″ of 44.1″ | 31.4″ of 44.1″ |
+| test7 | 23.3″ of 59.5″ | 27.9″ of 59.5″ |
+
+Production is not seeing *more* engagement than reality; on parallel it sees
+slightly less. So it knows the engagement is low at those moves and emits a low
+feed anyway. The cause is downstream of the estimate.
+
+**4. There is no under-slowing worth worrying about.** Emitted above entitlement:
+0.5″ (1%, 20 moves) on test1, **0.0″** on test7. The conservative bias holds, so
+none of this is a safety concern — it is purely cycle time.
+
+### Where to look next — do not guess again
+
+Three plausible causes have now been tested and eliminated. The remaining
+candidates are all in the chunk→fragment→scale assignment inside
+`applyEngagementFeedToLevel`, not in the estimator and not in the merge:
+
+- the hold/hysteresis path that survived S8 and S9,
+- the legacy-slot clamp spans (`legacySlotSpans`) over-covering,
+- the chunk→fragment walk assigning a fragment's scale to chunks it does not own.
+
+**The next slice should instrument that assignment before changing it** — emit,
+per chunk, the measured engagement, the entitled scale, the fragment it was
+assigned to and that fragment's scale. The three marginal slices in a row (S6,
+S8, S9) all came from acting on a plausible mechanism rather than an observed
+one. The instrumentation is cheap and the answer is currently unknown.
