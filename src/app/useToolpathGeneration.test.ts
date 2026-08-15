@@ -19,10 +19,11 @@
  * Run with: npx tsx src/app/useToolpathGeneration.test.ts
  */
 
-import type { ToolpathResult } from '../engine/toolpaths'
-import type { FeatureInstance, Operation, Project, SketchFeature } from '../types/project'
-import { newProject, rectProfile } from '../types/project'
+import { operationFootprint, type ToolpathResult } from '../engine/toolpaths'
+import type { FeatureInstance, Operation, Project, SketchFeature, Tool } from '../types/project'
+import { defaultTool, IDENTITY_MATRIX, newProject, rectProfile } from '../types/project'
 import type { LegacyFeatureRow } from '../store/helpers/projectFormat'
+import { createDefinitionForFeatureWithId, createFeatureInstance } from '../store/helpers/featureDefinitions'
 import { projectWithFeatures } from '../test/projectFixtures'
 import {
   isCacheHit,
@@ -123,6 +124,72 @@ function patchFeatureRow(project: Project, id: string, patch: Partial<FeatureIns
   }
 }
 
+/** Attach one real tool so `operationFootprint` can resolve a toolRef. */
+function withTool(project: Project, tool: Tool = defaultTool('mm')): Project {
+  return { ...project, tools: [tool] }
+}
+
+/** A `draftFeature` rect at an explicit world position. */
+function rectDraft(
+  id: string,
+  x: number,
+  y: number,
+  w = 20,
+  h = 10,
+  overrides: Partial<SketchFeature> = {},
+): SketchFeature {
+  return draftFeature(id, {
+    ...overrides,
+    sketch: {
+      profile: rectProfile(x, y, w, h),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+  })
+}
+
+/**
+ * Append a new feature the way the store does: a new definition plus a new
+ * instance row, everything else by reference. (Rebuilding through
+ * `projectWithFeatures` would also rebuild the tools and operations arrays
+ * and invalidate for the wrong reason.)
+ */
+function addFeatureDraft(project: Project, draft: SketchFeature): Project {
+  const definitionId = draft.id
+  const { definition } = createDefinitionForFeatureWithId(draft, definitionId)
+  const instance = createFeatureInstance(draft, definitionId, IDENTITY_MATRIX)
+  return {
+    ...project,
+    featureDefinitions: { ...project.featureDefinitions, [definitionId]: definition },
+    features: [...project.features, instance],
+  }
+}
+
+/**
+ * S3b fixture: the operation targets f1 (the 20×10 rect at the origin) with a
+ * 6 mm tool. Its footprint is the target union grown by
+ * 4·toolDiameter + stepover = 24.4, i.e. roughly (-24.4…44.4)². f2 at (40, 0)
+ * lies inside it; f3 at (500, 0) is far outside it.
+ */
+function makeFootprintProject(): Project {
+  const operation = makeOperation({ target: { source: 'features', featureIds: ['f1'] }, toolRef: 't1' })
+  return withTool(
+    projectWithFeatures(
+      { ...newProject('toolpath-generation-test', 'mm'), operations: [operation] },
+      [draftFeature('f1'), rectDraft('f2', 40, 0), rectDraft('f3', 500, 0)],
+    ),
+  )
+}
+
+/** The operation object as normalized inside a fixture project. */
+function footprintOperation(project: Project): Operation {
+  const operation = project.operations.find((o) => o.id === 'op-1')
+  assert(operation !== undefined, 'op-1 should exist')
+  return operation
+}
+
 function makeResult(operationId: string): ToolpathResult {
   return {
     operationId,
@@ -138,6 +205,7 @@ function makeEntry(project: Project, operation: Operation, result = makeResult(o
     operation,
     stock: project.stock,
     project,
+    footprint: operationFootprint(project, operation),
     tools: project.tools,
     tabs: project.tabs,
     clamps: project.clamps,
@@ -336,17 +404,129 @@ function testIsCacheHitFeatureDiff() {
   console.log('isCacheHit feature-input diff: PASSED')
 }
 
+function testIsCacheHitFootprint() {
+  console.log('Testing isCacheHit footprint narrowing (S3b)...')
+
+  const project = makeFootprintProject()
+  const operation = footprintOperation(project)
+  const entry = makeEntry(project, operation)
+  assert(entry.footprint.bounds !== null, 'the fixture footprint must be known')
+
+  // 1. The headline case: a feature edited far outside the footprint must not
+  // invalidate the operation — the symptom issue #518 was filed for.
+  assert(
+    isCacheHit(entry, operation, patchFeatureRow(project, 'f3', { z_top: 9 })),
+    'a feature edited far outside the footprint must keep the cache hit',
+  )
+
+  // 2. A feature edited so its bbox overlaps the footprint must invalidate.
+  assert(
+    !isCacheHit(entry, operation, patchFeatureRow(project, 'f2', { z_top: 9 })),
+    'a feature edited inside the footprint must miss',
+  )
+
+  // 3. A direct target edited must invalidate.
+  assert(
+    !isCacheHit(entry, operation, patchFeatureRow(project, 'f1', { z_top: 9 })),
+    'a direct target edit must miss',
+  )
+
+  // 4. A brand-new feature added far away must not invalidate; one added
+  // inside the footprint must.
+  assert(
+    isCacheHit(entry, operation, addFeatureDraft(project, rectDraft('f4', 500, 100))),
+    'adding a feature far away must keep the cache hit',
+  )
+  assert(
+    !isCacheHit(entry, operation, addFeatureDraft(project, rectDraft('f4', 40, 30))),
+    'adding a feature inside the footprint must miss',
+  )
+
+  // 5. An unrelated feature moved into the footprint must invalidate.
+  const f3Row = project.features.find((feature) => feature.id === 'f3')
+  assert(f3Row !== undefined, 'f3 row should exist')
+  const movedIn = patchFeatureRow(project, 'f3', { transform: { ...f3Row.transform, e: -460 } })
+  assert(
+    !isCacheHit(entry, operation, movedIn),
+    'moving an unrelated feature into the footprint must miss',
+  )
+
+  console.log('isCacheHit footprint narrowing: PASSED')
+}
+
+function testIsCacheHitStockTargeted() {
+  console.log('Testing isCacheHit footprint for stock-targeted operations...')
+
+  // A stock-targeted surface operation reads the whole model. The operation
+  // is attached after the authoritative feature build because project
+  // normalization rewrites a target it considers invalid onto the first solid
+  // feature, and a stock target only survives normalization as the
+  // empty-feature fallback — which is not this fixture.
+  const stockOp = makeOperation({
+    kind: 'rough_surface',
+    target: { source: 'stock' },
+    toolRef: 't1',
+  })
+  const base = withTool(
+    projectWithFeatures(
+      { ...newProject('toolpath-generation-test', 'mm'), operations: [] },
+      [draftFeature('f1'), rectDraft('c1', 40, 0, 20, 10, { operation: 'construction' })],
+    ),
+  )
+  const project = { ...base, operations: [stockOp] }
+  const operation = project.operations[0]
+  assert(operation !== undefined, 'stock op should exist')
+  assert(operation.target.source === 'stock', 'fixture must carry a stock target')
+  const entry = makeEntry(project, operation)
+  assert(entry.footprint.readsWholeModel, 'a stock-targeted footprint must read the whole model')
+
+  // Any solid-feature change must invalidate a stock-targeted operation.
+  assert(
+    !isCacheHit(entry, operation, patchFeatureRow(project, 'f1', { z_top: 9 })),
+    'a solid-feature change must miss for a stock-targeted operation',
+  )
+
+  // A construction-only change must not.
+  assert(
+    isCacheHit(entry, operation, patchFeatureRow(project, 'c1', { z_top: 8 })),
+    'a construction-only change must keep the cache hit for a stock-targeted operation',
+  )
+
+  console.log('isCacheHit footprint for stock-targeted operations: PASSED')
+}
+
+function testIsCacheHitUnknownFootprint() {
+  console.log('Testing isCacheHit invalidates when the footprint is unknown (missing tool)...')
+
+  // Same positioned features, but no tools at all: `operationFootprint`
+  // cannot resolve the toolRef and must report unknown, which invalidates on
+  // every change — even a far-away one.
+  const operation = makeOperation({ target: { source: 'features', featureIds: ['f1'] }, toolRef: 't1' })
+  const project = projectWithFeatures(
+    { ...newProject('toolpath-generation-test', 'mm'), operations: [operation] },
+    [draftFeature('f1'), rectDraft('f2', 40, 0), rectDraft('f3', 500, 0)],
+  )
+  const normalizedOperation = footprintOperation(project)
+  const entry = makeEntry(project, normalizedOperation)
+  assert(entry.footprint.bounds === null, 'a missing tool must yield an unknown footprint')
+
+  assert(
+    !isCacheHit(entry, normalizedOperation, patchFeatureRow(project, 'f3', { z_top: 9 })),
+    'any change must miss when the footprint is unknown, even a far-away one',
+  )
+
+  console.log('isCacheHit unknown-footprint invalidation: PASSED')
+}
+
 function testPipelineRegeneration() {
   console.log('Testing pipeline regeneration: display-only change does not regenerate, transform change does...')
 
-  const operation = makeOperation()
-  const project = makeFeatureProject(operation)
+  const project = makeFootprintProject()
   // The pipeline looks operations up from `project.operations`; prime the
   // cache with that same object, exactly as generation does. (Project
   // normalization rebuilds operation objects, so the pre-normalization draft
   // above is a different object and must not be the one cached.)
-  const normalizedOperation = project.operations.find((o) => o.id === operation.id)
-  assert(normalizedOperation !== undefined, 'normalized operation should exist')
+  const normalizedOperation = footprintOperation(project)
 
   const fake = makeFakeRaf()
   let generatedCalls = 0
@@ -356,7 +536,8 @@ function testPipelineRegeneration() {
     return makeResult(op.id)
   }
   const cache = new Map<string, ToolpathCacheEntry>()
-  cache.set(normalizedOperation.id, makeEntry(project, normalizedOperation))
+  const primedResult = makeResult(normalizedOperation.id)
+  cache.set(normalizedOperation.id, makeEntry(project, normalizedOperation, primedResult))
   let currentMap = new Map<string, ToolpathResult>()
   const setToolpathMap = (
     value: Map<string, ToolpathResult> | ((prev: Map<string, ToolpathResult>) => Map<string, ToolpathResult>),
@@ -367,20 +548,23 @@ function testPipelineRegeneration() {
     fake.raf(() => fake.raf(fn))
   }
 
+  const runPipeline = (nextProject: Project): void => {
+    startToolpathGenerationPipeline({
+      neededOperationIds: [normalizedOperation.id],
+      project: nextProject,
+      toolpathCache: cache,
+      generateToolpathForOperation,
+      setToolpathMap,
+      requestAnimationFrameFn: fake.raf,
+      scheduleAfterPaintFn: scheduleAfterPaint,
+    })
+    fake.flush()
+    fake.flush()
+  }
+
   // A visibility-toggle-shaped change must not regenerate: the cache entry
   // hits, so the generator spy is never called and the primed result stays.
-  const visibilityChanged = patchFeatureRow(project, 'f1', { visible: false })
-  startToolpathGenerationPipeline({
-    neededOperationIds: [normalizedOperation.id],
-    project: visibilityChanged,
-    toolpathCache: cache,
-    generateToolpathForOperation,
-    setToolpathMap,
-    requestAnimationFrameFn: fake.raf,
-    scheduleAfterPaintFn: scheduleAfterPaint,
-  })
-  fake.flush()
-  fake.flush()
+  runPipeline(patchFeatureRow(project, 'f1', { visible: false }))
   // Snapshot the counter into a fresh const: asserting on the mutable
   // variable directly would literal-narrow it and break the `=== 1` assert
   // below (`asserts condition` narrowing).
@@ -388,24 +572,28 @@ function testPipelineRegeneration() {
   assert(callsAfterVisibility === 0, 'visibility toggle must not regenerate the toolpath')
   assert(currentMap.has(normalizedOperation.id), 'cached result must stay in the map')
 
-  // A transform-shaped change must regenerate exactly once.
+  // A transform-shaped change on the direct target must regenerate exactly once.
   const row = project.features.find((feature) => feature.id === 'f1')
   assert(row !== undefined, 'f1 row should exist')
-  const transformChanged = patchFeatureRow(project, 'f1', { transform: { ...row.transform, e: 1 } })
-  startToolpathGenerationPipeline({
-    neededOperationIds: [normalizedOperation.id],
-    project: transformChanged,
-    toolpathCache: cache,
-    generateToolpathForOperation,
-    setToolpathMap,
-    requestAnimationFrameFn: fake.raf,
-    scheduleAfterPaintFn: scheduleAfterPaint,
-  })
-  fake.flush()
-  fake.flush()
-  assert(generatedCalls === 1, 'transform change must regenerate the toolpath once')
+  runPipeline(patchFeatureRow(project, 'f1', { transform: { ...row.transform, e: 1 } }))
+  const callsAfterTransform = generatedCalls
+  assert(callsAfterTransform === 1, 'transform change must regenerate the toolpath once')
 
-  console.log('pipeline regeneration on display-only vs transform changes: PASSED')
+  // S3b headline: a feature edited far outside the operation's footprint must
+  // not regenerate either — the spy stays quiet and the previous result stays
+  // in the map (which is exactly what stops the visible blanking during
+  // editing).
+  runPipeline(patchFeatureRow(project, 'f3', { z_top: 9 }))
+  const callsAfterFarAway = generatedCalls
+  assert(callsAfterFarAway === 1, 'a far-away feature edit must not regenerate the toolpath')
+  assert(currentMap.get(normalizedOperation.id) === primedResult, 'previous result must stay in the map after a far-away edit')
+
+  // An edit inside the footprint must regenerate exactly once.
+  runPipeline(patchFeatureRow(project, 'f2', { z_top: 9 }))
+  const callsAfterOverlapping = generatedCalls
+  assert(callsAfterOverlapping === 2, 'an overlapping feature edit must regenerate the toolpath once')
+
+  console.log('pipeline regeneration on display-only vs transform vs footprint-relevant changes: PASSED')
 }
 
 function testOnePerFrameScheduler() {
@@ -478,6 +666,9 @@ try {
   testOperationComputationEquals()
   testIsCacheHit()
   testIsCacheHitFeatureDiff()
+  testIsCacheHitFootprint()
+  testIsCacheHitStockTargeted()
+  testIsCacheHitUnknownFootprint()
   testPipelineRegeneration()
   testOnePerFrameScheduler()
   console.log('\nAll useToolpathGeneration tests PASSED.')

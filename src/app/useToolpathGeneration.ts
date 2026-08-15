@@ -31,7 +31,10 @@ import {
   generateSurfaceCleanToolpath,
   generateVCarveMedialToolpath,
   generateVCarveToolpath,
+  operationAffectedByChange,
+  operationFootprint,
   optimizeLinearMoves,
+  type OperationFootprint,
   type ToolpathResult,
   type ToolpathGenerationTrace,
 } from '../engine/toolpaths'
@@ -43,6 +46,13 @@ export interface ToolpathCacheEntry {
   stock: Stock
   /** The project snapshot this result was generated from (issue #518). */
   project: Project
+  /**
+   * The world-XY region a feature change must reach to invalidate this entry
+   * (issue #518, S3b). Computed from the same `project` snapshot at the point
+   * the entry is written, so it can never disagree with the inputs the result
+   * was generated from.
+   */
+  footprint: OperationFootprint
   tools: Tool[]
   tabs: Tab[]
   clamps: Clamp[]
@@ -133,12 +143,18 @@ export function isCacheHit(entry: ToolpathCacheEntry, operation: Operation, proj
   // "changed since last render" set: operations are generated at different
   // times, so one entry may be several edits older than another and a shared
   // set would be wrong for the stale one. Display-only instance changes
-  // (visible, locked, folderId) produce an empty diff and stop invalidating;
-  // every change that can affect generated geometry still invalidates today —
-  // narrowing to *relevant* geometry is S3's job, not this slice's.
+  // (visible, locked, folderId) produce an empty diff and stop invalidating.
+  // Whether a geometry change invalidates is decided by the footprint
+  // consult below.
   const diff = diffToolpathInputs(entry.project, project)
   if (diff.invalidatesEveryOperation) return false
-  return diff.changedFeatureIds.size === 0
+  if (diff.changedFeatureIds.size === 0) return true
+  // Spatial narrowing (issue #518, S3b): a changed feature invalidates this
+  // entry only when the change reaches the footprint recorded on it. The
+  // footprint was computed from `entry.project` — the same snapshot the
+  // result was generated from — so the two can never disagree, and an
+  // unknown footprint invalidates by construction (`bounds === null`).
+  return !operationAffectedByChange(entry.footprint, entry.project, project, diff.changedFeatureIds)
 }
 
 // Double-rAF: the first rAF fires before the current paint, the second
@@ -286,6 +302,7 @@ export function useToolpathGeneration(project: Project, selectedOperation: Opera
           operation,
           stock: project.stock,
           project,
+          footprint: operationFootprint(project, operation),
           tools: project.tools,
           tabs: project.tabs,
           clamps: project.clamps,
