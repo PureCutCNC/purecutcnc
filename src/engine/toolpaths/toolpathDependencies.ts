@@ -28,10 +28,13 @@
  * Every comparison is identity-first: deep compares run only for values whose
  * identity already differs, so an unchanged project stays O(n) with no
  * serialization. Deep comparison reuses `projectsEqual`
- * (`src/store/helpers/normalize.ts`) rather than a second deep-equal.
+ * (`src/store/helpers/normalize.ts`) rather than a second deep-equal — except
+ * `modelAssets`, whose megabyte base64 payloads must never be serialized, so
+ * it is compared by key set plus per-value reference identity instead
+ * (`modelAssetsEquivalent` below).
  */
 
-import type { FeatureInstance, Project } from '../../types/project'
+import type { FeatureInstance, PersistedImportedMesh, Project } from '../../types/project'
 import { projectsEqual } from '../../store/helpers/normalize'
 
 // Compare only the fields toolpath generation reads through the resolver
@@ -74,6 +77,34 @@ export interface ToolpathInputDiff {
 }
 
 /**
+ * Whether two model-asset records are equivalent for toolpath purposes.
+ *
+ * Compares the **key set**, then each value by **reference identity** — never
+ * the payload. `PersistedImportedMesh.positions`/`indices` are base64 strings,
+ * megabytes for a real import, and the `projectsEqual` deep compare would
+ * serialize them on every diff (identity churns here even without a mesh
+ * change: `addFeature` spreads `modelAssets` unconditionally).
+ *
+ * Identity is sufficient and conservative: persisted mesh payloads are
+ * immutable blobs, so a genuinely changed asset gets a new reference, and
+ * identity-differs → invalidate is the safe direction. An in-place mutation
+ * of a shared asset would defeat it, which the store's immutability
+ * convention forbids.
+ */
+function modelAssetsEquivalent(
+  a: Record<string, PersistedImportedMesh>,
+  b: Record<string, PersistedImportedMesh>,
+): boolean {
+  if (a === b) return true
+  const aKeys = Object.keys(a)
+  if (aKeys.length !== Object.keys(b).length) return false
+  for (const key of aKeys) {
+    if (!(key in b) || a[key] !== b[key]) return false
+  }
+  return true
+}
+
+/**
  * Diff two project snapshots for toolpath-relevant input changes.
  *
  * Pure: never mutates either argument, and identical snapshots
@@ -85,10 +116,14 @@ export interface ToolpathInputDiff {
  *
  * - `project.dimensions` — named dimensions feed `resolveDimensionRef`, which
  *   resolves every feature's `z_top`/`z_bottom` in `resolveFeatureZSpan`
- *   (`src/engine/toolpaths/geometry.ts`).
+ *   (`src/engine/toolpaths/geometry.ts`). Small record whose identity does
+ *   not churn on ordinary mutations, so it stays on `projectsEqual`'s deep
+ *   compare.
  * - `project.meta.units` — feeds `normalizeToolForProject`
  *   (`src/engine/toolpaths/geometry.ts`).
- * - `project.modelAssets` — STL payloads behind imported-model features.
+ * - `project.modelAssets` — STL payloads behind imported-model features,
+ *   compared by key set plus per-value reference identity, never by content
+ *   (see `modelAssetsEquivalent`).
  * - feature **order** — per-band topology is order-dependent
  *   (`resolver.ts`, `regions.ts`), so a pure reorder is a real change.
  *
@@ -151,7 +186,7 @@ export function diffToolpathInputs(previous: Project, next: Project): ToolpathIn
     orderChanged
     || previous.meta.units !== next.meta.units
     || (previous.dimensions !== next.dimensions && !projectsEqual(previous.dimensions, next.dimensions))
-    || (previous.modelAssets !== next.modelAssets && !projectsEqual(previous.modelAssets, next.modelAssets))
+    || !modelAssetsEquivalent(previous.modelAssets, next.modelAssets)
 
   return { changedFeatureIds, invalidatesEveryOperation }
 }

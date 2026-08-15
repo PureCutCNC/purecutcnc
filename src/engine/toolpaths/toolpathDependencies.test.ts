@@ -18,19 +18,22 @@
 
 /**
  * Tests for the pure change-detection module behind the per-operation
- * toolpath cache (issue #518, slice S1).
+ * toolpath cache (issue #518, slices S1 + S1b).
  *
  * `diffToolpathInputs` must report exactly the feature ids whose
  * toolpath-relevant input changed, and must raise `invalidatesEveryOperation`
  * for every input that no per-feature narrowing can cover. Display-only
  * instance fields (`name`, `visible`, `locked`, `folderId`) must never
- * invalidate anything.
+ * invalidate anything. `modelAssets` is compared by key set plus reference
+ * identity — a deep-equal but distinct asset is a change (conservative), and
+ * the megabyte base64 payloads are never read.
  */
 
 import { rectProfile } from '../../types/project'
 import type {
   FeatureInstance,
   LocalConstraint,
+  PersistedImportedMesh,
   Project,
   SketchFeature,
 } from '../../types/project'
@@ -81,6 +84,18 @@ const distanceConstraint: LocalConstraint = {
   type: 'fixed_distance',
   segment_ids: [],
   value: 10,
+}
+
+function testMesh(overrides: Partial<PersistedImportedMesh> = {}): PersistedImportedMesh {
+  return {
+    storage: 'mesh-v1',
+    vertexCount: 3,
+    triangleCount: 1,
+    positions: 'AAAA',
+    indices: 'AQID',
+    bounds: { minX: 0, maxX: 1, minY: 0, maxY: 1, minZ: 0, maxZ: 1 },
+    ...overrides,
+  }
 }
 
 function baseProject(): Project {
@@ -321,31 +336,16 @@ function expectDisplayOnly(project: Project, next: Project, label: string): void
 
 {
   console.log('12. Model asset change invalidates every operation...')
-  const mesh = {
-    storage: 'mesh-v1' as const,
-    vertexCount: 3,
-    triangleCount: 1,
-    positions: 'AAAA',
-    indices: 'AQID',
-    bounds: { minX: 0, maxX: 1, minY: 0, maxY: 1, minZ: 0, maxZ: 1 },
-  }
   const project: Project = {
     ...baseProject(),
-    modelAssets: { a1: { ...mesh } },
+    modelAssets: { a1: testMesh() },
   }
   const changed: Project = {
     ...project,
-    modelAssets: { a1: { ...mesh, positions: 'BBBB' } },
+    modelAssets: { a1: testMesh({ positions: 'BBBB' }) },
   }
   const diff = diffToolpathInputs(project, changed)
   assert(diff.invalidatesEveryOperation, 'model asset change must invalidate every operation')
-
-  const rebuilt: Project = {
-    ...project,
-    modelAssets: { a1: { ...mesh } },
-  }
-  const rebuiltDiff = diffToolpathInputs(project, rebuilt)
-  assert(!rebuiltDiff.invalidatesEveryOperation, 'deep-equal model assets replacement must not invalidate')
 }
 
 {
@@ -396,6 +396,106 @@ function expectDisplayOnly(project: Project, next: Project, label: string): void
     },
   }
   assert(projectsEqual(project, timestampNormalized), 'rebuild should be deep-equal modulo timestamps')
+}
+
+{
+  console.log('15. Same asset references in a fresh record (addFeature spread) invalidate nothing...')
+  const asset = testMesh()
+  const project: Project = {
+    ...baseProject(),
+    modelAssets: { a1: asset },
+  }
+  // `addFeature` does `{ ...s.project.modelAssets }` unconditionally: the
+  // record identity churns but every asset reference is preserved.
+  const spread: Project = {
+    ...project,
+    modelAssets: { ...project.modelAssets },
+  }
+  assert(spread.modelAssets !== project.modelAssets, 'spread must produce a fresh record')
+  assert(spread.modelAssets.a1 === project.modelAssets.a1, 'spread must keep value references')
+  const diff = diffToolpathInputs(project, spread)
+  assert(diff.changedFeatureIds.size === 0, 'record spread must change no ids')
+  assert(!diff.invalidatesEveryOperation, 'addFeature-shaped spread must not invalidate everything')
+}
+
+{
+  console.log('16. Added and removed model asset keys invalidate every operation...')
+  const project: Project = {
+    ...baseProject(),
+    modelAssets: { a1: testMesh() },
+  }
+  const added: Project = {
+    ...project,
+    modelAssets: { ...project.modelAssets, a2: testMesh() },
+  }
+  const addedDiff = diffToolpathInputs(project, added)
+  assert(addedDiff.invalidatesEveryOperation, 'added asset key must invalidate everything')
+
+  const removed: Project = {
+    ...project,
+    modelAssets: {},
+  }
+  const removedDiff = diffToolpathInputs(project, removed)
+  assert(removedDiff.invalidatesEveryOperation, 'removed asset key must invalidate everything')
+}
+
+{
+  console.log('17. Deep-equal but distinct asset object still invalidates (conservative)...')
+  const project: Project = {
+    ...baseProject(),
+    modelAssets: { a1: testMesh() },
+  }
+  const rebuilt: Project = {
+    ...project,
+    modelAssets: { a1: testMesh() },
+  }
+  assert(rebuilt.modelAssets.a1 !== project.modelAssets.a1, 'replacement must be a distinct object')
+  assert(
+    projectsEqual(project.modelAssets.a1, rebuilt.modelAssets.a1),
+    'replacement must be deep-equal to the original',
+  )
+  // Deliberate behaviour change from S1's deep compare: identity is the only
+  // trustable signal without reading the payload, so identity-differs
+  // invalidates even when a content compare would say "equal".
+  const diff = diffToolpathInputs(project, rebuilt)
+  assert(diff.invalidatesEveryOperation, 'deep-equal but distinct asset must still invalidate')
+}
+
+{
+  console.log('18. Asset payload is never read...')
+  const payloadReads = { count: 0 }
+  const mesh = {} as PersistedImportedMesh
+  // `enumerable: true` matters: JSON.stringify only visits enumerable own
+  // properties, so without it a deep-serialization regression would read
+  // nothing and the counter below would stay 0 either way.
+  Object.defineProperty(mesh, 'positions', {
+    enumerable: true,
+    get: () => { payloadReads.count += 1; return 'AAAA' },
+  })
+  Object.defineProperty(mesh, 'indices', {
+    enumerable: true,
+    get: () => { payloadReads.count += 1; return 'AQID' },
+  })
+  mesh.storage = 'mesh-v1'
+  mesh.vertexCount = 3
+  mesh.triangleCount = 1
+  mesh.bounds = { minX: 0, maxX: 1, minY: 0, maxY: 1, minZ: 0, maxZ: 1 }
+
+  const project: Project = {
+    ...baseProject(),
+    modelAssets: { a1: mesh },
+  }
+  // Fresh record, same references — the diff must not touch `positions`/`indices`.
+  const spread: Project = {
+    ...project,
+    modelAssets: { ...project.modelAssets },
+  }
+  const diff = diffToolpathInputs(project, spread)
+  assert(!diff.invalidatesEveryOperation, 'same-reference spread must not invalidate')
+  // `Object.keys` does not trigger getters, so a count of 0 proves no deep
+  // serialization (JSON.stringify) happened. Timing assertions are not used
+  // here because they are flaky.
+  assert(payloadReads.count === 0, `payload getters were read ${payloadReads.count} times`)
 }
 
 console.log('toolpathDependencies.test.ts: all tests passed')
