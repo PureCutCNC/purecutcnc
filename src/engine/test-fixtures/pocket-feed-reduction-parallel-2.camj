@@ -1,0 +1,445 @@
+{
+  "version": "3.0",
+  "meta": {
+    "name": "pocket-feed-reduction7",
+    "created": "2026-08-15T01:39:20.995Z",
+    "modified": "2026-08-15T01:42:29.544Z",
+    "units": "inch",
+    "showFeatureInfo": true,
+    "showDimensions": true,
+    "copyMode": "reference",
+    "maxTravelZ": 2,
+    "operationClearanceZ": 0.2,
+    "clampClearanceXY": 0.08,
+    "clampClearanceZ": 0.2,
+    "machineDefinitions": [],
+    "selectedMachineId": null
+  },
+  "grid": {
+    "extent": 8,
+    "majorSpacing": 1,
+    "minorSpacing": 0.25,
+    "snapEnabled": true,
+    "snapIncrement": 0.125,
+    "visible": true
+  },
+  "stock": {
+    "profile": {
+      "start": {
+        "x": 0,
+        "y": 0
+      },
+      "segments": [
+        {
+          "type": "line",
+          "to": {
+            "x": 4,
+            "y": 0
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 4,
+            "y": 3
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 3
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 0
+          }
+        }
+      ],
+      "closed": true
+    },
+    "thickness": 0.75,
+    "material": "aluminum_6061",
+    "color": "#b9a83c",
+    "visible": true,
+    "origin": {
+      "x": 0,
+      "y": 0
+    }
+  },
+  "origin": {
+    "name": "Origin",
+    "x": 0,
+    "y": 3,
+    "z": 0.75,
+    "visible": true
+  },
+  "backdrop": null,
+  "dimensions": {},
+  "annotations": [],
+  "modelAssets": {},
+  "featureDefinitions": {
+    "f-0002": {
+      "id": "f-0002",
+      "kind": "rect",
+      "profile": {
+        "start": {
+          "x": 0.25,
+          "y": 0.25
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 3.75,
+              "y": 0.25
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 3.75,
+              "y": 2.625
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.25,
+              "y": 2.625
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.25,
+              "y": 0.25
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "add"
+    },
+    "f-0004": {
+      "id": "f-0004",
+      "kind": "rect",
+      "profile": {
+        "start": {
+          "x": 0.5,
+          "y": 0.5
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 3.5,
+              "y": 0.5
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 3.5,
+              "y": 2.375
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.5,
+              "y": 2.375
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.5,
+              "y": 0.5
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f-0006": {
+      "id": "f-0006",
+      "kind": "polygon",
+      "profile": {
+        "start": {
+          "x": 1.375,
+          "y": 1
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 2.25,
+              "y": 1.125
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 1.625,
+              "y": 1.25
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 1.375,
+              "y": 1.875
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 1.375,
+              "y": 1
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "add"
+    },
+    "f-0010": {
+      "id": "f-0010",
+      "kind": "composite",
+      "profile": {
+        "start": {
+          "x": 2.375,
+          "y": 1.625
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 2.625,
+              "y": 1.375
+            }
+          },
+          {
+            "type": "arc",
+            "to": {
+              "x": 3,
+              "y": 1.625
+            },
+            "center": {
+              "x": 2.75,
+              "y": 1.59375
+            },
+            "clockwise": false
+          },
+          {
+            "type": "arc",
+            "to": {
+              "x": 2.75,
+              "y": 1.875
+            },
+            "center": {
+              "x": 2.875,
+              "y": 1.75
+            },
+            "clockwise": true
+          },
+          {
+            "type": "arc",
+            "to": {
+              "x": 2.375,
+              "y": 1.625
+            },
+            "center": {
+              "x": 2.5625,
+              "y": 1.75
+            },
+            "clockwise": false
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "add"
+    }
+  },
+  "features": [
+    {
+      "id": "f0001",
+      "name": "Rect 1",
+      "definitionId": "f-0002",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0003",
+      "name": "Rect 2",
+      "definitionId": "f-0004",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0.7,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0005",
+      "name": "Rect 3",
+      "definitionId": "f-0006",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0009",
+      "name": "Composite 4",
+      "definitionId": "f-0010",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "featureFolders": [],
+  "featureTree": [
+    {
+      "type": "feature",
+      "featureId": "f0001"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0003"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0005"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0009"
+    }
+  ],
+  "global_constraints": [],
+  "tools": [
+    {
+      "id": "t0007",
+      "name": "1/4\" Endmill",
+      "units": "inch",
+      "type": "flat_endmill",
+      "diameter": 0.25,
+      "vBitAngle": null,
+      "flutes": 2,
+      "material": "carbide",
+      "defaultRpm": 18000,
+      "defaultFeed": 30,
+      "defaultPlungeFeed": 12,
+      "defaultStepdown": 0.125,
+      "defaultStepover": 0.32,
+      "maxCutDepth": 1,
+      "alreadyImported": false
+    }
+  ],
+  "operations": [
+    {
+      "id": "op0008",
+      "name": "Pocket Rough",
+      "description": "",
+      "kind": "pocket",
+      "pass": "rough",
+      "enabled": true,
+      "showToolpath": true,
+      "debugToolpath": false,
+      "target": {
+        "source": "features",
+        "featureIds": [
+          "f0003"
+        ]
+      },
+      "toolRef": "t0007",
+      "stepdown": 0.125,
+      "stepover": 0.32,
+      "feed": 30,
+      "plungeFeed": 12,
+      "rpm": 18000,
+      "pocketPattern": "parallel",
+      "pocketAngle": 0,
+      "pocketSlotFeedPercent": 60,
+      "pocketFeedReduction": "engagement",
+      "roundOutsideCorners": true,
+      "cornerRelief": "none",
+      "stockToLeaveRadial": 0,
+      "stockToLeaveAxial": 0,
+      "finishWalls": true,
+      "finishFloor": true,
+      "carveDepth": 0.03937007874015748,
+      "maxCarveDepth": 0.03937007874015748,
+      "cutDirection": "conventional",
+      "machiningOrder": "feature_first",
+      "waterlineAdaptiveRefinement": true,
+      "waterlineMicroStepover": 0.08,
+      "waterlineRefinementThreshold": 0,
+      "waterlineMaxRingsPerBand": 0,
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true
+    }
+  ],
+  "tabs": [],
+  "clamps": [],
+  "ai_history": []
+}

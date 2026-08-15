@@ -134,6 +134,8 @@ export const appShellEn = {
   'appShell.toolpath.plunges': 'Plunges',
   'appShell.toolpath.retractions': 'Retractions',
   'appShell.toolpath.directions': 'Directions',
+  'appShell.toolpath.feedColours': 'Feed colours',
+  'appShell.toolpath.feedLegend': 'Feed percentage',
 
   // ── ToolRail ──
   'appShell.toolRail.shapes': 'Shapes',

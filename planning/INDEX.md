@@ -31,6 +31,7 @@ architecture contracts.
 - [REGION_FEATURE_SEMANTICS.md](REGION_FEATURE_SEMANTICS.md) — regions as machining filters rather than material or standalone targets.
 - [TROCHOIDAL_EDGE_DESIGN.md](TROCHOIDAL_EDGE_DESIGN.md) — trochoidal Edge Route roughing: guide-domain fragmentation, the clearance budget, and the pipeline stages it must bypass.
 - [INTEGRATION_HANDOFF_TEMPLATE.md](INTEGRATION_HANDOFF_TEMPLATE.md) — optional execution-ledger template for explicitly delegated, multi-slice work.
+- [ISSUE_498_INTEGRATION_HANDOFF.md](ISSUE_498_INTEGRATION_HANDOFF.md) — engagement-estimator domain contract and active execution ledger for issue #498 (cutter engagement model) on `feat/issue-498-engagement`.
 - [ISSUE_468_INTEGRATION_HANDOFF.md](ISSUE_468_INTEGRATION_HANDOFF.md) — active execution ledger for issue #468 (bulk tab and clamp editing) on `feat/issue-468-bulk-tabs-clamps`.
 - [ISSUE_414_INTEGRATION_HANDOFF.md](ISSUE_414_INTEGRATION_HANDOFF.md) — active execution ledger for issue #414 (smooth tabs) on `feat/issue-414-smooth-tabs`.
 - [I18N_MULTI_LANGUAGE_HANDOFF.md](I18N_MULTI_LANGUAGE_HANDOFF.md) — active execution ledger for issue #314 (multi-language support) on `feat/issue-314-multi-language`.

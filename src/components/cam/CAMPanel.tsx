@@ -1777,21 +1777,34 @@ export function CAMPanel({
                   {selectedOperation.kind === 'pocket'
                     && (selectedOperation.pass === 'rough'
                       || (selectedOperation.pass === 'finish' && selectedOperation.finishFloor)) ? (
-                    <label
-                      className="properties-field"
-                      title={camT('cam.operation.slotFeedTooltip')}
-                    >
-                      <span>{camT('cam.operation.slotFeed')}</span>
-                      <DraftNumberInput
-                        value={selectedOperation.pocketSlotFeedPercent ?? 100}
-                        min={1}
-                        max={100}
-                        onCommit={(value) => updateOperation(selectedOperation.id, {
-                          pocketSlotFeedPercent: Math.min(100, Math.max(1, Math.round(value))),
-                        })}
-                      />
-                      <OperationParameterReference kind="slotFeed" />
-                    </label>
+                    <>
+                      <label
+                        className="properties-field"
+                        title={camT('cam.operation.slotFeedTooltip')}
+                      >
+                        <span>{camT('cam.operation.slotFeed')}</span>
+                        <DraftNumberInput
+                          value={selectedOperation.pocketSlotFeedPercent ?? 100}
+                          min={1}
+                          max={100}
+                          onCommit={(value) => updateOperation(selectedOperation.id, {
+                            pocketSlotFeedPercent: Math.min(100, Math.max(1, Math.round(value))),
+                          })}
+                        />
+                        <OperationParameterReference kind="slotFeed" />
+                      </label>
+                      <label className="properties-field">
+                        <span>{camT('cam.operation.engagementMode')}</span>
+                        <Select
+                          value={selectedOperation.pocketFeedReduction ?? 'slots_only'}
+                          options={[
+                            { value: 'slots_only', label: camT('cam.operation.engagementModeLegacy') },
+                            { value: 'engagement', label: camT('cam.operation.engagementModeEngagementFeed') },
+                          ]}
+                          onChange={(value) => updateOperation(selectedOperation.id, { pocketFeedReduction: value })}
+                        />
+                      </label>
+                    </>
                   ) : null}
                   <label className="properties-field">
                     <span>{camT('cam.operation.rpm')}</span>

@@ -17,6 +17,8 @@
 import type { ToolpathVisibility } from './toolpathVisibility'
 import { useI18n } from '../i18n/i18nContext'
 import type { MessageKey } from '../i18n/locales/en'
+import { useTheme } from '../theme/themeContext'
+import { feedColourScales, canvasFeedColour } from '../theme/palette'
 import { Icon } from './Icon'
 
 interface ToolpathVisibilityPanelProps {
@@ -25,6 +27,19 @@ interface ToolpathVisibilityPanelProps {
   className?: string
   expanded: boolean
   onExpandedChange: (expanded: boolean) => void
+  /**
+   * The feed-colour toggle's auto default for the selected operation (on when
+   * its pocketFeedReduction is 'engagement'). Used only while the
+   * visibility object carries no explicit `feedColours` value.
+   */
+  feedColoursDefault?: boolean
+  /**
+   * The selected operation's slot-feed percentage (1-99), or null when no
+   * ladder is in force. The legend prints the feed rungs derived from it, so
+   * it matches what the engine actually emits (issue #498 S5); null hides the
+   * legend because there is no ladder to print.
+   */
+  slotFeedPercent?: number | null
 }
 
 const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch: string }> = [
@@ -34,10 +49,13 @@ const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch
   { key: 'plunges', labelKey: 'appShell.toolpath.plunges', swatch: 'viewport-toolpath-vis__swatch--plunges' },
   { key: 'retractions', labelKey: 'appShell.toolpath.retractions', swatch: 'viewport-toolpath-vis__swatch--retractions' },
   { key: 'directions', labelKey: 'appShell.toolpath.directions', swatch: 'viewport-toolpath-vis__swatch--directions' },
+  // Feed colours share the coral cuts swatch — step 0 of the ramp IS toolpathCut.
+  { key: 'feedColours', labelKey: 'appShell.toolpath.feedColours', swatch: 'viewport-toolpath-vis__swatch--cuts' },
 ]
 
-export function ToolpathVisibilityPanel({ visibility, onChange, className, expanded, onExpandedChange }: ToolpathVisibilityPanelProps) {
+export function ToolpathVisibilityPanel({ visibility, onChange, className, expanded, onExpandedChange, feedColoursDefault, slotFeedPercent = null }: ToolpathVisibilityPanelProps) {
   const { t } = useI18n()
+  const { palette } = useTheme()
 
   return (
     <div className={`viewport-toolpath-vis${expanded ? ' viewport-toolpath-vis--expanded' : ''}${className ? ` ${className}` : ''}`}>
@@ -52,7 +70,11 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
       </button>
       {expanded ? (
         ITEMS.map(({ key, labelKey, swatch }) => {
-          const selected = visibility[key]
+          // The feed-colour toggle is tri-state at the data level: undefined
+          // defers to the per-selection default, so display that default.
+          const selected = key === 'feedColours'
+            ? visibility.feedColours ?? feedColoursDefault ?? false
+            : visibility[key]
           return (
             <button
               key={key}
@@ -61,11 +83,35 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
               aria-pressed={selected}
               onClick={() => onChange({ ...visibility, [key]: !selected })}
             >
-              <span className={`viewport-toolpath-vis__swatch ${swatch}`} />
+              <span
+                className={`viewport-toolpath-vis__swatch ${swatch}`}
+                style={key === 'feedColours'
+                  ? { background: `linear-gradient(90deg, ${palette.canvas.toolpathCut} 0%, ${palette.canvas.toolpathCutSlow} 100%)` }
+                  : undefined}
+              />
               {t(labelKey)}
             </button>
           )
         })
+      ) : null}
+      {expanded && slotFeedPercent !== null ? (
+        <div
+          className="viewport-toolpath-vis__legend"
+          aria-label={t('appShell.toolpath.feedLegend')}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 10px 6px' }}
+        >
+          {feedColourScales(slotFeedPercent / 100).map((scale, step) => (
+            <span
+              key={scale}
+              className="viewport-toolpath-vis__legend-step"
+              title={`${Math.round(scale * 100)}%`}
+              style={{ display: 'flex', alignItems: 'center', gap: '3px' }}
+            >
+              <span className="viewport-toolpath-vis__swatch" style={{ background: canvasFeedColour(step, palette.canvas) }} />
+              <span style={{ fontSize: '10px', lineHeight: 1 }}>{Math.round(scale * 100)}%</span>
+            </span>
+          ))}
+        </div>
       ) : null}
     </div>
   )

@@ -16,6 +16,7 @@
 
 import type { Operation, Point, Tool, DrillType } from '../../types/project'
 import type { Units } from '../../utils/units'
+import type { EngagementTelemetry } from './engagement'
 import type { ToolpathWarning } from './warningCodes'
 
 export type ToolpathMoveKind = 'rapid' | 'plunge' | 'cut' | 'lead_in' | 'lead_out'
@@ -35,9 +36,12 @@ export interface ToolpathMove {
    *  to render shape markers that help visualise toolpath provenance. */
   source?: string
   /** Multiplier applied to the operation's cut feed at G-code export time.
-   *  Set on fully engaged (slotting) pocket cuts when the operation's
-   *  pocketSlotFeedPercent is below 100. Absent means 1 (normal feed).
-   *  Never set on plunge moves (those use the plunge feed). */
+   *  Absent means 1 (normal feed). Set on fully engaged (slotting) pocket cuts
+   *  when the operation's pocketSlotFeedPercent is below 100, or — when the
+   *  operation's pocketFeedReduction is 'engagement' — on cuts whose
+   *  sampled cutter engagement sits above the stepover's nominal wrap angle
+   *  (a quantized scale between pocketSlotFeedPercent and 1). Never set on
+   *  plunge moves (those use the plunge feed). */
   feedScale?: number
 }
 
@@ -82,6 +86,10 @@ export interface ToolpathResult {
 
 export interface PocketToolpathResult extends ToolpathResult {
   stepLevels: number[]
+  /** Distance-weighted engagement measurement for the whole operation,
+   *  present only when the operation's pocketFeedReduction is
+   *  'engagement' (issue #498 telemetry). */
+  engagementTelemetry?: EngagementTelemetry
 }
 
 /**

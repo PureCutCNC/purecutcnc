@@ -129,6 +129,8 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   'appShell.toolpath.plunges': 'Eintauchbewegungen',
   'appShell.toolpath.retractions': 'Rückzüge',
   'appShell.toolpath.directions': 'Richtungen',
+  'appShell.toolpath.feedColours': 'Vorschubfarben',
+  'appShell.toolpath.feedLegend': 'Vorschubprozentsatz',
 
   // ── ToolRail ──
   'appShell.toolRail.shapes': 'Formen',
