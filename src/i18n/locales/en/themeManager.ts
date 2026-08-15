@@ -22,7 +22,7 @@
  */
 export const themeManagerEn = {
   'themeManager.dialogAria': 'Manage themes',
-  'themeManager.title': 'Manage Themes',
+  'themeManager.title': 'Manage themes',
   'themeManager.close': 'Close',
   'themeManager.listAria': 'Themes',
   'themeManager.builtinBadge': 'Built-in',
@@ -55,7 +55,7 @@ export const themeManagerEn = {
   'themeManager.systemPrefersDark': 'This device currently prefers dark.',
   'themeManager.systemPrefersLight': 'This device currently prefers light.',
   'themeManager.done': 'Done',
-  'themeEditor.title': 'Edit Theme',
+  'themeEditor.title': 'Edit theme',
   'themeEditor.dialogAria': 'Edit theme {name}',
   'themeEditor.previewingLive': 'Previewing your edits live.',
   'themeEditor.colorsWrong': 'Colors look wrong?',

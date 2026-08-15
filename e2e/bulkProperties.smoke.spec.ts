@@ -463,7 +463,7 @@ test.describe('Bulk properties browser smoke', () => {
     await ui.tree.rowByName(app.page, 'Line Path').click()
 
     // Verify the correct feature is selected.
-    await expect(ui.properties.panel(app.page)).toContainText('Delete Feature')
+    await expect(ui.properties.panel(app.page)).toContainText('Delete feature')
 
     // Expand the Instance disclosure section (closed by default).
     await app.page.getByRole('button', { name: 'Instance' }).click()
@@ -720,20 +720,20 @@ test.describe('Bulk properties browser smoke', () => {
     await seedProject(app.page, BULK_FIXTURE_JSON)
 
     await ui.tree.tabRows(app.page).nth(0).click()
-    await expect(ui.properties.panel(app.page)).toContainText('Delete Tab')
+    await expect(ui.properties.panel(app.page)).toContainText('Delete tab')
 
     await ui.tree.clampRows(app.page).nth(0).click({ modifiers: [modKey as 'Meta' | 'Control'] })
-    await expect(ui.properties.panel(app.page)).toContainText('Delete Tab')
+    await expect(ui.properties.panel(app.page)).toContainText('Delete tab')
   })
 
   test('adding tab via modifier to clamp selection is ignored', async ({ app, ui }) => {
     await seedProject(app.page, BULK_FIXTURE_JSON)
 
     await ui.tree.clampRows(app.page).nth(0).click()
-    await expect(ui.properties.panel(app.page)).toContainText('Delete Clamp')
+    await expect(ui.properties.panel(app.page)).toContainText('Delete clamp')
 
     await ui.tree.tabRows(app.page).nth(0).click({ modifiers: [modKey as 'Meta' | 'Control'] })
-    await expect(ui.properties.panel(app.page)).toContainText('Delete Clamp')
+    await expect(ui.properties.panel(app.page)).toContainText('Delete clamp')
   })
 
   // ── Locked bottom field ──
@@ -807,12 +807,12 @@ test.describe('Bulk properties browser smoke', () => {
       await expect(menu).toBeVisible()
 
       // Singleton actions must be absent in multi-selection mode.
-      await expect(ui.contextMenu.item(menu, 'Edit Sketch')).not.toBeAttached()
+      await expect(ui.contextMenu.item(menu, 'Edit sketch')).not.toBeAttached()
       await expect(ui.contextMenu.item(menu, 'Copy')).not.toBeAttached()
       await expect(ui.contextMenu.item(menu, 'Move')).not.toBeAttached()
 
       // Delete Selected must be present.
-      const deleteItem = ui.contextMenu.item(menu, 'Delete Selected')
+      const deleteItem = ui.contextMenu.item(menu, 'Delete selected')
       await expect(deleteItem).toBeVisible()
 
       // Perform the bulk delete.
@@ -879,7 +879,7 @@ test.describe('Bulk properties browser smoke', () => {
         expect(clampsBefore.length).toBe(3)
 
         // Singleton Edit Sketch button must be absent/hidden in bulk panel.
-        const editSketchBtn = ui.properties.panel(app.page).getByRole('button', { name: 'Edit Sketch' })
+        const editSketchBtn = ui.properties.panel(app.page).getByRole('button', { name: 'Edit sketch' })
         await expect(editSketchBtn).toHaveCount(0)
 
         // Open the context menu the way a tablet user does: the "⋮" More-actions
@@ -902,11 +902,11 @@ test.describe('Bulk properties browser smoke', () => {
         await expect(app.page.locator(selectedClampRows())).toHaveCount(2)
 
         // Singleton actions must be absent while several clamps are selected.
-        await expect(ui.contextMenu.item(menu, 'Edit Sketch')).not.toBeAttached()
+        await expect(ui.contextMenu.item(menu, 'Edit sketch')).not.toBeAttached()
         await expect(ui.contextMenu.item(menu, 'Copy')).not.toBeAttached()
         await expect(ui.contextMenu.item(menu, 'Move')).not.toBeAttached()
 
-        const deleteItem = ui.contextMenu.item(menu, 'Delete Selected')
+        const deleteItem = ui.contextMenu.item(menu, 'Delete selected')
         await expect(deleteItem).toBeVisible()
         await deleteItem.tap()
 

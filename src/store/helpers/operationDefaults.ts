@@ -73,9 +73,9 @@ export function operationKindLabel(kind: OperationKind): string {
     case 'pocket':
       return 'Pocket'
     case 'v_carve':
-      return 'V-Carve offset'
+      return 'V-carve offset'
     case 'v_carve_medial':
-      return 'V-Carve medial'
+      return 'V-carve medial'
     case 'edge_route_inside':
       return 'Edge route inside'
     case 'edge_route_outside':
@@ -83,11 +83,11 @@ export function operationKindLabel(kind: OperationKind): string {
     case 'surface_clean':
       return 'Surface clean'
     case 'rough_surface':
-      return '3D Surface rough'
+      return '3D surface rough'
     case 'finish_surface':
-      return '3D Surface finish'
+      return '3D surface finish'
     case 'finish_surface_cleanup':
-      return '3D Surface cleanup'
+      return '3D surface cleanup'
     case 'follow_line':
       return 'Engrave'
     case 'drilling':

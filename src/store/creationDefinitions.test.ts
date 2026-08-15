@@ -499,7 +499,7 @@ function test_camj_import_merges_definitions_collision_safe(): void {
     features: [
       {
         id: 'src-f1',
-        name: 'Source Feature',
+        name: 'Source feature',
         definitionId: 'f-0001',
         transform: { ...IDENTITY_MATRIX },
         constraints: [],

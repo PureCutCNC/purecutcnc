@@ -30,7 +30,7 @@ export const canvasEn = {
   'canvas.target.drawingConstruction': 'Drawing construction',
 
   // ── Depth legend ──
-  'canvas.legend.heading': 'Feature Colors',
+  'canvas.legend.heading': 'Feature colors',
   'canvas.legend.collapseAria': 'Collapse feature color legend',
   'canvas.legend.collapseTitle': 'Collapse legend',
   'canvas.legend.subtract': 'Subtract',
@@ -90,8 +90,8 @@ export const canvasEn = {
   'canvas.shape.spline': 'Spline',
   'canvas.shape.slot': 'Slot',
   'canvas.shape.gear': 'Gear',
-  'canvas.shape.roundedRectangle': 'Rounded Rectangle',
-  'canvas.shape.chamferedRectangle': 'Chamfered Rectangle',
+  'canvas.shape.roundedRectangle': 'Rounded rectangle',
+  'canvas.shape.chamferedRectangle': 'Chamfered rectangle',
   'canvas.shape.composite': 'Composite',
 
   // ── Composite mode labels ──
@@ -124,15 +124,15 @@ export const canvasEn = {
   'canvas.creation.confirmGear': 'Confirm',
 
   // ── Place Origin / Place Text panels ──
-  'canvas.placement.originTitle': 'Place Origin',
-  'canvas.placement.textTitle': 'Place Text',
-  'canvas.placement.originStep': 'Click the sketch to place machine X0 Y0. Z remains manual in Properties.',
+  'canvas.placement.originTitle': 'Place origin',
+  'canvas.placement.textTitle': 'Place text',
+  'canvas.placement.originStep': 'Click the sketch to place machine X0 Y0. Z remains manual in properties.',
   'canvas.placement.textStep': 'Tap the sketch to place the text.',
   'canvas.placement.cancel': 'Cancel',
 
   // ── Constraint panel ──
   'canvas.constraint.title': 'Constraint',
-  'canvas.constraint.editTitle': 'Edit Constraint',
+  'canvas.constraint.editTitle': 'Edit constraint',
   'canvas.constraint.step.pickAnchor': 'Pick anchor point',
   'canvas.constraint.step.pickReference': 'Pick reference point',
   'canvas.constraint.step.setDistance': 'Set distance',
@@ -144,8 +144,8 @@ export const canvasEn = {
   'canvas.constraint.summary.reference': 'Tap a snap point on another feature.',
 
   // ── Driving dimension panel ──
-  'canvas.driving.title.resizeStock': 'Resize Stock',
-  'canvas.driving.title.editDimension': 'Edit Dimension',
+  'canvas.driving.title.resizeStock': 'Resize stock',
+  'canvas.driving.title.editDimension': 'Edit dimension',
   'canvas.driving.step.setValue': 'Set value',
   'canvas.driving.moveLabel': 'Move driving edit controls',
   'canvas.driving.flipHeldPoint': 'Flip held point',
@@ -353,7 +353,7 @@ export const canvasEn = {
   'canvas.axisLock.cycleAria': 'Click to cycle axis lock (Alt)',
   'canvas.axisLock.multiSelect': 'Multi',
   'canvas.axisLock.multiSelectTitle': 'Toggle multi-select',
-  'canvas.axisLock.multiSelectDisabledTitle': 'Multi-select is automatic for Join and Cut',
+  'canvas.axisLock.multiSelectDisabledTitle': 'Multi-select is automatic for join and cut',
 
   // ── Canvas-drawn preview labels ──
   'canvas.preview.pendingRectangle': 'Pending rectangle',

@@ -61,7 +61,7 @@ export const languageManagerEn = {
   'langEditor.placeholderIssuesBlockApply.other': '{count} translations have placeholder mismatches — fix them before applying.',
   'langEditor.resetKey': 'Reset',
   'langEditor.preview': 'Preview in app',
-  'langEditor.previewing': 'Previewing — Cancel restores the saved version',
+  'langEditor.previewing': 'Previewing — cancel restores the saved version',
   'langEditor.apply': 'Apply',
   'langEditor.cancel': 'Cancel',
   'langEditor.noMatches': 'No strings match the current search and filter.',

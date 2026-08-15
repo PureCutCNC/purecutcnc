@@ -227,7 +227,7 @@ test('updates selected feature properties when the interface language changes', 
   await linkedA.click()
   await expect(linkedA).toHaveClass(/tree-row--selected/)
   const menu = await openRowContextMenu(app.page, linkedA)
-  await clickMenuItem(menu, 'Select Linked Instances')
+  await clickMenuItem(menu, 'Select linked instances')
   await expect(ui.properties.panel(app.page).getByPlaceholder('Mixed values')).toHaveCount(2)
   await expect(ui.properties.exactText(app.page, 'Operation')).toBeVisible()
 

@@ -119,11 +119,11 @@ test.describe('Feature references browser smoke', () => {
     const row = rowByName(app.page, 'Linked A')
     const menu = await openRowContextMenu(app.page, row)
 
-    // "Make Unique" and "Select Linked Instances" at top of linked context menu
-    await expect(ui.contextMenu.item(menu, 'Make Unique')).toBeVisible()
-    await expect(ui.contextMenu.item(menu, 'Select Linked Instances')).toBeVisible()
+    // "Make unique" and "Select linked instances" at top of linked context menu
+    await expect(ui.contextMenu.item(menu, 'Make unique')).toBeVisible()
+    await expect(ui.contextMenu.item(menu, 'Select linked instances')).toBeVisible()
 
-    await clickMenuItem(menu, 'Make Unique')
+    await clickMenuItem(menu, 'Make unique')
     await expect(menu).not.toBeVisible()
 
     // Badge on the made-unique row cleared reactively
@@ -161,7 +161,7 @@ test.describe('Feature references browser smoke', () => {
     await expect(row).toHaveClass(/tree-row--selected/)
 
     const menu = await openRowContextMenu(app.page, row)
-    await clickMenuItem(menu, 'Select Linked Instances')
+    await clickMenuItem(menu, 'Select linked instances')
 
     const count = await ui.tree.selectedRows(app.page).count()
     expect(count, 'should select at least 2 rows (linked siblings)').toBeGreaterThanOrEqual(2)
@@ -213,7 +213,7 @@ test.describe('Feature references browser smoke', () => {
 
     const row = rowByName(app.page, 'Linked A')
     const menu = await openRowContextMenu(app.page, row)
-    await clickMenuItem(menu, 'Edit Sketch')
+    await clickMenuItem(menu, 'Edit sketch')
 
     // Sketch edit toolbar should appear
     await app.page.waitForTimeout(500)
