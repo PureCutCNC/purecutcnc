@@ -39,6 +39,7 @@ import {
   type ToolpathGenerationTrace,
 } from '../engine/toolpaths'
 import type { Clamp, Operation, Project, Stock, Tab, Tool } from '../types/project'
+import { projectsEqual } from '../store/helpers/normalize'
 
 export interface ToolpathCacheEntry {
   result: ToolpathResult
@@ -126,11 +127,29 @@ export function isCacheHit(entry: ToolpathCacheEntry, operation: Operation, proj
   if (
     !operationComputationEquals(entry.operation, operation)
     || entry.stock !== project.stock
-    || entry.tools !== project.tools
     || entry.tabs !== project.tabs
     || entry.clamps !== project.clamps
   ) {
     return false
+  }
+
+  // Tools are narrowed to the operation's own tool (issue #518, S5): every
+  // engine read is `project.tools.find(t => t.id === operation.toolRef)` —
+  // clamps.ts, carving.ts, drilling.ts, edge.ts, pocket.ts, geometry.ts, and
+  // four more — and no call site reads any other tool, so importing, editing,
+  // or deleting an unrelated tool cannot change this operation's output.
+  // Keep the whole-array identity fast path; a changed array compares only
+  // the operation's tool row, identity-first with a deep-equal fallback.
+  // Missing on either side counts as changed: unknown means invalidate.
+  //
+  // `tabs` and `clamps` deliberately stay whole-array identity: tab reads are
+  // not all spatially filtered (modelProtection.ts iterates every tab;
+  // edge.ts passes `project.tabs` wholesale for trochoidal), so narrowing
+  // them needs its own footprint argument and is out of scope here.
+  if (entry.tools !== project.tools) {
+    const before = entry.tools.find((tool) => tool.id === operation.toolRef) ?? null
+    const after = project.tools.find((tool) => tool.id === operation.toolRef) ?? null
+    if (before !== after && (!before || !after || !projectsEqual(before, after))) return false
   }
 
   // The entry holds the full project snapshot it was generated from
