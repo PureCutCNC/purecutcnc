@@ -4,6 +4,32 @@ Reference for translators and future locales. Decide a term once here, then
 use it consistently in every catalog module. User-authored names, filenames,
 machine IDs, G-code tokens, and serialized enum values are never translated.
 
+## English source style
+
+**Capitalization: sentence case** (issue #511). Capitalize the first word of a
+sentence and nothing else — labels, buttons, headings, and menu items included:
+`Max cut depth`, `Machining order`, `Create outside route`. Enforced on
+`en/**` by `npm run check:i18n`.
+
+The exceptions are terms whose capital belongs to the term, listed in
+`SENTENCE_CASE_TERMS` in [`scripts/check-i18n-format.ts`](../../scripts/check-i18n-format.ts):
+acronyms and formats (`CNC`, `DXF`, `RPM`, `3D`), axes and G-code words
+(`X`, `Z`, `G81`, `M6`), compound terms (`G-code`, `V-bit`, `V-carve`,
+`T-bone`, `Z-up`), product and platform names (`PureCutCNC`, `GRBL`, `Chrome`),
+keys and buttons named in prose (`Esc`, `Done`), and the names of UI options
+quoted in prose (`Smooth`, `Climb`, `Helix`) — *"cuts it as Rectangular"* points
+at a literal control choice, not an adjective. Add a term there rather than
+working around the check.
+
+Operation names are ordinary labels, not proper nouns: `Rough surface`, not
+`Rough Surface`. Where a description would otherwise open with the bare name and
+misparse (*"Surface clean machines the flat top…"* reads as adjective + noun),
+name the operation instead: *"The surface clean operation machines the flat top…"*.
+
+**This rule is English-only.** German capitalizes nouns grammatically (see
+below), Spanish and French are already sentence case by convention, and Chinese
+has no case, so the check does not apply to the other locales.
+
 ## English ↔ French
 
 | English | Français | Notes |

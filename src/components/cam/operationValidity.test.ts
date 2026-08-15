@@ -191,9 +191,9 @@ function testQuickOperationCarriesDefaultPassAndLabel(): void {
 
   assert(pocket !== undefined, 'expected a pocket quick operation')
   assert(pocket?.pass === 'rough', 'quick operations should default to the rough pass')
-  assert(pocket?.label === 'Create Pocket', `expected friendly label, got ${pocket?.label}`)
+  assert(pocket?.label === 'Create pocket', `expected friendly label, got ${pocket?.label}`)
   assert(pocket?.group === '2d', 'pocket is a 2D quick operation')
-  assert(quickOperationLabel('edge_route_outside') === 'Create Outside Route', 'outside-route label mismatch')
+  assert(quickOperationLabel('edge_route_outside') === 'Create outside route', 'outside-route label mismatch')
 }
 
 // ── 2D/3D grouping (issue #398) ───────────────────────────────────
@@ -239,15 +239,15 @@ function testStlModelQuickOperationsAreGroupedTwoDFirst(): void {
 /** The 3D labels are the CAM panel's own names, not a second vocabulary. */
 function testThreeDLabelsMatchCamPanelNames(): void {
   assert(
-    quickOperationLabel('rough_surface') === 'Create 3D Surface rough',
+    quickOperationLabel('rough_surface') === 'Create 3D surface rough',
     `rough-surface label mismatch, got ${quickOperationLabel('rough_surface')}`,
   )
   assert(
-    quickOperationLabel('finish_surface') === 'Create 3D Surface finish',
+    quickOperationLabel('finish_surface') === 'Create 3D surface finish',
     `finish-surface label mismatch, got ${quickOperationLabel('finish_surface')}`,
   )
   assert(
-    quickOperationLabel('finish_surface_cleanup') === 'Create 3D Surface cleanup',
+    quickOperationLabel('finish_surface_cleanup') === 'Create 3D surface cleanup',
     `cleanup label mismatch, got ${quickOperationLabel('finish_surface_cleanup')}`,
   )
 }
@@ -285,7 +285,7 @@ function testGetOperationAddHintGoldenValues(): void {
   )
   assert(
     getOperationAddHint(project, selectionFor(['add']), 'v_carve')
-      === 'V-Carve offset only accepts closed subtract or line features plus optional closed regions',
+      === 'V-carve offset only accepts closed subtract or line features plus optional closed regions',
     'add+v_carve hint mismatch',
   )
   assert(
@@ -433,7 +433,7 @@ function testOpenLineIsInvalidVCarveTarget(): void {
   const hint = getOperationAddHint(project, selectionFor(['openLine']), 'v_carve')
   assert(hint !== null, 'open line should be invalid for v_carve')
   assert(
-    hint === 'V-Carve offset only accepts closed subtract or line features plus optional closed regions',
+    hint === 'V-carve offset only accepts closed subtract or line features plus optional closed regions',
     `open line v_carve hint mismatch: ${hint}`,
   )
 }

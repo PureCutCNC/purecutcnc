@@ -306,7 +306,7 @@ export const contextMenu = {
 // ── Machine manager & update notice ────────────────────────────────
 
 export const machineManager = {
-  dialog: (page: Page) => page.getByRole('dialog', { name: 'Manage Machines' }),
+  dialog: (page: Page) => page.getByRole('dialog', { name: 'Manage machines' }),
   /** A row in the library list (built-in, My Machines, or the project copy). */
   item: (page: Page, name: string) =>
     machineManager.dialog(page).locator('.machine-manager-item')
@@ -324,7 +324,7 @@ export const machineManager = {
   updateProjectCopyButton: (page: Page) =>
     machineManager.dialog(page).getByRole('button', { name: 'Update project copy' }),
   saveToMyMachinesButton: (page: Page) =>
-    machineManager.dialog(page).getByRole('button', { name: 'Save to My Machines' }),
+    machineManager.dialog(page).getByRole('button', { name: 'Save to my machines' }),
   duplicateButton: (page: Page) =>
     machineManager.dialog(page).getByRole('button', { name: /^Duplicate/ }),
   editButton: (page: Page) =>
@@ -336,7 +336,7 @@ export const machineManager = {
 }
 
 export const machineEditor = {
-  dialog: (page: Page) => page.getByRole('dialog', { name: /^Edit Machine/ }),
+  dialog: (page: Page) => page.getByRole('dialog', { name: /^Edit machine/ }),
   saveButton: (page: Page) =>
     machineEditor.dialog(page).getByRole('button', { name: 'Save', exact: true }),
   cancelButton: (page: Page) =>
@@ -401,7 +401,7 @@ export const properties = {
 
   /** Delete Selected button in bulk panels. */
   deleteSelectedButton: (page: Page) =>
-    page.locator('.properties-panel').getByRole('button', { name: 'Delete Selected' }),
+    page.locator('.properties-panel').getByRole('button', { name: 'Delete selected' }),
 }
 
 // ── Project unit conversion dialog ─────────────────────────────────

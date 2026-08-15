@@ -127,7 +127,7 @@ export function parseToolLibraryFile(value: unknown): ToolLibraryFile {
     .filter((entry): entry is ToolLibraryEntry => entry !== null)
 
   return {
-    name: readString(value.name, 'Bundled Tool Library'),
+    name: readString(value.name, 'Bundled tool library'),
     version: readString(value.version, '1'),
     tools,
   }

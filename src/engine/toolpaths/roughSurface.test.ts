@@ -261,7 +261,7 @@ function makeRightHalfSubtractFeature(): SketchFeature {
 function makeRoughOperation(featureIds: string[]): Operation {
   return {
     id: 'rough1',
-    name: 'Rough Surface',
+    name: 'Rough surface',
     kind: 'rough_surface',
     pass: 'rough',
     enabled: true,

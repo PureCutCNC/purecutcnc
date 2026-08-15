@@ -20,7 +20,7 @@
  *
  * The CPU-built predecessor emitted ~18 vertices × ~48 B of attributes per
  * cell — hundreds of MB of typed arrays at high detail, a multi-second build
- * stall on "Play Tool", and a hard cell cap above which walls silently
+ * stall on "Play tool", and a hard cell cap above which walls silently
  * degraded. Here the geometry carries NO per-cell attribute data: one indexed
  * quad per edge is packed into a row-strip template and instanced once per grid
  * row, and the vertex shader derives each edge's position, its two adjacent

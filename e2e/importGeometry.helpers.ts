@@ -152,7 +152,7 @@ export function stlBox(sizeX: number, sizeY: number, sizeZ: number): string {
  * returns no units (common for synthetic SVG/DXF).
  */
 export async function selectSourceUnitsMm(dialog: Locator): Promise<void> {
-  const row = dialog.locator('.import-dialog__info-row').filter({ hasText: 'Source Units' })
+  const row = dialog.locator('.import-dialog__info-row').filter({ hasText: 'Source units' })
   await row.locator('select').selectOption('mm')
 }
 

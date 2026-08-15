@@ -135,7 +135,7 @@ export const browserPlatform: PlatformApi = {
     // file picker. Desktop browsers can download a custom .camj extension
     // regardless of File System Access API support.
     const extension = window.matchMedia('(pointer: coarse)').matches ? '.camj.json' : '.camj'
-    return saveFile(content, `${baseName}${extension}`, 'application/json', 'PureCutCNC Project', [extension])
+    return saveFile(content, `${baseName}${extension}`, 'application/json', 'PureCutCNC project', [extension])
   },
 
   async saveTextFile(

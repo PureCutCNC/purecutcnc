@@ -1377,8 +1377,8 @@ export function buildPocketFloorContours(
   let currentRegions = regions.flatMap((region) => buildInsetRegions(region, initialInset))
 
   // Floor cleanup should not implicitly double as a wall-finish contour.
-  // Start one stepover inside the finish boundary so "Finish Floor" can be
-  // used independently from "Finish Walls".
+  // Start one stepover inside the finish boundary so "Finish floor" can be
+  // used independently from "Finish walls".
   currentRegions = currentRegions.flatMap((region) => buildInsetRegions(region, effectiveStepover))
 
   while (currentRegions.length > 0) {

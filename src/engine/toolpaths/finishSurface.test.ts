@@ -432,7 +432,7 @@ function makePocketBlockModelFeature(): SketchFeature {
 function makeOperation(): Operation {
   return {
     id: 'finish1',
-    name: 'Finish Surface',
+    name: 'Finish surface',
     kind: 'finish_surface',
     pass: 'finish',
     enabled: true,
@@ -462,7 +462,7 @@ function makeRoughSurfaceOperation(): Operation {
   return {
     ...makeOperation(),
     id: 'rough1',
-    name: 'Rough Surface',
+    name: 'Rough surface',
     kind: 'rough_surface',
     pass: 'rough',
     pocketPattern: 'offset',

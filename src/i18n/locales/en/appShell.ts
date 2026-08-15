@@ -25,9 +25,9 @@
 export const appShellEn = {
   // ── Workspace tabs ──
   'appShell.workspace.sketch': 'Sketch',
-  'appShell.workspace.3d': '3D View',
+  'appShell.workspace.3d': '3D view',
   'appShell.workspace.simulation': 'Simulation',
-  'appShell.workspace.tabList': 'Workspace Views',
+  'appShell.workspace.tabList': 'Workspace views',
 
   // ── Workspace layout presets ──
   'appShell.layout.lcr': 'Show left, center, and right panels',
@@ -39,12 +39,12 @@ export const appShellEn = {
   // ── Right sidebar ──
   'appShell.sidebar.operations': 'Operations',
   'appShell.sidebar.tools': 'Tools',
-  'appShell.sidebar.tabList': 'Right Sidebar',
+  'appShell.sidebar.tabList': 'Right sidebar',
   'appShell.sidebar.openOperations': 'Open operations panel',
   'appShell.sidebar.closeOperations': 'Close operations panel',
 
   // ── Panels ──
-  'appShell.panel.projectTree': 'Project Tree',
+  'appShell.panel.projectTree': 'Project tree',
   'appShell.panel.properties': 'Properties',
   'appShell.panel.expandProperties': 'Expand properties panel',
   'appShell.panel.closeProject': 'Close project panel',
@@ -124,7 +124,7 @@ export const appShellEn = {
   'appShell.tablet.rotatePrompt': 'Please rotate your device to landscape mode',
 
   // ── Empty states ──
-  'appShell.empty.camPanel': 'CAM operations and toolpaths are scheduled for Phase 4.',
+  'appShell.empty.camPanel': 'CAM operations and toolpaths are scheduled for phase 4.',
 
   // ── Toolpath visibility ──
   'appShell.toolpath.show': 'Show',

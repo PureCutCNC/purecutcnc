@@ -16,7 +16,7 @@
 
 /**
  * Application machine registry. Bundled definitions are code-owned and always
- * come from the current build; custom definitions ("My Machines") are
+ * come from the current build; custom definitions ("My machines") are
  * user-owned application preferences validated against the same schema.
  *
  * A `.camj` project never stores this library — it embeds only the single

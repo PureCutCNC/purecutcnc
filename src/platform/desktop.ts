@@ -31,7 +31,7 @@ export const desktopPlatform: PlatformApi = {
 
   async openProjectFile(): Promise<OpenProjectResult | null> {
     const path = await open({
-      filters: [{ name: 'PureCutCNC Project', extensions: ['camj'] }],
+      filters: [{ name: 'PureCutCNC project', extensions: ['camj'] }],
       multiple: false,
     })
     if (!path) return null
@@ -50,7 +50,7 @@ export const desktopPlatform: PlatformApi = {
       const base = suggestedName.replace(/\.camj$/, '')
       targetPath = await save({
         defaultPath: `${base}.camj`,
-        filters: [{ name: 'PureCutCNC Project', extensions: ['camj'] }],
+        filters: [{ name: 'PureCutCNC project', extensions: ['camj'] }],
       })
     }
 
@@ -113,7 +113,7 @@ export const desktopPlatform: PlatformApi = {
 
   async pickImportFile(): Promise<File | null> {
     const path = await open({
-      filters: [{ name: 'PureCutCNC Import', extensions: [...SUPPORTED_IMPORT_EXTENSIONS] }],
+      filters: [{ name: 'PureCutCNC import', extensions: [...SUPPORTED_IMPORT_EXTENSIONS] }],
       multiple: false,
     })
     if (!path) return null
