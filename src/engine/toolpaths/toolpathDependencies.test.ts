@@ -1,0 +1,401 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Run with: npx tsx src/engine/toolpaths/toolpathDependencies.test.ts
+ */
+
+/**
+ * Tests for the pure change-detection module behind the per-operation
+ * toolpath cache (issue #518, slice S1).
+ *
+ * `diffToolpathInputs` must report exactly the feature ids whose
+ * toolpath-relevant input changed, and must raise `invalidatesEveryOperation`
+ * for every input that no per-feature narrowing can cover. Display-only
+ * instance fields (`name`, `visible`, `locked`, `folderId`) must never
+ * invalidate anything.
+ */
+
+import { rectProfile } from '../../types/project'
+import type {
+  FeatureInstance,
+  LocalConstraint,
+  Project,
+  SketchFeature,
+} from '../../types/project'
+import { newProject } from '../../types/project'
+import type { LegacyFeatureRow } from '../../store/helpers/projectFormat'
+import { projectWithFeatures } from '../../test/projectFixtures'
+import { projectsEqual } from '../../store/helpers/normalize'
+import {
+  diffToolpathInputs,
+  featureInstanceComputationEquals,
+  type ToolpathInputDiff,
+} from './toolpathDependencies'
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(`FAIL: ${message}`)
+}
+
+function setEquals(actual: Set<string>, expected: string[]): boolean {
+  return actual.size === expected.length && expected.every((id) => actual.has(id))
+}
+
+// ── Fixtures ──────────────────────────────────────────────────────
+
+function draftFeature(id: string, overrides: Partial<SketchFeature> = {}): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(0, 0, 20, 10),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    z_top: 5,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+    ...overrides,
+  }
+}
+
+const distanceConstraint: LocalConstraint = {
+  id: 'c1',
+  type: 'fixed_distance',
+  segment_ids: [],
+  value: 10,
+}
+
+function baseProject(): Project {
+  return projectWithFeatures(newProject('toolpath-deps-test', 'mm'), [
+    draftFeature('f1'),
+    draftFeature('f2'),
+    draftFeature('f3'),
+  ])
+}
+
+/** Immutable per-row edit, matching how the store updates feature rows. */
+function patchFeature(project: Project, id: string, patch: Partial<FeatureInstance>): Project {
+  return {
+    ...project,
+    features: project.features.map((feature) => (feature.id === id ? { ...feature, ...patch } : feature)),
+  }
+}
+
+function featureIds(project: Project): string[] {
+  return project.features.map((feature) => feature.id)
+}
+
+function expectDisplayOnly(project: Project, next: Project, label: string): void {
+  const diff = diffToolpathInputs(project, next)
+  assert(diff.changedFeatureIds.size === 0, `${label} change must invalidate no ids`)
+  assert(!diff.invalidatesEveryOperation, `${label} change must not invalidate everything`)
+}
+
+// ── featureInstanceComputationEquals ──────────────────────────────
+
+{
+  console.log('1. featureInstanceComputationEquals compares only resolver-read fields...')
+  const project = baseProject()
+  const row = project.features.find((feature) => feature.id === 'f1')
+  assert(row !== undefined, 'f1 row should exist')
+  assert(featureInstanceComputationEquals(row, row), 'same row is equal')
+
+  const expectDisplayOnlyEqual = (
+    patch: Partial<FeatureInstance>,
+    label: string,
+  ): void => {
+    const edited = patchFeature(project, 'f1', patch)
+    const editedRow = edited.features.find((feature) => feature.id === 'f1')
+    assert(editedRow !== undefined, `${label} edited row should exist`)
+    assert(
+      featureInstanceComputationEquals(row, editedRow),
+      `${label} is display-only and must compare equal`,
+    )
+  }
+
+  expectDisplayOnlyEqual({ name: 'renamed' }, 'name')
+  expectDisplayOnlyEqual({ visible: false }, 'visible')
+  expectDisplayOnlyEqual({ locked: true }, 'locked')
+  expectDisplayOnlyEqual({ folderId: 'some-folder' }, 'folderId')
+
+  const moved = patchFeature(project, 'f1', {
+    transform: { ...row.transform, e: 12 },
+  })
+  const movedRow = moved.features.find((feature) => feature.id === 'f1')
+  assert(movedRow !== undefined, 'moved row should exist')
+  assert(!featureInstanceComputationEquals(row, movedRow), 'transform change must compare unequal')
+
+  const deepened = patchFeature(project, 'f1', { z_top: 7 })
+  const deepenedRow = deepened.features.find((feature) => feature.id === 'f1')
+  assert(deepenedRow !== undefined, 'deepened row should exist')
+  assert(!featureInstanceComputationEquals(row, deepenedRow), 'z_top change must compare unequal')
+}
+
+// ── diffToolpathInputs ────────────────────────────────────────────
+
+{
+  console.log('2. Identical snapshots produce an empty diff...')
+  const project = baseProject()
+  const diff = diffToolpathInputs(project, project)
+  assert(diff.changedFeatureIds.size === 0, 'same project must change no ids')
+  assert(!diff.invalidatesEveryOperation, 'same project must not invalidate everything')
+}
+
+{
+  console.log('3. Display-only changes invalidate nothing...')
+  const project = baseProject()
+  expectDisplayOnly(project, patchFeature(project, 'f2', { name: 'renamed' }), 'name')
+  expectDisplayOnly(project, patchFeature(project, 'f2', { visible: false }), 'visible')
+  expectDisplayOnly(project, patchFeature(project, 'f2', { locked: true }), 'locked')
+  expectDisplayOnly(project, patchFeature(project, 'f2', { folderId: 'some-folder' }), 'folderId')
+}
+
+{
+  console.log('4. Transform change reports that id only...')
+  const project = baseProject()
+  const row = project.features.find((feature) => feature.id === 'f2')
+  assert(row !== undefined, 'f2 row should exist')
+  const next = patchFeature(project, 'f2', { transform: { ...row.transform, f: -8 } })
+  const diff = diffToolpathInputs(project, next)
+  assert(setEquals(diff.changedFeatureIds, ['f2']), `expected only f2, got ${[...diff.changedFeatureIds].join(',')}`)
+  assert(!diff.invalidatesEveryOperation, 'transform change must not invalidate everything')
+}
+
+{
+  console.log('5. z_top change reports that id only...')
+  const project = baseProject()
+  const next = patchFeature(project, 'f3', { z_top: 9 })
+  const diff = diffToolpathInputs(project, next)
+  assert(setEquals(diff.changedFeatureIds, ['f3']), `expected only f3, got ${[...diff.changedFeatureIds].join(',')}`)
+  assert(!diff.invalidatesEveryOperation, 'z_top change must not invalidate everything')
+}
+
+{
+  console.log('6. Constraint contents change reports that id only...')
+  const project = projectWithFeatures(newProject('constraints-test', 'mm'), [
+    draftFeature('f1', {
+      sketch: {
+        profile: rectProfile(0, 0, 20, 10),
+        origin: { x: 0, y: 0 },
+        orientationAngle: 0,
+        dimensions: [],
+        constraints: [distanceConstraint],
+      },
+    }),
+    draftFeature('f2'),
+    draftFeature('f3'),
+  ])
+  const next = patchFeature(project, 'f1', {
+    constraints: [{ ...distanceConstraint, value: 25 }],
+  })
+  const diff = diffToolpathInputs(project, next)
+  assert(setEquals(diff.changedFeatureIds, ['f1']), `expected only f1, got ${[...diff.changedFeatureIds].join(',')}`)
+  assert(!diff.invalidatesEveryOperation, 'constraint change must not invalidate everything')
+}
+
+{
+  console.log('7. Shared definition edit reports every referencing instance...')
+  const sharedDraft = (id: string): LegacyFeatureRow => ({
+    ...draftFeature(id),
+    definitionId: 'd-shared',
+  })
+  const project = projectWithFeatures(newProject('defs-test', 'mm'), [
+    sharedDraft('i1'),
+    sharedDraft('i2'),
+    draftFeature('f3'),
+  ])
+  assert(project.featureDefinitions['d-shared'] !== undefined, 'shared definition should exist')
+  const sharedDefinition = project.featureDefinitions['d-shared']
+  const previousFeatures = project.features
+  const next: Project = {
+    ...project,
+    featureDefinitions: {
+      ...project.featureDefinitions,
+      'd-shared': {
+        ...sharedDefinition,
+        profile: rectProfile(50, 50, 8, 8),
+      },
+    },
+  }
+  // The instance rows are the very same objects — only the definition changed.
+  assert(next.features === previousFeatures, 'instance rows must stay byte-identical')
+  const diff = diffToolpathInputs(project, next)
+  assert(
+    setEquals(diff.changedFeatureIds, ['i1', 'i2']),
+    `expected i1+i2, got ${[...diff.changedFeatureIds].join(',')}`,
+  )
+  assert(!diff.invalidatesEveryOperation, 'definition edit must not invalidate everything')
+}
+
+{
+  console.log('8. Added and removed features report their ids...')
+  const project = baseProject()
+  const extra = projectWithFeatures(newProject('extra-test', 'mm'), [draftFeature('f-new')])
+  const added: Project = {
+    ...project,
+    features: [...project.features, extra.features[0]],
+    featureDefinitions: { ...project.featureDefinitions, ...extra.featureDefinitions },
+  }
+  const addedDiff = diffToolpathInputs(project, added)
+  assert(setEquals(addedDiff.changedFeatureIds, ['f-new']), `expected only f-new, got ${[...addedDiff.changedFeatureIds].join(',')}`)
+  assert(!addedDiff.invalidatesEveryOperation, 'adding a feature must not invalidate everything')
+
+  const removed: Project = {
+    ...project,
+    features: project.features.filter((feature) => feature.id !== 'f2'),
+  }
+  const removedDiff = diffToolpathInputs(project, removed)
+  assert(setEquals(removedDiff.changedFeatureIds, ['f2']), `expected only f2, got ${[...removedDiff.changedFeatureIds].join(',')}`)
+  assert(!removedDiff.invalidatesEveryOperation, 'removing a feature must not invalidate everything')
+}
+
+{
+  console.log('9. Reordering features invalidates every operation...')
+  const project = baseProject()
+  assert(featureIds(project).join(',') === 'f1,f2,f3', 'fixture order should be f1,f2,f3')
+  const reordered: Project = {
+    ...project,
+    features: [project.features[0], project.features[2], project.features[1]],
+  }
+  const diff = diffToolpathInputs(project, reordered)
+  assert(diff.invalidatesEveryOperation, 'reorder must invalidate every operation')
+}
+
+{
+  console.log('10. Dimension value change invalidates every operation...')
+  const project: Project = {
+    ...baseProject(),
+    dimensions: {
+      d1: { id: 'd1', name: 'Depth', value: 5, formula: null },
+    },
+  }
+  const changed: Project = {
+    ...project,
+    dimensions: {
+      d1: { id: 'd1', name: 'Depth', value: 6, formula: null },
+    },
+  }
+  const diff = diffToolpathInputs(project, changed)
+  assert(diff.invalidatesEveryOperation, 'dimension change must invalidate every operation')
+
+  // Deep-equal replacement is not a change.
+  const rebuilt: Project = {
+    ...project,
+    dimensions: {
+      d1: { id: 'd1', name: 'Depth', value: 5, formula: null },
+    },
+  }
+  const rebuiltDiff = diffToolpathInputs(project, rebuilt)
+  assert(!rebuiltDiff.invalidatesEveryOperation, 'deep-equal dimensions replacement must not invalidate')
+}
+
+{
+  console.log('11. Units change invalidates every operation...')
+  const project = baseProject()
+  assert(project.meta.units === 'mm', 'fixture should be mm')
+  const next: Project = {
+    ...project,
+    meta: { ...project.meta, units: 'inch' },
+  }
+  const diff = diffToolpathInputs(project, next)
+  assert(diff.invalidatesEveryOperation, 'units change must invalidate every operation')
+}
+
+{
+  console.log('12. Model asset change invalidates every operation...')
+  const mesh = {
+    storage: 'mesh-v1' as const,
+    vertexCount: 3,
+    triangleCount: 1,
+    positions: 'AAAA',
+    indices: 'AQID',
+    bounds: { minX: 0, maxX: 1, minY: 0, maxY: 1, minZ: 0, maxZ: 1 },
+  }
+  const project: Project = {
+    ...baseProject(),
+    modelAssets: { a1: { ...mesh } },
+  }
+  const changed: Project = {
+    ...project,
+    modelAssets: { a1: { ...mesh, positions: 'BBBB' } },
+  }
+  const diff = diffToolpathInputs(project, changed)
+  assert(diff.invalidatesEveryOperation, 'model asset change must invalidate every operation')
+
+  const rebuilt: Project = {
+    ...project,
+    modelAssets: { a1: { ...mesh } },
+  }
+  const rebuiltDiff = diffToolpathInputs(project, rebuilt)
+  assert(!rebuiltDiff.invalidatesEveryOperation, 'deep-equal model assets replacement must not invalidate')
+}
+
+{
+  console.log('13. Missing definition counts as changed...')
+  const project = baseProject()
+  const next: Project = { ...project, featureDefinitions: {} }
+  const diff = diffToolpathInputs(project, next)
+  assert(
+    setEquals(diff.changedFeatureIds, ['f1', 'f2', 'f3']),
+    `expected all ids, got ${[...diff.changedFeatureIds].join(',')}`,
+  )
+  assert(!diff.invalidatesEveryOperation, 'missing definitions must not invalidate everything')
+}
+
+{
+  console.log('14. 200 features with one edit report exactly one id...')
+  const drafts = Array.from({ length: 200 }, (_, index) =>
+    draftFeature(`f${String(index + 1).padStart(4, '0')}`))
+  const project = projectWithFeatures(newProject('bulk-test', 'mm'), drafts)
+  assert(project.features.length === 200, 'bulk fixture should have 200 features')
+
+  const targetId = project.features[137].id
+  const row = project.features[137]
+  const next = patchFeature(project, targetId, { transform: { ...row.transform, e: 3 } })
+
+  const before = JSON.stringify(project)
+  const diff = diffToolpathInputs(project, next)
+  assert(JSON.stringify(project) === before, 'diff must not mutate its arguments')
+  assert(
+    setEquals(diff.changedFeatureIds, [targetId]),
+    `expected exactly one id (${targetId}), got ${diff.changedFeatureIds.size}`,
+  )
+  assert(!diff.invalidatesEveryOperation, 'single edit must not invalidate everything')
+
+  // Guard against an accidental all-changed fallback in the other direction:
+  // a structurally equal rebuild must produce no changes at all.
+  const rebuilt = projectWithFeatures(newProject('bulk-test', 'mm'), drafts)
+  const rebuiltDiff: ToolpathInputDiff = diffToolpathInputs(project, rebuilt)
+  assert(rebuiltDiff.changedFeatureIds.size === 0, 'deep-equal rebuild must change no ids')
+  assert(!rebuiltDiff.invalidatesEveryOperation, 'deep-equal rebuild must not invalidate everything')
+  // The rebuild is identical apart from `newProject`'s fresh timestamps.
+  const timestampNormalized: Project = {
+    ...rebuilt,
+    meta: {
+      ...rebuilt.meta,
+      created: project.meta.created,
+      modified: project.meta.modified,
+    },
+  }
+  assert(projectsEqual(project, timestampNormalized), 'rebuild should be deep-equal modulo timestamps')
+}
+
+console.log('toolpathDependencies.test.ts: all tests passed')
