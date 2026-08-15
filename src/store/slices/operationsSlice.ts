@@ -192,7 +192,7 @@ export function createOperationsSlice(
         const restFolderId = nextUniqueGeneratedId(nextProjectLike, 'fd')
         const restFolder: FeatureFolder = {
           id: restFolderId,
-          name: uniqueFolderName(`${operation.name || defaultOperationName(operation.kind, operation.pass, state.project.operations)} Rest Regions`, state.project.featureFolders),
+          name: uniqueFolderName(`${operation.name || defaultOperationName(operation.kind, operation.pass, state.project.operations)} rest regions`, state.project.featureFolders),
           collapsed: false,
           section: 'regions',
         }
@@ -284,7 +284,7 @@ export function createOperationsSlice(
       const restFolderId = nextUniqueGeneratedId(nextProjectLike, 'fd')
       const restFolder: FeatureFolder = {
         id: restFolderId,
-        name: uniqueFolderName(`${operation.name || 'Pocket'} Rest Regions`, state.project.featureFolders),
+        name: uniqueFolderName(`${operation.name || 'Pocket'} rest regions`, state.project.featureFolders),
         collapsed: false,
         section: 'regions',
       }

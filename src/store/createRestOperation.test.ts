@@ -92,7 +92,7 @@ function makeProject(): { project: Project; operation: Operation; machiningId: s
 
   const operation: Operation = {
     id: 'op-source',
-    name: 'Edge Route Inside',
+    name: 'Edge route inside',
     kind: 'edge_route_inside',
     pass: 'rough',
     enabled: true,
@@ -178,7 +178,7 @@ function testEdgeRestCreatesGeneratedRegionFilters(): void {
     `expected 3 target ids, got ${restOperation.target.featureIds.length}`,
   )
 
-  const restFolder = nextProject.featureFolders.find((folder) => folder.name === 'Edge Route Inside Rest Regions')
+  const restFolder = nextProject.featureFolders.find((folder) => folder.name === 'Edge route inside rest regions')
   assert(restFolder !== undefined, 'expected rest-region folder to exist')
   assert(restFolder?.section === 'regions', 'expected rest-region folder to live in the Regions section')
 

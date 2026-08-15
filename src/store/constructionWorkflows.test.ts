@@ -124,7 +124,7 @@ function testSectionIntegrity(): void {
   const featuresFolderId = useProjectStore.getState().addFeatureFolder('features')
   const constructionFolder = useProjectStore.getState().project.featureFolders.find((f) => f.id === constructionFolderId)
   assert(constructionFolder?.section === 'construction', 'construction folder carries its section')
-  assert(constructionFolder?.name.startsWith('Construction Folder'), 'construction folder naming')
+  assert(constructionFolder?.name.startsWith('Construction folder'), 'construction folder naming')
 
   // Cross-section tree moves are rejected outright.
   useProjectStore.getState().moveFeatureTreeFeature(constructionId, featuresFolderId)

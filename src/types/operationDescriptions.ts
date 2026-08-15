@@ -63,7 +63,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     exampleImageName: 'pocket-example.png',
   },
   v_carve: {
-    title: 'V-Carve Offset',
+    title: 'V-carve offset',
     shortSummary: 'Cut inset contours at increasing depth with a V-bit',
     fullDescription:
       'V-Carve Offset follows progressively narrower inset contours of a closed profile, lowering Z on each pass so the V-bit\'s angled flank carves a clean V-groove that tapers to the centerline. Depth per pass is derived from contour spacing and the V-bit half-angle.',
@@ -77,7 +77,7 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     exampleImageName: 'vcarve-offset-example.png',
   },
   v_carve_medial: {
-    title: 'V-Carve Medial',
+    title: 'V-carve medial',
     shortSummary: 'Geometric medial-axis V-carve with exact depth from the true skeleton',
     fullDescription:
       'V-Carve Medial computes the true medial axis of a closed profile from the Voronoi diagram of its boundary and cuts a V-groove whose depth exactly tracks the local half-width. Sharp corners receive skeleton tips that rise to the surface for crisp points; smooth curves stay clean thanks to geometric filtering. Sampling resolution adjusts automatically to each shape\'s size.',
@@ -93,10 +93,10 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     exampleImageName: 'vcarve-medial-example.png',
   },
   edge_route_inside: {
-    title: 'Edge Route Inside',
+    title: 'Edge route inside',
     shortSummary: 'Cut along the inside of a closed subtract profile',
     fullDescription:
-      'Edge Route Inside follows the inside edge of one or more closed subtract profiles. A contour pass offsets inward by the tool radius; rough passes can instead use trochoidal loops to reduce radial engagement while leaving stock for a contour finish.',
+      'Edge route inside follows the inside edge of one or more closed subtract profiles. A contour pass offsets inward by the tool radius; rough passes can instead use trochoidal loops to reduce radial engagement while leaving stock for a contour finish.',
     keyPoints: [
       'Requires one or more closed subtract profiles',
       'Contour or trochoidal roughing strategy',
@@ -107,10 +107,10 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     exampleImageName: 'edge-route-inside-example.png',
   },
   edge_route_outside: {
-    title: 'Edge Route Outside',
+    title: 'Edge route outside',
     shortSummary: 'Cut along the outside of a closed add/model profile',
     fullDescription:
-      'Edge Route Outside follows the outside edge of one or more closed add or model profiles. A contour pass offsets outward by the tool radius; rough passes can instead use trochoidal loops to reduce radial engagement while leaving stock for a contour finish.',
+      'Edge route outside follows the outside edge of one or more closed add or model profiles. A contour pass offsets outward by the tool radius; rough passes can instead use trochoidal loops to reduce radial engagement while leaving stock for a contour finish.',
     keyPoints: [
       'Requires one or more closed add or model profiles',
       'Contour or trochoidal roughing strategy',
@@ -121,10 +121,10 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     exampleImageName: 'edge-route-outside-example.png',
   },
   surface_clean: {
-    title: 'Surface Clean',
+    title: 'Surface clean',
     shortSummary: 'Clean the flat top of an add/model around taller features sitting on it',
     fullDescription:
-      'Surface Clean machines the flat top surface of one or more add/model features in the area around any taller add features that sit on top of them. It produces a band of cleanup passes at each step height — useful for finishing pads, terraces, and stepped surfaces. Pattern can be offset or parallel.',
+      'Surface clean machines the flat top surface of one or more add/model features in the area around any taller add features that sit on top of them. It produces a band of cleanup passes at each step height — useful for finishing pads, terraces, and stepped surfaces. Pattern can be offset or parallel.',
     keyPoints: [
       'Requires one or more closed add or model features',
       'Clears the area between taller features at each step height',
@@ -163,10 +163,10 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     exampleImageName: 'drilling-example.png',
   },
   rough_surface: {
-    title: '3D Surface Rough',
+    title: '3D surface rough',
     shortSummary: 'Level-by-level roughing of an imported 3D model with offset clearing',
     fullDescription:
-      'Rough Surface slices the imported 3D model at constant Z levels (waterline-style) and clears each level with offset passes, leaving radial and axial stock for finishing. Use larger stepdown and stepover for speed; follow with a finish operation for accuracy.',
+      'Rough surface slices the imported 3D model at constant Z levels (waterline-style) and clears each level with offset passes, leaving radial and axial stock for finishing. Use larger stepdown and stepover for speed; follow with a finish operation for accuracy.',
     keyPoints: [
       'Requires an imported 3D model',
       'Waterline-style level slicing with offset clearing per level',
@@ -177,29 +177,29 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     exampleImageName: 'rough-surface-example.png',
   },
   finish_surface: {
-    title: '3D Surface Finish',
+    title: '3D surface finish',
     shortSummary: 'Finish pass over an imported 3D model using parallel or waterline strategy',
     fullDescription:
-      'Finish Surface produces the final surface on an imported 3D model. Choose parallel (scanlines at a configurable angle) for shallower geometry or waterline (constant-Z contours) for steeper walls. Use a small stepover for parallel or small stepdown for waterline.',
+      'Finish surface produces the final surface on an imported 3D model. Choose parallel (scanlines at a configurable angle) for shallower geometry or waterline (constant-Z contours) for steeper walls. Use a small stepover for parallel or small stepdown for waterline.',
     keyPoints: [
       'Requires an imported 3D model',
       'Parallel (scanline) or waterline (constant-Z) pattern',
       'Single-pass operation (no rough/finish split — this op is the finish)',
-      'Usually follows 3D Surface Rough',
+      'Usually follows 3D surface rough',
       'Optional closed regions act as XY filters',
     ],
     exampleImageName: 'finish-surface-example.png',
   },
   finish_surface_cleanup: {
-    title: '3D Surface Cleanup',
+    title: '3D surface cleanup',
     shortSummary: 'Finish walls and floors at the deepest Z of each rough-surface step',
     fullDescription:
-      'Surface Cleanup emits finish-only wall and floor passes at the deepest retained Z of each step left by the 3D rough operation. It deduplicates repeated wall/floor columns across levels so each is cut once at its lowest effective depth — cleaning up rough-surface terraces without re-roughing.',
+      'Surface cleanup emits finish-only wall and floor passes at the deepest retained Z of each step left by the 3D rough operation. It deduplicates repeated wall/floor columns across levels so each is cut once at its lowest effective depth — cleaning up rough-surface terraces without re-roughing.',
     keyPoints: [
       'Requires an imported 3D model',
-      'Independent Finish Walls and Finish Floor toggles',
+      'Independent finish walls and finish floor toggles',
       'Offset or parallel pattern for floors',
-      'Typically run after 3D Surface Rough as the final pass',
+      'Typically run after 3D surface rough as the final pass',
       'Optional closed regions act as XY filters',
     ],
     exampleImageName: 'finish-surface-cleanup-example.png',

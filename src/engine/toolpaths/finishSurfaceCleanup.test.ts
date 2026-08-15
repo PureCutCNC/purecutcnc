@@ -175,7 +175,7 @@ function makeRegionFeature(id: string, x: number, y: number, width: number, heig
 function makeCleanupOperation(featureIds: string[]): Operation {
   return {
     id: 'cleanup1',
-    name: '3D Surface cleanup',
+    name: '3D surface cleanup',
     kind: 'finish_surface_cleanup',
     pass: 'finish',
     enabled: true,

@@ -136,7 +136,7 @@ export function createFeatureSlice(
       const existingSectionFolders = state.project.featureFolders.filter((folder) => (folder.section ?? 'features') === section)
       const folder: FeatureFolder = {
         id: nextId,
-        name: `${section === 'regions' ? 'Region Folder' : section === 'construction' ? 'Construction Folder' : 'Folder'} ${existingSectionFolders.length + 1}`,
+        name: `${section === 'regions' ? 'Region folder' : section === 'construction' ? 'Construction folder' : 'Folder'} ${existingSectionFolders.length + 1}`,
         collapsed: false,
         section,
       }

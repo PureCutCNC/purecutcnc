@@ -47,24 +47,24 @@ test.describe('CAM operation browser smoke', () => {
 
     const edgeMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
     await ui.contextMenu.item(edgeMenu, 'Create operation').hover()
-    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create Outside Route')
+    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create outside route')
     await expect(ui.operations.rowByName(app.page, 'Edge route outside Rough')).toBeVisible()
 
     const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
     await ui.contextMenu.item(carveMenu, 'Create operation').hover()
-    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create V-Carve (medial)')
+    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create V-carve (medial)')
     await expect(ui.operations.rows(app.page)).toHaveCount(2)
 
-    await ui.operations.rowByName(app.page, 'V-Carve medial')
+    await ui.operations.rowByName(app.page, 'V-carve medial')
       .dragTo(ui.operations.rowByName(app.page, 'Edge route outside Rough'))
 
-    await expect(ui.operations.rows(app.page).nth(0)).toContainText('V-Carve medial')
+    await expect(ui.operations.rows(app.page).nth(0)).toContainText('V-carve medial')
     await expect(ui.operations.rows(app.page).nth(1)).toContainText('Edge route outside Rough')
 
     const project = await getProject(app.page)
     const operations = project.operations as Array<{ name?: unknown }>
     expect(operations.map((operation) => operation.name)).toEqual([
-      'V-Carve medial',
+      'V-carve medial',
       'Edge route outside Rough',
     ])
   })
@@ -78,15 +78,15 @@ test.describe('CAM operation browser smoke', () => {
 
     const submenu = ui.contextMenu.submenu(app.page)
     await expect(submenu).toBeVisible()
-    await expect(ui.contextMenu.item(submenu, 'Create Outside Route')).toBeVisible()
+    await expect(ui.contextMenu.item(submenu, 'Create outside route')).toBeVisible()
 
-    await clickMenuItem(submenu, 'Create Outside Route')
+    await clickMenuItem(submenu, 'Create outside route')
 
     await expect(ui.operations.countBadge(app.page)).toHaveText('1')
     const operationRow = ui.operations.rowByName(app.page, 'Edge route outside Rough')
     await expect(operationRow).toBeVisible()
     await expect(app.page.getByText('Stepdown', { exact: true })).toBeVisible()
-    await expect(app.page.getByText('Stepover Ratio', { exact: true })).not.toBeVisible()
+    await expect(app.page.getByText('Stepover ratio', { exact: true })).not.toBeVisible()
     const contourProject = await getProject(app.page)
     const contourOperations = contourProject.operations as OperationSnapshot[]
     expect(contourOperations[0]?.pass).toBe('rough')
@@ -97,17 +97,17 @@ test.describe('CAM operation browser smoke', () => {
     await strategyField.locator('.ui-select__trigger').click()
     await app.page.getByRole('option', { name: 'Trochoidal', exact: true }).click()
 
-    await expect(app.page.getByText('Trochoidal Cut Width', { exact: true })).toBeVisible()
-    await expect(app.page.getByText('Advance per Loop (% of tool diameter)', { exact: true })).toBeVisible()
-    await expect(app.page.getByText('Advance per Loop (distance)', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Trochoidal cut width', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Advance per loop (% of tool diameter)', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Advance per loop (distance)', { exact: true })).toBeVisible()
     await expect(app.page.getByRole('button', { name: 'Create rest operation', exact: true })).toBeDisabled()
     await expect(app.page.getByText('Rest machining is unavailable for trochoidal edge routing.', { exact: true })).toBeVisible()
 
     await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
     await expect(app.page.getByText('Entry', { exact: true })).toBeVisible()
     // Trochoidal honours both machining orders, so the control stays available.
-    await expect(app.page.getByText('Machining Order', { exact: true })).toBeVisible()
-    const entryField = ui.cam.operationField(app.page, 'Entry Strategy')
+    await expect(app.page.getByText('Machining order', { exact: true })).toBeVisible()
+    const entryField = ui.cam.operationField(app.page, 'Entry strategy')
     await expect(entryField.locator('.ui-select__label')).toHaveText('Helix')
     await entryField.locator('.ui-select__trigger').click()
     await expect(app.page.getByRole('option', { name: 'Ramp', exact: true })).toHaveCount(0)
@@ -144,9 +144,9 @@ test.describe('CAM operation browser smoke', () => {
 
     const submenu = ui.contextMenu.submenu(app.page)
     await expect(submenu).toBeVisible()
-    await expect(ui.contextMenu.item(submenu, 'Create Engraving')).toBeVisible()
+    await expect(ui.contextMenu.item(submenu, 'Create engraving')).toBeVisible()
 
-    await clickMenuItem(submenu, 'Create Engraving')
+    await clickMenuItem(submenu, 'Create engraving')
 
     await expect(ui.operations.countBadge(app.page)).toHaveText('1')
     const operationRow = ui.operations.rowByName(app.page, 'Engrave')
@@ -157,8 +157,8 @@ test.describe('CAM operation browser smoke', () => {
     await expect(strategyField.locator('.ui-select__label')).toHaveText('Direct')
 
     // Trochoidal fields not visible for Direct.
-    await expect(app.page.getByText('Trochoidal Cut Width', { exact: true })).toHaveCount(0)
-    await expect(app.page.getByText('Advance per Loop (% of tool diameter)', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Trochoidal cut width', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Advance per loop (% of tool diameter)', { exact: true })).toHaveCount(0)
     await expect(app.page.getByText('Channel width', { exact: true })).toHaveCount(0)
 
     // Switch to Trochoidal.
@@ -166,18 +166,18 @@ test.describe('CAM operation browser smoke', () => {
     await app.page.getByRole('option', { name: 'Trochoidal (slot)', exact: true }).click()
 
     // Trochoidal fields become visible.
-    await expect(app.page.getByText('Trochoidal Cut Width', { exact: true })).toBeVisible()
-    await expect(app.page.getByText('Advance per Loop (% of tool diameter)', { exact: true })).toBeVisible()
-    await expect(app.page.getByText('Advance per Loop (distance)', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Trochoidal cut width', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Advance per loop (% of tool diameter)', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Advance per loop (distance)', { exact: true })).toBeVisible()
     await expect(app.page.getByText('Channel width', { exact: true })).toBeVisible()
     // The channel-width note mentions the width.
     await expect(app.page.getByText(/Trochoidal cuts a /)).toBeVisible()
 
     // Advanced section: Entry, Cut Direction visible; Ramp excluded.
     await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
-    await expect(app.page.getByText('Cut Direction', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Cut direction', { exact: true })).toBeVisible()
     await expect(app.page.getByText('Entry', { exact: true })).toBeVisible()
-    const entryField = ui.cam.operationField(app.page, 'Entry Strategy')
+    const entryField = ui.cam.operationField(app.page, 'Entry strategy')
     await expect(entryField.locator('.ui-select__label')).toHaveText('Helix')
     await entryField.locator('.ui-select__trigger').click()
     await expect(app.page.getByRole('option', { name: 'Ramp', exact: true })).toHaveCount(0)
@@ -198,10 +198,10 @@ test.describe('CAM operation browser smoke', () => {
     await app.page.getByRole('option', { name: 'Direct', exact: true }).click()
 
     // Trochoidal fields hide again.
-    await expect(app.page.getByText('Trochoidal Cut Width', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Trochoidal cut width', { exact: true })).toHaveCount(0)
     await expect(app.page.getByText('Channel width', { exact: true })).toHaveCount(0)
     // Cut Direction is hidden for direct Engrave.
-    await expect(app.page.getByText('Cut Direction', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Cut direction', { exact: true })).toHaveCount(0)
 
     project = await getProject(app.page)
     operations = project.operations as OperationSnapshot[]
@@ -219,11 +219,11 @@ test.describe('CAM operation browser smoke', () => {
     await expect(ui.contextMenu.groupLabels(submenu)).toHaveText(['2D operations', '3D operations'])
 
     // The 3D entries carry the CAM panel's own names, and all follow the 2D ones.
-    await expect(ui.contextMenu.item(submenu, 'Create 3D Surface rough')).toBeVisible()
-    await expect(ui.contextMenu.item(submenu, 'Create 3D Surface finish')).toBeVisible()
-    await expect(ui.contextMenu.item(submenu, 'Create 3D Surface cleanup')).toBeVisible()
+    await expect(ui.contextMenu.item(submenu, 'Create 3D surface rough')).toBeVisible()
+    await expect(ui.contextMenu.item(submenu, 'Create 3D surface finish')).toBeVisible()
+    await expect(ui.contextMenu.item(submenu, 'Create 3D surface cleanup')).toBeVisible()
 
-    await clickMenuItem(submenu, 'Create 3D Surface rough')
+    await clickMenuItem(submenu, 'Create 3D surface rough')
 
     // Creation is async (it may load the bundled tool library first), so wait
     // for the operation to land in the UI before reading project state.
@@ -232,16 +232,16 @@ test.describe('CAM operation browser smoke', () => {
     await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
     await expect(app.page.getByText('Entry', { exact: true })).toBeVisible()
 
-    const strategyField = app.page.getByText('Entry Strategy', { exact: true }).locator('..')
+    const strategyField = app.page.getByText('Entry strategy', { exact: true }).locator('..')
     await expect(strategyField.locator('.ui-select__label')).toHaveText('Plunge')
-    await expect(app.page.getByText('Ramp Angle (°)', { exact: true })).toHaveCount(0)
-    await expect(app.page.getByText('Helix Diameter (%)', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Ramp angle (°)', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Helix diameter (%)', { exact: true })).toHaveCount(0)
 
     await strategyField.locator('.ui-select__trigger').click()
     await app.page.getByRole('option', { name: 'Helix', exact: true }).click()
 
-    const rampAngleField = app.page.getByText('Ramp Angle (°)', { exact: true }).locator('..')
-    const helixDiameterField = app.page.getByText('Helix Diameter (%)', { exact: true }).locator('..')
+    const rampAngleField = app.page.getByText('Ramp angle (°)', { exact: true }).locator('..')
+    const helixDiameterField = app.page.getByText('Helix diameter (%)', { exact: true }).locator('..')
     await expect(rampAngleField.locator('input')).toHaveValue('5')
     await expect(helixDiameterField.locator('input')).toHaveValue('80')
     await rampAngleField.locator('input').fill('8')
@@ -267,7 +267,7 @@ test.describe('CAM operation browser smoke', () => {
 
     const submenu = ui.contextMenu.submenu(app.page)
     await expect(submenu).toBeVisible()
-    await expect(ui.contextMenu.item(submenu, 'Create Outside Route')).toBeVisible()
+    await expect(ui.contextMenu.item(submenu, 'Create outside route')).toBeVisible()
     await expect(ui.contextMenu.groupLabels(submenu)).toHaveCount(0)
   })
 
@@ -280,12 +280,12 @@ test.describe('CAM operation browser smoke', () => {
 
     const submenu = ui.contextMenu.submenu(app.page)
     await expect(submenu).toBeVisible()
-    await clickMenuItem(submenu, 'Create V-Carve (medial)')
+    await clickMenuItem(submenu, 'Create V-carve (medial)')
 
     await expect(ui.operations.countBadge(app.page)).toHaveText('1')
-    const operationRow = ui.operations.rowByName(app.page, 'V-Carve medial')
+    const operationRow = ui.operations.rowByName(app.page, 'V-carve medial')
     await expect(operationRow).toBeVisible()
-    await expect(app.page.getByText('Max Carve Depth', { exact: true })).toBeVisible()
+    await expect(app.page.getByText('Max carve depth', { exact: true })).toBeVisible()
     await expect(app.page.getByText('Step Size', { exact: true })).toHaveCount(0)
 
     const project = await getProject(app.page)
@@ -308,7 +308,7 @@ test.describe('CAM operation browser smoke', () => {
     await ui.contextMenu.item(menu, 'Create operation').hover()
     const submenu = ui.contextMenu.submenu(app.page)
     await expect(submenu).toBeVisible()
-    await clickMenuItem(submenu, 'Create Drilling')
+    await clickMenuItem(submenu, 'Create drilling')
 
     // Wait for the operation row to appear
     await expect(ui.operations.countBadge(app.page)).toHaveText('1')
@@ -318,12 +318,12 @@ test.describe('CAM operation browser smoke', () => {
     await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
 
     // The Drill Type selector should show the default (Simple (G81))
-    const drillTypeField = app.page.getByText('Drill Type', { exact: true }).locator('..')
+    const drillTypeField = app.page.getByText('Drill type', { exact: true }).locator('..')
     await expect(drillTypeField.locator('.ui-select__label')).toHaveText('Simple (G81)')
 
     // Ramp Angle and Helix Diameter should NOT be visible yet (default is Simple)
-    await expect(app.page.getByText('Ramp Angle (°)', { exact: true })).toHaveCount(0)
-    await expect(app.page.getByText('Helix Diameter (%)', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Ramp angle (°)', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Helix diameter (%)', { exact: true })).toHaveCount(0)
 
     // Select Helical from the drill type dropdown
     await drillTypeField.locator('.ui-select__trigger').click()
@@ -333,12 +333,12 @@ test.describe('CAM operation browser smoke', () => {
     await expect(drillTypeField.locator('.ui-select__label')).toHaveText('Helical')
 
     // Ramp Angle should now be visible with default value
-    const rampAngleField = app.page.getByText('Ramp Angle (°)', { exact: true }).locator('..')
+    const rampAngleField = app.page.getByText('Ramp angle (°)', { exact: true }).locator('..')
     await expect(rampAngleField.locator('input')).toHaveValue('5')
 
     // Helix Diameter must remain absent — the selected circle defines the bore
     // diameter, not the shared #412 entry-helix-diameter setting
-    await expect(app.page.getByText('Helix Diameter (%)', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Helix diameter (%)', { exact: true })).toHaveCount(0)
 
     // Change the ramp angle
     await rampAngleField.locator('input').fill('8')
@@ -360,7 +360,7 @@ test.describe('CAM operation browser smoke', () => {
     await ui.contextMenu.item(menu, 'Create operation').hover()
     const submenu = ui.contextMenu.submenu(app.page)
     await expect(submenu).toBeVisible()
-    await clickMenuItem(submenu, 'Create Drilling')
+    await clickMenuItem(submenu, 'Create drilling')
 
     await expect(ui.operations.countBadge(app.page)).toHaveText('1')
     await expect(ui.operations.rowByName(app.page, 'Drill')).toBeVisible()
@@ -378,21 +378,21 @@ test.describe('CAM operation browser smoke', () => {
 
     await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
 
-    const drillTypeField = app.page.getByText('Drill Type', { exact: true }).locator('..')
+    const drillTypeField = app.page.getByText('Drill type', { exact: true }).locator('..')
     await drillTypeField.locator('.ui-select__trigger').click()
     await app.page.getByRole('option', { name: 'Countersink', exact: true }).click()
     await expect(drillTypeField.locator('.ui-select__label')).toHaveText('Countersink')
 
     // Countersink owns the diameter field; the other modes' fields stay hidden.
-    const diameterField = app.page.getByText('Countersink Diameter', { exact: true }).locator('..')
+    const diameterField = app.page.getByText('Countersink diameter', { exact: true }).locator('..')
     await expect(diameterField).toBeVisible()
-    await expect(app.page.getByText('Peck Depth', { exact: true })).toHaveCount(0)
-    await expect(app.page.getByText('Dwell Time (s)', { exact: true })).toHaveCount(0)
-    await expect(app.page.getByText('Ramp Angle (°)', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Peck depth', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Dwell time (s)', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Ramp angle (°)', { exact: true })).toHaveCount(0)
 
     // Depth is derived, so with a drill fitted there is nothing to derive from —
     // the panel says so at the field rather than only in the warnings list.
-    await expect(app.page.getByText('Countersink Depth', { exact: true }).locator('..')).toContainText('—')
+    await expect(app.page.getByText('Countersink depth', { exact: true }).locator('..')).toContainText('—')
     await expect(
       app.page.getByText('Countersinking needs a V-bit. Assign one to this operation.', { exact: true }),
     ).toBeVisible()

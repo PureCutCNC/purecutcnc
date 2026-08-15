@@ -116,7 +116,7 @@ test('a stale project copy warns without changing anything until asked', async (
   // GRBL is built-in, so the comparison must name the build — not My Machines,
   // which is empty here — and list differences in words, not schema keys.
   await expect(comparison).toContainText('built-in definition in this version')
-  await expect(comparison).not.toContainText('My Machines')
+  await expect(comparison).not.toContainText('My machines')
   await expect(comparison).toContainText('motion commands')
   await expect(comparison).not.toContainText('cannedCycles')
   await ui.machineManager.updateProjectCopyButton(app.page).click()
@@ -138,7 +138,7 @@ test('a project machine missing from the library stays usable and can be saved b
   // Legacy project libraries migrate their custom machines into My Machines,
   // so this one is adopted on open rather than being lost.
   await openManager(app.page, ui)
-  await expect(ui.machineManager.groupLabel(app.page, 'My Machines')).toBeVisible()
+  await expect(ui.machineManager.groupLabel(app.page, 'My machines')).toBeVisible()
   await expect(ui.machineManager.item(app.page, 'Shop Router')).toBeVisible()
 
   // Removing it from the library must not touch the project.
@@ -151,10 +151,10 @@ test('a project machine missing from the library stays usable and can be saved b
   // It is now a project-only machine, still usable and re-savable.
   await expect(ui.machineManager.groupLabel(app.page, 'In this project')).toBeVisible()
   await ui.machineManager.item(app.page, 'Shop Router').first().click()
-  await expect(ui.machineManager.badge(app.page, 'Not in My Machines')).toBeVisible()
+  await expect(ui.machineManager.badge(app.page, 'Not in my machines')).toBeVisible()
   await ui.machineManager.saveToMyMachinesButton(app.page).click()
   await expect(ui.machineManager.groupLabel(app.page, 'In this project')).toBeHidden()
 
   await ui.machineManager.doneButton(app.page).click()
-  await expect(ui.properties.machineStatus(app.page)).not.toContainText('Not in My Machines')
+  await expect(ui.properties.machineStatus(app.page)).not.toContainText('Not in my machines')
 })

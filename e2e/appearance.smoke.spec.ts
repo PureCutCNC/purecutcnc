@@ -112,7 +112,7 @@ test('keeps New Project template hover states within the light palette', async (
   await ui.appearance.option(app.page, 'Light').click()
 
   await ui.toolbar.newProjectButton(app.page).click()
-  const imperialTemplate = ui.newProjectDialog.template(app.page, 'Blank Imperial')
+  const imperialTemplate = ui.newProjectDialog.template(app.page, 'Blank imperial')
   await imperialTemplate.hover()
 
   await expect(imperialTemplate).toHaveCSS('background-color', themeColor('light', 'surface-hover'))

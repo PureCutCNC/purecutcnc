@@ -278,6 +278,107 @@ function canonicalizeImport(text: string, specifier: string): string {
   return text.replace(pattern, (_match, clause: string) => `import type {${clause}} from '${specifier}'`)
 }
 
+/**
+ * Terms whose capitals belong to the term rather than to a style choice, and so
+ * survive the sentence-case rule below (issue #511).
+ *
+ * This list is deliberately explicit. Sentence case is not decidable without
+ * knowing which words are proper terms, so every exception is written down here
+ * and nowhere else — which makes the set double as a registry of the product's
+ * own vocabulary. Add to it only when the capital is genuinely part of the term.
+ */
+const SENTENCE_CASE_TERMS = new Set([
+  // Acronyms, file formats, and dimensionality.
+  'CNC', 'CAD', 'CAM', 'CAMJ', 'DXF', 'STL', 'OBJ', 'SVG', 'PDF', 'PNG', 'JPEG',
+  'JSON', 'RPM', 'WCAG', 'BCP', 'UI', 'OS', 'WebGL', 'ID', '2D', '3D', '2.5D',
+  // Axes, G-code words, and machine addresses. `V` is the bit profile, as in
+  // "V flanks" and "V groove", not an axis.
+  'X', 'Y', 'Z', 'V', 'XY', 'XZ', 'YZ', 'XYZ', 'X0', 'Y0', 'Z0',
+  'G0', 'G1', 'G2', 'G3', 'G73', 'G81', 'G82', 'G83', 'M6',
+  // Compound tool, fixture, and geometry terms whose capital is part of the name.
+  'G-code', 'V-bit', 'V-carve', 'V-groove', 'T-bone', 'T-track', 'Dogbone', 'Voronoi',
+  'Z-up', 'Y-up',
+  // Product, vendor, platform, and language names.
+  'PureCutCNC', 'Tauri', 'GRBL', 'FluidNC', 'LinuxCNC', 'Marlin',
+  'Windows', 'Linux', 'macOS', 'Chrome', 'Firefox', 'Safari',
+  'WebGL2', 'BCP-47', 'Apache-2.0',
+  'English', 'German', 'French', 'Spanish', 'Chinese', 'Simplified', 'Traditional',
+  // Keyboard keys and buttons named in prose ("Esc or Done to finish").
+  'Esc', 'Alt', 'Shift', 'Ctrl', 'Cmd', 'Enter', 'Done',
+  // Names of UI options, quoted in prose to point at a literal control choice
+  // ("cuts it as Rectangular" means the Rectangular setting, not the adjective).
+  'Smooth', 'Rectangular', 'Climb', 'Conventional', 'Helix', 'Plunge', 'Direct',
+  'Trochoidal', 'Contour', 'Ramp', 'Spiral', 'Parallel', 'Waterline',
+])
+
+/** Locale whose values carry the sentence-case rule. */
+const SENTENCE_CASE_LOCALE = 'en'
+
+/**
+ * Keys exempt from the sentence-case rule, with the reason.
+ *
+ * Reserved for a word that is a proper noun *here* but an ordinary word
+ * everywhere else, which a word-level allowlist cannot express. Allowlisting
+ * `Edge` globally would silently permit `Edge Route` to drift back to title
+ * case, so the exception is pinned to the one value that needs it.
+ */
+const SENTENCE_CASE_EXEMPT_KEYS = new Map<string, string>([
+  ['viewport.error.body', 'names the Edge browser; "edge" elsewhere means an edge route'],
+])
+
+/**
+ * Reduce a token to the form looked up in `SENTENCE_CASE_TERMS`: drop trailing
+ * punctuation and the possessive suffix, so `V-bit's` is judged as `V-bit`.
+ */
+function normalizeToken(text: string): string {
+  return text
+    .replace(/['’]s$/, '')
+    .replace(/[-'’.]+$/, '')
+}
+
+/**
+ * Words that may be capitalized mid-value without being a style error.
+ *
+ * The rule is one-sided on purpose: it never *requires* a capital, because many
+ * values are fragments or start with a placeholder (`'{count} flutes'`). It only
+ * rejects a capital that cannot be explained by a sentence start or by
+ * `SENTENCE_CASE_TERMS`.
+ */
+function titleCaseProblems(entry: Entry): string[] {
+  if (SENTENCE_CASE_EXEMPT_KEYS.has(entry.key)) return []
+  const withoutPlaceholders = entry.value.replace(/\{[^}]*\}/g, ' ')
+  const offenders: string[] = []
+  let sentenceStart = true
+
+  // A token may start with a digit so `3D` and `2.5D` stay whole; splitting them
+  // would leave a bare `D` that looks like a stray capital. Hyphens and
+  // apostrophes are kept inside the token so `G-code` and `V-bit's` survive too.
+  const token = /[A-Za-z0-9][A-Za-z0-9'’.-]*|[.!?\n]|\S/g
+  for (const match of withoutPlaceholders.matchAll(token)) {
+    const text = match[0]
+    if (/^[.!?\n]$/.test(text)) {
+      sentenceStart = true
+      continue
+    }
+    if (!/[A-Za-z]/.test(text)) continue
+    const word = normalizeToken(text)
+    if (word === '') continue
+    if (!sentenceStart && /^[A-Z]/.test(word) && !SENTENCE_CASE_TERMS.has(word)) {
+      offenders.push(word)
+    }
+    // A trailing `.` ends the sentence unless it sat inside the token (`2.5D`).
+    sentenceStart = /\.$/.test(text)
+  }
+
+  if (offenders.length === 0) return []
+  const unique = [...new Set(offenders)]
+  return [
+    `line ${entry.line}: '${entry.key}' is not sentence case — ${unique.map(w => `'${w}'`).join(', ')}`,
+    `    ${JSON.stringify(entry.value.length > 120 ? entry.value.slice(0, 120) + '…' : entry.value)}`,
+    '    lowercase it, or add the term to SENTENCE_CASE_TERMS if the capital is part of the name',
+  ]
+}
+
 interface Problem {
   file: string
   message: string
@@ -397,6 +498,14 @@ function run(fix: boolean): number {
       }
       if (extra.length > 5) problems.push({ file: rel, message: `… and ${extra.length - 5} more unknown keys` })
       if (missing.length > 0 || extra.length > 0) continue
+
+      // English only: German capitalizes nouns grammatically, Spanish and
+      // French are already sentence case by convention, and Chinese has no case.
+      if (locale === SENTENCE_CASE_LOCALE) {
+        for (const entry of parsed.entries) {
+          for (const message of titleCaseProblems(entry)) problems.push({ file: rel, message })
+        }
+      }
 
       const original = readFileSync(path, 'utf8')
       let canonical = render(parsed, order)
