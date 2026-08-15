@@ -561,7 +561,8 @@ export class EngagementFeedQuantizer {
   private readonly nominal: number
   private readonly slotScale: number
   private readonly hysteresisFraction: number
-  private readonly bucketWidth: number
+  /** Width of one feed-scale rung; exposed so the pocket's run merge applies the same one-rung rule. */
+  readonly bucketWidth: number
   private readonly emitted: QuantizedFragment[] = []
   private currentScale: number | null = null
   private heldDistance = 0
@@ -662,6 +663,16 @@ export class EngagementFeedQuantizer {
       // crossing): it keeps its own scale at its own length. Only
       // bucket-to-bucket merges (both reduced) are still consolidated.
       if (fragment.scale >= 1 || target.scale >= 1) {
+        i += 1
+        continue
+      }
+      // A bucket-to-bucket merge takes the lower scale, so a merge that would
+      // lower the higher-scale stretch by more than one rung is refused: a
+      // fragment entitled to a near-full scale must not be dragged to the slot
+      // floor by a slot it merely touches (issue #498, slice S9). Adjacent
+      // rungs still consolidate, so the minimum-fragment guarantee does not
+      // shatter the path into alternations.
+      if (Math.abs(fragment.scale - target.scale) > this.bucketWidth * (1 + 1e-9)) {
         i += 1
         continue
       }

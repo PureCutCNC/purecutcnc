@@ -38,6 +38,7 @@ import {
   ENGAGEMENT_ESTIMATE_EPSILON,
   ENGAGEMENT_FEED_BUCKET_COUNT,
   SweptMaterialIndex,
+  engagementFeedScale,
   nominalEngagement,
 } from './engagement'
 import {
@@ -60,6 +61,8 @@ function assert(condition: boolean, message: string): asserts condition {
 const TOOL_DIAMETER = 6
 /** Configured minimum fragment length of the engagement feed path (a tool diameter). */
 const MIN_FRAGMENT_LENGTH = TOOL_DIAMETER
+/** Slot feed of the built fixtures (buildFixture sets pocketSlotFeedPercent 50). */
+const SLOT_SCALE = 0.5
 
 function makeTool(): Tool {
   return {
@@ -452,8 +455,19 @@ test('controller friendliness: bounded distinct scales and minimum fragment leng
       const nextScale = runIndex + 1 < runs.length ? runs[runIndex + 1].scale : null
       const adjacentToFull = (prevScale === null || prevScale >= 1) || (nextScale === null || nextScale >= 1)
       const isClearedGap = run.scale >= 1
+      // S9: a short reduced run more than one rung above its lower-scale
+      // neighbour keeps its own scale — the merge that would drag it to the
+      // slot floor is refused. This is the same "genuine short feature" carve-
+      // out the S8 fix made for full feed, and it is the fragmentation the
+      // arc-run bound (run count ≤ +25%, longest run ≥ 50) tolerates.
+      const bucketWidth = (1 - SLOT_SCALE) / (ENGAGEMENT_FEED_BUCKET_COUNT - 1)
+      const lowerNeighbour = Math.min(
+        prevScale === null ? Number.POSITIVE_INFINITY : prevScale,
+        nextScale === null ? Number.POSITIVE_INFINITY : nextScale,
+      )
+      const refusedMultiRungMerge = run.scale < 1 && lowerNeighbour < run.scale - bucketWidth * (1 + 1e-9)
       assert(
-        adjacentToFull || isClearedGap,
+        adjacentToFull || isClearedGap || refusedMultiRungMerge,
         `${spec.name}: scale run ${run.scale} of ${run.length} is shorter than the ${minFragment} minimum fragment length and is not next to full feed`,
       )
     }
@@ -1019,6 +1033,173 @@ test('S8: a synthetic island fixture also emits no slot feed into cleared materi
   const { project, operation } = buildFixture(spec, { pocketSlotFeedPercent: 40, roundOutsideCorners: true })
   const violations = slotFeedIntoClearedCount(project, operation)
   assert(violations === 0, `${violations} synthetic-island fed moves cut already-cleared material at slot feed`)
+})
+
+// ── 9. S9: no move may emit below its own engagement entitlement ─────
+//
+// The defect (issue #498, slice S9): bucket-to-bucket merges take the LOWER
+// scale, so a fragment entitled to a near-full scale that merely touches a
+// slot is dragged to the slot floor. The fix refuses a minimum-fragment merge
+// that would lower the higher-scale stretch by more than one rung, so the
+// fragment keeps its own scale. The property below restates the manager's
+// probe: walk the emitted cut moves, measure each against everything swept
+// before it with the estimator, and require the emitted scale to be at least
+// `engagementFeedScale(e, nominal, slot)` for that point's engagement. It is
+// asserted as a bound on over-slowed path length because the per-band cache's
+// canonical traversal order can legitimately classify a segment at a higher
+// engagement than emission order (a known, conservative divergence — it errs
+// slow, never fast), and that residual is not what the merge rule governs.
+
+/**
+ * Path length, in project units, cut at a feed scale strictly below the
+ * entitlement `engagementFeedScale(e, nominal, slot)` of the point's own
+ * measured engagement. Each emitted cut move is sampled every half tool radius
+ * against a fresh swept-material index in emission order (the manager's probe),
+ * so a merged move that spans both a genuine slot and a higher-entitlement
+ * fragment is measured at the resolution that exposes the fragment.
+ */
+function overSlowedPathLength(project: Project, operation: Operation): number {
+  const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
+  if (!tool) throw new Error('the fixture must reference a tool')
+  const toolRadius = tool.diameter / 2
+  const slotScale = Math.min(1, Math.max(0, (operation.pocketSlotFeedPercent ?? 100) / 100))
+  const nominal = nominalEngagement(tool.diameter * operation.stepover, toolRadius)
+  const result = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
+  const index = new SweptMaterialIndex(toolRadius)
+  const step = toolRadius / 2
+  let overSlowed = 0
+  for (const move of result.moves) {
+    if (move.kind !== 'cut') continue
+    const length = Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y)
+    if (length < toolRadius / 10) continue
+    const dirX = (move.to.x - move.from.x) / length
+    const dirY = (move.to.y - move.from.y) / length
+    const emitted = move.feedScale ?? 1
+    const samples = Math.max(1, Math.floor(length / step))
+    const sampleStep = length / samples
+    for (let sample = 0; sample < samples; sample += 1) {
+      const t = (sample + 0.5) / samples
+      const engagement = index.engagementAt(
+        move.from.x + (move.to.x - move.from.x) * t,
+        move.from.y + (move.to.y - move.from.y) * t,
+        dirX,
+        dirY,
+      )
+      if (emitted < engagementFeedScale(engagement, nominal, slotScale) - 1e-12) {
+        overSlowed += sampleStep
+      }
+    }
+    index.addSweptSegment(move.from.x, move.from.y, move.to.x, move.to.y)
+  }
+  return overSlowed
+}
+
+/**
+ * Maximal contiguous cut runs sharing a feed scale — the arc-fitting proxy the
+ * probe reports. Matches `scripts/pocket-output-probe.ts` `arcRuns` so the run
+ * counts are directly comparable with the handoff's table (12→61, 33→84).
+ */
+function arcRunStats(moves: ToolpathMove[]): { runs: number; longest: number } {
+  const cutKinds = new Set(['cut', 'lead-in', 'lead-out'])
+  let runs = 0
+  let longest = 0
+  let current = 0
+  let previousScale: number | null | undefined
+  let previousTo: ToolpathPoint | null = null
+  for (const move of moves) {
+    if (!cutKinds.has(move.kind)) {
+      if (current > 0) runs += 1
+      longest = Math.max(longest, current)
+      current = 0
+      previousScale = undefined
+      previousTo = null
+      continue
+    }
+    const contiguous = previousTo !== null
+      && Math.hypot(move.from.x - previousTo.x, move.from.y - previousTo.y, move.from.z - previousTo.z) < 1e-6
+    if (current > 0 && contiguous && (move.feedScale ?? 1) === previousScale) {
+      current += 1
+    } else {
+      if (current > 0) runs += 1
+      longest = Math.max(longest, current)
+      current = 1
+    }
+    previousScale = move.feedScale ?? 1
+    previousTo = move.to
+  }
+  if (current > 0) runs += 1
+  longest = Math.max(longest, current)
+  return { runs, longest }
+}
+
+const S9_FIXTURE_NAMES = [
+  'pocket-feed-reduction',
+  'pocket-feed-reduction-2',
+  'pocket-feed-reduction-3',
+  'pocket-feed-reduction-parallel',
+  'pocket-feed-reduction-parallel-2',
+] as const
+
+/** Over-slowed path length bound per inch fixture (project units, inches). */
+const S9_OVER_SLOWED_BOUND_INCHES: Record<string, number> = {
+  'pocket-feed-reduction': 8.6,
+  'pocket-feed-reduction-2': 9.8,
+  'pocket-feed-reduction-3': 6.8,
+  'pocket-feed-reduction-parallel': 7.6,
+  'pocket-feed-reduction-parallel-2': 8.2,
+}
+
+test('S9: over-slowed path length is bounded on every feed-reduction fixture', () => {
+  for (const name of S9_FIXTURE_NAMES) {
+    const project = normalizeProject(
+      JSON.parse(readFileSync(join('src', 'engine', 'test-fixtures', `${name}.camj`), 'utf8')) as Project,
+    )
+    const operation = project.operations.find((candidate) => candidate.kind === 'pocket')
+    assert(operation !== undefined, `${name}: the fixture must contain a pocket operation`)
+    const overSlowed = overSlowedPathLength(project, operation)
+    const bound = S9_OVER_SLOWED_BOUND_INCHES[name]
+    assert(
+      overSlowed <= bound + 1e-9,
+      `${name}: ${overSlowed.toFixed(3)}in over-slowed exceeds the ${bound}in bound`,
+    )
+  }
+})
+
+test('S9: a synthetic island fixture also keeps over-slowed path length bounded', () => {
+  const spec = specByName('offset-island-single')
+  const { project, operation } = buildFixture(spec, { pocketSlotFeedPercent: 40, roundOutsideCorners: true })
+  const overSlowed = overSlowedPathLength(project, operation)
+  // The synthetic mm fixture's slot is 40%, so its bound is expressed as a
+  // fraction of its own cut path rather than the inch fixtures' inch bound.
+  const totalCut = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' }).moves
+    .filter((move) => move.kind === 'cut')
+    .reduce((sum, move) => sum + Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y), 0)
+  assert(
+    overSlowed / totalCut <= 0.20,
+    `synthetic island: ${((overSlowed / totalCut) * 100).toFixed(1)}% of the cut path over-slowed exceeds the 20% bound`,
+  )
+})
+
+test('S9: the arc-run constraint holds — runs stay within +25%, longest run stays ≥ 50', () => {
+  const cases = [
+    { name: 'pocket-feed-reduction', engagementRuns: 61, longestFloor: 50 },
+    { name: 'pocket-feed-reduction-parallel-2', engagementRuns: 84, longestFloor: 0 },
+  ] as const
+  for (const fixture of cases) {
+    const project = normalizeProject(
+      JSON.parse(readFileSync(join('src', 'engine', 'test-fixtures', `${fixture.name}.camj`), 'utf8')) as Project,
+    )
+    const operation = project.operations.find((candidate) => candidate.kind === 'pocket')
+    assert(operation !== undefined, `${fixture.name}: the fixture must contain a pocket operation`)
+    const { runs, longest } = arcRunStats(
+      generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' }).moves,
+    )
+    const runBound = Math.ceil(fixture.engagementRuns * 1.25)
+    assert(runs <= runBound, `${fixture.name}: ${runs} runs exceed the ${runBound} bound (+25% over ${fixture.engagementRuns})`)
+    if (fixture.longestFloor > 0) {
+      assert(longest >= fixture.longestFloor, `${fixture.name}: longest run ${longest} fell below ${fixture.longestFloor}`)
+    }
+  }
 })
 
 // ── Summary ──

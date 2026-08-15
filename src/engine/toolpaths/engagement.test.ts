@@ -589,8 +589,9 @@ console.log('Testing quantizer minimum fragment length...')
   assert(approx(merged[0].scale, 1, 1e-12) && approx(merged[0].distance, 0.05, 1e-9), 'the cleared gap must stay full feed at its own length')
   assert(approx(merged[1].scale, 0.4, 1e-12) && approx(merged[1].distance, 2.05, 1e-9), 'the slot stretch must stay reduced')
 
-  // Bucket-to-bucket consolidation is unchanged: a short reduced fragment
-  // between two reduced fragments is still merged into the lower scale.
+  // Bucket-to-bucket consolidation is unchanged for adjacent rungs: a short
+  // reduced fragment one rung above its neighbours still merges into the lower
+  // scale (2.7 rad quantizes to 0.52, one rung above the 0.4 slot).
   const between = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 0.4 })
   between.push(Math.PI, 2.0)
   between.push(2.7, 0.1)
@@ -598,6 +599,21 @@ console.log('Testing quantizer minimum fragment length...')
   const consolidated = between.fragments()
   assert(consolidated.every((fragment) => approx(fragment.scale, 0.4, 1e-12)), 'bucket-to-bucket merge must resolve toward the lower scale')
   assert(approx(consolidated.reduce((sum, fragment) => sum + fragment.distance, 0), 4.1, 1e-9), 'bucket-to-bucket merge must keep the total distance')
+
+  // S9: a merge that would lower the higher-scale stretch by more than one rung
+  // is refused — a fragment entitled to a near-full scale must not be dragged
+  // to the slot floor by the slot it merely touches. A 2.0 rad fragment
+  // quantizes to 0.76, three rungs above the 0.4 slot, so it keeps its own
+  // scale instead of being consolidated into the slot.
+  const dragged = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 0.4 })
+  dragged.push(Math.PI, 2.0)
+  dragged.push(2.0, 0.1)
+  dragged.push(Math.PI, 2.0)
+  const kept = dragged.fragments()
+  assert(
+    kept.some((fragment) => approx(fragment.scale, 0.76, 1e-12) && approx(fragment.distance, 0.1, 1e-9)),
+    `a short fragment more than one rung above its neighbours must keep its own scale, got ${JSON.stringify(kept)}`,
+  )
 }
 
 // ── 8b. Quantizer recovers to full feed through the deadband ──
