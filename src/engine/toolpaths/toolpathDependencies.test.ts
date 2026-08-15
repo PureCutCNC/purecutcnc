@@ -18,7 +18,8 @@
 
 /**
  * Tests for the pure change-detection module behind the per-operation
- * toolpath cache (issue #518, slices S1 + S1b + S2's `name` correction).
+ * toolpath cache (issue #518, slices S1 + S1b + S2's `name` correction + S2b's
+ * machining-relevant `meta` fields).
  *
  * `diffToolpathInputs` must report exactly the feature ids whose
  * toolpath-relevant input changed, and must raise `invalidatesEveryOperation`
@@ -28,6 +29,9 @@
  * user-visible toolpath warnings. `modelAssets` is compared by key set plus
  * reference identity — a deep-equal but distinct asset is a change
  * (conservative), and the megabyte base64 payloads are never read.
+ * `meta` is compared only through the `MACHINING_META_FIELDS` allowlist —
+ * never wholesale, because `meta.modified` churns on nearly every store
+ * action.
  */
 
 import { rectProfile } from '../../types/project'
@@ -512,6 +516,77 @@ function expectDisplayOnly(project: Project, next: Project, label: string): void
   // serialization (JSON.stringify) happened. Timing assertions are not used
   // here because they are flaky.
   assert(payloadReads.count === 0, `payload getters were read ${payloadReads.count} times`)
+}
+
+{
+  console.log('12. Machining-relevant meta field changes invalidate every operation...')
+  const project = baseProject()
+  const withMeta = (patch: Partial<Project['meta']>): Project => ({
+    ...project,
+    meta: { ...project.meta, ...patch },
+  })
+
+  // Assert each field separately — not in a loop over MACHINING_META_FIELDS,
+  // which would pass even if the implementation read the same constant wrongly.
+  const maxTravelZDiff = diffToolpathInputs(project, withMeta({ maxTravelZ: project.meta.maxTravelZ + 1 }))
+  assert(maxTravelZDiff.invalidatesEveryOperation, 'maxTravelZ change must invalidate every operation')
+
+  const operationClearanceZDiff = diffToolpathInputs(
+    project,
+    withMeta({ operationClearanceZ: project.meta.operationClearanceZ + 1 }),
+  )
+  assert(operationClearanceZDiff.invalidatesEveryOperation, 'operationClearanceZ change must invalidate every operation')
+
+  const clampClearanceXYDiff = diffToolpathInputs(
+    project,
+    withMeta({ clampClearanceXY: project.meta.clampClearanceXY + 1 }),
+  )
+  assert(clampClearanceXYDiff.invalidatesEveryOperation, 'clampClearanceXY change must invalidate every operation')
+
+  const clampClearanceZDiff = diffToolpathInputs(
+    project,
+    withMeta({ clampClearanceZ: project.meta.clampClearanceZ + 1 }),
+  )
+  assert(clampClearanceZDiff.invalidatesEveryOperation, 'clampClearanceZ change must invalidate every operation')
+}
+
+{
+  // Regression guard for the wholesale-compare trap: comparing `meta` by
+  // identity or deep equality would invalidate on every mutation because
+  // `meta.modified` is rewritten by essentially every store action.
+  console.log('13. REGRESSION GUARD: meta.modified change alone invalidates nothing...')
+  const project = baseProject()
+  const next: Project = {
+    ...project,
+    meta: { ...project.meta, modified: new Date(0).toISOString() },
+  }
+  const diff = diffToolpathInputs(project, next)
+  assert(!diff.invalidatesEveryOperation, 'meta.modified change must not invalidate every operation')
+  assert(diff.changedFeatureIds.size === 0, 'meta.modified change must invalidate no ids')
+}
+
+{
+  console.log('14. meta.name change alone invalidates nothing...')
+  const project = baseProject()
+  const next: Project = {
+    ...project,
+    meta: { ...project.meta, name: 'renamed-project' },
+  }
+  const diff = diffToolpathInputs(project, next)
+  assert(!diff.invalidatesEveryOperation, 'meta.name change must not invalidate every operation')
+  assert(diff.changedFeatureIds.size === 0, 'meta.name change must invalidate no ids')
+}
+
+{
+  console.log('15. selectedMachineId change alone invalidates nothing...')
+  const project = baseProject()
+  const next: Project = {
+    ...project,
+    meta: { ...project.meta, selectedMachineId: 'some-other-machine' },
+  }
+  const diff = diffToolpathInputs(project, next)
+  assert(!diff.invalidatesEveryOperation, 'selectedMachineId change must not invalidate every operation')
+  assert(diff.changedFeatureIds.size === 0, 'selectedMachineId change must invalidate no ids')
 }
 
 console.log('toolpathDependencies.test.ts: all tests passed')
