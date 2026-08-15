@@ -29,7 +29,7 @@ interface ToolpathVisibilityPanelProps {
   onExpandedChange: (expanded: boolean) => void
   /**
    * The feed-colour toggle's auto default for the selected operation (on when
-   * its pocketEngagementMode is 'engagement_feed'). Used only while the
+   * its pocketFeedReduction is 'engagement'). Used only while the
    * visibility object carries no explicit `feedColours` value.
    */
   feedColoursDefault?: boolean

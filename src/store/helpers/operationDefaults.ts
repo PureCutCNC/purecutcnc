@@ -324,10 +324,12 @@ export function defaultOperationForTarget(
       entryStrategy: 'helix' as const,
       entryRampAngle: 5,
     } : {}),
-    pocketSlotFeedPercent: 100,
-    // Seeded like pocketSlotFeedPercent: inert until a UI control exposes the
-    // engagement mode, so a newly created pocket changes no behaviour.
-    pocketEngagementMode: 'legacy',
+    // Issue #498 S7: 60 rather than 100 so a newly created pocket gets the
+    // slot-feed reduction by default. Saved projects are unaffected — nothing
+    // backfills this field on load.
+    pocketSlotFeedPercent: 60,
+    // Defaults to the shipped binary slot-feed rule; 'engagement' is opt-in.
+    pocketFeedReduction: 'slots_only',
     roundOutsideCorners: true,
     // Off by default. Relief changes the cut geometry of the corner, so it is
     // always an explicit choice — unlike roundOutsideCorners, which only

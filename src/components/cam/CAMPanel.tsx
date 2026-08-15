@@ -1796,12 +1796,12 @@ export function CAMPanel({
                       <label className="properties-field">
                         <span>{camT('cam.operation.engagementMode')}</span>
                         <Select
-                          value={selectedOperation.pocketEngagementMode ?? 'legacy'}
+                          value={selectedOperation.pocketFeedReduction ?? 'slots_only'}
                           options={[
-                            { value: 'legacy', label: camT('cam.operation.engagementModeLegacy') },
-                            { value: 'engagement_feed', label: camT('cam.operation.engagementModeEngagementFeed') },
+                            { value: 'slots_only', label: camT('cam.operation.engagementModeLegacy') },
+                            { value: 'engagement', label: camT('cam.operation.engagementModeEngagementFeed') },
                           ]}
-                          onChange={(value) => updateOperation(selectedOperation.id, { pocketEngagementMode: value })}
+                          onChange={(value) => updateOperation(selectedOperation.id, { pocketFeedReduction: value })}
                         />
                       </label>
                     </>

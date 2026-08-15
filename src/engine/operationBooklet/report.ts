@@ -330,7 +330,7 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
     rows.push({ label: translate('booklet.label.slotFeed'), value: translate('booklet.value.slotFeed', { percent: formatNumber(operation.pocketSlotFeedPercent ?? 100, 0) }) })
   }
 
-  if (operation.kind === 'pocket' && (operation.pocketEngagementMode ?? 'legacy') !== 'legacy') {
+  if (operation.kind === 'pocket' && (operation.pocketFeedReduction ?? 'slots_only') !== 'slots_only') {
     rows.push({ label: translate('booklet.label.engagementMode'), value: translate('booklet.engagementMode.engagementFeed') })
   }
 

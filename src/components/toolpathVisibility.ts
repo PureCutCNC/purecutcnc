@@ -34,7 +34,7 @@ export interface ToolpathVisibility {
 }
 
 /** True when the operation emitted engagement telemetry — the marker that its
- *  pocketEngagementMode is 'engagement_feed' (issue #498). Shared by both
+ *  pocketFeedReduction is 'engagement' (issue #498). Shared by both
  *  renderers and by the toggle's per-selection default, so the two views
  *  cannot disagree about when feed colours are on. */
 export function toolpathHasEngagementTelemetry(toolpath: ToolpathResult): boolean {

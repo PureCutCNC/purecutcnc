@@ -673,7 +673,7 @@ function segmentsTouch(
 
 /**
  * Engagement-scaled feed application for one Z level, used when the
- * operation's pocketEngagementMode is 'engagement_feed' (issue #498).
+ * operation's pocketFeedReduction is 'engagement' (issue #498).
  * Composes with `applySlotFeedToLevel`'s structure rather than adding a
  * second pass: one traversal of the level's moves, one splitting rule
  * (split where the emitted scale changes), the tail rebuilt once.
@@ -1057,7 +1057,7 @@ function applyLevelFeed(
   telemetry: EngagementTelemetryAccumulator | null,
   cache: OffsetBandEngagementClassification | null = null,
 ): void {
-  if (telemetry !== null && operation.pocketEngagementMode === 'engagement_feed') {
+  if (telemetry !== null && operation.pocketFeedReduction === 'engagement') {
     applyEngagementFeedToLevel(
       moves,
       startIndex,
@@ -2388,7 +2388,7 @@ function generateRoughBandMoves(
   // level looks its chunks up by canonical segment identity. (The parallel
   // pattern has no ring tree and its segment order is position-seeded per
   // level, so it keeps classifying per level.)
-  const engagementCache = telemetry !== null && operation.pocketEngagementMode === 'engagement_feed'
+  const engagementCache = telemetry !== null && operation.pocketFeedReduction === 'engagement'
     ? buildOffsetBandEngagementClassification(regionTrees, {
       toolRadius,
       direction,
@@ -2830,7 +2830,7 @@ function createSharedEngagementTelemetry(
   project: Project,
   operation: Operation,
 ): EngagementTelemetryAccumulator | null {
-  if (!(operation.kind === 'pocket' && operation.pocketEngagementMode === 'engagement_feed')) return null
+  if (!(operation.kind === 'pocket' && operation.pocketFeedReduction === 'engagement')) return null
   const toolRecord = operation.toolRef
     ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
     : null
@@ -2901,7 +2901,7 @@ function generatePocketToolpathSingle(
   const entryClearance = getOperationClearance(project)
   const stepoverDistance = tool.diameter * operation.stepover
   const maxLinkDistance = tool.diameter
-  const engagementMode = operation.kind === 'pocket' && operation.pocketEngagementMode === 'engagement_feed'
+  const engagementMode = operation.kind === 'pocket' && operation.pocketFeedReduction === 'engagement'
   const telemetry = sharedTelemetry ?? (engagementMode
     ? new EngagementTelemetryAccumulator(
       nominalEngagement(Math.max(stepoverDistance, 1 / DEFAULT_CLIPPER_SCALE), tool.radius),

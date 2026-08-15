@@ -38,7 +38,7 @@ export interface ToolpathMove {
   /** Multiplier applied to the operation's cut feed at G-code export time.
    *  Absent means 1 (normal feed). Set on fully engaged (slotting) pocket cuts
    *  when the operation's pocketSlotFeedPercent is below 100, or — when the
-   *  operation's pocketEngagementMode is 'engagement_feed' — on cuts whose
+   *  operation's pocketFeedReduction is 'engagement' — on cuts whose
    *  sampled cutter engagement sits above the stepover's nominal wrap angle
    *  (a quantized scale between pocketSlotFeedPercent and 1). Never set on
    *  plunge moves (those use the plunge feed). */
@@ -87,8 +87,8 @@ export interface ToolpathResult {
 export interface PocketToolpathResult extends ToolpathResult {
   stepLevels: number[]
   /** Distance-weighted engagement measurement for the whole operation,
-   *  present only when the operation's pocketEngagementMode is
-   *  'engagement_feed' (issue #498 telemetry). */
+   *  present only when the operation's pocketFeedReduction is
+   *  'engagement' (issue #498 telemetry). */
   engagementTelemetry?: EngagementTelemetry
 }
 

@@ -16,10 +16,10 @@
 
 /**
  * Engagement-scaled pocket feed wiring (issue #498, slice S2): tests for
- * `pocketEngagementMode` on pocket clearing.
+ * `pocketFeedReduction` on pocket clearing.
  *
- * The legacy byte-identity invariant is proven two ways: JSON equality between
- * the field-absent and field-'legacy' move streams in-process, and — when
+ * The slots-only byte-identity invariant is proven two ways: JSON equality between
+ * the field-absent and field-'slots_only' move streams in-process, and — when
  * `ENGAGEMENT_DUMP_DIR` is set — a full JSON dump of every fixture's move
  * stream for diffing against the pre-change tree (see the slice's required
  * checks).
@@ -163,15 +163,15 @@ function buildFixture(spec: FixtureSpec, overrides: Partial<Operation> = {}): { 
   return { project, operation }
 }
 
-function operationWithoutPocketEngagementMode(operation: Operation): Operation {
+function operationWithoutPocketFeedReduction(operation: Operation): Operation {
   const copy = { ...operation }
-  delete copy.pocketEngagementMode
+  delete copy.pocketFeedReduction
   return copy
 }
 
 interface CachedResult {
-  legacyAbsent: PocketToolpathResult
-  legacyExplicit: PocketToolpathResult
+  slotsOnlyAbsent: PocketToolpathResult
+  slotsOnlyExplicit: PocketToolpathResult
   engagement: PocketToolpathResult
 }
 
@@ -185,13 +185,13 @@ function dumpMoves(name: string, variant: string, moves: ToolpathMove[]): void {
 
 function generateCached(spec: FixtureSpec, key: string, overrides: Partial<Operation> = {}): CachedResult {
   const { project, operation } = buildFixture(spec, overrides)
-  const legacyAbsent = generatePocketToolpath(project, operationWithoutPocketEngagementMode(operation))
-  const legacyExplicit = generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'legacy' })
-  const engagement = generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
-  dumpMoves(key, 'legacy-absent', legacyAbsent.moves)
-  dumpMoves(key, 'legacy-explicit', legacyExplicit.moves)
+  const slotsOnlyAbsent = generatePocketToolpath(project, operationWithoutPocketFeedReduction(operation))
+  const slotsOnlyExplicit = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'slots_only' })
+  const engagement = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
+  dumpMoves(key, 'slots-only-absent', slotsOnlyAbsent.moves)
+  dumpMoves(key, 'slots-only-explicit', slotsOnlyExplicit.moves)
   dumpMoves(key, 'engagement', engagement.moves)
-  return { legacyAbsent, legacyExplicit, engagement }
+  return { slotsOnlyAbsent, slotsOnlyExplicit, engagement }
 }
 
 // ── Precomputation (runs before every test so the JSON dumps are complete
@@ -208,9 +208,9 @@ for (const spec of FIXTURES) {
   const spec = FIXTURES.find((candidate) => candidate.name === 'offset-single')
   if (!spec) throw new Error('missing offset-single fixture')
   const { project, operation } = buildFixture(spec, { pocketSlotFeedPercent: undefined })
-  const noAnchorLegacy = generatePocketToolpath(project, operationWithoutPocketEngagementMode(operation))
-  const noAnchorEngagement = generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
-  dumpMoves('offset-single-no-anchor', 'legacy-absent', noAnchorLegacy.moves)
+  const noAnchorSlotsOnly = generatePocketToolpath(project, operationWithoutPocketFeedReduction(operation))
+  const noAnchorEngagement = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
+  dumpMoves('offset-single-no-anchor', 'slots-only-absent', noAnchorSlotsOnly.moves)
   dumpMoves('offset-single-no-anchor', 'engagement', noAnchorEngagement.moves)
 }
 
@@ -236,32 +236,32 @@ function specByName(name: string): FixtureSpec {
   return spec
 }
 
-// ── 1. Legacy byte-identity ───────────────────────────────────────────
+// ── 1. Slots-only byte-identity ───────────────────────────────────────
 
 for (const spec of FIXTURES) {
-  test(`${spec.name}: field absent and 'legacy' emit byte-identical move streams`, () => {
-    const { legacyAbsent, legacyExplicit } = results.get(spec.name) as CachedResult
+  test(`${spec.name}: field absent and 'slots_only' emit byte-identical move streams`, () => {
+    const { slotsOnlyAbsent, slotsOnlyExplicit } = results.get(spec.name) as CachedResult
     assert(
-      JSON.stringify(legacyAbsent.moves) === JSON.stringify(legacyExplicit.moves),
+      JSON.stringify(slotsOnlyAbsent.moves) === JSON.stringify(slotsOnlyExplicit.moves),
       'move streams must be identical field for field, including feedScale presence',
     )
     assert(
-      JSON.stringify(legacyAbsent.warnings) === JSON.stringify(legacyExplicit.warnings),
+      JSON.stringify(slotsOnlyAbsent.warnings) === JSON.stringify(slotsOnlyExplicit.warnings),
       'warnings must be identical',
     )
-    assert(legacyAbsent.engagementTelemetry === undefined, 'legacy mode must not expose engagement telemetry')
-    assert(legacyExplicit.engagementTelemetry === undefined, 'legacy mode must not expose engagement telemetry')
+    assert(slotsOnlyAbsent.engagementTelemetry === undefined, 'slots_only mode must not expose engagement telemetry')
+    assert(slotsOnlyExplicit.engagementTelemetry === undefined, 'slots_only mode must not expose engagement telemetry')
   })
 }
 
 // ── 2. Output actually changes ────────────────────────────────────────
 
 for (const name of ['offset-single', 'offset-island-single', 'parallel-single', 'parallel-multi', 'finish-offset-single']) {
-  test(`${name}: engagement_feed changes the emitted moves`, () => {
-    const { legacyAbsent, engagement } = results.get(name) as CachedResult
+  test(`${name}: engagement changes the emitted moves`, () => {
+    const { slotsOnlyAbsent, engagement } = results.get(name) as CachedResult
     assert(
-      JSON.stringify(legacyAbsent.moves) !== JSON.stringify(engagement.moves),
-      'engagement_feed must change the emitted move stream — the field must not be a no-op',
+      JSON.stringify(slotsOnlyAbsent.moves) !== JSON.stringify(engagement.moves),
+      'engagement must change the emitted move stream — the field must not be a no-op',
     )
     assert(engagement.engagementTelemetry !== undefined, 'engagement mode must expose telemetry')
   })
@@ -514,15 +514,15 @@ function pointSegmentDistanceSq(
 
 /**
  * Never-raise, measured geometrically (issue #498 slice S2c): every engagement
- * cut move's midpoint is matched to every legacy cut segment covering it — an
+ * cut move's midpoint is matched to every slots-only cut segment covering it — an
  * index-wise comparison is invalid because the two modes split moves
- * differently — and the engagement scale must never exceed the lowest legacy
- * scale at that physical location. Fails on the shipped chunkwise clamp, whose
- * legacy verdicts are captured per chunk and miss a legacy slot span that a
- * later move retraces (the parallel pattern's boundary contour and first fill
- * line).
+ * differently — and the engagement scale must never exceed the lowest
+ * slots-only scale at that physical location. Fails on the shipped chunkwise
+ * clamp, whose slots-only verdicts are captured per chunk and miss a slots-only
+ * slot span that a later move retraces (the parallel pattern's boundary
+ * contour and first fill line).
  */
-test('never-raise, geometric: no engagement move exceeds the legacy scale covering its midpoint', () => {
+test('never-raise, geometric: no engagement move exceeds the slots-only scale covering its midpoint', () => {
   for (const [name, overrides] of [
     ['parallel slot 40', { pocketPattern: 'parallel' as const, pocketAngle: 0, pocketSlotFeedPercent: 40 }],
     ['parallel 45 slot 40', { pocketPattern: 'parallel' as const, pocketAngle: 45, pocketSlotFeedPercent: 40 }],
@@ -530,52 +530,52 @@ test('never-raise, geometric: no engagement move exceeds the legacy scale coveri
   ] as Array<[string, Partial<Operation>]>) {
     const spec = specByName(overrides.pocketPattern === 'parallel' ? 'parallel-single' : 'offset-single')
     const { project, operation } = buildFixture(spec, overrides)
-    const legacy = generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'legacy' })
-    const engagement = generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
-    const legacyCuts = legacy.moves.filter((move) => move.kind === 'cut')
+    const slotsOnly = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'slots_only' })
+    const engagement = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
+    const slotsOnlyCuts = slotsOnly.moves.filter((move) => move.kind === 'cut')
     for (const move of engagement.moves) {
       if (move.kind !== 'cut') continue
       const mx = (move.from.x + move.to.x) / 2
       const my = (move.from.y + move.to.y) / 2
-      let lowestLegacy = 1
+      let lowestSlotsOnly = 1
       let covered = false
-      for (const candidate of legacyCuts) {
+      for (const candidate of slotsOnlyCuts) {
         if (pointSegmentDistanceSq(mx, my, candidate.from.x, candidate.from.y, candidate.to.x, candidate.to.y) <= 1e-12) {
           covered = true
-          lowestLegacy = Math.min(lowestLegacy, candidate.feedScale ?? 1)
+          lowestSlotsOnly = Math.min(lowestSlotsOnly, candidate.feedScale ?? 1)
         }
       }
-      assert(covered, `${name}: engagement midpoint (${mx.toFixed(2)}, ${my.toFixed(2)}) is covered by no legacy cut segment`)
+      assert(covered, `${name}: engagement midpoint (${mx.toFixed(2)}, ${my.toFixed(2)}) is covered by no slots-only cut segment`)
       assert(
-        (move.feedScale ?? 1) <= lowestLegacy + 1e-12,
-        `${name}: engagement scale ${move.feedScale ?? 1} exceeds the legacy scale ${lowestLegacy} covering its midpoint (${mx.toFixed(2)}, ${my.toFixed(2)})`,
+        (move.feedScale ?? 1) <= lowestSlotsOnly + 1e-12,
+        `${name}: engagement scale ${move.feedScale ?? 1} exceeds the slots-only scale ${lowestSlotsOnly} covering its midpoint (${mx.toFixed(2)}, ${my.toFixed(2)})`,
       )
     }
   }
 })
 
-test('conservative composition: engagement mode never carries a higher feedScale than legacy', () => {
+test('conservative composition: engagement never carries a higher feedScale than slots_only', () => {
   for (const spec of FIXTURES) {
-    const { legacyAbsent, engagement } = results.get(spec.name) as CachedResult
+    const { slotsOnlyAbsent, engagement } = results.get(spec.name) as CachedResult
     const engagementProfile = scaleProfile(engagement.moves)
-    const legacyProfile = scaleProfile(legacyAbsent.moves)
+    const slotsOnlyProfile = scaleProfile(slotsOnlyAbsent.moves)
     const engagementTotal = engagementProfile.at(-1)?.at ?? 0
-    const legacyTotal = legacyProfile.at(-1)?.at ?? 0
+    const slotsOnlyTotal = slotsOnlyProfile.at(-1)?.at ?? 0
     assert(
-      Math.abs(engagementTotal - legacyTotal) < 1e-6,
-      `${spec.name}: both streams must cover the same path (${engagementTotal} vs ${legacyTotal})`,
+      Math.abs(engagementTotal - slotsOnlyTotal) < 1e-6,
+      `${spec.name}: both streams must cover the same path (${engagementTotal} vs ${slotsOnlyTotal})`,
     )
     const distances = [...new Set(
-      [...engagementProfile, ...legacyProfile]
+      [...engagementProfile, ...slotsOnlyProfile]
         .map((point) => point.at)
         .filter((distance) => distance < engagementTotal - 1e-9),
     )].sort((a, b) => a - b)
     for (const distance of distances) {
       const engagementScale = profileScaleAt(engagementProfile, distance)
-      const legacyScale = profileScaleAt(legacyProfile, distance)
+      const slotsOnlyScale = profileScaleAt(slotsOnlyProfile, distance)
       assert(
-        engagementScale <= legacyScale + 1e-12,
-        `${spec.name}: engagement scale ${engagementScale} exceeds legacy ${legacyScale} at path distance ${distance}`,
+        engagementScale <= slotsOnlyScale + 1e-12,
+        `${spec.name}: engagement scale ${engagementScale} exceeds slots_only ${slotsOnlyScale} at path distance ${distance}`,
       )
     }
   }
@@ -661,7 +661,7 @@ test('cache equivalence: cached per-band classification equals recomputation on 
   const { project, operation } = buildThreeLobeFixture()
   // The raw (unsplit) move stream: engagement mode without a slot anchor emits
   // exactly the generated moves, so per-level cut sequences come from here.
-  const raw = generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed', pocketSlotFeedPercent: undefined })
+  const raw = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement', pocketSlotFeedPercent: undefined })
   const rawCuts = raw.moves.filter((move) => move.kind === 'cut')
   // The level cut sequences, in emission order, grouped by level z.
   const levels: ToolpathMove[][] = []
@@ -804,7 +804,7 @@ test('cost probe: the swept-material index is built once per band and reused per
   const spec = specByName('offset-multi')
   const { project, operation } = buildFixture(spec)
   resetEngagementCacheProbeCounts()
-  generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
+  generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
   const engagementCounts = engagementCacheProbeCounts()
   assert(
     engagementCounts.bandCacheBuilds === 1,
@@ -815,11 +815,11 @@ test('cost probe: the swept-material index is built once per band and reused per
     `both step levels must consume the one build, got ${engagementCounts.cacheLevelUses} level uses`,
   )
   resetEngagementCacheProbeCounts()
-  generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'legacy' })
-  const legacyCounts = engagementCacheProbeCounts()
-  assert(legacyCounts.bandCacheBuilds === 0 && legacyCounts.cacheLevelUses === 0, 'legacy mode must build no classification')
+  generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'slots_only' })
+  const slotsOnlyCounts = engagementCacheProbeCounts()
+  assert(slotsOnlyCounts.bandCacheBuilds === 0 && slotsOnlyCounts.cacheLevelUses === 0, 'slots_only mode must build no classification')
   resetEngagementCacheProbeCounts()
-  generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed', pocketPattern: 'parallel' })
+  generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement', pocketPattern: 'parallel' })
   const parallelCounts = engagementCacheProbeCounts()
   assert(
     parallelCounts.bandCacheBuilds === 0 && parallelCounts.cacheLevelUses === 0,
@@ -847,7 +847,7 @@ test('cost probe: the swept-material index is built once per band and reused per
 test('depth invariance: every level emits the same fed-move count, XY sequence, and feedScale sequence', () => {
   const spec = specByName('offset-multi')
   const { project, operation } = buildFixture(spec)
-  const engagement = generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
+  const engagement = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
   const levels: ToolpathMove[][] = []
   for (const move of engagement.moves) {
     if (move.kind !== 'cut') continue
@@ -883,7 +883,7 @@ test('cache misses are observable: zero on the canonical fixtures, a known numbe
     const spec = specByName(name)
     const { project, operation } = buildFixture(spec)
     resetEngagementCacheProbeCounts()
-    generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
+    generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
     const counts = engagementCacheProbeCounts()
     assert(
       counts.cacheMisses === 0,
@@ -896,7 +896,7 @@ test('cache misses are observable: zero on the canonical fixtures, a known numbe
     const spec = specByName(name)
     const { project, operation } = buildFixture(spec)
     resetEngagementCacheProbeCounts()
-    generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
+    generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
     const counts = engagementCacheProbeCounts()
     assert(
       counts.bandCacheBuilds === 0 && counts.cacheMisses === 0,
@@ -912,7 +912,7 @@ test('cache misses are observable: zero on the canonical fixtures, a known numbe
     const spec = specByName('offset-island-multi')
     const { project, operation } = buildFixture(spec)
     resetEngagementCacheProbeCounts()
-    generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
+    generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
     const counts = engagementCacheProbeCounts()
     assert(
       counts.cacheMisses === 2,
@@ -927,7 +927,7 @@ test('determinism: repeated generation produces identical move streams', () => {
   for (const name of ['offset-single', 'parallel-island-multi']) {
     const spec = specByName(name)
     const { project, operation } = buildFixture(spec)
-    const engagementOp = { ...operation, pocketEngagementMode: 'engagement_feed' as const }
+    const engagementOp = { ...operation, pocketFeedReduction: 'engagement' as const }
     const first = generatePocketToolpath(project, engagementOp)
     const second = generatePocketToolpath(project, engagementOp)
     assert(JSON.stringify(first.moves) === JSON.stringify(second.moves), `${name}: moves must be deterministic`)
@@ -961,11 +961,11 @@ test('engagement telemetry records the corner spike on a square pocket', () => {
 test('engagement mode without a slot percent applies no scaling but records telemetry', () => {
   const spec = specByName('offset-single')
   const { project, operation } = buildFixture(spec, { pocketSlotFeedPercent: undefined })
-  const engagement = generatePocketToolpath(project, { ...operation, pocketEngagementMode: 'engagement_feed' })
-  const legacy = generatePocketToolpath(project, operationWithoutPocketEngagementMode(operation))
+  const engagement = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
+  const slotsOnly = generatePocketToolpath(project, operationWithoutPocketFeedReduction(operation))
   assert(
-    JSON.stringify(engagement.moves) === JSON.stringify(legacy.moves),
-    'no pocketSlotFeedPercent anchor means no scaling — the move stream must match legacy',
+    JSON.stringify(engagement.moves) === JSON.stringify(slotsOnly.moves),
+    'no pocketSlotFeedPercent anchor means no scaling — the move stream must match slots_only',
   )
   assert(
     engagement.moves.every((move) => move.feedScale === undefined),

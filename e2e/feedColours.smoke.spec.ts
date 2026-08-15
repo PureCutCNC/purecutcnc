@@ -18,9 +18,9 @@
  * Feed-coloured toolpath smoke (issue #498 S4, extended by S5).
  *
  * Asserts the load-bearing rendering contract on the sketch canvas pixels:
- * with the feed-colour toggle on, a pocket in `engagement_feed` mode draws its
- * cut segments in more than one distinct colour; a legacy pocket draws them in
- * exactly one. Pixel comparisons are between full-canvas samples of the same
+ * with the feed-colour toggle on, a pocket in `engagement` mode draws its
+ * cut segments in more than one distinct colour; a slots-only pocket draws them
+ * in exactly one. Pixel comparisons are between full-canvas samples of the same
  * fixture with only the toggle flipped, so the test needs no colour math — any
  * palette change re-verifies against the live ramp rather than against
  * hardcoded values. The S5 test adds a non-40% slot feed and pins the legend
@@ -52,12 +52,12 @@ function resolvedRectProfile(cx: number, cy: number, w: number, h: number) {
 /**
  * The two fixture variants differ only in pocket feed mode. The engagement
  * variant emits the full bucket ladder (verified against the engine: distinct
- * cut scales 0.88 / 0.64 / 0.40 plus full-feed moves); the legacy variant
+ * cut scales 0.88 / 0.64 / 0.40 plus full-feed moves); the slots-only variant
  * emits no scaled moves at all, so its cuts must stay a single colour.
  * `slotPercent` varies the engagement ladder's slot feed (issue #498 S5): the
  * emitted rungs and the legend both derive from it.
  */
-function buildFeedColoursProjectJson(mode: 'legacy' | 'engagement_feed', slotPercent = 40): string {
+function buildFeedColoursProjectJson(mode: 'slots_only' | 'engagement', slotPercent = 40): string {
   const now = '2026-01-01T00:00:00.000Z'
   return JSON.stringify({
     version: '3.0',
@@ -161,9 +161,9 @@ function buildFeedColoursProjectJson(mode: 'legacy' | 'engagement_feed', slotPer
         rpm: 18000,
         pocketPattern: 'offset',
         pocketAngle: 0,
-        ...(mode === 'engagement_feed'
-          ? { pocketSlotFeedPercent: slotPercent, pocketEngagementMode: 'engagement_feed' }
-          : { pocketEngagementMode: 'legacy' }),
+        ...(mode === 'engagement'
+          ? { pocketSlotFeedPercent: slotPercent, pocketFeedReduction: 'engagement' }
+          : { pocketFeedReduction: 'slots_only' }),
         roundOutsideCorners: false,
         stockToLeaveRadial: 0,
         stockToLeaveAxial: 0,
@@ -179,8 +179,8 @@ function buildFeedColoursProjectJson(mode: 'legacy' | 'engagement_feed', slotPer
   })
 }
 
-const ENGAGEMENT_FIXTURE_JSON = buildFeedColoursProjectJson('engagement_feed')
-const LEGACY_FIXTURE_JSON = buildFeedColoursProjectJson('legacy')
+const ENGAGEMENT_FIXTURE_JSON = buildFeedColoursProjectJson('engagement')
+const SLOTS_ONLY_FIXTURE_JSON = buildFeedColoursProjectJson('slots_only')
 
 /** Distinct pixel colours covering at least MIN_GROUP_PIXELS each. */
 async function dominantPixelGroups(sketchCanvas: Locator): Promise<string[]> {
@@ -221,7 +221,7 @@ async function sampleCanvas(page: Page, sketchCanvas: Locator): Promise<Set<stri
 }
 
 test.describe('Feed-coloured toolpath smoke', () => {
-  test('engagement_feed pocket renders cut segments in multiple colours with the toggle on', async ({ app, ui }) => {
+  test('engagement pocket renders cut segments in multiple colours with the toggle on', async ({ app, ui }) => {
     await seedProject(app.page, ENGAGEMENT_FIXTURE_JSON)
 
     // The panel only renders once the generated toolpath exists.
@@ -251,8 +251,8 @@ test.describe('Feed-coloured toolpath smoke', () => {
     }, { timeout: 10000 }).toBeGreaterThanOrEqual(2)
   })
 
-  test('engagement_feed pocket at 75% slot feed renders the derived ramp and legend', async ({ app, ui }) => {
-    await seedProject(app.page, buildFeedColoursProjectJson('engagement_feed', 75))
+  test('engagement pocket at 75% slot feed renders the derived ramp and legend', async ({ app, ui }) => {
+    await seedProject(app.page, buildFeedColoursProjectJson('engagement', 75))
 
     const panel = ui.toolpathVis.sketchPanel(app.page)
     await expect(panel).toBeVisible({ timeout: 30000 })
@@ -286,8 +286,8 @@ test.describe('Feed-coloured toolpath smoke', () => {
     }, { timeout: 10000 }).toBeGreaterThanOrEqual(2)
   })
 
-  test('legacy pocket renders cut segments in exactly one colour with the toggle on', async ({ app, ui }) => {
-    await seedProject(app.page, LEGACY_FIXTURE_JSON)
+  test('slots-only pocket renders cut segments in exactly one colour with the toggle on', async ({ app, ui }) => {
+    await seedProject(app.page, SLOTS_ONLY_FIXTURE_JSON)
 
     const panel = ui.toolpathVis.sketchPanel(app.page)
     await expect(panel).toBeVisible({ timeout: 30000 })
@@ -295,13 +295,13 @@ test.describe('Feed-coloured toolpath smoke', () => {
     const feedToggle = ui.toolpathVis.sketchItems(app.page).filter({ hasText: 'Feed colours' })
     await expect(feedToggle).toHaveCount(1)
 
-    // A legacy operation defaults the feed-colour toggle off.
+    // A slots-only operation defaults the feed-colour toggle off.
     await ui.operations.rowByName(app.page, 'Pocket A').click()
     await expect(feedToggle).toHaveAttribute('aria-pressed', 'false')
 
     const offGroups = await sampleCanvas(app.page, ui.canvas.sketch(app.page))
 
-    // Toggle on — legacy cuts carry no feed scale, so nothing may change.
+    // Toggle on — slots-only cuts carry no feed scale, so nothing may change.
     await feedToggle.click()
     await expect(feedToggle).toHaveAttribute('aria-pressed', 'true')
     const onGroups = await sampleCanvas(app.page, ui.canvas.sketch(app.page))

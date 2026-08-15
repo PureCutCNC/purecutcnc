@@ -497,26 +497,26 @@ function testReportIncludesEngagementModeRow(): void {
 
   const engagement = buildOperationBookletReport({
     project,
-    operation: { ...operation, pocketEngagementMode: 'engagement_feed' },
+    operation: { ...operation, pocketFeedReduction: 'engagement' },
     tool,
     toolpath,
     generatedAt: new Date('2026-06-04T12:00:00Z'),
   })
   assert(
     engagement.settingRows.some((row) => row.label === translate('booklet.label.engagementMode') && row.value === translate('booklet.engagementMode.engagementFeed')),
-    'engagement mode should be reported when set to engagement feed',
+    'the engagement reduction should be reported when set to engagement',
   )
 
-  const legacy = buildOperationBookletReport({
+  const slotsOnly = buildOperationBookletReport({
     project,
-    operation: { ...operation, pocketEngagementMode: 'legacy' },
+    operation: { ...operation, pocketFeedReduction: 'slots_only' },
     tool,
     toolpath,
     generatedAt: new Date('2026-06-04T12:00:00Z'),
   })
   assert(
-    !legacy.settingRows.some((row) => row.label === translate('booklet.label.engagementMode')),
-    'legacy engagement mode should not be reported',
+    !slotsOnly.settingRows.some((row) => row.label === translate('booklet.label.engagementMode')),
+    'the slots_only reduction should not be reported',
   )
 
   const unset = buildOperationBookletReport({
@@ -528,7 +528,7 @@ function testReportIncludesEngagementModeRow(): void {
   })
   assert(
     !unset.settingRows.some((row) => row.label === translate('booklet.label.engagementMode')),
-    'an unset engagement mode should default to legacy and not be reported',
+    'an unset reduction should default to slots_only and not be reported',
   )
 }
 
