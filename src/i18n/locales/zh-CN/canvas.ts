@@ -28,7 +28,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.target.drawingLines': '正在绘制线条',
   'canvas.target.drawingRegions': '正在绘制区域',
   'canvas.target.drawingConstruction': '正在绘制构造线',
-
   'canvas.legend.heading': '特征颜色',
   'canvas.legend.collapseAria': '折叠特征颜色图例',
   'canvas.legend.collapseTitle': '折叠图例',
@@ -38,7 +37,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.legend.regionExclude': '区域排除',
   'canvas.legend.importedModel': '导入模型',
   'canvas.legend.selected': '已选中',
-
   'canvas.overlap.title': '选择特征',
   'canvas.overlap.dialogAria': '选择特征',
   'canvas.overlap.listAria': '重叠的特征',
@@ -55,7 +53,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.overlap.kind.composite': '复合路径',
   'canvas.overlap.kind.text': '文字',
   'canvas.overlap.kind.stl': 'STL 模型',
-
   'canvas.common.confirm': '确认',
   'canvas.common.cancel': '取消',
   'canvas.common.apply': '应用',
@@ -64,7 +61,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.common.undo': '撤销',
   'canvas.common.next': '下一步',
   'canvas.common.moveControls': '移动工作流控件',
-
   'canvas.field.width': '宽度',
   'canvas.field.height': '高度',
   'canvas.field.radius': '半径',
@@ -75,7 +71,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.field.diameter': '直径',
   'canvas.field.copies': '副本数',
   'canvas.field.scale': '缩放',
-
   'canvas.shape.rectangle': '矩形',
   'canvas.shape.circle': '圆形',
   'canvas.shape.ellipse': '椭圆',
@@ -88,11 +83,9 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.shape.roundedRectangle': '圆角矩形',
   'canvas.shape.chamferedRectangle': '倒角矩形',
   'canvas.shape.composite': '复合形状',
-
   'canvas.composite.mode.line': '直线',
   'canvas.composite.mode.arc': '弧线',
   'canvas.composite.mode.spline': '样条',
-
   'canvas.creation.step.enterDimensions': '输入尺寸',
   'canvas.creation.step.clickFirstPoint': '点击第一个点',
   'canvas.creation.step.clickFirstCorner': '点击第一个角',
@@ -115,13 +108,11 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.creation.radiusButton': '半径',
   'canvas.creation.widthButton': '宽度',
   'canvas.creation.confirmGear': '确认',
-
   'canvas.placement.originTitle': '放置原点',
   'canvas.placement.textTitle': '放置文字',
   'canvas.placement.originStep': '点击草图放置机床 X0 Y0。Z 轴在属性中手动设置。',
   'canvas.placement.textStep': '点击草图放置文字。',
   'canvas.placement.cancel': '取消',
-
   'canvas.constraint.title': '约束',
   'canvas.constraint.editTitle': '编辑约束',
   'canvas.constraint.step.pickAnchor': '选择锚点',
@@ -133,7 +124,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.constraint.confirm': '确认',
   'canvas.constraint.summary.anchor': '点击此特征上的捕捉点。',
   'canvas.constraint.summary.reference': '点击另一特征上的捕捉点。',
-
   'canvas.driving.title.resizeStock': '调整毛坯尺寸',
   'canvas.driving.title.editDimension': '编辑标注',
   'canvas.driving.step.setValue': '设置值',
@@ -154,7 +144,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.driving.holdLabel.end': '固定终点',
   'canvas.driving.holdLabel.firstRay': '固定第一条边',
   'canvas.driving.holdLabel.secondRay': '固定第二条边',
-
   'canvas.offset.title': '偏移',
   'canvas.offset.step.setDistance': '设置距离',
   'canvas.offset.step.previewDistance': '预览距离',
@@ -163,7 +152,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.offset.distanceButton': '距离',
   'canvas.offset.cancel': '取消',
   'canvas.offset.summary': '在特征内或外移动以预览。点击确认。',
-
   'canvas.join.title': '合并',
   'canvas.join.step.selectFeatures': '选择特征',
   'canvas.join.moveLabel': '移动合并控件',
@@ -173,7 +161,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.join.summary.tooFew': '请选择至少两个闭合特征。',
   'canvas.join.summary.count.one': '已选择 {count} 个闭合特征。',
   'canvas.join.summary.count.other': '已选择 {count} 个闭合特征。',
-
   'canvas.cut.title': '切割',
   'canvas.cut.step.selectCutters': '选择切割工具',
   'canvas.cut.step.selectTargets': '选择目标',
@@ -189,7 +176,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.cut.summary.cuttersLocked.other': '{count} 个切割工具已锁定。选择目标特征。',
   'canvas.cut.summary.targets.one': '已选择 {count} 个目标。',
   'canvas.cut.summary.targets.other': '已选择 {count} 个目标。',
-
   'canvas.move.title.copy': '复制',
   'canvas.move.title.move': '移动',
   'canvas.move.step.setDistance': '设置距离',
@@ -200,7 +186,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.move.confirm': '确认',
   'canvas.move.cancel': '取消',
   'canvas.move.summary.selectTarget': '选择目标点以设置方向和默认距离。',
-
   'canvas.transform.title.resize': '缩放',
   'canvas.transform.title.mirror': '镜像',
   'canvas.transform.title.rotate': '旋转',
@@ -225,7 +210,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.transform.summary.mirror': '移动以预览，然后点击第二个镜像线点。',
   'canvas.transform.summary.rotateCopy': '移动以预览旋转副本，然后点击设置角度。',
   'canvas.transform.summary.rotate': '移动以预览，然后点击确认。',
-
   'canvas.edit.title': '编辑',
   'canvas.edit.step.enterDimensions': '输入尺寸',
   'canvas.edit.step.enterRadius': '输入半径',
@@ -251,7 +235,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.edit.distanceButton': '距离',
   'canvas.edit.warning.selfIntersecting': '轮廓自相交',
   'canvas.edit.warning.exceedsStock': '超出毛坯范围',
-
   'canvas.dimension.title.aligned': '对齐标注',
   'canvas.dimension.title.horizontal': '水平标注',
   'canvas.dimension.title.vertical': '垂直标注',
@@ -269,23 +252,19 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.dimension.step.setOffset': '点击设置偏移',
   'canvas.dimension.addCancel': '取消',
   'canvas.dimension.addSummary': '点击点将标注锚定到几何体。按 Esc 取消。',
-
   'canvas.dimension.deleteTitle': '删除标注',
   'canvas.dimension.deleteStep': '点击要删除的标注',
   'canvas.dimension.deleteDone': '完成',
   'canvas.dimension.deleteSummary': '点击每个要删除的标注。按 Esc 或完成结束。',
-
   'canvas.tape.title': '卷尺测量',
   'canvas.tape.step.first': '点击第一个点',
   'canvas.tape.step.second': '点击第二个点',
   'canvas.tape.done': '完成',
   'canvas.tape.summary': '捕捉到几何体。测量结果保持到下次点击 — 按 Esc 或完成退出。',
-
   'canvas.paste.title': '粘贴特征',
   'canvas.paste.step': '在草图中点击放置',
   'canvas.paste.cancel': '取消',
   'canvas.paste.summary': '移动指针预览粘贴位置。',
-
   'canvas.gear.summary': '外径 {length}',
   'canvas.gear.toothCount': '齿数',
   'canvas.gear.wholeDepth': '全齿深',
@@ -312,17 +291,14 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.gear.ref.crestForm': '齿顶形式参考图',
   'canvas.gear.ref.crestRadius': '齿顶圆角半径参考图',
   'canvas.gear.ref.boreDiameter': '内孔直径参考图',
-
   'canvas.param.ngonSides': '边数 (3-50)',
   'canvas.param.cornerRadius': '圆角半径',
   'canvas.param.chamfer': '倒角',
   'canvas.param.ref.ngonSides': '多边形边数参考图',
   'canvas.param.ref.roundRectCorner': '圆角矩形圆角半径参考图',
   'canvas.param.ref.chamferRectCorner': '倒角矩形倒角参考图',
-
   'canvas.warning.selfIntersect': '此轮廓自相交。3D/CAM 结果可能无效。',
   'canvas.warning.exceedsStock': '此轮廓超出毛坯范围。',
-
   'canvas.axisLock.lock': '锁定',
   'canvas.axisLock.lockX': '锁定 X',
   'canvas.axisLock.lockY': '锁定 Y',
@@ -330,7 +306,6 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.axisLock.multiSelect': '多选',
   'canvas.axisLock.multiSelectTitle': '切换多选',
   'canvas.axisLock.multiSelectDisabledTitle': '合并和切割时自动启用多选',
-
   'canvas.preview.pendingRectangle': '矩形预览',
   'canvas.preview.pendingTab': '连接桥预览',
   'canvas.preview.pendingClamp': '夹具预览',

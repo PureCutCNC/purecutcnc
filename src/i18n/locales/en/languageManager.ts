@@ -42,7 +42,6 @@ export const languageManagerEn = {
   'langManager.importPlaceholderIssues.one': 'Imported “{name}” with {count} placeholder mismatch — open the editor to review it.',
   'langManager.importPlaceholderIssues.other': 'Imported “{name}” with {count} placeholder mismatches — open the editor to review them.',
   'langManager.deleted': 'Deleted “{name}”.',
-
   'langEditor.title': 'Edit language — {name}',
   'langEditor.nameLabel': 'Language name',
   'langEditor.tagLabel': 'BCP-47 language tag',

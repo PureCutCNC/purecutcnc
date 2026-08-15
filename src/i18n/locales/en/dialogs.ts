@@ -161,7 +161,7 @@ export const dialogsEn = {
   'dialogs.unitConversion.convertDescription': 'Preserves the physical size of the design, stock, dimensions, and machining values.',
   'dialogs.unitConversion.convertExample': '{from} becomes {to}',
   'dialogs.unitConversion.keepHeading': 'Keep numeric values',
-  'dialogs.unitConversion.keepDescription': 'Reinterprets every number in the new units, changing the project\'s physical scale.',
+  'dialogs.unitConversion.keepDescription': "Reinterprets every number in the new units, changing the project's physical scale.",
   'dialogs.unitConversion.keepExample': '{from} becomes {to}',
 
   // ── Example Project list ──

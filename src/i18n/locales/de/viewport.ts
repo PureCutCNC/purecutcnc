@@ -26,13 +26,11 @@ export const viewportDe: Record<keyof typeof viewportEn, string> = {
   'viewport.presets.left': 'Ansicht links',
   'viewport.presets.iso': 'Isometrische Ansicht',
   'viewport.presets.free': 'Freie Ansicht',
-
   'viewport.viewMenu.ariaLabel': 'Kameraansicht',
   'viewport.viewMenu.headingStandard': 'Standardansichten',
   'viewport.viewMenu.headingActions': 'Aktionen',
   'viewport.viewMenu.fit': 'An Modell anpassen',
   'viewport.viewMenu.reset': 'Ansicht zurücksetzen',
-
   'viewport.sim.modeLabel': 'Simulationsmodus',
   'viewport.sim.modeSelected': 'Ausgewählt',
   'viewport.sim.modeVisible': 'Sichtbar',
@@ -58,7 +56,6 @@ export const viewportDe: Record<keyof typeof viewportEn, string> = {
   'viewport.sim.stepTooltip': 'Maximale Distanz, die das Werkzeug pro Frame vorrückt. Kleiner = flüssigere Bewegung, größer = schnellere Wiedergabe.',
   'viewport.sim.feedTooltip': 'Schnittvorschub der aktuellen Bewegung. Reduzierte Nutschnitte in Taschen zeigen hier ihren skalierten Vorschub; die Punktfarbe kennzeichnet die Bewegungsart (Eilgänge haben keinen Vorschub).',
   'viewport.sim.moveKindIdle': 'Leerlauf',
-
   'viewport.about.ariaLabel': 'Über PureCutCNC',
   'viewport.about.title': 'Über',
   'viewport.about.close': 'Schließen',
@@ -72,7 +69,6 @@ export const viewportDe: Record<keyof typeof viewportEn, string> = {
   'viewport.about.license': 'Lizenz (Apache-2.0)',
   'viewport.about.supportText': 'PureCutCNC ist kostenlos und bleibt kostenlos – doch Entwicklung und Pflege kosten echte Zeit und echtes Geld. Wenn es Ihnen hilft, hält ein Kaffee es am Laufen.',
   'viewport.about.buyCoffee': 'Einen Kaffee spendieren',
-
   'viewport.empty.title': 'Ihr Werkstück beginnen',
   'viewport.empty.subtitle': 'Zeichnen Sie eine Form, importieren Sie eine Datei oder öffnen Sie ein fertiges Beispiel, um den gesamten Ablauf zu sehen.',
   'viewport.empty.drawTitle': 'Form zeichnen',
@@ -80,7 +76,6 @@ export const viewportDe: Record<keyof typeof viewportEn, string> = {
   'viewport.empty.importTitle': 'Datei importieren',
   'viewport.empty.importMeta': 'SVG-, DXF-, OBJ-, STL- oder CAMJ-Dateien',
   'viewport.empty.examplesLabel': 'Beispiel öffnen…',
-
   'viewport.error.eyebrow': 'Etwas ist schiefgelaufen',
   'viewport.error.title': 'Entschuldigung – PureCutCNC konnte auf diesem Gerät nicht starten.',
   'viewport.error.body': 'Das bedeutet meist, dass Ihr Browser oder Betriebssystem die vom Programm benötigten 3D-Grafikfunktionen nicht unterstützt. Versuchen Sie eine aktuelle Version von Chrome, Edge oder Firefox auf einem einigermaßen aktuellen Desktop oder Tablet, oder verwenden Sie eine unserer Desktop-Versionen.',
@@ -88,7 +83,6 @@ export const viewportDe: Record<keyof typeof viewportEn, string> = {
   'viewport.error.reload': 'Neu laden',
   'viewport.error.desktopDownloads': 'Desktop-Downloads',
   'viewport.error.projectWebsite': 'Projekt-Website',
-
   'viewport.error.userAgent': 'User-Agent:',
   'viewport.error.timestamp': 'Zeitstempel:',
 }

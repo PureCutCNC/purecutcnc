@@ -39,7 +39,6 @@ export const warningsEn = {
   'warnings.cutDepthExceedsToolMax': 'Cut depth {depth} {units} exceeds tool max cut depth {max} {units}',
   'warnings.cutDepthExceedsToolMaxForFeature': '{name}: Cut depth {depth} {units} exceeds tool max cut depth {max} {units}',
   'warnings.entryStrategyFallback': 'The selected entry move did not fit inside the available cutting area, so a safer fallback entry was used.',
-
   'warnings.entryHelixDiameterClamped': 'The helix entry diameter was reduced from {requestedDiameter} to {actualDiameter} to fit the cutting area.',
   'warnings.noToolAssigned': 'No tool assigned to this operation',
   'warnings.vBitAngleRange': 'V-bit angle must be between 0 and 180 degrees',
@@ -74,7 +73,6 @@ export const warningsEn = {
   'warnings.edgeTrochoidalAdvanceRange': 'Trochoidal advance must be greater than 0 and no more than one tool diameter.',
   'warnings.edgeTrochoidalParametersInvalid': 'Trochoidal routing requires positive feed, plunge feed, and RPM values.',
   'warnings.edgeTrochoidalEntryStrategyUnsupported': 'Trochoidal routing supports Helix or Plunge entry only.',
-
   'warnings.edgeTrochoidalInvalidGuide': 'Trochoidal routing requires a single valid closed guide.',
   'warnings.edgeTrochoidalMoveBudget': 'Trochoidal routing exceeds the 500,000-point operation budget.',
   'warnings.edgeTrochoidalEntryBudget': 'The trochoidal entry near ({x}, {y}) exceeds the entry-point budget.',

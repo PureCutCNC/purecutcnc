@@ -30,13 +30,11 @@ export const viewportEn = {
   'viewport.presets.left': 'Left view',
   'viewport.presets.iso': 'Isometric view',
   'viewport.presets.free': 'Custom view',
-
   'viewport.viewMenu.ariaLabel': 'Camera view',
   'viewport.viewMenu.headingStandard': 'Standard views',
   'viewport.viewMenu.headingActions': 'Actions',
   'viewport.viewMenu.fit': 'Fit to model',
   'viewport.viewMenu.reset': 'Reset view',
-
   'viewport.sim.modeLabel': 'Simulation mode',
   'viewport.sim.modeSelected': 'Selected',
   'viewport.sim.modeVisible': 'Visible',
@@ -60,9 +58,8 @@ export const viewportEn = {
   'viewport.sim.speedAria': 'Playback speed multiplier',
   'viewport.sim.stepLabel': 'Step',
   'viewport.sim.stepTooltip': 'Maximum distance the tool advances per frame. Smaller = smoother motion, larger = faster playback.',
-  'viewport.sim.feedTooltip': "Cutting feed of the current move. Reduced slotting pocket cuts show their scaled feed here; the dot colour marks the move kind (rapids have no feed).",
+  'viewport.sim.feedTooltip': 'Cutting feed of the current move. Reduced slotting pocket cuts show their scaled feed here; the dot colour marks the move kind (rapids have no feed).',
   'viewport.sim.moveKindIdle': 'Idle',
-
   'viewport.about.ariaLabel': 'About PureCutCNC',
   'viewport.about.title': 'About',
   'viewport.about.close': 'Close',
@@ -76,7 +73,6 @@ export const viewportEn = {
   'viewport.about.license': 'License (Apache-2.0)',
   'viewport.about.supportText': 'PureCutCNC is free, and stays free — but building and maintaining it takes real time and money. If it helps you, a coffee keeps it going.',
   'viewport.about.buyCoffee': 'Buy me a coffee',
-
   'viewport.empty.title': 'Start your part',
   'viewport.empty.subtitle': 'Draw a shape, import a file, or open a finished example to see the full workflow.',
   'viewport.empty.drawTitle': 'Draw a shape',
@@ -84,7 +80,6 @@ export const viewportEn = {
   'viewport.empty.importTitle': 'Import a file',
   'viewport.empty.importMeta': 'SVG, DXF, OBJ, STL, or CAMJ files',
   'viewport.empty.examplesLabel': 'Open an example…',
-
   'viewport.error.eyebrow': 'Something went wrong',
   'viewport.error.title': "Sorry — PureCutCNC couldn't start on this device.",
   'viewport.error.body': "This usually means your browser or operating system doesn't support the 3D graphics features the app needs. Try a current version of Chrome, Edge, or Firefox on a reasonably recent desktop or tablet, or use one of our desktop builds.",
@@ -92,7 +87,6 @@ export const viewportEn = {
   'viewport.error.reload': 'Reload',
   'viewport.error.desktopDownloads': 'Desktop Downloads',
   'viewport.error.projectWebsite': 'Project Website',
-
   'viewport.error.userAgent': 'User agent:',
   'viewport.error.timestamp': 'Timestamp:',
 } as const satisfies Record<string, string>

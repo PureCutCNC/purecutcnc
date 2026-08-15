@@ -33,7 +33,6 @@ export const shellZhCN: Record<keyof typeof shellEn, string> = {
   'file.saveProjectDirty': '保存项目（有未保存的更改）',
   'file.undo': '撤销',
   'file.redo': '重做',
-
   'shell.topBar.openProjectPanel': '打开项目面板',
   'shell.topBar.openOperationsPanel': '打开加工操作面板',
   'shell.topBar.operations': '加工操作',
@@ -49,7 +48,6 @@ export const shellZhCN: Record<keyof typeof shellEn, string> = {
   'shell.topBar.zoomToModel': '缩放至模型',
   'shell.topBar.zoomSelected': '框选缩放',
   'shell.topBar.cancelZoomSelected': '取消框选缩放',
-
   'shell.snap.enable': '启用捕捉',
   'shell.snap.disable': '禁用捕捉',
   'shell.snap.settingsTooltip': '捕捉设置',
@@ -72,7 +70,6 @@ export const shellZhCN: Record<keyof typeof shellEn, string> = {
   'shell.snap.intersectionShort': '交点',
   'shell.snap.perpendicular': '捕捉到垂足',
   'shell.snap.perpendicularShort': '垂足',
-
   'shell.measure.tooltip': '测量与标注',
   'shell.measure.aria': '测量与标注',
   'shell.measure.tapeMeasure': '卷尺测量',
@@ -96,7 +93,6 @@ export const shellZhCN: Record<keyof typeof shellEn, string> = {
   'shell.measure.showDimensionsCount.other': '显示标注（{count}）',
   'shell.measure.hideDimensionsCount.one': '隐藏标注（{count}）',
   'shell.measure.hideDimensionsCount.other': '隐藏标注（{count}）',
-
   'appearance.tooltip': '外观',
   'appearance.heading': '外观',
   'appearance.menuAria': '外观主题',
@@ -112,19 +108,16 @@ export const shellZhCN: Record<keyof typeof shellEn, string> = {
   'appearance.lightFamily': '浅色系',
   'appearance.manageThemes': '管理主题…',
   'appearance.manageThemesDetail': '创建、编辑、导入、导出',
-
   'language.tooltip': '语言',
   'language.heading': '语言',
   'language.menuAria': '界面语言',
   'language.current': '语言：{name}',
   'language.customHeading': '自定义语言',
-
   'mobileBlocker.eyebrow': '仅支持桌面浏览器',
   'mobileBlocker.title': 'PureCutCNC 不支持在手机上使用。',
   'mobileBlocker.body': '浏览器版应用专为桌面尺寸的工作区设计，在手机屏幕上表现不佳。请使用桌面浏览器，或安装适用于 macOS、Windows 或 Linux 的桌面版。',
   'mobileBlocker.downloads': '桌面版下载',
   'mobileBlocker.website': '项目网站',
-
   'platform.confirmDiscard': '您有未保存的更改。要放弃更改并继续吗？',
   'platform.readProjectFailed': '读取项目文件失败。',
   'platform.openProjectFailed': '打开项目文件失败。',

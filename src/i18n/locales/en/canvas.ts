@@ -287,7 +287,6 @@ export const canvasEn = {
   'canvas.dimension.step.setOffset': 'Click to set the offset',
   'canvas.dimension.addCancel': 'Cancel',
   'canvas.dimension.addSummary': 'Click points to anchor the dimension to geometry. Esc to cancel.',
-
   'canvas.dimension.deleteTitle': 'Delete dimension',
   'canvas.dimension.deleteStep': 'Click a dimension to delete',
   'canvas.dimension.deleteDone': 'Done',

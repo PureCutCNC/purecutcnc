@@ -282,7 +282,6 @@ export const canvasDe: Record<keyof typeof canvasEn, string> = {
   'canvas.dimension.step.setOffset': 'Zum Festlegen des Versatzes klicken',
   'canvas.dimension.addCancel': 'Abbrechen',
   'canvas.dimension.addSummary': 'Punkte anklicken, um die Bemaßung an der Geometrie zu verankern. Esc zum Abbrechen.',
-
   'canvas.dimension.deleteTitle': 'Bemaßung löschen',
   'canvas.dimension.deleteStep': 'Bemaßung zum Löschen anklicken',
   'canvas.dimension.deleteDone': 'Fertig',

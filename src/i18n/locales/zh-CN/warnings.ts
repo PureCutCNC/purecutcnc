@@ -36,7 +36,6 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.cutDepthExceedsToolMax': '切削深度 {depth} {units} 超过刀具最大切深 {max} {units}',
   'warnings.cutDepthExceedsToolMaxForFeature': '{name}：切削深度 {depth} {units} 超过刀具最大切深 {max} {units}',
   'warnings.entryStrategyFallback': '所选下刀路径无法放入可用加工区域，已改用更安全的备用下刀方式。',
-
   'warnings.entryHelixDiameterClamped': '为适应加工区域，螺旋下刀直径已从 {requestedDiameter} 缩小到 {actualDiameter}。',
   'warnings.noToolAssigned': '此加工操作未指定刀具',
   'warnings.vBitAngleRange': 'V刀角度必须在 0 到 180 度之间',
@@ -68,7 +67,6 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeTrochoidalAdvanceRange': '摆线每圈推进量必须大于 0 且不超过一个刀具直径。',
   'warnings.edgeTrochoidalParametersInvalid': '摆线加工要求进给、下刀进给和转速均为正值。',
   'warnings.edgeTrochoidalEntryStrategyUnsupported': '摆线加工仅支持螺旋或垂直下刀。',
-
   'warnings.edgeTrochoidalInvalidGuide': '摆线加工需要单一有效的闭合引导路径。',
   'warnings.edgeTrochoidalMoveBudget': '摆线加工超过了每个操作 500,000 点的预算。',
   'warnings.edgeTrochoidalEntryBudget': '({x}, {y}) 附近的摆线入口超过了入口点预算。',
