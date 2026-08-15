@@ -53,6 +53,12 @@ session artifact for observed assistant, tool-call, and tool-result events;
 process-alive heartbeats remain a fallback. Dispatch in the background and poll
 scripts/worker-status.sh --slug SLUG instead of killing a long run.
 
+DSH commit fallback: DSH workspace-write can edit the linked worktree but cannot
+write its shared Git metadata outside that boundary. After a zero-exit DSH
+implementation run, this manager-side dispatcher creates one commit if there
+are changes. It never auto-commits a failed or no-change DSH run. Claude/DeepSeek
+workers retain their existing worker-owned commit behavior.
+
 Permissions: every provider sends the prompt to its configured external service,
 so get explicit approval first. claude-deepseek reads .env.agent and runs a
 bypassPermissions Claude worker; dsh uses its own configured credentials and
@@ -225,9 +231,36 @@ if [[ "$worker_status" -ne 0 ]]; then
     "$worker_status" >&2
 fi
 
+# A linked worktree's .git file points to shared metadata in the primary
+# checkout. DSH's workspace-write sandbox correctly denies that path, so only
+# the manager process may turn a successful DSH worker's edits into a commit.
+# Keep this provider-specific: Claude/DeepSeek workers still own their commit.
+manager_commit_result="not-applicable (worker-owned commit)"
+manager_commit_failed=false
+if [[ "$provider" == "dsh" ]]; then
+  if [[ "$worker_status" -ne 0 ]]; then
+    manager_commit_result="not-attempted (worker failed)"
+  elif [[ -z "$(git -C "$worktree_dir" status --short)" ]]; then
+    manager_commit_result="not-needed (clean worktree)"
+  else
+    printf '== manager commit: applying successful DSH worker changes ==\n' >&2
+    progress_mark "[commit] provider=dsh manager commit starting"
+    if git -C "$worktree_dir" add -A \
+      && git -C "$worktree_dir" commit -m "chore: apply DSH worker changes for issue #$issue"; then
+      manager_commit_result="$(git -C "$worktree_dir" rev-parse HEAD)"
+      progress_mark "[commit] provider=dsh manager commit=$manager_commit_result"
+    else
+      manager_commit_result="FAILED"
+      manager_commit_failed=true
+      progress_mark "[commit] provider=dsh manager commit=FAILED"
+      printf '!! manager could not commit successful DSH worker changes; worktree left in place !!\n' >&2
+    fi
+  fi
+fi
+
 # ---- independent build gate (manager verification, not the worker's report) ----
 build_result="skipped"
-if [[ "$skip_build" == false ]]; then
+if [[ "$skip_build" == false && "$manager_commit_failed" == false ]]; then
   printf '== build gate: npm run build in worktree ==\n' >&2
   progress_mark "[gate] npm run build starting"
   if [[ ! -d "$worktree_dir/node_modules" ]]; then
@@ -255,11 +288,13 @@ branch:       $branch
 worktree:     $worktree_dir
 base:         $base
 worker exit:  $worker_status
+commit owner: ${provider/dsh/manager}
+commit result: $manager_commit_result
 build gate:   $build_result
 progress log: $progress_log
 last commit:  $last_commit
 
-uncommitted (should be empty if worker committed):
+uncommitted (should be empty after a successful worker/manager commit):
 ${status_short:-  (clean)}
 
 diffstat vs $base:
@@ -269,5 +304,5 @@ Review the real diff, then merge with:
   scripts/finish-task.sh --slug $slug --base $base
 EOF
 
-[[ "$build_result" == "FAILED" || "$build_result" == "install-failed" ]] && exit 1
+[[ "$manager_commit_failed" == true || "$build_result" == "FAILED" || "$build_result" == "install-failed" ]] && exit 1
 exit 0

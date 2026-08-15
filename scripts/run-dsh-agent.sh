@@ -12,6 +12,7 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly DSH_PROGRESS_FILTER="$SCRIPT_DIR/dsh-progress-filter.jq"
 readonly DEFAULT_EVENT_MAX_CHARS=2048
+readonly DEFAULT_TOOL_RESULT_MAX_CHARS=320
 
 usage() {
   cat <<'EOF'
@@ -29,10 +30,14 @@ Options:
 
 Review sessions run with DSH_PERMISSION_MODE=read-only. Implementation sessions
 run with DSH_PERMISSION_MODE=workspace-write and must remain in the supplied
-worktree. DSH stores its own configured credential and session state under
-~/.dsh; this launcher does not read .env.agent. The full raw session remains
-DSH-owned. Observed event payloads are normalized and capped at
-DSH_EVENT_MAX_CHARS (default: 2048) in the manager progress log.
+worktree. A linked worktree's Git metadata is outside that writable boundary,
+so DSH implementation workers leave their edits for dispatch-task.sh to commit
+after a successful exit. DSH stores its own configured credential and session
+state under ~/.dsh; this launcher does not read .env.agent. The full raw session
+remains DSH-owned. Assistant and tool-call payloads are capped at
+DSH_EVENT_MAX_CHARS (default: 2048); tool-result payloads are separately
+excerpted to DSH_TOOL_RESULT_MAX_CHARS (default: 320) before they reach the
+manager progress log.
 EOF
 }
 
@@ -132,6 +137,9 @@ printf '%s [start] provider=dsh mode=%s sandbox=%s\n' \
 event_max_chars="${DSH_EVENT_MAX_CHARS:-$DEFAULT_EVENT_MAX_CHARS}"
 [[ "$event_max_chars" =~ ^[1-9][0-9]*$ ]] \
   || fail "DSH_EVENT_MAX_CHARS must be a positive integer"
+tool_result_max_chars="${DSH_TOOL_RESULT_MAX_CHARS:-$DEFAULT_TOOL_RESULT_MAX_CHARS}"
+[[ "$tool_result_max_chars" =~ ^[1-9][0-9]*$ ]] \
+  || fail "DSH_TOOL_RESULT_MAX_CHARS must be a positive integer"
 
 # DSH keys sessions by an encoded physical cwd: /a/b becomes --a-b--.
 session_path="${worktree#/}"
@@ -217,7 +225,8 @@ tail_observed_events() {
   [[ "$artifact_size" != "$last_artifact_size" ]] || return 0
 
   if ! zstd -dc "$tail_artifact" 2>/dev/null \
-      | jq -nRr --unbuffered -f "$DSH_PROGRESS_FILTER" > "$decoded_events_file"; then
+      | jq -nRr --unbuffered --argjson tool_result_max_chars "$tool_result_max_chars" \
+        -f "$DSH_PROGRESS_FILTER" > "$decoded_events_file"; then
     return 0
   fi
   last_artifact_size="$artifact_size"

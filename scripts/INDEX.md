@@ -26,6 +26,14 @@ Use this path only after explicit delegation approval and follow
 [`manager-delegate`](../.agents/skills/manager-delegate/SKILL.md). Direct
 implementation remains the default execution mode.
 
+DSH implementation sessions intentionally leave worktree edits uncommitted:
+its workspace-write sandbox cannot write the linked worktree's shared Git
+metadata in the primary checkout. After a zero-exit DSH session with changes,
+`dispatch-task.sh` creates exactly one manager-owned commit; failed and
+no-change runs are never auto-committed. Live tool-result snippets are capped
+at 320 characters by default (`DSH_TOOL_RESULT_MAX_CHARS`); inspect DSH's raw
+session artifact when the full output matters.
+
 ## Diagnostics and fixtures
 
 The remaining TypeScript, Python, JSON, and `.camj` files are focused import,
