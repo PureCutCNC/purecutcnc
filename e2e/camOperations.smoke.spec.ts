@@ -407,4 +407,48 @@ test.describe('CAM operation browser smoke', () => {
     expect((operations[0] as Record<string, unknown>).drillType).toBe('countersink')
     expect(operations[0].countersinkDiameter).toBe(0.25)
   })
+  test('context menu adds and removes features from existing operations', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    // With no operations at all, both entries render disabled.
+    const emptyMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
+    await expect(ui.contextMenu.item(emptyMenu, 'Add to operation')).toBeDisabled()
+    await expect(ui.contextMenu.item(emptyMenu, 'Remove from operation')).toBeDisabled()
+    await app.page.keyboard.press('Escape')
+
+    // Create a pocket from the subtract rect.
+    const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
+    await ui.contextMenu.item(carveMenu, 'Create operation').hover()
+    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create pocket')
+    await expect(ui.operations.rows(app.page)).toHaveCount(1)
+
+    // The subtract circle is a compatible pocket target: it must appear under
+    // "Add to operation" and clicking it merges it into the target.
+    const drillMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Drill Target'))
+    await ui.contextMenu.item(drillMenu, 'Add to operation').hover()
+    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Pocket Rough')
+
+    let project = await getProject(app.page)
+    let operations = project.operations as OperationSnapshot[]
+    expect(operations[0].target?.featureIds).toEqual(['f-carve-target', 'f-drill-target'])
+
+    // The merged feature is now listed under "Remove from operation".
+    const drillMenu2 = await openRowContextMenu(app.page, rowByName(app.page, 'Drill Target'))
+    await ui.contextMenu.item(drillMenu2, 'Remove from operation').hover()
+    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Pocket Rough')
+
+    project = await getProject(app.page)
+    operations = project.operations as OperationSnapshot[]
+    expect(operations[0].target?.featureIds).toEqual(['f-carve-target'])
+
+    // Dropping the pocket's only remaining machining feature would invalidate
+    // the operation, so that remove entry renders disabled.
+    const carveMenu2 = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
+    await ui.contextMenu.item(carveMenu2, 'Remove from operation').hover()
+    await expect(ui.contextMenu.item(ui.contextMenu.submenu(app.page), 'Pocket Rough')).toBeDisabled()
+
+    // An incompatible feature (add rect vs. pocket) sees no add candidates.
+    const addMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
+    await expect(ui.contextMenu.item(addMenu, 'Add to operation')).toBeDisabled()
+  })
 })

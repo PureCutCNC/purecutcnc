@@ -7,9 +7,9 @@ App-level orchestration hooks that keep `App.tsx` as the composition root withou
 - `useToolpathGeneration.test.ts` — React-free tests for cache invalidation and the one-per-frame scheduling core
 - `useSimulationModel.ts` — simulation result, operation count, and playback-input derivation
 - `useSimulationModel.test.ts` — DOM-free tests for off-tab result and operation-count branches
-- `useTreeContextMenu.ts` — feature-tree context-menu state, derived entities, submenu state, and viewport-aware positioning
+- `useTreeContextMenu.ts` — feature-tree context-menu state, derived entities, submenu state (quick ops, folders, add/remove operation targets), and viewport-aware positioning
 - `useTreeContextMenu.test.ts` — DOM-free tests for feature/tab/clamp routing and close/reset behaviour
-- `useFeatureTreeActions.ts` — feature-tree menu action dispatchers for feature, tab, clamp, stock, and quick-operation commands
+- `useFeatureTreeActions.ts` — feature-tree menu action dispatchers for feature, tab, clamp, stock, quick-operation, and add/remove-operation-target commands
 - `useFeatureTreeActions.test.ts` — DOM-free tests for representative feature-tree action dispatch shapes
 - `useSnapSettings.ts` — snap preference persistence, active snap mode state, and snap-mode toggle reducers
 - `useSnapSettings.test.ts` — React-free tests for snap enabled/mode reducer behaviour

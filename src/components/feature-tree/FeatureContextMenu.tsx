@@ -16,10 +16,11 @@
 
 import { Fragment, type RefObject } from 'react'
 import type { QuickOperation } from '../cam/operationValidity'
+import type { RemoveFromOperationCandidate } from '../cam/operationTargetLists'
 import { camT } from '../cam/camI18n'
 import type { FeatureTreeActions } from '../../app/useFeatureTreeActions'
-import type { MenuPosition, QuickOpsSubmenuPosition, FolderSubmenuPosition, MenuFolderEntry } from '../../app/useTreeContextMenu'
-import type { Clamp, SketchFeature, Tab } from '../../types/project'
+import type { MenuPosition, QuickOpsSubmenuPosition, FolderSubmenuPosition, OperationTargetSubmenuPosition, MenuFolderEntry } from '../../app/useTreeContextMenu'
+import type { Clamp, Operation, SketchFeature, Tab } from '../../types/project'
 import { useI18n } from '../../i18n/i18nContext'
 
 interface FeatureContextMenuProps {
@@ -35,6 +36,10 @@ interface FeatureContextMenuProps {
   menuQuickOperations: QuickOperation[]
   quickOpsSubmenu: QuickOpsSubmenuPosition | null
   menuFeatureFolders: MenuFolderEntry[]
+  menuAddToOperationCandidates: Operation[]
+  menuRemoveFromOperationCandidates: RemoveFromOperationCandidate[]
+  addToOperationSubmenu: OperationTargetSubmenuPosition | null
+  removeFromOperationSubmenu: OperationTargetSubmenuPosition | null
   addToFolderSubmenu: FolderSubmenuPosition | null
   menuSelectionInGroupedFolder: boolean
   menuSelectionSectionsMixed: boolean
@@ -47,6 +52,10 @@ interface FeatureContextMenuProps {
   onCloseQuickOpsSubmenu: () => void
   onOpenAddToFolderSubmenu: (trigger: HTMLElement) => void
   onCloseAddToFolderSubmenu: () => void
+  onOpenAddToOperationSubmenu: (trigger: HTMLElement) => void
+  onCloseAddToOperationSubmenu: () => void
+  onOpenRemoveFromOperationSubmenu: (trigger: HTMLElement) => void
+  onCloseRemoveFromOperationSubmenu: () => void
 }
 
 export function FeatureContextMenu({
@@ -62,6 +71,10 @@ export function FeatureContextMenu({
   menuQuickOperations,
   quickOpsSubmenu,
   menuFeatureFolders,
+  menuAddToOperationCandidates,
+  menuRemoveFromOperationCandidates,
+  addToOperationSubmenu,
+  removeFromOperationSubmenu,
   addToFolderSubmenu,
   menuSelectionInGroupedFolder,
   menuSelectionSectionsMixed,
@@ -74,6 +87,10 @@ export function FeatureContextMenu({
   onCloseQuickOpsSubmenu,
   onOpenAddToFolderSubmenu,
   onCloseAddToFolderSubmenu,
+  onOpenAddToOperationSubmenu,
+  onCloseAddToOperationSubmenu,
+  onOpenRemoveFromOperationSubmenu,
+  onCloseRemoveFromOperationSubmenu,
 }: FeatureContextMenuProps) {
   const { t } = useI18n()
 
@@ -179,6 +196,99 @@ export function FeatureContextMenu({
               <div className="feature-context-menu__separator" />
             </>
           ) : null}
+          <div
+            className="feature-context-menu__submenu-host"
+            onMouseEnter={tabletShell || menuAddToOperationCandidates.length === 0 ? undefined : (event) => onOpenAddToOperationSubmenu(event.currentTarget)}
+            onMouseLeave={tabletShell ? undefined : onCloseAddToOperationSubmenu}
+          >
+            <button
+              className="feature-context-menu__item feature-context-menu__item--submenu"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={addToOperationSubmenu !== null}
+              disabled={menuAddToOperationCandidates.length === 0}
+              title={menuAddToOperationCandidates.length === 0 ? t('featureTree.contextMenu.addToOperationEmptyTooltip') : undefined}
+              onClick={(event) => {
+                if (menuAddToOperationCandidates.length === 0) {
+                  return
+                }
+                if (tabletShell && addToOperationSubmenu) {
+                  onCloseAddToOperationSubmenu()
+                } else {
+                  onOpenAddToOperationSubmenu(event.currentTarget)
+                }
+              }}
+            >
+              <span>{t('featureTree.contextMenu.addToOperation')}</span>
+              <span className="feature-context-menu__submenu-caret" aria-hidden="true">›</span>
+            </button>
+            {addToOperationSubmenu && menuAddToOperationCandidates.length > 0 ? (
+              <div
+                className={`feature-context-menu feature-context-menu__submenu feature-context-menu__submenu--${addToOperationSubmenu.side}`}
+                style={{ top: addToOperationSubmenu.top, left: addToOperationSubmenu.left }}
+                onContextMenu={(event) => event.preventDefault()}
+              >
+                {menuAddToOperationCandidates.map((operation) => (
+                  <button
+                    key={operation.id}
+                    className="feature-context-menu__item"
+                    type="button"
+                    onClick={() => actions.addToOperation([...ids], operation.id)}
+                  >
+                    {operation.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <div
+            className="feature-context-menu__submenu-host"
+            onMouseEnter={tabletShell || menuRemoveFromOperationCandidates.length === 0 ? undefined : (event) => onOpenRemoveFromOperationSubmenu(event.currentTarget)}
+            onMouseLeave={tabletShell ? undefined : onCloseRemoveFromOperationSubmenu}
+          >
+            <button
+              className="feature-context-menu__item feature-context-menu__item--submenu"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={removeFromOperationSubmenu !== null}
+              disabled={menuRemoveFromOperationCandidates.length === 0}
+              title={menuRemoveFromOperationCandidates.length === 0 ? t('featureTree.contextMenu.removeFromOperationEmptyTooltip') : undefined}
+              onClick={(event) => {
+                if (menuRemoveFromOperationCandidates.length === 0) {
+                  return
+                }
+                if (tabletShell && removeFromOperationSubmenu) {
+                  onCloseRemoveFromOperationSubmenu()
+                } else {
+                  onOpenRemoveFromOperationSubmenu(event.currentTarget)
+                }
+              }}
+            >
+              <span>{t('featureTree.contextMenu.removeFromOperation')}</span>
+              <span className="feature-context-menu__submenu-caret" aria-hidden="true">›</span>
+            </button>
+            {removeFromOperationSubmenu && menuRemoveFromOperationCandidates.length > 0 ? (
+              <div
+                className={`feature-context-menu feature-context-menu__submenu feature-context-menu__submenu--${removeFromOperationSubmenu.side}`}
+                style={{ top: removeFromOperationSubmenu.top, left: removeFromOperationSubmenu.left }}
+                onContextMenu={(event) => event.preventDefault()}
+              >
+                {menuRemoveFromOperationCandidates.map(({ operation, canRemove }) => (
+                  <button
+                    key={operation.id}
+                    className="feature-context-menu__item"
+                    type="button"
+                    disabled={!canRemove}
+                    title={!canRemove ? t('featureTree.contextMenu.removeWouldInvalidateTooltip') : undefined}
+                    onClick={() => actions.removeFromOperation([...ids], operation.id)}
+                  >
+                    {operation.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <div className="feature-context-menu__separator" />
           <button
             className="feature-context-menu__item"
             type="button"
