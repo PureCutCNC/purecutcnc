@@ -1166,9 +1166,34 @@ scripts/build-summary.sh
 6. A newly added region on a stock-targeted (`readsWholeModel`) operation → **false**.
 7. **Control:** a newly added `subtract` over the same area → **true**.
 
-**Manager review record:** `pending`
+**Manager review record:** `accepted 2026-08-15`, merged as `029cbee`.
+
+The worker process was killed mid-run (host crash, `Terminated: 15`) after writing
+its edits but before committing or verifying. The edits were recovered from the task
+worktree rather than re-dispatching, and the manager committed them.
+
+- `roleExemptEverywhere(previous, next)` implements the truth table exactly.
+- **Mutation-checked**: reverting to "role on both sides" (the original bug) and
+  dropping the definite-`false` guard (which would let a to/from-role conversion
+  slip through) each failed the suite.
+- **Verified on the user's own project**: region drawn over the pocket ->
+  `isCacheHit = true`; construction likewise; `subtract` and `add` over the same
+  area still `false`.
+- Full `npm run build` green (187 test files).
 
 ## Status: ready for user review
+
+### The lesson this issue keeps teaching
+
+Three defects reached a merge with every gate green: the footprint margin
+(S5), the region exemption (S6), and the construction exemption it inherited from
+S3a. All three were specification defects, not implementation defects — the workers
+built exactly what was asked. Mutation testing cannot catch them, because it
+validates the rule that was written, not the rule that was needed.
+
+Every one was caught by replaying the user's own scenario against their own project
+file. That check belongs in the definition of done for a behavioural slice, ahead of
+the unit tests and the build gate, not after them.
 
 S1 -> S5 merged on `perf/issue-518-toolpath-cache`; PR #525.
 
