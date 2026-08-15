@@ -9,6 +9,9 @@
 def one_line:
   tostring | gsub("[\r\n\t]+"; " ") | gsub(" +"; " ");
 
+def excerpt($limit):
+  if length > $limit then .[0:($limit - 1)] + "…" else . end;
+
 def assistant_text:
   [.data.message.content[]? | select(.type == "text") | .text // empty]
   | join(" ")
@@ -38,7 +41,7 @@ inputs
   elif .type == "tool/result" then
     tool_result_text as $text
     | select($text != "")
-    | [.seq, "tool-result", $text] | @tsv
+    | [.seq, "tool-result", ($text | excerpt($tool_result_max_chars))] | @tsv
   else
     empty
   end

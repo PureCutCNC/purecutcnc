@@ -164,10 +164,12 @@ assert_contains "$unreadable_progress_content" '[heartbeat] provider=dsh process
 assert_not_contains "$unreadable_progress_content" '[assistant] provider=dsh'
 
 bounded_progress_log="$TEMP_DIR/bounded.progress.log"
-printf 'task\n' | DSH_EVENT_MAX_CHARS=1 FAKE_DSH_STREAM_EVENTS=true \
+printf 'task\n' | DSH_TOOL_RESULT_MAX_CHARS=1 FAKE_DSH_STREAM_EVENTS=true \
   run_launcher --mode review --worktree "$TEMP_DIR/wt" \
   --progress-log "$bounded_progress_log" >/dev/null
-assert_contains "$(cat "$bounded_progress_log")" '[tool-result] provider=dsh #…'
+bounded_progress_content="$(cat "$bounded_progress_log")"
+assert_contains "$bounded_progress_content" '[tool-result] provider=dsh …'
+assert_contains "$bounded_progress_content" '[assistant] provider=dsh Reading project context now'
 
 # ---- worker failure propagates ----
 if FAKE_DSH_EXIT=7 run_launcher --mode review --worktree "$TEMP_DIR/wt" \

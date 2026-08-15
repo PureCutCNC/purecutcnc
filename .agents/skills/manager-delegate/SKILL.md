@@ -58,7 +58,12 @@ to implementing the slice yourself or abandoning the delegation.
   It does not read or forward `.env.agent`; DSH persists normal profile/session
   state under `~/.dsh`. Review workers use DSH `read-only`; implementation
   workers use DSH `workspace-write` rooted at the task worktree. Any DSH
-  escalation without an interactive approver fails closed.
+  escalation without an interactive approver fails closed. A linked worktree's
+  Git metadata lives outside that writable root, so a DSH implementation worker
+  must leave edits uncommitted and report `COMMIT: none`. After a zero-exit DSH
+  run with changes, `dispatch-task.sh` creates exactly one manager-owned commit
+  and reports its hash. Failed and no-change DSH runs are never auto-committed;
+  inspect the worktree and dispatch report before deciding what to do next.
 
 - **Codex:** run from the worktree/repo root with `sandbox=workspace-write`,
   `sandbox_workspace_write.network_access=true`, and `approval-policy=on-request`.
@@ -79,6 +84,8 @@ DSH's leaf tails DSH's active local session artifact and writes observed
 `[heartbeat]` marker remains a fallback: it means the DSH process remains alive,
 **not** that the worker made tool-level progress. The full raw session remains
 under `~/.dsh`; rendered manager-log payloads are normalized and bounded.
+Tool-result snippets default to 320 characters; read the raw artifact when the
+full output matters.
 Inspect the worktree and final response before treating a long DSH run as healthy.
 
 - Dispatch in the background with output redirected to a file; do not block a

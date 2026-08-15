@@ -50,7 +50,7 @@ Rules:
 - Run the required checks. Do not claim an unrun check passed.
 - For the full build gate, run `scripts/build-summary.sh` ONCE instead of a bare `npm run build`: it saves the complete output to a log (path printed at the end) and summarizes the failing stage with extracted errors. Never re-run the build to hunt for an error you already hit — re-read that log, or run `scripts/build-summary.sh --from-log <path>`.
 - Editing files: prefer your built-in exact-match Edit tool. If it rejects an edit twice, do NOT fall back to `sed`/`awk`/`perl` — regex in-place edits mutate files invisibly and beyond the addressed lines. Use the deterministic line editor instead: `npx tsx scripts/edit-lines.ts show <file> <start> <end>` to re-read the exact current lines, then `replace <file> <start> <end> --expect "<substring of the old lines>" <<'EOF' … EOF` (also `insert-after`, `delete`; run with no arguments for usage). It refuses stale line numbers and prints a diff of exactly what changed. File-wide regex renames are forbidden in any tool.
-- Make exactly one commit for this slice. Do not add Co-Authored-By or generated-by footers.
+- Commit ownership depends on the provider. Claude/DeepSeek workers make exactly one commit for this slice, with no Co-Authored-By or generated-by footers. DSH implementation workers must not run git add or git commit: workspace-write intentionally cannot modify a linked worktree's shared Git metadata. Leave completed edits in the assigned worktree and report `COMMIT: none`; after a zero-exit DSH session, the dispatcher creates one manager-owned commit and reports its hash.
 
 Finish with exactly this completion block:
 STATUS: complete | blocked

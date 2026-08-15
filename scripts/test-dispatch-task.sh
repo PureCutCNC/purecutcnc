@@ -38,6 +38,10 @@ set -euo pipefail
 printf 'provider=dsh sandbox=<%s>\n' "${DSH_PERMISSION_MODE:-}"
 printf 'args:\n'
 printf '<%s>\n' "$@"
+if [[ -n "${FAKE_DSH_WRITE_FILE:-}" ]]; then
+  printf 'worker change\n' > "$FAKE_DSH_WRITE_FILE"
+fi
+exit "${FAKE_DSH_EXIT:-0}"
 EOF
 chmod +x "$TEMP_DIR/bin/claude" "$TEMP_DIR/bin/dsh"
 
@@ -56,6 +60,20 @@ EOF
 git -C "$TEMP_DIR/wt" add handoffs
 git -C "$TEMP_DIR/wt" -c user.name=test -c user.email=test@example.com \
   commit -qm 'add handoff fixture'
+
+prepare_implement_fixture() {
+  local fixture_repo="$TEMP_DIR/implement-repo"
+  mkdir -p "$fixture_repo/scripts"
+  git init -q "$fixture_repo"
+  git -C "$fixture_repo" config user.name test
+  git -C "$fixture_repo" config user.email test@example.com
+  printf 'fixture\n' > "$fixture_repo/README.md"
+  git -C "$fixture_repo" add README.md
+  git -C "$fixture_repo" commit -qm 'fixture base'
+  cp "$DISPATCH" "$SCRIPT_DIR/run-dsh-agent.sh" "$SCRIPT_DIR/dsh-progress-filter.jq" "$fixture_repo/scripts/"
+  chmod +x "$fixture_repo/scripts/dispatch-task.sh" "$fixture_repo/scripts/run-dsh-agent.sh"
+  printf '%s' "$fixture_repo"
+}
 
 # ---- omitted provider preserves the Claude/DeepSeek dispatch path ----
 claude_output="$(printf 'default task\n' | PATH="$TEMP_DIR/bin:$PATH" \
@@ -123,5 +141,35 @@ if invalid_provider_error="$(printf 'task\n' | "$DISPATCH" --provider invalid --
   fail 'dispatch unexpectedly accepted an invalid provider'
 fi
 assert_contains "$invalid_provider_error" '--provider must be claude-deepseek or dsh'
+
+# ---- DSH implementation commits are owned by the manager, never the sandboxed worker ----
+implement_repo="$(prepare_implement_fixture)"
+implement_dispatch="$implement_repo/scripts/dispatch-task.sh"
+implement_base="$(git -C "$implement_repo" branch --show-current)"
+manager_commit_output="$(printf 'implement\n' | PATH="$TEMP_DIR/bin:$PATH" HOME="$TEMP_DIR/home" \
+  PURECUT_WORKTREE_BASE="$TEMP_DIR/implement-worktrees" FAKE_DSH_WRITE_FILE=worker-change.txt \
+  "$implement_dispatch" --provider dsh --issue 101 --task-slug manager-commit --base "$implement_base" --skip-build)"
+manager_worktree="$TEMP_DIR/implement-worktrees/manager-commit"
+assert_contains "$manager_commit_output" 'commit owner: manager'
+assert_not_contains "$manager_commit_output" 'commit result: not-needed'
+[[ "$(git -C "$manager_worktree" log --format=%s -1)" == 'chore: apply DSH worker changes for issue #101' ]] \
+  || fail 'manager did not create the expected DSH commit'
+[[ "$(git -C "$manager_worktree" status --short)" == "" ]] \
+  || fail 'manager-created DSH commit left changes behind'
+
+no_change_output="$(printf 'implement\n' | PATH="$TEMP_DIR/bin:$PATH" HOME="$TEMP_DIR/home" \
+  PURECUT_WORKTREE_BASE="$TEMP_DIR/implement-worktrees" \
+  "$implement_dispatch" --provider dsh --issue 102 --task-slug no-change --base "$implement_base" --skip-build)"
+assert_contains "$no_change_output" 'commit result: not-needed (clean worktree)'
+
+failed_output="$(printf 'implement\n' | PATH="$TEMP_DIR/bin:$PATH" HOME="$TEMP_DIR/home" \
+  PURECUT_WORKTREE_BASE="$TEMP_DIR/implement-worktrees" FAKE_DSH_WRITE_FILE=failed-change.txt FAKE_DSH_EXIT=9 \
+  "$implement_dispatch" --provider dsh --issue 103 --task-slug failed-worker --base "$implement_base" --skip-build)"
+failed_worktree="$TEMP_DIR/implement-worktrees/failed-worker"
+assert_contains "$failed_output" 'commit result: not-attempted (worker failed)'
+[[ "$(git -C "$failed_worktree" log --format=%s -1)" == 'fixture base' ]] \
+  || fail 'failed DSH worker was auto-committed'
+[[ "$(git -C "$failed_worktree" status --short)" == '?? failed-change.txt' ]] \
+  || fail 'failed DSH worker changes were not left for inspection'
 
 printf 'test-dispatch-task: passed\n'
