@@ -701,8 +701,9 @@ function assertClose(actual: number, expected: number, epsilon: number, message:
   assert(bounds.maxX - 20 >= 6, 'footprint must exceed the target by ≥ tool diameter on maxX')
   assert(0 - bounds.minY >= 6, 'footprint must exceed the target by ≥ tool diameter on minY')
   assert(bounds.maxY - 10 >= 6, 'footprint must exceed the target by ≥ tool diameter on maxY')
-  // Pin the grow formula: 4·toolDiameter + trochoidalCutWidth + stockToLeaveRadial + stepover.
-  const grow = 4 * 6 + 0 + 0 + 0.4
+  // Pin the grow formula (S5): 2·toolDiameter + trochoidalCutWidth + stockToLeaveRadial.
+  // `stepover` is deliberately not in the sum — it spaces passes inside the region.
+  const grow = 2 * 6 + 0 + 0
   assertClose(bounds.minX, -grow, 1e-9, 'grow on minX')
   assertClose(bounds.maxX, 20 + grow, 1e-9, 'grow on maxX')
   assertClose(bounds.minY, -grow, 1e-9, 'grow on minY')
@@ -718,9 +719,9 @@ function assertClose(actual: number, expected: number, epsilon: number, message:
   assert(grownFootprint.bounds !== null, 'grown footprint bounds must not be null')
   assertClose(
     grownFootprint.bounds.minX,
-    -(4 * 6 + 3 + 0.5 + 0.4),
+    -(2 * 6 + 3 + 0.5),
     1e-9,
-    'trochoidal + radial leave + stepover must all extend the footprint',
+    'trochoidal + radial leave must extend the footprint',
   )
 }
 
@@ -732,8 +733,8 @@ function assertClose(actual: number, expected: number, epsilon: number, message:
   )
   const footprint = operationFootprint(project, makeOperation({ source: 'features', featureIds: ['f1'] }))
   assert(footprint.bounds !== null, 'footprint bounds must not be null')
-  // 0.25 in = 6.35 mm → grow = 4·6.35 + 0.4 = 25.8.
-  assertClose(footprint.bounds.minX, -(4 * 6.35 + 0.4), 1e-6, 'grow must use the project-unit diameter')
+  // 0.25 in = 6.35 mm → grow = 2·6.35 = 12.7 (stepover is not in the S5 sum).
+  assertClose(footprint.bounds.minX, -(2 * 6.35), 1e-6, 'grow must use the project-unit diameter')
 }
 
 {
@@ -845,11 +846,11 @@ function assertClose(actual: number, expected: number, epsilon: number, message:
 
 {
   console.log('S3a.7 A changed non-target whose bbox overlaps the footprint affects it (island case)...')
-  // f1 (target) spans 0..20; the footprint grows to -24.4..44.4, so f2 at
-  // 40..60 overlaps it while f3 at 500 does not.
+  // f1 (target) spans 0..20; the footprint grows to -12..32, so f2 at
+  // 25..45 overlaps it while f3 at 500 does not.
   const project = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
     draftFeature('f1'),
-    rectDraft('f2', 40, 0),
+    rectDraft('f2', 25, 0),
     rectDraft('f3', 500, 0),
   ]))
   const footprint = operationFootprint(project, makeOperation({ source: 'features', featureIds: ['f1'] }))
@@ -880,11 +881,11 @@ function assertClose(actual: number, expected: number, epsilon: number, message:
   console.log('S3a.9 A feature moved into or out of the footprint affects it (both directions)...')
   const inside = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
     draftFeature('f1'),
-    rectDraft('f2', 40, 0),
+    rectDraft('f2', 25, 0),
   ]))
   const insideRow = inside.features.find((feature) => feature.id === 'f2')
   assert(insideRow !== undefined, 'f2 row should exist')
-  // Shift f2 from 40..60 to 500..520 without touching its definition.
+  // Shift f2 from 25..45 to 500..520 without touching its definition.
   const outside = patchFeature(inside, 'f2', { transform: { ...insideRow.transform, e: 460 } })
   const footprint = operationFootprint(inside, makeOperation({ source: 'features', featureIds: ['f1'] }))
   assert(footprint.bounds !== null, 'footprint bounds must not be null')
@@ -905,7 +906,7 @@ function assertClose(actual: number, expected: number, epsilon: number, message:
   // broken, the bbox check would return true and this test would catch it.
   const project = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
     draftFeature('f1'),
-    rectDraft('c1', 40, 0, 20, 10, { operation: 'construction' }),
+    rectDraft('c1', 25, 0, 20, 10, { operation: 'construction' }),
   ]))
   const next = patchFeature(project, 'c1', { z_top: 8 })
 
@@ -928,11 +929,11 @@ function assertClose(actual: number, expected: number, epsilon: number, message:
   console.log('S3a.11 A construction feature converted to machinable between snapshots affects the operation...')
   const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
     draftFeature('f1'),
-    rectDraft('c1', 40, 0, 20, 10, { operation: 'construction' }),
+    rectDraft('c1', 25, 0, 20, 10, { operation: 'construction' }),
   ]))
   const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
     draftFeature('f1'),
-    rectDraft('c1', 40, 0, 20, 10, { operation: 'subtract' }),
+    rectDraft('c1', 25, 0, 20, 10, { operation: 'subtract' }),
   ]))
   const footprint = operationFootprint(previous, makeOperation({ source: 'features', featureIds: ['f1'] }))
   assert(footprint.bounds !== null, 'footprint bounds must not be null')
@@ -973,6 +974,137 @@ function assertClose(actual: number, expected: number, epsilon: number, message:
   assert(
     !operationAffectedByChange(footprint, outsideProject, outsideNext, new Set(['f2'])),
     'a bbox 0.01 beyond the footprint edge must not intersect',
+  )
+}
+
+// ── S5.A: the right-sized footprint margin ────────────────────────
+
+/**
+ * The user's own fixture (issue #518, S5 measurements): an inch project whose
+ * default stock is exactly X 0..4 (defaultStock), a 0.25" tool, a 0.32"
+ * stepover, and a pocket target spanning X 0.50..3.50. With the derived
+ * margin the footprint lands exactly on the stock edge, X 0.00..4.00.
+ */
+function userMarginProject(): { project: Project, operation: Operation } {
+  const operation = makeOperation(
+    { source: 'features', featureIds: ['target'] },
+    { stepover: 0.32 },
+  )
+  const project = withTool(
+    projectWithFeatures(newProject('footprint-margin-test', 'inch'), [
+      rectDraft('target', 0.5, 0.5, 3, 1),
+    ]),
+    defaultTool('inch'),
+  )
+  assert(getStockBounds(project.stock).maxX === 4, 'fixture premise: the inch default stock must span X 0..4')
+  return { project, operation }
+}
+
+{
+  console.log('S5.A1 The user fixture footprint is exactly X 0.00..4.00 (numbers asserted, not derived)...')
+  const { project, operation } = userMarginProject()
+  const footprint = operationFootprint(project, operation)
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  // Assert the literal numbers so any margin change fails loudly: the old
+  // 4·toolDiameter + stepover margin reached X -0.82..4.82 here.
+  assertClose(footprint.bounds.minX, 0.0, 1e-9, 'footprint minX must be exactly 0.00')
+  assertClose(footprint.bounds.maxX, 4.0, 1e-9, 'footprint maxX must be exactly 4.00')
+}
+
+{
+  console.log('S5.A2 stepover no longer widens the footprint...')
+  const project = withTool(projectWithFeatures(newProject('footprint-margin-test', 'mm'), [draftFeature('f1')]))
+  const target = { source: 'features', featureIds: ['f1'] } satisfies Operation['target']
+  const narrow = operationFootprint(project, makeOperation(target, { stepover: 0.4 }))
+  const wide = operationFootprint(project, makeOperation(target, { stepover: 8 }))
+  assert(narrow.bounds !== null && wide.bounds !== null, 'both footprints must be known')
+  assertClose(wide.bounds.minX, narrow.bounds.minX, 1e-9, 'stepover must not move minX')
+  assertClose(wide.bounds.maxX, narrow.bounds.maxX, 1e-9, 'stepover must not move maxX')
+  assertClose(wide.bounds.minY, narrow.bounds.minY, 1e-9, 'stepover must not move minY')
+  assertClose(wide.bounds.maxY, narrow.bounds.maxY, 1e-9, 'stepover must not move maxY')
+}
+
+{
+  console.log('S5.A3 trochoidalCutWidth and stockToLeaveRadial still widen the footprint...')
+  const project = withTool(projectWithFeatures(newProject('footprint-margin-test', 'mm'), [draftFeature('f1')]))
+  const target = { source: 'features', featureIds: ['f1'] } satisfies Operation['target']
+  const base = operationFootprint(project, makeOperation(target))
+  const trochoidal = operationFootprint(project, makeOperation(target, { trochoidalCutWidth: 3 }))
+  const radial = operationFootprint(project, makeOperation(target, { stockToLeaveRadial: 0.5 }))
+  assert(
+    base.bounds !== null && trochoidal.bounds !== null && radial.bounds !== null,
+    'all footprints must be known',
+  )
+  assertClose(
+    trochoidal.bounds.minX,
+    base.bounds.minX - 3,
+    1e-9,
+    'trochoidalCutWidth must widen the footprint by its value',
+  )
+  assertClose(
+    radial.bounds.minX,
+    base.bounds.minX - 0.5,
+    1e-9,
+    'stockToLeaveRadial must widen the footprint by its value',
+  )
+}
+
+{
+  console.log('S5.A4 USER-REPORTED CASE: a feature drawn just outside the stock no longer regenerates the pocket...')
+  const { operation } = userMarginProject()
+  const withOutside = projectWithFeatures(newProject('footprint-margin-test', 'inch'), [
+    rectDraft('target', 0.5, 0.5, 3, 1),
+    rectDraft('outside', 4.2, 0.5, 1, 1),
+  ])
+  const outsideProject = withTool(withOutside, defaultTool('inch'))
+  const footprint = operationFootprint(outsideProject, operation)
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  assertClose(footprint.bounds.maxX, 4.0, 1e-9, 'fixture premise: the footprint must reach exactly the stock edge')
+  const next = patchFeature(outsideProject, 'outside', { z_top: 0.6 })
+  assert(
+    !operationAffectedByChange(footprint, outsideProject, next, new Set(['outside'])),
+    'a feature drawn just outside the stock must not regenerate the pocket',
+  )
+}
+
+{
+  console.log('S5.A5 A change overlapping the target or inside the remaining margin still regenerates...')
+  const { operation } = userMarginProject()
+  const build = (id: string, x: number): Project => withTool(
+    projectWithFeatures(newProject('footprint-margin-test', 'inch'), [
+      rectDraft('target', 0.5, 0.5, 3, 1),
+      rectDraft(id, x, 0.5, 0.3, 1),
+    ]),
+    defaultTool('inch'),
+  )
+
+  // Inside the remaining margin: between the target edge (3.5) and the
+  // footprint edge (4.0).
+  const marginProject = build('margin', 3.6)
+  const marginFootprint = operationFootprint(marginProject, operation)
+  assert(marginFootprint.bounds !== null, 'margin fixture footprint must be known')
+  assert(
+    operationAffectedByChange(
+      marginFootprint,
+      marginProject,
+      patchFeature(marginProject, 'margin', { z_top: 0.6 }),
+      new Set(['margin']),
+    ),
+    'a change inside the remaining margin must regenerate the operation',
+  )
+
+  // Overlapping the target region itself.
+  const overlapProject = build('overlap', 1.0)
+  const overlapFootprint = operationFootprint(overlapProject, operation)
+  assert(overlapFootprint.bounds !== null, 'overlap fixture footprint must be known')
+  assert(
+    operationAffectedByChange(
+      overlapFootprint,
+      overlapProject,
+      patchFeature(overlapProject, 'overlap', { z_top: 0.6 }),
+      new Set(['overlap']),
+    ),
+    'a change overlapping the target must regenerate the operation',
   )
 }
 

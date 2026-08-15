@@ -350,15 +350,30 @@ export function operationFootprint(project: Project, operation: Operation): Oper
 
   // Grow the target union into the region this operation's cutter can reach.
   // The multiplier is relative to the tool diameter, so it is unit-free.
-  // Being generous costs only extra invalidation; being short ships a stale
-  // toolpath. `trochoidalCutWidth` and `stockToLeaveRadial` extend the swept
-  // region (trochoidal orbit width and radial stock leave); `stepover` is the
-  // per-pass offset, all in project length units.
+  //
+  // Derived (issue #518, S5), not picked. What actually reaches past the
+  // target bbox:
+  //
+  // - an outside edge route offsets the path by one radius and the cutter
+  //   body extends another → 1 diameter;
+  // - `buildProtectedFootprintPaths` expands features by about a tool radius
+  //   when clipping coverage → half a diameter more;
+  // - `trochoidalCutWidth` and `stockToLeaveRadial` genuinely extend the
+  //   swept region → additive.
+  //
+  // So the margin is 2·toolDiameter + trochoidalCutWidth + stockToLeaveRadial,
+  // ~1.33x the real geometric reach. `stepover` is deliberately **not** in the
+  // sum: it is the spacing between passes *inside* the region, not an
+  // extension past it. Do not "restore" it: the earlier 4·toolDiameter +
+  // stepover margin was picked, not derived, and its generosity cost exactly
+  // the benefit this issue exists to deliver — on the user's fixture it
+  // reached 0.82" beyond the stock edge, so any nearby feature regenerated
+  // the pocket. Being short would ship a stale toolpath; being generous
+  // costs the invalidation win the user is measuring.
   const grow =
-    4 * toolDiameter
+    2 * toolDiameter
     + (operation.trochoidalCutWidth ?? 0)
     + (operation.stockToLeaveRadial ?? 0)
-    + operation.stepover
 
   return {
     bounds: {

@@ -171,15 +171,16 @@ function addFeatureDraft(project: Project, draft: SketchFeature): Project {
 /**
  * S3b fixture: the operation targets f1 (the 20×10 rect at the origin) with a
  * 6 mm tool. Its footprint is the target union grown by
- * 4·toolDiameter + stepover = 24.4, i.e. roughly (-24.4…44.4)². f2 at (40, 0)
- * lies inside it; f3 at (500, 0) is far outside it.
+ * 2·toolDiameter = 12 (the S5-derived margin; stepover is not in the sum),
+ * i.e. roughly (-12…32)². f2 at (25, 0) lies inside it; f3 at (500, 0) is far
+ * outside it.
  */
 function makeFootprintProject(): Project {
   const operation = makeOperation({ target: { source: 'features', featureIds: ['f1'] }, toolRef: 't1' })
   return withTool(
     projectWithFeatures(
       { ...newProject('toolpath-generation-test', 'mm'), operations: [operation] },
-      [draftFeature('f1'), rectDraft('f2', 40, 0), rectDraft('f3', 500, 0)],
+      [draftFeature('f1'), rectDraft('f2', 25, 0), rectDraft('f3', 500, 0)],
     ),
   )
 }
@@ -294,9 +295,10 @@ function testIsCacheHit() {
   assert(isCacheHit(entry, operation, project), 'identical object references hit')
   assert(!isCacheHit(entry, { ...operation, stepdown: operation.stepdown + 1 }, project), 'operation computation change misses')
   assert(!isCacheHit(entry, operation, { ...project, stock: { ...project.stock } }), 'stock reference change misses')
-  // Whole-array identity for tools/tabs/clamps is retained by this slice:
-  // a fresh array (even of identical rows) still invalidates.
-  assert(!isCacheHit(entry, operation, { ...project, tools: [...project.tools] }), 'tools reference change misses')
+  // Tools are narrowed to the operation's own tool (S5): a fresh array of
+  // identical rows no longer invalidates. Tabs and clamps stay whole-array
+  // identity checks.
+  assert(isCacheHit(entry, operation, { ...project, tools: [...project.tools] }), 'tools reference change with identical rows hits')
   assert(!isCacheHit(entry, operation, { ...project, tabs: [...project.tabs] }), 'tabs reference change misses')
   assert(!isCacheHit(entry, operation, { ...project, clamps: [...project.clamps] }), 'clamps reference change misses')
   // A fresh features array with identical rows is no longer a miss — that is
@@ -426,14 +428,14 @@ function testIsCacheHitFootprint() {
     'adding a feature far away must keep the cache hit',
   )
   assert(
-    !isCacheHit(entry, operation, addFeatureDraft(project, rectDraft('f4', 40, 30))),
+    !isCacheHit(entry, operation, addFeatureDraft(project, rectDraft('f4', 25, 20))),
     'adding a feature inside the footprint must miss',
   )
 
   // 5. An unrelated feature moved into the footprint must invalidate.
   const f3Row = project.features.find((feature) => feature.id === 'f3')
   assert(f3Row !== undefined, 'f3 row should exist')
-  const movedIn = patchFeatureRow(project, 'f3', { transform: { ...f3Row.transform, e: -460 } })
+  const movedIn = patchFeatureRow(project, 'f3', { transform: { ...f3Row.transform, e: -475 } })
   assert(
     !isCacheHit(entry, operation, movedIn),
     'moving an unrelated feature into the footprint must miss',
