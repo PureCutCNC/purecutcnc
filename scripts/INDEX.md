@@ -37,6 +37,8 @@ session artifact when the full output matters.
 
 ## Diagnostics and fixtures
 
+- [`pocket-output-probe.ts`](pocket-output-probe.ts) — dump a project's pocket move streams to JSON, then compare two dumps. Answers the three questions a green suite and a clean diff cannot: whether existing output really is untouched (field-by-field diff, not a regression test's own expectation), whether a change ever *raises* a feed (compared geometrically by midpoint containment — an index-wise comparison lies as soon as the two runs split moves differently), and what it costs (estimated cycle time plus the arc-run proxy that predicts lost G2/G3 before export). A third mode, `levels`, checks depth dependence: an offset ring tree is reused at every Z, so levels cutting the same path length should carry the same length-weighted mean feed. `dump builtin` uses an 11-case matrix covering both patterns, sharp/rounded corners, islands, a narrow neck, multi-level, stock-to-leave, and helix entry; pass a `.camj` path to probe a real project, and a JSON object to override operation fields.
+
 The remaining TypeScript, Python, JSON, and `.camj` files are focused import,
 surface-toolpath, waterline, roughing, and legacy V-carve diagnostics. They may
 have special inputs or emit local artifacts. They are outside the default lint
