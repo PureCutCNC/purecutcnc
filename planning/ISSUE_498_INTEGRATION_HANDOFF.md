@@ -961,3 +961,38 @@ per chunk, the measured engagement, the entitled scale, the fragment it was
 assigned to and that fragment's scale. The three marginal slices in a row (S6,
 S8, S9) all came from acting on a plausible mechanism rather than an observed
 one. The instrumentation is cheap and the answer is currently unknown.
+
+### S10 diagnosis and fix — exact emitted-traversal cache
+
+The requested chunk-to-fragment instrumentation showed that assignment,
+hysteresis, and the legacy-slot clamp were behaving correctly on the concrete
+defect. The cached input was already wrong: on the long horizontal cut through
+`x = 2`, `y = 0.705` in `pocket-feed-reduction.camj`, the cache supplied `π`
+engagement (0.60 rung), while an emission-order replay measured about 1.29 rad
+(74 degrees, 0.92 rung).
+
+This overturns conclusion 3 above. Aggregate telemetry was too coarse to detect
+a pointwise redistribution of engagement: similar total distance above nominal
+did not mean the same moves had been classified the same way. The per-band
+canonical traversal omitted or reordered real prior cuts relative to the
+position-seeded emitted traversal.
+
+The fix keeps the existing emitted path order unchanged and caches engagement
+classification by the exact ordered cut-segment stream for each distinct level
+traversal. Identical levels reuse one classification; a genuinely different
+traversal gets its own. Cache lookup verifies both the cut occurrence and exact
+coordinates, so repeated geometry cannot silently reuse another occurrence's
+prior-cut context. Ring-perimeter metadata remains geometry-only and is shared
+across those classifications.
+
+Evidence after the fix:
+
+- The defect cut now emits 0.92 from `x = 1.146875` through `x = 2.84`; the
+  former 0.60 span from `x = 1.2675` through `x = 2.7775` is gone.
+- All five real fixtures have zero moves raised above `slots_only` at the same
+  point.
+- `pocket-feed-reduction` has 69 feed runs (before fix: 73) and longest run 72,
+  preserving the S9 arc-run constraint.
+- The focused pocket suite asserts byte-identical `slots_only`, never-raise,
+  depth invariance, zero cache misses, exact multi-lobe traversal handling, and
+  the real `x = 2`, `y = 0.705` regression.

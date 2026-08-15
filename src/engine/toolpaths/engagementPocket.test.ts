@@ -29,7 +29,6 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import ClipperLib from 'clipper-lib'
 import type { Operation, Project, SketchFeature, Tool } from '../../types/project'
 import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
@@ -42,14 +41,11 @@ import {
   nominalEngagement,
 } from './engagement'
 import {
-  buildInsetRegions,
   buildOffsetBandEngagementClassification,
-  buildOffsetRegionTree,
   engagementCacheProbeCounts,
   generatePocketToolpath,
   resetEngagementCacheProbeCounts,
 } from './pocket'
-import { resolvePocketRegions } from './resolver'
 import type { PocketToolpathResult, ToolpathMove, ToolpathPoint } from './types'
 
 function assert(condition: boolean, message: string): asserts condition {
@@ -689,10 +685,11 @@ function buildThreeLobeFixture(): { project: Project; operation: Operation } {
   return { project, operation }
 }
 
-test('cache equivalence: cached per-band classification equals recomputation on a multi-lobe fixture', () => {
+test('cache equivalence: each distinct level traversal gets an exact classification', () => {
   const { project, operation } = buildThreeLobeFixture()
   // The raw (unsplit) move stream: engagement mode without a slot anchor emits
   // exactly the generated moves, so per-level cut sequences come from here.
+  resetEngagementCacheProbeCounts()
   const raw = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement', pocketSlotFeedPercent: undefined })
   const rawCuts = raw.moves.filter((move) => move.kind === 'cut')
   // The level cut sequences, in emission order, grouped by level z.
@@ -707,8 +704,8 @@ test('cache equivalence: cached per-band classification equals recomputation on 
   }
   assert(levels.length >= 2, `the fixture must cut at least two step levels, got ${levels.length}`)
 
-  // Level ordering actually differs: label each move by its lobe (nearest
-  // circle centre) and compare the label sequences.
+  // Label each move by its lobe (nearest circle centre). The fixture proves
+  // that position seeding can produce genuinely different level traversals.
   const lobeCenters = [
     { x: -22, y: 0 },
     { x: 0, y: 0 },
@@ -733,61 +730,37 @@ test('cache equivalence: cached per-band classification equals recomputation on 
   const secondLabels = labelSequence(levels[1])
   assert(
     JSON.stringify(firstLabels) !== JSON.stringify(secondLabels),
-    `level ordering must actually differ between levels (got ${firstLabels.join('')} vs ${secondLabels.join('')})`,
+    `the fixture must exercise distinct traversal orders (got ${firstLabels.join('')} vs ${secondLabels.join('')})`,
   )
+  const counts = engagementCacheProbeCounts()
+  assert(counts.bandCacheBuilds === 2, `two distinct traversals must build two classifications, got ${counts.bandCacheBuilds}`)
+  assert(counts.cacheLevelUses === 2, `both levels must consume an exact classification, got ${counts.cacheLevelUses}`)
+  assert(counts.cacheMisses === 0, `exact traversal classifications must have zero misses, got ${counts.cacheMisses}`)
 
-  // Build the same band classification the generator builds, from the same
-  // resolved regions (initial inset = tool radius, no radial stock, mitered
-  // islands, no corner rounding).
-  const band = resolvePocketRegions(project, operation).bands[0]
-  if (!band) throw new Error('the fixture must resolve one band')
-  // Exact generator values: the stepover is the tool diameter times the ratio
-  // (6 × 0.4, not the 2.4 literal — a 1-ulp difference changes smoothed
-  // contours, and the cache keys are exact float strings).
-  const trees = band.regions
-    .flatMap((region) => buildInsetRegions(region, 3, ClipperLib.JoinType.jtMiter, ClipperLib.JoinType.jtMiter))
-    .map((region) => buildOffsetRegionTree(region, 6 * 0.4, ClipperLib.JoinType.jtMiter))
-  const cache = buildOffsetBandEngagementClassification(trees, {
-    toolRadius: 3,
-    direction: 'conventional',
-    smoothRadius: null,
-  })
-  assert(cache.segmentCount > 0, 'the band classification must classify segments')
-  assert(cache.indexEntryCount > 0, 'the band classification must build swept-material indexes')
-
-  // The cache is level-invariant (the depth-invariance and cost-probe tests
-  // below assert that), so what remains to prove here is that it SERVES the
-  // whole ring path — a per-level walk must hit the cache for every ring
-  // segment and every reproduced link, with misses confined to the fringe
-  // moves a position-seeded level emits that the canonical traversal does not.
-  // (The S8 neck fix now classifies a ring's own earlier segments as prior,
-  // so the cached engagement no longer equals a naive emission-order
-  // recomputation that uses a different start vertex; the emitted feed is
-  // guarded by the never-raise and depth-invariance tests instead.)
+  // Each distinct ordered stream gets an exact cache. Index plus coordinates
+  // are checked, so repeated geometry cannot silently reuse another
+  // occurrence's engagement context.
   for (const level of levels) {
-    let totalCutDistance = 0
-    let servedDistance = 0
-    for (const move of level) {
-      const length = Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y)
-      totalCutDistance += length
-      const cached = cache.chunksForMove(move.from.x, move.from.y, move.to.x, move.to.y)
-      if (cached === null) {
-        continue
-      }
-      servedDistance += length
-    }
-    // The ring path is 2π·(7 + 4.6 + 2.2) = 86.7 mm per lobe (260 mm total,
-    // measured 259.8 with tessellation chords); the only cut distance outside
-    // it is the six stepover-length links between rings (6 × 2.4 = 14.4 mm).
-    // The cache must serve the whole ring path.
-    assert(
-      servedDistance >= totalCutDistance - 20,
-      `the cache must serve the ring path (served ${servedDistance.toFixed(1)} of ${totalCutDistance.toFixed(1)} mm)`,
-    )
+    const cache = buildOffsetBandEngagementClassification(level, 0, level.length, {
+      toolRadius: 3,
+      ringPerimeters: new Map(),
+    })
+    assert(cache.segmentCount === level.length, 'the exact classification must cover every emitted cut')
+    assert(cache.indexEntryCount > 0, 'the classification must build a swept-material index')
+    level.forEach((move, cutIndex) => {
+      const cached = cache.chunksForMove(
+        cutIndex,
+        move.from.x,
+        move.from.y,
+        move.to.x,
+        move.to.y,
+      )
+      assert(cached !== null, `cut ${cutIndex} must match the cached traversal occurrence`)
+    })
   }
 })
 
-test('cost probe: the swept-material index is built once per band and reused per level', () => {
+test('cost probe: identical level traversals reuse one classification', () => {
   const spec = specByName('offset-multi')
   const { project, operation } = buildFixture(spec)
   resetEngagementCacheProbeCounts()
@@ -795,7 +768,7 @@ test('cost probe: the swept-material index is built once per band and reused per
   const engagementCounts = engagementCacheProbeCounts()
   assert(
     engagementCounts.bandCacheBuilds === 1,
-    `the band classification must be built once per band, got ${engagementCounts.bandCacheBuilds} builds`,
+    `the identical traversal must be classified once, got ${engagementCounts.bandCacheBuilds} builds`,
   )
   assert(
     engagementCounts.cacheLevelUses === 2,
@@ -817,7 +790,7 @@ test('cost probe: the swept-material index is built once per band and reused per
 // ── 5c. Depth invariance and miss observability (S2d) ─────────────────
 //
 // The band's ring tree is Z-invariant, so the emitted feed pattern must be
-// too. S2c's cache already classified every ring segment once per band, but
+// too. S2c's cache already classified every ring segment once, but
 // the emitted stream still drifted with depth for two reasons: the
 // never-raise clamp's `legacySlotSpans` collected spans from the whole
 // accumulated move array, so each deeper level clamped against its own
@@ -825,7 +798,7 @@ test('cost probe: the swept-material index is built once per band and reused per
 // grew 3 → 95 → 184 → 272 → 356 over five levels, and the slot-feed share
 // grew 35.4% → 71.2%); and the inter-ring link cuts were never classified,
 // so every level resolved them to full engagement. Both are fixed: the
-// clamp is level-scoped and the canonical traversal classifies links too.
+// clamp is level-scoped and exact traversal caches classify links too.
 // The depth-invariance property below failed before the fix (fed sequences
 // differed at every level) and passes after it. Cache misses are counted
 // and asserted so a silent conservative fallback can never hide a
@@ -862,11 +835,8 @@ test('depth invariance: every level emits the same fed-move count, XY sequence, 
   }
 })
 
-test('cache misses are observable: zero on the canonical fixtures, a known number where the traversal diverges', () => {
-  // A plain offset pocket, a multi-level pocket, and an island pocket: the
-  // canonical (null-seeded) traversal reproduces every emitted level, so
-  // every cut move — ring segment and link alike — hits the cache.
-  for (const name of ['offset-single', 'offset-multi', 'offset-island-single']) {
+test('exact traversal caches serve every offset cut without a conservative miss fallback', () => {
+  for (const name of ['offset-single', 'offset-multi', 'offset-island-single', 'offset-island-multi']) {
     const spec = specByName(name)
     const { project, operation } = buildFixture(spec)
     resetEngagementCacheProbeCounts()
@@ -874,7 +844,7 @@ test('cache misses are observable: zero on the canonical fixtures, a known numbe
     const counts = engagementCacheProbeCounts()
     assert(
       counts.cacheMisses === 0,
-      `${name}: every emitted cut must hit the canonical cache, got ${counts.cacheMisses} misses`,
+      `${name}: every emitted cut must hit its exact traversal cache, got ${counts.cacheMisses} misses`,
     )
   }
   // The parallel pattern has no ring tree, builds no canonical cache, and
@@ -888,22 +858,6 @@ test('cache misses are observable: zero on the canonical fixtures, a known numbe
     assert(
       counts.bandCacheBuilds === 0 && counts.cacheMisses === 0,
       `${name}: the parallel pattern builds no cache and must record no misses`,
-    )
-  }
-  // The island multi-level band legitimately cannot be fully cached: level 1
-  // is seeded from level 0's carried position, which rotates the two island
-  // rings differently than the canonical traversal, so their two links miss
-  // and resolve conservatively to full engagement. The number is pinned — a
-  // known miss count is reviewable, an unbounded one is not.
-  {
-    const spec = specByName('offset-island-multi')
-    const { project, operation } = buildFixture(spec)
-    resetEngagementCacheProbeCounts()
-    generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
-    const counts = engagementCacheProbeCounts()
-    assert(
-      counts.cacheMisses === 2,
-      `the island multi-level band's two island-ring links miss the canonical cache, got ${counts.cacheMisses} misses`,
     )
   }
 })
@@ -1035,6 +989,27 @@ test('S8: a synthetic island fixture also emits no slot feed into cleared materi
   assert(violations === 0, `${violations} synthetic-island fed moves cut already-cleared material at slot feed`)
 })
 
+test('cached offset engagement uses the emitted prior-cut context on the real island fixture', () => {
+  const project = normalizeProject(
+    JSON.parse(readFileSync(join('src', 'engine', 'test-fixtures', 'pocket-feed-reduction.camj'), 'utf8')) as Project,
+  )
+  const operation = project.operations.find((candidate) => candidate.kind === 'pocket')
+  assert(operation !== undefined, 'the fixture must contain a pocket operation')
+  const result = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
+  const target = result.moves.find((move) =>
+    move.kind === 'cut'
+    && Math.abs(move.from.y - 0.705) < 1e-6
+    && Math.abs(move.to.y - 0.705) < 1e-6
+    && Math.min(move.from.x, move.to.x) <= 2
+    && Math.max(move.from.x, move.to.x) >= 2,
+  )
+  assert(target !== undefined, 'the fixture must emit the long outer island pass through x=2, y=0.705')
+  assert(
+    Math.abs((target.feedScale ?? 1) - 0.92) <= 1e-12,
+    `the 74-degree outer pass is entitled to the 0.92 rung, got ${target.feedScale ?? 1}`,
+  )
+})
+
 // ── 9. S9: no move may emit below its own engagement entitlement ─────
 //
 // The defect (issue #498, slice S9): bucket-to-bucket merges take the LOWER
@@ -1045,10 +1020,9 @@ test('S8: a synthetic island fixture also emits no slot feed into cleared materi
 // probe: walk the emitted cut moves, measure each against everything swept
 // before it with the estimator, and require the emitted scale to be at least
 // `engagementFeedScale(e, nominal, slot)` for that point's engagement. It is
-// asserted as a bound on over-slowed path length because the per-band cache's
-// canonical traversal order can legitimately classify a segment at a higher
-// engagement than emission order (a known, conservative divergence — it errs
-// slow, never fast), and that residual is not what the merge rule governs.
+// asserted as a bound on over-slowed path length because one emitted fragment
+// intentionally spans several sampled chunks and therefore carries one
+// conservative scale across locally varying entitlement.
 
 /**
  * Path length, in project units, cut at a feed scale strictly below the

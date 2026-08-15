@@ -324,7 +324,7 @@ function ringMinFragmentLength(toolDiameter: number, ringPerimeter: number | nul
 
 // ── Engagement cache probes ───────────────────────────────────────────
 //
-// Call-count probes for the once-per-band classification cache. Cost
+// Call-count probes for the per-distinct-traversal classification cache. Cost
 // assertions count work — never wall clocks (AGENTS.md § Build & Verify) —
 // so tests reset and read these counters instead of timing generation. Only
 // `resetEngagementCacheProbeCounts` and `engagementCacheProbeCounts` are
@@ -334,7 +334,7 @@ let engagementBandCacheBuildCount = 0
 let engagementCacheLevelUseCount = 0
 let engagementCacheMissCount = 0
 
-/** Read the per-band cache probe counters (builds, level uses, and misses so far). */
+/** Read the engagement cache probe counters (builds, level uses, and misses so far). */
 export function engagementCacheProbeCounts(): {
   bandCacheBuilds: number
   cacheLevelUses: number
@@ -347,7 +347,7 @@ export function engagementCacheProbeCounts(): {
   }
 }
 
-/** Reset the per-band cache probe counters. Tests call this before measuring. */
+/** Reset the engagement cache probe counters. Tests call this before measuring. */
 export function resetEngagementCacheProbeCounts(): void {
   engagementBandCacheBuildCount = 0
   engagementCacheLevelUseCount = 0
@@ -799,7 +799,13 @@ function applyEngagementFeedToLevel(
   const chunks: SampledChunk[] = []
   for (let cutIndex = 0; cutIndex < cuts.length; cutIndex += 1) {
     const cut = cuts[cutIndex]
-    const cached = cache?.chunksForMove(cut.move.from.x, cut.move.from.y, cut.move.to.x, cut.move.to.y) ?? null
+    const cached = cache?.chunksForMove(
+      cutIndex,
+      cut.move.from.x,
+      cut.move.from.y,
+      cut.move.to.x,
+      cut.move.to.y,
+    ) ?? null
     if (cached !== null) {
       const chunkMinFragmentLength = ringMinFragmentLength(toolDiameter, cached.ringPerimeter)
       quantizer?.setMinFragmentLength(chunkMinFragmentLength)
@@ -1814,314 +1820,205 @@ export function buildOffsetRegionTree(
   }
 }
 
-/**
- * Engagement classification of one band's offset rings, computed ONCE per
- * band and reused at every Z level (issue #498 slice S2c). The ring tree is
- * Z-invariant, so the engagement of a ring segment depends only on which
- * sweeps were cut before it — and the set that is *certainly* prior in every
- * level's emission order is exactly the ring's own descendants (inner-first
- * traversal cuts them all first). Sibling subtrees, sibling contours, and
- * other trees are cut in an order seeded from the position carried out of the
- * previous level — it varies per level — so they are excluded from the prior
- * set. Exclusion over-reports engagement, which resolves toward a lower feed:
- * the conservative direction.
- */
+type RingPerimeterIndex = ReadonlyMap<string, number>
+
+const directedSegmentKey = (from: Point, to: Point): string =>
+  `${from.x},${from.y}->${to.x},${to.y}`
+
+/** Ring perimeter metadata is geometry-only and reusable across traversal orders. */
+function buildRingPerimeterIndex(
+  regionTrees: OffsetRegionNode[],
+  direction: CutDirection,
+  smoothRadius: number | null,
+): RingPerimeterIndex {
+  const perimeters = new Map<string, number>()
+  const visit = (node: OffsetRegionNode, depth: number): void => {
+    const outer = node.region.outer.length >= 3 ? node.region.outer : null
+    const smoothedOuter = outer
+      ? [smoothRadius !== null && depth > 0 ? roundContourCorners(outer, smoothRadius) : outer]
+      : []
+    const islands = node.region.islands.filter((island) => island.length >= 3)
+    for (const contour of applyContourDirection([...smoothedOuter, ...islands], direction)) {
+      let perimeter = 0
+      for (let index = 0; index < contour.length; index += 1) {
+        const next = contour[(index + 1) % contour.length]
+        perimeter += Math.hypot(next.x - contour[index].x, next.y - contour[index].y)
+      }
+      for (let index = 0; index < contour.length; index += 1) {
+        const next = contour[(index + 1) % contour.length]
+        if (Math.hypot(next.x - contour[index].x, next.y - contour[index].y) <= 1e-9) continue
+        perimeters.set(directedSegmentKey(contour[index], next), perimeter)
+      }
+    }
+    for (const child of node.children) {
+      visit(child, depth + 1)
+    }
+  }
+  for (const tree of regionTrees) {
+    visit(tree, 0)
+  }
+  return perimeters
+}
+
+/** Engagement classification for one exact offset-level traversal. */
 export interface OffsetBandEngagementClassification {
   /**
-   * Cached chunks of the canonical segment `(fromX, fromY) → (toX, toY)`, or
-   * null when the segment is unknown (the conservative fallback is full
-   * engagement, handled by the caller). `isLink` marks the inter-ring
-   * transition cuts — classified against the canonical emission order, which
-   * is the one thing about them that varies with the position-seeded level
-   * traversal, so callers validating against a recomputation know where a
-   * contour ends and a link begins.
+   * Cached chunks for the cut at `cutIndex`. Coordinates are checked as well
+   * as the index so a traversal mismatch is observable and resolves through
+   * the caller's conservative cache-miss path.
    */
   chunksForMove(
+    cutIndex: number,
     fromX: number,
     fromY: number,
     toX: number,
     toY: number,
   ): {
     chunks: ReadonlyArray<{ t0: number; t1: number; engagement: number }>
-    isLink: boolean
     /** Perimeter of the ring contour this segment lies on, or null for a link. */
     ringPerimeter: number | null
   } | null
   /** Stored cell entries of every swept-material index the build created —
-   * the once-per-band index-size proxy for cost assertions. */
+   * the per-distinct-traversal index-size proxy for cost assertions. */
   indexEntryCount: number
-  /** Number of canonical segments classified. */
+  /** Number of emitted cut segments classified. */
   segmentCount: number
 }
 
 /**
- * Build the per-band engagement classification. Traverses each ring tree in
- * canonical order — children in index order, contours unrotated from their
- * canonical start, direction applied exactly as `cutClosedContours` applies
- * it — and keys every segment by its canonical identity, never by emission
- * order or move index. `smoothRadius`/`depth` mirror `cutOffsetRegionNode`'s
- * emit-time smoothing so the classified geometry is the geometry the level
- * loop actually cuts.
- *
- * The inter-ring LINK cuts are classified too, by replaying the emission
- * traversal once with a null seed — children in index order, each contour
- * rotated to the nearest vertex of the carried position exactly as
- * `cutCurrentRegion` rotates it, contours ordered greedily with rotation
- * preserved — against an index holding everything cut earlier in that
- * canonical order. A level whose position-seeded traversal reproduces the
- * canonical one (every level of a Z-invariant band whose rotation seed is
- * level-stable, e.g. concentric rings) then hits the cache for its whole
- * move stream; a link the canonical traversal did not emit stays a miss and
- * resolves conservatively to full engagement at the caller.
+ * Build one exact emission-order classification. The generator caches this by
+ * the level's ordered cut-segment signature, so identical levels reuse it and
+ * a genuinely different traversal gets its own safe classification.
  */
 export function buildOffsetBandEngagementClassification(
-  regionTrees: OffsetRegionNode[],
+  moves: ToolpathMove[],
+  startIndex: number,
+  endIndex: number,
   options: {
     toolRadius: number
-    direction: CutDirection
-    smoothRadius: number | null
+    ringPerimeters: RingPerimeterIndex
   },
 ): OffsetBandEngagementClassification {
-  const { toolRadius, direction, smoothRadius } = options
+  const { toolRadius, ringPerimeters } = options
   const toolDiameter = toolRadius * 2
-  const maxLinkDistance = toolDiameter
   const baseStep = toolDiameter * ENGAGEMENT_SAMPLE_BASE_LENGTH
   const refinedStep = toolDiameter * ENGAGEMENT_SAMPLE_CORNER_LENGTH
   const refineSpan = toolDiameter * ENGAGEMENT_SAMPLE_CORNER_SPAN
-  const segmentChunks = new Map<string, Array<{ t0: number; t1: number; engagement: number }>>()
-  const linkSegmentKeys = new Set<string>()
-  const segmentRingPerimeter = new Map<string, number>()
-  let indexEntryCount = 0
-  let segmentCount = 0
+  const priorIndex = new SweptMaterialIndex(toolRadius)
 
-  interface CanonicalPair {
+  interface CachedCut {
     from: Point
     to: Point
+    chunks: Array<{ t0: number; t1: number; engagement: number }>
+    ringPerimeter: number | null
+  }
+
+  const cachedCuts: CachedCut[] = []
+
+  interface LevelCut {
+    move: ToolpathMove
     dirX: number
     dirY: number
     length: number
+    refinedStart: boolean
+    refinedEnd: boolean
   }
 
-  const junctionAngle = (p: CanonicalPair, q: CanonicalPair): number =>
-    Math.acos(Math.min(1, Math.max(-1, p.dirX * q.dirX + p.dirY * q.dirY)))
-
-  /**
-   * Sample one straight segment's engagement chunks against `priorIndex` and
-   * store them under the segment's coordinate key — the canonical segment
-   * identity the level loop looks up by. `refinedStart`/`refinedEnd` select
-   * the fine sampling near direction changes; both ends of a link refine
-   * (its junction neighbours are whatever the level order cuts before and
-   * after, and unknown junctions resolve toward more sampling).
-   */
-  const classifySegment = (
-    from: Point,
-    to: Point,
-    priorIndex: SweptMaterialIndex,
-    refinedStart: boolean,
-    refinedEnd: boolean,
-    isLink: boolean,
-    ringPerimeter: number | null,
-  ): void => {
-    const dx = to.x - from.x
-    const dy = to.y - from.y
+  const cuts: LevelCut[] = []
+  for (let moveIndex = startIndex; moveIndex < endIndex; moveIndex += 1) {
+    const move = moves[moveIndex]
+    if (move.kind !== 'cut') continue
+    const dx = move.to.x - move.from.x
+    const dy = move.to.y - move.from.y
     const length = Math.hypot(dx, dy)
-    if (length <= 1e-9) return
-    const boundaries = engagementChunkBoundaries(
+    if (length <= 1e-9) continue
+    cuts.push({
+      move,
+      dirX: dx / length,
+      dirY: dy / length,
       length,
-      refinedStart,
-      refinedEnd,
+      refinedStart: false,
+      refinedEnd: false,
+    })
+  }
+  for (let cutIndex = 0; cutIndex < cuts.length; cutIndex += 1) {
+    const cut = cuts[cutIndex]
+    const junctionAngle = (other: LevelCut): number =>
+      Math.acos(Math.min(1, Math.max(-1, cut.dirX * other.dirX + cut.dirY * other.dirY)))
+    cut.refinedStart = cutIndex === 0 || junctionAngle(cuts[cutIndex - 1]) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
+    cut.refinedEnd = cutIndex === cuts.length - 1 || junctionAngle(cuts[cutIndex + 1]) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
+  }
+
+  for (const cut of cuts) {
+    const boundaries = engagementChunkBoundaries(
+      cut.length,
+      cut.refinedStart,
+      cut.refinedEnd,
       baseStep,
       refinedStep,
       refineSpan,
     )
     const chunks: Array<{ t0: number; t1: number; engagement: number }> = []
     for (let boundary = 0; boundary + 1 < boundaries.length; boundary += 1) {
-      const t0 = boundaries[boundary] / length
-      const t1 = boundaries[boundary + 1] / length
-      const chunkLength = (t1 - t0) * length
+      const t0 = boundaries[boundary] / cut.length
+      const t1 = boundaries[boundary + 1] / cut.length
+      const chunkLength = (t1 - t0) * cut.length
       if (chunkLength <= 1e-12) continue
       let engagement = 0
       for (let point = 0; point < ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK; point += 1) {
         const t = t0 + ((t1 - t0) * (point + 1)) / (ENGAGEMENT_SAMPLE_POINTS_PER_CHUNK + 1)
-        const sample = priorIndex.engagementAt(from.x + dx * t, from.y + dy * t, dx / length, dy / length)
+        const sample = priorIndex.engagementAt(
+          cut.move.from.x + (cut.move.to.x - cut.move.from.x) * t,
+          cut.move.from.y + (cut.move.to.y - cut.move.from.y) * t,
+          cut.dirX,
+          cut.dirY,
+        )
         if (sample > engagement) engagement = sample
       }
       chunks.push({ t0, t1, engagement })
     }
-    const key = `${from.x},${from.y}->${to.x},${to.y}`
-    segmentChunks.set(key, chunks)
-    if (isLink) linkSegmentKeys.add(key)
-    if (ringPerimeter !== null) segmentRingPerimeter.set(key, ringPerimeter)
-    segmentCount += 1
+    cachedCuts.push({
+      from: cut.move.from,
+      to: cut.move.to,
+      chunks,
+      ringPerimeter: ringPerimeters.get(directedSegmentKey(cut.move.from, cut.move.to)) ?? null,
+    })
+    priorIndex.addSweptSegment(
+      cut.move.from.x,
+      cut.move.from.y,
+      cut.move.to.x,
+      cut.move.to.y,
+    )
   }
-
-  /**
-   * Classify this node's own contours against `scope` and insert their
-   * segments. Each contour is cut as one closed loop whose segments are
-   * traversed in a fixed cyclic order (only the start vertex is
-   * position-seeded per level), so a segment's own earlier segments are prior
-   * at every level: they are inserted into `scope` as soon as they are
-   * classified, exactly as the uncached emission-order path does move by
-   * move. A contour's own trail is still excluded structurally — a kerf
-   * directly behind the tool never enters the leading semicircle — but a
-   * parallel stretch of the same contour (e.g. the two sides of a neck) is a
-   * real prior sweep and must be counted, or a ring that runs back through
-   * its own cleared corridor is over-reported as a full slot. Contours other
-   * than the one being classified stay excluded from its prior set: their
-   * relative order is position-seeded per level, so counting one would make
-   * the cached result depend on a level's emission order.
-   *
-   * Each contour is rotated to the canonical entry vertex exactly as the
-   * level loop rotates it, so the "first" segment of the loop — the one cut
-   * with no own-trail prior — is the segment the level loop actually cuts
-   * first. A narrow ring whose two sides are closer than the tool diameter
-   * would otherwise be classified with the slot side and the cleared side
-   * swapped relative to the emitted order.
-   */
-  const classifyContours = (
-    node: OffsetRegionNode,
-    depth: number,
-    scope: SweptMaterialIndex,
-    entryPosition: Point | null,
-  ): Array<[number, number, number, number]> => {
-    const outer = node.region.outer.length >= 3 ? node.region.outer : null
-    const smoothed = outer
-      ? [smoothRadius !== null && depth > 0 ? roundContourCorners(outer, smoothRadius) : outer]
-      : []
-    const islands = node.region.islands.filter((island) => island.length >= 3)
-    const contours = applyContourDirection([...smoothed, ...islands], direction)
-      .map((contour) => rotateContourToBestEntry(contour, entryPosition, []))
-    const own: Array<[number, number, number, number]> = []
-    for (const contour of contours) {
-      const pairs: CanonicalPair[] = []
-      for (let index = 0; index + 1 < contour.length; index += 1) {
-        const from = contour[index]
-        const to = contour[index + 1]
-        const dx = to.x - from.x
-        const dy = to.y - from.y
-        const length = Math.hypot(dx, dy)
-        pairs.push({ from, to, dirX: length > 0 ? dx / length : 0, dirY: length > 0 ? dy / length : 0, length })
-      }
-      const first = contour[0]
-      const last = contour[contour.length - 1]
-      if (first.x !== last.x || first.y !== last.y) {
-        const dx = first.x - last.x
-        const dy = first.y - last.y
-        const length = Math.hypot(dx, dy)
-        pairs.push({ from: last, to: first, dirX: length > 0 ? dx / length : 0, dirY: length > 0 ? dy / length : 0, length })
-      }
-      const perimeter = pairs.reduce((sum, pair) => sum + pair.length, 0)
-      for (let index = 0; index < pairs.length; index += 1) {
-        const pair = pairs[index]
-        if (pair.length <= 1e-9) continue
-        const prev = pairs[(index + pairs.length - 1) % pairs.length]
-        const next = pairs[(index + 1) % pairs.length]
-        // The first and last segment of a contour face unknown neighbours —
-        // whatever ring the level order cuts before and after — and unknown
-        // junctions resolve toward more sampling.
-        const refinedStart = index === 0 || junctionAngle(prev, pair) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
-        const refinedEnd = index === pairs.length - 1 || junctionAngle(pair, next) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
-        classifySegment(pair.from, pair.to, scope, refinedStart, refinedEnd, false, perimeter)
-        scope.addSweptSegment(pair.from.x, pair.from.y, pair.to.x, pair.to.y)
-        own.push([pair.from.x, pair.from.y, pair.to.x, pair.to.y])
-      }
-    }
-    return own
-  }
-
-  /**
-   * The contours this node cuts at one level, in the canonical emission
-   * order: the wall/outer contour smoothed exactly as `cutOffsetRegionNode`
-   * smooths it (interior rings only), each contour rotated to the nearest
-   * vertex of the carried position (inner-first carries no child anchors),
-   * direction applied exactly as `cutClosedContours` applies it, and the
-   * whole set ordered greedily with rotation preserved.
-   */
-  const canonicalNodeContours = (node: OffsetRegionNode, depth: number, position: Point | null): Point[][] => {
-    const outer = node.region.outer.length >= 3 ? node.region.outer : null
-    const smoothed = outer
-      ? [smoothRadius !== null && depth > 0 ? roundContourCorners(outer, smoothRadius) : outer]
-      : []
-    const islands = node.region.islands.filter((island) => island.length >= 3)
-    const contours = applyContourDirection([...smoothed, ...islands], direction)
-    const prepared = contours.map((contour) => rotateContourToBestEntry(contour, position, []))
-    return orderClosedContoursGreedyPreservingRotation(prepared, position)
-  }
-
-  /**
-   * The canonical emission-order index: everything cut earlier in the
-   * canonical traversal. Link classification samples against this, mirroring
-   * the per-level index of the uncached path. A node's own contours join it
-   * only once the whole node is classified — the same own-trail exclusion
-   * `classifyContours` applies — so a link between two contours of one node
-   * under-reports its priors and over-reports engagement, the conservative
-   * direction (and the emission order of those contours is position-seeded
-   * anyway).
-   */
-  const canonicalIndex = new SweptMaterialIndex(toolRadius)
-
-  /**
-   * Inner-first traversal with two outputs: the ring-segment classification
-   * (each node against its own fresh scope — its certain priors are exactly
-   * its own descendants, folded after every child subtree is classified) and
-   * the canonical walk position threading, which classifies every emitted
-   * link cut — the direct transition from the carried position to the next
-   * contour's start, emitted exactly when `transitionToCutEntry` would emit
-   * a cut link (within `maxLinkDistance`, not a same-XY plunge).
-   */
-  const classifyNode = (
-    node: OffsetRegionNode,
-    depth: number,
-    entry: Point | null,
-  ): { end: Point | null; segments: Array<[number, number, number, number]> } => {
-    const scope = new SweptMaterialIndex(toolRadius)
-    const segments: Array<[number, number, number, number]> = []
-    let position = entry
-    for (const child of orderNodesGreedy(node.children, position)) {
-      const childResult = classifyNode(child, depth + 1, position)
-      position = childResult.end
-      for (const [ax, ay, bx, by] of childResult.segments) {
-        scope.addSweptSegment(ax, ay, bx, by)
-      }
-      segments.push(...childResult.segments)
-    }
-    const contoursEntry = position
-    for (const contour of canonicalNodeContours(node, depth, position)) {
-      const startPoint = contour[0]
-      if (position !== null) {
-        const linkLength = Math.hypot(startPoint.x - position.x, startPoint.y - position.y)
-        if (linkLength > XY_ALIGN_EPS && linkLength <= maxLinkDistance) {
-          classifySegment(position, startPoint, canonicalIndex, true, true, true, null)
-          canonicalIndex.addSweptSegment(position.x, position.y, startPoint.x, startPoint.y)
-        }
-      }
-      position = { x: startPoint.x, y: startPoint.y }
-    }
-    const own = classifyContours(node, depth, scope, contoursEntry)
-    for (const [ax, ay, bx, by] of own) {
-      canonicalIndex.addSweptSegment(ax, ay, bx, by)
-    }
-    segments.push(...own)
-    indexEntryCount += scope.storedEntryCount()
-    return { end: position, segments }
-  }
-
-  let bandPosition: Point | null = null
-  for (const tree of regionTrees) {
-    bandPosition = classifyNode(tree, 0, bandPosition).end
-  }
-  indexEntryCount += canonicalIndex.storedEntryCount()
 
   return {
-    chunksForMove(fromX, fromY, toX, toY) {
-      const key = `${fromX},${fromY}->${toX},${toY}`
-      const chunks = segmentChunks.get(key)
-      if (chunks === undefined) return null
-      return { chunks, isLink: linkSegmentKeys.has(key), ringPerimeter: segmentRingPerimeter.get(key) ?? null }
+    chunksForMove(cutIndex, fromX, fromY, toX, toY) {
+      const cached = cachedCuts[cutIndex]
+      if (
+        cached === undefined
+        || cached.from.x !== fromX
+        || cached.from.y !== fromY
+        || cached.to.x !== toX
+        || cached.to.y !== toY
+      ) {
+        return null
+      }
+      return { chunks: cached.chunks, ringPerimeter: cached.ringPerimeter }
     },
-    indexEntryCount,
-    segmentCount,
+    indexEntryCount: priorIndex.storedEntryCount(),
+    segmentCount: cachedCuts.length,
   }
+}
+
+/** Exact ordered-cut identity used to reuse a safe classification. */
+function engagementTraversalKey(moves: ToolpathMove[], startIndex: number, endIndex: number): string {
+  const parts: string[] = []
+  for (let moveIndex = startIndex; moveIndex < endIndex; moveIndex += 1) {
+    const move = moves[moveIndex]
+    if (move.kind !== 'cut') continue
+    parts.push(directedSegmentKey(move.from, move.to))
+  }
+  return parts.join('|')
 }
 
 function orderNodesGreedy(nodes: OffsetRegionNode[], start: Point | null): OffsetRegionNode[] {
@@ -2421,19 +2318,15 @@ function generateRoughBandMoves(
     .flatMap((region) => buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
     .map((region) => buildOffsetRegionTree(region, effectiveStepover, islandJoinType))
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
-  // The engagement classification is level-invariant — same ring tree, same
-  // cut directions at every level — so it is computed once per band and every
-  // level looks its chunks up by canonical segment identity. (The parallel
-  // pattern has no ring tree and its segment order is position-seeded per
-  // level, so it keeps classifying per level.)
-  const engagementCache = telemetry !== null && operation.pocketFeedReduction === 'engagement'
-    ? buildOffsetBandEngagementClassification(regionTrees, {
-      toolRadius,
-      direction,
-      smoothRadius: smoothRadius ?? null,
-    })
+  // Cache exact emission-order classification by the ordered cut-segment
+  // stream. Most levels reuse one traversal; if position seeding genuinely
+  // changes the order, that order gets its own classification instead of
+  // reusing a conservative approximation with the wrong prior-cut context.
+  const engagementCacheEnabled = telemetry !== null && operation.pocketFeedReduction === 'engagement'
+  const ringPerimeters = engagementCacheEnabled
+    ? buildRingPerimeterIndex(regionTrees, direction, smoothRadius ?? null)
     : null
-  if (engagementCache !== null) engagementBandCacheBuildCount += 1
+  const engagementCaches = new Map<string, OffsetBandEngagementClassification>()
   const entryPolicy = withEntryHandoffFeedScale(
     createEntryPolicy(
       operation,
@@ -2484,6 +2377,23 @@ function generateRoughBandMoves(
         0,
         levelEntryPolicy,
       )
+    }
+
+    const levelEndIndex = moves.length
+    let engagementCache: OffsetBandEngagementClassification | null = null
+    if (ringPerimeters !== null) {
+      const traversalKey = engagementTraversalKey(moves, levelStartIndex, levelEndIndex)
+      engagementCache = engagementCaches.get(traversalKey) ?? null
+      if (engagementCache === null) {
+        engagementCache = buildOffsetBandEngagementClassification(
+          moves,
+          levelStartIndex,
+          levelEndIndex,
+          { toolRadius, ringPerimeters },
+        )
+        engagementCaches.set(traversalKey, engagementCache)
+        engagementBandCacheBuildCount += 1
+      }
     }
 
     applyLevelFeed(
