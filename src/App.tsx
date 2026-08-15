@@ -115,6 +115,7 @@ function App() {
     selection,
     startAddRectPlacement,
     pendingAdd,
+    history,
   } = useProjectStore()
 
   const {
@@ -231,7 +232,14 @@ function App() {
     selectedToolpath,
     visibleToolpaths,
     collidingClampIds,
-  } = useToolpathGeneration(project, selectedOperation)
+  } = useToolpathGeneration(
+    project,
+    selectedOperation,
+    // Coalesce during gestures (issue #518, S4): `transactionStart` is open
+    // for the duration of a drag, so one gesture produces one regeneration
+    // instead of one per pointermove.
+    history.transactionStart !== null,
+  )
   void toolpathMap
 
   const { simulationResult, simulationOperationCount, simulationPlaybackInput } = useSimulationModel({
