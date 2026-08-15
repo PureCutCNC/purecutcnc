@@ -181,18 +181,31 @@ Always run `npm run build` from the project root to verify changes compile befor
 
 `npm run test:e2e` is a separate PR CI gate, not part of `npm run build`. User-facing UI or workflow changes should add or extend an `e2e/*.smoke.spec.ts` test when the behavior depends on rendered DOM, menu wiring, dialogs, or browser-only boot paths. If lower-level structural tests are sufficient, say so in the PR description so the lack of e2e coverage is deliberate.
 
-### Performance assertions measure CPU time, never wall clock
+### Performance assertions compare against invariant work, never against a millisecond constant
 
-`scripts/run-tests.ts` runs test files in a parallel pool of up to 10 processes, so wall-clock timings vary with unrelated load and cannot distinguish *"the algorithm regressed"* from *"the machine is busy"* — and `build` is a required status check, so a wall-clock assertion intermittently blocks merges. This cost three issues in a week (#383, #386); on the same fixture, wall clock drifted 102ms → 202ms under 8-core saturation while CPU time held 126ms → 112ms.
+`build` is a required status check, so any timing assertion that drifts blocks merges for everyone. Three issues have now been spent here (#383, #386, #508). Each of the first two fixed the *units* and left the *shape* of the assertion alone, and each decayed within weeks. The rule below is the third answer; read the whole of it before writing a timing assertion.
 
-So: measure with `process.cpuUsage()`, take the **minimum** across a few repetitions (contention and GC can only ever add cost), and build the fixture outside the measured region.
+**No absolute millisecond budget survives.** Not in wall clock, and not in CPU time either:
 
-Then pick the comparison to match what the test actually guards — check this before writing the assertion, because the wrong instrument passes against the very regression it exists to catch:
+- Wall clock counts time the process spends descheduled while `scripts/run-tests.ts` runs its pool (`min(10, cores - 2)`), so it moves with unrelated load. This is what #383/#386 diagnosed, correctly.
+- `process.cpuUsage()` fixes only that. It measures **time on CPU, not work done**, so it still moves with the effective clock rate — turbo limits, thermal throttling, SMT sibling contention. Measured for #508 on `classifier.test.ts`, against this project's own test pool: wall clock 569ms → 942ms, CPU time 156ms → 325ms (**2.1x**), while a ratio against invariant work moved 1.16x. An allocation-free reference loop inflated 1.6x in lockstep over the same runs, which rules out GC as the cause.
 
-- **A complexity property → assert the shape of the cost curve.** A ratio between two input sizes is machine-independent, so it neither flakes on a slow runner nor needs revisiting when hardware changes. Reference: `bestNonFittingCpuMs` in `src/engine/toolpaths/arcReconstruction.test.ts`.
-- **A constant factor → assert an absolute CPU budget.** When the guarded work is already in the same complexity class as its regression — a cheap reject that gates expensive per-pair work, say — the ratio barely moves and a ratio assertion is blind. Reference: `bestClassifyCpuMs` in `src/import/classifier.test.ts`, where dropping a bbox gate cost 12x in absolute CPU but moved the ratio only 3.19x → 4.07x, inside the baseline's own run-to-run spread.
+The earlier claim in this section that CPU time "is NOT contention dependent" was wrong, and both budgets written under it had already drifted past their recorded baselines before anyone noticed.
 
-An absolute budget is machine-speed dependent, which is a real cost but a *different* one from the contention flake above. Where you use one, record in the test the measured baseline, the measured regression, and the headroom either side, so the next reader can re-derive the number instead of guessing at it. And verify the assertion actually fails against the regression it guards, by temporarily reintroducing the slow path.
+**So: measure the guarded work against the same code path on a fixture that provably cannot benefit from the optimization being guarded, and assert the ratio.** Both halves then share machine, clock rate, allocator and microarchitecture, so only the optimization itself moves the number. Use `cpuRatio` from [`src/test/cpuRatio.ts`](src/test/cpuRatio.ts); it takes the **minimum** across repetitions, since contention and GC can only ever add cost.
+
+Finding the invariant half is the design work, and it is usually a fixture, not a code change — never add a test-only toggle to production code for this, because if the toggle breaks the ratio silently collapses to 1 and the test passes while measuring nothing. Two worked examples:
+
+| test | guards | subject | invariant reference |
+|---|---|---|---|
+| `classifier.test.ts` | bbox reject gating pairwise nesting | 2,980 **disjoint** rects — gate rejects nearly every pair | 200 **concentric** rects — every bbox pair overlaps, so the gate never rejects |
+| `importBulk.test.ts` | suffix cursor in `createNameAllocator` | 2,980 **repeated** names — every one hits the suffix loop | 2,980 **unique** names — never `taken`, so they return before the loop |
+
+**A ratio between two input sizes is a different instrument, and not this one.** It sees a complexity change but is blind to a constant factor: on the classifier, dropping the bbox gate cost ~10x in absolute CPU but moved the size ratio only 3.19x → 4.07x, inside the baseline's own spread. Use a size ratio only when the property under test genuinely *is* the shape of the cost curve — `bestNonFittingCpuMs` in `src/engine/toolpaths/arcReconstruction.test.ts` is the correct use of it, and needs no change.
+
+Whichever you write, record in the test the measured baseline row, the measured regressed row, and the headroom either side, so the next reader can re-derive the constant instead of guessing at it. Set the threshold at the geometric mid-point of the *worst* pair — highest observed baseline against lowest observed regression — not of the averages.
+
+**Verify by mutation, not by a green run.** Temporarily delete the optimization, confirm the assertion fails, and restore. A perf test that has never been shown to fail against its own regression is not evidence of anything. Check the reference column stayed put across that mutation too: if both columns moved, the reference is contaminated and the ratio understates the regression.
 
 ## Git & Branching
 

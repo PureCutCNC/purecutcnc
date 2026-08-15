@@ -23,6 +23,7 @@
 import { classifyImportShapes, inferNestedSolidOperation } from './classifier'
 import type { ImportGeometryMode, ImportedShape } from './types'
 import { polygonProfile, rectProfile } from '../types/project'
+import { cpuRatio } from '../test/cpuRatio'
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error('FAIL: ' + msg)
@@ -495,31 +496,21 @@ function test_manual_ambiguous_contact_stays_add(): void {
 }
 
 /**
- * Lowest CPU time, in ms, across `reps` classifications of the same batch.
+ * Concentric rects: every bbox pair overlaps, so `bboxesOverlapOrTouch` can
+ * never reject a pair and the expensive edge-intersection work runs on all of
+ * them regardless of whether that gate exists.
  *
- * Measures CPU time (`process.cpuUsage`) rather than wall clock, because
- * `scripts/run-tests.ts` executes test files in a parallel pool of up to 10
- * processes. Wall clock counts time this process spends descheduled while
- * sibling test files run; CPU time does not. Measured on this fixture:
- *
- *   wall clock   102ms idle  ->  202ms under 8-core saturation
- *   CPU time     126ms idle  ->  112ms under 8-core saturation
- *
- * The previous `elapsedMs < 3_000` wall-clock assertion failed at 3,411ms on
- * unchanged code for exactly that reason.
- *
- * Minimum rather than mean, since contention and GC can only ever add cost.
- * Shapes are built once so fixture allocation stays outside the measured region.
+ * That makes this the invariant half of the ratio below. Kept far smaller than
+ * the subject fixture because the ungated pair scan is ~n^2.1 here: 200 shapes
+ * costs ~120ms, 800 costs ~1.9s.
  */
-function bestClassifyCpuMs(shapes: ImportedShape[], reps = 5): number {
-  let best = Infinity
-  for (let rep = 0; rep < reps; rep += 1) {
-    const before = process.cpuUsage()
-    classifyImportShapes(shapes, 'auto', 'dxf')
-    const delta = process.cpuUsage(before)
-    best = Math.min(best, (delta.user + delta.system) / 1000)
-  }
-  return best
+function concentricRects(count: number): ImportedShape[] {
+  return Array.from({ length: count }, (_, index) => ({
+    name: `concentric-${index}`,
+    sourceType: 'dxf' as const,
+    layerName: null,
+    profile: rectProfile(index * 0.01, index * 0.01, 200 - index * 0.02, 200 - index * 0.02),
+  }))
 }
 
 function test_large_disjoint_dxf_auto_batch_is_bounded(): void {
@@ -529,43 +520,67 @@ function test_large_disjoint_dxf_auto_batch_is_bounded(): void {
     return closedRect(`shape-${index}`, null, column * 20, row * 20, 10, 10)
   })
 
-  // Correctness first; this call also warms the JIT for the measurement below.
+  const reference = concentricRects(200)
+
+  // Correctness first; these calls also warm the JIT for the measurement below.
   const { classified, result } = classifyImportShapes(shapes, 'auto', 'dxf')
   assert(classified.length === shapes.length, 'all disjoint contours classified')
   assert(result.addCount === shapes.length, 'all disjoint contours stay top-level Add')
 
-  // An ABSOLUTE CPU budget, not a scaling ratio — deliberately, and unlike
-  // `bestNonFittingCpuMs` in arcReconstruction.test.ts. What this guards is
-  // that the expensive pairwise work in `buildNestingTree` (edge-intersection
-  // tests, Clipper differences) stays behind its cheap bbox rejects. The pair
-  // scan is quadratic by design, so dropping a bbox gate multiplies the
-  // constant factor without changing the complexity class — which is exactly
-  // what a ratio cannot see. Removing the `bboxesOverlapOrTouch` gate from the
-  // edge-contact loop:
+  const referenceRun = classifyImportShapes(reference, 'auto', 'dxf')
+  assert(referenceRun.classified.length === reference.length, 'reference contours classified')
+
+  // What this guards: the expensive pairwise work in `buildNestingTree`
+  // (edge-intersection tests, Clipper differences) stays behind its cheap bbox
+  // rejects. The pair scan is quadratic by design, so dropping a bbox gate
+  // multiplies the constant factor without changing the complexity class.
   //
-  //                              CPU at 2,980   ratio 1,490 -> 2,980
-  //     current                    142..183ms         3.19x
-  //     bbox gate removed             1374ms          4.07x
+  // Measured as a RATIO against concentric shapes, not an absolute budget.
+  // Every concentric bbox pair overlaps, so `bboxesOverlapOrTouch` never
+  // rejects there and that fixture costs the same with or without the gate —
+  // it is the invariant yardstick. The disjoint fixture is the opposite: the
+  // gate rejects essentially every pair, so it is what the gate makes cheap.
+  // Remove the gate and the subject rises to meet the reference:
   //
-  // The current ratio measured 3.03..3.48x across trials, overlapping the
-  // regressed 4.07x, so a ratio assertion here would be blind. The ~8x gap in
-  // absolute CPU is not. (Removing the `bboxesEqual` gate from the duplicate
-  // loop is far louder still: 52x at n=745, and quadratic from there.)
+  //                        subject (2,980)   reference (200)   subject/reference
+  //     current              150.. 383ms        72..140ms         1.99.. 2.89
+  //     bbox gate removed   1476..3766ms       106..153ms        13.94..24.4
   //
-  // The `current` range is the spread over 12 full `npm test` runs, 8 idle and
-  // 4 under 8-core saturation — the two are indistinguishable, which is the
-  // whole point of measuring CPU. The budget is roughly the geometric
-  // mid-point of the two rows, leaving ~2.5x either way: it holds on a machine
-  // 2.5x slower than this one, and still catches the regression on one 3x
-  // faster. Tradeoff, stated honestly: an absolute
-  // budget is machine-speed dependent in a way a ratio is not. It is NOT
-  // contention dependent, which is the part that made the old wall-clock
-  // assertion flake. If typical hardware outgrows this, re-measure both
-  // columns and retighten — widening on its own only blinds the test.
-  const cpuMs = bestClassifyCpuMs(shapes)
-  console.log(`  2,980 disjoint DXF contours classified in ${cpuMs.toFixed(0)}ms CPU`)
-  assert(cpuMs < 450,
-    `2,980 disjoint DXF contours classified in ${cpuMs.toFixed(0)}ms CPU (budget 450ms) — `
+  // The reference column barely moves between those two rows, which is the
+  // property that makes this work — verify it stayed put if you ever retune the
+  // fixtures. The limit is the geometric mid-point of the *worst* pair (2.89
+  // baseline against 13.94 regressed), so ~2.2x clear either way. Note the
+  // regressed ratio is lowest on a cold machine: thermal load inflates the
+  // subject more than the reference, so contention makes the regression easier
+  // to catch, not harder.
+  //
+  // The baseline range spans a cold machine and a thermally-loaded one. Ratio
+  // spread within one session is ~1.12x; across sessions 1.45x, against 2.55x
+  // for the subject's absolute CPU over the same span. Cancellation is good but
+  // not total — the two halves differ in work mix, the subject being dominated
+  // by bbox rejects and the reference by edge-intersection and Clipper.
+  //
+  // Both halves run the same function on the same machine microseconds apart,
+  // so clock rate cancels: that is the whole point, and it is what the two
+  // previous absolute budgets (#383 wall clock, #386 CPU time) each lacked.
+  // CPU time is NOT contention independent — measured 2.1x inflation under this
+  // project's own test pool, which is what made the 450ms budget flake. See
+  // `src/test/cpuRatio.ts` and AGENTS.md § Build & Verify.
+  //
+  // Not an input-size ratio: at 1,490 -> 2,980 the regression moved the number
+  // only 3.19x -> 4.07x, inside the baseline's own 3.03..3.48x spread. Scaling
+  // ratios see complexity changes, not constant factors.
+  const { ratio, subjectMs, referenceMs } = cpuRatio(
+    { run: () => { classifyImportShapes(shapes, 'auto', 'dxf') } },
+    { run: () => { classifyImportShapes(reference, 'auto', 'dxf') } },
+  )
+  console.log(
+    `  2,980 disjoint DXF contours: ${subjectMs.toFixed(0)}ms CPU vs `
+    + `${referenceMs.toFixed(0)}ms concentric reference (ratio ${ratio.toFixed(2)})`,
+  )
+  assert(ratio < 7,
+    `2,980 disjoint DXF contours cost ${ratio.toFixed(2)}x the concentric reference `
+    + `(limit 7x; ${subjectMs.toFixed(0)}ms vs ${referenceMs.toFixed(0)}ms CPU) — `
     + 'check that pairwise nesting work is still gated by a cheap bbox reject')
 }
 
