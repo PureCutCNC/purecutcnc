@@ -501,6 +501,18 @@ export type EntryStrategy = 'plunge' | 'helix' | 'ramp'
  * default there is no `.camj` version bump and no migration.
  */
 export type CornerReliefStyle = 'none' | 'dogbone' | 't_bone' | 'longest_edge'
+/**
+ * Pocket feed reduction mode (issue #498).
+ *
+ * `'slots_only'` is the load-bearing default: it must be what a saved operation
+ * without the field normalizes to, or every already-saved pocket would change
+ * its motion. `'engagement'` samples cutter engagement along each cut
+ * level and interpolates the feed between `pocketSlotFeedPercent` (full slot)
+ * and the nominal wrap angle implied by the operation's stepover. Because the
+ * field is optional with a `'slots_only'` default there is no `.camj` version bump
+ * and no migration.
+ */
+export type PocketFeedReduction = 'slots_only' | 'engagement'
 
 export type OperationTarget =
   | { source: 'features'; featureIds: string[] }
@@ -540,6 +552,11 @@ export interface Operation {
    *  pinch corridors, the parallel boundary pass and first fill line, and the
    *  first finish-floor cut. Undefined or 100 disables the reduction. */
   pocketSlotFeedPercent?: number
+  /** Feed reduction for slotting pocket cuts (issue #498): 'engagement' replaces
+   *  the shipped binary slot-feed rule with a continuous engagement estimate
+   *  mapped onto quantized feed scales. Missing or 'slots_only' keeps the
+   *  shipped rule — a slots-only operation must produce byte-identical G-code. */
+  pocketFeedReduction?: PocketFeedReduction
   roundOutsideCorners?: boolean
   /** Corner-relief style cut as a dedicated stepped pass appended after the
    *  operation's main path. Missing or `'none'` emits no relief at all — a

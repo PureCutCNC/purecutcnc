@@ -191,6 +191,7 @@ export const THEME_TOKENS: readonly ThemeTokenMeta[] = [
 
   // Toolpath move kinds.
   canvas('toolpathCut', 'Cut move', 'canvas-toolpath'),
+  canvas('toolpathCutSlow', 'Cut move (slowest feed)', 'canvas-toolpath'),
   canvas('toolpathRapid', 'Rapid move', 'canvas-toolpath'),
   canvas('toolpathPlunge', 'Plunge move', 'canvas-toolpath'),
   canvas('toolpathCollision', 'Collision warning', 'canvas-toolpath'),
@@ -241,6 +242,7 @@ export const THEME_TOKENS: readonly ThemeTokenMeta[] = [
   three('gridMajorCenter', '3D grid major (center)'),
   three('gridMajor', '3D grid major'),
   three('toolpathCut', '3D cut move'),
+  three('toolpathCutSlow', '3D cut move (slowest feed)'),
   three('toolpathRapid', '3D rapid move'),
   three('toolpathPlunge', '3D plunge move'),
   three('stockDefault', '3D default stock'),

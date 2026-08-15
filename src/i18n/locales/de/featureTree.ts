@@ -337,6 +337,8 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.contextMenu.makeUnique': 'Eindeutig machen',
   'featureTree.contextMenu.selectLinked': 'Verknüpfte Instanzen auswählen',
   'featureTree.contextMenu.createOperation': 'Operation erstellen',
+  'featureTree.contextMenu.addToOperation': 'Zu Operation hinzufügen',
+  'featureTree.contextMenu.removeFromOperation': 'Aus Operation entfernen',
   'featureTree.contextMenu.editSketch': 'Skizze bearbeiten',
   'featureTree.contextMenu.addConstraint': 'Bedingung hinzufügen',
   'featureTree.contextMenu.copy': 'Kopieren',
@@ -366,6 +368,9 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.contextMenu.addToFolderMixedTooltip': 'Features, Bereiche und Konstruktionsgeometrie behalten getrennte Ordner – wählen Sie eine Art',
   'featureTree.contextMenu.joinDisabledTooltip': 'Wählen Sie zwei oder mehr Features zum Vereinigen aus',
   'featureTree.contextMenu.useAsStockDisabledTooltip': 'Feature muss eine Hinzufügen-Operation mit geschlossenem Profil sein',
+  'featureTree.contextMenu.addToOperationEmptyTooltip': 'Keine kompatiblen Operationen',
+  'featureTree.contextMenu.removeFromOperationEmptyTooltip': 'Wird in keiner Operation verwendet',
+  'featureTree.contextMenu.removeWouldInvalidateTooltip': 'Das Entfernen würde die Operation ungültig machen',
 
   // ── Properties: tab shape ──
   'featureTree.properties.tabShape': 'Form',

@@ -11,5 +11,5 @@ Application-local appearance preferences. Theme state is deliberately separate f
 - `bootstrap.ts` — applies the persisted selection (including custom overrides) before React renders to avoid a theme flash.
 - `ThemeProvider.tsx` — React provider: selection + custom theme persistence, system listener, preview state, resolved palette, and legacy-key write-back.
 - `themeContext.ts` — context contract and `useTheme()` consumer hook, separated for Fast Refresh.
-- `palette.ts` — typed 2D canvas and Three.js palette shapes plus the built-in color values consumed by the registry.
-- `*.test.ts` — coverage for color math, registry/schema/import, selection/migration, contrast gating, and root application (including the CSS ↔ registry sync test).
+- `palette.ts` — typed 2D canvas and Three.js palette shapes plus the built-in color values consumed by the registry; also the feed-colour ramp (`feedColourScales`, `feedColourStep`, `canvasFeedColour`, `threeFeedColour`, `pocketSlotFeedPercent`), whose rungs derive from the operation's slot feed, used by the toolpath renderers (issue #498).
+- `*.test.ts` — coverage for color math, registry/schema/import, selection/migration, contrast gating, the feed-colour ramp, and root application (including the CSS ↔ registry sync test).

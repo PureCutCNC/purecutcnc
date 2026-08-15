@@ -130,6 +130,12 @@ function App() {
     addToFolderSubmenu,
     setAddToFolderSubmenu,
     menuFeatureFolders,
+    menuAddToOperationCandidates,
+    menuRemoveFromOperationCandidates,
+    addToOperationSubmenu,
+    setAddToOperationSubmenu,
+    removeFromOperationSubmenu,
+    setRemoveFromOperationSubmenu,
     menuSelectionInGroupedFolder,
     menuSelectionSectionsMixed,
     menuSelectionIsGroup,
@@ -143,6 +149,8 @@ function App() {
     closeTreeContextMenu,
     openQuickOpsSubmenu,
     openAddToFolderSubmenu,
+    openAddToOperationSubmenu,
+    openRemoveFromOperationSubmenu,
   } = useTreeContextMenu({ project })
 
   const effectiveSelectedOperationId =
@@ -557,6 +565,10 @@ function App() {
         menuQuickOperations={menuQuickOperations}
         quickOpsSubmenu={quickOpsSubmenu}
         menuFeatureFolders={menuFeatureFolders}
+        menuAddToOperationCandidates={menuAddToOperationCandidates}
+        menuRemoveFromOperationCandidates={menuRemoveFromOperationCandidates}
+        addToOperationSubmenu={addToOperationSubmenu}
+        removeFromOperationSubmenu={removeFromOperationSubmenu}
         addToFolderSubmenu={addToFolderSubmenu}
         menuSelectionInGroupedFolder={menuSelectionInGroupedFolder}
         menuSelectionSectionsMixed={menuSelectionSectionsMixed}
@@ -569,6 +581,10 @@ function App() {
         onCloseQuickOpsSubmenu={() => setQuickOpsSubmenu(null)}
         onOpenAddToFolderSubmenu={openAddToFolderSubmenu}
         onCloseAddToFolderSubmenu={() => setAddToFolderSubmenu(null)}
+        onOpenAddToOperationSubmenu={openAddToOperationSubmenu}
+        onCloseAddToOperationSubmenu={() => setAddToOperationSubmenu(null)}
+        onOpenRemoveFromOperationSubmenu={openRemoveFromOperationSubmenu}
+        onCloseRemoveFromOperationSubmenu={() => setRemoveFromOperationSubmenu(null)}
       />
     </>
   )

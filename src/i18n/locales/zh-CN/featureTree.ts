@@ -343,6 +343,8 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.contextMenu.makeUnique': '设为唯一',
   'featureTree.contextMenu.selectLinked': '选择关联实例',
   'featureTree.contextMenu.createOperation': '创建加工操作',
+  'featureTree.contextMenu.addToOperation': '添加到操作',
+  'featureTree.contextMenu.removeFromOperation': '从操作中移除',
   'featureTree.contextMenu.editSketch': '编辑草图',
   'featureTree.contextMenu.addConstraint': '添加约束',
   'featureTree.contextMenu.copy': '复制',
@@ -372,6 +374,9 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.contextMenu.addToFolderMixedTooltip': '特征、区域和构造几何各有独立文件夹 — 请选择一种类型',
   'featureTree.contextMenu.joinDisabledTooltip': '选择两个或更多特征以合并',
   'featureTree.contextMenu.useAsStockDisabledTooltip': '特征必须是闭合轮廓的添加操作',
+  'featureTree.contextMenu.addToOperationEmptyTooltip': '没有兼容的操作',
+  'featureTree.contextMenu.removeFromOperationEmptyTooltip': '未用于任何操作',
+  'featureTree.contextMenu.removeWouldInvalidateTooltip': '移除此项会使操作无效',
 
   // ── Properties: tab shape ──
   'featureTree.properties.tabShape': '形状',

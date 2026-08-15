@@ -59,6 +59,7 @@ type FeatureTreeActionStore = Pick<
   | 'startCopyClamp'
   | 'setStockSourceFeature'
   | 'addOperation'
+  | 'updateOperation'
   | 'makeUnique'
   | 'groupSelectedFeaturesIntoNewFolder'
   | 'assignFeaturesToFolder'
@@ -86,6 +87,8 @@ export interface FeatureTreeActions {
   useAsStock: (featureId: string) => void
   deleteFeatures: (featureIds: string[]) => void
   createQuickOperation: (featureId: string, quickOp: QuickOperation) => Promise<void>
+  addToOperation: (featureIds: string[], operationId: string) => void
+  removeFromOperation: (featureIds: string[], operationId: string) => void
   groupFeatures: () => void
   assignToFolder: (featureIds: string[], folderId: string) => void
   createNewFolderAndAssign: (featureIds: string[]) => void
@@ -134,6 +137,7 @@ export function createFeatureTreeActions({
     startCopyClamp,
     setStockSourceFeature,
     addOperation,
+    updateOperation,
     makeUnique: storeMakeUnique,
     groupSelectedFeaturesIntoNewFolder,
     assignFeaturesToFolder,
@@ -214,6 +218,38 @@ export function createFeatureTreeActions({
       }
       setRightTab('operations')
       onSelectedOperationIdChange(operationId)
+    },
+    addToOperation: (featureIds: string[], operationId: string) => {
+      const operation = project.operations.find((item) => item.id === operationId)
+      const target = operation?.target
+      if (!operation || !target || target.source !== 'features') {
+        closeTreeContextMenu()
+        return
+      }
+      // updateOperation re-validates the merged target; the menu only offers
+      // candidates that pass the same check, so this cannot be a silent no-op.
+      const missing = featureIds.filter((featureId) => !target.featureIds.includes(featureId))
+      if (missing.length > 0) {
+        updateOperation(operationId, {
+          target: { source: 'features', featureIds: [...target.featureIds, ...missing] },
+        })
+      }
+      closeTreeContextMenu()
+    },
+    removeFromOperation: (featureIds: string[], operationId: string) => {
+      const operation = project.operations.find((item) => item.id === operationId)
+      const target = operation?.target
+      if (!operation || !target || target.source !== 'features') {
+        closeTreeContextMenu()
+        return
+      }
+      updateOperation(operationId, {
+        target: {
+          source: 'features',
+          featureIds: target.featureIds.filter((featureId) => !featureIds.includes(featureId)),
+        },
+      })
+      closeTreeContextMenu()
     },
     groupFeatures: () => {
       groupSelectedFeaturesIntoNewFolder()
@@ -308,6 +344,7 @@ export function useFeatureTreeActions({
     startCopyClamp,
     setStockSourceFeature,
     addOperation,
+    updateOperation,
     makeUnique: storeMakeUnique,
     groupSelectedFeaturesIntoNewFolder,
     assignFeaturesToFolder,
@@ -346,6 +383,7 @@ export function useFeatureTreeActions({
       startCopyClamp,
       setStockSourceFeature,
       addOperation,
+      updateOperation,
       makeUnique: storeMakeUnique,
       groupSelectedFeaturesIntoNewFolder,
       assignFeaturesToFolder,
@@ -387,5 +425,6 @@ export function useFeatureTreeActions({
     startResizeFeature,
     startRotateFeature,
     storeMakeUnique,
+    updateOperation,
   ])
 }

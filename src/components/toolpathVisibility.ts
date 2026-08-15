@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { ToolpathResult } from '../engine/toolpaths/types'
+
 export interface ToolpathVisibility {
   cuts: boolean
   leadIns: boolean
@@ -21,6 +23,22 @@ export interface ToolpathVisibility {
   plunges: boolean
   retractions: boolean
   directions: boolean
+  /**
+   * Colour cut moves by emitted feed scale (issue #498). Optional on purpose:
+   * `undefined` defers to the renderer default — on when the selected
+   * operation's toolpath carries engagement telemetry, off otherwise — so
+   * legacy projects and non-pockets stay pixel-identical. An explicit value
+   * overrides the default for every toolpath.
+   */
+  feedColours?: boolean
+}
+
+/** True when the operation emitted engagement telemetry — the marker that its
+ *  pocketFeedReduction is 'engagement' (issue #498). Shared by both
+ *  renderers and by the toggle's per-selection default, so the two views
+ *  cannot disagree about when feed colours are on. */
+export function toolpathHasEngagementTelemetry(toolpath: ToolpathResult): boolean {
+  return 'engagementTelemetry' in toolpath && toolpath.engagementTelemetry !== undefined
 }
 
 export const DEFAULT_TOOLPATH_VISIBILITY: ToolpathVisibility = {

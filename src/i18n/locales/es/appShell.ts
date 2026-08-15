@@ -88,6 +88,8 @@ export const appShellEs: Record<keyof typeof appShellEn, string> = {
   'appShell.toolpath.plunges': 'penetraciones',
   'appShell.toolpath.retractions': 'Retracciones',
   'appShell.toolpath.directions': 'Direcciones',
+  'appShell.toolpath.feedColours': 'Colores de avance',
+  'appShell.toolpath.feedLegend': 'Porcentaje de avance',
   'appShell.toolRail.shapes': 'formas',
   'appShell.toolRail.align': 'Alinear',
   'appShell.toolRail.distribute': 'Distribuir',
