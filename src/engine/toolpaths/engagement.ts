@@ -625,7 +625,8 @@ export class EngagementFeedQuantizer {
     const continuous = continuousFeedScale(clamped, this.nominal, this.slotScale)
     const effective = clamped <= this.nominal + ENGAGEMENT_ESTIMATE_EPSILON ? 1 : continuous
     const margin = rawScale >= 1 ? 0 : this.hysteresisFraction * this.bucketWidth
-    if (effective >= rawScale + margin && this.heldDistance >= this.heldMinFragmentLength - MIN_FRAGMENT_EPSILON) {
+    const fragmentGate = rawScale >= 1 || this.heldDistance >= this.heldMinFragmentLength - MIN_FRAGMENT_EPSILON
+    if (effective >= rawScale + margin && fragmentGate) {
       this.emitted.push({ scale: this.currentScale, distance: this.heldDistance, minFragmentLength: this.heldMinFragmentLength })
       this.currentScale = rawScale
       this.heldDistance = safeDistance
@@ -652,6 +653,18 @@ export class EngagementFeedQuantizer {
       const prev = result[i - 1]
       const targetIndex = next && (!prev || next.scale <= prev.scale) ? i + 1 : i - 1
       const target = result[targetIndex]
+      // A minimum-fragment merge must not bridge the full-feed ceiling in
+      // either direction. Extending a reduced stretch into a full-feed
+      // neighbour holds the slot feed into material measured at or below
+      // nominal, and absorbing a short full-feed stretch into a reduced one
+      // does the same from the other side. A short stretch next to full feed
+      // is a genuine short slot or a genuine short cleared gap (a neck
+      // crossing): it keeps its own scale at its own length. Only
+      // bucket-to-bucket merges (both reduced) are still consolidated.
+      if (fragment.scale >= 1 || target.scale >= 1) {
+        i += 1
+        continue
+      }
       result.splice(Math.min(i, targetIndex), 2, {
         scale: Math.min(fragment.scale, target.scale),
         distance: fragment.distance + target.distance,

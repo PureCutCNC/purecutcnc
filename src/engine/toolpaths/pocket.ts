@@ -938,6 +938,18 @@ function applyEngagementFeedToLevel(
           ? runIndex - 1
           : (next && (!prev || next.scale <= prev.scale) ? runIndex + 1 : runIndex - 1)
       const target = runs[targetIndex]
+      // A minimum-fragment merge must not bridge the full-feed ceiling in
+      // either direction. Extending a reduced run into a full-feed neighbour
+      // holds the slot feed into material measured at or below nominal, and
+      // absorbing a short full-feed run into a reduced one does the same from
+      // the other side. A short run next to full feed is a genuine short slot
+      // or a genuine short cleared gap (a neck crossing): it keeps its own
+      // scale at its own length. Only bucket-to-bucket merges (both reduced)
+      // are still consolidated.
+      if (runs[runIndex].scale >= 1 || target.scale >= 1) {
+        runIndex += 1
+        continue
+      }
       const mergedScale = Math.min(runs[runIndex].scale, target.scale)
       // Relabel the whole merged span, target included: the lower scale
       // extends over both runs, so the emitted chunks match the run table.
@@ -1937,20 +1949,40 @@ export function buildOffsetBandEngagementClassification(
 
   /**
    * Classify this node's own contours against `scope` and insert their
-   * segments. Segments are inserted per contour, after the whole contour is
-   * classified: the node's contours are cut in a position-seeded order that
-   * varies per level, so no contour may count another as prior. Excluding a
-   * contour's own trail too is deliberate — at a bend the trail sits slightly
-   * off directly-behind and covers a small arc (≈0.008 rad), and excluding it
-   * over-reports engagement, the conservative direction.
+   * segments. Each contour is cut as one closed loop whose segments are
+   * traversed in a fixed cyclic order (only the start vertex is
+   * position-seeded per level), so a segment's own earlier segments are prior
+   * at every level: they are inserted into `scope` as soon as they are
+   * classified, exactly as the uncached emission-order path does move by
+   * move. A contour's own trail is still excluded structurally — a kerf
+   * directly behind the tool never enters the leading semicircle — but a
+   * parallel stretch of the same contour (e.g. the two sides of a neck) is a
+   * real prior sweep and must be counted, or a ring that runs back through
+   * its own cleared corridor is over-reported as a full slot. Contours other
+   * than the one being classified stay excluded from its prior set: their
+   * relative order is position-seeded per level, so counting one would make
+   * the cached result depend on a level's emission order.
+   *
+   * Each contour is rotated to the canonical entry vertex exactly as the
+   * level loop rotates it, so the "first" segment of the loop — the one cut
+   * with no own-trail prior — is the segment the level loop actually cuts
+   * first. A narrow ring whose two sides are closer than the tool diameter
+   * would otherwise be classified with the slot side and the cleared side
+   * swapped relative to the emitted order.
    */
-  const classifyContours = (node: OffsetRegionNode, depth: number, scope: SweptMaterialIndex): Array<[number, number, number, number]> => {
+  const classifyContours = (
+    node: OffsetRegionNode,
+    depth: number,
+    scope: SweptMaterialIndex,
+    entryPosition: Point | null,
+  ): Array<[number, number, number, number]> => {
     const outer = node.region.outer.length >= 3 ? node.region.outer : null
     const smoothed = outer
       ? [smoothRadius !== null && depth > 0 ? roundContourCorners(outer, smoothRadius) : outer]
       : []
     const islands = node.region.islands.filter((island) => island.length >= 3)
     const contours = applyContourDirection([...smoothed, ...islands], direction)
+      .map((contour) => rotateContourToBestEntry(contour, entryPosition, []))
     const own: Array<[number, number, number, number]> = []
     for (const contour of contours) {
       const pairs: CanonicalPair[] = []
@@ -1982,9 +2014,6 @@ export function buildOffsetBandEngagementClassification(
         const refinedStart = index === 0 || junctionAngle(prev, pair) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
         const refinedEnd = index === pairs.length - 1 || junctionAngle(pair, next) >= ENGAGEMENT_SAMPLE_CORNER_ANGLE
         classifySegment(pair.from, pair.to, scope, refinedStart, refinedEnd, false, perimeter)
-      }
-      for (const pair of pairs) {
-        if (pair.length <= 1e-9) continue
         scope.addSweptSegment(pair.from.x, pair.from.y, pair.to.x, pair.to.y)
         own.push([pair.from.x, pair.from.y, pair.to.x, pair.to.y])
       }
@@ -2048,6 +2077,7 @@ export function buildOffsetBandEngagementClassification(
       }
       segments.push(...childResult.segments)
     }
+    const contoursEntry = position
     for (const contour of canonicalNodeContours(node, depth, position)) {
       const startPoint = contour[0]
       if (position !== null) {
@@ -2059,7 +2089,7 @@ export function buildOffsetBandEngagementClassification(
       }
       position = { x: startPoint.x, y: startPoint.y }
     }
-    const own = classifyContours(node, depth, scope)
+    const own = classifyContours(node, depth, scope, contoursEntry)
     for (const [ax, ay, bx, by] of own) {
       canonicalIndex.addSweptSegment(ax, ay, bx, by)
     }

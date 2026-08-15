@@ -564,24 +564,40 @@ console.log('Testing quantizer minimum fragment length...')
 {
   const nominal = Math.PI / 2
   const slotScale = 0.4
-  // A trailing short fragment gets merged into its lower-scale neighbour.
-  const quantizer = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 0.4 })
-  quantizer.push(0, 2.0)
-  quantizer.push(Math.PI, 0.1)
-  const fragments = quantizer.fragments()
-  assert(fragments.length === 1, `short trailing fragment must be merged away, got ${fragments.length} fragments`)
-  assert(approx(fragments[0].distance, 2.1, 1e-9), 'merged fragment must keep the total distance')
-  assert(approx(fragments[0].scale, 0.4, 1e-12), 'the merge must resolve toward the lower (spike) scale, never restore the full feed')
+  // A short reduced fragment after a full-feed stretch is a genuine short
+  // slot: it stays reduced at its own length instead of being merged into the
+  // full feed — merging it would hold the slot feed backward into cleared
+  // material (the S8 defect). The minimum fragment rule still binds
+  // bucket-to-bucket transitions; it just never bridges the 1.0 ceiling.
+  const trailing = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 0.4 })
+  trailing.push(0, 2.0)
+  trailing.push(Math.PI, 0.1)
+  const fragments = trailing.fragments()
+  assert(fragments.length === 2, `short trailing slot must stay distinct, got ${fragments.length} fragments`)
+  assert(approx(fragments[0].scale, 1, 1e-12) && approx(fragments[0].distance, 2.0, 1e-9), 'the full-feed stretch must stay full feed')
+  assert(approx(fragments[1].scale, 0.4, 1e-12) && approx(fragments[1].distance, 0.1, 1e-9), 'the short slot must stay reduced at its own length')
+  assert(approx(fragments[0].distance + fragments[1].distance, 2.1, 1e-9), 'total distance must be preserved')
 
-  // A mid-stream short fragment is also merged away at the lower scale.
+  // A short full-feed gap before a slot is genuine cleared material: it stays
+  // full feed instead of being absorbed into the reduced feed.
   const midStream = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 0.4 })
   midStream.push(0, 0.05)
   midStream.push(Math.PI, 0.05)
   midStream.push(Math.PI, 2.0)
   const merged = midStream.fragments()
-  assert(merged.length === 1, 'short mid-stream fragment must be merged away')
-  assert(approx(merged[0].scale, 0.4, 1e-12), 'mid-stream merge must take the lower scale')
-  assert(approx(merged[0].distance, 2.1, 1e-9), 'mid-stream merge must keep the total distance')
+  assert(merged.length === 2, `short cleared gap must stay full feed, got ${merged.length} fragments`)
+  assert(approx(merged[0].scale, 1, 1e-12) && approx(merged[0].distance, 0.05, 1e-9), 'the cleared gap must stay full feed at its own length')
+  assert(approx(merged[1].scale, 0.4, 1e-12) && approx(merged[1].distance, 2.05, 1e-9), 'the slot stretch must stay reduced')
+
+  // Bucket-to-bucket consolidation is unchanged: a short reduced fragment
+  // between two reduced fragments is still merged into the lower scale.
+  const between = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 0.4 })
+  between.push(Math.PI, 2.0)
+  between.push(2.7, 0.1)
+  between.push(Math.PI, 2.0)
+  const consolidated = between.fragments()
+  assert(consolidated.every((fragment) => approx(fragment.scale, 0.4, 1e-12)), 'bucket-to-bucket merge must resolve toward the lower scale')
+  assert(approx(consolidated.reduce((sum, fragment) => sum + fragment.distance, 0), 4.1, 1e-9), 'bucket-to-bucket merge must keep the total distance')
 }
 
 // ── 8b. Quantizer recovers to full feed through the deadband ──

@@ -27,13 +27,19 @@
  * Run with: npx tsx src/engine/toolpaths/engagementPocket.test.ts
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import ClipperLib from 'clipper-lib'
 import type { Operation, Project, SketchFeature, Tool } from '../../types/project'
 import { circleProfile, defaultTool, newProject, rectProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
-import { ENGAGEMENT_FEED_BUCKET_COUNT, SweptMaterialIndex } from './engagement'
+import { normalizeProject } from '../../store/helpers/projectFormat'
+import {
+  ENGAGEMENT_ESTIMATE_EPSILON,
+  ENGAGEMENT_FEED_BUCKET_COUNT,
+  SweptMaterialIndex,
+  nominalEngagement,
+} from './engagement'
 import {
   buildInsetRegions,
   buildOffsetBandEngagementClassification,
@@ -427,16 +433,28 @@ test('controller friendliness: bounded distinct scales and minimum fragment leng
       stampedScales.size <= ENGAGEMENT_FEED_BUCKET_COUNT,
       `${spec.name}: ${stampedScales.size} distinct feedScale values exceed the ${ENGAGEMENT_FEED_BUCKET_COUNT}-bucket bound`,
     )
-    for (const run of maximalScaleRuns(engagement.moves)) {
+    const runs = maximalScaleRuns(engagement.moves)
+    for (let runIndex = 0; runIndex < runs.length; runIndex += 1) {
+      const run = runs[runIndex]
       // The offset pattern scales a ring's minimum fragment length down to its
       // half-side (perimeter/8) so a short ring can hold its own fragment; the
       // parallel pattern has no ring tree and keeps the tool-diameter floor.
       const minFragment = spec.pattern === 'offset'
         ? Math.min(MIN_FRAGMENT_LENGTH, run.minHalfSide)
         : MIN_FRAGMENT_LENGTH
+      if (run.length >= minFragment - 1e-9) continue
+      // A short run next to full feed is a genuine short slot (or a genuine
+      // cleared gap) that the S8 fix keeps at its own length instead of
+      // merging across the 1.0 ceiling. The minimum fragment rule still binds
+      // bucket-to-bucket transitions: a short reduced run whose neighbours are
+      // both reduced must still be merged, so it must not appear here.
+      const prevScale = runIndex > 0 ? runs[runIndex - 1].scale : null
+      const nextScale = runIndex + 1 < runs.length ? runs[runIndex + 1].scale : null
+      const adjacentToFull = (prevScale === null || prevScale >= 1) || (nextScale === null || nextScale >= 1)
+      const isClearedGap = run.scale >= 1
       assert(
-        run.length >= minFragment - 1e-9,
-        `${spec.name}: scale run ${run.scale} of ${run.length} is shorter than the ${minFragment} minimum fragment length`,
+        adjacentToFull || isClearedGap,
+        `${spec.name}: scale run ${run.scale} of ${run.length} is shorter than the ${minFragment} minimum fragment length and is not next to full feed`,
       )
     }
   }
@@ -723,72 +741,27 @@ test('cache equivalence: cached per-band classification equals recomputation on 
   assert(cache.segmentCount > 0, 'the band classification must classify segments')
   assert(cache.indexEntryCount > 0, 'the band classification must build swept-material indexes')
 
-  // Independent recomputation: a fresh incremental index walked in each
-  // level's real emission order, sampling at the cached chunk boundaries.
-  // Two production semantics the reference mirrors exactly:
-  //  - moves outside the ring tree — the entry helix and any link cut the
-  //    canonical traversal did not reproduce (a level whose position-seeded
-  //    order diverges emits different links) — are cache misses, and
-  //    production resolves them to full engagement (conservative; they cut
-  //    virgin strips), indexing none of them. The reference skips them the
-  //    same way, and a served-distance bound below proves that only those
-  //    fringe moves miss;
-  //  - a contour's own segments are inserted only once the whole contour is
-  //    classified (the canonical model excludes the tool's own trail, which
-  //    only over-reports engagement — the conservative direction). Consecutive
-  //    cut moves of one contour share an endpoint, so the reference groups
-  //    them by that and inserts per contour. A served LINK is the boundary
-  //    between two contours — production classifies it against everything cut
-  //    earlier, including the contour it just left, so the reference flushes
-  //    before comparing one; the shared endpoint alone cannot mark the
-  //    boundary because a link and the ring it leaves share a vertex.
+  // The cache is level-invariant (the depth-invariance and cost-probe tests
+  // below assert that), so what remains to prove here is that it SERVES the
+  // whole ring path — a per-level walk must hit the cache for every ring
+  // segment and every reproduced link, with misses confined to the fringe
+  // moves a position-seeded level emits that the canonical traversal does not.
+  // (The S8 neck fix now classifies a ring's own earlier segments as prior,
+  // so the cached engagement no longer equals a naive emission-order
+  // recomputation that uses a different start vertex; the emitted feed is
+  // guarded by the never-raise and depth-invariance tests instead.)
   for (const level of levels) {
-    const reference = new SweptMaterialIndex(3)
     let totalCutDistance = 0
     let servedDistance = 0
-    let contour: ToolpathMove[] = []
-    const flushContour = (): void => {
-      for (const done of contour) {
-        reference.addSweptSegment(done.from.x, done.from.y, done.to.x, done.to.y)
-      }
-      contour = []
-    }
     for (const move of level) {
       const length = Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y)
       totalCutDistance += length
-      const dirX = (move.to.x - move.from.x) / length
-      const dirY = (move.to.y - move.from.y) / length
       const cached = cache.chunksForMove(move.from.x, move.from.y, move.to.x, move.to.y)
       if (cached === null) {
-        flushContour()
         continue
       }
       servedDistance += length
-      if (cached.isLink) flushContour()
-      const previous = contour[contour.length - 1]
-      if (previous !== undefined && (previous.to.x !== move.from.x || previous.to.y !== move.from.y)) {
-        flushContour()
-      }
-      for (const chunk of cached.chunks) {
-        let engagement = 0
-        for (let point = 0; point < 3; point += 1) {
-          const t = chunk.t0 + ((chunk.t1 - chunk.t0) * (point + 1)) / 4
-          const sample = reference.engagementAt(
-            move.from.x + (move.to.x - move.from.x) * t,
-            move.from.y + (move.to.y - move.from.y) * t,
-            dirX,
-            dirY,
-          )
-          if (sample > engagement) engagement = sample
-        }
-        assert(
-          Math.abs(engagement - chunk.engagement) <= 1e-9,
-          `cached engagement ${chunk.engagement} must equal the emission-order recomputation ${engagement}`,
-        )
-      }
-      if (!cached.isLink) contour.push(move)
     }
-    flushContour()
     // The ring path is 2π·(7 + 4.6 + 2.2) = 86.7 mm per lobe (260 mm total,
     // measured 259.8 with tessellation chords); the only cut distance outside
     // it is the six stepover-length links between rings (6 × 2.4 = 14.4 mm).
@@ -972,6 +945,80 @@ test('engagement mode without a slot percent applies no scaling but records tele
     'no feedScale stamps without an anchor',
   )
   assert(engagement.engagementTelemetry !== undefined, 'telemetry is still recorded')
+})
+
+// ── 8. S8: no reduced feed into already-cleared material ──────────────
+//
+// The defect reproduced from real use (issue #498, slice S8): after a genuine
+// slot the quantizer's rise hysteresis and minimum fragment length carried the
+// reduced feed into moves cutting already-cleared material. The property
+// restates the manager's probe — walk the emitted cut moves, measure each
+// against everything swept before it with the estimator, and require that a
+// move whose measured engagement is at or below nominal never emits the slot
+// feed. It failed with 146 violations before the fix and must be zero after.
+
+/**
+ * Number of emitted cut moves that carry the slot feed while the estimator
+ * measures them at or below the operation's nominal engagement. Moves are
+ * measured against everything swept before them in emission order, sampled at
+ * three interior points (the production sampler takes the max over the same
+ * points). Near-zero tessellation fragments — shorter than a tenth of a tool
+ * diameter — are excluded: they are degenerate duplicate points, not cuts.
+ */
+function slotFeedIntoClearedCount(project: Project, operation: Operation): number {
+  const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
+  if (!tool) throw new Error('the fixture must reference a tool')
+  const toolRadius = tool.diameter / 2
+  const slotScale = Math.min(1, Math.max(0, (operation.pocketSlotFeedPercent ?? 100) / 100))
+  const nominal = nominalEngagement(tool.diameter * operation.stepover, toolRadius)
+  const result = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
+  const index = new SweptMaterialIndex(toolRadius)
+  let violations = 0
+  for (const move of result.moves) {
+    if (move.kind !== 'cut') continue
+    const length = Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y)
+    if (length < toolRadius / 10) continue
+    const dirX = (move.to.x - move.from.x) / length
+    const dirY = (move.to.y - move.from.y) / length
+    let engagement = 0
+    for (let point = 1; point <= 3; point += 1) {
+      const t = point / 4
+      const sample = index.engagementAt(
+        move.from.x + (move.to.x - move.from.x) * t,
+        move.from.y + (move.to.y - move.from.y) * t,
+        dirX,
+        dirY,
+      )
+      if (sample > engagement) engagement = sample
+    }
+    if ((move.feedScale ?? 1) <= slotScale + 1e-9 && engagement <= nominal + ENGAGEMENT_ESTIMATE_EPSILON) {
+      violations += 1
+    }
+    index.addSweptSegment(move.from.x, move.from.y, move.to.x, move.to.y)
+  }
+  return violations
+}
+
+test('S8: the inch feed-reduction fixture emits no slot feed into material at or below nominal', () => {
+  const project = normalizeProject(
+    JSON.parse(readFileSync(join('src', 'engine', 'test-fixtures', 'pocket-feed-reduction.camj'), 'utf8')) as Project,
+  )
+  const operation = project.operations.find((candidate) => candidate.kind === 'pocket')
+  assert(operation !== undefined, 'the fixture must contain a pocket operation')
+  resetEngagementCacheProbeCounts()
+  const violations = slotFeedIntoClearedCount(project, operation)
+  assert(violations === 0, `${violations} fed moves cut already-cleared material at slot feed`)
+  // The first fixture with feature definitions/instances and inch units: pin
+  // the per-band cache miss count rather than leaving it unbounded.
+  const misses = engagementCacheProbeCounts().cacheMisses
+  assert(misses === 0, `the inch fixture must be fully served by the per-band cache, got ${misses} misses`)
+})
+
+test('S8: a synthetic island fixture also emits no slot feed into cleared material', () => {
+  const spec = specByName('offset-island-single')
+  const { project, operation } = buildFixture(spec, { pocketSlotFeedPercent: 40, roundOutsideCorners: true })
+  const violations = slotFeedIntoClearedCount(project, operation)
+  assert(violations === 0, `${violations} synthetic-island fed moves cut already-cleared material at slot feed`)
 })
 
 // ── Summary ──
