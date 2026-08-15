@@ -1123,6 +1123,33 @@ const S9_OVER_SLOWED_BOUND_INCHES: Record<string, number> = {
   'pocket-feed-reduction-parallel-2': 8.2,
 }
 
+test('issue #517: the worst real fixture keeps exact index work bounded', () => {
+  const project = normalizeProject(
+    JSON.parse(readFileSync(join('src', 'engine', 'test-fixtures', 'pocket-feed-reduction-3.camj'), 'utf8')) as Project,
+  )
+  const operation = project.operations.find((candidate) => candidate.kind === 'pocket')
+  assert(operation !== undefined, 'the fixture must contain a pocket operation')
+  const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
+  assert(tool !== undefined, 'the fixture operation must resolve its tool')
+  const raw = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'slots_only' })
+  const classification = buildOffsetBandEngagementClassification(raw.moves, 0, raw.moves.length, {
+    toolRadius: tool.diameter / 2,
+    ringPerimeters: new Map(),
+  })
+
+  // Measured after the exact index rewrite: 1,031,006 scanned candidates and
+  // 399,455 trigonometric candidates. The bound leaves >6% headroom while
+  // rejecting a return to the former ~7.7M repeated scan path.
+  assert(
+    classification.queryStats.capsulesScanned <= 1_100_000,
+    `worst fixture scanned ${classification.queryStats.capsulesScanned} capsules (bound 1,100,000)`,
+  )
+  assert(
+    classification.queryStats.capsulesTrigTested <= 425_000,
+    `worst fixture sent ${classification.queryStats.capsulesTrigTested} capsules to trig (bound 425,000)`,
+  )
+})
+
 test('S9: over-slowed path length is bounded on every feed-reduction fixture', () => {
   for (const name of S9_FIXTURE_NAMES) {
     const project = normalizeProject(

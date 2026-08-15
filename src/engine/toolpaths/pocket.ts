@@ -1883,6 +1883,11 @@ export interface OffsetBandEngagementClassification {
   indexEntryCount: number
   /** Number of emitted cut segments classified. */
   segmentCount: number
+  /** Exact index work performed while classifying this traversal. */
+  queryStats: {
+    capsulesScanned: number
+    capsulesTrigTested: number
+  }
 }
 
 /**
@@ -2007,6 +2012,7 @@ export function buildOffsetBandEngagementClassification(
     },
     indexEntryCount: priorIndex.storedEntryCount(),
     segmentCount: cachedCuts.length,
+    queryStats: priorIndex.queryStats(),
   }
 }
 
