@@ -1176,6 +1176,33 @@ test('S9: the arc-run constraint holds — runs stay within +25%, longest run st
   }
 })
 
+test('issue #517: the worst real fixture keeps exact index work bounded', () => {
+  const project = normalizeProject(
+    JSON.parse(readFileSync(join('src', 'engine', 'test-fixtures', 'pocket-feed-reduction-3.camj'), 'utf8')) as Project,
+  )
+  const operation = project.operations.find((candidate) => candidate.kind === 'pocket')
+  assert(operation !== undefined, 'the fixture must contain a pocket operation')
+  const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
+  assert(tool !== undefined, 'the fixture operation must resolve its tool')
+  const raw = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'slots_only' })
+  const classification = buildOffsetBandEngagementClassification(raw.moves, 0, raw.moves.length, {
+    toolRadius: tool.diameter / 2,
+    ringPerimeters: new Map(),
+  })
+
+  // Measured on this exact fixture: 1,033,682 scanned candidates and 400,366
+  // trigonometric candidates. The caps leave 66,318 / 24,634 candidates of
+  // headroom, while restoring the repeated dilation path scans 1,616,690.
+  assert(
+    classification.queryStats.capsulesScanned <= 1_100_000,
+    `worst fixture scanned ${classification.queryStats.capsulesScanned} capsules (bound 1,100,000)`,
+  )
+  assert(
+    classification.queryStats.capsulesTrigTested <= 425_000,
+    `worst fixture sent ${classification.queryStats.capsulesTrigTested} capsules to trig (bound 425,000)`,
+  )
+})
+
 // ── Summary ──
 
 console.log(`\nengagementPocket: ${passed} passed, ${failed} failed`)

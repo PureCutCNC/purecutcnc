@@ -107,77 +107,119 @@ interface PriorSweep {
   ay: number
   bx: number
   by: number
+  dx: number
+  dy: number
+  length: number
+  lengthSq: number
+  /** Query marker for per-query de-duplication. */
+  queryMark: number
 }
 
 /**
- * Interval `[u, v]` with `u ≤ v ≤ u + 2π`, normalized into arcs inside
- * `[0, 2π)`: one arc when it fits, two when it wraps past `2π`.
+ * Reusable fixed-size arc sets for clipping a rectangle against a leading
+ * semicircle. The rectangle has only four angular constraints; 16 arcs is
+ * deliberately well above the proven eight-arc result, while avoiding an
+ * allocation cascade for every capsule query.
  */
-function arcsInRange(u: number, v: number): Array<[number, number]> {
-  const width = v - u
-  if (width >= 2 * Math.PI) return [[0, 2 * Math.PI]]
-  let lo = u
-  while (lo < 0) lo += 2 * Math.PI
-  while (lo >= 2 * Math.PI) lo -= 2 * Math.PI
-  const hi = lo + width
-  if (hi <= 2 * Math.PI) return [[lo, hi]]
-  return [
-    [lo, 2 * Math.PI],
-    [0, hi - 2 * Math.PI],
-  ]
-}
+class AngularIntervalScratch {
+  private active = new Float64Array(32)
+  private next = new Float64Array(32)
+  private readonly constraint = new Float64Array(4)
+  private count = 0
 
-/** Intersection of two arc sets: pairwise interval overlap, dropping empties. */
-function intersectArcSets(
-  a: Array<[number, number]>,
-  b: Array<[number, number]>,
-): Array<[number, number]> {
-  const out: Array<[number, number]> = []
-  for (const [aLo, aHi] of a) {
-    for (const [bLo, bHi] of b) {
-      const lo = Math.max(aLo, bLo)
-      const hi = Math.min(aHi, bHi)
-      if (lo < hi) out.push([lo, hi])
+  reset(lo: number, hi: number): void {
+    this.count = this.writeNormalizedRange(this.active, lo, hi)
+  }
+
+  clip(lo: number, hi: number): void {
+    const constraintCount = this.writeNormalizedRange(this.constraint, lo, hi)
+    let nextCount = 0
+    for (let activeIndex = 0; activeIndex < this.count; activeIndex += 2) {
+      for (let constraintIndex = 0; constraintIndex < constraintCount; constraintIndex += 2) {
+        const from = Math.max(this.active[activeIndex], this.constraint[constraintIndex])
+        const to = Math.min(this.active[activeIndex + 1], this.constraint[constraintIndex + 1])
+        if (from < to) {
+          if (nextCount + 2 > this.next.length) {
+            throw new RangeError('AngularIntervalScratch exceeded its proven arc capacity')
+          }
+          this.next[nextCount] = from
+          this.next[nextCount + 1] = to
+          nextCount += 2
+        }
+      }
     }
+    const previous = this.active
+    this.active = this.next
+    this.next = previous
+    this.count = nextCount
   }
-  return out
+
+  appendTo(psi: number, phiE: number, intervals: LeadingIntervalUnion): boolean {
+    for (let index = 0; index < this.count; index += 2) {
+      if (pushLeadingClip(phiE + this.active[index], phiE + this.active[index + 1], psi, intervals)) return true
+    }
+    return false
+  }
+
+  private writeNormalizedRange(target: Float64Array, from: number, to: number): number {
+    const twoPi = 2 * Math.PI
+    if (to - from >= twoPi) {
+      target[0] = 0
+      target[1] = twoPi
+      return 2
+    }
+    let lo = from
+    while (lo < 0) lo += twoPi
+    while (lo >= twoPi) lo -= twoPi
+    const hi = lo + (to - from)
+    if (hi <= twoPi) {
+      target[0] = lo
+      target[1] = hi
+      return 2
+    }
+    target[0] = lo
+    target[1] = twoPi
+    target[2] = 0
+    target[3] = hi - twoPi
+    return 4
+  }
 }
 
-/**
- * The angular set `{α : cos α ∈ [cLo, cHi] and sin α ∈ [sLo, sHi]}` on
- * `[0, 2π)`, as arcs. The caller checks the raw intervals are non-empty;
- * every acos/asin argument is clamped into `[−1, 1]`. Each constraint
- * contributes at most two arcs, the intersection at most eight.
- */
-function rectangleBodyArcs(
-  cLo: number,
-  cHi: number,
-  sLo: number,
-  sHi: number,
-): Array<[number, number]> {
-  const loC = Math.max(-1, Math.min(1, cLo))
-  const hiC = Math.max(-1, Math.min(1, cHi))
-  const loS = Math.max(-1, Math.min(1, sLo))
-  const hiS = Math.max(-1, Math.min(1, sHi))
-  let cosSet: Array<[number, number]> = [[0, 2 * Math.PI]]
-  if (loC > -1) {
-    const a = Math.acos(loC)
-    cosSet = intersectArcSets(cosSet, arcsInRange(-a, a))
+/** Sorted union of arcs clipped into the leading semicircle. */
+class LeadingIntervalUnion {
+  private readonly intervals: Array<[number, number]> = []
+
+  clear(): void {
+    this.intervals.length = 0
   }
-  if (hiC < 1) {
-    const b = Math.acos(hiC)
-    cosSet = intersectArcSets(cosSet, arcsInRange(b, 2 * Math.PI - b))
+
+  /** Add an interval and report whether it now covers the whole semicircle. */
+  add(lo: number, hi: number): boolean {
+    let index = 0
+    while (index < this.intervals.length && this.intervals[index][1] < lo) index += 1
+    if (index === this.intervals.length || this.intervals[index][0] > hi) {
+      this.intervals.splice(index, 0, [lo, hi])
+    } else {
+      const current = this.intervals[index]
+      current[0] = Math.min(current[0], lo)
+      current[1] = Math.max(current[1], hi)
+      while (index + 1 < this.intervals.length && this.intervals[index + 1][0] <= current[1]) {
+        const next = this.intervals[index + 1]
+        current[1] = Math.max(current[1], next[1])
+        this.intervals.splice(index + 1, 1)
+      }
+    }
+    return this.intervals.length === 1
+      && this.intervals[0][0] <= -Math.PI / 2
+      && this.intervals[0][1] >= Math.PI / 2
   }
-  let sinSet: Array<[number, number]> = [[0, 2 * Math.PI]]
-  if (loS > -1) {
-    const a = Math.asin(loS)
-    sinSet = intersectArcSets(sinSet, arcsInRange(a, Math.PI - a))
+
+  /** Engagement after unioning the covered leading arcs. */
+  engagement(): number {
+    let covered = 0
+    for (const [lo, hi] of this.intervals) covered += hi - lo
+    return Math.min(Math.PI, Math.max(0, Math.PI - covered))
   }
-  if (hiS < 1) {
-    const b = Math.asin(hiS)
-    sinSet = intersectArcSets(sinSet, arcsInRange(Math.PI - b, 2 * Math.PI + b))
-  }
-  return intersectArcSets(cosSet, sinSet)
 }
 
 /**
@@ -190,27 +232,27 @@ function pushLeadingClip(
   arcLo: number,
   arcHi: number,
   psi: number,
-  intervals: Array<[number, number]>,
-): void {
+  intervals: LeadingIntervalUnion,
+): boolean {
   let s = arcLo - psi
   while (s < -Math.PI) s += 2 * Math.PI
   while (s >= Math.PI) s -= 2 * Math.PI
   const hi = s + (arcHi - arcLo)
   const firstLo = Math.max(s, -Math.PI / 2)
   const firstHi = Math.min(hi, Math.PI / 2)
-  if (firstLo < firstHi) intervals.push([firstLo, firstHi])
+  if (firstLo < firstHi && intervals.add(firstLo, firstHi)) return true
   if (hi > (3 * Math.PI) / 2) {
     const wrapHi = hi - 2 * Math.PI
-    if (wrapHi > -Math.PI / 2) intervals.push([-Math.PI / 2, wrapHi])
+    if (wrapHi > -Math.PI / 2 && intervals.add(-Math.PI / 2, wrapHi)) return true
   }
+  return false
 }
 
 /**
  * Spatial index over previously swept capsules. Each swept segment is stored
- * once per grid cell its own extent covers — the cells the centreline
- * crosses (supercover), each dilated by its 8 neighbours so the radius-r
- * tube is fully indexed — not per cell of a 2r-padded bbox. A query scans
- * only the 3×3 cell block around its own cell, which is exact: a sweep
+ * once per grid cell its own extent covers — the centreline supercover — not
+ * per cell of a 2r-padded bbox. A query scans only the 3×3 cell block around
+ * its own cell, which is exact: a sweep
  * point within `2r` of the query lies at most one cell away (cell size
  * `2r`), and its cell holds the sweep because the sweep is indexed by its
  * own extent. A capsule spanning many cells is still found because it is
@@ -223,6 +265,9 @@ export class SweptMaterialIndex {
   private readonly cellSize: number
   private scannedCount = 0
   private trigTestedCount = 0
+  private queryMark = 0
+  private readonly leadingIntervals = new LeadingIntervalUnion()
+  private readonly angularScratch = new AngularIntervalScratch()
 
   constructor(toolRadius: number) {
     if (!Number.isFinite(toolRadius) || toolRadius <= 0) {
@@ -239,8 +284,11 @@ export class SweptMaterialIndex {
    * engagement, which is the conservative direction.
    */
   addSweptSegment(ax: number, ay: number, bx: number, by: number): void {
-    if (Math.hypot(bx - ax, by - ay) <= ZERO_LENGTH_EPS) return
-    const sweep: PriorSweep = { ax, ay, bx, by }
+    const dx = bx - ax
+    const dy = by - ay
+    const length = Math.hypot(dx, dy)
+    if (length <= ZERO_LENGTH_EPS) return
+    const sweep: PriorSweep = { ax, ay, bx, by, dx, dy, length, lengthSq: dx * dx + dy * dy, queryMark: -1 }
     for (const key of this.extentCellKeys(sweep)) {
       const bucket = this.cells.get(key)
       if (bucket) {
@@ -252,14 +300,14 @@ export class SweptMaterialIndex {
   }
 
   /**
-   * Cells whose extent the capsule covers: the supercover cells the
-   * centreline crosses, each dilated by its 8 neighbours so every point of
-   * the radius-r tube sits in an indexed cell.
+   * Centreline supercover cells of a swept segment. A query scans its own
+   * 3×3 cell neighbourhood. With cells of side `2r`, every segment point
+   * within `2r` of a query lies in that neighbourhood, so dilating every
+   * stored segment into the same nine cells would only repeat candidates.
    */
   private extentCellKeys(sweep: PriorSweep): string[] {
     const c = this.cellSize
-    const dx = sweep.bx - sweep.ax
-    const dy = sweep.by - sweep.ay
+    const { dx, dy } = sweep
     const minX = Math.min(sweep.ax, sweep.bx)
     const maxX = Math.max(sweep.ax, sweep.bx)
     const minY = Math.min(sweep.ay, sweep.by)
@@ -284,11 +332,7 @@ export class SweptMaterialIndex {
       const t = (crossings[i] + crossings[i + 1]) / 2
       const col = Math.floor((sweep.ax + dx * t) / c)
       const row = Math.floor((sweep.ay + dy * t) / c)
-      for (let dc = -1; dc <= 1; dc += 1) {
-        for (let dr = -1; dr <= 1; dr += 1) {
-          keys.add(`${col + dc},${row + dr}`)
-        }
-      }
+      keys.add(`${col},${row}`)
     }
     return Array.from(keys)
   }
@@ -303,7 +347,7 @@ export class SweptMaterialIndex {
   /**
    * Cumulative capsule-query counters since construction: how many stored
    * capsules a query's 3×3 cell scan iterated, and how many of those reached
-   * the trigonometric path (i.e. survived the squared-distance rejection).
+   * the trigonometric path after the exact geometric rejections.
    * Cost assertions count these — never wall clocks (AGENTS.md § Build &
    * Verify).
    */
@@ -328,10 +372,20 @@ export class SweptMaterialIndex {
     }
     const dirLength = Math.hypot(dirX, dirY)
     if (dirLength <= DEGENERATE_DIRECTION_EPS) return Math.PI
-    const psi = Math.atan2(dirY / dirLength, dirX / dirLength)
+    const forwardX = dirX / dirLength
+    const forwardY = dirY / dirLength
+    const psi = Math.atan2(forwardY, forwardX)
     const col = Math.floor(x / this.cellSize)
     const row = Math.floor(y / this.cellSize)
-    const intervals: Array<[number, number]> = []
+    const intervals = this.leadingIntervals
+    intervals.clear()
+    // A long segment can cross more than one cell in this query's 3×3 scan.
+    // Process its shared sweep record only once; repeated interval insertion
+    // cannot change engagement but is disproportionately expensive for the
+    // short tessellated moves common in real pockets (issue #517). A marker
+    // on the shared record avoids allocating and hashing a Set per query.
+    this.queryMark += 1
+    const queryMark = this.queryMark
     let foundAny = false
     for (let dc = -1; dc <= 1; dc += 1) {
       for (let dr = -1; dr <= 1; dr += 1) {
@@ -339,35 +393,20 @@ export class SweptMaterialIndex {
         if (!bucket) continue
         foundAny = true
         for (const sweep of bucket) {
+          if (sweep.queryMark === queryMark) continue
+          sweep.queryMark = queryMark
           this.scannedCount += 1
-          if (this.appendCapsuleArcs(sweep, x, y, psi, intervals)) return 0
+          if (this.appendCapsuleArcs(sweep, x, y, psi, forwardX, forwardY, intervals, this.angularScratch)) return 0
         }
       }
     }
     if (!foundAny) return Math.PI
-
-    intervals.sort((p, q) => p[0] - q[0])
-    let covered = 0
-    let currentLo = 0
-    let currentHi = 0
-    let hasCurrent = false
-    for (const [lo, hi] of intervals) {
-      if (!hasCurrent || lo > currentHi) {
-        if (hasCurrent) covered += currentHi - currentLo
-        currentLo = lo
-        currentHi = hi
-        hasCurrent = true
-      } else if (hi > currentHi) {
-        currentHi = hi
-      }
-    }
-    if (hasCurrent) covered += currentHi - currentLo
-    return Math.min(Math.PI, Math.max(0, Math.PI - covered))
+    return intervals.engagement()
   }
 
   /**
    * Append the covered arcs of one swept capsule (both endpoint discs and
-   * the rectangular body); return true when the whole cutter circle is
+   * the rectangular body); return true when the whole leading semicircle is
    * covered (engagement 0).
    *
    * Cheap rejection first: the capsule meets the cutter circle exactly when
@@ -383,11 +422,21 @@ export class SweptMaterialIndex {
     x: number,
     y: number,
     psi: number,
-    intervals: Array<[number, number]>,
+    forwardX: number,
+    forwardY: number,
+    intervals: LeadingIntervalUnion,
+    angularScratch: AngularIntervalScratch,
   ): boolean {
-    const dx = sweep.bx - sweep.ax
-    const dy = sweep.by - sweep.ay
-    const lengthSq = dx * dx + dy * dy
+    // Material whose centreline lies more than one tool radius behind the
+    // cutter cannot reach its leading semicircle. This is an exact half-plane
+    // rejection: every leading-circle point has forward projection at least
+    // zero, while the capsule expands its centreline by only `r`.
+    const forwardExtent = Math.max(
+      (sweep.ax - x) * forwardX + (sweep.ay - y) * forwardY,
+      (sweep.bx - x) * forwardX + (sweep.by - y) * forwardY,
+    )
+    if (forwardExtent < -this.radius) return false
+    const { dx, dy, lengthSq } = sweep
     const t = lengthSq > 0
       ? Math.max(0, Math.min(1, ((x - sweep.ax) * dx + (y - sweep.ay) * dy) / lengthSq))
       : 0
@@ -395,10 +444,11 @@ export class SweptMaterialIndex {
     const py = sweep.ay + dy * t - y
     const twoR = 2 * this.radius
     if (px * px + py * py > twoR * twoR) return false
+    if (!this.mayReachLeadingArc(sweep, x, y, forwardX, forwardY)) return false
     this.trigTestedCount += 1
     if (this.appendDiscArcs(sweep.ax, sweep.ay, x, y, psi, intervals)) return true
     if (this.appendDiscArcs(sweep.bx, sweep.by, x, y, psi, intervals)) return true
-    const length = Math.hypot(dx, dy)
+    const { length } = sweep
     const ex = dx / length
     const ey = dy / length
     const nx = -ey
@@ -408,16 +458,107 @@ export class SweptMaterialIndex {
     const along = ex * wx + ey * wy
     const perp = nx * wx + ny * wy
     const r = this.radius
+    // The endpoint discs may meet the cutter circle when its centre is just
+    // beyond this segment, while the rectangular capsule body cannot. Avoid
+    // constructing angular interval sets unless the body rectangle expanded
+    // by the cutter radius overlaps the query centre. Boundary contact has
+    // zero angular measure, so excluding it leaves engagement exact.
+    if (along <= -r || along >= length + r || perp <= -2 * r || perp >= 2 * r) return false
     const cLo = -along / r
     const cHi = (length - along) / r
     const sLo = -(r + perp) / r
     const sHi = (r - perp) / r
     if (cLo > cHi || sLo > sHi) return false // the rectangle covers no cutter-circle point
     const phiE = Math.atan2(ey, ex)
-    for (const [lo, hi] of rectangleBodyArcs(cLo, cHi, sLo, sHi)) {
-      pushLeadingClip(phiE + lo, phiE + hi, psi, intervals)
+    const loC = Math.max(-1, Math.min(1, cLo))
+    const hiC = Math.max(-1, Math.min(1, cHi))
+    const loS = Math.max(-1, Math.min(1, sLo))
+    const hiS = Math.max(-1, Math.min(1, sHi))
+    angularScratch.reset(psi - phiE - Math.PI / 2, psi - phiE + Math.PI / 2)
+    if (loC > -1) angularScratch.clip(-Math.acos(loC), Math.acos(loC))
+    if (hiC < 1) {
+      const bound = Math.acos(hiC)
+      angularScratch.clip(bound, 2 * Math.PI - bound)
     }
-    return false
+    if (loS > -1) {
+      const bound = Math.asin(loS)
+      angularScratch.clip(bound, Math.PI - bound)
+    }
+    if (hiS < 1) {
+      const bound = Math.asin(hiS)
+      angularScratch.clip(Math.PI - bound, 2 * Math.PI + bound)
+    }
+    return angularScratch.appendTo(psi, phiE, intervals)
+  }
+
+  /**
+   * Whether this centreline segment can reach any point of the leading
+   * semicircle after its radius-r sweep. In forward/lateral coordinates, the
+   * r-neighbourhood of that semicircle is exactly its front half-disc of
+   * radius 2r plus the two radius-r discs at the half-circle endpoints.
+   * Testing that shape avoids all angular work for capsules that only meet
+   * the cutter's trailing half.
+   */
+  private mayReachLeadingArc(
+    sweep: PriorSweep,
+    x: number,
+    y: number,
+    forwardX: number,
+    forwardY: number,
+  ): boolean {
+    const ax = sweep.ax - x
+    const ay = sweep.ay - y
+    const bx = sweep.bx - x
+    const by = sweep.by - y
+    const aForward = ax * forwardX + ay * forwardY
+    const aLateral = -ax * forwardY + ay * forwardX
+    const bForward = bx * forwardX + by * forwardY
+    const bLateral = -bx * forwardY + by * forwardX
+    const twoR = 2 * this.radius
+
+    const aFront = aForward >= 0
+    const bFront = bForward >= 0
+    if (aFront || bFront) {
+      const crossing = aFront === bFront ? 0 : -aForward / (bForward - aForward)
+      const from = aFront ? 0 : crossing
+      const to = bFront ? 1 : crossing
+      if (this.rangeDistanceSq(aForward, aLateral, bForward, bLateral, 0, 0, from, to) <= twoR * twoR) {
+        return true
+      }
+    }
+
+    const aTrailing = aForward <= 0
+    const bTrailing = bForward <= 0
+    if (!aTrailing && !bTrailing) return false
+    const crossing = aTrailing === bTrailing ? 0 : -aForward / (bForward - aForward)
+    const from = aTrailing ? 0 : crossing
+    const to = bTrailing ? 1 : crossing
+    const radiusSq = this.radius * this.radius
+    return (
+      this.rangeDistanceSq(aForward, aLateral, bForward, bLateral, 0, this.radius, from, to) <= radiusSq
+      || this.rangeDistanceSq(aForward, aLateral, bForward, bLateral, 0, -this.radius, from, to) <= radiusSq
+    )
+  }
+
+  /** Squared distance from a point to the closed parameter sub-range of a segment. */
+  private rangeDistanceSq(
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+    px: number,
+    py: number,
+    from: number,
+    to: number,
+  ): number {
+    const dx = bx - ax
+    const dy = by - ay
+    const lengthSq = dx * dx + dy * dy
+    const unclamped = lengthSq > 0 ? ((px - ax) * dx + (py - ay) * dy) / lengthSq : 0
+    const t = Math.max(from, Math.min(to, unclamped))
+    const offsetX = ax + dx * t - px
+    const offsetY = ay + dy * t - py
+    return offsetX * offsetX + offsetY * offsetY
   }
 
   /**
@@ -431,7 +572,7 @@ export class SweptMaterialIndex {
     x: number,
     y: number,
     psi: number,
-    intervals: Array<[number, number]>,
+    intervals: LeadingIntervalUnion,
   ): boolean {
     const vx = px - x
     const vy = py - y
@@ -442,8 +583,7 @@ export class SweptMaterialIndex {
     const d = Math.sqrt(dSq)
     const h = Math.acos(Math.min(1, Math.max(-1, d / twoR)))
     const arcLo = Math.atan2(vy, vx) - h
-    pushLeadingClip(arcLo, arcLo + 2 * h, psi, intervals)
-    return false
+    return pushLeadingClip(arcLo, arcLo + 2 * h, psi, intervals)
   }
 }
 

@@ -801,23 +801,22 @@ console.log('Testing the index stores a small per-segment constant of entries...
   index.addSweptSegment(-50 * r, 0, 50 * r, 0) // one segment, length 100·r
   const entries = index.storedEntryCount()
   // Derivation: the axis-aligned centreline crosses ceil(100r / 2r) + 1 = 51
-  // cells (cell size 2r), and the radius-r tube dilates each crossed cell to
-  // its 3-row neighbourhood, so ≤ 3 × 51 = 153 entries — a small constant
-  // per segment, independent of path length beyond the cells it actually
-  // covers.
-  assert(entries <= 160, `one 100·r segment must store ≤ 160 entries, got ${entries}`)
+  // cells (cell size 2r). Queries scan their own 3×3 neighbourhood, so the
+  // entry is stored only in the centreline cells; dilating it at insertion
+  // would make the same candidate recur in up to nine buckets.
+  assert(entries <= 60, `one 100·r segment must store ≤ 60 entries, got ${entries}`)
   assert(entries > 0, 'a 100·r segment must actually be indexed')
 
   // The bound scales with the number of segments: six axis-aligned segments
   // of mixed length (≤ 100r each, parallel walls spaced 5r apart so their
-  // extents barely overlap) stay under 160 entries per segment.
+  // extents barely overlap) stay under 60 entries per segment.
   const mixed = new SweptMaterialIndex(r)
   const lengths = [100, 40, 70, 5, 90, 20]
   for (let i = 0; i < lengths.length; i += 1) {
     mixed.addSweptSegment(0, 5 * r * i, lengths[i] * r, 5 * r * i)
   }
   assert(
-    mixed.storedEntryCount() <= 160 * lengths.length,
+    mixed.storedEntryCount() <= 60 * lengths.length,
     `entries must be bounded by a small constant × segment count, got ${mixed.storedEntryCount()} for ${lengths.length} segments`,
   )
 }
@@ -849,13 +848,12 @@ console.log('Testing the early rejection gates the trig path...')
     dense.addSweptSegment(ax, ay, ax + length * Math.cos(angle), ay + length * Math.sin(angle))
   }
   // Query in the adjacent column: its 3×3 scan covers the cluster's cell, so
-  // every capsule is scanned (a capsule is stored once per cell its extent
-  // covers plus each cell's 8 neighbours, hence ≥ segmentCount scans) — and
-  // every capsule is beyond 2r (the cluster ends at 3.25r, the query sits at
-  // 5.5r), so none may reach the trig path.
+  // every capsule is scanned once — and every capsule is beyond 2r (the
+  // cluster ends at 3.25r, the query sits at 5.5r), so none may reach the
+  // trig path.
   const farEngagement = dense.engagementAt(5.5 * r, 0, 1, 0)
   const farStats = dense.queryStats()
-  assert(farStats.capsulesScanned >= segmentCount, `the far query must scan at least all ${segmentCount} capsules, got ${farStats.capsulesScanned}`)
+  assert(farStats.capsulesScanned === segmentCount, `the far query must scan every capsule once, got ${farStats.capsulesScanned}`)
   assert(farStats.capsulesTrigTested === 0, 'no capsule beyond 2r may reach the trig path')
   assert(approx(farEngagement, Math.PI), 'far from the cluster the engagement must still be exactly π')
 
@@ -867,6 +865,20 @@ console.log('Testing the early rejection gates the trig path...')
   console.log(
     `  (scanned ${nearStats.capsulesScanned}, trig-tested ${nearStats.capsulesTrigTested}; far query tested ${farStats.capsulesTrigTested}/${farStats.capsulesScanned})`,
   )
+}
+
+// ── 14. One sweep must not recur through cells in one query ───────────────
+
+console.log('Testing that a diagonal sweep is de-duplicated across query cells...')
+{
+  const diagonal = new SweptMaterialIndex(1)
+  // This long diagonal spans several of the query's 3×3 cells. Its one shared
+  // record may be found through several buckets, but exact interval union must
+  // see it once rather than repeat its trigonometric work.
+  diagonal.addSweptSegment(-3, -3, 3, 3)
+  diagonal.engagementAt(0, 0, 1, 0)
+  const stats = diagonal.queryStats()
+  assert(stats.capsulesScanned === 1, `one diagonal sweep must be processed once, got ${stats.capsulesScanned}`)
 }
 
 // ── Summary ──
