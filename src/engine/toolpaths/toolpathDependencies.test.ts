@@ -19,7 +19,8 @@
 /**
  * Tests for the pure change-detection module behind the per-operation
  * toolpath cache (issue #518, slices S1 + S1b + S2's `name` correction + S2b's
- * machining-relevant `meta` fields + S3a's operation footprint model).
+ * machining-relevant `meta` fields + S3a's operation footprint model + S6's
+ * non-target region exemption).
  *
  * `diffToolpathInputs` must report exactly the feature ids whose
  * toolpath-relevant input changed, and must raise `invalidatesEveryOperation`
@@ -34,7 +35,8 @@
  * action. `operationFootprint` must be generous by construction (unknown →
  * `bounds: null` → invalidate) and `operationAffectedByChange` must return
  * true exactly when a changed feature can reach the operation, treating
- * construction-only changes and far-away changes as irrelevant.
+ * construction-only changes, non-target region changes, and far-away changes
+ * as irrelevant.
  */
 
 import { defaultTool, getProfileBounds, getStockBounds, rectProfile } from '../../types/project'
@@ -1105,6 +1107,113 @@ function userMarginProject(): { project: Project, operation: Operation } {
       new Set(['overlap']),
     ),
     'a change overlapping the target must regenerate the operation',
+  )
+}
+
+// ── S6: exempt non-target regions ─────────────────────────────────
+
+{
+  console.log('S6.1 USER-REPORTED CASE: a region over the operation area that is not a target no longer regenerates it...')
+  // r1 overlaps the target's footprint on purpose: if the region skip were
+  // missing, the bbox check would return true and this test would catch it.
+  const project = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('r1', 10, 0, 20, 10, { operation: 'region' }),
+  ]))
+  const footprint = operationFootprint(project, makeOperation({ source: 'features', featureIds: ['f1'] }))
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  assert(setEquals(footprint.targetFeatureIds, ['f1']), 'fixture premise: r1 must not be a target')
+  const next = patchFeature(project, 'r1', { z_top: 8 })
+  assert(
+    !operationAffectedByChange(footprint, project, next, new Set(['r1'])),
+    'a non-target region change must not regenerate the operation (reported case)',
+  )
+}
+
+{
+  console.log('S6.2 A region that IS a target still invalidates when edited...')
+  const project = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('r2', 0, 20, 20, 10, { operation: 'region' }),
+  ]))
+  const footprint = operationFootprint(
+    project,
+    makeOperation({ source: 'features', featureIds: ['f1', 'r2'] }),
+  )
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  const next = patchFeature(project, 'r2', { z_top: 8 })
+  assert(
+    operationAffectedByChange(footprint, project, next, new Set(['r2'])),
+    'a change to a targeted region must regenerate the operation',
+  )
+}
+
+{
+  console.log('S6.3 A feature converted from subtract to region between snapshots still invalidates...')
+  const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('x1', 25, 0, 20, 10, { operation: 'subtract' }),
+  ]))
+  const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('x1', 25, 0, 20, 10, { operation: 'region' }),
+  ]))
+  const footprint = operationFootprint(previous, makeOperation({ source: 'features', featureIds: ['f1'] }))
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  assert(
+    operationAffectedByChange(footprint, previous, next, new Set(['x1'])),
+    'a subtract-to-region conversion must regenerate (region on one side only)',
+  )
+}
+
+{
+  console.log('S6.4 A feature converted from region to subtract between snapshots still invalidates...')
+  const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('x1', 25, 0, 20, 10, { operation: 'region' }),
+  ]))
+  const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('x1', 25, 0, 20, 10, { operation: 'subtract' }),
+  ]))
+  const footprint = operationFootprint(previous, makeOperation({ source: 'features', featureIds: ['f1'] }))
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  assert(
+    operationAffectedByChange(footprint, previous, next, new Set(['x1'])),
+    'a region-to-subtract conversion must regenerate (region on one side only)',
+  )
+}
+
+{
+  console.log('S6.5 A stock-targeted operation ignores region changes...')
+  const project = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('r1', 10, 0, 20, 10, { operation: 'region' }),
+  ]))
+  const footprint = operationFootprint(project, makeOperation({ source: 'stock' }, { toolRef: null }))
+  assert(footprint.readsWholeModel, 'stock footprint must read the whole model')
+  assert(footprint.targetFeatureIds.size === 0, 'a stock target has no ids for a region to sit in')
+  const next = patchFeature(project, 'r1', { z_top: 8 })
+  assert(
+    !operationAffectedByChange(footprint, project, next, new Set(['r1'])),
+    'a region change must not affect a stock-targeted operation',
+  )
+}
+
+{
+  console.log('S6.6 CONTROL: a non-region subtract over the same area still regenerates...')
+  // Identical geometry to S6.1 but `operation: subtract` — the exemption is
+  // region-specific and must never swallow real material.
+  const project = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('s1', 10, 0, 20, 10, { operation: 'subtract' }),
+  ]))
+  const footprint = operationFootprint(project, makeOperation({ source: 'features', featureIds: ['f1'] }))
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  const next = patchFeature(project, 's1', { z_top: 8 })
+  assert(
+    operationAffectedByChange(footprint, project, next, new Set(['s1'])),
+    'a subtract change over the operation area must still regenerate',
   )
 }
 
