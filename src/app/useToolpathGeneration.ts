@@ -20,6 +20,7 @@ import {
   applyEdgeRouteTabs,
   applyTabsToEdgeRoute,
   applyTabWarnings,
+  diffToolpathInputs,
   generateDrillingToolpath,
   generateEdgeRouteToolpath,
   generateFinishSurfaceCleanupToolpath,
@@ -34,13 +35,14 @@ import {
   type ToolpathResult,
   type ToolpathGenerationTrace,
 } from '../engine/toolpaths'
-import type { Clamp, FeatureInstance, Operation, Project, Stock, Tab, Tool } from '../types/project'
+import type { Clamp, Operation, Project, Stock, Tab, Tool } from '../types/project'
 
 export interface ToolpathCacheEntry {
   result: ToolpathResult
   operation: Operation
   stock: Stock
-  features: FeatureInstance[]
+  /** The project snapshot this result was generated from (issue #518). */
+  project: Project
   tools: Tool[]
   tabs: Tab[]
   clamps: Clamp[]
@@ -110,14 +112,33 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
 }
 
 export function isCacheHit(entry: ToolpathCacheEntry, operation: Operation, project: Project): boolean {
-  return (
-    operationComputationEquals(entry.operation, operation)
-    && entry.stock === project.stock
-    && entry.features === project.features
-    && entry.tools === project.tools
-    && entry.tabs === project.tabs
-    && entry.clamps === project.clamps
-  )
+  if (
+    !operationComputationEquals(entry.operation, operation)
+    || entry.stock !== project.stock
+    || entry.tools !== project.tools
+    || entry.tabs !== project.tabs
+    || entry.clamps !== project.clamps
+  ) {
+    return false
+  }
+
+  // The entry holds the full project snapshot it was generated from
+  // (`entry.project`). Holding one `Project` reference per entry is bounded —
+  // at most one per operation — and immutable updates share structure, so
+  // this is not a leak. When the snapshot's identity still matches, skip the
+  // O(n) diff below.
+  if (entry.project === project) return true
+
+  // Each entry diffs against its **own** snapshot, not a single global
+  // "changed since last render" set: operations are generated at different
+  // times, so one entry may be several edits older than another and a shared
+  // set would be wrong for the stale one. Display-only instance changes
+  // (visible, locked, folderId) produce an empty diff and stop invalidating;
+  // every change that can affect generated geometry still invalidates today —
+  // narrowing to *relevant* geometry is S3's job, not this slice's.
+  const diff = diffToolpathInputs(entry.project, project)
+  if (diff.invalidatesEveryOperation) return false
+  return diff.changedFeatureIds.size === 0
 }
 
 // Double-rAF: the first rAF fires before the current paint, the second
@@ -264,7 +285,7 @@ export function useToolpathGeneration(project: Project, selectedOperation: Opera
           result,
           operation,
           stock: project.stock,
-          features: project.features,
+          project,
           tools: project.tools,
           tabs: project.tabs,
           clamps: project.clamps,
