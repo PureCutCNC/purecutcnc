@@ -34,8 +34,27 @@
  * (`modelAssetsEquivalent` below).
  */
 
-import type { FeatureInstance, PersistedImportedMesh, Project } from '../../types/project'
+import type { FeatureInstance, PersistedImportedMesh, Project, ProjectMeta } from '../../types/project'
 import { projectsEqual } from '../../store/helpers/normalize'
+
+/**
+ * The `ProjectMeta` fields read during toolpath generation.
+ *
+ * `meta` is compared only through this list — never wholesale. `meta.modified`
+ * is rewritten by essentially every store action (~100 sites across every
+ * slice), so comparing `meta` by identity or deep equality would invalidate on
+ * every mutation and silently undo this entire issue. It must be a field list.
+ *
+ * Any new `meta` field read by toolpath generation must be listed here.
+ *
+ * Deliberately excluded, verified: `machineDefinitions` and `selectedMachineId`
+ * are post-processor/export inputs and are read nowhere under
+ * `src/engine/toolpaths/`; `name`, `created`, `modified`, `showFeatureInfo`,
+ * `showDimensions`, and `copyMode` are metadata or display state.
+ */
+export const MACHINING_META_FIELDS = [
+  'units', 'maxTravelZ', 'operationClearanceZ', 'clampClearanceXY', 'clampClearanceZ',
+] as const
 
 // Compare only the fields toolpath generation reads through the resolver
 // (`resolveFeatureRow`, src/store/helpers/resolveFeatures.ts): definitionId,
@@ -84,6 +103,22 @@ export interface ToolpathInputDiff {
 }
 
 /**
+ * Whether two `meta` records agree on every machining-relevant field.
+ *
+ * Compares `MACHINING_META_FIELDS` only, never the record as a whole: the
+ * other fields (`modified`, `name`, display state, machine selection, …)
+ * cannot change generated geometry, and `modified` churns on nearly every
+ * store action. Identity-first: a shared `meta` record compares equal in O(1).
+ */
+function machiningMetaEquivalent(a: ProjectMeta, b: ProjectMeta): boolean {
+  if (a === b) return true
+  for (const field of MACHINING_META_FIELDS) {
+    if (a[field] !== b[field]) return false
+  }
+  return true
+}
+
+/**
  * Whether two model-asset records are equivalent for toolpath purposes.
  *
  * Compares the **key set**, then each value by **reference identity** — never
@@ -126,8 +161,13 @@ function modelAssetsEquivalent(
  *   (`src/engine/toolpaths/geometry.ts`). Small record whose identity does
  *   not churn on ordinary mutations, so it stays on `projectsEqual`'s deep
  *   compare.
- * - `project.meta.units` — feeds `normalizeToolForProject`
- *   (`src/engine/toolpaths/geometry.ts`).
+ * - `project.meta` machining fields — `units` feeds `normalizeToolForProject`
+ *   (`src/engine/toolpaths/geometry.ts`), `maxTravelZ` / `clampClearanceXY` /
+ *   `clampClearanceZ` feed clamp clearance and travel-limit checks
+ *   (`src/engine/toolpaths/clamps.ts`, `modelProtection.ts`), and
+ *   `operationClearanceZ` feeds retract heights (`geometry.ts`). Compared only
+ *   through the exported `MACHINING_META_FIELDS` list — never wholesale, since
+ *   `meta.modified` churns on nearly every store action.
  * - `project.modelAssets` — STL payloads behind imported-model features,
  *   compared by key set plus per-value reference identity, never by content
  *   (see `modelAssetsEquivalent`).
@@ -191,7 +231,7 @@ export function diffToolpathInputs(previous: Project, next: Project): ToolpathIn
 
   const invalidatesEveryOperation =
     orderChanged
-    || previous.meta.units !== next.meta.units
+    || !machiningMetaEquivalent(previous.meta, next.meta)
     || (previous.dimensions !== next.dimensions && !projectsEqual(previous.dimensions, next.dimensions))
     || !modelAssetsEquivalent(previous.modelAssets, next.modelAssets)
 
