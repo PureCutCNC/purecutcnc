@@ -48,15 +48,20 @@ if [[ "${FAKE_DSH_STREAM_EVENTS:-}" == true ]]; then
   cat > "$session_root/session-stream-$stream_id/session.jsonl.zstd" <<'JSON'
 {"type":"assistant/message","seq":10,"data":{"message":{"content":[{"type":"reasoning","text":"internal reasoning must stay hidden"},{"type":"text","text":"Reading project context\nnow"}]}}}
 JSON
-  sleep 2
+  sleep 1
   cat >> "$session_root/session-stream-$stream_id/session.jsonl.zstd" <<'JSON'
 {"type":"tool/call","seq":11,"data":{"name":"read_file","arguments":"{\"path\":\"INDEX.md\"}"}}
 JSON
-  sleep 2
+  sleep 1
   cat >> "$session_root/session-stream-$stream_id/session.jsonl.zstd" <<'JSON'
 {"type":"tool/result","seq":12,"data":{"message":{"content":[{"type":"tool-result","content":[{"type":"text","text":"# INDEX\nScripts overview"}]}]}}}
 JSON
-  sleep 2
+  sleep 1
+  if [[ "${FAKE_DSH_FINAL_EVENT:-}" == true ]]; then
+    cat >> "$session_root/session-stream-$stream_id/session.jsonl.zstd" <<'JSON'
+{"type":"assistant/message","seq":13,"data":{"message":{"content":[{"type":"text","text":"Final worker response"}]}}}
+JSON
+  fi
 fi
 if [[ "${FAKE_DSH_AMBIGUOUS:-}" == true ]]; then
   session_path="${PWD#/}"
@@ -78,6 +83,14 @@ cat > "$TEMP_DIR/bin/zstd" <<'EOF'
 set -euo pipefail
 [[ "$1" == "-dc" ]] || exit 2
 [[ "${FAKE_ZSTD_FAIL:-}" != true ]] || exit 1
+if [[ "${FAKE_ZSTD_FAIL_ONCE:-}" == true && ! -f "${FAKE_ZSTD_FAIL_ONCE_STATE:?}" ]]; then
+  touch "$FAKE_ZSTD_FAIL_ONCE_STATE"
+  exit 1
+fi
+if [[ -n "${FAKE_ZSTD_INPUT_LOG:-}" ]]; then
+  cat "$2" >> "$FAKE_ZSTD_INPUT_LOG"
+  printf '%s\n' '-- zstd input boundary --' >> "$FAKE_ZSTD_INPUT_LOG"
+fi
 cat "$2"
 EOF
 chmod +x "$TEMP_DIR/bin/dsh"
@@ -133,7 +146,9 @@ assert_contains "$progress_content" '[exit] provider=dsh worker exited code=0'
 
 # ---- session artifacts stream observed text, tool calls, and tool results ----
 stream_progress_log="$TEMP_DIR/stream.progress.log"
+stream_input_log="$TEMP_DIR/stream.zstd-input.log"
 printf 'task\n' | DSH_HEARTBEAT_SECONDS=1 FAKE_DSH_STREAM_EVENTS=true \
+  FAKE_ZSTD_INPUT_LOG="$stream_input_log" \
   run_launcher --mode review --worktree "$TEMP_DIR/wt" \
   --progress-log "$stream_progress_log" >/dev/null
 stream_progress_content="$(cat "$stream_progress_log")"
@@ -143,6 +158,27 @@ assert_contains "$stream_progress_content" '[tool-result] provider=dsh # INDEX S
 assert_not_contains "$stream_progress_content" 'internal reasoning must stay hidden'
 [[ "$(grep -F -c '[tool] provider=dsh read_file' "$stream_progress_log")" -eq 1 ]] \
   || fail 'repeated session decodes duplicated the tool event'
+[[ "$(grep -F -c '"seq":10' "$stream_input_log")" -eq 1 ]] \
+  || fail 'incremental tail re-decoded the first session record'
+
+# ---- a failed segment decode retries from the same cursor ----
+retry_progress_log="$TEMP_DIR/retry.progress.log"
+retry_state_file="$TEMP_DIR/zstd-failed-once"
+printf 'task\n' | DSH_HEARTBEAT_SECONDS=1 FAKE_DSH_STREAM_EVENTS=true \
+  FAKE_ZSTD_FAIL_ONCE=true FAKE_ZSTD_FAIL_ONCE_STATE="$retry_state_file" \
+  run_launcher --mode review --worktree "$TEMP_DIR/wt" \
+  --progress-log "$retry_progress_log" >/dev/null
+retry_progress_content="$(cat "$retry_progress_log")"
+[[ -f "$retry_state_file" ]] || fail 'the injected decode failure did not run'
+assert_contains "$retry_progress_content" '[assistant] provider=dsh Reading project context now'
+
+# ---- the post-exit drain captures an event written immediately before exit ----
+final_progress_log="$TEMP_DIR/final.progress.log"
+printf 'task\n' | DSH_HEARTBEAT_SECONDS=1 FAKE_DSH_STREAM_EVENTS=true FAKE_DSH_FINAL_EVENT=true \
+  run_launcher --mode review --worktree "$TEMP_DIR/wt" \
+  --progress-log "$final_progress_log" >/dev/null
+final_progress_content="$(cat "$final_progress_log")"
+assert_contains "$final_progress_content" '[assistant] provider=dsh Final worker response'
 
 # ---- ambiguous artifacts retain heartbeat-only fallback ----
 ambiguous_progress_log="$TEMP_DIR/ambiguous.progress.log"
@@ -170,6 +206,19 @@ printf 'task\n' | DSH_TOOL_RESULT_MAX_CHARS=1 FAKE_DSH_STREAM_EVENTS=true \
 bounded_progress_content="$(cat "$bounded_progress_log")"
 assert_contains "$bounded_progress_content" '[tool-result] provider=dsh …'
 assert_contains "$bounded_progress_content" '[assistant] provider=dsh Reading project context now'
+
+# ---- filter discards emitted sequences and bounds before whitespace cleanup ----
+filter_input="$(jq -cn \
+  --arg oversized_text "start$(printf '%*s' 10000 '')end" \
+  '[
+    {type: "assistant/message", seq: 14, data: {message: {content: [{type: "text", text: "already emitted"}]}}},
+    {type: "assistant/message", seq: 15, data: {message: {content: [{type: "text", text: $oversized_text}]}}}
+  ][]')"
+filter_output="$(printf '%s\n' "$filter_input" \
+  | jq -nRr --argjson event_max_chars 32 --argjson tool_result_max_chars 16 --argjson last_event_seq 14 \
+    -f "$SCRIPT_DIR/dsh-progress-filter.jq")"
+assert_not_contains "$filter_output" 'already emitted'
+assert_contains "$filter_output" $'15\tassistant\tstart …'
 
 # ---- worker failure propagates ----
 if FAKE_DSH_EXIT=7 run_launcher --mode review --worktree "$TEMP_DIR/wt" \

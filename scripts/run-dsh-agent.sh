@@ -122,12 +122,13 @@ result_file="$(mktemp -t run-dsh-agent-result)"
 stderr_file="$(mktemp -t run-dsh-agent-stderr)"
 session_snapshot_file="$(mktemp -t run-dsh-agent-sessions)"
 decoded_events_file="$(mktemp -t run-dsh-agent-events)"
+tail_segment_file="$(mktemp -t run-dsh-agent-segment)"
 worker_pid=""
 cleanup() {
   if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
     kill "$worker_pid" 2>/dev/null || true
   fi
-  rm -f "$result_file" "$stderr_file" "$session_snapshot_file" "$decoded_events_file"
+  rm -f "$result_file" "$stderr_file" "$session_snapshot_file" "$decoded_events_file" "$tail_segment_file"
 }
 trap cleanup EXIT INT TERM
 : > "$progress_log"
@@ -155,7 +156,8 @@ fi
 tail_enabled=true
 tail_state="waiting"
 tail_artifact=""
-last_artifact_size=""
+tail_cursor=0
+tail_cursor_needs_recovery=false
 last_event_seq=0
 
 if ! command -v zstd >/dev/null 2>&1; then
@@ -171,15 +173,6 @@ elif [[ ! -f "$DSH_PROGRESS_FILTER" ]]; then
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$progress_log"
   tail_enabled=false
 fi
-
-clip_event_payload() {
-  local payload="$1"
-  if (( ${#payload} > event_max_chars )); then
-    printf '%s…' "${payload:0:event_max_chars}"
-  else
-    printf '%s' "$payload"
-  fi
-}
 
 find_session_artifact() {
   local -a new_sessions=()
@@ -211,8 +204,62 @@ find_session_artifact() {
   return 1
 }
 
+append_decoded_events() {
+  local seq event_kind payload
+
+  while IFS=$'\t' read -r seq event_kind payload; do
+    [[ "$seq" =~ ^[0-9]+$ ]] || continue
+    (( seq > last_event_seq )) || continue
+    printf '%s [%s] provider=dsh %s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$event_kind" "$payload" >> "$progress_log"
+    last_event_seq="$seq"
+  done < "$decoded_events_file"
+}
+
+decode_observed_events() {
+  local source="$1"
+
+  if ! zstd -dc "$source" 2>/dev/null \
+      | jq -nRr --unbuffered \
+        --argjson event_max_chars "$event_max_chars" \
+        --argjson tool_result_max_chars "$tool_result_max_chars" \
+        --argjson last_event_seq "$last_event_seq" \
+        -f "$DSH_PROGRESS_FILTER" > "$decoded_events_file"; then
+    return 1
+  fi
+  append_decoded_events
+}
+
+copy_artifact_segment() {
+  local start_byte="$1"
+  local byte_count="$2"
+  local copied_size
+
+  # Bound the read to the size observed before copying. If DSH appends during
+  # this pipeline, head may close tail early; verify the captured size instead
+  # of treating tail's SIGPIPE as an artifact failure.
+  tail -c "+$((start_byte + 1))" "$tail_artifact" 2>/dev/null \
+    | head -c "$byte_count" > "$tail_segment_file" || true
+  copied_size="$(stat -f '%z' "$tail_segment_file" 2>/dev/null \
+    || stat -c '%s' "$tail_segment_file" 2>/dev/null)" || return 1
+  [[ "$copied_size" == "$byte_count" ]]
+}
+
+tail_full_artifact() {
+  local artifact_size
+
+  [[ -f "$tail_artifact" ]] || return 0
+  artifact_size="$(stat -f '%z' "$tail_artifact" 2>/dev/null \
+    || stat -c '%s' "$tail_artifact" 2>/dev/null)" || return 0
+  if ! decode_observed_events "$tail_artifact"; then
+    return 0
+  fi
+  tail_cursor="$artifact_size"
+  tail_cursor_needs_recovery=false
+}
+
 tail_observed_events() {
-  local artifact_size seq event_kind payload
+  local artifact_size append_size
 
   [[ "$tail_enabled" == true ]] || return 0
   if [[ -z "$tail_artifact" ]] && ! find_session_artifact; then
@@ -222,23 +269,27 @@ tail_observed_events() {
 
   artifact_size="$(stat -f '%z' "$tail_artifact" 2>/dev/null \
     || stat -c '%s' "$tail_artifact" 2>/dev/null)" || return 0
-  [[ "$artifact_size" != "$last_artifact_size" ]] || return 0
+  if (( artifact_size < tail_cursor )); then
+    printf '%s [tail] provider=dsh artifact-truncated; restarting cursor\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$progress_log"
+    tail_cursor=0
+  fi
+  append_size=$((artifact_size - tail_cursor))
+  (( append_size > 0 )) || return 0
 
-  if ! zstd -dc "$tail_artifact" 2>/dev/null \
-      | jq -nRr --unbuffered --argjson tool_result_max_chars "$tool_result_max_chars" \
-        -f "$DSH_PROGRESS_FILTER" > "$decoded_events_file"; then
+  if ! copy_artifact_segment "$tail_cursor" "$append_size"; then
+    tail_cursor_needs_recovery=true
     return 0
   fi
-  last_artifact_size="$artifact_size"
-
-  while IFS=$'\t' read -r seq event_kind payload; do
-    [[ "$seq" =~ ^[0-9]+$ ]] || continue
-    (( seq > last_event_seq )) || continue
-    payload="$(clip_event_payload "$payload")"
-    printf '%s [%s] provider=dsh %s\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$event_kind" "$payload" >> "$progress_log"
-    last_event_seq="$seq"
-  done < "$decoded_events_file"
+  if ! decode_observed_events "$tail_segment_file"; then
+    # DSH may be midway through appending a zstd frame. Keep the cursor in
+    # place so the next poll replays this segment; sequence filtering prevents
+    # duplicates if the decoder emitted complete preceding frames first.
+    tail_cursor_needs_recovery=true
+    return 0
+  fi
+  tail_cursor="$artifact_size"
+  tail_cursor_needs_recovery=false
 }
 
 run_dsh >"$result_file" 2>"$stderr_file" &
@@ -266,6 +317,11 @@ worker_status=$?
 set -e
 worker_pid=""
 tail_observed_events
+if [[ "$tail_cursor_needs_recovery" == true ]]; then
+  printf '%s [tail] provider=dsh final-recovery=full-decode\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$progress_log"
+  tail_full_artifact
+fi
 cat "$result_file"
 cat "$stderr_file" >&2
 printf '%s [exit] provider=dsh worker exited code=%s\n' \
