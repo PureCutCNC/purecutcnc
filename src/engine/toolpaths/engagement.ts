@@ -111,7 +111,7 @@ interface PriorSweep {
   dy: number
   length: number
   lengthSq: number
-  /** Last query that processed this record across more than one cell. */
+  /** Query marker for per-query de-duplication. */
   queryMark: number
 }
 
@@ -251,8 +251,8 @@ function pushLeadingClip(
 /**
  * Spatial index over previously swept capsules. Each swept segment is stored
  * once per grid cell its own extent covers — the centreline supercover — not
- * per cell of a 2r-padded bbox. A query scans
- * only the 3×3 cell block around its own cell, which is exact: a sweep
+ * per cell of a 2r-padded bbox. A query scans only the 3×3 cell block around
+ * its own cell, which is exact: a sweep
  * point within `2r` of the query lies at most one cell away (cell size
  * `2r`), and its cell holds the sweep because the sweep is indexed by its
  * own extent. A capsule spanning many cells is still found because it is
