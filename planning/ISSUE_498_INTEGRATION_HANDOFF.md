@@ -817,3 +817,85 @@ worst real-world behaviour intact — 23.6″ of unearned slowing on a 59.5″ p
 Note also that the offending moves are fewer but longer (84 moves covering 23.6″
 versus 434 covering 10.9″), so a violation *count* alone understates parallel;
 assert on path length as well.
+
+### S9 — Stop bucket-to-bucket merges dragging a cut to the slot feed
+
+**S8 fixed the wrong-side-of-nominal case; this is the magnitude case.** The S8
+acceptance property was binary — "no move at or below nominal may be reduced" —
+and it was too weak. A move measured at **74°**, with nominal at 69°, passes that
+test while being emitted at **0.60**: the full-slot floor, when the feed map
+entitles it to ≈**0.92**. It is 4.5% of the way from nominal to a full slot and
+is slowed as if it were slotting outright. *That was a manager specification
+error; the S8 worker satisfied exactly what was asked.*
+
+Reported from the app: on `pocket-feed-reduction.camj` the two long horizontal
+cuts flanking the island render identically to the genuine bridging slots beside
+them. They are not the same — the inner pair measures 180°, the outer pair 74° —
+but both emit 0.60, so they look and cut the same.
+
+**The correct property, measured against each move's own entitlement:**
+
+> No move may emit a `feedScale` below `engagementFeedScale(e, nominal, slot)`
+> for its own measured engagement `e`.
+
+Current state on the five fixtures (this is *after* S8):
+
+| Fixture | Over-slowed vs entitlement |
+| --- | --- |
+| pocket-feed-reduction (offset) | 10.6″ of 44.1″ — **24%**, 380 moves |
+| pocket-feed-reduction-2 (offset) | 14.7″ of 48.1″ — **31%**, 928 moves |
+| pocket-feed-reduction-3 (offset) | 8.1″ of 43.3″ — **19%**, 681 moves |
+| pocket-feed-reduction-parallel | 6.1″ of 49.2″ — 12%, 88 moves |
+| pocket-feed-reduction-parallel-2 | 6.9″ of 59.5″ — 12%, 130 moves |
+
+Note the ranking **inverts** versus the S8 metric: offset is now the worse
+pattern. Offset has many short ring segments adjacent to genuine slots, and
+bucket-to-bucket merging drags them to the floor. Optimising against the old
+metric would have aimed at the wrong pattern.
+
+**Mechanism.** S8 correctly stopped merges that bridge the full-feed ceiling, but
+bucket-to-bucket merges still consolidate and a merge takes the **lower** scale.
+A 0.92 fragment adjacent to a 0.60 slot becomes 0.60.
+
+**Three candidate rules — evaluate, do not assume:**
+
+1. Forbid a merge that lowers a fragment by more than one rung.
+2. Merge to a **length-weighted** scale rather than the minimum.
+3. Drop merging for reduced fragments entirely and rely on S6's
+   perimeter-scaled minimum alone.
+
+Each trades cycle time against `feedScale` fragmentation, which is exactly what
+the merge exists to protect — arc fitting refuses to join moves whose
+`feedScale` differs at all (`sameRun`, `src/engine/gcode/arcFitting.ts`). Pick on
+measurement, and state in the completion report which you chose and what the
+other two scored.
+
+**Hard bound — the arc-run constraint.** Current `slots_only` versus
+`engagement`, from `scripts/pocket-output-probe.ts compare`:
+
+| Fixture | runs (legacy → engagement) | longest run |
+| --- | --- | --- |
+| pocket-feed-reduction | 12 → 61 | 306 → 72 |
+| pocket-feed-reduction-parallel-2 | 33 → 84 | 58 → 63 |
+
+**The chosen rule must not increase the run count by more than 25% over these
+engagement-mode figures, nor reduce the longest run below 50 on
+`pocket-feed-reduction`.** A rule that fixes over-slowing by shattering the path
+into hundreds of short feed fragments is not acceptable — it trades a cycle-time
+defect for a G-code-quality one.
+
+**Allowed files:** `src/engine/toolpaths/engagement.ts`,
+`src/engine/toolpaths/engagement.test.ts`, `src/engine/toolpaths/pocket.ts`,
+`src/engine/toolpaths/engagementPocket.test.ts`
+
+**Forbidden:** the estimator's geometry, `src/types/project.ts`, `src/store/**`,
+`src/components/**`, `src/i18n/**`, `src/theme/**`.
+
+**Required tests:** the entitlement property above, asserted on **all five**
+fixtures and on a synthetic case, with over-slowed path length bounded (state the
+bound you achieve); plus an arc-run assertion against the table above.
+
+**Invariants that must survive:** never-raise versus `slots_only` (0 violations
+today), depth invariance (no new dependence), byte-identical `slots_only` output.
+
+**Manager review record:** pending.
