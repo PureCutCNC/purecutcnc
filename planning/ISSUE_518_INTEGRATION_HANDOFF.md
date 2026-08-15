@@ -17,7 +17,7 @@ provider debug output here.
 - Base commit: `91b6d9c51540341ee89b42c2fcbce4fd22a21518`
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/518
 - Manager session: 2026-08-15
-- Status: `slice in progress`
+- Status: `ready for user review`
 - User authorization for external worker dispatch: granted 2026-08-15 for the `dsh` provider.
 
 ## Global rules
@@ -75,7 +75,7 @@ Recorded here because the replacement must not inherit these gaps:
 | S3b | Record the footprint on the cache entry and consult it | `01df1b2` | `feat/issue-518-footprint-wiring` / removed | `complete` | `accepted` | `cb9b3c2` | both unit tests + build gate | delivers the symptom fix; write-path coverage gap → S3c |
 | S3c | Make the cache-entry write path testable | `cb9b3c2` | `feat/issue-518-entry-builder` / removed | `complete` | `accepted` | `de0c371` | unit test + build gate | M18 now bites |
 | main | Merge `origin/main` (issue #498 added `pocketFeedReduction`, correctly allowlisted upstream) | `de0c371` | - | `-` | `-` | `10fd3b4` | full `npm run build` green | one trivial `planning/INDEX.md` union conflict |
-| S4 | Coalesce during gestures; stop blanking `toolpathMap` | `10fd3b4` | `feat/issue-518-coalesce` / `$PURECUT_WORKTREE_BASE/coalesce` | `dispatched` | `pending` | `-` | unit test + build gate | app-layer scheduling only |
+| S4 | Coalesce during gestures; stop blanking `toolpathMap` | `10fd3b4` | `feat/issue-518-coalesce` / removed | `complete` | `accepted` | `15c7275` | unit test + build gate | mutation-checked; 2 deviations recorded |
 
 ## Worker prompt — active slice is S4
 
@@ -859,4 +859,28 @@ scripts/build-summary.sh
 4. Flipping `deferGeneration` back to false runs generation **exactly once**.
 5. `deferGeneration` omitted → byte-identical behaviour to the existing tests (no regression).
 
-**Manager review record:** `pending`
+**Manager review record:** `accepted 2026-08-15` with two deviations, merged as `15c7275`.
+
+- Implementation correct and thoughtful: it identified that React defers map
+  updaters, so the cache-hit classification must happen synchronously outside the
+  updater or `toCompute` would not be ready. It also exported
+  `runToolpathGenerationEffect` so the deferral decision is unit-testable without
+  a React renderer.
+- **Mutation-checked**: blanking pending operations again, ignoring
+  `deferGeneration`, and seeding the map from `prev` (so removed operations leak)
+  each made the suite fail.
+- **Deviation 1 (accepted):** the worker put its tests in a new
+  `src/app/useToolpathGenerationScheduling.test.ts` rather than the allowed
+  `useToolpathGeneration.test.ts`. Substantively fine — `scripts/run-tests.ts`
+  discovers `src/**/*.test.ts`, the existing file was left untouched so
+  requirement 5 (no regression with `deferGeneration` omitted) is satisfied by
+  construction, and splitting a 600-line test file is an improvement. Recorded
+  rather than re-dispatched.
+- **Deviation 2 (fixed by the manager):** adding that file required an
+  `src/app/INDEX.md` entry in the same change per AGENTS.md, and the worker did
+  not add one. `docs:check` does not enforce per-file index entries, so the build
+  gate stayed green — the rule is real but unguarded. Manager added the entry.
+
+## Status: all slices complete
+
+S1 → S4 merged. Remaining manager work: e2e re-run, PR with `Closes #518`.
