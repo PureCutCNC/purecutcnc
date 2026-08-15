@@ -18,15 +18,16 @@
 
 /**
  * Tests for the pure change-detection module behind the per-operation
- * toolpath cache (issue #518, slices S1 + S1b).
+ * toolpath cache (issue #518, slices S1 + S1b + S2's `name` correction).
  *
  * `diffToolpathInputs` must report exactly the feature ids whose
  * toolpath-relevant input changed, and must raise `invalidatesEveryOperation`
  * for every input that no per-feature narrowing can cover. Display-only
- * instance fields (`name`, `visible`, `locked`, `folderId`) must never
- * invalidate anything. `modelAssets` is compared by key set plus reference
- * identity — a deep-equal but distinct asset is a change (conservative), and
- * the megabyte base64 payloads are never read.
+ * instance fields (`visible`, `locked`, `folderId`) must never invalidate
+ * anything; `name` is computation-relevant because it is embedded in
+ * user-visible toolpath warnings. `modelAssets` is compared by key set plus
+ * reference identity — a deep-equal but distinct asset is a change
+ * (conservative), and the megabyte base64 payloads are never read.
  */
 
 import { rectProfile } from '../../types/project'
@@ -146,10 +147,17 @@ function expectDisplayOnly(project: Project, next: Project, label: string): void
     )
   }
 
-  expectDisplayOnlyEqual({ name: 'renamed' }, 'name')
   expectDisplayOnlyEqual({ visible: false }, 'visible')
   expectDisplayOnlyEqual({ locked: true }, 'locked')
   expectDisplayOnlyEqual({ folderId: 'some-folder' }, 'folderId')
+
+  // `name` is NOT display-only: generators embed `feature.name` in
+  // user-visible toolpath warnings (drilling.ts, carving.ts), so a rename
+  // must invalidate or the CAM panel keeps showing the old name.
+  const renamed = patchFeature(project, 'f1', { name: 'renamed' })
+  const renamedRow = renamed.features.find((feature) => feature.id === 'f1')
+  assert(renamedRow !== undefined, 'renamed row should exist')
+  assert(!featureInstanceComputationEquals(row, renamedRow), 'name change must compare unequal')
 
   const moved = patchFeature(project, 'f1', {
     transform: { ...row.transform, e: 12 },
@@ -177,10 +185,18 @@ function expectDisplayOnly(project: Project, next: Project, label: string): void
 {
   console.log('3. Display-only changes invalidate nothing...')
   const project = baseProject()
-  expectDisplayOnly(project, patchFeature(project, 'f2', { name: 'renamed' }), 'name')
   expectDisplayOnly(project, patchFeature(project, 'f2', { visible: false }), 'visible')
   expectDisplayOnly(project, patchFeature(project, 'f2', { locked: true }), 'locked')
   expectDisplayOnly(project, patchFeature(project, 'f2', { folderId: 'some-folder' }), 'folderId')
+}
+
+{
+  console.log('3b. Name change reports that id only (warnings embed feature.name)...')
+  const project = baseProject()
+  const next = patchFeature(project, 'f2', { name: 'renamed' })
+  const diff = diffToolpathInputs(project, next)
+  assert(setEquals(diff.changedFeatureIds, ['f2']), `expected only f2, got ${[...diff.changedFeatureIds].join(',')}`)
+  assert(!diff.invalidatesEveryOperation, 'name change must not invalidate everything')
 }
 
 {

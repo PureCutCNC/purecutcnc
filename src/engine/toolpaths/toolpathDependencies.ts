@@ -39,8 +39,14 @@ import { projectsEqual } from '../../store/helpers/normalize'
 
 // Compare only the fields toolpath generation reads through the resolver
 // (`resolveFeatureRow`, src/store/helpers/resolveFeatures.ts): definitionId,
-// transform, constraints, z_top, z_bottom. Excluded (display-only):
-//   name, visible, locked, folderId
+// name, transform, constraints, z_top, z_bottom. Excluded (display-only):
+//   visible, locked, folderId
+// `name` is computation-relevant because it is embedded in user-visible
+// toolpath warnings (`warnings[].params.name` — drilling.ts, carving.ts), so a
+// cached result would otherwise keep the old name in the CAM panel after a
+// rename. The alternative not taken: warnings could carry feature ids resolved
+// to names at display time, which would let renames stop invalidating, but
+// that touches every warning site and its i18n params and is out of scope.
 // `folderId` is excluded deliberately: a feature's machining role lives on its
 // definition (`FeatureDefinition.operation`), and `sectionForOperation`
 // (`src/store/helpers/featureRoles.ts`) derives the tree section from that
@@ -62,6 +68,7 @@ export function featureInstanceComputationEquals(a: FeatureInstance, b: FeatureI
   )
   return (
     a.definitionId === b.definitionId
+    && a.name === b.name
     && transformEqual
     && (a.constraints === b.constraints || projectsEqual(a.constraints, b.constraints))
     && a.z_top === b.z_top
