@@ -789,3 +789,31 @@ would look successful while leaving the worst case largely intact.
 
 **The required property must hold on all three**, and the violation counts above
 are the before-figures to drive to zero.
+
+#### S8 addendum 2 — the parallel pattern is the worst case
+
+Two further user projects, saved as `pocket-feed-reduction-parallel.camj` and
+`pocket-feed-reduction-parallel-2.camj`. Same tool and settings as the others
+(inches, 0.25″, 0.32 stepover, 60% slot feed, `engagement`), but
+`pocketPattern: 'parallel'`:
+
+| Fixture | Pattern | Path | Reduced | Unjustified |
+| --- | --- | --- | --- | --- |
+| pocket-feed-reduction | offset | 44.1″ | 50% | 33% of reduced, 146 moves |
+| pocket-feed-reduction-2 | offset | 48.1″ | 66% | 40% of reduced, 253 moves |
+| pocket-feed-reduction-3 | offset | 43.3″ | 58% | 43% of reduced, 434 moves |
+| pocket-feed-reduction-parallel | parallel | 49.2″ | 66% | **52%** of reduced, 74 moves |
+| pocket-feed-reduction-parallel-2 | parallel | 59.5″ | **71%** | **56%** of reduced, 84 moves |
+
+Parallel is structurally worse: long fill lines separated by short stepover
+links, with the boundary contour and first fill line both classified as slotting.
+Each recovery window therefore opens at the start of a long straightforward cut,
+so a single event wastes far more path than the short ring segments of the offset
+pattern do.
+
+**These two are the acceptance bar.** A fix that clears the offset fixtures but
+not these would pass a test written against the simple case while leaving the
+worst real-world behaviour intact — 23.6″ of unearned slowing on a 59.5″ path.
+Note also that the offending moves are fewer but longer (84 moves covering 23.6″
+versus 434 covering 10.9″), so a violation *count* alone understates parallel;
+assert on path length as well.
