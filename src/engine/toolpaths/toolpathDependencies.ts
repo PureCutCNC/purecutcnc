@@ -396,25 +396,28 @@ export function operationFootprint(project: Project, operation: Operation): Oper
  * - `bounds === null` — the footprint is unknown, so relevance cannot be
  *   determined. Unknown means invalidate.
  * - `readsWholeModel` — the operation cuts the whole model, so every changed
- *   feature invalidates it, except a feature that is construction geometry or
- *   a region in **both** snapshots (issue #199 guarantees construction
- *   geometry can never be a machining target, region mask, or CSG input; the
- *   `constructionExclusion` guard test fails the build if that regresses —
- *   and a region can only filter an operation whose target list contains it,
- *   which a stock-targeted operation has none of).
+ *   feature invalidates it, except one whose construction or region role
+ *   holds on every side where the feature exists (`roleExemptEverywhere`).
+ *   Issue #199 guarantees construction geometry can never be a machining
+ *   target, region mask, or CSG input — the `constructionExclusion` guard
+ *   test fails the build if that regresses — and a region can only filter an
+ *   operation whose target list contains it, which a stock-targeted
+ *   operation has none of.
  * - otherwise, for each changed id: a direct target always invalidates
  *   (including a region — a targeted region is the operation's mask); a
- *   feature that is construction on both sides is skipped; a feature that is
- *   a region in **both** snapshots and not a direct target is skipped — the
- *   generators split exactly `operation.target.featureIds` and never scan
- *   `project.features` for regions, so a non-target region cannot reach this
- *   operation, and requiring region-ness on both sides mirrors the
- *   construction rule so a to/from-region conversion still invalidates; any
- *   other changed feature invalidates when its world bbox in `previous`
- *   **or** in `next` intersects the footprint — checking both sides is what
- *   catches a feature that moved into or out of the footprint. A side where
- *   the feature does not exist contributes nothing; a side where it exists
- *   but its bbox cannot be computed invalidates.
+ *   feature whose construction role holds on every side where it exists is
+ *   skipped; a feature whose region role holds on every side where it exists
+ *   and that is not a direct target is skipped — the generators split
+ *   exactly `operation.target.featureIds` and never scan `project.features`
+ *   for regions, so a non-target region cannot reach this operation.
+ *   Requiring the role on every side where the feature exists, with absence
+ *   raising no objection, is what lets a newly added or removed
+ *   region/construction feature stay exempt while a to/from-role conversion
+ *   still invalidates; any other changed feature invalidates when its world
+ *   bbox in `previous` **or** in `next` intersects the footprint — checking
+ *   both sides is what catches a feature that moved into or out of the
+ *   footprint. A side where the feature does not exist contributes nothing;
+ *   a side where it exists but its bbox cannot be computed invalidates.
  *
  * Bbox intersection is inclusive: touching bounds count as intersecting.
  */
@@ -429,39 +432,45 @@ export function operationAffectedByChange(
 
   if (footprint.readsWholeModel) {
     for (const id of changedFeatureIds) {
-      const constructionOnBothSides =
-        featureConstructionStatus(previous, id) === true
-        && featureConstructionStatus(next, id) === true
       // A stock-targeted operation has no target list, so no region can be a
-      // mask for it: a region on both sides is as irrelevant as construction
-      // geometry, while a to/from-region conversion still invalidates.
-      const regionOnBothSides =
-        featureRegionStatus(previous, id) === true
-        && featureRegionStatus(next, id) === true
-      if (!constructionOnBothSides && !regionOnBothSides) return true
+      // mask for it: a region is as irrelevant as construction geometry,
+      // while a to/from-role conversion still invalidates.
+      const constructionExempt = roleExemptEverywhere(
+        featureConstructionStatus(previous, id),
+        featureConstructionStatus(next, id),
+      )
+      const regionExempt = roleExemptEverywhere(
+        featureRegionStatus(previous, id),
+        featureRegionStatus(next, id),
+      )
+      if (!constructionExempt && !regionExempt) return true
     }
     return false
   }
 
   for (const id of changedFeatureIds) {
     if (footprint.targetFeatureIds.has(id)) return true
-    if (
-      featureConstructionStatus(previous, id) === true
-      && featureConstructionStatus(next, id) === true
-    ) {
+    if (roleExemptEverywhere(
+      featureConstructionStatus(previous, id),
+      featureConstructionStatus(next, id),
+    )) {
       continue
     }
     // A region that is not a direct target can only filter an operation whose
     // target list contains it: every generator splits exactly
     // `operation.target.featureIds` (`splitFeatureTargets`) and never scans
     // `project.features` for regions, so a change to a non-target region
-    // cannot reach this operation. Requiring region-ness on both sides
-    // mirrors the construction rule: converting a feature to or from a region
-    // changes what the operation sees and must still invalidate. Targeted
-    // regions never get here — the target check above returns first.
+    // cannot reach this operation. Requiring the role on every side where
+    // the feature exists, with absence raising no objection, mirrors the
+    // construction rule: converting a feature to or from a region changes
+    // what the operation sees and must still invalidate, while an added or
+    // removed region stays exempt. Targeted regions never get here — the
+    // target check above returns first.
     if (
-      featureRegionStatus(previous, id) === true
-      && featureRegionStatus(next, id) === true
+      roleExemptEverywhere(
+        featureRegionStatus(previous, id),
+        featureRegionStatus(next, id),
+      )
       && !footprint.targetFeatureIds.has(id)
     ) {
       continue
@@ -522,6 +531,30 @@ function featureRegionStatus(project: Project, id: string): boolean | null {
   const definition = project.featureDefinitions[row.definitionId]
   if (!definition) return null
   return isRegion(definition)
+}
+
+/**
+ * Whether a machining-role exemption (construction or region) holds for one
+ * feature across two snapshots, given its three-state role status on each
+ * side: `true` = the feature holds the role, `false` = it does not,
+ * `null` = it is absent on that side.
+ *
+ * The role must hold on every side where the feature exists, and absence
+ * raises no objection:
+ *
+ * - present on both sides and holding the role on both → exempt;
+ * - **added** or **removed** while holding the role → exempt — the S6b fix:
+ *   the earlier "role on both sides" test never fired for an added feature
+ *   (its `previous` status is `null`), so drawing a region or construction
+ *   feature still regenerated everything;
+ * - converted to or from the role → not exempt, in both directions;
+ * - holding the role on neither side (both `false`, or absent on both) →
+ *   not exempt — the caller falls through to the bbox check, which is safe.
+ */
+function roleExemptEverywhere(previousStatus: boolean | null, nextStatus: boolean | null): boolean {
+  return previousStatus !== false
+    && nextStatus !== false
+    && (previousStatus === true || nextStatus === true)
 }
 
 /**
