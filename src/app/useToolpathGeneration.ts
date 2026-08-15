@@ -157,6 +157,33 @@ export function isCacheHit(entry: ToolpathCacheEntry, operation: Operation, proj
   return !operationAffectedByChange(entry.footprint, entry.project, project, diff.changedFeatureIds)
 }
 
+/**
+ * Build the cache entry the hook writes when a toolpath is generated. This is
+ * the **single definition** of what an entry contains (issue #518, S3c): the
+ * hook's write path and the test suite both consume this builder, so the
+ * predicate is always tested against the exact entry shape production writes.
+ *
+ * The footprint is computed from the same `project` snapshot the result was
+ * generated from, at the point the entry is written, so it can never disagree
+ * with the inputs the result was generated from.
+ */
+export function buildToolpathCacheEntry(
+  project: Project,
+  operation: Operation,
+  result: ToolpathResult,
+): ToolpathCacheEntry {
+  return {
+    result,
+    operation,
+    stock: project.stock,
+    project,
+    footprint: operationFootprint(project, operation),
+    tools: project.tools,
+    tabs: project.tabs,
+    clamps: project.clamps,
+  }
+}
+
 // Double-rAF: the first rAF fires before the current paint, the second
 // fires in the next frame — guaranteeing one browser paint in between.
 // This ensures the spinner is visually rendered before computation blocks.
@@ -297,16 +324,7 @@ export function useToolpathGeneration(project: Project, selectedOperation: Opera
       }
 
       if (result) {
-        toolpathCacheRef.current.set(operation.id, {
-          result,
-          operation,
-          stock: project.stock,
-          project,
-          footprint: operationFootprint(project, operation),
-          tools: project.tools,
-          tabs: project.tabs,
-          clamps: project.clamps,
-        })
+        toolpathCacheRef.current.set(operation.id, buildToolpathCacheEntry(project, operation, result))
       }
 
       return result
