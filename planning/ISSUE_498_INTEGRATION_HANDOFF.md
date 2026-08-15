@@ -769,3 +769,23 @@ scripts/build-summary.sh
 ```
 
 **Manager review record:** pending.
+
+#### S8 addendum — the defect grows with geometric complexity
+
+Two further user projects, saved as `pocket-feed-reduction-2.camj` and
+`pocket-feed-reduction-3.camj` (all three are inches, 0.25″ cutter, 0.32
+stepover, 60% slot feed, `engagement` mode):
+
+| Fixture | Fed moves | Path | Reduced | Unjustified |
+| --- | --- | --- | --- | --- |
+| pocket-feed-reduction | 750 | 44.1″ | 50% | 7.3″ — 33% of reduced, 146 moves |
+| pocket-feed-reduction-2 | 1551 | 48.1″ | 66% | 12.8″ — 40% of reduced, 253 moves |
+| pocket-feed-reduction-3 | 1967 | 43.3″ | 58% | 10.9″ — **43%** of reduced, 434 moves |
+
+The share of unearned slowing **rises** with complexity: more rings and more
+ring-to-ring links mean more genuine slots, and each one opens a recovery window
+that swallows the cutting after it. A fix validated only on the simplest fixture
+would look successful while leaving the worst case largely intact.
+
+**The required property must hold on all three**, and the violation counts above
+are the before-figures to drive to zero.
