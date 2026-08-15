@@ -20,6 +20,7 @@
  */
 
 import type { ProjectStore } from '../store/types'
+import { newProject, type Operation } from '../types/project'
 import { createFeatureTreeActions, type FeatureTreeActions } from './useFeatureTreeActions'
 
 function assert(condition: boolean, message: string) {
@@ -61,6 +62,7 @@ function makeActions(
     startCopyClamp: noop,
     setStockSourceFeature: noop,
     addOperation: (() => null) satisfies ProjectStore['addOperation'],
+    updateOperation: noopVoid,
     makeUnique: noopVoid,
     groupSelectedFeaturesIntoNewFolder: () => '',
     assignFeaturesToFolder: noopVoid,
@@ -113,6 +115,111 @@ function testDeleteFeaturesDoesNotSwitchTabs() {
   console.log('deleteFeatures dispatch shape: PASSED')
 }
 
+function makeOperation(id: string, featureIds: string[]): Operation {
+  return {
+    id,
+    name: id,
+    kind: 'pocket',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds },
+    toolRef: null,
+    stepdown: 1,
+    stepover: 0.5,
+    feed: 100,
+    plungeFeed: 50,
+    rpm: 10000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: false,
+    finishFloor: false,
+    carveDepth: 0,
+    maxCarveDepth: 0,
+  }
+}
+
+function testAddToOperationDispatchShape() {
+  console.log('Testing addToOperation dispatch shape...')
+
+  const calls: string[] = []
+  const patches: Array<Partial<Operation>> = []
+  const actions = makeActions(calls, {
+    project: { ...newProject('test'), operations: [makeOperation('op-1', ['feature-1'])] },
+    updateOperation: (id, patch) => {
+      calls.push(`updateOperation:${id}`)
+      patches.push(patch)
+    },
+  })
+  actions.addToOperation(['feature-2'], 'op-1')
+
+  assert(
+    calls.join('|') === 'updateOperation:op-1|closeTreeContextMenu',
+    'addToOperation updates the operation and closes the menu',
+  )
+  const target = patches[0]?.target
+  assert(
+    target?.source === 'features'
+      && Array.isArray(target.featureIds)
+      && target.featureIds.join() === 'feature-1,feature-2',
+    'addToOperation merges the selection into the operation target',
+  )
+
+  console.log('addToOperation dispatch shape: PASSED')
+}
+
+function testRemoveFromOperationDispatchShape() {
+  console.log('Testing removeFromOperation dispatch shape...')
+
+  const calls: string[] = []
+  const patches: Array<Partial<Operation>> = []
+  const actions = makeActions(calls, {
+    project: { ...newProject('test'), operations: [makeOperation('op-1', ['feature-1', 'feature-2'])] },
+    updateOperation: (id, patch) => {
+      calls.push(`updateOperation:${id}`)
+      patches.push(patch)
+    },
+  })
+  actions.removeFromOperation(['feature-1'], 'op-1')
+
+  assert(
+    calls.join('|') === 'updateOperation:op-1|closeTreeContextMenu',
+    'removeFromOperation updates the operation and closes the menu',
+  )
+  const target = patches[0]?.target
+  assert(
+    target?.source === 'features'
+      && Array.isArray(target.featureIds)
+      && target.featureIds.join() === 'feature-2',
+    'removeFromOperation drops the selection from the operation target',
+  )
+
+  console.log('removeFromOperation dispatch shape: PASSED')
+}
+
+function testOperationTargetActionsGuardMissingOperations() {
+  console.log('Testing operation-target action guards...')
+
+  const calls: string[] = []
+  const stockOp = { ...makeOperation('op-1', []), target: { source: 'stock' as const } }
+  const actions = makeActions(calls, {
+    project: { ...newProject('test'), operations: [stockOp] },
+    updateOperation: (id) => calls.push(`updateOperation:${id}`),
+  })
+  actions.addToOperation(['feature-1'], 'missing')
+  actions.removeFromOperation(['feature-1'], 'op-1')
+
+  assert(
+    calls.join('|') === 'closeTreeContextMenu|closeTreeContextMenu',
+    'missing and stock-target operations close the menu without updating',
+  )
+
+  console.log('operation-target action guards: PASSED')
+}
+
 function testUseAsStockLeavesMenuOpen() {
   console.log('Testing useAsStock dispatch shape...')
 
@@ -132,6 +239,9 @@ try {
   testMoveFeatureDispatchShape()
   testDeleteFeaturesDoesNotSwitchTabs()
   testUseAsStockLeavesMenuOpen()
+  testAddToOperationDispatchShape()
+  testRemoveFromOperationDispatchShape()
+  testOperationTargetActionsGuardMissingOperations()
   console.log('\nAll useFeatureTreeActions tests PASSED.')
 } catch (e) {
   console.error(e)

@@ -17,11 +17,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import { validQuickOperationsForFeature, type QuickOperation } from '../components/cam/operationValidity'
+import { addToOperationCandidates, removeFromOperationCandidates, type RemoveFromOperationCandidate } from '../components/cam/operationTargetLists'
 import { useOutsideDismiss } from '../hooks/useOutsideDismiss'
 import { useProjectStore } from '../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../store/helpers/featureDefinitions'
 import { commonSectionOfIds } from '../store/helpers/featureRoles'
-import type { Clamp, Project, SketchFeature, Tab } from '../types/project'
+import type { Clamp, Operation, Project, SketchFeature, Tab } from '../types/project'
 import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
 
 export interface TreeContextMenuState {
@@ -44,6 +45,12 @@ export interface QuickOpsSubmenuPosition {
 }
 
 export interface FolderSubmenuPosition {
+  top: number
+  left: number
+  side: 'right' | 'left'
+}
+
+export interface OperationTargetSubmenuPosition {
   top: number
   left: number
   side: 'right' | 'left'
@@ -94,6 +101,12 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
   addToFolderSubmenu: FolderSubmenuPosition | null
   setAddToFolderSubmenu: Dispatch<SetStateAction<FolderSubmenuPosition | null>>
   menuFeatureFolders: MenuFolderEntry[]
+  menuAddToOperationCandidates: Operation[]
+  menuRemoveFromOperationCandidates: RemoveFromOperationCandidate[]
+  addToOperationSubmenu: OperationTargetSubmenuPosition | null
+  setAddToOperationSubmenu: Dispatch<SetStateAction<OperationTargetSubmenuPosition | null>>
+  removeFromOperationSubmenu: OperationTargetSubmenuPosition | null
+  setRemoveFromOperationSubmenu: Dispatch<SetStateAction<OperationTargetSubmenuPosition | null>>
   menuSelectionInGroupedFolder: boolean
   menuSelectionSectionsMixed: boolean
   menuSelectionIsGroup: boolean
@@ -107,11 +120,15 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
   closeTreeContextMenu: () => void
   openQuickOpsSubmenu: (trigger: HTMLElement) => void
   openAddToFolderSubmenu: (trigger: HTMLElement) => void
+  openAddToOperationSubmenu: (trigger: HTMLElement) => void
+  openRemoveFromOperationSubmenu: (trigger: HTMLElement) => void
 } {
   const [treeContextMenu, setTreeContextMenu] = useState<TreeContextMenuState | null>(null)
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
   const [quickOpsSubmenu, setQuickOpsSubmenu] = useState<QuickOpsSubmenuPosition | null>(null)
   const [addToFolderSubmenu, setAddToFolderSubmenu] = useState<FolderSubmenuPosition | null>(null)
+  const [addToOperationSubmenu, setAddToOperationSubmenu] = useState<OperationTargetSubmenuPosition | null>(null)
+  const [removeFromOperationSubmenu, setRemoveFromOperationSubmenu] = useState<OperationTargetSubmenuPosition | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
   const menuFeature = useMemo(
@@ -146,6 +163,24 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     [menuFeature, treeContextMenu, project]
   )
 
+  const menuAddToOperationCandidates = useMemo<Operation[]>(
+    () => (
+      treeContextMenu?.entityType === 'feature'
+        ? addToOperationCandidates(project, treeContextMenu.ids)
+        : []
+    ),
+    [treeContextMenu, project],
+  )
+
+  const menuRemoveFromOperationCandidates = useMemo<RemoveFromOperationCandidate[]>(
+    () => (
+      treeContextMenu?.entityType === 'feature'
+        ? removeFromOperationCandidates(project, treeContextMenu.ids)
+        : []
+    ),
+    [treeContextMenu, project],
+  )
+
   const openFeatureContextMenu = useCallback((featureId: string, x: number, y: number) => {
     const nextSelection = useProjectStore.getState().selection
     const featureIds = nextSelection.selectedFeatureIds.includes(featureId)
@@ -177,6 +212,8 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     setTreeContextMenu(null)
     setMenuPosition(null)
     setQuickOpsSubmenu(null)
+    setAddToOperationSubmenu(null)
+    setRemoveFromOperationSubmenu(null)
   }, [])
 
   const openQuickOpsSubmenu = useCallback((trigger: HTMLElement) => {
@@ -193,6 +230,26 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     const rect = trigger.getBoundingClientRect()
     const openLeft = rect.right + 200 > window.innerWidth
     setAddToFolderSubmenu({
+      top: rect.top,
+      left: openLeft ? rect.left : rect.right,
+      side: openLeft ? 'left' : 'right',
+    })
+  }, [])
+
+  const openAddToOperationSubmenu = useCallback((trigger: HTMLElement) => {
+    const rect = trigger.getBoundingClientRect()
+    const openLeft = rect.right + 200 > window.innerWidth
+    setAddToOperationSubmenu({
+      top: rect.top,
+      left: openLeft ? rect.left : rect.right,
+      side: openLeft ? 'left' : 'right',
+    })
+  }, [])
+
+  const openRemoveFromOperationSubmenu = useCallback((trigger: HTMLElement) => {
+    const rect = trigger.getBoundingClientRect()
+    const openLeft = rect.right + 200 > window.innerWidth
+    setRemoveFromOperationSubmenu({
       top: rect.top,
       left: openLeft ? rect.left : rect.right,
       side: openLeft ? 'left' : 'right',
@@ -309,6 +366,8 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     menuHasMultipleSelection,
     menuCanUseAsStock,
     menuHasLockedSelection,
+    menuAddToOperationCandidates.length,
+    menuRemoveFromOperationCandidates.length,
   ])
 
   useEffect(() => {
@@ -333,6 +392,12 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     addToFolderSubmenu,
     setAddToFolderSubmenu,
     menuFeatureFolders,
+    menuAddToOperationCandidates,
+    menuRemoveFromOperationCandidates,
+    addToOperationSubmenu,
+    setAddToOperationSubmenu,
+    removeFromOperationSubmenu,
+    setRemoveFromOperationSubmenu,
     menuSelectionInGroupedFolder,
     menuSelectionSectionsMixed,
     menuSelectionIsGroup,
@@ -346,5 +411,7 @@ export function useTreeContextMenu({ project }: UseTreeContextMenuArgs): {
     closeTreeContextMenu,
     openQuickOpsSubmenu,
     openAddToFolderSubmenu,
+    openAddToOperationSubmenu,
+    openRemoveFromOperationSubmenu,
   }
 }

@@ -23,7 +23,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { useProjectStore } from '../store/projectStore'
 import { projectWithFeatures } from '../test/projectFixtures'
-import type { Clamp, Project, SketchFeature, Tab } from '../types/project'
+import type { Clamp, Operation, Project, SketchFeature, Tab } from '../types/project'
 import { newProject, rectProfile } from '../types/project'
 import { useTreeContextMenu } from './useTreeContextMenu'
 
@@ -91,6 +91,33 @@ function makeTab(id: string): Tab {
     z_top: 0,
     z_bottom: -1,
     visible: true,
+  }
+}
+
+function makePocketOperation(id: string, featureIds: string[]): Operation {
+  return {
+    id,
+    name: id,
+    kind: 'pocket',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds },
+    toolRef: null,
+    stepdown: 1,
+    stepover: 0.5,
+    feed: 100,
+    plungeFeed: 50,
+    rpm: 10000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: false,
+    finishFloor: false,
+    carveDepth: 0,
+    maxCarveDepth: 0,
   }
 }
 
@@ -344,6 +371,46 @@ function testClampContextMenuCarriesFullSelection() {
   console.log('clamp context menu full selection: PASSED')
 }
 
+function testOperationTargetCandidateLists() {
+  console.log('Testing operation-target candidate lists...')
+
+  const feature1 = makeFeature('feature-1', { operation: 'subtract' })
+  const feature2 = makeFeature('feature-2', { operation: 'subtract' })
+  const project = {
+    ...makeProject({ features: [feature1, feature2] }),
+    operations: [makePocketOperation('op-1', ['feature-1'])],
+  }
+  setSelectedFeatureIds([])
+
+  let didOpen = false
+  const result = renderUseTreeContextMenu({ project }, (current) => {
+    if (!didOpen) {
+      didOpen = true
+      current.openFeatureContextMenu('feature-2', 12, 34)
+    }
+  })
+
+  assert(
+    result.menuAddToOperationCandidates.length === 1 && result.menuAddToOperationCandidates[0].id === 'op-1',
+    'add candidates list the compatible operation',
+  )
+  assert(result.menuRemoveFromOperationCandidates.length === 0, 'feature in no operation has no remove candidates')
+
+  let didOpenMember = false
+  const memberResult = renderUseTreeContextMenu({ project }, (current) => {
+    if (!didOpenMember) {
+      didOpenMember = true
+      current.openFeatureContextMenu('feature-1', 12, 34)
+    }
+  })
+
+  assert(memberResult.menuRemoveFromOperationCandidates.length === 1, 'feature in an operation has a remove candidate')
+  assert(memberResult.menuRemoveFromOperationCandidates[0].canRemove === false, 'removing the only machining feature is flagged invalid')
+  assert(memberResult.menuAddToOperationCandidates.length === 0, 'feature already in the operation has no add candidate')
+
+  console.log('operation-target candidate lists: PASSED')
+}
+
 function testUnselectedClampRemainsSingleton() {
   console.log('Testing unselected clamp remains singleton...')
 
@@ -379,6 +446,7 @@ try {
   testUnselectedTabRemainsSingleton()
   testClampContextMenuCarriesFullSelection()
   testUnselectedClampRemainsSingleton()
+  testOperationTargetCandidateLists()
   console.log('\nAll useTreeContextMenu tests PASSED.')
 } catch (e) {
   console.error(e)

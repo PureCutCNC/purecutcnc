@@ -342,6 +342,8 @@ export const featureTreeEn = {
   'featureTree.contextMenu.makeUnique': 'Make unique',
   'featureTree.contextMenu.selectLinked': 'Select linked instances',
   'featureTree.contextMenu.createOperation': 'Create operation',
+  'featureTree.contextMenu.addToOperation': 'Add to operation',
+  'featureTree.contextMenu.removeFromOperation': 'Remove from operation',
   'featureTree.contextMenu.editSketch': 'Edit sketch',
   'featureTree.contextMenu.addConstraint': 'Add constraint',
   'featureTree.contextMenu.copy': 'Copy',
@@ -371,6 +373,9 @@ export const featureTreeEn = {
   'featureTree.contextMenu.addToFolderMixedTooltip': 'Features, regions, and construction geometry keep separate folders — select one kind',
   'featureTree.contextMenu.joinDisabledTooltip': 'Select two or more features to join',
   'featureTree.contextMenu.useAsStockDisabledTooltip': 'Feature must be an add operation with a closed profile',
+  'featureTree.contextMenu.addToOperationEmptyTooltip': 'No compatible operations',
+  'featureTree.contextMenu.removeFromOperationEmptyTooltip': 'Not used in any operation',
+  'featureTree.contextMenu.removeWouldInvalidateTooltip': 'Removing this would make the operation invalid',
 
   // ── Properties: tab shape ──
   'featureTree.properties.tabShape': 'Shape',
