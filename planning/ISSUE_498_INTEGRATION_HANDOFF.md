@@ -680,3 +680,92 @@ scripts/build-summary.sh
 ```
 
 **Manager review record:** pending.
+
+### S8 — Stop holding the reduced feed into already-cleared material
+
+**Reported from real use, then reproduced.** On a user's part (0.25″ cutter,
+0.32 stepover ratio, 60% slot feed, `engagement` mode, rounded corners) two
+adjacent cuts near the island both render at slot feed. The lower one genuinely
+bridges two cleared sides — a true slot, correctly slowed. The upper one runs
+through **already-cleared material** and should be at full feed. Mirrored on the
+opposite side, because the geometry is symmetric.
+
+Measured on that file, saved as `src/engine/test-fixtures/pocket-feed-reduction.camj`:
+
+| | |
+| --- | --- |
+| Nominal engagement for this stepover | 69° |
+| Path at reduced feed | 22.1″ of 44.1″ (50%) |
+| **Of that, unjustified** | **7.3″ — 33% of the reduced path** |
+| Moves affected | **146 of 750** |
+
+"Unjustified" means the estimator's own measurement at that move is **at or below
+nominal** — the cutter is in cleared air or cutting no harder than an ordinary
+stepover — while the emitted `feedScale` is still reduced. On the synthetic
+island fixture the same query finds moves at literally **0°** emitting 0.40.
+
+**Cause is the quantizer, not the estimator.** The estimator is right; it reports
+0–67° at these moves. The reduced feed is carried forward by the rise hysteresis
+and the minimum fragment length after a genuine slot. Measured recovery cost:
+
+```
+slot burst 4.8 mm, then 130 mm at exactly nominal
+  -> 0.40 for 15.6 mm, then 1.00
+```
+
+**This settles the S6 disagreement against the worker.** S6's RISKS block argued
+production genuinely sees those regions as engaged, so leaving them slow was
+correct, and on that basis it implemented only the perimeter-scaled minimum.
+Production's own estimator disproves it on real geometry. The declined fix is the
+one that matters.
+
+**Units are not implicated — audited, do not spend time there.** Every length in
+the engagement path derives from a tool dimension (`minFragmentLength =
+toolDiameter`, `baseStep = toolDiameter × 0.5`, `refinedStep = × 0.25`,
+`refineSpan = × 2`, `ringMinFragmentLength = min(toolDiameter, perimeter / 8)`).
+The only absolute constants are `1e-9`/`1e-12` degenerate-geometry guards, far
+below any real move in either unit system, and the rest are dimensionless. The
+classification is scale-invariant by construction; the inch project and the mm
+fixtures fail identically for the same reason.
+
+**Required fix.** A rise to **full feed** must not require the hysteresis margin.
+Hysteresis exists to stop chatter at bucket boundaries; `1.0` is the ceiling,
+with nothing above it to oscillate into. Bucket-to-bucket transitions keep the
+current rule. Combined with S6's perimeter-scaled minimum this should clear the
+146 moves.
+
+**Allowed files:** `src/engine/toolpaths/engagement.ts`,
+`src/engine/toolpaths/engagement.test.ts`, `src/engine/toolpaths/pocket.ts`,
+`src/engine/toolpaths/engagementPocket.test.ts`
+
+**Forbidden:** `src/types/project.ts`, `src/store/**`, `src/components/**`,
+`src/i18n/**`, `src/theme/**`, and the estimator's geometry — the engagement
+numbers are correct and must not move.
+
+**Required test, stated as a property over the new fixture:** load
+`src/engine/test-fixtures/pocket-feed-reduction.camj`, generate its pocket, and
+assert that **no move whose measured engagement is at or below nominal emits a
+reduced `feedScale`**. It currently fails with 146 violations; it must pass. Use
+the estimator to measure each move against everything swept before it, the same
+way the manager's probe does. Keep a synthetic case too, so the property is not
+tied to one file.
+
+**Also worth covering, untested until now:** this fixture is the first with
+`featureDefinitions` and instances (3 of each) and the first in **inches**. The
+S2d cache keys on canonical ring identity, and the S2d worker pinned 2 cache
+misses on a multi-region band — each miss resolves conservatively to `π`, i.e. a
+silently slow region. Report the miss count for this fixture rather than leaving
+it unbounded.
+
+**Invariants that must survive:** never-raise versus legacy, depth invariance,
+byte-identical `slots_only` output, and no collapse in arc-fittable run length —
+do not simply delete the minimum fragment rule.
+
+**Required checks:**
+
+```bash
+npx tsx scripts/run-tests.ts
+scripts/build-summary.sh
+```
+
+**Manager review record:** pending.
