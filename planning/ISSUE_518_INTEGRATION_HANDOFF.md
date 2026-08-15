@@ -996,4 +996,30 @@ Part B:
 9. Deleting an unrelated tool → **true**.
 10. Effect test: prime the cache, add an unrelated tool, assert the generator spy was not called.
 
-**Manager review record:** `pending`
+**Manager review record:** `accepted 2026-08-15`, merged as `0e53bd6`.
+
+- Both parts match the spec; `tabs`/`clamps` correctly left untouched with the reason recorded.
+- **Mutation-checked**: restoring the 4xD+stepover margin, dropping `stockToLeaveRadial`, reverting tools to whole-array identity, and ignoring tool changes entirely each made the suite fail.
+- **Verified against the user's own file** (`work/feed-reduction-test4.camj`), reproducing the filmed scenario:
+  - footprint X `0.00 .. 4.00` (was `-0.82 .. 4.82`) — now exactly the stock;
+  - rect drawn just outside the stock -> `isCacheHit = true` (no regeneration) — the reported case;
+  - plus an unrelated tool import -> still `true`;
+  - CONTROL: island drawn inside the pocket -> `isCacheHit = false`, still regenerates.
+- Manager added the `src/app/INDEX.md` entry for the new test file (worker omitted it again; `docs:check` does not enforce per-file index entries).
+
+## Status: ready for user review
+
+S1 -> S5 merged on `perf/issue-518-toolpath-cache`; PR #525.
+
+### Process note for the next slice
+
+Two review lessons from S5, both mine:
+
+1. **A margin chosen for safety is not free.** The 4x tool-diameter footprint margin
+   was picked with the reasoning "generous costs only extra invalidation". It cost
+   the entire user-visible benefit: on a 4" stock the halo reached 0.82" past the
+   stock edge, so nothing a user could draw near the part avoided regeneration. Any
+   tolerance in a perf fix needs deriving and a test that asserts its actual number.
+2. **Verify against the user's own file, in their scenario, before declaring done.**
+   The unit tests, the build gate, the e2e run and the G-code byte-identity check
+   were all green while the feature delivered nothing on a real project.
