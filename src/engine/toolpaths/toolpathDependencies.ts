@@ -48,7 +48,7 @@ import type {
 } from '../../types/project'
 import { getProfileBounds, getStockBounds } from '../../types/project'
 import { projectsEqual } from '../../store/helpers/normalize'
-import { isConstruction } from '../../store/helpers/featureRoles'
+import { isConstruction, isRegion } from '../../store/helpers/featureRoles'
 import { resolveFeatureInstances, resolveFeatureRow } from '../../store/helpers/resolveFeatures'
 import { getFeatureGeometryProfiles } from '../../text'
 import { normalizeToolForProject } from './geometry'
@@ -396,17 +396,25 @@ export function operationFootprint(project: Project, operation: Operation): Oper
  * - `bounds === null` — the footprint is unknown, so relevance cannot be
  *   determined. Unknown means invalidate.
  * - `readsWholeModel` — the operation cuts the whole model, so every changed
- *   feature invalidates it, except a feature that is construction geometry
- *   in **both** snapshots (issue #199 guarantees construction geometry can
- *   never be a machining target, region mask, or CSG input; the
- *   `constructionExclusion` guard test fails the build if that regresses).
- * - otherwise, for each changed id: a direct target always invalidates; a
- *   feature that is construction on both sides is skipped; any other changed
- *   feature invalidates when its world bbox in `previous` **or** in `next`
- *   intersects the footprint — checking both sides is what catches a feature
- *   that moved into or out of the footprint. A side where the feature does
- *   not exist contributes nothing; a side where it exists but its bbox
- *   cannot be computed invalidates.
+ *   feature invalidates it, except a feature that is construction geometry or
+ *   a region in **both** snapshots (issue #199 guarantees construction
+ *   geometry can never be a machining target, region mask, or CSG input; the
+ *   `constructionExclusion` guard test fails the build if that regresses —
+ *   and a region can only filter an operation whose target list contains it,
+ *   which a stock-targeted operation has none of).
+ * - otherwise, for each changed id: a direct target always invalidates
+ *   (including a region — a targeted region is the operation's mask); a
+ *   feature that is construction on both sides is skipped; a feature that is
+ *   a region in **both** snapshots and not a direct target is skipped — the
+ *   generators split exactly `operation.target.featureIds` and never scan
+ *   `project.features` for regions, so a non-target region cannot reach this
+ *   operation, and requiring region-ness on both sides mirrors the
+ *   construction rule so a to/from-region conversion still invalidates; any
+ *   other changed feature invalidates when its world bbox in `previous`
+ *   **or** in `next` intersects the footprint — checking both sides is what
+ *   catches a feature that moved into or out of the footprint. A side where
+ *   the feature does not exist contributes nothing; a side where it exists
+ *   but its bbox cannot be computed invalidates.
  *
  * Bbox intersection is inclusive: touching bounds count as intersecting.
  */
@@ -421,12 +429,16 @@ export function operationAffectedByChange(
 
   if (footprint.readsWholeModel) {
     for (const id of changedFeatureIds) {
-      if (
-        featureConstructionStatus(previous, id) !== true
-        || featureConstructionStatus(next, id) !== true
-      ) {
-        return true
-      }
+      const constructionOnBothSides =
+        featureConstructionStatus(previous, id) === true
+        && featureConstructionStatus(next, id) === true
+      // A stock-targeted operation has no target list, so no region can be a
+      // mask for it: a region on both sides is as irrelevant as construction
+      // geometry, while a to/from-region conversion still invalidates.
+      const regionOnBothSides =
+        featureRegionStatus(previous, id) === true
+        && featureRegionStatus(next, id) === true
+      if (!constructionOnBothSides && !regionOnBothSides) return true
     }
     return false
   }
@@ -436,6 +448,21 @@ export function operationAffectedByChange(
     if (
       featureConstructionStatus(previous, id) === true
       && featureConstructionStatus(next, id) === true
+    ) {
+      continue
+    }
+    // A region that is not a direct target can only filter an operation whose
+    // target list contains it: every generator splits exactly
+    // `operation.target.featureIds` (`splitFeatureTargets`) and never scans
+    // `project.features` for regions, so a change to a non-target region
+    // cannot reach this operation. Requiring region-ness on both sides
+    // mirrors the construction rule: converting a feature to or from a region
+    // changes what the operation sees and must still invalidate. Targeted
+    // regions never get here — the target check above returns first.
+    if (
+      featureRegionStatus(previous, id) === true
+      && featureRegionStatus(next, id) === true
+      && !footprint.targetFeatureIds.has(id)
     ) {
       continue
     }
@@ -482,6 +509,19 @@ function featureConstructionStatus(project: Project, id: string): boolean | null
   const definition = project.featureDefinitions[row.definitionId]
   if (!definition) return null
   return isConstruction(definition)
+}
+
+/**
+ * Whether `id` is a region (machining mask) in `project`: `true`/`false` when
+ * the row and its definition resolve, `null` when they do not (unknown). The
+ * operation role lives on the definition, never on the instance row.
+ */
+function featureRegionStatus(project: Project, id: string): boolean | null {
+  const row = project.features.find((feature) => feature.id === id)
+  if (!row) return null
+  const definition = project.featureDefinitions[row.definitionId]
+  if (!definition) return null
+  return isRegion(definition)
 }
 
 /**
