@@ -24,6 +24,9 @@
  * - `diffToolpathInputs` — across two project snapshots, which feature ids
  *   changed in a toolpath-relevant way, and is per-feature narrowing valid at
  *   all (or must every operation regenerate)?
+ * - `operationFootprint` / `operationAffectedByChange` — the spatial model
+ *   slice S3 narrows with: which world-XY region does one operation read, and
+ *   can a change to a given set of feature ids reach it?
  *
  * Every comparison is identity-first: deep compares run only for values whose
  * identity already differs, so an unchanged project stays O(n) with no
@@ -34,8 +37,21 @@
  * (`modelAssetsEquivalent` below).
  */
 
-import type { FeatureInstance, PersistedImportedMesh, Project, ProjectMeta } from '../../types/project'
+import type {
+  Bounds2D,
+  FeatureInstance,
+  Operation,
+  PersistedImportedMesh,
+  Project,
+  ProjectMeta,
+  SketchProfile,
+} from '../../types/project'
+import { getProfileBounds, getStockBounds } from '../../types/project'
 import { projectsEqual } from '../../store/helpers/normalize'
+import { isConstruction } from '../../store/helpers/featureRoles'
+import { resolveFeatureInstances, resolveFeatureRow } from '../../store/helpers/resolveFeatures'
+import { getFeatureGeometryProfiles } from '../../text'
+import { normalizeToolForProject } from './geometry'
 
 /**
  * The `ProjectMeta` fields read during toolpath generation.
@@ -236,4 +252,241 @@ export function diffToolpathInputs(previous: Project, next: Project): ToolpathIn
     || !modelAssetsEquivalent(previous.modelAssets, next.modelAssets)
 
   return { changedFeatureIds, invalidatesEveryOperation }
+}
+
+// ============================================================================
+// Per-operation read footprints (issue #518, slice S3a)
+// ============================================================================
+
+/**
+ * The world-XY region in which a feature change can affect one operation,
+ * plus the operation's direct targets. Pure: computed from the project and
+ * operation alone, mutates neither.
+ *
+ * The target-bbox model is sound because (verified against the generators,
+ * see the S3a slice instructions):
+ *
+ * - an island or obstacle only counts if it intersects the target union
+ *   (`resolver.ts`), so it lies inside the target bbox;
+ * - safe/travel Z derives from the operation's **target** spans plus stock
+ *   thickness and `operationClearanceZ` (`geometry.ts`) — no distant feature
+ *   can raise a retract;
+ * - protected-footprint paths only subtract where they intersect the
+ *   operation's own coverage;
+ * - rest machining is materialized as region features at creation time, so
+ *   there is no live operation-to-operation dependency.
+ */
+export interface OperationFootprint {
+  /** World XY region in which a feature change can affect this operation. `null` = unknown. */
+  bounds: Bounds2D | null
+  /** Ids the operation targets directly. */
+  targetFeatureIds: Set<string>
+  /** True when the operation reads the whole model (stock-targeted surfacing). */
+  readsWholeModel: boolean
+}
+
+/**
+ * Compute the footprint of one operation.
+ *
+ * Unknown means invalidate — this function never guesses:
+ *
+ * - an empty target list has no spatial anchor;
+ * - a target id whose row or definition fails to resolve;
+ * - a target whose geometry yields no profiles;
+ * - a missing tool, or one without a usable diameter (the footprint growth
+ *   is expressed in tool diameters, so a diameter-less tool has no measure).
+ */
+export function operationFootprint(project: Project, operation: Operation): OperationFootprint {
+  // Stock-targeted surface operations cut the whole model: no per-feature
+  // narrowing applies. `bounds` carries the stock's world rectangle so the
+  // `bounds === null` rule in `operationAffectedByChange` never fires for
+  // them and their construction-only exemption still works.
+  if (operation.target.source === 'stock') {
+    return {
+      bounds: getStockBounds(project.stock),
+      targetFeatureIds: new Set<string>(),
+      readsWholeModel: true,
+    }
+  }
+
+  const targetFeatureIds = new Set(operation.target.featureIds)
+  if (operation.target.featureIds.length === 0) {
+    return { bounds: null, targetFeatureIds, readsWholeModel: false }
+  }
+  const rowById = new Map(project.features.map((feature) => [feature.id, feature]))
+  for (const id of operation.target.featureIds) {
+    if (!rowById.has(id)) {
+      return { bounds: null, targetFeatureIds, readsWholeModel: false }
+    }
+  }
+  const resolvedTargets = resolveFeatureInstances(project, operation.target.featureIds)
+  if (resolvedTargets.length !== operation.target.featureIds.length) {
+    // Every id has a row (checked above), so a shortfall means a definition
+    // failed to resolve.
+    return { bounds: null, targetFeatureIds, readsWholeModel: false }
+  }
+
+  // Union the profile bounds of every resolved target. Text features resolve
+  // to one profile per glyph, so `getFeatureGeometryProfiles` must be used
+  // rather than reading `sketch.profile` directly — a single-profile read
+  // would under-measure multi-glyph text.
+  const targetUnion = unionProfileBounds(
+    resolvedTargets.flatMap((target) => getFeatureGeometryProfiles(target)),
+  )
+  if (targetUnion === null) {
+    return { bounds: null, targetFeatureIds, readsWholeModel: false }
+  }
+
+  const tool = operation.toolRef
+    ? project.tools.find((candidate) => candidate.id === operation.toolRef) ?? null
+    : null
+  if (!tool) {
+    return { bounds: null, targetFeatureIds, readsWholeModel: false }
+  }
+  const toolDiameter = normalizeToolForProject(tool, project).diameter
+  if (!Number.isFinite(toolDiameter) || toolDiameter <= 0) {
+    return { bounds: null, targetFeatureIds, readsWholeModel: false }
+  }
+
+  // Grow the target union into the region this operation's cutter can reach.
+  // The multiplier is relative to the tool diameter, so it is unit-free.
+  // Being generous costs only extra invalidation; being short ships a stale
+  // toolpath. `trochoidalCutWidth` and `stockToLeaveRadial` extend the swept
+  // region (trochoidal orbit width and radial stock leave); `stepover` is the
+  // per-pass offset, all in project length units.
+  const grow =
+    4 * toolDiameter
+    + (operation.trochoidalCutWidth ?? 0)
+    + (operation.stockToLeaveRadial ?? 0)
+    + operation.stepover
+
+  return {
+    bounds: {
+      minX: targetUnion.minX - grow,
+      maxX: targetUnion.maxX + grow,
+      minY: targetUnion.minY - grow,
+      maxY: targetUnion.maxY + grow,
+    },
+    targetFeatureIds,
+    readsWholeModel: false,
+  }
+}
+
+/**
+ * Whether a change to `changedFeatureIds` can affect the operation the
+ * footprint was recorded for. Pure: mutates neither project snapshot.
+ *
+ * Returns true (regenerate) when:
+ *
+ * - `bounds === null` — the footprint is unknown, so relevance cannot be
+ *   determined. Unknown means invalidate.
+ * - `readsWholeModel` — the operation cuts the whole model, so every changed
+ *   feature invalidates it, except a feature that is construction geometry
+ *   in **both** snapshots (issue #199 guarantees construction geometry can
+ *   never be a machining target, region mask, or CSG input; the
+ *   `constructionExclusion` guard test fails the build if that regresses).
+ * - otherwise, for each changed id: a direct target always invalidates; a
+ *   feature that is construction on both sides is skipped; any other changed
+ *   feature invalidates when its world bbox in `previous` **or** in `next`
+ *   intersects the footprint — checking both sides is what catches a feature
+ *   that moved into or out of the footprint. A side where the feature does
+ *   not exist contributes nothing; a side where it exists but its bbox
+ *   cannot be computed invalidates.
+ *
+ * Bbox intersection is inclusive: touching bounds count as intersecting.
+ */
+export function operationAffectedByChange(
+  footprint: OperationFootprint,
+  previous: Project,
+  next: Project,
+  changedFeatureIds: ReadonlySet<string>,
+): boolean {
+  if (footprint.bounds === null) return true
+  const bounds = footprint.bounds
+
+  if (footprint.readsWholeModel) {
+    for (const id of changedFeatureIds) {
+      if (
+        featureConstructionStatus(previous, id) !== true
+        || featureConstructionStatus(next, id) !== true
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
+  for (const id of changedFeatureIds) {
+    if (footprint.targetFeatureIds.has(id)) return true
+    if (
+      featureConstructionStatus(previous, id) === true
+      && featureConstructionStatus(next, id) === true
+    ) {
+      continue
+    }
+    const previousBounds = featureWorldBounds(previous, id)
+    if (previousBounds === undefined) return true
+    const nextBounds = featureWorldBounds(next, id)
+    if (nextBounds === undefined) return true
+    if (previousBounds !== null && boundsIntersect(previousBounds, bounds)) return true
+    if (nextBounds !== null && boundsIntersect(nextBounds, bounds)) return true
+  }
+  return false
+}
+
+/** Union of profile bounds; `null` when `profiles` is empty. */
+function unionProfileBounds(profiles: SketchProfile[]): Bounds2D | null {
+  let union: Bounds2D | null = null
+  for (const profile of profiles) {
+    const profileBounds = getProfileBounds(profile)
+    if (union === null) {
+      union = {
+        minX: profileBounds.minX,
+        maxX: profileBounds.maxX,
+        minY: profileBounds.minY,
+        maxY: profileBounds.maxY,
+      }
+    } else {
+      union.minX = Math.min(union.minX, profileBounds.minX)
+      union.maxX = Math.max(union.maxX, profileBounds.maxX)
+      union.minY = Math.min(union.minY, profileBounds.minY)
+      union.maxY = Math.max(union.maxY, profileBounds.maxY)
+    }
+  }
+  return union
+}
+
+/**
+ * Whether `id` is construction geometry in `project`: `true`/`false` when the
+ * row and its definition resolve, `null` when they do not (unknown). The
+ * operation role lives on the definition, never on the instance row.
+ */
+function featureConstructionStatus(project: Project, id: string): boolean | null {
+  const row = project.features.find((feature) => feature.id === id)
+  if (!row) return null
+  const definition = project.featureDefinitions[row.definitionId]
+  if (!definition) return null
+  return isConstruction(definition)
+}
+
+/**
+ * The world bbox of one feature in one snapshot: `null` when the feature does
+ * not exist on that side (contributes nothing), `undefined` when it exists
+ * but its bbox cannot be computed (missing definition, or a geometry kind
+ * with no profiles) — the caller must invalidate, never guess.
+ */
+function featureWorldBounds(project: Project, id: string): Bounds2D | null | undefined {
+  const row = project.features.find((feature) => feature.id === id)
+  if (!row) return null
+  const resolved = resolveFeatureRow(project, row)
+  if (!resolved) return undefined
+  const union = unionProfileBounds(getFeatureGeometryProfiles(resolved))
+  // `null` means "no profiles" — the row exists but has no measurable
+  // geometry, which is uncomputable, not absent.
+  return union === null ? undefined : union
+}
+
+/** Inclusive: touching bounds count as intersecting. */
+function boundsIntersect(a: Bounds2D, b: Bounds2D): boolean {
+  return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
 }
