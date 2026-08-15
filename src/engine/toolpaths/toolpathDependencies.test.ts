@@ -20,7 +20,7 @@
  * Tests for the pure change-detection module behind the per-operation
  * toolpath cache (issue #518, slices S1 + S1b + S2's `name` correction + S2b's
  * machining-relevant `meta` fields + S3a's operation footprint model + S6's
- * non-target region exemption).
+ * non-target region exemption + S6b's every-side role exemption).
  *
  * `diffToolpathInputs` must report exactly the feature ids whose
  * toolpath-relevant input changed, and must raise `invalidatesEveryOperation`
@@ -35,14 +35,16 @@
  * action. `operationFootprint` must be generous by construction (unknown →
  * `bounds: null` → invalidate) and `operationAffectedByChange` must return
  * true exactly when a changed feature can reach the operation, treating
- * construction-only changes, non-target region changes, and far-away changes
- * as irrelevant.
+ * construction-only and non-target-region changes as irrelevant on every
+ * side where the feature exists (absent sides raise no objection), and
+ * far-away changes as irrelevant.
  */
 
 import { defaultTool, getProfileBounds, getStockBounds, rectProfile } from '../../types/project'
 import type {
   Bounds2D,
   FeatureInstance,
+  FeatureOperation,
   LocalConstraint,
   Operation,
   PersistedImportedMesh,
@@ -1214,6 +1216,181 @@ function userMarginProject(): { project: Project, operation: Operation } {
   assert(
     operationAffectedByChange(footprint, project, next, new Set(['s1'])),
     'a subtract change over the operation area must still regenerate',
+  )
+}
+
+// ── S6b: a role exemption holds on every side the feature exists ──
+
+/** A removal-direction fixture: `previous` holds f1 (target) plus the extra
+ *  draft, `next` holds only f1. The footprint comes from `previous`, so the
+ *  extra's previous-side bbox sits inside the footprint — if the exemption
+ *  were missing, the bbox check would return true and the test would catch
+ *  it. */
+function s6bPair(
+  extra: SketchFeature,
+): { previous: Project, next: Project, footprint: ReturnType<typeof operationFootprint> } {
+  const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    extra,
+  ]))
+  const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [draftFeature('f1')]))
+  const footprint = operationFootprint(previous, makeOperation({ source: 'features', featureIds: ['f1'] }))
+  return { previous, next, footprint }
+}
+
+{
+  console.log('S6b.1 USER-REPORTED CASE: a newly drawn region over the operation area no longer regenerates it...')
+  // r-new is added in `next` only and sits inside the footprint on purpose:
+  // if the exemption were still the S6 both-sides test, or were missing
+  // entirely, the bbox check would return true and this test would catch it.
+  const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [draftFeature('f1')]))
+  const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('r-new', 10, 0, 20, 10, { operation: 'region' }),
+  ]))
+  const footprint = operationFootprint(previous, makeOperation({ source: 'features', featureIds: ['f1'] }))
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  assert(setEquals(footprint.targetFeatureIds, ['f1']), 'fixture premise: r-new must not be a target')
+  const diff = diffToolpathInputs(previous, next)
+  assert(diff.changedFeatureIds.has('r-new'), 'the add must register as a changed feature')
+  assert(
+    !operationAffectedByChange(footprint, previous, next, new Set(['r-new'])),
+    'a newly added non-target region must not regenerate the operation (reported case)',
+  )
+}
+
+{
+  console.log('S6b.2 A newly added construction feature over the operation area does not affect it (S3a regression)...')
+  const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [draftFeature('f1')]))
+  const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('c-new', 10, 0, 20, 10, { operation: 'construction' }),
+  ]))
+  const footprint = operationFootprint(previous, makeOperation({ source: 'features', featureIds: ['f1'] }))
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  assert(
+    !operationAffectedByChange(footprint, previous, next, new Set(['c-new'])),
+    'a newly added construction feature must not regenerate the operation',
+  )
+}
+
+{
+  console.log('S6b.3 A removed region and a removed construction feature do not affect it...')
+  const checkRemoved = (extra: SketchFeature, label: string): void => {
+    const { previous, next, footprint } = s6bPair(extra)
+    assert(footprint.bounds !== null, `${label}: footprint bounds must not be null`)
+    assert(
+      !operationAffectedByChange(footprint, previous, next, new Set([extra.id])),
+      `a removed ${label} must not regenerate the operation`,
+    )
+  }
+  checkRemoved(rectDraft('r-gone', 10, 0, 20, 10, { operation: 'region' }), 'region')
+  checkRemoved(rectDraft('c-gone', 10, 0, 20, 10, { operation: 'construction' }), 'construction feature')
+}
+
+{
+  console.log('S6b.4 Role conversions still invalidate, in both directions (region and construction)...')
+  const convert = (from: FeatureOperation, to: FeatureOperation, label: string): void => {
+    const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+      draftFeature('f1'),
+      rectDraft('x1', 25, 0, 20, 10, { operation: from }),
+    ]))
+    const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+      draftFeature('f1'),
+      rectDraft('x1', 25, 0, 20, 10, { operation: to }),
+    ]))
+    const footprint = operationFootprint(previous, makeOperation({ source: 'features', featureIds: ['f1'] }))
+    assert(footprint.bounds !== null, `${label}: footprint bounds must not be null`)
+    assert(
+      operationAffectedByChange(footprint, previous, next, new Set(['x1'])),
+      `a ${from}-to-${to} conversion must regenerate (${label})`,
+    )
+  }
+  convert('subtract', 'region', 'region on one side only')
+  convert('region', 'subtract', 'region on one side only')
+  convert('subtract', 'construction', 'construction on one side only')
+  convert('construction', 'subtract', 'construction on one side only')
+}
+
+{
+  console.log('S6b.5 A newly added region that IS a target still invalidates...')
+  // The footprint must already list the id as a target, so it is computed
+  // from the post-add snapshot. In the real pipeline the operation's own
+  // target list changed too, which `operationComputationEquals` catches
+  // before the footprint is consulted — here the pure predicate must hold
+  // the invariant alone: the target check returns before the region skip.
+  const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [draftFeature('f1')]))
+  const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('r-target', 0, 20, 20, 10, { operation: 'region' }),
+  ]))
+  const footprint = operationFootprint(next, makeOperation({ source: 'features', featureIds: ['f1', 'r-target'] }))
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  assert(footprint.targetFeatureIds.has('r-target'), 'fixture premise: r-target must be targeted')
+  assert(
+    operationAffectedByChange(footprint, previous, next, new Set(['r-target'])),
+    'a newly added targeted region must regenerate the operation',
+  )
+}
+
+{
+  console.log('S6b.6 A newly added region does not affect a stock-targeted operation...')
+  const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [draftFeature('f1')]))
+  const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('r-new', 10, 0, 20, 10, { operation: 'region' }),
+  ]))
+  const footprint = operationFootprint(previous, makeOperation({ source: 'stock' }, { toolRef: null }))
+  assert(footprint.readsWholeModel, 'stock footprint must read the whole model')
+  assert(
+    !operationAffectedByChange(footprint, previous, next, new Set(['r-new'])),
+    'a newly added region must not affect a stock-targeted operation',
+  )
+}
+
+{
+  console.log('S6b.7 CONTROL: a newly added subtract over the same area still regenerates...')
+  // Identical geometry to S6b.1 but `operation: subtract` — the exemption is
+  // role-specific and must never swallow real material, added or edited.
+  const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [draftFeature('f1')]))
+  const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('s-new', 10, 0, 20, 10, { operation: 'subtract' }),
+  ]))
+  const footprint = operationFootprint(previous, makeOperation({ source: 'features', featureIds: ['f1'] }))
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  assert(
+    operationAffectedByChange(footprint, previous, next, new Set(['s-new'])),
+    'a newly added subtract over the operation area must still regenerate',
+  )
+}
+
+{
+  console.log('S6b.8 A changed id absent on BOTH sides is not role-exempt (rule-table row)...')
+  // Pins the last row of the every-side rule: absent on both sides must raise
+  // no exemption. Unreachable through `diffToolpathInputs` (a changed id
+  // always exists on at least one side) but part of the helper's contract:
+  // without the "holds on at least one side" clause the helper would exempt
+  // these and the whole-model branch would wrongly skip them.
+  const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [draftFeature('f1')]))
+  const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [draftFeature('f1')]))
+  const ghost = new Set(['ghost'])
+
+  // Feature-targeted: not exempt falls through to the bbox check, where a
+  // side with no such feature contributes nothing → no effect.
+  const featureFootprint = operationFootprint(previous, makeOperation({ source: 'features', featureIds: ['f1'] }))
+  assert(featureFootprint.bounds !== null, 'footprint bounds must not be null')
+  assert(
+    !operationAffectedByChange(featureFootprint, previous, next, ghost),
+    'a ghost id must not affect a feature-targeted operation (bbox fall-through)',
+  )
+
+  // Stock-targeted: there is no bbox fall-through, so not exempt invalidates.
+  const stockFootprint = operationFootprint(previous, makeOperation({ source: 'stock' }, { toolRef: null }))
+  assert(stockFootprint.readsWholeModel, 'stock footprint must read the whole model')
+  assert(
+    operationAffectedByChange(stockFootprint, previous, next, ghost),
+    'a ghost id must invalidate a stock-targeted operation (not exempt → invalidate)',
   )
 }
 
