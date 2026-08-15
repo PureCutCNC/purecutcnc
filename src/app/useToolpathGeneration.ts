@@ -201,8 +201,11 @@ export function startToolpathGenerationPipeline({
   requestAnimationFrameFn = requestAnimationFrame,
   scheduleAfterPaintFn = scheduleAfterPaint,
 }: StartToolpathGenerationPipelineOptions): () => void {
-  const immediateResults = new Map<string, ToolpathResult>()
   const toCompute: string[] = []
+  // Cache-hit results, classified exactly once per needed operation before the
+  // map updater below runs (React defers updaters, so the classification must
+  // not live inside it — `toCompute` has to be ready synchronously).
+  const hitResults = new Map<string, ToolpathResult>()
 
   for (const id of neededOperationIds) {
     const op = project.operations.find((o) => o.id === id)
@@ -210,13 +213,39 @@ export function startToolpathGenerationPipeline({
 
     const entry = toolpathCache.get(id)
     if (entry && isCacheHit(entry, op, project)) {
-      immediateResults.set(id, entry.result)
+      hitResults.set(id, entry.result)
     } else {
       toCompute.push(id)
     }
   }
 
-  setToolpathMap(immediateResults)
+  // Build the initial map from `neededOperationIds` alone, in this order per
+  // id (issue #518, S4): the cache-hit result when the entry is valid;
+  // otherwise the **previous** map's entry, retained as a stale placeholder so
+  // a visible toolpath does not blank out while its recompute is pending (the
+  // `generatingOperationIds` spinner already signals the recompute); otherwise
+  // absent. An operation no longer in `neededOperationIds` is never carried
+  // over — the map is rebuilt from the list each time, so nothing leaks.
+  //
+  // Retaining a stale result is display-only and cannot affect exported
+  // G-code: the export dialog calls `generateToolpathForOperation` (App.tsx
+  // passes it as `generateToolpath`), which re-validates through `isCacheHit`
+  // and regenerates on a miss. It never reads `toolpathMap`.
+  setToolpathMap((prev) => {
+    const next = new Map<string, ToolpathResult>()
+    for (const id of neededOperationIds) {
+      const op = project.operations.find((o) => o.id === id)
+      if (!op) continue
+      const hit = hitResults.get(id)
+      if (hit) {
+        next.set(id, hit)
+        continue
+      }
+      const stale = prev.get(id)
+      if (stale) next.set(id, stale)
+    }
+    return next
+  })
 
   if (toCompute.length === 0) {
     return () => {}
@@ -255,7 +284,25 @@ export function startToolpathGenerationPipeline({
   return () => { cancelled = true }
 }
 
-export function useToolpathGeneration(project: Project, selectedOperation: Operation | null): {
+/**
+ * The pipeline effect body (issue #518, S4): a no-op while `deferGeneration`
+ * is true, otherwise the pipeline itself. Exported so the deferral decision is
+ * unit-testable without a React renderer; `useToolpathGeneration`'s effect is
+ * exactly this call.
+ */
+export function runToolpathGenerationEffect(
+  options: StartToolpathGenerationPipelineOptions,
+  deferGeneration = false,
+): () => void {
+  if (deferGeneration) return () => {}
+  return startToolpathGenerationPipeline(options)
+}
+
+export function useToolpathGeneration(
+  project: Project,
+  selectedOperation: Operation | null,
+  deferGeneration = false,
+): {
   toolpathMap: Map<string, ToolpathResult>
   generateToolpathForOperation: (op: Operation | null) => ToolpathResult | null
   getGenerationTrace: (operation: Operation) => ToolpathGenerationTrace | null
@@ -390,15 +437,24 @@ export function useToolpathGeneration(project: Project, selectedOperation: Opera
   // Async toolpath pipeline: resolves cached results immediately, defers
   // uncached operations one-per-frame with a paint gap in between so the
   // spinner (derived from cache staleness above) stays animated.
+  //
+  // While a history transaction is open (issue #518, S4) the store rewrites
+  // `project` on every pointermove; starting the pipeline per frame would
+  // restart generation mid-gesture. `deferGeneration` defers — returning the
+  // no-op cleanup and leaving `toolpathMap` untouched — so one gesture commit
+  // produces exactly one regeneration when the flag flips back to false.
   useEffect(() => {
-    return startToolpathGenerationPipeline({
-      neededOperationIds,
-      project,
-      toolpathCache: toolpathCacheRef.current,
-      generateToolpathForOperation,
-      setToolpathMap,
-    })
-  }, [neededOperationIds, generateToolpathForOperation, project])
+    return runToolpathGenerationEffect(
+      {
+        neededOperationIds,
+        project,
+        toolpathCache: toolpathCacheRef.current,
+        generateToolpathForOperation,
+        setToolpathMap,
+      },
+      deferGeneration,
+    )
+  }, [neededOperationIds, generateToolpathForOperation, project, deferGeneration])
 
   const selectedToolpath = selectedOperation
     ? toolpathMap.get(selectedOperation.id) ?? null
