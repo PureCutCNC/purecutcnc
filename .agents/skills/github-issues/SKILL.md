@@ -79,7 +79,7 @@ Area guidance: engine/toolpath → `toolpath`, canvas/panels → `ui`, palette �
        gql('mutation($p:ID!,$i:ID!,$f:ID!,$v:String!){ updateProjectV2ItemFieldValue(input:{'
            'projectId:$p,itemId:$i,fieldId:$f,value:{singleSelectOptionId:$v}}){ clientMutationId } }',
            p=PROJECT, i=item_id, f=field, v=value)
-   gql('mutation($i:ID!,$f:ID!,$v:String!){ setIssueFieldValue(input:{issueId:$i,'
+   gql('mutation($i:ID!,$f:ID!,$v:ID!){ setIssueFieldValue(input:{issueId:$i,'
        'issueFields:[{fieldId:$f,singleSelectOptionId:$v}]}){ clientMutationId } }',
        i=issue_id, f=PRIO[0], v=PRIO[1])
    print('wired', item_id)
@@ -107,6 +107,20 @@ the mutation top level fails validation. There is **no** REST endpoint for
 setting org issue fields; only read them via REST (`.issue_field_values`, used
 by `scripts/backlog-hygiene.ts`). Priority is the **native org issue field**,
 not a board field — do not set it through `updateProjectV2ItemFieldValue`.
+
+**The two mutations disagree on the type of `singleSelectOptionId`**, and the
+same option id therefore needs a different variable declaration in each:
+
+| Mutation | Declare as |
+| --- | --- |
+| `updateProjectV2ItemFieldValue` (board fields) | `$v:String!` |
+| `setIssueFieldValue` (org issue fields) | `$v:ID!` |
+
+Getting it wrong fails at validation, before any network effect, with
+`Type mismatch on variable $v and argument singleSelectOptionId (String! / ID)`.
+Harmless but it costs a turn — and in the batched recipe above it aborts the
+script *after* Status/Size/Area are already set, so re-running the whole block
+is safe but only Priority is actually missing.
 
 ## Board item lookup
 
