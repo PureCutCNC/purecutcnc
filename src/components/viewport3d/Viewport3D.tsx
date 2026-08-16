@@ -20,7 +20,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
-import { toolpathHasEngagementTelemetry, type ToolpathVisibility } from '../toolpathVisibility'
+import { toolpathHasEngagementTelemetry, unionFeedColourLegendSteps, type ToolpathVisibility } from '../toolpathVisibility'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
 import { modelFeatures } from '../../store/helpers/featureRoles'
@@ -917,10 +917,17 @@ useImperativeHandle(ref, () => ({
 
   // The feed-colour toggle's auto default: on when the selected operation is
   // an engagement-mode pocket, off otherwise (issue #498 S4). The legend rungs
-  // derive from the selected operation's slot feed (issue #498 S5).
+  // are the scales every toolpath in the preview emits (issue #535) — the
+  // per-toolpath scans are cached by toolpath identity, so no move scan runs
+  // on this render path.
   const selectedToolpathForLegend = toolpaths.find((toolpath) => toolpath.operationId === selectedOperationId) ?? null
   const feedColoursDefault = selectedToolpathForLegend !== null && toolpathHasEngagementTelemetry(selectedToolpathForLegend)
-  const selectedSlotFeedPercent = pocketSlotFeedPercent(project.operations.find((op) => op.id === selectedOperationId))
+  const feedColourLegendSteps = toolpaths.length > 0
+    ? unionFeedColourLegendSteps(toolpaths, (operationId) => {
+        const percent = pocketSlotFeedPercent(project.operations.find((op) => op.id === operationId))
+        return percent === null ? 1 : percent / 100
+      })
+    : []
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
@@ -981,7 +988,7 @@ useImperativeHandle(ref, () => ({
           expanded={toolpathPanelExpanded}
           onExpandedChange={onToolpathPanelExpandedChange}
           feedColoursDefault={feedColoursDefault}
-          slotFeedPercent={selectedSlotFeedPercent}
+          legendSteps={feedColourLegendSteps}
         />
       )}
       <div className="viewport-presets">

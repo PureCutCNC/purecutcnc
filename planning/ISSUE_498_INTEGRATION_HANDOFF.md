@@ -517,6 +517,12 @@ G-code changes.
    it. Verify that by reverting to the constant and watching the test fail.
 5. Extend `e2e/feedColours.smoke.spec.ts` to cover a non-40% slot feed.
 
+> **Superseded by #535 (2026-08):** item 2's "rungs for the selected
+> operation" is gone. The legend is now data-driven — the union of the
+> (scale, step) pairs actually emitted by every toolpath in the preview,
+> cached per toolpath, and rendered only while feed colours are on. See
+> `src/components/toolpathVisibility.ts` (`unionFeedColourLegendSteps`).
+
 **Required checks:**
 
 ```bash

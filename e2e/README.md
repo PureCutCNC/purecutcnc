@@ -5,7 +5,8 @@ Covers DOM render + menu→action wiring. Does **NOT** assert geometry or
 WebGL canvas contents — those are owned by `npm test`. One deliberate
 exception: `feedColours.smoke.spec.ts` samples 2D canvas pixels, because
 the feed-colour ramp (issue #498) is a rendering contract that only pixels
-can prove.
+can prove; it also asserts the data-driven feed-colour legend via DOM
+selectors (issue #535), the other half of that contract.
 
 ## Quick start
 
