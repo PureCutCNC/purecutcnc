@@ -64,13 +64,57 @@ function resolvedRectProfile(cx: number, cy: number, w: number, h: number) {
  * contract this variant exists to pin. 100% is the engine's no-feed anchor
  * (`resolveSlotFeedScale` returns null there), so the move stream carries no
  * feed scales and toggling feed colours must not change the canvas.
+ *
+ * Since #535 the legend is data-driven: it prints the union of the (scale,
+ * step) pairs actually emitted by the toolpaths in the preview — a slots-only
+ * pocket at 60% contributes its single slot rung, an engagement pocket its
+ * ladder, and a mixed preview both, independent of selection. The legend
+ * renders only while feed colours are on.
  */
-function buildFeedColoursProjectJson(mode: 'slots_only' | 'engagement', slotPercent = 40): string {
+interface PocketOperationFixture {
+  id: string
+  name: string
+  mode: 'slots_only' | 'engagement'
+  slotPercent: number
+}
+
+function pocketOperationJson({ id, name, mode, slotPercent }: PocketOperationFixture): Record<string, unknown> {
+  return {
+    id,
+    name,
+    kind: 'pocket',
+    pass: 'rough',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['f-machinable-subtract'] },
+    toolRef: 'tool-1',
+    stepdown: 0.1,
+    stepover: 0.125,
+    feed: 60,
+    plungeFeed: 30,
+    rpm: 18000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    ...(mode === 'engagement'
+      ? { pocketSlotFeedPercent: slotPercent, pocketFeedReduction: 'engagement' }
+      : { pocketSlotFeedPercent: slotPercent, pocketFeedReduction: 'slots_only' }),
+    roundOutsideCorners: false,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: false,
+    finishFloor: false,
+    carveDepth: 0,
+    maxCarveDepth: 0,
+  }
+}
+
+function feedColoursProjectJson(label: string, operations: Record<string, unknown>[]): string {
   const now = '2026-01-01T00:00:00.000Z'
   return JSON.stringify({
     version: '3.0',
     meta: {
-      name: `Feed Colours ${mode} Fixture`,
+      name: `Feed Colours ${label} Fixture`,
       created: now,
       modified: now,
       units: 'inch',
@@ -151,44 +195,47 @@ function buildFeedColoursProjectJson(mode: 'slots_only' | 'engagement', slotPerc
         maxCutDepth: 1,
       },
     ],
-    operations: [
-      {
-        id: 'op-pocket-a',
-        name: 'Pocket A',
-        kind: 'pocket',
-        pass: 'rough',
-        enabled: true,
-        showToolpath: true,
-        debugToolpath: false,
-        target: { source: 'features', featureIds: ['f-machinable-subtract'] },
-        toolRef: 'tool-1',
-        stepdown: 0.1,
-        stepover: 0.125,
-        feed: 60,
-        plungeFeed: 30,
-        rpm: 18000,
-        pocketPattern: 'offset',
-        pocketAngle: 0,
-        ...(mode === 'engagement'
-          ? { pocketSlotFeedPercent: slotPercent, pocketFeedReduction: 'engagement' }
-          : { pocketSlotFeedPercent: 100, pocketFeedReduction: 'slots_only' }),
-        roundOutsideCorners: false,
-        stockToLeaveRadial: 0,
-        stockToLeaveAxial: 0,
-        finishWalls: false,
-        finishFloor: false,
-        carveDepth: 0,
-        maxCarveDepth: 0,
-      },
-    ],
+    operations,
     tabs: [],
     clamps: [],
     ai_history: [],
   })
 }
 
+function buildFeedColoursProjectJson(mode: 'slots_only' | 'engagement', slotPercent = 40): string {
+  return feedColoursProjectJson(mode, [
+    pocketOperationJson({
+      id: 'op-pocket-a',
+      name: 'Pocket A',
+      mode,
+      slotPercent: mode === 'engagement' ? slotPercent : 100,
+    }),
+  ])
+}
+
+/** A slots-only pocket with an explicit slot feed below 100% — the classic
+ *  path stamps its full-width slot stretches with exactly this scale, so the
+ *  legend must show this single rung next to full feed. */
+function buildSlotsOnlyAtSlotFeedProjectJson(slotPercent: number): string {
+  return feedColoursProjectJson(`slots_only_${slotPercent}`, [
+    pocketOperationJson({ id: 'op-pocket-a', name: 'Pocket A', mode: 'slots_only', slotPercent }),
+  ])
+}
+
+/** Two pockets on the same feature: engagement at 75% (emits its ladder) plus
+ *  slots-only at 60% (emits its single slot scale). The legend must show the
+ *  union of both, whichever operation is selected. */
+function buildMixedFeedColoursProjectJson(): string {
+  return feedColoursProjectJson('mixed', [
+    pocketOperationJson({ id: 'op-pocket-a', name: 'Pocket A', mode: 'engagement', slotPercent: 75 }),
+    pocketOperationJson({ id: 'op-pocket-b', name: 'Pocket B', mode: 'slots_only', slotPercent: 60 }),
+  ])
+}
+
 const ENGAGEMENT_FIXTURE_JSON = buildFeedColoursProjectJson('engagement')
 const SLOTS_ONLY_FIXTURE_JSON = buildFeedColoursProjectJson('slots_only')
+const SLOTS_ONLY_SLOT_FEED_60_JSON = buildSlotsOnlyAtSlotFeedProjectJson(60)
+const MIXED_FIXTURE_JSON = buildMixedFeedColoursProjectJson()
 
 /** Distinct pixel colours covering at least MIN_GROUP_PIXELS each. */
 async function dominantPixelGroups(sketchCanvas: Locator): Promise<string[]> {
@@ -274,9 +321,13 @@ test.describe('Feed-coloured toolpath smoke', () => {
     await expect(feedToggle).toHaveAttribute('aria-pressed', 'true')
 
     // The legend prints the rungs derived from the 75% slot feed, not the
-    // hardcoded 40% ladder the engine no longer emits (issue #498 S5).
+    // hardcoded 40% ladder the engine no longer emits (issue #498 S5), and
+    // since #535 it is data-driven: it lists only the rungs the emitted moves
+    // actually carry. The 0.80 rung is absent because this fixture's geometry
+    // never quantizes there (minimum-fragment merges take the lower scale),
+    // so nothing on the canvas paints it and the legend must not claim it.
     await expect(panel.locator('.viewport-toolpath-vis__legend-step')).toHaveText([
-      '100%', '95%', '90%', '85%', '80%', '75%',
+      '100%', '95%', '90%', '85%', '75%',
     ])
 
     // Baseline: explicit off.
@@ -324,5 +375,70 @@ test.describe('Feed-coloured toolpath smoke', () => {
       const hiddenGroups = await dominantPixelGroups(sketchCanvas)
       return [...hiddenGroups].sort().join('|') !== offKeys
     }, { timeout: 10000 }).toBe(true)
+  })
+
+  test('slots-only pocket at 60% slot feed shows only its emitted rung and hides the legend when the toggle is off', async ({ app, ui }) => {
+    await seedProject(app.page, SLOTS_ONLY_SLOT_FEED_60_JSON)
+
+    const panel = ui.toolpathVis.sketchPanel(app.page)
+    await expect(panel).toBeVisible({ timeout: 30000 })
+
+    const feedToggle = ui.toolpathVis.sketchItems(app.page).filter({ hasText: 'Feed colours' })
+    await expect(feedToggle).toHaveCount(1)
+
+    // A slots-only operation defaults the feed-colour toggle off — and with
+    // feed colours off there is nothing for a legend to explain (issue #535).
+    await ui.operations.rowByName(app.page, 'Pocket A').click()
+    await expect(feedToggle).toHaveAttribute('aria-pressed', 'false')
+    await expect(panel.locator('.viewport-toolpath-vis__legend')).toHaveCount(0)
+
+    // On: the classic path emitted exactly one scale — the 60% slot feed — so
+    // the legend is full feed plus that single rung, not the 6-rung ladder.
+    await feedToggle.click()
+    await expect(feedToggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(panel.locator('.viewport-toolpath-vis__legend-step')).toHaveText(['100%', '60%'])
+
+    await feedToggle.click()
+    await expect(panel.locator('.viewport-toolpath-vis__legend')).toHaveCount(0)
+  })
+
+  test('mixed pockets show the union of emitted scales in both panels, independent of selection', async ({ app, ui }) => {
+    await seedProject(app.page, MIXED_FIXTURE_JSON)
+
+    const panel = ui.toolpathVis.sketchPanel(app.page)
+    await expect(panel).toBeVisible({ timeout: 30000 })
+
+    const feedToggle = ui.toolpathVis.sketchItems(app.page).filter({ hasText: 'Feed colours' })
+    await expect(feedToggle).toHaveCount(1)
+
+    // The union of the engagement ladder (this fixture's geometry emits all
+    // rungs except 0.80 — see the 75% test) and the slots-only pocket's 60%
+    // rung, whichever operation is selected.
+    const unionSteps = ['100%', '95%', '90%', '85%', '75%', '60%']
+
+    // Selecting the engagement pocket defaults the toggle on; the legend is
+    // the union of the engagement ladder and the slots-only pocket's 60% rung.
+    await ui.operations.rowByName(app.page, 'Pocket A').click()
+    await expect(feedToggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(panel.locator('.viewport-toolpath-vis__legend-step')).toHaveText(unionSteps)
+
+    // Make the toggle explicit so a selection change cannot move its default,
+    // then select the other operation: the union must not change.
+    await feedToggle.click()
+    await feedToggle.click()
+    await ui.operations.rowByName(app.page, 'Pocket B').click()
+    await expect(feedToggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(panel.locator('.viewport-toolpath-vis__legend-step')).toHaveText(unionSteps)
+
+    // The 3D panel shares the visibility state and must show the same union.
+    const view3d = ui.toolpathVis.view3dPanel(app.page)
+    await expect(view3d).toBeAttached({ timeout: 15000 })
+    await expect(view3d.locator('.viewport-toolpath-vis__legend-step')).toHaveText(unionSteps)
+
+    // Toggle off hides the legend in both panels.
+    await feedToggle.click()
+    await expect(feedToggle).toHaveAttribute('aria-pressed', 'false')
+    await expect(panel.locator('.viewport-toolpath-vis__legend')).toHaveCount(0)
+    await expect(view3d.locator('.viewport-toolpath-vis__legend')).toHaveCount(0)
   })
 })

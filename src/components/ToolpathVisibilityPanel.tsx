@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-import type { ToolpathVisibility } from './toolpathVisibility'
+import type { FeedColourLegendStep, ToolpathVisibility } from './toolpathVisibility'
 import { useI18n } from '../i18n/i18nContext'
 import type { MessageKey } from '../i18n/locales/en'
 import { useTheme } from '../theme/themeContext'
-import { feedColourScales, canvasFeedColour } from '../theme/palette'
+import { canvasFeedColour } from '../theme/palette'
 import { Icon } from './Icon'
 
 interface ToolpathVisibilityPanelProps {
@@ -34,12 +34,13 @@ interface ToolpathVisibilityPanelProps {
    */
   feedColoursDefault?: boolean
   /**
-   * The selected operation's slot-feed percentage (1-99), or null when no
-   * ladder is in force. The legend prints the feed rungs derived from it, so
-   * it matches what the engine actually emits (issue #498 S5); null hides the
-   * legend because there is no ladder to print.
+   * The feed-colour legend rungs — the distinct (scale, step) pairs emitted by
+   * the toolpaths currently in the preview, precomputed and cached by the
+   * caller (issue #535). Empty/absent hides the legend; the old per-operation
+   * `slotFeedPercent` ladder is gone because it advertised rungs no visible
+   * toolpath emits (and missed rungs other operations did emit).
    */
-  slotFeedPercent?: number | null
+  legendSteps?: ReadonlyArray<FeedColourLegendStep>
 }
 
 const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch: string }> = [
@@ -53,9 +54,19 @@ const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch
   { key: 'feedColours', labelKey: 'appShell.toolpath.feedColours', swatch: 'viewport-toolpath-vis__swatch--cuts' },
 ]
 
-export function ToolpathVisibilityPanel({ visibility, onChange, className, expanded, onExpandedChange, feedColoursDefault, slotFeedPercent = null }: ToolpathVisibilityPanelProps) {
+export function ToolpathVisibilityPanel({ visibility, onChange, className, expanded, onExpandedChange, feedColoursDefault, legendSteps }: ToolpathVisibilityPanelProps) {
   const { t } = useI18n()
   const { palette } = useTheme()
+
+  // The feed-colour toggle is tri-state at the data level: undefined defers
+  // to the per-selection default, so display that default.
+  const feedColoursOn = visibility.feedColours ?? feedColoursDefault ?? false
+  // Only rungs the view actually paints, and only while feed colours are on —
+  // an off toggle means no feed colouring exists to explain (issue #535).
+  // A single full-feed rung means nothing is scaled, so there is no legend.
+  const showLegend = expanded
+    && feedColoursOn
+    && (legendSteps?.some((entry) => entry.step > 0) ?? false)
 
   return (
     <div className={`viewport-toolpath-vis${expanded ? ' viewport-toolpath-vis--expanded' : ''}${className ? ` ${className}` : ''}`}>
@@ -70,10 +81,8 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
       </button>
       {expanded ? (
         ITEMS.map(({ key, labelKey, swatch }) => {
-          // The feed-colour toggle is tri-state at the data level: undefined
-          // defers to the per-selection default, so display that default.
           const selected = key === 'feedColours'
-            ? visibility.feedColours ?? feedColoursDefault ?? false
+            ? feedColoursOn
             : visibility[key]
           return (
             <button
@@ -94,15 +103,15 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
           )
         })
       ) : null}
-      {expanded && slotFeedPercent !== null ? (
+      {showLegend && legendSteps ? (
         <div
           className="viewport-toolpath-vis__legend"
           aria-label={t('appShell.toolpath.feedLegend')}
           style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 10px 6px' }}
         >
-          {feedColourScales(slotFeedPercent / 100).map((scale, step) => (
+          {legendSteps.map(({ scale, step }) => (
             <span
-              key={scale}
+              key={`${scale}:${step}`}
               className="viewport-toolpath-vis__legend-step"
               title={`${Math.round(scale * 100)}%`}
               style={{ display: 'flex', alignItems: 'center', gap: '3px' }}

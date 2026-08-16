@@ -17,7 +17,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
 import { pocketSlotFeedPercent } from '../../theme/palette'
-import { toolpathHasEngagementTelemetry } from '../toolpathVisibility'
+import { toolpathHasEngagementTelemetry, unionFeedColourLegendSteps } from '../toolpathVisibility'
 import type { OpenProfileEndpoint, SketchControlRef } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import { previewOffsetFeatures } from '../../store/helpers/derivedFeatures'
@@ -2844,6 +2844,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const pendingDraftExceedsStock =
     pendingDraftProfile ? profileExceedsStock(pendingDraftProfile, project.stock) : false
 
+  // Feed-colour legend steps for every toolpath the preview draws (issue #535).
+  // Selection-independent; the per-toolpath scans are cached by toolpath
+  // identity, so no move scan runs on this render path.
+  const feedColourLegendSteps = toolpaths && toolpaths.length > 0
+    ? unionFeedColourLegendSteps(toolpaths, (operationId) => {
+        const percent = pocketSlotFeedPercent(project.operations.find((op) => op.id === operationId))
+        return percent === null ? 1 : percent / 100
+      })
+    : []
+
   return (
     <div ref={containerRef} className="sketch-canvas-container">
       <canvas
@@ -2872,7 +2882,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           feedColoursDefault={
             toolpaths.some((toolpath) => toolpath.operationId === selectedOperationId && toolpathHasEngagementTelemetry(toolpath))
           }
-          slotFeedPercent={pocketSlotFeedPercent(project.operations.find((op) => op.id === selectedOperationId))}
+          legendSteps={feedColourLegendSteps}
         />
       )}
       <ConstraintEditPanel constraint={constraint} />
