@@ -454,7 +454,13 @@ test.describe('Tool library import dialog — tablet', () => {
     hasTouch: true,
   })
 
-  test('enters tablet shell mode with touch targets and scrolling results', async ({ app }) => {
+  // Known flake, tracked in #527: this measures the results list's overflow
+  // (scrollHeight > clientHeight) and is load-sensitive — it passes at
+  // `--workers=1` and fails at `--workers=2` with both heights at 140, which
+  // reads as the list being measured before it has finished populating.
+  // `fixme` rather than `fail`: it does not reliably fail, so `test.fail`
+  // reports "expected to fail, but passed" whenever it happens to pass.
+  test.fixme('enters tablet shell mode with touch targets and scrolling results', async ({ app }) => {
     // The app shell must reflect tablet mode (width >= 900 + pointer: coarse).
     const shell = app.page.locator('.app-shell')
     await expect(shell).toHaveAttribute('data-shell-mode', 'tablet')
