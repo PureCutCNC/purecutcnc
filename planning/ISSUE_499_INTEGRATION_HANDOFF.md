@@ -201,6 +201,27 @@ CHECKS: <each command and pass/fail result>
 RISKS: <none or concise unresolved risks>
 ```
 
+## Environment note for every DSH slice — read before running anything
+
+**Never invoke `npx` in a DSH worker.** `npx` writes to the npm cache at
+`~/.npm/_cacache`, which lies outside the workspace-write root, so it fails with
+`EPERM ... Your cache folder contains root-owned files`. That message is
+misleading: nothing is root-owned and nothing is broken. It is the sandbox
+refusing a write outside the task worktree.
+
+Run the local binary directly instead — `node_modules` is symlinked into the
+worktree from the primary checkout, so it is already present:
+
+```
+./node_modules/.bin/tsx <file>
+```
+
+`scripts/build-summary.sh` is fine as-is. Also note `scripts/run-tests.ts`
+ignores a path argument and runs all 191 test files, so run your test file
+directly while iterating.
+
+This cost real time on both S1 and S2 before it was written down.
+
 ## Slice S2 — the corner qualifier — **YOUR ASSIGNMENT**
 
 **You are the implementation worker for slice S2 of issue #499.**
@@ -310,9 +331,7 @@ slice appears to require editing a forbidden file, stop and report blocked.
 
 **Required checks:**
 
-- `npx tsx src/engine/toolpaths/cornerQualifier.test.ts` — note that
-  `scripts/run-tests.ts` ignores a path argument and runs all 191 files, so run
-  the file directly during development.
+- `./node_modules/.bin/tsx src/engine/toolpaths/cornerQualifier.test.ts`
 - `scripts/build-summary.sh` (once — re-read its log rather than re-running).
 
 **Report:** the per-fixture qualifying-corner counts and spans, and the result
