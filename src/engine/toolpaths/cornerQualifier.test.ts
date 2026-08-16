@@ -18,7 +18,9 @@
  * Corner-qualifier acceptance (issue #499, slice S2): qualifies the corners
  * of the slice-1 fixture pack's emitted offset rings and asserts each
  * fixture's known geometry. Detection only — nothing here asserts on, or
- * changes, emitted motion.
+ * changes, emitted motion. The span-guard boundary pair (slice S2b, section
+ * 9) runs on synthetic rings instead: the pack cannot reach the span
+ * threshold by construction, so the guard is pinned there directly.
  *
  * Harness. Rings are reconstructed from the emitted cut moves per level by
  * closure detection: every closed loop of the emission stream is one ring,
@@ -53,6 +55,7 @@ import { generatePocketToolpath } from './pocket'
 import type { ToolpathMove, ToolpathPoint } from './types'
 import {
   qualifyCorners,
+  SPAN_MAX_TOOL_DIAMETERS,
   type CornerQualifierPoint,
   type CornerQualifierRing,
   type QualifyingCorner,
@@ -410,6 +413,129 @@ test('cost: qualification CPU time per fixture (reported, never asserted)', () =
     })
     console.log(`   ${qualification.id}: best-of-3 qualification CPU ${cpuMs.toFixed(1)} ms`)
   }
+})
+
+// ── 9. The span guard (slice S2b) ──────────────────────────────────────────
+
+// The fixture pack can never exercise the span rejection: the threshold was
+// derived as "just above largeComplex's measured maximum", so by construction
+// nothing in the pack reaches 8d — the gap the S2 review record assigns here.
+// The module is pure, so the guard is tested on synthetic ring input with a
+// synthetic engagement oracle. The two tests form the boundary pair: the same
+// corner, once with a run just under the threshold and once just over. One
+// alone would not show the boundary is where it claims to be.
+
+/** Tool diameter for the synthetic rings: the d/4 sampling step is 1 unit, so the walk arithmetic is exact. */
+const SPAN_TOOL_DIAMETER = 4
+
+/** Nominal engagement handed to the qualifier (any non-negative value works). */
+const SPAN_NOMINAL = 1
+
+/** Above-nominal engagement reading inside the synthetic run window. */
+const SPAN_ABOVE = 2
+
+/**
+ * The pair's two-sided run lengths, in tool diameters. They bracket the
+ * threshold at a quarter diameter on each side — 7.5d below it, 8.5d above
+ * it — and both sit clear of the measured slice-1 maximum, 7.39d on
+ * `largeComplex`, which the threshold is derived from. Fixed here, never
+ * derived from the constant: a test whose input scales with the constant
+ * would pass under any retune and pin nothing.
+ */
+const SPAN_ACCEPTED_RUN_DIAMETERS = 7.5
+const SPAN_DECLINED_RUN_DIAMETERS = 8.5
+
+/**
+ * Synthetic rings for the span guard: one level, three concentric squares
+ * whose half-extents (1, 50, 200) leave exactly the middle ring selected by
+ * the qualifier's half-size rule. The middle ring's corner at (50, 50) is a
+ * 90° interior corner; the synthetic oracle reads `SPAN_ABOVE` within
+ * `window` units of it — along the square's straight edges, arc distance
+ * from the corner equals Euclidean distance, so the above-nominal run around
+ * the corner is exactly `2 · window` long — and `SPAN_NOMINAL` everywhere
+ * else, so the ring's other three corners must all be declined.
+ */
+function buildSpanGuardRings(window: number): CornerQualifierRing[] {
+  const targetCorner = { x: 50, y: 50 }
+  const inner: CornerQualifierPoint[] = [
+    { x: -1, y: -1 },
+    { x: 1, y: -1 },
+    { x: 1, y: 1 },
+    { x: -1, y: 1 },
+  ]
+  const middle: CornerQualifierPoint[] = [
+    { x: -50, y: -50 },
+    { x: 50, y: -50 },
+    { x: 50, y: 50 },
+    { x: -50, y: 50 },
+  ]
+  const outer: CornerQualifierPoint[] = [
+    { x: -200, y: -200 },
+    { x: 200, y: -200 },
+    { x: 200, y: 200 },
+    { x: -200, y: 200 },
+  ]
+  const nominal = (): number => SPAN_NOMINAL
+  const local = (x: number, y: number): number =>
+    Math.hypot(x - targetCorner.x, y - targetCorner.y) <= window ? SPAN_ABOVE : SPAN_NOMINAL
+  const ring = (
+    points: CornerQualifierPoint[],
+    engagementAt: (x: number, y: number) => number,
+  ): CornerQualifierRing => ({ points, level: 0, engagementAt })
+  return [ring(inner, nominal), ring(middle, local), ring(outer, nominal)]
+}
+
+test('span guard: the pair brackets SPAN_MAX_TOOL_DIAMETERS (premise)', () => {
+  // Guards the pair's own construction: any retune of the threshold out of
+  // the bracket fails here with the instruction, instead of silently passing
+  // on runs that no longer straddle the boundary. (The permissive mutation
+  // check sets the constant to 1e9 — this test and the declined-case test
+  // both fail, then.)
+  assert(
+    SPAN_ACCEPTED_RUN_DIAMETERS < SPAN_MAX_TOOL_DIAMETERS
+      && SPAN_MAX_TOOL_DIAMETERS < SPAN_DECLINED_RUN_DIAMETERS,
+    `the pair (${SPAN_ACCEPTED_RUN_DIAMETERS}d accepted / ${SPAN_DECLINED_RUN_DIAMETERS}d declined) must bracket SPAN_MAX_TOOL_DIAMETERS (${SPAN_MAX_TOOL_DIAMETERS}d); a deliberate retune needs a new derivation and updated runs`,
+  )
+})
+
+test('span guard: the corner whose run is 7.5d qualifies — just under SPAN_MAX_TOOL_DIAMETERS', () => {
+  // 3.75d above nominal per side, 7.5d two-sided: under the 8d threshold, so
+  // the span guard must let the corner through. The measured run sits two
+  // sampling steps under the rejection floor.
+  const window = (SPAN_ACCEPTED_RUN_DIAMETERS / 2) * SPAN_TOOL_DIAMETER
+  const corners = qualifyCorners(buildSpanGuardRings(window), {
+    toolDiameter: SPAN_TOOL_DIAMETER,
+    nominalEngagement: SPAN_NOMINAL,
+  })
+  assert(corners.length === 1, `expected the 7.5d corner to qualify, got ${corners.length}`)
+  const corner = corners[0]
+  assert(
+    corner.ringIndex === 1 && corner.vertexIndex === 2,
+    `the qualifying corner must be the middle ring's target corner, got ring ${corner.ringIndex} vertex ${corner.vertexIndex}`,
+  )
+  assert(
+    Math.abs(Math.abs(corner.turnAngle) - Math.PI / 2) <= 1e-9,
+    `the corner turn ${corner.turnAngle.toFixed(4)} must be the square's right angle`,
+  )
+  assert(
+    Math.abs(corner.span - SPAN_ACCEPTED_RUN_DIAMETERS * SPAN_TOOL_DIAMETER) <= 1e-9,
+    `the measured span ${corner.span} must be the 7.5d run at the d/4 sampling resolution`,
+  )
+  assert(corner.engagement === SPAN_ABOVE, `corner engagement ${corner.engagement} must read above nominal`)
+})
+
+test('span guard: the identical corner whose run is 8.5d is declined — just over SPAN_MAX_TOOL_DIAMETERS', () => {
+  // Identical geometry, turn, and engagement level to the accepted case; only
+  // the run differs: 4.25d per side, 8.5d two-sided, two sampling steps over
+  // the floor. The decline therefore happens at the span guard and nowhere
+  // else. Mutation-checked: with SPAN_MAX_TOOL_DIAMETERS set permissive
+  // (1e9), this corner qualifies and this test fails.
+  const window = (SPAN_DECLINED_RUN_DIAMETERS / 2) * SPAN_TOOL_DIAMETER
+  const corners = qualifyCorners(buildSpanGuardRings(window), {
+    toolDiameter: SPAN_TOOL_DIAMETER,
+    nominalEngagement: SPAN_NOMINAL,
+  })
+  assert(corners.length === 0, `the 8.5d corner must be declined by the span guard, got ${corners.length}`)
 })
 
 // ── Summary ──
