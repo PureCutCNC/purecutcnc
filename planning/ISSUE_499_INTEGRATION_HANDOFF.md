@@ -199,4 +199,80 @@ RISKS: <none or concise unresolved risks>
 
 ## Review record
 
-- S1 dispatch: pending.
+### S1 — fixture pack, **accepted** and merged as `3b7fd6e`
+
+Dispatched to DSH 2026-08-16, worker exit 0, one manager-owned commit
+(`80b3b36`), independent build gate passed. Diff confined to the two allowed
+files: `src/test/pocketFixturePack.ts` (693) and
+`src/engine/toolpaths/pocketFixturePack.test.ts` (904). No production file
+touched, so this slice cannot move machine output.
+
+**Verified, not taken on report:**
+
+- Ran the suite directly: 8 passed, 0 failed. The `#498` anchor reproduces, the
+  oracle agrees on both the acute corner and the anchor corner, tool-independence
+  holds, and both determinism tests pass.
+- **Mutation check.** Scaled `SweptMaterialIndex.engagementAt` by 0.96
+  (`cp` backup, restored from it — never `git checkout`). Three tests failed:
+  the anchor (straight run 1.3147 vs required 1.3694), the acute-corner oracle
+  (estimator 3.0159 vs oracle 3.1416), and the anchor-corner oracle
+  (2.8226 vs 2.9402). **The oracle held still while the estimator moved** —
+  that is the proof of independence, not the code reading.
+- Oracle reads no production engagement value: it point-samples the leading
+  semicircle 20 000 times against segments it rebuilds from the emitted move
+  stream, not from the production index.
+- No span thresholds anywhere. Assertions are relative (corner exceeds straight
+  by a margin) or structural. Cost is reported in CPU time via the pre-existing
+  `src/test/cpuRatio.ts`, never asserted.
+- Fixtures contain the geometry they claim: `acuteCorner` is a triangle with a
+  53.1° apex and two 63.4° corners; `curvedCorner` is a capsule with no sharp
+  corner at all, and it produces **zero** interior spike runs — the negative
+  control works.
+- No `any`, no non-null assertions, licence headers present.
+
+### Measured spike spans — the deliverable
+
+Interior rings only, d = 6 mm, stepover 0.4 (2.4 mm), slot feed 40%:
+
+| Fixture | median | p95 | max |
+| --- | --- | --- | --- |
+| rectangular (90°) | 1.00d | 1.00d | 3.00d |
+| acuteCorner | 1.62d | 3.12d | 3.12d |
+| curvedCorner | — (0 runs) | — | — |
+| longNeck | 0.96d | 3.00d | 5.43d |
+| islandPinch | 1.00d | 3.35d | 3.85d |
+| multiSection | 0.95d | 1.80d | 3.00d |
+| tinyPocket | 2.10d | 2.10d | 2.10d |
+| largeComplex | 1.40d | 4.88d | 7.39d |
+
+Readings for slice 2:
+
+1. **Acute corners are worse but not dramatically** — 1.62d median against the
+   right angle's 1.00d. Acuteness alone does not justify a geometry change.
+2. **`largeComplex` carries the long tail** (p95 4.88d, max 7.39d). Long spikes
+   live in complicated real boundaries, not in textbook acute corners. Any
+   qualifier tuned only on `acuteCorner` will miss the cases that matter.
+3. **The distribution settles the threshold question that started this.** Medians
+   cluster near 1.0d while p95 runs 3–5d, so a 2d cutoff sits in the middle of
+   the distribution — the worst available place for it. The original ranking's
+   guessed 2d boundary is now measured to have been maximally wrong.
+
+### Two traps found during S1 — both live for slice 2
+
+- **Ring numbering is inverted relative to #498's prose.** The generator emits
+  innermost-first, so ordinal 0 is the *innermost* ring, while #498's caveat
+  says "wall-adjacent ring 0". Anyone excluding ring 0 by ordinal, per that
+  caveat, will drop a genuine interior ring and *keep* the wall-adjacent one
+  whose engagement #498 says is overstated — the exact opposite of the intent.
+  On the 60 mm square the anchor ring (half 22.2) is ordinal 9, not 2. The pack
+  therefore selects rings by emitted half-size, never by ordinal. Do the same.
+- **The `peak` column is not a corner-severity measure.** "Interior rings only"
+  includes the innermost ring, which is a true full-width slot, so `peak` reads
+  π on nearly every fixture and tells you nothing about corners. The span
+  columns are the usable output.
+
+### Open, carried to slice 2
+
+The reopen trigger is satisfied and the thresholds now have a measured source.
+Slice 2 derives its turn-angle and span qualifiers from the table above, with
+`largeComplex` — not `acuteCorner` — as the case that sets the span threshold.
