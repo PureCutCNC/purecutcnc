@@ -1254,7 +1254,49 @@ scripts/build-summary.sh
 6. **Control:** a newly drawn `add` island over the same area → still **true**.
 7. Existing region and construction tests still pass unchanged.
 
-**Manager review record:** `pending`
+**Manager review record:** `accepted 2026-08-16`, merged as `6929e79`.
+
+- Generalised into a shared `TARGET_GATED_EXEMPT_ROLES` list (region + line) rather
+  than a third near-identical branch, with construction deliberately kept out of it
+  because its exemption is unconditional. Role reads stay lazy via `.some`.
+- **Mutation-checked**: removing line from the role list, making the line predicate
+  always true (so the exemption stops being role-specific), and reverting
+  `roleExemptEverywhere` to "both sides" each failed the suite.
+- **Verified on the user's project**, everything drawn over the pocket in its Z band:
+  line / region / construction -> `isCacheHit = true`; `subtract` and `add` -> `false`.
+- Independent build gate passed.
+
+### Deferred — non-target subtract features do not reach the resolver (separate bug)
+
+Found while scoping S7; the user has taken it for separate investigation, so it is
+**not** filed and **not** fixed here. Recorded because the evidence is already in hand:
+
+A non-target `subtract` that eats part of an island does not change the pocket
+toolpath, although it does change the CSG model. Measured on
+`work/feed-reduction-test4.camj`:
+
+| | bytes |
+| --- | --- |
+| pocket + full island | 198,377 |
+| same + subtract eating half the island | 198,377 (unchanged) |
+| pocket + half-width island (what B should equal) | 217,844 |
+
+Byte-identical on pristine `origin/main` (`1f3043a`), so it predates this branch.
+
+Mechanism: `resolver.ts`'s band loop gates on `activeBandFeatureIds` (active targets
++ active islands, and island discovery is `add`-only), so a non-target subtract never
+enters the loop body; the subtract branch additionally requires
+`targetIdSet.has(feature.id)`. `buildBooleanModel` folds features in order, so the 3D
+preview and the toolpath disagree — the operation machines around an island that is
+no longer there. Under-cuts; not a crash risk.
+
+No documented intent for the target-only rule was found in `ARCHITECTURE.md` or
+`REGION_FEATURE_SEMANTICS.md`.
+
+**Caution for whoever picks this up:** Z is measured from the stock bottom, and that
+fixture's pocket spans only 0.700..0.750. A probe island placed outside that band is
+correctly ignored and produces a false "confirmed" with all cases identical. Keep an
+`A !== C` sanity control.
 
 ## Status: ready for user review
 
