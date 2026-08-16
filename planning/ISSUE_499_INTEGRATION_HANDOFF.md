@@ -222,9 +222,72 @@ directly while iterating.
 
 This cost real time on both S1 and S2 before it was written down.
 
-## Slice S2 — the corner qualifier — **YOUR ASSIGNMENT**
+## Slice S2b — test the span guard — **YOUR ASSIGNMENT**
 
-**You are the implementation worker for slice S2 of issue #499.**
+**You are the implementation worker for slice S2b of issue #499.**
+
+Same confinement, reading list and working rules as S2 below, which is now
+complete and reference-only. Read the S2 review record before starting: it says
+exactly what went wrong.
+
+### The defect
+
+`SPAN_MAX_TOOL_DIAMETERS = 8` in `src/engine/toolpaths/cornerQualifier.ts`
+rejects a corner whose above-nominal run is longer than eight tool diameters, on
+the reasoning that such a corner sits inside a slotting stretch (#501's
+territory) rather than being an unwindable corner. The rejection is at the
+`rawSpan > spanMax` guard.
+
+**The guard is never exercised.** Setting the constant to `1e9` — disabling the
+rejection entirely — leaves all nine tests passing. Verified by the manager.
+Nothing in the fixture pack reaches 8d, because the threshold was derived as
+"just above `largeComplex`'s measured maximum", which guarantees it can never
+fire on the pack it was derived from.
+
+This is the failure the project has hit before: a suite that stays green with a
+load-bearing mechanism deleted (`AGENTS.md`-adjacent precedent recorded in the
+`manager-delegate` skill, where a region-polarity test passed 9/9 with the
+critical substitution removed). The guard matters for slice 3, which will build
+motion on top of qualification, so it must be constrained before then.
+
+### What to do
+
+1. **Add a direct unit test for the span rejection.** The module is pure, so
+   feed it synthetic ring input rather than adding a fixture — the fixture pack
+   is forbidden to edit. Construct a corner whose above-nominal run exceeds
+   `SPAN_MAX_TOOL_DIAMETERS`, assert it is declined, and assert an otherwise
+   identical corner just under the threshold is accepted. The pair is the point:
+   one alone does not show the boundary is where it claims to be.
+2. **Then apply the rule generally.** Every exported threshold constant in
+   `cornerQualifier.ts` must have a test that fails when that constant is
+   disabled (set permissive). Check each one, add what is missing.
+3. **Prove each new test bites.** For every constant, disable it, watch the test
+   fail, restore from a `cp` backup (never `git checkout`), and report what you
+   saw. A test you have not watched fail does not count.
+
+### Files
+
+**Allowed:**
+
+- `src/engine/toolpaths/cornerQualifier.test.ts` (edit)
+- `src/engine/toolpaths/cornerQualifier.ts` (edit **only** if a constant must be
+  exported to be testable, or a comment corrected — no behaviour change)
+
+**Forbidden:** everything else, explicitly `src/test/pocketFixturePack.ts`,
+`src/engine/toolpaths/pocket.ts`, `src/engine/toolpaths/engagement.ts`.
+
+**Do not change any threshold value.** If a derivation looks wrong, report it;
+do not retune it. Changing a constant to make a test pass would invert the whole
+point of the slice.
+
+**Required checks:** as S2 — `./node_modules/.bin/tsx
+src/engine/toolpaths/cornerQualifier.test.ts` and one
+`scripts/build-summary.sh`.
+
+## Slice S2 — the corner qualifier — **COMPLETE, reference only**
+
+> **Not your assignment.** Merged as `a6952f0`. Kept because S2b works inside
+> its module and its reading list and working rules still apply.
 
 Work only in this task worktree. Do not create, remove, merge, push, or switch
 branches or worktrees. Do not create a PR. Do not work in the integration
@@ -417,6 +480,52 @@ Readings for slice 2:
   includes the innermost ring, which is a true full-width slot, so `peak` reads
   π on nearly every fixture and tells you nothing about corners. The span
   columns are the usable output.
+
+### S2 — corner qualifier, **accepted with one gap**, merged as `a6952f0`
+
+Two new files, 877 lines, nothing imported anywhere — the module is inert, so no
+production path can reach it. Worker exit 0, build gate passed.
+
+**Verified:**
+
+- Ran the suite: 9 passed, 0 failed. `curvedCorner` qualifies **zero** corners —
+  the negative control holds.
+- Turn threshold 0.374 rad (21.4°) derives as the geometric midpoint of the
+  measured 5.1° tessellation ceiling and the 90° rectangular corner:
+  √(5.1 × 90) = 21.4°, ~4.2× margin either side. Arithmetic checked.
+- The worker's own mutation check is real: turn threshold → 0 makes
+  `curvedCorner` fire 222 corners and the negative-control test fail; restored
+  from a `cp` backup.
+- No `any`, no non-null assertions, licence header, deterministic, CPU time
+  reported not asserted, rings selected by half-size not ordinal.
+
+**The gap — `SPAN_MAX_TOOL_DIAMETERS` is unexercised.** Setting it to `1e9`,
+which disables the rejection completely, leaves all nine tests green. The
+threshold was derived as "just above `largeComplex`'s max", so by construction
+nothing in the pack can reach it. A guard no test constrains is exactly the
+#455-class defect this project has already paid for once. Assigned as S2b before
+slice 3 builds motion on top of qualification.
+
+Contributing cause on the manager side: the S2 contract said "`largeComplex`
+sets the span threshold" without saying whether that threshold was a floor or a
+ceiling. The worker read it as a ceiling and placed it above the maximum, which
+is a fair reading of an ambiguous instruction.
+
+### Qualifying corners measured in S2
+
+| Fixture | Qualifying | Span median / p95 / max |
+| --- | --- | --- |
+| rectangular | 40 | 1.00d / 4.00d / 4.00d |
+| acuteCorner | 15 | 1.50d / 3.25d / 3.25d |
+| curvedCorner | **0** | — |
+| longNeck | 40 | 1.00d / 4.00d / 4.00d |
+| islandPinch | 34 | 1.38d / 3.00d / 3.00d |
+| multiSection | 72 | 1.00d / 4.00d / 4.00d |
+| tinyPocket | **0** | — |
+| largeComplex | 143 | 2.00d / 5.75d / 6.50d |
+
+`tinyPocket` declining is a good sign: a pocket smaller than an unwind excursion
+should not qualify.
 
 ### Open, carried to slice 2
 
