@@ -21,6 +21,7 @@ import {
   startJoinFeatures,
   startRotateFeature,
   getKeepOriginals,
+  getFeatureCount,
 } from './helpers'
 import { seedOverlapFeatureProject } from './overlapFeatureSelection.helpers'
 
@@ -132,7 +133,10 @@ test('rotate panel collapses its all-false fragment body', async ({ app }) => {
 
 test('K toggles keep originals on the join panel', async ({ app }) => {
   await seedOverlapFeatureProject(app.page, 2)
-  await startJoinFeatures(app.page, ['f-overlap-1', 'f-overlap-2'])
+  // One feature only. Since issue #522 a selection of both would qualify and
+  // join outright, leaving no panel to toggle — the fixture's two features are
+  // coincident full-stock rects, i.e. exactly the qualifying case.
+  await startJoinFeatures(app.page, ['f-overlap-1'])
 
   const panel = app.page.locator('.canvas-workflow-panel--join')
   await expect(panel).toBeVisible()
@@ -154,4 +158,16 @@ test('K toggles keep originals on the join panel', async ({ app }) => {
   // Modifier combinations stay free for the app's own bindings.
   await app.page.keyboard.press('Meta+k')
   await expect(checkbox).not.toBeChecked()
+})
+
+test('a qualifying selection joins with no panel at all (issue #522)', async ({ app }) => {
+  await seedOverlapFeatureProject(app.page, 2)
+  expect(await getFeatureCount(app.page)).toBe(2)
+
+  await startJoinFeatures(app.page, ['f-overlap-1', 'f-overlap-2'])
+
+  // The selection had already answered the panel's only question, so the join
+  // runs outright and the originals are consumed into one feature.
+  await expect.poll(() => getFeatureCount(app.page)).toBe(1)
+  await expect(app.page.locator('.canvas-workflow-panel--join')).toHaveCount(0)
 })

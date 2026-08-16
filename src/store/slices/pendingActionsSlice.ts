@@ -19,6 +19,7 @@ import type { Clamp, Project, Tab } from '../../types/project'
 import { largestConnectedOverlapGroup } from '../helpers/clipping'
 import { selectedClosedFeaturesFromIds } from '../helpers/derivedFeatures'
 import { nextPlacementSession } from '../helpers/ids'
+import { selectionQualifiesAsCutCutter, selectionQualifiesForImmediateJoin } from '../helpers/shapeActionEligibility'
 import type { ProjectStore } from '../types'
 import { resolveFeatureInstance, type ResolvedSketchFeature } from '../helpers/resolveFeatures'
 
@@ -70,6 +71,7 @@ function tabById(project: Project, id: string): Tab | null {
 
 export function createPendingActionsSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
+  get: Parameters<StateCreator<ProjectStore>>[1],
 ): PendingActionsSlice {
   return {
     pendingMove: null,
@@ -307,7 +309,22 @@ export function createPendingActionsSlice(
         }
       }),
 
-    startJoinSelectedFeatures: () =>
+    // Issue #522: a selection that already qualifies has answered the panel's
+    // only question, so join it outright. The panel still opens for everything
+    // else — including a selection that only *partially* qualifies, where the
+    // grouping below would quietly drop the members that don't fit.
+    startJoinSelectedFeatures: () => {
+      const state = get()
+      if (selectionQualifiesForImmediateJoin(state.project, state.selection.selectedFeatureIds)) {
+        set({ pendingAdd: null, sketchEditSession: null })
+        // mergeSelectedFeatures returns [] *before* it touches state when the
+        // union can't be rebuilt into a profile, so falling through to the
+        // panel leaves the user with a live workflow rather than a dead click.
+        if (get().mergeSelectedFeatures(false).length > 0) {
+          return
+        }
+      }
+
       set((s) => {
         const allClosed = selectedClosedFeaturesFromIds(s.project, s.selection.selectedFeatureIds)
         const connectedGroup = largestConnectedOverlapGroup(allClosed)
@@ -330,19 +347,24 @@ export function createPendingActionsSlice(
             activeControl: null,
           },
         }
-      }),
+      })
+    },
 
+    // Issue #522: one selected feature is an unambiguous cutter, so open on
+    // target selection rather than re-asking for the cutter. The cut itself is
+    // never skipped — targets can't be inferred from the cutter's selection.
     startCutSelectedFeatures: () =>
       set((s) => {
         const cutterIds = s.selection.selectedFeatureIds
           .filter((id) => s.project.features.some((f) => f.id === id))
+        const phase = selectionQualifiesAsCutCutter(s.project, cutterIds) ? 'targets' : 'cutters'
 
         return {
           pendingAdd: null,
           pendingMove: null,
           pendingTransform: null,
           pendingOffset: null,
-          pendingShapeAction: { kind: 'cut', cutterIds, targetIds: [], phase: 'cutters', keepOriginals: false, session: nextPlacementSession() },
+          pendingShapeAction: { kind: 'cut', cutterIds, targetIds: [], phase, keepOriginals: false, session: nextPlacementSession() },
           sketchEditSession: null,
           selection: {
             ...s.selection,

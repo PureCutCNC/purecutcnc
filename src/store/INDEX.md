@@ -37,6 +37,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `featureRoles.ts` — single source of truth for feature roles (issue #199): isMachinable/isRegion/isConstruction/isSolid predicates, modelFeatures() CSG gate, and sectionForOperation tree sectioning. Use these instead of `operation !== 'region'` checks. `isSolid` (issue #270) returns true only for add/subtract/model — the base-solid invariant gate.
   - `geometry.ts` — geometric utilities (bounds, transforms)
   - `transform.ts` — point/profile/clamp/tab translation, rotation, mirroring, and affine transforms; arc→bezier conversion
+  - `shapeActionEligibility.ts` — shared join/cut selection eligibility (issue #522): `selectionQualifiesForImmediateJoin` decides whether a selection has already said enough to skip the join confirmation panel, `selectionQualifiesAsCutCutter` whether one selected feature is an unambiguous cutter. Every clause exists so the shortcut drops no member of the selection; anything failing falls back to the panel unchanged
   - `vcarveTargets.ts` — shared V-carve target eligibility predicate (issue #270 S2): `isVCarveCompatibleFeature` is the single source of truth for "can this feature be a V-carve machining target?"; used by UI hints, compatible selection, CAM panel validation, persisted target validation, and fallback target selection
   - `referenceTransforms.ts` — feature/backdrop resize, rotate, mirror from reference geometry; corner fillet radius and application
   - `modelAssets.ts` — imported model (STL) asset normalization, storage deduplication, and feature classification
@@ -73,6 +74,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `geometryFidelity.test.ts` — per-FeatureKind × transform-class resolveProfile fidelity, edit round-trip, duplicate-as-reference, per-kind store transforms
 - `helpers/clipping.test.ts` — join-connectivity predicates (issue #271): shared-edge, corner-contact, disjoint, overlap, and hole-forming union cases for featuresOverlap and the grouping helpers
 - `instanceTransforms.test.ts` — instance transform matrix composition
+- `joinImmediate.test.ts` — skipping the confirmation panel for a qualifying selection (issue #522): the immediate join and its single undo step, the cut cutter-phase skip, and the fallback matrix proving every non-qualifying selection (partial group, open, locked, text, model, mixed operation, one or none selected) still opens the panel with nothing dropped
 - `joinSharedEdge.test.ts` — store-level join of edge-adjacent closed features (issue #271): grouping, session click-to-add, merge result, keepOriginals
 - `linkedConstraintResolve.test.ts` — linked constraint re-solve through resolved instances after definition edits; direct-edit regression; no-drift idempotency
 - `lineTopZFromEnclosingFeature.test.ts` — Line `z_top` inheritance from the smallest enclosing solid (issue #351): subtract floor / add top, nested innermost wins, on-wall inheritance, construction keeps default, store wiring for closed primitives, open polylines, and open composites
