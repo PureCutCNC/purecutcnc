@@ -29,8 +29,11 @@ import { snapClosedContourEntryToAnchor } from './finishSurfaceWaterline'
 import { generateRoughSurfaceToolpath } from './roughSurface'
 import { toClipperPath, normalizeWinding, DEFAULT_CLIPPER_SCALE, applyContourDirectionBySide, isClockwise, normalizeToolForProject } from './geometry'
 import { loadSTLTransformedGeometry } from '../csg'
-import { chooseHeightMapCellSize, computeXYBounds, getCachedHeightMap, safeToolTipZAt, type FinishSurfaceParallelCacheHost } from './finishSurfaceParallel'
+import { chooseHeightMapCellSize, computeXYBounds, getCachedHeightMap, modelSilhouettePathsForFinishSurface, safeToolTipZAt, type FinishSurfaceParallelCacheHost } from './finishSurfaceParallel'
 import { getMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
+import { pointInClipperPaths } from './modelProtection'
+import { resolveRegionDomainCentre } from './regionDomain'
+import { buildRegionMask } from './regions'
 import type { Point } from '../../types/project'
 import type { ClipperPath, PocketToolpathResult, ToolpathMove } from './types'
 import { simulateReplayItemsHeightfield } from '../simulation/replay'
@@ -524,6 +527,70 @@ function distanceToSliceBoundary(paths: Array<Array<[number, number]>>, point: P
     }
   }
   return minDistance
+}
+
+function distanceToClipperBoundary(paths: ClipperPath[], point: Point): number {
+  let minDistance = Number.POSITIVE_INFINITY
+  for (const path of paths) {
+    for (let i = 0; i < path.length; i += 1) {
+      const current = path[i]
+      const next = path[(i + 1) % path.length]
+      minDistance = Math.min(minDistance, distanceToSegment(
+        point,
+        { x: current.X / DEFAULT_CLIPPER_SCALE, y: current.Y / DEFAULT_CLIPPER_SCALE },
+        { x: next.X / DEFAULT_CLIPPER_SCALE, y: next.Y / DEFAULT_CLIPPER_SCALE },
+      ))
+    }
+  }
+  return minDistance
+}
+
+function distanceToRectBoundary(point: Point, x: number, y: number, w: number, h: number): number {
+  const corners = [
+    { x, y },
+    { x: x + w, y },
+    { x: x + w, y: y + h },
+    { x, y: y + h },
+  ]
+  let minDistance = Number.POSITIVE_INFINITY
+  for (let i = 0; i < corners.length; i += 1) {
+    minDistance = Math.min(minDistance, distanceToSegment(
+      point,
+      corners[i],
+      corners[(i + 1) % corners.length],
+    ))
+  }
+  return minDistance
+}
+
+/**
+ * The expected waterline region domain, computed with the *shared* resolver so
+ * a divergence between the waterline generator and `regionDomain.ts` fails
+ * here rather than silently drifting (issue #476).
+ */
+function waterlineRegionAllowedDomain(
+  modelFeature: SketchFeature,
+  regionFeatures: SketchFeature[],
+  toolOffset: number,
+): ClipperPath[] {
+  const domain = modelSilhouettePathsForFinishSurface(modelFeature)
+  const mask = buildRegionMask(regionFeatures)
+  return mask ? resolveRegionDomainCentre(domain, mask, toolOffset) : domain
+}
+
+function assertWaterlineCutsInsideDomain(cuts: ToolpathMove[], allowed: ClipperPath[]): void {
+  for (const move of cuts) {
+    for (const t of [0, 0.5, 1]) {
+      const point = {
+        x: move.from.x + (move.to.x - move.from.x) * t,
+        y: move.from.y + (move.to.y - move.from.y) * t,
+      }
+      assert(
+        pointInClipperPaths(allowed, point) || distanceToClipperBoundary(allowed, point) <= 1e-3,
+        `expected waterline cut at (${point.x.toFixed(4)}, ${point.y.toFixed(4)}) inside the region-resolved domain`,
+      )
+    }
+  }
 }
 
 function assertNoTargetMeshGougingCuts(project: Project, operation: Operation, result: PocketToolpathResult): void {
@@ -1102,6 +1169,137 @@ function testWaterlineRegionActsAsFilterNotBoundaryContour(): void {
 
   assert(boundaryRuns.length === 0,
     `expected no region-boundary contour runs, got ${boundaryRuns.length}`)
+}
+
+function testWaterlineIncludeRegionDilatesForCoverage(): void {
+  console.log('Testing waterline include region dilates for coverage bounded by the model domain...')
+  const { project } = makeProject()
+  const region = makeRegionFeatureRect('region1', 9, 0, 4, 10)
+  replaceProjectFeatures(project, [makeTaperedModelFeature(), region])
+  const operation: Operation = {
+    ...makeWaterlineOperation(),
+    target: { source: 'features', featureIds: ['model1', 'region1'] },
+  }
+  project.operations = [operation]
+
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'expected waterline cut moves')
+
+  const toolOffset = 0.5
+  const allowed = waterlineRegionAllowedDomain(resolvedFeature(project, 'model1'), [region], toolOffset)
+  assertWaterlineCutsInsideDomain(cuts, allowed)
+
+  // Coverage: the tool centre may reach toolOffset beyond the raw region so
+  // the cut covers it — proven by some cut point past x=13 — but never past
+  // the region dilated by toolOffset (bounded by the model domain).
+  const points = cuts.flatMap((move) => [
+    { x: move.from.x, y: move.from.y },
+    { x: (move.from.x + move.to.x) / 2, y: (move.from.y + move.to.y) / 2 },
+    { x: move.to.x, y: move.to.y },
+  ])
+  const beyondRaw = points.filter((point) => point.x > 13 + 1e-3)
+  const beyondDilated = points.filter((point) => point.x > 13 + toolOffset + 1e-3)
+  assert(beyondRaw.length > 0,
+    'expected coverage over-reach past the raw include region (centre may reach toolOffset beyond it)')
+  assert(beyondDilated.length === 0,
+    `expected no waterline cut beyond the region dilated by toolOffset=${toolOffset}, got ${beyondDilated.length}`)
+}
+
+function testWaterlineExcludeRegionKeepsToolCentreClearance(): void {
+  console.log('Testing waterline exclude region keeps tool-centre clearance...')
+  const { project } = makeProject()
+  const region = makeRegionFeatureRect('region1', 9, 0, 4, 10, 'exclude')
+  replaceProjectFeatures(project, [makeTaperedModelFeature(), region])
+  const operation: Operation = {
+    ...makeWaterlineOperation(),
+    target: { source: 'features', featureIds: ['model1', 'region1'] },
+  }
+  project.operations = [operation]
+
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'expected waterline cut moves outside the exclude region')
+
+  const toolOffset = 0.5
+  const allowed = waterlineRegionAllowedDomain(resolvedFeature(project, 'model1'), [region], toolOffset)
+  assertWaterlineCutsInsideDomain(cuts, allowed)
+
+  // Containment: the tool centre stays toolOffset clear of the raw exclude
+  // region everywhere it cuts.
+  for (const move of cuts) {
+    for (const point of [move.from, move.to]) {
+      const clearance = distanceToRectBoundary(point, 9, 0, 4, 10)
+      assert(clearance >= toolOffset - 1e-3,
+        `expected tool centre at least ${toolOffset} clear of the exclude region, got ${clearance.toFixed(4)} at (${point.x.toFixed(4)}, ${point.y.toFixed(4)})`)
+    }
+  }
+}
+
+function testWaterlineOrderedIncludeThenExcludeComposition(): void {
+  console.log('Testing waterline ordered include-then-exclude region composition...')
+  const { project } = makeProject()
+  // The exclude must stay interior to the include — an exclude touching the
+  // include boundary makes Clipper drop the detached sliver on the far side.
+  const includeRegion = makeRegionFeatureRect('region1', 9, 0, 4, 10)
+  const excludeRegion = makeRegionFeatureRect('region2', 11, 2, 2, 6, 'exclude')
+  replaceProjectFeatures(project, [makeTaperedModelFeature(), includeRegion, excludeRegion])
+  const operation: Operation = {
+    ...makeWaterlineOperation(),
+    target: { source: 'features', featureIds: ['model1', 'region1', 'region2'] },
+  }
+  project.operations = [operation]
+
+  const result = generateFinishSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  assert(cuts.length > 0, 'expected waterline cut moves')
+
+  const toolOffset = 0.5
+  const allowed = waterlineRegionAllowedDomain(
+    resolvedFeature(project, 'model1'),
+    [includeRegion, excludeRegion],
+    toolOffset,
+  )
+  assertWaterlineCutsInsideDomain(cuts, allowed)
+
+  // Later exclude wins inside the include: the dilated exclude
+  // x∈[10.5,12.5] × y∈[1.5,8.5] must contain no cuts.
+  const inExcludedZone = cuts.filter((move) => {
+    const xs = [move.from.x, (move.from.x + move.to.x) / 2, move.to.x]
+    const ys = [move.from.y, (move.from.y + move.to.y) / 2, move.to.y]
+    return xs.some((x) => x > 10.5 + 1e-3 && x < 12.5 - 1e-3)
+      && ys.some((y) => y > 1.5 + 1e-3 && y < 8.5 - 1e-3)
+  })
+  assert(inExcludedZone.length === 0,
+    `expected no waterline cuts inside the excluded zone, got ${inExcludedZone.length}`)
+}
+
+function testWaterlineRegionCanOnlyNarrowCuts(): void {
+  console.log('Testing waterline region narrows (never adds) unmasked cuts...')
+  const { project } = makeProject()
+  project.operations = [{ ...makeWaterlineOperation() }]
+  const unmasked = generateFinishSurfaceToolpath(project, project.operations[0])
+  const unmaskedCuts = cutMoves(unmasked.moves)
+  assert(unmaskedCuts.length > 0, 'expected unmasked waterline cut moves')
+  assert(unmaskedCuts.some((move) => move.from.x < 8.5 || move.to.x < 8.5),
+    'expected unmasked cuts left of the region zone (x < 8.5)')
+
+  const region = makeRegionFeatureRect('region1', 9, 0, 4, 10)
+  replaceProjectFeatures(project, [makeModelFeature(), region])
+  const maskedOperation: Operation = {
+    ...makeWaterlineOperation(),
+    target: { source: 'features', featureIds: ['model1', 'region1'] },
+  }
+  project.operations = [maskedOperation]
+  const masked = generateFinishSurfaceToolpath(project, maskedOperation)
+  const maskedCuts = cutMoves(masked.moves)
+  assert(maskedCuts.length > 0, 'expected masked waterline cut moves')
+
+  // A region can only narrow the operation's own domain: everything left of
+  // the include region (dilated inward by the tool offset) must be gone.
+  const maskedMinX = Math.min(...maskedCuts.flatMap((move) => [move.from.x, move.to.x]))
+  assert(maskedMinX >= 8.5 - 1e-3,
+    `expected masked cuts to keep at least the include-inset bound x≥8.5, got min x ${maskedMinX.toFixed(4)}`)
 }
 
 function testWaterlineAdaptivelyRefinesShallowSlope(): void {
@@ -2118,6 +2316,10 @@ testWaterlineStepLevelsDescend()
 testWaterlineRepeatIsStable()
 testWaterlineRespectsContainingPocketDepth()
 testWaterlineRegionActsAsFilterNotBoundaryContour()
+testWaterlineIncludeRegionDilatesForCoverage()
+testWaterlineExcludeRegionKeepsToolCentreClearance()
+testWaterlineOrderedIncludeThenExcludeComposition()
+testWaterlineRegionCanOnlyNarrowCuts()
 testWaterlineAdaptivelyRefinesShallowSlope()
 testWaterlineTipCapSmoothsConePeak()
 testWaterlineTipCapFillsCollapsedBranch()

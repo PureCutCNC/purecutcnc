@@ -16,7 +16,7 @@ PureCutCNC is a web-based, parametric 2.5D CAM application designed for CNC enth
 ## 2. Core Architecture
 - **State Management:** Driven by a central Zustand store (`src/store/projectStore.ts`). It handles the project lifecycle, feature tree ordering, and undo/redo history.
 - **Geometric Engine:**
-    - **2D (Clipper):** Uses `clipper-lib` for polygon clipping and region resolution (see `src/engine/toolpaths/resolver.ts`).
+    - **2D (Clipper):** Uses `clipper-lib` for polygon clipping. Region masks are composed in `src/engine/toolpaths/regions.ts` (`buildRegionMask`) and resolved into typed operation domains by the area/centre/curve resolvers in `src/engine/toolpaths/regionDomain.ts` (`resolveRegionDomainArea` / `resolveRegionDomainCentre` / `resolveRegionDomainCurve`); the resolver table in [`planning/REGION_FEATURE_SEMANTICS.md`](planning/REGION_FEATURE_SEMANTICS.md) owns which operation kind uses which resolver. `src/engine/toolpaths/resolver.ts` resolves features and operations into Clipper input regions (V-carve line/subtract acceptance, even-odd nesting) — it does not resolve region masks.
     - **3D (Manifold):** Uses `manifold-3d` WASM to perform CSG (Constructive Solid Geometry) for the 3D preview.
 - **Rendering:**
     - **Sketch View (2D):** High-performance HTML5 Canvas (`src/components/canvas/SketchCanvas.tsx`).
@@ -87,6 +87,7 @@ Icons are **SVG-first**: editable per-icon SVG files are the source of truth and
 
 ## 8. Operational Gotchas
 - **Clipper Scaling:** `clipper-lib` uses integer math. Always use the internal scaling factor when performing clipping operations.
+- **Region resolution is typed per operation domain.** `regionDomain.ts` offers three resolvers (`resolveRegionDomainArea` / `resolveRegionDomainCentre` / `resolveRegionDomainCurve`); choosing the wrong one is a silent clearance bug — see the resolver table in [`planning/REGION_FEATURE_SEMANTICS.md`](planning/REGION_FEATURE_SEMANTICS.md). Never re-implement mask composition or dilation per operation: a clearance-rule fix in `regionDomain.ts` must reach every operation kind, and duplicated logic drifts (issue #476).
 - **Coordinate Systems:** 
     - **Internal:** Uses a screen-coordinate system where (0,0) is top-left, and **positive Y increases downwards**.
     - **Machine:** Standard Cartesian CAM system where **positive Y increases upwards**. 

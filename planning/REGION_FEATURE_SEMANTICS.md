@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: region feature meaning and CAM filtering behavior
-last-verified: 2026-08-06
+last-verified: 2026-08-16
 ---
 
 # Region Feature Semantics
@@ -62,9 +62,15 @@ applies:
 
 | Domain | Operations | Resolver |
 | --- | --- | --- |
-| Area (polygon set) | `pocket`, `surface_clean`, `rough_surface`, V-carve offset/medial, rest regions | `resolveRegionDomainArea` or `resolveRegionDomainCentre` |
-| Curve (guide, contours, scanlines) | `edge_route_*`, `follow_line`/carving, waterline, parallel finishing, trochoidal guide | `resolveRegionDomainCurve` |
+| Area (polygon set) | `pocket`, `surface_clean`, `rough_surface`, V-carve offset/medial, rest regions, waterline finishing, parallel finishing | `resolveRegionDomainArea` or `resolveRegionDomainCentre` |
+| Curve (guide, contours, scanlines) | `edge_route_*`, `follow_line`/carving, trochoidal guide | `resolveRegionDomainCurve` |
 | Point | `drilling` | filter candidate centres (unchanged) |
+
+Waterline finishing is the area case applied per ring: its rings are already
+tool-centre contours, so `resolveRegionDomainCentre(modelSilhouettePaths,
+mask, toolOffset)` builds the composite allowed area and each ring is clipped
+to it during generation — the rings differ per Z level, but the domain is an
+area, never a curve guide.
 
 Applying an area intersection to a curve domain would turn the region's edge
 into a machined contour and is forbidden.
