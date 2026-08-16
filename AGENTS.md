@@ -27,6 +27,8 @@ If the `codebase-memory-mcp` server is connected, prefer its graph tools (`searc
 5. **PR when done.** When work is complete and the build is green, open the PR with `Closes #NN` in the description. Move Status to `In review`. The PR is created at the **end** as the delivery — it is not where the plan lives.
 6. **Merge.** Merging auto-closes the issue and moves the card to `Done`.
 
+The GitHub mechanics behind these steps — issue creation, board wiring (Status/Size/Area), the R1 Priority field, status moves, PR labels — are scripted in the [`github-issues` skill](.agents/skills/github-issues/SKILL.md) (exact GraphQL/REST calls, field IDs, rate-limit rules). Load it before doing any of that; it exists because every one of those calls was re-discovered from scratch on #524/#535/#536.
+
 Abandoned work: close the issue with a short reason; the board moves it to `Done`/closed. No file cleanup needed.
 
 ### Fast lane (waives steps 2–3 only)
