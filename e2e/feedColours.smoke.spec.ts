@@ -56,6 +56,14 @@ function resolvedRectProfile(cx: number, cy: number, w: number, h: number) {
  * emits no scaled moves at all, so its cuts must stay a single colour.
  * `slotPercent` varies the engagement ladder's slot feed (issue #498 S5): the
  * emitted rungs and the legend both derive from it.
+ *
+ * The slots-only variant pins its slot feed to 100% explicitly: an unset
+ * `pocketSlotFeedPercent` is normalized to the app default of 60% on load
+ * (issue #524), which makes the engine stamp its full-width slot stretches
+ * with a scaled feed — real product behaviour, but not the "no scaled moves"
+ * contract this variant exists to pin. 100% is the engine's no-feed anchor
+ * (`resolveSlotFeedScale` returns null there), so the move stream carries no
+ * feed scales and toggling feed colours must not change the canvas.
  */
 function buildFeedColoursProjectJson(mode: 'slots_only' | 'engagement', slotPercent = 40): string {
   const now = '2026-01-01T00:00:00.000Z'
@@ -163,7 +171,7 @@ function buildFeedColoursProjectJson(mode: 'slots_only' | 'engagement', slotPerc
         pocketAngle: 0,
         ...(mode === 'engagement'
           ? { pocketSlotFeedPercent: slotPercent, pocketFeedReduction: 'engagement' }
-          : { pocketFeedReduction: 'slots_only' }),
+          : { pocketSlotFeedPercent: 100, pocketFeedReduction: 'slots_only' }),
         roundOutsideCorners: false,
         stockToLeaveRadial: 0,
         stockToLeaveAxial: 0,
@@ -286,12 +294,7 @@ test.describe('Feed-coloured toolpath smoke', () => {
     }, { timeout: 10000 }).toBeGreaterThanOrEqual(2)
   })
 
-  // Known failure, tracked in #524: the vacuous-pass guard at the end of this
-  // test times out, which means the colour equality it protects is currently
-  // passing without constraining anything. `fixme` rather than `fail` on
-  // purpose — the assertion is a canvas-pixel poll, so it is timing-sensitive
-  // and `test.fail` would be flaky in the opposite direction.
-  test.fixme('slots-only pocket renders cut segments in exactly one colour with the toggle on', async ({ app, ui }) => {
+  test('slots-only pocket renders cut segments in exactly one colour with the toggle on', async ({ app, ui }) => {
     await seedProject(app.page, SLOTS_ONLY_FIXTURE_JSON)
 
     const panel = ui.toolpathVis.sketchPanel(app.page)
