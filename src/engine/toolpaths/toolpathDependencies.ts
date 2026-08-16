@@ -396,24 +396,26 @@ export function operationFootprint(project: Project, operation: Operation): Oper
  * - `bounds === null` — the footprint is unknown, so relevance cannot be
  *   determined. Unknown means invalidate.
  * - `readsWholeModel` — the operation cuts the whole model, so every changed
- *   feature invalidates it, except one whose construction or region role
- *   holds on every side where the feature exists (`roleExemptEverywhere`).
- *   Issue #199 guarantees construction geometry can never be a machining
- *   target, region mask, or CSG input — the `constructionExclusion` guard
- *   test fails the build if that regresses — and a region can only filter an
- *   operation whose target list contains it, which a stock-targeted
- *   operation has none of.
+ *   feature invalidates it, except one whose construction, region, or line
+ *   role holds on every side where the feature exists
+ *   (`roleExemptEverywhere`). Issue #199 guarantees construction geometry
+ *   can never be a machining target, region mask, or CSG input — the
+ *   `constructionExclusion` guard test fails the build if that regresses —
+ *   and a region or line can only reach an operation whose target list
+ *   contains it, which a stock-targeted operation has none of.
  * - otherwise, for each changed id: a direct target always invalidates
- *   (including a region — a targeted region is the operation's mask); a
- *   feature whose construction role holds on every side where it exists is
- *   skipped; a feature whose region role holds on every side where it exists
- *   and that is not a direct target is skipped — the generators split
- *   exactly `operation.target.featureIds` and never scan `project.features`
- *   for regions, so a non-target region cannot reach this operation.
+ *   (including a region or line — a targeted one IS the operation's input);
+ *   a feature whose construction role holds on every side where it exists
+ *   is skipped; a feature whose region or line role holds on every side
+ *   where it exists and that is not a direct target is skipped — the
+ *   generators split exactly `operation.target.featureIds` and never scan
+ *   `project.features` for regions or lines, so a non-target one cannot
+ *   reach this operation.
  *   Requiring the role on every side where the feature exists, with absence
  *   raising no objection, is what lets a newly added or removed
- *   region/construction feature stay exempt while a to/from-role conversion
- *   still invalidates; any other changed feature invalidates when its world
+ *   region/line/construction feature stay exempt while a to/from-role
+ *   conversion still invalidates; any other changed feature invalidates when
+ *   its world
  *   bbox in `previous` **or** in `next` intersects the footprint — checking
  *   both sides is what catches a feature that moved into or out of the
  *   footprint. A side where the feature does not exist contributes nothing;
@@ -432,18 +434,17 @@ export function operationAffectedByChange(
 
   if (footprint.readsWholeModel) {
     for (const id of changedFeatureIds) {
-      // A stock-targeted operation has no target list, so no region can be a
-      // mask for it: a region is as irrelevant as construction geometry,
-      // while a to/from-role conversion still invalidates.
+      // A stock-targeted operation has no target list, so no region or line
+      // can be an input for it: both are as irrelevant as construction
+      // geometry, while a to/from-role conversion still invalidates.
       const constructionExempt = roleExemptEverywhere(
         featureConstructionStatus(previous, id),
         featureConstructionStatus(next, id),
       )
-      const regionExempt = roleExemptEverywhere(
-        featureRegionStatus(previous, id),
-        featureRegionStatus(next, id),
+      const targetGatedExempt = TARGET_GATED_EXEMPT_ROLES.some((status) =>
+        roleExemptEverywhere(status(previous, id), status(next, id)),
       )
-      if (!constructionExempt && !regionExempt) return true
+      if (!constructionExempt && !targetGatedExempt) return true
     }
     return false
   }
@@ -456,22 +457,26 @@ export function operationAffectedByChange(
     )) {
       continue
     }
-    // A region that is not a direct target can only filter an operation whose
-    // target list contains it: every generator splits exactly
-    // `operation.target.featureIds` (`splitFeatureTargets`) and never scans
-    // `project.features` for regions, so a change to a non-target region
-    // cannot reach this operation. Requiring the role on every side where
+    // A region or line that is not a direct target cannot reach this
+    // operation: every generator splits exactly `operation.target.featureIds`
+    // (`splitFeatureTargets`) and never scans `project.features` for regions
+    // or lines — a region can only filter an operation that targets it, and
+    // line features are machinable path geometry consumed only through the
+    // target list (verified in the S6/S7 slice instructions). Unlike the
+    // construction skip above, this exemption is target-gated: a targeted
+    // region or line IS the operation's input, so the target check above
+    // returns before it is consulted. Requiring the role on every side where
     // the feature exists, with absence raising no objection, mirrors the
-    // construction rule: converting a feature to or from a region changes
-    // what the operation sees and must still invalidate, while an added or
-    // removed region stays exempt. Targeted regions never get here — the
-    // target check above returns first.
+    // construction rule: converting a feature to or from one of these roles
+    // changes what the operation sees and must still invalidate, while an
+    // added or removed region/line stays exempt. `.some` keeps the role
+    // reads lazy: they run only for the changed id at hand and stop at the
+    // first exempt role.
     if (
-      roleExemptEverywhere(
-        featureRegionStatus(previous, id),
-        featureRegionStatus(next, id),
+      !footprint.targetFeatureIds.has(id)
+      && TARGET_GATED_EXEMPT_ROLES.some((status) =>
+        roleExemptEverywhere(status(previous, id), status(next, id)),
       )
-      && !footprint.targetFeatureIds.has(id)
     ) {
       continue
     }
@@ -534,9 +539,45 @@ function featureRegionStatus(project: Project, id: string): boolean | null {
 }
 
 /**
- * Whether a machining-role exemption (construction or region) holds for one
- * feature across two snapshots, given its three-state role status on each
- * side: `true` = the feature holds the role, `false` = it does not,
+ * Whether `id` is a line feature (machinable path geometry) in `project`:
+ * `true`/`false` when the row and its definition resolve, `null` when they
+ * do not (unknown). The operation role lives on the definition, never on
+ * the instance row.
+ *
+ * Unlike `featureRegionStatus` there is no `isLine` predicate in
+ * `featureRoles.ts` to reuse, and that file is outside this slice's allowed
+ * set, so the role check is spelled inline: `definition.operation === 'line'`.
+ */
+function featureLineStatus(project: Project, id: string): boolean | null {
+  const row = project.features.find((feature) => feature.id === id)
+  if (!row) return null
+  const definition = project.featureDefinitions[row.definitionId]
+  if (!definition) return null
+  return definition.operation === 'line'
+}
+
+/**
+ * Machining roles that can reach an operation only as an explicit target: a
+ * region is a machining-area *filter* and a line is machinable path
+ * geometry; both are consumed through the operation's own target list and
+ * never by scanning `project.features` (S6/S7 verifications). A feature
+ * holding one of these roles on every side where it exists, and absent from
+ * `targetFeatureIds`, cannot affect the operation, so it is exempt.
+ *
+ * Construction geometry is deliberately not in this list: its exemption is
+ * unconditional (issue #199) and is checked separately, without the target
+ * gate. The target gate is the point — a targeted region or line IS the
+ * operation's input and must invalidate on any change.
+ */
+const TARGET_GATED_EXEMPT_ROLES: ReadonlyArray<(project: Project, id: string) => boolean | null> = [
+  featureRegionStatus,
+  featureLineStatus,
+]
+
+/**
+ * Whether a machining-role exemption (construction, region, or line) holds
+ * for one feature across two snapshots, given its three-state role status on
+ * each side: `true` = the feature holds the role, `false` = it does not,
  * `null` = it is absent on that side.
  *
  * The role must hold on every side where the feature exists, and absence

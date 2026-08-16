@@ -20,7 +20,8 @@
  * Tests for the pure change-detection module behind the per-operation
  * toolpath cache (issue #518, slices S1 + S1b + S2's `name` correction + S2b's
  * machining-relevant `meta` fields + S3a's operation footprint model + S6's
- * non-target region exemption + S6b's every-side role exemption).
+ * non-target region exemption + S6b's every-side role exemption + S7's
+ * non-target line exemption).
  *
  * `diffToolpathInputs` must report exactly the feature ids whose
  * toolpath-relevant input changed, and must raise `invalidatesEveryOperation`
@@ -35,9 +36,9 @@
  * action. `operationFootprint` must be generous by construction (unknown →
  * `bounds: null` → invalidate) and `operationAffectedByChange` must return
  * true exactly when a changed feature can reach the operation, treating
- * construction-only and non-target-region changes as irrelevant on every
- * side where the feature exists (absent sides raise no objection), and
- * far-away changes as irrelevant.
+ * construction-only, non-target-region, and non-target-line changes as
+ * irrelevant on every side where the feature exists (absent sides raise no
+ * objection), and far-away changes as irrelevant.
  */
 
 import { defaultTool, getProfileBounds, getStockBounds, rectProfile } from '../../types/project'
@@ -1391,6 +1392,153 @@ function s6bPair(
   assert(
     operationAffectedByChange(stockFootprint, previous, next, ghost),
     'a ghost id must invalidate a stock-targeted operation (not exempt → invalidate)',
+  )
+}
+
+// ── S7: exempt non-target line features ───────────────────────────
+
+{
+  console.log('S7.1 USER-REPORTED CASE: a newly drawn line over the operation area that is not a target no longer regenerates it...')
+  // l-new is added in `next` only and sits inside the footprint on purpose:
+  // if the line exemption were missing, the bbox check would return true
+  // and this test would catch it.
+  const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [draftFeature('f1')]))
+  const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('l-new', 10, 0, 20, 10, { operation: 'line' }),
+  ]))
+  const footprint = operationFootprint(previous, makeOperation({ source: 'features', featureIds: ['f1'] }))
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  assert(setEquals(footprint.targetFeatureIds, ['f1']), 'fixture premise: l-new must not be a target')
+  const diff = diffToolpathInputs(previous, next)
+  assert(diff.changedFeatureIds.has('l-new'), 'the add must register as a changed feature')
+  assert(
+    !operationAffectedByChange(footprint, previous, next, new Set(['l-new'])),
+    'a newly drawn non-target line must not regenerate the operation (reported case)',
+  )
+}
+
+{
+  console.log('S7.1b An edited non-target line over the operation area does not regenerate it...')
+  // Mirrors S6.1: present on both sides, role holding on both — the other
+  // half of the reported scenario.
+  const project = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('l1', 10, 0, 20, 10, { operation: 'line' }),
+  ]))
+  const footprint = operationFootprint(project, makeOperation({ source: 'features', featureIds: ['f1'] }))
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  assert(setEquals(footprint.targetFeatureIds, ['f1']), 'fixture premise: l1 must not be a target')
+  const next = patchFeature(project, 'l1', { z_top: 8 })
+  assert(
+    !operationAffectedByChange(footprint, project, next, new Set(['l1'])),
+    'an edit to a non-target line must not regenerate the operation',
+  )
+}
+
+{
+  console.log('S7.2 A line that IS a target still invalidates when edited...')
+  const project = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('l2', 0, 20, 20, 10, { operation: 'line' }),
+  ]))
+  const footprint = operationFootprint(
+    project,
+    makeOperation({ source: 'features', featureIds: ['f1', 'l2'] }),
+  )
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  const next = patchFeature(project, 'l2', { z_top: 8 })
+  assert(
+    operationAffectedByChange(footprint, project, next, new Set(['l2'])),
+    'a change to a targeted line must regenerate the operation',
+  )
+}
+
+{
+  console.log('S7.3 A removed non-target line does not affect the operation...')
+  const { previous, next, footprint } = s6bPair(
+    rectDraft('l-gone', 10, 0, 20, 10, { operation: 'line' }),
+  )
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  assert(
+    !operationAffectedByChange(footprint, previous, next, new Set(['l-gone'])),
+    'a removed non-target line must not regenerate the operation',
+  )
+}
+
+{
+  console.log('S7.4 Line role conversions still invalidate, in both directions...')
+  const convert = (from: FeatureOperation, to: FeatureOperation): void => {
+    const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+      draftFeature('f1'),
+      rectDraft('x1', 25, 0, 20, 10, { operation: from }),
+    ]))
+    const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+      draftFeature('f1'),
+      rectDraft('x1', 25, 0, 20, 10, { operation: to }),
+    ]))
+    const footprint = operationFootprint(previous, makeOperation({ source: 'features', featureIds: ['f1'] }))
+    assert(footprint.bounds !== null, `${from}->${to}: footprint bounds must not be null`)
+    assert(
+      operationAffectedByChange(footprint, previous, next, new Set(['x1'])),
+      `a ${from}-to-${to} conversion must regenerate (line on one side only)`,
+    )
+  }
+  convert('subtract', 'line')
+  convert('line', 'subtract')
+}
+
+{
+  console.log('S7.5 A newly drawn line does not affect a stock-targeted operation...')
+  const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [draftFeature('f1')]))
+  const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('l-new', 10, 0, 20, 10, { operation: 'line' }),
+  ]))
+  const footprint = operationFootprint(previous, makeOperation({ source: 'stock' }, { toolRef: null }))
+  assert(footprint.readsWholeModel, 'stock footprint must read the whole model')
+  assert(
+    !operationAffectedByChange(footprint, previous, next, new Set(['l-new'])),
+    'a newly drawn line must not affect a stock-targeted operation',
+  )
+}
+
+{
+  console.log('S7.6 CONTROL: a newly drawn add island over the same area still regenerates...')
+  // Identical geometry to S7.1 but `operation: add` — the exemption is
+  // role-specific and must never swallow real material.
+  const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [draftFeature('f1')]))
+  const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('a-new', 10, 0, 20, 10, { operation: 'add' }),
+  ]))
+  const footprint = operationFootprint(previous, makeOperation({ source: 'features', featureIds: ['f1'] }))
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  assert(
+    operationAffectedByChange(footprint, previous, next, new Set(['a-new'])),
+    'a newly drawn add island over the operation area must still regenerate',
+  )
+}
+
+{
+  console.log('S7.7 A newly added line that IS a target still invalidates...')
+  // The target gate, in the add direction: the footprint must already list
+  // the id as a target, so it is computed from the post-add snapshot. In the
+  // real pipeline the operation's own target list changed too, which
+  // `operationComputationEquals` catches before the footprint is consulted —
+  // here the pure predicate must hold the invariant alone: the target check
+  // returns before the target-gated line exemption.
+  const previous = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [draftFeature('f1')]))
+  const next = withTool(projectWithFeatures(newProject('footprint-test', 'mm'), [
+    draftFeature('f1'),
+    rectDraft('l-target', 0, 20, 20, 10, { operation: 'line' }),
+  ]))
+  const footprint = operationFootprint(next, makeOperation({ source: 'features', featureIds: ['f1', 'l-target'] }))
+  assert(footprint.bounds !== null, 'footprint bounds must not be null')
+  assert(footprint.targetFeatureIds.has('l-target'), 'fixture premise: l-target must be targeted')
+  assert(
+    operationAffectedByChange(footprint, previous, next, new Set(['l-target'])),
+    'a newly added targeted line must regenerate the operation',
   )
 }
 
