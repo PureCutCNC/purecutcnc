@@ -1,6 +1,6 @@
 ---
-status: current
-authoritative-for: delegated execution ledger for issue #518 (per-operation toolpath cache invalidation)
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #518 (delivered by PR #525)
 last-verified: 2026-08-15
 ---
 
