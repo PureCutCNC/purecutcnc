@@ -527,6 +527,31 @@ is a fair reading of an ambiguous instruction.
 `tinyPocket` declining is a good sign: a pocket smaller than an unwind excursion
 should not qualify.
 
+### S2b — span guard test, **accepted**, merged as `61f6ed0`
+
+Test file only, 127 lines added, no module change and no threshold retuned.
+
+**The gap is closed, verified by repeating the exact mutation that slipped
+through S2.** `SPAN_MAX_TOOL_DIAMETERS = 1e9` now fails two tests where it
+previously left all nine green.
+
+Every exported constant in `cornerQualifier.ts` is now constrained by a test
+that has been watched to fail — manager-verified, each mutation applied and
+restored from a `cp` backup:
+
+| Constant | Mutation | Result |
+| --- | --- | --- |
+| `TURN_ANGLE_THRESHOLD_RAD` | → 0 | negative control fails; `curvedCorner` fires 222 corners |
+| `SPAN_MAX_TOOL_DIAMETERS` | → `1e9` | 2 span tests fail |
+| `ENGAGEMENT_SAMPLE_STEP_FRACTION` | 0.25 → 4 | 3 tests fail, including the #498 anchor figure |
+
+Worth keeping: the worker added a **premise test** asserting that the 7.5d/8.5d
+pair actually brackets `SPAN_MAX_TOOL_DIAMETERS`. If someone retunes the
+constant, that test fails with a message demanding a new derivation, so the
+bracket pair cannot silently become vacuous — the failure mode that made the
+original guard untestable in the first place. Reuse this shape for any future
+threshold.
+
 ### Open, carried to slice 2
 
 The reopen trigger is satisfied and the thresholds now have a measured source.
