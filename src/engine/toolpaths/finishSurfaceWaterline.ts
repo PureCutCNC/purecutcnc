@@ -54,6 +54,7 @@ import {
   unionClipperPathsEvenOdd,
 } from './modelProtection'
 import { retractToSafe, rotateContourToNearestEntry, toClosedCutMoves, toOpenCutMoves, transitionToCutEntry } from './pocket'
+import { resolveRegionDomainCentre } from './regionDomain'
 import { buildRegionMask } from './regions'
 import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 
@@ -1254,24 +1255,14 @@ export function generateFinishSurfaceWaterline(
   // Build the composite allowed area for pre-generation contour clipping.
   // The waterline rings are tool-centre paths (already offset by toolOffset
   // from the mesh surface), so both polarities dilate the region mask entries
-  // by toolOffset = tool.radius + stockToLeaveRadial.  Include entries add
-  // to the allowed set; exclude entries remove from it.
-  let compositeAllowedForRegion: ClipperPath[] | null = null
-  if (regionMask) {
-    const entries = regionMask.entries
-    if (entries.length > 0) {
-      compositeAllowedForRegion = entries[0].mode === 'include' ? [] : [...modelSilhouettePaths]
-      for (const entry of entries) {
-        if (entry.paths.length === 0) continue
-        const dilated = toolOffset > 0 ? offsetClipperPaths(entry.paths, toolOffset) : entry.paths
-        if (entry.mode === 'include') {
-          compositeAllowedForRegion = unionClipperPaths([...compositeAllowedForRegion, ...dilated])
-        } else {
-          compositeAllowedForRegion = differenceClipperPaths(compositeAllowedForRegion, dilated)
-        }
-      }
-    }
-  }
+  // by toolOffset = tool.radius + stockToLeaveRadial — exactly the
+  // `resolveRegionDomainCentre` contract: the resolver supplies the clearance
+  // itself and constrains the result to the model silhouette, so coverage
+  // over-reach can never introduce a cut the unmasked operation would not
+  // have made (see planning/REGION_FEATURE_SEMANTICS.md).
+  const compositeAllowedForRegion: ClipperPath[] | null = regionMask
+    ? resolveRegionDomainCentre(modelSilhouettePaths, regionMask, toolOffset)
+    : null
   const sliceIndex = getMeshSliceIndex(stlData as Parameters<typeof getMeshSliceIndex>[0])
   const sliceSampleEpsilon = Math.max(Math.abs(modelTopZ - effectiveBottom) * 1e-6, 1e-6)
 
