@@ -20,6 +20,7 @@ import {
   applyEdgeRouteTabs,
   applyTabsToEdgeRoute,
   applyTabWarnings,
+  diffToolpathInputs,
   generateDrillingToolpath,
   generateEdgeRouteToolpath,
   generateFinishSurfaceCleanupToolpath,
@@ -30,17 +31,29 @@ import {
   generateSurfaceCleanToolpath,
   generateVCarveMedialToolpath,
   generateVCarveToolpath,
+  operationAffectedByChange,
+  operationFootprint,
   optimizeLinearMoves,
+  type OperationFootprint,
   type ToolpathResult,
   type ToolpathGenerationTrace,
 } from '../engine/toolpaths'
-import type { Clamp, FeatureInstance, Operation, Project, Stock, Tab, Tool } from '../types/project'
+import type { Clamp, Operation, Project, Stock, Tab, Tool } from '../types/project'
+import { projectsEqual } from '../store/helpers/normalize'
 
 export interface ToolpathCacheEntry {
   result: ToolpathResult
   operation: Operation
   stock: Stock
-  features: FeatureInstance[]
+  /** The project snapshot this result was generated from (issue #518). */
+  project: Project
+  /**
+   * The world-XY region a feature change must reach to invalidate this entry
+   * (issue #518, S3b). Computed from the same `project` snapshot at the point
+   * the entry is written, so it can never disagree with the inputs the result
+   * was generated from.
+   */
+  footprint: OperationFootprint
   tools: Tool[]
   tabs: Tab[]
   clamps: Clamp[]
@@ -111,14 +124,84 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
 }
 
 export function isCacheHit(entry: ToolpathCacheEntry, operation: Operation, project: Project): boolean {
-  return (
-    operationComputationEquals(entry.operation, operation)
-    && entry.stock === project.stock
-    && entry.features === project.features
-    && entry.tools === project.tools
-    && entry.tabs === project.tabs
-    && entry.clamps === project.clamps
-  )
+  if (
+    !operationComputationEquals(entry.operation, operation)
+    || entry.stock !== project.stock
+    || entry.tabs !== project.tabs
+    || entry.clamps !== project.clamps
+  ) {
+    return false
+  }
+
+  // Tools are narrowed to the operation's own tool (issue #518, S5): every
+  // engine read is `project.tools.find(t => t.id === operation.toolRef)` —
+  // clamps.ts, carving.ts, drilling.ts, edge.ts, pocket.ts, geometry.ts, and
+  // four more — and no call site reads any other tool, so importing, editing,
+  // or deleting an unrelated tool cannot change this operation's output.
+  // Keep the whole-array identity fast path; a changed array compares only
+  // the operation's tool row, identity-first with a deep-equal fallback.
+  // Missing on either side counts as changed: unknown means invalidate.
+  //
+  // `tabs` and `clamps` deliberately stay whole-array identity: tab reads are
+  // not all spatially filtered (modelProtection.ts iterates every tab;
+  // edge.ts passes `project.tabs` wholesale for trochoidal), so narrowing
+  // them needs its own footprint argument and is out of scope here.
+  if (entry.tools !== project.tools) {
+    const before = entry.tools.find((tool) => tool.id === operation.toolRef) ?? null
+    const after = project.tools.find((tool) => tool.id === operation.toolRef) ?? null
+    if (before !== after && (!before || !after || !projectsEqual(before, after))) return false
+  }
+
+  // The entry holds the full project snapshot it was generated from
+  // (`entry.project`). Holding one `Project` reference per entry is bounded —
+  // at most one per operation — and immutable updates share structure, so
+  // this is not a leak. When the snapshot's identity still matches, skip the
+  // O(n) diff below.
+  if (entry.project === project) return true
+
+  // Each entry diffs against its **own** snapshot, not a single global
+  // "changed since last render" set: operations are generated at different
+  // times, so one entry may be several edits older than another and a shared
+  // set would be wrong for the stale one. Display-only instance changes
+  // (visible, locked, folderId) produce an empty diff and stop invalidating.
+  // Whether a geometry change invalidates is decided by the footprint
+  // consult below.
+  const diff = diffToolpathInputs(entry.project, project)
+  if (diff.invalidatesEveryOperation) return false
+  if (diff.changedFeatureIds.size === 0) return true
+  // Spatial narrowing (issue #518, S3b): a changed feature invalidates this
+  // entry only when the change reaches the footprint recorded on it. The
+  // footprint was computed from `entry.project` — the same snapshot the
+  // result was generated from — so the two can never disagree, and an
+  // unknown footprint invalidates by construction (`bounds === null`).
+  return !operationAffectedByChange(entry.footprint, entry.project, project, diff.changedFeatureIds)
+}
+
+/**
+ * Build the cache entry the hook writes when a toolpath is generated. This is
+ * the **single definition** of what an entry contains (issue #518, S3c): the
+ * hook's write path and the test suite both consume this builder, so the
+ * predicate is always tested against the exact entry shape production writes.
+ *
+ * The footprint is computed from the same `project` snapshot the result was
+ * generated from, at the point the entry is written, so it can never disagree
+ * with the inputs the result was generated from.
+ */
+export function buildToolpathCacheEntry(
+  project: Project,
+  operation: Operation,
+  result: ToolpathResult,
+): ToolpathCacheEntry {
+  return {
+    result,
+    operation,
+    stock: project.stock,
+    project,
+    footprint: operationFootprint(project, operation),
+    tools: project.tools,
+    tabs: project.tabs,
+    clamps: project.clamps,
+  }
 }
 
 // Double-rAF: the first rAF fires before the current paint, the second
@@ -137,8 +220,11 @@ export function startToolpathGenerationPipeline({
   requestAnimationFrameFn = requestAnimationFrame,
   scheduleAfterPaintFn = scheduleAfterPaint,
 }: StartToolpathGenerationPipelineOptions): () => void {
-  const immediateResults = new Map<string, ToolpathResult>()
   const toCompute: string[] = []
+  // Cache-hit results, classified exactly once per needed operation before the
+  // map updater below runs (React defers updaters, so the classification must
+  // not live inside it — `toCompute` has to be ready synchronously).
+  const hitResults = new Map<string, ToolpathResult>()
 
   for (const id of neededOperationIds) {
     const op = project.operations.find((o) => o.id === id)
@@ -146,13 +232,39 @@ export function startToolpathGenerationPipeline({
 
     const entry = toolpathCache.get(id)
     if (entry && isCacheHit(entry, op, project)) {
-      immediateResults.set(id, entry.result)
+      hitResults.set(id, entry.result)
     } else {
       toCompute.push(id)
     }
   }
 
-  setToolpathMap(immediateResults)
+  // Build the initial map from `neededOperationIds` alone, in this order per
+  // id (issue #518, S4): the cache-hit result when the entry is valid;
+  // otherwise the **previous** map's entry, retained as a stale placeholder so
+  // a visible toolpath does not blank out while its recompute is pending (the
+  // `generatingOperationIds` spinner already signals the recompute); otherwise
+  // absent. An operation no longer in `neededOperationIds` is never carried
+  // over — the map is rebuilt from the list each time, so nothing leaks.
+  //
+  // Retaining a stale result is display-only and cannot affect exported
+  // G-code: the export dialog calls `generateToolpathForOperation` (App.tsx
+  // passes it as `generateToolpath`), which re-validates through `isCacheHit`
+  // and regenerates on a miss. It never reads `toolpathMap`.
+  setToolpathMap((prev) => {
+    const next = new Map<string, ToolpathResult>()
+    for (const id of neededOperationIds) {
+      const op = project.operations.find((o) => o.id === id)
+      if (!op) continue
+      const hit = hitResults.get(id)
+      if (hit) {
+        next.set(id, hit)
+        continue
+      }
+      const stale = prev.get(id)
+      if (stale) next.set(id, stale)
+    }
+    return next
+  })
 
   if (toCompute.length === 0) {
     return () => {}
@@ -191,7 +303,25 @@ export function startToolpathGenerationPipeline({
   return () => { cancelled = true }
 }
 
-export function useToolpathGeneration(project: Project, selectedOperation: Operation | null): {
+/**
+ * The pipeline effect body (issue #518, S4): a no-op while `deferGeneration`
+ * is true, otherwise the pipeline itself. Exported so the deferral decision is
+ * unit-testable without a React renderer; `useToolpathGeneration`'s effect is
+ * exactly this call.
+ */
+export function runToolpathGenerationEffect(
+  options: StartToolpathGenerationPipelineOptions,
+  deferGeneration = false,
+): () => void {
+  if (deferGeneration) return () => {}
+  return startToolpathGenerationPipeline(options)
+}
+
+export function useToolpathGeneration(
+  project: Project,
+  selectedOperation: Operation | null,
+  deferGeneration = false,
+): {
   toolpathMap: Map<string, ToolpathResult>
   generateToolpathForOperation: (op: Operation | null) => ToolpathResult | null
   getGenerationTrace: (operation: Operation) => ToolpathGenerationTrace | null
@@ -261,15 +391,7 @@ export function useToolpathGeneration(project: Project, selectedOperation: Opera
       }
 
       if (result) {
-        toolpathCacheRef.current.set(operation.id, {
-          result,
-          operation,
-          stock: project.stock,
-          features: project.features,
-          tools: project.tools,
-          tabs: project.tabs,
-          clamps: project.clamps,
-        })
+        toolpathCacheRef.current.set(operation.id, buildToolpathCacheEntry(project, operation, result))
       }
 
       return result
@@ -334,15 +456,24 @@ export function useToolpathGeneration(project: Project, selectedOperation: Opera
   // Async toolpath pipeline: resolves cached results immediately, defers
   // uncached operations one-per-frame with a paint gap in between so the
   // spinner (derived from cache staleness above) stays animated.
+  //
+  // While a history transaction is open (issue #518, S4) the store rewrites
+  // `project` on every pointermove; starting the pipeline per frame would
+  // restart generation mid-gesture. `deferGeneration` defers — returning the
+  // no-op cleanup and leaving `toolpathMap` untouched — so one gesture commit
+  // produces exactly one regeneration when the flag flips back to false.
   useEffect(() => {
-    return startToolpathGenerationPipeline({
-      neededOperationIds,
-      project,
-      toolpathCache: toolpathCacheRef.current,
-      generateToolpathForOperation,
-      setToolpathMap,
-    })
-  }, [neededOperationIds, generateToolpathForOperation, project])
+    return runToolpathGenerationEffect(
+      {
+        neededOperationIds,
+        project,
+        toolpathCache: toolpathCacheRef.current,
+        generateToolpathForOperation,
+        setToolpathMap,
+      },
+      deferGeneration,
+    )
+  }, [neededOperationIds, generateToolpathForOperation, project, deferGeneration])
 
   const selectedToolpath = selectedOperation
     ? toolpathMap.get(selectedOperation.id) ?? null

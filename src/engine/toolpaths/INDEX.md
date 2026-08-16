@@ -37,6 +37,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `linearMoveOptimization.ts` — pure generation-stage finalizer that removes zero-length duplicate moves and merges contiguous, direction-preserving, collinear XY moves; applied after tabs but before clamp warnings. Zero-length **rapids** are kept: they are each operation's entry-positioning marker for the postprocessor, not noise
 - `arcReconstruction.ts` — recovers arcs/circles/beziers from flattened Clipper output: known-circle reconstruction, segment-preserving boolean reconstruction (annotation map), and the Clipper-offset simplification pipeline (Kasa fit + RDP)
 - `regions.ts` — region computation (which area belongs to which op)
+- `toolpathDependencies.ts` — pure change-detection for the per-operation toolpath cache (issue #518, slice S1): `featureInstanceComputationEquals` (resolver-read instance fields only) and `diffToolpathInputs` (changed feature ids plus global invalidation for named-dimension, unit, model-asset, and feature-order changes). Not wired into `isCacheHit` yet — slice S2 owns that seam.
 - `resolver.ts` — resolves features+operations into clipper input regions; V-carve accepts closed Subtract and Line features (S2), Pocket remains Subtract-only; Line paths use even-odd fill semantics for nested contour holes
 - `restRegions.ts` — rest-machining region computation (what a prior tool missed)
 - `silhouette.ts` — extracts 2D silhouette from 3D mesh for sketch projection
@@ -57,6 +58,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `guideFragments.test.ts` — cyclic span splitting across disjoint, seam-crossing, and concave forbidden regions
 - `toolpaths.test.ts` — broad smoke tests across strategies
 - `resolverReadPath.test.ts` — resolved instance geometry and missing-definition behavior in toolpath resolution
+- `toolpathDependencies.test.ts` — change-detection module (issue #518): display-only instance fields invalidate nothing, per-field and definition-level edits report exactly the affected ids, add/remove/reorder semantics, dimension/unit/model-asset global invalidation, and a 200-feature single-edit guard
 - `vcarveLineResolver.test.ts` — S2 closed-Line V-carve resolver tests: single Line, open-Line rejection, nested even-odd holes, disjoint Lines, mixed Subtract + Line, Subtract-only regression
 - `clamps.test.ts` — clamp collision warnings, rapid auto-lift, per-move collision tagging
 - `drillingRetract.test.ts` — drilling retract-plane safety (issue #479): `retractHeight` is an absolute project Z, so it is clamped to the material surface and warned about rather than rapid-plunging into the part. Asserts one invariant over both the toolpath and the posted program — every rapid endpoint below the surface must sit where a fed move already cut — which admits G83 re-entry and helical bore retracts while rejecting a traverse or descent into uncut stock. Also covers the canned-cycle `R` plane and the safe-Z entry marker that keeps the first hole's traverse off the retract plane
