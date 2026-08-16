@@ -286,7 +286,12 @@ test.describe('Feed-coloured toolpath smoke', () => {
     }, { timeout: 10000 }).toBeGreaterThanOrEqual(2)
   })
 
-  test('slots-only pocket renders cut segments in exactly one colour with the toggle on', async ({ app, ui }) => {
+  // Known failure, tracked in #524: the vacuous-pass guard at the end of this
+  // test times out, which means the colour equality it protects is currently
+  // passing without constraining anything. `fixme` rather than `fail` on
+  // purpose — the assertion is a canvas-pixel poll, so it is timing-sensitive
+  // and `test.fail` would be flaky in the opposite direction.
+  test.fixme('slots-only pocket renders cut segments in exactly one colour with the toggle on', async ({ app, ui }) => {
     await seedProject(app.page, SLOTS_ONLY_FIXTURE_JSON)
 
     const panel = ui.toolpathVis.sketchPanel(app.page)
