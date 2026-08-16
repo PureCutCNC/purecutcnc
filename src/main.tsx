@@ -159,7 +159,12 @@ if (import.meta.env.DEV) {
       const { useProjectStore } = await _pcTestStore()
       return useProjectStore.getState().project.features.length
     },
-    /** Selects the given features and opens the Join workflow panel. */
+    /**
+     * Selects the given features and invokes Join. Since issue #522 that either
+     * joins them outright (selection already qualifies) or opens the Join
+     * workflow panel — pass a selection that cannot qualify, e.g. a single
+     * feature, when the panel itself is what's under test.
+     */
     startJoinFeatures: async (ids: string[]) => {
       const { useProjectStore } = await _pcTestStore()
       useProjectStore.getState().selectFeatures(ids)

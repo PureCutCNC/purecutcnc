@@ -225,7 +225,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   ...createSelectionSlice(set, get, {
     normalizeProject,
   }),
-  ...createPendingActionsSlice(set),
+  ...createPendingActionsSlice(set, get),
   ...createPendingCompletionSlice(set, get, {
     clearStaleConstraints,
     propagateConstraintsOnTranslate: (features, offsets) =>

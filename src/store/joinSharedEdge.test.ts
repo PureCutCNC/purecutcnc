@@ -131,11 +131,16 @@ function joinEntityIds(): string[] {
 
 console.log('\nJoin — closed features sharing a line segment (issue #271)')
 
+// Since issue #522 a selection of only these two would join outright, so the
+// grouping and panel-confirmation tests below carry a disconnected `far` rect
+// to keep the panel in play. `far` never joins the group, so every assertion
+// about the a+b union is unchanged.
 test('startJoinSelectedFeatures groups edge-adjacent rects', () => {
   resetStore()
   addRectFeature('a', 'Left', 0, 0, 10, 10)
   addRectFeature('b', 'Right', 10, 0, 10, 10)
-  selectFeatures(['a', 'b'])
+  addRectFeature('far', 'Far', 100, 100, 10, 10)
+  selectFeatures(['a', 'b', 'far'])
 
   useProjectStore.getState().startJoinSelectedFeatures()
 
@@ -147,7 +152,8 @@ test('completePendingShapeAction merges edge-adjacent rects into one feature', (
   resetStore()
   addRectFeature('a', 'Left', 0, 0, 10, 10)
   addRectFeature('b', 'Right', 10, 0, 10, 10)
-  selectFeatures(['a', 'b'])
+  addRectFeature('far', 'Far', 100, 100, 10, 10)
+  selectFeatures(['a', 'b', 'far'])
 
   useProjectStore.getState().startJoinSelectedFeatures()
   const createdIds = useProjectStore.getState().completePendingShapeAction()
@@ -156,10 +162,34 @@ test('completePendingShapeAction merges edge-adjacent rects into one feature', (
   const project = getProject()
   assert(!project.features.find((feature) => feature.id === 'a'), 'original a must be consumed')
   assert(!project.features.find((feature) => feature.id === 'b'), 'original b must be consumed')
+  assert(project.features.find((feature) => feature.id === 'far'), 'a feature outside the group must be untouched')
 
   const merged = resolveFeatureInstance(project, createdIds[0])
   assert(merged, 'merged feature must exist in the project')
   assert(merged.sketch.profile.closed, 'merged profile must be closed')
+  const bounds = getProfileBounds(merged.sketch.profile)
+  assert(
+    bounds.minX === 0 && bounds.minY === 0 && bounds.maxX === 20 && bounds.maxY === 10,
+    `merged outline must span the combined rect, got ${JSON.stringify(bounds)}`,
+  )
+})
+
+// The same #271 geometry on the path that is now the default: shared-edge
+// adjacency counts as connected, so the pair qualifies and joins with no panel.
+test('edge-adjacent rects join outright when both are selected', () => {
+  resetStore()
+  addRectFeature('a', 'Left', 0, 0, 10, 10)
+  addRectFeature('b', 'Right', 10, 0, 10, 10)
+  selectFeatures(['a', 'b'])
+
+  useProjectStore.getState().startJoinSelectedFeatures()
+
+  assert(useProjectStore.getState().pendingShapeAction === null, 'no join panel may be left pending')
+  const project = getProject()
+  assert(project.features.length === 1, `originals must be replaced by one feature, got ${project.features.length}`)
+
+  const merged = resolveFeatureInstance(project, project.features[0].id)
+  assert(merged, 'merged feature must exist in the project')
   const bounds = getProfileBounds(merged.sketch.profile)
   assert(
     bounds.minX === 0 && bounds.minY === 0 && bounds.maxX === 20 && bounds.maxY === 10,
