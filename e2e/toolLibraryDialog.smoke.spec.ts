@@ -454,13 +454,7 @@ test.describe('Tool library import dialog — tablet', () => {
     hasTouch: true,
   })
 
-  // Known flake, tracked in #527: this measures the results list's overflow
-  // (scrollHeight > clientHeight) and is load-sensitive — it passes at
-  // `--workers=1` and fails at `--workers=2` with both heights at 140, which
-  // reads as the list being measured before it has finished populating.
-  // `fixme` rather than `fail`: it does not reliably fail, so `test.fail`
-  // reports "expected to fail, but passed" whenever it happens to pass.
-  test.fixme('enters tablet shell mode with touch targets and scrolling results', async ({ app }) => {
+  test('enters tablet shell mode with touch targets and scrolling results', async ({ app }) => {
     // The app shell must reflect tablet mode (width >= 900 + pointer: coarse).
     const shell = app.page.locator('.app-shell')
     await expect(shell).toHaveAttribute('data-shell-mode', 'tablet')
@@ -482,6 +476,17 @@ test.describe('Tool library import dialog — tablet', () => {
     const results = dialog.locator('.tl-results')
     const overflowY = await results.evaluate((el) => window.getComputedStyle(el).overflowY)
     expect(['auto', 'scroll']).toContain(overflowY)
+
+    // #527: rows render after the dialog opens, and under parallel workers
+    // the measurements below raced that render — both heights read 140, the
+    // empty list's min-height — so the scroll assertion silently tested
+    // nothing. Wait until the populated list actually overflows before
+    // measuring it; a timeout here is the regression this test guards
+    // against, not a product bug it should paper over.
+    await expect.poll(
+      () => results.evaluate((el) => el.scrollHeight > el.clientHeight),
+      { message: 'results list should overflow its container once rows render' },
+    ).toBe(true)
 
     // The results region must be the element that actually overflows —
     // never the dialog body, the form, or the page. `scrollHeight >=
