@@ -69,8 +69,27 @@ export function cornerSmoothingRadius(
 ): number | undefined {
   if (!enabled) return undefined
   const radius = Math.min(toolRadius, stepover)
-  const factor = Number(process.env.PC_ROUND_FACTOR ?? '1')
-  return radius > 0 ? radius * factor : undefined
+  return radius > 0 ? radius * spikeRadiusFactor() : undefined
+}
+
+/**
+ * SPIKE SCAFFOLDING — must not merge.
+ *
+ * Scales the derived fillet radius so the corner-radius trade-off can be driven
+ * from the CLI sweeps and seen in the running app. `1` reproduces shipped
+ * behaviour; `3` (r = 7.2 mm on a 6 mm cutter) is the measured sweet spot, where
+ * cycle time bottoms out and coverage is still exactly complete.
+ *
+ * `process` does not exist in the browser, so the env lookup is guarded — an
+ * unguarded `process.env` here throws `process is not defined` as soon as the
+ * app generates a pocket.
+ */
+export const SPIKE_RADIUS_FACTOR = 3
+
+function spikeRadiusFactor(): number {
+  const fromEnv = typeof process !== 'undefined' ? process.env?.PC_ROUND_FACTOR : undefined
+  const parsed = Number(fromEnv ?? SPIKE_RADIUS_FACTOR)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1
 }
 
 function normalizeSignedAngle(angle: number): number {
