@@ -15,22 +15,30 @@
  */
 
 /**
- * Unit tests for roundContourCorners — the emit-time corner fillet applied to
- * offset clearing rings.
+ * Unit tests for the contour-level turn planner (issue #546, slice S1) —
+ * planContourSmoothing plus the roundContourCorners compatibility wrapper.
  *
  * Run with: npx tsx src/engine/toolpaths/offsetSmoothing.test.ts
  */
 
 import type { Point } from '../../types/project'
-import { roundContourCorners } from './offsetSmoothing'
+import { planContourSmoothing, roundContourCorners } from './offsetSmoothing'
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
 
+function approx(actual: number, expected: number, tolerance: number): boolean {
+  return Math.abs(actual - expected) <= tolerance
+}
+
 function pointsEqual(a: Point[], b: Point[]): boolean {
   if (a.length !== b.length) return false
   return a.every((point, index) => point.x === b[index].x && point.y === b[index].y)
+}
+
+function dist(a: Point, b: Point): number {
+  return Math.hypot(a.x - b.x, a.y - b.y)
 }
 
 /** Largest turn (deflection) angle, in degrees, over a closed contour. */
@@ -64,11 +72,90 @@ function minDistanceTo(points: Point[], target: Point): number {
   return Math.min(...points.map((point) => Math.hypot(point.x - target.x, point.y - target.y)))
 }
 
+/** Radius of the circle through three non-collinear points. */
+function circumradius(a: Point, b: Point, c: Point): number {
+  const ab = dist(a, b)
+  const bc = dist(b, c)
+  const ca = dist(c, a)
+  const area = Math.abs(
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x),
+  ) / 2
+  assert(area > 1e-12, 'circumradius needs non-collinear points')
+  return (ab * bc * ca) / (4 * area)
+}
+
+/** Independent O(n^2) proper-intersection check over a closed polyline. */
+function hasProperIntersection(points: Point[]): boolean {
+  const count = points.length
+  const orientation = (p: Point, q: Point, r: Point): number =>
+    (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)
+  const strictlyInside = (p: Point, q: Point, r: Point): boolean => {
+    if (Math.abs(q.x - p.x) >= Math.abs(q.y - p.y)) {
+      const min = Math.min(p.x, q.x)
+      const max = Math.max(p.x, q.x)
+      return r.x > min && r.x < max
+    }
+    const min = Math.min(p.y, q.y)
+    const max = Math.max(p.y, q.y)
+    return r.y > min && r.y < max
+  }
+  const cross = (a: Point, b: Point, c: Point, d: Point): boolean => {
+    const d1 = orientation(c, d, a)
+    const d2 = orientation(c, d, b)
+    const d3 = orientation(a, b, c)
+    const d4 = orientation(a, b, d)
+    if (
+      ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0))
+      && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+    ) {
+      return true
+    }
+    if (d1 === 0 && strictlyInside(c, d, a)) return true
+    if (d2 === 0 && strictlyInside(c, d, b)) return true
+    if (d3 === 0 && strictlyInside(a, b, c)) return true
+    if (d4 === 0 && strictlyInside(a, b, d)) return true
+    return false
+  }
+  for (let i = 0; i < count; i += 1) {
+    for (let j = i + 2; j < count; j += 1) {
+      if (i === 0 && j === count - 1) continue // incident closing pair
+      if (cross(points[i], points[(i + 1) % count], points[j], points[(j + 1) % count])) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 const SQUARE: Point[] = [
   { x: 0, y: 0 },
   { x: 20, y: 0 },
   { x: 20, y: 20 },
   { x: 0, y: 20 },
+]
+
+/** The 20x20 square corner at (20,0) whose two adjacent edges are split into
+ *  10-unit halves by collinear extra vertices (shallow turns, never rounded). */
+const SPLIT_SQUARE: Point[] = [
+  { x: 20, y: 0 },
+  { x: 10, y: 0 },
+  { x: 0, y: 0 },
+  { x: 0, y: 20 },
+  { x: 20, y: 20 },
+  { x: 20, y: 10 },
+]
+
+/** Rectangle with one corner replaced by a quarter arc of radius 4 (5
+ *  vertices, 22.5-degree steps) centred at (0,0), plus straight legs. */
+const ARC_CORNER_CONTOUR: Point[] = [
+  { x: 4, y: -20 },
+  { x: 4, y: 0 },
+  { x: 3.695518, y: 1.530734 },
+  { x: 2.828427, y: 2.828427 },
+  { x: 1.530734, y: 3.695518 },
+  { x: 0, y: 4 },
+  { x: -20, y: 4 },
+  { x: -20, y: -20 },
 ]
 
 function testIdentityWhenDisabled() {
@@ -77,6 +164,8 @@ function testIdentityWhenDisabled() {
   assert(pointsEqual(roundContourCorners(SQUARE, -3), SQUARE), 'negative radius must return the input unchanged')
   const twoPoints: Point[] = [{ x: 0, y: 0 }, { x: 1, y: 1 }]
   assert(pointsEqual(roundContourCorners(twoPoints, 2), twoPoints), 'a degenerate (<3 point) ring is returned unchanged')
+  const plan = planContourSmoothing(SQUARE, 0)
+  assert(plan.points === SQUARE && plan.transitions.length === 0, 'identity plan carries no transitions')
   console.log('identity when disabled: PASSED')
 }
 
@@ -86,20 +175,14 @@ function testRoundsSquareCorners() {
   const rounded = roundContourCorners(SQUARE, radius)
 
   assert(rounded.length > SQUARE.length, `expected added arc points, got ${rounded.length}`)
-
-  // No sharp corner survives: every original 90° turn is now a smooth arc.
   assert(maxDeflectionDeg(rounded) < 10, `no output corner should stay sharp, max deflection was ${maxDeflectionDeg(rounded).toFixed(1)}°`)
 
-  // Convex-corner fillets cut *inside* the corner, so the rounded ring never
-  // leaves the original bounding box (never gouges outward past the walls).
   const box = bbox(rounded)
   assert(
     box.minX >= -1e-6 && box.minY >= -1e-6 && box.maxX <= 20 + 1e-6 && box.maxY <= 20 + 1e-6,
     'rounded convex corners must stay within the original bounding box',
   )
 
-  // Each original apex is cleared by roughly r*(sqrt(2)-1) for a 90° corner
-  // (the arc's closest approach), confirming a real radius, not a chamfer.
   const expectedClearance = radius * (Math.SQRT2 - 1)
   for (const corner of SQUARE) {
     const clearance = minDistanceTo(rounded, corner)
@@ -111,25 +194,22 @@ function testRoundsSquareCorners() {
   console.log('rounds square corners: PASSED')
 }
 
-function testClampPreventsOverlapOnSmallSquare() {
-  console.log('Testing the per-corner clamp keeps huge radii from overlapping or blowing up...')
-  // Radius far larger than the square: every corner is clamped to half the
-  // edge, so the ring stays simple and bounded (edges meet the fillets, no
-  // self-intersection, nothing escapes the box).
+function testHugeRadiusStaysInsideBox() {
+  console.log('Testing huge radii stay bounded and simple...')
   const rounded = roundContourCorners(SQUARE, 1000)
-  assert(rounded.length >= 8, 'expected clamped fillets on every corner')
+  assert(rounded.length >= 8, 'expected fillets on every corner')
   const box = bbox(rounded)
   assert(
     box.minX >= -1e-6 && box.minY >= -1e-6 && box.maxX <= 20 + 1e-6 && box.maxY <= 20 + 1e-6,
-    'clamped fillets must stay within the original bounding box',
+    'filleted contour must stay within the original bounding box',
   )
-  assert(maxDeflectionDeg(rounded) < 10, 'clamped corners should still be smooth')
-  console.log('clamp prevents overlap: PASSED')
+  assert(maxDeflectionDeg(rounded) < 10, 'corners should still be smooth')
+  assert(!hasProperIntersection(rounded), 'huge-radius output must not self-intersect')
+  console.log('huge radius stays bounded: PASSED')
 }
 
 function testShallowCornersPreserved() {
   console.log('Testing gentle turns below the deflection threshold are left untouched...')
-  // A near-straight vertex (a few degrees of deflection) should not be rounded.
   const almostStraight: Point[] = [
     { x: 0, y: 0 },
     { x: 10, y: 0 },
@@ -148,30 +228,342 @@ function testShallowCornersPreserved() {
 function testAcuteCornerRetreatBounded() {
   console.log('Testing an acute corner rounds but never retreats past the radius...')
   const radius = 3
-  // Thin triangle: the apex at (80, 0) is a ~12° corner.
   const acute: Point[] = [{ x: 0, y: 0 }, { x: 80, y: 0 }, { x: 6, y: 16 }]
   const apex = { x: 80, y: 0 }
   const rounded = roundContourCorners(acute, radius)
 
-  // The sharp apex is rounded away...
   assert(!rounded.some((point) => point.x === apex.x && point.y === apex.y), 'the acute apex should be rounded away')
 
-  // ...but the smoothed path must not retreat more than the fillet radius from
-  // the apex. If it did, the tool (whose radius is >= this fillet radius) would
-  // leave a crescent of uncut material at the sharp corner — the acute-corner
-  // leftover that #245 had to clean up around islands.
   const closest = minDistanceTo(rounded, apex)
   assert(closest <= radius + 1e-6, `acute-corner retreat ${closest.toFixed(3)} must stay within radius ${radius}`)
   assert(closest > 0, 'the corner should still be rounded, not collapsed onto the apex')
   console.log('acute corner retreat bounded: PASSED')
 }
 
+function testIsolatedCornerExceedsOldHalfEdgeCap() {
+  console.log('Testing an isolated 20x20 square corner attains radius 8 beyond the old half-edge clamp...')
+  // The old per-vertex clamp limited every fillet to half the shorter adjacent
+  // edge: for the 10-unit edges of this corner that caps the radius at 5.
+  const radius = 8
+  const plan = planContourSmoothing(SPLIT_SQUARE, radius)
+  assert(plan.transitions.length === 4, `expected all four corners rounded, got ${plan.transitions.length}`)
+
+  const corner = plan.transitions.find((transition) => transition.firstIndex === 0)
+  assert(corner !== undefined, 'the (20,0) corner must be a planned transition')
+  assert(
+    corner.lastIndex === 0 && corner.runIndices.length === 1 && corner.runIndices[0] === 0,
+    'metadata must name the actual changed source run',
+  )
+  assert(approx(Math.abs(corner.signedTurn), Math.PI / 2, 1e-9), 'signed turn must be 90°')
+  assert(corner.requestedRadius === radius, 'requested radius recorded verbatim')
+  assert(approx(corner.effectiveRadius, radius, 1e-9), `effective radius must reach 8, got ${corner.effectiveRadius}`)
+  assert(approx(corner.entry.x, 20, 1e-9) && approx(corner.entry.y, 8, 1e-9), `entry must be (20,8), got (${corner.entry.x}, ${corner.entry.y})`)
+  assert(approx(corner.exit.x, 12, 1e-9) && approx(corner.exit.y, 0, 1e-9), `exit must be (12,0), got (${corner.exit.x}, ${corner.exit.y})`)
+  assert(corner.entryEdgeIndex === 5, 'entry setback comes from the (20,10)->(20,0) edge')
+  assert(corner.exitEdgeIndex === 0, 'exit setback comes from the (20,0)->(10,0) edge')
+  assert(
+    corner.transitionPoints.length >= 19 && corner.transitionPoints.length <= 20,
+    `90° at a 5° arc step must tessellate (~19-20 points), got ${corner.transitionPoints.length}`,
+  )
+  const mid = corner.transitionPoints[Math.floor(corner.transitionPoints.length / 2)]
+  assert(
+    approx(circumradius(corner.entry, mid, corner.exit), radius, 1e-9),
+    'emitted arc points must lie on a circle of radius 8',
+  )
+  // The arc's sampled midpoint approaches the apex within the chord error of
+  // the 5° tessellation, but still far closer than the old 5-radius fillet
+  // (which clears 5*(sqrt(2)-1) = 2.07).
+  const clearance = minDistanceTo(plan.points, { x: 20, y: 0 })
+  assert(
+    approx(clearance, radius * (Math.SQRT2 - 1), 0.05),
+    `apex clearance must match an 8-radius fillet, got ${clearance.toFixed(4)}`,
+  )
+  for (const transition of plan.transitions) {
+    assert(approx(transition.effectiveRadius, radius, 1e-9), 'every corner of the split square attains radius 8')
+  }
+  assert(!hasProperIntersection(plan.points), 'planned contour must not self-intersect')
+  console.log('isolated corner exceeds the old half-edge cap: PASSED')
+}
+
+function testAdjacentTurnsShareShortEdge() {
+  console.log('Testing adjacent turns competing for one short edge share it without overlap...')
+  const rectangle: Point[] = [
+    { x: 0, y: 0 },
+    { x: 6, y: 0 },
+    { x: 6, y: 20 },
+    { x: 0, y: 20 },
+  ]
+
+  // Request 5 on the 6-unit edges: each corner wants a 5-unit setback but two
+  // corners compete for every short edge, so all four scale to ~3.
+  const conflicted = planContourSmoothing(rectangle, 5)
+  assert(conflicted.transitions.length === 4, 'all four corners are rounded')
+  for (const transition of conflicted.transitions) {
+    assert(
+      approx(transition.effectiveRadius, 3, 1e-5),
+      `conflicting setbacks must scale to ~3, got ${transition.effectiveRadius}`,
+    )
+  }
+  const firstCorner = conflicted.transitions.find((transition) => transition.firstIndex === 0)
+  const secondCorner = conflicted.transitions.find((transition) => transition.firstIndex === 1)
+  assert(firstCorner && secondCorner, 'the two corners on the short edge are both planned')
+  assert(
+    firstCorner.exit.x < secondCorner.entry.x,
+    'exit of the first corner must precede the entry of the second along the shared edge',
+  )
+  assert(secondCorner.entry.x - firstCorner.exit.x > 0, 'an epsilon connector remains between the setbacks')
+  assert(!hasProperIntersection(conflicted.points), 'conflicted output must not self-intersect')
+  assert(maxDeflectionDeg(conflicted.points) < 10, 'conflicted output stays smooth')
+
+  // Request 2 fits without conflict: nothing scales and every corner keeps 2.
+  const free = planContourSmoothing(rectangle, 2)
+  for (const transition of free.transitions) {
+    assert(
+      approx(transition.effectiveRadius, 2, 1e-9),
+      `non-conflicting setbacks must stay at the request, got ${transition.effectiveRadius}`,
+    )
+  }
+  console.log('adjacent turns share a short edge: PASSED')
+}
+
+function testMultiVertexTurnRunBecomesOneTransition() {
+  console.log('Testing a multi-vertex same-sign turn run becomes one broad tangent transition...')
+  const plan8 = planContourSmoothing(ARC_CORNER_CONTOUR, 8)
+  const run = plan8.transitions.find((transition) => transition.runIndices.length === 5)
+  assert(run !== undefined, 'the five tessellated arc vertices must collapse into one transition')
+  assert(
+    run.firstIndex === 1 && run.lastIndex === 5,
+    `the transition must span source indices 1..5, got ${run.firstIndex}..${run.lastIndex}`,
+  )
+  assert(
+    run.runIndices.join(',') === '1,2,3,4,5',
+    'metadata must list every vertex of the source run in order',
+  )
+  assert(approx(run.effectiveRadius, 8, 1e-5), `one broad transition must reach radius 8, got ${run.effectiveRadius}`)
+  assert(approx(run.entry.x, 4, 1e-9) && approx(run.entry.y, -4, 1e-9), `entry must be (4,-4), got (${run.entry.x}, ${run.entry.y})`)
+  assert(approx(run.exit.x, -4, 1e-9) && approx(run.exit.y, 4, 1e-9), `exit must be (-4,4), got (${run.exit.x}, ${run.exit.y})`)
+  assert(
+    run.transitionPoints.length >= 19,
+    `the broad arc must stay tessellated, got ${run.transitionPoints.length} points`,
+  )
+  assert(!hasProperIntersection(plan8.points), 'planned contour must not self-intersect')
+
+  const plan12 = planContourSmoothing(ARC_CORNER_CONTOUR, 12)
+  const run12 = plan12.transitions.find((transition) => transition.runIndices.length === 5)
+  assert(run12 !== undefined, 'the same run exists at radius 12')
+  assert(
+    approx(run12.effectiveRadius, 12, 1e-5) && run12.effectiveRadius > run.effectiveRadius + 3.9,
+    `changing the request must materially change the fitted radius, got ${run12.effectiveRadius}`,
+  )
+  console.log('multi-vertex run becomes one broad transition: PASSED')
+}
+
+function testSmootherRunStaysUnchanged() {
+  console.log('Testing a source arc already smoother than the request stays unchanged...')
+  // Request 3 against a quarter arc of radius 4: the run's fitted local radius
+  // already exceeds the request, so its vertices must survive verbatim.
+  const plan = planContourSmoothing(ARC_CORNER_CONTOUR, 3)
+  assert(plan.transitions.length === 3, `only the three sharp corners are rounded, got ${plan.transitions.length}`)
+  for (const transition of plan.transitions) {
+    assert(
+      transition.runIndices.every((index) => index === 0 || index === 6 || index === 7),
+      'no transition may cover any vertex of the smooth source arc',
+    )
+  }
+  for (let index = 1; index <= 5; index += 1) {
+    const vertex = ARC_CORNER_CONTOUR[index]
+    assert(
+      plan.points.some((point) => point.x === vertex.x && point.y === vertex.y),
+      `arc vertex ${index} must survive verbatim`,
+    )
+  }
+  console.log('smoother source run unchanged: PASSED')
+}
+
+function testFailClosedDegenerateCases() {
+  console.log('Testing degenerate and unstable cases fail closed deterministically...')
+
+  // Duplicate closing vertex: identical to the seam-free ring.
+  const withSeam: Point[] = [...SQUARE, { x: 0, y: 0 }]
+  assert(
+    pointsEqual(roundContourCorners(withSeam, 4), roundContourCorners(SQUARE, 4)),
+    'a duplicated closing vertex must not corrupt cyclic indexing',
+  )
+
+  // Zero-length edge: the duplicated vertex survives verbatim, corners round.
+  const zeroEdge: Point[] = [
+    { x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 0 },
+    { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 },
+  ]
+  const zeroPlan = planContourSmoothing(zeroEdge, 4)
+  assert(zeroPlan.transitions.length === 4, 'the four real corners are rounded')
+  assert(
+    zeroPlan.points.filter((point) => point.x === 10 && point.y === 0).length === 2,
+    'both copies of the duplicated vertex are preserved',
+  )
+  assert(zeroPlan.points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y)), 'no NaN output')
+
+  // Tiny contour: every edge below the epsilon — identity.
+  const tiny: Point[] = [{ x: 0, y: 0 }, { x: 1e-12, y: 0 }, { x: 0, y: 1e-12 }]
+  const tinyPlan = planContourSmoothing(tiny, 2)
+  assert(tinyPlan.points === tiny && tinyPlan.transitions.length === 0, 'tiny contour fails closed to identity')
+
+  // Non-finite input: identity.
+  const nanContour: Point[] = [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: NaN, y: 20 }, { x: 0, y: 20 }]
+  const nanPlan = planContourSmoothing(nanContour, 4)
+  assert(nanPlan.points === nanContour && nanPlan.transitions.length === 0, 'non-finite input fails closed to identity')
+
+  // Near-reversal slot turnaround: the two 90° vertices at the top of a 2-wide
+  // slot make a 180° U-turn. Their run's shoulders are parallel, so the run
+  // must decline and the vertices must never merge into one doubled-back arc.
+  const uTurn: Point[] = [
+    { x: 0, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 4 }, { x: 4, y: 4 },
+    { x: 4, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 },
+  ]
+  assert(!hasProperIntersection(uTurn), 'the slot contour itself must be simple')
+  const uPlan = planContourSmoothing(uTurn, 4)
+  for (const transition of uPlan.transitions) {
+    assert(transition.runIndices.length === 1, 'the hairpin vertices must stay single-vertex transitions')
+  }
+  assert(uPlan.points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y)), 'no NaN output')
+  assert(!hasProperIntersection(uPlan.points), 'hairpin output must not self-intersect')
+
+  // Behind-apex shoulder: with a request smaller than the apex distance of the
+  // three-vertex chamfer run, the run must decline and fall back per vertex.
+  const chamfer: Point[] = [
+    { x: 12, y: 0 }, { x: 4, y: 0 }, { x: 1, y: 1 },
+    { x: 0, y: 4 }, { x: 0, y: 12 }, { x: 12, y: 12 },
+  ]
+  const tight = planContourSmoothing(chamfer, 1)
+  for (const transition of tight.transitions) {
+    assert(transition.runIndices.length === 1, 'behind-apex run must fail closed to single-vertex fallback')
+  }
+  // The same chamfer at radius 6 (beyond the apex distance 4) is one clean run.
+  const roomy = planContourSmoothing(chamfer, 6)
+  const chamferRun = roomy.transitions.find((transition) => transition.runIndices.length === 3)
+  assert(chamferRun !== undefined, 'radius 6 must group the chamfer into one run')
+  assert(chamferRun.runIndices.join(',') === '1,2,3', 'the run names the three chamfer vertices')
+  assert(approx(chamferRun.effectiveRadius, 6, 1e-5), 'the chamfer run attains the request once the apex fits')
+  console.log('degenerate cases fail closed: PASSED')
+}
+
+function testOrientationReversalEquivalent() {
+  console.log('Testing orientation reversal produces equivalent geometry in reverse order...')
+  const forward = roundContourCorners(SPLIT_SQUARE, 8)
+  const reversedInput = SPLIT_SQUARE.slice().reverse()
+  const reversed = roundContourCorners(reversedInput, 8)
+  assert(reversed.length === forward.length, 'reversed output keeps the same point count')
+  const tolerance = 1e-9
+  for (let index = 0; index < forward.length; index += 1) {
+    const expected = forward[forward.length - 1 - index]
+    const actual = reversed[index]
+    const scale = Math.max(1, Math.abs(expected.x), Math.abs(expected.y))
+    assert(
+      approx(actual.x, expected.x, tolerance * scale) && approx(actual.y, expected.y, tolerance * scale),
+      `reversed point ${index} must mirror forward point ${forward.length - 1 - index}`,
+    )
+  }
+  console.log('orientation reversal: PASSED')
+}
+
+function testScaleEquivalence() {
+  console.log('Testing a scaled copy of the contour/radius produces the scaled result...')
+  const scale = 3
+  const base = planContourSmoothing(SPLIT_SQUARE, 8)
+  const scaledInput = SPLIT_SQUARE.map((point) => ({ x: point.x * scale, y: point.y * scale }))
+  const scaled = planContourSmoothing(scaledInput, 8 * scale)
+  // Arc tessellation counts can differ by one at the ceil(|sweep|/step)
+  // boundary (float jitter), so compare the geometric contract rather than
+  // sample positions: same runs, exactly scaled radii and tangent points, and
+  // every emitted point on the same circle as its unscaled counterpart.
+  assert(scaled.transitions.length === base.transitions.length, 'same number of transitions')
+  for (let index = 0; index < base.transitions.length; index += 1) {
+    const b = base.transitions[index]
+    const s = scaled.transitions[index]
+    assert(b.firstIndex === s.firstIndex && b.lastIndex === s.lastIndex, 'same source runs')
+    assert(approx(s.effectiveRadius, b.effectiveRadius * scale, 1e-9), 'effective radius scales exactly')
+    assert(approx(s.entry.x, b.entry.x * scale, 1e-9) && approx(s.entry.y, b.entry.y * scale, 1e-9), 'entry scales exactly')
+    assert(approx(s.exit.x, b.exit.x * scale, 1e-9) && approx(s.exit.y, b.exit.y * scale, 1e-9), 'exit scales exactly')
+    assert(
+      Math.abs(s.transitionPoints.length - b.transitionPoints.length) <= 1,
+      'tessellation count matches within the ceil boundary',
+    )
+    // Both arcs share a centre on the (scaled) bisector: entry/exit and the
+    // arc midpoint of one side must lie on the other side's circle.
+    const bMid = b.transitionPoints[Math.floor(b.transitionPoints.length / 2)]
+    const bRadius = circumradius(b.entry, bMid, b.exit)
+    const sMid = s.transitionPoints[Math.floor(s.transitionPoints.length / 2)]
+    const sRadius = circumradius(s.entry, sMid, s.exit)
+    assert(approx(sRadius, bRadius * scale, 1e-9), 'arc radius scales exactly')
+    // Every sampled point of each arc lies on the same circle.
+    for (const point of s.transitionPoints) {
+      if (point === s.entry || point === s.exit) continue
+      assert(approx(circumradius(s.entry, point, s.exit), sRadius, 1e-9), 'scaled arc points are on one circle')
+    }
+    for (const point of b.transitionPoints) {
+      if (point === b.entry || point === b.exit) continue
+      assert(approx(circumradius(b.entry, point, b.exit), bRadius, 1e-9), 'base arc points are on one circle')
+    }
+  }
+  console.log('scale equivalence: PASSED')
+}
+
+function testSelfIntersectingPlanFailsClosed() {
+  console.log('Testing a planned contour that would self-intersect fails closed to the source...')
+  // A square with a bottom notch and a right-edge notch. At radius 14 the
+  // vertices (26,0) and (40,14) group into one turn run whose tangent arc cuts
+  // across the notched region; the source contour itself is simple, so the
+  // crossing is introduced by the rounding. Found by a deterministic search
+  // over notched rectangles, run against an unguarded copy of the module:
+  // only radius 14 of {6,8,10,12,14} produces a crossing.
+  const { contour, radius } = SELF_INTERSECT_CASE
+  assert(!hasProperIntersection(contour), 'the source contour must be simple')
+  const plan = planContourSmoothing(contour, radius)
+  assert(
+    plan.points === contour,
+    'self-intersecting plan must return the unchanged source geometry',
+  )
+  assert(plan.transitions.length === 0, 'no transition survives the self-intersection guard')
+  console.log('self-intersecting plan fails closed: PASSED')
+}
+
+const SELF_INTERSECT_CASE = {
+  contour: [
+    { x: 23, y: 0 },
+    { x: 23, y: -13 },
+    { x: 26, y: -13 },
+    { x: 26, y: 0 },
+    { x: 40, y: 14 },
+    { x: 44, y: 14 },
+    { x: 44, y: 19 },
+    { x: 40, y: 19 },
+  ],
+  radius: 14,
+}
+
+function testDeterminism() {
+  console.log('Testing the planner is deterministic...')
+  const first = planContourSmoothing(ARC_CORNER_CONTOUR, 8)
+  const second = planContourSmoothing(ARC_CORNER_CONTOUR, 8)
+  assert(JSON.stringify(first) === JSON.stringify(second), 'two identical calls must produce identical plans')
+  console.log('determinism: PASSED')
+}
+
 try {
   testIdentityWhenDisabled()
   testRoundsSquareCorners()
-  testClampPreventsOverlapOnSmallSquare()
+  testHugeRadiusStaysInsideBox()
   testShallowCornersPreserved()
   testAcuteCornerRetreatBounded()
+  testIsolatedCornerExceedsOldHalfEdgeCap()
+  testAdjacentTurnsShareShortEdge()
+  testMultiVertexTurnRunBecomesOneTransition()
+  testSmootherRunStaysUnchanged()
+  testFailClosedDegenerateCases()
+  testOrientationReversalEquivalent()
+  testScaleEquivalence()
+  testSelfIntersectingPlanFailsClosed()
+  testDeterminism()
   console.log('\nAll offsetSmoothing tests PASSED.')
 } catch (e) {
   console.error(e)
