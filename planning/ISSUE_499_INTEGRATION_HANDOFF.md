@@ -755,6 +755,66 @@ the suppressed-excursion *contrast*, which is a test-design argument, not a
 payoff or a safety argument. Whichever value is chosen needs a stated derivation
 on the machining axis.
 
+### S4 — containment backstop, **module accepted**, merged as `3484c70`
+
+Two new files, 1236 lines, inert. 14 tests pass. The module is well built: it
+judges the cutter body rather than the centre (with a premise test that fails if
+the check is reduced to the centre), fails closed on empty and starved prior
+sets with distinct structured reasons, catches an interior uncut hole, and
+verifies every rejection witness by raw distance rather than by its own boolean.
+
+### **UNRESOLVED — the pipeline currently produces zero usable excursions**
+
+S4's pack scan, which the contract required it to run over S3's real output,
+reports that **every excursion the generator produces is rejected**: 139 of 139
+across the pack, penetration ~2.3–2.7 mm on a 6 mm tool. Combined with S3's
+conversion rate, the end-to-end pipeline yields **no usable corner unwind at
+all**. The worker reported this rather than adjusting either side to agree,
+which is correct and is why it is visible.
+
+**This is the single most important open question for #499, and it is not
+resolved.** What was established tonight:
+
+- The scan's envelope is production-faithful — rings already emitted at the
+  level, the inter-ring links, and the ring's own emitted prefix up to the
+  excursion's departure. Not a wrongly-narrow envelope.
+- The rejections are geometrically verified, not self-graded.
+- **Ruled out: an endpoint artifact.** Dropping the first and last samples does
+  not change the verdict or the penetration.
+- **Ruled out: a recoverable side choice.** `cornerUnwindPath` requires the
+  excursion side to equal the corner's turn sign; supplying the opposite side
+  makes it throw for all 344 corners, so the mapping cannot simply be flipped.
+- One reported violating point sits at `x = 13.11` for a ring of half-size
+  10.20 — outside the ring, in the band between it and the wall, which is uncut
+  under inner-first. That is *suggestive* of an outward excursion, **but it is
+  not conclusive**: the module reports the worst point of a sampling grid around
+  the path, not necessarily a point on the path itself.
+
+**Three hypotheses remain open, and they need daylight, not a late-night
+guess:**
+
+1. The generator's premise — that the inside of the corner's turn is the cleared
+   interior — does not hold for the rings as actually emitted. If so, S3 needs
+   rework and its interior-side test is measuring the wrong thing.
+2. The scan harness picks the side per corner by a rule that satisfies the
+   generator's guard without being the genuinely cleared side. The guard only
+   checks side against the turn sign, so a harness can satisfy it by
+   construction and still request an outward loop — this shape of error is
+   invisible to the guard.
+3. The containment grid extends past the swept path and reports a witness that
+   no part of the cutter ever occupies, making the rejection an artifact of
+   witness selection rather than a real crossing.
+
+**Do not wire S5 until this is settled.** Whichever way it resolves, it changes
+what gets wired: hypothesis 1 means the generator is wrong, 2 means the scan is
+wrong and the real conversion rate is unknown, 3 means the backstop is too
+strict and would suppress good excursions in production.
+
+The fastest discriminator is probably to plot or dump one rejected excursion's
+samples against the ring and the envelope, and confirm by inspection which side
+of the ring the path actually occupies. That is a manager task, not a worker
+slice.
+
 ### Open, carried to slice 2
 
 The reopen trigger is satisfied and the thresholds now have a measured source.
