@@ -528,8 +528,21 @@ function productionFilletProbe(
       })),
     ),
   }
-  const points = linkJunctionFillet(corner, incomingDir, outgoingDir, incomingLength, outgoingLength, options)
-  return points === null ? 0 : points.length
+  // Straight approximation of both sides (the family-D probe is approximate;
+  // the PRODUCTION on/off comparison elsewhere in this script is the
+  // authoritative measurement and uses the real polylines through the
+  // generator).
+  const result = linkJunctionFillet(
+    corner,
+    { x: corner.x - incomingDir.x * incomingLength, y: corner.y - incomingDir.y * incomingLength },
+    incomingLength,
+    [
+      corner,
+      { x: corner.x + outgoingDir.x * outgoingLength, y: corner.y + outgoingDir.y * outgoingLength },
+    ],
+    options,
+  )
+  return result === null ? 0 : result.points.length
 }
 
 /**

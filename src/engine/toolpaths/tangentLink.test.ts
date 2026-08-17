@@ -28,7 +28,7 @@ import {
 } from './tangentLink'
 import type { Point } from '../../types/project'
 
-function assert(condition: boolean, message: string) {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error('Assertion failed: ' + message)
 }
 
@@ -42,9 +42,6 @@ const insideEverything: LinkFilletOptions = {
   toolRadius: 3,
   isInsideDomain: () => true,
 }
-
-const uX: Point = { x: 1, y: 0 }
-const uY: Point = { x: 0, y: 1 }
 
 function unit(angleDeg: number): Point {
   const rad = (angleDeg * Math.PI) / 180
@@ -63,27 +60,46 @@ function angleBetween(a: Point, b: Point): number {
   return Math.acos(cos)
 }
 
+/** Straight ring run of chords of the given length along a direction. */
+function ringRun(corner: Point, direction: Point, chordLength: number, chordCount: number): Point[] {
+  const vertices: Point[] = [corner]
+  for (let index = 0; index < chordCount; index += 1) {
+    const previous = vertices[vertices.length - 1]
+    vertices.push({ x: previous.x + direction.x * chordLength, y: previous.y + direction.y * chordLength })
+  }
+  return vertices
+}
+
 function testRightAngleFilletTangentAtBothEnds() {
   console.log('Testing right-angle junction fillet is tangent at both ends...')
   const corner: Point = { x: 10, y: 10 }
-  // Incoming along +x into the corner, outgoing +y (90 degree left turn).
-  const points = linkJunctionFillet(corner, uX, uY, 5, 5, insideEverything)
-  assert(points !== null, '90-degree junction with unrestricted domain must fillet')
-  const p = points as Point[]
-  // The half-tool-radius coverage cap binds before maxRadius 2:
-  // tangent = toolRadius/2 = 1.5, radius = tangent/tan45 = 1.5.
-  assert(approx(p[0].x, 8.5) && approx(p[0].y, 10), 'entry tangent point sits back along the incoming segment')
-  assert(approx(p[p.length - 1].x, 10) && approx(p[p.length - 1].y, 11.5), 'exit tangent point sits ahead along the outgoing segment')
-  // First arc segment continues the incoming direction, last continues outgoing.
-  const firstDir = segmentDirection(p[0], p[1])
-  const lastDir = segmentDirection(p[p.length - 2], p[p.length - 1])
-  // Tessellation chords deviate by at most half the 5-degree arc step.
-  assert(angleBetween(firstDir, uX) < 0.05, 'first arc segment is tangent to the incoming direction')
-  assert(angleBetween(lastDir, uY) < 0.05, 'last arc segment is tangent to the outgoing direction')
-  // All arc points at the fillet radius from the centre.
-  const centre = { x: 8.5, y: 11.5 }
-  for (const point of p) {
-    assert(approx(Math.hypot(point.x - centre.x, point.y - centre.y), 1.5, 1e-3), 'every arc point lies on the fillet circle')
+  // Link from the west into the corner, ring turning north (left turn).
+  const result = linkJunctionFillet(
+    corner,
+    { x: 5, y: 10 },
+    5,
+    ringRun(corner, { x: 0, y: 1 }, 1, 5),
+    insideEverything,
+  )
+  assert(result !== null, '90-degree junction with unrestricted domain must fillet')
+  const points = result.points
+  // The ring vertices are 1.0 apart; the coverage cap (1.5) admits k = 1,
+  // so the radius is 1.0 and the link tangent sits 1.0 from the corner.
+  assert(approx(result.linkTangent, 1), 'link tangent distance matches the ring vertex span')
+  assert(result.ringChordsConsumed === 1, 'one ring chord consumed')
+  assert(approx(points[0].x, 9) && approx(points[0].y, 10), 'arc starts on the link segment')
+  assert(approx(points[points.length - 1].x, 10) && approx(points[points.length - 1].y, 11), 'arc ends on the ring vertex')
+  // Tangency: the first arc chord continues the link heading, the last
+  // continues the ring chord heading (tessellation chords deviate <= half the
+  // 5-degree arc step).
+  const firstDir = segmentDirection(points[0], points[1])
+  const lastDir = segmentDirection(points[points.length - 2], points[points.length - 1])
+  assert(angleBetween(firstDir, { x: 1, y: 0 }) < 0.05, 'first arc segment is tangent to the link')
+  assert(angleBetween(lastDir, { x: 0, y: 1 }) < 0.05, 'last arc segment is tangent to the ring')
+  // All arc points lie on the fillet circle centred at the corner's interior.
+  const centre = { x: 9, y: 11 }
+  for (const point of points) {
+    assert(approx(Math.hypot(point.x - centre.x, point.y - centre.y), 1, 1e-3), 'every arc point lies on the fillet circle')
   }
   console.log('right-angle fillet tangency: PASSED')
 }
@@ -91,85 +107,76 @@ function testRightAngleFilletTangentAtBothEnds() {
 function testDomainRejectionStaysSharp() {
   console.log('Testing domain rejection keeps the junction sharp...')
   const corner: Point = { x: 10, y: 10 }
-  // The fillet bulges to the upper-left of the corner; a domain that only
-  // admits points at or right of x=10 rejects every radius.
-  const rightHalf: LinkFilletOptions = {
+  const ring = ringRun(corner, { x: 0, y: 1 }, 0.5, 5)
+  // A domain that excludes the whole fillet bulge rejects every candidate.
+  const tight: LinkFilletOptions = {
     ...insideEverything,
-    isInsideDomain: (x) => x >= 10 - 1e-9,
+    isInsideDomain: (x) => x >= 9.9 - 1e-9,
   }
-  assert(linkJunctionFillet(corner, uX, uY, 5, 5, rightHalf) === null, 'domain that excludes the bulge must reject the fillet')
-  // A tighter domain that still admits the tangent points must shrink the
-  // radius rather than reject outright.
-  const nearWall: LinkFilletOptions = {
+  assert(linkJunctionFillet(corner, { x: 5, y: 10 }, 5, ring, tight) === null, 'domain that excludes the bulge must reject the fillet')
+  // A domain that admits only the smaller candidate (k = 1) picks it rather
+  // than rejecting outright.
+  const partial: LinkFilletOptions = {
     ...insideEverything,
-    maxRadius: 2,
-    isInsideDomain: (x) => x >= 8.3 - 1e-9, // admits radius up to ~1.2
+    isInsideDomain: (x) => x >= 9.0 - 1e-9,
   }
-  const points = linkJunctionFillet(corner, uX, uY, 5, 5, nearWall)
-  assert(points !== null, 'domain admitting a smaller radius must fillet with it')
-  const p = points as Point[]
-  assert(p[0].x > 8.3 - 1e-6, 'entry tangent point stays inside the domain')
-  assert(p[0].x > 8, 'radius was reduced below the unconstrained value')
+  const result = linkJunctionFillet(corner, { x: 5, y: 10 }, 5, ring, partial)
+  assert(result !== null, 'domain admitting a smaller candidate must fillet with it')
+  // The unconstrained largest candidate (k = 3, tangent 1.5) violates the
+  // domain (its link tangent point sits at x = 8.5); the next candidate
+  // (k = 2, tangent 1.0) fits and is chosen.
+  assert(approx(result.linkTangent, 1), 'the fillet shrinks to the largest admitted candidate')
   console.log('domain rejection: PASSED')
 }
 
 function testRadiusFloorAndGentlyCurvedJunctions() {
   console.log('Testing radius floor and shallow junctions...')
   const corner: Point = { x: 0, y: 0 }
+  const ring = ringRun(corner, { x: 0, y: 1 }, 1, 3)
   const tiny: LinkFilletOptions = { ...insideEverything, maxRadius: 0.4, minRadius: 0.5 }
-  assert(linkJunctionFillet(corner, uX, uY, 5, 5, tiny) === null, 'maxRadius below the floor must stay sharp')
+  assert(linkJunctionFillet(corner, { x: -5, y: 0 }, 5, ring, tiny) === null, 'candidates above the max radius stay sharp')
   // 10 degrees of deflection is below the default 20-degree minimum.
-  const shallow = linkJunctionFillet(corner, uX, unit(10), 5, 5, insideEverything)
+  const shallow = linkJunctionFillet(corner, { x: -5, y: 0 }, 5, ringRun(corner, unit(10), 1, 3), insideEverything)
   assert(shallow === null, '10-degree junction needs no fillet')
-  // 30 degrees gets one.
-  const mild = linkJunctionFillet(corner, uX, unit(30), 5, 5, insideEverything)
-  assert(mild !== null, '30-degree junction fillets')
+  // A 30-degree turn needs ~3.7x the tangent span in radius, so the ring
+  // vertices must be fine enough for a candidate to fit under maxRadius.
+  const mild = linkJunctionFillet(corner, { x: -5, y: 0 }, 5, ringRun(corner, unit(30), 0.2, 6), insideEverything)
+  assert(mild !== null, '30-degree junction fillets when a candidate fits')
   console.log('radius floor and shallow junctions: PASSED')
 }
 
 function testHairpinAndDegenerateJunctions() {
   console.log('Testing hairpin and degenerate junctions...')
   const corner: Point = { x: 0, y: 0 }
-  assert(linkJunctionFillet(corner, uX, { x: -1, y: 0 }, 5, 5, insideEverything) === null, 'full reversal stays sharp')
-  assert(linkJunctionFillet(corner, uX, uY, 0, 5, insideEverything) === null, 'zero-length incoming segment stays sharp')
-  assert(linkJunctionFillet(corner, uX, uY, 5, 0, insideEverything) === null, 'zero-length outgoing segment stays sharp')
+  const west: Point = { x: -5, y: 0 }
+  assert(linkJunctionFillet(corner, west, 5, ringRun(corner, { x: 1, y: 0 }, 1, 3), insideEverything) === null, 'full reversal stays sharp')
+  assert(linkJunctionFillet(corner, west, 0, ringRun(corner, { x: 0, y: 1 }, 1, 3), insideEverything) === null, 'zero-length link stays sharp')
+  assert(linkJunctionFillet(corner, west, 5, [corner], insideEverything) === null, 'no ring vertices stays sharp')
+  assert(linkJunctionFillet(corner, west, 5, [{ x: 1, y: 1 }, { x: 1, y: 2 }], insideEverything) === null, 'ring not anchored at the corner stays sharp')
   console.log('hairpin and degenerate junctions: PASSED')
 }
 
-function testSegmentLengthClamp() {
-  console.log('Testing the tangent points never exceed the segment lengths...')
+function testLinkLengthAndCapBounds() {
+  console.log('Testing the link length and coverage cap bounds...')
   const corner: Point = { x: 0, y: 0 }
-  const clamped = linkJunctionFillet(corner, uX, uY, 0.5, 0.5, insideEverything)
-  assert(clamped !== null, 'junction with short segments still fillets')
-  const p = clamped as Point[]
-  assert(approx(p[0].x, -0.5) && approx(p[0].y, 0), 'entry tangent point clamps to the incoming segment end')
-  assert(approx(p[p.length - 1].x, 0) && approx(p[p.length - 1].y, 0.5), 'exit tangent point clamps to the outgoing segment end')
-  // So short that no radius >= minRadius fits.
-  const tooShort: LinkFilletOptions = { ...insideEverything, minRadius: 0.2 }
-  assert(linkJunctionFillet(corner, uX, uY, 0.05, 5, tooShort) === null, 'segments shorter than the floor radius stay sharp')
-  console.log('segment length clamp: PASSED')
-}
-
-function testCoverageCapBindsTangent() {
-  console.log('Testing the half-tool-radius coverage cap...')
-  const corner: Point = { x: 0, y: 0 }
-  const capped: LinkFilletOptions = { ...insideEverything, maxRadius: 10, toolRadius: 1 }
-  const p = linkJunctionFillet(corner, uX, uY, 50, 50, capped) as Point[]
-  // Tangent setback <= toolRadius/2 = 0.5 even though maxRadius allows more.
-  assert(approx(p[0].x, -0.5) && approx(p[0].y, 0), 'tangent setback capped at half the tool radius')
-  assert(approx(p[p.length - 1].x, 0) && approx(p[p.length - 1].y, 0.5), 'exit tangent point matches the same cap')
-  console.log('coverage cap: PASSED')
+  const shortLink = linkJunctionFillet(corner, { x: -0.5, y: 0 }, 0.5, ringRun(corner, { x: 0, y: 1 }, 1, 3), insideEverything)
+  assert(shortLink === null, 'link shorter than the first ring chord stays sharp')
+  // Half-tool-radius cap: with toolRadius 1 the tangent can never exceed 0.5.
+  const capped: LinkFilletOptions = { ...insideEverything, toolRadius: 1 }
+  const result = linkJunctionFillet(corner, { x: -5, y: 0 }, 5, ringRun(corner, { x: 0, y: 1 }, 0.2, 6), capped)
+  assert(result !== null, 'junction with fine ring chords fillets')
+  assert(result.linkTangent <= 0.5 + 1e-9, 'link tangent bounded by half the tool radius')
+  console.log('link length and cap bounds: PASSED')
 }
 
 function testDeterminism() {
   console.log('Testing determinism...')
   const corner: Point = { x: 1.5, y: -2.25 }
-  const incoming = unit(17)
-  const outgoing = unit(-64)
-  const a = linkJunctionFillet(corner, incoming, outgoing, 4, 4, insideEverything)
-  const b = linkJunctionFillet(corner, incoming, outgoing, 4, 4, insideEverything)
+  const ring = ringRun(corner, unit(-64), 0.3, 8)
+  const a = linkJunctionFillet(corner, { x: corner.x - 4 * unit(17).x, y: corner.y - 4 * unit(17).y }, 4, ring, insideEverything)
+  const b = linkJunctionFillet(corner, { x: corner.x - 4 * unit(17).x, y: corner.y - 4 * unit(17).y }, 4, ring, insideEverything)
   assert(a !== null && b !== null, 'both runs fillet')
-  assert(JSON.stringify(a) === JSON.stringify(b), 'identical inputs produce identical points')
+  assert(JSON.stringify(a) === JSON.stringify(b), 'identical inputs produce identical results')
   console.log('determinism: PASSED')
 }
 
@@ -177,18 +184,15 @@ function testCollinearRunLength() {
   console.log('Testing collinear run lengths...')
   const maxLength = 10
   const minDeflection = (20 * Math.PI) / 180
-  // A straight square edge: the run stops at the first 90-degree bend.
   const square: Point[] = [
     { x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 },
   ]
   assert(approx(collinearRunLength(square, 0, 1, maxLength, minDeflection), 10), 'forward run capped at maxLength on a long straight edge')
   assert(approx(collinearRunLength(square, 0, -1, maxLength, minDeflection), 10), 'backward run capped at maxLength')
-  // A short edge: the run stops at the corner before reaching the cap.
   const short: Point[] = [
     { x: 0, y: 0 }, { x: 3, y: 0 }, { x: 3, y: 10 }, { x: 0, y: 10 },
   ]
   assert(approx(collinearRunLength(short, 0, 1, maxLength, minDeflection), 3), 'run stops at the corner bend')
-  // A tessellated arc: 5-degree steps accumulate across chords until the cap.
   const arc: Point[] = [{ x: 0, y: 0 }]
   let heading = 0
   for (let index = 0; index < 24; index += 1) {
@@ -200,7 +204,6 @@ function testCollinearRunLength() {
   // The run accumulates chords while the total deviation from the base
   // direction stays under 20 degrees: four 5-degree chords.
   assert(approx(run, 4), '5-degree chords accumulate across the tessellation until the 20-degree limit, got ' + run.toFixed(3))
-  // Degenerate inputs.
   assert(collinearRunLength([{ x: 0, y: 0 }], 0, 1, maxLength, minDeflection) === 0, 'single point has no run')
   assert(collinearRunLength(arc, 0, 1, 0, minDeflection) === 0, 'zero cap has no run')
   console.log('collinear run lengths: PASSED')
@@ -247,8 +250,7 @@ try {
   testDomainRejectionStaysSharp()
   testRadiusFloorAndGentlyCurvedJunctions()
   testHairpinAndDegenerateJunctions()
-  testSegmentLengthClamp()
-  testCoverageCapBindsTangent()
+  testLinkLengthAndCapBounds()
   testDeterminism()
   testCollinearRunLength()
   testDomainCheck()

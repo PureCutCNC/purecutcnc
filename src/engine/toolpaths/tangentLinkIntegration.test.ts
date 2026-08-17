@@ -41,7 +41,7 @@ import {
   type SketchFeature,
   type Tool,
 } from '../../types/project'
-import type { ToolpathMove } from './types'
+import type { ToolpathMove, ToolpathPoint } from './types'
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error('Assertion failed: ' + message)
@@ -297,6 +297,31 @@ function productionGateOptions(project: Project, operation: Operation): LinkFill
   return pocketLinkFilletOptions(true, toolRadius, stepoverDistance, regionTrees.map((tree) => tree.region))
 }
 
+/** Ring vertices from the junction corner along the ring's travel direction
+ *  (forward = the ring's own direction; backward for the closing side). */
+function ringVerticesFromJunction(poly: Poly, corner: ToolpathPoint, forward: boolean): Point[] {
+  const points: Point[] = []
+  for (let index = 0; index + 1 < poly.length; index += 2) {
+    points.push({ x: poly[index], y: poly[index + 1] })
+  }
+  const count = points.length
+  let cornerIndex = -1
+  let best = Number.POSITIVE_INFINITY
+  for (let index = 0; index < count; index += 1) {
+    const distance = Math.hypot(points[index].x - corner.x, points[index].y - corner.y)
+    if (distance < best) {
+      best = distance
+      cornerIndex = index
+    }
+  }
+  if (cornerIndex < 0 || best > 1e-6) return [corner]
+  const vertices: Point[] = [points[cornerIndex]]
+  for (let step = 1; step < count; step += 1) {
+    vertices.push(points[forward ? (cornerIndex + step) % count : (cornerIndex - step + count) % count])
+  }
+  return vertices
+}
+
 /** Every remaining sharp link junction in an enabled stream must be one the
  *  production gate legitimately rejected: re-running the gate without the
  *  domain check must either also reject it (segment/geometry limited) or the
@@ -325,13 +350,25 @@ function assertSharpLinkJunctionsAreGateRejections(
     if (!linkSide) continue
     sharpLinks += 1
     const corner = a.to
-    const inDir = { x: (corner.x - a.from.x) / inLen, y: (corner.y - a.from.y) / inLen }
-    const outDir = { x: (b.to.x - corner.x) / outLen, y: (b.to.y - corner.y) / outLen }
-    const unconstrained = linkJunctionFillet(corner, inDir, outDir, inLen, outLen, {
-      ...options,
-      isInsideDomain: () => true,
-    })
-    const gated = linkJunctionFillet(corner, inDir, outDir, inLen, outLen, options)
+    const incomingIsRing = cls[index] === 'ring'
+    // Rebuild the production gate call: the link is the non-ring side, the
+    // ring side is the polyline walked from the junction vertex along the
+    // ring's travel direction.
+    const ringPoly = polys.find((poly) => pointOnPolys(
+      incomingIsRing ? (a.from.x + a.to.x) / 2 : (b.from.x + b.to.x) / 2,
+      incomingIsRing ? (a.from.y + a.to.y) / 2 : (b.from.y + b.to.y) / 2,
+      [poly],
+    ))
+    const link = incomingIsRing ? b : a
+    const linkEnd = incomingIsRing ? b.to : a.from
+    const linkLength = Math.hypot(link.to.x - link.from.x, link.to.y - link.from.y)
+    const gateCall = (domain: (x: number, y: number) => boolean) => {
+      if (ringPoly === undefined) return null
+      const vertices = ringVerticesFromJunction(ringPoly, corner, !incomingIsRing)
+      return linkJunctionFillet(corner, linkEnd, linkLength, vertices, { ...options, isInsideDomain: domain })
+    }
+    const unconstrained = gateCall(() => true)
+    const gated = gateCall(options.isInsideDomain)
     const gateRejected = unconstrained !== null && gated === null
     const segmentRejected = unconstrained === null
     assert(gateRejected || segmentRejected,
@@ -398,18 +435,19 @@ function arcRunCount(moves: ToolpathMove[]): number {
 
 function testArcRunBudgetOnRealFixture() {
   console.log('Testing the filleted stream keeps arc-run fragmentation bounded...')
-  // Each fillet adds one tessellated run; bound the total on the tracked
-  // fixture so the feature cannot silently explode G-code fragmentation.
-  // Measured on pocket-feed-reduction (engagement mode): legacy 69 runs,
-  // enabled 81 runs.
+  // Each fillet adds a tessellated run but consumes whole ring chords, so the
+  // run count may move slightly in either direction. Bound the total on the
+  // tracked fixture so the feature cannot silently explode G-code
+  // fragmentation. Measured on pocket-feed-reduction (engagement mode):
+  // legacy 69 runs, enabled 68 runs.
   const raw = JSON.parse(readFileSync('src/engine/test-fixtures/pocket-feed-reduction.camj', 'utf8')) as Project
   const project = normalizeProject(raw)
   const op = project.operations.find((candidate) => candidate.kind === 'pocket')
   assert(op !== undefined, 'fixture has a pocket operation')
   const legacy = arcRunCount(generatePocket(project, { ...op, roundLinkCorners: undefined }).moves)
   const enabled = arcRunCount(generatePocket(project, op).moves)
-  assert(enabled >= legacy, 'fillets add runs, never remove them')
-  assert(enabled <= 90, 'filleted run count bounded (measured 81, legacy ' + legacy + '), got ' + enabled)
+  assert(Math.abs(enabled - legacy) <= 5, 'run count stays within 5 of legacy (' + legacy + ' -> ' + enabled + ')')
+  assert(enabled <= 90, 'filleted run count bounded (measured 68, legacy ' + legacy + '), got ' + enabled)
   console.log('arc-run budget: PASSED (legacy ' + legacy + ', enabled ' + enabled + ')')
 }
 

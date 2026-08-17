@@ -1764,108 +1764,6 @@ export function buildPocketParallelSegments(
   return segments
 }
 
-/**
- * Forward collinear run length over a fresh set of cut moves (the ring chords
- * about to be emitted): the accumulated length from startIndex while the
- * moves stay connected and their direction deviates from the first by less
- * than minDeflectionRadians, capped at maxLength. Tessellated ring arcs are
- * runs of near-collinear chords; a junction fillet may consume the whole run
- * up to the next real corner, not just one chord.
- */
-function forwardCutRun(
-  cutMoves: ToolpathMove[],
-  startIndex: number,
-  maxLength: number,
-  minDeflectionRadians: number,
-): number {
-  if (startIndex >= cutMoves.length || !(maxLength > 0)) return 0
-  const first = cutMoves[startIndex]
-  const baseDx = first.to.x - first.from.x
-  const baseDy = first.to.y - first.from.y
-  const baseLen = Math.hypot(baseDx, baseDy)
-  if (baseLen <= 1e-9) return 0
-  const baseDirX = baseDx / baseLen
-  const baseDirY = baseDy / baseLen
-  let total = 0
-  for (let index = startIndex; index < cutMoves.length; index += 1) {
-    const move = cutMoves[index]
-    const dx = move.to.x - move.from.x
-    const dy = move.to.y - move.from.y
-    const length = Math.hypot(dx, dy)
-    if (length <= 1e-9) break
-    if (index > startIndex) {
-      const previous = cutMoves[index - 1]
-      if (
-        Math.abs(previous.to.x - move.from.x) > 1e-9
-        || Math.abs(previous.to.y - move.from.y) > 1e-9
-      ) {
-        break
-      }
-    }
-    const dirX = dx / length
-    const dirY = dy / length
-    const deviation = Math.abs(Math.atan2(baseDirX * dirY - baseDirY * dirX, baseDirX * dirX + baseDirY * dirY))
-    if (deviation >= minDeflectionRadians) break
-    if (total + length >= maxLength) {
-      return maxLength
-    }
-    total += length
-  }
-  return total
-}
-
-/**
- * Backward collinear run length over already-emitted cut moves ending at
- * endIndex: like forwardCutRun, walking backward. Used for the exit junction
- * where the ring chords are already in the stream (and may belong to the
- * previous traversal call).
- */
-function backwardCutRun(
-  moves: ToolpathMove[],
-  endIndex: number,
-  maxLength: number,
-  minDeflectionRadians: number,
-): number {
-  if (endIndex < 0 || endIndex >= moves.length || !(maxLength > 0)) return 0
-  const first = moves[endIndex]
-  if (first.kind !== 'cut') return 0
-  const baseDx = first.to.x - first.from.x
-  const baseDy = first.to.y - first.from.y
-  const baseLen = Math.hypot(baseDx, baseDy)
-  if (baseLen <= 1e-9) return 0
-  const baseDirX = baseDx / baseLen
-  const baseDirY = baseDy / baseLen
-  let total = 0
-  for (let index = endIndex; index >= 0; index -= 1) {
-    const move = moves[index]
-    if (move.kind !== 'cut') break
-    if (index < endIndex) {
-      const next = moves[index + 1]
-      if (
-        Math.abs(move.to.x - next.from.x) > 1e-9
-        || Math.abs(move.to.y - next.from.y) > 1e-9
-      ) {
-        break
-      }
-    }
-    const dx = move.to.x - move.from.x
-    const dy = move.to.y - move.from.y
-    const length = Math.hypot(dx, dy)
-    if (length <= 1e-9) break
-    const dirX = dx / length
-    const dirY = dy / length
-    const deviation = Math.abs(Math.atan2(baseDirX * dirY - baseDirY * dirX, baseDirX * dirX + baseDirY * dirY))
-    if (deviation >= minDeflectionRadians) break
-    if (total + length >= maxLength) {
-      return maxLength
-    }
-    total += length
-  }
-  return total
-}
-
-const DEFAULT_LINK_FILLET_MIN_DEFLECTION_RAD = (20 * Math.PI) / 180
-
 /** Arc moves between the tessellated fillet points, at the junction Z. */
 function linkFilletArcMoves(points: Point[], z: number): ToolpathMove[] {
   const arcs: ToolpathMove[] = []
@@ -1901,48 +1799,20 @@ function spliceEntryLinkJunction(
   ) {
     return
   }
-  const minDeflection = linkFillet.minDeflectionRadians ?? DEFAULT_LINK_FILLET_MIN_DEFLECTION_RAD
-  const runCap = linkFillet.toolRadius / 2
-  // The link side is a run of collinear fragments (feed classification splits
-  // links), exactly like the ring side is a run of collinear chords.
-  const linkRun = backwardCutRun(moves, moves.length - 1, runCap, minDeflection)
-  const linkDx = corner.x - linkLast.from.x
-  const linkDy = corner.y - linkLast.from.y
-  const linkLen = Math.hypot(linkDx, linkDy)
-  if (linkLen <= 1e-9) return
-  const ringRun = forwardCutRun(cutMoves, 0, runCap, minDeflection)
-  const firstChordLen = chordLength(firstChord)
-  if (firstChordLen <= 1e-9) return
-  const points = linkJunctionFillet(
-    corner,
-    { x: linkDx / linkLen, y: linkDy / linkLen },
-    { x: (firstChord.to.x - corner.x) / firstChordLen, y: (firstChord.to.y - corner.y) / firstChordLen },
-    linkRun,
-    ringRun,
-    linkFillet,
-  )
-  if (points === null) return
+  const linkLength = chordLength(linkLast)
+  if (linkLength <= 1e-9) return
+  // Ring vertices along the travel direction, starting at the corner.
+  const ringVertices: Point[] = [corner, ...cutMoves.map((move) => move.to)]
+  const result = linkJunctionFillet(corner, linkLast.from, linkLength, ringVertices, linkFillet)
+  if (result === null) return
   const z = corner.z
-  const tangent = Math.hypot(corner.x - points[0].x, corner.y - points[0].y)
-  // Consume link fragments up to the tangent point, truncating the survivor.
-  let remaining = tangent
-  let linkIndex = moves.length - 1
-  while (linkIndex > 0 && remaining >= chordLength(moves[linkIndex]) - 1e-9) {
-    remaining -= chordLength(moves[linkIndex])
-    linkIndex -= 1
-  }
-  const linkSurvivor = moves[linkIndex]
-  linkSurvivor.to = interpolateChord(linkSurvivor, chordLength(linkSurvivor) - remaining)
-  moves.splice(linkIndex + 1)
-  // Consume ring chords up to the tangent point, truncating the survivor.
-  remaining = tangent
-  while (remaining >= chordLength(cutMoves[0]) - 1e-9 && cutMoves.length > 1) {
-    remaining -= chordLength(cutMoves[0])
-    cutMoves.shift()
-  }
-  const ringSurvivor = cutMoves[0]
-  ringSurvivor.from = interpolateChord(ringSurvivor, remaining)
-  moves.push(...linkFilletArcMoves(points, z))
+  // Truncate the link at its tangent point (the link is a single straight move
+  // at generation time; feed splitting happens afterwards).
+  linkLast.to = interpolateChord(linkLast, linkLength - result.linkTangent)
+  // Consume whole ring chords up to the tangent vertex (no interpolation —
+  // the tangent point is a ring vertex by construction).
+  cutMoves.splice(0, result.ringChordsConsumed)
+  moves.push(...linkFilletArcMoves(result.points, z))
 }
 
 /** XY length of one cut move. */
@@ -1963,9 +1833,9 @@ function interpolateChord(move: ToolpathMove, at: number): ToolpathPoint {
 
 /**
  * Exit junction: the ring's closing chords (already in the stream, ending just
- * before the link at linkIndex) meet the link. Consumes trailing ring chords
- * and leading link fragments up to the tangent points, truncates the
- * survivors, removes the consumed moves, and inserts the tessellated arc.
+ * before the link at linkIndex) meet the link. Consumes whole trailing ring
+ * chords up to the tangent vertex, truncates the link at its tangent point,
+ * and inserts the tessellated arc between them.
  */
 function spliceExitLinkJunction(
   moves: ToolpathMove[],
@@ -1984,54 +1854,39 @@ function spliceExitLinkJunction(
   ) {
     return
   }
-  const minDeflection = linkFillet.minDeflectionRadians ?? DEFAULT_LINK_FILLET_MIN_DEFLECTION_RAD
-  const runCap = linkFillet.toolRadius / 2
-  const linkRun = forwardCutRun([link], 0, runCap, minDeflection)
-  if (linkRun <= 1e-9) return
-  const ringRun = backwardCutRun(moves, linkIndex - 1, runCap, minDeflection)
-  const ringDx = lastChord.to.x - lastChord.from.x
-  const ringDy = lastChord.to.y - lastChord.from.y
-  const ringLen = Math.hypot(ringDx, ringDy)
-  if (ringLen <= 1e-9) return
-  const linkLen = chordLength(link)
-  const points = linkJunctionFillet(
-    corner,
-    { x: ringDx / ringLen, y: ringDy / ringLen },
-    { x: (link.to.x - corner.x) / linkLen, y: (link.to.y - corner.y) / linkLen },
-    ringRun,
-    linkRun,
-    linkFillet,
-  )
-  if (points === null) return
+  const linkLength = chordLength(link)
+  if (linkLength <= 1e-9) return
+  // Ring vertices along the travel direction: the corner, then the chords
+  // walked backward (each chord's from is the next vertex back).
+  const ringVertices: Point[] = [corner]
+  for (let index = linkIndex - 1; index >= 0; index -= 1) {
+    const move = moves[index]
+    if (move.kind !== 'cut') break
+    const previous = moves[index + 1]
+    if (
+      index < linkIndex - 1
+      && (
+        Math.abs(move.to.x - previous.from.x) > 1e-9
+        || Math.abs(move.to.y - previous.from.y) > 1e-9
+      )
+    ) {
+      break
+    }
+    ringVertices.push(move.from)
+  }
+  const result = linkJunctionFillet(corner, link.to, linkLength, ringVertices, linkFillet)
+  if (result === null) return
   const z = corner.z
-  const tangent = Math.hypot(corner.x - points[0].x, corner.y - points[0].y)
-  // Consume trailing ring chords up to the tangent point.
-  let remaining = tangent
-  let cutIndex = linkIndex - 1
-  while (cutIndex > 0 && remaining >= chordLength(moves[cutIndex]) - 1e-9) {
-    remaining -= chordLength(moves[cutIndex])
-    cutIndex -= 1
-  }
-  const ringSurvivor = moves[cutIndex]
-  const ringSurvivorLen = chordLength(ringSurvivor)
-  ringSurvivor.to = interpolateChord(ringSurvivor, ringSurvivorLen - remaining)
-  // Consume leading link fragments (the link is currently a single move: the
-  // entry-side splice has not run yet, so no fragments exist beyond it — but
-  // engagement-feed splitting happens AFTER generation, so a single-move link
-  // is the only shape here; keep the loop for robustness).
-  let linkIndex2 = cutIndex + 1
-  remaining = tangent
-  while (linkIndex2 + 1 < moves.length && remaining >= chordLength(moves[linkIndex2]) - 1e-9) {
-    remaining -= chordLength(moves[linkIndex2])
-    linkIndex2 += 1
-  }
-  const linkSurvivor = moves[linkIndex2]
-  linkSurvivor.from = interpolateChord(linkSurvivor, remaining)
-  // Remove the fully consumed moves between the two survivors.
-  moves.splice(cutIndex + 1, linkIndex2 - 1 - cutIndex)
-  // Insert the arc right after the ring survivor.
-  const arcs = linkFilletArcMoves(points, z)
-  moves.splice(cutIndex + 1, 0, ...arcs)
+  // Truncate the link at its tangent point.
+  link.from = interpolateChord(link, result.linkTangent)
+  // Remove the consumed ring chords and insert the arc before the link.
+  // The stream runs ring -> link, so the arc points (link -> ring) reverse.
+  moves.splice(linkIndex - result.ringChordsConsumed, result.ringChordsConsumed)
+  moves.splice(
+    linkIndex - result.ringChordsConsumed,
+    0,
+    ...linkFilletArcMoves([...result.points].reverse(), z),
+  )
 }
 
 export function cutClosedContours(
