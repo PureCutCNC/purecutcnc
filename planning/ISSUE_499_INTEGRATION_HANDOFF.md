@@ -623,6 +623,58 @@ bracket pair cannot silently become vacuous — the failure mode that made the
 original guard untestable in the first place. Reuse this shape for any future
 threshold.
 
+### S3 — engagement-limited path generator, **accepted**, merged as `1e4692e`
+
+Two new files, 1368 lines, inert — nothing imports it. 18 tests pass, including
+the issue's mandatory suppression test (the "peak drops" assertion is verified
+to fail when the excursion is removed).
+
+Manager-verified mutations, each applied and restored from a `cp` backup:
+
+| Mutation | Result |
+| --- | --- |
+| `ENGAGEMENT_MARGIN_ABOVE_NOMINAL_RAD` 0.15 → 1.7 | 4 tests fail, including the premise |
+| `CORNER_LEAD_IN_TOOL_DIAMETERS` 2 → 0.1 | 4 tests fail, including the premise |
+| Interior-side sign guard deleted | direction test fails |
+
+The module also fails closed on an out-of-domain bound: margin 3.0 pushes
+`nominal + margin` past π and raises a `RangeError` rather than proceeding.
+
+### The conversion finding — qualification is not payoff
+
+**A qualified corner is not an unwindable corner.** Measured with
+`scripts/corner-unwind-conversion-probe.ts`, added for this purpose: of the 344
+corners the qualifier accepts across the pack, at the shipped margin only **103
+(29.9%)** produce a valid excursion. Every decline is `engagement-exceeded` —
+there is not enough cleared room to unwind into.
+
+The rate depends strongly on `ENGAGEMENT_MARGIN_ABOVE_NOMINAL_RAD`, and the
+premise test allows anything below 0.7855:
+
+| Margin | Converted | acuteCorner | largeComplex |
+| --- | --- | --- | --- |
+| 0.15 (shipped) | 103 / 344 (29.9%) | **0 / 15** | **8 / 143 (5.6%)** |
+| 0.30 | 148 / 344 (43.0%) | — | — |
+| 0.50 | 166 / 344 (48.3%) | — | — |
+| 0.70 (premise ceiling) | 179 / 344 (52.0%) | 12 / 15 (80%) | 54 / 143 (38%) |
+
+Two readings, and they pull in opposite directions:
+
+1. **At the shipped tuning the feature does almost nothing where it matters.**
+   `largeComplex` — the realistic boundary that carries the long span tail — converts
+   at 5.6%, and acute corners at 0%. The corners hardest to cut are exactly the
+   ones with no room to unwind into.
+2. **The tuning is not fixed.** At 0.70, still inside the premise bracket, acute
+   goes to 80% and `largeComplex` to 38%. The conversion ceiling is ~52%, so the
+   geometric limit is real, but the shipped value sits far below it.
+
+**This is a machining judgement, not a code decision, and it is left for the
+user.** The margin governs how much engagement above nominal the tool is allowed
+to see on re-entry — a tool-load question. `0.15` was derived from preserving
+the suppressed-excursion *contrast*, which is a test-design argument, not a
+payoff or a safety argument. Whichever value is chosen needs a stated derivation
+on the machining axis.
+
 ### Open, carried to slice 2
 
 The reopen trigger is satisfied and the thresholds now have a measured source.
