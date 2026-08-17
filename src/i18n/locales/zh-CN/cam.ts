@@ -167,6 +167,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.featureFirst': '按特征',
   'cam.operation.levelFirst': '按层',
   'cam.operation.roundOutsideCorners': '圆角拐角',
+  'cam.operation.roundLinkCorners': '圆角连接节点',
   'cam.operation.cornerRelief': '拐角让位',
   'cam.operation.cornerReliefNone': '无',
   'cam.operation.cornerReliefDogbone': '狗骨形',

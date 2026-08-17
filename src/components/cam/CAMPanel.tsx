@@ -1594,6 +1594,16 @@ export function CAMPanel({
                       <span>{camT('cam.operation.roundOutsideCorners')}</span>
                     </label>
                   ) : null}
+                  {(selectedOperation.kind === 'pocket' && selectedOperation.pocketPattern !== 'parallel') ? (
+                    <label className="properties-check">
+                      <input
+                        type="checkbox"
+                        checked={selectedOperation.roundLinkCorners ?? false}
+                        onChange={(event) => updateOperation(selectedOperation.id, { roundLinkCorners: event.target.checked })}
+                      />
+                      <span>{camT('cam.operation.roundLinkCorners')}</span>
+                    </label>
+                  ) : null}
                   {(selectedOperation.kind === 'pocket'
                     || selectedOperation.kind === 'edge_route_inside'
                     || selectedOperation.kind === 'edge_route_outside') ? (

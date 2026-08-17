@@ -166,6 +166,7 @@ export const camEn = {
   'cam.operation.featureFirst': 'Feature first',
   'cam.operation.levelFirst': 'Level first',
   'cam.operation.roundOutsideCorners': 'Round corners',
+  'cam.operation.roundLinkCorners': 'Round link junctions',
   'cam.operation.cornerRelief': 'Corner relief',
   'cam.operation.cornerReliefNone': 'None',
   'cam.operation.cornerReliefDogbone': 'Dogbone',

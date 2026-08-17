@@ -142,6 +142,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.operation.featureFirst': 'Primero por elemento',
   'cam.operation.levelFirst': 'Primero por nivel',
   'cam.operation.roundOutsideCorners': 'Redondear las esquinas',
+  'cam.operation.roundLinkCorners': 'Redondear uniones de enlace',
   'cam.operation.cornerRelief': 'Relieve de esquinas',
   'cam.operation.cornerReliefNone': 'Ninguno',
   'cam.operation.cornerReliefDogbone': 'Hueso de perro',

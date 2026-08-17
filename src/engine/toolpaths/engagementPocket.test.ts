@@ -555,6 +555,7 @@ test('never-raise, geometric: no engagement move exceeds the slots-only scale co
     ['parallel slot 40', { pocketPattern: 'parallel' as const, pocketAngle: 0, pocketSlotFeedPercent: 40 }],
     ['parallel 45 slot 40', { pocketPattern: 'parallel' as const, pocketAngle: 45, pocketSlotFeedPercent: 40 }],
     ['offset roundOutsideCorners slot 40', { pocketPattern: 'offset' as const, roundOutsideCorners: true, pocketSlotFeedPercent: 40 }],
+    ['offset roundLinkCorners slot 40', { pocketPattern: 'offset' as const, roundLinkCorners: true, pocketSlotFeedPercent: 40 }],
   ] as Array<[string, Partial<Operation>]>) {
     const spec = specByName(overrides.pocketPattern === 'parallel' ? 'parallel-single' : 'offset-single')
     const { project, operation } = buildFixture(spec, overrides)
@@ -995,7 +996,10 @@ test('cached offset engagement uses the emitted prior-cut context on the real is
   )
   const operation = project.operations.find((candidate) => candidate.kind === 'pocket')
   assert(operation !== undefined, 'the fixture must contain a pocket operation')
-  const result = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
+  // This guard measures the engagement cache's prior-cut context on the legacy
+  // stream; issue #545's S-links are a separate feature bound in
+  // tangentLinkIntegration.test.ts, so strip the field here.
+  const result = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement', roundLinkCorners: undefined })
   const target = result.moves.find((move) =>
     move.kind === 'cut'
     && Math.abs(move.from.y - 0.705) < 1e-6
@@ -1165,8 +1169,17 @@ test('S9: the arc-run constraint holds — runs stay within +25%, longest run st
     )
     const operation = project.operations.find((candidate) => candidate.kind === 'pocket')
     assert(operation !== undefined, `${fixture.name}: the fixture must contain a pocket operation`)
+    // The arc-run constraint guards the engagement feed's own fragmentation;
+    // issue #545's link fillets add their own tessellated runs and are bound
+    // separately in tangentLinkIntegration.test.ts. Strip the field here so
+    // this guard keeps measuring the engagement feed on the legacy stream it
+    // was calibrated for.
     const { runs, longest } = arcRunStats(
-      generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' }).moves,
+      generatePocketToolpath(project, {
+        ...operation,
+        pocketFeedReduction: 'engagement',
+        roundLinkCorners: undefined,
+      }).moves,
     )
     const runBound = Math.ceil(fixture.engagementRuns * 1.25)
     assert(runs <= runBound, `${fixture.name}: ${runs} runs exceed the ${runBound} bound (+25% over ${fixture.engagementRuns})`)
@@ -1184,7 +1197,9 @@ test('issue #517: the worst real fixture keeps exact index work bounded', () => 
   assert(operation !== undefined, 'the fixture must contain a pocket operation')
   const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
   assert(tool !== undefined, 'the fixture operation must resolve its tool')
-  const raw = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'slots_only' })
+  // This guard bounds the classification work on the legacy stream; issue
+  // #545's S-links are bound separately in tangentLinkIntegration.test.ts.
+  const raw = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'slots_only', roundLinkCorners: undefined })
   const classification = buildOffsetBandEngagementClassification(raw.moves, 0, raw.moves.length, {
     toolRadius: tool.diameter / 2,
     ringPerimeters: new Map(),

@@ -142,6 +142,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.operation.featureFirst': 'Entité d’abord',
   'cam.operation.levelFirst': 'Niveau d’abord',
   'cam.operation.roundOutsideCorners': 'Arrondir les coins',
+  'cam.operation.roundLinkCorners': 'Arrondir les jonctions de liaison',
   'cam.operation.cornerRelief': 'Dégagement de coin',
   'cam.operation.cornerReliefNone': 'Aucun',
   'cam.operation.cornerReliefDogbone': 'Os de chien',
