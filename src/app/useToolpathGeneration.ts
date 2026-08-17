@@ -99,6 +99,7 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.pocketSlotFeedPercent === b.pocketSlotFeedPercent
     && a.pocketFeedReduction === b.pocketFeedReduction
     && a.roundOutsideCorners === b.roundOutsideCorners
+    && a.roundLinkCorners === b.roundLinkCorners
     && a.cornerRelief === b.cornerRelief
     && a.stockToLeaveRadial === b.stockToLeaveRadial
     && a.stockToLeaveAxial === b.stockToLeaveAxial

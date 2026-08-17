@@ -331,6 +331,10 @@ export function defaultOperationForTarget(
     // Defaults to the shipped binary slot-feed rule; 'engagement' is opt-in.
     pocketFeedReduction: 'slots_only',
     roundOutsideCorners: true,
+    // Tangential ring-to-ring links (issue #545), on like roundOutsideCorners:
+    // the fillet only reshapes how the tool travels through junctions it
+    // already sweeps, so it needs no explicit opt-in.
+    roundLinkCorners: true,
     // Off by default. Relief changes the cut geometry of the corner, so it is
     // always an explicit choice — unlike roundOutsideCorners, which only
     // affects how the tool travels through a corner it already cleared.

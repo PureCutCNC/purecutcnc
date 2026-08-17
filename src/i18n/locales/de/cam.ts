@@ -163,6 +163,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.featureFirst': 'Feature zuerst',
   'cam.operation.levelFirst': 'Ebene zuerst',
   'cam.operation.roundOutsideCorners': 'Ecken abrunden',
+  'cam.operation.roundLinkCorners': 'Übergänge abrunden',
   'cam.operation.cornerRelief': 'Eckenfreistellung',
   'cam.operation.cornerReliefNone': 'Keine',
   'cam.operation.cornerReliefDogbone': 'Dogbone',

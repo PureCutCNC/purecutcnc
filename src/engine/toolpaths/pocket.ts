@@ -54,6 +54,11 @@ import {
 import { isFeatureFirst, mergePocketToolpathResults, perFeatureOperations } from './multiFeature'
 import { cornerSmoothingRadius, roundContourCorners } from './offsetSmoothing'
 import {
+  linkJunctionFillet,
+  pocketLinkFilletOptions,
+  type LinkFilletOptions,
+} from './tangentLink'
+import {
   EngagementFeedQuantizer,
   EngagementTelemetryAccumulator,
   SweptMaterialIndex,
@@ -1759,6 +1764,276 @@ export function buildPocketParallelSegments(
   return segments
 }
 
+/**
+ * Forward collinear run length over a fresh set of cut moves (the ring chords
+ * about to be emitted): the accumulated length from startIndex while the
+ * moves stay connected and their direction deviates from the first by less
+ * than minDeflectionRadians, capped at maxLength. Tessellated ring arcs are
+ * runs of near-collinear chords; a junction fillet may consume the whole run
+ * up to the next real corner, not just one chord.
+ */
+function forwardCutRun(
+  cutMoves: ToolpathMove[],
+  startIndex: number,
+  maxLength: number,
+  minDeflectionRadians: number,
+): number {
+  if (startIndex >= cutMoves.length || !(maxLength > 0)) return 0
+  const first = cutMoves[startIndex]
+  const baseDx = first.to.x - first.from.x
+  const baseDy = first.to.y - first.from.y
+  const baseLen = Math.hypot(baseDx, baseDy)
+  if (baseLen <= 1e-9) return 0
+  const baseDirX = baseDx / baseLen
+  const baseDirY = baseDy / baseLen
+  let total = 0
+  for (let index = startIndex; index < cutMoves.length; index += 1) {
+    const move = cutMoves[index]
+    const dx = move.to.x - move.from.x
+    const dy = move.to.y - move.from.y
+    const length = Math.hypot(dx, dy)
+    if (length <= 1e-9) break
+    if (index > startIndex) {
+      const previous = cutMoves[index - 1]
+      if (
+        Math.abs(previous.to.x - move.from.x) > 1e-9
+        || Math.abs(previous.to.y - move.from.y) > 1e-9
+      ) {
+        break
+      }
+    }
+    const dirX = dx / length
+    const dirY = dy / length
+    const deviation = Math.abs(Math.atan2(baseDirX * dirY - baseDirY * dirX, baseDirX * dirX + baseDirY * dirY))
+    if (deviation >= minDeflectionRadians) break
+    if (total + length >= maxLength) {
+      return maxLength
+    }
+    total += length
+  }
+  return total
+}
+
+/**
+ * Backward collinear run length over already-emitted cut moves ending at
+ * endIndex: like forwardCutRun, walking backward. Used for the exit junction
+ * where the ring chords are already in the stream (and may belong to the
+ * previous traversal call).
+ */
+function backwardCutRun(
+  moves: ToolpathMove[],
+  endIndex: number,
+  maxLength: number,
+  minDeflectionRadians: number,
+): number {
+  if (endIndex < 0 || endIndex >= moves.length || !(maxLength > 0)) return 0
+  const first = moves[endIndex]
+  if (first.kind !== 'cut') return 0
+  const baseDx = first.to.x - first.from.x
+  const baseDy = first.to.y - first.from.y
+  const baseLen = Math.hypot(baseDx, baseDy)
+  if (baseLen <= 1e-9) return 0
+  const baseDirX = baseDx / baseLen
+  const baseDirY = baseDy / baseLen
+  let total = 0
+  for (let index = endIndex; index >= 0; index -= 1) {
+    const move = moves[index]
+    if (move.kind !== 'cut') break
+    if (index < endIndex) {
+      const next = moves[index + 1]
+      if (
+        Math.abs(move.to.x - next.from.x) > 1e-9
+        || Math.abs(move.to.y - next.from.y) > 1e-9
+      ) {
+        break
+      }
+    }
+    const dx = move.to.x - move.from.x
+    const dy = move.to.y - move.from.y
+    const length = Math.hypot(dx, dy)
+    if (length <= 1e-9) break
+    const dirX = dx / length
+    const dirY = dy / length
+    const deviation = Math.abs(Math.atan2(baseDirX * dirY - baseDirY * dirX, baseDirX * dirX + baseDirY * dirY))
+    if (deviation >= minDeflectionRadians) break
+    if (total + length >= maxLength) {
+      return maxLength
+    }
+    total += length
+  }
+  return total
+}
+
+const DEFAULT_LINK_FILLET_MIN_DEFLECTION_RAD = (20 * Math.PI) / 180
+
+/** Arc moves between the tessellated fillet points, at the junction Z. */
+function linkFilletArcMoves(points: Point[], z: number): ToolpathMove[] {
+  const arcs: ToolpathMove[] = []
+  for (let index = 0; index + 1 < points.length; index += 1) {
+    arcs.push({
+      kind: 'cut',
+      from: { x: points[index].x, y: points[index].y, z },
+      to: { x: points[index + 1].x, y: points[index + 1].y, z },
+    })
+  }
+  return arcs
+}
+
+/**
+ * Entry junction: the link's last cut move (already in the stream) meets the
+ * ring's first chord (cutMoves[0], not yet emitted). Truncates the link move,
+ * consumes whole ring chords up to the tangent point, truncates the survivor,
+ * and appends the tessellated arc — all before the ring is pushed.
+ */
+function spliceEntryLinkJunction(
+  moves: ToolpathMove[],
+  cutMoves: ToolpathMove[],
+  linkFillet: LinkFilletOptions,
+): void {
+  if (moves.length === 0 || cutMoves.length === 0) return
+  const linkLast = moves[moves.length - 1]
+  if (linkLast.kind !== 'cut') return
+  const corner = linkLast.to
+  const firstChord = cutMoves[0]
+  if (
+    Math.abs(corner.x - firstChord.from.x) > 1e-9
+    || Math.abs(corner.y - firstChord.from.y) > 1e-9
+  ) {
+    return
+  }
+  const minDeflection = linkFillet.minDeflectionRadians ?? DEFAULT_LINK_FILLET_MIN_DEFLECTION_RAD
+  const runCap = linkFillet.toolRadius / 2
+  // The link side is a run of collinear fragments (feed classification splits
+  // links), exactly like the ring side is a run of collinear chords.
+  const linkRun = backwardCutRun(moves, moves.length - 1, runCap, minDeflection)
+  const linkDx = corner.x - linkLast.from.x
+  const linkDy = corner.y - linkLast.from.y
+  const linkLen = Math.hypot(linkDx, linkDy)
+  if (linkLen <= 1e-9) return
+  const ringRun = forwardCutRun(cutMoves, 0, runCap, minDeflection)
+  const firstChordLen = chordLength(firstChord)
+  if (firstChordLen <= 1e-9) return
+  const points = linkJunctionFillet(
+    corner,
+    { x: linkDx / linkLen, y: linkDy / linkLen },
+    { x: (firstChord.to.x - corner.x) / firstChordLen, y: (firstChord.to.y - corner.y) / firstChordLen },
+    linkRun,
+    ringRun,
+    linkFillet,
+  )
+  if (points === null) return
+  const z = corner.z
+  const tangent = Math.hypot(corner.x - points[0].x, corner.y - points[0].y)
+  // Consume link fragments up to the tangent point, truncating the survivor.
+  let remaining = tangent
+  let linkIndex = moves.length - 1
+  while (linkIndex > 0 && remaining >= chordLength(moves[linkIndex]) - 1e-9) {
+    remaining -= chordLength(moves[linkIndex])
+    linkIndex -= 1
+  }
+  const linkSurvivor = moves[linkIndex]
+  linkSurvivor.to = interpolateChord(linkSurvivor, chordLength(linkSurvivor) - remaining)
+  moves.splice(linkIndex + 1)
+  // Consume ring chords up to the tangent point, truncating the survivor.
+  remaining = tangent
+  while (remaining >= chordLength(cutMoves[0]) - 1e-9 && cutMoves.length > 1) {
+    remaining -= chordLength(cutMoves[0])
+    cutMoves.shift()
+  }
+  const ringSurvivor = cutMoves[0]
+  ringSurvivor.from = interpolateChord(ringSurvivor, remaining)
+  moves.push(...linkFilletArcMoves(points, z))
+}
+
+/** XY length of one cut move. */
+function chordLength(move: ToolpathMove): number {
+  return Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y)
+}
+
+/** Point along a cut move at distance at from its from endpoint. */
+function interpolateChord(move: ToolpathMove, at: number): ToolpathPoint {
+  const length = chordLength(move)
+  const t = length > 1e-9 ? Math.max(0, Math.min(1, at / length)) : 0
+  return {
+    x: move.from.x + (move.to.x - move.from.x) * t,
+    y: move.from.y + (move.to.y - move.from.y) * t,
+    z: move.from.z + (move.to.z - move.from.z) * t,
+  }
+}
+
+/**
+ * Exit junction: the ring's closing chords (already in the stream, ending just
+ * before the link at linkIndex) meet the link. Consumes trailing ring chords
+ * and leading link fragments up to the tangent points, truncates the
+ * survivors, removes the consumed moves, and inserts the tessellated arc.
+ */
+function spliceExitLinkJunction(
+  moves: ToolpathMove[],
+  linkIndex: number,
+  linkFillet: LinkFilletOptions,
+): void {
+  if (linkIndex <= 0 || linkIndex >= moves.length) return
+  const link = moves[linkIndex]
+  if (link.kind !== 'cut') return
+  const corner = link.from
+  const lastChord = moves[linkIndex - 1]
+  if (lastChord.kind !== 'cut') return
+  if (
+    Math.abs(lastChord.to.x - corner.x) > 1e-9
+    || Math.abs(lastChord.to.y - corner.y) > 1e-9
+  ) {
+    return
+  }
+  const minDeflection = linkFillet.minDeflectionRadians ?? DEFAULT_LINK_FILLET_MIN_DEFLECTION_RAD
+  const runCap = linkFillet.toolRadius / 2
+  const linkRun = forwardCutRun([link], 0, runCap, minDeflection)
+  if (linkRun <= 1e-9) return
+  const ringRun = backwardCutRun(moves, linkIndex - 1, runCap, minDeflection)
+  const ringDx = lastChord.to.x - lastChord.from.x
+  const ringDy = lastChord.to.y - lastChord.from.y
+  const ringLen = Math.hypot(ringDx, ringDy)
+  if (ringLen <= 1e-9) return
+  const linkLen = chordLength(link)
+  const points = linkJunctionFillet(
+    corner,
+    { x: ringDx / ringLen, y: ringDy / ringLen },
+    { x: (link.to.x - corner.x) / linkLen, y: (link.to.y - corner.y) / linkLen },
+    ringRun,
+    linkRun,
+    linkFillet,
+  )
+  if (points === null) return
+  const z = corner.z
+  const tangent = Math.hypot(corner.x - points[0].x, corner.y - points[0].y)
+  // Consume trailing ring chords up to the tangent point.
+  let remaining = tangent
+  let cutIndex = linkIndex - 1
+  while (cutIndex > 0 && remaining >= chordLength(moves[cutIndex]) - 1e-9) {
+    remaining -= chordLength(moves[cutIndex])
+    cutIndex -= 1
+  }
+  const ringSurvivor = moves[cutIndex]
+  const ringSurvivorLen = chordLength(ringSurvivor)
+  ringSurvivor.to = interpolateChord(ringSurvivor, ringSurvivorLen - remaining)
+  // Consume leading link fragments (the link is currently a single move: the
+  // entry-side splice has not run yet, so no fragments exist beyond it — but
+  // engagement-feed splitting happens AFTER generation, so a single-move link
+  // is the only shape here; keep the loop for robustness).
+  let linkIndex2 = cutIndex + 1
+  remaining = tangent
+  while (linkIndex2 + 1 < moves.length && remaining >= chordLength(moves[linkIndex2]) - 1e-9) {
+    remaining -= chordLength(moves[linkIndex2])
+    linkIndex2 += 1
+  }
+  const linkSurvivor = moves[linkIndex2]
+  linkSurvivor.from = interpolateChord(linkSurvivor, remaining)
+  // Remove the fully consumed moves between the two survivors.
+  moves.splice(cutIndex + 1, linkIndex2 - 1 - cutIndex)
+  // Insert the arc right after the ring survivor.
+  const arcs = linkFilletArcMoves(points, z)
+  moves.splice(cutIndex + 1, 0, ...arcs)
+}
+
 export function cutClosedContours(
   moves: ToolpathMove[],
   contours: Point[][],
@@ -1770,6 +2045,7 @@ export function cutClosedContours(
   direction: CutDirection = 'conventional',
   safeLinkCheck?: SafeLinkCheck,
   entryPolicy?: EntryPolicy,
+  linkFillet?: LinkFilletOptions,
 ): ToolpathPoint | null {
   const directedContours = applyContourDirection(contours, direction)
   const start = currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null
@@ -1780,6 +2056,7 @@ export function cutClosedContours(
   let nextPosition = currentPosition
   for (const contour of orderedContours) {
     const entryPoint = contourStartPoint(contour, z)
+    const linkStartIndex = moves.length
     nextPosition = transitionToCutEntry(
       moves,
       nextPosition,
@@ -1790,6 +2067,20 @@ export function cutClosedContours(
       entryPolicy,
     )
     const cutMoves = toClosedCutMoves(contour, z)
+    if (linkFillet && cutMoves.length > 0) {
+      // Exit junction: the previous ring's closing chords → this link's first
+      // cut move (a direct cut link only — rapids/plunges stay sharp). The
+      // chords may belong to the previous contour of this same call, or to
+      // the previous traversal call; both sit directly before the link.
+      if (moves.length > linkStartIndex) {
+        spliceExitLinkJunction(moves, linkStartIndex, linkFillet)
+      }
+      // Entry junction: the link's last cut move → this ring's first chord.
+      // When no link move was emitted (the rings touch), the stream's last
+      // move is the previous ring's closing chord and this splices the
+      // touching junction instead.
+      spliceEntryLinkJunction(moves, cutMoves, linkFillet)
+    }
     moves.push(...cutMoves)
     nextPosition = cutMoves.at(-1)?.to ?? nextPosition
   }
@@ -2050,6 +2341,7 @@ function cutOffsetRegionNode(
   smoothRadius?: number,
   depth = 0,
   entryPolicy?: EntryPolicy,
+  linkFillet?: LinkFilletOptions,
 ): ToolpathPoint | null {
   const cutCurrentRegion = (fromPosition: ToolpathPoint | null): ToolpathPoint | null => {
     const childAnchors = traversalMode === 'outer-first'
@@ -2086,7 +2378,8 @@ function cutOffsetRegionNode(
       childAnchors,
     ))
 
-    return cutClosedContours(
+    const prevMovesEnd = moves.length
+    const result = cutClosedContours(
       moves,
       preparedContours,
       z,
@@ -2097,7 +2390,16 @@ function cutOffsetRegionNode(
       direction,
       safeLinkCheck,
       entryPolicy,
+      linkFillet,
     )
+    // Exit junction between the previous ring (cut by the previous call) and
+    // this call's first link move. The within-call junctions (outer → island
+    // loops) are handled inside cutClosedContours; this one spans calls
+    // because each region node cuts its own ring.
+    if (linkFillet !== undefined && moves.length > prevMovesEnd) {
+      spliceExitLinkJunction(moves, prevMovesEnd, linkFillet)
+    }
+    return result
   }
 
   let nextPosition = currentPosition
@@ -2125,6 +2427,7 @@ function cutOffsetRegionNode(
       smoothRadius,
       depth + 1,
       entryPolicy,
+      linkFillet,
     )
   }
 
@@ -2149,6 +2452,7 @@ export function cutOffsetRegionRecursive(
   smoothRadius?: number,
   islandJoinType: number = ClipperLib.JoinType.jtMiter,
   entryPolicy?: EntryPolicy,
+  linkFillet?: LinkFilletOptions,
 ): ToolpathPoint | null {
   return cutOffsetRegionNode(
     moves,
@@ -2164,6 +2468,7 @@ export function cutOffsetRegionRecursive(
     smoothRadius,
     0,
     entryPolicy,
+    linkFillet,
   )
 }
 
@@ -2324,6 +2629,18 @@ function generateRoughBandMoves(
     .flatMap((region) => buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
     .map((region) => buildOffsetRegionTree(region, effectiveStepover, islandJoinType))
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
+  // Tangential link junctions (issue #545): fillet the two ring↔link corners
+  // with the largest radius the cleared domain admits, gated by the operation
+  // field (absent = today's sharp links). The domain is the band's tool-centre
+  // region — the tree roots are exactly that construction.
+  const linkFillet = operation.kind === 'pocket'
+    ? pocketLinkFilletOptions(
+      operation.roundLinkCorners,
+      toolRadius,
+      effectiveStepover,
+      regionTrees.map((tree) => tree.region),
+    )
+    : undefined
   // Cache exact emission-order classification by the ordered cut-segment
   // stream. Most levels reuse one traversal; if position seeding genuinely
   // changes the order, that order gets its own classification instead of
@@ -2382,6 +2699,7 @@ function generateRoughBandMoves(
         smoothRadius,
         0,
         levelEntryPolicy,
+        linkFillet,
       )
     }
 
@@ -2503,6 +2821,17 @@ function generateFinishBandMoves(
       .flatMap((region) => buildInsetRegions(region, floorStepover))
       .map((region) => buildOffsetRegionTree(region, floorStepover))
     : []
+  // Tangential link junctions for the offset floor rings; the domain is the
+  // wall-finish tool-centre path (finishRegions), which is the hard boundary
+  // a floor-ring link may sweep up to.
+  const floorLinkFillet = operation.kind === 'pocket' && operation.finishFloor && !isParallelPocket
+    ? pocketLinkFilletOptions(
+      operation.roundLinkCorners,
+      toolRadius,
+      floorStepover,
+      finishRegions,
+    )
+    : undefined
   const floorSegments = operation.finishFloor && isParallelPocket
     ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
     : []
@@ -2552,6 +2881,7 @@ function generateFinishBandMoves(
         floorSmoothRadius,
         0,
         entryPolicy,
+        floorLinkFillet,
       )
     }
 

@@ -558,6 +558,12 @@ export interface Operation {
    *  shipped rule — a slots-only operation must produce byte-identical G-code. */
   pocketFeedReduction?: PocketFeedReduction
   roundOutsideCorners?: boolean
+  /** Tangential ring-to-ring links in offset pocket clearing (issue #545): the
+   *  two sharp corners where a link meets a clearing ring are replaced with
+   *  tangent-arc fillets bounded by the cleared domain. Missing keeps today's
+   *  sharp links at the engine level; operation defaults and load-time
+   *  normalisation backfill it on, mirroring roundOutsideCorners. */
+  roundLinkCorners?: boolean
   /** Corner-relief style cut as a dedicated stepped pass appended after the
    *  operation's main path. Missing or `'none'` emits no relief at all — a
    *  legacy operation must produce byte-identical G-code. Applies to Pocket and
