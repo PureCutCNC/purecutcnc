@@ -69,7 +69,8 @@ export function cornerSmoothingRadius(
 ): number | undefined {
   if (!enabled) return undefined
   const radius = Math.min(toolRadius, stepover)
-  return radius > 0 ? radius : undefined
+  const factor = Number(process.env.PC_ROUND_FACTOR ?? '1')
+  return radius > 0 ? radius * factor : undefined
 }
 
 function normalizeSignedAngle(angle: number): number {
