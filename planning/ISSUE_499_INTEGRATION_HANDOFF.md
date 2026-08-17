@@ -222,12 +222,92 @@ directly while iterating.
 
 This cost real time on both S1 and S2 before it was written down.
 
-## Slice S3 — the engagement-limited path generator — **YOUR ASSIGNMENT**
+## Slice S4 — the containment backstop — **YOUR ASSIGNMENT**
 
-**You are the implementation worker for slice S3 of issue #499.**
+**You are the implementation worker for slice S4 of issue #499.**
 
-Same confinement, reading list and working rules as S2 below. Read the S2 and
-S2b review records first — they define the standing rules this slice is held to.
+Same confinement, reading list and working rules as S2 below. Read the S2, S2b
+and S3 review records first — they define the standing rules this slice is held
+to.
+
+### Why this exists
+
+The issue is emphatic:
+
+> If a generated loop cannot be *proven* contained within the swept envelope of
+> the moves already emitted at that level, discard it: emit the legacy corner at
+> conservative feed with a structured warning. Fail closed, the way the
+> trochoidal and countersink generators already do. **A containment proof that
+> only exists in the test suite is not a safety property.**
+
+So this slice builds the predicate that will run in production. S5 wires it and
+supplies the warning path.
+
+### Containment is not the engagement bound
+
+S3 already bounds *engagement* — the angular measure of the leading semicircle
+in uncut material. Containment is a different and stronger question: **does any
+part of the cutter body leave already-cleared material?** A path can satisfy an
+engagement bound and still put the trailing flank into stock.
+
+Judge the **cutter body**, not the tool centre. A tool-centre test is the classic
+too-loose check and will pass paths that gouge.
+
+New pure module `src/engine/toolpaths/excursionContainment.ts`, pure the way
+`engagement.ts`, `cornerQualifier.ts` and `engagementLimitedPath.ts` are.
+
+### Fail closed
+
+Every uncertainty — sampling gaps, degenerate geometry, an empty prior set —
+resolves to **not contained**. Never to contained. The bias must be tested, not
+just asserted in a comment: feed it a deliberately starved prior set and require
+a rejection.
+
+Return the violating point when it rejects, so S5 can put it in the warning.
+
+### Acceptance
+
+- An excursion wholly inside cleared material is contained.
+- An excursion crossing into uncut stock is rejected, and the reported violating
+  point actually lies outside the cleared union — verify the point, not just the
+  boolean.
+- **Run it over the real generator's output.** For every excursion
+  `cornerUnwindPath` produces across the fixture pack, report contained vs
+  rejected. If the generator is producing excursions that this predicate
+  rejects, that is a finding worth reporting loudly — say so in the completion
+  block rather than adjusting either side to agree.
+- Starved prior set → rejected (fail-closed, tested).
+- Cutter body, not centre: a path whose centre stays inside but whose flank
+  exits must be rejected. This assertion must fail if the check is changed to
+  test the centre only.
+- Deterministic; CPU time reported, never asserted.
+- **Standing rule from S2b:** every exported threshold constant needs a test
+  that fails when it is set permissive. Prove each by disabling, watching the
+  failure, and restoring from a `cp` backup. Use the premise-test shape for any
+  bracketing pair. Report each mutation and what you saw.
+
+### Files
+
+**Allowed (both new):**
+
+- `src/engine/toolpaths/excursionContainment.ts`
+- `src/engine/toolpaths/excursionContainment.test.ts`
+
+**Forbidden:** `src/engine/toolpaths/pocket.ts`,
+`src/engine/toolpaths/engagement.ts`,
+`src/engine/toolpaths/engagementLimitedPath.ts`,
+`src/engine/toolpaths/cornerQualifier.ts`, `src/test/pocketFixturePack.ts`,
+`src/types/project.ts`, `src/store/**`, `scripts/**`, and everything not listed.
+Reading any of them is expected; editing is not. Do not retune any constant in
+another module — report instead.
+
+**Required checks:** `./node_modules/.bin/tsx
+src/engine/toolpaths/excursionContainment.test.ts` and one
+`scripts/build-summary.sh`.
+
+## Slice S3 — the engagement-limited path generator — **COMPLETE, reference only**
+
+Merged as `1e4692e`; see its review record and the conversion finding.
 
 ### Scope — the generator only
 
