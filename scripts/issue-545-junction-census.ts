@@ -61,7 +61,6 @@ import {
   toClipperPath,
 } from '../src/engine/toolpaths/geometry'
 import { cornerSmoothingRadius, roundContourCorners } from '../src/engine/toolpaths/offsetSmoothing'
-import { buildOffsetDomainCheck, collinearRunLength, linkJunctionFillet } from '../src/engine/toolpaths/tangentLink'
 import { isFeatureFirst, perFeatureOperations } from '../src/engine/toolpaths/multiFeature'
 import { buildRegionMask, splitFeatureTargets } from '../src/engine/toolpaths/regions'
 import { resolveRegionDomainArea } from '../src/engine/toolpaths/regionDomain'
@@ -497,94 +496,6 @@ function tangentLeadOut(
  * tessellated arc (the same mechanism offsetSmoothing already uses for ring
  * corners) instead of one sharp turn. Returns the max fitting radius.
  */
-/**
- * Family D probe now calls the PRODUCTION gate: linkJunctionFillet with the
- * same options the generator builds (maxRadius 0.4 x D, minRadius 0.5 x
- * stepover, half-tool-radius coverage cap, band-domain check), plus the
- * collinear-run lengths for the two adjacent segments (the run along the
- * ring side is what the generator computes; the census approximates it with
- * the single adjacent chord length, which is exact for unsplit links).
- */
-function productionFilletProbe(
-  corner: Pt,
-  incomingDir: Vec,
-  outgoingDir: Vec,
-  incomingLength: number,
-  outgoingLength: number,
-  outers: Poly[],
-  islands: Poly[],
-  toolDiameter: number,
-  stepover: number,
-): number {
-  const toolRadius = toolDiameter / 2
-  const options = {
-    maxRadius: toolDiameter * 0.4,
-    minRadius: Math.max(stepover * 0.5, 1e-9),
-    toolRadius,
-    isInsideDomain: buildOffsetDomainCheck(
-      outers.map((outer) => ({
-        outer: flatToPoints(outer),
-        islands: islands.map((island) => flatToPoints(island)),
-      })),
-    ),
-  }
-  // Straight approximation of both sides (the family-D probe is approximate;
-  // the PRODUCTION on/off comparison elsewhere in this script is the
-  // authoritative measurement and uses the real polylines through the
-  // generator).
-  const result = linkJunctionFillet(
-    corner,
-    { x: corner.x - incomingDir.x * incomingLength, y: corner.y - incomingDir.y * incomingLength },
-    incomingLength,
-    [
-      corner,
-      { x: corner.x + outgoingDir.x * outgoingLength, y: corner.y + outgoingDir.y * outgoingLength },
-    ],
-    options,
-  )
-  return result === null ? 0 : result.points.length
-}
-
-/**
- * Collinear run length along a ring polyline from a junction corner, matching
- * what the generator computes for the ring side (tessellated rings are runs
- * of near-collinear chords; the fillet may consume the whole run up to the
- * next real corner).
- */
-function ringSideRun(
-  corner: Pt,
-  ringPoly: Poly,
-  step: 1 | -1,
-  maxLength: number,
-): number {
-  const points: Pt[] = []
-  for (let i = 0; i + 1 < ringPoly.length; i += 2) {
-    points.push({ x: ringPoly[i], y: ringPoly[i + 1] })
-  }
-  if (points.length < 2) return 0
-  let cornerIndex = -1
-  let best = Number.POSITIVE_INFINITY
-  for (let index = 0; index < points.length; index += 1) {
-    const d = Math.hypot(points[index].x - corner.x, points[index].y - corner.y)
-    if (d < best) {
-      best = d
-      cornerIndex = index
-    }
-  }
-  if (cornerIndex < 0 || best > 1e-6) return 0
-  return collinearRunLength(points, cornerIndex, step, maxLength, (20 * Math.PI) / 180)
-}
-
-function flatToPoints(poly: Poly): Pt[] {
-  const points: Pt[] = []
-  for (let i = 0; i + 1 < poly.length; i += 2) {
-    points.push({ x: poly[i], y: poly[i + 1] })
-  }
-  return points
-}
-
-type FilletBucket = 'exit-fillet' | 'exit-fallback' | 'entry-fillet' | 'entry-fallback' | 'no-context'
-
 // ── File census ──────────────────────────────────────────────────────────
 
 interface FileRow {
@@ -882,46 +793,6 @@ function censusFile(file: string): FileRow | null {
         leadout['leadout-no-target'] += 1
       }
 
-      // Family D probe: corridor-bounded fillets at both link junctions.
-      if (prevConnects && nextConnects && prev!.cls === 'ring' && next!.cls === 'ring') {
-        const u0 = norm(sub(prev!.move.to, prev!.move.from))
-        const u1 = norm(sub(next!.move.to, next!.move.from))
-        const linkDir = norm(sub(to, from))
-        const prevMid = {
-          x: (prev!.move.from.x + prev!.move.to.x) / 2,
-          y: (prev!.move.from.y + prev!.move.to.y) / 2,
-        }
-        const nextMid = {
-          x: (next!.move.from.x + next!.move.to.x) / 2,
-          y: (next!.move.from.y + next!.move.to.y) / 2,
-        }
-        const prevRing = polys.find((poly) => pointOnPolys(prevMid.x, prevMid.y, [poly]))
-        const nextRing = polys.find((poly) => pointOnPolys(nextMid.x, nextMid.y, [poly]))
-        const exitRingRun = prevRing !== undefined
-          ? ringSideRun(from, prevRing, -1, budgetD / 4)
-          : Math.hypot(prev!.move.to.x - prev!.move.from.x, prev!.move.to.y - prev!.move.from.y)
-        const entryRingRun = nextRing !== undefined
-          ? ringSideRun(to, nextRing, 1, budgetD / 4)
-          : Math.hypot(next!.move.to.x - next!.move.from.x, next!.move.to.y - next!.move.from.y)
-        const exitPoints = productionFilletProbe(
-          from, u0, linkDir,
-          exitRingRun,
-          straightLen,
-          wallOuters, islandBoundaries, budgetD, rMin,
-        )
-        fillet[exitPoints > 0 ? 'exit-fillet' : 'exit-fallback'] += 1
-        if (exitPoints > 0) filletSegments += Math.max(0, exitPoints - 2)
-        const entryPoints = productionFilletProbe(
-          to, linkDir, u1,
-          straightLen,
-          entryRingRun,
-          wallOuters, islandBoundaries, budgetD, rMin,
-        )
-        fillet[entryPoints > 0 ? 'entry-fillet' : 'entry-fallback'] += 1
-        if (entryPoints > 0) filletSegments += Math.max(0, entryPoints - 2)
-      } else {
-        fillet['no-context'] += 1
-      }
       i = end + 1
     }
   }
@@ -1157,14 +1028,3 @@ if (angles.length > 0) {
   const sorted = [...angles].sort((x, y) => x - y)
   console.log('entry angle at hit: p50 ' + sorted[Math.floor(sorted.length / 2)].toFixed(1) + '°, p95 ' + sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)].toFixed(1) + '°')
 }
-console.log('')
-console.log('── Junction-fillet probe (family D, approximate - the PRODUCTION on/off comparison above is authoritative) ──')
-for (const key of Object.keys(totals.fillet) as FilletBucket[]) {
-  const count = totals.fillet[key]
-  console.log('  ' + key.padEnd(16) + String(count).padStart(6) + '  ' + ((100 * count) / Math.max(1, totals.gateLinks)).toFixed(1) + '%')
-}
-const exitFitted = totals.fillet['exit-fillet'] + totals.fillet['exit-fallback']
-const entryFitted = totals.fillet['entry-fillet'] + totals.fillet['entry-fallback']
-console.log('exit junctions filleted: ' + totals.fillet['exit-fillet'] + ' of ' + exitFitted + ' (' + ((100 * totals.fillet['exit-fillet']) / Math.max(1, exitFitted)).toFixed(1) + '%)')
-console.log('entry junctions filleted: ' + totals.fillet['entry-fillet'] + ' of ' + entryFitted + ' (' + ((100 * totals.fillet['entry-fillet']) / Math.max(1, entryFitted)).toFixed(1) + '%)')
-console.log('fillet tessellation segments added: ' + totals.filletSegments + ' (replacing ' + (totals.fillet['exit-fillet'] + totals.fillet['entry-fillet']) + ' corner points)')

@@ -996,7 +996,10 @@ test('cached offset engagement uses the emitted prior-cut context on the real is
   )
   const operation = project.operations.find((candidate) => candidate.kind === 'pocket')
   assert(operation !== undefined, 'the fixture must contain a pocket operation')
-  const result = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement' })
+  // This guard measures the engagement cache's prior-cut context on the legacy
+  // stream; issue #545's S-links are a separate feature bound in
+  // tangentLinkIntegration.test.ts, so strip the field here.
+  const result = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'engagement', roundLinkCorners: undefined })
   const target = result.moves.find((move) =>
     move.kind === 'cut'
     && Math.abs(move.from.y - 0.705) < 1e-6

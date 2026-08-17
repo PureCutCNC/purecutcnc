@@ -26,7 +26,7 @@ import { generateEdgeRouteToolpath, generateVCarveToolpath } from './index'
 import { generatePocketToolpath as generatePocket, buildInsetRegions, buildOffsetRegionTree, type OffsetRegionNode } from './pocket'
 import { applyContourDirection, normalizeToolForProject } from './geometry'
 import { cornerSmoothingRadius, roundContourCorners } from './offsetSmoothing'
-import { linkJunctionFillet, pocketLinkFilletOptions, type LinkFilletOptions } from './tangentLink'
+import { pocketTangentLinkOptions, tangentSLink, type TangentLinkOptions } from './tangentLink'
 import { resolvePocketRegions } from './resolver'
 import { normalizeProject } from '../../store/helpers/projectFormat'
 import { projectWithFeatures } from '../../test/projectFixtures'
@@ -41,7 +41,7 @@ import {
   type SketchFeature,
   type Tool,
 } from '../../types/project'
-import type { ToolpathMove, ToolpathPoint } from './types'
+import type { ToolpathMove } from './types'
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error('Assertion failed: ' + message)
@@ -153,6 +153,25 @@ function circlePocket(opOverrides: Partial<Operation> = {}): { project: Project;
   const operation = makePocketOp({
     kind: 'pocket',
     target: { source: 'features', featureIds: ['p1'] },
+    toolRef: 't1',
+    finishWalls: false,
+    finishFloor: false,
+    ...opOverrides,
+  })
+  return { project, operation }
+}
+
+function neckPocket(opOverrides: Partial<Operation> = {}): { project: Project; operation: Operation } {
+  const tool = makeFlatEndmill('t1', 6)
+  const features = [
+    makeRect('a', 0, 0, 20, 20),
+    makeRect('b', 26, 0, 20, 20),
+    makeRect('neck', 20, 7, 6, 6),
+  ]
+  const project = baseProject([tool], features)
+  const operation = makePocketOp({
+    kind: 'pocket',
+    target: { source: 'features', featureIds: ['a', 'b', 'neck'] },
     toolRef: 't1',
     finishWalls: false,
     finishFloor: false,
@@ -284,7 +303,7 @@ function movesEqual(a: ToolpathMove[], b: ToolpathMove[]): boolean {
 
 /** Production gate options, built with the same construction the generator
  *  uses (band regions inset to the tool-centre wall path). */
-function productionGateOptions(project: Project, operation: Operation): LinkFilletOptions | undefined {
+function productionGateOptions(project: Project, operation: Operation): TangentLinkOptions | undefined {
   const toolRecord = project.tools.find((tool) => tool.id === operation.toolRef)
   if (!toolRecord) return undefined
   const tool = normalizeToolForProject(toolRecord, project)
@@ -294,42 +313,26 @@ function productionGateOptions(project: Project, operation: Operation): LinkFill
   const regionTrees = resolved.bands
     .flatMap((band) => band.regions.flatMap((region) => buildInsetRegions(region, toolRadius)))
     .map((region) => buildOffsetRegionTree(region, stepoverDistance))
-  return pocketLinkFilletOptions(true, toolRadius, stepoverDistance, regionTrees.map((tree) => tree.region))
+  return pocketTangentLinkOptions(true, tool.diameter, regionTrees.map((tree) => tree.region))
 }
 
-/** Ring vertices from the junction corner along the ring's travel direction
- *  (forward = the ring's own direction; backward for the closing side). */
-function ringVerticesFromJunction(poly: Poly, corner: ToolpathPoint, forward: boolean): Point[] {
+/** Ring vertices of the arrival ring in travel order. */
+function ringVerticesOf(poly: Poly): Point[] {
   const points: Point[] = []
   for (let index = 0; index + 1 < poly.length; index += 2) {
     points.push({ x: poly[index], y: poly[index + 1] })
   }
-  const count = points.length
-  let cornerIndex = -1
-  let best = Number.POSITIVE_INFINITY
-  for (let index = 0; index < count; index += 1) {
-    const distance = Math.hypot(points[index].x - corner.x, points[index].y - corner.y)
-    if (distance < best) {
-      best = distance
-      cornerIndex = index
-    }
-  }
-  if (cornerIndex < 0 || best > 1e-6) return [corner]
-  const vertices: Point[] = [points[cornerIndex]]
-  for (let step = 1; step < count; step += 1) {
-    vertices.push(points[forward ? (cornerIndex + step) % count : (cornerIndex - step + count) % count])
-  }
-  return vertices
+  return points
 }
 
 /** Every remaining sharp link junction in an enabled stream must be one the
- *  production gate legitimately rejected: re-running the gate without the
- *  domain check must either also reject it (segment/geometry limited) or the
+ *  production gate legitimately rejected: re-running the S solver without the
+ *  domain check must either also reject it (geometry/budget limited) or the
  *  domain check must be what rejected it. */
 function assertSharpLinkJunctionsAreGateRejections(
   moves: ToolpathMove[],
   polys: Poly[],
-  options: LinkFilletOptions,
+  options: TangentLinkOptions,
 ): void {
   const cuts = moves.filter((move) => move.kind === 'cut')
   const cls = cuts.map((move) =>
@@ -349,30 +352,33 @@ function assertSharpLinkJunctionsAreGateRejections(
       || (cls[index] === 'link' && cls[index + 1] === 'ring')
     if (!linkSide) continue
     sharpLinks += 1
-    const corner = a.to
-    const incomingIsRing = cls[index] === 'ring'
-    // Rebuild the production gate call: the link is the non-ring side, the
-    // ring side is the polyline walked from the junction vertex along the
-    // ring's travel direction.
-    const ringPoly = polys.find((poly) => pointOnPolys(
-      incomingIsRing ? (a.from.x + a.to.x) / 2 : (b.from.x + b.to.x) / 2,
-      incomingIsRing ? (a.from.y + a.to.y) / 2 : (b.from.y + b.to.y) / 2,
-      [poly],
-    ))
-    const link = incomingIsRing ? b : a
-    const linkEnd = incomingIsRing ? b.to : a.from
-    const linkLength = Math.hypot(link.to.x - link.from.x, link.to.y - link.from.y)
-    const gateCall = (domain: (x: number, y: number) => boolean) => {
-      if (ringPoly === undefined) return null
-      const vertices = ringVerticesFromJunction(ringPoly, corner, !incomingIsRing)
-      return linkJunctionFillet(corner, linkEnd, linkLength, vertices, { ...options, isInsideDomain: domain })
-    }
+    // Rebuild the production call: exit = the link run's start, t0 = the
+    // preceding ring cut's direction, arrival ring = the ring polyline the
+    // following ring cut lies on. Find the link run bounds first.
+    let runStart = index
+    let runEnd = index
+    while (runStart > 0 && cls[runStart - 1] === 'link'
+      && Math.hypot(cuts[runStart].from.x - cuts[runStart - 1].to.x, cuts[runStart].from.y - cuts[runStart - 1].to.y) < 1e-6) runStart -= 1
+    while (runEnd + 1 < cuts.length && cls[runEnd + 1] === 'link'
+      && Math.hypot(cuts[runEnd].to.x - cuts[runEnd + 1].from.x, cuts[runEnd].to.y - cuts[runEnd + 1].from.y) < 1e-6) runEnd += 1
+    const exit = cuts[runStart].from
+    const prevCut = runStart > 0 && cls[runStart - 1] === 'ring'
+      && Math.hypot(cuts[runStart - 1].to.x - exit.x, cuts[runStart - 1].to.y - exit.y) < 1e-6 ? cuts[runStart - 1] : null
+    const nextCut = runEnd + 1 < cuts.length && cls[runEnd + 1] === 'ring'
+      && Math.hypot(cuts[runEnd].to.x - cuts[runEnd + 1].from.x, cuts[runEnd].to.y - cuts[runEnd + 1].from.y) < 1e-6 ? cuts[runEnd + 1] : null
+    const arrivalPoly = nextCut !== null
+      ? polys.find((poly) => pointOnPolys((nextCut.from.x + nextCut.to.x) / 2, (nextCut.from.y + nextCut.to.y) / 2, [poly]))
+      : undefined
+    if (prevCut === null || arrivalPoly === undefined) continue
+    const t0 = { x: (exit.x - prevCut.from.x) / Math.hypot(exit.x - prevCut.from.x, exit.y - prevCut.from.y), y: (exit.y - prevCut.from.y) / Math.hypot(exit.x - prevCut.from.x, exit.y - prevCut.from.y) }
+    const gateCall = (domain: (x: number, y: number) => boolean) =>
+      tangentSLink(exit, t0, ringVerticesOf(arrivalPoly), { ...options, isInsideDomain: domain })
     const unconstrained = gateCall(() => true)
     const gated = gateCall(options.isInsideDomain)
     const gateRejected = unconstrained !== null && gated === null
-    const segmentRejected = unconstrained === null
-    assert(gateRejected || segmentRejected,
-      'sharp link junction at (' + corner.x.toFixed(2) + ', ' + corner.y.toFixed(2) + ') would fillet but the emitted stream left it sharp')
+    const geometryRejected = unconstrained === null
+    assert(gateRejected || geometryRejected,
+      'sharp link junction at (' + exit.x.toFixed(2) + ', ' + exit.y.toFixed(2) + ') would admit an S but the emitted stream left it sharp')
   }
   assert(sharpLinks > 0, 'fixture must contain sharp link junctions to make this assertion meaningful')
 }
@@ -402,7 +408,7 @@ function testSharpLinkJunctionsDisappear() {
   // exits supply both rejection classes on this fixture.
   const gateOptions = productionGateOptions(project, operation)
   assert(gateOptions !== undefined, 'gate options resolve')
-  assertSharpLinkJunctionsAreGateRejections(on, polys, gateOptions as LinkFilletOptions)
+  assertSharpLinkJunctionsAreGateRejections(on, polys, gateOptions as TangentLinkOptions)
   // Ring corners are untouched by the link feature.
   assert(onCensus.cornerSharp === offCensus.cornerSharp, 'ring corner junction count unchanged')
   console.log('sharp link junctions: PASSED (off ' + offCensus.exitSharp + '/' + offCensus.entrySharp
@@ -614,28 +620,26 @@ function testDeterminism() {
 
 function testSlotFeedStillStampsSlots() {
   console.log('Testing slot feed still stamps the slots that remain...')
-  // Fillets consume the short link middles (the arcs cleared part of the
-  // strip, so those cuts genuinely no longer slot — correctly unstamped).
-  // Links that DO still cross virgin material must still carry the slot feed,
-  // and the engagement mode must compose with the filleted stream without
-  // reshaping the path (the full geometric never-raise matrix for the
-  // engagement mode lives in engagementPocket.test.ts).
-  const { project, operation } = squarePocket({ pocketSlotFeedPercent: 40, roundLinkCorners: true })
+  // The neck fixture has a genuinely slotting link (the crossing between the
+  // two pocket lobes) in both streams. The S keeps the stamping: it only
+  // reshapes links inside the cleared domain, and the classifier runs on the
+  // emitted moves either way.
+  const { project, operation } = neckPocket({ pocketSlotFeedPercent: 40, roundLinkCorners: true })
   const on = generatePocket(project, operation).moves
-  const polys = ringPolylines(project, operation)
-  const stampedLinks = on.filter((move) => move.kind === 'cut'
-    && move.feedScale !== undefined
-    && !pointOnPolys((move.from.x + move.to.x) / 2, (move.from.y + move.to.y) / 2, polys))
-  assert(stampedLinks.length > 0, 'at least one link still slots and gets stamped, got ' + stampedLinks.length)
+  const legacy = generatePocket(project, { ...operation, roundLinkCorners: undefined }).moves
+  const stamped = (moves: ToolpathMove[]): number =>
+    moves.filter((move) => move.kind === 'cut' && move.feedScale !== undefined).length
+  assert(stamped(legacy) >= 1, 'legacy fixture slots and stamps, got ' + stamped(legacy))
+  assert(stamped(on) >= 1, 'S-enabled stream still stamps the slotting link, got ' + stamped(on))
 
   const engagement = generatePocket(project, { ...operation, pocketFeedReduction: 'engagement' })
   const totalCutLength = (moves: ToolpathMove[]): number =>
     moves.filter((move) => move.kind === 'cut')
       .reduce((sum, move) => sum + Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y), 0)
-  assert(engagement.moves.length > 0, 'engagement mode generates with filleted links')
+  assert(engagement.moves.length > 0, 'engagement mode generates with S-links')
   assert(approx(totalCutLength(engagement.moves), totalCutLength(on), 1e-6),
-    'engagement mode preserves the filleted path length (splits moves, never reshapes)')
-  console.log('slot feed still stamps slots: PASSED (' + stampedLinks.length + ' stamped links)')
+    'engagement mode preserves the S path length (splits moves, never reshapes)')
+  console.log('slot feed still stamps slots: PASSED (legacy ' + stamped(legacy) + ', enabled ' + stamped(on) + ')')
 }
 
 function testComposesWithRoundOutsideCorners() {
@@ -655,7 +659,7 @@ function testComposesWithRoundOutsideCorners() {
     'link fillets apply alongside smoothed rings')
   const gateOptions = productionGateOptions(project, operation)
   assert(gateOptions !== undefined, 'gate options resolve')
-  assertSharpLinkJunctionsAreGateRejections(on.moves, polys, gateOptions as LinkFilletOptions)
+  assertSharpLinkJunctionsAreGateRejections(on.moves, polys, gateOptions as TangentLinkOptions)
   console.log('composition with roundOutsideCorners: PASSED')
 }
 

@@ -14,305 +14,195 @@
  * limitations under the License.
  */
 
-// Tangential ring-to-ring link junctions for offset pocket clearing (issue
-// #545).
+// Tangential ring-to-ring links for offset pocket clearing (issue #545).
 //
-// The straight link between two clearing rings makes two abrupt direction
-// changes — one leaving the ring just cut, one picking up the next. This
-// module replaces each junction's sharp corner with a tangent circular-arc
-// fillet, tessellated to line segments (the toolpath move model is
-// polyline-only). A fillet is tangent to the ring at the junction and tangent
-// to the link, so the tool eases onto the next ring in the direction of travel
-// instead of turning onto it — and leaves the ring just cut the same way. It is
-// the same emit-time mechanism offsetSmoothing uses for ring corners, whose
-// per-corner tessellated fillets were measured as the cycle-time winner in
-// #546.
+// The straight link between two clearing rings leaves one ring and enters the
+// next at sharp angles. This module replaces it with an S-shaped tangent
+// link: the path departs ring N along its travel tangent, curves out, runs a
+// straight diagonal, curves back, and arrives on a vertex of ring N+1 along
+// ring N+1's own travel tangent — tangent at both ends, departure and
+// arrival. The arrival point is free to slide along the next ring's vertices,
+// which is what makes the S feasible where the fixed-endpoint arc-line-arc
+// measured for the plan was not (the lateral step between adjacent rings
+// needs unequal turn radii).
 //
-// The radius is bounded three ways, each of which keeps the fillet safe:
-//
-//  - domain: every point of the arc must lie inside the cleared domain (the
-//    band's tool-centre region: inside the wall-adjacent outer, outside island
-//    expansions) — otherwise the corner stays sharp. The wall-adjacent ring
-//    has the tightest outward budget, and a bulge past it would enter
-//    wall-side stock.
-//  - coverage: the tangent setback is capped at half the tool radius, which
-//    keeps the trimmed corner wedge inside the disk sweep of the truncated
-//    adjacent segment — the fillet can never leave material behind. (The
-//    wedge's points lie within 2·tangent of the tangent point, and
-//    2·tangent ≤ tool radius.)
-//  - segment fit: the tangent points never extend past the actual segment
-//    lengths, so fillets at neighbouring junctions cannot overlap.
-//
-// The straight link itself is unchanged: the rings' own swaths already cover
-// the strip between them (stepover ≤ tool diameter, validated at generation),
-// so the link is a positioning move and reshaping its ends cannot leave
-// material. Feed classification runs downstream on the emitted moves and needs
-// no change.
+// Shape: arc (signed turn phi1, signed radius rho1) + straight middle + arc
+// (signed turn phi2, signed radius rho2). For a candidate arrival vertex Q
+// with ring tangent t1, the middle direction m is searched over a sweep and
+// the closure D = chord1 + s*m + chord2 is solved with one radius pinned to
+// minRadius. The shortest feasible candidate whose path stays inside the
+// cleared domain wins; no candidate means the caller keeps today's straight
+// link. Feed and engagement classification run downstream on the emitted
+// moves, so the S needs no special feed handling.
 
 import type { Point } from '../../types/project'
 import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
 
-const EPS = 1e-9
-const DEFAULT_MIN_DEFLECTION_DEG = 20
-const DOMAIN_SAMPLES = 6
+interface Vec {
+  x: number
+  y: number
+}
 
-export interface LinkFilletOptions {
-  /** Upper bound on the fillet radius, in project units. */
-  maxRadius: number
-  /** Smallest radius worth emitting; a corner that cannot fit at least this
-   *  stays sharp (today's behaviour). */
+const sub = (a: Point, b: Point): Vec => ({ x: a.x - b.x, y: a.y - b.y })
+const add = (a: Point, b: Vec): Vec => ({ x: a.x + b.x, y: a.y + b.y })
+const mul = (v: Vec, k: number): Vec => ({ x: v.x * k, y: v.y * k })
+const len = (v: Vec): number => Math.hypot(v.x, v.y)
+const norm = (v: Vec): Vec => { const l = len(v); return l > 1e-12 ? { x: v.x / l, y: v.y / l } : { x: 1, y: 0 } }
+const dot = (a: Vec, b: Vec): number => a.x * b.x + a.y * b.y
+const cross = (a: Vec, b: Vec): number => a.x * b.y - a.y * b.x
+const rot = (v: Vec, angle: number): Vec => ({
+  x: v.x * Math.cos(angle) - v.y * Math.sin(angle),
+  y: v.x * Math.sin(angle) + v.y * Math.cos(angle),
+})
+const signedAngle = (u: Vec, v: Vec): number => Math.atan2(cross(u, v), dot(u, v))
+
+export interface TangentLinkOptions {
+  /** Smallest arc radius worth emitting for the S curves, project units. */
   minRadius: number
-  /** Tool radius — caps the tangent setback so the trimmed corner wedge stays
-   *  inside the sweep of the truncated adjacent segment. */
-  toolRadius: number
-  /** Angular tessellation step for the fillet arc, in radians. */
+  /** Total path length budget for the S, project units. */
+  maxLength: number
+  /** Angular tessellation step for the arcs, radians. */
   arcStepRadians?: number
-  /** Only turns whose deflection exceeds this get a fillet; gentler turns are
-   *  already smooth enough for the machine. */
-  minDeflectionRadians?: number
   /** True when a tool-centre position lies inside the cleared domain the link
    *  may sweep (inside the wall-adjacent outer, outside island expansions). */
   isInsideDomain: (x: number, y: number) => boolean
 }
 
-export interface LinkFilletOptions {
-  /** Upper bound on the fillet radius, in project units. */
-  maxRadius: number
-  /** Smallest radius worth emitting; a corner that cannot fit at least this
-   *  stays sharp (today's behaviour). */
-  minRadius: number
-  /** Tool radius — caps the tangent setback so the trimmed corner wedge stays
-   *  inside the sweep of the truncated adjacent segment. */
-  toolRadius: number
-  /** Angular tessellation step for the fillet arc, in radians. */
-  arcStepRadians?: number
-  /** Only turns whose deflection exceeds this get a fillet; gentler turns are
-   *  already smooth enough for the machine. */
-  minDeflectionRadians?: number
-  /** True when a tool-centre position lies inside the cleared domain the link
-   *  may sweep (inside the wall-adjacent outer, outside island expansions). */
-  isInsideDomain: (x: number, y: number) => boolean
-}
-
-/**
- * Length of the collinear run from the corner along a closed contour: the
- * distance from cornerIndex to the first vertex where the contour direction
- * deviates from the corner's own segment direction by at least
- * minDeflectionRadians, capped at maxLength. Tessellated arcs consist of
- * near-collinear chords (5 degree steps); their junction fillets must be
- * allowed to consume the run of chords up to the next real corner rather than
- * just the single adjacent chord. The cap keeps the run within the tangent
- * bound the coverage argument needs.
- */
-export function collinearRunLength(
-  points: Point[],
-  cornerIndex: number,
-  step: 1 | -1,
-  maxLength: number,
-  minDeflectionRadians: number,
-): number {
-  const count = points.length
-  if (count < 2 || !(maxLength > 0)) return 0
-  const next = (index: number): number => (index + count) % count
-  const a = points[cornerIndex]
-  const b = points[next(cornerIndex + step)]
-  const baseDx = b.x - a.x
-  const baseDy = b.y - a.y
-  const baseLen = Math.hypot(baseDx, baseDy)
-  if (baseLen <= 1e-9) return 0
-  const baseDirX = baseDx / baseLen
-  const baseDirY = baseDy / baseLen
-  let total = 0
-  let index = cornerIndex
-  let previous = a
-  for (let walked = 0; walked < count - 1; walked += 1) {
-    const current = points[next(index + step)]
-    const dx = current.x - previous.x
-    const dy = current.y - previous.y
-    const len = Math.hypot(dx, dy)
-    // Near-zero-length chords are tessellation noise: their direction is
-    // arbitrary and must not end the run (nor contribute length).
-    if (len <= 1e-9) {
-      previous = current
-      index = next(index + step)
-      continue
-    }
-    const dirX = dx / len
-    const dirY = dy / len
-    const cross = baseDirX * dirY - baseDirY * dirX
-    const dot = Math.max(-1, Math.min(1, baseDirX * dirX + baseDirY * dirY))
-    const deviation = Math.abs(Math.atan2(cross, dot))
-    if (deviation >= minDeflectionRadians) break
-    if (total + len > maxLength) {
-      return maxLength
-    }
-    total += len
-    previous = current
-    index = next(index + step)
-  }
-  return total
-}
-
-/**
- * Tangent fillet for one link↔ring junction, exact on the actual segments
- * (issue #545).
- *
- * The link is a single straight segment; the ring side is a polyline of
- * tessellated chords. A fillet tangent to a straight line (the link) and to
- * the ring polyline is constructed per candidate ring vertex: the arc is the
- * circle tangent to the link's line AND to the chord line at the chosen ring
- * vertex, so both tangent points lie exactly on the emitted segments — the
- * ring-side tangent point is a ring vertex (the caller consumes whole chords,
- * never interpolates) and the link-side tangent point truncates the link
- * move. This replaces the earlier straight-extension construction, whose
- * tangent points drifted off curved ring runs and disconnected the stream.
- *
- * Returns the tessellated arc from the link-side tangent point to the
- * ring-side tangent vertex, plus the two consumption distances — or null when
- * no candidate fits (radius floor, domain, or the link segment is too short).
- */
-export interface JunctionFilletResult {
+export interface TangentLinkResult {
+  /** Tessellated path from the exit point to the arrival vertex, tangent to
+   *  the exit tangent at the start and to the ring at the end. */
   points: Point[]
-  /** Distance from the corner toward the link's far end of the link-side tangent point. */
-  linkTangent: number
-  /** Number of whole ring chords consumed (the ring-side tangent point is a ring vertex). */
-  ringChordsConsumed: number
+  /** Index into ringVertices of the arrival vertex (the ring re-seams there). */
+  arrivalIndex: number
 }
 
-export function linkJunctionFillet(
-  corner: Point,
-  linkEnd: Point,
-  linkLength: number,
-  ringVertices: Point[],
-  options: LinkFilletOptions,
-): JunctionFilletResult | null {
-  if (linkLength <= EPS || ringVertices.length < 2) return null
-  // ringVertices[0] must be the corner; the list follows the ring's travel
-  // direction away from the corner.
-  if (
-    Math.abs(ringVertices[0].x - corner.x) > 1e-9
-    || Math.abs(ringVertices[0].y - corner.y) > 1e-9
-  ) {
-    return null
-  }
-  const linkDirX = (linkEnd.x - corner.x) / linkLength
-  const linkDirY = (linkEnd.y - corner.y) / linkLength
-  const minDeflection = options.minDeflectionRadians
-    ?? (DEFAULT_MIN_DEFLECTION_DEG * Math.PI) / 180
-  const runCap = Math.min(linkLength, options.toolRadius / 2)
-  const arcStep = Math.max(options.arcStepRadians ?? DEFAULT_FLATTEN_ARC_STEP, 1e-3)
-
-  // Walk the ring vertices within the collinear run and the cap.
-  const vertexDistances: number[] = [0]
-  let accumulated = 0
-  for (let index = 1; index < ringVertices.length; index += 1) {
-    const chord = Math.hypot(
-      ringVertices[index].x - ringVertices[index - 1].x,
-      ringVertices[index].y - ringVertices[index - 1].y,
-    )
-    if (chord <= 1e-9) break
-    if (index >= 2) {
-      const baseX = ringVertices[1].x - ringVertices[0].x
-      const baseY = ringVertices[1].y - ringVertices[0].y
-      const baseLen = Math.hypot(baseX, baseY)
-      if (baseLen > 1e-9) {
-        const dirX = (ringVertices[index].x - ringVertices[index - 1].x) / chord
-        const dirY = (ringVertices[index].y - ringVertices[index - 1].y) / chord
-        const cross = (baseX / baseLen) * dirY - (baseY / baseLen) * dirX
-        const dot = Math.max(-1, Math.min(1, (baseX / baseLen) * dirX + (baseY / baseLen) * dirY))
-        const deviation = Math.abs(Math.atan2(cross, dot))
-        if (deviation >= minDeflection) break
-      }
-    }
-    if (accumulated + chord > runCap) break
-    accumulated += chord
-    vertexDistances.push(accumulated)
-  }
-  const candidates = vertexDistances.length - 1
-  if (candidates === 0) return null
-
-  const insideArc = (points: Point[]): boolean => {
-    if (!options.isInsideDomain(points[0].x, points[0].y)) return false
-    if (!options.isInsideDomain(points[points.length - 1].x, points[points.length - 1].y)) return false
-    const step = Math.max(1, Math.floor((points.length - 2) / DOMAIN_SAMPLES))
-    for (let index = step; index < points.length - 1; index += step) {
-      if (!options.isInsideDomain(points[index].x, points[index].y)) return false
-    }
-    return true
-  }
-
-  // Largest tangent span first.
-  for (let k = candidates; k >= 1; k -= 1) {
-    const ringTangentPoint = ringVertices[k]
-    if (k + 1 >= ringVertices.length) continue
-    const chordAfterX = ringVertices[k + 1].x - ringTangentPoint.x
-    const chordAfterY = ringVertices[k + 1].y - ringTangentPoint.y
-    const chordAfterLen = Math.hypot(chordAfterX, chordAfterY)
-    if (chordAfterLen <= 1e-9) continue
-    const ringDirX = chordAfterX / chordAfterLen
-    const ringDirY = chordAfterY / chordAfterLen
-
-    // The junction turn uses the direction heading INTO the corner (the
-    // travel direction), not the away direction the link coordinate uses.
-    const turn = Math.atan2(-linkDirX * ringDirY + linkDirY * ringDirX, -linkDirX * ringDirX - linkDirY * ringDirY)
-    const deflection = Math.abs(turn)
-    if (deflection < minDeflection) continue
-    if (Math.PI - deflection <= EPS) continue
-
-    // Circle tangent to the link line at T1 and to the ring chord line at the
-    // ring tangent vertex: the centre sits on the perpendicular to the ring
-    // chord at the vertex, at radius r, and its distance to the link line is
-    // also r. Solve r from the signed tangency equation a + b·r = r (or the
-    // mirrored branch), where a = cross(ringVertex - corner, linkDir) and
-    // b = cross(ringNormal, linkDir).
-    const interiorNormalX = turn >= 0 ? -ringDirY : ringDirY
-    const interiorNormalY = turn >= 0 ? ringDirX : -ringDirX
-    const a = (ringTangentPoint.x - corner.x) * linkDirY - (ringTangentPoint.y - corner.y) * linkDirX
-    const b = interiorNormalX * linkDirY - interiorNormalY * linkDirX
-    let radius = Number.NaN
-    for (const candidateRadius of [a / (1 - b), -a / (1 + b)]) {
-      if (!(candidateRadius > 0)) continue
-      const residual = a + b * candidateRadius
-      if (Math.abs(Math.abs(residual) - candidateRadius) <= 1e-9 * Math.max(1, candidateRadius)) {
-        radius = candidateRadius
-        break
-      }
-    }
-    if (!(radius > 0) || !(radius >= options.minRadius) || radius > options.maxRadius) continue
-
-    const centreX = ringTangentPoint.x + interiorNormalX * radius
-    const centreY = ringTangentPoint.y + interiorNormalY * radius
-    // Foot of the centre on the link line: the link-side tangent point, at a
-    // positive distance along the link segment from the corner.
-    const linkTangent = (centreX - corner.x) * linkDirX + (centreY - corner.y) * linkDirY
-    if (!(linkTangent >= 0) || linkTangent > linkLength + 1e-9) continue
-    const tangent1: Point = {
-      x: corner.x + linkTangent * linkDirX,
-      y: corner.y + linkTangent * linkDirY,
-    }
-    const distT1 = Math.hypot(tangent1.x - centreX, tangent1.y - centreY)
-    if (Math.abs(distT1 - radius) > 1e-9 * Math.max(1, radius)) continue
-
-    // Tessellate the arc from T1 to the ring vertex around the centre.
-    const startAngle = Math.atan2(tangent1.y - centreY, tangent1.x - centreX)
-    const endAngle = Math.atan2(ringTangentPoint.y - centreY, ringTangentPoint.x - centreX)
-    let sweep = endAngle - startAngle
-    while (sweep > Math.PI) sweep -= 2 * Math.PI
-    while (sweep <= -Math.PI) sweep += 2 * Math.PI
-    const steps = Math.max(1, Math.ceil(Math.abs(sweep) / arcStep))
-    const points: Point[] = [tangent1]
+function buildS(
+  exit: Point,
+  t0: Vec,
+  phi1: number,
+  rho1: number,
+  m: Vec,
+  s: number,
+  phi2: number,
+  rho2: number,
+  arrival: Point,
+  arcStep: number,
+): Point[] {
+  const pts: Point[] = [exit]
+  const tess = (from: Point, tangent: Vec, turn: number, radius: number, to: Point): void => {
+    const centre: Point = { x: from.x - radius * tangent.y, y: from.y + radius * tangent.x }
+    const steps = Math.max(1, Math.ceil(Math.abs(turn) / arcStep))
     for (let step = 1; step < steps; step += 1) {
-      const angle = startAngle + (sweep * step) / steps
-      points.push({
-        x: centreX + radius * Math.cos(angle),
-        y: centreY + radius * Math.sin(angle),
-      })
+      const dir = rot(tangent, (turn * step) / steps)
+      pts.push({ x: centre.x + radius * dir.y, y: centre.y - radius * dir.x })
     }
-    points.push(ringTangentPoint)
-    if (!insideArc(points)) continue
-    return { points, linkTangent, ringChordsConsumed: k }
+    pts.push(to)
   }
-  return null
+  if (Math.abs(phi1) > 1e-9) {
+    const end1 = add(exit, mul(rot(t0, phi1 / 2), 2 * rho1 * Math.sin(phi1 / 2)))
+    tess(exit, t0, phi1, rho1, end1)
+  }
+  if (s > 1e-9) {
+    pts.push(add(pts[pts.length - 1], mul(m, s)))
+  }
+  if (Math.abs(phi2) > 1e-9) {
+    tess(pts[pts.length - 1], m, phi2, rho2, arrival)
+  }
+  pts[pts.length - 1] = arrival
+  return pts
+}
+
+/**
+ * Tangent S-link from exit (leaving along exitTangent) to a vertex of the
+ * directed arrival ring. Searches arrival vertices within the length budget
+ * and middle directions across the turn sweep; the shortest feasible path
+ * that stays inside the cleared domain wins. Returns null when no tangent S
+ * fits — the caller keeps today's straight link.
+ */
+export function tangentSLink(
+  exit: Point,
+  exitTangent: Vec,
+  ringVertices: Point[],
+  options: TangentLinkOptions,
+): TangentLinkResult | null {
+  const count = ringVertices.length
+  if (count < 3 || !(options.maxLength > 0)) return null
+  const arcStep = Math.max(options.arcStepRadians ?? DEFAULT_FLATTEN_ARC_STEP, 1e-3)
+  const rMin = options.minRadius
+
+  let best: TangentLinkResult | null = null
+  let bestLength = Number.POSITIVE_INFINITY
+
+  for (let index = 0; index < count; index += 1) {
+    const arrival = ringVertices[index]
+    const straightDist = Math.hypot(arrival.x - exit.x, arrival.y - exit.y)
+    if (straightDist > options.maxLength || straightDist <= 1e-9) continue
+    const nextVertex = ringVertices[(index + 1) % count]
+    const arrivalTangent = norm(sub(nextVertex, arrival))
+
+    const D = sub(arrival, exit)
+    const phi = signedAngle(exitTangent, arrivalTangent)
+    const bisector = norm(add(exitTangent, arrivalTangent))
+    const middleCandidates: Vec[] = []
+    if (len(add(exitTangent, arrivalTangent)) > 1e-9) middleCandidates.push(bisector)
+    for (let k = -20; k <= 20; k += 1) {
+      if (k === 0) continue
+      middleCandidates.push(rot(exitTangent, (phi * k) / 20))
+    }
+
+    for (const m of middleCandidates) {
+      const phi1 = signedAngle(exitTangent, m)
+      const phi2 = signedAngle(m, arrivalTangent)
+      if (Math.abs(phi1) > Math.PI - 1e-6 || Math.abs(phi2) > Math.PI - 1e-6) continue
+      if (Math.abs(phi1) < 1e-9 && Math.abs(phi2) < 1e-9) continue
+      const sigma1 = phi1 >= 0 ? 1 : -1
+      const sigma2 = phi2 >= 0 ? 1 : -1
+      const a1 = mul(rot(exitTangent, phi1 / 2), 2 * sigma1 * Math.sin(phi1 / 2))
+      const a2 = mul(rot(m, phi2 / 2), 2 * sigma2 * Math.sin(phi2 / 2))
+
+      const candidates: Point[][] = []
+      const denom2 = cross(m, a2)
+      if (Math.abs(denom2) > 1e-12) {
+        const r2 = cross(m, sub(D, mul(a1, rMin))) / denom2
+        if (r2 >= rMin) {
+          const s = dot(m, sub(D, add(mul(a1, rMin), mul(a2, r2))))
+          if (s >= 0) candidates.push(buildS(exit, exitTangent, phi1, sigma1 * rMin, m, s, phi2, sigma2 * r2, arrival, arcStep))
+        }
+      }
+      const denom1 = cross(m, a1)
+      if (Math.abs(denom1) > 1e-12) {
+        const r1 = cross(m, sub(D, mul(a2, rMin))) / denom1
+        if (r1 >= rMin) {
+          const s = dot(m, sub(D, add(mul(a1, r1), mul(a2, rMin))))
+          if (s >= 0) candidates.push(buildS(exit, exitTangent, phi1, sigma1 * r1, m, s, phi2, sigma2 * rMin, arrival, arcStep))
+        }
+      }
+
+      for (const candidate of candidates) {
+        let pathLength = 0
+        let domainOk = true
+        for (let step = 0; step + 1 < candidate.length; step += 1) {
+          const a = candidate[step]
+          const b = candidate[step + 1]
+          pathLength += Math.hypot(b.x - a.x, b.y - a.y)
+          if (!options.isInsideDomain(a.x, a.y) || !options.isInsideDomain(b.x, b.y)) {
+            domainOk = false
+            break
+          }
+        }
+        if (!domainOk || pathLength > options.maxLength) continue
+        // The last segment must be tangent to the arrival ring's direction.
+        const lastDir = norm(sub(candidate[candidate.length - 1], candidate[candidate.length - 2]))
+        if (Math.abs(signedAngle(lastDir, arrivalTangent)) > 0.1) continue
+        if (pathLength < bestLength) {
+          bestLength = pathLength
+          best = { points: candidate, arrivalIndex: index }
+        }
+      }
+    }
+  }
+
+  return best
 }
 
 function pointInPolygon(x: number, y: number, polygon: Point[]): boolean {
@@ -330,7 +220,7 @@ function pointInPolygon(x: number, y: number, polygon: Point[]): boolean {
 }
 
 /** Region roots at tool-centre offset: the cleared-domain boundary for links. */
-export interface LinkFilletDomainRegion {
+export interface TangentLinkDomainRegion {
   outer: Point[]
   islands: Point[][]
 }
@@ -340,7 +230,7 @@ export interface LinkFilletDomainRegion {
  * at least one outer and outside every island expansion.
  */
 export function buildOffsetDomainCheck(
-  regions: LinkFilletDomainRegion[],
+  regions: TangentLinkDomainRegion[],
 ): (x: number, y: number) => boolean {
   return (x: number, y: number): boolean => {
     if (!regions.some((region) => pointInPolygon(x, y, region.outer))) return false
@@ -349,25 +239,19 @@ export function buildOffsetDomainCheck(
 }
 
 /**
- * Link-fillet options for one pocket pass (issue #545). Returns undefined when
- * disabled or degenerate so callers can pass the result straight through —
- * undefined = today's exact, unsmoothed link junctions.
+ * Tangent-link options for one pocket pass (issue #545). Returns undefined
+ * when disabled or degenerate — undefined = today's straight links.
  */
-export function pocketLinkFilletOptions(
+export function pocketTangentLinkOptions(
   enabled: boolean | undefined,
-  toolRadius: number,
-  stepover: number,
-  domainRegions: LinkFilletDomainRegion[],
-): LinkFilletOptions | undefined {
+  toolDiameter: number,
+  domainRegions: TangentLinkDomainRegion[],
+): TangentLinkOptions | undefined {
   if (!enabled) return undefined
-  const toolDiameter = toolRadius * 2
-  const maxRadius = toolDiameter * 0.4
-  const minRadius = Math.max(stepover * 0.5, 1e-9)
-  if (!(maxRadius > 0) || !(toolRadius > 0) || domainRegions.length === 0) return undefined
+  if (!(toolDiameter > 0) || domainRegions.length === 0) return undefined
   return {
-    maxRadius,
-    minRadius,
-    toolRadius,
+    minRadius: toolDiameter * 0.25,
+    maxLength: toolDiameter * 2.5,
     isInsideDomain: buildOffsetDomainCheck(domainRegions),
   }
 }
