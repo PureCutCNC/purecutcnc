@@ -169,6 +169,61 @@ function testReportIncludesEnabledRoundOutsideCorners(): void {
   )
 }
 
+function testReportIncludesEnabledRoundLinkCorners(): void {
+  console.log('Testing operation booklet reports enabled round link corners...')
+  const { project, operation, toolpath } = fixture()
+  const report = buildOperationBookletReport({
+    project,
+    operation: {
+      ...operation,
+      kind: 'pocket',
+      pocketPattern: 'offset',
+      roundLinkCorners: true,
+    },
+    tool: normalizeToolForProject(project.tools[0], project),
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+
+  assert(
+    report.settingRows.some((row) => row.label === translate('booklet.label.roundLinkCorners') && row.value === translate('booklet.value.enabled')),
+    'enabled round link corners should be reported for offset pockets',
+  )
+}
+
+function testReportOmitsRoundLinkCornersWhenInapplicable(): void {
+  console.log('Testing operation booklet omits round link corners when inapplicable...')
+  const { project, operation, toolpath } = fixture()
+  const parallelReport = buildOperationBookletReport({
+    project,
+    operation: {
+      ...operation,
+      kind: 'pocket',
+      pocketPattern: 'parallel',
+      roundLinkCorners: true,
+    },
+    tool: normalizeToolForProject(project.tools[0], project),
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    !parallelReport.settingRows.some((row) => row.label === translate('booklet.label.roundLinkCorners')),
+    'parallel pockets must not report round link corners (a documented no-op)',
+  )
+
+  const disabledReport = buildOperationBookletReport({
+    project,
+    operation: { ...operation, kind: 'pocket', pocketPattern: 'offset', roundLinkCorners: false },
+    tool: normalizeToolForProject(project.tools[0], project),
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    !disabledReport.settingRows.some((row) => row.label === translate('booklet.label.roundLinkCorners')),
+    'disabled round link corners must not be reported for offset pockets',
+  )
+}
+
 function testReportIncludesTrochoidalSettings(): void {
   console.log('Testing operation booklet reports trochoidal settings...')
   const { project, operation, toolpath } = fixture()
@@ -603,6 +658,8 @@ testFeedTimeFallsBackToToolDefaultFeed()
 testFeedTimeUsesScaledSlotFeed()
 testReportIncludesEngagementModeRow()
 testReportIncludesEnabledRoundOutsideCorners()
+testReportIncludesEnabledRoundLinkCorners()
+testReportOmitsRoundLinkCornersWhenInapplicable()
 testReportIncludesTrochoidalSettings()
 testReportIncludesTrochoidalEdgeSettingsResolvedFromTool()
 testReportIncludesTrochoidalCarveSettings()

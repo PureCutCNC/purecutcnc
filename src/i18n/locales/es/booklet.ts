@@ -80,6 +80,7 @@ export const bookletEs: Record<keyof typeof bookletEn, string> = {
   'booklet.label.cutDirection': 'Dirección de corte',
   'booklet.label.machiningOrder': 'Orden de mecanizado',
   'booklet.label.roundOutsideCorners': 'Esquinas exteriores redondeadas',
+  'booklet.label.roundLinkCorners': 'Redondear uniones de enlace',
   'booklet.label.cornerRelief': 'Relieve de esquinas',
   'booklet.label.pattern': 'Patrón',
   'booklet.label.pocketAngle': 'Ángulo de la cajera',

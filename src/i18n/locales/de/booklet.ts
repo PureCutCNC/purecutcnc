@@ -83,6 +83,7 @@ export const bookletDe: Record<keyof typeof bookletEn, string> = {
   'booklet.label.cutDirection': 'Schnittrichtung',
   'booklet.label.machiningOrder': 'Bearbeitungsreihenfolge',
   'booklet.label.roundOutsideCorners': 'Außenecken abrunden',
+  'booklet.label.roundLinkCorners': 'Übergänge abrunden',
   'booklet.label.cornerRelief': 'Eckenfreistellung',
   'booklet.label.pattern': 'Muster',
   'booklet.label.pocketAngle': 'Taschenwinkel',
