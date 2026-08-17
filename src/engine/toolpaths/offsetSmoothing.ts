@@ -77,14 +77,23 @@ export function cornerSmoothingRadius(
  *
  * Scales the derived fillet radius so the corner-radius trade-off can be driven
  * from the CLI sweeps and seen in the running app. `1` reproduces shipped
- * behaviour; `3` (r = 7.2 mm on a 6 mm cutter) is the measured sweet spot, where
- * cycle time bottoms out and coverage is still exactly complete.
+ * behaviour.
+ *
+ * Two different ceilings, and the tighter one wins:
+ * - Coverage allows up to ~3 (r = 7.2 mm on a 6 mm cutter): nothing is left
+ *   behind, because the next ring outward absorbs the skipped corner.
+ * - **#498's engagement guarantees cap it at 1.5.** At 2 the over-slowed path
+ *   bound fails on `pocket-feed-reduction-2`; at 2.5 the synthetic-island
+ *   already-cleared check fails too. Those are shipped guarantees measured on
+ *   real parts, so they bind before coverage does.
+ *
+ * 1.5 is therefore the largest value that breaks nothing.
  *
  * `process` does not exist in the browser, so the env lookup is guarded — an
  * unguarded `process.env` here throws `process is not defined` as soon as the
  * app generates a pocket.
  */
-export const SPIKE_RADIUS_FACTOR = 3
+export const SPIKE_RADIUS_FACTOR = 1.5
 
 function spikeRadiusFactor(): number {
   const fromEnv = typeof process !== 'undefined' ? process.env?.PC_ROUND_FACTOR : undefined
