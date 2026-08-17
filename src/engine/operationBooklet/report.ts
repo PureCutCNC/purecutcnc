@@ -111,6 +111,13 @@ function operationUsesRoundOutsideCorners(operation: Operation): boolean {
   )
 }
 
+/** Tangential S-links apply to offset pocket clearing only (issue #545): the
+ *  parallel pattern has no ring-to-ring links, so the setting is a no-op
+ *  there and the booklet must not show it. */
+function operationUsesTangentLinks(operation: Operation): boolean {
+  return operation.kind === 'pocket' && operation.pocketPattern !== 'parallel'
+}
+
 function targetSummary(project: Project, target: OperationTarget): string {
   if (target.source === 'stock') {
     return translate('booklet.target.stock')
@@ -312,6 +319,10 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
 
   if ((operation.roundOutsideCorners ?? false) && operationUsesRoundOutsideCorners(operation)) {
     rows.push({ label: translate('booklet.label.roundOutsideCorners'), value: translate('booklet.value.enabled') })
+  }
+
+  if ((operation.roundLinkCorners ?? false) && operationUsesTangentLinks(operation)) {
+    rows.push({ label: translate('booklet.label.roundLinkCorners'), value: translate('booklet.value.enabled') })
   }
 
   const cornerRelief = operation.cornerRelief ?? 'none'
