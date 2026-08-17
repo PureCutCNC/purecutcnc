@@ -1810,6 +1810,9 @@ export function cutClosedContours(
         && previous.kind === 'cut'
         && Math.abs(previous.to.x - linkMove.from.x) <= 1e-9
         && Math.abs(previous.to.y - linkMove.from.y) <= 1e-9
+        // The S is an XY planar link; a ramping cut link (3D) has no planar
+        // S and must not be spliced at the wrong Z.
+        && Math.abs(linkMove.from.z - linkMove.to.z) <= 1e-9
       ) {
         const exitTangentX = linkMove.from.x - previous.from.x
         const exitTangentY = linkMove.from.y - previous.from.y
@@ -1825,8 +1828,9 @@ export function cutClosedContours(
             Math.acos(Math.max(-1, Math.min(1, (ax * bx + ay * by) / (Math.hypot(ax, ay) * Math.hypot(bx, by)))))
           const exitTurn = turnOf(exitTangentX, exitTangentY, linkDx, linkDy)
           const entryTurn = turnOf(linkDx, linkDy, firstChordDx, firstChordDy)
-          // An already-tangent link gains nothing from an S.
-          if (exitTurn >= (10 * Math.PI) / 180 && entryTurn >= (10 * Math.PI) / 180) {
+          // Skip the S only when BOTH ends are already tangent — a link with
+          // one shallow end and one sharp end still needs the curve.
+          if (exitTurn >= (10 * Math.PI) / 180 || entryTurn >= (10 * Math.PI) / 180) {
             const result = tangentSLink(
               linkMove.from,
               { x: exitTangentX / exitTangentLen, y: exitTangentY / exitTangentLen },
@@ -2392,10 +2396,11 @@ function generateRoughBandMoves(
     .flatMap((region) => buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
     .map((region) => buildOffsetRegionTree(region, effectiveStepover, islandJoinType))
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
-  // Tangential link junctions (issue #545): fillet the two ring↔link corners
-  // with the largest radius the cleared domain admits, gated by the operation
-  // field (absent = today's sharp links). The domain is the band's tool-centre
-  // region — the tree roots are exactly that construction.
+  // Tangential links (issue #545): replace the straight ring-to-ring link
+  // with a tangent S-curve, gated by the operation field (absent = today's
+  // straight links). The domain is the band's tool-centre region — the tree
+  // roots are exactly that construction — and the solver falls back to the
+  // straight link when nothing fits.
   const tangentLink = operation.kind === 'pocket'
     ? pocketTangentLinkOptions(
       operation.roundLinkCorners,

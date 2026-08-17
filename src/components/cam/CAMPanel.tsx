@@ -1594,7 +1594,7 @@ export function CAMPanel({
                       <span>{camT('cam.operation.roundOutsideCorners')}</span>
                     </label>
                   ) : null}
-                  {selectedOperation.kind === 'pocket' ? (
+                  {(selectedOperation.kind === 'pocket' && selectedOperation.pocketPattern !== 'parallel') ? (
                     <label className="properties-check">
                       <input
                         type="checkbox"

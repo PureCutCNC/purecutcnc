@@ -1197,7 +1197,9 @@ test('issue #517: the worst real fixture keeps exact index work bounded', () => 
   assert(operation !== undefined, 'the fixture must contain a pocket operation')
   const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
   assert(tool !== undefined, 'the fixture operation must resolve its tool')
-  const raw = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'slots_only' })
+  // This guard bounds the classification work on the legacy stream; issue
+  // #545's S-links are bound separately in tangentLinkIntegration.test.ts.
+  const raw = generatePocketToolpath(project, { ...operation, pocketFeedReduction: 'slots_only', roundLinkCorners: undefined })
   const classification = buildOffsetBandEngagementClassification(raw.moves, 0, raw.moves.length, {
     toolRadius: tool.diameter / 2,
     ringPerimeters: new Map(),

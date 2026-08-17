@@ -559,10 +559,12 @@ export interface Operation {
   pocketFeedReduction?: PocketFeedReduction
   roundOutsideCorners?: boolean
   /** Tangential ring-to-ring links in offset pocket clearing (issue #545): the
-   *  two sharp corners where a link meets a clearing ring are replaced with
-   *  tangent-arc fillets bounded by the cleared domain. Missing keeps today's
-   *  sharp links at the engine level; operation defaults and load-time
-   *  normalisation backfill it on, mirroring roundOutsideCorners. */
+   *  straight link is replaced by an S-curve that departs ring N along its
+   *  travel tangent and arrives on a vertex of ring N+1 along its travel
+   *  tangent, bounded by the cleared domain and the length budget; when no S
+   *  fits, the straight link stays. Missing keeps today's straight links at
+   *  the engine level; operation defaults and load-time normalisation
+   *  backfill it on, mirroring roundOutsideCorners. */
   roundLinkCorners?: boolean
   /** Corner-relief style cut as a dedicated stepped pass appended after the
    *  operation's main path. Missing or `'none'` emits no relief at all — a

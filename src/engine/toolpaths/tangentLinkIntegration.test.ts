@@ -457,6 +457,36 @@ function testArcRunBudgetOnRealFixture() {
   console.log('arc-run budget: PASSED (legacy ' + legacy + ', enabled ' + enabled + ')')
 }
 
+function testStreamContiguity() {
+  console.log('Testing the emitted stream never disconnects...')
+  // The disconnected-tangent regression on this branch (28 gaps per pocket,
+  // worst 1.5 mm, on a rounded-corner fixture) forced the design change from
+  // junction fillets to the S-link. Every consecutive move in every emitted
+  // stream must connect, on all three synthetic fixtures and on a real one.
+  const fixtures = [
+    circlePocket({ roundLinkCorners: true }),
+    squarePocket({ roundLinkCorners: true }),
+    neckPocket({ roundLinkCorners: true }),
+  ]
+  const raw = JSON.parse(readFileSync('src/engine/test-fixtures/pocket-feed-reduction.camj', 'utf8')) as Project
+  const real = normalizeProject(raw)
+  const realOp = real.operations.find((candidate) => candidate.kind === 'pocket')
+  assert(realOp !== undefined, 'fixture has a pocket operation')
+  fixtures.push({ project: real, operation: realOp })
+  for (const { project, operation } of fixtures) {
+    const moves = generatePocket(project, operation).moves
+    assert(moves.length > 0, 'fixture emits moves')
+    for (let index = 0; index + 1 < moves.length; index += 1) {
+      const a = moves[index]
+      const b = moves[index + 1]
+      const gap = Math.hypot(a.to.x - b.from.x, a.to.y - b.from.y, a.to.z - b.from.z)
+      assert(gap <= 1e-6,
+        'gap ' + gap.toFixed(4) + ' between move ' + index + ' and ' + (index + 1))
+    }
+  }
+  console.log('stream contiguity: PASSED')
+}
+
 function testAbsentEqualsFalse() {
   console.log('Testing absent roundLinkCorners reproduces legacy output byte-for-byte...')
   const { project, operation } = squarePocket()
@@ -689,11 +719,18 @@ function testRealFixtureBackfillPath() {
   const before = junctionCensus(generatePocket(normalized, { ...op, roundLinkCorners: undefined }).moves, polys)
   const after = junctionCensus(generatePocket(normalized, op).moves, polys)
   assert(after.exitSharp + after.entrySharp < before.exitSharp + before.entrySharp, 'real fixture shows fewer sharp link junctions when enabled')
+  // Ring corner junctions may move by a few because the S re-seams the ring:
+  // a corner that sat on the seam counts as an exit junction in legacy and as
+  // a ring corner in the S stream. Pin the delta so the re-classification
+  // stays small and visible rather than drifting.
+  assert(Math.abs(after.cornerSharp - before.cornerSharp) <= 5,
+    'corner junction count moves only by re-classification (legacy ' + before.cornerSharp + ', enabled ' + after.cornerSharp + ')')
   console.log('real fixture backfill: PASSED (sharp links ' + (before.exitSharp + before.entrySharp) + ' -> ' + (after.exitSharp + after.entrySharp) + ')')
 }
 
 try {
   testSharpLinkJunctionsDisappear()
+  testStreamContiguity()
   testAbsentEqualsFalse()
   testWallAndIslandDomainRespected()
   testSweptCoverageParity()

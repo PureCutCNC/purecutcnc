@@ -152,8 +152,111 @@ function testPocketOptionsGating() {
   console.log('pocket option gating: PASSED')
 }
 
+function testStraightMiddleDomainSampling() {
+  console.log('Testing the domain gate samples the straight middle...')
+  // Review repro: an island expansion straddling the S's straight middle on
+  // an otherwise open domain. Vertex-only sampling accepted the straddling
+  // candidate; along-segment sampling must keep every returned path off the
+  // island — whether by rejecting that candidate or by picking a safe one.
+  const island: Point[] = [
+    { x: 0.85, y: 1.95 }, { x: 1.2, y: 1.95 }, { x: 1.2, y: 2.6 }, { x: 0.85, y: 2.6 },
+  ]
+  const domain = buildOffsetDomainCheck([{
+    outer: [{ x: -30, y: -30 }, { x: 30, y: -30 }, { x: 30, y: 30 }, { x: -30, y: 30 }],
+    islands: [island],
+  }])
+  const ring: Point[] = [
+    { x: 0.5, y: 1.2 }, { x: 4, y: 1.2 }, { x: 4, y: 3 }, { x: 0.5, y: 3 },
+  ]
+  const angle = (20 * Math.PI) / 180
+  const result = tangentSLink(
+    { x: 0, y: 0 },
+    { x: Math.cos(angle), y: Math.sin(angle) },
+    ring,
+    { minRadius: 0.25, maxLength: 10, isInsideDomain: domain },
+  )
+  if (result !== null) {
+    // Densely resample the emitted path: nothing may enter the island.
+    for (let step = 0; step + 1 < result.points.length; step += 1) {
+      const a = result.points[step]
+      const b = result.points[step + 1]
+      const segLen = Math.hypot(b.x - a.x, b.y - a.y)
+      const samples = Math.max(1, Math.ceil(segLen / 0.002))
+      for (let sample = 0; sample <= samples; sample += 1) {
+        const t = sample / samples
+        const x = a.x + (b.x - a.x) * t
+        const y = a.y + (b.y - a.y) * t
+        assert(!domainIslandInterior(x, y, island), 'path point (' + x.toFixed(3) + ', ' + y.toFixed(3) + ') enters the island expansion')
+      }
+    }
+  }
+  // The predicate itself rejects island-interior points (the mechanism the
+  // sampling applies along the middle).
+  assert(!domain(1.0, 2.2), 'predicate rejects a point strictly inside the island')
+  console.log('straight-middle domain sampling: PASSED')
+}
+
+function domainIslandInterior(x: number, y: number, island: Point[]): boolean {
+  let inside = false
+  for (let i = 0, j = island.length - 1; i < island.length; j = i, i += 1) {
+    if ((island[i].y > y) !== (island[j].y > y)
+      && x < ((island[j].x - island[i].x) * (y - island[i].y)) / (island[j].y - island[i].y) + island[i].x) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
+function testBoundaryPointsAreInside() {
+  console.log('Testing boundary points of the domain are accepted...')
+  // The ring paths ride the domain boundary: every vertex of the domain's own
+  // polygon must be accepted, not a ray-cast parity coin flip (measured
+  // 32/64 accepted before the fix).
+  const outer: Point[] = []
+  const n = 64
+  for (let k = 0; k < n; k += 1) {
+    const a = (2 * Math.PI * k) / n
+    outer.push({ x: 10 + 5 * Math.cos(a), y: 10 + 5 * Math.sin(a) })
+  }
+  const domain = buildOffsetDomainCheck([{ outer, islands: [] }])
+  let accepted = 0
+  for (const vertex of outer) {
+    if (domain(vertex.x, vertex.y)) accepted += 1
+  }
+  assert(accepted === n, 'all ' + n + ' boundary vertices accepted, got ' + accepted)
+  // The centre and a clearly outside point behave as before.
+  assert(domain(10, 10), 'centre accepted')
+  assert(!domain(40, 40), 'outside rejected')
+  console.log('boundary points accepted: PASSED')
+}
+
+function testParallelLateralStep() {
+  console.log('Testing the parallel lateral step (the sweep must bow across)...')
+  // The exit tangent is parallel to the arrival ring's straight side; the
+  // middle-direction sweep must reach outside the tangent cone to cross the
+  // step. Arrival index 0 of the reviewer's fixture is the parallel side.
+  const exit: Point = { x: 0, y: 0 }
+  const t0: Point = { x: 1, y: 0 }
+  const ring: Point[] = [
+    { x: 0.5, y: 1 }, { x: 4, y: 1 }, { x: 4, y: 3 }, { x: 0.5, y: 3 },
+  ]
+  const result = tangentSLink(exit, t0, ring, openDomain)
+  assert(result !== null, 'the parallel lateral step must admit an S')
+  // Tangency at both ends.
+  const points = result.points
+  const firstDir = segmentDirection(points[0], points[1])
+  const lastDir = segmentDirection(points[points.length - 2], points[points.length - 1])
+  assert(angleBetween(firstDir, t0) < 0.06, 'first segment tangent to the exit direction')
+  const ringTangent = segmentDirection(ring[result.arrivalIndex], ring[(result.arrivalIndex + 1) % ring.length])
+  assert(angleBetween(lastDir, ringTangent) < 0.06, 'last segment tangent to the arrival direction')
+  console.log('parallel lateral step: PASSED (arrival ' + result.arrivalIndex + ')')
+}
+
 try {
   testLateralStepSTangentAtBothEnds()
+  testParallelLateralStep()
+  testStraightMiddleDomainSampling()
+  testBoundaryPointsAreInside()
   testDomainRejectionAndBudget()
   testDeterminism()
   testDomainCheck()

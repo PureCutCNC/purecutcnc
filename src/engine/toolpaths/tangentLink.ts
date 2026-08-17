@@ -145,9 +145,14 @@ export function tangentSLink(
     const bisector = norm(add(exitTangent, arrivalTangent))
     const middleCandidates: Vec[] = []
     if (len(add(exitTangent, arrivalTangent)) > 1e-9) middleCandidates.push(bisector)
+    // Interpolated sweep between the two tangents, plus an ABSOLUTE sweep
+    // around the bisector: parallel tangents collapse the interpolation onto
+    // one direction, and the S that crosses a parallel step must bow out of
+    // the tangent cone, which only the absolute sweep can reach.
     for (let k = -20; k <= 20; k += 1) {
       if (k === 0) continue
       middleCandidates.push(rot(exitTangent, (phi * k) / 20))
+      middleCandidates.push(rot(bisector, (k * 9 * Math.PI) / 180))
     }
 
     for (const m of middleCandidates) {
@@ -178,16 +183,31 @@ export function tangentSLink(
         }
       }
 
+      // The domain gate must see what lies BETWEEN the path vertices: the
+      // straight middle is a single segment up to the whole length budget, so
+      // sample every candidate segment at the floor-radius chord budget the
+      // arcs use. A concavity straddling the middle must reject the path.
+      // Absolute floor so a degenerate minRadius cannot explode the samples.
+      const chordBudget = Math.max(2 * rMin * Math.sin(arcStep / 2), 1e-6)
       for (const candidate of candidates) {
         let pathLength = 0
         let domainOk = true
-        for (let step = 0; step + 1 < candidate.length; step += 1) {
+        for (let step = 0; step + 1 < candidate.length && domainOk; step += 1) {
           const a = candidate[step]
           const b = candidate[step + 1]
-          pathLength += Math.hypot(b.x - a.x, b.y - a.y)
-          if (!options.isInsideDomain(a.x, a.y) || !options.isInsideDomain(b.x, b.y)) {
+          const segLen = Math.hypot(b.x - a.x, b.y - a.y)
+          pathLength += segLen
+          if (!options.isInsideDomain(a.x, a.y)) {
             domainOk = false
             break
+          }
+          const samples = Math.max(1, Math.ceil(segLen / chordBudget))
+          for (let sample = 1; sample < samples; sample += 1) {
+            const t = sample / samples
+            if (!options.isInsideDomain(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)) {
+              domainOk = false
+              break
+            }
           }
         }
         if (!domainOk || pathLength > options.maxLength) continue
@@ -219,6 +239,28 @@ function pointInPolygon(x: number, y: number, polygon: Point[]): boolean {
   return inside
 }
 
+/** Is the point on an edge of the polygon, within float dust? The ring paths
+ *  are cut exactly ON the domain boundary (the wall-adjacent ring IS the
+ *  domain polygon, the island rings ride the island expansions), so boundary
+ *  points are legitimate and the ray-cast's parity must not decide them. */
+function pointOnPolygonEdge(x: number, y: number, polygon: Point[]): boolean {
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const ax = polygon[i].x
+    const ay = polygon[i].y
+    const bx = polygon[j].x
+    const by = polygon[j].y
+    const dx = bx - ax
+    const dy = by - ay
+    const lenSq = dx * dx + dy * dy
+    if (lenSq <= 1e-18) continue
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / lenSq))
+    const qx = ax + dx * t - x
+    const qy = ay + dy * t - y
+    if (qx * qx + qy * qy <= 1e-12) return true
+  }
+  return false
+}
+
 /** Region roots at tool-centre offset: the cleared-domain boundary for links. */
 export interface TangentLinkDomainRegion {
   outer: Point[]
@@ -233,8 +275,14 @@ export function buildOffsetDomainCheck(
   regions: TangentLinkDomainRegion[],
 ): (x: number, y: number) => boolean {
   return (x: number, y: number): boolean => {
-    if (!regions.some((region) => pointInPolygon(x, y, region.outer))) return false
-    return !regions.some((region) => region.islands.some((island) => pointInPolygon(x, y, island)))
+    // Inside or ON an outer boundary (the ring paths ride the boundary);
+    // rejected only when STRICTLY inside an island expansion — the island
+    // rings themselves also ride that boundary, so boundary points pass.
+    const inOuter = regions.some((region) =>
+      pointInPolygon(x, y, region.outer) || pointOnPolygonEdge(x, y, region.outer))
+    if (!inOuter) return false
+    return !regions.some((region) => region.islands.some((island) =>
+      pointInPolygon(x, y, island) && !pointOnPolygonEdge(x, y, island)))
   }
 }
 

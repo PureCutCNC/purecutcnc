@@ -527,8 +527,6 @@ interface FileRow {
   leadoutLambdaMean: number
   leadoutAngleP50: number
   leadoutAngleP95: number
-  fillet: Record<FilletBucket, number>
-  filletSegments: number
 }
 
 const THRESHOLD = 60
@@ -584,14 +582,6 @@ function censusFile(file: string): FileRow | null {
   }
   const leadoutLambdas: number[] = []
   const leadoutAngles: number[] = []
-  const fillet: Record<FilletBucket, number> = {
-    'exit-fillet': 0,
-    'exit-fallback': 0,
-    'entry-fillet': 0,
-    'entry-fallback': 0,
-    'no-context': 0,
-  }
-  let filletSegments = 0
 
   for (const op of ops) {
     if (op.kind === 'pocket' && op.pocketPattern === 'parallel') {
@@ -885,8 +875,6 @@ function censusFile(file: string): FileRow | null {
       : 0,
     leadoutAngleP50: median(leadoutAngles),
     leadoutAngleP95: p95(leadoutAngles),
-    fillet,
-    filletSegments,
   }
 }
 
@@ -915,17 +903,13 @@ for (const file of files) {
 }
 
 const fmt = (v: number, digits = 1): string => (Number.isFinite(v) ? v.toFixed(digits) : '  –')
-const headers = ['file', 'ops', 'cuts', 'ring', 'link', 'RL≥60', 'LR≥60', 'RR≥60', 'LL≥60', 'lenMean', 'lenMax', 'tP50', 'tP95', 'exitF', 'entryF']
+const headers = ['file', 'ops', 'cuts', 'ring', 'link', 'RL≥60', 'LR≥60', 'RR≥60', 'LL≥60', 'lenMean', 'lenMax', 'tP50', 'tP95']
 console.log(headers.map((h, i) => h.padStart(i < 2 ? 38 : 8)).join(''))
 for (const row of rows) {
-  const exitTotal = row.fillet['exit-fillet'] + row.fillet['exit-fallback']
-  const entryTotal = row.fillet['entry-fillet'] + row.fillet['entry-fallback']
   const cells = [
     row.file.replace(ROOT + '/', '').slice(0, 37),
     row.ops, row.cuts, row.ringCuts, row.linkCuts, row.rl, row.lr, row.rr, row.ll,
     fmt(row.linkLenMean, 3), fmt(row.linkLenMax, 3), fmt(row.entryTurnP50, 0), fmt(row.entryTurnP95, 0),
-    exitTotal > 0 ? Math.round((100 * row.fillet['exit-fillet']) / exitTotal) + '%' : '–',
-    entryTotal > 0 ? Math.round((100 * row.fillet['entry-fillet']) / entryTotal) + '%' : '–',
   ]
   console.log(cells.map((v, i) => String(v).padStart(i < 2 ? 38 : 8)).join(''))
 }
@@ -948,8 +932,6 @@ const totals = rows.reduce((acc, row) => {
   acc.gateLinks += row.gateLinks
   for (const key of Object.keys(row.gate) as GateOutcome[]) acc.gate[key] += row.gate[key]
   for (const key of Object.keys(row.leadout) as LeadOutcome[]) acc.leadout[key] += row.leadout[key]
-  for (const key of Object.keys(row.fillet) as FilletBucket[]) acc.fillet[key] += row.fillet[key]
-  acc.filletSegments += row.filletSegments
   acc.extraSegments += row.extraSegments
   acc.addedLength += row.addedLength
   acc.straightLength += row.straightLength
@@ -978,14 +960,6 @@ const totals = rows.reduce((acc, row) => {
     'leadout-domain': 0,
     'leadout-no-target': 0,
   } as Record<LeadOutcome, number>,
-  fillet: {
-    'exit-fillet': 0,
-    'exit-fallback': 0,
-    'entry-fillet': 0,
-    'entry-fallback': 0,
-    'no-context': 0,
-  } as Record<FilletBucket, number>,
-  filletSegments: 0,
   extraSegments: 0, addedLength: 0, straightLength: 0,
   leadoutLambdaSum: 0,
   leadoutAngles: [] as number[],
