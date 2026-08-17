@@ -222,13 +222,84 @@ directly while iterating.
 
 This cost real time on both S1 and S2 before it was written down.
 
-## Slice S2b — test the span guard — **YOUR ASSIGNMENT**
+## Slice S3 — the engagement-limited path generator — **YOUR ASSIGNMENT**
 
-**You are the implementation worker for slice S2b of issue #499.**
+**You are the implementation worker for slice S3 of issue #499.**
 
-Same confinement, reading list and working rules as S2 below, which is now
-complete and reference-only. Read the S2 review record before starting: it says
-exactly what went wrong.
+Same confinement, reading list and working rules as S2 below. Read the S2 and
+S2b review records first — they define the standing rules this slice is held to.
+
+### Scope — the generator only
+
+Build the reusable path generator that produces an unwind excursion for a
+qualifying corner. **Do not wire it into the pocket generator.** Nothing may
+import it from a production path; like S1–S2b, this slice stays inert and
+therefore cannot change machine output. Containment enforcement is S4 and the
+pocket wiring is S5.
+
+### Reusable, not bespoke
+
+The issue is explicit that this must not be a corner-specific algorithm: #501
+needs the same generator to spiral out from a helix seed. Design the API around
+the general problem — *produce a path from A to B whose measured engagement
+stays at or below a bound* — with the corner unwind as its first caller. If the
+signature only makes sense for corners, it is wrong.
+
+New pure module `src/engine/toolpaths/engagementLimitedPath.ts`. Pure the way
+`engagement.ts` and `cornerQualifier.ts` are: no `Project`/`Operation` import,
+no pocket coupling, no I/O.
+
+### The load-bearing geometric fact
+
+Rough offset traversal is `'inner-first'` (`src/engine/toolpaths/pocket.ts`
+around the `orderNodesGreedy` call), so when a ring is cut, its inner
+neighbours are already gone. **Cleared space lies toward the pocket interior,
+and that is the only direction an excursion may unwind.** Unwinding outward
+drives the tool into uncut stock, or into the wall on the root ring.
+
+Getting this backwards is the single most dangerous error available in this
+slice. Assert the direction explicitly, and make the assertion fail if the sign
+is flipped.
+
+### Acceptance
+
+- Peak engagement through the corner drops below the straight-wall value for
+  that stepover plus a stated margin, measured with the `engagement.ts` model.
+  **The same assertion with the excursion suppressed must fail** — the issue
+  names this explicitly; a test that passes either way proves nothing.
+- Every emitted excursion point lies on the interior side. Flipping the
+  direction sign must fail a test.
+- Re-entry engagement is bounded, not merely lower: state the bound and assert
+  it.
+- Deterministic: no `Math.random`, no `Date.now`, stable ordering.
+- **Standing rule from S2b:** every exported threshold constant must have a test
+  that fails when the constant is set permissive. Prove each by disabling it,
+  watching the failure, and restoring from a `cp` backup. Use the *premise-test*
+  shape from S2b for any bracketing pair, so it cannot go vacuous under a
+  retune. Report each mutation and what you saw.
+- Do not retune any constant in `cornerQualifier.ts`. Report, do not adjust.
+
+### Files
+
+**Allowed (both new):**
+
+- `src/engine/toolpaths/engagementLimitedPath.ts`
+- `src/engine/toolpaths/engagementLimitedPath.test.ts`
+
+**Forbidden:** `src/engine/toolpaths/pocket.ts`,
+`src/engine/toolpaths/engagement.ts`, `src/engine/toolpaths/cornerQualifier.ts`,
+`src/test/pocketFixturePack.ts`, `src/types/project.ts`, `src/store/**`,
+`scripts/**`, and everything not listed as allowed. Reading the qualifier and
+the fixture pack is expected; editing them is not.
+
+**Required checks:** `./node_modules/.bin/tsx
+src/engine/toolpaths/engagementLimitedPath.test.ts` and one
+`scripts/build-summary.sh`.
+
+## Slice S2b — test the span guard — **COMPLETE, reference only**
+
+Merged as `61f6ed0`; see its review record. Its standing rule — every threshold
+constant must have a test that bites — binds every later slice.
 
 ### The defect
 
