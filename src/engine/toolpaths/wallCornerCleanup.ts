@@ -39,6 +39,11 @@ export interface WallCornerCleanupResult {
    * exact source-span cleanup loops. No duplicated closing point. */
   points: Point[]
   cleanupCount: number
+  /** The motion each cleanup added, keyed by the transition it belongs to.
+   * A caller that can prove some other pass already removes everything this
+   * motion removes may drop that corner's loop; nothing else can decide it,
+   * because the question is about swept material and not about the span. */
+  loops: Array<{ transition: ContourTurnTransition; path: Point[] }>
 }
 
 interface DirectedTransition extends ContourTurnTransition {
@@ -217,12 +222,13 @@ export function buildWallCornerCleanupContour(
   options: WallCornerCleanupOptions,
 ): WallCornerCleanupResult | null {
   if (plan.transitions.length === 0) {
-    return { points: plan.points, cleanupCount: 0 }
+    return { points: plan.points, cleanupCount: 0, loops: [] }
   }
   const rotated = rotatePlanForWalk(plan)
   if (!rotated) return null
   const { source, transitions } = rotated
   const points: Point[] = []
+  const loops: WallCornerCleanupResult['loops'] = []
   const mode = options.cleanup ?? 'all'
   let cursor = 0
   let cleanupCount = 0
@@ -265,9 +271,14 @@ export function buildWallCornerCleanupContour(
       continue
     }
     pushDistinct(points, transition.transitionPoints)
+    const loopStart = points.length
     pushDistinct(points, returnPath.slice(1))
     pushDistinct(points, spanPath)
     pushDistinct(points, [transition.exit])
+    loops.push({
+      transition,
+      path: [points[loopStart - 1], ...points.slice(loopStart)],
+    })
     cursor = transition.lastIndex + 1
     cleanupCount += 1
   }
@@ -275,5 +286,5 @@ export function buildWallCornerCleanupContour(
     pushDistinct(points, [source[cursor]])
     cursor += 1
   }
-  return { points, cleanupCount }
+  return { points, cleanupCount, loops }
 }

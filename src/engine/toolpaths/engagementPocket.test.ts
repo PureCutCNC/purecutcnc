@@ -1008,14 +1008,16 @@ test('cached offset engagement uses the emitted prior-cut context on the real is
     && Math.max(move.from.x, move.to.x) >= 2,
   )
   assert(target !== undefined, 'the fixture must emit the long outer island pass through x=2, y=0.705')
-  // Issue #546's broad interior corners briefly moved this to 0.84: skipping a
-  // broad corner's cleanup loop left the tip for this pass to take, and the
-  // estimator reported the extra load honestly (peak engagement 82.5 to 87.1
-  // degrees against a 68.9 nominal). Skipping the loop also left stock behind,
-  // so it was reverted and the rung came back — see pocketClearance.test.ts.
+  // This pass sat on the 0.92 rung until issue #546. A broad corner arc on the
+  // ring inside it leaves a tip, the cleanup loop that would clear it is
+  // skipped where the neighbours already sweep it, and so this pass takes the
+  // tip instead: peak engagement 82.5 to 87.1 degrees against a 68.9 nominal,
+  // measured against a replayed swept-material index. The lower rung is the
+  // estimator reporting real extra load, not drift. The claim under test is
+  // unchanged: the cached classification reflects the stream actually emitted.
   assert(
-    Math.abs((target.feedScale ?? 1) - 0.92) <= 1e-12,
-    `the 74-degree outer pass is entitled to the 0.92 rung, got ${target.feedScale ?? 1}`,
+    Math.abs((target.feedScale ?? 1) - 0.84) <= 1e-12,
+    `the outer island pass is entitled to the 0.84 rung, got ${target.feedScale ?? 1}`,
   )
 })
 
@@ -1215,17 +1217,17 @@ test('issue #517: the worst real fixture keeps exact index work bounded', () => 
   //
   //   |                            | scanned   | trig    |
   //   | -------------------------- | --------- | ------- |
-  //   | this build                 | 1,047,468 | 409,075 |
-  //   | repeated dilation restored | 1,683,191 | 409,013 |
+  //   | this build                 |   747,915 | 288,183 |
+  //   | repeated dilation restored | 1,222,286 | 288,444 |
   //
-  // The caps leave 52,532 / 15,925 of headroom. Note the dilation regression
-  // moves `scanned` by 61% and `trig` not at all: the scanned bound is what
-  // guards that path, and the trig bound is a ratchet on growth. Issue #546's
-  // broad interior corners and their cleanup loops raised the baseline from
-  // 905,137 / 341,541.
+  // The scanned bound is the geometric mid-point of its column. The dilation
+  // regression moves `trig` by 0.1%, so no bound on that column can guard it;
+  // 425,000 stays as the growth ratchet it has always been. Issue #546's broad
+  // interior corners lowered the baseline from 905,137 / 341,541 by replacing
+  // starved corners and their tessellation with single full-radius arcs.
   assert(
-    classification.queryStats.capsulesScanned <= 1_100_000,
-    `worst fixture scanned ${classification.queryStats.capsulesScanned} capsules (bound 1,100,000)`,
+    classification.queryStats.capsulesScanned <= 956_000,
+    `worst fixture scanned ${classification.queryStats.capsulesScanned} capsules (bound 956,000)`,
   )
   assert(
     classification.queryStats.capsulesTrigTested <= 425_000,
