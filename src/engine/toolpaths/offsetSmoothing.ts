@@ -37,11 +37,14 @@
 //  1. Analyze each vertex for its signed turn, degenerate (zero-length) edges
 //     and straight-through (collinear) vertices.
 //  2. Group consecutive same-sign turning vertices into one geometric turn
-//     run, extending greedily while the run stays valid: the accumulated turn
-//     must match the turn between the run's entry/exit shoulder lines, the
-//     virtual apex of those lines must sit on the corner side of the run (not
-//     behind a shoulder), and the tangent points must not fall beyond the
-//     run's endpoints.
+//     run. Every turning vertex proposes the longest valid same-sign run it
+//     can start, and the broadest valid grouping wins, so a run split across
+//     the seam (source indices n-1 and 0) merges exactly like the same turn
+//     away from the seam. A run stays valid only while: the accumulated turn
+//     matches the turn between the run's entry/exit shoulder lines, the
+//     virtual apex of those lines sits on the corner side of the run (not
+//     behind a shoulder), and the tangent points do not fall beyond the run's
+//     endpoints.
 //  3. Guard genuinely smooth runs: when the run's vertices track a fitted
 //     circle whose radius is already at least the request, the source vertices
 //     are emitted unchanged, so a large source arc is never flattened or
@@ -68,11 +71,13 @@ export interface RoundContourOptions {
 
 /** One changed turn on the smoothed contour. */
 export interface ContourTurnTransition {
-  /** Cyclic source index of the first vertex of the changed turn run. */
+  /** Cyclic source index of the first vertex of the changed turn run. Runs are
+   *  cyclic intervals: a run crossing the seam has firstIndex > lastIndex. */
   firstIndex: number
   /** Cyclic source index of the last vertex of the changed turn run. */
   lastIndex: number
-  /** Source indices of every vertex in the run, in contour order. */
+  /** Source indices of every vertex in the run, in contour order (wrapping
+   *  from n-1 to 0 when the run crosses the seam). */
   runIndices: number[]
   /** Accumulated signed turn of the run, radians, in (-π, π]. The sign is the
    *  heading rotation of the path at the run (atan2 convention: positive is
@@ -106,7 +111,8 @@ export interface ContourSmoothingPlan {
   points: Point[]
   /** The radius the plan was computed for (as passed in). */
   requestedRadius: number
-  /** One entry per changed turn, in source cyclic order. */
+  /** One entry per changed turn, in emitted contour order (source cyclic
+   *  order starting at index 0). */
   transitions: ContourTurnTransition[]
 }
 
@@ -277,6 +283,11 @@ function analyzeRing(ring: Point[]): VertexInfo[] {
   })
 }
 
+/** Number of vertex-to-vertex steps in the cyclic interval start..end. */
+function cyclicRunLength(count: number, start: number, end: number): number {
+  return (end - start + count) % count
+}
+
 /**
  * Build the geometric description of the run infos[start..end] and validate it:
  * shoulder-turn consistency, a convex virtual apex (not behind either
@@ -288,14 +299,11 @@ function buildRun(
   start: number,
   end: number,
   request: number,
+  signedTurn: number,
 ): RunGeometry | null {
   const uPrev = infos[start].uPrev
   const uNext = infos[end].uNext
   if (!uPrev || !uNext) return null
-  let signedTurn = 0
-  for (let index = start; index <= end; index += 1) {
-    signedTurn += infos[index].signedTurn
-  }
   const shoulderTurn = normalizeSignedAngle(
     Math.atan2(uNext.y, uNext.x) - Math.atan2(uPrev.y, uPrev.x) - Math.PI,
   )
@@ -344,10 +352,12 @@ function fitLocalCircle(infos: VertexInfo[], start: number, end: number): {
   radius: number
   smooth: boolean
 } | null {
-  if (end - start < 2) return null
+  const count = infos.length
+  const length = cyclicRunLength(count, start, end)
+  if (length < 2) return null
   const points: Point[] = []
-  for (let index = start; index <= end; index += 1) {
-    points.push(infos[index].point)
+  for (let offset = 0; offset <= length; offset += 1) {
+    points.push(infos[(start + offset) % count].point)
   }
   const fit = fitCircleKasa(points)
   if (!fit) return null
@@ -359,50 +369,93 @@ function fitLocalCircle(infos: VertexInfo[], start: number, end: number): {
   return { radius: fit.radius, smooth: maxDev <= SMOOTH_DEV_TOL }
 }
 
-/** Group the ring into validated corner runs (indices into `infos`). */
+/**
+ * Group the ring into validated corner runs, each a cyclic index interval
+ * into `infos` (start exceeds end when a run wraps the seam).
+ *
+ * A candidate run is built greedily from every turning vertex, extending over
+ * consecutive same-sign turning vertices while the run stays valid. The final
+ * grouping then picks the longest valid candidate first, so a broad
+ * multi-vertex turn absorbs the sub-runs it contains instead of being
+ * fragmented by them. Every decision (candidate geometry, length, start
+ * index) rotates with the ring, so the grouping is seam-invariant: a
+ * multi-vertex turn split across source indices n-1 and 0 merges into the
+ * same broad transition as the same contour rotated away from the seam.
+ */
 function findTurnRuns(
   infos: VertexInfo[],
   request: number,
   minDeflection: number,
 ): RunGeometry[] {
   const count = infos.length
-  const runs: RunGeometry[] = []
-  let index = 0
-  while (index < count) {
-    const info = infos[index]
-    if (info.degenerate || info.straight) {
-      index += 1
-      continue
-    }
-    let run = buildRun(infos, index, index, request)
-    if (!run) {
-      // A lone unusable vertex stays as-is.
-      index += 1
-      continue
-    }
-    let end = index
-    while (end + 1 < count) {
-      const next = infos[end + 1]
-      if (next.degenerate || next.straight) break
-      if (Math.sign(next.signedTurn) !== Math.sign(info.signedTurn)) break
-      const extended = buildRun(infos, index, end + 1, request)
+  // Prefix sums give each candidate's accumulated turn in O(1) no matter how
+  // many vertices it wraps.
+  const prefixTurn: number[] = new Array<number>(count + 1)
+  prefixTurn[0] = 0
+  for (let index = 0; index < count; index += 1) {
+    prefixTurn[index + 1] = prefixTurn[index] + infos[index].signedTurn
+  }
+  const turnSum = (start: number, end: number): number =>
+    end >= start
+      ? prefixTurn[end + 1] - prefixTurn[start]
+      : prefixTurn[count] - prefixTurn[start] + prefixTurn[end + 1]
+
+  const candidates: RunGeometry[] = []
+  for (let start = 0; start < count; start += 1) {
+    const info = infos[start]
+    if (info.degenerate || info.straight) continue
+    let run = buildRun(infos, start, start, request, info.signedTurn)
+    if (!run) continue
+    let end = start
+    while (true) {
+      const next = (end + 1) % count
+      if (next === start) break
+      const nextInfo = infos[next]
+      if (nextInfo.degenerate || nextInfo.straight) break
+      if (Math.sign(nextInfo.signedTurn) !== Math.sign(info.signedTurn)) break
+      const extended = buildRun(infos, start, next, request, turnSum(start, next))
       if (!extended) break
-      end += 1
+      end = next
       run = extended
     }
-    if (Math.abs(run.signedTurn) < minDeflection) {
-      index = end + 1
-      continue
+    candidates.push(run)
+  }
+
+  // Longest valid grouping first; length ties resolve by start index, which
+  // rotates with the ring and keeps the result seam-invariant.
+  candidates.sort((a, b) => {
+    const lengthA = cyclicRunLength(count, a.start, a.end)
+    const lengthB = cyclicRunLength(count, b.start, b.end)
+    return lengthB - lengthA || a.start - b.start
+  })
+
+  // A genuinely smooth candidate (fitted radius already at least the request)
+  // keeps its vertices verbatim, so no other run may consume any of them.
+  const preserved = new Array<boolean>(count).fill(false)
+  for (const run of candidates) {
+    const local = fitLocalCircle(infos, run.start, run.end)
+    if (!local || !local.smooth || local.radius < request) continue
+    for (let offset = 0; offset <= cyclicRunLength(count, run.start, run.end); offset += 1) {
+      preserved[(run.start + offset) % count] = true
     }
-    const local = fitLocalCircle(infos, index, end)
-    if (local && local.smooth && local.radius >= request) {
-      // The source already follows a circle at least as broad as the request;
-      // leave the run's vertices untouched.
-      index = end + 1
-      continue
+  }
+
+  const covered = new Array<boolean>(count).fill(false)
+  const overlaps = (run: RunGeometry): boolean => {
+    for (let offset = 0; offset <= cyclicRunLength(count, run.start, run.end); offset += 1) {
+      const index = (run.start + offset) % count
+      if (preserved[index] || covered[index]) return true
     }
+    return false
+  }
+  const runs: RunGeometry[] = []
+  for (const run of candidates) {
+    if (Math.abs(run.signedTurn) < minDeflection) continue
+    if (overlaps(run)) continue
     runs.push(run)
-    index = end + 1
+    for (let offset = 0; offset <= cyclicRunLength(count, run.start, run.end); offset += 1) {
+      covered[(run.start + offset) % count] = true
+    }
   }
   return runs
 }
@@ -441,29 +494,54 @@ function segmentsProperlyIntersect(a: Point, b: Point, c: Point, d: Point): bool
   return false
 }
 
-/** True when any newly emitted segment properly crosses any other segment. */
-function plannedContourSelfIntersects(
-  out: Point[],
-  transitions: PlannedTransition[],
-): boolean {
-  if (transitions.length === 0) return false
+/**
+ * True when the closed contour has any two non-adjacent segments sharing an
+ * interior point. The guard runs on the final emitted contour, so every newly
+ * emitted segment is checked against every other segment no matter how many
+ * unchanged source vertices sit between transitions. Segment bounding boxes
+ * gate the pairwise check, so densely tessellated contours stay near-linear.
+ */
+function contourSelfIntersects(out: Point[]): boolean {
   const count = out.length
-  const newSegments = new Set<number>()
-  let position = 0
-  for (const transition of transitions) {
-    const entryIndex = position
-    for (let offset = entryIndex - 1; offset <= entryIndex + transition.points.length - 1; offset += 1) {
-      newSegments.add(((offset % count) + count) % count)
-    }
-    position += transition.points.length
+  if (count < 4) return false
+  const minX = new Float64Array(count)
+  const maxX = new Float64Array(count)
+  const minY = new Float64Array(count)
+  const maxY = new Float64Array(count)
+  let totalX = 0
+  let totalY = 0
+  for (let index = 0; index < count; index += 1) {
+    const a = out[index]
+    const b = out[(index + 1) % count]
+    minX[index] = Math.min(a.x, b.x)
+    maxX[index] = Math.max(a.x, b.x)
+    minY[index] = Math.min(a.y, b.y)
+    maxY[index] = Math.max(a.y, b.y)
+    totalX += maxX[index] - minX[index]
+    totalY += maxY[index] - minY[index]
   }
-  for (const segment of newSegments) {
-    const a = out[segment]
-    const b = out[(segment + 1) % count]
-    for (let other = 0; other < count; other += 1) {
-      if (other === segment) continue
-      if ((other + 1) % count === segment || (segment + 1) % count === other) continue
-      if (segmentsProperlyIntersect(a, b, out[other], out[(other + 1) % count])) {
+  // Sweep along the axis on which the segments are shorter, so a contour made
+  // of long horizontal runs is swept by y (and long vertical runs by x).
+  const sweepX = totalX <= totalY
+  const lo = sweepX ? minX : minY
+  const hi = sweepX ? maxX : maxY
+  const loOther = sweepX ? minY : minX
+  const hiOther = sweepX ? maxY : maxX
+  const order = Array.from({ length: count }, (_, index) => index).sort(
+    (a, b) => lo[a] - lo[b],
+  )
+  for (let i = 0; i < count; i += 1) {
+    const first = order[i]
+    for (let k = i + 1; k < count; k += 1) {
+      const second = order[k]
+      if (lo[second] > hi[first]) break
+      const gap = second - first
+      if (gap === 1 || gap === -1 || gap === count - 1 || gap === 1 - count) continue
+      if (hiOther[second] < loOther[first] || hiOther[first] < loOther[second]) continue
+      if (segmentsProperlyIntersect(
+        out[first], out[(first + 1) % count],
+        out[second], out[(second + 1) % count],
+      )) {
         return true
       }
     }
@@ -604,9 +682,18 @@ export function planContourSmoothing(
     return { sourcePoints: ring, points: ring, requestedRadius: radius, transitions: [] }
   }
 
+  // Emission walks the ring from index 0, replacing every run with its arc.
+  // Runs are disjoint cyclic intervals; the one containing vertex 0 (if any)
+  // is exactly the run with start > end, and opens the walk with its full arc.
+  const wrapped = transitions.find((transition) => transition.start > transition.end)
+  const walkOrder = wrapped
+    ? [wrapped, ...transitions.filter((transition) => transition !== wrapped).sort((a, b) => a.start - b.start)]
+    : [...transitions].sort((a, b) => a.start - b.start)
   const out: Point[] = []
-  let cursor = 0
-  for (const transition of transitions) {
+  let cursor = wrapped ? wrapped.end + 1 : 0
+  if (wrapped) out.push(...wrapped.points)
+  for (const transition of walkOrder) {
+    if (transition === wrapped) continue
     while (cursor < transition.start) {
       out.push(ring[cursor])
       cursor += 1
@@ -614,21 +701,21 @@ export function planContourSmoothing(
     out.push(...transition.points)
     cursor = transition.end + 1
   }
-  while (cursor < count) {
+  while (cursor < (wrapped ? wrapped.start : count)) {
     out.push(ring[cursor])
     cursor += 1
   }
 
-  if (!out.every(isFinitePoint) || plannedContourSelfIntersects(out, transitions)) {
+  if (!out.every(isFinitePoint) || contourSelfIntersects(out)) {
     return { sourcePoints: ring, points: ring, requestedRadius: radius, transitions: [] }
   }
 
-  const metadata: ContourTurnTransition[] = transitions.map((transition) => ({
+  const metadata: ContourTurnTransition[] = walkOrder.map((transition) => ({
     firstIndex: transition.start,
     lastIndex: transition.end,
     runIndices: Array.from(
-      { length: transition.end - transition.start + 1 },
-      (_, offset) => transition.start + offset,
+      { length: cyclicRunLength(count, transition.start, transition.end) + 1 },
+      (_, offset) => (transition.start + offset) % count,
     ),
     signedTurn: transition.run.signedTurn,
     requestedRadius: radius,

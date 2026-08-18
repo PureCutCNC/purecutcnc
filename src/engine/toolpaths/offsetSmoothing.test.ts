@@ -24,7 +24,7 @@
 import type { Point } from '../../types/project'
 import { planContourSmoothing, roundContourCorners } from './offsetSmoothing'
 
-function assert(condition: boolean, message: string) {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
 
@@ -39,6 +39,33 @@ function pointsEqual(a: Point[], b: Point[]): boolean {
 
 function dist(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+/** Rotate a closed ring so old index `offset` becomes index 0. */
+function rotateRing(points: Point[], offset: number): Point[] {
+  return points.map((_, index) => points[(index + offset) % points.length])
+}
+
+/** Split the edge a->b into steps+1 collinear pieces; returns the interior
+ *  vertices (exactly collinear, so the planner treats them as straight). */
+function subdivideEdge(a: Point, b: Point, steps: number): Point[] {
+  return Array.from({ length: steps }, (_, index) => ({
+    x: a.x + ((b.x - a.x) * (index + 1)) / (steps + 1),
+    y: a.y + ((b.y - a.y) * (index + 1)) / (steps + 1),
+  }))
+}
+
+/** True when two closed rings are the same cyclic point sequence. */
+function cyclicPointsEquivalent(a: Point[], b: Point[], tolerance: number): boolean {
+  if (a.length !== b.length) return false
+  const count = a.length
+  return Array.from({ length: count }, (_, offset) =>
+    a.every((point, index) => {
+      const other = b[(index + offset) % count]
+      const scale = Math.max(1, Math.abs(point.x), Math.abs(point.y))
+      return approx(other.x, point.x, tolerance * scale) && approx(other.y, point.y, tolerance * scale)
+    }),
+  ).some(Boolean)
 }
 
 /** Largest turn (deflection) angle, in degrees, over a closed contour. */
@@ -306,7 +333,10 @@ function testAdjacentTurnsShareShortEdge() {
   }
   const firstCorner = conflicted.transitions.find((transition) => transition.firstIndex === 0)
   const secondCorner = conflicted.transitions.find((transition) => transition.firstIndex === 1)
-  assert(firstCorner && secondCorner, 'the two corners on the short edge are both planned')
+  assert(
+    firstCorner !== undefined && secondCorner !== undefined,
+    'the two corners on the short edge are both planned',
+  )
   assert(
     firstCorner.exit.x < secondCorner.entry.x,
     'exit of the first corner must precede the entry of the second along the shared edge',
@@ -508,6 +538,79 @@ function testScaleEquivalence() {
   console.log('scale equivalence: PASSED')
 }
 
+function testSeamInvariantTurnRuns() {
+  console.log('Testing a same-sign turn run split across the seam merges like any other...')
+  const base = planContourSmoothing(ARC_CORNER_CONTOUR, 8)
+  const seam = planContourSmoothing(rotateRing(ARC_CORNER_CONTOUR, 3), 8)
+
+  assert(
+    seam.transitions.length === base.transitions.length,
+    'rotation must not change the number of transitions',
+  )
+
+  // Old source indices 1..5 (the five tessellated arc vertices) map to rotated
+  // indices 6,7,0,1,2: the same broad turn, now split across the seam.
+  const seamRun = seam.transitions.find((transition) => transition.runIndices.length === 5)
+  assert(seamRun !== undefined, 'the broad arc run must still be found as one transition')
+  assert(
+    seamRun.firstIndex === 6 && seamRun.lastIndex === 2,
+    `the transition must span cyclic source indices 6..2, got ${seamRun.firstIndex}..${seamRun.lastIndex}`,
+  )
+  assert(
+    seamRun.runIndices.join(',') === '6,7,0,1,2',
+    'runIndices must list every vertex of the wrapped run in contour order',
+  )
+  assert(seamRun.entryEdgeIndex === 5, 'the entry setback comes from edge 5 (the edge into rotated index 6)')
+  assert(seamRun.exitEdgeIndex === 2, 'the exit setback comes from edge 2 (the edge out of rotated index 2)')
+
+  const baseRun = base.transitions.find((transition) => transition.runIndices.length === 5)
+  assert(baseRun !== undefined, 'the base plan has the same broad run away from the seam')
+  assert(
+    approx(seamRun.signedTurn, baseRun.signedTurn, 1e-12),
+    'the wrapped run accumulates the same signed turn',
+  )
+  assert(
+    approx(seamRun.effectiveRadius, baseRun.effectiveRadius, 1e-9),
+    'the wrapped run attains the same effective radius',
+  )
+  assert(
+    approx(seamRun.entry.x, baseRun.entry.x, 1e-9) && approx(seamRun.entry.y, baseRun.entry.y, 1e-9)
+      && approx(seamRun.exit.x, baseRun.exit.x, 1e-9) && approx(seamRun.exit.y, baseRun.exit.y, 1e-9),
+    'entry and exit are the same geometric tangent points',
+  )
+
+  // Every other transition must map onto a base transition shifted back by the
+  // rotation, with the same source span, turn, and tangent points.
+  const rotation = 3
+  const baseSignatures = base.transitions.map((transition) => ({
+    indices: transition.runIndices.join(','),
+    turn: transition.signedTurn,
+    entry: transition.entry,
+    exit: transition.exit,
+  }))
+  for (const transition of seam.transitions) {
+    const mapped = transition.runIndices
+      .map((index) => (index + rotation) % ARC_CORNER_CONTOUR.length)
+      .join(',')
+    assert(
+      baseSignatures.some((signature) => signature.indices === mapped
+        && approx(signature.turn, transition.signedTurn, 1e-12)
+        && approx(signature.entry.x, transition.entry.x, 1e-9)
+        && approx(signature.entry.y, transition.entry.y, 1e-9)
+        && approx(signature.exit.x, transition.exit.x, 1e-9)
+        && approx(signature.exit.y, transition.exit.y, 1e-9)),
+      `rotated transition ${transition.runIndices.join(',')} must match a base transition`,
+    )
+  }
+
+  assert(
+    cyclicPointsEquivalent(seam.points, base.points, 1e-9),
+    'the emitted contour must be the same closed ring regardless of the seam',
+  )
+  assert(!hasProperIntersection(seam.points), 'the seam-split plan must not self-intersect')
+  console.log('seam-invariant turn runs: PASSED')
+}
+
 function testSelfIntersectingPlanFailsClosed() {
   console.log('Testing a planned contour that would self-intersect fails closed to the source...')
   // A square with a bottom notch and a right-edge notch. At radius 14 the
@@ -541,6 +644,45 @@ const SELF_INTERSECT_CASE = {
   radius: 14,
 }
 
+/**
+ * The base notches of SELF_INTERSECT_CASE with two long collinear stretches
+ * inserted: 70 vertices along the edge below the (26,0) corner and 30 along
+ * the diagonal back edge. The unchanged vertices separate the corner
+ * transitions in the emitted contour, and the rounding arc of the (26,0)/(40,14)
+ * corner run cuts across the middle of the subdivided diagonal — the crossing
+ * pair is a changed arc segment and an unchanged source segment, both sitting
+ * far beyond every segment the old position bookkeeping would have marked.
+ * Verified by running the planner with the guard disabled: radius 14 produces
+ * proper crossings, and the old bookkeeping (position advanced by transition
+ * point counts only) marks neither segment of either crossing pair, so the
+ * old guard returned the crossed contour instead of failing closed.
+ */
+const SELF_INTERSECT_BOOKKEEPING_CASE: Point[] = (() => {
+  const { contour } = SELF_INTERSECT_CASE
+  return [
+    contour[0], contour[1], contour[2],
+    ...subdivideEdge(contour[2], contour[3], 70),
+    contour[3], contour[4], contour[5], contour[6], contour[7],
+    ...subdivideEdge(contour[7], contour[0], 30),
+  ]
+})()
+
+function testSeparatedTransitionsCheckedForCrossing() {
+  console.log('Testing a crossing past unchanged vertices between transitions fails closed...')
+  const contour = SELF_INTERSECT_BOOKKEEPING_CASE
+  assert(!hasProperIntersection(contour), 'the source contour must be simple')
+  const plan = planContourSmoothing(contour, SELF_INTERSECT_CASE.radius)
+  assert(
+    plan.points === contour,
+    'the crossed plan must return the unchanged source geometry',
+  )
+  assert(
+    plan.transitions.length === 0,
+    'no transition survives the whole-contour crossing guard',
+  )
+  console.log('separated transitions checked for crossing: PASSED')
+}
+
 function testDeterminism() {
   console.log('Testing the planner is deterministic...')
   const first = planContourSmoothing(ARC_CORNER_CONTOUR, 8)
@@ -562,7 +704,9 @@ try {
   testFailClosedDegenerateCases()
   testOrientationReversalEquivalent()
   testScaleEquivalence()
+  testSeamInvariantTurnRuns()
   testSelfIntersectingPlanFailsClosed()
+  testSeparatedTransitionsCheckedForCrossing()
   testDeterminism()
   console.log('\nAll offsetSmoothing tests PASSED.')
 } catch (e) {
