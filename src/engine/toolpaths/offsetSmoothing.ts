@@ -54,9 +54,11 @@
 //     one edge their setbacks scale proportionally, always leaving a small
 //     epsilon connector.
 //  5. Emit each transition as a circular arc tangent to its entry and exit
-//     shoulders, tessellated with the shared arc-step contract, then fail
-//     closed to the unchanged source geometry if the planned contour
-//     self-intersects or any coordinate stops being finite.
+//     shoulders, tessellated with the shared arc-step contract. A turn whose
+//     allocation no longer keeps both tangent points on their shoulder edges
+//     is declined and keeps its source geometry, and the whole contour falls
+//     back to the unchanged source if the planned ring self-intersects or any
+//     coordinate stops being finite.
 
 import type { Point } from '../../types/project'
 import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
@@ -377,10 +379,11 @@ function fitLocalCircle(infos: VertexInfo[], start: number, end: number): {
  * consecutive same-sign turning vertices while the run stays valid. The final
  * grouping then picks the longest valid candidate first, so a broad
  * multi-vertex turn absorbs the sub-runs it contains instead of being
- * fragmented by them. Every decision (candidate geometry, length, start
- * index) rotates with the ring, so the grouping is seam-invariant: a
- * multi-vertex turn split across source indices n-1 and 0 merges into the
- * same broad transition as the same contour rotated away from the seam.
+ * fragmented by them. Every decision (candidate geometry, length, and the
+ * coordinates that break length ties) is a property of the geometry rather
+ * than of the indexing, so the grouping is seam-invariant: a multi-vertex turn
+ * split across source indices n-1 and 0 merges into the same broad transition
+ * as the same contour rotated away from the seam.
  */
 function findTurnRuns(
   infos: VertexInfo[],
@@ -421,12 +424,18 @@ function findTurnRuns(
     candidates.push(run)
   }
 
-  // Longest valid grouping first; length ties resolve by start index, which
-  // rotates with the ring and keeps the result seam-invariant.
+  // Longest valid grouping first. Length ties resolve on the start vertex's
+  // coordinates, not its index: index order is relabelled by the seam, so two
+  // equal-length candidates could swap places when the same contour arrived
+  // from a different start vertex, and the winner claims vertices the loser
+  // then cannot use — one flipped tie re-groups the whole ring. Coordinates
+  // travel with the geometry, so the grouping does not.
   candidates.sort((a, b) => {
     const lengthA = cyclicRunLength(count, a.start, a.end)
     const lengthB = cyclicRunLength(count, b.start, b.end)
-    return lengthB - lengthA || a.start - b.start
+    return lengthB - lengthA
+      || infos[a.start].point.x - infos[b.start].point.x
+      || infos[a.start].point.y - infos[b.start].point.y
   })
 
   // A genuinely smooth candidate (fitted radius already at least the request)
@@ -623,6 +632,16 @@ export function planContourSmoothing(
   const transitions: PlannedTransition[] = []
   runs.forEach((run, runIndex) => {
     const s = Math.min(allocated[runIndex].tIn + run.dIn, allocated[runIndex].tOut + run.dOut)
+    // `buildRun` accepted this run because the apex was far enough out to put
+    // both tangent points on the shoulder edges (sDesired >= dIn, dOut). A
+    // starved allocation on one shoulder can pull `s` back below the other
+    // shoulder's apex distance, which puts that tangent point *inside* the run:
+    // the emitted path would then leave the ring past the source vertex,
+    // running along the extended edge instead of easing off it. Decline the
+    // turn and keep its exact source geometry. Raising `s` back to
+    // max(dIn, dOut) is never available — s < max(dIn, dOut) says precisely
+    // that the starved shoulder cannot fund the setback such a clamp needs.
+    if (s < Math.max(run.dIn, run.dOut) - EPS) return
     const effectiveRadius = s * run.tanHalf
     if (!(effectiveRadius > EPS) || !Number.isFinite(effectiveRadius)) return
     const uPrev = infos[run.start].uPrev

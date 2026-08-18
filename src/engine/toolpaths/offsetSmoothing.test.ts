@@ -691,6 +691,126 @@ function testDeterminism() {
   console.log('determinism: PASSED')
 }
 
+/**
+ * A four-vertex ring whose 106-degree turn run (vertices 0..1) sits between a
+ * 39.6-long edge and a 2.24-long one. The short edge is shared with the next
+ * corner, so the run's exit setback is scaled down hard while its entry apex
+ * stays far out along the long edge. Before the shoulder guard the allocation
+ * pulled the run's apex distance below its entry apex distance and the entry
+ * tangent point landed 1.61 *past* source vertex 0 — the emitted path left the
+ * ring along the extended edge instead of easing off the corner.
+ */
+const STARVED_SHOULDER_CONTOUR: Point[] = [
+  { x: 15, y: 28 },
+  { x: 14, y: 31 },
+  { x: 12, y: 30 },
+  { x: 22, y: -11 },
+]
+
+/** Signed setback of `point` from `vertex` along the direction to `toward`. */
+function setbackAlong(vertex: Point, toward: Point, point: Point): number {
+  const dx = toward.x - vertex.x
+  const dy = toward.y - vertex.y
+  const length = Math.hypot(dx, dy)
+  if (length <= 0) return 0
+  return ((point.x - vertex.x) * dx + (point.y - vertex.y) * dy) / length
+}
+
+function testTangentPointsStayOnTheirShoulderEdges() {
+  console.log('Testing a starved shoulder declines the turn instead of overshooting the vertex...')
+  const contour = STARVED_SHOULDER_CONTOUR
+  const count = contour.length
+  const plan = planContourSmoothing(contour, 4.5)
+
+  for (const transition of plan.transitions) {
+    // The entry tangent point must sit on the edge running INTO the run, i.e.
+    // a non-negative distance back from the run's first vertex, and no farther
+    // than that edge is long. Same for the exit on the edge leaving the run.
+    const firstVertex = contour[transition.firstIndex]
+    const beforeFirst = contour[(transition.firstIndex - 1 + count) % count]
+    const entrySetback = setbackAlong(firstVertex, beforeFirst, transition.entry)
+    assert(
+      entrySetback >= -1e-9,
+      `entry of run ${transition.firstIndex}..${transition.lastIndex} overshoots its vertex by `
+        + `${(-entrySetback).toFixed(4)}; it must stay on the incoming shoulder edge`,
+    )
+    assert(
+      entrySetback <= dist(firstVertex, beforeFirst) + 1e-9,
+      'entry must not reach past the far end of the incoming shoulder edge',
+    )
+
+    const lastVertex = contour[transition.lastIndex]
+    const afterLast = contour[(transition.lastIndex + 1) % count]
+    const exitSetback = setbackAlong(lastVertex, afterLast, transition.exit)
+    assert(
+      exitSetback >= -1e-9,
+      `exit of run ${transition.firstIndex}..${transition.lastIndex} overshoots its vertex by `
+        + `${(-exitSetback).toFixed(4)}; it must stay on the outgoing shoulder edge`,
+    )
+    assert(
+      exitSetback <= dist(lastVertex, afterLast) + 1e-9,
+      'exit must not reach past the far end of the outgoing shoulder edge',
+    )
+  }
+
+  // The 0..1 run is the one that cannot be funded, so it keeps source geometry.
+  assert(
+    !plan.transitions.some((transition) => transition.firstIndex === 0 && transition.lastIndex === 1),
+    'the starved run must be declined, not emitted with a tangent point inside the run',
+  )
+  assert(
+    plan.points.some((point) => approx(point.x, contour[0].x, 1e-9) && approx(point.y, contour[0].y, 1e-9))
+      && plan.points.some((point) => approx(point.x, contour[1].x, 1e-9) && approx(point.y, contour[1].y, 1e-9)),
+    'the declined run keeps its exact source vertices',
+  )
+  // Declining one turn must not stop the fundable corners from rounding.
+  assert(plan.transitions.length > 0, 'the remaining corners still round')
+  assert(!hasProperIntersection(plan.points), 'the emitted contour stays simple')
+  console.log('tangent points stay on their shoulder edges: PASSED')
+}
+
+/**
+ * Five vertices whose two longest same-sign candidates tie on length. The
+ * winner claims vertices the loser then cannot use, so an index-ordered
+ * tie-break re-grouped the whole ring depending on where the seam fell: shifted
+ * by two this contour used to emit 3 transitions and 72 points where every
+ * other rotation emitted 4 and 78.
+ */
+const TIED_CANDIDATES_CONTOUR: Point[] = [
+  { x: -17, y: -1 },
+  { x: -19, y: -8 },
+  { x: -18, y: -12 },
+  { x: -15, y: -13 },
+  { x: 14, y: -10 },
+]
+
+function testGroupingIsSeamInvariantUnderEveryRotation() {
+  console.log('Testing tied turn-run candidates group the same way from every seam...')
+  for (const contour of [TIED_CANDIDATES_CONTOUR, ARC_CORNER_CONTOUR, SELF_INTERSECT_CASE.contour]) {
+    const radius = contour === SELF_INTERSECT_CASE.contour ? 6 : 4.5
+    const base = planContourSmoothing(contour, radius)
+    for (let shift = 1; shift < contour.length; shift += 1) {
+      const rotated = rotateRing(contour, shift)
+      const plan = planContourSmoothing(rotated, radius)
+      assert(
+        plan.transitions.length === base.transitions.length,
+        `rotating by ${shift} changed the transition count `
+          + `${base.transitions.length} -> ${plan.transitions.length}`,
+      )
+      assert(
+        plan.points.length === base.points.length,
+        `rotating by ${shift} changed the emitted point count `
+          + `${base.points.length} -> ${plan.points.length}`,
+      )
+      assert(
+        cyclicPointsEquivalent(plan.points, base.points, 1e-9),
+        `rotating by ${shift} produced a different curve`,
+      )
+    }
+  }
+  console.log('grouping is seam-invariant under every rotation: PASSED')
+}
+
 try {
   testIdentityWhenDisabled()
   testRoundsSquareCorners()
@@ -705,6 +825,8 @@ try {
   testOrientationReversalEquivalent()
   testScaleEquivalence()
   testSeamInvariantTurnRuns()
+  testGroupingIsSeamInvariantUnderEveryRotation()
+  testTangentPointsStayOnTheirShoulderEdges()
   testSelfIntersectingPlanFailsClosed()
   testSeparatedTransitionsCheckedForCrossing()
   testDeterminism()
