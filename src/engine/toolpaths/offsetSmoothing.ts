@@ -45,10 +45,13 @@
 //     virtual apex of those lines sits on the corner side of the run (not
 //     behind a shoulder), and the tangent points do not fall beyond the run's
 //     endpoints.
-//  3. Guard genuinely smooth runs: when the run's vertices track a fitted
-//     circle whose radius is already at least the request, the source vertices
-//     are emitted unchanged, so a large source arc is never flattened or
-//     tightened merely because its accumulated turn exceeds the threshold.
+//  3. Guard genuinely smooth runs: when the run's *path* — its vertices and
+//     the midpoints of its segments — tracks a fitted circle whose radius is
+//     already at least the request, the source vertices are emitted unchanged,
+//     so a large source arc is never flattened or tightened merely because its
+//     accumulated turn exceeds the threshold. Measuring vertices alone would
+//     not do: any three points fit a circle exactly and a square's corners are
+//     concyclic, so a vertex-only test shields genuine corners.
 //  4. Allocate straight-edge setback at contour scope. An isolated corner may
 //     consume (nearly) a whole adjacent edge; when two transitions compete for
 //     one edge their setbacks scale proportionally, always leaving a small
@@ -126,8 +129,10 @@ const STRAIGHT_TURN_EPS = 1e-6
 const TURN_CONSISTENCY_EPS = 1e-6
 /** Fraction of each edge always reserved as a straight connector. */
 const CONNECTOR_FRACTION = 1e-6
-/** Max relative deviation of a run's vertices from its fitted circle before
- *  the run stops counting as genuinely smooth. */
+/** Max relative deviation of a run's polyline (vertices and segment midpoints)
+ *  from its fitted circle before the run stops counting as genuinely smooth.
+ *  Sits between a tessellated arc (1.9% at 22.5 degrees per vertex) and a
+ *  square corner (29%). */
 const SMOOTH_DEV_TOL = 0.05
 
 interface Vec {
@@ -363,10 +368,26 @@ function fitLocalCircle(infos: VertexInfo[], start: number, end: number): {
   }
   const fit = fitCircleKasa(points)
   if (!fit) return null
+  // Measure the *path*, not just the vertices. Vertices alone say almost
+  // nothing: any three points fit a circle exactly, and the corners of a square
+  // are perfectly concyclic — a vertex-only test calls both "smooth" and would
+  // shield a genuine corner from being rounded. The segment midpoints are where
+  // a chord departs from the circle it is approximating, so including them
+  // measures how closely the polyline actually tracks the fitted arc. For
+  // points sampled on a circle at per-vertex turn d the midpoint deviation is
+  // 1 - cos(d/2): 1.9% at 22.5 degrees (a tessellated arc, genuinely smooth)
+  // against 29% at 90 degrees (a square corner, not smooth at all).
   let maxDev = 0
-  for (const point of points) {
-    const dist = Math.hypot(point.x - fit.cx, point.y - fit.cy)
+  const measure = (x: number, y: number): void => {
+    const dist = Math.hypot(x - fit.cx, y - fit.cy)
     maxDev = Math.max(maxDev, Math.abs(dist - fit.radius) / fit.radius)
+  }
+  for (let index = 0; index < points.length; index += 1) {
+    measure(points[index].x, points[index].y)
+    if (index + 1 < points.length) {
+      const next = points[index + 1]
+      measure((points[index].x + next.x) / 2, (points[index].y + next.y) / 2)
+    }
   }
   return { radius: fit.radius, smooth: maxDev <= SMOOTH_DEV_TOL }
 }
@@ -438,8 +459,8 @@ function findTurnRuns(
       || infos[a.start].point.y - infos[b.start].point.y
   })
 
-  // A genuinely smooth candidate (fitted radius already at least the request)
-  // keeps its vertices verbatim, so no other run may consume any of them.
+  // A candidate whose source geometry is already at least as broad as the
+  // request keeps its vertices verbatim, so no other run may consume any.
   const preserved = new Array<boolean>(count).fill(false)
   for (const run of candidates) {
     const local = fitLocalCircle(infos, run.start, run.end)

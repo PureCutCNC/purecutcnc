@@ -811,6 +811,72 @@ function testGroupingIsSeamInvariantUnderEveryRotation() {
   console.log('grouping is seam-invariant under every rotation: PASSED')
 }
 
+/**
+ * A coarsely tessellated corner: vertices 0..2 turn 33.9 and 35.9 degrees. Any
+ * three points fit a circle exactly, so a vertex-only smoothness test reports
+ * 0.000% deviation at a fitted radius of 2.125 and shields this corner from a
+ * request of 2. Measuring the polyline puts the segment midpoints 5.4% off that
+ * circle, which is what a 34-degree-per-vertex path actually is.
+ */
+const COARSE_TURN_CONTOUR: Point[] = [
+  { x: 29.182, y: -0.862 },
+  { x: 29.819, y: 0.359 },
+  { x: 29.697, y: 1.453 },
+  { x: 28.817, y: 2.422 },
+  { x: -27.355, y: -0.064 },
+  { x: 18.501, y: -9.586 },
+]
+
+/**
+ * A genuinely smooth source arc: vertices 0..4 track a circle of radius 5.896
+ * to within 1.6%. A request of 4.5 is *narrower* than the source, so the run
+ * must be left alone — rounding any part of it would tighten an arc that is
+ * already broader than what was asked for.
+ */
+const BROADER_THAN_REQUEST_ARC: Point[] = [
+  { x: 23.908, y: 13.747 },
+  { x: 23.488, y: 15.989 },
+  { x: 22.711, y: 17.719 },
+  { x: 21.575, y: 18.934 },
+  { x: 20.081, y: 19.636 },
+  { x: -10.863, y: 22.482 },
+]
+
+function testSmoothnessIsMeasuredOnThePathNotTheVertices() {
+  console.log('Testing a coarse turn is rounded and a broader-than-request arc is not...')
+
+  // Sharp side: the three-point run must be rounded despite fitting a circle
+  // through its vertices exactly.
+  const coarse = planContourSmoothing(COARSE_TURN_CONTOUR, 2)
+  const rounded = coarse.transitions.find(
+    (transition) => transition.firstIndex === 0 && transition.lastIndex === 2,
+  )
+  assert(
+    rounded !== undefined,
+    'the 34-degree-per-vertex run must be rounded, not mistaken for a smooth arc',
+  )
+  assert(
+    rounded.effectiveRadius > 0 && rounded.effectiveRadius <= 2 + 1e-9,
+    `the rounded run must honour the request, got ${rounded.effectiveRadius}`,
+  )
+  assert(!hasProperIntersection(coarse.points), 'the rounded coarse turn stays simple')
+
+  // Smooth side: an arc already broader than the request keeps every vertex.
+  const arc = planContourSmoothing(BROADER_THAN_REQUEST_ARC, 4.5)
+  assert(
+    !arc.transitions.some((transition) => transition.runIndices.some((index) => index <= 4)),
+    'a source arc broader than the request must not be tightened by rounding part of it',
+  )
+  for (let index = 0; index <= 4; index += 1) {
+    const vertex = BROADER_THAN_REQUEST_ARC[index]
+    assert(
+      arc.points.some((point) => approx(point.x, vertex.x, 1e-9) && approx(point.y, vertex.y, 1e-9)),
+      `source vertex ${index} of the broad arc must survive unchanged`,
+    )
+  }
+  console.log('smoothness measured on the path, not the vertices: PASSED')
+}
+
 try {
   testIdentityWhenDisabled()
   testRoundsSquareCorners()
@@ -821,6 +887,7 @@ try {
   testAdjacentTurnsShareShortEdge()
   testMultiVertexTurnRunBecomesOneTransition()
   testSmootherRunStaysUnchanged()
+  testSmoothnessIsMeasuredOnThePathNotTheVertices()
   testFailClosedDegenerateCases()
   testOrientationReversalEquivalent()
   testScaleEquivalence()
