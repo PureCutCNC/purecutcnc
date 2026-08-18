@@ -55,9 +55,7 @@ import { isFeatureFirst, mergePocketToolpathResults, perFeatureOperations } from
 import {
   cornerSmoothingRadius,
   planContourSmoothing,
-  type ContourSmoothingPlan,
 } from './offsetSmoothing'
-import { buildSweptCoverage, pathIsCovered } from './sweptCoverage'
 import {
   buildOffsetDomainCheck,
   pocketTangentLinkOptions,
@@ -1907,48 +1905,12 @@ export interface WallCornerCleanupContext {
 const directedSegmentKey = (from: Point, to: Point): string =>
   `${from.x},${from.y}->${to.x},${to.y}`
 
-/**
- * Tool centrelines of the rings immediately either side of this one, as they
- * will actually be emitted.
- *
- * Deliberately excludes the ring's own outer path. Its broad arc does sweep
- * part of the tip it leaves, so crediting it would be legitimate, but a
- * neighbour-only answer is the conservative one and it is the claim worth
- * making: the tip is reached by a pass that would happen anyway.
- */
-function neighbourCentrelines(
-  node: OffsetRegionNode,
-  parent: OffsetRegionNode | undefined,
-  direction: CutDirection,
-  smoothRadius: number,
-): Point[][] {
-  const lines: Point[][] = []
-  const add = (region: ResolvedPocketRegion): void => {
-    if (region.outer.length >= 3) {
-      const directed = applyContourDirection([region.outer], direction)[0]
-      lines.push(planContourSmoothing(directed, smoothRadius, { broadCorners: true }).points)
-    }
-    // Island loops count as much as outer rings and are easy to forget. In a
-    // sliver pinched between an island and a wall — which is precisely where
-    // these starved corners live — the loop running along the island is the
-    // pass that reaches the tip, and leaving it out declines every corner
-    // there.
-    lines.push(...region.islands.filter((island) => island.length >= 3))
-  }
-  if (parent) add(parent.region)
-  for (const child of node.children) add(child.region)
-  lines.push(...node.region.islands.filter((island) => island.length >= 3))
-  return lines
-}
-
 function prepareOffsetOuterContour(
   node: OffsetRegionNode,
   direction: CutDirection,
   smoothRadius: number | null | undefined,
   depth: number,
   wallCleanup: WallCornerCleanupContext | undefined,
-  toolRadius: number | undefined,
-  parent: OffsetRegionNode | undefined,
 ): { points: Point[]; cleanupFallback: boolean; preserveRotation: boolean } | null {
   if (node.region.outer.length < 3) return null
   const directed = applyContourDirection([node.region.outer], direction)[0]
@@ -1958,40 +1920,25 @@ function prepareOffsetOuterContour(
     // an island's rounded offset leaves where it meets a straight wall — has
     // no straight edge to set back into, so the ordinary construction emits a
     // few percent of the requested radius and the ring stays visibly pointed.
-    // Cut it with one full-radius arc instead.
+    // Cut it with one full-radius arc instead, and clean the tip that arc
+    // leaves the same way a wall corner is cleaned.
     //
-    // That arc leaves a tip of stock, and on an interior ring the neighbours
-    // usually take it: they sit one stepover away and sweep a whole tool
-    // radius, so wherever the stepover is comfortably inside the radius the
-    // tip is already machined by a pass that happens anyway. Where it is not —
-    // a stepover approaching the tool diameter — the corner keeps the
-    // return-and-retrace loop, which costs motion but leaves nothing behind.
+    // The tip looks redundant: the neighbouring rings sit one stepover away
+    // and sweep a whole tool radius, and on every corner measured they reach
+    // it with room to spare. Skipping the loop on that basis is wrong, and
+    // measurably so — `rounded-corners-poc-test-1.camj` came back with a
+    // 0.21 x 0.05in ridge standing 0.0057in proud, because the loop had also
+    // been sweeping stock *outside* its own tip that nothing else covers.
+    // Whether a loop is redundant is a question about the material its whole
+    // swept envelope removes, not about the span it retraces, and nothing
+    // cheaper answers it: a coverage margin tight enough to catch that ridge
+    // declined so many corners the result carried more motion than simply
+    // cleaning every one.
     const plan = planContourSmoothing(directed, smoothRadius, { broadCorners: true })
     if (!plan.transitions.some((transition) => transition.cutsAcrossSource)) {
       return { points: plan.points, cleanupFallback: false, preserveRotation: false }
     }
-    const coverage = toolRadius !== undefined && toolRadius > 0
-      ? buildSweptCoverage(
-        neighbourCentrelines(node, parent, direction, smoothRadius),
-        toolRadius,
-      )
-      : null
-    const sampleStep = (toolRadius ?? 0) / 50
-    const resolved: ContourSmoothingPlan = {
-      ...plan,
-      transitions: plan.transitions.map((transition) => {
-        if (!transition.cutsAcrossSource || !transition.spanPoints || !coverage) return transition
-        // The span is today's own geometry at this corner, so clearing the
-        // flag says exactly "leaving this alone is no worse than shipping".
-        if (!pathIsCovered(transition.spanPoints, coverage, sampleStep)) return transition
-        const { spanPoints: _cleaned, ...rest } = transition
-        return { ...rest, cutsAcrossSource: false }
-      }),
-    }
-    if (!resolved.transitions.some((transition) => transition.cutsAcrossSource)) {
-      return { points: plan.points, cleanupFallback: false, preserveRotation: false }
-    }
-    const cleaned = buildWallCornerCleanupContour(resolved, {
+    const cleaned = buildWallCornerCleanupContour(plan, {
       isInsideDomain: buildOffsetDomainCheck([node.region]),
       cleanup: 'cut-across',
     })
@@ -2033,18 +1980,15 @@ function buildRingPerimeterIndex(
   direction: CutDirection,
   smoothRadius: number | null,
   wallCleanupEnabled: boolean,
-  toolRadius: number,
 ): RingPerimeterIndex {
   const perimeters = new Map<string, number>()
-  const visit = (node: OffsetRegionNode, depth: number, parent: OffsetRegionNode | undefined): void => {
+  const visit = (node: OffsetRegionNode, depth: number): void => {
     const outer = prepareOffsetOuterContour(
       node,
       direction,
       smoothRadius,
       depth,
       wallCleanupEnabled ? { enabled: true } : undefined,
-      toolRadius,
-      parent,
     )
     const islands = applyContourDirection(
       node.region.islands.filter((island) => island.length >= 3),
@@ -2063,11 +2007,11 @@ function buildRingPerimeterIndex(
       }
     }
     for (const child of node.children) {
-      visit(child, depth + 1, node)
+      visit(child, depth + 1)
     }
   }
   for (const tree of regionTrees) {
-    visit(tree, 0, undefined)
+    visit(tree, 0)
   }
   return perimeters
 }
@@ -2264,8 +2208,6 @@ function cutOffsetRegionNode(
   entryPolicy?: EntryPolicy,
   tangentLink?: TangentLinkOptions,
   wallCleanup?: WallCornerCleanupContext,
-  toolRadius?: number,
-  parent?: OffsetRegionNode,
 ): ToolpathPoint | null {
   const cutCurrentRegion = (fromPosition: ToolpathPoint | null): ToolpathPoint | null => {
     const childAnchors = traversalMode === 'outer-first'
@@ -2287,7 +2229,7 @@ function cutOffsetRegionNode(
     //    the tool into the island and gouge it. So island loops are emitted
     //    as-is, already rounded (or mitered when the option is off).
     const outer = prepareOffsetOuterContour(
-      node, direction, smoothRadius, depth, wallCleanup, toolRadius, parent,
+      node, direction, smoothRadius, depth, wallCleanup,
     )
     if (outer?.cleanupFallback) wallCleanup?.onFallback?.()
     const islandContours = loops === 'outer'
@@ -2349,8 +2291,6 @@ function cutOffsetRegionNode(
       entryPolicy,
       tangentLink,
       wallCleanup,
-      toolRadius,
-      node,
     )
   }
 
@@ -2377,7 +2317,6 @@ export function cutOffsetRegionRecursive(
   entryPolicy?: EntryPolicy,
   tangentLink?: TangentLinkOptions,
   wallCleanup?: WallCornerCleanupContext,
-  toolRadius?: number,
 ): ToolpathPoint | null {
   return cutOffsetRegionNode(
     moves,
@@ -2395,7 +2334,6 @@ export function cutOffsetRegionRecursive(
     entryPolicy,
     tangentLink,
     wallCleanup,
-    toolRadius,
   )
 }
 
@@ -2584,7 +2522,7 @@ function generateRoughBandMoves(
       }
     : undefined
   const ringPerimeters = engagementCacheEnabled
-    ? buildRingPerimeterIndex(regionTrees, direction, smoothRadius ?? null, wallCleanup !== undefined, toolRadius)
+    ? buildRingPerimeterIndex(regionTrees, direction, smoothRadius ?? null, wallCleanup !== undefined)
     : null
   const engagementCaches = new Map<string, OffsetBandEngagementClassification>()
   const entryPolicy = withEntryHandoffFeedScale(
@@ -2638,7 +2576,6 @@ function generateRoughBandMoves(
         levelEntryPolicy,
         tangentLink,
         wallCleanup,
-        toolRadius,
       )
     }
 
@@ -2830,7 +2767,6 @@ function generateFinishBandMoves(
         entryPolicy,
         floorTangentLink,
         floorWallCleanup,
-        toolRadius,
       )
     }
 

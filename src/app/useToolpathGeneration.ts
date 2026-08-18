@@ -100,6 +100,7 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.pocketFeedReduction === b.pocketFeedReduction
     && a.roundOutsideCorners === b.roundOutsideCorners
     && a.roundLinkCorners === b.roundLinkCorners
+    && a.cleanWallCorners === b.cleanWallCorners
     && a.cornerRelief === b.cornerRelief
     && a.stockToLeaveRadial === b.stockToLeaveRadial
     && a.stockToLeaveAxial === b.stockToLeaveAxial

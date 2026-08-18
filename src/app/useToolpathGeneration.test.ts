@@ -245,6 +245,11 @@ function testOperationComputationEquals() {
     ['entryRampAngle', { entryRampAngle: 8 }],
     ['entryHelixDiameterPercent', { entryHelixDiameterPercent: 60 }],
     ['roundOutsideCorners', { roundOutsideCorners: true }],
+    ['roundLinkCorners', { roundLinkCorners: false }],
+    ['cleanWallCorners', { cleanWallCorners: true }],
+    ['pocketSlotFeedPercent', { pocketSlotFeedPercent: 55 }],
+    ['pocketFeedReduction', { pocketFeedReduction: 'engagement' }],
+    ['cornerRelief', { cornerRelief: 'dogbone' }],
     ['stockToLeaveRadial', { stockToLeaveRadial: 0.1 }],
     ['stockToLeaveAxial', { stockToLeaveAxial: 0.2 }],
     ['finishWalls', { finishWalls: false }],
@@ -284,6 +289,7 @@ function testOperationComputationEquals() {
 
   console.log('operationComputationEquals field allowlist: PASSED')
 }
+
 
 function testIsCacheHit() {
   console.log('Testing isCacheHit reference and operation invalidation...')
