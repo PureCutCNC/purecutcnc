@@ -119,6 +119,51 @@ export function buildSweptCoverage(centrelines: Point[][], toolRadius: number): 
 }
 
 /**
+ * True when everything a cutter sweeping `path` would remove is already inside
+ * `covered`.
+ *
+ * This is the question `pathIsCovered` only looks like it answers. A path whose
+ * *centreline* runs through swept territory can still remove material either
+ * side of it, so asking about the line is not asking about the metal. The
+ * difference is not academic: a corner cleanup loop was dropped on exactly that
+ * reasoning and left a 0.21 x 0.05in patch of stock standing 0.0057in proud.
+ *
+ * The area is rasterised rather than solved, over the path's bounding box grown
+ * by one radius, and no region test is needed: callers hand this a loop that
+ * has already been checked against the tool-centre domain, so every cell its
+ * disc reaches is material by construction.
+ */
+export function sweptRegionIsCovered(
+  path: Point[],
+  covered: SweptCoverage,
+  toolRadius: number,
+  cellSize: number,
+): boolean {
+  if (path.length === 0 || !(toolRadius > 0) || !(cellSize > 0)) return false
+  if (covered.segmentCount === 0) return false
+  const swept = buildSweptCoverage([path], toolRadius)
+  if (swept.segmentCount === 0) return false
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const point of path) {
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return false
+    minX = Math.min(minX, point.x)
+    maxX = Math.max(maxX, point.x)
+    minY = Math.min(minY, point.y)
+    maxY = Math.max(maxY, point.y)
+  }
+  for (let x = minX - toolRadius; x <= maxX + toolRadius; x += cellSize) {
+    for (let y = minY - toolRadius; y <= maxY + toolRadius; y += cellSize) {
+      if (!swept.covers(x, y)) continue
+      if (!covered.covers(x, y)) return false
+    }
+  }
+  return true
+}
+
+/**
  * True when every point of `path` is inside the swept envelope.
  *
  * The path is sampled rather than solved: `sampleStep` is the spacing along

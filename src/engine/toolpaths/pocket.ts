@@ -55,9 +55,9 @@ import { isFeatureFirst, mergePocketToolpathResults, perFeatureOperations } from
 import {
   cornerSmoothingRadius,
   planContourSmoothing,
-  type ContourSmoothingPlan,
+  type ContourTurnTransition,
 } from './offsetSmoothing'
-import { buildSweptCoverage, pathIsCovered } from './sweptCoverage'
+import { buildSweptCoverage, sweptRegionIsCovered } from './sweptCoverage'
 import {
   buildOffsetDomainCheck,
   pocketTangentLinkOptions,
@@ -1970,36 +1970,50 @@ function prepareOffsetOuterContour(
     if (!plan.transitions.some((transition) => transition.cutsAcrossSource)) {
       return { points: plan.points, cleanupFallback: false, preserveRotation: false }
     }
-    const coverage = toolRadius !== undefined && toolRadius > 0
-      ? buildSweptCoverage(
-        neighbourCentrelines(node, parent, direction, smoothRadius),
-        toolRadius,
-      )
-      : null
-    const sampleStep = (toolRadius ?? 0) / 50
-    const resolved: ContourSmoothingPlan = {
-      ...plan,
-      transitions: plan.transitions.map((transition) => {
-        if (!transition.cutsAcrossSource || !transition.spanPoints || !coverage) return transition
-        // The span is today's own geometry at this corner, so clearing the
-        // flag says exactly "leaving this alone is no worse than shipping".
-        if (!pathIsCovered(transition.spanPoints, coverage, sampleStep)) return transition
-        const { spanPoints: _cleaned, ...rest } = transition
-        return { ...rest, cutsAcrossSource: false }
-      }),
-    }
-    if (!resolved.transitions.some((transition) => transition.cutsAcrossSource)) {
-      return { points: plan.points, cleanupFallback: false, preserveRotation: false }
-    }
-    const cleaned = buildWallCornerCleanupContour(resolved, {
-      isInsideDomain: buildOffsetDomainCheck([node.region]),
+    const domain = buildOffsetDomainCheck([node.region])
+    const cleaned = buildWallCornerCleanupContour(plan, {
+      isInsideDomain: domain,
       cleanup: 'cut-across',
     })
     if (!cleaned) {
       return { points: plan.points, cleanupFallback: false, preserveRotation: false }
     }
+    // Most of those loops clear nothing another pass does not already clear:
+    // the neighbouring rings are one stepover away and sweep a whole tool
+    // radius. Dropping the redundant ones is what makes rounding cheaper than
+    // not rounding, but redundancy is a question about the *material* a loop
+    // removes, not about the span it retraces — asking the easier question left
+    // stock behind. Each loop is measured against everything that would be cut
+    // without it: the neighbours, and this ring with no loops at all. That is
+    // the worst case, so a loop cleared here is safe whatever the others do.
+    const redundant = new Set<ContourTurnTransition>()
+    if (cleaned.loops.length > 0 && toolRadius !== undefined && toolRadius > 0) {
+      const elsewhere = buildSweptCoverage(
+        [...neighbourCentrelines(node, parent, direction, smoothRadius), plan.points],
+        toolRadius,
+      )
+      for (const loop of cleaned.loops) {
+        if (sweptRegionIsCovered(loop.path, elsewhere, toolRadius, toolRadius / 12)) {
+          redundant.add(loop.transition)
+        }
+      }
+    }
+    if (redundant.size === 0) {
+      return { points: cleaned.points, cleanupFallback: false, preserveRotation: false }
+    }
+    if (redundant.size === cleaned.loops.length) {
+      return { points: plan.points, cleanupFallback: false, preserveRotation: false }
+    }
+    const pruned = buildWallCornerCleanupContour({
+      ...plan,
+      transitions: plan.transitions.map((transition) => {
+        if (!redundant.has(transition)) return transition
+        const { spanPoints: _dropped, ...rest } = transition
+        return { ...rest, cutsAcrossSource: false }
+      }),
+    }, { isInsideDomain: domain, cleanup: 'cut-across' })
     return {
-      points: cleaned.points,
+      points: (pruned ?? cleaned).points,
       cleanupFallback: false,
       preserveRotation: false,
     }

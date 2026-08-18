@@ -30,9 +30,13 @@
  * and island corners it can never enter — is already left by the unsmoothed
  * path, so it cancels, and only a real regression moves the count.
  *
- * One fixture carries a known, measured, accepted gap instead — see
- * `testKnownCoverageGapDoesNotGrow`. Three other pocket fixtures showed
- * nothing; only that one catches it.
+ * This exists because a plausible optimisation broke it. A broad corner arc
+ * leaves a tip, and the cleanup loop clearing it looks redundant — the
+ * neighbouring rings sit one stepover away and sweep a whole tool radius, and
+ * on every corner measured they reach the tip with room to spare. Dropping the
+ * loop on that reasoning left a 0.21 x 0.05in patch standing 0.0057in proud,
+ * because a loop also sweeps stock *outside* its own tip. Three other pocket
+ * fixtures showed nothing. Only this one caught it.
  *
  * Run with: npx tsx src/engine/toolpaths/pocketClearance.test.ts
  */
@@ -123,36 +127,11 @@ function testSmoothingLeavesNoStock(fixture: string): void {
   console.log(`${fixture}: unsmoothed ${unsmoothed}, rounded ${rounded}, rounded+wall ${withWall}: PASSED`)
 }
 
-/**
- * A known, measured, deliberately accepted gap — not a passing test dressed up.
- *
- * A broad corner arc leaves a tip, and the cleanup loop that clears it is
- * skipped where the neighbouring rings are judged to already sweep that tip.
- * The judgement is about the span the loop retraces, and the loop also sweeps
- * stock *outside* its own tip, so on this fixture skipping it leaves a
- * 0.21 x 0.05in patch standing 0.0057in proud. Deciding it correctly means
- * rasterising the material each loop's whole swept envelope removes, which the
- * per-corner check cannot see; a coverage margin tight enough to catch it
- * declined so many corners that the result carried more motion (2521 cuts)
- * than cleaning every one (2069).
- *
- * The optimisation is worth keeping meanwhile — it takes this fixture from
- * 85.5s to 72.8s, faster than not rounding at all — so the gap is pinned at
- * the size it was measured, and this fails the moment it grows.
- */
-function testKnownCoverageGapDoesNotGrow(fixture: string): void {
-  const { unsmoothed, rounded, withWall } = measure(fixture)
-  const worst = Math.max(rounded, withWall) - unsmoothed
-  const BOUND = 12
-  assert(worst <= BOUND,
-    `${fixture}: the accepted coverage gap grew from ${BOUND} to ${worst} cells`)
-  console.log(`${fixture}: KNOWN GAP ${worst} of ${BOUND} cells accepted`
-    + ` (unsmoothed ${unsmoothed}, rounded ${rounded}, rounded+wall ${withWall}): PASSED`)
-}
-
 try {
+  // The fixture that caught a broad corner's cleanup loop being dropped when
+  // it was still the only pass clearing part of the floor.
+  testSmoothingLeavesNoStock('pocket-rounded-corner-coverage.camj')
   testSmoothingLeavesNoStock('pocket-feed-reduction.camj')
-  testKnownCoverageGapDoesNotGrow('pocket-rounded-corner-coverage.camj')
   console.log('\nAll pocketClearance tests PASSED.')
 } catch (e) {
   console.error(e)

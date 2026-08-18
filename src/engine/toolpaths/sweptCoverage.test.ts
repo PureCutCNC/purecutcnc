@@ -21,7 +21,7 @@
  */
 
 import type { Point } from '../../types/project'
-import { buildSweptCoverage, pathIsCovered } from './sweptCoverage'
+import { buildSweptCoverage, pathIsCovered, sweptRegionIsCovered } from './sweptCoverage'
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -116,6 +116,54 @@ function testUnanswerableQuestionsAnswerNo(): void {
   console.log('unanswerable questions answer no: PASSED')
 }
 
+function testSweptRegionAsksAboutMetalNotAboutTheLine(): void {
+  // Two rails a tool-width apart, and a path running straight down the middle
+  // of the gap. Its *centreline* is inside both rails' swept band the whole
+  // way — `pathIsCovered` says yes — but a cutter following it removes a strip
+  // down the middle that neither rail touches. This is the difference that let
+  // a corner cleanup loop be dropped while it was still the only pass clearing
+  // part of the floor.
+  // Rails at y=0 and y=2.4 with a unit cutter sweep y<=1 and y>=1.4, leaving a
+  // 0.4-wide strip between them. A path at y=0.95 is 0.95 from the lower rail,
+  // so its centreline is covered, but its own sweep reaches y=1.95 and takes
+  // that strip.
+  const rails: Point[][] = [
+    [{ x: 0, y: 0 }, { x: 10, y: 0 }],
+    [{ x: 0, y: 2.4 }, { x: 10, y: 2.4 }],
+  ]
+  const covered = buildSweptCoverage(rails, 1)
+  const middle: Point[] = [{ x: 2, y: 0.95 }, { x: 8, y: 0.95 }]
+  assert(pathIsCovered(middle, covered, 0.05),
+    'the centreline of the middle path is inside the rails\' band')
+  assert(!sweptRegionIsCovered(middle, covered, 1, 0.05),
+    'but sweeping it removes metal the rails never reach')
+
+  // Move it onto a rail and both agree.
+  const onRail: Point[] = [{ x: 2, y: 0 }, { x: 8, y: 0 }]
+  assert(sweptRegionIsCovered(onRail, covered, 1, 0.05),
+    'a path lying on a rail removes nothing the rail does not')
+  console.log('swept region asks about metal, not about the line: PASSED')
+}
+
+function testSweptRegionFailsClosed(): void {
+  const square: Point[] = [
+    { x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 },
+  ]
+  const covered = buildSweptCoverage([square], 1)
+  const path: Point[] = [{ x: 2, y: 0 }, { x: 8, y: 0 }]
+  const cases: Array<[string, boolean]> = [
+    ['an empty path', sweptRegionIsCovered([], covered, 1, 0.05)],
+    ['a non-positive radius', sweptRegionIsCovered(path, covered, 0, 0.05)],
+    ['a non-positive cell size', sweptRegionIsCovered(path, covered, 1, 0)],
+    ['nothing to compare against', sweptRegionIsCovered(path, buildSweptCoverage([], 1), 1, 0.05)],
+    ['a non-finite path point', sweptRegionIsCovered([{ x: 2, y: 0 }, { x: Number.NaN, y: 0 }], covered, 1, 0.05)],
+  ]
+  for (const [label, result] of cases) {
+    assert(result === false, `${label} answers no — this gate only ever removes motion`)
+  }
+  console.log('swept region fails closed: PASSED')
+}
+
 function testDeterminism(): void {
   const path: Point[] = [{ x: 2, y: 0.5 }, { x: 8, y: 0.5 }, { x: 9.5, y: 4 }]
   const first = pathIsCovered(path, buildSweptCoverage([square], 1), 0.05)
@@ -132,6 +180,8 @@ try {
   testPathCoverageNeedsEveryPoint()
   testTheInteriorOfASegmentIsSampled()
   testUnanswerableQuestionsAnswerNo()
+  testSweptRegionAsksAboutMetalNotAboutTheLine()
+  testSweptRegionFailsClosed()
   testDeterminism()
   console.log('\nAll sweptCoverage tests PASSED.')
 } catch (e) {
