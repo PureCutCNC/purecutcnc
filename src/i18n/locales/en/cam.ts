@@ -167,6 +167,8 @@ export const camEn = {
   'cam.operation.levelFirst': 'Level first',
   'cam.operation.roundOutsideCorners': 'Round corners',
   'cam.operation.roundLinkCorners': 'Round link junctions',
+  'cam.operation.cleanWallCorners': 'Round wall corners',
+  'cam.operation.cleanWallCornersTooltip': 'Also rounds the ring that defines the wall, cleaning each corner immediately afterwards so the wall keeps its full coverage. Lowers peak cutter load at the corners; costs a little cycle time.',
   'cam.operation.cornerRelief': 'Corner relief',
   'cam.operation.cornerReliefNone': 'None',
   'cam.operation.cornerReliefDogbone': 'Dogbone',

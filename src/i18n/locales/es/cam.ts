@@ -143,6 +143,8 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.operation.levelFirst': 'Primero por nivel',
   'cam.operation.roundOutsideCorners': 'Redondear las esquinas',
   'cam.operation.roundLinkCorners': 'Redondear uniones de enlace',
+  'cam.operation.cleanWallCorners': 'Redondear esquinas de pared',
+  'cam.operation.cleanWallCornersTooltip': 'Redondea también el anillo que define la pared, despejando cada esquina inmediatamente después para que la pared conserve toda su cobertura. Reduce la carga máxima de la fresa en las esquinas a cambio de algo de tiempo de mecanizado.',
   'cam.operation.cornerRelief': 'Relieve de esquinas',
   'cam.operation.cornerReliefNone': 'Ninguno',
   'cam.operation.cornerReliefDogbone': 'Hueso de perro',

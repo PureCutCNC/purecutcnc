@@ -37,6 +37,20 @@ function pointsEqual(a: Point[], b: Point[]): boolean {
   return a.every((point, index) => point.x === b[index].x && point.y === b[index].y)
 }
 
+function pointSegmentDistance(point: Point, from: Point, to: Point): number {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const lengthSquared = dx * dx + dy * dy
+  if (lengthSquared <= 1e-18) return Math.hypot(point.x - from.x, point.y - from.y)
+  const t = Math.max(0, Math.min(1,
+    ((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSquared))
+  return Math.hypot(point.x - (from.x + dx * t), point.y - (from.y + dy * t))
+}
+
+function samePointish(a: Point, b: Point): boolean {
+  return Math.hypot(a.x - b.x, a.y - b.y) <= 1e-9
+}
+
 function dist(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }
@@ -683,6 +697,166 @@ function testSeparatedTransitionsCheckedForCrossing() {
   console.log('separated transitions checked for crossing: PASSED')
 }
 
+/**
+ * A crescent: one long straight chord, and a circular arc tessellated into
+ * chords a fraction of the requested radius long running into each end of it.
+ * Its two corners are sharp but starved — the shape an island's rounded offset
+ * leaves where it meets a pocket wall.
+ */
+function tessellatedCrescent(steps = 160): Point[] {
+  const radius = 5
+  const half = (80 * Math.PI) / 180
+  const ring: Point[] = []
+  for (let step = 0; step <= steps; step += 1) {
+    const angle = Math.PI - half + (2 * half * step) / steps
+    ring.push({ x: radius + radius * Math.cos(angle), y: radius * Math.sin(angle) })
+  }
+  return ring
+}
+
+function maxTurnDeg(path: Point[]): number {
+  let worst = 0
+  for (let index = 0; index + 2 < path.length; index += 1) {
+    const a = path[index]
+    const b = path[index + 1]
+    const c = path[index + 2]
+    const inLength = dist(a, b)
+    const outLength = dist(b, c)
+    if (inLength <= 1e-12 || outLength <= 1e-12) continue
+    const cosine = Math.max(-1, Math.min(1,
+      ((b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y)) / (inLength * outLength)))
+    worst = Math.max(worst, (Math.acos(cosine) * 180) / Math.PI)
+  }
+  return worst
+}
+
+function testBroadCornersOffIsTodaysOutput(): void {
+  const ring = tessellatedCrescent()
+  const plain = planContourSmoothing(ring, 1)
+  const explicitlyOff = planContourSmoothing(ring, 1, { broadCorners: false })
+  assert(JSON.stringify(plain) === JSON.stringify(explicitlyOff),
+    'the broad-corner option defaults off and changes nothing when off')
+  console.log("broad corners off is today's output: PASSED")
+}
+
+function testStarvedCornerBecomesOneFullRadiusArc(): void {
+  const ring = tessellatedCrescent()
+  const request = 1
+  const starvedPlan = planContourSmoothing(ring, request)
+  const broadPlan = planContourSmoothing(ring, request, { broadCorners: true })
+  const starved = starvedPlan.transitions.filter((transition) =>
+    transition.effectiveRadius < request * 0.25)
+  assert(starved.length > 0,
+    'the tessellated corners really are starved without the broad search')
+  const broad = broadPlan.transitions.filter((transition) => transition.cutsAcrossSource)
+  assert(broad.length === starved.length,
+    'every starved corner is replaced by a broad transition')
+
+  const count = broadPlan.sourcePoints.length
+  for (const transition of broad) {
+    assert(approx(transition.effectiveRadius, request, 1e-9),
+      'the broad transition is emitted at exactly the requested radius')
+    assert(transition.runIndices.length > 1,
+      'reaching the full radius means cutting across source vertices')
+    // The contract the wall cleanup depends on: every index still refers to
+    // sourcePoints, and the tangent points still lie on the named source edges.
+    for (const index of transition.runIndices) {
+      assert(index >= 0 && index < count, 'run indices address the source ring')
+    }
+    assert(transition.entryEdgeIndex === (transition.firstIndex - 1 + count) % count,
+      'the entry edge is still the edge reaching the first run vertex')
+    assert(transition.exitEdgeIndex === transition.lastIndex % count,
+      'the exit edge is still the edge leaving the last run vertex')
+    assert(pointSegmentDistance(transition.entry,
+      broadPlan.sourcePoints[transition.entryEdgeIndex],
+      broadPlan.sourcePoints[(transition.entryEdgeIndex + 1) % count]) <= 1e-9,
+      'the entry tangent point lies on its own source edge')
+    assert(pointSegmentDistance(transition.exit,
+      broadPlan.sourcePoints[transition.exitEdgeIndex],
+      broadPlan.sourcePoints[(transition.exitEdgeIndex + 1) % count]) <= 1e-9,
+      'the exit tangent point lies on its own source edge')
+  }
+  console.log('starved corner becomes one full-radius arc: PASSED')
+}
+
+function testBroadTransitionCarriesTheGeometryItCutAway(): void {
+  const ring = tessellatedCrescent()
+  const plan = planContourSmoothing(ring, 1, { broadCorners: true })
+  const count = plan.sourcePoints.length
+  const broad = plan.transitions.find((transition) => transition.cutsAcrossSource)
+  assert(broad !== undefined, 'the crescent produces a broad transition')
+  const span = broad.spanPoints
+  assert(span !== undefined && span.length > 1,
+    'a transition that cut material away carries the span to clean it with')
+  assert(samePointish(span[0], plan.sourcePoints[broad.firstIndex]),
+    'the cleanup span starts at the first source vertex the arc cut across')
+
+  // The corner the arc cut away is a sharp one. Traversing it raw would put
+  // that full deflection straight back into the emitted path, so the ordinary
+  // fillet has to be spliced into the span — that is what gives the cleanup a
+  // curve to rejoin on instead of a point.
+  const apex = broad.runIndices.reduce((sharpest, index) => {
+    const turn = maxTurnDeg([
+      plan.sourcePoints[(index - 1 + count) % count],
+      plan.sourcePoints[index],
+      plan.sourcePoints[(index + 1) % count],
+    ])
+    return turn > sharpest ? turn : sharpest
+  }, 0)
+  assert(apex > 60, 'the corner the arc cut away really is sharp')
+  // Measure the span as the cleanup actually walks it: in from the entry and
+  // out through the exit. The apex sits at the end of the span, so its own
+  // deflection only becomes visible once the exit point is appended.
+  const traversal = [broad.entry, ...span, broad.exit]
+  assert(maxTurnDeg(traversal) < apex / 2,
+    'the span keeps the ordinary fillet, so the cleanup never traverses the bare apex')
+  console.log('broad transition carries the geometry it cut away: PASSED')
+}
+
+function testBroadArcNeverReversesAgainstANeighbourOnASharedEdge(): void {
+  // A real depth-1 ring from pocket-feed-reduction-3.camj. Vertices 5 and 6
+  // are two corners either side of one 0.053in edge: 5 turns +126.8 and takes
+  // an ordinary fillet, 6 turns -36.8 and is starved enough to want a broad
+  // arc. The broad search jams its circle without consulting the contour-scope
+  // setback allocation, so it planted its entry *behind* the neighbouring
+  // fillet's exit on that shared edge — and the emitted path jumped forward
+  // 0.008in and doubled straight back, four junctions at 177.7 degrees.
+  const ring: Point[] = [
+    { x: 2.8905, y: 0.9304 }, { x: 3.0696, y: 1.1095 }, { x: 3.295, y: 1.0344 },
+    { x: 3.295, y: 1.5997 }, { x: 3.1616, y: 2.1332 }, { x: 3.1758, y: 2.1758 },
+    { x: 3.125, y: 2.1589 }, { x: 2.7167, y: 2.295 }, { x: 0.705, y: 2.295 },
+    { x: 0.705, y: 0.705 }, { x: 2.9656, y: 0.705 },
+  ]
+  const plan = planContourSmoothing(ring, 0.08, { broadCorners: true })
+  // Smoothing replaces corners with arcs and leaves everything else alone, so
+  // it can never produce a junction sharper than the sharpest source corner.
+  const sourceWorst = maxTurnDeg([...ring, ring[0], ring[1]])
+  const emittedWorst = maxTurnDeg([...plan.points, plan.points[0], plan.points[1]])
+  assert(emittedWorst <= sourceWorst + 1e-6,
+    `smoothing may not sharpen a junction (source ${sourceWorst.toFixed(1)}, emitted ${emittedWorst.toFixed(1)})`)
+
+  // And the direct statement of the same thing: on any edge two transitions
+  // share, the one that leaves first has to leave first.
+  const count = plan.sourcePoints.length
+  const along = (edge: number, point: Point): number => {
+    const from = plan.sourcePoints[edge % count]
+    const to = plan.sourcePoints[(edge + 1) % count]
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    return ((point.x - from.x) * dx + (point.y - from.y) * dy) / (dx * dx + dy * dy)
+  }
+  for (const transition of plan.transitions) {
+    for (const other of plan.transitions) {
+      if (other === transition) continue
+      if (other.exitEdgeIndex === transition.entryEdgeIndex) {
+        assert(along(transition.entryEdgeIndex, other.exit) <= along(transition.entryEdgeIndex, transition.entry),
+          'a transition entering a shared edge starts after the one leaving it')
+      }
+    }
+  }
+  console.log('broad arc never reverses against a neighbour on a shared edge: PASSED')
+}
+
 function testDeterminism() {
   console.log('Testing the planner is deterministic...')
   const first = planContourSmoothing(ARC_CORNER_CONTOUR, 8)
@@ -896,6 +1070,10 @@ try {
   testTangentPointsStayOnTheirShoulderEdges()
   testSelfIntersectingPlanFailsClosed()
   testSeparatedTransitionsCheckedForCrossing()
+  testBroadCornersOffIsTodaysOutput()
+  testStarvedCornerBecomesOneFullRadiusArc()
+  testBroadTransitionCarriesTheGeometryItCutAway()
+  testBroadArcNeverReversesAgainstANeighbourOnASharedEdge()
   testDeterminism()
   console.log('\nAll offsetSmoothing tests PASSED.')
 } catch (e) {

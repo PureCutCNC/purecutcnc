@@ -64,6 +64,7 @@
 //     coordinate stops being finite.
 
 import type { Point } from '../../types/project'
+import { findBroadCornerArc, type BroadCornerArc } from './broadCornerArc'
 import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
 
 export interface RoundContourOptions {
@@ -72,6 +73,12 @@ export interface RoundContourOptions {
   minDeflectionDeg?: number
   /** Angular tessellation step for the fillet arcs, in radians. */
   arcStepRadians?: number
+  /** Let a turn starved by short tessellation edges be cut with one arc at the
+   *  full requested radius, across as many source vertices as that takes. The
+   *  arc then leaves a tip of material behind, so a caller may only enable
+   *  this if it cleans every transition reporting `cutsAcrossSource`. Off (the
+   *  default) is today's exact output. */
+  broadCorners?: boolean
 }
 
 /** One changed turn on the smoothed contour. */
@@ -104,6 +111,16 @@ export interface ContourTurnTransition {
   /** Source edge index (the edge from lastIndex to lastIndex+1, cyclic) the
    *  exit setback is taken from. */
   exitEdgeIndex: number
+  /** True when the arc cuts across its own source vertices rather than easing
+   *  off the two edges adjacent to the corner, so it leaves a tip of material
+   *  behind. The caller must clean that tip; see `spanPoints`. */
+  cutsAcrossSource: boolean
+  /** The geometry to traverse when cleaning the tip: the source vertices this
+   *  transition cut across, with the ordinary fillet spliced in at the corner
+   *  so the cleanup rejoins on a curve instead of a point. Starts on the
+   *  transition's own entry edge and ends on its exit edge. Only present when
+   *  `cutsAcrossSource` is true. */
+  spanPoints?: Point[]
 }
 
 /** Result of the pure contour-level turn planner. */
@@ -134,6 +151,9 @@ const CONNECTOR_FRACTION = 1e-6
  *  Sits between a tessellated arc (1.9% at 22.5 degrees per vertex) and a
  *  square corner (29%). */
 const SMOOTH_DEV_TOL = 0.05
+/** A transition below this fraction of the request is starved enough to be
+ *  worth cutting the corner outright and cleaning the tip afterwards. */
+const BROAD_CORNER_TRIGGER = 0.9
 
 interface Vec {
   x: number
@@ -178,15 +198,17 @@ interface RunGeometry {
 
 /** A transition with its allocated setbacks and emitted arc. */
 interface PlannedTransition {
-  run: RunGeometry
   start: number
   end: number
-  tIn: number
-  tOut: number
+  signedTurn: number
   radius: number
   entry: Point
   exit: Point
   points: Point[]
+  /** Set on transitions produced by the broad-corner search, which cut across
+   *  their own source vertices and so leave a tip for the caller to clean. */
+  cutsAcrossSource?: boolean
+  spanPoints?: Point[]
 }
 
 function normalizeSignedAngle(angle: number): number {
@@ -579,6 +601,189 @@ function contourSelfIntersects(out: Point[]): boolean {
   return false
 }
 
+/** Tessellate a circular arc from `entry` to `exit` at the shared arc step. */
+function tessellateArc(
+  centre: Vec,
+  radius: number,
+  entry: Point,
+  exit: Point,
+  sweep: number,
+  arcStep: number,
+): Point[] {
+  const startAngle = Math.atan2(entry.y - centre.y, entry.x - centre.x)
+  const steps = Math.max(1, Math.ceil(Math.abs(sweep) / arcStep))
+  const points: Point[] = [entry]
+  for (let step = 1; step < steps; step += 1) {
+    const angle = startAngle + (sweep * step) / steps
+    points.push({
+      x: centre.x + radius * Math.cos(angle),
+      y: centre.y + radius * Math.sin(angle),
+    })
+  }
+  points.push(exit)
+  return points
+}
+
+/** Position of `point` along the source edge starting at `index`. */
+function edgeParameter(ring: Point[], index: number, point: Point): number {
+  const count = ring.length
+  const from = ring[index % count]
+  const to = ring[(index + 1) % count]
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const lengthSquared = dx * dx + dy * dy
+  if (!(lengthSquared > EPS * EPS)) return 0
+  return ((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSquared
+}
+
+/**
+ * The geometry a broad arc cut away, as the planner would otherwise have
+ * emitted it: the source vertices of the span with the ordinary fillet spliced
+ * back in at the corner. That fillet is what gives the cleanup a curve to
+ * rejoin on instead of the bare apex — traversing the raw vertex would put the
+ * corner's full deflection straight back into the emitted path.
+ */
+function buildSpanGeometry(
+  ring: Point[],
+  standard: PlannedTransition[],
+  arc: BroadCornerArc,
+): Point[] {
+  const count = ring.length
+  const first = (arc.entryEdge + 1) % count
+  const last = arc.exitEdge % count
+  const spanLength = cyclicRunLength(count, first, last)
+  const entryLimit = edgeParameter(ring, arc.entryEdge, arc.entry)
+  const exitLimit = edgeParameter(ring, arc.exitEdge, arc.exit)
+  const points: Point[] = []
+  for (let offset = 0; offset <= spanLength;) {
+    const index = (first + offset) % count
+    const inner = standard.find((transition) => transition.start === index)
+    const innerLength = inner ? cyclicRunLength(count, inner.start, inner.end) : 0
+    const spliceable = inner !== undefined
+      && offset + innerLength <= spanLength
+      // A fillet sharing an edge with the broad arc may only be spliced while
+      // it stays between the arc's own tangent points; otherwise the traversal
+      // would double back over the arc it is cleaning up after.
+      && (inner.start !== first
+        || edgeParameter(ring, arc.entryEdge, inner.entry) > entryLimit + EPS)
+      && (inner.end !== last
+        || edgeParameter(ring, arc.exitEdge, inner.exit) < exitLimit - EPS)
+    if (inner && spliceable) {
+      points.push(...inner.points)
+      offset += innerLength + 1
+      continue
+    }
+    points.push(ring[index])
+    offset += 1
+  }
+  return points
+}
+
+/**
+ * Replace starved transitions with one full-radius arc each.
+ *
+ * A turn approached through short tessellation edges has no straight edge to
+ * set back into, so the ordinary construction emits a few percent of the
+ * requested radius. Where a circle of the full radius jams into the corner
+ * against two real source edges, that arc is emitted instead — cutting across
+ * the source vertices between the two tangent points, which is exactly why the
+ * result is marked `cutsAcrossSource` and is only planned when the caller has
+ * said it will clean the tip.
+ *
+ * A candidate is declined when it would partly overlap another transition (it
+ * may absorb one entirely — the arc replaces that geometry, and the cleanup
+ * traversal splices it back in) or when its span is already claimed.
+ */
+function applyBroadCorners(
+  ring: Point[],
+  runs: RunGeometry[],
+  standard: PlannedTransition[],
+  radius: number,
+  arcStep: number,
+): PlannedTransition[] {
+  const count = ring.length
+  // Anchor on the turn runs, not on the transitions they produced. A corner
+  // starved badly enough emits no transition at all — its whole setback was
+  // eaten by a neighbour — and anchoring on the output would skip exactly the
+  // corners that need this most.
+  const emitted = new Map<number, PlannedTransition>(
+    standard.map((transition) => [transition.start, transition]),
+  )
+  const starved = runs
+    .filter((run) => (emitted.get(run.start)?.radius ?? 0) < radius * BROAD_CORNER_TRIGGER)
+    .sort((a, b) => a.start - b.start)
+  if (starved.length === 0) return standard
+
+  const claimed = new Array<boolean>(count).fill(false)
+  const result = [...standard]
+  const absorbed = new Set<PlannedTransition>()
+  for (const run of starved) {
+    const arc = findBroadCornerArc({
+      points: ring,
+      apexFirst: run.start,
+      apexLast: run.end,
+      turnSign: run.signedTurn >= 0 ? 1 : -1,
+      radius,
+    })
+    if (!arc) continue
+    const first = (arc.entryEdge + 1) % count
+    const last = arc.exitEdge % count
+    const spanLength = cyclicRunLength(count, first, last)
+    const span: number[] = Array.from(
+      { length: spanLength + 1 },
+      (_, offset) => (first + offset) % count,
+    )
+    if (span.some((index) => claimed[index])) continue
+    // Every transition the span touches has to be inside it: a partial overlap
+    // would leave two arcs fighting over the same source vertices.
+    const touched = result.filter((other) => !absorbed.has(other)
+      && span.some((index) => cyclicRunLength(count, other.start, index) <= cyclicRunLength(count, other.start, other.end)))
+    if (touched.some((other) => !span.includes(other.start) || !span.includes(other.end))) continue
+    // The broad search jams a circle against two source edges without going
+    // through the contour-scope setback allocation, so it can plant a tangent
+    // point behind a neighbouring transition that is already using the same
+    // edge. Two corners either side of one short edge do exactly that, and the
+    // emitted path then jumps forward and doubles straight back on itself.
+    // Ordering along the shared edge is the whole test; a broad arc that
+    // cannot keep it declines and the corner keeps its starved fillet.
+    const entryAt = edgeParameter(ring, arc.entryEdge, arc.entry)
+    const exitAt = edgeParameter(ring, arc.exitEdge, arc.exit)
+    const reverses = result.some((other) => {
+      if (absorbed.has(other) || touched.includes(other)) return false
+      if (other.end % count === arc.entryEdge
+        && edgeParameter(ring, arc.entryEdge, other.exit) > entryAt - EPS) return true
+      if ((other.start - 1 + count) % count === arc.exitEdge
+        && edgeParameter(ring, arc.exitEdge, other.entry) < exitAt + EPS) return true
+      return false
+    })
+    if (reverses) continue
+
+    const centre = {
+      x: arc.centre.x,
+      y: arc.centre.y,
+    }
+    const points = tessellateArc(centre, radius, arc.entry, arc.exit, arc.sweep, arcStep)
+    if (!points.every(isFinitePoint)) continue
+    const spanPoints = buildSpanGeometry(ring, standard, arc)
+    if (!spanPoints.every(isFinitePoint) || spanPoints.length === 0) continue
+
+    for (const other of touched) absorbed.add(other)
+    for (const index of span) claimed[index] = true
+    result.push({
+      start: first,
+      end: last,
+      signedTurn: arc.sweep,
+      radius,
+      entry: arc.entry,
+      exit: arc.exit,
+      points,
+      cutsAcrossSource: true,
+      spanPoints,
+    })
+  }
+  return result.filter((transition) => !absorbed.has(transition))
+}
+
 /**
  * Plan the corner smoothing of one closed contour.
  *
@@ -694,23 +899,12 @@ export function planContourSmoothing(
     const startAngle = Math.atan2(entry.y - center.y, entry.x - center.x)
     const endAngle = Math.atan2(exit.y - center.y, exit.x - center.x)
     const sweep = normalizeSignedAngle(endAngle - startAngle)
-    const steps = Math.max(1, Math.ceil(Math.abs(sweep) / arcStep))
-    const arcPoints: Point[] = [entry]
-    for (let step = 1; step < steps; step += 1) {
-      const angle = startAngle + (sweep * step) / steps
-      arcPoints.push({
-        x: center.x + effectiveRadius * Math.cos(angle),
-        y: center.y + effectiveRadius * Math.sin(angle),
-      })
-    }
-    arcPoints.push(exit)
+    const arcPoints = tessellateArc(center, effectiveRadius, entry, exit, sweep, arcStep)
     if (!arcPoints.every(isFinitePoint)) return
     transitions.push({
-      run,
       start: run.start,
       end: run.end,
-      tIn,
-      tOut,
+      signedTurn: run.signedTurn,
       radius: effectiveRadius,
       entry,
       exit,
@@ -718,17 +912,21 @@ export function planContourSmoothing(
     })
   })
 
-  if (transitions.length === 0) {
+  const planned = options.broadCorners
+    ? applyBroadCorners(ring, runs, transitions, radius, arcStep)
+    : transitions
+
+  if (planned.length === 0) {
     return { sourcePoints: ring, points: ring, requestedRadius: radius, transitions: [] }
   }
 
   // Emission walks the ring from index 0, replacing every run with its arc.
   // Runs are disjoint cyclic intervals; the one containing vertex 0 (if any)
   // is exactly the run with start > end, and opens the walk with its full arc.
-  const wrapped = transitions.find((transition) => transition.start > transition.end)
+  const wrapped = planned.find((transition) => transition.start > transition.end)
   const walkOrder = wrapped
-    ? [wrapped, ...transitions.filter((transition) => transition !== wrapped).sort((a, b) => a.start - b.start)]
-    : [...transitions].sort((a, b) => a.start - b.start)
+    ? [wrapped, ...planned.filter((transition) => transition !== wrapped).sort((a, b) => a.start - b.start)]
+    : [...planned].sort((a, b) => a.start - b.start)
   const out: Point[] = []
   let cursor = wrapped ? wrapped.end + 1 : 0
   if (wrapped) out.push(...wrapped.points)
@@ -757,7 +955,7 @@ export function planContourSmoothing(
       { length: cyclicRunLength(count, transition.start, transition.end) + 1 },
       (_, offset) => (transition.start + offset) % count,
     ),
-    signedTurn: transition.run.signedTurn,
+    signedTurn: transition.signedTurn,
     requestedRadius: radius,
     effectiveRadius: transition.radius,
     entry: transition.entry,
@@ -765,6 +963,8 @@ export function planContourSmoothing(
     transitionPoints: transition.points,
     entryEdgeIndex: (transition.start - 1 + count) % count,
     exitEdgeIndex: transition.end % count,
+    cutsAcrossSource: transition.cutsAcrossSource === true,
+    ...(transition.spanPoints ? { spanPoints: transition.spanPoints } : {}),
   }))
 
   return { sourcePoints: ring, points: out, requestedRadius: radius, transitions: metadata }

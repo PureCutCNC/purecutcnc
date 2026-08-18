@@ -26,6 +26,12 @@ export interface WallCornerCleanupOptions {
   isInsideDomain: (x: number, y: number) => boolean
   /** Angular chord budget shared with rounded contour tessellation. */
   arcStepRadians?: number
+  /** Which transitions get a cleanup loop. A wall ring cleans every rounded
+   *  corner, because every one of them leaves stock against the wall. An
+   *  interior ring only cleans the transitions that cut across their own
+   *  source vertices; its ordinary fillets leave nothing that needs a loop, so
+   *  cleaning them would only spend motion. Default `'all'`. */
+  cleanup?: 'all' | 'cut-across'
 }
 
 export interface WallCornerCleanupResult {
@@ -217,6 +223,7 @@ export function buildWallCornerCleanupContour(
   if (!rotated) return null
   const { source, transitions } = rotated
   const points: Point[] = []
+  const mode = options.cleanup ?? 'all'
   let cursor = 0
   let cleanupCount = 0
   for (const transition of transitions) {
@@ -224,6 +231,19 @@ export function buildWallCornerCleanupContour(
       pushDistinct(points, [source[cursor]])
       cursor += 1
     }
+    // A transition that cut nothing away leaves nothing to clean, so on an
+    // interior ring it is emitted as the plain rounded corner it already is.
+    if (mode === 'cut-across' && !transition.cutsAcrossSource) {
+      pushDistinct(points, transition.transitionPoints)
+      cursor = transition.lastIndex + 1
+      continue
+    }
+    // The geometry to traverse when clearing the tip. A broad arc carries its
+    // own span (the source vertices it cut across, with the ordinary fillet
+    // spliced in); a wall corner has no such span and traverses its exact
+    // source vertices, which is what restores the legacy wall coverage.
+    const spanPath = transition.spanPoints
+      ?? transition.runIndices.map((index) => source[index])
     // The broad arc has to be checked too, not just the return that follows it.
     // Rounding cuts a corner, and on a *reflex* corner of a wall ring that cut
     // bulges the tool centre outward — off the ring and into the wall. The wall
@@ -240,17 +260,13 @@ export function buildWallCornerCleanupContour(
       // source has — the legacy sharp path, which needs no cleanup. Declining
       // one corner must not cost the whole ring its rounding: a single reflex
       // corner would otherwise disable the feature for the entire pocket.
-      for (const index of transition.runIndices) {
-        pushDistinct(points, [source[index]])
-      }
+      pushDistinct(points, spanPath)
       cursor = transition.lastIndex + 1
       continue
     }
     pushDistinct(points, transition.transitionPoints)
     pushDistinct(points, returnPath.slice(1))
-    for (const index of transition.runIndices) {
-      pushDistinct(points, [source[index]])
-    }
+    pushDistinct(points, spanPath)
     pushDistinct(points, [transition.exit])
     cursor = transition.lastIndex + 1
     cleanupCount += 1

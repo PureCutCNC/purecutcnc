@@ -207,6 +207,94 @@ function testArcLeavingTheDomainDeclinesItsCorner(): void {
   }
 }
 
+/**
+ * A crescent: one long straight chord and a tessellated arc running into each
+ * end of it, giving two corners starved by short edges. Same shape the planner
+ * tests use, and the one an island's rounded offset leaves against a wall.
+ */
+function tessellatedCrescent(steps = 160): Point[] {
+  const radius = 5
+  const half = (80 * Math.PI) / 180
+  const ring: Point[] = []
+  for (let step = 0; step <= steps; step += 1) {
+    const angle = Math.PI - half + (2 * half * step) / steps
+    ring.push({ x: radius + radius * Math.cos(angle), y: radius * Math.sin(angle) })
+  }
+  // A square bump partway along the closing chord, so the same contour carries
+  // both kinds of transition: the two starved corners where the arc runs into
+  // the chord, and ordinary square ones that reach the full radius unaided.
+  const chordX = ring[ring.length - 1].x
+  ring.push({ x: chordX, y: -1 })
+  ring.push({ x: chordX + 3, y: -1 })
+  ring.push({ x: chordX + 3, y: 1 })
+  ring.push({ x: chordX, y: 1 })
+  return ring
+}
+
+function testCutAcrossModeCleansOnlyWhatCutMaterial(): void {
+  const ring = tessellatedCrescent()
+  const plan = planContourSmoothing(ring, 1, { broadCorners: true })
+  const broad = plan.transitions.filter((transition) => transition.cutsAcrossSource)
+  const ordinary = plan.transitions.filter((transition) => !transition.cutsAcrossSource)
+  assert(broad.length > 0 && ordinary.length > 0,
+    'the crescent plans both kinds of transition, so the modes are distinguishable')
+
+  const generous = (): boolean => true
+  const all = buildWallCornerCleanupContour(plan, { isInsideDomain: generous })
+  const cutAcross = buildWallCornerCleanupContour(plan, {
+    isInsideDomain: generous, cleanup: 'cut-across',
+  })
+  assert(all !== null && cutAcross !== null, 'both modes produce a contour')
+  assert(all.cleanupCount === plan.transitions.length,
+    "'all' cleans every rounded corner, which is what a wall ring needs")
+  assert(cutAcross.cleanupCount === broad.length,
+    "'cut-across' cleans exactly the transitions that cut material away")
+  assert(cutAcross.points.length < all.points.length,
+    'skipping the loops that clean nothing costs less motion')
+  console.log('cut-across mode cleans only what cut material: PASSED')
+}
+
+function testBroadCornerCleanupLeavesNoMoreThanTodaysFillet(): void {
+  const ring = tessellatedCrescent()
+  const plan = planContourSmoothing(ring, 1, { broadCorners: true })
+  const result = buildWallCornerCleanupContour(plan, {
+    isInsideDomain: (): boolean => true, cleanup: 'cut-across',
+  })
+  assert(result !== null, 'the crescent admits contained cleanup returns')
+  assert(result.cleanupCount > 0, 'at least one broad corner is cleaned')
+  const broad = plan.transitions.filter((transition) => transition.cutsAcrossSource)
+  assert(broad.length > 0, 'the crescent produces a broad transition')
+
+  // The ordinary plan is what ships today, and the fillet it emits at this
+  // corner is the yardstick: a broad arc plus its cleanup may not leave more
+  // stock at any vertex than that fillet already leaves.
+  const ordinary = planContourSmoothing(ring, 1)
+  for (const transition of broad) {
+    // The span is traversed exactly, not approximately.
+    for (const point of transition.spanPoints ?? []) {
+      assert(pathDistance(point, result.points) <= 1e-9,
+        'every point of the cleanup span is on the emitted path')
+    }
+    const budget = Math.max(...ordinary.transitions
+      .filter((other) => other.runIndices.some((index) => transition.runIndices.includes(index)))
+      .map((other) => other.effectiveRadius))
+    assert(Number.isFinite(budget) && budget > 0,
+      'the corner has an ordinary fillet to be measured against')
+    for (const index of transition.runIndices) {
+      const vertex = plan.sourcePoints[index]
+      assert(pathDistance(vertex, result.points) <= budget,
+        'the cleanup leaves no more at a cut-across vertex than the ordinary fillet does')
+    }
+    // And without the cleanup the arc really does leave material there, so the
+    // assertion above is not satisfied by an arc that never cut anything.
+    const uncleaned = Math.max(...transition.runIndices
+      .map((index) => pathDistance(plan.sourcePoints[index], plan.points)))
+    assert(uncleaned > budget,
+      'the broad arc on its own leaves more than the ordinary fillet — hence the cleanup')
+  }
+  console.log('broad corner cleanup leaves no more than today\'s fillet: PASSED')
+}
+
 function testIdentityPlanNeedsNoCleanup(): void {
   const source: Point[] = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }]
   const plan = planContourSmoothing(source, 0)
@@ -220,4 +308,6 @@ testEveryEmittedSegmentStaysInDomain()
 testFailClosedWhenReturnCannotFit()
 testArcLeavingTheDomainDeclinesItsCorner()
 testIdentityPlanNeedsNoCleanup()
+testCutAcrossModeCleansOnlyWhatCutMaterial()
+testBroadCornerCleanupLeavesNoMoreThanTodaysFillet()
 console.log('wallCornerCleanup tests: PASSED')

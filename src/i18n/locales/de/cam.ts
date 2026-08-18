@@ -164,6 +164,8 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.levelFirst': 'Ebene zuerst',
   'cam.operation.roundOutsideCorners': 'Ecken abrunden',
   'cam.operation.roundLinkCorners': 'Übergänge abrunden',
+  'cam.operation.cleanWallCorners': 'Wandecken runden',
+  'cam.operation.cleanWallCornersTooltip': 'Rundet auch den wandbildenden Ring und räumt jede Ecke unmittelbar danach frei, damit die Wand vollständig abgedeckt bleibt. Senkt die Spitzenbelastung des Fräsers in den Ecken, kostet etwas Bearbeitungszeit.',
   'cam.operation.cornerRelief': 'Eckenfreistellung',
   'cam.operation.cornerReliefNone': 'Keine',
   'cam.operation.cornerReliefDogbone': 'Dogbone',

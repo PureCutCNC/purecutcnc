@@ -143,6 +143,8 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.operation.levelFirst': 'Niveau d’abord',
   'cam.operation.roundOutsideCorners': 'Arrondir les coins',
   'cam.operation.roundLinkCorners': 'Arrondir les jonctions de liaison',
+  'cam.operation.cleanWallCorners': 'Arrondir les angles de paroi',
+  'cam.operation.cleanWallCornersTooltip': "Arrondit également l'anneau qui définit la paroi, en dégageant chaque angle juste après afin que la paroi conserve toute sa couverture. Réduit la charge maximale de l'outil dans les angles, au prix d'un peu de temps d'usinage.",
   'cam.operation.cornerRelief': 'Dégagement de coin',
   'cam.operation.cornerReliefNone': 'Aucun',
   'cam.operation.cornerReliefDogbone': 'Os de chien',

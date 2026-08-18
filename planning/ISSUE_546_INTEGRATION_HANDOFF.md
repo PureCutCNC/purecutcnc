@@ -167,6 +167,72 @@ RISKS: <none or concise unresolved risks>
   Verification: 5 of 6 corners cleaned on the L fixture with the reflex corner
   declined, zero domain excursions, legacy wall coverage exact (3.6e-15).
 
+## S3 — broad corners in tessellated regions (next slice, not started)
+
+Approved shape, from the user 2026-08-18. Reuses the S2 cleanup pattern rather
+than inventing new geometry:
+
+1. Cut the corner with one proper arc at the requested radius. It may cut across
+   many source vertices; that is intended.
+2. Remember the two points where the arc starts and ends.
+3. Clear the leftover tip using those two points: return from the end point back
+   to the start point, then follow the original tessellated line forward again to
+   the end point, then carry on.
+4. Keep the small fillet the current logic already produces at that corner. It
+   gives the cleanup a smooth place to rejoin instead of a hard point.
+
+Step 3's return already exists: `buildReturn` in `wallCornerCleanup.ts`, the
+domain-checked cubic. The whole shape is what `buildWallCornerCleanupContour`
+does for wall corners — this slice applies it to interior corners.
+
+### The measurement that motivates it
+
+On `pocket-feed-reduction.camj` (0.25" cutter, derived radius 0.080"), interior
+ring corners in tessellated regions come out at 12%, 2%, even 0.1% of the
+requested radius. 11 of 33 transitions are under half the request.
+
+The cause is not a clamp. Those corners are approached by chains of 0.005"-0.018"
+edges each bending 1-3 degrees, and a setback consumes one source edge, so there
+is nothing to consume. Read from the adjacent edges the corner measures 123
+degrees; read from ~2.5 radii out along the contour it is a true 90 degrees and
+the full radius fits with room to spare:
+
+| shoulder read from | corner measures | 0.080" radius |
+| --- | --- | --- |
+| 0.020" out | 122 deg | does not fit |
+| 0.080" out | 109 deg | does not fit |
+| 0.200" out | 90 deg | fits, spanning 25 source vertices |
+
+### Do not retry these
+
+Three approaches were tried and measured, all reverted:
+
+- **Collapsing tessellation noise before planning** (RDP at the
+  `bboxDiagonal * 0.001` tolerance `arcReconstruction.ts` uses). Moved the worst
+  case from 0.1% to 15.3% only, and breaks the contract S2 depends on:
+  `runIndices` and `entryEdgeIndex` index into `sourcePoints`, and the wall
+  cleanup traverses the exact source span to restore coverage.
+- **Widening the shoulder** — read the shoulder direction from further out and
+  fit one arc tangent to the two shoulder lines. The approach curves, so those
+  lines leave the polyline and the sharpness moves from the apex out to the two
+  arc ends. Sharp junctions (>=20 deg) went 16 -> 37, worse than shipping
+  nothing. 548 invariant-fuzz failures.
+- **A kink-acceptance guard on the above.** Rejected every widening on the
+  fixture, i.e. a no-op, and a threshold sweep from 1x to 6x the arc step
+  produced identical numbers — the experimental code has a further bug that was
+  not chased, because the approach is wrong regardless.
+
+A biarc was considered to avoid the kinks. The approved design above makes it
+unnecessary: do not avoid leaving material at the tip, clean it.
+
+### Acceptance
+
+Junction angle is the metric, not effective radius — the feature exists to keep
+feed up. Current baseline on that fixture, rounding on: 1045 cut junctions,
+median 5.0 deg, p95 12.5 deg, 16 at >=20 deg. A change ships only if the >=20 deg
+count goes down. Also required: the invariant fuzz stays clean, both wall-cleanup
+suites pass, and `npm run build` is green.
+
 ## Open items
 
 - The rounded wall ring runs about 2.7x the sharp ring's length (80mm -> 217mm
