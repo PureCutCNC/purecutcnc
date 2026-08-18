@@ -214,6 +214,11 @@ export type ToolpathWarningCode =
   | 'cleanupNoContours'
   | 'pocketNoFloorRegion'
   | 'pocketNoFloorSegments'
+  /** No corner on a Pocket wall ring could be rounded with a contained cleanup,
+   * so the ring kept its legacy sharp geometry. Individual corners declining is
+   * normal (every reflex corner does) and stays quiet; this fires only when the
+   * whole ring came back with nothing cleaned. */
+  | 'pocketWallCornerCleanupFallback'
   // clamps travel / postprocessor
   | 'clampTravelLimitExceeded'
   | 'postWcsNullSelect'

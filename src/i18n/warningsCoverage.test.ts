@@ -75,7 +75,7 @@ const ALL_CODES = [
   'clampCrossedOne', 'clampCrossedMany', 'clampTravelLimitExceeded',
   'finishNeedsModel', 'finishNotMesh', 'finishNoDepthInPocket',
   'surfaceHeightMapReduced', 'surfaceSilhouetteDegenerate', 'cleanupStockToLeaveOffsets', 'cleanupNoContours',
-  'pocketNoFloorRegion', 'pocketNoFloorSegments',
+  'pocketNoFloorRegion', 'pocketNoFloorSegments', 'pocketWallCornerCleanupFallback',
   'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
   'postArcNoCapability', 'postArcFallbackLinear',
   'replayNoTool', 'bookletNoTool', 'bookletNoToolpath',

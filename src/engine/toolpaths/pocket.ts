@@ -52,12 +52,18 @@ import {
   type ReliefLoop,
 } from './cornerRelief'
 import { isFeatureFirst, mergePocketToolpathResults, perFeatureOperations } from './multiFeature'
-import { cornerSmoothingRadius, roundContourCorners } from './offsetSmoothing'
 import {
+  cornerSmoothingRadius,
+  planContourSmoothing,
+  roundContourCorners,
+} from './offsetSmoothing'
+import {
+  buildOffsetDomainCheck,
   pocketTangentLinkOptions,
   tangentSLink,
   type TangentLinkOptions,
 } from './tangentLink'
+import { buildWallCornerCleanupContour } from './wallCornerCleanup'
 import {
   EngagementFeedQuantizer,
   EngagementTelemetryAccumulator,
@@ -1776,8 +1782,11 @@ export function cutClosedContours(
   safeLinkCheck?: SafeLinkCheck,
   entryPolicy?: EntryPolicy,
   tangentLink?: TangentLinkOptions,
+  contoursAlreadyDirected = false,
 ): ToolpathPoint | null {
-  const directedContours = applyContourDirection(contours, direction)
+  const directedContours = contoursAlreadyDirected
+    ? contours
+    : applyContourDirection(contours, direction)
   const start = currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null
   const orderedContours = preserveContourRotation
     ? orderClosedContoursGreedyPreservingRotation(directedContours, start)
@@ -1889,23 +1898,75 @@ export function buildOffsetRegionTree(
 
 type RingPerimeterIndex = ReadonlyMap<string, number>
 
+export interface WallCornerCleanupContext {
+  enabled: boolean
+  onFallback?: () => void
+}
+
 const directedSegmentKey = (from: Point, to: Point): string =>
   `${from.x},${from.y}->${to.x},${to.y}`
+
+function prepareOffsetOuterContour(
+  node: OffsetRegionNode,
+  direction: CutDirection,
+  smoothRadius: number | null | undefined,
+  depth: number,
+  wallCleanup: WallCornerCleanupContext | undefined,
+): { points: Point[]; cleanupFallback: boolean; preserveRotation: boolean } | null {
+  if (node.region.outer.length < 3) return null
+  const directed = applyContourDirection([node.region.outer], direction)[0]
+  if (!smoothRadius) return { points: directed, cleanupFallback: false, preserveRotation: false }
+  if (depth > 0) {
+    return {
+      points: roundContourCorners(directed, smoothRadius),
+      cleanupFallback: false,
+      preserveRotation: false,
+    }
+  }
+  if (!wallCleanup?.enabled) {
+    return { points: directed, cleanupFallback: false, preserveRotation: false }
+  }
+
+  const plan = planContourSmoothing(directed, smoothRadius)
+  const cleanup = buildWallCornerCleanupContour(plan, {
+    isInsideDomain: buildOffsetDomainCheck([node.region]),
+  })
+  // A corner the cleanup declines keeps its exact sharp geometry, which is what
+  // ships today, so a partly-cleaned ring is a normal outcome and stays quiet —
+  // every reflex corner declines by construction, and warning on those would cry
+  // wolf on any notched pocket. Warn only when the ring came back with nothing
+  // cleaned at all despite planned transitions: there the feature did nothing.
+  if (!cleanup) {
+    return { points: directed, cleanupFallback: true, preserveRotation: false }
+  }
+  return {
+    points: cleanup.points,
+    cleanupFallback: cleanup.cleanupCount === 0 && plan.transitions.length > 0,
+    preserveRotation: cleanup.cleanupCount > 0,
+  }
+}
 
 /** Ring perimeter metadata is geometry-only and reusable across traversal orders. */
 function buildRingPerimeterIndex(
   regionTrees: OffsetRegionNode[],
   direction: CutDirection,
   smoothRadius: number | null,
+  wallCleanupEnabled: boolean,
 ): RingPerimeterIndex {
   const perimeters = new Map<string, number>()
   const visit = (node: OffsetRegionNode, depth: number): void => {
-    const outer = node.region.outer.length >= 3 ? node.region.outer : null
-    const smoothedOuter = outer
-      ? [smoothRadius !== null && depth > 0 ? roundContourCorners(outer, smoothRadius) : outer]
-      : []
-    const islands = node.region.islands.filter((island) => island.length >= 3)
-    for (const contour of applyContourDirection([...smoothedOuter, ...islands], direction)) {
+    const outer = prepareOffsetOuterContour(
+      node,
+      direction,
+      smoothRadius,
+      depth,
+      wallCleanupEnabled ? { enabled: true } : undefined,
+    )
+    const islands = applyContourDirection(
+      node.region.islands.filter((island) => island.length >= 3),
+      direction,
+    )
+    for (const contour of [...(outer ? [outer.points] : []), ...islands]) {
       let perimeter = 0
       for (let index = 0; index < contour.length; index += 1) {
         const next = contour[(index + 1) % contour.length]
@@ -2118,6 +2179,7 @@ function cutOffsetRegionNode(
   depth = 0,
   entryPolicy?: EntryPolicy,
   tangentLink?: TangentLinkOptions,
+  wallCleanup?: WallCornerCleanupContext,
 ): ToolpathPoint | null {
   const cutCurrentRegion = (fromPosition: ToolpathPoint | null): ToolpathPoint | null => {
     const childAnchors = traversalMode === 'outer-first'
@@ -2129,30 +2191,32 @@ function cutOffsetRegionNode(
     // Outer (wall-side) and island (bump-side) rings are smoothed differently
     // because the tool relates to each corner oppositely:
     //
-    //  - Outer ring: the tool is inside a corner it can't fully reach. Sharp is
-    //    the tightest path; rounding pulls back and leaves stock. So the root
-    //    ring (depth 0, wall-adjacent) is kept sharp and only interior rings
-    //    (depth > 0) are filleted — their rounded-corner crescents are swept by
-    //    the straight edge of the ring just outside them, so nothing is left,
-    //    and at depth no corner column can stack into a chip.
+    //  - Outer ring: interior rings use broad contour-level transitions. A
+    //    Pocket root ring may use the same transition only when it can return
+    //    tangentially and immediately traverse the exact source span; if that
+    //    contained cleanup loop cannot be built, it fails closed to sharp.
     //  - Island rings: the tool goes around convex material it can reach. Here
     //    the tight, smooth path is a rounded OFFSET (jtRound, applied when the
     //    region was built) — filleting the emitted polyline would instead pull
     //    the tool into the island and gouge it. So island loops are emitted
     //    as-is, already rounded (or mitered when the option is off).
-    const outerContour = node.region.outer.length >= 3 ? node.region.outer : null
-    const smoothedOuter = outerContour
-      ? [smoothRadius && depth > 0 ? roundContourCorners(outerContour, smoothRadius) : outerContour]
-      : []
+    const outer = prepareOffsetOuterContour(node, direction, smoothRadius, depth, wallCleanup)
+    if (outer?.cleanupFallback) wallCleanup?.onFallback?.()
     const islandContours = loops === 'outer'
       ? []
-      : node.region.islands.filter((island) => island.length >= 3)
-    const contours = [...smoothedOuter, ...islandContours]
-    const preparedContours = contours.map((contour) => rotateContourToBestEntry(
-      contour,
-      fromPosition ? { x: fromPosition.x, y: fromPosition.y } : null,
-      childAnchors,
-    ))
+      : applyContourDirection(
+        node.region.islands.filter((island) => island.length >= 3),
+        direction,
+      )
+    const contours = [...(outer ? [outer.points] : []), ...islandContours]
+    const preparedContours = contours.map((contour, index) =>
+      index === 0 && outer?.preserveRotation
+        ? contour
+        : rotateContourToBestEntry(
+            contour,
+            fromPosition ? { x: fromPosition.x, y: fromPosition.y } : null,
+            childAnchors,
+          ))
 
     return cutClosedContours(
       moves,
@@ -2166,6 +2230,7 @@ function cutOffsetRegionNode(
       safeLinkCheck,
       entryPolicy,
       tangentLink,
+      true,
     )
   }
 
@@ -2195,6 +2260,7 @@ function cutOffsetRegionNode(
       depth + 1,
       entryPolicy,
       tangentLink,
+      wallCleanup,
     )
   }
 
@@ -2220,6 +2286,7 @@ export function cutOffsetRegionRecursive(
   islandJoinType: number = ClipperLib.JoinType.jtMiter,
   entryPolicy?: EntryPolicy,
   tangentLink?: TangentLinkOptions,
+  wallCleanup?: WallCornerCleanupContext,
 ): ToolpathPoint | null {
   return cutOffsetRegionNode(
     moves,
@@ -2236,6 +2303,7 @@ export function cutOffsetRegionRecursive(
     0,
     entryPolicy,
     tangentLink,
+    wallCleanup,
   )
 }
 
@@ -2387,8 +2455,9 @@ function generateRoughBandMoves(
   // and traverse it per level. When rounding is on, islands are offset with
   // round joins (extends #245's island rounding to rough clearing): the tool
   // wraps convex island corners smoothly at a true rounded offset, never
-  // gouging the island. Outer/wall rings stay mitered and are filleted at
-  // emit time (interior rings only) by cutOffsetRegionNode.
+  // gouging the island. Outer/wall rings stay mitered and receive broad
+  // emit-time transitions; a Pocket root ring pairs each transition with an
+  // immediate contained cleanup of its exact source span.
   const islandJoinType = operation.roundOutsideCorners
     ? ClipperLib.JoinType.jtRound
     : ClipperLib.JoinType.jtMiter
@@ -2413,8 +2482,16 @@ function generateRoughBandMoves(
   // changes the order, that order gets its own classification instead of
   // reusing a conservative approximation with the wrong prior-cut context.
   const engagementCacheEnabled = telemetry !== null && operation.pocketFeedReduction === 'engagement'
+  const wallCleanup = operation.kind === 'pocket' && operation.roundOutsideCorners
+    ? {
+        enabled: true,
+        onFallback: (): void => appendUniqueWarning(warnings, {
+          code: 'pocketWallCornerCleanupFallback',
+        }),
+      }
+    : undefined
   const ringPerimeters = engagementCacheEnabled
-    ? buildRingPerimeterIndex(regionTrees, direction, smoothRadius ?? null)
+    ? buildRingPerimeterIndex(regionTrees, direction, smoothRadius ?? null, wallCleanup !== undefined)
     : null
   const engagementCaches = new Map<string, OffsetBandEngagementClassification>()
   const entryPolicy = withEntryHandoffFeedScale(
@@ -2467,6 +2544,7 @@ function generateRoughBandMoves(
         0,
         levelEntryPolicy,
         tangentLink,
+        wallCleanup,
       )
     }
 
@@ -2598,6 +2676,14 @@ function generateFinishBandMoves(
       finishRegions,
     )
     : undefined
+  const floorWallCleanup = operation.kind === 'pocket' && operation.roundOutsideCorners
+    ? {
+        enabled: true,
+        onFallback: (): void => appendUniqueWarning(warnings, {
+          code: 'pocketWallCornerCleanupFallback',
+        }),
+      }
+    : undefined
   const floorSegments = operation.finishFloor && isParallelPocket
     ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
     : []
@@ -2648,6 +2734,7 @@ function generateFinishBandMoves(
         0,
         entryPolicy,
         floorTangentLink,
+        floorWallCleanup,
       )
     }
 

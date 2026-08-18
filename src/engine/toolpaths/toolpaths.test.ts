@@ -3547,9 +3547,18 @@ function testPocketRoughRoundsInnerRings() {
     sharpTurnCount(enabled.moves) * 3 < sharpTurnCount(disabled.moves),
     `enabling round corners should remove most sharp ring corners (disabled ${sharpTurnCount(disabled.moves)}, enabled ${sharpTurnCount(enabled.moves)})`,
   )
-  // Arc tessellation adds points; cutting the corners shortens the path.
+  // Arc tessellation adds points. Cutting the interior-ring corners shortens
+  // them, but the wall-adjacent ring now pairs each rounded corner with a
+  // cleanup loop back over the exact sharp span (issue #546), which costs
+  // motion — so the total is no longer strictly shorter. What still has to hold
+  // is that the trade stays small: a cleanup that ran away, or one emitted at
+  // every ring instead of the wall ring, shows up here immediately.
   assert(cutMoves(enabled.moves).length > cutMoves(disabled.moves).length, 'rounded rings should tessellate into more cut moves')
-  assert(totalCutLength(enabled.moves) < totalCutLength(disabled.moves), 'rounded rings should shorten the total cut path')
+  const lengthRatio = totalCutLength(enabled.moves) / totalCutLength(disabled.moves)
+  assert(
+    lengthRatio < 1.05,
+    `rounded rings must stay within 5% of the sharp cut length, got ${lengthRatio.toFixed(3)}`,
+  )
 
   // Disabled parity: false and undefined must be byte-identical (no-op when off).
   const undefinedFlag = generatePocketToolpath(project, { ...baseOp, roundOutsideCorners: undefined })
