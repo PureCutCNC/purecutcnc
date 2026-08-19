@@ -81,6 +81,7 @@ export const bookletFr: Record<keyof typeof bookletEn, string> = {
   'booklet.label.machiningOrder': 'Ordre d’usinage',
   'booklet.label.roundOutsideCorners': 'Arrondir les coins extérieurs',
   'booklet.label.roundLinkCorners': 'Arrondir les jonctions de liaison',
+  'booklet.label.cleanWallCorners': 'Arrondir les angles de paroi',
   'booklet.label.cornerRelief': 'Dégagement de coin',
   'booklet.label.pattern': 'Motif',
   'booklet.label.pocketAngle': 'Angle de poche',

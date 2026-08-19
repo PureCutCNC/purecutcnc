@@ -150,6 +150,18 @@ RISKS: <none or concise unresolved risks>
     this — let only the winning candidate decide preservation — was implemented
     first and was wrong in the other direction: it tightened a 5.896-radius
     source arc against a 4.5 request. Tests stayed green either way.
+- 2026-08-18: S3 delivered. Full-radius corner arcs via a rolling-circle
+  tangency search, with the cleanup loop kept only where the material it removes
+  is not already removed by another pass. Wall cleanup became opt-in. Two
+  defects were found by measurement rather than by the suite, and both now have
+  mutation-checked regression tests: a broad arc could plant a tangent point
+  behind a neighbouring fillet on a shared short edge (four 177.7-degree
+  junctions), and the loop-skipping test asked about the retraced span rather
+  than the swept material (a 0.21 x 0.05" patch left 0.0057" proud). A third
+  defect had nothing to do with geometry: the new operation field was missing
+  from `operationComputationEquals`, so the checkbox never regenerated the
+  toolpath — `roundLinkCorners` had the same bug — now prevented by a
+  compile-enforced field table.
 - 2026-08-17: S2 (wall corner cleanup) reviewed and completed. Codex delivered
   the module and correctly deferred Pocket integration pending the planner
   correction; the integration in the tree was written afterwards and had not
@@ -167,7 +179,7 @@ RISKS: <none or concise unresolved risks>
   Verification: 5 of 6 corners cleaned on the L fixture with the reflex corner
   declined, zero domain excursions, legacy wall coverage exact (3.6e-15).
 
-## S3 — broad corners in tessellated regions (next slice, not started)
+## S3 — broad corners in tessellated regions (delivered)
 
 Approved shape, from the user 2026-08-18. Reuses the S2 cleanup pattern rather
 than inventing new geometry:
@@ -227,19 +239,61 @@ unnecessary: do not avoid leaving material at the tip, clean it.
 
 ### Acceptance
 
-Junction angle is the metric, not effective radius — the feature exists to keep
-feed up. Current baseline on that fixture, rounding on: 1045 cut junctions,
-median 5.0 deg, p95 12.5 deg, 16 at >=20 deg. A change ships only if the >=20 deg
-count goes down. Also required: the invariant fuzz stays clean, both wall-cleanup
-suites pass, and `npm run build` is green.
+Junction angle was chosen as the metric because the feature exists to keep feed
+up. It turned out to be nearly blind to this defect: a 0.006" fillet tessellated
+at 5 degrees reads as perfectly smooth junction-by-junction, so the census moved
+hardly at all while the emitted radius went from 3-8% of the request to 100%.
+The measure that sees it is curvature — minimum radius held and path length
+spent below half the request — and the measure that matters for safety is
+clearance. Both live in `scripts/issue-546-corner-probe.ts`.
+
+Delivered, measured on `pocket-rounded-corner-coverage.camj` (the fixture that
+found the one real bug), round corners on and wall cleanup off:
+
+| | cuts | length | time |
+| --- | --- | --- | --- |
+| corners off | 524 | 32.866" | 76.2s |
+| every cleanup loop kept | 2718 | 37.380" | 85.5s |
+| shipped | 1978 | 33.759" | 78.8s |
+
+Uncleared material, rounded against unsmoothed: 141 against 142 — rounding
+leaves slightly *less* stock than not rounding, on every fixture.
+
+### What the slice actually taught
+
+- **A broad arc has to be tangent to real source edges.** Fitting one to
+  shoulder lines read from further out — the reverted attempt — kinks, because
+  the approach curves and those lines have left the polyline by the time the arc
+  reaches them. Rolling a circle in until it jams against two actual edges is
+  what makes both junctions tangent-continuous.
+- **The neighbour set has to include island loops.** These corners live in
+  slivers pinched between an island and a wall, and there the island loop is the
+  pass that reaches the tip. Omitting it declined every corner on one side of
+  the reference fixture.
+- **Skipping a cleanup loop is a question about metal, not about a line.** The
+  loop sweeps stock either side of the span it retraces, so a span-based test
+  dropped a loop that was still the only pass clearing part of a floor, leaving
+  a 0.21 x 0.05" patch 0.0057" proud. `sweptRegionIsCovered` rasterises the
+  path's disc instead. A coverage margin is not a substitute: tightened until
+  the patch disappeared it declined so many corners the result carried more
+  motion than cleaning every one.
+- **The wall ring wants a different radius from the interior.** Interior rings
+  get shorter *and* faster at the full radius. The wall ring pays for its radius
+  twice, so its cost scales with the radius while the engagement benefit
+  saturates — break-even around half the derived radius. Not implemented.
+- **One fixture out of a hundred exercises the load-bearing path.** Three repo
+  pocket fixtures all reported that every cleanup loop was redundant, which is
+  exactly what made the wrong test look right. `pocket-rounded-corner-coverage.camj`
+  is committed for that reason.
 
 ## Open items
 
-- The rounded wall ring runs about 2.7x the sharp ring's length (80mm -> 217mm
-  on a 20x20 fixture): it cuts the corner smooth, returns along a cubic, then
-  cuts the sharp corner anyway. This is what the approved plan specifies and
-  coverage requires it, but the feature exists to save cycle time and on this
-  ring it spends it. Worth a product decision before delivery.
+- The rounded wall ring's cost was recorded as 2.7x the sharp ring's length
+  (80mm -> 217mm). That came from the 20x20 test fixture, where an 8mm radius is
+  enormous relative to the ring. Measured on real geometry it is **1.06x**
+  (14.402" -> 15.277"), costing about 2% cycle time and buying a drop in peak
+  corner engagement from 177 to 124 degrees. The product decision was taken:
+  wall cleanup ships opt-in behind `cleanWallCorners`, default off.
 - The cleanup loop is proven contained, not proven to run in already-cleared
   material. Under outer-first traversal the wall ring is cut before the
   interior, so a loop may swing into uncut stock; the plan accepts this with
