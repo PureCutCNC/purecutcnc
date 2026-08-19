@@ -1605,6 +1605,21 @@ export function CAMPanel({
                     </label>
                   ) : null}
                   {(selectedOperation.kind === 'pocket'
+                    && selectedOperation.pocketPattern !== 'parallel'
+                    && selectedOperation.roundOutsideCorners) ? (
+                    <label
+                      className="properties-check"
+                      title={camT('cam.operation.cleanWallCornersTooltip')}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedOperation.cleanWallCorners ?? false}
+                        onChange={(event) => updateOperation(selectedOperation.id, { cleanWallCorners: event.target.checked })}
+                      />
+                      <span>{camT('cam.operation.cleanWallCorners')}</span>
+                    </label>
+                  ) : null}
+                  {(selectedOperation.kind === 'pocket'
                     || selectedOperation.kind === 'edge_route_inside'
                     || selectedOperation.kind === 'edge_route_outside') ? (
                     <label

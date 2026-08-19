@@ -79,6 +79,7 @@ export const bookletEn = {
   'booklet.label.machiningOrder': 'Machining order',
   'booklet.label.roundOutsideCorners': 'Round outside corners',
   'booklet.label.roundLinkCorners': 'Round link junctions',
+  'booklet.label.cleanWallCorners': 'Round wall corners',
   'booklet.label.cornerRelief': 'Corner relief',
   'booklet.label.pattern': 'Pattern',
   'booklet.label.pocketAngle': 'Pocket angle',

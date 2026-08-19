@@ -566,6 +566,15 @@ export interface Operation {
    *  the engine level; operation defaults and load-time normalisation
    *  backfill it on, mirroring roundOutsideCorners. */
   roundLinkCorners?: boolean
+  /** Round the wall-adjacent (root) clearing ring too (issue #546). That ring
+   *  defines the wall, so rounding it removes coverage the wall needs; each
+   *  rounded corner therefore has to be paired with an immediate same-Z
+   *  cleanup that returns and traverses the exact sharp source span. The trade
+   *  is a large drop in peak corner engagement (177 deg to 124 deg measured on
+   *  `pocket-feed-reduction.camj`) for roughly 2% cycle time, so it is opt-in:
+   *  missing or false keeps the wall ring sharp. Only meaningful together with
+   *  `roundOutsideCorners`, which governs the interior rings on their own. */
+  cleanWallCorners?: boolean
   /** Corner-relief style cut as a dedicated stepped pass appended after the
    *  operation's main path. Missing or `'none'` emits no relief at all — a
    *  legacy operation must produce byte-identical G-code. Applies to Pocket and

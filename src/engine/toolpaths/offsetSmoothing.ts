@@ -24,33 +24,965 @@
 // pointed regardless of join type. Rounding them therefore has to be an
 // explicit fillet on the emitted polyline, which is what this module does.
 //
-// `roundContourCorners` replaces each sharp turn on a closed contour with a
-// tangent circular-arc fillet, tessellated to line segments (the toolpath move
-// model is polyline-only). The radius is clamped per corner to a fraction of
-// the shorter adjacent edge, so fillets on neighbouring corners never overlap
-// and short edges just get a smaller (or no) fillet. It is a pure emit-time
-// transform on the ring the tool follows: callers keep computing successive
-// insets from the exact, unsmoothed region so nothing drifts, and the
-// wall-defining passes are never routed through here.
+// `planContourSmoothing` is the pure contour-level turn planner: it analyzes
+// the whole closed ring first and produces the rounded contour plus metadata
+// describing every changed turn. `roundContourCorners` is the compatibility
+// wrapper that returns only the points. It is a pure emit-time transform on
+// the ring the tool follows: callers keep computing successive insets from the
+// exact, unsmoothed region so nothing drifts, and the wall-defining passes are
+// never routed through here.
+//
+// The planner works in five stages:
+//
+//  1. Analyze each vertex for its signed turn, degenerate (zero-length) edges
+//     and straight-through (collinear) vertices.
+//  2. Group consecutive same-sign turning vertices into one geometric turn
+//     run. Every turning vertex proposes the longest valid same-sign run it
+//     can start, and the broadest valid grouping wins, so a run split across
+//     the seam (source indices n-1 and 0) merges exactly like the same turn
+//     away from the seam. A run stays valid only while: the accumulated turn
+//     matches the turn between the run's entry/exit shoulder lines, the
+//     virtual apex of those lines sits on the corner side of the run (not
+//     behind a shoulder), and the tangent points do not fall beyond the run's
+//     endpoints.
+//  3. Guard genuinely smooth runs: when the run's *path* — its vertices and
+//     the midpoints of its segments — tracks a fitted circle whose radius is
+//     already at least the request, the source vertices are emitted unchanged,
+//     so a large source arc is never flattened or tightened merely because its
+//     accumulated turn exceeds the threshold. Measuring vertices alone would
+//     not do: any three points fit a circle exactly and a square's corners are
+//     concyclic, so a vertex-only test shields genuine corners.
+//  4. Allocate straight-edge setback at contour scope. An isolated corner may
+//     consume (nearly) a whole adjacent edge; when two transitions compete for
+//     one edge their setbacks scale proportionally, always leaving a small
+//     epsilon connector.
+//  5. Emit each transition as a circular arc tangent to its entry and exit
+//     shoulders, tessellated with the shared arc-step contract. A turn whose
+//     allocation no longer keeps both tangent points on their shoulder edges
+//     is declined and keeps its source geometry, and the whole contour falls
+//     back to the unchanged source if the planned ring self-intersects or any
+//     coordinate stops being finite.
 
 import type { Point } from '../../types/project'
+import { findBroadCornerArc, type BroadCornerArc } from './broadCornerArc'
 import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
 
 export interface RoundContourOptions {
-  /** Only round turns whose deflection (0 = straight, 180 = full reversal)
-   *  exceeds this. Gentle turns are left as-is. */
+  /** Only round turns whose accumulated deflection (0 = straight, 180 = full
+   *  reversal) exceeds this. Gentle turns are left as-is. */
   minDeflectionDeg?: number
   /** Angular tessellation step for the fillet arcs, in radians. */
   arcStepRadians?: number
-  /** Largest share of each adjacent edge a corner's fillet may consume. At the
-   *  0.5 default a fillet uses at most half of each edge, so the fillets at the
-   *  two ends of a shared edge can never overlap. */
-  maxEdgeFraction?: number
+  /** Let a turn starved by short tessellation edges be cut with one arc at the
+   *  full requested radius, across as many source vertices as that takes. The
+   *  arc then leaves a tip of material behind, so a caller may only enable
+   *  this if it cleans every transition reporting `cutsAcrossSource`. Off (the
+   *  default) is today's exact output. */
+  broadCorners?: boolean
+}
+
+/** One changed turn on the smoothed contour. */
+export interface ContourTurnTransition {
+  /** Cyclic source index of the first vertex of the changed turn run. Runs are
+   *  cyclic intervals: a run crossing the seam has firstIndex > lastIndex. */
+  firstIndex: number
+  /** Cyclic source index of the last vertex of the changed turn run. */
+  lastIndex: number
+  /** Source indices of every vertex in the run, in contour order (wrapping
+   *  from n-1 to 0 when the run crosses the seam). */
+  runIndices: number[]
+  /** Accumulated signed turn of the run, radians, in (-π, π]. The sign is the
+   *  heading rotation of the path at the run (atan2 convention: positive is
+   *  counterclockwise in standard math orientation). */
+  signedTurn: number
+  /** The radius the transition was requested with. */
+  requestedRadius: number
+  /** The radius actually emitted, never larger than the request. */
+  effectiveRadius: number
+  /** Tangent point where the transition leaves the incoming shoulder edge. */
+  entry: Point
+  /** Tangent point where the transition rejoins the outgoing shoulder edge. */
+  exit: Point
+  /** Emitted transition points in order, entry first and exit last. */
+  transitionPoints: Point[]
+  /** Source edge index (the edge from firstIndex-1 to firstIndex, cyclic) the
+   *  entry setback is taken from. */
+  entryEdgeIndex: number
+  /** Source edge index (the edge from lastIndex to lastIndex+1, cyclic) the
+   *  exit setback is taken from. */
+  exitEdgeIndex: number
+  /** True when the arc cuts across its own source vertices rather than easing
+   *  off the two edges adjacent to the corner, so it leaves a tip of material
+   *  behind. The caller must clean that tip; see `spanPoints`. */
+  cutsAcrossSource: boolean
+  /** The geometry to traverse when cleaning the tip: the source vertices this
+   *  transition cut across, with the ordinary fillet spliced in at the corner
+   *  so the cleanup rejoins on a curve instead of a point. Starts on the
+   *  transition's own entry edge and ends on its exit edge. Only present when
+   *  `cutsAcrossSource` is true. */
+  spanPoints?: Point[]
+}
+
+/** Result of the pure contour-level turn planner. */
+export interface ContourSmoothingPlan {
+  /** The normalized source ring (distinct vertices, no duplicated closing
+   *  point). All indices in `transitions` refer to this array, cyclically. */
+  sourcePoints: Point[]
+  /** The final emitted contour (same cyclic order, no duplicated closing
+   *  point). When nothing changed this is the source ring itself. */
+  points: Point[]
+  /** The radius the plan was computed for (as passed in). */
+  requestedRadius: number
+  /** One entry per changed turn, in emitted contour order (source cyclic
+   *  order starting at index 0). */
+  transitions: ContourTurnTransition[]
 }
 
 const DEFAULT_MIN_DEFLECTION_DEG = 20
-const DEFAULT_MAX_EDGE_FRACTION = 0.5
 const EPS = 1e-9
+/** Below this magnitude of signed turn a vertex is treated as collinear. */
+const STRAIGHT_TURN_EPS = 1e-6
+/** Allowed mismatch between a run's accumulated turn and its shoulder turn. */
+const TURN_CONSISTENCY_EPS = 1e-6
+/** Fraction of each edge always reserved as a straight connector. */
+const CONNECTOR_FRACTION = 1e-6
+/** Max relative deviation of a run's polyline (vertices and segment midpoints)
+ *  from its fitted circle before the run stops counting as genuinely smooth.
+ *  Sits between a tessellated arc (1.9% at 22.5 degrees per vertex) and a
+ *  square corner (29%). */
+const SMOOTH_DEV_TOL = 0.05
+/** A transition below this fraction of the request is starved enough to be
+ *  worth cutting the corner outright and cleaning the tip afterwards. */
+const BROAD_CORNER_TRIGGER = 0.9
+
+interface Vec {
+  x: number
+  y: number
+}
+
+/** Per-vertex analysis of the source ring. */
+interface VertexInfo {
+  point: Point
+  /** True when an adjacent edge is zero-length; never part of a turn run. */
+  degenerate: boolean
+  /** True when the vertex is effectively collinear; breaks turn runs. */
+  straight: boolean
+  /** Signed turn at the vertex, radians, in (-π, π]. */
+  signedTurn: number
+  /** Unit direction from the vertex toward its previous neighbour. */
+  uPrev: Vec | null
+  /** Unit direction from the vertex toward its next neighbour. */
+  uNext: Vec | null
+  prevLen: number
+  nextLen: number
+}
+
+/** Validated geometric description of one candidate turn run. */
+interface RunGeometry {
+  start: number
+  end: number
+  signedTurn: number
+  tanHalf: number
+  sinHalf: number
+  /** Apex coordinate along uPrev measured from the run start vertex (<= 0). */
+  apexIn: number
+  /** Apex coordinate along uNext measured from the run end vertex (<= 0). */
+  apexOut: number
+  /** Distance of the apex beyond the run start, along the incoming shoulder. */
+  dIn: number
+  /** Distance of the apex beyond the run end, along the outgoing shoulder. */
+  dOut: number
+  /** Desired distance from the apex to each tangent point (<= request). */
+  sDesired: number
+}
+
+/** A transition with its allocated setbacks and emitted arc. */
+interface PlannedTransition {
+  start: number
+  end: number
+  signedTurn: number
+  radius: number
+  entry: Point
+  exit: Point
+  points: Point[]
+  /** Set on transitions produced by the broad-corner search, which cut across
+   *  their own source vertices and so leave a tip for the caller to clean. */
+  cutsAcrossSource?: boolean
+  spanPoints?: Point[]
+}
+
+function normalizeSignedAngle(angle: number): number {
+  let value = angle
+  while (value > Math.PI) value -= 2 * Math.PI
+  while (value <= -Math.PI) value += 2 * Math.PI
+  return value
+}
+
+function isFinitePoint(point: Point): boolean {
+  return Number.isFinite(point.x) && Number.isFinite(point.y)
+}
+
+function cross(a: Vec, b: Vec): number {
+  return a.x * b.y - a.y * b.x
+}
+
+function det3(
+  a11: number, a12: number, a13: number,
+  a21: number, a22: number, a23: number,
+  a31: number, a32: number, a33: number,
+): number {
+  return (
+    a11 * (a22 * a33 - a23 * a32)
+    - a12 * (a21 * a33 - a23 * a31)
+    + a13 * (a21 * a32 - a22 * a31)
+  )
+}
+
+/** Least-squares (Kasa) circle fit; null when degenerate. */
+function fitCircleKasa(points: Point[]): { cx: number; cy: number; radius: number } | null {
+  let sx = 0
+  let sy = 0
+  let sz = 0
+  let sxx = 0
+  let syy = 0
+  let sxy = 0
+  let szx = 0
+  let szy = 0
+  for (const point of points) {
+    const { x, y } = point
+    const z = x * x + y * y
+    sx += x
+    sy += y
+    sz += z
+    sxx += x * x
+    syy += y * y
+    sxy += x * y
+    szx += z * x
+    szy += z * y
+  }
+  const count = points.length
+  const detA = det3(sxx, sxy, sx, sxy, syy, sy, sx, sy, count)
+  if (Math.abs(detA) <= EPS || !Number.isFinite(detA)) return null
+  const d = det3(-szx, sxy, sx, -szy, syy, sy, -sz, sy, count) / detA
+  const e = det3(sxx, -szx, sx, sxy, -szy, sy, sx, -sz, count) / detA
+  const f = det3(sxx, sxy, -szx, sxy, syy, -szy, sx, sy, -sz) / detA
+  const cx = -d / 2
+  const cy = -e / 2
+  const radiusSq = (d * d + e * e) / 4 - f
+  if (!(radiusSq > 0) || !Number.isFinite(radiusSq)) return null
+  return { cx, cy, radius: Math.sqrt(radiusSq) }
+}
+
+function analyzeRing(ring: Point[]): VertexInfo[] {
+  const count = ring.length
+  return ring.map((point, index) => {
+    const previous = ring[(index + count - 1) % count]
+    const next = ring[(index + 1) % count]
+    const toPrev = { x: previous.x - point.x, y: previous.y - point.y }
+    const toNext = { x: next.x - point.x, y: next.y - point.y }
+    const prevLen = Math.hypot(toPrev.x, toPrev.y)
+    const nextLen = Math.hypot(toNext.x, toNext.y)
+    if (prevLen <= EPS || nextLen <= EPS) {
+      return {
+        point,
+        degenerate: true,
+        straight: true,
+        signedTurn: 0,
+        uPrev: null,
+        uNext: null,
+        prevLen,
+        nextLen,
+      }
+    }
+    const uPrev = { x: toPrev.x / prevLen, y: toPrev.y / prevLen }
+    const uNext = { x: toNext.x / nextLen, y: toNext.y / nextLen }
+    const signedTurn = normalizeSignedAngle(
+      Math.atan2(uNext.y, uNext.x) - Math.atan2(uPrev.y, uPrev.x) - Math.PI,
+    )
+    return {
+      point,
+      degenerate: false,
+      straight: Math.abs(signedTurn) < STRAIGHT_TURN_EPS,
+      signedTurn,
+      uPrev,
+      uNext,
+      prevLen,
+      nextLen,
+    }
+  })
+}
+
+/** Number of vertex-to-vertex steps in the cyclic interval start..end. */
+function cyclicRunLength(count: number, start: number, end: number): number {
+  return (end - start + count) % count
+}
+
+/**
+ * Build the geometric description of the run infos[start..end] and validate it:
+ * shoulder-turn consistency, a convex virtual apex (not behind either
+ * shoulder), and tangent points that do not fall beyond the run endpoints.
+ * Returns null when the run is not a usable corner.
+ */
+function buildRun(
+  infos: VertexInfo[],
+  start: number,
+  end: number,
+  request: number,
+  signedTurn: number,
+): RunGeometry | null {
+  const uPrev = infos[start].uPrev
+  const uNext = infos[end].uNext
+  if (!uPrev || !uNext) return null
+  const shoulderTurn = normalizeSignedAngle(
+    Math.atan2(uNext.y, uNext.x) - Math.atan2(uPrev.y, uPrev.x) - Math.PI,
+  )
+  if (Math.abs(signedTurn - shoulderTurn) > TURN_CONSISTENCY_EPS) {
+    return null
+  }
+  const dot = Math.max(-1, Math.min(1, uPrev.x * uNext.x + uPrev.y * uNext.y))
+  const interior = Math.acos(dot)
+  const tanHalf = Math.tan(interior / 2)
+  if (!(tanHalf > EPS) || !Number.isFinite(tanHalf)) return null
+  const denom = cross(uPrev, uNext)
+  if (Math.abs(denom) <= EPS) return null
+  const w = {
+    x: infos[end].point.x - infos[start].point.x,
+    y: infos[end].point.y - infos[start].point.y,
+  }
+  const apexIn = cross(w, uNext) / denom
+  const apexOut = cross(w, uPrev) / denom
+  // A convex corner has its virtual apex on the far side of the run; an apex
+  // behind a shoulder would send the tangent points backward.
+  if (apexIn > EPS || apexOut > EPS || !Number.isFinite(apexIn) || !Number.isFinite(apexOut)) {
+    return null
+  }
+  const dIn = -apexIn
+  const dOut = -apexOut
+  // Tangent distance from the apex, capped at the request so an acute corner
+  // never retreats farther than the radius (the leftover-crescent bound).
+  const sDesired = Math.min(request / tanHalf, request)
+  if (sDesired < dIn - EPS || sDesired < dOut - EPS) return null
+  return {
+    start,
+    end,
+    signedTurn,
+    tanHalf,
+    sinHalf: Math.sin(interior / 2),
+    apexIn,
+    apexOut,
+    dIn,
+    dOut,
+    sDesired,
+  }
+}
+
+/** Local circle fit over the run's vertices; null for runs shorter than 3. */
+function fitLocalCircle(infos: VertexInfo[], start: number, end: number): {
+  radius: number
+  smooth: boolean
+} | null {
+  const count = infos.length
+  const length = cyclicRunLength(count, start, end)
+  if (length < 2) return null
+  const points: Point[] = []
+  for (let offset = 0; offset <= length; offset += 1) {
+    points.push(infos[(start + offset) % count].point)
+  }
+  const fit = fitCircleKasa(points)
+  if (!fit) return null
+  // Measure the *path*, not just the vertices. Vertices alone say almost
+  // nothing: any three points fit a circle exactly, and the corners of a square
+  // are perfectly concyclic — a vertex-only test calls both "smooth" and would
+  // shield a genuine corner from being rounded. The segment midpoints are where
+  // a chord departs from the circle it is approximating, so including them
+  // measures how closely the polyline actually tracks the fitted arc. For
+  // points sampled on a circle at per-vertex turn d the midpoint deviation is
+  // 1 - cos(d/2): 1.9% at 22.5 degrees (a tessellated arc, genuinely smooth)
+  // against 29% at 90 degrees (a square corner, not smooth at all).
+  let maxDev = 0
+  const measure = (x: number, y: number): void => {
+    const dist = Math.hypot(x - fit.cx, y - fit.cy)
+    maxDev = Math.max(maxDev, Math.abs(dist - fit.radius) / fit.radius)
+  }
+  for (let index = 0; index < points.length; index += 1) {
+    measure(points[index].x, points[index].y)
+    if (index + 1 < points.length) {
+      const next = points[index + 1]
+      measure((points[index].x + next.x) / 2, (points[index].y + next.y) / 2)
+    }
+  }
+  return { radius: fit.radius, smooth: maxDev <= SMOOTH_DEV_TOL }
+}
+
+/**
+ * Group the ring into validated corner runs, each a cyclic index interval
+ * into `infos` (start exceeds end when a run wraps the seam).
+ *
+ * A candidate run is built greedily from every turning vertex, extending over
+ * consecutive same-sign turning vertices while the run stays valid. The final
+ * grouping then picks the longest valid candidate first, so a broad
+ * multi-vertex turn absorbs the sub-runs it contains instead of being
+ * fragmented by them. Every decision (candidate geometry, length, and the
+ * coordinates that break length ties) is a property of the geometry rather
+ * than of the indexing, so the grouping is seam-invariant: a multi-vertex turn
+ * split across source indices n-1 and 0 merges into the same broad transition
+ * as the same contour rotated away from the seam.
+ */
+function findTurnRuns(
+  infos: VertexInfo[],
+  request: number,
+  minDeflection: number,
+): RunGeometry[] {
+  const count = infos.length
+  // Prefix sums give each candidate's accumulated turn in O(1) no matter how
+  // many vertices it wraps.
+  const prefixTurn: number[] = new Array<number>(count + 1)
+  prefixTurn[0] = 0
+  for (let index = 0; index < count; index += 1) {
+    prefixTurn[index + 1] = prefixTurn[index] + infos[index].signedTurn
+  }
+  const turnSum = (start: number, end: number): number =>
+    end >= start
+      ? prefixTurn[end + 1] - prefixTurn[start]
+      : prefixTurn[count] - prefixTurn[start] + prefixTurn[end + 1]
+
+  const candidates: RunGeometry[] = []
+  for (let start = 0; start < count; start += 1) {
+    const info = infos[start]
+    if (info.degenerate || info.straight) continue
+    let run = buildRun(infos, start, start, request, info.signedTurn)
+    if (!run) continue
+    let end = start
+    while (true) {
+      const next = (end + 1) % count
+      if (next === start) break
+      const nextInfo = infos[next]
+      if (nextInfo.degenerate || nextInfo.straight) break
+      if (Math.sign(nextInfo.signedTurn) !== Math.sign(info.signedTurn)) break
+      const extended = buildRun(infos, start, next, request, turnSum(start, next))
+      if (!extended) break
+      end = next
+      run = extended
+    }
+    candidates.push(run)
+  }
+
+  // Longest valid grouping first. Length ties resolve on the start vertex's
+  // coordinates, not its index: index order is relabelled by the seam, so two
+  // equal-length candidates could swap places when the same contour arrived
+  // from a different start vertex, and the winner claims vertices the loser
+  // then cannot use — one flipped tie re-groups the whole ring. Coordinates
+  // travel with the geometry, so the grouping does not.
+  candidates.sort((a, b) => {
+    const lengthA = cyclicRunLength(count, a.start, a.end)
+    const lengthB = cyclicRunLength(count, b.start, b.end)
+    return lengthB - lengthA
+      || infos[a.start].point.x - infos[b.start].point.x
+      || infos[a.start].point.y - infos[b.start].point.y
+  })
+
+  // A candidate whose source geometry is already at least as broad as the
+  // request keeps its vertices verbatim, so no other run may consume any.
+  const preserved = new Array<boolean>(count).fill(false)
+  for (const run of candidates) {
+    const local = fitLocalCircle(infos, run.start, run.end)
+    if (!local || !local.smooth || local.radius < request) continue
+    for (let offset = 0; offset <= cyclicRunLength(count, run.start, run.end); offset += 1) {
+      preserved[(run.start + offset) % count] = true
+    }
+  }
+
+  const covered = new Array<boolean>(count).fill(false)
+  const overlaps = (run: RunGeometry): boolean => {
+    for (let offset = 0; offset <= cyclicRunLength(count, run.start, run.end); offset += 1) {
+      const index = (run.start + offset) % count
+      if (preserved[index] || covered[index]) return true
+    }
+    return false
+  }
+  const runs: RunGeometry[] = []
+  for (const run of candidates) {
+    if (Math.abs(run.signedTurn) < minDeflection) continue
+    if (overlaps(run)) continue
+    runs.push(run)
+    for (let offset = 0; offset <= cyclicRunLength(count, run.start, run.end); offset += 1) {
+      covered[(run.start + offset) % count] = true
+    }
+  }
+  return runs
+}
+
+/**
+ * True when segments [a, b] and [c, d] share an interior point (a proper
+ * crossing or a collinear overlap; endpoint-only contact does not count).
+ */
+function segmentsProperlyIntersect(a: Point, b: Point, c: Point, d: Point): boolean {
+  const orientation = (p: Point, q: Point, r: Point): number =>
+    (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)
+  const strictlyInside = (p: Point, q: Point, r: Point): boolean => {
+    if (Math.abs(q.x - p.x) >= Math.abs(q.y - p.y)) {
+      const min = Math.min(p.x, q.x)
+      const max = Math.max(p.x, q.x)
+      return r.x > min && r.x < max
+    }
+    const min = Math.min(p.y, q.y)
+    const max = Math.max(p.y, q.y)
+    return r.y > min && r.y < max
+  }
+  const d1 = orientation(c, d, a)
+  const d2 = orientation(c, d, b)
+  const d3 = orientation(a, b, c)
+  const d4 = orientation(a, b, d)
+  if (
+    ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0))
+    && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+  ) {
+    return true
+  }
+  if (d1 === 0 && strictlyInside(c, d, a)) return true
+  if (d2 === 0 && strictlyInside(c, d, b)) return true
+  if (d3 === 0 && strictlyInside(a, b, c)) return true
+  if (d4 === 0 && strictlyInside(a, b, d)) return true
+  return false
+}
+
+/**
+ * True when the closed contour has any two non-adjacent segments sharing an
+ * interior point. The guard runs on the final emitted contour, so every newly
+ * emitted segment is checked against every other segment no matter how many
+ * unchanged source vertices sit between transitions. Segment bounding boxes
+ * gate the pairwise check, so densely tessellated contours stay near-linear.
+ */
+function contourSelfIntersects(out: Point[]): boolean {
+  const count = out.length
+  if (count < 4) return false
+  const minX = new Float64Array(count)
+  const maxX = new Float64Array(count)
+  const minY = new Float64Array(count)
+  const maxY = new Float64Array(count)
+  let totalX = 0
+  let totalY = 0
+  for (let index = 0; index < count; index += 1) {
+    const a = out[index]
+    const b = out[(index + 1) % count]
+    minX[index] = Math.min(a.x, b.x)
+    maxX[index] = Math.max(a.x, b.x)
+    minY[index] = Math.min(a.y, b.y)
+    maxY[index] = Math.max(a.y, b.y)
+    totalX += maxX[index] - minX[index]
+    totalY += maxY[index] - minY[index]
+  }
+  // Sweep along the axis on which the segments are shorter, so a contour made
+  // of long horizontal runs is swept by y (and long vertical runs by x).
+  const sweepX = totalX <= totalY
+  const lo = sweepX ? minX : minY
+  const hi = sweepX ? maxX : maxY
+  const loOther = sweepX ? minY : minX
+  const hiOther = sweepX ? maxY : maxX
+  const order = Array.from({ length: count }, (_, index) => index).sort(
+    (a, b) => lo[a] - lo[b],
+  )
+  for (let i = 0; i < count; i += 1) {
+    const first = order[i]
+    for (let k = i + 1; k < count; k += 1) {
+      const second = order[k]
+      if (lo[second] > hi[first]) break
+      const gap = second - first
+      if (gap === 1 || gap === -1 || gap === count - 1 || gap === 1 - count) continue
+      if (hiOther[second] < loOther[first] || hiOther[first] < loOther[second]) continue
+      if (segmentsProperlyIntersect(
+        out[first], out[(first + 1) % count],
+        out[second], out[(second + 1) % count],
+      )) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+/** Tessellate a circular arc from `entry` to `exit` at the shared arc step. */
+function tessellateArc(
+  centre: Vec,
+  radius: number,
+  entry: Point,
+  exit: Point,
+  sweep: number,
+  arcStep: number,
+): Point[] {
+  const startAngle = Math.atan2(entry.y - centre.y, entry.x - centre.x)
+  const steps = Math.max(1, Math.ceil(Math.abs(sweep) / arcStep))
+  const points: Point[] = [entry]
+  for (let step = 1; step < steps; step += 1) {
+    const angle = startAngle + (sweep * step) / steps
+    points.push({
+      x: centre.x + radius * Math.cos(angle),
+      y: centre.y + radius * Math.sin(angle),
+    })
+  }
+  points.push(exit)
+  return points
+}
+
+/** Position of `point` along the source edge starting at `index`. */
+function edgeParameter(ring: Point[], index: number, point: Point): number {
+  const count = ring.length
+  const from = ring[index % count]
+  const to = ring[(index + 1) % count]
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const lengthSquared = dx * dx + dy * dy
+  if (!(lengthSquared > EPS * EPS)) return 0
+  return ((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSquared
+}
+
+/**
+ * The geometry a broad arc cut away, as the planner would otherwise have
+ * emitted it: the source vertices of the span with the ordinary fillet spliced
+ * back in at the corner. That fillet is what gives the cleanup a curve to
+ * rejoin on instead of the bare apex — traversing the raw vertex would put the
+ * corner's full deflection straight back into the emitted path.
+ */
+function buildSpanGeometry(
+  ring: Point[],
+  standard: PlannedTransition[],
+  arc: BroadCornerArc,
+): Point[] {
+  const count = ring.length
+  const first = (arc.entryEdge + 1) % count
+  const last = arc.exitEdge % count
+  const spanLength = cyclicRunLength(count, first, last)
+  const entryLimit = edgeParameter(ring, arc.entryEdge, arc.entry)
+  const exitLimit = edgeParameter(ring, arc.exitEdge, arc.exit)
+  const points: Point[] = []
+  for (let offset = 0; offset <= spanLength;) {
+    const index = (first + offset) % count
+    const inner = standard.find((transition) => transition.start === index)
+    const innerLength = inner ? cyclicRunLength(count, inner.start, inner.end) : 0
+    const spliceable = inner !== undefined
+      && offset + innerLength <= spanLength
+      // A fillet sharing an edge with the broad arc may only be spliced while
+      // it stays between the arc's own tangent points; otherwise the traversal
+      // would double back over the arc it is cleaning up after.
+      && (inner.start !== first
+        || edgeParameter(ring, arc.entryEdge, inner.entry) > entryLimit + EPS)
+      && (inner.end !== last
+        || edgeParameter(ring, arc.exitEdge, inner.exit) < exitLimit - EPS)
+    if (inner && spliceable) {
+      points.push(...inner.points)
+      offset += innerLength + 1
+      continue
+    }
+    points.push(ring[index])
+    offset += 1
+  }
+  return points
+}
+
+/**
+ * Replace starved transitions with one full-radius arc each.
+ *
+ * A turn approached through short tessellation edges has no straight edge to
+ * set back into, so the ordinary construction emits a few percent of the
+ * requested radius. Where a circle of the full radius jams into the corner
+ * against two real source edges, that arc is emitted instead — cutting across
+ * the source vertices between the two tangent points, which is exactly why the
+ * result is marked `cutsAcrossSource` and is only planned when the caller has
+ * said it will clean the tip.
+ *
+ * A candidate is declined when it would partly overlap another transition (it
+ * may absorb one entirely — the arc replaces that geometry, and the cleanup
+ * traversal splices it back in) or when its span is already claimed.
+ */
+function applyBroadCorners(
+  ring: Point[],
+  runs: RunGeometry[],
+  standard: PlannedTransition[],
+  radius: number,
+  arcStep: number,
+): PlannedTransition[] {
+  const count = ring.length
+  // Anchor on the turn runs, not on the transitions they produced. A corner
+  // starved badly enough emits no transition at all — its whole setback was
+  // eaten by a neighbour — and anchoring on the output would skip exactly the
+  // corners that need this most.
+  const emitted = new Map<number, PlannedTransition>(
+    standard.map((transition) => [transition.start, transition]),
+  )
+  const starved = runs
+    .filter((run) => (emitted.get(run.start)?.radius ?? 0) < radius * BROAD_CORNER_TRIGGER)
+    .sort((a, b) => a.start - b.start)
+  if (starved.length === 0) return standard
+
+  const claimed = new Array<boolean>(count).fill(false)
+  const result = [...standard]
+  const absorbed = new Set<PlannedTransition>()
+  for (const run of starved) {
+    const arc = findBroadCornerArc({
+      points: ring,
+      apexFirst: run.start,
+      apexLast: run.end,
+      turnSign: run.signedTurn >= 0 ? 1 : -1,
+      radius,
+    })
+    if (!arc) continue
+    const first = (arc.entryEdge + 1) % count
+    const last = arc.exitEdge % count
+    const spanLength = cyclicRunLength(count, first, last)
+    const span: number[] = Array.from(
+      { length: spanLength + 1 },
+      (_, offset) => (first + offset) % count,
+    )
+    if (span.some((index) => claimed[index])) continue
+    // Every transition the span touches has to be inside it: a partial overlap
+    // would leave two arcs fighting over the same source vertices.
+    const touched = result.filter((other) => !absorbed.has(other)
+      && span.some((index) => cyclicRunLength(count, other.start, index) <= cyclicRunLength(count, other.start, other.end)))
+    if (touched.some((other) => !span.includes(other.start) || !span.includes(other.end))) continue
+    // The broad search jams a circle against two source edges without going
+    // through the contour-scope setback allocation, so it can plant a tangent
+    // point behind a neighbouring transition that is already using the same
+    // edge. Two corners either side of one short edge do exactly that, and the
+    // emitted path then jumps forward and doubles straight back on itself.
+    // Ordering along the shared edge is the whole test; a broad arc that
+    // cannot keep it declines and the corner keeps its starved fillet.
+    const entryAt = edgeParameter(ring, arc.entryEdge, arc.entry)
+    const exitAt = edgeParameter(ring, arc.exitEdge, arc.exit)
+    const reverses = result.some((other) => {
+      if (absorbed.has(other) || touched.includes(other)) return false
+      if (other.end % count === arc.entryEdge
+        && edgeParameter(ring, arc.entryEdge, other.exit) > entryAt - EPS) return true
+      if ((other.start - 1 + count) % count === arc.exitEdge
+        && edgeParameter(ring, arc.exitEdge, other.entry) < exitAt + EPS) return true
+      return false
+    })
+    if (reverses) continue
+
+    const centre = {
+      x: arc.centre.x,
+      y: arc.centre.y,
+    }
+    const points = tessellateArc(centre, radius, arc.entry, arc.exit, arc.sweep, arcStep)
+    if (!points.every(isFinitePoint)) continue
+    const spanPoints = buildSpanGeometry(ring, standard, arc)
+    if (!spanPoints.every(isFinitePoint) || spanPoints.length === 0) continue
+
+    for (const other of touched) absorbed.add(other)
+    for (const index of span) claimed[index] = true
+    result.push({
+      start: first,
+      end: last,
+      signedTurn: arc.sweep,
+      radius,
+      entry: arc.entry,
+      exit: arc.exit,
+      points,
+      cutsAcrossSource: true,
+      spanPoints,
+    })
+  }
+  return result.filter((transition) => !absorbed.has(transition))
+}
+
+/**
+ * Plan the corner smoothing of one closed contour.
+ *
+ * `points` is a closed ring given as distinct vertices with no duplicated
+ * closing point (the shape `buildContourLoops` produces). A non-positive
+ * `radius`, a degenerate ring (< 3 points), or corners too shallow to matter
+ * return the input vertices unchanged, so passing no radius is a no-op. On any
+ * validation failure the plan fails closed to the unchanged source geometry.
+ */
+export function planContourSmoothing(
+  points: Point[],
+  radius: number,
+  options: RoundContourOptions = {},
+): ContourSmoothingPlan {
+  const identity: ContourSmoothingPlan = {
+    sourcePoints: points,
+    points,
+    requestedRadius: radius,
+    transitions: [],
+  }
+  if (!(radius > 0) || points.length < 3) return identity
+  for (const point of points) {
+    if (!isFinitePoint(point)) return identity
+  }
+
+  // Work on a clean cyclic ring: drop a duplicated closing vertex if present so
+  // the seam corner is rounded like any other (Clipper output has none, but
+  // contours from other sources may).
+  const first = points[0]
+  const last = points[points.length - 1]
+  const ring = Math.abs(first.x - last.x) <= EPS && Math.abs(first.y - last.y) <= EPS
+    ? points.slice(0, -1)
+    : points
+  if (ring.length < 3) return identity
+
+  const minDeflection = ((options.minDeflectionDeg ?? DEFAULT_MIN_DEFLECTION_DEG) * Math.PI) / 180
+  const arcStep = Math.max(options.arcStepRadians ?? DEFAULT_FLATTEN_ARC_STEP, 1e-3)
+  const infos = analyzeRing(ring)
+  const runs = findTurnRuns(infos, radius, minDeflection)
+  if (runs.length === 0) {
+    return { sourcePoints: ring, points: ring, requestedRadius: radius, transitions: [] }
+  }
+
+  // Contour-scope setback allocation. Each source edge can be consumed from
+  // its start (a run's exit setback) and/or its end (a run's entry setback).
+  const count = ring.length
+  const edgeConsumers: Array<Array<{ run: number; side: 'in' | 'out'; tDes: number }>> =
+    Array.from({ length: count }, () => [])
+  runs.forEach((run, runIndex) => {
+    const entryEdge = (run.start - 1 + count) % count
+    const exitEdge = run.end % count
+    edgeConsumers[entryEdge].push({ run: runIndex, side: 'in', tDes: run.sDesired - run.dIn })
+    edgeConsumers[exitEdge].push({ run: runIndex, side: 'out', tDes: run.sDesired - run.dOut })
+  })
+  const allocated: Array<{ tIn: number; tOut: number }> = runs.map(() => ({ tIn: 0, tOut: 0 }))
+  for (let edge = 0; edge < count; edge += 1) {
+    const consumers = edgeConsumers[edge]
+    if (consumers.length === 0) continue
+    const next = ring[(edge + 1) % count]
+    const edgeLen = Math.hypot(next.x - ring[edge].x, next.y - ring[edge].y)
+    const available = edgeLen * (1 - CONNECTOR_FRACTION)
+    const sum = consumers.reduce((acc, consumer) => acc + consumer.tDes, 0)
+    const factor = sum > available ? available / sum : 1
+    for (const consumer of consumers) {
+      const value = consumer.tDes * factor
+      if (consumer.side === 'in') allocated[consumer.run].tIn = value
+      else allocated[consumer.run].tOut = value
+    }
+  }
+
+  // Emit the tangent arc for every run whose transition survives.
+  const transitions: PlannedTransition[] = []
+  runs.forEach((run, runIndex) => {
+    const s = Math.min(allocated[runIndex].tIn + run.dIn, allocated[runIndex].tOut + run.dOut)
+    // `buildRun` accepted this run because the apex was far enough out to put
+    // both tangent points on the shoulder edges (sDesired >= dIn, dOut). A
+    // starved allocation on one shoulder can pull `s` back below the other
+    // shoulder's apex distance, which puts that tangent point *inside* the run:
+    // the emitted path would then leave the ring past the source vertex,
+    // running along the extended edge instead of easing off it. Decline the
+    // turn and keep its exact source geometry. Raising `s` back to
+    // max(dIn, dOut) is never available — s < max(dIn, dOut) says precisely
+    // that the starved shoulder cannot fund the setback such a clamp needs.
+    if (s < Math.max(run.dIn, run.dOut) - EPS) return
+    const effectiveRadius = s * run.tanHalf
+    if (!(effectiveRadius > EPS) || !Number.isFinite(effectiveRadius)) return
+    const uPrev = infos[run.start].uPrev
+    const uNext = infos[run.end].uNext
+    if (!uPrev || !uNext) return
+    if (!(run.sinHalf > EPS)) return
+    const tIn = s - run.dIn
+    const tOut = s - run.dOut
+    const entry = {
+      x: ring[run.start].x + uPrev.x * tIn,
+      y: ring[run.start].y + uPrev.y * tIn,
+    }
+    const exit = {
+      x: ring[run.end].x + uNext.x * tOut,
+      y: ring[run.end].y + uNext.y * tOut,
+    }
+    let bisector: Vec = { x: uPrev.x + uNext.x, y: uPrev.y + uNext.y }
+    const bisectorLen = Math.hypot(bisector.x, bisector.y)
+    if (bisectorLen <= EPS) return
+    bisector = { x: bisector.x / bisectorLen, y: bisector.y / bisectorLen }
+    const apex = {
+      x: ring[run.start].x + run.apexIn * uPrev.x,
+      y: ring[run.start].y + run.apexIn * uPrev.y,
+    }
+    const center = {
+      x: apex.x + bisector.x * (effectiveRadius / run.sinHalf),
+      y: apex.y + bisector.y * (effectiveRadius / run.sinHalf),
+    }
+    const startAngle = Math.atan2(entry.y - center.y, entry.x - center.x)
+    const endAngle = Math.atan2(exit.y - center.y, exit.x - center.x)
+    const sweep = normalizeSignedAngle(endAngle - startAngle)
+    const arcPoints = tessellateArc(center, effectiveRadius, entry, exit, sweep, arcStep)
+    if (!arcPoints.every(isFinitePoint)) return
+    transitions.push({
+      start: run.start,
+      end: run.end,
+      signedTurn: run.signedTurn,
+      radius: effectiveRadius,
+      entry,
+      exit,
+      points: arcPoints,
+    })
+  })
+
+  const planned = options.broadCorners
+    ? applyBroadCorners(ring, runs, transitions, radius, arcStep)
+    : transitions
+
+  if (planned.length === 0) {
+    return { sourcePoints: ring, points: ring, requestedRadius: radius, transitions: [] }
+  }
+
+  // Emission walks the ring from index 0, replacing every run with its arc.
+  // Runs are disjoint cyclic intervals; the one containing vertex 0 (if any)
+  // is exactly the run with start > end, and opens the walk with its full arc.
+  const wrapped = planned.find((transition) => transition.start > transition.end)
+  const walkOrder = wrapped
+    ? [wrapped, ...planned.filter((transition) => transition !== wrapped).sort((a, b) => a.start - b.start)]
+    : [...planned].sort((a, b) => a.start - b.start)
+  const out: Point[] = []
+  let cursor = wrapped ? wrapped.end + 1 : 0
+  if (wrapped) out.push(...wrapped.points)
+  for (const transition of walkOrder) {
+    if (transition === wrapped) continue
+    while (cursor < transition.start) {
+      out.push(ring[cursor])
+      cursor += 1
+    }
+    out.push(...transition.points)
+    cursor = transition.end + 1
+  }
+  while (cursor < (wrapped ? wrapped.start : count)) {
+    out.push(ring[cursor])
+    cursor += 1
+  }
+
+  if (!out.every(isFinitePoint) || contourSelfIntersects(out)) {
+    return { sourcePoints: ring, points: ring, requestedRadius: radius, transitions: [] }
+  }
+
+  const metadata: ContourTurnTransition[] = walkOrder.map((transition) => ({
+    firstIndex: transition.start,
+    lastIndex: transition.end,
+    runIndices: Array.from(
+      { length: cyclicRunLength(count, transition.start, transition.end) + 1 },
+      (_, offset) => (transition.start + offset) % count,
+    ),
+    signedTurn: transition.signedTurn,
+    requestedRadius: radius,
+    effectiveRadius: transition.radius,
+    entry: transition.entry,
+    exit: transition.exit,
+    transitionPoints: transition.points,
+    entryEdgeIndex: (transition.start - 1 + count) % count,
+    exitEdgeIndex: transition.end % count,
+    cutsAcrossSource: transition.cutsAcrossSource === true,
+    ...(transition.spanPoints ? { spanPoints: transition.spanPoints } : {}),
+  }))
+
+  return { sourcePoints: ring, points: out, requestedRadius: radius, transitions: metadata }
+}
+
+/**
+ * Round the sharp corners of a closed contour with tangent-arc fillets.
+ *
+ * Compatibility wrapper over `planContourSmoothing`: returns the smoothed
+ * points only. See the planner for the identity/fail-closed behaviour.
+ */
+export function roundContourCorners(
+  points: Point[],
+  radius: number,
+  options: RoundContourOptions = {},
+): Point[] {
+  return planContourSmoothing(points, radius, options).points
+}
 
 /**
  * Derived fillet radius for clearing-ring corner smoothing: the smaller of the
@@ -72,13 +1004,6 @@ export function cornerSmoothingRadius(
   return radius > 0 ? radius : undefined
 }
 
-function normalizeSignedAngle(angle: number): number {
-  let value = angle
-  while (value > Math.PI) value -= 2 * Math.PI
-  while (value <= -Math.PI) value += 2 * Math.PI
-  return value
-}
-
 /**
  * Fillet the corners of every closed contour when a radius is given; otherwise
  * return the contours unchanged. undefined/0 radius = today's exact output, so
@@ -95,132 +1020,4 @@ export function smoothClosedContours(
     return contours
   }
   return contours.map((contour) => roundContourCorners(contour, radius, options))
-}
-
-/**
- * Round the sharp corners of a closed contour with tangent-arc fillets.
- *
- * `points` is a closed ring given as distinct vertices with no duplicated
- * closing point (the shape `buildContourLoops` produces). A non-positive
- * `radius`, a degenerate ring (< 3 points), or a corner too shallow to matter
- * returns the input vertices unchanged, so passing no radius is a no-op.
- */
-export function roundContourCorners(
-  points: Point[],
-  radius: number,
-  options: RoundContourOptions = {},
-): Point[] {
-  if (!(radius > 0) || points.length < 3) {
-    return points
-  }
-
-  // Work on a clean cyclic ring: drop a duplicated closing vertex if present so
-  // the seam corner is rounded like any other (Clipper output has none, but
-  // contours from other sources may).
-  const first = points[0]
-  const last = points[points.length - 1]
-  const ring = Math.abs(first.x - last.x) <= EPS && Math.abs(first.y - last.y) <= EPS
-    ? points.slice(0, -1)
-    : points
-  if (ring.length < 3) {
-    return points
-  }
-
-  const minDeflection = ((options.minDeflectionDeg ?? DEFAULT_MIN_DEFLECTION_DEG) * Math.PI) / 180
-  const arcStep = Math.max(options.arcStepRadians ?? DEFAULT_FLATTEN_ARC_STEP, 1e-3)
-  const maxEdgeFraction = options.maxEdgeFraction ?? DEFAULT_MAX_EDGE_FRACTION
-  const count = ring.length
-  const out: Point[] = []
-
-  for (let index = 0; index < count; index += 1) {
-    const current = ring[index]
-    const previous = ring[(index + count - 1) % count]
-    const next = ring[(index + 1) % count]
-
-    // Unit vectors along the two edges, pointing away from the corner.
-    const toPrev = { x: previous.x - current.x, y: previous.y - current.y }
-    const toNext = { x: next.x - current.x, y: next.y - current.y }
-    const prevLen = Math.hypot(toPrev.x, toPrev.y)
-    const nextLen = Math.hypot(toNext.x, toNext.y)
-    if (prevLen <= EPS || nextLen <= EPS) {
-      out.push(current)
-      continue
-    }
-
-    const uPrev = { x: toPrev.x / prevLen, y: toPrev.y / prevLen }
-    const uNext = { x: toNext.x / nextLen, y: toNext.y / nextLen }
-
-    // Interior angle between the edges, and the deflection (turn) angle.
-    const cosInterior = Math.max(-1, Math.min(1, uPrev.x * uNext.x + uPrev.y * uNext.y))
-    const interior = Math.acos(cosInterior)
-    const deflection = Math.PI - interior
-    if (deflection < minDeflection) {
-      out.push(current)
-      continue
-    }
-
-    const halfAngle = interior / 2
-    const tanHalf = Math.tan(halfAngle)
-    if (!(tanHalf > EPS)) {
-      out.push(current)
-      continue
-    }
-
-    // Tangent length for the requested radius, clamped two ways:
-    //  - to a share of each adjacent edge, so neighbouring fillets never
-    //    overlap, and
-    //  - to the radius itself, which bounds how far the fillet retreats from a
-    //    corner. A rounded rough ring always leaves a little stock at a corner
-    //    (the exact finish pass removes it — walls are never smoothed); this cap
-    //    keeps that stock within ~radius (<= tool radius) of the apex so the
-    //    finish pass can reach it. Without it an acute corner (small tan(half))
-    //    would pull the path far back, leaving a crescent too deep for the
-    //    finish pass to clean. 90 deg and blunter corners are unaffected (their
-    //    tangent is already <= radius).
-    const desiredTangent = radius / tanHalf
-    const maxTangent = Math.min(maxEdgeFraction * Math.min(prevLen, nextLen), radius)
-    const tangent = Math.min(desiredTangent, maxTangent)
-    const effectiveRadius = tangent * tanHalf
-    if (!(effectiveRadius > EPS) || tangent <= EPS) {
-      out.push(current)
-      continue
-    }
-
-    const entry = { x: current.x + uPrev.x * tangent, y: current.y + uPrev.y * tangent }
-    const exit = { x: current.x + uNext.x * tangent, y: current.y + uNext.y * tangent }
-
-    // Arc centre sits on the interior bisector, radius/sin(halfAngle) from the
-    // corner. The fillet's central angle equals the deflection angle.
-    const sinHalf = Math.sin(halfAngle)
-    let bisector = { x: uPrev.x + uNext.x, y: uPrev.y + uNext.y }
-    const bisectorLen = Math.hypot(bisector.x, bisector.y)
-    if (bisectorLen <= EPS || sinHalf <= EPS) {
-      // Nearly straight-through spike; skip rather than divide by ~0.
-      out.push(current)
-      continue
-    }
-    bisector = { x: bisector.x / bisectorLen, y: bisector.y / bisectorLen }
-    const centreDistance = effectiveRadius / sinHalf
-    const centre = {
-      x: current.x + bisector.x * centreDistance,
-      y: current.y + bisector.y * centreDistance,
-    }
-
-    const startAngle = Math.atan2(entry.y - centre.y, entry.x - centre.x)
-    const endAngle = Math.atan2(exit.y - centre.y, exit.x - centre.x)
-    const sweep = normalizeSignedAngle(endAngle - startAngle)
-    const steps = Math.max(1, Math.ceil(Math.abs(sweep) / arcStep))
-
-    out.push(entry)
-    for (let step = 1; step < steps; step += 1) {
-      const angle = startAngle + (sweep * step) / steps
-      out.push({
-        x: centre.x + effectiveRadius * Math.cos(angle),
-        y: centre.y + effectiveRadius * Math.sin(angle),
-      })
-    }
-    out.push(exit)
-  }
-
-  return out
 }

@@ -1,0 +1,815 @@
+{
+  "version": "3.0",
+  "meta": {
+    "name": "rounded-corners-poc-test-1",
+    "created": "2026-08-16T22:10:28.902Z",
+    "modified": "2026-08-18T22:25:27.022Z",
+    "units": "inch",
+    "showFeatureInfo": false,
+    "showDimensions": true,
+    "copyMode": "reference",
+    "maxTravelZ": 2,
+    "operationClearanceZ": 0.2,
+    "clampClearanceXY": 0.08,
+    "clampClearanceZ": 0.2,
+    "machineDefinitions": [],
+    "selectedMachineId": null
+  },
+  "grid": {
+    "extent": 8,
+    "majorSpacing": 1,
+    "minorSpacing": 0.25,
+    "snapEnabled": true,
+    "snapIncrement": 0.125,
+    "visible": true
+  },
+  "stock": {
+    "profile": {
+      "start": {
+        "x": 0.25,
+        "y": 0.25
+      },
+      "segments": [
+        {
+          "type": "line",
+          "to": {
+            "x": 4.25,
+            "y": 0.25
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 4.25,
+            "y": 3.25
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0.25,
+            "y": 3.25
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0.25,
+            "y": 0.25
+          }
+        }
+      ],
+      "closed": true
+    },
+    "thickness": 0.75,
+    "material": "aluminum_6061",
+    "color": "#b9a83c",
+    "visible": true,
+    "origin": {
+      "x": 0,
+      "y": 0
+    },
+    "sourceFeature": null,
+    "sourceFeatureId": null
+  },
+  "origin": {
+    "name": "Origin",
+    "x": 0.25,
+    "y": 3.25,
+    "z": 0.75,
+    "visible": true
+  },
+  "backdrop": null,
+  "dimensions": {},
+  "annotations": [],
+  "modelAssets": {},
+  "featureDefinitions": {
+    "f-0002": {
+      "id": "f-0002",
+      "kind": "rect",
+      "profile": {
+        "start": {
+          "x": 0.25,
+          "y": 0.25
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 3.75,
+              "y": 0.25
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 3.75,
+              "y": 2.75
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.25,
+              "y": 2.75
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.25,
+              "y": 0.25
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "add"
+    },
+    "f-0004": {
+      "id": "f-0004",
+      "kind": "polygon",
+      "profile": {
+        "start": {
+          "x": 0.75,
+          "y": 0.75
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 2,
+              "y": 1
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 2,
+              "y": 0.5
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 3.2548076923076925,
+              "y": 0.7740384615384615
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 3.25,
+              "y": 2.25
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 2.5,
+              "y": 2.25
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 2,
+              "y": 2.25
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 1.5,
+              "y": 2.25
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.75,
+              "y": 2.25
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0.75,
+              "y": 0.75
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f-0006": {
+      "id": "f-0006",
+      "kind": "ellipse",
+      "profile": {
+        "start": {
+          "x": 2.625,
+          "y": 1.5
+        },
+        "segments": [
+          {
+            "type": "bezier",
+            "control1": {
+              "x": 2.625,
+              "y": 1.638075
+            },
+            "control2": {
+              "x": 2.3451874999999998,
+              "y": 1.75
+            },
+            "to": {
+              "x": 2,
+              "y": 1.75
+            }
+          },
+          {
+            "type": "bezier",
+            "control1": {
+              "x": 1.6548125,
+              "y": 1.75
+            },
+            "control2": {
+              "x": 1.375,
+              "y": 1.638075
+            },
+            "to": {
+              "x": 1.375,
+              "y": 1.5
+            }
+          },
+          {
+            "type": "bezier",
+            "control1": {
+              "x": 1.375,
+              "y": 1.361925
+            },
+            "control2": {
+              "x": 1.6548125,
+              "y": 1.25
+            },
+            "to": {
+              "x": 2,
+              "y": 1.25
+            }
+          },
+          {
+            "type": "bezier",
+            "control1": {
+              "x": 2.3451874999999998,
+              "y": 1.25
+            },
+            "control2": {
+              "x": 2.625,
+              "y": 1.361925
+            },
+            "to": {
+              "x": 2.625,
+              "y": 1.5
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "add"
+    },
+    "f-0008": {
+      "id": "f-0008",
+      "kind": "circle",
+      "profile": {
+        "start": {
+          "x": 0.625,
+          "y": 0.5
+        },
+        "segments": [
+          {
+            "type": "circle",
+            "center": {
+              "x": 0.5,
+              "y": 0.5
+            },
+            "to": {
+              "x": 0.625,
+              "y": 0.5
+            },
+            "clockwise": true
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f-0010": {
+      "id": "f-0010",
+      "kind": "circle",
+      "profile": {
+        "start": {
+          "x": 3.625,
+          "y": 0.5
+        },
+        "segments": [
+          {
+            "type": "circle",
+            "center": {
+              "x": 3.5,
+              "y": 0.5
+            },
+            "to": {
+              "x": 3.625,
+              "y": 0.5
+            },
+            "clockwise": true
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f-0012": {
+      "id": "f-0012",
+      "kind": "circle",
+      "profile": {
+        "start": {
+          "x": 0.625,
+          "y": 2.5
+        },
+        "segments": [
+          {
+            "type": "circle",
+            "center": {
+              "x": 0.5,
+              "y": 2.5
+            },
+            "to": {
+              "x": 0.625,
+              "y": 2.5
+            },
+            "clockwise": true
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f-0014": {
+      "id": "f-0014",
+      "kind": "circle",
+      "profile": {
+        "start": {
+          "x": 3.625,
+          "y": 2.5
+        },
+        "segments": [
+          {
+            "type": "circle",
+            "center": {
+              "x": 3.5,
+              "y": 2.5
+            },
+            "to": {
+              "x": 3.625,
+              "y": 2.5
+            },
+            "clockwise": true
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "f-0020": {
+      "id": "f-0020",
+      "kind": "composite",
+      "profile": {
+        "start": {
+          "x": 1.125,
+          "y": 1.25
+        },
+        "segments": [
+          {
+            "type": "arc",
+            "to": {
+              "x": 1.2305217938157564,
+              "y": 1.175034128612347
+            },
+            "center": {
+              "x": 1.204724779617039,
+              "y": 1.2504713656307738
+            },
+            "clockwise": false
+          }
+        ],
+        "closed": false
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "construction"
+    },
+    "f-0022": {
+      "id": "f-0022",
+      "kind": "polygon",
+      "profile": {
+        "start": {
+          "x": 1.1991763414009107,
+          "y": 1.1564590456998456
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 1.113266582930592,
+              "y": 1.1378839627873443
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 1.1144275256126235,
+              "y": 1.245851632216258
+            }
+          }
+        ],
+        "closed": false
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "construction"
+    },
+    "f-0024": {
+      "id": "f-0024",
+      "kind": "composite",
+      "profile": {
+        "start": {
+          "x": 1.1144275256126235,
+          "y": 1.245851632216258
+        },
+        "segments": [
+          {
+            "type": "arc",
+            "to": {
+              "x": 1.1991763414009107,
+              "y": 1.1564590456998456
+            },
+            "center": {
+              "x": 1.2135708338099742,
+              "y": 1.254975205479274
+            },
+            "clockwise": false
+          }
+        ],
+        "closed": false
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "construction"
+    }
+  },
+  "features": [
+    {
+      "id": "f0001",
+      "name": "Rect 1",
+      "definitionId": "f-0002",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0.2500329578275632,
+        "f": 0.2500329578275631
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0003",
+      "name": "Rect 2",
+      "definitionId": "f-0004",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0.2500329578275632,
+        "f": 0.2500329578275631
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0.65,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0005",
+      "name": "Ellipse 3",
+      "definitionId": "f-0006",
+      "transform": {
+        "a": 0.6,
+        "b": -6.123233995736766e-17,
+        "c": -6.123233995736766e-17,
+        "d": 1,
+        "e": 1.3000329578275633,
+        "f": 0.2500329578275633
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0007",
+      "name": "Circle 4",
+      "definitionId": "f-0008",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0.2500329578275632,
+        "f": 0.2500329578275631
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0009",
+      "name": "Circle 5",
+      "definitionId": "f-0010",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0.2500329578275632,
+        "f": 0.2500329578275631
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0011",
+      "name": "Circle 6",
+      "definitionId": "f-0012",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0.2500329578275632,
+        "f": 0.2500329578275631
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0013",
+      "name": "Circle 7",
+      "definitionId": "f-0014",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0.2500329578275632,
+        "f": 0.2500329578275631
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0019",
+      "name": "Construction 1",
+      "definitionId": "f-0020",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0021",
+      "name": "Construction 2",
+      "definitionId": "f-0022",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "f0023",
+      "name": "Construction 3",
+      "definitionId": "f-0024",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "constraints": [],
+      "z_top": 0.75,
+      "z_bottom": 0,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "featureFolders": [],
+  "featureTree": [
+    {
+      "type": "feature",
+      "featureId": "f0001"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0003"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0005"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0007"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0009"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0011"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0013"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0019"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0021"
+    },
+    {
+      "type": "feature",
+      "featureId": "f0023"
+    }
+  ],
+  "global_constraints": [],
+  "tools": [
+    {
+      "id": "t0017",
+      "name": "3/4\" Endmill",
+      "units": "inch",
+      "type": "flat_endmill",
+      "diameter": 0.75,
+      "vBitAngle": null,
+      "flutes": 3,
+      "material": "carbide",
+      "defaultRpm": 10000,
+      "defaultFeed": 55,
+      "defaultPlungeFeed": 20,
+      "defaultStepdown": 0.2,
+      "defaultStepover": 0.32,
+      "maxCutDepth": 2
+    },
+    {
+      "id": "t0018",
+      "name": "1/4\" Endmill",
+      "units": "inch",
+      "type": "flat_endmill",
+      "diameter": 0.25,
+      "vBitAngle": null,
+      "flutes": 2,
+      "material": "carbide",
+      "defaultRpm": 18000,
+      "defaultFeed": 30,
+      "defaultPlungeFeed": 12,
+      "defaultStepdown": 0.125,
+      "defaultStepover": 0.32,
+      "maxCutDepth": 1,
+      "alreadyImported": false
+    }
+  ],
+  "operations": [
+    {
+      "id": "op0016",
+      "name": "Pocket Rough",
+      "description": "",
+      "kind": "pocket",
+      "pass": "rough",
+      "enabled": true,
+      "showToolpath": true,
+      "debugToolpath": false,
+      "target": {
+        "source": "features",
+        "featureIds": [
+          "f0003"
+        ]
+      },
+      "toolRef": "t0018",
+      "stepdown": 0.125,
+      "stepover": 0.32,
+      "feed": 30,
+      "plungeFeed": 12,
+      "rpm": 18000,
+      "pocketPattern": "offset",
+      "pocketAngle": 0,
+      "pocketSlotFeedPercent": 60,
+      "pocketFeedReduction": "engagement",
+      "roundOutsideCorners": true,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
+      "stockToLeaveRadial": 0,
+      "stockToLeaveAxial": 0,
+      "finishWalls": true,
+      "finishFloor": true,
+      "carveDepth": 0.03937007874015748,
+      "maxCarveDepth": 0.03937007874015748,
+      "cutDirection": "conventional",
+      "machiningOrder": "feature_first",
+      "waterlineAdaptiveRefinement": true,
+      "waterlineMicroStepover": 0.24,
+      "waterlineRefinementThreshold": 0,
+      "waterlineMaxRingsPerBand": 0,
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true,
+      "cleanWallCorners": true
+    }
+  ],
+  "tabs": [],
+  "clamps": [],
+  "ai_history": []
+}

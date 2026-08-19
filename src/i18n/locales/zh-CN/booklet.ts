@@ -81,6 +81,7 @@ export const bookletZhCN: Record<keyof typeof bookletEn, string> = {
   'booklet.label.machiningOrder': '加工顺序',
   'booklet.label.roundOutsideCorners': '圆角外侧拐角',
   'booklet.label.roundLinkCorners': '圆角连接节点',
+  'booklet.label.cleanWallCorners': '圆角处理侧壁转角',
   'booklet.label.cornerRelief': '拐角让位',
   'booklet.label.pattern': '路径图案',
   'booklet.label.pocketAngle': '挖槽角度',

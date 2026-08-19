@@ -325,6 +325,14 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
     rows.push({ label: translate('booklet.label.roundLinkCorners'), value: translate('booklet.value.enabled') })
   }
 
+  // Only meaningful alongside rounded corners, and it changes the wall the job
+  // leaves, so it belongs on the sheet whenever it is on.
+  if ((operation.cleanWallCorners ?? false)
+    && (operation.roundOutsideCorners ?? false)
+    && operation.kind === 'pocket') {
+    rows.push({ label: translate('booklet.label.cleanWallCorners'), value: translate('booklet.value.enabled') })
+  }
+
   const cornerRelief = operation.cornerRelief ?? 'none'
   if (cornerRelief !== 'none' && operationUsesCornerRelief(operation)) {
     rows.push({ label: translate('booklet.label.cornerRelief'), value: cornerReliefLabel(cornerRelief) })

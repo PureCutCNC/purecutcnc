@@ -168,6 +168,8 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.levelFirst': '按层',
   'cam.operation.roundOutsideCorners': '圆角拐角',
   'cam.operation.roundLinkCorners': '圆角连接节点',
+  'cam.operation.cleanWallCorners': '圆角处理侧壁转角',
+  'cam.operation.cleanWallCornersTooltip': '同时对定义侧壁的环进行圆角处理，并在每个转角之后立即清根，使侧壁保持完整覆盖。可降低转角处刀具的峰值负载，但会略微增加加工时间。',
   'cam.operation.cornerRelief': '拐角让位',
   'cam.operation.cornerReliefNone': '无',
   'cam.operation.cornerReliefDogbone': '狗骨形',

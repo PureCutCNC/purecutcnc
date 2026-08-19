@@ -193,6 +193,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   // pocket floors
   'warnings.pocketNoFloorRegion': 'Kein bearbeitbarer paralleler Bodenbereich für Band {topZ} -> {bottomZ}',
   'warnings.pocketNoFloorSegments': 'Keine bearbeitbaren parallelen Bodensegmente für Band {topZ} -> {bottomZ}',
+  'warnings.pocketWallCornerCleanupFallback': 'Eine abgerundete Taschenwandecke konnte nicht sicher nachbearbeitet werden; für diesen Ring wurde die scharfe Wandbahn beibehalten',
   // postprocessor
   'warnings.postWcsNullSelect': 'Maschinendefinition fordert {wcsCommand} in der Kopfzeile an, aber selectCommand ist null.',
   'warnings.postToolChangesDisabled': 'Operation „{operation}" verwendet ein anderes Werkzeug („{tool}") als das vorherige, aber Werkzeugwechsel sind deaktiviert.',
