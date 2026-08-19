@@ -192,8 +192,6 @@ export const OPERATION_FIELD_IDS = [
   'kind',
   'pass',
   'enabled',
-  'booklet',
-  'toolpathWarnings',
   // What it cuts.
   'target',
   'targetSource',
@@ -247,7 +245,6 @@ export const OPERATION_FIELD_IDS = [
   'countersinkDepth',
   // Output.
   'arcFitting',
-  'debugToolpath',
 ] as const
 
 export type OperationFieldId = typeof OPERATION_FIELD_IDS[number]
@@ -271,8 +268,7 @@ const always = () => true
  * kind can no longer move a control the user was just editing.
  */
 export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
-  // ── Identity — what this operation is. The booklet export and the toolpath
-  //   warnings sit in the stream only until they move out of it.
+  // ── Identity — what this operation is.
   { id: 'name', group: 'identity', appliesTo: always },
   { id: 'description', group: 'identity', appliesTo: always },
   { id: 'kind', group: 'identity', appliesTo: always },
@@ -288,8 +284,6 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
       && operation.kind !== 'finish_surface_cleanup',
   },
   { id: 'enabled', group: 'identity', appliesTo: always },
-  { id: 'booklet', group: 'identity', appliesTo: always },
-  { id: 'toolpathWarnings', group: 'identity', appliesTo: always },
   // ── What it cuts.
   { id: 'target', group: 'target', appliesTo: always },
   { id: 'targetSource', group: 'target', appliesTo: always },
@@ -519,9 +513,8 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     appliesTo: isCountersinkDrill,
   },
   { id: 'countersinkDepth', group: 'drilling', appliesTo: isCountersinkDrill },
-  // ── Output — G-code detail set once per machine, plus the dev toggle.
+  // ── Output — G-code detail, set once per machine.
   { id: 'arcFitting', group: 'output', appliesTo: always },
-  { id: 'debugToolpath', group: 'output', appliesTo: always },
 ]
 
 /**

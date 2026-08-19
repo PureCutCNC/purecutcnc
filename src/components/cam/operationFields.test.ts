@@ -199,7 +199,7 @@ function testGoldenRenderOrder() {
   const roughPocket = visibleFor(makeOperation({ kind: 'pocket', pass: 'rough', pocketPattern: 'offset' }))
   assert(
     roughPocket.join(',') === [
-      'name', 'description', 'kind', 'pass', 'enabled', 'booklet', 'toolpathWarnings',
+      'name', 'description', 'kind', 'pass', 'enabled',
       'target', 'targetSource', 'restMachining',
       'tool',
       'stepdown', 'stockToLeaveRadial', 'stockToLeaveAxial',
@@ -207,7 +207,7 @@ function testGoldenRenderOrder() {
       'pattern', 'cutDirection', 'machiningOrder', 'stepover',
       'entryStrategy',
       'roundOutsideCorners', 'roundLinkCorners', 'cornerRelief',
-      'arcFitting', 'debugToolpath',
+      'arcFitting',
     ].join(','),
     `rough pocket render order changed: ${roughPocket.join(',')}`,
   )
@@ -215,13 +215,13 @@ function testGoldenRenderOrder() {
   const drilling = visibleFor(makeOperation({ kind: 'drilling', drillType: 'simple' }))
   assert(
     drilling.join(',') === [
-      'name', 'description', 'kind', 'enabled', 'booklet', 'toolpathWarnings',
+      'name', 'description', 'kind', 'enabled',
       'target', 'targetSource',
       'tool',
       'feed', 'plungeFeed', 'rpm',
       'retractHeight',
       'drillType',
-      'arcFitting', 'debugToolpath',
+      'arcFitting',
     ].join(','),
     `drilling render order changed: ${drilling.join(',')}`,
   )

@@ -46,6 +46,11 @@
     <path d="m18.54 5.46-1.42 1.42" />
     <path d="m6.88 17.12-1.42 1.42" />
   </symbol>
+  <symbol id="booklet" viewBox="0 0 24 24">
+    <path d="M 12 6 C 10.5 4.6, 8.6 4, 6 4 L 3 4 L 3 19 L 6 19 C 8.6 19, 10.5 19.6, 12 21" />
+    <path d="M 12 6 C 13.5 4.6, 15.4 4, 18 4 L 21 4 L 21 19 L 18 19 C 15.4 19, 13.5 19.6, 12 21" />
+    <path d="M 12 6 L 12 21" />
+  </symbol>
   <symbol id="chamfer" viewBox="0 0 24 24">
     <path d="M 20 5 L 11 5" />
     <path d="M 11 5 L 5 11" />

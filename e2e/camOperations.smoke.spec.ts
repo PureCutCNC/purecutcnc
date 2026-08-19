@@ -457,6 +457,46 @@ test.describe('CAM operation browser smoke', () => {
     const addMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
     await expect(ui.contextMenu.item(addMenu, 'Add to operation')).toBeDisabled()
   })
+  test('actions, diagnostics and the dev toggle are not property rows (#559)', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
+    await ui.contextMenu.item(carveMenu, 'Create operation').hover()
+    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create pocket')
+    await expect(ui.operations.rows(app.page)).toHaveCount(1)
+
+    // Open every group, so "absent" below means absent rather than collapsed.
+    for (const group of ['Strategy', 'Entry & retract', 'Corners', 'Output']) {
+      await ui.cam.operationGroup(app.page, group).click()
+    }
+
+    // Positive controls, so the "absent" assertions below cannot pass merely
+    // because a locator stopped matching anything at all.
+    await expect(ui.cam.operationField(app.page, 'Target')).toHaveCount(1)
+    await expect(
+      app.page.locator('.cam-operation-properties .properties-group')
+        .getByText('Stepdown', { exact: true }),
+    ).toHaveCount(1)
+
+    // The booklet export is an action: it lives in the panel's action row, not
+    // in the same vertical run as "Stepdown = 2 mm".
+    await expect(ui.cam.operationField(app.page, 'Booklet')).toHaveCount(0)
+    await expect(app.page.getByRole('button', { name: 'Export booklet (PDF) for Pocket Rough' })).toBeEnabled()
+
+    // Toolpath warnings are a diagnostic, reported in the status strip above
+    // the groups rather than as a property row.
+    await expect(ui.cam.operationField(app.page, 'Toolpath warnings')).toHaveCount(0)
+
+    // The debug toggle still exists in a dev build — the e2e server is one —
+    // but outside the groups, so it is no longer a property.
+    const devToggle = app.page.locator('.cam-operation-properties .cam-operation-dev-toggle')
+    await expect(devToggle).toContainText('Debug toolpath')
+    await expect(
+      app.page.locator('.cam-operation-properties .properties-group')
+        .getByText('Debug toolpath', { exact: true }),
+    ).toHaveCount(0)
+  })
+
   test('Feed reduction row carries its parameter-reference icon (#555)', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)
 

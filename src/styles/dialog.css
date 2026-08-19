@@ -1210,6 +1210,27 @@
   margin-bottom: 10px;
 }
 
+/* Each operation group is now a real box, so the columns above lay the groups
+   out two-up rather than splitting one long list (issue #559). `break-inside:
+   avoid` keeps a group whole, but a group taller than the column has to break
+   anyway — and WebKit cannot fragment a display:grid child, so it would balloon
+   and clip in the desktop webview. Same fix as `.properties-group` above: block
+   flow fragments cleanly, and `> * + *` restores the body's 6px rhythm. */
+.dialog--panel-expand .disclosure-section__body {
+  display: block;
+}
+
+.dialog--panel-expand .disclosure-section__body > * + * {
+  margin-top: 6px;
+}
+
+/* The status strip is not part of either column's flow — it reports on the
+   whole operation, so it spans the full width above them. */
+.dialog--panel-expand .cam-operation-status {
+  column-span: all;
+  break-inside: avoid;
+}
+
 .dialog--panel-expand .properties-check {
   break-inside: avoid;
 }

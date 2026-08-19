@@ -1211,22 +1211,6 @@ export function CAMPanel({
           ) : null}
         </div>
       ),
-      booklet: () => (
-        <div className="properties-field">
-          <span>{camT('cam.operation.booklet')}</span>
-          <button
-            className="feat-btn"
-            type="button"
-            onClick={handleExportBooklet}
-            disabled={exportingBookletOperationId === operation.id}
-          >
-            {exportingBookletOperationId === operation.id ? camT('cam.operation.exporting') : camT('cam.operation.exportPdf')}
-          </button>
-          {bookletExportMessage?.operationId === operation.id ? (
-            <span className="cam-field-message">{bookletExportMessage.text}</span>
-          ) : null}
-        </div>
-      ),
       tabs: () => (
         <div className="properties-field">
           <span>{camT('cam.operation.tabs')}</span>
@@ -1234,20 +1218,6 @@ export function CAMPanel({
             {camT('cam.operation.autoPlaceTabs')}
           </button>
         </div>
-      ),
-      toolpathWarnings: () => (
-        toolpathWarnings && toolpathWarnings.length > 0 ? (
-          <div className="properties-field">
-            <span>{camT('cam.operation.toolpathWarnings')}</span>
-            <div className="cam-field-note-list">
-              {toolpathWarnings.map((warning, index) => (
-                <div key={`${operation.id}-warning-${index}`} className="cam-field-note">
-                  {toolpathWarningText(warning)}
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null
       ),
       tool: () => (
         <label className="properties-field">
@@ -1729,16 +1699,6 @@ export function CAMPanel({
           <OperationParameterReference kind="finishFloor" />
         </label>
       ),
-      debugToolpath: () => (
-        <label className="properties-check">
-          <input
-            type="checkbox"
-            checked={operation.debugToolpath}
-            onChange={(event) => updateOperation(operation.id, { debugToolpath: event.target.checked })}
-          />
-          <span>{camT('cam.operation.debugToolpath')}</span>
-        </label>
-      ),
       feed: () => (
         <label className="properties-field">
           <span>{camT('cam.operation.feed')}</span>
@@ -1889,8 +1849,31 @@ export function CAMPanel({
       ),
     }
 
+    const hasWarnings = Boolean(toolpathWarnings && toolpathWarnings.length > 0)
+    const showBookletMessage = bookletExportMessage?.operationId === operation.id
+
     return (
       <div key={`${operation.id}-${operation.toolRef ?? ''}`} className="properties-panel cam-tool-properties cam-operation-properties">
+        {/* Status, not properties. Pinned above the groups so what the
+            generator objected to is not something you scroll past between
+            "Stepdown" and "Feed". */}
+        {hasWarnings || showBookletMessage ? (
+          <div className="cam-operation-status">
+            {showBookletMessage ? (
+              <div className="cam-field-message">{bookletExportMessage?.text}</div>
+            ) : null}
+            {hasWarnings ? (
+              <>
+                <span className="cam-operation-status__title">{camT('cam.operation.toolpathWarnings')}</span>
+                {toolpathWarnings?.map((warning, index) => (
+                  <div key={`${operation.id}-warning-${index}`} className="cam-field-note">
+                    {toolpathWarningText(warning)}
+                  </div>
+                ))}
+              </>
+            ) : null}
+          </div>
+        ) : null}
         <div className="properties-group">
           {OPERATION_FIELD_GROUPS.map((group) => {
             const fields = operationFieldsForGroup(group.id, operation)
@@ -1911,6 +1894,19 @@ export function CAMPanel({
             )
           })}
         </div>
+        {/* Dev-only. The source-tag markers this draws are a debugging aid for
+            the toolpath generators, not a setting on the operation, so it sits
+            outside the groups and ships in dev builds only. */}
+        {import.meta.env.DEV ? (
+          <label className="properties-check cam-operation-dev-toggle">
+            <input
+              type="checkbox"
+              checked={operation.debugToolpath}
+              onChange={(event) => updateOperation(operation.id, { debugToolpath: event.target.checked })}
+            />
+            <span>{camT('cam.operation.debugToolpath')}</span>
+          </label>
+        ) : null}
       </div>
     )
   }
@@ -2277,6 +2273,20 @@ export function CAMPanel({
                     }}
                   >
                     <Icon id="gcode" />
+                  </button>
+                  <button
+                    className="tree-action-btn"
+                    type="button"
+                    title={exportingBookletOperationId && exportingBookletOperationId === selectedOperation?.id
+                      ? camT('cam.operation.exporting')
+                      : camT('cam.panel.exportBookletForOperation')}
+                    aria-label={selectedOperation
+                      ? camT('cam.panel.exportBookletFor', { name: selectedOperation.name })
+                      : camT('cam.panel.exportBookletForSelected')}
+                    disabled={!selectedOperation || exportingBookletOperationId === selectedOperation.id}
+                    onClick={handleExportBooklet}
+                  >
+                    <Icon id="booklet" />
                   </button>
                   <button
                     className="tree-action-btn"
