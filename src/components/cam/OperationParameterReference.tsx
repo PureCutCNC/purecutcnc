@@ -242,6 +242,33 @@ export function OperationParameterReference({
         </OpParamRefFrame>
       )
 
+    case 'engagementMode': {
+      // The two modes differ in when the reduction applies: only while the
+      // cutter runs a full-width slot, or scaled by the arc of the cutter that
+      // is actually buried in the material.
+      if (variant === 'engagement') {
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__guide" d="M6 6h13v22H6z" />
+            <circle className="gear-reference__outline" cx="24" cy="17" r="9" />
+            <path className="gear-reference__accent" d="M19 9.5a9 9 0 0 0 0 15" />
+            <path className="gear-reference__accent" d="M35 17h9" />
+            <path className="gear-reference__accent-fill" d="M46 17l-4-2.4v4.8z" />
+          </OpParamRefFrame>
+        )
+      }
+      // slots_only (default): the reduction glyph sits over the full-width
+      // slot, where the cutter engages the whole channel at once.
+      return (
+        <OpParamRefFrame label={label}>
+          <path className="gear-reference__outline" d="M6 8v18h20V8z" />
+          <circle className="gear-reference__outline" cx="16" cy="17" r="9" />
+          <path className="gear-reference__accent-fill" d="M16 3.4l-2.2 3h4.4z" />
+          <path className="gear-reference__accent-fill" d="M16 6.8l-2.2 3h4.4z" />
+        </OpParamRefFrame>
+      )
+    }
+
     case 'rpm':
       return (
         <OpParamRefFrame label={label}>

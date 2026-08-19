@@ -1828,6 +1828,10 @@ export function CAMPanel({
                           ]}
                           onChange={(value) => updateOperation(selectedOperation.id, { pocketFeedReduction: value })}
                         />
+                        <OperationParameterReference
+                          kind="engagementMode"
+                          variant={selectedOperation.pocketFeedReduction ?? 'slots_only'}
+                        />
                       </label>
                     </>
                   ) : null}

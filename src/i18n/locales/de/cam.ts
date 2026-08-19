@@ -353,6 +353,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.paramRef.entryRampAngle': 'Referenz für Rampenwinkel',
   'cam.paramRef.entryHelixDiameter': 'Referenz für Helixdurchmesser',
   'cam.paramRef.slotFeed': 'Referenz für Nutvorschub',
+  'cam.paramRef.engagementMode': 'Referenz für Vorschubreduzierung',
   'cam.paramRef.rpm': 'Referenz für Drehzahl',
   'cam.paramRef.dwell': 'Referenz für Verweilzeit',
   'cam.paramRef.cutDirection': 'Referenz für Schnittrichtung',

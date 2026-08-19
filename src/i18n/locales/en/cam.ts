@@ -356,6 +356,7 @@ export const camEn = {
   'cam.paramRef.entryRampAngle': 'Entry ramp angle reference',
   'cam.paramRef.entryHelixDiameter': 'Entry helix diameter reference',
   'cam.paramRef.slotFeed': 'Slot feed reference',
+  'cam.paramRef.engagementMode': 'Feed reduction reference',
   'cam.paramRef.rpm': 'RPM reference',
   'cam.paramRef.dwell': 'Dwell reference',
   'cam.paramRef.cutDirection': 'Cut direction reference',

@@ -292,6 +292,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.paramRef.entryRampAngle': 'Referencia de ángulo de rampa',
   'cam.paramRef.entryHelixDiameter': 'Referencia de diámetro helicoidal',
   'cam.paramRef.slotFeed': 'Referencia de avance de ranura',
+  'cam.paramRef.engagementMode': 'Referencia de reducción de avance',
   'cam.paramRef.rpm': 'Referencia de RPM',
   'cam.paramRef.dwell': 'Referencia de tiempo de permanencia',
   'cam.paramRef.cutDirection': 'Referencia de dirección de corte',

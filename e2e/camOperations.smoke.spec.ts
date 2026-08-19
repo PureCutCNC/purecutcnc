@@ -451,4 +451,30 @@ test.describe('CAM operation browser smoke', () => {
     const addMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
     await expect(ui.contextMenu.item(addMenu, 'Add to operation')).toBeDisabled()
   })
+  test('Feed reduction row carries its parameter-reference icon (#555)', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
+    await ui.contextMenu.item(carveMenu, 'Create operation').hover()
+    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create pocket')
+    await expect(ui.operations.rows(app.page)).toHaveCount(1)
+
+    // The feed settings live in the collapsed Advanced section.
+    await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
+
+    // Every parameter row shows a schematic reference icon in its third
+    // column; Feed reduction was the one row missing it.
+    const feedReductionField = ui.cam.operationField(app.page, 'Feed reduction')
+    await expect(feedReductionField.locator('.op-param-ref')).toBeVisible()
+
+    // Switching the mode keeps the icon and stores the choice.
+    await feedReductionField.locator('.ui-select__trigger').click()
+    await app.page.getByRole('option', { name: 'By engagement', exact: true }).click()
+    await expect(feedReductionField.locator('.ui-select__label')).toHaveText('By engagement')
+    await expect(feedReductionField.locator('.op-param-ref')).toBeVisible()
+
+    const project = await getProject(app.page)
+    const operations = project.operations as OperationSnapshot[]
+    expect((operations[0] as Record<string, unknown>).pocketFeedReduction).toBe('engagement')
+  })
 })

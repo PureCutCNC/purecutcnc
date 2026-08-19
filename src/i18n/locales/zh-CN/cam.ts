@@ -357,6 +357,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.paramRef.entryRampAngle': '斜坡下刀角度参考',
   'cam.paramRef.entryHelixDiameter': '螺旋下刀直径参考',
   'cam.paramRef.slotFeed': '满刀进给参考',
+  'cam.paramRef.engagementMode': '降低进给参考',
   'cam.paramRef.rpm': '转速参考',
   'cam.paramRef.dwell': '暂停参考',
   'cam.paramRef.cutDirection': '切削方向参考',
