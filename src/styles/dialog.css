@@ -1183,6 +1183,14 @@
   display: block;
   columns: 2;
   column-gap: 24px;
+  /* Content-sized, never stretched to the dialog body's height. The body is the
+     `1fr` row of a max-height grid, so without this the panel gets a *definite*
+     block size — and a multi-column box that is too short for its content does
+     not grow taller, it opens further columns sideways. A third column appeared
+     past the panel's right edge with nothing to scroll it into view (#559).
+     `max-content` lets the balancer pick a height that fits the declared two
+     columns, and the overflow becomes the body's own vertical scroll. */
+  height: max-content;
 }
 
 /* Let .properties-group's children flow across the columns. The group must be
@@ -1208,6 +1216,27 @@
 .dialog--panel-expand .disclosure-section {
   break-inside: avoid;
   margin-bottom: 10px;
+}
+
+/* Each operation group is now a real box, so the columns above lay the groups
+   out two-up rather than splitting one long list (issue #559). `break-inside:
+   avoid` keeps a group whole, but a group taller than the column has to break
+   anyway — and WebKit cannot fragment a display:grid child, so it would balloon
+   and clip in the desktop webview. Same fix as `.properties-group` above: block
+   flow fragments cleanly, and `> * + *` restores the body's 6px rhythm. */
+.dialog--panel-expand .disclosure-section__body {
+  display: block;
+}
+
+.dialog--panel-expand .disclosure-section__body > * + * {
+  margin-top: 6px;
+}
+
+/* The status strip is not part of either column's flow — it reports on the
+   whole operation, so it spans the full width above them. */
+.dialog--panel-expand .cam-operation-status {
+  column-span: all;
+  break-inside: avoid;
 }
 
 .dialog--panel-expand .properties-check {

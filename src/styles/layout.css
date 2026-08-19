@@ -3286,6 +3286,32 @@
   letter-spacing: normal;
 }
 
+/* Operation status strip (#559): the last action's result and the generator's
+   warnings, pinned above the property groups. Neither is a property, and a
+   warning buried between "Stepdown" and "Feed" is a warning scrolled past. */
+.cam-operation-status {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.cam-operation-status__title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Dev-only toolpath debug toggle (#559). Set apart from the groups above it
+   because it is a debugging aid for the generators, not an operation setting. */
+.cam-operation-dev-toggle {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  opacity: 0.75;
+}
+
 /* A1.4: inline explanation when a region feature is used as an op target. */
 .cam-region-note {
   display: flex;
