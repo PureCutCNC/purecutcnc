@@ -33,7 +33,7 @@ function defProfile(project: Record<string, unknown>): {
   return defs['def-linked'].profile
 }
 
-test('a tool entered from the panel exits via Done, keeping its edits and the session', async ({ app }) => {
+test('switching tools exits the previous mode, keeping its edits and the session', async ({ app }) => {
   await seedLinkedProject(app.page)
   await enterSketchEdit(app.page, 'f-linked-a')
 
@@ -45,20 +45,24 @@ test('a tool entered from the panel exits via Done, keeping its edits and the se
   await expect(panel.getByRole('button', { name: 'Finish editing' })).toBeVisible()
   await expect(panel.getByRole('button', { name: 'Cancel editing' })).toBeVisible()
 
-  // The tools live in the panel now; the global rail no longer hosts them.
+  // Add point is an immediate click-repeat mode: no Done strip, the toolbar
+  // itself is the exit affordance.
   await panel.getByRole('button', { name: 'Add point' }).click()
-  await expect(panel.getByRole('button', { name: 'Done adding points' })).toBeVisible()
+  await expect(panel.getByRole('button', { name: 'Done adding points' })).toHaveCount(0)
 
   // The click an add-point tool would dispatch onto the top segment.
   await insertFeaturePointAt(app.page, 'f-linked-a', 0, 30, 0, 0.5)
   expect(defProfile(await getProject(app.page)).segments.length).toBe(5)
 
-  // Done exits the mode — the edit survives and the session stays open.
-  await panel.getByRole('button', { name: 'Done adding points' }).click()
-  await expect(panel.getByRole('button', { name: 'Done adding points' })).toHaveCount(0)
-  await expect(panel).toBeVisible()
-  await expect(panel.getByRole('button', { name: 'Finish editing' })).toBeVisible()
+  // Clicking another tool closes the previous mode and keeps its edits.
+  await panel.getByRole('button', { name: 'Delete segment' }).click()
+  expect(await getSketchEditState(app.page)).toEqual({ mode: 'sketch_edit', tool: 'delete_segment', pending: null })
+  expect(defProfile(await getProject(app.page)).segments.length).toBe(5)
+
+  // Clicking the active tool again exits it entirely; edits and session stay.
+  await panel.getByRole('button', { name: 'Delete segment' }).click()
   expect(await getSketchEditState(app.page)).toEqual({ mode: 'sketch_edit', tool: null, pending: null })
+  await expect(panel.getByRole('button', { name: 'Finish editing' })).toBeVisible()
   expect(defProfile(await getProject(app.page)).segments.length).toBe(5)
 })
 
@@ -68,15 +72,21 @@ test('Escape leaves the tool first and only then cancels the session', async ({ 
 
   const panel = app.page.locator(EDIT_PANEL)
   await panel.getByRole('button', { name: 'Add point' }).click()
-  await expect(panel.getByRole('button', { name: 'Done adding points' })).toBeVisible()
 
-  // First Escape exits the mode, keeping the session alive.
-  await app.page.keyboard.press('Escape')
+  // Immediate modes have no Done strip, so Escape is the first exit rung.
   await expect(panel.getByRole('button', { name: 'Done adding points' })).toHaveCount(0)
+  await app.page.keyboard.press('Escape')
   await expect(panel).toBeVisible()
   expect((await getSketchEditState(app.page)).mode).toBe('sketch_edit')
 
-  // Second Escape cancels the whole session.
+  // Picking modes keep the Done strip; Escape still leaves the tool first.
+  await panel.getByRole('button', { name: 'Round corner / fillet' }).click()
+  await expect(panel.getByRole('button', { name: 'Done rounding' })).toBeVisible()
+  await app.page.keyboard.press('Escape')
+  await expect(panel.getByRole('button', { name: 'Done rounding' })).toHaveCount(0)
+  await expect(panel).toBeVisible()
+
+  // Only the next Escape cancels the whole session.
   await app.page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
   expect((await getSketchEditState(app.page)).mode).toBe('feature')

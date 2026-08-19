@@ -78,6 +78,15 @@ const TOOL_ORDER: SketchEditTool[] = [
   'extend',
 ]
 
+/**
+ * Modes that keep the visible Done strip. The immediate click-repeat modes
+ * (add/delete point, delete segment, disconnect) have no sub-state, so their
+ * exit affordances are the toolbar itself: click another tool, or click the
+ * active tool again. Fillet/chamfer (corner picked) and trim/extend
+ * (subject/reference picked) keep Done for exiting mid-pick.
+ */
+const DONE_STRIP_TOOLS: readonly SketchEditTool[] = ['fillet', 'chamfer', 'trim', 'extend']
+
 interface ToolButtonProps {
   icon: string
   label: string
@@ -279,7 +288,7 @@ export function EditSketchPanel({
           ),
         )}
       </div>
-      {tool && (
+      {tool && DONE_STRIP_TOOLS.includes(tool) && (
         <div className="canvas-workflow-panel__mode-strip">
           <button type="button" className="tablet-cmd-btn" onClick={exitTool}>
             {t(DONE_LABEL_KEYS[tool])}
