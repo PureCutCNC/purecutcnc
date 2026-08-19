@@ -154,6 +154,51 @@ export async function getKeepOriginals(
   })
 }
 
+/** Enter the sketch edit session for a feature (issue #556). */
+export async function enterSketchEdit(page: Page, featureId: string): Promise<void> {
+  await page.evaluate(async (id: string) => {
+    const w = window as unknown as { __pcTest: { enterSketchEdit: (featureId: string) => Promise<void> } }
+    await w.__pcTest.enterSketchEdit(id)
+  }, featureId)
+}
+
+/** Snapshot the sketch edit session's tool state. */
+export async function getSketchEditState(
+  page: Page,
+): Promise<{ mode: string; tool: string | null; pending: { tool: string; phase: string } | null }> {
+  return page.evaluate(async () => {
+    const w = window as unknown as {
+      __pcTest: { getSketchEditState: () => Promise<{ mode: string; tool: string | null; pending: { tool: string; phase: string } | null }> }
+    }
+    return w.__pcTest.getSketchEditState()
+  })
+}
+
+/** Simulates the segment click an add-point tool would dispatch. */
+export async function insertFeaturePointAt(
+  page: Page,
+  featureId: string,
+  segmentIndex: number,
+  x: number,
+  y: number,
+  t: number,
+): Promise<void> {
+  await page.evaluate(async (args: { featureId: string; segmentIndex: number; x: number; y: number; t: number }) => {
+    const w = window as unknown as {
+      __pcTest: { insertFeaturePointAt: (featureId: string, segmentIndex: number, x: number, y: number, t: number) => Promise<void> }
+    }
+    await w.__pcTest.insertFeaturePointAt(args.featureId, args.segmentIndex, args.x, args.y, args.t)
+  }, { featureId, segmentIndex, x, y, t })
+}
+
+/** Arms a segment control so Tab opens its dimension inspector. */
+export async function setActiveSegmentControl(page: Page, index: number): Promise<void> {
+  await page.evaluate(async (segmentIndex: number) => {
+    const w = window as unknown as { __pcTest: { setActiveSegmentControl: (index: number) => Promise<void> } }
+    await w.__pcTest.setActiveSegmentControl(segmentIndex)
+  }, index)
+}
+
 // ── Feature tree ────────────────────────────────────────────────────
 
 /** Count feature rows currently rendered. */

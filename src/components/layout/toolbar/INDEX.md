@@ -15,8 +15,8 @@ Toolbar internals split out from `src/components/layout/Toolbar.tsx`. The parent
 - `FeatureEditActions.tsx` — selected-feature transform/edit action group.
 - `AlignmentActions.tsx` — align and distribute popover groups.
 - `ShapeToolActions.tsx` — join/cut shape command group.
-- `SketchEditActions.tsx` — in-feature sketch editing command group.
 - `BackdropEditActions.tsx` — selected-backdrop transform/delete action group.
+- Sketch-edit tool modes no longer live in the rail; they moved into the Edit Sketch session panel (`src/components/canvas/EditSketchPanel.tsx`, issue #556).
 - `SnapActions.tsx` — snapping mode action group.
 - `MeasureActions.tsx` — tape measure and dimension action group.
 - `GlobalToolbar.tsx`, `CreationToolbar.tsx`, `Toolbar.tsx`, `SnapToolbar.tsx` — assembly components exported by the public barrel.

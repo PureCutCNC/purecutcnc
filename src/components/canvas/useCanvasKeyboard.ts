@@ -31,6 +31,7 @@ import type {
   PendingTransformTool,
   SelectionState,
   SketchControlRef,
+  SketchEditTool,
   TapeMeasureState,
 } from '../../store/types'
 import type { Point, Project } from '../../types/project'
@@ -117,7 +118,7 @@ export interface CanvasKeyboardCtx {
   cancelPendingOffset: () => void
   confirmCutCutters: () => void
   cancelPendingShapeAction: () => void
-  cancelPendingSketchEdit: () => void
+  setSketchEditTool: (tool: SketchEditTool | null) => void
   cancelOverlapFeaturePicker: () => void
   completePendingMove: (toPoint: Point, copyCount?: number) => void
   completePendingShapeAction: () => void
@@ -192,7 +193,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     cancelPendingOffset,
     confirmCutCutters,
     cancelPendingShapeAction,
-    cancelPendingSketchEdit,
+    setSketchEditTool,
     cancelOverlapFeaturePicker,
     completePendingMove,
     completePendingShapeAction,
@@ -744,8 +745,11 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
       }
     }
 
-    if (event.key === 'Escape' && pendingSketchEditRef.current) {
-      cancelPendingSketchEdit()
+    // Escape ladder, narrowest scope first (issue #556): a picked trim/extend
+    // subject is cleared without leaving the tool; with nothing picked the next
+    // rung (active tool) exits the mode.
+    if (event.key === 'Escape' && pendingSketchEditRef.current?.subject) {
+      setSketchEditTool(pendingSketchEditRef.current.tool)
       return
     }
 
@@ -778,7 +782,8 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     }
 
     if (event.key === 'Escape' && selection.mode === 'sketch_edit' && fillet.filletDimensionEditRef.current && pendingSketchFilletRef.current) {
-      fillet.cancelFilletDimension()
+      // Close the radius editor but keep the picked corner (issue #556).
+      fillet.dismissFilletDimension()
       return
     }
 
@@ -788,7 +793,9 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     }
 
     if (event.key === 'Escape' && selection.mode === 'sketch_edit' && dimEdit.dimensionEditRef.current && dimEdit.dimensionEditControlRef.current) {
-      dimEdit.cancelEditDimension()
+      // Live segment edits: Escape closes the inspector and keeps the values,
+      // exactly like Enter (issue #556).
+      dimEdit.commitEditDimension()
       return
     }
 
@@ -808,6 +815,15 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     ) {
       event.preventDefault()
       beginConstraint(selection.selectedFeatureId)
+      return
+    }
+
+    // Rung: an active tool exits before the session is touched. Escape and
+    // Enter are both "done with this mode" — the edits made in it survive
+    // (issue #556). The session can only be applied or discarded from the
+    // base Move state.
+    if (selection.mode === 'sketch_edit' && selection.sketchEditTool && (event.key === 'Escape' || event.key === 'Enter')) {
+      setSketchEditTool(null)
       return
     }
 

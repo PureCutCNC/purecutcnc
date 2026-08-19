@@ -23,7 +23,6 @@ import { GlobalActions } from './GlobalActions'
 import { MeasureActions } from './MeasureActions'
 import { ProjectNameControl } from './ProjectNameControl'
 import { ShapeToolActions } from './ShapeToolActions'
-import { SketchEditActions } from './SketchEditActions'
 import { SnapActions } from './SnapActions'
 import { ToolbarDialog } from './ToolbarDialog'
 import { useToolbarState } from './useToolbarState'
@@ -134,19 +133,6 @@ export function Toolbar({
         <DistributionActions
           enabled={toolbar.sketchCommands.predicates.canDistributeSelectedFeatures}
           onDistribute={toolbar.sketchCommands.arrange.distributeFeatures}
-        />
-        <SketchEditActions
-          enabled={toolbar.sketchCommands.predicates.featureSketchEditActive}
-          activeTool={toolbar.sketchCommands.sketchEdit.add_point.active ? 'add_point' : toolbar.sketchCommands.sketchEdit.delete_point.active ? 'delete_point' : toolbar.sketchCommands.sketchEdit.delete_segment.active ? 'delete_segment' : toolbar.sketchCommands.sketchEdit.disconnect.active ? 'disconnect' : toolbar.sketchCommands.sketchEdit.fillet.active ? 'fillet' : toolbar.sketchCommands.sketchEdit.chamfer.active ? 'chamfer' : toolbar.sketchCommands.sketchEdit.trim.active ? 'trim' : toolbar.sketchCommands.sketchEdit.extend.active ? 'extend' : null}
-          onAddPoint={toolbar.sketchCommands.sketchEdit.add_point.onActivate}
-          onDeletePoint={toolbar.sketchCommands.sketchEdit.delete_point.onActivate}
-          onDeleteSegment={toolbar.sketchCommands.sketchEdit.delete_segment.onActivate}
-          onDisconnect={toolbar.sketchCommands.sketchEdit.disconnect.onActivate}
-          onFillet={toolbar.sketchCommands.sketchEdit.fillet.onActivate}
-          onChamfer={toolbar.sketchCommands.sketchEdit.chamfer.onActivate}
-          onTrim={toolbar.sketchCommands.sketchEdit.trim.onActivate}
-          onExtend={toolbar.sketchCommands.sketchEdit.extend.onActivate}
-          trimExtendDisabled={!toolbar.sketchCommands.sketchEdit.trim.enabled}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}

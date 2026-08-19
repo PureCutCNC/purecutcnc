@@ -215,16 +215,18 @@ test.describe('Feature references browser smoke', () => {
     const menu = await openRowContextMenu(app.page, row)
     await clickMenuItem(menu, 'Edit sketch')
 
-    // Sketch edit toolbar should appear
-    await app.page.waitForTimeout(500)
-    const groups = await ui.toolbar.groups(app.page).count()
-    expect(groups, 'should have at least one toolbar group visible').toBeGreaterThan(0)
+    // The Edit Sketch panel appears; its tools live inside it (issue #556).
+    const panel = app.page.locator('.canvas-workflow-panel--edit')
+    await expect(panel).toBeVisible()
+    await expect(panel.locator('.canvas-workflow-panel__title')).toHaveText('Edit sketch')
+    await expect(panel.getByRole('button', { name: 'Add point' })).toBeVisible()
 
-    // Escape cancels sketch edit
+    // The global rail no longer hosts the sketch-edit tools.
+    expect(await ui.toolbar.addPointButton(app.page).count()).toBe(0)
+
+    // Escape cancels sketch edit (no tool is active in the base state).
     await app.page.keyboard.press('Escape')
-    await app.page.waitForTimeout(300)
-    const addPointAfter = await ui.toolbar.addPointButton(app.page).count()
-    expect(addPointAfter, 'sketch edit tools should disappear after Escape').toBe(0)
+    await expect(panel).toHaveCount(0)
   })
 
   // ── 8. Properties grouping ──────────────────────────────────────

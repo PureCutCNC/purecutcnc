@@ -534,7 +534,9 @@ export const toolbar = {
   /** All toolbar groups. */
   groups: (page: Page) => page.locator('.toolbar-group'),
 
-  /** Add-point button (visible during sketch edit). */
+  /** Legacy rail-style add-point button (aria-label form). Since issue #556 the
+   *  tool lives as a text button inside the Edit Sketch panel, so this selector
+   *  matches nothing and guards that the rail group is gone. */
   addPointButton: (page: Page) => page.locator('button[aria-label="Add point"]'),
 
   /** Opens the New Project dialog. */
