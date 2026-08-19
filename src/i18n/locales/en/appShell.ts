@@ -29,13 +29,6 @@ export const appShellEn = {
   'appShell.workspace.simulation': 'Simulation',
   'appShell.workspace.tabList': 'Workspace views',
 
-  // ── Workspace layout presets ──
-  'appShell.layout.lcr': 'Show left, center, and right panels',
-  'appShell.layout.lc': 'Show left and center panels',
-  'appShell.layout.c': 'Show center panel only',
-  'appShell.layout.cr': 'Show center and right panels',
-  'appShell.layout.presets': 'Workspace layout presets',
-
   // ── Right sidebar ──
   'appShell.sidebar.operations': 'Operations',
   'appShell.sidebar.tools': 'Tools',
@@ -49,6 +42,10 @@ export const appShellEn = {
   'appShell.panel.expandProperties': 'Expand properties panel',
   'appShell.panel.closeProject': 'Close project panel',
   'appShell.panel.cam': 'CAM panel',
+  'appShell.panel.showProject': 'Show project panel',
+  'appShell.panel.hideProject': 'Hide project panel',
+  'appShell.panel.showCam': 'Show CAM panel',
+  'appShell.panel.hideCam': 'Hide CAM panel',
   'appShell.panel.close': 'Close',
 
   // ── Drawer (tablet) ──

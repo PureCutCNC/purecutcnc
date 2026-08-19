@@ -611,3 +611,27 @@ export const toolpathVis = {
   view3dItems: (page: Page) =>
     toolpathVis.view3dPanel(page).locator('.viewport-toolpath-vis__item'),
 }
+
+// ── Panel pull-out handles (issue #557) ────────────────────────────
+
+export const panelHandles = {
+  /** Left pull-out handle; its accessible name flips with the state. */
+  leftHandle: (page: Page) =>
+    page.getByRole('button', { name: /^(Show|Hide) project panel$/ }),
+
+  /** Right pull-out handle; its accessible name flips with the state. */
+  rightHandle: (page: Page) =>
+    page.getByRole('button', { name: /^(Show|Hide) CAM panel$/ }),
+
+  /** The centre workspace tablist — must contain only the three tabs. */
+  centreTablist: (page: Page) => page.getByRole('tablist', { name: 'Workspace views' }),
+
+  /** The left panel aside (Project Tree + Properties). */
+  leftPanel: (page: Page) => page.locator('#panel-left'),
+
+  /** The right panel aside (Operations + Tools). */
+  rightPanel: (page: Page) => page.locator('#panel-right'),
+
+  /** The active sketch stage — measured to prove canvas reclamation. */
+  sketchStage: (page: Page) => page.locator('#workspace-panel-sketch'),
+}

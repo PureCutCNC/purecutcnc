@@ -37,7 +37,7 @@ load inside a runner:
 |------|---------|-------|
 | Settings | `npm run test:e2e:settings` | appearance, units, languages, language manager, theme manager |
 | Project input | `npm run test:e2e:project-input` | feature references, import geometry, creation targets |
-| Workflow UI | `npm run test:e2e:workflow-ui` | CAM operations, G-code export, motion debug, overlap selection, viewport views |
+| Workflow UI | `npm run test:e2e:workflow-ui` | CAM operations, G-code export, motion debug, overlap selection, viewport views, panel handles |
 
 The aggregate `e2e` check succeeds only when every lane succeeds, preserving
 the required PR gate. Each failed lane uploads its own Playwright report and

@@ -1311,72 +1311,59 @@
   z-index: 1;
 }
 
-.workspace-layout-controls {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  margin-left: auto;
-  padding-bottom: 6px;
+/* The three workspace tab buttons live in this wrapper so the panel pull-out
+ * handles can sit outside role="tablist" while staying in the same strip. */
+.panel-tablist {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
 }
 
-.workspace-layout-btn {
+/* ── Panel pull-out handles (desktop) ──
+ * One quiet icon button per panel boundary. Fixed width in every state and
+ * locale (no visible text), so the Sketch tab never moves. The chevron always
+ * describes the next action: push the edge away to collapse, pull it back to
+ * restore. The collapsed state carries a subtle filled resting background so
+ * it reads as "something is stowed here", never as inert chrome. */
+.panel-handle {
   width: var(--control-hit-target);
   height: var(--control-hit-target);
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line-strong);
-  border-radius: 0;
-  background: var(--surface-translucent);
+  border: none;
+  border-radius: 8px;
+  background: transparent;
   color: var(--text-dim);
   cursor: pointer;
   padding: 0;
 }
 
-.workspace-layout-btn:hover {
+.panel-handle:hover {
   color: var(--text);
-  border-color: var(--line-bright);
+  background: var(--surface-translucent);
 }
 
-.workspace-layout-btn--active {
+.panel-handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* A small gap keeps the handles visually separate from the tab family, so
+ * they cannot be mistaken for a tab or a tab-scroll arrow. */
+.panel-handle--left {
+  margin-right: 6px;
+}
+
+.panel-handle--right {
+  margin-left: 6px;
+}
+
+.panel-handle--collapsed {
   color: var(--text);
-  border-color: color-mix(in srgb, var(--accent) 75%, transparent);
   background: var(--surface-popover);
-}
-
-.workspace-layout-controls .workspace-layout-btn:first-child {
-  border-top-left-radius: 6px;
-  border-bottom-left-radius: 6px;
-}
-
-.workspace-layout-controls .workspace-layout-btn:last-child {
-  border-top-right-radius: 6px;
-  border-bottom-right-radius: 6px;
-}
-
-.workspace-layout-icon {
-  width: 16px;
-  height: 12px;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 2px;
-}
-
-.workspace-layout-icon span {
-  border: 1px solid currentColor;
-  border-radius: 2px;
-  opacity: 0.28;
-}
-
-.workspace-layout-icon--lcr span:nth-child(1),
-.workspace-layout-icon--lcr span:nth-child(2),
-.workspace-layout-icon--lcr span:nth-child(3),
-.workspace-layout-icon--lc span:nth-child(1),
-.workspace-layout-icon--lc span:nth-child(2),
-.workspace-layout-icon--c span:nth-child(2),
-.workspace-layout-icon--cr span:nth-child(2),
-.workspace-layout-icon--cr span:nth-child(3) {
-  opacity: 1;
 }
 
 .ai-panel {
