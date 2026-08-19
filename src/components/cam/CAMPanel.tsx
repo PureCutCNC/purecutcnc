@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { DragEvent, ReactNode } from 'react'
 import { useI18n } from '../../i18n/i18nContext'
 import { toolpathWarningText } from '../../i18n/warningText'
 import type { ToolpathWarning } from '../../engine/toolpaths/warningCodes'
@@ -40,7 +40,7 @@ import type {
   Tool,
   ToolType,
 } from '../../types/project'
-import { isTrochoidalCarve } from '../../types/project'
+import { isTrochoidalEdgeRoughing } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
 import { countersinkTipDepth } from '../../engine/toolpaths/drilling'
@@ -57,6 +57,14 @@ import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { PanelSplit } from './PanelSplit'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 import { camT, camTPlural } from './camI18n'
+import {
+  OPERATION_FIELD_GROUPS,
+  isCountersinkDrill,
+  isTrochoidalOperation,
+  operationFieldsForGroup,
+  resolvedEntryStrategy,
+  type OperationFieldId,
+} from './operationFields'
 
 interface CAMPanelProps {
   mode: 'operations' | 'tools'
@@ -377,21 +385,6 @@ function pocketPatternLabel(pattern: PocketPattern): string {
     case 'waterline':
       return camT('cam.pocketPattern.waterline')
   }
-}
-
-function showStepdown(operation: Project['operations'][number]): boolean {
-  if (
-    operation.kind === 'v_carve'
-    || operation.kind === 'v_carve_medial'
-    || operation.kind === 'drilling'
-    || operation.kind === 'finish_surface_cleanup'
-  ) {
-    return false
-  }
-  if ((operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') && operation.pass === 'finish') {
-    return false
-  }
-  return true
 }
 
 function getValidOperationTarget(project: Project, selection: SelectionState, kind: OperationKind): OperationTarget | null {
@@ -1060,22 +1053,20 @@ export function CAMPanel({
     if (!selectedOperation) {
       return <div className="panel-empty">{camT('cam.panel.emptyOperation')}</div>
     }
-    const isRoughEdgeRoute = selectedOperation.pass === 'rough'
-      && (selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside')
-    const isTrochoidalRoughEdge = isRoughEdgeRoute && selectedOperation.edgeStrategy === 'trochoidal'
-    // Shared predicate, not a second spelling of it: generation, this panel's
+    const operation = selectedOperation
+    // Shared predicates, not second spellings of them: generation, this panel's
     // field visibility, and the channel-width readout must agree exactly.
-    const isTrochoidalCarveOp = isTrochoidalCarve(selectedOperation)
-    const isTrochoidalOp = isTrochoidalRoughEdge || isTrochoidalCarveOp
+    const isTrochoidalRoughEdge = isTrochoidalEdgeRoughing(operation)
+    const isTrochoidalOp = isTrochoidalOperation(operation)
     const trochoidalTool = selectedOperationTool && selectedOperationTool.units !== project.meta.units
       ? convertToolUnits(selectedOperationTool, project.meta.units)
       : selectedOperationTool
     const trochoidalToolDiameter = trochoidalTool?.diameter ?? 0
-    const trochoidalAdvance = selectedOperation.trochoidalAdvance ?? 0.1
+    const trochoidalAdvance = operation.trochoidalAdvance ?? 0.1
     // Undefined means "follow the tool". Only an explicit edit pins the value,
     // so swapping cutters re-derives the channel instead of leaving a width
     // that belonged to the previous tool.
-    const trochoidalCutWidth = selectedOperation.trochoidalCutWidth ?? trochoidalToolDiameter * 1.5
+    const trochoidalCutWidth = operation.trochoidalCutWidth ?? trochoidalToolDiameter * 1.5
     const trochoidalCutWidthFloor = trochoidalToolDiameter * 1.15
     // A pinned width can fall under the floor when the tool grows. The engine
     // refuses to generate in that case, so say so at the field rather than
@@ -1087,11 +1078,10 @@ export function CAMPanel({
     // from the requested mouth diameter and the V-bit's included angle. Both the
     // normalization and the formula are the engine's own, so the number shown
     // here is the number that will be cut.
-    const isCountersinkDrill = selectedOperation.kind === 'drilling' && selectedOperation.drillType === 'countersink'
-    const countersinkTool = isCountersinkDrill && selectedOperationTool
+    const countersinkTool = isCountersinkDrill(operation) && selectedOperationTool
       ? normalizeToolForProject(selectedOperationTool, project)
       : null
-    const countersinkDiameter = selectedOperation.countersinkDiameter ?? 0
+    const countersinkDiameter = operation.countersinkDiameter ?? 0
     const countersinkAngle = countersinkTool?.type === 'v_bit' ? countersinkTool.vBitAngle : null
     const countersinkDepth = countersinkAngle !== null && countersinkDiameter > 0
       ? countersinkTipDepth(countersinkDiameter, countersinkAngle)
@@ -1099,862 +1089,835 @@ export function CAMPanel({
     // The two conditions the operator can fix at this field. Everything else the
     // engine rejects (per-target hole size, max cut depth) surfaces in the
     // warnings list, which already renders below.
-    const countersinkNeedsVBit = isCountersinkDrill && countersinkTool !== null && countersinkTool.type !== 'v_bit'
-    const countersinkExceedsTool = isCountersinkDrill
-      && countersinkTool?.type === 'v_bit'
+    const countersinkNeedsVBit = countersinkTool !== null && countersinkTool.type !== 'v_bit'
+    const countersinkExceedsTool = countersinkTool?.type === 'v_bit'
       && countersinkDiameter > countersinkTool.diameter
-    const supportsEntryStrategy = selectedOperation.kind === 'pocket'
-      || selectedOperation.kind === 'surface_clean'
-      || selectedOperation.kind === 'rough_surface'
-      || isTrochoidalRoughEdge
-      || isTrochoidalCarveOp
-    const entryStrategy = isTrochoidalOp
-      ? selectedOperation.entryStrategy === 'plunge' ? 'plunge' : 'helix'
-      : selectedOperation.entryStrategy ?? 'plunge'
+    const entryStrategy = resolvedEntryStrategy(operation)
+
+    // One renderer per registry row. The `Record<OperationFieldId, …>` makes the
+    // pairing exhaustive: a field declared in `operationFields.ts` without a
+    // renderer here (or the reverse) fails to compile, so the declared order can
+    // never drift from what is actually drawn.
+    const fieldRenderers: Record<OperationFieldId, () => ReactNode> = {
+      name: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.name')}</span>
+          <DraftTextInput value={operation.name} onCommit={(value) => updateOperation(operation.id, { name: value })} />
+        </label>
+      ),
+      description: () => (
+        <label className="properties-field properties-field--textarea">
+          <span>{camT('cam.operation.description')}</span>
+          <DraftTextArea
+            value={operation.description ?? ''}
+            onCommit={(value) => updateOperation(operation.id, { description: value })}
+          />
+        </label>
+      ),
+      kind: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.kind')}</span>
+          <input type="text" value={operationKindLabel(operation.kind)} readOnly />
+        </label>
+      ),
+      pass: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.pass')}</span>
+          <Select
+            value={operation.pass}
+            options={[
+              { value: 'rough', label: camT('cam.pass.rough') },
+              { value: 'finish', label: camT('cam.pass.finish') },
+            ]}
+            onChange={(value) => updateOperation(operation.id, { pass: value })}
+          />
+        </label>
+      ),
+      maxCarveDepth: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.maxCarveDepth')}</span>
+          <DraftLengthInput
+            value={operation.maxCarveDepth}
+            units={project.meta.units}
+            min={0.0001}
+            onCommit={(value) => updateOperation(operation.id, { maxCarveDepth: value })}
+          />
+          <OperationParameterReference kind="maxDepth" />
+        </label>
+      ),
+      carveDepth: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.carveDepth')}</span>
+          <DraftLengthInput
+            value={operation.carveDepth}
+            units={project.meta.units}
+            min={0.0001}
+            onCommit={(value) => updateOperation(operation.id, { carveDepth: value })}
+          />
+          <OperationParameterReference kind="maxDepth" />
+        </label>
+      ),
+      target: () => (
+        <>
+          <label className="properties-field">
+            <span>{camT('cam.operation.target')}</span>
+            <input type="text" value={operationTargetSummary(project, operation.target)} readOnly />
+          </label>
+          {selectedOperationTargetsRegion ? (
+            <div className="cam-region-note">
+              <span className="cam-region-note__badge">{camT('cam.regionNote.badge')}</span>
+              <span>{camT('cam.regionNote.text')}</span>
+            </div>
+          ) : null}
+        </>
+      ),
+      targetSource: () => (
+        <div className="properties-field">
+          <span>{camT('cam.operation.targetSource')}</span>
+          <button
+            className="feat-btn"
+            type="button"
+            title={getOperationTargetUpdateHint(project, selection, operation) ?? undefined}
+            onClick={handleApplySelectionToOperation}
+          >
+            {camT('cam.operation.useCurrentSelection')}
+          </button>
+          {selectionUpdateConfirm === operation.id ? (
+            <span className="cam-field-message cam-field-message--success">{camT('cam.operation.targetUpdated')}</span>
+          ) : targetUpdateMessage
+            && targetUpdateMessage.operationId === operation.id
+            && targetUpdateMessage.selectionKey === selectionKey ? (
+            <span className="cam-field-message">{targetUpdateMessage.text}</span>
+          ) : null}
+        </div>
+      ),
+      restMachining: () => (
+        <div className="properties-field">
+          <span>{camT('cam.operation.restMachining')}</span>
+          <button
+            className="feat-btn"
+            type="button"
+            disabled={isTrochoidalRoughEdge}
+            title={isTrochoidalRoughEdge ? camT('cam.operation.restTrochoidalUnavailable') : undefined}
+            onClick={handleCreateRestOperation}
+          >
+            {camT('cam.operation.createRestOp')}
+          </button>
+          {isTrochoidalRoughEdge ? (
+            <span className="cam-field-message">{camT('cam.operation.restTrochoidalUnavailable')}</span>
+          ) : null}
+          {operationActionMessage?.operationId === operation.id ? (
+            <span className="cam-field-message">{operationActionMessage.text}</span>
+          ) : null}
+        </div>
+      ),
+      booklet: () => (
+        <div className="properties-field">
+          <span>{camT('cam.operation.booklet')}</span>
+          <button
+            className="feat-btn"
+            type="button"
+            onClick={handleExportBooklet}
+            disabled={exportingBookletOperationId === operation.id}
+          >
+            {exportingBookletOperationId === operation.id ? camT('cam.operation.exporting') : camT('cam.operation.exportPdf')}
+          </button>
+          {bookletExportMessage?.operationId === operation.id ? (
+            <span className="cam-field-message">{bookletExportMessage.text}</span>
+          ) : null}
+        </div>
+      ),
+      tabs: () => (
+        <div className="properties-field">
+          <span>{camT('cam.operation.tabs')}</span>
+          <button className="feat-btn" type="button" onClick={handleAutoPlaceTabs}>
+            {camT('cam.operation.autoPlaceTabs')}
+          </button>
+        </div>
+      ),
+      toolpathWarnings: () => (
+        toolpathWarnings && toolpathWarnings.length > 0 ? (
+          <div className="properties-field">
+            <span>{camT('cam.operation.toolpathWarnings')}</span>
+            <div className="cam-field-note-list">
+              {toolpathWarnings.map((warning, index) => (
+                <div key={`${operation.id}-warning-${index}`} className="cam-field-note">
+                  {toolpathWarningText(warning)}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null
+      ),
+      tool: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.tool')}</span>
+          <Select
+            value={operation.toolRef ?? ''}
+            options={[
+              { value: '', label: camT('cam.operation.noTool') },
+              ...(operation.kind === 'v_carve' || operation.kind === 'v_carve_medial'
+                ? project.tools.filter((tool) => tool.type === 'v_bit')
+                : project.tools
+              ).map((tool) => ({ value: tool.id, label: tool.name })),
+            ]}
+            onChange={(newToolId) => {
+              const id = newToolId || null
+              const newTool = id ? project.tools.find((t) => t.id === id) ?? null : null
+              const toolInProjectUnits = newTool && newTool.units !== project.meta.units
+                ? convertToolUnits(newTool, project.meta.units)
+                : newTool
+              const isVCarve = operation.kind === 'v_carve' || operation.kind === 'v_carve_medial'
+              const waterlineSpacing = operation.kind === 'finish_surface' && operation.pocketPattern === 'waterline'
+                ? defaultWaterlineAdaptiveSpacing(newTool, project.meta.units)
+                : 0
+              updateOperation(operation.id, {
+                toolRef: id,
+                ...(toolInProjectUnits ? {
+                  feed: toolInProjectUnits.defaultFeed,
+                  plungeFeed: toolInProjectUnits.defaultPlungeFeed,
+                  ...(operation.kind !== 'finish_surface_cleanup'
+                    ? { stepdown: toolInProjectUnits.defaultStepdown }
+                    : {}),
+                  stepover: toolInProjectUnits.defaultStepover,
+                  rpm: toolInProjectUnits.defaultRpm,
+                  ...(isVCarve && toolInProjectUnits.maxCutDepth > 0 ? {
+                    maxCarveDepth: toolInProjectUnits.maxCutDepth,
+                  } : {}),
+                  ...(waterlineSpacing > 0 ? {
+                    waterlineMicroStepover: waterlineSpacing,
+                  } : {}),
+                } : {}),
+              })
+            }}
+          />
+        </label>
+      ),
+      enabled: () => (
+        <label className="properties-check">
+          <input
+            type="checkbox"
+            checked={operation.enabled}
+            onChange={(event) => updateOperation(operation.id, { enabled: event.target.checked })}
+          />
+          <span>{camT('cam.operation.enabled')}</span>
+        </label>
+      ),
+      arcFitting: () => (
+        <label className="properties-check">
+          <input
+            type="checkbox"
+            checked={operation.arcFittingEnabled ?? true}
+            onChange={(event) => updateOperation(operation.id, { arcFittingEnabled: event.target.checked })}
+            title={camT('cam.operation.arcFittingTip')}
+          />
+          <span>{camT('cam.operation.arcFitting')}</span>
+        </label>
+      ),
+      stepdown: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.stepdown')}</span>
+          <DraftLengthInput
+            value={operation.stepdown}
+            units={project.meta.units}
+            min={0.0001}
+            onCommit={(value) => updateOperation(operation.id, { stepdown: value })}
+          />
+          <OperationParameterReference kind="stepdown" />
+        </label>
+      ),
+      edgeStrategy: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.edgeStrategy')}</span>
+          <Select
+            value={operation.edgeStrategy ?? 'contour'}
+            options={[
+              { value: 'contour', label: camT('cam.operation.edgeStrategyContour') },
+              { value: 'trochoidal', label: camT('cam.operation.edgeStrategyTrochoidal') },
+            ]}
+            // Write only the strategy. Cut width and advance stay
+            // undefined until the user edits them so they keep
+            // tracking the assigned tool, and machiningOrder is left
+            // alone so switching back to Contour does not silently
+            // discard the user's choice (trochoidal ignores it).
+            onChange={(edgeStrategy) => updateOperation(operation.id, { edgeStrategy })}
+          />
+          <OperationParameterReference kind="edgeStrategy" variant={operation.edgeStrategy ?? 'contour'} />
+        </label>
+      ),
+      carveStrategy: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.carveStrategy')}</span>
+          <Select
+            value={operation.carveStrategy ?? 'direct'}
+            options={[
+              { value: 'direct', label: camT('cam.operation.carveStrategyDirect') },
+              { value: 'trochoidal', label: camT('cam.operation.carveStrategyTrochoidal') },
+            ]}
+            onChange={(carveStrategy) => updateOperation(operation.id, { carveStrategy })}
+          />
+          <OperationParameterReference kind="edgeStrategy" variant={operation.carveStrategy === 'trochoidal' ? 'trochoidal' : 'contour'} />
+        </label>
+      ),
+      trochoidalCutWidth: () => (
+        <>
+          <label className="properties-field">
+            <span>{camT('cam.operation.trochoidalCutWidth')}</span>
+            <DraftLengthInput
+              value={trochoidalCutWidth}
+              units={project.meta.units}
+              min={Math.max(0.0001, trochoidalCutWidthFloor)}
+              onCommit={(value) => updateOperation(operation.id, { trochoidalCutWidth: value })}
+            />
+            <OperationParameterReference kind="trochoidalCutWidth" />
+          </label>
+          {trochoidalCutWidthBelowFloor ? (
+            <div className="properties-field">
+              <span />
+              <span className="cam-field-message">
+                {camT('cam.operation.trochoidalCutWidthBelowFloor', {
+                  minimum: formatLength(trochoidalCutWidthFloor, project.meta.units),
+                })}
+              </span>
+            </div>
+          ) : null}
+        </>
+      ),
+      trochoidalAdvance: () => (
+        <>
+          <label className="properties-field">
+            <span>{camT('cam.operation.trochoidalAdvancePercent')}</span>
+            {/* Percent of tool diameter is the only stored form. An
+                absolute-distance twin fought this field: each wrote
+                the same ratio back through a rounded display, so
+                editing either nudged the other. The distance is
+                shown derived instead. */}
+            <DraftNumberInput
+              value={trochoidalAdvance * 100}
+              min={1}
+              max={100}
+              onCommit={(value) => updateOperation(operation.id, {
+                trochoidalAdvance: Math.min(1, Math.max(0.01, value / 100)),
+              })}
+            />
+            <OperationParameterReference kind="trochoidalAdvance" />
+          </label>
+          <div className="properties-field">
+            <span>{camT('cam.operation.trochoidalAdvanceDistance')}</span>
+            <span className="cam-field-derived">
+              {formatLength(trochoidalAdvance * trochoidalToolDiameter, project.meta.units)}
+            </span>
+          </div>
+        </>
+      ),
+      trochoidalCarveChannel: () => (
+        <>
+          <div className="properties-field">
+            <span>{camT('cam.operation.carveChannelWidth')}</span>
+            <span className="cam-field-derived">{formatLength(trochoidalCutWidth, project.meta.units)}</span>
+          </div>
+          <div className="properties-field">
+            <span />
+            <span className="cam-field-message">
+              {camT('cam.operation.carveChannelWidthNote', { width: formatLength(trochoidalCutWidth, project.meta.units) })}
+            </span>
+          </div>
+          {trochoidalTool?.type === 'v_bit' ? (
+            <div className="properties-field">
+              <span />
+              <span className="cam-field-message">
+                {camT('cam.operation.carveTrochoidalNeedsConstantDiameterTool')}
+              </span>
+            </div>
+          ) : null}
+        </>
+      ),
+      stepover: () => (
+        <label className="properties-field">
+          <span>
+            {operation.kind === 'v_carve'
+              ? camT('cam.operation.contourSpacing')
+              : camT('cam.operation.stepoverRatio')}
+          </span>
+          <DraftNumberInput
+            value={operation.stepover}
+            min={0.001}
+            onCommit={(value) => updateOperation(operation.id, { stepover: value })}
+          />
+          <OperationParameterReference kind="stepover" />
+        </label>
+      ),
+      entryStrategy: () => (
+        <>
+          <span className="properties-section-title">{camT('cam.operation.entry')}</span>
+          <label className="properties-field">
+            <span>{camT('cam.operation.entryStrategy')}</span>
+            <Select<EntryStrategy>
+              value={entryStrategy}
+              options={[
+                { value: 'plunge', label: camT('cam.operation.entryPlunge') },
+                { value: 'helix', label: camT('cam.operation.entryHelix') },
+                ...(isTrochoidalOp ? [] : [{ value: 'ramp' as EntryStrategy, label: camT('cam.operation.entryRamp') }]),
+              ]}
+              onChange={(value) => updateOperation(operation.id, { entryStrategy: value })}
+            />
+            <OperationParameterReference kind="entryStrategy" variant={entryStrategy} />
+          </label>
+        </>
+      ),
+      entryRampAngle: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.entryRampAngle')}</span>
+          <DraftNumberInput
+            value={operation.entryRampAngle ?? 5}
+            min={0.1}
+            max={45}
+            onCommit={(value) => updateOperation(operation.id, {
+              entryRampAngle: Math.min(45, Math.max(0.1, value)),
+            })}
+          />
+          <OperationParameterReference kind="entryRampAngle" />
+        </label>
+      ),
+      entryHelixDiameter: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.entryHelixDiameter')}</span>
+          <DraftNumberInput
+            value={operation.entryHelixDiameterPercent ?? 80}
+            min={1}
+            max={100}
+            onCommit={(value) => updateOperation(operation.id, {
+              entryHelixDiameterPercent: Math.min(100, Math.max(1, value)),
+            })}
+          />
+          <OperationParameterReference kind="entryHelixDiameter" />
+        </label>
+      ),
+      pattern: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.pattern')}</span>
+          <Select
+            value={operation.pocketPattern}
+            // The offered patterns are the kind's own: only 3D surface
+            // finishing waterlines, and only the 2.5D kinds offset.
+            options={operation.kind === 'finish_surface'
+              ? [
+                { value: 'parallel', label: pocketPatternLabel('parallel') },
+                { value: 'waterline', label: pocketPatternLabel('waterline') },
+              ]
+              : [
+                { value: 'offset', label: pocketPatternLabel('offset') },
+                { value: 'parallel', label: pocketPatternLabel('parallel') },
+              ]}
+            onChange={(value) => {
+              const waterlineSpacing = value === 'waterline'
+                ? defaultWaterlineAdaptiveSpacing(selectedOperationTool, project.meta.units)
+                : 0
+              updateOperation(operation.id, {
+                pocketPattern: value,
+                ...(waterlineSpacing > 0 && !(operation.waterlineMicroStepover && operation.waterlineMicroStepover > 0)
+                  ? { waterlineMicroStepover: waterlineSpacing }
+                  : {}),
+              })
+            }}
+          />
+          <OperationParameterReference kind="pattern" variant={operation.pocketPattern} />
+        </label>
+      ),
+      rasterAngle: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.angle')}</span>
+          <DraftNumberInput
+            value={operation.pocketAngle}
+            onCommit={(value) => updateOperation(operation.id, { pocketAngle: value })}
+          />
+          <OperationParameterReference kind="rasterAngle" />
+        </label>
+      ),
+      cutDirection: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.cutDirection')}</span>
+          <Select
+            value={operation.cutDirection ?? 'conventional'}
+            options={[
+              { value: 'conventional', label: camT('cam.operation.conventional') },
+              { value: 'climb', label: camT('cam.operation.climb') },
+            ]}
+            onChange={(value) => updateOperation(operation.id, { cutDirection: value })}
+          />
+          <OperationParameterReference kind="cutDirection" variant={operation.cutDirection ?? 'conventional'} />
+        </label>
+      ),
+      machiningOrder: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.machiningOrder')}</span>
+          <Select
+            value={operation.machiningOrder ?? 'level_first'}
+            options={[
+              { value: 'feature_first', label: camT('cam.operation.featureFirst') },
+              { value: 'level_first', label: camT('cam.operation.levelFirst') },
+            ]}
+            onChange={(value) => updateOperation(operation.id, { machiningOrder: value })}
+          />
+          <OperationParameterReference kind="machiningOrder" variant={operation.machiningOrder ?? 'level_first'} />
+        </label>
+      ),
+      roundOutsideCorners: () => (
+        <label className="properties-check">
+          <input
+            type="checkbox"
+            checked={operation.roundOutsideCorners ?? false}
+            onChange={(event) => updateOperation(operation.id, { roundOutsideCorners: event.target.checked })}
+          />
+          <span>{camT('cam.operation.roundOutsideCorners')}</span>
+        </label>
+      ),
+      roundLinkCorners: () => (
+        <label className="properties-check">
+          <input
+            type="checkbox"
+            checked={operation.roundLinkCorners ?? false}
+            onChange={(event) => updateOperation(operation.id, { roundLinkCorners: event.target.checked })}
+          />
+          <span>{camT('cam.operation.roundLinkCorners')}</span>
+        </label>
+      ),
+      cleanWallCorners: () => (
+        <label
+          className="properties-check"
+          title={camT('cam.operation.cleanWallCornersTooltip')}
+        >
+          <input
+            type="checkbox"
+            checked={operation.cleanWallCorners ?? false}
+            onChange={(event) => updateOperation(operation.id, { cleanWallCorners: event.target.checked })}
+          />
+          <span>{camT('cam.operation.cleanWallCorners')}</span>
+        </label>
+      ),
+      cornerRelief: () => (
+        <label
+          className="properties-field"
+          title={camT('cam.operation.cornerReliefTooltip')}
+        >
+          <span>{camT('cam.operation.cornerRelief')}</span>
+          <Select
+            value={operation.cornerRelief ?? 'none'}
+            options={[
+              { value: 'none', label: camT('cam.operation.cornerReliefNone') },
+              { value: 'dogbone', label: camT('cam.operation.cornerReliefDogbone') },
+              { value: 't_bone', label: camT('cam.operation.cornerReliefTBone') },
+              { value: 'longest_edge', label: camT('cam.operation.cornerReliefLongestEdge') },
+            ]}
+            onChange={(value) => updateOperation(operation.id, { cornerRelief: value })}
+          />
+          <OperationParameterReference
+            kind="cornerRelief"
+            variant={operation.cornerRelief ?? 'none'}
+          />
+        </label>
+      ),
+      drillType: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.drillType')}</span>
+          <Select
+            value={operation.drillType ?? 'simple'}
+            options={[
+              { value: 'simple', label: drillTypeLabel('simple') },
+              { value: 'peck', label: drillTypeLabel('peck') },
+              { value: 'dwell', label: drillTypeLabel('dwell') },
+              { value: 'chip_breaking', label: drillTypeLabel('chip_breaking') },
+              { value: 'helical', label: drillTypeLabel('helical') },
+              { value: 'countersink', label: drillTypeLabel('countersink') },
+            ]}
+            onChange={(value) => updateOperation(operation.id, { drillType: value })}
+          />
+          <OperationParameterReference kind="drillType" variant={operation.drillType ?? 'simple'} />
+        </label>
+      ),
+      peckDepth: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.peckDepth')}</span>
+          <DraftLengthInput
+            value={operation.peckDepth ?? 0}
+            units={project.meta.units}
+            min={0}
+            onCommit={(value) => updateOperation(operation.id, { peckDepth: value })}
+          />
+          <OperationParameterReference kind="peckDepth" />
+        </label>
+      ),
+      dwellTime: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.dwellTime')}</span>
+          <DraftNumberInput
+            value={operation.dwellTime ?? 0}
+            min={0}
+            onCommit={(value) => updateOperation(operation.id, { dwellTime: value })}
+          />
+          <OperationParameterReference kind="dwell" />
+        </label>
+      ),
+      countersinkDiameter: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.countersinkDiameter')}</span>
+          <DraftLengthInput
+            value={countersinkDiameter}
+            units={project.meta.units}
+            min={0}
+            onCommit={(value) => updateOperation(operation.id, { countersinkDiameter: value })}
+          />
+          <OperationParameterReference kind="countersinkDiameter" />
+        </label>
+      ),
+      countersinkDepth: () => (
+        <>
+          <div className="properties-field">
+            <span>{camT('cam.operation.countersinkDepth')}</span>
+            <span className="cam-field-derived">
+              {countersinkDepth !== null ? formatLength(countersinkDepth, project.meta.units) : '—'}
+            </span>
+          </div>
+          {countersinkNeedsVBit ? (
+            <div className="properties-field">
+              <span />
+              <span className="cam-field-message">{camT('cam.operation.countersinkNeedsVBit')}</span>
+            </div>
+          ) : null}
+          {countersinkExceedsTool ? (
+            <div className="properties-field">
+              <span />
+              <span className="cam-field-message">
+                {camT('cam.operation.countersinkExceedsTool', {
+                  toolDiameter: formatLength(countersinkTool?.diameter ?? 0, project.meta.units),
+                })}
+              </span>
+            </div>
+          ) : null}
+        </>
+      ),
+      retractHeight: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.retractHeight')}</span>
+          <DraftLengthInput
+            value={operation.retractHeight ?? (project.stock.thickness + 1)}
+            units={project.meta.units}
+            // Absolute project Z, so the stock top is the floor: below it the
+            // generator would clamp and warn anyway (issue #479).
+            min={project.stock.thickness}
+            onCommit={(value) => updateOperation(operation.id, { retractHeight: value })}
+          />
+          <OperationParameterReference kind="retractHeight" />
+        </label>
+      ),
+      finishWalls: () => (
+        <label className="properties-check">
+          <input
+            type="checkbox"
+            checked={operation.finishWalls}
+            onChange={(event) => updateOperation(operation.id, { finishWalls: event.target.checked })}
+          />
+          <span>{camT('cam.operation.finishWalls')}</span>
+          <OperationParameterReference kind="finishWalls" />
+        </label>
+      ),
+      finishFloor: () => (
+        <label className="properties-check">
+          <input
+            type="checkbox"
+            checked={operation.finishFloor}
+            onChange={(event) => updateOperation(operation.id, { finishFloor: event.target.checked })}
+          />
+          <span>{camT('cam.operation.finishFloor')}</span>
+          <OperationParameterReference kind="finishFloor" />
+        </label>
+      ),
+      debugToolpath: () => (
+        <label className="properties-check">
+          <input
+            type="checkbox"
+            checked={operation.debugToolpath}
+            onChange={(event) => updateOperation(operation.id, { debugToolpath: event.target.checked })}
+          />
+          <span>{camT('cam.operation.debugToolpath')}</span>
+        </label>
+      ),
+      feed: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.feed')}</span>
+          <DraftLengthInput
+            value={operation.feed}
+            units={project.meta.units}
+            min={0.0001}
+            onCommit={(value) => updateOperation(operation.id, { feed: value })}
+          />
+          <OperationParameterReference kind="feed" />
+        </label>
+      ),
+      plungeFeed: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.plungeFeed')}</span>
+          <DraftLengthInput
+            value={operation.plungeFeed}
+            units={project.meta.units}
+            min={0.0001}
+            onCommit={(value) => updateOperation(operation.id, { plungeFeed: value })}
+          />
+          <OperationParameterReference kind="plungeFeed" />
+        </label>
+      ),
+      slotFeed: () => (
+        <label
+          className="properties-field"
+          title={camT('cam.operation.slotFeedTooltip')}
+        >
+          <span>{camT('cam.operation.slotFeed')}</span>
+          <DraftNumberInput
+            value={operation.pocketSlotFeedPercent ?? 100}
+            min={1}
+            max={100}
+            onCommit={(value) => updateOperation(operation.id, {
+              pocketSlotFeedPercent: Math.min(100, Math.max(1, Math.round(value))),
+            })}
+          />
+          <OperationParameterReference kind="slotFeed" />
+        </label>
+      ),
+      engagementMode: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.engagementMode')}</span>
+          <Select
+            value={operation.pocketFeedReduction ?? 'slots_only'}
+            options={[
+              { value: 'slots_only', label: camT('cam.operation.engagementModeLegacy') },
+              { value: 'engagement', label: camT('cam.operation.engagementModeEngagementFeed') },
+            ]}
+            onChange={(value) => updateOperation(operation.id, { pocketFeedReduction: value })}
+          />
+          <OperationParameterReference
+            kind="engagementMode"
+            variant={operation.pocketFeedReduction ?? 'slots_only'}
+          />
+        </label>
+      ),
+      rpm: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.rpm')}</span>
+          <DraftNumberInput
+            value={operation.rpm}
+            min={1}
+            onCommit={(value) => updateOperation(operation.id, { rpm: Math.round(value) })}
+          />
+          <OperationParameterReference kind="rpm" />
+        </label>
+      ),
+      stockToLeaveRadial: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.stockToLeaveRadial')}</span>
+          <DraftLengthInput
+            value={operation.stockToLeaveRadial}
+            units={project.meta.units}
+            min={0}
+            onCommit={(value) => updateOperation(operation.id, { stockToLeaveRadial: value })}
+          />
+          <OperationParameterReference kind="stockRadial" />
+        </label>
+      ),
+      adaptiveRefinement: () => (
+        <label
+          className="properties-check"
+          title={camT('cam.operation.adaptiveRefinementTooltip')}
+        >
+          <input
+            type="checkbox"
+            checked={operation.waterlineAdaptiveRefinement ?? true}
+            onChange={(event) => {
+              const enabled = event.target.checked
+              const waterlineSpacing = defaultWaterlineAdaptiveSpacing(selectedOperationTool, project.meta.units)
+              updateOperation(operation.id, {
+                waterlineAdaptiveRefinement: enabled,
+                ...(enabled
+                  && waterlineSpacing > 0
+                  && !(operation.waterlineMicroStepover && operation.waterlineMicroStepover > 0)
+                  ? { waterlineMicroStepover: waterlineSpacing }
+                  : {}),
+              })
+            }}
+          />
+          <span>{camT('cam.operation.adaptiveRefinement')}</span>
+          <OperationParameterReference kind="adaptiveRefinement" />
+        </label>
+      ),
+      adaptiveSpacing: () => (
+        <label
+          className="properties-field"
+          title={camT('cam.operation.adaptiveSpacingTooltip')}
+        >
+          <span>{camT('cam.operation.adaptiveSpacing')}</span>
+          <DraftLengthInput
+            value={selectedOperationWaterlineSpacing}
+            units={project.meta.units}
+            min={0.0001}
+            onCommit={(value) => updateOperation(operation.id, { waterlineMicroStepover: value })}
+          />
+          <OperationParameterReference kind="adaptiveSpacing" />
+        </label>
+      ),
+      maxRings: () => (
+        <label
+          className="properties-field"
+          title={camT('cam.operation.maxRingsTooltip')}
+        >
+          <span>{camT('cam.operation.maxRingsBand')}</span>
+          <DraftNumberInput
+            value={operation.waterlineMaxRingsPerBand ?? 0}
+            min={0}
+            max={512}
+            onCommit={(value) => updateOperation(operation.id, { waterlineMaxRingsPerBand: Math.floor(value) })}
+          />
+          <OperationParameterReference kind="maxRings" />
+        </label>
+      ),
+      stockToLeaveAxial: () => (
+        <label className="properties-field">
+          <span>{camT('cam.operation.stockToLeaveAxial')}</span>
+          <DraftLengthInput
+            value={operation.stockToLeaveAxial}
+            units={project.meta.units}
+            min={0}
+            onCommit={(value) => updateOperation(operation.id, { stockToLeaveAxial: value })}
+          />
+          <OperationParameterReference kind="stockAxial" />
+        </label>
+      ),
+    }
+
     return (
-      <div key={`${selectedOperation.id}-${selectedOperation.toolRef ?? ''}`} className="properties-panel cam-tool-properties cam-operation-properties">
-                    <div className="properties-group">
-                  <label className="properties-field">
-                    <span>{camT('cam.operation.name')}</span>
-                    <DraftTextInput value={selectedOperation.name} onCommit={(value) => updateOperation(selectedOperation.id, { name: value })} />
-                  </label>
-                  <label className="properties-field properties-field--textarea">
-                    <span>{camT('cam.operation.description')}</span>
-                    <DraftTextArea
-                      value={selectedOperation.description ?? ''}
-                      onCommit={(value) => updateOperation(selectedOperation.id, { description: value })}
-                    />
-                  </label>
-                  <label className="properties-field">
-                    <span>{camT('cam.operation.kind')}</span>
-                    <input type="text" value={operationKindLabel(selectedOperation.kind)} readOnly />
-                  </label>
-                  {selectedOperation.kind !== 'v_carve' && selectedOperation.kind !== 'v_carve_medial' && selectedOperation.kind !== 'drilling' && selectedOperation.kind !== 'rough_surface' && selectedOperation.kind !== 'finish_surface' && selectedOperation.kind !== 'finish_surface_cleanup' ? (
-                    <label className="properties-field">
-                      <span>{camT('cam.operation.pass')}</span>
-                      <Select
-                        value={selectedOperation.pass}
-                        options={[
-                          { value: 'rough', label: camT('cam.pass.rough') },
-                          { value: 'finish', label: camT('cam.pass.finish') },
-                        ]}
-                        onChange={(value) => updateOperation(selectedOperation.id, { pass: value })}
-                      />
-                    </label>
-                  ) : null}
-                  {selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_medial' ? (
-                    <label className="properties-field">
-                      <span>{camT('cam.operation.maxCarveDepth')}</span>
-                      <DraftLengthInput
-                        value={selectedOperation.maxCarveDepth}
-                        units={project.meta.units}
-                        min={0.0001}
-                        onCommit={(value) => updateOperation(selectedOperation.id, { maxCarveDepth: value })}
-                      />
-                      <OperationParameterReference kind="maxDepth" />
-                    </label>
-                  ) : null}
-                  {selectedOperation.kind === 'follow_line' ? (
-                    <label className="properties-field">
-                      <span>{camT('cam.operation.carveDepth')}</span>
-                      <DraftLengthInput
-                        value={selectedOperation.carveDepth}
-                        units={project.meta.units}
-                        min={0.0001}
-                        onCommit={(value) => updateOperation(selectedOperation.id, { carveDepth: value })}
-                      />
-                      <OperationParameterReference kind="maxDepth" />
-                    </label>
-                  ) : null}
-                  <label className="properties-field">
-                    <span>{camT('cam.operation.target')}</span>
-                    <input type="text" value={operationTargetSummary(project, selectedOperation.target)} readOnly />
-                  </label>
-                  {selectedOperationTargetsRegion ? (
-                    <div className="cam-region-note">
-                      <span className="cam-region-note__badge">{camT('cam.regionNote.badge')}</span>
-                      <span>{camT('cam.regionNote.text')}</span>
-                    </div>
-                  ) : null}
-                  <div className="properties-field">
-                    <span>{camT('cam.operation.targetSource')}</span>
-                    <button
-                      className="feat-btn"
-                      type="button"
-                      title={getOperationTargetUpdateHint(project, selection, selectedOperation) ?? undefined}
-                      onClick={handleApplySelectionToOperation}
-                    >
-                      {camT('cam.operation.useCurrentSelection')}
-                    </button>
-                    {selectionUpdateConfirm === selectedOperation.id ? (
-                      <span className="cam-field-message cam-field-message--success">{camT('cam.operation.targetUpdated')}</span>
-                    ) : targetUpdateMessage
-                      && targetUpdateMessage.operationId === selectedOperation.id
-                      && targetUpdateMessage.selectionKey === selectionKey ? (
-                      <span className="cam-field-message">{targetUpdateMessage.text}</span>
-                    ) : null}
-                  </div>
-                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside') ? (
-                    <div className="properties-field">
-                      <span>{camT('cam.operation.restMachining')}</span>
-                      <button
-                        className="feat-btn"
-                        type="button"
-                        disabled={isTrochoidalRoughEdge}
-                        title={isTrochoidalRoughEdge ? camT('cam.operation.restTrochoidalUnavailable') : undefined}
-                        onClick={handleCreateRestOperation}
-                      >
-                        {camT('cam.operation.createRestOp')}
-                      </button>
-                      {isTrochoidalRoughEdge ? (
-                        <span className="cam-field-message">{camT('cam.operation.restTrochoidalUnavailable')}</span>
-                      ) : null}
-                      {operationActionMessage?.operationId === selectedOperation.id ? (
-                        <span className="cam-field-message">{operationActionMessage.text}</span>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <div className="properties-field">
-                    <span>{camT('cam.operation.booklet')}</span>
-                    <button
-                      className="feat-btn"
-                      type="button"
-                      onClick={handleExportBooklet}
-                      disabled={exportingBookletOperationId === selectedOperation.id}
-                    >
-                      {exportingBookletOperationId === selectedOperation.id ? camT('cam.operation.exporting') : camT('cam.operation.exportPdf')}
-                    </button>
-                    {bookletExportMessage?.operationId === selectedOperation.id ? (
-                      <span className="cam-field-message">{bookletExportMessage.text}</span>
-                    ) : null}
-                  </div>
-                  {(selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside') ? (
-                    <div className="properties-field">
-                      <span>{camT('cam.operation.tabs')}</span>
-                      <button className="feat-btn" type="button" onClick={handleAutoPlaceTabs}>
-                        {camT('cam.operation.autoPlaceTabs')}
-                      </button>
-                    </div>
-                  ) : null}
-                  {toolpathWarnings && toolpathWarnings.length > 0 ? (
-                    <div className="properties-field">
-                      <span>{camT('cam.operation.toolpathWarnings')}</span>
-                      <div className="cam-field-note-list">
-                        {toolpathWarnings.map((warning, index) => (
-                          <div key={`${selectedOperation.id}-warning-${index}`} className="cam-field-note">
-                            {toolpathWarningText(warning)}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  <label className="properties-field">
-                    <span>{camT('cam.operation.tool')}</span>
-                    <Select
-                      value={selectedOperation.toolRef ?? ''}
-                      options={[
-                        { value: '', label: camT('cam.operation.noTool') },
-                        ...(selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_medial'
-                          ? project.tools.filter((tool) => tool.type === 'v_bit')
-                          : project.tools
-                        ).map((tool) => ({ value: tool.id, label: tool.name })),
-                      ]}
-                      onChange={(newToolId) => {
-                        const id = newToolId || null
-                        const newTool = id ? project.tools.find((t) => t.id === id) ?? null : null
-                        const toolInProjectUnits = newTool && newTool.units !== project.meta.units
-                          ? convertToolUnits(newTool, project.meta.units)
-                          : newTool
-                        const isVCarve = selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'v_carve_medial'
-                        const waterlineSpacing = selectedOperation.kind === 'finish_surface' && selectedOperation.pocketPattern === 'waterline'
-                          ? defaultWaterlineAdaptiveSpacing(newTool, project.meta.units)
-                          : 0
-                        updateOperation(selectedOperation.id, {
-                          toolRef: id,
-                          ...(toolInProjectUnits ? {
-                            feed: toolInProjectUnits.defaultFeed,
-                            plungeFeed: toolInProjectUnits.defaultPlungeFeed,
-                            ...(selectedOperation.kind !== 'finish_surface_cleanup'
-                              ? { stepdown: toolInProjectUnits.defaultStepdown }
-                              : {}),
-                            stepover: toolInProjectUnits.defaultStepover,
-                            rpm: toolInProjectUnits.defaultRpm,
-                            ...(isVCarve && toolInProjectUnits.maxCutDepth > 0 ? {
-                              maxCarveDepth: toolInProjectUnits.maxCutDepth,
-                            } : {}),
-                            ...(waterlineSpacing > 0 ? {
-                              waterlineMicroStepover: waterlineSpacing,
-                            } : {}),
-                          } : {}),
-                        })
-                      }}
-                    />
-                  </label>
-                  <label className="properties-check">
-                    <input
-                      type="checkbox"
-                      checked={selectedOperation.enabled}
-                      onChange={(event) => updateOperation(selectedOperation.id, { enabled: event.target.checked })}
-                    />
-                    <span>{camT('cam.operation.enabled')}</span>
-                  </label>
-                  <label className="properties-check">
-                    <input
-                      type="checkbox"
-                      checked={selectedOperation.arcFittingEnabled ?? true}
-                      onChange={(event) => updateOperation(selectedOperation.id, { arcFittingEnabled: event.target.checked })}
-                      title={camT('cam.operation.arcFittingTip')}
-                    />
-                    <span>{camT('cam.operation.arcFitting')}</span>
-                  </label>
-                  {showStepdown(selectedOperation) ? (
-                    <label className="properties-field">
-                      <span>{camT('cam.operation.stepdown')}</span>
-                      <DraftLengthInput
-                        value={selectedOperation.stepdown}
-                        units={project.meta.units}
-                        min={0.0001}
-                        onCommit={(value) => updateOperation(selectedOperation.id, { stepdown: value })}
-                      />
-                      <OperationParameterReference kind="stepdown" />
-                    </label>
-                  ) : null}
-                  {isRoughEdgeRoute ? (
-                    <label className="properties-field">
-                      <span>{camT('cam.operation.edgeStrategy')}</span>
-                      <Select
-                        value={selectedOperation.edgeStrategy ?? 'contour'}
-                        options={[
-                          { value: 'contour', label: camT('cam.operation.edgeStrategyContour') },
-                          { value: 'trochoidal', label: camT('cam.operation.edgeStrategyTrochoidal') },
-                        ]}
-                        // Write only the strategy. Cut width and advance stay
-                        // undefined until the user edits them so they keep
-                        // tracking the assigned tool, and machiningOrder is left
-                        // alone so switching back to Contour does not silently
-                        // discard the user's choice (trochoidal ignores it).
-                        onChange={(edgeStrategy) => updateOperation(selectedOperation.id, { edgeStrategy })}
-                      />
-                      <OperationParameterReference kind="edgeStrategy" variant={selectedOperation.edgeStrategy ?? 'contour'} />
-                    </label>
-                  ) : null}
-                  {selectedOperation.kind === 'follow_line' ? (
-                    <label className="properties-field">
-                      <span>{camT('cam.operation.carveStrategy')}</span>
-                      <Select
-                        value={selectedOperation.carveStrategy ?? 'direct'}
-                        options={[
-                          { value: 'direct', label: camT('cam.operation.carveStrategyDirect') },
-                          { value: 'trochoidal', label: camT('cam.operation.carveStrategyTrochoidal') },
-                        ]}
-                        onChange={(carveStrategy) => updateOperation(selectedOperation.id, { carveStrategy })}
-                      />
-                      <OperationParameterReference kind="edgeStrategy" variant={selectedOperation.carveStrategy === 'trochoidal' ? 'trochoidal' : 'contour'} />
-                    </label>
-                  ) : null}
-                  {isTrochoidalOp ? (
-                    <>
-                      <label className="properties-field">
-                        <span>{camT('cam.operation.trochoidalCutWidth')}</span>
-                        <DraftLengthInput
-                          value={trochoidalCutWidth}
-                          units={project.meta.units}
-                          min={Math.max(0.0001, trochoidalCutWidthFloor)}
-                          onCommit={(value) => updateOperation(selectedOperation.id, { trochoidalCutWidth: value })}
-                        />
-                        <OperationParameterReference kind="trochoidalCutWidth" />
-                      </label>
-                      {trochoidalCutWidthBelowFloor ? (
-                        <div className="properties-field">
-                          <span />
-                          <span className="cam-field-message">
-                            {camT('cam.operation.trochoidalCutWidthBelowFloor', {
-                              minimum: formatLength(trochoidalCutWidthFloor, project.meta.units),
-                            })}
-                          </span>
-                        </div>
-                      ) : null}
-                      <label className="properties-field">
-                        <span>{camT('cam.operation.trochoidalAdvancePercent')}</span>
-                        {/* Percent of tool diameter is the only stored form. An
-                            absolute-distance twin fought this field: each wrote
-                            the same ratio back through a rounded display, so
-                            editing either nudged the other. The distance is
-                            shown derived instead. */}
-                        <DraftNumberInput
-                          value={trochoidalAdvance * 100}
-                          min={1}
-                          max={100}
-                          onCommit={(value) => updateOperation(selectedOperation.id, {
-                            trochoidalAdvance: Math.min(1, Math.max(0.01, value / 100)),
-                          })}
-                        />
-                        <OperationParameterReference kind="trochoidalAdvance" />
-                      </label>
-                      <div className="properties-field">
-                        <span>{camT('cam.operation.trochoidalAdvanceDistance')}</span>
-                        <span className="cam-field-derived">
-                          {formatLength(trochoidalAdvance * trochoidalToolDiameter, project.meta.units)}
-                        </span>
-                      </div>
-                      {isTrochoidalCarveOp ? (
-                        <>
-                          <div className="properties-field">
-                            <span>{camT('cam.operation.carveChannelWidth')}</span>
-                            <span className="cam-field-derived">{formatLength(trochoidalCutWidth, project.meta.units)}</span>
-                          </div>
-                          <div className="properties-field">
-                            <span />
-                            <span className="cam-field-message">
-                              {camT('cam.operation.carveChannelWidthNote', { width: formatLength(trochoidalCutWidth, project.meta.units) })}
-                            </span>
-                          </div>
-                          {trochoidalTool?.type === 'v_bit' ? (
-                            <div className="properties-field">
-                              <span />
-                              <span className="cam-field-message">
-                                {camT('cam.operation.carveTrochoidalNeedsConstantDiameterTool')}
-                              </span>
-                            </div>
-                          ) : null}
-                        </>
-                      ) : null}
-                    </>
-                  ) : null}
-                  {selectedOperation.kind !== 'follow_line'
-                    && selectedOperation.kind !== 'drilling'
-                    && selectedOperation.kind !== 'v_carve_medial'
-                    && selectedOperation.kind !== 'edge_route_inside'
-                    && selectedOperation.kind !== 'edge_route_outside'
-                    && !(selectedOperation.kind === 'finish_surface' && selectedOperation.pocketPattern === 'waterline') ? (
-                    <label className="properties-field">
-                      <span>
-                        {selectedOperation.kind === 'v_carve'
-                          ? camT('cam.operation.contourSpacing')
-                          : camT('cam.operation.stepoverRatio')}
-                      </span>
-                      <DraftNumberInput
-                        value={selectedOperation.stepover}
-                        min={0.001}
-                        onCommit={(value) => updateOperation(selectedOperation.id, { stepover: value })}
-                      />
-                      <OperationParameterReference kind="stepover" />
-                    </label>
-                  ) : null}
-                  <DisclosureSection title={camT('cam.operation.advanced')} storageKey="cam-operation-advanced">
-                  {supportsEntryStrategy ? (
-                    <>
-                      <span className="properties-section-title">{camT('cam.operation.entry')}</span>
-                      <label className="properties-field">
-                        <span>{camT('cam.operation.entryStrategy')}</span>
-                        <Select<EntryStrategy>
-                          value={entryStrategy}
-                          options={[
-                            { value: 'plunge', label: camT('cam.operation.entryPlunge') },
-                            { value: 'helix', label: camT('cam.operation.entryHelix') },
-                            ...(isTrochoidalOp ? [] : [{ value: 'ramp' as EntryStrategy, label: camT('cam.operation.entryRamp') }]),
-                          ]}
-                          onChange={(value) => updateOperation(selectedOperation.id, { entryStrategy: value })}
-                        />
-                        <OperationParameterReference kind="entryStrategy" variant={entryStrategy} />
-                      </label>
-                      {entryStrategy === 'helix' || entryStrategy === 'ramp' ? (
-                        <label className="properties-field">
-                          <span>{camT('cam.operation.entryRampAngle')}</span>
-                          <DraftNumberInput
-                            value={selectedOperation.entryRampAngle ?? 5}
-                            min={0.1}
-                            max={45}
-                            onCommit={(value) => updateOperation(selectedOperation.id, {
-                              entryRampAngle: Math.min(45, Math.max(0.1, value)),
-                            })}
-                          />
-                          <OperationParameterReference kind="entryRampAngle" />
-                        </label>
-                      ) : null}
-                      {entryStrategy === 'helix' ? (
-                        <label className="properties-field">
-                          <span>{camT('cam.operation.entryHelixDiameter')}</span>
-                          <DraftNumberInput
-                            value={selectedOperation.entryHelixDiameterPercent ?? 80}
-                            min={1}
-                            max={100}
-                            onCommit={(value) => updateOperation(selectedOperation.id, {
-                              entryHelixDiameterPercent: Math.min(100, Math.max(1, value)),
-                            })}
-                          />
-                          <OperationParameterReference kind="entryHelixDiameter" />
-                        </label>
-                      ) : null}
-                    </>
-                  ) : null}
-                  {selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' ? (
-                    <label className="properties-field">
-                      <span>{camT('cam.operation.pattern')}</span>
-                      <Select
-                        value={selectedOperation.pocketPattern}
-                        options={[
-                          { value: 'offset', label: pocketPatternLabel('offset') },
-                          { value: 'parallel', label: pocketPatternLabel('parallel') },
-                        ]}
-                        onChange={(value) => {
-                          const waterlineSpacing = value === 'waterline'
-                            ? defaultWaterlineAdaptiveSpacing(selectedOperationTool, project.meta.units)
-                            : 0
-                          updateOperation(selectedOperation.id, {
-                            pocketPattern: value,
-                            ...(waterlineSpacing > 0 && !(selectedOperation.waterlineMicroStepover && selectedOperation.waterlineMicroStepover > 0)
-                              ? { waterlineMicroStepover: waterlineSpacing }
-                              : {}),
-                          })
-                        }}
-                      />
-                      <OperationParameterReference kind="pattern" variant={selectedOperation.pocketPattern} />
-                    </label>
-                  ) : null}
-                  {selectedOperation.kind === 'finish_surface' ? (
-                    <label className="properties-field">
-                      <span>{camT('cam.operation.pattern')}</span>
-                      <Select
-                        value={selectedOperation.pocketPattern}
-                        options={[
-                          { value: 'parallel', label: pocketPatternLabel('parallel') },
-                          { value: 'waterline', label: pocketPatternLabel('waterline') },
-                        ]}
-                        onChange={(value) => updateOperation(selectedOperation.id, { pocketPattern: value })}
-                      />
-                      <OperationParameterReference kind="pattern" variant={selectedOperation.pocketPattern} />
-                    </label>
-                  ) : null}
-                  {selectedOperation.kind === 'finish_surface_cleanup' ? (
-                    <label className="properties-field">
-                      <span>{camT('cam.operation.pattern')}</span>
-                      <Select
-                        value={selectedOperation.pocketPattern}
-                        options={[
-                          { value: 'offset', label: pocketPatternLabel('offset') },
-                          { value: 'parallel', label: pocketPatternLabel('parallel') },
-                        ]}
-                        onChange={(value) => updateOperation(selectedOperation.id, { pocketPattern: value })}
-                      />
-                      <OperationParameterReference kind="pattern" variant={selectedOperation.pocketPattern} />
-                    </label>
-                  ) : null}
-                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'finish_surface' || selectedOperation.kind === 'finish_surface_cleanup') && selectedOperation.pocketPattern === 'parallel' ? (
-                    <label className="properties-field">
-                      <span>{camT('cam.operation.angle')}</span>
-                      <DraftNumberInput
-                        value={selectedOperation.pocketAngle}
-                        onCommit={(value) => updateOperation(selectedOperation.id, { pocketAngle: value })}
-                      />
-                      <OperationParameterReference kind="rasterAngle" />
-                    </label>
-                  ) : null}
-                  {(selectedOperation.kind === 'pocket' || selectedOperation.kind === 'edge_route_inside' || selectedOperation.kind === 'edge_route_outside' || selectedOperation.kind === 'v_carve' || selectedOperation.kind === 'surface_clean' || selectedOperation.kind === 'rough_surface' || selectedOperation.kind === 'finish_surface' || selectedOperation.kind === 'finish_surface_cleanup' || isTrochoidalCarveOp) ? (
-                    <label className="properties-field">
-                      <span>{camT('cam.operation.cutDirection')}</span>
-                      <Select
-                        value={selectedOperation.cutDirection ?? 'conventional'}
-                        options={[
-                          { value: 'conventional', label: camT('cam.operation.conventional') },
-                          { value: 'climb', label: camT('cam.operation.climb') },
-                        ]}
-                        onChange={(value) => updateOperation(selectedOperation.id, { cutDirection: value })}
-                      />
-                      <OperationParameterReference kind="cutDirection" variant={selectedOperation.cutDirection ?? 'conventional'} />
-                    </label>
-                  ) : null}
-                  {(selectedOperation.kind === 'pocket'
-                    || selectedOperation.kind === 'edge_route_inside'
-                    || selectedOperation.kind === 'edge_route_outside') ? (
-                    <label className="properties-field">
-                      <span>{camT('cam.operation.machiningOrder')}</span>
-                      <Select
-                        value={selectedOperation.machiningOrder ?? 'level_first'}
-                        options={[
-                          { value: 'feature_first', label: camT('cam.operation.featureFirst') },
-                          { value: 'level_first', label: camT('cam.operation.levelFirst') },
-                        ]}
-                        onChange={(value) => updateOperation(selectedOperation.id, { machiningOrder: value })}
-                      />
-                      <OperationParameterReference kind="machiningOrder" variant={selectedOperation.machiningOrder ?? 'level_first'} />
-                    </label>
-                  ) : null}
-                  {(selectedOperation.kind === 'edge_route_outside'
-                    || selectedOperation.kind === 'pocket'
-                    || selectedOperation.kind === 'surface_clean'
-                    || selectedOperation.kind === 'rough_surface'
-                    || selectedOperation.kind === 'finish_surface_cleanup') ? (
-                    <label className="properties-check">
-                      <input
-                        type="checkbox"
-                        checked={selectedOperation.roundOutsideCorners ?? false}
-                        onChange={(event) => updateOperation(selectedOperation.id, { roundOutsideCorners: event.target.checked })}
-                      />
-                      <span>{camT('cam.operation.roundOutsideCorners')}</span>
-                    </label>
-                  ) : null}
-                  {(selectedOperation.kind === 'pocket' && selectedOperation.pocketPattern !== 'parallel') ? (
-                    <label className="properties-check">
-                      <input
-                        type="checkbox"
-                        checked={selectedOperation.roundLinkCorners ?? false}
-                        onChange={(event) => updateOperation(selectedOperation.id, { roundLinkCorners: event.target.checked })}
-                      />
-                      <span>{camT('cam.operation.roundLinkCorners')}</span>
-                    </label>
-                  ) : null}
-                  {(selectedOperation.kind === 'pocket'
-                    && selectedOperation.pocketPattern !== 'parallel'
-                    && selectedOperation.roundOutsideCorners) ? (
-                    <label
-                      className="properties-check"
-                      title={camT('cam.operation.cleanWallCornersTooltip')}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedOperation.cleanWallCorners ?? false}
-                        onChange={(event) => updateOperation(selectedOperation.id, { cleanWallCorners: event.target.checked })}
-                      />
-                      <span>{camT('cam.operation.cleanWallCorners')}</span>
-                    </label>
-                  ) : null}
-                  {(selectedOperation.kind === 'pocket'
-                    || selectedOperation.kind === 'edge_route_inside'
-                    || selectedOperation.kind === 'edge_route_outside') ? (
-                    <label
-                      className="properties-field"
-                      title={camT('cam.operation.cornerReliefTooltip')}
-                    >
-                      <span>{camT('cam.operation.cornerRelief')}</span>
-                      <Select
-                        value={selectedOperation.cornerRelief ?? 'none'}
-                        options={[
-                          { value: 'none', label: camT('cam.operation.cornerReliefNone') },
-                          { value: 'dogbone', label: camT('cam.operation.cornerReliefDogbone') },
-                          { value: 't_bone', label: camT('cam.operation.cornerReliefTBone') },
-                          { value: 'longest_edge', label: camT('cam.operation.cornerReliefLongestEdge') },
-                        ]}
-                        onChange={(value) => updateOperation(selectedOperation.id, { cornerRelief: value })}
-                      />
-                      <OperationParameterReference
-                        kind="cornerRelief"
-                        variant={selectedOperation.cornerRelief ?? 'none'}
-                      />
-                    </label>
-                  ) : null}
-                  {selectedOperation.kind === 'drilling' ? (
-                    <>
-                      <label className="properties-field">
-                        <span>{camT('cam.operation.drillType')}</span>
-                        <Select
-                          value={selectedOperation.drillType ?? 'simple'}
-                          options={[
-                            { value: 'simple', label: drillTypeLabel('simple') },
-                            { value: 'peck', label: drillTypeLabel('peck') },
-                            { value: 'dwell', label: drillTypeLabel('dwell') },
-                            { value: 'chip_breaking', label: drillTypeLabel('chip_breaking') },
-                            { value: 'helical', label: drillTypeLabel('helical') },
-                            { value: 'countersink', label: drillTypeLabel('countersink') },
-                          ]}
-                          onChange={(value) => updateOperation(selectedOperation.id, { drillType: value })}
-                        />
-                        <OperationParameterReference kind="drillType" variant={selectedOperation.drillType ?? 'simple'} />
-                      </label>
-                      {(selectedOperation.drillType === 'peck' || selectedOperation.drillType === 'chip_breaking') ? (
-                        <label className="properties-field">
-                          <span>{camT('cam.operation.peckDepth')}</span>
-                          <DraftLengthInput
-                            value={selectedOperation.peckDepth ?? 0}
-                            units={project.meta.units}
-                            min={0}
-                            onCommit={(value) => updateOperation(selectedOperation.id, { peckDepth: value })}
-                          />
-                          <OperationParameterReference kind="peckDepth" />
-                        </label>
-                      ) : null}
-                      {selectedOperation.drillType === 'dwell' ? (
-                        <label className="properties-field">
-                          <span>{camT('cam.operation.dwellTime')}</span>
-                          <DraftNumberInput
-                            value={selectedOperation.dwellTime ?? 0}
-                            min={0}
-                            onCommit={(value) => updateOperation(selectedOperation.id, { dwellTime: value })}
-                          />
-                          <OperationParameterReference kind="dwell" />
-                        </label>
-                      ) : null}
-                      {isCountersinkDrill ? (
-                        <>
-                          <label className="properties-field">
-                            <span>{camT('cam.operation.countersinkDiameter')}</span>
-                            <DraftLengthInput
-                              value={countersinkDiameter}
-                              units={project.meta.units}
-                              min={0}
-                              onCommit={(value) => updateOperation(selectedOperation.id, { countersinkDiameter: value })}
-                            />
-                            <OperationParameterReference kind="countersinkDiameter" />
-                          </label>
-                          <div className="properties-field">
-                            <span>{camT('cam.operation.countersinkDepth')}</span>
-                            <span className="cam-field-derived">
-                              {countersinkDepth !== null ? formatLength(countersinkDepth, project.meta.units) : '—'}
-                            </span>
-                          </div>
-                          {countersinkNeedsVBit ? (
-                            <div className="properties-field">
-                              <span />
-                              <span className="cam-field-message">{camT('cam.operation.countersinkNeedsVBit')}</span>
-                            </div>
-                          ) : null}
-                          {countersinkExceedsTool ? (
-                            <div className="properties-field">
-                              <span />
-                              <span className="cam-field-message">
-                                {camT('cam.operation.countersinkExceedsTool', {
-                                  toolDiameter: formatLength(countersinkTool?.diameter ?? 0, project.meta.units),
-                                })}
-                              </span>
-                            </div>
-                          ) : null}
-                        </>
-                      ) : null}
-                      {selectedOperation.drillType === 'helical' ? (
-                        <label className="properties-field">
-                          <span>{camT('cam.operation.entryRampAngle')}</span>
-                          <DraftNumberInput
-                            value={selectedOperation.entryRampAngle ?? 5}
-                            min={0.1}
-                            max={45}
-                            onCommit={(value) => updateOperation(selectedOperation.id, {
-                              entryRampAngle: Math.min(45, Math.max(0.1, value)),
-                            })}
-                          />
-                          <OperationParameterReference kind="entryRampAngle" />
-                        </label>
-                      ) : null}
-                      <label className="properties-field">
-                        <span>{camT('cam.operation.retractHeight')}</span>
-                        <DraftLengthInput
-                          value={selectedOperation.retractHeight ?? (project.stock.thickness + 1)}
-                          units={project.meta.units}
-                          // Absolute project Z, so the stock top is the floor: below it the
-                          // generator would clamp and warn anyway (issue #479).
-                          min={project.stock.thickness}
-                          onCommit={(value) => updateOperation(selectedOperation.id, { retractHeight: value })}
-                        />
-                        <OperationParameterReference kind="retractHeight" />
-                      </label>
-                    </>
-                  ) : null}
-                  {((selectedOperation.kind === 'pocket' || selectedOperation.kind === 'surface_clean') && selectedOperation.pass === 'finish')
-                    || selectedOperation.kind === 'finish_surface_cleanup' ? (
-                    <>
-                      <label className="properties-check">
-                        <input
-                          type="checkbox"
-                          checked={selectedOperation.finishWalls}
-                          onChange={(event) => updateOperation(selectedOperation.id, { finishWalls: event.target.checked })}
-                        />
-                        <span>{camT('cam.operation.finishWalls')}</span>
-                        <OperationParameterReference kind="finishWalls" />
-                      </label>
-                      <label className="properties-check">
-                        <input
-                          type="checkbox"
-                          checked={selectedOperation.finishFloor}
-                          onChange={(event) => updateOperation(selectedOperation.id, { finishFloor: event.target.checked })}
-                        />
-                        <span>{camT('cam.operation.finishFloor')}</span>
-                        <OperationParameterReference kind="finishFloor" />
-                      </label>
-                    </>
-                  ) : null}
-                  <label className="properties-check">
-                    <input
-                      type="checkbox"
-                      checked={selectedOperation.debugToolpath}
-                      onChange={(event) => updateOperation(selectedOperation.id, { debugToolpath: event.target.checked })}
-                    />
-                    <span>{camT('cam.operation.debugToolpath')}</span>
-                  </label>
-                  <label className="properties-field">
-                    <span>{camT('cam.operation.feed')}</span>
-                    <DraftLengthInput
-                      value={selectedOperation.feed}
-                      units={project.meta.units}
-                      min={0.0001}
-                      onCommit={(value) => updateOperation(selectedOperation.id, { feed: value })}
-                    />
-                    <OperationParameterReference kind="feed" />
-                  </label>
-                  <label className="properties-field">
-                    <span>{camT('cam.operation.plungeFeed')}</span>
-                    <DraftLengthInput
-                      value={selectedOperation.plungeFeed}
-                      units={project.meta.units}
-                      min={0.0001}
-                      onCommit={(value) => updateOperation(selectedOperation.id, { plungeFeed: value })}
-                    />
-                    <OperationParameterReference kind="plungeFeed" />
-                  </label>
-                  {selectedOperation.kind === 'pocket'
-                    && (selectedOperation.pass === 'rough'
-                      || (selectedOperation.pass === 'finish' && selectedOperation.finishFloor)) ? (
-                    <>
-                      <label
-                        className="properties-field"
-                        title={camT('cam.operation.slotFeedTooltip')}
-                      >
-                        <span>{camT('cam.operation.slotFeed')}</span>
-                        <DraftNumberInput
-                          value={selectedOperation.pocketSlotFeedPercent ?? 100}
-                          min={1}
-                          max={100}
-                          onCommit={(value) => updateOperation(selectedOperation.id, {
-                            pocketSlotFeedPercent: Math.min(100, Math.max(1, Math.round(value))),
-                          })}
-                        />
-                        <OperationParameterReference kind="slotFeed" />
-                      </label>
-                      <label className="properties-field">
-                        <span>{camT('cam.operation.engagementMode')}</span>
-                        <Select
-                          value={selectedOperation.pocketFeedReduction ?? 'slots_only'}
-                          options={[
-                            { value: 'slots_only', label: camT('cam.operation.engagementModeLegacy') },
-                            { value: 'engagement', label: camT('cam.operation.engagementModeEngagementFeed') },
-                          ]}
-                          onChange={(value) => updateOperation(selectedOperation.id, { pocketFeedReduction: value })}
-                        />
-                        <OperationParameterReference
-                          kind="engagementMode"
-                          variant={selectedOperation.pocketFeedReduction ?? 'slots_only'}
-                        />
-                      </label>
-                    </>
-                  ) : null}
-                  <label className="properties-field">
-                    <span>{camT('cam.operation.rpm')}</span>
-                    <DraftNumberInput
-                      value={selectedOperation.rpm}
-                      min={1}
-                      onCommit={(value) => updateOperation(selectedOperation.id, { rpm: Math.round(value) })}
-                    />
-                    <OperationParameterReference kind="rpm" />
-                  </label>
-                  {selectedOperation.kind !== 'follow_line'
-                    && selectedOperation.kind !== 'v_carve'
-                    && selectedOperation.kind !== 'v_carve_medial'
-                    && selectedOperation.kind !== 'drilling'
-                    && selectedOperation.kind !== 'finish_surface' ? (
-                    <>
-                      <label className="properties-field">
-                        <span>{camT('cam.operation.stockToLeaveRadial')}</span>
-                        <DraftLengthInput
-                          value={selectedOperation.stockToLeaveRadial}
-                          units={project.meta.units}
-                          min={0}
-                          onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveRadial: value })}
-                        />
-                        <OperationParameterReference kind="stockRadial" />
-                      </label>
-                      <label className="properties-field">
-                        <span>{camT('cam.operation.stockToLeaveAxial')}</span>
-                        <DraftLengthInput
-                          value={selectedOperation.stockToLeaveAxial}
-                          units={project.meta.units}
-                          min={0}
-                          onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveAxial: value })}
-                        />
-                        <OperationParameterReference kind="stockAxial" />
-                      </label>
-                    </>
-                  ) : null}
-                  {selectedOperation.kind === 'finish_surface' ? (
-                    <>
-                      {selectedOperation.pocketPattern === 'waterline' ? (
-                        <>
-                          <label className="properties-field">
-                            <span>{camT('cam.operation.stockToLeaveRadial')}</span>
-                            <DraftLengthInput
-                              value={selectedOperation.stockToLeaveRadial}
-                              units={project.meta.units}
-                              min={0}
-                              onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveRadial: value })}
-                            />
-                            <OperationParameterReference kind="stockRadial" />
-                          </label>
-                          <label
-                            className="properties-check"
-                            title={camT('cam.operation.adaptiveRefinementTooltip')}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selectedOperation.waterlineAdaptiveRefinement ?? true}
-                              onChange={(event) => {
-                                const enabled = event.target.checked
-                                const waterlineSpacing = defaultWaterlineAdaptiveSpacing(selectedOperationTool, project.meta.units)
-                                updateOperation(selectedOperation.id, {
-                                  waterlineAdaptiveRefinement: enabled,
-                                  ...(enabled
-                                    && waterlineSpacing > 0
-                                    && !(selectedOperation.waterlineMicroStepover && selectedOperation.waterlineMicroStepover > 0)
-                                    ? { waterlineMicroStepover: waterlineSpacing }
-                                    : {}),
-                                })
-                              }}
-                            />
-                            <span>{camT('cam.operation.adaptiveRefinement')}</span>
-                            <OperationParameterReference kind="adaptiveRefinement" />
-                          </label>
-                          {(selectedOperation.waterlineAdaptiveRefinement ?? true) ? (
-                            <>
-                              <label
-                                className="properties-field"
-                                title={camT('cam.operation.adaptiveSpacingTooltip')}
-                              >
-                                <span>{camT('cam.operation.adaptiveSpacing')}</span>
-                                <DraftLengthInput
-                                  value={selectedOperationWaterlineSpacing}
-                                  units={project.meta.units}
-                                  min={0.0001}
-                                  onCommit={(value) => updateOperation(selectedOperation.id, { waterlineMicroStepover: value })}
-                                />
-                                <OperationParameterReference kind="adaptiveSpacing" />
-                              </label>
-                              <label
-                                className="properties-field"
-                                title={camT('cam.operation.maxRingsTooltip')}
-                              >
-                                <span>{camT('cam.operation.maxRingsBand')}</span>
-                                <DraftNumberInput
-                                  value={selectedOperation.waterlineMaxRingsPerBand ?? 0}
-                                  min={0}
-                                  max={512}
-                                  onCommit={(value) => updateOperation(selectedOperation.id, { waterlineMaxRingsPerBand: Math.floor(value) })}
-                                />
-                                <OperationParameterReference kind="maxRings" />
-                              </label>
-                            </>
-                          ) : null}
-                        </>
-                      ) : null}
-                      <label className="properties-field">
-                        <span>{camT('cam.operation.stockToLeaveAxial')}</span>
-                        <DraftLengthInput
-                          value={selectedOperation.stockToLeaveAxial}
-                          units={project.meta.units}
-                          min={0}
-                          onCommit={(value) => updateOperation(selectedOperation.id, { stockToLeaveAxial: value })}
-                        />
-                        <OperationParameterReference kind="stockAxial" />
-                      </label>
-                    </>
-                  ) : null}
-                  </DisclosureSection>
-                    </div>
+      <div key={`${operation.id}-${operation.toolRef ?? ''}`} className="properties-panel cam-tool-properties cam-operation-properties">
+        <div className="properties-group">
+          {OPERATION_FIELD_GROUPS.map((group) => {
+            const fields = operationFieldsForGroup(group.id, operation)
+            // A group with nothing to show for this operation kind is not an
+            // empty box — it does not render at all.
+            if (fields.length === 0) return null
+            const body = fields.map((field) => (
+              <Fragment key={field.id}>{fieldRenderers[field.id]()}</Fragment>
+            ))
+            if (group.titleKey === null) {
+              return <Fragment key={group.id}>{body}</Fragment>
+            }
+            return (
+              <DisclosureSection
+                key={group.id}
+                title={camT(group.titleKey)}
+                storageKey={group.storageKey}
+                defaultOpen={group.defaultOpen}
+              >
+                {body}
+              </DisclosureSection>
+            )
+          })}
+        </div>
       </div>
     )
   }
