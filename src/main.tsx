@@ -214,6 +214,16 @@ if (import.meta.env.DEV) {
       const { useProjectStore } = await _pcTestStore()
       useProjectStore.getState().setActiveControl({ kind: 'segment', index })
     },
+    /** Picks a trim/extend subject so the mid-pick Escape rung can be tested. */
+    setPendingSketchSubject: async (subject: { featureId: string; segmentIndex: number; x: number; y: number; t: number }) => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().setPendingSketchSubject({
+        featureId: subject.featureId,
+        segmentIndex: subject.segmentIndex,
+        point: { x: subject.x, y: subject.y },
+        t: subject.t,
+      })
+    },
   }
 }
 
@@ -254,6 +264,7 @@ declare global {
       }>
       insertFeaturePointAt: (featureId: string, segmentIndex: number, x: number, y: number, t: number) => Promise<void>
       setActiveSegmentControl: (index: number) => Promise<void>
+      setPendingSketchSubject: (subject: { featureId: string; segmentIndex: number; x: number; y: number; t: number }) => Promise<void>
     }
   }
 }

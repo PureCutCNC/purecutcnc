@@ -205,7 +205,7 @@ export const canvasEs: Record<keyof typeof canvasEn, string> = {
   'canvas.transform.summary.rotateCopy': 'Desplazarse para previsualizar la copia rotada y hacer clic para ajustar el ángulo.',
   'canvas.transform.summary.rotate': 'Desplácese para previsualizar y luego haga clic para confirmar.',
   'canvas.edit.title': 'Editar boceto',
-  'canvas.edit.step.enterDimensions': 'Escriba para actualizar el segmento; haga clic en otra parte para cerrar',
+  'canvas.edit.step.enterDimensions': 'Escriba para actualizar el segmento',
   'canvas.edit.step.enterRadius': 'Escriba para previsualizar el radio',
   'canvas.edit.step.enterDistance': 'Escriba para previsualizar la distancia',
   'canvas.edit.step.clickToAddPoints': 'Haga clic para añadir puntos',

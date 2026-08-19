@@ -205,7 +205,7 @@ export const canvasFr: Record<keyof typeof canvasEn, string> = {
   'canvas.transform.summary.rotateCopy': 'Déplacez pour prévisualiser la copie pivotée, puis cliquez pour définir l’angle.',
   'canvas.transform.summary.rotate': 'Déplacez pour prévisualiser, puis cliquez pour valider.',
   'canvas.edit.title': 'Modifier l’esquisse',
-  'canvas.edit.step.enterDimensions': 'Saisissez pour mettre à jour le segment — cliquez ailleurs pour fermer',
+  'canvas.edit.step.enterDimensions': 'Saisissez pour mettre à jour le segment',
   'canvas.edit.step.enterRadius': 'Saisissez pour prévisualiser le rayon',
   'canvas.edit.step.enterDistance': 'Saisissez pour prévisualiser la distance',
   'canvas.edit.step.clickToAddPoints': 'Cliquez pour ajouter des points',

@@ -33,18 +33,6 @@ import type { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
 /* eslint-disable react-hooks/refs -- This leaf component forwards refs produced by
    the canvas workflow hooks (dimEdit, fillet, panel) into JSX, like ConstraintEditPanel. */
 
-/** Per-tool "Done" exit label — worded as finishing the mode, never as cancelling. */
-const DONE_LABEL_KEYS: Record<SketchEditTool, MessageKey> = {
-  add_point: 'canvas.edit.done.addPoint',
-  delete_point: 'canvas.edit.done.deletePoint',
-  delete_segment: 'canvas.edit.done.deleteSegment',
-  disconnect: 'canvas.edit.done.disconnect',
-  fillet: 'canvas.edit.done.fillet',
-  chamfer: 'canvas.edit.done.chamfer',
-  trim: 'canvas.edit.done.trim',
-  extend: 'canvas.edit.done.extend',
-}
-
 const TOOL_ICONS: Record<SketchEditTool, string> = {
   add_point: 'point-add',
   delete_point: 'point-delete',
@@ -77,15 +65,6 @@ const TOOL_ORDER: SketchEditTool[] = [
   'trim',
   'extend',
 ]
-
-/**
- * Modes that keep the visible Done strip. The immediate click-repeat modes
- * (add/delete point, delete segment, disconnect) have no sub-state, so their
- * exit affordances are the toolbar itself: click another tool, or click the
- * active tool again. Fillet/chamfer (corner picked) and trim/extend
- * (subject/reference picked) keep Done for exiting mid-pick.
- */
-const DONE_STRIP_TOOLS: readonly SketchEditTool[] = ['fillet', 'chamfer', 'trim', 'extend']
 
 interface ToolButtonProps {
   icon: string
@@ -126,6 +105,9 @@ export interface EditSketchPanelProps {
   onTriggerDimensionEdit: () => void
   /** Redraw the canvas (live radius preview while typing). */
   scheduleDraw: () => void
+  /** Float at page level (portaled, draggable anywhere) — must match the
+   *  `pageLevel` option on the panel's useCanvasWorkflowPanel call. */
+  pageLevel?: boolean
 }
 
 /**
@@ -144,6 +126,7 @@ export function EditSketchPanel({
   onCancelSession,
   onTriggerDimensionEdit,
   scheduleDraw,
+  pageLevel = false,
 }: EditSketchPanelProps) {
   const { t } = useI18n()
   const commands = useSketchCommands()
@@ -159,13 +142,22 @@ export function EditSketchPanel({
   const filletEditorActive = fillet.filletDimensionEditActive
   const dimEditorActive = dimEdit.dimensionEdit !== null
 
+  /** Switch to another tool. A switching click also closes the open segment
+   *  inspector — its live edits are already applied, so closing just commits. */
   function activateTool(nextTool: SketchEditTool) {
+    if (dimEditorActive) {
+      dimEdit.commitEditDimension()
+    }
     commands.sketchEdit[nextTool].onActivate()
     panel.focusCanvasAfterAction()
   }
 
-  /** Exit the active tool, keeping every edit made in it. */
+  /** Exit the active tool, keeping every edit made in it. Also closes the open
+   *  segment inspector (Move button, active-tool toggle). */
   function exitTool() {
+    if (dimEditorActive) {
+      dimEdit.commitEditDimension()
+    }
     setSketchEditTool(null)
     panel.focusCanvasAfterAction()
   }
@@ -258,6 +250,7 @@ export function EditSketchPanel({
       position={panel.position}
       panelRef={panel.panelRef}
       handleProps={panel.handleProps}
+      pageLevel={pageLevel}
       actions={(
         <>
           <CanvasWorkflowConfirm label={t('canvas.edit.finish')} onClick={finishSession} />
@@ -288,13 +281,6 @@ export function EditSketchPanel({
           ),
         )}
       </div>
-      {tool && DONE_STRIP_TOOLS.includes(tool) && (
-        <div className="canvas-workflow-panel__mode-strip">
-          <button type="button" className="tablet-cmd-btn" onClick={exitTool}>
-            {t(DONE_LABEL_KEYS[tool])}
-          </button>
-        </div>
-      )}
       {dimEdit.armedForDimension && !dimEditorActive && (
         <div className="canvas-workflow-panel__mode-strip">
           <CanvasWorkflowAction

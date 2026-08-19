@@ -199,6 +199,19 @@ export async function setActiveSegmentControl(page: Page, index: number): Promis
   }, index)
 }
 
+/** Picks a trim/extend subject as a canvas click would (mid-pick state). */
+export async function setPendingSketchSubject(
+  page: Page,
+  subject: { featureId: string; segmentIndex: number; x: number; y: number; t: number },
+): Promise<void> {
+  await page.evaluate(async (next: { featureId: string; segmentIndex: number; x: number; y: number; t: number }) => {
+    const w = window as unknown as {
+      __pcTest: { setPendingSketchSubject: (subject: { featureId: string; segmentIndex: number; x: number; y: number; t: number }) => Promise<void> }
+    }
+    await w.__pcTest.setPendingSketchSubject(next)
+  }, subject)
+}
+
 // ── Feature tree ────────────────────────────────────────────────────
 
 /** Count feature rows currently rendered. */

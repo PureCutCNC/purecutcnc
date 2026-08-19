@@ -31,6 +31,13 @@
   pointer-events: auto;
 }
 
+/* Page-level variant: portaled to document.body, fixed to the viewport, and
+   free to be dragged anywhere — above workspace surfaces, below modals. */
+.canvas-workflow-panel--page {
+  position: fixed;
+  z-index: 1200;
+}
+
 /* Title bar carries the step text and the action buttons, so a panel whose body is
    empty collapses to this single row. The divider lives on the body's top edge, not
    here — otherwise a collapsed panel is left with a rule along its bottom. */

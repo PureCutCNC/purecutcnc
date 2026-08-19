@@ -211,7 +211,7 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.transform.summary.rotateCopy': '移动以预览旋转副本，然后点击设置角度。',
   'canvas.transform.summary.rotate': '移动以预览，然后点击确认。',
   'canvas.edit.title': '编辑草图',
-  'canvas.edit.step.enterDimensions': '输入以更新线段 — 点击其他位置关闭',
+  'canvas.edit.step.enterDimensions': '输入以更新线段',
   'canvas.edit.step.enterRadius': '输入以预览半径',
   'canvas.edit.step.enterDistance': '输入以预览距离',
   'canvas.edit.step.clickToAddPoints': '点击添加点',

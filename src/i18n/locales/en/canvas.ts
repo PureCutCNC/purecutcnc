@@ -244,7 +244,7 @@ export const canvasEn = {
 
   // ── Edit Sketch session panel ──
   'canvas.edit.title': 'Edit sketch',
-  'canvas.edit.step.enterDimensions': 'Type to update the segment — click elsewhere to close',
+  'canvas.edit.step.enterDimensions': 'Type to update the segment',
   'canvas.edit.step.enterRadius': 'Type to preview the radius',
   'canvas.edit.step.enterDistance': 'Type to preview the distance',
   'canvas.edit.step.clickToAddPoints': 'Click to add points',

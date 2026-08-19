@@ -239,7 +239,7 @@ export const canvasDe: Record<keyof typeof canvasEn, string> = {
 
   // ── Edit Sketch session panel ──
   'canvas.edit.title': 'Skizze bearbeiten',
-  'canvas.edit.step.enterDimensions': 'Eingeben aktualisiert das Segment — zum Schließen woanders hinklicken',
+  'canvas.edit.step.enterDimensions': 'Eingeben aktualisiert das Segment',
   'canvas.edit.step.enterRadius': 'Eingeben zeigt die Radiusvorschau',
   'canvas.edit.step.enterDistance': 'Eingeben zeigt die Abstandsvorschau',
   'canvas.edit.step.clickToAddPoints': 'Zum Hinzufügen von Punkten klicken',

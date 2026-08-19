@@ -462,6 +462,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     canvasRef,
     clearTransientCanvasState,
     focusCanvasOnOpen: !editFilletActive && !editDimEditActive,
+    pageLevel: true,
   })
 
   // ── Measure & dimension workflow panels (instruction popups) ──
@@ -3828,6 +3829,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           onCancelSession={cancelEditFromPanel}
           onTriggerDimensionEdit={triggerDimensionEdit}
           scheduleDraw={scheduleDraw}
+          pageLevel
         />
       )}
       {lockMode !== 'none' && !isTablet && (

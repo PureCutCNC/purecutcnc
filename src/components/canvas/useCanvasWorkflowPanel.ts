@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useLayoutEffect } from 'react'
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react'
 
 const DEFAULT_WORKFLOW_PANEL_MARGIN = 12
@@ -32,6 +32,13 @@ interface UseCanvasWorkflowPanelOptions {
   clearTransientCanvasState: () => void
   focusCanvasOnOpen?: boolean
   margin?: number
+  /**
+   * Position the panel against the whole page (viewport coordinates, clamped
+   * to the window) instead of the canvas container. The panel component must
+   * be rendered with the matching `pageLevel` prop so it portals to
+   * document.body with `position: fixed` — keep the two in sync.
+   */
+  pageLevel?: boolean
 }
 
 interface PanelDragState {
@@ -54,16 +61,38 @@ export function useCanvasWorkflowPanel({
   clearTransientCanvasState,
   focusCanvasOnOpen = true,
   margin = DEFAULT_WORKFLOW_PANEL_MARGIN,
+  pageLevel = false,
 }: UseCanvasWorkflowPanelOptions) {
   const [position, setPosition] = useState<CanvasWorkflowPanelPosition>({ x: margin, y: margin })
   const panelRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<PanelDragState | null>(null)
   const callbacksRef = useRef({ clearTransientCanvasState, canvasRef })
   const wasOpenRef = useRef(false)
+  const pagePositionInitializedRef = useRef(false)
 
   useEffect(() => {
     callbacksRef.current = { clearTransientCanvasState, canvasRef }
   }, [clearTransientCanvasState, canvasRef])
+
+  // Page-level panels start at the canvas container's top-left corner, in
+  // viewport coordinates, so they appear where the container-bound panel did.
+  // The position persists across phases and sessions afterwards. Shaped like
+  // usePortalPosition: the measured anchor is set from a local handler, the
+  // legitimate "external system" effect pattern for a one-time DOM measurement.
+  useLayoutEffect(() => {
+    if (!pageLevel || !open || pagePositionInitializedRef.current) {
+      return
+    }
+    function anchorToContainer() {
+      const rect = containerRef.current?.getBoundingClientRect()
+      if (!rect) {
+        return
+      }
+      pagePositionInitializedRef.current = true
+      setPosition({ x: rect.left + margin, y: rect.top + margin })
+    }
+    anchorToContainer()
+  }, [pageLevel, open, containerRef, margin])
 
   function focusCanvasAfterAction() {
     callbacksRef.current.clearTransientCanvasState()
@@ -108,8 +137,21 @@ export function useCanvasWorkflowPanel({
     event.preventDefault()
     event.stopPropagation()
 
-    const containerRect = containerRef.current?.getBoundingClientRect()
     const panelRect = panelRef.current?.getBoundingClientRect()
+
+    if (pageLevel) {
+      // Fixed, viewport-coordinate panels clamp to the window instead of the
+      // canvas container, so they can be parked anywhere on the page.
+      const maxX = Math.max(margin, window.innerWidth - (panelRect?.width ?? 0) - margin)
+      const maxY = Math.max(margin, window.innerHeight - (panelRect?.height ?? 0) - margin)
+      setPosition({
+        x: clampNumber(dragState.startX + event.clientX - dragState.startClientX, margin, maxX),
+        y: clampNumber(dragState.startY + event.clientY - dragState.startClientY, margin, maxY),
+      })
+      return
+    }
+
+    const containerRect = containerRef.current?.getBoundingClientRect()
     const maxX = Math.max(margin, (containerRect?.width ?? 0) - (panelRect?.width ?? 0) - margin)
     const maxY = Math.max(margin, (containerRect?.height ?? 0) - (panelRect?.height ?? 0) - margin)
 
