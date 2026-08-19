@@ -30,13 +30,6 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
   'appShell.workspace.simulation': '仿真',
   'appShell.workspace.tabList': '工作区视图',
 
-  // ── Workspace layout presets ──
-  'appShell.layout.lcr': '显示左、中、右面板',
-  'appShell.layout.lc': '显示左和中面板',
-  'appShell.layout.c': '仅显示中间面板',
-  'appShell.layout.cr': '显示中和右面板',
-  'appShell.layout.presets': '工作区布局预设',
-
   // ── Right sidebar ──
   'appShell.sidebar.operations': '加工操作',
   'appShell.sidebar.tools': '刀具',
@@ -50,6 +43,10 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
   'appShell.panel.expandProperties': '展开属性面板',
   'appShell.panel.closeProject': '关闭项目面板',
   'appShell.panel.cam': 'CAM 面板',
+  'appShell.panel.showProject': '显示项目面板',
+  'appShell.panel.hideProject': '隐藏项目面板',
+  'appShell.panel.showCam': '显示 CAM 面板',
+  'appShell.panel.hideCam': '隐藏 CAM 面板',
   'appShell.panel.close': '关闭',
 
   // ── Drawer (tablet) ──

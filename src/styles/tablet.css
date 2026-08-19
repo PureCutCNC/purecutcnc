@@ -183,12 +183,17 @@
   }
 }
 
-/* ── Touch targets: panel tabs ───────────────────────────── */
+/* ── Touch targets: panel tabs & pull-out handles ─────────── */
 
 @media (pointer: coarse) {
-  .panel-tab {
+  .panel-tab,
+  .panel-handle {
     min-height: var(--touch-target, 44px);
     font-size: 13px;
+  }
+
+  .panel-handle {
+    min-width: var(--touch-target, 44px);
   }
 }
 

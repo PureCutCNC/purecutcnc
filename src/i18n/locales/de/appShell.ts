@@ -24,13 +24,6 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   'appShell.workspace.simulation': 'Simulation',
   'appShell.workspace.tabList': 'Arbeitsbereich-Ansichten',
 
-  // ── Workspace layout presets ──
-  'appShell.layout.lcr': 'Linke, mittlere und rechte Bereiche anzeigen',
-  'appShell.layout.lc': 'Linke und mittlere Bereiche anzeigen',
-  'appShell.layout.c': 'Nur mittleren Bereich anzeigen',
-  'appShell.layout.cr': 'Mittlere und rechte Bereiche anzeigen',
-  'appShell.layout.presets': 'Layout-Voreinstellungen des Arbeitsbereichs',
-
   // ── Right sidebar ──
   'appShell.sidebar.operations': 'Operationen',
   'appShell.sidebar.tools': 'Werkzeuge',
@@ -44,6 +37,10 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   'appShell.panel.expandProperties': 'Eigenschaftenbereich ausklappen',
   'appShell.panel.closeProject': 'Projektbereich schließen',
   'appShell.panel.cam': 'CAM-Bereich',
+  'appShell.panel.showProject': 'Projektbereich einblenden',
+  'appShell.panel.hideProject': 'Projektbereich ausblenden',
+  'appShell.panel.showCam': 'CAM-Bereich einblenden',
+  'appShell.panel.hideCam': 'CAM-Bereich ausblenden',
   'appShell.panel.close': 'Schließen',
 
   // ── Drawer (tablet) ──

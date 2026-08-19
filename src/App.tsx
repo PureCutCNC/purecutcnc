@@ -59,7 +59,6 @@ const DEPTH_LEGEND_CODEC = {
 function App() {
   const [centerTab, setCenterTab] = useState<'sketch' | 'preview3d' | 'simulation'>('sketch')
   const [rightTab, setRightTab] = useState<'operations' | 'tools'>('operations')
-  const [workspaceLayout, setWorkspaceLayout] = useState<'lcr' | 'lc' | 'c' | 'cr'>('lcr')
   const tabletShell = isTabletMode(useShellMode())
   const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
   const [simulationDetailCells, setSimulationDetailCells] = useState(280)
@@ -484,8 +483,6 @@ function App() {
         }
         centerTab={centerTab}
         onCenterTabChange={handleCenterTabChange}
-        workspaceLayout={workspaceLayout}
-        onWorkspaceLayoutChange={setWorkspaceLayout}
         rightTab={rightTab}
         onRightTabChange={setRightTab}
         statusBarExtras={collapsedDepthLegend}
