@@ -53,7 +53,12 @@ jobs:
         run: npm ci
 
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        # No --with-deps (issue #564): the apt half re-downloads system/font
+        # packages on every run and has repeatedly blown the lane's 10-minute
+        # timeout on degraded mirrors. The runner image already carries the
+        # shared libraries Chromium needs; the browser binary comes from
+        # Playwright's CDN, which is fast and unaffected.
+        run: npx playwright install chromium
 
       - name: Run Playwright e2e lane
         run: npm run ${{ matrix.command }}
