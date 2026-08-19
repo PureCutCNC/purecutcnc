@@ -133,91 +133,121 @@ function leavesStock(operation: Operation): boolean {
 
 // ── Groups ─────────────────────────────────────────────────────────
 
-export const OPERATION_FIELD_GROUP_IDS = ['basic', 'advanced'] as const
+export const OPERATION_FIELD_GROUP_IDS = [
+  'identity',
+  'target',
+  'tool',
+  'depth',
+  'feeds',
+  'strategy',
+  'entry',
+  'corners',
+  'drilling',
+  'output',
+] as const
 
 export type OperationFieldGroupId = typeof OPERATION_FIELD_GROUP_IDS[number]
 
 export interface OperationFieldGroup {
   id: OperationFieldGroupId
-  /**
-   * Section heading. `null` renders the group's fields bare, with no disclosure
-   * wrapper — how the always-visible run reads today.
-   */
-  titleKey: (keyof typeof camEn) | null
-  /** Persisted open/collapsed key; omitted for a bare group. */
-  storageKey?: string
-  /** Whether a collapsible group starts open the first time it is seen. */
-  defaultOpen?: boolean
+  /** Section heading. */
+  titleKey: keyof typeof camEn
+  /** Persisted open/collapsed key. */
+  storageKey: string
+  /** Whether the group starts open the first time it is seen. */
+  defaultOpen: boolean
 }
 
-/** Groups render in this order. A group with no applicable field is skipped. */
+/**
+ * Groups render in this order. A group with no applicable field is skipped.
+ *
+ * Each group answers one question, and the open/collapsed line is "do you set
+ * this when starting a job" versus "do you tune this occasionally". That is what
+ * puts speeds and feeds above the fold and arc fitting below it — the previous
+ * single "Advanced" section had it exactly backwards, burying `feed`,
+ * `plungeFeed` and `rpm` (changed on every material change) while leaving
+ * `arcFitting` (a G-code output detail set once per machine) always visible.
+ */
 export const OPERATION_FIELD_GROUPS: readonly OperationFieldGroup[] = [
-  { id: 'basic', titleKey: null },
-  {
-    id: 'advanced',
-    titleKey: 'cam.operation.advanced',
-    storageKey: 'cam-operation-advanced',
-    defaultOpen: false,
-  },
+  { id: 'identity', titleKey: 'cam.operation.group.identity', storageKey: 'cam-op-identity', defaultOpen: true },
+  { id: 'target', titleKey: 'cam.operation.group.target', storageKey: 'cam-op-target', defaultOpen: true },
+  { id: 'tool', titleKey: 'cam.operation.group.tool', storageKey: 'cam-op-tool', defaultOpen: true },
+  { id: 'depth', titleKey: 'cam.operation.group.depth', storageKey: 'cam-op-depth', defaultOpen: true },
+  { id: 'feeds', titleKey: 'cam.operation.group.feeds', storageKey: 'cam-op-feeds', defaultOpen: true },
+  { id: 'strategy', titleKey: 'cam.operation.group.strategy', storageKey: 'cam-op-strategy', defaultOpen: false },
+  { id: 'entry', titleKey: 'cam.operation.group.entry', storageKey: 'cam-op-entry', defaultOpen: false },
+  { id: 'corners', titleKey: 'cam.operation.group.corners', storageKey: 'cam-op-corners', defaultOpen: false },
+  // Drilling applies to one kind, so when it renders at all it is the point of
+  // the operation — it opens rather than hiding its own reason for existing.
+  { id: 'drilling', titleKey: 'cam.operation.group.drilling', storageKey: 'cam-op-drilling', defaultOpen: true },
+  { id: 'output', titleKey: 'cam.operation.group.output', storageKey: 'cam-op-output', defaultOpen: false },
 ]
 
 // ── Fields ─────────────────────────────────────────────────────────
 
 export const OPERATION_FIELD_IDS = [
-  // Basic — the always-visible run.
+  // Identity — what this operation is.
   'name',
   'description',
   'kind',
   'pass',
-  'maxCarveDepth',
-  'carveDepth',
+  'enabled',
+  'booklet',
+  'toolpathWarnings',
+  // What it cuts.
   'target',
   'targetSource',
   'restMachining',
-  'booklet',
   'tabs',
-  'toolpathWarnings',
+  // Tool.
   'tool',
-  'enabled',
-  'arcFitting',
+  // Depth.
+  'carveDepth',
+  'maxCarveDepth',
   'stepdown',
+  'finishWalls',
+  'finishFloor',
+  'stockToLeaveRadial',
+  'stockToLeaveAxial',
+  // Speeds & feeds.
+  'feed',
+  'plungeFeed',
+  'slotFeed',
+  'engagementMode',
+  'rpm',
+  // Strategy.
+  'pattern',
+  'rasterAngle',
+  'cutDirection',
+  'machiningOrder',
   'edgeStrategy',
   'carveStrategy',
   'trochoidalCutWidth',
   'trochoidalAdvance',
   'trochoidalCarveChannel',
   'stepover',
-  // Advanced.
+  'adaptiveRefinement',
+  'adaptiveSpacing',
+  'maxRings',
+  // Entry & retract.
   'entryStrategy',
   'entryRampAngle',
   'entryHelixDiameter',
-  'pattern',
-  'rasterAngle',
-  'cutDirection',
-  'machiningOrder',
+  'retractHeight',
+  // Corners.
   'roundOutsideCorners',
   'roundLinkCorners',
   'cleanWallCorners',
   'cornerRelief',
+  // Drilling.
   'drillType',
   'peckDepth',
   'dwellTime',
   'countersinkDiameter',
   'countersinkDepth',
-  'retractHeight',
-  'finishWalls',
-  'finishFloor',
+  // Output.
+  'arcFitting',
   'debugToolpath',
-  'feed',
-  'plungeFeed',
-  'slotFeed',
-  'engagementMode',
-  'rpm',
-  'stockToLeaveRadial',
-  'adaptiveRefinement',
-  'adaptiveSpacing',
-  'maxRings',
-  'stockToLeaveAxial',
 ] as const
 
 export type OperationFieldId = typeof OPERATION_FIELD_IDS[number]
@@ -241,13 +271,14 @@ const always = () => true
  * kind can no longer move a control the user was just editing.
  */
 export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
-  // ── Basic ────────────────────────────────────────────────────────
-  { id: 'name', group: 'basic', appliesTo: always },
-  { id: 'description', group: 'basic', appliesTo: always },
-  { id: 'kind', group: 'basic', appliesTo: always },
+  // ── Identity — what this operation is. The booklet export and the toolpath
+  //   warnings sit in the stream only until they move out of it.
+  { id: 'name', group: 'identity', appliesTo: always },
+  { id: 'description', group: 'identity', appliesTo: always },
+  { id: 'kind', group: 'identity', appliesTo: always },
   {
     id: 'pass',
-    group: 'basic',
+    group: 'identity',
     // Kinds with a single meaningful pass do not offer the choice.
     appliesTo: (operation) => operation.kind !== 'v_carve'
       && operation.kind !== 'v_carve_medial'
@@ -256,96 +287,64 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
       && operation.kind !== 'finish_surface'
       && operation.kind !== 'finish_surface_cleanup',
   },
-  {
-    id: 'maxCarveDepth',
-    group: 'basic',
-    paramRef: 'maxDepth',
-    appliesTo: (operation) => operation.kind === 'v_carve' || operation.kind === 'v_carve_medial',
-  },
-  {
-    id: 'carveDepth',
-    group: 'basic',
-    paramRef: 'maxDepth',
-    appliesTo: (operation) => operation.kind === 'follow_line',
-  },
-  { id: 'target', group: 'basic', appliesTo: always },
-  { id: 'targetSource', group: 'basic', appliesTo: always },
+  { id: 'enabled', group: 'identity', appliesTo: always },
+  { id: 'booklet', group: 'identity', appliesTo: always },
+  { id: 'toolpathWarnings', group: 'identity', appliesTo: always },
+  // ── What it cuts.
+  { id: 'target', group: 'target', appliesTo: always },
+  { id: 'targetSource', group: 'target', appliesTo: always },
   {
     id: 'restMachining',
-    group: 'basic',
+    group: 'target',
     appliesTo: (operation) => operation.kind === 'pocket'
       || operation.kind === 'edge_route_inside'
       || operation.kind === 'edge_route_outside',
   },
-  { id: 'booklet', group: 'basic', appliesTo: always },
   {
     id: 'tabs',
-    group: 'basic',
+    group: 'target',
     appliesTo: (operation) => operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside',
   },
-  { id: 'toolpathWarnings', group: 'basic', appliesTo: always },
-  { id: 'tool', group: 'basic', appliesTo: always },
-  { id: 'enabled', group: 'basic', appliesTo: always },
-  { id: 'arcFitting', group: 'basic', appliesTo: always },
-  { id: 'stepdown', group: 'basic', paramRef: 'stepdown', appliesTo: showStepdown },
-  { id: 'edgeStrategy', group: 'basic', paramRef: 'edgeStrategy', appliesTo: isRoughEdgeRoute },
+  // ── Tool.
+  { id: 'tool', group: 'tool', appliesTo: always },
+  // ── Depth.
   {
-    id: 'carveStrategy',
-    group: 'basic',
-    paramRef: 'edgeStrategy',
+    id: 'carveDepth',
+    group: 'depth',
+    paramRef: 'maxDepth',
     appliesTo: (operation) => operation.kind === 'follow_line',
   },
   {
-    id: 'trochoidalCutWidth',
-    group: 'basic',
-    paramRef: 'trochoidalCutWidth',
-    appliesTo: isTrochoidalOperation,
+    id: 'maxCarveDepth',
+    group: 'depth',
+    paramRef: 'maxDepth',
+    appliesTo: (operation) => operation.kind === 'v_carve' || operation.kind === 'v_carve_medial',
   },
+  { id: 'stepdown', group: 'depth', paramRef: 'stepdown', appliesTo: showStepdown },
+  { id: 'finishWalls', group: 'depth', paramRef: 'finishWalls', appliesTo: offersFinishSurfaces },
+  { id: 'finishFloor', group: 'depth', paramRef: 'finishFloor', appliesTo: offersFinishSurfaces },
   {
-    id: 'trochoidalAdvance',
-    group: 'basic',
-    paramRef: 'trochoidalAdvance',
-    appliesTo: isTrochoidalOperation,
+    id: 'stockToLeaveRadial',
+    group: 'depth',
+    paramRef: 'stockRadial',
+    // Surface finishing leaves radial stock only on the waterline pattern, where
+    // the rings are walls; the parallel pattern only has a floor.
+    appliesTo: (operation) => leavesStock(operation)
+      && (operation.kind !== 'finish_surface' || isWaterlineFinish(operation)),
   },
-  // Derived channel-width readout and its two cautions; engraving only.
-  { id: 'trochoidalCarveChannel', group: 'basic', appliesTo: isTrochoidalCarve },
-  {
-    id: 'stepover',
-    group: 'basic',
-    paramRef: 'stepover',
-    // Waterline finishing spaces its rings adaptively, so a ratio means nothing.
-    appliesTo: (operation) => operation.kind !== 'follow_line'
-      && operation.kind !== 'drilling'
-      && operation.kind !== 'v_carve_medial'
-      && operation.kind !== 'edge_route_inside'
-      && operation.kind !== 'edge_route_outside'
-      && !isWaterlineFinish(operation),
-  },
-
-  // ── Advanced ─────────────────────────────────────────────────────
-  { id: 'entryStrategy', group: 'advanced', paramRef: 'entryStrategy', appliesTo: supportsEntryStrategy },
-  {
-    id: 'entryRampAngle',
-    group: 'advanced',
-    paramRef: 'entryRampAngle',
-    // One row for both users of the angle: a ramping/helical entry, and helical
-    // drilling. The two predicates are disjoint (drilling offers no entry
-    // strategy), so the field still renders from exactly one place.
-    appliesTo: (operation) => (supportsEntryStrategy(operation)
-      && (resolvedEntryStrategy(operation) === 'helix' || resolvedEntryStrategy(operation) === 'ramp'))
-      || (operation.kind === 'drilling' && operation.drillType === 'helical'),
-  },
-  {
-    id: 'entryHelixDiameter',
-    group: 'advanced',
-    paramRef: 'entryHelixDiameter',
-    // Deliberately not offered for helical drilling: there the selected circle
-    // defines the bore diameter, not this shared setting (issue #412).
-    appliesTo: (operation) => supportsEntryStrategy(operation) && resolvedEntryStrategy(operation) === 'helix',
-  },
+  { id: 'stockToLeaveAxial', group: 'depth', paramRef: 'stockAxial', appliesTo: leavesStock },
+  // ── Speeds & feeds — the numbers that change with the material. Slot feed and
+  //   its engagement mode stay adjacent: the mode governs how the reduction
+  //   above it is applied, so splitting them reads as two unrelated settings.
+  { id: 'feed', group: 'feeds', paramRef: 'feed', appliesTo: always },
+  { id: 'plungeFeed', group: 'feeds', paramRef: 'plungeFeed', appliesTo: always },
+  { id: 'slotFeed', group: 'feeds', paramRef: 'slotFeed', appliesTo: cutsSlots },
+  { id: 'engagementMode', group: 'feeds', paramRef: 'engagementMode', appliesTo: cutsSlots },
+  { id: 'rpm', group: 'feeds', paramRef: 'rpm', appliesTo: always },
+  // ── Strategy — how the cutter covers the material.
   {
     id: 'pattern',
-    group: 'advanced',
+    group: 'strategy',
     paramRef: 'pattern',
     // One row; the offered patterns differ per kind and live in the renderer.
     appliesTo: (operation) => operation.kind === 'pocket'
@@ -355,7 +354,7 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   },
   {
     id: 'rasterAngle',
-    group: 'advanced',
+    group: 'strategy',
     paramRef: 'rasterAngle',
     appliesTo: (operation) => (operation.kind === 'pocket'
       || operation.kind === 'surface_clean'
@@ -365,7 +364,7 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   },
   {
     id: 'cutDirection',
-    group: 'advanced',
+    group: 'strategy',
     paramRef: 'cutDirection',
     appliesTo: (operation) => operation.kind === 'pocket'
       || operation.kind === 'edge_route_inside'
@@ -379,15 +378,93 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   },
   {
     id: 'machiningOrder',
-    group: 'advanced',
+    group: 'strategy',
     paramRef: 'machiningOrder',
     appliesTo: (operation) => operation.kind === 'pocket'
       || operation.kind === 'edge_route_inside'
       || operation.kind === 'edge_route_outside',
   },
+  { id: 'edgeStrategy', group: 'strategy', paramRef: 'edgeStrategy', appliesTo: isRoughEdgeRoute },
+  {
+    id: 'carveStrategy',
+    group: 'strategy',
+    paramRef: 'edgeStrategy',
+    appliesTo: (operation) => operation.kind === 'follow_line',
+  },
+  {
+    id: 'trochoidalCutWidth',
+    group: 'strategy',
+    paramRef: 'trochoidalCutWidth',
+    appliesTo: isTrochoidalOperation,
+  },
+  {
+    id: 'trochoidalAdvance',
+    group: 'strategy',
+    paramRef: 'trochoidalAdvance',
+    appliesTo: isTrochoidalOperation,
+  },
+  { id: 'trochoidalCarveChannel', group: 'strategy', appliesTo: isTrochoidalCarve },
+  {
+    id: 'stepover',
+    group: 'strategy',
+    paramRef: 'stepover',
+    // Waterline finishing spaces its rings adaptively, so a ratio means nothing.
+    appliesTo: (operation) => operation.kind !== 'follow_line'
+      && operation.kind !== 'drilling'
+      && operation.kind !== 'v_carve_medial'
+      && operation.kind !== 'edge_route_inside'
+      && operation.kind !== 'edge_route_outside'
+      && !isWaterlineFinish(operation),
+  },
+  {
+    id: 'adaptiveRefinement',
+    group: 'strategy',
+    paramRef: 'adaptiveRefinement',
+    appliesTo: isWaterlineFinish,
+  },
+  {
+    id: 'adaptiveSpacing',
+    group: 'strategy',
+    paramRef: 'adaptiveSpacing',
+    appliesTo: (operation) => isWaterlineFinish(operation) && (operation.waterlineAdaptiveRefinement ?? true),
+  },
+  {
+    id: 'maxRings',
+    group: 'strategy',
+    paramRef: 'maxRings',
+    appliesTo: (operation) => isWaterlineFinish(operation) && (operation.waterlineAdaptiveRefinement ?? true),
+  },
+  // ── Entry & retract — how the cutter gets into and out of the cut.
+  { id: 'entryStrategy', group: 'entry', paramRef: 'entryStrategy', appliesTo: supportsEntryStrategy },
+  {
+    id: 'entryRampAngle',
+    group: 'entry',
+    paramRef: 'entryRampAngle',
+    // One row for both users of the angle: a ramping/helical entry, and helical
+    // drilling. The two predicates are disjoint (drilling offers no entry
+    // strategy), so the field still renders from exactly one place.
+    appliesTo: (operation) => (supportsEntryStrategy(operation)
+      && (resolvedEntryStrategy(operation) === 'helix' || resolvedEntryStrategy(operation) === 'ramp'))
+      || (operation.kind === 'drilling' && operation.drillType === 'helical'),
+  },
+  {
+    id: 'entryHelixDiameter',
+    group: 'entry',
+    paramRef: 'entryHelixDiameter',
+    // Deliberately not offered for helical drilling: there the selected circle
+    // defines the bore diameter, not this shared setting (issue #412).
+    appliesTo: (operation) => supportsEntryStrategy(operation) && resolvedEntryStrategy(operation) === 'helix',
+  },
+  {
+    id: 'retractHeight',
+    group: 'entry',
+    paramRef: 'retractHeight',
+    appliesTo: (operation) => operation.kind === 'drilling',
+  },
+  // ── Corners.
   {
     id: 'roundOutsideCorners',
-    group: 'advanced',
+    group: 'corners',
     appliesTo: (operation) => operation.kind === 'edge_route_outside'
       || operation.kind === 'pocket'
       || operation.kind === 'surface_clean'
@@ -396,12 +473,12 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   },
   {
     id: 'roundLinkCorners',
-    group: 'advanced',
+    group: 'corners',
     appliesTo: (operation) => operation.kind === 'pocket' && operation.pocketPattern !== 'parallel',
   },
   {
     id: 'cleanWallCorners',
-    group: 'advanced',
+    group: 'corners',
     // Only meaningful once the interior rings are already rounded.
     appliesTo: (operation) => operation.kind === 'pocket'
       && operation.pocketPattern !== 'parallel'
@@ -409,81 +486,42 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   },
   {
     id: 'cornerRelief',
-    group: 'advanced',
+    group: 'corners',
     paramRef: 'cornerRelief',
     appliesTo: (operation) => operation.kind === 'pocket'
       || operation.kind === 'edge_route_inside'
       || operation.kind === 'edge_route_outside',
   },
+  // ── Drilling — applies to one kind, so the group is absent everywhere else.
   {
     id: 'drillType',
-    group: 'advanced',
+    group: 'drilling',
     paramRef: 'drillType',
     appliesTo: (operation) => operation.kind === 'drilling',
   },
   {
     id: 'peckDepth',
-    group: 'advanced',
+    group: 'drilling',
     paramRef: 'peckDepth',
     appliesTo: (operation) => operation.kind === 'drilling'
       && (operation.drillType === 'peck' || operation.drillType === 'chip_breaking'),
   },
   {
     id: 'dwellTime',
-    group: 'advanced',
+    group: 'drilling',
     paramRef: 'dwell',
     appliesTo: (operation) => operation.kind === 'drilling' && operation.drillType === 'dwell',
   },
   {
     id: 'countersinkDiameter',
-    group: 'advanced',
+    group: 'drilling',
     paramRef: 'countersinkDiameter',
     appliesTo: isCountersinkDrill,
   },
-  // Derived plunge depth plus the two conditions the operator can fix here.
-  { id: 'countersinkDepth', group: 'advanced', appliesTo: isCountersinkDrill },
-  {
-    id: 'retractHeight',
-    group: 'advanced',
-    paramRef: 'retractHeight',
-    appliesTo: (operation) => operation.kind === 'drilling',
-  },
-  { id: 'finishWalls', group: 'advanced', paramRef: 'finishWalls', appliesTo: offersFinishSurfaces },
-  { id: 'finishFloor', group: 'advanced', paramRef: 'finishFloor', appliesTo: offersFinishSurfaces },
-  { id: 'debugToolpath', group: 'advanced', appliesTo: always },
-  { id: 'feed', group: 'advanced', paramRef: 'feed', appliesTo: always },
-  { id: 'plungeFeed', group: 'advanced', paramRef: 'plungeFeed', appliesTo: always },
-  { id: 'slotFeed', group: 'advanced', paramRef: 'slotFeed', appliesTo: cutsSlots },
-  { id: 'engagementMode', group: 'advanced', paramRef: 'engagementMode', appliesTo: cutsSlots },
-  { id: 'rpm', group: 'advanced', paramRef: 'rpm', appliesTo: always },
-  {
-    id: 'stockToLeaveRadial',
-    group: 'advanced',
-    paramRef: 'stockRadial',
-    // Surface finishing leaves radial stock only on the waterline pattern, where
-    // the rings are walls; the parallel pattern only has a floor.
-    appliesTo: (operation) => leavesStock(operation)
-      && (operation.kind !== 'finish_surface' || isWaterlineFinish(operation)),
-  },
-  {
-    id: 'adaptiveRefinement',
-    group: 'advanced',
-    paramRef: 'adaptiveRefinement',
-    appliesTo: isWaterlineFinish,
-  },
-  {
-    id: 'adaptiveSpacing',
-    group: 'advanced',
-    paramRef: 'adaptiveSpacing',
-    appliesTo: (operation) => isWaterlineFinish(operation) && (operation.waterlineAdaptiveRefinement ?? true),
-  },
-  {
-    id: 'maxRings',
-    group: 'advanced',
-    paramRef: 'maxRings',
-    appliesTo: (operation) => isWaterlineFinish(operation) && (operation.waterlineAdaptiveRefinement ?? true),
-  },
-  { id: 'stockToLeaveAxial', group: 'advanced', paramRef: 'stockAxial', appliesTo: leavesStock },
+  { id: 'countersinkDepth', group: 'drilling', appliesTo: isCountersinkDrill },
+  // ── Output — G-code detail set once per machine, plus the dev toggle.
+  { id: 'arcFitting', group: 'output', appliesTo: always },
+  { id: 'debugToolpath', group: 'output', appliesTo: always },
 ]
 
 /**

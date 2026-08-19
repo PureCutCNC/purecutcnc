@@ -1448,22 +1448,19 @@ export function CAMPanel({
         </label>
       ),
       entryStrategy: () => (
-        <>
-          <span className="properties-section-title">{camT('cam.operation.entry')}</span>
-          <label className="properties-field">
-            <span>{camT('cam.operation.entryStrategy')}</span>
-            <Select<EntryStrategy>
-              value={entryStrategy}
-              options={[
-                { value: 'plunge', label: camT('cam.operation.entryPlunge') },
-                { value: 'helix', label: camT('cam.operation.entryHelix') },
-                ...(isTrochoidalOp ? [] : [{ value: 'ramp' as EntryStrategy, label: camT('cam.operation.entryRamp') }]),
-              ]}
-              onChange={(value) => updateOperation(operation.id, { entryStrategy: value })}
-            />
-            <OperationParameterReference kind="entryStrategy" variant={entryStrategy} />
-          </label>
-        </>
+        <label className="properties-field">
+          <span>{camT('cam.operation.entryStrategy')}</span>
+          <Select<EntryStrategy>
+            value={entryStrategy}
+            options={[
+              { value: 'plunge', label: camT('cam.operation.entryPlunge') },
+              { value: 'helix', label: camT('cam.operation.entryHelix') },
+              ...(isTrochoidalOp ? [] : [{ value: 'ramp' as EntryStrategy, label: camT('cam.operation.entryRamp') }]),
+            ]}
+            onChange={(value) => updateOperation(operation.id, { entryStrategy: value })}
+          />
+          <OperationParameterReference kind="entryStrategy" variant={entryStrategy} />
+        </label>
       ),
       entryRampAngle: () => (
         <label className="properties-field">
@@ -1900,12 +1897,6 @@ export function CAMPanel({
             // A group with nothing to show for this operation kind is not an
             // empty box — it does not render at all.
             if (fields.length === 0) return null
-            const body = fields.map((field) => (
-              <Fragment key={field.id}>{fieldRenderers[field.id]()}</Fragment>
-            ))
-            if (group.titleKey === null) {
-              return <Fragment key={group.id}>{body}</Fragment>
-            }
             return (
               <DisclosureSection
                 key={group.id}
@@ -1913,7 +1904,9 @@ export function CAMPanel({
                 storageKey={group.storageKey}
                 defaultOpen={group.defaultOpen}
               >
-                {body}
+                {fields.map((field) => (
+                  <Fragment key={field.id}>{fieldRenderers[field.id]()}</Fragment>
+                ))}
               </DisclosureSection>
             )
           })}

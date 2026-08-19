@@ -199,11 +199,15 @@ function testGoldenRenderOrder() {
   const roughPocket = visibleFor(makeOperation({ kind: 'pocket', pass: 'rough', pocketPattern: 'offset' }))
   assert(
     roughPocket.join(',') === [
-      'name', 'description', 'kind', 'pass', 'target', 'targetSource', 'restMachining',
-      'booklet', 'toolpathWarnings', 'tool', 'enabled', 'arcFitting', 'stepdown', 'stepover',
-      'entryStrategy', 'pattern', 'cutDirection', 'machiningOrder', 'roundOutsideCorners',
-      'roundLinkCorners', 'cornerRelief', 'debugToolpath', 'feed', 'plungeFeed', 'slotFeed',
-      'engagementMode', 'rpm', 'stockToLeaveRadial', 'stockToLeaveAxial',
+      'name', 'description', 'kind', 'pass', 'enabled', 'booklet', 'toolpathWarnings',
+      'target', 'targetSource', 'restMachining',
+      'tool',
+      'stepdown', 'stockToLeaveRadial', 'stockToLeaveAxial',
+      'feed', 'plungeFeed', 'slotFeed', 'engagementMode', 'rpm',
+      'pattern', 'cutDirection', 'machiningOrder', 'stepover',
+      'entryStrategy',
+      'roundOutsideCorners', 'roundLinkCorners', 'cornerRelief',
+      'arcFitting', 'debugToolpath',
     ].join(','),
     `rough pocket render order changed: ${roughPocket.join(',')}`,
   )
@@ -211,12 +215,50 @@ function testGoldenRenderOrder() {
   const drilling = visibleFor(makeOperation({ kind: 'drilling', drillType: 'simple' }))
   assert(
     drilling.join(',') === [
-      'name', 'description', 'kind', 'target', 'targetSource', 'booklet', 'toolpathWarnings',
-      'tool', 'enabled', 'arcFitting', 'drillType', 'retractHeight', 'debugToolpath',
+      'name', 'description', 'kind', 'enabled', 'booklet', 'toolpathWarnings',
+      'target', 'targetSource',
+      'tool',
       'feed', 'plungeFeed', 'rpm',
+      'retractHeight',
+      'drillType',
+      'arcFitting', 'debugToolpath',
     ].join(','),
     `drilling render order changed: ${drilling.join(',')}`,
   )
+}
+
+/**
+ * The inversion the regrouping exists to fix: the parameters changed on every
+ * material change were buried in "Advanced", while a G-code output detail set
+ * once per machine sat always-visible above them.
+ */
+function testSpeedsAndFeedsSitAboveTheFold() {
+  const groupOf = (id: OperationFieldId) => {
+    const field = OPERATION_FIELDS.find((candidate) => candidate.id === id)
+    assert(field, `'${id}' must be declared`)
+    return OPERATION_FIELD_GROUPS.find((group) => group.id === field.group)
+  }
+
+  for (const id of ['feed', 'plungeFeed', 'slotFeed', 'rpm'] as const) {
+    const group = groupOf(id)
+    assert(group?.defaultOpen === true, `'${id}' must be visible without opening a section`)
+  }
+  assert(groupOf('arcFitting')?.defaultOpen === false, 'arc fitting is set once per machine, not per job')
+}
+
+function testGroupsWithNothingToShowDoNotRender() {
+  const rendered = (operation: Operation) => OPERATION_FIELD_GROUPS
+    .filter((group) => operationFieldsForGroup(group.id, operation).length > 0)
+    .map((group) => group.id)
+
+  const pocket = rendered(makeOperation({ kind: 'pocket' }))
+  assert(!pocket.includes('drilling'), 'a pocket must not render an empty Drilling group')
+
+  const drilling = rendered(makeOperation({ kind: 'drilling' }))
+  assert(!drilling.includes('corners'), 'drilling has no corners to relieve')
+  assert(!drilling.includes('strategy'), 'drilling has no 2D covering strategy')
+  assert(!drilling.includes('depth'), 'drilling depth comes from the target circles, not this group')
+  assert(drilling.includes('drilling'), 'a drilling operation renders its own group')
 }
 
 function testTrochoidalPredicatesMatchTheEnginesOwn() {
@@ -294,6 +336,8 @@ testEveryFieldNamesADeclaredGroup()
 testEveryFieldIsReachable()
 testEveryKindRendersAtLeastOneGroup()
 testGoldenRenderOrder()
+testSpeedsAndFeedsSitAboveTheFold()
+testGroupsWithNothingToShowDoNotRender()
 testTrochoidalPredicatesMatchTheEnginesOwn()
 testRampAngleRendersFromExactlyOnePlace()
 testStockToLeaveFollowsTheSurfacePattern()

@@ -92,6 +92,8 @@ test.describe('CAM operation browser smoke', () => {
     expect(contourOperations[0]?.pass).toBe('rough')
     expect(contourOperations[0]?.kind).toBe('edge_route_outside')
 
+    // Cut strategy and the trochoidal settings it reveals live in Strategy.
+    await ui.cam.operationGroup(app.page, 'Strategy').click()
     const strategyField = ui.cam.operationField(app.page, 'Strategy')
     await expect(strategyField.locator('.ui-select__label')).toHaveText('Contour')
     await strategyField.locator('.ui-select__trigger').click()
@@ -103,10 +105,9 @@ test.describe('CAM operation browser smoke', () => {
     await expect(app.page.getByRole('button', { name: 'Create rest operation', exact: true })).toBeDisabled()
     await expect(app.page.getByText('Rest machining is unavailable for trochoidal edge routing.', { exact: true })).toBeVisible()
 
-    await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
-    await expect(app.page.getByText('Entry', { exact: true })).toBeVisible()
     // Trochoidal honours both machining orders, so the control stays available.
     await expect(app.page.getByText('Machining order', { exact: true })).toBeVisible()
+    await ui.cam.operationGroup(app.page, 'Entry & retract').click()
     const entryField = ui.cam.operationField(app.page, 'Entry strategy')
     await expect(entryField.locator('.ui-select__label')).toHaveText('Helix')
     await entryField.locator('.ui-select__trigger').click()
@@ -153,6 +154,7 @@ test.describe('CAM operation browser smoke', () => {
     await expect(operationRow).toBeVisible()
 
     // Strategy field defaults to Direct.
+    await ui.cam.operationGroup(app.page, 'Strategy').click()
     const strategyField = ui.cam.operationField(app.page, 'Strategy')
     await expect(strategyField.locator('.ui-select__label')).toHaveText('Direct')
 
@@ -173,10 +175,10 @@ test.describe('CAM operation browser smoke', () => {
     // The channel-width note mentions the width.
     await expect(app.page.getByText(/Trochoidal cuts a /)).toBeVisible()
 
-    // Advanced section: Entry, Cut Direction visible; Ramp excluded.
-    await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
+    // Cut direction belongs to the strategy, which is already open; entry has
+    // its own group. Ramp stays excluded either way.
     await expect(app.page.getByText('Cut direction', { exact: true })).toBeVisible()
-    await expect(app.page.getByText('Entry', { exact: true })).toBeVisible()
+    await ui.cam.operationGroup(app.page, 'Entry & retract').click()
     const entryField = ui.cam.operationField(app.page, 'Entry strategy')
     await expect(entryField.locator('.ui-select__label')).toHaveText('Helix')
     await entryField.locator('.ui-select__trigger').click()
@@ -229,8 +231,7 @@ test.describe('CAM operation browser smoke', () => {
     // for the operation to land in the UI before reading project state.
     await expect(ui.operations.countBadge(app.page)).toHaveText('1')
 
-    await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
-    await expect(app.page.getByText('Entry', { exact: true })).toBeVisible()
+    await ui.cam.operationGroup(app.page, 'Entry & retract').click()
 
     const strategyField = app.page.getByText('Entry strategy', { exact: true }).locator('..')
     await expect(strategyField.locator('.ui-select__label')).toHaveText('Plunge')
@@ -314,8 +315,10 @@ test.describe('CAM operation browser smoke', () => {
     await expect(ui.operations.countBadge(app.page)).toHaveText('1')
     await expect(ui.operations.rowByName(app.page, 'Drill')).toBeVisible()
 
-    // Expand the advanced section to reveal the Drill Type selector
-    await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
+    // Drilling opens its own group, so the drill type is already visible. Open
+    // the entry group too: the ramp angle lives there, and without it the
+    // "absent" assertions below would pass merely because it is collapsed.
+    await ui.cam.operationGroup(app.page, 'Entry & retract').click()
 
     // The Drill Type selector should show the default (Simple (G81))
     const drillTypeField = app.page.getByText('Drill type', { exact: true }).locator('..')
@@ -376,7 +379,10 @@ test.describe('CAM operation browser smoke', () => {
     expect(fittedTool).toBeDefined()
     expect(fittedTool?.type).not.toBe('v_bit')
 
-    await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
+    // Same reason as the helical test: the ramp angle asserted absent below
+    // lives in the entry group, so open it rather than assert against a
+    // collapsed section.
+    await ui.cam.operationGroup(app.page, 'Entry & retract').click()
 
     const drillTypeField = app.page.getByText('Drill type', { exact: true }).locator('..')
     await drillTypeField.locator('.ui-select__trigger').click()
@@ -459,8 +465,13 @@ test.describe('CAM operation browser smoke', () => {
     await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create pocket')
     await expect(ui.operations.rows(app.page)).toHaveCount(1)
 
-    // The feed settings live in the collapsed Advanced section.
-    await app.page.getByRole('button', { name: 'Advanced', exact: true }).click()
+    // Speeds and feeds are the numbers changed on every material change, so
+    // they are visible without opening anything (#559); the arc-fitting output
+    // detail, set once per machine, is the one that collapses.
+    for (const label of ['Feed', 'Plunge feed', 'Slot feed (%)', 'RPM']) {
+      await expect(app.page.getByText(label, { exact: true })).toBeVisible()
+    }
+    await expect(app.page.getByText('Arc fitting (G2/G3)', { exact: true })).not.toBeVisible()
 
     // Every parameter row shows a schematic reference icon in its third
     // column; Feed reduction was the one row missing it.

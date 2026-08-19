@@ -219,6 +219,16 @@ export const cam = {
   operationField: (page: Page, label: string) =>
     page.locator('.cam-operation-properties .properties-field')
       .filter({ has: page.getByText(label, { exact: true }) }),
+
+  /**
+   * The header of the operation-properties group titled exactly `title` — the
+   * click target that opens or closes it. Anchored on the disclosure header so
+   * a group title that also names a field (e.g. "Strategy") cannot be confused
+   * with that field's own row.
+   */
+  operationGroup: (page: Page, title: string) =>
+    page.locator('.cam-operation-properties .disclosure-section__header')
+      .filter({ has: page.getByText(title, { exact: true }) }),
 }
 
 // ── Feature tree ────────────────────────────────────────────────────
