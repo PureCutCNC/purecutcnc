@@ -188,6 +188,42 @@ if (import.meta.env.DEV) {
         transform: state.pendingTransform?.keepOriginals ?? null,
       }
     },
+    /** Enters the sketch edit session for the given feature (issue #556 e2e). */
+    enterSketchEdit: async (featureId: string) => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().enterSketchEdit(featureId)
+    },
+    /** Snapshot of the sketch edit session's tool state. */
+    getSketchEditState: async () => {
+      const { useProjectStore } = await _pcTestStore()
+      const state = useProjectStore.getState()
+      const pending = state.pendingSketchEdit
+      return {
+        mode: state.selection.mode,
+        tool: state.selection.sketchEditTool,
+        pending: pending ? { tool: pending.tool, phase: pending.phase } : null,
+      }
+    },
+    /** Simulates the canvas click an add-point tool would dispatch onto a segment. */
+    insertFeaturePointAt: async (featureId: string, segmentIndex: number, x: number, y: number, t: number) => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().insertFeaturePoint(featureId, { kind: 'segment', segmentIndex, point: { x, y }, t })
+    },
+    /** Arms a segment control so the Tab key opens its dimension inspector. */
+    setActiveSegmentControl: async (index: number) => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().setActiveControl({ kind: 'segment', index })
+    },
+    /** Picks a trim/extend subject so the mid-pick Escape rung can be tested. */
+    setPendingSketchSubject: async (subject: { featureId: string; segmentIndex: number; x: number; y: number; t: number }) => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().setPendingSketchSubject({
+        featureId: subject.featureId,
+        segmentIndex: subject.segmentIndex,
+        point: { x: subject.x, y: subject.y },
+        t: subject.t,
+      })
+    },
   }
 }
 
@@ -220,6 +256,15 @@ declare global {
       startJoinFeatures: (ids: string[]) => Promise<void>
       startRotateFeature: (featureId: string) => Promise<void>
       getKeepOriginals: () => Promise<{ shapeAction: boolean | null; transform: boolean | null }>
+      enterSketchEdit: (featureId: string) => Promise<void>
+      getSketchEditState: () => Promise<{
+        mode: string
+        tool: string | null
+        pending: { tool: string; phase: string } | null
+      }>
+      insertFeaturePointAt: (featureId: string, segmentIndex: number, x: number, y: number, t: number) => Promise<void>
+      setActiveSegmentControl: (index: number) => Promise<void>
+      setPendingSketchSubject: (subject: { featureId: string; segmentIndex: number; x: number; y: number; t: number }) => Promise<void>
     }
   }
 }

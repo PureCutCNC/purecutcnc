@@ -15,6 +15,7 @@
  */
 
 import { Children } from 'react'
+import { createPortal } from 'react-dom'
 import type { HTMLAttributes, KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from 'react'
 import { useI18n } from '../../i18n/i18nContext'
 import type { CanvasWorkflowPanelPosition } from './useCanvasWorkflowPanel'
@@ -41,6 +42,12 @@ interface CanvasWorkflowPanelProps {
   actionRowProps?: HTMLAttributes<HTMLDivElement>
   className?: string
   moveLabel?: string
+  /**
+   * Render through a portal to document.body with `position: fixed`, so the
+   * panel can be dragged anywhere on the page. Must match the `pageLevel`
+   * option on the `useCanvasWorkflowPanel` call that produced `position`.
+   */
+  pageLevel?: boolean
 }
 
 export function CanvasWorkflowPanel({
@@ -54,10 +61,11 @@ export function CanvasWorkflowPanel({
   actionRowProps,
   className = '',
   moveLabel,
+  pageLevel = false,
 }: CanvasWorkflowPanelProps) {
   const { t } = useI18n()
   const resolvedMoveLabel = moveLabel ?? t('canvas.common.moveControls')
-  const panelClassName = ['canvas-workflow-panel', className].filter(Boolean).join(' ')
+  const panelClassName = ['canvas-workflow-panel', pageLevel ? 'canvas-workflow-panel--page' : '', className].filter(Boolean).join(' ')
   // Call sites pass conditional fragments, so an "empty" body arrives as [false, false]
   // — truthy as an array. Children.toArray drops null/undefined/booleans, leaving [].
   const hasBody = Children.toArray(children).length > 0
@@ -102,7 +110,7 @@ export function CanvasWorkflowPanel({
     }
   }
 
-  return (
+  const panelElement = (
     <div
       ref={panelRef}
       className={panelClassName}
@@ -130,4 +138,10 @@ export function CanvasWorkflowPanel({
       {hasBody ? <div className="canvas-workflow-panel__body">{children}</div> : null}
     </div>
   )
+
+  if (pageLevel) {
+    return createPortal(panelElement, document.body)
+  }
+
+  return panelElement
 }

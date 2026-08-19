@@ -145,6 +145,7 @@ import { useRafScheduler } from '../../hooks/useRafScheduler'
 import { useShellMode, isTabletMode } from '../layout/useShellMode'
 import { CanvasWorkflowAction, CanvasWorkflowCancel, CanvasWorkflowConfirm } from './CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
+import { EditSketchPanel } from './EditSketchPanel'
 import { CANVAS_SHORTCUT, withShortcut } from './canvasShortcuts'
 import { OverlapFeaturePicker } from './OverlapFeaturePicker'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
@@ -300,6 +301,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingSketchEdit,
     cancelPendingSketchEdit,
     setPendingSketchSubject,
+    setSketchEditTool,
     moveTabControl,
     moveClampControl,
     setPendingAddAnchor,
@@ -460,6 +462,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     canvasRef,
     clearTransientCanvasState,
     focusCanvasOnOpen: !editFilletActive && !editDimEditActive,
+    pageLevel: true,
   })
 
   // ── Measure & dimension workflow panels (instruction popups) ──
@@ -731,10 +734,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   function cancelJoinFromPanel() { cancelPendingShapeAction(); joinWorkflowPanel.focusCanvasAfterAction() }
   function applyEditFromPanel() { gestures.stopNodeDrag(); resetLock(); applySketchEdit(); editWorkflowPanel.focusCanvasAfterAction() }
   function cancelEditFromPanel() { gestures.stopNodeDrag(); resetLock(); cancelSketchEdit(); editWorkflowPanel.focusCanvasAfterAction() }
-  function commitEditDimensionFromPanel() { dimEdit.commitEditDimension(); editWorkflowPanel.focusCanvasAfterAction() }
-  function cancelEditDimensionFromPanel() { dimEdit.cancelEditDimension(); editWorkflowPanel.focusCanvasAfterAction() }
-  function commitFilletFromPanel() { fillet.commitFilletDimension(); editWorkflowPanel.focusCanvasAfterAction() }
-  function cancelFilletFromPanel() { fillet.cancelFilletDimension(); editWorkflowPanel.focusCanvasAfterAction() }
   useEffect(() => {
     function handleClipboardPlacement(event: Event) { if (event instanceof CustomEvent) beginClipboardPlacement(event.detail as FeatureClipboardPayload) }
     window.addEventListener(FEATURE_CLIPBOARD_PLACEMENT_EVENT, handleClipboardPlacement)
@@ -2606,7 +2605,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingOffset,
     confirmCutCutters,
     cancelPendingShapeAction,
-    cancelPendingSketchEdit,
+    setSketchEditTool,
     cancelOverlapFeaturePicker: overlapFeaturePicker.cancel,
     completePendingMove,
     completePendingShapeAction,
@@ -3820,164 +3819,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         </CanvasWorkflowPanel>
       )}
       {editModeActive && (
-        <CanvasWorkflowPanel
-          title={t('canvas.edit.title')}
-          step={
-            editFilletActive ? (selection.sketchEditTool === 'chamfer' ? t('canvas.edit.step.enterDistance') : t('canvas.edit.step.enterRadius'))
-            : editDimEditActive ? t('canvas.edit.step.enterDimensions')
-            : selection.sketchEditTool === 'add_point' ? t('canvas.edit.step.clickToAddPoints')
-            : selection.sketchEditTool === 'delete_point' ? t('canvas.edit.step.clickToDeletePoints')
-            : selection.sketchEditTool === 'delete_segment' ? t('canvas.edit.step.clickToDeleteSegments')
-            : selection.sketchEditTool === 'disconnect' ? t('canvas.edit.step.clickAnchorToSplit')
-            : selection.sketchEditTool === 'fillet' ? (fillet.filletCornerPicked ? t('canvas.edit.step.filletSecond') : t('canvas.edit.step.filletCorner'))
-            : selection.sketchEditTool === 'chamfer' ? (fillet.filletCornerPicked ? t('canvas.edit.step.chamferSecond') : t('canvas.edit.step.chamferCorner'))
-            : selection.sketchEditTool === 'trim' ? (pendingSketchEdit?.phase === 'pick-reference' ? t('canvas.edit.step.trimReference') : t('canvas.edit.step.trimSubject'))
-            : selection.sketchEditTool === 'extend' ? (pendingSketchEdit?.phase === 'pick-reference' ? t('canvas.edit.step.extendReference') : t('canvas.edit.step.extendSubject'))
-            : t('canvas.edit.step.default')
-          }
-          position={editWorkflowPanel.position}
-          panelRef={editWorkflowPanel.panelRef}
-          handleProps={editWorkflowPanel.handleProps}
-          actions={editFilletActive ? (
-            <>
-              <CanvasWorkflowConfirm label={t('canvas.edit.apply')} onClick={commitFilletFromPanel} />
-              <CanvasWorkflowCancel label={t('canvas.edit.cancel')} onClick={cancelFilletFromPanel} />
-            </>
-          ) : editDimEditActive ? (
-            <>
-              <CanvasWorkflowConfirm label={t('canvas.edit.confirm')} onClick={commitEditDimensionFromPanel} />
-              <CanvasWorkflowCancel label={t('canvas.edit.cancel')} onClick={cancelEditDimensionFromPanel} />
-            </>
-          ) : (
-            <>
-              {dimEdit.armedForDimension && (
-                <CanvasWorkflowAction shortcut={CANVAS_SHORTCUT.dimensions} label={t('canvas.edit.dimensionButton')} onClick={() => { triggerDimensionEdit(); dimEdit.setArmedForDimension(false) }} />
-              )}
-              {fillet.filletCornerPicked && !editFilletActive && (
-                <CanvasWorkflowAction label={selection.sketchEditTool === 'chamfer' ? t('canvas.edit.distanceButton') : t('canvas.edit.radiusButton')} onClick={() => fillet.enterFilletRadiusEdit()} />
-              )}
-              <CanvasWorkflowConfirm label={t('canvas.edit.apply')} onClick={applyEditFromPanel} />
-              <CanvasWorkflowCancel label={t('canvas.edit.cancel')} onClick={cancelEditFromPanel} />
-            </>
-          )}
-        >
-          {editFilletActive ? (
-            <label className="canvas-workflow-panel__field">
-              <span>{selection.sketchEditTool === 'chamfer' ? t('canvas.field.distance') : t('canvas.field.radius')}</span>
-              <input
-                ref={fillet.filletRadiusInputRef}
-                className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                type="text"
-                inputMode="decimal"
-                value={fillet.filletDimensionEdit?.radius ?? ''}
-                onChange={(e) => {
-                  fillet.setFilletDimensionEdit((prev) => (prev ? { ...prev, radius: e.target.value } : null))
-                  scheduleDraw()
-                }}
-                onFocus={(e) => e.currentTarget.select()}
-                onKeyDown={(e) => {
-                  e.stopPropagation()
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    commitFilletFromPanel()
-                  } else if (e.key === 'Escape') {
-                    e.preventDefault()
-                    cancelFilletFromPanel()
-                  }
-                }}
-              />
-            </label>
-          ) : editDimEditActive && dimEdit.dimensionEdit ? (
-            dimEdit.dimensionEdit.activeField === 'radius' ? (
-              <label className="canvas-workflow-panel__field">
-                <span>{t('canvas.field.radius')}</span>
-                <input
-                  ref={dimEdit.radiusInputRef}
-                  className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                  type="text"
-                  inputMode="decimal"
-                  value={dimEdit.dimensionEdit.radius}
-                  onChange={(e) => dimEdit.handleEditDimLiveChange('radius', e.target.value)}
-                  onFocus={(e) => e.currentTarget.select()}
-                  onKeyDown={(e) => {
-                    e.stopPropagation()
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      commitEditDimensionFromPanel()
-                    } else if (e.key === 'Escape') {
-                      e.preventDefault()
-                      cancelEditDimensionFromPanel()
-                    }
-                  }}
-                  autoFocus
-                />
-              </label>
-            ) : (
-              <>
-                <label className="canvas-workflow-panel__field">
-                  <span>{t('canvas.field.length')}</span>
-                  <input
-                    ref={dimEdit.widthInputRef}
-                    className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                    type="text"
-                    inputMode="decimal"
-                    value={dimEdit.dimensionEdit.length}
-                    onChange={(e) => dimEdit.handleEditDimLiveChange('length', e.target.value)}
-                    onFocus={(e) => e.currentTarget.select()}
-                    onKeyDown={(e) => {
-                      e.stopPropagation()
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        commitEditDimensionFromPanel()
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault()
-                        cancelEditDimensionFromPanel()
-                      } else if (e.key === 'Tab') {
-                        e.preventDefault()
-                        dimEdit.heightInputRef.current?.focus({ preventScroll: true })
-                      }
-                    }}
-                    autoFocus
-                  />
-                </label>
-                <label className="canvas-workflow-panel__field">
-                  <span>{t('canvas.field.angle')}</span>
-                  <input
-                    ref={dimEdit.heightInputRef}
-                    className="canvas-workflow-panel__count-input canvas-workflow-panel__distance-input"
-                    type="text"
-                    inputMode="decimal"
-                    value={dimEdit.dimensionEdit.angle}
-                    onChange={(e) => dimEdit.handleEditDimLiveChange('angle', e.target.value)}
-                    onFocus={(e) => e.currentTarget.select()}
-                    onKeyDown={(e) => {
-                      e.stopPropagation()
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        commitEditDimensionFromPanel()
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault()
-                        cancelEditDimensionFromPanel()
-                      } else if (e.key === 'Tab') {
-                        e.preventDefault()
-                        dimEdit.widthInputRef.current?.focus({ preventScroll: true })
-                      }
-                    }}
-                  />
-                </label>
-              </>
-            )
-          ) : (
-            <>
-              {editingFeatureHasSelfIntersection && (
-                <div className="canvas-workflow-panel__summary" style={{ color: 'var(--warning)' }}>{t('canvas.edit.warning.selfIntersecting')}</div>
-              )}
-              {editingFeatureExceedsStock && (
-                <div className="canvas-workflow-panel__summary" style={{ color: 'var(--warning)' }}>{t('canvas.edit.warning.exceedsStock')}</div>
-              )}
-            </>
-          )}
-        </CanvasWorkflowPanel>
+        <EditSketchPanel
+          panel={editWorkflowPanel}
+          dimEdit={dimEdit}
+          fillet={fillet}
+          hasSelfIntersection={editingFeatureHasSelfIntersection}
+          exceedsStock={editingFeatureExceedsStock}
+          onFinishSession={applyEditFromPanel}
+          onCancelSession={cancelEditFromPanel}
+          onTriggerDimensionEdit={triggerDimensionEdit}
+          scheduleDraw={scheduleDraw}
+          pageLevel
+        />
       )}
       {lockMode !== 'none' && !isTablet && (
         <button

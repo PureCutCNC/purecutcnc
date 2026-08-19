@@ -310,19 +310,6 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
             )}
           </div>
         )}
-
-        {/* Sketch edit tools */}
-        {sketchCommands.predicates.featureSketchEditActive && (
-          <div className="tool-rail__section">
-            <RailButton icon="point-add" label={t('appShell.toolRail.addPoint')} active={sketchCommands.sketchEdit.add_point.active} onClick={sketchCommands.sketchEdit.add_point.onActivate} />
-            <RailButton icon="point-delete" label={t('appShell.toolRail.deletePoint')} active={sketchCommands.sketchEdit.delete_point.active} onClick={sketchCommands.sketchEdit.delete_point.onActivate} />
-            <RailButton icon="segment-delete" label={t('appShell.toolRail.deleteSegment')} active={sketchCommands.sketchEdit.delete_segment.active} onClick={sketchCommands.sketchEdit.delete_segment.onActivate} />
-            <RailButton icon="disconnect" label={t('appShell.toolRail.disconnect')} active={sketchCommands.sketchEdit.disconnect.active} onClick={sketchCommands.sketchEdit.disconnect.onActivate} />
-            <RailButton icon="fillet" label={t('appShell.toolRail.fillet')} active={sketchCommands.sketchEdit.fillet.active} onClick={sketchCommands.sketchEdit.fillet.onActivate} />
-            <RailButton icon="trim" label={t('appShell.toolRail.trim')} active={sketchCommands.sketchEdit.trim.active} disabled={!sketchCommands.sketchEdit.trim.enabled} onClick={sketchCommands.sketchEdit.trim.onActivate} />
-            <RailButton icon="extend" label={t('appShell.toolRail.extend')} active={sketchCommands.sketchEdit.extend.active} disabled={!sketchCommands.sketchEdit.extend.enabled} onClick={sketchCommands.sketchEdit.extend.onActivate} />
-          </div>
-        )}
       </nav>
 
       {showTextDialog && typeof document !== 'undefined'

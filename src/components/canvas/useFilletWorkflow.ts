@@ -51,6 +51,12 @@ export interface FilletWorkflow {
   enterFilletRadiusEdit: () => void
   commitFilletDimension: () => void
   cancelFilletDimension: () => void
+  /**
+   * Close the radius editor and keep the picked corner (issue #556): Escape
+   * leaves the narrowest scope, so the corner pick survives and the preview
+   * falls back to the pointer-derived radius.
+   */
+  dismissFilletDimension: () => void
 }
 
 export function useFilletWorkflow(ctx: FilletWorkflowCtx): FilletWorkflow {
@@ -157,6 +163,14 @@ export function useFilletWorkflow(ctx: FilletWorkflowCtx): FilletWorkflow {
     scheduleDraw()
   }
 
+  function dismissFilletDimension() {
+    // Keep pendingSketchFilletRef so the picked corner stays active; the next
+    // pointer move recomputes sketchEditPreviewRef from the live pointer.
+    sketchEditPreviewRef.current = null
+    setFilletDimensionEdit(null)
+    scheduleDraw()
+  }
+
   return {
     filletDimensionEdit,
     setFilletDimensionEdit,
@@ -168,5 +182,6 @@ export function useFilletWorkflow(ctx: FilletWorkflowCtx): FilletWorkflow {
     enterFilletRadiusEdit,
     commitFilletDimension,
     cancelFilletDimension,
+    dismissFilletDimension,
   }
 }

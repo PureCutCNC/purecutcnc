@@ -21,7 +21,7 @@
     "test:agent": "bash scripts/test-claude-deepseek-agent.sh",
     "test:e2e": "playwright test",
     "test:e2e:settings": "playwright test e2e/appearance.smoke.spec.ts e2e/language.smoke.spec.ts e2e/languageManager.smoke.spec.ts e2e/themeManager.smoke.spec.ts e2e/unitConversion.smoke.spec.ts e2e/machineLibrary.smoke.spec.ts e2e/toolLibraryDialog.smoke.spec.ts",
-    "test:e2e:project-input": "playwright test e2e/featureReferences.smoke.spec.ts e2e/importGeometry.smoke.spec.ts e2e/creationTargets.smoke.spec.ts e2e/bulkProperties.smoke.spec.ts e2e/modelOrientation.smoke.spec.ts e2e/canvasWorkflowPanel.smoke.spec.ts",
+    "test:e2e:project-input": "playwright test e2e/featureReferences.smoke.spec.ts e2e/importGeometry.smoke.spec.ts e2e/creationTargets.smoke.spec.ts e2e/bulkProperties.smoke.spec.ts e2e/modelOrientation.smoke.spec.ts e2e/canvasWorkflowPanel.smoke.spec.ts e2e/sketchEditSession.smoke.spec.ts",
     "test:e2e:workflow-ui": "playwright test e2e/camOperations.smoke.spec.ts e2e/gcodeExport.smoke.spec.ts e2e/motionDebug.smoke.spec.ts e2e/overlapFeatureSelection.smoke.spec.ts e2e/viewportViews.smoke.spec.ts e2e/toolpathVisibility.smoke.spec.ts e2e/feedColours.smoke.spec.ts",
     "check:headers": "npx tsx scripts/check-license-headers.ts",
     "tauri": "tauri",

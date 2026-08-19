@@ -31,6 +31,13 @@
   pointer-events: auto;
 }
 
+/* Page-level variant: portaled to document.body, fixed to the viewport, and
+   free to be dragged anywhere — above workspace surfaces, below modals. */
+.canvas-workflow-panel--page {
+  position: fixed;
+  z-index: 1200;
+}
+
 /* Title bar carries the step text and the action buttons, so a panel whose body is
    empty collapses to this single row. The divider lives on the body's top edge, not
    here — otherwise a collapsed panel is left with a rule along its bottom. */
@@ -249,6 +256,95 @@
   place-items: center;
   width: 34px;
   padding: 0;
+}
+
+/* ── Edit Sketch session panel (issue #556) ───────────────────────────────
+   The tool modes live in the panel body, the session Finish/Cancel pair stays
+   in the header, and the inspectors are labelled body sections. */
+
+/* Room for the 9-button tool row to wrap into two comfortable rows. */
+.canvas-workflow-panel--edit {
+  max-width: min(560px, calc(100% - 24px));
+}
+
+.canvas-workflow-panel__tool-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Desktop reuses the toolbar's icon-only buttons (label on hover); the
+   toolbar-group context that normally rounds them is absent inside the panel. */
+.canvas-workflow-panel__tool-row .toolbar-icon-btn {
+  border-radius: 6px;
+}
+
+/* Icon + visible text: no hover/tooltip dependence on touch. */
+.canvas-workflow-panel__tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  border: 1px solid color-mix(in oklab, var(--accent) 24%, var(--line));
+  border-radius: 6px;
+  background: var(--surface-input);
+  color: var(--text);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.canvas-workflow-panel__tool:hover,
+.canvas-workflow-panel__tool:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.canvas-workflow-panel__tool--active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.canvas-workflow-panel__tool:disabled {
+  border-color: color-mix(in oklab, var(--line) 70%, transparent);
+  color: var(--text-dim);
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Context strip: the active mode's exit affordance ("Done adding points"), and
+   the Dimension / Radius entry affordances. */
+.canvas-workflow-panel__mode-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 34px;
+}
+
+.canvas-workflow-panel__mode-strip .tablet-cmd-btn {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.canvas-workflow-panel__inspector {
+  display: grid;
+  gap: 6px;
+  border: 1px solid color-mix(in oklab, var(--accent) 24%, var(--line));
+  border-radius: 6px;
+  background: var(--surface-input);
+  padding: 8px 10px;
+}
+
+.canvas-workflow-panel__section-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .overlap-feature-picker {
