@@ -497,6 +497,51 @@ test.describe('CAM operation browser smoke', () => {
     ).toHaveCount(0)
   })
 
+  test('expanded properties lay out in exactly two columns (#559)', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
+    await ui.contextMenu.item(carveMenu, 'Create operation').hover()
+    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create pocket')
+    await expect(ui.operations.rows(app.page)).toHaveCount(1)
+
+    // Open every group so the content is taller than the dialog — the condition
+    // that used to push a third column off the panel's right edge, reachable by
+    // nothing at all: the panel overflowed horizontally without a scrollbar.
+    for (const group of ['Strategy', 'Entry & retract', 'Corners', 'Output']) {
+      await ui.cam.operationGroup(app.page, group).click()
+    }
+
+    await app.page.getByRole('button', { name: 'Expand operation properties' }).click()
+    await expect(app.page.locator('.dialog--panel-expand')).toBeVisible()
+
+    const layout = await app.page.evaluate(() => {
+      const panel = document.querySelector('.dialog--panel-expand .properties-panel') as HTMLElement
+      const body = document.querySelector('.dialog-body--panel-expand') as HTMLElement
+      const sections = [...document.querySelectorAll('.dialog--panel-expand .disclosure-section')]
+      const panelRight = panel.getBoundingClientRect().right
+      return {
+        sections: sections.length,
+        columns: new Set(sections.map((el) => Math.round(el.getBoundingClientRect().left))).size,
+        pastRightEdge: sections.filter((el) => el.getBoundingClientRect().right > panelRight + 1).length,
+        horizontalOverflow: panel.scrollWidth - Math.round(panel.getBoundingClientRect().width),
+        // Precondition, measured in a way that holds whichever direction the
+        // overflow goes: stacked in one column the groups are taller than the
+        // dialog, which is the only case where a third column can appear.
+        stackedHeight: Math.round(sections.reduce((sum, el) => sum + el.getBoundingClientRect().height, 0)),
+        bodyHeight: body.clientHeight,
+      }
+    })
+
+    // Guards against the assertions below passing on an empty or short panel.
+    expect(layout.sections).toBeGreaterThan(4)
+    expect(layout.stackedHeight).toBeGreaterThan(layout.bodyHeight)
+
+    expect(layout.columns).toBe(2)
+    expect(layout.pastRightEdge).toBe(0)
+    expect(layout.horizontalOverflow).toBeLessThanOrEqual(1)
+  })
+
   test('Feed reduction row carries its parameter-reference icon (#555)', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)
 

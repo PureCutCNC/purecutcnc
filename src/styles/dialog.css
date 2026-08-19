@@ -1183,6 +1183,14 @@
   display: block;
   columns: 2;
   column-gap: 24px;
+  /* Content-sized, never stretched to the dialog body's height. The body is the
+     `1fr` row of a max-height grid, so without this the panel gets a *definite*
+     block size — and a multi-column box that is too short for its content does
+     not grow taller, it opens further columns sideways. A third column appeared
+     past the panel's right edge with nothing to scroll it into view (#559).
+     `max-content` lets the balancer pick a height that fits the declared two
+     columns, and the overflow becomes the body's own vertical scroll. */
+  height: max-content;
 }
 
 /* Let .properties-group's children flow across the columns. The group must be
