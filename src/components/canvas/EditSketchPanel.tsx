@@ -21,6 +21,8 @@ import type { SketchEditTool } from '../../store/types'
 import { useSketchCommands } from '../../commands/sketchCommands'
 import { Icon } from '../Icon'
 import { parseLengthInput } from '../../utils/units'
+import { isTabletMode, useShellMode } from '../layout/useShellMode'
+import { ToolbarActionButton } from '../layout/toolbar/primitives'
 import { CanvasWorkflowAction, CanvasWorkflowCancel, CanvasWorkflowConfirm } from './CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
 import { CANVAS_SHORTCUT } from './canvasShortcuts'
@@ -84,8 +86,8 @@ interface ToolButtonProps {
   onClick: () => void
 }
 
-/** One tool-mode button in the panel's tool row. Icon + visible text so the
- *  mode is discoverable without hover (tablet-safe). */
+/** One tool-mode button in the panel's tool row, tablet variant: icon + visible
+ *  text so the mode is discoverable without hover. */
 function ToolButton({ icon, label, active, disabled, onClick }: ToolButtonProps) {
   return (
     <button
@@ -140,6 +142,9 @@ export function EditSketchPanel({
   const pendingSketchEdit = useProjectStore((state) => state.pendingSketchEdit)
   const units = useProjectStore((state) => state.project.meta.units)
   const setSketchEditTool = useProjectStore((state) => state.setSketchEditTool)
+  // Desktop renders the tool row as an icon toolbar with hover tooltips;
+  // touch has no hover, so the tablet keeps icon + visible label buttons.
+  const isTablet = isTabletMode(useShellMode())
 
   const tool = selection.sketchEditTool
   const filletEditorActive = fillet.filletDimensionEditActive
@@ -217,6 +222,25 @@ export function EditSketchPanel({
     : tool === 'extend' ? (pendingSketchEdit?.phase === 'pick-reference' ? t('canvas.edit.step.extendReference') : t('canvas.edit.step.extendSubject'))
     : t('canvas.edit.step.default')
 
+  const rowTools: Array<{ key: string; icon: string; label: string; active: boolean; disabled: boolean; onClick: () => void }> = [
+    {
+      key: 'move',
+      icon: 'move',
+      label: t('canvas.edit.move'),
+      active: tool === null,
+      disabled: false,
+      onClick: exitTool,
+    },
+    ...TOOL_ORDER.map((key) => ({
+      key,
+      icon: TOOL_ICONS[key],
+      label: t(TOOL_LABEL_KEYS[key]),
+      active: tool === key,
+      disabled: !commands.sketchEdit[key].enabled,
+      onClick: () => activateTool(key),
+    })),
+  ]
+
   return (
     <CanvasWorkflowPanel
       className="canvas-workflow-panel--edit"
@@ -233,23 +257,27 @@ export function EditSketchPanel({
       )}
     >
       <div className="canvas-workflow-panel__tool-row">
-        <ToolButton
-          icon="move"
-          label={t('canvas.edit.move')}
-          active={tool === null}
-          disabled={false}
-          onClick={exitTool}
-        />
-        {TOOL_ORDER.map((key) => (
-          <ToolButton
-            key={key}
-            icon={TOOL_ICONS[key]}
-            label={t(TOOL_LABEL_KEYS[key])}
-            active={tool === key}
-            disabled={!commands.sketchEdit[key].enabled}
-            onClick={() => activateTool(key)}
-          />
-        ))}
+        {rowTools.map(({ key, icon, label, active, disabled, onClick }) =>
+          isTablet ? (
+            <ToolButton
+              key={key}
+              icon={icon}
+              label={label}
+              active={active}
+              disabled={disabled}
+              onClick={onClick}
+            />
+          ) : (
+            <ToolbarActionButton
+              key={key}
+              icon={icon}
+              label={label}
+              active={active}
+              disabled={disabled}
+              onClick={onClick}
+            />
+          ),
+        )}
       </div>
       {tool && (
         <div className="canvas-workflow-panel__mode-strip">

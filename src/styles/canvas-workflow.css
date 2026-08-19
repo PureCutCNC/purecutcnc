@@ -266,6 +266,12 @@
   gap: 6px;
 }
 
+/* Desktop reuses the toolbar's icon-only buttons (label on hover); the
+   toolbar-group context that normally rounds them is absent inside the panel. */
+.canvas-workflow-panel__tool-row .toolbar-icon-btn {
+  border-radius: 6px;
+}
+
 /* Icon + visible text: no hover/tooltip dependence on touch. */
 .canvas-workflow-panel__tool {
   display: inline-flex;
