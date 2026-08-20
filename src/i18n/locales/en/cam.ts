@@ -84,6 +84,7 @@ export const camEn = {
   'cam.pocketPattern.offset': 'Offset',
   'cam.pocketPattern.parallel': 'Parallel',
   'cam.pocketPattern.waterline': 'Waterline',
+  'cam.pocketPattern.seededOffset': 'Seeded circles',
 
   // ── Pass labels ──
   'cam.pass.rough': 'Rough',

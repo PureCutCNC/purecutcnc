@@ -35,6 +35,7 @@ interface OperationSnapshot {
   entryRampAngle?: unknown
   entryHelixDiameterPercent?: unknown
   countersinkDiameter?: unknown
+  pocketPattern?: unknown
   target?: {
     source?: unknown
     featureIds?: unknown
@@ -456,6 +457,34 @@ test.describe('CAM operation browser smoke', () => {
     // An incompatible feature (add rect vs. pocket) sees no add candidates.
     const addMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
     await expect(ui.contextMenu.item(addMenu, 'Add to operation')).toBeDisabled()
+  })
+  test('the seeded circle pocket pattern is selectable and reaches the project (#554)', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
+    await ui.contextMenu.item(carveMenu, 'Create operation').hover()
+    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create pocket')
+    await expect(ui.operations.rows(app.page)).toHaveCount(1)
+
+    await ui.cam.operationGroup(app.page, 'Strategy').click()
+    const pattern = ui.cam.operationField(app.page, 'Pattern')
+    await expect(pattern).toHaveCount(1)
+
+    // A new pocket starts on the shipped default, so picking the seeded
+    // pattern below is a real change rather than a no-op that would pass
+    // whatever the dropdown happened to contain.
+    await expect(pattern.locator('.ui-select__label')).toHaveText('Offset')
+
+    await pattern.locator('.ui-select__trigger').click()
+    const options = pattern.locator('.ui-select__dropdown [role="option"]')
+    await expect(options).toHaveText(['Offset', 'Seeded circles', 'Parallel'])
+    await options.filter({ hasText: 'Seeded circles' }).click()
+
+    await expect(pattern.locator('.ui-select__label')).toHaveText('Seeded circles')
+
+    const project = await getProject(app.page)
+    const operations = project.operations as OperationSnapshot[]
+    expect(operations[0].pocketPattern).toBe('seeded_offset')
   })
   test('actions, diagnostics and the dev toggle are not property rows (#559)', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)

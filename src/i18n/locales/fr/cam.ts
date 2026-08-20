@@ -66,6 +66,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.pocketPattern.offset': 'Décalage',
   'cam.pocketPattern.parallel': 'Parallèle',
   'cam.pocketPattern.waterline': 'Ligne d’eau',
+  'cam.pocketPattern.seededOffset': 'Cercles d’amorce',
   'cam.pass.rough': 'Ébauche',
   'cam.pass.finish': 'Finition',
   'cam.panel.emptyOperation': 'Sélectionnez une opération pour modifier ses paramètres.',

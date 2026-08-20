@@ -66,6 +66,12 @@ import {
 } from './tangentLink'
 import { buildWallCornerCleanupContour } from './wallCornerCleanup'
 import {
+  planSeedCircles,
+  seedCircleContours,
+  seedStartRadius,
+  type SeedCirclePlan,
+} from './seedClearing'
+import {
   EngagementFeedQuantizer,
   EngagementTelemetryAccumulator,
   SweptMaterialIndex,
@@ -1771,6 +1777,91 @@ export function buildPocketParallelSegments(
   return segments
 }
 
+interface TangentSLinkSplice {
+  cutMoves: ToolpathMove[]
+  nextPosition: ToolpathPoint
+}
+
+/**
+ * Replace one planar direct cut link with a tangent S and re-seam its arrival
+ * contour. Both the offset-tree rings and phase-1 seed circles use this exact
+ * transition, so keeping the splice here prevents the two paths drifting.
+ */
+function spliceTangentSLink(
+  moves: ToolpathMove[],
+  linkStartIndex: number,
+  contour: Point[],
+  cutMoves: ToolpathMove[],
+  tangentLink: TangentLinkOptions | undefined,
+): TangentSLinkSplice | null {
+  if (!tangentLink || cutMoves.length === 0 || moves.length !== linkStartIndex + 1 || linkStartIndex === 0) {
+    return null
+  }
+
+  // A single direct cut link: try the tangent S-link (issue #545). The S
+  // departs the previous contour's closing cut along its tangent and arrives
+  // on a vertex of this contour along this contour's tangent, so the contour
+  // re-seams at the arrival vertex. When no S fits, the straight link stays.
+  const linkMove = moves[linkStartIndex]
+  const previous = moves[linkStartIndex - 1]
+  if (
+    linkMove.kind !== 'cut'
+    || previous.kind !== 'cut'
+    || Math.abs(previous.to.x - linkMove.from.x) > 1e-9
+    || Math.abs(previous.to.y - linkMove.from.y) > 1e-9
+    // The S is an XY planar link; a ramping cut link (3D) has no planar S and
+    // must not be spliced at the wrong Z.
+    || Math.abs(linkMove.from.z - linkMove.to.z) > 1e-9
+  ) {
+    return null
+  }
+
+  const exitTangentX = linkMove.from.x - previous.from.x
+  const exitTangentY = linkMove.from.y - previous.from.y
+  const exitTangentLen = Math.hypot(exitTangentX, exitTangentY)
+  const linkDx = linkMove.to.x - linkMove.from.x
+  const linkDy = linkMove.to.y - linkMove.from.y
+  const linkLen = Math.hypot(linkDx, linkDy)
+  const firstChordDx = cutMoves[0].to.x - cutMoves[0].from.x
+  const firstChordDy = cutMoves[0].to.y - cutMoves[0].from.y
+  const firstChordLen = Math.hypot(firstChordDx, firstChordDy)
+  if (exitTangentLen <= 1e-9 || linkLen <= 1e-9 || firstChordLen <= 1e-9) return null
+
+  const turnOf = (ax: number, ay: number, bx: number, by: number): number =>
+    Math.acos(Math.max(-1, Math.min(1, (ax * bx + ay * by) / (Math.hypot(ax, ay) * Math.hypot(bx, by)))))
+  const exitTurn = turnOf(exitTangentX, exitTangentY, linkDx, linkDy)
+  const entryTurn = turnOf(linkDx, linkDy, firstChordDx, firstChordDy)
+  // Skip the S only when BOTH ends are already tangent — a link with one
+  // shallow end and one sharp end still needs the curve.
+  if (exitTurn < (10 * Math.PI) / 180 && entryTurn < (10 * Math.PI) / 180) return null
+
+  const result = tangentSLink(
+    linkMove.from,
+    { x: exitTangentX / exitTangentLen, y: exitTangentY / exitTangentLen },
+    contour,
+    tangentLink,
+  )
+  if (result === null) return null
+
+  const z = linkMove.from.z
+  const sMoves: ToolpathMove[] = []
+  for (let index = 1; index < result.points.length; index += 1) {
+    sMoves.push({
+      kind: 'cut',
+      from: { x: result.points[index - 1].x, y: result.points[index - 1].y, z },
+      to: { x: result.points[index].x, y: result.points[index].y, z },
+    })
+  }
+  if (sMoves.length === 0) return null
+
+  moves.splice(linkStartIndex, 1, ...sMoves)
+  const rotated = [...contour.slice(result.arrivalIndex), ...contour.slice(0, result.arrivalIndex)]
+  return {
+    cutMoves: toClosedCutMoves(rotated, z),
+    nextPosition: sMoves[sMoves.length - 1].to,
+  }
+}
+
 export function cutClosedContours(
   moves: ToolpathMove[],
   contours: Point[][],
@@ -1807,65 +1898,10 @@ export function cutClosedContours(
       entryPolicy,
     )
     let cutMoves = toClosedCutMoves(contour, z)
-    if (tangentLink && cutMoves.length > 0 && moves.length === linkStartIndex + 1 && linkStartIndex > 0) {
-      // A single direct cut link: try the tangent S-link (issue #545). The S
-      // departs the previous ring's closing cut along its tangent and arrives
-      // on a vertex of this ring along this ring's tangent, so the ring
-      // re-seams at the arrival vertex. When no S fits, the straight link
-      // stays — today's behaviour.
-      const linkMove = moves[linkStartIndex]
-      const previous = moves[linkStartIndex - 1]
-      if (
-        linkMove.kind === 'cut'
-        && previous.kind === 'cut'
-        && Math.abs(previous.to.x - linkMove.from.x) <= 1e-9
-        && Math.abs(previous.to.y - linkMove.from.y) <= 1e-9
-        // The S is an XY planar link; a ramping cut link (3D) has no planar
-        // S and must not be spliced at the wrong Z.
-        && Math.abs(linkMove.from.z - linkMove.to.z) <= 1e-9
-      ) {
-        const exitTangentX = linkMove.from.x - previous.from.x
-        const exitTangentY = linkMove.from.y - previous.from.y
-        const exitTangentLen = Math.hypot(exitTangentX, exitTangentY)
-        const linkDx = linkMove.to.x - linkMove.from.x
-        const linkDy = linkMove.to.y - linkMove.from.y
-        const linkLen = Math.hypot(linkDx, linkDy)
-        const firstChordDx = cutMoves[0].to.x - cutMoves[0].from.x
-        const firstChordDy = cutMoves[0].to.y - cutMoves[0].from.y
-        const firstChordLen = Math.hypot(firstChordDx, firstChordDy)
-        if (exitTangentLen > 1e-9 && linkLen > 1e-9 && firstChordLen > 1e-9) {
-          const turnOf = (ax: number, ay: number, bx: number, by: number): number =>
-            Math.acos(Math.max(-1, Math.min(1, (ax * bx + ay * by) / (Math.hypot(ax, ay) * Math.hypot(bx, by)))))
-          const exitTurn = turnOf(exitTangentX, exitTangentY, linkDx, linkDy)
-          const entryTurn = turnOf(linkDx, linkDy, firstChordDx, firstChordDy)
-          // Skip the S only when BOTH ends are already tangent — a link with
-          // one shallow end and one sharp end still needs the curve.
-          if (exitTurn >= (10 * Math.PI) / 180 || entryTurn >= (10 * Math.PI) / 180) {
-            const result = tangentSLink(
-              linkMove.from,
-              { x: exitTangentX / exitTangentLen, y: exitTangentY / exitTangentLen },
-              contour,
-              tangentLink,
-            )
-            if (result !== null) {
-              const z0 = linkMove.from.z
-              const sMoves: ToolpathMove[] = []
-              for (let index = 1; index < result.points.length; index += 1) {
-                sMoves.push({
-                  kind: 'cut',
-                  from: { x: result.points[index - 1].x, y: result.points[index - 1].y, z: z0 },
-                  to: { x: result.points[index].x, y: result.points[index].y, z: z0 },
-                })
-              }
-              moves.splice(linkStartIndex, 1, ...sMoves)
-              // Re-seam the ring at the arrival vertex.
-              const rotated = [...contour.slice(result.arrivalIndex), ...contour.slice(0, result.arrivalIndex)]
-              cutMoves = toClosedCutMoves(rotated, z)
-              nextPosition = sMoves[sMoves.length - 1].to
-            }
-          }
-        }
-      }
+    const tangentSplice = spliceTangentSLink(moves, linkStartIndex, contour, cutMoves, tangentLink)
+    if (tangentSplice) {
+      cutMoves = tangentSplice.cutMoves
+      nextPosition = tangentSplice.nextPosition
     }
     moves.push(...cutMoves)
     nextPosition = cutMoves.at(-1)?.to ?? nextPosition
@@ -2567,9 +2603,40 @@ function generateRoughBandMoves(
   const islandJoinType = operation.roundOutsideCorners
     ? ClipperLib.JoinType.jtRound
     : ClipperLib.JoinType.jtMiter
-  const regionTrees = band.regions
+  const centreRegions = band.regions
     .flatMap((region) => buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
-    .map((region) => buildOffsetRegionTree(region, effectiveStepover, islandJoinType))
+  // Seeded circle clearing (issue #554). Phase 1 clears the open middle with
+  // full circles grown from the region's clearance seed; the last of them is
+  // recorded as an island so phase 2 is today's ring tree, unchanged, with its
+  // first ring landing one stepover outside the seed disc. The pattern is the
+  // only gate: any other value plans nothing and takes the previous path.
+  const seedStart = operation.pocketPattern === 'seeded_offset'
+    ? seedStartRadius(operation, toolRadius)
+    : 0
+  const seedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
+  const regionTrees = centreRegions.map((region) => {
+    const plans = seedStart > 0
+      ? planSeedCircles(region, seedStart, effectiveStepover, toolRadius * 2)
+      : []
+    if (plans.length === 0) return buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
+
+    const seeded = buildOffsetRegionTree(
+      { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
+      effectiveStepover,
+      islandJoinType,
+    )
+    // The tree must OFFSET around the seed islands but must not CUT them:
+    // phase 1 has already run those exact laps, and `cutOffsetRegionNode`
+    // emits every island of the node it is cutting. Restoring the root's
+    // original island list drops the duplicates — the children were built
+    // from the region that still had the seeds, so every outward ring is
+    // unaffected — and it also returns the seed discs to the cleared domain
+    // that entry placement and tangential links are tested against, which is
+    // where the helix belongs.
+    const tree: OffsetRegionNode = { region, children: seeded.children }
+    seedPlans.set(tree, plans)
+    return tree
+  })
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
   // Tangential links (issue #545): replace the straight ring-to-ring link
   // with a tangent S-curve, gated by the operation field (absent = today's
@@ -2635,7 +2702,71 @@ function generateRoughBandMoves(
       currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
     )
 
-    for (const tree of orderedTrees) {
+    // Phase 1 runs for EVERY open area in the band before phase 2 starts, not
+    // interleaved: each area's circles in turn — largest area first, since
+    // that is the order they were found in — and only once the last of them is
+    // cut does the first ring go down. Within an area the circles run
+    // innermost outwards, each starting at the same angle as the one before
+    // it, so the link to the next is a radial step of exactly one stepover:
+    // never longer than the tool diameter, and therefore always a direct cut
+    // link rather than a retract.
+    if (seedPlans.size > 0) {
+      for (const tree of orderedTrees) {
+        for (const seedPlan of seedPlans.get(tree) ?? []) {
+          const circles = applyContourDirection(
+            seedCircleContours(seedPlan, effectiveStepover),
+            direction,
+          )
+          // A successful tangent S re-seams its arrival circle. Carry that
+          // endpoint to the next concentric circle so its radial link remains
+          // short; otherwise the old canonical seam can be a full diameter
+          // away and force an avoidable safe-Z rapid.
+          let previousCircleEnd: ToolpathPoint | null = null
+          for (const baseCircle of circles) {
+            const circle = tangentLink
+              ? rotateContourToNearestEntry(baseCircle, previousCircleEnd)
+              : baseCircle
+            const linkStartIndex = moves.length
+            currentPosition = transitionToCutEntry(
+              moves,
+              currentPosition,
+              contourStartPoint(circle, z),
+              safeZ,
+              maxLinkDistance,
+              undefined,
+              levelEntryPolicy,
+            )
+            let circleMoves = toClosedCutMoves(circle, z)
+            const tangentSplice = spliceTangentSLink(
+              moves,
+              linkStartIndex,
+              circle,
+              circleMoves,
+              tangentLink,
+            )
+            if (tangentSplice) {
+              circleMoves = tangentSplice.cutMoves
+              currentPosition = tangentSplice.nextPosition
+            }
+            moves.push(...circleMoves)
+            currentPosition = circleMoves.at(-1)?.to ?? currentPosition
+            previousCircleEnd = tangentLink ? currentPosition : null
+          }
+        }
+      }
+    }
+
+    // Phase 2 re-orders from wherever phase 1 left the tool. With no seeds
+    // this is the same list, computed from the same position, so the previous
+    // ordering is reproduced exactly rather than merely closely.
+    const phaseTwoTrees = seedPlans.size > 0
+      ? orderNodesGreedy(
+        regionTrees,
+        currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+      )
+      : orderedTrees
+
+    for (const tree of phaseTwoTrees) {
       currentPosition = cutOffsetRegionNode(
         moves,
         tree,

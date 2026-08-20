@@ -384,6 +384,8 @@ function pocketPatternLabel(pattern: PocketPattern): string {
       return camT('cam.pocketPattern.parallel')
     case 'waterline':
       return camT('cam.pocketPattern.waterline')
+    case 'seeded_offset':
+      return camT('cam.pocketPattern.seededOffset')
   }
 }
 
@@ -1474,6 +1476,7 @@ export function CAMPanel({
               ]
               : [
                 { value: 'offset', label: pocketPatternLabel('offset') },
+                { value: 'seeded_offset', label: pocketPatternLabel('seeded_offset') },
                 { value: 'parallel', label: pocketPatternLabel('parallel') },
               ]}
             onChange={(value) => {

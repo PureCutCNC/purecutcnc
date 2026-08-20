@@ -321,6 +321,20 @@ export function OperationParameterReference({
           </OpParamRefFrame>
         )
       }
+      if (variant === 'seeded_offset') {
+        // Concentric circles at the seed, then the ring family blending out
+        // to the wall — the two phases, in one picture.
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__outline" d="M6 5h46v24H6z" />
+            <path className="gear-reference__guide" d="M12 10h34v14H12z" />
+            <circle className="gear-reference__accent" cx="24" cy="17" r="3.5" />
+            <circle className="gear-reference__accent" cx="24" cy="17" r="6.5" />
+            <circle className="gear-reference__accent-fill" cx="24" cy="17" r="1.2" />
+            <path className="gear-reference__accent" d="M15 27a10.5 10.5 0 0 1 0-20h20a10.5 10.5 0 0 1 0 20z" />
+          </OpParamRefFrame>
+        )
+      }
       if (variant === 'waterline') {
         return (
           <OpParamRefFrame label={label}>

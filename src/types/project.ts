@@ -478,7 +478,14 @@ export type OperationPass = 'rough' | 'finish'
 
 export type EdgeStrategy = 'contour' | 'trochoidal'
 export type CarveStrategy = 'direct' | 'trochoidal'
-export type PocketPattern = 'offset' | 'parallel' | 'waterline'
+/**
+ * Pocket clearing pattern. `seeded_offset` is `offset` preceded by a run of
+ * full circles grown from the region's clearance seed, with the last circle
+ * recorded as an island so the ring tree continues from it (issue #554).
+ * Every project saved before it has `offset`, so the value is new-only and
+ * legacy output is untouched.
+ */
+export type PocketPattern = 'offset' | 'parallel' | 'waterline' | 'seeded_offset'
 export type CutDirection = 'conventional' | 'climb'
 /**
  * Drilling mode (issue #489 added `countersink`).
