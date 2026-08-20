@@ -44,6 +44,7 @@ import {
   normalizeToolForProject,
   resolveFeatureZSpan,
   toClipperPath,
+  xyDistanceSquared,
 } from './geometry'
 import {
   collectReliefCorners,
@@ -2298,6 +2299,136 @@ function orderNodesGreedy(nodes: OffsetRegionNode[], start: Point | null): Offse
     .map((region) => byRegion.get(region) as OffsetRegionNode)
 }
 
+interface OffsetRingSection {
+  node: OffsetRegionNode
+  parent: OffsetRingSection | null
+  depth: number
+}
+
+type RoughSectionChoice =
+  | { kind: 'seed'; index: number }
+  | { kind: 'offset'; index: number }
+
+function nearestContourEntryPoint(
+  contour: Point[],
+  current: ToolpathPoint | null,
+  z: number,
+): ToolpathPoint | null {
+  const first = contour[0]
+  if (!first) return null
+  if (current === null) return { x: first.x, y: first.y, z }
+
+  let nearest = first
+  let nearestDistance = xyDistanceSquared(current, first)
+  for (let index = 1; index < contour.length; index += 1) {
+    const candidate = contour[index]
+    const distance = xyDistanceSquared(current, candidate)
+    if (distance < nearestDistance) {
+      nearest = candidate
+      nearestDistance = distance
+    }
+  }
+  return { x: nearest.x, y: nearest.y, z }
+}
+
+function seedPlanEntryPoint(
+  plan: SeedCirclePlan,
+  current: ToolpathPoint | null,
+  z: number,
+  stepover: number,
+  direction: CutDirection,
+): ToolpathPoint | null {
+  const firstCircle = applyContourDirection(seedCircleContours(plan, stepover), direction)[0]
+  return firstCircle ? nearestContourEntryPoint(firstCircle, current, z) : null
+}
+
+function offsetSectionEntryPoint(
+  section: OffsetRingSection,
+  current: ToolpathPoint | null,
+  z: number,
+  direction: CutDirection,
+  smoothRadius: number | null | undefined,
+  wallCleanup: WallCornerCleanupContext | undefined,
+  toolRadius: number,
+): ToolpathPoint | null {
+  if (section.node.children.length > 0) {
+    const [child] = orderNodesGreedy(
+      section.node.children,
+      current ? { x: current.x, y: current.y } : null,
+    )
+    return offsetSectionEntryPoint(
+      { node: child, parent: section, depth: section.depth + 1 },
+      current,
+      z,
+      direction,
+      smoothRadius,
+      wallCleanup,
+      toolRadius,
+    )
+  }
+  const previewCleanup = wallCleanup ? { ...wallCleanup, onFallback: undefined } : undefined
+  const outer = prepareOffsetOuterContour(
+    section.node,
+    direction,
+    smoothRadius,
+    section.depth,
+    previewCleanup,
+    toolRadius,
+    section.parent?.node,
+  )
+  if (outer) {
+    return outer.preserveRotation
+      ? contourStartPoint(outer.points, z)
+      : nearestContourEntryPoint(outer.points, current, z)
+  }
+  const island = applyContourDirection(section.node.region.islands, direction)[0]
+  return island ? nearestContourEntryPoint(island, current, z) : null
+}
+
+function nextRoughSection(
+  seedPlans: readonly SeedCirclePlan[],
+  offsetSections: readonly OffsetRingSection[],
+  current: ToolpathPoint | null,
+  z: number,
+  stepover: number,
+  direction: CutDirection,
+  smoothRadius: number | null | undefined,
+  wallCleanup: WallCornerCleanupContext | undefined,
+  toolRadius: number,
+): RoughSectionChoice {
+  if (current === null) {
+    return seedPlans.length > 0 ? { kind: 'seed', index: 0 } : { kind: 'offset', index: 0 }
+  }
+
+  let choice: RoughSectionChoice = seedPlans.length > 0
+    ? { kind: 'seed', index: 0 }
+    : { kind: 'offset', index: 0 }
+  let bestDistance = Number.POSITIVE_INFINITY
+
+  for (let index = 0; index < seedPlans.length; index += 1) {
+    const entry = seedPlanEntryPoint(seedPlans[index], current, z, stepover, direction)
+    if (!entry) continue
+    const distance = xyDistanceSquared(current, entry)
+    if (distance < bestDistance) {
+      choice = { kind: 'seed', index }
+      bestDistance = distance
+    }
+  }
+  for (let index = 0; index < offsetSections.length; index += 1) {
+    const entry = offsetSectionEntryPoint(
+      offsetSections[index], current, z, direction, smoothRadius, wallCleanup, toolRadius,
+    )
+    if (!entry) continue
+    const distance = xyDistanceSquared(current, entry)
+    if (distance < bestDistance) {
+      choice = { kind: 'offset', index }
+      bestDistance = distance
+    }
+  }
+
+  return choice
+}
+
 function cutOffsetRegionNode(
   moves: ToolpathMove[],
   node: OffsetRegionNode,
@@ -2377,12 +2508,12 @@ function cutOffsetRegionNode(
     nextPosition = cutCurrentRegion(nextPosition)
   }
 
-  const orderedChildren = orderNodesGreedy(
-    node.children,
-    nextPosition ? { x: nextPosition.x, y: nextPosition.y } : null,
-  )
-
-  for (const childNode of orderedChildren) {
+  const remainingChildren = [...node.children]
+  while (remainingChildren.length > 0) {
+    const [childNode] = orderNodesGreedy(
+      remainingChildren,
+      nextPosition ? { x: nextPosition.x, y: nextPosition.y } : null,
+    )
     nextPosition = cutOffsetRegionNode(
       moves,
       childNode,
@@ -2402,6 +2533,7 @@ function cutOffsetRegionNode(
       toolRadius,
       node,
     )
+    remainingChildren.splice(remainingChildren.indexOf(childNode), 1)
   }
 
   if (traversalMode === 'inner-first') {
@@ -2605,11 +2737,11 @@ function generateRoughBandMoves(
     : ClipperLib.JoinType.jtMiter
   const centreRegions = band.regions
     .flatMap((region) => buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
-  // Seeded circle clearing (issue #554). Phase 1 clears the open middle with
-  // full circles grown from the region's clearance seed; the last of them is
-  // recorded as an island so phase 2 is today's ring tree, unchanged, with its
-  // first ring landing one stepover outside the seed disc. The pattern is the
-  // only gate: any other value plans nothing and takes the previous path.
+  // Seeded circle clearing (issue #554). Full circles grow from each region's
+  // clearance seed; the last is recorded as an island so each offset ring
+  // stays one stepover outside the cleared disc. Both are independent inner
+  // sections in the travel scheduler below. The pattern is the only gate: any
+  // other value plans nothing and takes the previous path.
   const seedStart = operation.pocketPattern === 'seeded_offset'
     ? seedStartRadius(operation, toolRadius)
     : 0
@@ -2626,13 +2758,10 @@ function generateRoughBandMoves(
       islandJoinType,
     )
     // The tree must OFFSET around the seed islands but must not CUT them:
-    // phase 1 has already run those exact laps, and `cutOffsetRegionNode`
-    // emits every island of the node it is cutting. Restoring the root's
-    // original island list drops the duplicates — the children were built
-    // from the region that still had the seeds, so every outward ring is
-    // unaffected — and it also returns the seed discs to the cleared domain
-    // that entry placement and tangential links are tested against, which is
-    // where the helix belongs.
+    // seed stacks emit those exact laps separately, and
+    // `cutOffsetRegionNode` emits every island of the node it is cutting.
+    // Restoring the root's original island list drops the duplicates while the
+    // children retain the seed islands that keep every outward ring clear.
     const tree: OffsetRegionNode = { region, children: seeded.children }
     seedPlans.set(tree, plans)
     return tree
@@ -2697,79 +2826,77 @@ function generateRoughBandMoves(
     }
 
     const levelStartIndex = moves.length
-    const orderedTrees = orderNodesGreedy(
-      regionTrees,
-      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
-    )
-
-    // Phase 1 runs for EVERY open area in the band before phase 2 starts, not
-    // interleaved: each area's circles in turn — largest area first, since
-    // that is the order they were found in — and only once the last of them is
-    // cut does the first ring go down. Within an area the circles run
-    // innermost outwards, each starting at the same angle as the one before
-    // it, so the link to the next is a radial step of exactly one stepover:
-    // never longer than the tool diameter, and therefore always a direct cut
-    // link rather than a retract.
-    if (seedPlans.size > 0) {
-      for (const tree of orderedTrees) {
-        for (const seedPlan of seedPlans.get(tree) ?? []) {
-          const circles = applyContourDirection(
-            seedCircleContours(seedPlan, effectiveStepover),
-            direction,
-          )
-          // A successful tangent S re-seams its arrival circle. Carry that
-          // endpoint to the next concentric circle so its radial link remains
-          // short; otherwise the old canonical seam can be a full diameter
-          // away and force an avoidable safe-Z rapid.
-          let previousCircleEnd: ToolpathPoint | null = null
-          for (const baseCircle of circles) {
-            const circle = tangentLink
-              ? rotateContourToNearestEntry(baseCircle, previousCircleEnd)
-              : baseCircle
-            const linkStartIndex = moves.length
-            currentPosition = transitionToCutEntry(
-              moves,
-              currentPosition,
-              contourStartPoint(circle, z),
-              safeZ,
-              maxLinkDistance,
-              undefined,
-              levelEntryPolicy,
-            )
-            let circleMoves = toClosedCutMoves(circle, z)
-            const tangentSplice = spliceTangentSLink(
-              moves,
-              linkStartIndex,
-              circle,
-              circleMoves,
-              tangentLink,
-            )
-            if (tangentSplice) {
-              circleMoves = tangentSplice.cutMoves
-              currentPosition = tangentSplice.nextPosition
-            }
-            moves.push(...circleMoves)
-            currentPosition = circleMoves.at(-1)?.to ?? currentPosition
-            previousCircleEnd = tangentLink ? currentPosition : null
-          }
-        }
-      }
-    }
-
-    // Phase 2 re-orders from wherever phase 1 left the tool. With no seeds
-    // this is the same list, computed from the same position, so the previous
-    // ordering is reproduced exactly rather than merely closely.
-    const phaseTwoTrees = seedPlans.size > 0
-      ? orderNodesGreedy(
-        regionTrees,
-        currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+    // Every independent inner section competes on its actual next entry:
+    // seeded-circle stacks and full offset-ring trees use the same safe-Z
+    // travel decision. Each retains its internal connected cuts, so closest
+    // section ordering never turns adjacent rings into needless retracts.
+    const remainingSeedPlans = regionTrees.flatMap((tree) => seedPlans.get(tree) ?? [])
+    const remainingOffsetSections = regionTrees.map((node) => ({ node, parent: null, depth: 0 }))
+    while (remainingSeedPlans.length > 0 || remainingOffsetSections.length > 0) {
+      const choice = nextRoughSection(
+        remainingSeedPlans,
+        remainingOffsetSections,
+        currentPosition,
+        z,
+        effectiveStepover,
+        direction,
+        smoothRadius,
+        wallCleanup,
+        toolRadius,
       )
-      : orderedTrees
+      if (choice.kind === 'seed') {
+        const [seedPlan] = remainingSeedPlans.splice(choice.index, 1)
+        // A stack is an independent section. Its links are safe only inside
+        // the stack, so every cross-section transition retracts before the
+        // nearest-entry choice moves in XY.
+        currentPosition = retractToSafe(moves, currentPosition, safeZ)
+        const circles = applyContourDirection(
+          seedCircleContours(seedPlan, effectiveStepover),
+          direction,
+        )
+        // Re-seam every circle from the actual preceding endpoint. The first
+        // circle makes this stack's entry comparable with every other shape;
+        // later circles stay radially adjacent to their predecessor.
+        let previousCircleEnd: ToolpathPoint | null = null
+        for (const baseCircle of circles) {
+          const circle = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
+          const linkStartIndex = moves.length
+          currentPosition = transitionToCutEntry(
+            moves,
+            currentPosition,
+            contourStartPoint(circle, z),
+            safeZ,
+            maxLinkDistance,
+            undefined,
+            levelEntryPolicy,
+          )
+          let circleMoves = toClosedCutMoves(circle, z)
+          const tangentSplice = spliceTangentSLink(
+            moves,
+            linkStartIndex,
+            circle,
+            circleMoves,
+            tangentLink,
+          )
+          if (tangentSplice) {
+            circleMoves = tangentSplice.cutMoves
+            currentPosition = tangentSplice.nextPosition
+          }
+          moves.push(...circleMoves)
+          currentPosition = circleMoves.at(-1)?.to ?? currentPosition
+          previousCircleEnd = currentPosition
+        }
+        continue
+      }
 
-    for (const tree of phaseTwoTrees) {
+      const [section] = remainingOffsetSections.splice(choice.index, 1)
+      // As above, a separately scheduled offset section never inherits a
+      // short direct-cut link from the previous section. Its XY travel is
+      // explicitly at safe Z before the configured entry resumes cutting.
+      currentPosition = retractToSafe(moves, currentPosition, safeZ)
       currentPosition = cutOffsetRegionNode(
         moves,
-        tree,
+        section.node,
         z,
         safeZ,
         maxLinkDistance,
@@ -2779,11 +2906,12 @@ function generateRoughBandMoves(
         'inner-first',
         'all',
         smoothRadius,
-        0,
+        section.depth,
         levelEntryPolicy,
         tangentLink,
         wallCleanup,
         toolRadius,
+        undefined,
       )
     }
 
