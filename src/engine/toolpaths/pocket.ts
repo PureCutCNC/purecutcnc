@@ -2671,13 +2671,17 @@ function generateRoughBandMoves(
       currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
     )
 
-    for (const tree of orderedTrees) {
-      // Phase 1 first, innermost circle outwards. Every circle starts at the
-      // same angle as the one before it, so the link to the next is a radial
-      // step of exactly one stepover — never longer than the tool diameter,
-      // and therefore always a direct cut link rather than a retract.
-      const seedPlan = seedPlans.get(tree)
-      if (seedPlan) {
+    // Phase 1 runs for EVERY open area in the band before phase 2 starts, not
+    // interleaved region by region: with more than one of them, all the open
+    // middles are gone before the first ring is cut. Innermost circle outwards
+    // within each, and every circle starts at the same angle as the one before
+    // it, so the link to the next is a radial step of exactly one stepover —
+    // never longer than the tool diameter, and therefore always a direct cut
+    // link rather than a retract.
+    if (seedPlans.size > 0) {
+      for (const tree of orderedTrees) {
+        const seedPlan = seedPlans.get(tree)
+        if (!seedPlan) continue
         const circles = applyContourDirection(
           seedCircleContours(seedPlan, effectiveStepover),
           direction,
@@ -2697,7 +2701,19 @@ function generateRoughBandMoves(
           currentPosition = circleMoves.at(-1)?.to ?? currentPosition
         }
       }
+    }
 
+    // Phase 2 re-orders from wherever phase 1 left the tool. With no seeds
+    // this is the same list, computed from the same position, so the previous
+    // ordering is reproduced exactly rather than merely closely.
+    const phaseTwoTrees = seedPlans.size > 0
+      ? orderNodesGreedy(
+        regionTrees,
+        currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+      )
+      : orderedTrees
+
+    for (const tree of phaseTwoTrees) {
       currentPosition = cutOffsetRegionNode(
         moves,
         tree,

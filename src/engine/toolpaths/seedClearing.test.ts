@@ -43,6 +43,7 @@ import {
 } from './seedClearing'
 import { buildInsetRegions, buildOffsetRegionTree, generatePocketToolpath } from './pocket'
 import { buildSweptCoverage } from './sweptCoverage'
+import { resolvePocketRegions } from './resolver'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import {
   circleProfile,
@@ -412,6 +413,77 @@ function testSeedIsNotCutTwice(): void {
 }
 
 /**
+ * With more than one open area, phase 1 runs for ALL of them before phase 2
+ * starts — not interleaved region by region.
+ *
+ * Phase 2 motion is identified positively rather than by exclusion: a cut whose
+ * midpoint lies outside every seed's handoff radius cannot be a circle, and
+ * cannot be one of the short radial links between circles either, since those
+ * stay inside the disc. So the first such cut marks where phase 2 begins, and
+ * every circle must already be behind it.
+ */
+function testPhaseOneRunsForEveryAreaBeforePhaseTwo(): void {
+  const project = projectWith([rect('left', 0, 0, 60, 40), rect('right', 100, 0, 44, 40)])
+  const operation = pocketOperation('two-areas', ['left', 'right'], {
+    pocketPattern: 'seeded_offset',
+    entryStrategy: 'helix',
+    entryHelixDiameterPercent: 80,
+  })
+
+  const toolRadius = 3
+  const stepover = 2.4
+  const startRadius = seedStartRadius(operation, toolRadius)
+  const resolved = resolvePocketRegions(project, operation)
+  const plans = resolved.bands[0].regions
+    .flatMap((region) => buildInsetRegions(region, toolRadius))
+    .map((region) => planSeedCircles(region, startRadius, stepover, toolRadius * 2))
+    .filter((plan) => plan !== null)
+  assert(plans.length === 2, `the fixture must resolve to two seeded areas, got ${plans.length}`)
+
+  const moves = generatePocketToolpath(project, operation).moves
+  const levelZ = moves.reduce((min, move) => Math.min(min, move.to.z), 0)
+
+  const onAnyCircle = (x: number, y: number): number | null => {
+    for (let index = 0; index < plans.length; index += 1) {
+      const plan = plans[index]
+      const distance = Math.hypot(x - plan.centre.x, y - plan.centre.y)
+      if (plan.radii.some((radius) => Math.abs(distance - radius) <= 0.02)) return index
+    }
+    return null
+  }
+  const outsideEverySeed = (x: number, y: number): boolean =>
+    plans.every((plan) => Math.hypot(x - plan.centre.x, y - plan.centre.y) > plan.lastRadius + stepover / 2)
+
+  let lastCircle = -1
+  let firstRing = Infinity
+  const seenAreas = new Set<number>()
+  for (let index = 0; index < moves.length; index += 1) {
+    const move = moves[index]
+    if (move.kind !== 'cut') continue
+    if (Math.abs(move.from.z - levelZ) > 1e-9 || Math.abs(move.to.z - levelZ) > 1e-9) continue
+    const midX = (move.from.x + move.to.x) / 2
+    const midY = (move.from.y + move.to.y) / 2
+    const area = onAnyCircle(move.from.x, move.from.y) !== null && onAnyCircle(move.to.x, move.to.y) !== null
+      ? onAnyCircle(midX, midY)
+      : null
+    if (area !== null) {
+      seenAreas.add(area)
+      lastCircle = index
+    } else if (outsideEverySeed(midX, midY)) {
+      firstRing = Math.min(firstRing, index)
+    }
+  }
+
+  assert(seenAreas.size === 2, `both areas must emit circles, saw ${seenAreas.size}`)
+  assert(firstRing < Infinity, 'phase 2 must emit rings outside the seed discs')
+  assert(
+    lastCircle < firstRing,
+    `every phase-1 circle must precede the first phase-2 ring: last circle at ${lastCircle}, first ring at ${firstRing}`,
+  )
+  console.log(`phase 1 before phase 2: PASSED (2 areas, last circle ${lastCircle} < first ring ${firstRing})`)
+}
+
+/**
  * When no seed fits, `seeded_offset` must be byte-identical to `offset`.
  *
  * An 11.6 mm-wide pocket cut with a 6 mm tool leaves a 5.6 mm-wide tool-centre
@@ -480,6 +552,7 @@ try {
   testHandoffLandsOneStepoverOutsideTheSeed()
   testSeededStreamEmitsCirclesAndClearsEverything()
   testSeedIsNotCutTwice()
+  testPhaseOneRunsForEveryAreaBeforePhaseTwo()
   testNoSeedFallsBackByteIdentical()
   testParallelAndIslandsAreUnaffected()
   console.log('\nAll seedClearing tests PASSED.')
