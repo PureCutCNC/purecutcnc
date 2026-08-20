@@ -46,7 +46,6 @@ import {
   buildInsetRegions,
   buildOffsetRegionTree,
   generatePocketToolpath,
-  nextSeedPlanIndex,
 } from './pocket'
 import { buildSweptCoverage } from './sweptCoverage'
 import { resolvePocketRegions } from './resolver'
@@ -78,17 +77,6 @@ function planLargest(
   const plans = planSeedCircles(region, startRadius, stepover, toolDiameter)
   assert(plans.length > 0, 'the region must hold at least one seeded area')
   return plans[0]
-}
-
-function syntheticSeedPlan(cx: number, cy: number): SeedCirclePlan {
-  const radius = 3
-  return {
-    centre: { x: cx, y: cy },
-    maxRadius: radius,
-    radii: [radius],
-    lastRadius: radius,
-    island: seedCircleContour({ x: cx, y: cy }, radius, 0.01),
-  }
 }
 
 // ── fixtures ───────────────────────────────────────────────────────────────
@@ -227,27 +215,6 @@ function testThreeCircleMinimumKeepsTheExactBoundary(): void {
   assert(plans.length === 1, `the exact-boundary region must keep one seed, got ${plans.length}`)
   assert(plans[0].radii.length === 3, `the threshold must keep exactly three circles, got ${plans[0].radii.length}`)
   console.log('three-circle boundary: PASSED')
-}
-
-function testIndependentSeedSectionsChooseTheNearestEntry(): void {
-  const plans = [
-    syntheticSeedPlan(80, 0),
-    syntheticSeedPlan(20, 0),
-    syntheticSeedPlan(50, 0),
-  ]
-  const current = { x: 18, y: 0, z: -4 }
-  const nearest = nextSeedPlanIndex(plans, current, -4, 2.4, 'conventional')
-  assert(nearest === 1, `nearest seed section must win, got source index ${nearest}`)
-
-  const tie = nextSeedPlanIndex(
-    [syntheticSeedPlan(20, -10), syntheticSeedPlan(20, 10)],
-    { x: 0, y: 0, z: -4 },
-    -4,
-    2.4,
-    'conventional',
-  )
-  assert(tie === 0, `equal-distance seed sections must retain source order, got ${tie}`)
-  console.log('seed section travel ordering: PASSED')
 }
 
 function testNoCircleIsEverClipped(): void {
@@ -628,18 +595,14 @@ function testSeveralOpenAreasInOneRegion(): void {
 }
 
 /**
- * With more than one open area, phase 1 runs for ALL of them before phase 2
- * starts — not interleaved region by region.
- *
- * Phase 2 motion is identified positively rather than by exclusion: a cut whose
- * midpoint lies outside every seed's handoff radius cannot be a circle, and
- * cannot be one of the short radial links between circles either, since those
- * stay inside the disc. So the first such cut marks where phase 2 begins, and
- * every circle must already be behind it.
+ * Seed stacks and offset-ring sections share one nearest-entry queue. Once the
+ * left seed is complete, an inner left ring is closer than the untouched right
+ * seed, so it must run first. This guards against accidentally restoring a
+ * shape-specific seed-before-ring phase.
  */
-function testPhaseOneRunsForEveryAreaBeforePhaseTwo(): void {
-  const project = projectWith([rect('left', 0, 0, 60, 40), rect('right', 100, 0, 44, 40)])
-  const operation = pocketOperation('two-areas', ['left', 'right'], {
+function testNearestQueueMixesSeedAndOffsetSections(): void {
+  const project = projectWith([rect('left', 0, 0, 60, 40), rect('right', 200, 0, 60, 40)])
+  const operation = pocketOperation('mixed-sections', ['left', 'right'], {
     pocketPattern: 'seeded_offset',
     entryStrategy: 'helix',
     entryHelixDiameterPercent: 80,
@@ -651,14 +614,12 @@ function testPhaseOneRunsForEveryAreaBeforePhaseTwo(): void {
   const resolved = resolvePocketRegions(project, operation)
   const centreRegions = resolved.bands[0].regions.flatMap((region) => buildInsetRegions(region, toolRadius))
   assert(centreRegions.length === 2, `the fixture must resolve to two pockets, got ${centreRegions.length}`)
-  const perRegion = centreRegions.map((region) => planSeedCircles(region, startRadius, stepover, toolRadius * 2))
-  assert(perRegion.every((list) => list.length > 0), 'both pockets must seed')
-  const plans = perRegion.flat()
+  const plans = centreRegions.flatMap((region) => planSeedCircles(region, startRadius, stepover, toolRadius * 2))
+  assert(plans.length === 2, `the fixture must create one seed per pocket, got ${plans.length}`)
 
   const moves = generatePocketToolpath(project, operation).moves
   const levelZ = moves.reduce((min, move) => Math.min(min, move.to.z), 0)
-
-  const onAnyCircle = (x: number, y: number): number | null => {
+  const circleAt = (x: number, y: number): number | null => {
     for (let index = 0; index < plans.length; index += 1) {
       const plan = plans[index]
       const distance = Math.hypot(x - plan.centre.x, y - plan.centre.y)
@@ -666,39 +627,33 @@ function testPhaseOneRunsForEveryAreaBeforePhaseTwo(): void {
     }
     return null
   }
-  const outsideEverySeed = (x: number, y: number): boolean =>
-    plans.every((plan) => Math.hypot(x - plan.centre.x, y - plan.centre.y) > plan.lastRadius + stepover / 2)
 
-  let lastCircle = -1
-  let firstRing = Infinity
-  const seenAreas = new Set<number>()
+  let firstLeftRing = Infinity
+  let firstRightCircle = Infinity
   for (let index = 0; index < moves.length; index += 1) {
     const move = moves[index]
     if (move.kind !== 'cut') continue
     if (Math.abs(move.from.z - levelZ) > 1e-9 || Math.abs(move.to.z - levelZ) > 1e-9) continue
+    const fromCircle = circleAt(move.from.x, move.from.y)
+    const toCircle = circleAt(move.to.x, move.to.y)
+    if (fromCircle === 1 && toCircle === 1) {
+      firstRightCircle = Math.min(firstRightCircle, index)
+      continue
+    }
     const midX = (move.from.x + move.to.x) / 2
     const midY = (move.from.y + move.to.y) / 2
-    const area = onAnyCircle(move.from.x, move.from.y) !== null && onAnyCircle(move.to.x, move.to.y) !== null
-      ? onAnyCircle(midX, midY)
-      : null
-    if (area !== null) {
-      seenAreas.add(area)
-      lastCircle = index
-    } else if (outsideEverySeed(midX, midY)) {
-      firstRing = Math.min(firstRing, index)
+    if (midX < 100 && plans[0].radii.every((radius) => Math.abs(Math.hypot(midX - plans[0].centre.x, midY - plans[0].centre.y) - radius) > 0.02)) {
+      firstLeftRing = Math.min(firstLeftRing, index)
     }
   }
 
+  assert(firstLeftRing < Infinity, 'left pocket must emit an offset-ring section')
+  assert(firstRightCircle < Infinity, 'right pocket must emit its seed stack')
   assert(
-    seenAreas.size === plans.length,
-    `every planned area must emit circles: ${seenAreas.size} of ${plans.length}`,
+    firstLeftRing < firstRightCircle,
+    `nearest left ring must run before the distant right seed (${firstLeftRing} >= ${firstRightCircle})`,
   )
-  assert(firstRing < Infinity, 'phase 2 must emit rings outside the seed discs')
-  assert(
-    lastCircle < firstRing,
-    `every phase-1 circle must precede the first phase-2 ring: last circle at ${lastCircle}, first ring at ${firstRing}`,
-  )
-  console.log(`phase 1 before phase 2: PASSED (${plans.length} areas across 2 pockets, last circle ${lastCircle} < first ring ${firstRing})`)
+  console.log(`mixed seed/offset nearest queue: PASSED (left ring ${firstLeftRing} < right seed ${firstRightCircle})`)
 }
 
 /**
@@ -765,7 +720,6 @@ function testParallelAndIslandsAreUnaffected(): void {
 try {
   testScheduleStopsAtTheFirstRadiusThatDoesNotFit()
   testThreeCircleMinimumKeepsTheExactBoundary()
-  testIndependentSeedSectionsChooseTheNearestEntry()
   testNoCircleIsEverClipped()
   testSeedDiscIsFullyCleared()
   testStartRadiusNeverExceedsToolRadius()
@@ -775,7 +729,7 @@ try {
   testSeedCircleTransitionsUseTangentSLinks()
   testSeedIsNotCutTwice()
   testSeveralOpenAreasInOneRegion()
-  testPhaseOneRunsForEveryAreaBeforePhaseTwo()
+  testNearestQueueMixesSeedAndOffsetSections()
   testNoSeedFallsBackByteIdentical()
   testParallelAndIslandsAreUnaffected()
   console.log('\nAll seedClearing tests PASSED.')
