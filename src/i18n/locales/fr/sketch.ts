@@ -54,6 +54,8 @@ export const sketchFr: Record<keyof typeof sketchEn, string> = {
   'sketch.transform.cancelRotate': 'Annuler la rotation',
   'sketch.transform.mirror': 'Symétrie des entités sélectionnées',
   'sketch.transform.cancelMirror': 'Annuler la symétrie',
+  'sketch.transform.featureDistribution': 'Distribution des entités',
+  'sketch.transform.cancelFeatureDistribution': 'Annuler la distribution des entités',
   'sketch.boolean.join': 'Joindre les entités fermées',
   'sketch.boolean.cancelJoin': 'Annuler la jonction',
   'sketch.boolean.cut': 'Découper les entités',

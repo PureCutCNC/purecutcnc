@@ -22,6 +22,7 @@ import type {
   FeatureDistribution,
   PendingConstraint,
   PendingDimensionTool,
+  PendingFeatureDistribution,
   PendingMoveTool,
   PendingOffsetTool,
   PendingShapeActionTool,
@@ -67,7 +68,7 @@ export interface SketchCommandPredicates {
 type CommandStatus = Pick<CommandDescriptor, 'enabled' | 'active'>
 
 export interface SketchCommandStatus {
-  transform: Record<'copy' | 'move' | 'delete' | 'resize' | 'rotate' | 'mirror', CommandStatus>
+  transform: Record<'copy' | 'move' | 'delete' | 'resize' | 'rotate' | 'mirror' | 'featureDistribution', CommandStatus>
   boolean: Record<'join' | 'cut' | 'offset', CommandStatus>
   arrange: Record<'align' | 'distribute', CommandStatus>
   sketchEdit: Record<SketchEditTool, CommandStatus>
@@ -86,6 +87,7 @@ export interface SketchCommandStateInput {
   pendingMove: PendingMoveTool | null
   pendingTransform: PendingTransformTool | null
   pendingOffset: PendingOffsetTool | null
+  pendingFeatureDistribution?: PendingFeatureDistribution | null
   pendingShapeAction: PendingShapeActionTool | null
   pendingConstraint: PendingConstraint | null
   tapeMeasure: TapeMeasureState | null
@@ -185,6 +187,10 @@ export function deriveSketchCommandState(input: SketchCommandStateInput): Sketch
         enabled: featureTransformAvailable,
         active: input.pendingTransform?.entityType === 'feature' && input.pendingTransform.mode === 'mirror',
       },
+      featureDistribution: {
+        enabled: featureTransformAvailable && predicates.selectedFeatures.every((feature) => feature.kind !== 'stl'),
+        active: input.pendingFeatureDistribution !== null && input.pendingFeatureDistribution !== undefined,
+      },
     },
     boolean: {
       join: {
@@ -283,7 +289,7 @@ function command(
 }
 
 export function useSketchCommands(): SketchCommandState & {
-  transform: Record<'copy' | 'move' | 'delete' | 'resize' | 'rotate' | 'mirror', CommandDescriptor>
+  transform: Record<'copy' | 'move' | 'delete' | 'resize' | 'rotate' | 'mirror' | 'featureDistribution', CommandDescriptor>
   boolean: Record<'join' | 'cut' | 'offset', CommandDescriptor>
   arrange: {
     align: CommandDescriptor
@@ -340,6 +346,14 @@ export function useSketchCommands(): SketchCommandState & {
     } else {
       store.startMirrorFeature(state.predicates.primarySelectedFeatureId)
     }
+  }
+
+  function toggleFeatureDistribution() {
+    if (store.pendingFeatureDistribution) {
+      store.cancelFeatureDistribution()
+      return
+    }
+    store.startFeatureDistribution()
   }
 
   function toggleSketchEditTool(tool: SketchEditTool) {
@@ -446,6 +460,13 @@ export function useSketchCommands(): SketchCommandState & {
       resize: command('resize', 'resize', state.transform.resize.active ? t('sketch.transform.cancelResize') : t('sketch.transform.resize'), state.transform.resize, () => startFeatureTransform('resize')),
       rotate: command('rotate', 'rotate', state.transform.rotate.active ? t('sketch.transform.cancelRotate') : t('sketch.transform.rotate'), state.transform.rotate, () => startFeatureTransform('rotate')),
       mirror: command('mirror', 'mirror', state.transform.mirror.active ? t('sketch.transform.cancelMirror') : t('sketch.transform.mirror'), state.transform.mirror, () => startFeatureTransform('mirror')),
+      featureDistribution: command(
+        'featureDistribution',
+        'feature-distribution',
+        state.transform.featureDistribution.active ? t('sketch.transform.cancelFeatureDistribution') : t('sketch.transform.featureDistribution'),
+        state.transform.featureDistribution,
+        toggleFeatureDistribution,
+      ),
     },
     boolean: {
       join: command('join', 'merge', state.boolean.join.active ? t('sketch.boolean.cancelJoin') : t('sketch.boolean.join'), state.boolean.join, () => toggleShapeAction('join')),

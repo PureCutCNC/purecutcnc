@@ -54,6 +54,8 @@ export const sketchDe: Record<keyof typeof sketchEn, string> = {
   'sketch.transform.cancelRotate': 'Drehen abbrechen',
   'sketch.transform.mirror': 'Ausgewählte Features spiegeln',
   'sketch.transform.cancelMirror': 'Spiegeln abbrechen',
+  'sketch.transform.featureDistribution': 'Feature-Verteilung',
+  'sketch.transform.cancelFeatureDistribution': 'Feature-Verteilung abbrechen',
   'sketch.boolean.join': 'Geschlossene Features vereinigen',
   'sketch.boolean.cancelJoin': 'Vereinigen abbrechen',
   'sketch.boolean.cut': 'Features abziehen',

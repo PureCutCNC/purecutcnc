@@ -12,7 +12,7 @@ Toolbar internals split out from `src/components/layout/Toolbar.tsx`. The parent
 - `ProjectNameControl.tsx` — project name and dirty-state control.
 - `GlobalActions.tsx` — file/history/zoom action group.
 - `CreationActions.tsx` — feature/region creation target and shape picker group.
-- `FeatureEditActions.tsx` — selected-feature transform/edit action group.
+- `FeatureEditActions.tsx` — selected-feature transform/edit action group, including the one-shot Feature Distribution command.
 - `AlignmentActions.tsx` — align and distribute popover groups.
 - `ShapeToolActions.tsx` — join/cut shape command group.
 - `BackdropEditActions.tsx` — selected-backdrop transform/delete action group.

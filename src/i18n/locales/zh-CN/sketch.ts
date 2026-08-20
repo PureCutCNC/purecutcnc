@@ -60,6 +60,8 @@ export const sketchZhCN: Record<keyof typeof sketchEn, string> = {
   'sketch.transform.cancelRotate': '取消旋转',
   'sketch.transform.mirror': '镜像所选特征',
   'sketch.transform.cancelMirror': '取消镜像',
+  'sketch.transform.featureDistribution': '特征分布',
+  'sketch.transform.cancelFeatureDistribution': '取消特征分布',
   'sketch.boolean.join': '合并闭合特征',
   'sketch.boolean.cancelJoin': '取消合并',
   'sketch.boolean.cut': '切割特征',

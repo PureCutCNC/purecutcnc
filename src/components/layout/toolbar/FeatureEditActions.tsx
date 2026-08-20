@@ -24,6 +24,8 @@ function FeatureEditActions({
   pendingMoveMode,
   pendingTransformMode,
   pendingOffset,
+  pendingFeatureDistribution,
+  featureDistributionEnabled,
   tooltipSide,
   onCopy,
   onMove,
@@ -32,6 +34,7 @@ function FeatureEditActions({
   onRotate,
   onMirror,
   onOffset,
+  onFeatureDistribution,
   onConstraint,
   constraintActive,
 }: {
@@ -41,6 +44,8 @@ function FeatureEditActions({
   pendingMoveMode: 'move' | 'copy' | null
   pendingTransformMode: 'resize' | 'rotate' | 'mirror' | null
   pendingOffset: boolean
+  pendingFeatureDistribution: boolean
+  featureDistributionEnabled: boolean
   tooltipSide?: 'bottom' | 'right'
   onCopy: () => void
   onMove: () => void
@@ -49,6 +54,7 @@ function FeatureEditActions({
   onRotate: () => void
   onMirror: () => void
   onOffset: () => void
+  onFeatureDistribution: () => void
   onConstraint: () => void
   constraintActive: boolean
 }) {
@@ -111,6 +117,14 @@ function FeatureEditActions({
           disabled={hasLockedSelection || !hasClosedSelection}
           tooltipSide={tooltipSide}
           onClick={onOffset}
+        />
+        <ToolbarActionButton
+          icon="feature-distribution"
+          label={pendingFeatureDistribution ? t('sketch.transform.cancelFeatureDistribution') : t('sketch.transform.featureDistribution')}
+          active={pendingFeatureDistribution}
+          disabled={hasLockedSelection || !featureDistributionEnabled}
+          tooltipSide={tooltipSide}
+          onClick={onFeatureDistribution}
         />
         <ToolbarActionButton
           icon="constraint"

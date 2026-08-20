@@ -115,10 +115,18 @@ function testLockedSelectionGating() {
   assert(!result.transform.resize.enabled, 'resize is disabled for locked selection')
   assert(!result.transform.rotate.enabled, 'rotate is disabled for locked selection')
   assert(!result.transform.mirror.enabled, 'mirror is disabled for locked selection')
+  assert(!result.transform.featureDistribution.enabled, 'feature distribution is disabled for locked selection')
   assert(!result.boolean.offset.enabled, 'offset is disabled for locked selection')
   assert(!result.constraint.enabled, 'constraint is disabled for locked selection')
 
   console.log('locked-selection command gating: PASSED')
+}
+
+function testFeatureDistributionRejectsModelSelection() {
+  const project = makeProject([makeFeature('model', { kind: 'stl' })])
+  const result = makeCommandState(project, makeSelection(['model']))
+  assert(!result.transform.featureDistribution.enabled, 'feature distribution is limited to 2D sketch instances')
+  console.log('feature distribution 2D gate: PASSED')
 }
 
 function testClosedProfileOffsetGating() {
@@ -217,6 +225,13 @@ function testToggleActiveStates() {
     pendingMove: { mode: 'copy', entityType: 'feature', entityIds: ['feature-1'], fromPoint: null, toPoint: null, session: 1 },
     pendingTransform: { mode: 'rotate', entityType: 'feature', entityIds: ['feature-1'], referenceStart: null, referenceEnd: null, keepOriginals: false, session: 1 },
     pendingOffset: { entityIds: ['feature-1'], session: 1 },
+    pendingFeatureDistribution: {
+      sourceIds: ['feature-1'],
+      guideId: null,
+      selectingGuide: false,
+      spec: { mode: 'grid', rows: 1, columns: 2, spacingX: 10, spacingY: 10, startScale: 100, endScale: 100 },
+      session: 1,
+    },
     pendingShapeAction: { kind: 'join', entityIds: ['feature-1'], keepOriginals: false, session: 1 },
     pendingConstraint: { featureId: 'feature-1', anchor: null, reference: null, session: 1 },
     pendingDimension: { type: 'horizontal', a: null, b: null, c: null, session: 1 },
@@ -226,6 +241,7 @@ function testToggleActiveStates() {
   assert(result.transform.copy.active, 'copy pending is active')
   assert(!result.transform.move.active, 'move is inactive when copy is pending')
   assert(result.transform.rotate.active, 'rotate pending is active')
+  assert(result.transform.featureDistribution.active, 'feature distribution pending is active')
   assert(result.boolean.offset.active, 'offset pending is active')
   assert(result.boolean.join.active, 'join pending is active')
   assert(!result.boolean.cut.active, 'cut inactive when join is pending')
@@ -237,6 +253,7 @@ function testToggleActiveStates() {
 }
 
 testLockedSelectionGating()
+testFeatureDistributionRejectsModelSelection()
 testClosedProfileOffsetGating()
 testArrangeThresholds()
 testSketchEditActive()

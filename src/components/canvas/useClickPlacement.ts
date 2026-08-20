@@ -20,6 +20,7 @@ import type {
   PendingAddTool,
   PendingConstraint,
   PendingDimensionTool,
+  PendingFeatureDistribution,
   PendingMoveTool,
   PendingOffsetTool,
   PendingShapeActionTool,
@@ -112,6 +113,7 @@ export interface ClickPlacementCtx {
   pendingMoveRef: MutableRefObject<PendingMoveTool | null>
   pendingTransformRef: MutableRefObject<PendingTransformTool | null>
   pendingOffsetRef: MutableRefObject<PendingOffsetTool | null>
+  pendingFeatureDistributionRef: MutableRefObject<PendingFeatureDistribution | null>
   pendingShapeActionRef: MutableRefObject<PendingShapeActionTool | null>
   viewStateRef: MutableRefObject<SketchViewState>
   pendingConstraintRef: MutableRefObject<PendingConstraint | null>
@@ -225,6 +227,7 @@ export interface ClickPlacementCtx {
   completePendingTransform: (point: Point) => void
   completePendingOffset: (distance: number) => void
   cancelPendingOffset: () => void
+  setFeatureDistributionGuide: (featureId: string) => void
   beginHistoryTransaction: () => void
 }
 
@@ -247,6 +250,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     pendingMoveRef,
     pendingTransformRef,
     pendingOffsetRef,
+    pendingFeatureDistributionRef,
     pendingShapeActionRef,
     viewStateRef,
     pendingConstraintRef,
@@ -326,6 +330,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     completePendingTransform,
     completePendingOffset,
     cancelPendingOffset,
+    setFeatureDistributionGuide,
     beginHistoryTransaction,
   } = ctx
 
@@ -350,6 +355,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
     const pendingOffset = pendingOffsetRef.current
+    const pendingFeatureDistribution = pendingFeatureDistributionRef.current
     const pendingShapeAction = pendingShapeActionRef.current
     const viewState = viewStateRef.current
     const dimensionEdit = dimEdit.dimensionEditRef.current
@@ -369,6 +375,17 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
       excludeActiveEditGeometry: constraintRefPickingClick,
     })
     const pickedPoint = snap.requiresResolvedSnapForPointPick() && !resolvedSnap.mode ? null : resolvedSnap.point
+
+    if (pendingFeatureDistribution?.selectingGuide) {
+      const guideHit = resolveFeatureSelectionHit(world, resolvedProjectFeatures(project), vt)
+      if (guideHit.kind === 'direct') {
+        setFeatureDistributionGuide(guideHit.featureId)
+      } else if (guideHit.kind === 'ambiguous') {
+        const guideId = guideHit.candidateIds.find((id) => !pendingFeatureDistribution.sourceIds.includes(id))
+        if (guideId) setFeatureDistributionGuide(guideId)
+      }
+      return
+    }
 
     // ── Delete-dimension mode: click a dimension to remove it (stays armed) ──
     if (!pendingAdd && dimensionDeleteArmedRef.current) {

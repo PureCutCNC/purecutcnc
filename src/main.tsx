@@ -159,6 +159,11 @@ if (import.meta.env.DEV) {
       const { useProjectStore } = await _pcTestStore()
       return useProjectStore.getState().project.features.length
     },
+    /** Sets a deterministic feature selection before exercising visible commands. */
+    selectFeatures: async (ids: string[]) => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().selectFeatures(ids)
+    },
     /**
      * Selects the given features and invokes Join. Since issue #522 that either
      * joins them outright (selection already qualifies) or opens the Join
@@ -253,6 +258,7 @@ declare global {
       cancelPendingAdd: () => Promise<void>
       getPendingAddShape: () => Promise<string | null>
       getFeatureCount: () => Promise<number>
+      selectFeatures: (ids: string[]) => Promise<void>
       startJoinFeatures: (ids: string[]) => Promise<void>
       startRotateFeature: (featureId: string) => Promise<void>
       getKeepOriginals: () => Promise<{ shapeAction: boolean | null; transform: boolean | null }>

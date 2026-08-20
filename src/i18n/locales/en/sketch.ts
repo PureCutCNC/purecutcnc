@@ -59,6 +59,8 @@ export const sketchEn = {
   'sketch.transform.cancelRotate': 'Cancel rotate',
   'sketch.transform.mirror': 'Mirror selected features',
   'sketch.transform.cancelMirror': 'Cancel mirror',
+  'sketch.transform.featureDistribution': 'Feature distribution',
+  'sketch.transform.cancelFeatureDistribution': 'Cancel feature distribution',
   'sketch.boolean.join': 'Join closed features',
   'sketch.boolean.cancelJoin': 'Cancel join',
   'sketch.boolean.cut': 'Cut features',

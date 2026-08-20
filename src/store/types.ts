@@ -43,6 +43,7 @@ import type {
 import type { TextToolConfig } from '../text'
 import type { ToolLibraryEntry } from '../toolLibrary'
 import type { GearCreationParams } from '../sketch/gearProfile'
+import type { FeatureDistributionSpec } from '../sketch/featureDistribution'
 
 export type SelectionMode = 'feature' | 'sketch_edit'
 
@@ -191,6 +192,15 @@ export interface PendingOffsetTool {
   session: number
 }
 
+/** Transient one-shot copy-placement workflow; never stored in .camj. */
+export interface PendingFeatureDistribution {
+  sourceIds: string[]
+  guideId: string | null
+  selectingGuide: boolean
+  spec: FeatureDistributionSpec
+  session: number
+}
+
 export type PendingShapeActionTool =
   | {
       kind: 'join'
@@ -255,6 +265,7 @@ export interface ProjectStore {
   pendingMove: PendingMoveTool | null
   pendingTransform: PendingTransformTool | null
   pendingOffset: PendingOffsetTool | null
+  pendingFeatureDistribution: PendingFeatureDistribution | null
   pendingShapeAction: PendingShapeActionTool | null
   backdropImageLoading: boolean
   sketchEditSession: SketchEditSession | null
@@ -524,6 +535,12 @@ export interface ProjectStore {
   setPendingMoveFrom: (point: Point) => void
   setPendingMoveTo: (point: Point) => void
   completePendingMove: (toPoint: Point, copyCount?: number) => void
+  startFeatureDistribution: () => void
+  updateFeatureDistribution: (spec: FeatureDistributionSpec) => void
+  setFeatureDistributionGuidePicking: (selecting: boolean) => void
+  setFeatureDistributionGuide: (featureId: string) => void
+  cancelFeatureDistribution: () => void
+  completeFeatureDistribution: () => string[]
   cancelPendingTransform: () => void
   setPendingTransformReferenceStart: (point: Point) => void
   setPendingTransformReferenceEnd: (point: Point) => void

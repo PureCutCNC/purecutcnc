@@ -12,6 +12,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `pendingActionsSlice.ts` — queue of deferred ops awaiting user confirmation
   - `pendingAddSlice.ts` — in-progress feature being drawn but not yet committed, including multi-step gear placement; re-arms a fresh draft of the same shape on completion (sticky drawing, issue #415)
   - `pendingCompletionSlice.ts` — partially-completed sketches awaiting closure
+  - `featureDistributionSlice.ts` — transient one-shot grid/radial/path copy distribution; commits reference or independent instances as one undoable action (issue #205)
   - `dimensionsSlice.ts` — persistent dimension annotations (`project.annotations`): add/update/delete + selection (history-tracked)
   - `dimensionToolSlice.ts` — transient measure tools: tape measure + in-progress permanent-dimension placement (not persisted, not in history)
   - `featureSlice.ts` — feature CRUD, tree/folder management, primitive constructors including gear+bore grouping, arrange (align/distribute), and boolean ops (merge/cut/offset)
@@ -43,7 +44,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `modelAssets.ts` — imported model (STL) asset normalization, storage deduplication, and feature classification
   - `naming.ts` — unique-name generation for features, clamps, tabs, folders, and text features; text-feature creation
   - `operationDefaults.ts` — operation defaults: target validation, tool matching, kind labels, fallback targets, and default operation construction
-  - `copyFeatures.ts` — build rotated, mirrored, and linear copies of features, clamps, and tabs; reference-vs-independent duplicate semantics with extractClonedDefinitions
+  - `copyFeatures.ts` — build rotated, mirrored, linear, and arbitrary-affine copies of features, clamps, and tabs; reference-vs-independent duplicate semantics with extractClonedDefinitions
   - `instanceTransforms.ts` — affine matrix builders and transform-delta composition for feature instances
   - `resolveFeatures.ts` — strict definition+instance resolver, ephemeral world-space read model, and commit boundary back to lightweight instances
   - `projectFormat.ts` — validates format 3.0 projects and performs the one-way 1.0/2.0/2.1 legacy conversion without retaining baked rows
@@ -68,6 +69,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `editOpFidelity.test.ts` — sketch-edit op segment-kind preservation + linked-instance propagation for insert/delete point, disconnect, and arc-handle edit (fills gaps editInPlace + H1 didn't cover)
 - `featureLifecycle.test.ts` — create→definition, save/load round-trip, undo/redo, delete→GC per FeatureKind
 - `featureLifecycleOps.test.ts` — stock/tabs/align-distribute lifecycle paths (no prior coverage): setStock, setStockSourceFeature, tab CRUD + auto-place + edit, alignFeatures/distributeFeatures + undo
+- `featureDistribution.test.ts` — issue #205 grid/radial/path distribution commit: reference and independent definitions, source/guide preservation, root-level selectable copies, and one-step undo/redo
 - `gearCreation.test.ts` — gear creation store flow: radius placement, optional bore as a grouped subtract feature, validation, selection, and definitions
 - `featureReferencesMigration.test.ts` — strict 3.0 serialization, 1.0/2.0/2.1 one-way conversion, malformed-row rejection, and linked-instance size regression
 - `featureResolver.test.ts` — matrix resolution and definition lookup behavior
