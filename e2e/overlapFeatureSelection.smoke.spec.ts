@@ -17,9 +17,13 @@
 import { test, expect } from './fixtures'
 import { getHoveredFeatureId } from './helpers'
 import {
+  canvasWorldPoint,
   clickCanvasCenter,
+  clickCanvasSharedEdge,
+  clickCanvasWorld,
   seedObviousOverlapFeatureProject,
   seedOverlapFeatureProject,
+  seedStackedRectProject,
 } from './overlapFeatureSelection.helpers'
 
 test.describe('Overlap feature selection browser smoke', () => {
@@ -33,10 +37,50 @@ test.describe('Overlap feature selection browser smoke', () => {
     await expect(ui.tree.rowByName(app.page, 'Bottom overlap')).not.toHaveClass(/tree-row--selected/)
   })
 
-  test('shows overlapping candidates and lets the user select a non-topmost feature', async ({ app, ui }) => {
+  test('selects the topmost feature on an interior click without opening the picker', async ({ app, ui }) => {
     await seedOverlapFeatureProject(app.page)
 
     await clickCanvasCenter(ui.canvas.sketch(app.page))
+
+    await expect(ui.overlapFeaturePicker.root(app.page)).not.toBeVisible()
+    await expect(ui.tree.rowByName(app.page, 'Top overlap')).toHaveClass(/tree-row--selected/)
+    await expect(ui.tree.rowByName(app.page, 'Bottom overlap')).not.toHaveClass(/tree-row--selected/)
+  })
+
+  test('right-click keeps the click-resolved selection under a covering rect', async ({ app, ui }) => {
+    await seedStackedRectProject(app.page)
+
+    // Just inside the inner rect's left outline: the boundary rule selects the
+    // inner rect even though the outer rect is drawn on top.
+    await clickCanvasWorld(ui.canvas.sketch(app.page), 30.2, 30)
+    await expect(ui.tree.rowByName(app.page, 'Inner rect')).toHaveClass(/tree-row--selected/)
+    await expect(ui.tree.rowByName(app.page, 'Outer rect')).not.toHaveClass(/tree-row--selected/)
+
+    // The context menu must resolve the same feature an ordinary click does.
+    await clickCanvasWorld(ui.canvas.sketch(app.page), 30.2, 30, 'right')
+    await expect(ui.tree.rowByName(app.page, 'Inner rect')).toHaveClass(/tree-row--selected/)
+    await expect(ui.tree.rowByName(app.page, 'Outer rect')).not.toHaveClass(/tree-row--selected/)
+  })
+
+  test('selects a fully enclosed rect on an interior click even when covered', async ({ app, ui }) => {
+    await seedStackedRectProject(app.page)
+
+    // The outer rect is drawn on top, but the pointer is inside the enclosed
+    // inner rect: hover must preview the innermost shape, and the click must
+    // select it (issue #521 review feedback).
+    const canvas = ui.canvas.sketch(app.page)
+    await canvas.hover({ position: await canvasWorldPoint(canvas, 40, 30) })
+    await expect.poll(() => getHoveredFeatureId(app.page)).toBe('f-stacked-inner')
+
+    await clickCanvasWorld(canvas, 40, 30)
+    await expect(ui.tree.rowByName(app.page, 'Inner rect')).toHaveClass(/tree-row--selected/)
+    await expect(ui.tree.rowByName(app.page, 'Outer rect')).not.toHaveClass(/tree-row--selected/)
+  })
+
+  test('shows overlapping candidates and lets the user select a non-topmost feature', async ({ app, ui }) => {
+    await seedOverlapFeatureProject(app.page)
+
+    await clickCanvasSharedEdge(ui.canvas.sketch(app.page))
 
     const picker = ui.overlapFeaturePicker.root(app.page)
     await expect(picker).toBeVisible()
@@ -53,7 +97,7 @@ test.describe('Overlap feature selection browser smoke', () => {
 
   test('previews a hovered or focused candidate without selecting it', async ({ app, ui }) => {
     await seedOverlapFeatureProject(app.page)
-    await clickCanvasCenter(ui.canvas.sketch(app.page))
+    await clickCanvasSharedEdge(ui.canvas.sketch(app.page))
 
     const bottomCandidate = ui.overlapFeaturePicker.candidate(app.page, 'Bottom overlap')
     const topCandidate = ui.overlapFeaturePicker.candidate(app.page, 'Top overlap')
@@ -78,7 +122,7 @@ test.describe('Overlap feature selection browser smoke', () => {
     await app.page.setViewportSize({ width: 1024, height: 768 })
     await seedOverlapFeatureProject(app.page)
 
-    await clickCanvasCenter(ui.canvas.sketch(app.page))
+    await clickCanvasSharedEdge(ui.canvas.sketch(app.page))
 
     const picker = ui.overlapFeaturePicker.root(app.page)
     await expect(picker).toBeVisible()
@@ -93,7 +137,7 @@ test.describe('Overlap feature selection browser smoke', () => {
   test('boxes and scrolls a long candidate list', async ({ app, ui }) => {
     await seedOverlapFeatureProject(app.page, 17)
 
-    await clickCanvasCenter(ui.canvas.sketch(app.page))
+    await clickCanvasSharedEdge(ui.canvas.sketch(app.page))
 
     const list = ui.overlapFeaturePicker.list(app.page)
     await expect(list).toBeVisible()
@@ -115,7 +159,7 @@ test.describe('Overlap feature selection browser smoke', () => {
   test('dismisses when the user starts a different action', async ({ app, ui }) => {
     await seedOverlapFeatureProject(app.page)
 
-    await clickCanvasCenter(ui.canvas.sketch(app.page))
+    await clickCanvasSharedEdge(ui.canvas.sketch(app.page))
 
     const picker = ui.overlapFeaturePicker.root(app.page)
     await expect(picker).toBeVisible()

@@ -27,8 +27,8 @@ import type { Project } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import {
   findHitClampId,
-  findHitFeatureId,
   findHitTabId,
+  resolveFeatureSelectionHit,
 } from './hitTest'
 import {
   canvasToWorld,
@@ -121,8 +121,13 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
       return
     }
 
-    const hitId = findHitFeatureId(world, resolvedProjectFeatures(project), vt)
-    if (!hitId) return
+    // Resolve the hit exactly like an ordinary click: a uniquely indicated
+    // outline wins, an interior click takes the topmost (hover-highlighted)
+    // feature. Coincident outlines cannot show the picker here, so fall back
+    // to the topmost candidate.
+    const featureHit = resolveFeatureSelectionHit(world, resolvedProjectFeatures(project), vt)
+    if (featureHit.kind === 'none') return
+    const hitId = featureHit.kind === 'direct' ? featureHit.featureId : featureHit.candidateIds[0]
 
     if (!selection.selectedFeatureIds.includes(hitId)) {
       selectFeature(hitId)

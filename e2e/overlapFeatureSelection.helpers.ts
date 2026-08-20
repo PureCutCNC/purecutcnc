@@ -144,9 +144,143 @@ export async function seedObviousOverlapFeatureProject(page: Page): Promise<void
   await seedProject(page, buildOverlapFeatureProjectJson(2, true))
 }
 
+/**
+ * Outer rect drawn on top of a small inner rect (outer is last in the tree).
+ * A click near the inner rect's outline still selects the inner rect through
+ * the boundary rule, which is exactly the case where the old topmost-only
+ * context-menu hit test picked the outer rect instead (issue #521 follow-up).
+ */
+function buildStackedRectProjectJson(): string {
+  const now = '2026-07-13T00:00:00.000Z'
+  const stockWidth = 120
+  const stockHeight = 90
+  const featureRow = (id: string, name: string, definitionId: string) => ({
+    id,
+    name,
+    definitionId,
+    transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+    constraints: [] as unknown[],
+    folderId: null,
+    z_top: 5,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  })
+  return JSON.stringify({
+    version: '3.0',
+    meta: {
+      name: 'Stacked rect E2E fixture',
+      created: now,
+      modified: now,
+      units: 'inch',
+      showFeatureInfo: true,
+      showDimensions: true,
+      copyMode: 'reference',
+      maxTravelZ: 2,
+      operationClearanceZ: 0.2,
+      clampClearanceXY: 0.5,
+      clampClearanceZ: 0.2,
+      machineDefinitions: [],
+      selectedMachineId: null,
+    },
+    grid: {
+      extent: 200,
+      majorSpacing: 1,
+      minorSpacing: 0.25,
+      snapEnabled: false,
+      snapIncrement: 0.25,
+      visible: true,
+    },
+    stock: {
+      profile: rectProfile(0, 0, stockWidth, stockHeight),
+      thickness: 2,
+      material: 'aluminum_6061',
+      color: '#b9a83c',
+      visible: true,
+      origin: { x: 0, y: 0 },
+    },
+    origin: { name: 'Origin', x: stockWidth / 2, y: stockHeight / 2, z: 2, visible: true },
+    backdrop: null,
+    dimensions: {},
+    annotations: [],
+    modelAssets: {},
+    featureDefinitions: {
+      'def-stacked-outer': definition('def-stacked-outer', 100, 80),
+      'def-stacked-inner': definition('def-stacked-inner', 20, 10),
+    },
+    // The outer rect is drawn on top (last in the tree) and fully covers the
+    // inner one. The inner rect is translated to world (30,25)-(50,35) so its
+    // outline stays clear of the outer rect's edges — a click just inside it
+    // indicates exactly one outline.
+    features: [
+      { ...featureRow('f-stacked-inner', 'Inner rect', 'def-stacked-inner'), transform: { a: 1, b: 0, c: 0, d: 1, e: 30, f: 25 } },
+      featureRow('f-stacked-outer', 'Outer rect', 'def-stacked-outer'),
+    ],
+    featureFolders: [],
+    featureTree: [],
+    global_constraints: [],
+    tools: [],
+    operations: [],
+    tabs: [],
+    clamps: [],
+    ai_history: [],
+  })
+}
+
+/** Seed an outer-on-top stacked rect project and return it for tests. */
+export async function seedStackedRectProject(page: Page): Promise<void> {
+  await seedProject(page, buildStackedRectProjectJson())
+}
+
 export async function clickCanvasCenter(canvas: Locator): Promise<void> {
   const box = await canvas.boundingBox()
   if (!box) throw new Error('sketch canvas did not have a bounding box')
 
   await canvas.click({ position: { x: box.width / 2, y: box.height / 2 } })
+}
+
+/**
+ * World→canvas-pixel mapping for these fixtures. Same rule as
+ * `computeBaseViewTransform` (VIEW_PADDING = 42): the base view fits the
+ * 120×90 stock into the canvas.
+ */
+export async function canvasWorldPoint(
+  canvas: Locator,
+  worldX: number,
+  worldY: number,
+): Promise<{ x: number; y: number }> {
+  const box = await canvas.boundingBox()
+  if (!box) throw new Error('sketch canvas did not have a bounding box')
+
+  const STOCK_W = 120
+  const STOCK_H = 90
+  const VIEW_PADDING = 42
+  const scale = Math.min(
+    (box.width - VIEW_PADDING * 2) / STOCK_W,
+    (box.height - VIEW_PADDING * 2) / STOCK_H,
+  )
+  return {
+    x: (box.width - STOCK_W * scale) / 2 + worldX * scale,
+    y: (box.height - STOCK_H * scale) / 2 + worldY * scale,
+  }
+}
+
+/** Click the canvas at a world point (button left or right). */
+export async function clickCanvasWorld(
+  canvas: Locator,
+  worldX: number,
+  worldY: number,
+  button: 'left' | 'right' = 'left',
+): Promise<void> {
+  await canvas.click({ position: await canvasWorldPoint(canvas, worldX, worldY), button })
+}
+
+/**
+ * Click just inside the shared left outline of the fixture's coincident
+ * full-stock rects (world ~(0.4, 45)). Every feature's outline passes through
+ * there, so the click stays ambiguous and opens the overlap picker even though
+ * interior clicks now resolve to the topmost feature (issue #521).
+ */
+export async function clickCanvasSharedEdge(canvas: Locator): Promise<void> {
+  await clickCanvasWorld(canvas, 0.4, 45)
 }

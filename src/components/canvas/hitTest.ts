@@ -61,6 +61,43 @@ export function pointInProfile(x: number, y: number, profile: SketchProfile): bo
   return inside
 }
 
+/**
+ * True when every sampled point of `inner` lies inside `outer` — i.e. `inner`
+ * is fully enclosed by `outer` regardless of draw order. Coincident profiles
+ * may return true in both directions; callers handle that as a tie.
+ */
+function profileContainedIn(inner: SketchProfile, outer: SketchProfile): boolean {
+  const innerPoints = sampleProfilePoints(inner)
+  if (innerPoints.length < 3) return false
+  return innerPoints.every((point) => pointInProfile(point.x, point.y, outer))
+}
+
+/**
+ * Picks the feature an interior hit resolves to: the unique innermost candidate
+ * (fully enclosed by every other candidate, regardless of draw order) when one
+ * exists, otherwise the topmost candidate — the first in `candidates`. Shared
+ * by click resolution, hover, and drag-pick so the highlight always predicts
+ * what a click selects.
+ */
+function resolveInnermostOrTopmostId(
+  candidates: { id: string; profile: SketchProfile }[],
+): string | null {
+  if (candidates.length === 0) return null
+  if (candidates.length === 1) return candidates[0].id
+
+  const containingSets = candidates.map((candidate) =>
+    candidates.filter(
+      (other) => other !== candidate && profileContainedIn(candidate.profile, other.profile),
+    ),
+  )
+  const maxContaining = Math.max(0, ...containingSets.map((set) => set.length))
+  const innermost = candidates.filter(
+    (_, index) => maxContaining > 0 && containingSets[index].length === maxContaining,
+  )
+  if (innermost.length === 1) return innermost[0].id
+  return candidates[0].id
+}
+
 function distancePointToSegment(point: Point, start: Point, end: Point): number {
   const dx = end.x - start.x
   const dy = end.y - start.y
@@ -276,7 +313,11 @@ export function findHitFeatureIds(worldPoint: Point, features: readonly FeatureL
 
 /**
  * Resolves ordinary feature selection without interrupting a clear outline
- * click. Interior-only and coincident-outline hits remain ambiguous so the
+ * click. An interior-only click over several shapes prefers the unique
+ * innermost candidate — a shape fully enclosed by the others, whatever the
+ * draw order — and falls back to the topmost candidate; the hover highlight
+ * uses the same resolution, so it always predicts the click (issue #521).
+ * Only a click on two or more coincident outlines stays ambiguous so the
  * overlap picker can expose every candidate.
  */
 export function resolveFeatureSelectionHit(
@@ -284,7 +325,7 @@ export function resolveFeatureSelectionHit(
   features: readonly FeatureLike[],
   vt: ViewTransform,
 ): FeatureSelectionHit {
-  const candidateIds: string[] = []
+  const candidates: { id: string; profile: SketchProfile }[] = []
   const nearbyOutlineIds: string[] = []
 
   for (let index = features.length - 1; index >= 0; index -= 1) {
@@ -296,31 +337,43 @@ export function resolveFeatureSelectionHit(
       continue
     }
 
-    candidateIds.push(feature.id)
+    candidates.push({ id: feature.id, profile: feature.sketch.profile })
     if (nearOutline) nearbyOutlineIds.push(feature.id)
   }
 
-  if (candidateIds.length === 0) {
+  const candidateIds = candidates.map((candidate) => candidate.id)
+
+  if (candidates.length === 0) {
     return { kind: 'none', candidateIds: [] }
   }
-  if (candidateIds.length === 1) {
-    return { kind: 'direct', featureId: candidateIds[0], candidateIds }
+  if (candidates.length === 1) {
+    return { kind: 'direct', featureId: candidates[0].id, candidateIds }
   }
   if (nearbyOutlineIds.length === 1) {
     return { kind: 'direct', featureId: nearbyOutlineIds[0], candidateIds }
+  }
+  if (nearbyOutlineIds.length === 0) {
+    // Interior-only click across several shapes: the same innermost-or-topmost
+    // resolution the hover highlight previews.
+    return {
+      kind: 'direct',
+      featureId: resolveInnermostOrTopmostId(candidates) ?? candidates[0].id,
+      candidateIds,
+    }
   }
   return { kind: 'ambiguous', candidateIds }
 }
 
 export function findHitFeatureId(worldPoint: Point, features: readonly FeatureLike[], vt: ViewTransform): string | null {
+  const candidates: { id: string; profile: SketchProfile }[] = []
   for (let index = features.length - 1; index >= 0; index -= 1) {
     const feature = features[index]
     if (!feature.visible) continue
     if (featureContainsPoint(feature, worldPoint, vt)) {
-      return feature.id
+      candidates.push({ id: feature.id, profile: feature.sketch.profile })
     }
   }
-  return null
+  return resolveInnermostOrTopmostId(candidates)
 }
 
 function pointInRect(point: Point, minX: number, minY: number, maxX: number, maxY: number): boolean {
