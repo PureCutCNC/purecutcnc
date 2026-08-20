@@ -42,7 +42,12 @@ import {
   seedStartRadius,
   type SeedCirclePlan,
 } from './seedClearing'
-import { buildInsetRegions, buildOffsetRegionTree, generatePocketToolpath } from './pocket'
+import {
+  buildInsetRegions,
+  buildOffsetRegionTree,
+  generatePocketToolpath,
+  nextSeedPlanIndex,
+} from './pocket'
 import { buildSweptCoverage } from './sweptCoverage'
 import { resolvePocketRegions } from './resolver'
 import { projectWithFeatures } from '../../test/projectFixtures'
@@ -73,6 +78,17 @@ function planLargest(
   const plans = planSeedCircles(region, startRadius, stepover, toolDiameter)
   assert(plans.length > 0, 'the region must hold at least one seeded area')
   return plans[0]
+}
+
+function syntheticSeedPlan(cx: number, cy: number): SeedCirclePlan {
+  const radius = 3
+  return {
+    centre: { x: cx, y: cy },
+    maxRadius: radius,
+    radii: [radius],
+    lastRadius: radius,
+    island: seedCircleContour({ x: cx, y: cy }, radius, 0.01),
+  }
 }
 
 // ── fixtures ───────────────────────────────────────────────────────────────
@@ -211,6 +227,27 @@ function testThreeCircleMinimumKeepsTheExactBoundary(): void {
   assert(plans.length === 1, `the exact-boundary region must keep one seed, got ${plans.length}`)
   assert(plans[0].radii.length === 3, `the threshold must keep exactly three circles, got ${plans[0].radii.length}`)
   console.log('three-circle boundary: PASSED')
+}
+
+function testIndependentSeedSectionsChooseTheNearestEntry(): void {
+  const plans = [
+    syntheticSeedPlan(80, 0),
+    syntheticSeedPlan(20, 0),
+    syntheticSeedPlan(50, 0),
+  ]
+  const current = { x: 18, y: 0, z: -4 }
+  const nearest = nextSeedPlanIndex(plans, current, -4, 2.4, 'conventional')
+  assert(nearest === 1, `nearest seed section must win, got source index ${nearest}`)
+
+  const tie = nextSeedPlanIndex(
+    [syntheticSeedPlan(20, -10), syntheticSeedPlan(20, 10)],
+    { x: 0, y: 0, z: -4 },
+    -4,
+    2.4,
+    'conventional',
+  )
+  assert(tie === 0, `equal-distance seed sections must retain source order, got ${tie}`)
+  console.log('seed section travel ordering: PASSED')
 }
 
 function testNoCircleIsEverClipped(): void {
@@ -728,6 +765,7 @@ function testParallelAndIslandsAreUnaffected(): void {
 try {
   testScheduleStopsAtTheFirstRadiusThatDoesNotFit()
   testThreeCircleMinimumKeepsTheExactBoundary()
+  testIndependentSeedSectionsChooseTheNearestEntry()
   testNoCircleIsEverClipped()
   testSeedDiscIsFullyCleared()
   testStartRadiusNeverExceedsToolRadius()

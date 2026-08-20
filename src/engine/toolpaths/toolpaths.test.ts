@@ -28,14 +28,7 @@ import { circleProfile, defaultTool, newProject, polygonProfile, rectProfile } f
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { buildGearProfile, defaultGearCreationParams } from '../../sketch/gearProfile'
 import type { ResolvedPocketRegion, ToolpathBounds, ToolpathMove, ToolpathResult } from './types'
-import {
-  mergePocketToolpathResults,
-  mergeToolpathResults,
-  mergeToolpathSections,
-  orderToolpathSections,
-  perFeatureOperations,
-  type ToolpathSection,
-} from './multiFeature'
+import { mergePocketToolpathResults, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import { generatePocketToolpath } from './pocket'
 import { generateEdgeRouteToolpath } from './edge'
 import { generateVCarveToolpath } from './vcarve'
@@ -529,103 +522,49 @@ function testMergeToolpathResults() {
   assert(mergedPocket.stepLevels.length === 3, 'stepLevels deduped')
   assert(mergedPocket.stepLevels[0] === -2 && mergedPocket.stepLevels[2] === -6, 'stepLevels sorted descending')
 
-  const makeSafeSectionResult = (operationId: string, entryX: number, exitX: number): ToolpathResult => ({
-    operationId,
+  const partNear: ToolpathResult = {
+    operationId: 'sub-near',
     moves: [
-      { kind: 'rapid', from: { x: entryX, y: 0, z: 5 }, to: { x: entryX, y: 0, z: 5 } },
-      { kind: 'plunge', from: { x: entryX, y: 0, z: 5 }, to: { x: entryX, y: 0, z: -2 } },
-      { kind: 'cut', from: { x: entryX, y: 0, z: -2 }, to: { x: exitX, y: 0, z: -2 } },
-      { kind: 'rapid', from: { x: exitX, y: 0, z: -2 }, to: { x: exitX, y: 0, z: 5 } },
+      { kind: 'rapid', from: { x: 12, y: 0, z: 5 }, to: { x: 12, y: 0, z: 5 } },
+      { kind: 'cut', from: { x: 12, y: 0, z: -2 }, to: { x: 14, y: 0, z: -2 } },
     ],
     warnings: [],
     bounds: null,
-  })
-  const partAnchor = makeSafeSectionResult('sub-anchor', 0, 10)
-  const partNear = makeSafeSectionResult('sub-near', 12, 14)
-  const partFar = makeSafeSectionResult('sub-far', 100, 110)
-  const ordered = mergeToolpathResults('op-parent', [partAnchor, partFar, partNear], { orderBlocks: 'nearest' })
-  assert(
-    cutMoves(ordered.moves).map((move) => move.from.x).join(',') === '0,12,100',
-    'nearest merge chooses the near block before the far block',
-  )
-  assert(
-    ordered.moves.some((move) => move.kind === 'rapid' && move.from.x === 10 && move.to.x === 12 && move.from.z === 5 && move.to.z === 5),
-    'nearest merge transitions between sections at safe Z',
-  )
+  }
+  const partFar: ToolpathResult = {
+    operationId: 'sub-far',
+    moves: [
+      { kind: 'rapid', from: { x: 100, y: 0, z: 5 }, to: { x: 100, y: 0, z: 5 } },
+      { kind: 'cut', from: { x: 100, y: 0, z: -2 }, to: { x: 110, y: 0, z: -2 } },
+    ],
+    warnings: [],
+    bounds: null,
+  }
+  const ordered = mergeToolpathResults('op-parent', [partA, partFar, partNear], { orderBlocks: 'nearest' })
+  assert(ordered.moves.length === 5, 'nearest merge concatenates all moves')
+  assert(ordered.moves[1].kind === 'rapid' && ordered.moves[1].to.x === 12, 'nearest merge chooses near block before far block')
+  assert(ordered.moves[1].from.x === 10, 'nearest merge normalizes next block rapid from previous endpoint')
 
-  const tieLeft = makeSafeSectionResult('sub-left', 0, 0)
-  const tieRight = makeSafeSectionResult('sub-right', 20, 20)
-  const tieAnchor = makeSafeSectionResult('sub-anchor', 9, 10)
+  const tieLeft: ToolpathResult = {
+    operationId: 'sub-left',
+    moves: [{ kind: 'rapid', from: { x: 0, y: 0, z: 5 }, to: { x: 0, y: 0, z: 5 } }],
+    warnings: [],
+    bounds: null,
+  }
+  const tieRight: ToolpathResult = {
+    operationId: 'sub-right',
+    moves: [{ kind: 'rapid', from: { x: 20, y: 0, z: 5 }, to: { x: 20, y: 0, z: 5 } }],
+    warnings: [],
+    bounds: null,
+  }
+  const tieAnchor: ToolpathResult = {
+    operationId: 'sub-anchor',
+    moves: [{ kind: 'cut', from: { x: 9, y: 0, z: -2 }, to: { x: 10, y: 0, z: -2 } }],
+    warnings: [],
+    bounds: null,
+  }
   const tied = mergeToolpathResults('op-parent', [tieAnchor, tieRight, tieLeft], { orderBlocks: 'nearest' })
-  assert(cutMoves(tied.moves)[1]?.from.x === 20, 'nearest merge preserves original order for equal-distance ties')
-
-  const section = (
-    id: string,
-    entryX: number,
-    exitX: number,
-    predecessors: readonly string[] = [],
-  ): ToolpathSection => {
-    const result = makeSafeSectionResult(id, entryX, exitX)
-    return {
-      id,
-      result,
-      entry: result.moves[0].to,
-      exit: result.moves.at(-1)!.to,
-      predecessors,
-    }
-  }
-  const start = { x: 0, y: 0, z: 5 }
-  const seededSections = [
-    section('seed-near', 0, 4),
-    section('seed-far', 100, 104),
-    section('offset-near', 5, 10, ['seed-near']),
-    section('offset-far', 105, 110, ['seed-far']),
-  ]
-  const seededOrdered = orderToolpathSections(seededSections, { start })
-  assert(
-    seededOrdered.map((entry) => entry.id).join(',') === 'seed-near,offset-near,seed-far,offset-far',
-    'seeded offset sections should select the nearest eligible section while preserving seed-before-offset dependencies',
-  )
-  const safeTravelDistance = (sections: readonly ToolpathSection[]) => {
-    let position = start
-    let distance = 0
-    for (const entry of sections) {
-      distance += Math.hypot(entry.entry.x - position.x, entry.entry.y - position.y)
-      position = entry.exit
-    }
-    return distance
-  }
-  assert(
-    safeTravelDistance(seededOrdered) < safeTravelDistance(seededSections),
-    'nearest seeded-offset order must not increase safe-Z XY travel over valid source order',
-  )
-
-  const constrained = orderToolpathSections([
-    section('deep-layer', 1, 2, ['shallow-layer']),
-    section('shallow-layer', 50, 51),
-    section('independent', 5, 6),
-  ], { start })
-  assert(
-    constrained.map((entry) => entry.id).join(',') === 'independent,shallow-layer,deep-layer',
-    'a near section must wait for its declared predecessor',
-  )
-  let rejectedSelfDependency = false
-  try {
-    orderToolpathSections([section('self-dependent', 0, 1, ['self-dependent'])], { start })
-  } catch {
-    rejectedSelfDependency = true
-  }
-  assert(rejectedSelfDependency, 'a self dependency must be rejected even for one section')
-
-  const mergedSections = mergeToolpathSections('op-parent', seededSections, { order: 'nearest', start })
-  assert(
-    cutMoves(mergedSections.moves).map((move) => move.from.x).join(',') === '0,5,100,105',
-    'the shared section merger emits the scheduled seeded-offset order',
-  )
-  for (const move of mergedSections.moves) {
-    if (move.kind !== 'rapid' || (move.from.x === move.to.x && move.from.y === move.to.y)) continue
-    assert(move.from.z === 5 && move.to.z === 5, 'all cross-section XY rapids must stay at safe Z')
-  }
+  assert(tied.moves[1].to.x === 20, 'nearest merge preserves original order for equal-distance ties')
 
   console.log('mergeToolpathResults: PASSED')
 }

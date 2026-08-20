@@ -44,6 +44,7 @@ import {
   normalizeToolForProject,
   resolveFeatureZSpan,
   toClipperPath,
+  xyDistanceSquared,
 } from './geometry'
 import {
   collectReliefCorners,
@@ -2298,6 +2299,35 @@ function orderNodesGreedy(nodes: OffsetRegionNode[], start: Point | null): Offse
     .map((region) => byRegion.get(region) as OffsetRegionNode)
 }
 
+/**
+ * Select the next independent seed section by its actual rapid-entry point.
+ * The seed plan itself remains indivisible: its concentric circles must stay
+ * together so their direct/tangent links and phase-two dependency are intact.
+ */
+export function nextSeedPlanIndex(
+  plans: readonly SeedCirclePlan[],
+  current: ToolpathPoint | null,
+  z: number,
+  stepover: number,
+  direction: CutDirection,
+): number {
+  if (plans.length <= 1 || current === null) return 0
+
+  let bestIndex = 0
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (let index = 0; index < plans.length; index += 1) {
+    const firstCircle = applyContourDirection(seedCircleContours(plans[index], stepover), direction)[0]
+    if (!firstCircle) continue
+    const distance = xyDistanceSquared(current, contourStartPoint(firstCircle, z))
+    if (distance < bestDistance) {
+      bestIndex = index
+      bestDistance = distance
+    }
+  }
+
+  return bestIndex
+}
+
 function cutOffsetRegionNode(
   moves: ToolpathMove[],
   node: OffsetRegionNode,
@@ -2377,12 +2407,12 @@ function cutOffsetRegionNode(
     nextPosition = cutCurrentRegion(nextPosition)
   }
 
-  const orderedChildren = orderNodesGreedy(
-    node.children,
-    nextPosition ? { x: nextPosition.x, y: nextPosition.y } : null,
-  )
-
-  for (const childNode of orderedChildren) {
+  const remainingChildren = [...node.children]
+  while (remainingChildren.length > 0) {
+    const [childNode] = orderNodesGreedy(
+      remainingChildren,
+      nextPosition ? { x: nextPosition.x, y: nextPosition.y } : null,
+    )
     nextPosition = cutOffsetRegionNode(
       moves,
       childNode,
@@ -2402,6 +2432,7 @@ function cutOffsetRegionNode(
       toolRadius,
       node,
     )
+    remainingChildren.splice(remainingChildren.indexOf(childNode), 1)
   }
 
   if (traversalMode === 'inner-first') {
@@ -2697,76 +2728,73 @@ function generateRoughBandMoves(
     }
 
     const levelStartIndex = moves.length
-    const orderedTrees = orderNodesGreedy(
-      regionTrees,
-      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
-    )
-
-    // Phase 1 runs for EVERY open area in the band before phase 2 starts, not
-    // interleaved: each area's circles in turn — largest area first, since
-    // that is the order they were found in — and only once the last of them is
-    // cut does the first ring go down. Within an area the circles run
-    // innermost outwards, each starting at the same angle as the one before
-    // it, so the link to the next is a radial step of exactly one stepover:
-    // never longer than the tool diameter, and therefore always a direct cut
-    // link rather than a retract.
+    // Phase 1 still completes every seed before phase 2 begins, but each
+    // seed-circle stack is an independent section. Pick its next entry from
+    // the real preceding endpoint instead of retaining the clearance-search
+    // order; its concentric circles stay together, so their direct/tangent
+    // links and the seed-before-offset dependency remain intact.
     if (seedPlans.size > 0) {
-      for (const tree of orderedTrees) {
-        for (const seedPlan of seedPlans.get(tree) ?? []) {
-          const circles = applyContourDirection(
-            seedCircleContours(seedPlan, effectiveStepover),
-            direction,
+      const remainingSeedPlans = regionTrees.flatMap((tree) => seedPlans.get(tree) ?? [])
+      while (remainingSeedPlans.length > 0) {
+        const seedPlanIndex = nextSeedPlanIndex(
+          remainingSeedPlans,
+          currentPosition,
+          z,
+          effectiveStepover,
+          direction,
+        )
+        const [seedPlan] = remainingSeedPlans.splice(seedPlanIndex, 1)
+        const circles = applyContourDirection(
+          seedCircleContours(seedPlan, effectiveStepover),
+          direction,
+        )
+        // A successful tangent S re-seams its arrival circle. Carry that
+        // endpoint to the next concentric circle so its radial link remains
+        // short; otherwise the old canonical seam can be a full diameter
+        // away and force an avoidable safe-Z rapid.
+        let previousCircleEnd: ToolpathPoint | null = null
+        for (const baseCircle of circles) {
+          const circle = tangentLink
+            ? rotateContourToNearestEntry(baseCircle, previousCircleEnd)
+            : baseCircle
+          const linkStartIndex = moves.length
+          currentPosition = transitionToCutEntry(
+            moves,
+            currentPosition,
+            contourStartPoint(circle, z),
+            safeZ,
+            maxLinkDistance,
+            undefined,
+            levelEntryPolicy,
           )
-          // A successful tangent S re-seams its arrival circle. Carry that
-          // endpoint to the next concentric circle so its radial link remains
-          // short; otherwise the old canonical seam can be a full diameter
-          // away and force an avoidable safe-Z rapid.
-          let previousCircleEnd: ToolpathPoint | null = null
-          for (const baseCircle of circles) {
-            const circle = tangentLink
-              ? rotateContourToNearestEntry(baseCircle, previousCircleEnd)
-              : baseCircle
-            const linkStartIndex = moves.length
-            currentPosition = transitionToCutEntry(
-              moves,
-              currentPosition,
-              contourStartPoint(circle, z),
-              safeZ,
-              maxLinkDistance,
-              undefined,
-              levelEntryPolicy,
-            )
-            let circleMoves = toClosedCutMoves(circle, z)
-            const tangentSplice = spliceTangentSLink(
-              moves,
-              linkStartIndex,
-              circle,
-              circleMoves,
-              tangentLink,
-            )
-            if (tangentSplice) {
-              circleMoves = tangentSplice.cutMoves
-              currentPosition = tangentSplice.nextPosition
-            }
-            moves.push(...circleMoves)
-            currentPosition = circleMoves.at(-1)?.to ?? currentPosition
-            previousCircleEnd = tangentLink ? currentPosition : null
+          let circleMoves = toClosedCutMoves(circle, z)
+          const tangentSplice = spliceTangentSLink(
+            moves,
+            linkStartIndex,
+            circle,
+            circleMoves,
+            tangentLink,
+          )
+          if (tangentSplice) {
+            circleMoves = tangentSplice.cutMoves
+            currentPosition = tangentSplice.nextPosition
           }
+          moves.push(...circleMoves)
+          currentPosition = circleMoves.at(-1)?.to ?? currentPosition
+          previousCircleEnd = tangentLink ? currentPosition : null
         }
       }
     }
 
-    // Phase 2 re-orders from wherever phase 1 left the tool. With no seeds
-    // this is the same list, computed from the same position, so the previous
-    // ordering is reproduced exactly rather than merely closely.
-    const phaseTwoTrees = seedPlans.size > 0
-      ? orderNodesGreedy(
-        regionTrees,
+    // Every offset tree is likewise an independent section once phase 1 is
+    // complete. Re-evaluate nearest travel after each emitted tree because its
+    // actual exit can differ from the contour anchor used to enter it.
+    const remainingPhaseTwoTrees = [...regionTrees]
+    while (remainingPhaseTwoTrees.length > 0) {
+      const [tree] = orderNodesGreedy(
+        remainingPhaseTwoTrees,
         currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
       )
-      : orderedTrees
-
-    for (const tree of phaseTwoTrees) {
       currentPosition = cutOffsetRegionNode(
         moves,
         tree,
@@ -2785,6 +2813,7 @@ function generateRoughBandMoves(
         wallCleanup,
         toolRadius,
       )
+      remainingPhaseTwoTrees.splice(remainingPhaseTwoTrees.indexOf(tree), 1)
     }
 
     const levelEndIndex = moves.length
