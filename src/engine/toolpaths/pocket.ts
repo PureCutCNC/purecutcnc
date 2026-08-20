@@ -2583,27 +2583,28 @@ function generateRoughBandMoves(
   const seedStart = operation.pocketPattern === 'seeded_offset'
     ? seedStartRadius(operation, toolRadius)
     : 0
-  const seedPlans = new Map<OffsetRegionNode, SeedCirclePlan>()
+  const seedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
   const regionTrees = centreRegions.map((region) => {
-    const plan = seedStart > 0
+    const plans = seedStart > 0
       ? planSeedCircles(region, seedStart, effectiveStepover, toolRadius * 2)
-      : null
-    if (!plan) return buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
+      : []
+    if (plans.length === 0) return buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
 
     const seeded = buildOffsetRegionTree(
-      { ...region, islands: [...region.islands, plan.island] },
+      { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
       effectiveStepover,
       islandJoinType,
     )
-    // The tree must OFFSET around the seed island but must not CUT it: phase 1
-    // has already run that exact lap, and `cutOffsetRegionNode` emits every
-    // island of the node it is cutting. Restoring the root's original island
-    // list drops the duplicate — the children were built from the region that
-    // still had the seed, so every outward ring is unaffected — and it also
-    // returns the seed disc to the cleared domain that entry placement and
-    // tangential links are tested against, which is where the helix belongs.
+    // The tree must OFFSET around the seed islands but must not CUT them:
+    // phase 1 has already run those exact laps, and `cutOffsetRegionNode`
+    // emits every island of the node it is cutting. Restoring the root's
+    // original island list drops the duplicates — the children were built
+    // from the region that still had the seeds, so every outward ring is
+    // unaffected — and it also returns the seed discs to the cleared domain
+    // that entry placement and tangential links are tested against, which is
+    // where the helix belongs.
     const tree: OffsetRegionNode = { region, children: seeded.children }
-    seedPlans.set(tree, plan)
+    seedPlans.set(tree, plans)
     return tree
   })
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
@@ -2672,33 +2673,34 @@ function generateRoughBandMoves(
     )
 
     // Phase 1 runs for EVERY open area in the band before phase 2 starts, not
-    // interleaved region by region: with more than one of them, all the open
-    // middles are gone before the first ring is cut. Innermost circle outwards
-    // within each, and every circle starts at the same angle as the one before
-    // it, so the link to the next is a radial step of exactly one stepover —
+    // interleaved: each area's circles in turn — largest area first, since
+    // that is the order they were found in — and only once the last of them is
+    // cut does the first ring go down. Within an area the circles run
+    // innermost outwards, each starting at the same angle as the one before
+    // it, so the link to the next is a radial step of exactly one stepover:
     // never longer than the tool diameter, and therefore always a direct cut
     // link rather than a retract.
     if (seedPlans.size > 0) {
       for (const tree of orderedTrees) {
-        const seedPlan = seedPlans.get(tree)
-        if (!seedPlan) continue
-        const circles = applyContourDirection(
-          seedCircleContours(seedPlan, effectiveStepover),
-          direction,
-        )
-        for (const circle of circles) {
-          currentPosition = transitionToCutEntry(
-            moves,
-            currentPosition,
-            contourStartPoint(circle, z),
-            safeZ,
-            maxLinkDistance,
-            undefined,
-            levelEntryPolicy,
+        for (const seedPlan of seedPlans.get(tree) ?? []) {
+          const circles = applyContourDirection(
+            seedCircleContours(seedPlan, effectiveStepover),
+            direction,
           )
-          const circleMoves = toClosedCutMoves(circle, z)
-          moves.push(...circleMoves)
-          currentPosition = circleMoves.at(-1)?.to ?? currentPosition
+          for (const circle of circles) {
+            currentPosition = transitionToCutEntry(
+              moves,
+              currentPosition,
+              contourStartPoint(circle, z),
+              safeZ,
+              maxLinkDistance,
+              undefined,
+              levelEntryPolicy,
+            )
+            const circleMoves = toClosedCutMoves(circle, z)
+            moves.push(...circleMoves)
+            currentPosition = circleMoves.at(-1)?.to ?? currentPosition
+          }
         }
       }
     }

@@ -40,6 +40,7 @@ import {
   seedCircleContour,
   seedCircleContours,
   seedStartRadius,
+  type SeedCirclePlan,
 } from './seedClearing'
 import { buildInsetRegions, buildOffsetRegionTree, generatePocketToolpath } from './pocket'
 import { buildSweptCoverage } from './sweptCoverage'
@@ -60,6 +61,18 @@ import type { ResolvedPocketRegion, ToolpathMove } from './types'
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error('Assertion failed: ' + message)
+}
+
+/** The largest open area of a region, for the checks that concern one seed. */
+function planLargest(
+  region: ResolvedPocketRegion,
+  startRadius: number,
+  stepover: number,
+  toolDiameter: number,
+): SeedCirclePlan {
+  const plans = planSeedCircles(region, startRadius, stepover, toolDiameter)
+  assert(plans.length > 0, 'the region must hold at least one seeded area')
+  return plans[0]
 }
 
 // ── fixtures ───────────────────────────────────────────────────────────────
@@ -173,8 +186,7 @@ function cutCentrelines(moves: ToolpathMove[]): Point[][] {
 function testScheduleStopsAtTheFirstRadiusThatDoesNotFit(): void {
   const region = rectRegion(80, 40)
   const stepover = 2.4
-  const plan = planSeedCircles(region, 3, stepover, 6)
-  assert(plan !== null, 'a 80x40 tool-centre region must hold a seed')
+  const plan = planLargest(region, 3, stepover, 6)
 
   // Inscribed radius of a 80x40 rectangle is 20, under-reported by the search.
   assert(plan.maxRadius <= 20 + 1e-9, `maxRadius must never over-report, got ${plan.maxRadius}`)
@@ -192,31 +204,48 @@ function testScheduleStopsAtTheFirstRadiusThatDoesNotFit(): void {
   console.log(`schedule: PASSED (${plan.radii.length} circles, ${plan.radii[0]} to ${last}, Rmax ${plan.maxRadius.toFixed(4)})`)
 }
 
+function testThreeCircleMinimumKeepsTheExactBoundary(): void {
+  // An inscribed radius of 9.5 accepts 3, 5.4 and 7.8 mm but not the next
+  // 10.2 mm circle. The strategy must keep this exact three-circle boundary.
+  const plans = planSeedCircles(rectRegion(19, 19), 3, 2.4, 6)
+  assert(plans.length === 1, `the exact-boundary region must keep one seed, got ${plans.length}`)
+  assert(plans[0].radii.length === 3, `the threshold must keep exactly three circles, got ${plans[0].radii.length}`)
+  console.log('three-circle boundary: PASSED')
+}
+
 function testNoCircleIsEverClipped(): void {
   const region: ResolvedPocketRegion = {
     ...rectRegion(80, 40),
     islands: [seedCircleContour({ x: 62, y: 20 }, 5, 0.01)],
   }
-  const plan = planSeedCircles(region, 3, 2.4, 6)
-  assert(plan !== null, 'the island region must still hold a seed')
+  const plans = planSeedCircles(region, 3, 2.4, 6)
+  assert(plans.length > 0, 'the island region must still hold a seed')
 
-  for (const contour of seedCircleContours(plan, 2.4)) {
-    for (const point of contour) {
-      assert(
-        pointInPolygon(point.x, point.y, region.outer),
-        `a circle left the region at (${point.x.toFixed(3)}, ${point.y.toFixed(3)})`,
-      )
-      for (const hole of region.islands) {
+  // Every area, not just the first: a later area's circles are the ones that
+  // could come back clipped, since they are the ones with a cleared disc to
+  // avoid as well as the walls.
+  let circles = 0
+  for (const plan of plans) {
+    for (const contour of seedCircleContours(plan, 2.4)) {
+      circles += 1
+      for (const point of contour) {
         assert(
-          !pointInPolygon(point.x, point.y, hole),
-          `a circle entered an island at (${point.x.toFixed(3)}, ${point.y.toFixed(3)})`,
+          pointInPolygon(point.x, point.y, region.outer),
+          `a circle left the region at (${point.x.toFixed(3)}, ${point.y.toFixed(3)})`,
         )
+        for (const hole of region.islands) {
+          assert(
+            !pointInPolygon(point.x, point.y, hole),
+            `a circle entered an island at (${point.x.toFixed(3)}, ${point.y.toFixed(3)})`,
+          )
+        }
       }
     }
   }
-  // The seed must have moved away from the island rather than shrinking around it.
-  assert(plan.centre.x < 40, `the seed relocates away from the island, centred at x=${plan.centre.x.toFixed(2)}`)
-  console.log(`no clipping: PASSED (${plan.radii.length} circles clear of the island)`)
+  // The first seed must have moved away from the island rather than shrinking
+  // around it.
+  assert(plans[0].centre.x < 40, `the seed relocates away from the island, centred at x=${plans[0].centre.x.toFixed(2)}`)
+  console.log(`no clipping: PASSED (${circles} circles across ${plans.length} areas, clear of the island)`)
 }
 
 /**
@@ -230,8 +259,7 @@ function testNoCircleIsEverClipped(): void {
 function seedDiscUncovered(startRadius: number, toolRadius: number): number {
   const region = rectRegion(80, 40)
   const stepover = toolRadius * 0.8
-  const plan = planSeedCircles(region, startRadius, stepover, toolRadius * 2)
-  assert(plan !== null, 'the plan must exist for the coverage check')
+  const plan = planLargest(region, startRadius, stepover, toolRadius * 2)
   const coverage = buildSweptCoverage(seedCircleContours(plan, stepover), toolRadius)
 
   let uncovered = 0
@@ -308,10 +336,14 @@ function testTessellationTracksTheTrueCircle(): void {
 }
 
 function testHandoffLandsOneStepoverOutsideTheSeed(): void {
-  const region = rectRegion(80, 40)
+  // A 30x30 region holds exactly one area: after the first disc is consumed
+  // the corners left over are under the start radius. That makes the nearest
+  // phase-2 point unambiguously this seed's own ring rather than a neighbour's.
+  const region = rectRegion(30, 30)
   const stepover = 2.4
-  const plan = planSeedCircles(region, 3, stepover, 6)
-  assert(plan !== null, 'the plan must exist')
+  const plans = planSeedCircles(region, 3, stepover, 6)
+  assert(plans.length === 1, `this region must hold exactly one area, got ${plans.length}`)
+  const plan = plans[0]
 
   const tree = buildOffsetRegionTree(
     { ...region, islands: [...region.islands, plan.island] },
@@ -389,10 +421,9 @@ function testSeedIsNotCutTwice(): void {
     { outer: [{ x: 0, y: 0 }, { x: 70, y: 0 }, { x: 70, y: 50 }, { x: 0, y: 50 }], islands: [], targetFeatureIds: [], islandFeatureIds: [] },
     3,
   )[0]
-  const plan = planSeedCircles(region, seedStartRadius(
+  const plan = planLargest(region, seedStartRadius(
     pocketOperation('helix', [], { entryStrategy: 'helix', entryHelixDiameterPercent: 80 }), 3,
   ), 2.4, 6)
-  assert(plan !== null, 'the plan must exist')
 
   // Cut length lying on the seed circle, at one Z level. One lap, not two:
   // phase 1 cuts it, and the root of the tree must not cut it again.
@@ -410,6 +441,66 @@ function testSeedIsNotCutTwice(): void {
   assert(length > lap * 0.9, `the seed circle must be cut, got ${length.toFixed(2)} of ${lap.toFixed(2)}`)
   assert(length < lap * 1.5, `the seed circle must be cut ONCE, got ${length.toFixed(2)} of ${lap.toFixed(2)}`)
   console.log(`no duplicate lap: PASSED (${length.toFixed(2)} vs one lap ${lap.toFixed(2)})`)
+}
+
+/**
+ * Several open areas inside ONE region each get their own seed, and phase 1
+ * cuts them all before phase 2 starts.
+ *
+ * A dumbbell — two wide lobes joined by a neck narrower than either — is one
+ * connected region with two open middles. The first seed takes a lobe; the
+ * second has to find the other one rather than shrinking around the first,
+ * and its circles have to come back whole. That last part is the property the
+ * multi-area loop exists to preserve: each pass hands the disc it emptied to
+ * the next as an island, so a later area's circles stand in uncut material
+ * instead of being trimmed against a cleared one.
+ */
+function testSeveralOpenAreasInOneRegion(): void {
+  const region: ResolvedPocketRegion = {
+    outer: [
+      { x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 16 }, { x: 60, y: 16 },
+      { x: 60, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 40 }, { x: 60, y: 40 },
+      { x: 60, y: 24 }, { x: 40, y: 24 }, { x: 40, y: 40 }, { x: 0, y: 40 },
+    ],
+    islands: [],
+    targetFeatureIds: [],
+    islandFeatureIds: [],
+  }
+  const stepover = 2.4
+  const plans = planSeedCircles(region, 3, stepover, 6)
+  assert(plans.length >= 2, `a two-lobe region must seed both lobes, got ${plans.length}`)
+
+  // Largest area first, and the second seed is in the OTHER lobe rather than
+  // squeezed alongside the first.
+  const [first, second] = plans
+  assert(first.lastRadius >= second.lastRadius, 'areas must come out largest first')
+  assert(
+    (first.centre.x < 40 && second.centre.x > 60) || (first.centre.x > 60 && second.centre.x < 40),
+    `the two seeds must land in different lobes, got x=${first.centre.x.toFixed(1)} and x=${second.centre.x.toFixed(1)}`,
+  )
+
+  // Whole circles, in the region, and — the multi-area claim — clear of every
+  // disc an earlier area already emptied.
+  const emptied = plans.map((plan) => ({ centre: plan.centre, radius: plan.lastRadius + 3 }))
+  for (let index = 0; index < plans.length; index += 1) {
+    for (const contour of seedCircleContours(plans[index], stepover)) {
+      for (const point of contour) {
+        assert(
+          pointInPolygon(point.x, point.y, region.outer),
+          `area ${index} left the region at (${point.x.toFixed(2)}, ${point.y.toFixed(2)})`,
+        )
+        for (let earlier = 0; earlier < index; earlier += 1) {
+          const disc = emptied[earlier]
+          const distance = Math.hypot(point.x - disc.centre.x, point.y - disc.centre.y)
+          assert(
+            distance >= disc.radius - 1e-6,
+            `area ${index} cut inside the disc area ${earlier} already emptied (${distance.toFixed(3)} < ${disc.radius.toFixed(3)})`,
+          )
+        }
+      }
+    }
+  }
+  console.log(`several areas in one region: PASSED (${plans.length} areas, radii ${plans.map((p) => p.lastRadius.toFixed(1)).join(', ')})`)
 }
 
 /**
@@ -434,11 +525,11 @@ function testPhaseOneRunsForEveryAreaBeforePhaseTwo(): void {
   const stepover = 2.4
   const startRadius = seedStartRadius(operation, toolRadius)
   const resolved = resolvePocketRegions(project, operation)
-  const plans = resolved.bands[0].regions
-    .flatMap((region) => buildInsetRegions(region, toolRadius))
-    .map((region) => planSeedCircles(region, startRadius, stepover, toolRadius * 2))
-    .filter((plan) => plan !== null)
-  assert(plans.length === 2, `the fixture must resolve to two seeded areas, got ${plans.length}`)
+  const centreRegions = resolved.bands[0].regions.flatMap((region) => buildInsetRegions(region, toolRadius))
+  assert(centreRegions.length === 2, `the fixture must resolve to two pockets, got ${centreRegions.length}`)
+  const perRegion = centreRegions.map((region) => planSeedCircles(region, startRadius, stepover, toolRadius * 2))
+  assert(perRegion.every((list) => list.length > 0), 'both pockets must seed')
+  const plans = perRegion.flat()
 
   const moves = generatePocketToolpath(project, operation).moves
   const levelZ = moves.reduce((min, move) => Math.min(min, move.to.z), 0)
@@ -474,28 +565,32 @@ function testPhaseOneRunsForEveryAreaBeforePhaseTwo(): void {
     }
   }
 
-  assert(seenAreas.size === 2, `both areas must emit circles, saw ${seenAreas.size}`)
+  assert(
+    seenAreas.size === plans.length,
+    `every planned area must emit circles: ${seenAreas.size} of ${plans.length}`,
+  )
   assert(firstRing < Infinity, 'phase 2 must emit rings outside the seed discs')
   assert(
     lastCircle < firstRing,
     `every phase-1 circle must precede the first phase-2 ring: last circle at ${lastCircle}, first ring at ${firstRing}`,
   )
-  console.log(`phase 1 before phase 2: PASSED (2 areas, last circle ${lastCircle} < first ring ${firstRing})`)
+  console.log(`phase 1 before phase 2: PASSED (${plans.length} areas across 2 pockets, last circle ${lastCircle} < first ring ${firstRing})`)
 }
 
 /**
- * When no seed fits, `seeded_offset` must be byte-identical to `offset`.
+ * When fewer than three seed circles fit, `seeded_offset` must be
+ * byte-identical to `offset`.
  *
- * An 11.6 mm-wide pocket cut with a 6 mm tool leaves a 5.6 mm-wide tool-centre
- * region, whose inscribed radius (2.8) is under the tool radius (3), so the
- * schedule is empty. A 10% stepover and a four-level stepdown still fill that
- * region with rings, so this compares a stream of real size rather than the
- * couple of moves a merely narrow slot would produce.
+ * A 20 mm-wide pocket cut with a 6 mm tool leaves a 14 mm-wide tool-centre
+ * region, whose inscribed radius (7) schedules exactly two circles: r=3 and
+ * r=5.4 at a 40% stepover. The threshold must decline both, leaving the
+ * normal rings untouched. A four-level stepdown makes this a real-size stream,
+ * not a couple of moves in a narrow slot.
  */
 function testNoSeedFallsBackByteIdentical(): void {
-  const project = projectWith([rect('narrow', 0, 0, 120, 11.6)])
+  const project = projectWith([rect('narrow', 0, 0, 120, 20)])
   const base = pocketOperation('narrow', ['narrow'], {
-    stepover: 0.1,
+    stepover: 0.4,
     stepdown: 1,
     roundOutsideCorners: true,
     pocketSlotFeedPercent: 60,
@@ -545,6 +640,7 @@ function testParallelAndIslandsAreUnaffected(): void {
 
 try {
   testScheduleStopsAtTheFirstRadiusThatDoesNotFit()
+  testThreeCircleMinimumKeepsTheExactBoundary()
   testNoCircleIsEverClipped()
   testSeedDiscIsFullyCleared()
   testStartRadiusNeverExceedsToolRadius()
@@ -552,6 +648,7 @@ try {
   testHandoffLandsOneStepoverOutsideTheSeed()
   testSeededStreamEmitsCirclesAndClearsEverything()
   testSeedIsNotCutTwice()
+  testSeveralOpenAreasInOneRegion()
   testPhaseOneRunsForEveryAreaBeforePhaseTwo()
   testNoSeedFallsBackByteIdentical()
   testParallelAndIslandsAreUnaffected()

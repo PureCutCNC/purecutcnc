@@ -80,6 +80,31 @@ const MIN_SEED_RADIUS_RATIO = 0.05
 /** Fewest points in a tessellated seed circle. */
 const MIN_SEED_CIRCLE_POINTS = 24
 
+/**
+ * Fewest full concentric laps worth front-loading before phase 2 takes over.
+ *
+ * One or two seed circles split the offset tree without clearing enough of the
+ * open middle to earn the extra handoff. Keep that small remainder on the
+ * regular rings instead. This is deliberately an implementation constant: the
+ * seeded strategy is experimental and this threshold is not a user setting.
+ */
+const MIN_SEED_CIRCLES = 3
+
+/** Sides of the coarse polygon standing in for an area already cleared. */
+const SEED_EXCLUSION_SIDES = 16
+
+/**
+ * Backstop on the number of open areas seeded in one region.
+ *
+ * The search terminates on its own — every area consumes at least a disc of
+ * `startRadius`, so the free area strictly shrinks — and on real pockets it
+ * exits well inside this bound. The cap exists so a pathological region (one
+ * whose tessellation lets the inscribed-circle search keep finding slivers)
+ * cannot turn one operation into an unbounded run of branch-and-bound
+ * searches, each of which pays for every island found before it.
+ */
+const MAX_SEED_AREAS = 24
+
 export interface SeedCirclePlan {
   /** Centre of the maximum inscribed circle of the tool-centre region. */
   centre: Point
@@ -145,46 +170,120 @@ export function seedCircleContour(centre: Point, radius: number, arcTolerance: n
 }
 
 /**
- * Plan phase 1 for one tool-centre region, or `null` when the region has no
- * seed worth cutting — no clearance circle at all, or one too small to hold a
- * single circle. A null plan is the signal to leave that region on today's
- * path unchanged.
+ * How far a later area must stand off from what an earlier one emptied.
+ *
+ * `toolRadius` is what phase 1's last circle physically reached past its own
+ * centreline. The two stepovers are what the ring tree needs to grow a pass
+ * out of each side of the gap, since `buildInsetRegions` expands every island
+ * by one stepover per recursion — leave less and the two expanded islands meet,
+ * the region between them collapses, and no ring is emitted in a gap the
+ * cutter was nonetheless too small to have cleared. The remaining
+ * `toolRadius`-wide band is what guarantees the pass exists rather than merely
+ * fitting to within a rounding error.
+ *
+ * This is the window that leaves stock, and it only opens above a 50% stepover
+ * — below it, two circles far enough apart to need a ring always have room for
+ * one. Charging the full separation at every stepover costs a few seeds on
+ * fine ones and keeps a single rule.
+ */
+function seedSeparation(stepover: number, toolRadius: number): number {
+  return toolRadius + 2 * stepover
+}
+
+/**
+ * The area an earlier seed consumed, as a polygon that CONTAINS its disc.
+ *
+ * Deliberately coarse and deliberately circumscribed. Every later
+ * inscribed-circle search measures against every polygon found before it, and
+ * that search calls `pointToRegionDistance` once per quadtree cell over every
+ * edge of every contour — so a chord-tolerance tessellation here makes the
+ * whole plan quadratic in the number of areas for no benefit. A 16-gon
+ * circumscribing the disc is 2% larger than it, which errs toward standing
+ * further off, and that is the safe direction.
+ */
+function seedExclusionPolygon(centre: Point, radius: number): Point[] {
+  const vertexRadius = radius / Math.cos(Math.PI / SEED_EXCLUSION_SIDES)
+  const points: Point[] = []
+  for (let index = 0; index < SEED_EXCLUSION_SIDES; index += 1) {
+    const angle = (2 * Math.PI * index) / SEED_EXCLUSION_SIDES
+    points.push({
+      x: centre.x + vertexRadius * Math.cos(angle),
+      y: centre.y + vertexRadius * Math.sin(angle),
+    })
+  }
+  return normalizeWinding(points, isClockwise(points))
+}
+
+/**
+ * Plan phase 1 for one tool-centre region: every open area it holds, largest
+ * first, or an empty list when it holds none worth cutting.
+ *
+ * Each pass finds the largest inscribed circle of what is still uncut, cuts
+ * the schedule that fits inside it, and then hands the disc it cleared to the
+ * next pass **as an island**. That is what keeps the "never clipped" property
+ * across several seeds rather than only the first: the next area's inscribed
+ * radius is measured against the walls, the real islands, and everything phase
+ * 1 has already removed, so its circles are whole circles standing in uncut
+ * material — never arcs trimmed against a cleared disc.
+ *
+ * The loop is self-terminating. Every area consumes at least a disc of radius
+ * `startRadius`, so the free area strictly shrinks, and the search stops as
+ * soon as the largest remaining circle cannot hold even the first radius.
+ * `MAX_SEED_AREAS` is a backstop against pathological tessellation, not the
+ * expected exit.
  */
 export function planSeedCircles(
   region: ResolvedPocketRegion,
   startRadius: number,
   stepover: number,
   toolDiameter: number,
-): SeedCirclePlan | null {
-  if (!(startRadius > 0) || !(stepover > 0) || !(toolDiameter > 0)) return null
+): SeedCirclePlan[] {
+  if (!(startRadius > 0) || !(stepover > 0) || !(toolDiameter > 0)) return []
 
   const precision = Math.max(MIN_SEED_CLEARANCE_PRECISION, toolDiameter * SEED_CLEARANCE_PRECISION_RATIO)
-  const circle = findLargestClearanceCircle(
-    [{ outer: region.outer, islands: region.islands }],
-    precision,
-  )
-  if (!circle) return null
-
-  // Stop at the first radius that does not fit: the schedule is bounded by the
-  // inscribed radius, which is measured against the walls and every island, so
-  // no circle is ever clipped and none needs its own containment test.
-  const radii: number[] = []
-  for (let radius = startRadius; radius <= circle.radius; radius += stepover) {
-    radii.push(radius)
-  }
-  if (radii.length === 0) return null
-
-  const lastRadius = radii[radii.length - 1]
-  if (!(lastRadius >= toolDiameter * MIN_SEED_RADIUS_RATIO)) return null
-
   const arcTolerance = seedArcTolerance(stepover)
-  return {
-    centre: { x: circle.center.x, y: circle.center.y },
-    maxRadius: circle.radius,
-    radii,
-    lastRadius,
-    island: seedCircleContour(circle.center, lastRadius, arcTolerance),
+  const minRadius = toolDiameter * MIN_SEED_RADIUS_RATIO
+  const plans: SeedCirclePlan[] = []
+  const consumed: Point[][] = []
+
+  while (plans.length < MAX_SEED_AREAS) {
+    const circle = findLargestClearanceCircle(
+      [{ outer: region.outer, islands: [...region.islands, ...consumed] }],
+      precision,
+    )
+    if (!circle) break
+
+    // Stop at the first radius that does not fit: the schedule is bounded by
+    // the inscribed radius, which is measured against the walls, the islands
+    // and every disc already cleared, so no circle is ever clipped and none
+    // needs its own containment test.
+    const radii: number[] = []
+    for (let radius = startRadius; radius <= circle.radius; radius += stepover) {
+      radii.push(radius)
+    }
+    // This is the largest remaining open area. If it cannot produce three
+    // circles, no later (smaller) area can either, so leave all of the
+    // remainder on the regular offset tree instead of adding a counter-
+    // productive one- or two-circle seed.
+    if (radii.length < MIN_SEED_CIRCLES) break
+
+    const lastRadius = radii[radii.length - 1]
+    if (!(lastRadius >= minRadius)) break
+
+    plans.push({
+      centre: { x: circle.center.x, y: circle.center.y },
+      maxRadius: circle.radius,
+      radii,
+      lastRadius,
+      island: seedCircleContour(circle.center, lastRadius, arcTolerance),
+    })
+    consumed.push(seedExclusionPolygon(
+      circle.center,
+      lastRadius + seedSeparation(stepover, toolDiameter / 2),
+    ))
   }
+
+  return plans
 }
 
 /**
