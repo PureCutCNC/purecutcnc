@@ -2768,11 +2768,20 @@ function generateFinishBandMoves(
   const minFloorStepover = 1 / DEFAULT_CLIPPER_SCALE
   const floorStepover = Math.max(stepoverDistance, minFloorStepover)
   const floorSmoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, floorStepover)
+  // The island join mirrors the rough pass (issue #550): with rounding on,
+  // island holes are grown with round joins so the island-side floor rings
+  // wrap convex island corners smoothly at a true rounded offset, never
+  // gouging the island. The island contours themselves are cut per node below
+  // (loops 'all') — the ring the finish floor used to skip, which left the
+  // corner lens between the wall contour and the floor rings uncut.
+  const floorIslandJoin = operation.roundOutsideCorners
+    ? ClipperLib.JoinType.jtRound
+    : ClipperLib.JoinType.jtMiter
   const floorTrees = operation.finishFloor && !isParallelPocket
     ? finishRegions
       .flatMap((region) => buildInsetRegions(region, 0))
-      .flatMap((region) => buildInsetRegions(region, floorStepover))
-      .map((region) => buildOffsetRegionTree(region, floorStepover))
+      .flatMap((region) => buildInsetRegions(region, floorStepover, ClipperLib.JoinType.jtMiter, floorIslandJoin))
+      .map((region) => buildOffsetRegionTree(region, floorStepover, floorIslandJoin))
     : []
   // Tangential link junctions for the offset floor rings; the domain is the
   // wall-finish tool-centre path (finishRegions), which is the hard boundary
@@ -2838,7 +2847,7 @@ function generateFinishBandMoves(
         direction,
         undefined,
         'inner-first',
-        'outer',
+        'all',
         floorSmoothRadius,
         0,
         entryPolicy,
