@@ -65,7 +65,7 @@ Current smoke targets:
 - `importGeometry.smoke.spec.ts` — real-user import flow: dialog open/close, button state, file upload via hidden input, SVG/DXF mode selection with classification summary verification (Auto/Paths/Solid regions), real Import button, project-role verification through existing `getProject` seam, and landscape tablet layout. Synthetic inline fixtures only.
 - `modelOrientation.smoke.spec.ts` — post-import 3D orientation for imported models (issue #241): real STL import, 90° quick-rotate committing a rigid Z band and a re-projected silhouette, non-deforming lift, and reset to import orientation.
 - `machineLibrary.smoke.spec.ts` — application machine library (issue #403): My Machines persistence across projects and restarts, one-snapshot embedding on selection, the non-blocking update warning (keep vs. explicit update), and library deletion leaving a project's embedded machine usable.
-- `overlapFeatureSelection.smoke.spec.ts` — direct selection for clear outline clicks, ambiguous-overlap picker wiring, candidate hover/focus previews, non-topmost selection, boxed scroll behavior, next-action dismissal, and landscape-tablet availability.
+- `overlapFeatureSelection.smoke.spec.ts` — direct selection for clear outline clicks and interior clicks over stacked shapes (issue #521), picker wiring for coincident-outline clicks, candidate hover/focus previews, non-topmost selection, boxed scroll behavior, next-action dismissal, and landscape-tablet availability.
 
 ## Adding a test
 

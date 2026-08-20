@@ -263,24 +263,71 @@ function makeProject(
   console.log('   ✓ coincident outlines remain ambiguous')
 }
 
-// Shared interiors with no nearby outline remain ambiguous.
+// Shared interiors with no nearby outline select the topmost feature, which
+// is what the hover highlight previews (issue #521).
 {
-  console.log('9. Shared interior ambiguity...')
+  console.log('9. Shared interior selects topmost...')
 
   const bottom = makeFeature('bottom', rectProfile(0, 0, 20, 20))
   const top = makeFeature('top', rectProfile(0, 0, 20, 20))
   const features = resolvedProjectFeatures(makeProject([bottom, top]))
   const result = resolveFeatureSelectionHit({ x: 10, y: 10 }, features, preciseVt)
 
-  assert(result.kind === 'ambiguous', `expected ambiguous shared interior, got ${result.kind}`)
+  assert(result.kind === 'direct', `expected direct topmost shared interior, got ${result.kind}`)
+  assert(result.featureId === 'top', `expected topmost feature, got ${result.featureId}`)
   assert(result.candidateIds.join(',') === 'top,bottom', 'interior candidates should remain topmost-first')
 
-  console.log('   ✓ shared interiors remain ambiguous')
+  console.log('   ✓ shared interiors resolve to the topmost candidate')
+}
+
+// A hole nested inside a material: clicking inside the hole selects the hole
+// without the overlap picker, while clicking the material around it still
+// selects the material (issue #521 scenario).
+{
+  console.log('10. Nested hole-in-material interior click...')
+
+  const material = makeFeature('material', rectProfile(0, 0, 40, 40))
+  const hole = makeFeature('hole', rectProfile(15, 15, 10, 10))
+  const features = resolvedProjectFeatures(makeProject([material, hole]))
+
+  const holeInterior = resolveFeatureSelectionHit({ x: 20, y: 20 }, features, preciseVt)
+  assert(holeInterior.kind === 'direct', `expected direct hole interior, got ${holeInterior.kind}`)
+  assert(holeInterior.featureId === 'hole', `expected hole feature, got ${holeInterior.featureId}`)
+  assert(holeInterior.candidateIds.join(',') === 'hole,material', 'hole interior candidates should stay topmost-first')
+
+  const materialInterior = resolveFeatureSelectionHit({ x: 5, y: 5 }, features, preciseVt)
+  assert(materialInterior.kind === 'direct', `expected direct material interior, got ${materialInterior.kind}`)
+  assert(materialInterior.featureId === 'material', `expected material feature, got ${materialInterior.featureId}`)
+
+  const holeOutline = resolveFeatureSelectionHit({ x: 15, y: 20 }, features, preciseVt)
+  assert(holeOutline.kind === 'direct', `expected direct hole outline, got ${holeOutline.kind}`)
+  assert(holeOutline.featureId === 'hole', `expected hole on outline click, got ${holeOutline.featureId}`)
+
+  // Covered variant: the material is drawn on top. An interior click still
+  // resolves to the innermost hole instead of the covering material (the
+  // review-feedback case that extended issue #521).
+  const coveredFeatures = resolvedProjectFeatures(makeProject([hole, material]))
+  const coveredInterior = resolveFeatureSelectionHit({ x: 20, y: 20 }, coveredFeatures, preciseVt)
+  assert(coveredInterior.kind === 'direct', `expected direct covered hole interior, got ${coveredInterior.kind}`)
+  assert(coveredInterior.featureId === 'hole', `expected innermost hole, got ${coveredInterior.featureId}`)
+  assert(coveredInterior.candidateIds.join(',') === 'material,hole', 'covered candidates should stay topmost-first')
+
+  // Hover follows the same innermost resolution, in both draw orders.
+  assert(
+    findHitFeatureId({ x: 20, y: 20 }, features, preciseVt) === 'hole',
+    'hover should preview the innermost hole',
+  )
+  assert(
+    findHitFeatureId({ x: 20, y: 20 }, coveredFeatures, preciseVt) === 'hole',
+    'hover should preview the innermost hole even when covered',
+  )
+
+  console.log('   ✓ nested interior clicks resolve without the picker, even when covered')
 }
 
 // A lone hit keeps ordinary direct-selection behavior.
 {
-  console.log('10. Single candidate selection...')
+  console.log('11. Single candidate selection...')
 
   const feature = makeFeature('only', rectProfile(0, 0, 20, 20))
   const features = resolvedProjectFeatures(makeProject([feature]))
