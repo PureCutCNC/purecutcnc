@@ -66,6 +66,12 @@ import {
 } from './tangentLink'
 import { buildWallCornerCleanupContour } from './wallCornerCleanup'
 import {
+  planSeedCircles,
+  seedCircleContours,
+  seedStartRadius,
+  type SeedCirclePlan,
+} from './seedClearing'
+import {
   EngagementFeedQuantizer,
   EngagementTelemetryAccumulator,
   SweptMaterialIndex,
@@ -2567,9 +2573,39 @@ function generateRoughBandMoves(
   const islandJoinType = operation.roundOutsideCorners
     ? ClipperLib.JoinType.jtRound
     : ClipperLib.JoinType.jtMiter
-  const regionTrees = band.regions
+  const centreRegions = band.regions
     .flatMap((region) => buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
-    .map((region) => buildOffsetRegionTree(region, effectiveStepover, islandJoinType))
+  // Seeded circle clearing (issue #554). Phase 1 clears the open middle with
+  // full circles grown from the region's clearance seed; the last of them is
+  // recorded as an island so phase 2 is today's ring tree, unchanged, with its
+  // first ring landing one stepover outside the seed disc. The pattern is the
+  // only gate: any other value plans nothing and takes the previous path.
+  const seedStart = operation.pocketPattern === 'seeded_offset'
+    ? seedStartRadius(operation, toolRadius)
+    : 0
+  const seedPlans = new Map<OffsetRegionNode, SeedCirclePlan>()
+  const regionTrees = centreRegions.map((region) => {
+    const plan = seedStart > 0
+      ? planSeedCircles(region, seedStart, effectiveStepover, toolRadius * 2)
+      : null
+    if (!plan) return buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
+
+    const seeded = buildOffsetRegionTree(
+      { ...region, islands: [...region.islands, plan.island] },
+      effectiveStepover,
+      islandJoinType,
+    )
+    // The tree must OFFSET around the seed island but must not CUT it: phase 1
+    // has already run that exact lap, and `cutOffsetRegionNode` emits every
+    // island of the node it is cutting. Restoring the root's original island
+    // list drops the duplicate — the children were built from the region that
+    // still had the seed, so every outward ring is unaffected — and it also
+    // returns the seed disc to the cleared domain that entry placement and
+    // tangential links are tested against, which is where the helix belongs.
+    const tree: OffsetRegionNode = { region, children: seeded.children }
+    seedPlans.set(tree, plan)
+    return tree
+  })
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
   // Tangential links (issue #545): replace the straight ring-to-ring link
   // with a tangent S-curve, gated by the operation field (absent = today's
@@ -2636,6 +2672,32 @@ function generateRoughBandMoves(
     )
 
     for (const tree of orderedTrees) {
+      // Phase 1 first, innermost circle outwards. Every circle starts at the
+      // same angle as the one before it, so the link to the next is a radial
+      // step of exactly one stepover — never longer than the tool diameter,
+      // and therefore always a direct cut link rather than a retract.
+      const seedPlan = seedPlans.get(tree)
+      if (seedPlan) {
+        const circles = applyContourDirection(
+          seedCircleContours(seedPlan, effectiveStepover),
+          direction,
+        )
+        for (const circle of circles) {
+          currentPosition = transitionToCutEntry(
+            moves,
+            currentPosition,
+            contourStartPoint(circle, z),
+            safeZ,
+            maxLinkDistance,
+            undefined,
+            levelEntryPolicy,
+          )
+          const circleMoves = toClosedCutMoves(circle, z)
+          moves.push(...circleMoves)
+          currentPosition = circleMoves.at(-1)?.to ?? currentPosition
+        }
+      }
+
       currentPosition = cutOffsetRegionNode(
         moves,
         tree,

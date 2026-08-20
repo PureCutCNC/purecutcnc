@@ -81,6 +81,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.pocketPattern.offset': 'Offset',
   'cam.pocketPattern.parallel': 'Parallel',
   'cam.pocketPattern.waterline': 'Wasserlinie',
+  'cam.pocketPattern.seededOffset': 'Startkreise',
 
   // ── Pass labels ──
   'cam.pass.rough': 'Schruppen',

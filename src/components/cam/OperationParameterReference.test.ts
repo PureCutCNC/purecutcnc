@@ -86,7 +86,7 @@ function testEveryKindRendersSvg(): void {
 // the value-aware switch produces geometry).
 function testVariantKindsRenderEveryOption(): void {
   const cases: Array<[OperationParamRefKind, readonly string[]]> = [
-    ['pattern', ['offset', 'parallel', 'waterline']],
+    ['pattern', ['offset', 'parallel', 'waterline', 'seeded_offset']],
     ['cutDirection', ['conventional', 'climb']],
     ['edgeStrategy', ['contour', 'trochoidal']],
     ['machiningOrder', ['level_first', 'feature_first']],

@@ -85,6 +85,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.pocketPattern.offset': '偏移',
   'cam.pocketPattern.parallel': '平行',
   'cam.pocketPattern.waterline': '水平线',
+  'cam.pocketPattern.seededOffset': '同心圆起始',
 
   // ── Pass labels ──
   'cam.pass.rough': '粗加工',
