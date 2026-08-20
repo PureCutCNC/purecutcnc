@@ -63,6 +63,43 @@ gh pr list --state merged --limit 50 --json number,title,labels,mergedAt
 
 Re-run the eligibility check against each labeled PR's merge base. If fast-lane PRs exceed a third of the window, the criteria are being stretched — tighten them.
 
+## Scope Discipline
+
+The loop above is for *work*. These rules keep it from being applied to things
+that are not work, and keep an approved plan from being relitigated. Each exists
+because its absence produced the same failure: a question answered with an
+investigation, an approved feature reopened as an argument, and effort spent
+proving a point nobody asked about.
+
+**A question is not a task.** "Look at X", "why does Y do this", "what do you
+think about Z" gets an answer in the conversation, in prose. No issue, no plan,
+no board card, no numbers. The loop starts when the user asks for the work, not
+when a topic comes up. Answering a question by opening an issue is the most
+expensive way to say a sentence.
+
+**One investigation pass.** Read what you need, then answer. Do not open a
+second pass to audit the first, and do not re-derive a conclusion already
+reached in this session. A push-back from the user or newly landed code is a new
+pass with a reason; nothing else is.
+
+**Do not produce numbers you did not measure.** No estimated tables, no invented
+percentages, no ratios assembled from guesses. With no measurement in hand, say
+what is true in words or say you do not know — an unfollowable table of figures
+is worse than the sentence it replaced. **Performance assertions** below is the
+only place in this repo where a measurement belongs in the deliverable, and it
+applies only where it says it does.
+
+**The approved issue is the contract.** After approval, implement it. If
+implementation shows the plan is wrong, stop and say so in two or three
+sentences, then wait. Do not re-analyse it into a different design, and do not
+build something other than what was approved because a better idea arrived late.
+
+**Abandonment is the user's call, never yours.** Do not revert working code,
+close an approved issue, or declare an approved feature not worth building on
+your own judgment. Raise the concern in a sentence and wait for an answer. "I
+decided it wasn't worth it" is not a status an agent may report on approved
+work.
+
 ## The Backlog Contract
 
 The workflow above governs how work *enters*. This section governs how it
@@ -119,6 +156,10 @@ filing**. That is not a hope; it is the observed behaviour of this tracker.
 #196's polish list contained `[ ] Non-rectangular tabs`, untouched from
 2026-06-25. On 2026-08-02 an outside user filed #414 — smooth tabs — with a
 working branch and a screenshot.
+
+**This bet covers *unstarted* filings only.** Once something is planned,
+approved and started it leaves R2's scope entirely, and "closing costs nothing"
+stops applying to it — see **Abandonment is the user's call** above.
 
 ### R3 — External reports are marked automatically and never decay
 
@@ -188,6 +229,12 @@ Always run `npm run build` from the project root to verify changes compile befor
 **A known-failing test is annotated, never deleted or left out of a lane.** Both annotations take the test declaration — `test.fixme('title', fn)` — because a bare `test.fixme()` is a *scope* modifier that silently disables every test in the enclosing `describe`. Use `test.fail()` only when the failure is genuinely deterministic: it reports "expected to fail, but passed" the moment the test succeeds, which is a useful prompt to remove the annotation but a false alarm if the test is merely flaky. When in doubt use `test.fixme()`, and prove determinism before choosing `test.fail()` — a failure that depends on `--workers` is a flake, not a deterministic failure. Either way the annotation carries its issue number in a comment so it stays greppable and cannot decay into an anonymous permanent skip.
 
 ### Performance assertions compare against invariant work, never against a millisecond constant
+
+**Scope: this section applies only when you are writing a timing assertion into
+a test.** It is a recipe for one narrow act, not a house style. Nothing in it
+licenses measuring anything else, tabulating anything else, or re-measuring to
+check a previous figure. If the user asked a question, answer the question — see
+**Scope Discipline**.
 
 `build` is a required status check, so any timing assertion that drifts blocks merges for everyone. Three issues have now been spent here (#383, #386, #508). Each of the first two fixed the *units* and left the *shape* of the assertion alone, and each decayed within weeks. The rule below is the third answer; read the whole of it before writing a timing assertion.
 
