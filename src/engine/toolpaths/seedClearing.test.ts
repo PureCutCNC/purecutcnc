@@ -431,6 +431,31 @@ function countSeedRadialLinks(
   }).length
 }
 
+/**
+ * A tangent S re-seams its arrival circle. The next circle in the same seed
+ * must begin at that new seam, otherwise its radial transition exceeds the
+ * direct-link budget and retracts to safe Z.
+ */
+function countSeedCircleRapids(
+  moves: ToolpathMove[],
+  centre: Point,
+  plan: SeedCirclePlan,
+  stepover: number,
+): number {
+  return moves.filter((move) => {
+    if (move.kind !== 'rapid') return false
+    const fromRadius = Math.hypot(move.from.x - centre.x, move.from.y - centre.y)
+    const toRadius = Math.hypot(move.to.x - centre.x, move.to.y - centre.y)
+    return (
+      fromRadius >= plan.radii[0] - 0.02
+      && fromRadius <= plan.lastRadius + 0.02
+      && toRadius >= plan.radii[0] - 0.02
+      && toRadius <= plan.lastRadius + 0.02
+      && Math.abs(Math.abs(toRadius - fromRadius) - stepover) < 0.02
+    )
+  }).length
+}
+
 function testSeedCircleTransitionsUseTangentSLinks(): void {
   const project = projectWith([rect('pocket', 0, 0, 70, 50)])
   const base = pocketOperation('seeded', ['pocket'], { pocketPattern: 'seeded_offset' })
@@ -445,6 +470,7 @@ function testSeedCircleTransitionsUseTangentSLinks(): void {
   const levelZ = straight.moves.reduce((min, move) => Math.min(min, move.to.z), 0)
   const straightRadialLinks = countSeedRadialLinks(straight.moves, plan.centre, plan, stepover, levelZ)
   const roundedRadialLinks = countSeedRadialLinks(rounded.moves, plan.centre, plan, stepover, levelZ)
+  const roundedSeedRapids = countSeedCircleRapids(rounded.moves, plan.centre, plan, stepover)
 
   assert(straightRadialLinks >= plan.radii.length - 1, 'the control stream must use direct radial seed links')
   assert(
@@ -452,6 +478,10 @@ function testSeedCircleTransitionsUseTangentSLinks(): void {
     `roundLinkCorners must replace seed radial links with S-links (${straightRadialLinks} -> ${roundedRadialLinks})`,
   )
   assert(rounded.moves.length > straight.moves.length, 'a tessellated S-link must add cut segments')
+  assert(
+    roundedSeedRapids === 0,
+    `re-seamed seed circles must stay cut-linked, got ${roundedSeedRapids} safe-height rapids`,
+  )
 
   const toolRadius = 3
   const straightCoverage = buildSweptCoverage(cutCentrelines(straight.moves), toolRadius)

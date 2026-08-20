@@ -2717,7 +2717,15 @@ function generateRoughBandMoves(
             seedCircleContours(seedPlan, effectiveStepover),
             direction,
           )
-          for (const circle of circles) {
+          // A successful tangent S re-seams its arrival circle. Carry that
+          // endpoint to the next concentric circle so its radial link remains
+          // short; otherwise the old canonical seam can be a full diameter
+          // away and force an avoidable safe-Z rapid.
+          let previousCircleEnd: ToolpathPoint | null = null
+          for (const baseCircle of circles) {
+            const circle = tangentLink
+              ? rotateContourToNearestEntry(baseCircle, previousCircleEnd)
+              : baseCircle
             const linkStartIndex = moves.length
             currentPosition = transitionToCutEntry(
               moves,
@@ -2742,6 +2750,7 @@ function generateRoughBandMoves(
             }
             moves.push(...circleMoves)
             currentPosition = circleMoves.at(-1)?.to ?? currentPosition
+            previousCircleEnd = tangentLink ? currentPosition : null
           }
         }
       }
