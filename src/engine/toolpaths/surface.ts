@@ -17,7 +17,7 @@
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
-import { createEntryPolicy, withEntryStartZ } from './entry'
+import { createEntryPolicy, withEntryStartZ, withEntryHandoffFeedScale } from './entry'
 import type {
   ClipperPath,
   PocketToolpathResult,
@@ -41,26 +41,45 @@ import {
   toClipperPath,
 } from './geometry'
 import {
+  applyLevelFeed,
   buildContourLoops,
   buildInsetRegions,
-  buildPocketFloorContours,
+  buildOffsetBandEngagementClassification,
+  buildOffsetRegionTree,
+  buildOffsetUnitFrontier,
   buildPocketParallelSegments,
-  cutOffsetRegionRecursive,
+  buildRingPerimeterIndex,
   contourStartPoint,
+  cutOffsetNodeRings,
+  cutOffsetRegionNode,
   executeDifference,
   generateStepLevels,
+  nextRoughSection,
+  offsetSectionEntryPoint,
+  offsetUnitEntryPoint,
   orderClosedContoursGreedy,
+  orderNodesGreedy,
   orderOpenSegmentsGreedy,
-  orderRegionsGreedy,
   polyTreeToRegions,
   retractToSafe,
   resolveBandBottomZ,
-  transitionToCutEntry,
+  resolveSlotFeedScale,
+  rotateContourToNearestEntry,
+  SLOT_FEED_ADJACENCY_FACTOR,
+  SLOT_FEED_ENGAGEMENT_FACTOR,
+  SLOT_FEED_OWN_TRAIL_FACTOR,
+  spliceTangentSLink,
   toClosedCutMoves,
   toOpenCutMoves,
+  transitionToCutEntry,
   updateBounds,
 } from './pocket'
-import { cornerSmoothingRadius, smoothClosedContours } from './offsetSmoothing'
+import type { OffsetRegionNode } from './pocket'
+import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
+import { pocketTangentLinkOptions } from './tangentLink'
+import { seedStartRadius, planSeedCircles, seedCircleContours } from './seedClearing'
+import type { SeedCirclePlan } from './seedClearing'
+import { cornerSmoothingRadius } from './offsetSmoothing'
 import {
   buildRegionMask,
   splitFeatureTargets,
@@ -326,6 +345,7 @@ function generateRoughBandMoves(
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
+  telemetry: EngagementTelemetryAccumulator | null = null,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -371,6 +391,11 @@ function generateRoughBandMoves(
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
   const effectiveStepover = Math.max(stepoverDistance, minStepover)
   let currentPosition: ToolpathPoint | null = null
+  const slotScale = resolveSlotFeedScale(operation)
+  const slotDistance = Math.max(
+    toolRadius * 2 * SLOT_FEED_ENGAGEMENT_FACTOR,
+    effectiveStepover * SLOT_FEED_ADJACENCY_FACTOR,
+  )
 
   if (operation.pocketPattern === 'parallel') {
     const roughRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, initialInset))
@@ -384,12 +409,15 @@ function generateRoughBandMoves(
 
     const boundaryContours = applyContourDirection(buildContourLoops(roughRegions), direction)
     const segments = buildPocketParallelSegments(roughRegions, effectiveStepover, operation.pocketAngle)
-    const entryPolicy = createEntryPolicy(
+    const entryPolicy = withEntryHandoffFeedScale(
+      createEntryPolicy(
         operation,
         toolRadius * 2,
         roughRegions,
         (warning) => appendUniqueWarning(warnings, warning),
-      )
+      ),
+      slotScale,
+    )
     if (segments.length === 0) {
       return {
         moves,
@@ -404,6 +432,7 @@ function generateRoughBandMoves(
         entryPolicy,
         levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
       )
+      const levelStartIndex = moves.length
       const orderedBoundaryContours = orderClosedContoursGreedy(
         boundaryContours,
         currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
@@ -446,6 +475,18 @@ function generateRoughBandMoves(
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
 
+      applyLevelFeed(
+        moves,
+        levelStartIndex,
+        operation,
+        slotScale,
+        slotDistance,
+        effectiveStepover * SLOT_FEED_OWN_TRAIL_FACTOR,
+        toolRadius * 2,
+        effectiveStepover,
+        telemetry,
+      )
+
       currentPosition = retractToSafe(moves, currentPosition, safeZ)
     }
 
@@ -459,12 +500,69 @@ function generateRoughBandMoves(
     ? ClipperLib.JoinType.jtRound
     : ClipperLib.JoinType.jtMiter
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
-  const entryPolicy = createEntryPolicy(
+  const centreRegions = coverageRegions.flatMap((region) =>
+    buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
+  // Seeded circle clearing (issue #554). Full circles grow from each region's
+  // clearance seed; the last is recorded as an island so each offset ring
+  // stays one stepover outside the cleared disc. Both are independent inner
+  // sections in the travel scheduler below. The pattern is the only gate: any
+  // other value plans nothing and takes the previous path.
+  const seedStart = operation.pocketPattern === 'seeded_offset'
+    ? seedStartRadius(operation, toolRadius)
+    : 0
+  const seedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
+  const regionTrees = centreRegions.map((region) => {
+    const plans = seedStart > 0
+      ? planSeedCircles(region, seedStart, effectiveStepover, toolRadius * 2)
+      : []
+    if (plans.length === 0) return buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
+
+    const seeded = buildOffsetRegionTree(
+      { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
+      effectiveStepover,
+      islandJoinType,
+    )
+    // The tree must OFFSET around the seed islands but must not CUT them:
+    // seed stacks emit those exact laps separately, and `cutOffsetRegionNode`
+    // emits every island of the node it is cutting. Restoring the root's
+    // original island list drops the duplicates while the children retain the
+    // seed islands that keep every outward ring clear.
+    const tree: OffsetRegionNode = { region, children: seeded.children }
+    seedPlans.set(tree, plans)
+    return tree
+  })
+  // Tangential links (issue #545): replace the straight ring-to-ring link
+  // with a tangent S-curve, gated by the operation field (absent = today's
+  // straight links). The domain is the band's tool-centre region — the tree
+  // roots are exactly that construction — and the solver falls back to the
+  // straight link when nothing fits.
+  const tangentLink = (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.roundLinkCorners
+    ? pocketTangentLinkOptions(
+      operation.roundLinkCorners,
+      toolRadius * 2,
+      regionTrees.map((tree) => tree.region),
+    )
+    : undefined
+  const engagementCacheEnabled = telemetry !== null && operation.pocketFeedReduction === 'engagement'
+  const wallCleanup = (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.roundOutsideCorners
+    && operation.cleanWallCorners === true
+    ? {
+      enabled: true,
+      onFallback: (): void => appendUniqueWarning(warnings, { code: 'pocketWallCornerCleanupFallback' }),
+    }
+    : undefined
+  const ringPerimeters = engagementCacheEnabled
+    ? buildRingPerimeterIndex(regionTrees, direction, smoothRadius ?? null, wallCleanup !== undefined, toolRadius)
+    : null
+  const entryPolicy = withEntryHandoffFeedScale(
+    createEntryPolicy(
       operation,
       toolRadius * 2,
-      coverageRegions,
+      regionTrees.map((tree) => tree.region),
       (warning) => appendUniqueWarning(warnings, warning),
-    )
+    ),
+    slotScale,
+  )
 
   for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
     const z = stepLevels[levelIndex]
@@ -472,36 +570,184 @@ function generateRoughBandMoves(
       entryPolicy,
       levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
     )
-    const currentRegions = coverageRegions.flatMap((region) =>
-      buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
-    if (currentRegions.length === 0) {
+
+    if (regionTrees.length === 0) {
       warnings.push({ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
       currentPosition = retractToSafe(moves, currentPosition, safeZ)
       continue
     }
 
-    const orderedRegions = orderRegionsGreedy(
-      currentRegions,
-      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
-    )
-
-    for (const region of orderedRegions) {
-      currentPosition = cutOffsetRegionRecursive(
-        moves,
-        region,
-        z,
-        safeZ,
-        effectiveStepover,
-        maxLinkDistance,
-        currentPosition,
-        direction,
-        undefined,
-        'outer-first',
-        smoothRadius,
-        islandJoinType,
-        levelEntryPolicy,
-      )
+    const levelStartIndex = moves.length
+    const remainingSeedPlans = regionTrees.flatMap((tree) => seedPlans.get(tree) ?? [])
+    // A seed stack is an independent section. Its links are safe only inside
+    // the stack, so every cross-section transition retracts before the
+    // nearest-entry choice moves in XY.
+    const cutSeedStack = (seedPlan: SeedCirclePlan): void => {
+      currentPosition = retractToSafe(moves, currentPosition, safeZ)
+      const circles = applyContourDirection(seedCircleContours(seedPlan, effectiveStepover), direction)
+      let previousCircleEnd: ToolpathPoint | null = null
+      for (const baseCircle of circles) {
+        const circle = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
+        const linkStartIndex = moves.length
+        currentPosition = transitionToCutEntry(
+          moves,
+          currentPosition,
+          contourStartPoint(circle, z),
+          safeZ,
+          maxLinkDistance,
+          undefined,
+          levelEntryPolicy,
+        )
+        let circleMoves = toClosedCutMoves(circle, z)
+        const tangentSplice = spliceTangentSLink(
+          moves,
+          linkStartIndex,
+          circle,
+          circleMoves,
+          tangentLink,
+        )
+        if (tangentSplice) {
+          circleMoves = tangentSplice.cutMoves
+          currentPosition = tangentSplice.nextPosition
+        }
+        moves.push(...circleMoves)
+        currentPosition = circleMoves.at(-1)?.to ?? currentPosition
+        previousCircleEnd = currentPosition
+      }
     }
+
+    if (remainingSeedPlans.length === 0) {
+      // Legacy schedule: each whole offset tree is one section competing on
+      // its innermost entry. This is the plain `offset` path, and the
+      // byte-identical fallback seeded_offset must keep when no seed fits.
+      const remainingOffsetSections = regionTrees.map((node) => ({ node, parent: null, depth: 0 }))
+      while (remainingOffsetSections.length > 0) {
+        const choice = nextRoughSection(
+          remainingSeedPlans,
+          remainingOffsetSections,
+          (section, current, levelZ) => offsetSectionEntryPoint(
+            section, current, levelZ, direction, smoothRadius, wallCleanup, toolRadius,
+          ),
+          currentPosition,
+          z,
+          effectiveStepover,
+          direction,
+        )
+        const [section] = remainingOffsetSections.splice(choice.index, 1)
+        // A separately scheduled offset section never inherits a short
+        // direct-cut link from the previous section. Its XY travel is
+        // explicitly at safe Z before the configured entry resumes cutting.
+        currentPosition = retractToSafe(moves, currentPosition, safeZ)
+        currentPosition = cutOffsetRegionNode(
+          moves,
+          section.node,
+          z,
+          safeZ,
+          maxLinkDistance,
+          currentPosition,
+          direction,
+          undefined,
+          'inner-first',
+          'all',
+          smoothRadius,
+          section.depth,
+          levelEntryPolicy,
+          tangentLink,
+          wallCleanup,
+          toolRadius,
+          undefined,
+        )
+      }
+    } else {
+      // Seeded schedule (issue #575): offset work is a frontier of ring
+      // units. A unit becomes eligible once its children are cut, which
+      // preserves inner-first; after every seed stack or offset unit the next
+      // entry is re-chosen globally from the actual endpoint, so seed stacks
+      // and offset branches interleave instead of one whole tree draining
+      // after its first selection. Links inside one tree stay direct (and
+      // eligible for tangent S-curves); transitions from a seed stack or from
+      // another tree travel at safe Z first — the same rule the legacy
+      // section-to-section transitions used.
+      const { frontier, pendingChildren, unitByNode } = buildOffsetUnitFrontier(
+        regionTrees,
+        direction,
+        smoothRadius,
+        wallCleanup,
+        toolRadius,
+      )
+      let previousUnitRoot: OffsetRegionNode | null = null
+      while (remainingSeedPlans.length > 0 || frontier.length > 0) {
+        const choice = nextRoughSection(
+          remainingSeedPlans,
+          frontier,
+          offsetUnitEntryPoint,
+          currentPosition,
+          z,
+          effectiveStepover,
+          direction,
+        )
+        if (choice.kind === 'seed') {
+          const [seedPlan] = remainingSeedPlans.splice(choice.index, 1)
+          cutSeedStack(seedPlan)
+          previousUnitRoot = null
+          continue
+        }
+
+        const [unit] = frontier.splice(choice.index, 1)
+        if (previousUnitRoot !== unit.root) {
+          currentPosition = retractToSafe(moves, currentPosition, safeZ)
+        }
+        currentPosition = cutOffsetNodeRings(
+          moves,
+          unit.node,
+          z,
+          safeZ,
+          maxLinkDistance,
+          currentPosition,
+          direction,
+          undefined,
+          [],
+          'all',
+          smoothRadius,
+          unit.depth,
+          levelEntryPolicy,
+          tangentLink,
+          wallCleanup,
+          toolRadius,
+          unit.parent ?? undefined,
+        )
+        previousUnitRoot = unit.root
+        const parentNode = unit.parent
+        if (parentNode !== null) {
+          const remaining = (pendingChildren.get(parentNode) ?? 0) - 1
+          pendingChildren.set(parentNode, remaining)
+          if (remaining <= 0) {
+            const promoted = unitByNode.get(parentNode)
+            if (promoted !== undefined) {
+              frontier.push(promoted)
+            }
+          }
+        }
+      }
+    }
+
+    const levelEndIndex = moves.length
+    const engagementCache = ringPerimeters !== null
+      ? buildOffsetBandEngagementClassification(moves, levelStartIndex, levelEndIndex, { toolRadius, ringPerimeters })
+      : null
+
+    applyLevelFeed(
+      moves,
+      levelStartIndex,
+      operation,
+      slotScale,
+      slotDistance,
+      effectiveStepover * SLOT_FEED_OWN_TRAIL_FACTOR,
+      toolRadius * 2,
+      effectiveStepover,
+      telemetry,
+      engagementCache,
+    )
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
@@ -518,6 +764,7 @@ function generateFinishBandMoves(
   stepoverDistance: number,
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
+  telemetry: EngagementTelemetryAccumulator | null = null,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -568,27 +815,83 @@ function generateFinishBandMoves(
   }
   const finishDelta = radialLeave
   const finishRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, finishDelta))
-  const entryPolicy = createEntryPolicy(
+  const slotScale = resolveSlotFeedScale(operation)
+  const entryPolicy = withEntryHandoffFeedScale(
+    createEntryPolicy(
       operation,
       toolRadius * 2,
       finishRegions,
       (warning) => appendUniqueWarning(warnings, warning),
-    )
+    ),
+    slotScale,
+  )
   const wallContours = operation.finishWalls ? applyContourDirection(buildContourLoops(finishRegions), direction) : []
-  // Finish-floor rings are filleted when the option is on. This is a single-
-  // level pass (no chip risk) and the floor rings run one stepover inside the
-  // wall, so the wall-finish pass backstops the outermost ring's corners.
-  const floorSmoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, stepoverDistance)
-  const floorContours = operation.finishFloor && operation.pocketPattern === 'offset'
-    ? applyContourDirection(
-      smoothClosedContours(buildPocketFloorContours(finishRegions, 0, stepoverDistance), floorSmoothRadius),
-      direction,
-    )
+  const minFloorStepover = 1 / DEFAULT_CLIPPER_SCALE
+  const floorStepover = Math.max(stepoverDistance, minFloorStepover)
+  const floorSmoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, floorStepover)
+  const floorIslandJoin = operation.roundOutsideCorners
+    ? ClipperLib.JoinType.jtRound
+    : ClipperLib.JoinType.jtMiter
+  const isParallelPocket = operation.pocketPattern === 'parallel'
+  // Seeded circle clearing on the finish floor (issue #579): the same phase 1
+  // the rough pass runs (issue #554), planned against each region the floor
+  // tree is actually built from so every circle fits whole. Each plan's last
+  // circle is injected as an island so the rings offset around — but never
+  // cut — the seed discs; the root keeps its original islands because the
+  // seed stacks emit those exact laps separately.
+  const floorSeedStart = operation.pocketPattern === 'seeded_offset'
+    ? seedStartRadius(operation, toolRadius)
+    : 0
+  const floorSeedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
+  const floorTrees = operation.finishFloor && !isParallelPocket
+    ? finishRegions
+      .flatMap((region) => buildInsetRegions(region, 0))
+      .flatMap((region) => buildInsetRegions(region, floorStepover, ClipperLib.JoinType.jtMiter, floorIslandJoin))
+      .flatMap((region) => {
+        const plans = floorSeedStart > 0
+          ? planSeedCircles(region, floorSeedStart, floorStepover, toolRadius * 2)
+          : []
+        if (plans.length === 0) return [buildOffsetRegionTree(region, floorStepover, floorIslandJoin)]
+        const seeded = buildOffsetRegionTree(
+          { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
+          floorStepover,
+          floorIslandJoin,
+        )
+        // The tree must OFFSET around the seed islands but must not CUT them:
+        // seed stacks emit those exact laps separately, and `cutOffsetRegionNode`
+        // emits every island of the node it is cutting. Restoring the root's
+        // original island list drops the duplicates while the children retain the
+        // seed islands that keep every outward ring clear.
+        const tree: OffsetRegionNode = { region, children: seeded.children }
+        floorSeedPlans.set(tree, plans)
+        return [tree]
+      })
     : []
-  const floorSegments = operation.finishFloor && operation.pocketPattern === 'parallel'
+  // Tangential link junctions for the offset floor rings; the domain is the
+  // wall-finish tool-centre path (finishRegions), which is the hard boundary a
+  // floor-ring link may sweep up to.
+  const floorTangentLink = (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.finishFloor && !isParallelPocket
+    ? pocketTangentLinkOptions(
+      operation.roundLinkCorners,
+      toolRadius * 2,
+      finishRegions,
+    )
+    : undefined
+  const floorWallCleanup = (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.roundOutsideCorners
+    && operation.cleanWallCorners === true
+    ? {
+      enabled: true,
+      onFallback: (): void => appendUniqueWarning(warnings, { code: 'pocketWallCornerCleanupFallback' }),
+    }
+    : undefined
+  const floorSegments = operation.finishFloor && isParallelPocket
     ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
     : []
-  if (wallContours.length === 0 && floorContours.length === 0 && floorSegments.length === 0) {
+  if (
+    wallContours.length === 0
+    && floorTrees.length === 0
+    && floorSegments.length === 0
+  ) {
     return {
       moves,
       stepLevels: [],
@@ -602,36 +905,148 @@ function generateFinishBandMoves(
 
   // Floor before walls: when roughing left axial stock, a wall pass at final
   // depth would slot through the uncleared floor skin at full feed. Cutting
-  // the floor first removes that skin, so the wall pass only shaves the
-  // radial stock — and cutting walls last leaves the cleanest wall surface.
-  // Mirrors the same ordering in pocket.ts generateFinishBandMoves.
+  // the floor first removes that skin (with its first pass at the reduced
+  // slot feed), so the wall pass only shaves the radial stock — and cutting
+  // walls last leaves the cleanest final wall surface.
   for (const z of floorStepLevels) {
-    const orderedFloorContours = orderClosedContoursGreedy(
-      floorContours,
-      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
-    )
-
-    for (const contour of orderedFloorContours) {
-      const entryPoint = contourStartPoint(contour, z)
-      currentPosition = transitionToCutEntry(
-        moves,
-        currentPosition,
-        entryPoint,
-        safeZ,
-        maxLinkDistance,
-        undefined,
-        entryPolicy,
+    const floorStartIndex = moves.length
+    const remainingSeedPlans = floorTrees.flatMap((tree) => floorSeedPlans.get(tree) ?? [])
+    if (remainingSeedPlans.length === 0) {
+      const orderedTrees = orderNodesGreedy(
+        floorTrees,
+        currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
       )
-      const cutMoves = toClosedCutMoves(contour, z)
-      moves.push(...cutMoves)
-      currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+      for (const tree of orderedTrees) {
+        currentPosition = cutOffsetRegionNode(
+          moves,
+          tree,
+          z,
+          safeZ,
+          maxLinkDistance,
+          currentPosition,
+          direction,
+          undefined,
+          'inner-first',
+          'all',
+          floorSmoothRadius,
+          0,
+          entryPolicy,
+          floorTangentLink,
+          floorWallCleanup,
+          toolRadius,
+          undefined,
+        )
+      }
+    } else {
+      // Seeded schedule (issue #575 machinery, shared with the rough pass):
+      // offset work is a frontier of ring units, and after every seed stack or
+      // offset unit the next entry is re-chosen globally from the actual
+      // endpoint. A seed stack is an independent section — its links are only
+      // safe inside the stack — so every cross-section transition retracts
+      // before the nearest-entry choice moves in XY.
+      const { frontier, pendingChildren, unitByNode } = buildOffsetUnitFrontier(
+        floorTrees,
+        direction,
+        floorSmoothRadius,
+        floorWallCleanup,
+        toolRadius,
+      )
+      let previousUnitRoot: OffsetRegionNode | null = null
+      const cutSeedStack = (seedPlan: SeedCirclePlan): void => {
+        currentPosition = retractToSafe(moves, currentPosition, safeZ)
+        const circles = applyContourDirection(
+          seedCircleContours(seedPlan, floorStepover),
+          direction,
+        )
+        let previousCircleEnd: ToolpathPoint | null = null
+        for (const baseCircle of circles) {
+          const circle = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
+          const linkStartIndex = moves.length
+          currentPosition = transitionToCutEntry(
+            moves,
+            currentPosition,
+            contourStartPoint(circle, z),
+            safeZ,
+            maxLinkDistance,
+            undefined,
+            entryPolicy,
+          )
+          let circleMoves = toClosedCutMoves(circle, z)
+          const tangentSplice = spliceTangentSLink(
+            moves,
+            linkStartIndex,
+            circle,
+            circleMoves,
+            floorTangentLink,
+          )
+          if (tangentSplice) {
+            circleMoves = tangentSplice.cutMoves
+            currentPosition = tangentSplice.nextPosition
+          }
+          moves.push(...circleMoves)
+          currentPosition = circleMoves.at(-1)?.to ?? currentPosition
+          previousCircleEnd = currentPosition
+        }
+      }
+      while (remainingSeedPlans.length > 0 || frontier.length > 0) {
+        const choice = nextRoughSection(
+          remainingSeedPlans,
+          frontier,
+          offsetUnitEntryPoint,
+          currentPosition,
+          z,
+          floorStepover,
+          direction,
+        )
+        if (choice.kind === 'seed') {
+          const [seedPlan] = remainingSeedPlans.splice(choice.index, 1)
+          cutSeedStack(seedPlan)
+          previousUnitRoot = null
+          continue
+        }
+
+        const [unit] = frontier.splice(choice.index, 1)
+        if (previousUnitRoot !== unit.root) {
+          currentPosition = retractToSafe(moves, currentPosition, safeZ)
+        }
+        currentPosition = cutOffsetNodeRings(
+          moves,
+          unit.node,
+          z,
+          safeZ,
+          maxLinkDistance,
+          currentPosition,
+          direction,
+          undefined,
+          [],
+          'all',
+          floorSmoothRadius,
+          unit.depth,
+          entryPolicy,
+          floorTangentLink,
+          floorWallCleanup,
+          toolRadius,
+          unit.parent ?? undefined,
+        )
+        previousUnitRoot = unit.root
+        const parentNode = unit.parent
+        if (parentNode !== null) {
+          const remaining = (pendingChildren.get(parentNode) ?? 0) - 1
+          pendingChildren.set(parentNode, remaining)
+          if (remaining <= 0) {
+            const promoted = unitByNode.get(parentNode)
+            if (promoted !== undefined) {
+              frontier.push(promoted)
+            }
+          }
+        }
+      }
     }
 
     const orderedFloorSegments = orderOpenSegmentsGreedy(
       floorSegments,
       currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
     )
-
     for (const segment of orderedFloorSegments) {
       const entryPoint = contourStartPoint(segment, z)
       currentPosition = transitionToCutEntry(
@@ -647,6 +1062,22 @@ function generateFinishBandMoves(
       moves.push(...cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
     }
+
+    const slotDistance = Math.max(
+      toolRadius * 2 * SLOT_FEED_ENGAGEMENT_FACTOR,
+      floorStepover * SLOT_FEED_ADJACENCY_FACTOR,
+    )
+    applyLevelFeed(
+      moves,
+      floorStartIndex,
+      operation,
+      slotScale,
+      slotDistance,
+      floorStepover * SLOT_FEED_OWN_TRAIL_FACTOR,
+      toolRadius * 2,
+      floorStepover,
+      telemetry,
+    )
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
@@ -723,8 +1154,12 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
   const safeZ = getOperationSafeZ(project)
   const entryClearance = getOperationClearance(project)
   const stepoverDistance = tool.diameter * operation.stepover
+  const effectiveStepover = Math.max(stepoverDistance, 1 / DEFAULT_CLIPPER_SCALE)
   const maxLinkDistance = tool.diameter
   const direction = operation.cutDirection ?? 'conventional'
+  const telemetry = operation.pocketFeedReduction === 'engagement'
+    ? new EngagementTelemetryAccumulator(nominalEngagement(effectiveStepover, tool.radius))
+    : null
   const allMoves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
   const allStepLevels = new Set<number>()
@@ -745,6 +1180,7 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
         stepoverDistance,
         maxLinkDistance,
         direction,
+        telemetry,
       )
       : generateRoughBandMoves(
         band,
@@ -756,6 +1192,7 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
         stepoverDistance,
         maxLinkDistance,
         direction,
+        telemetry,
       )
 
     const { moves, stepLevels, warnings: bandWarnings } = result
@@ -776,5 +1213,6 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
     warnings,
     bounds,
     stepLevels: [...allStepLevels].sort((a, b) => b - a),
+    ...(telemetry ? { engagementTelemetry: telemetry.toTelemetry() } : {}),
   }
 }

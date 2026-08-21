@@ -296,21 +296,21 @@ const XY_ALIGN_EPS = 1e-6
  * prior kerf are over-engaged at most transiently (e.g. ring corners, whose
  * diagonal spacing exceeds the stepover) and keep the normal feed.
  */
-const SLOT_FEED_ENGAGEMENT_FACTOR = 0.9
+export const SLOT_FEED_ENGAGEMENT_FACTOR = 0.9
 
 /**
  * Lower bound on the slot distance: a pass at exactly one stepover from its
  * neighbour must never be misclassified as engaged, even with stepovers close
  * to (or beyond) the engagement threshold.
  */
-const SLOT_FEED_ADJACENCY_FACTOR = 1.05
+export const SLOT_FEED_ADJACENCY_FACTOR = 1.05
 
 /**
  * Lateral wiggle (as a fraction of the stepover) tolerated when deciding that
  * a prior kerf directly behind the tool is its own trail: below half a
  * stepover it cannot be a neighbouring pass, so it must be the path just cut.
  */
-const SLOT_FEED_OWN_TRAIL_FACTOR = 0.45
+export const SLOT_FEED_OWN_TRAIL_FACTOR = 0.45
 
 /**
  * Sampling resolution for the engagement feed path, as fractions of the tool
@@ -380,8 +380,8 @@ export function resetEngagementCacheProbeCounts(): void {
  * out-of-range, or 100%), which callers use to skip all slot-feed work so the
  * generated move stream is byte-identical to the pre-feature output.
  */
-function resolveSlotFeedScale(operation: Operation): number | null {
-  if (operation.kind !== 'pocket') return null
+export function resolveSlotFeedScale(operation: Operation): number | null {
+  if (operation.kind !== 'pocket' && operation.kind !== 'surface_clean') return null
   const percent = operation.pocketSlotFeedPercent
   if (percent === undefined || !(percent > 0) || percent >= 100) return null
   return percent / 100
@@ -1091,7 +1091,7 @@ function engagementChunkBoundaries(
 }
 
 /** Per-level feed application: the engagement path, or the shipped slot feed. */
-function applyLevelFeed(
+export function applyLevelFeed(
   moves: ToolpathMove[],
   startIndex: number,
   operation: Operation,
@@ -1796,7 +1796,7 @@ interface TangentSLinkSplice {
  *   flat-revolution chord is structurally identical to a handoff.
  * When no S fits, the straight link stays.
  */
-function spliceTangentSLink(
+export function spliceTangentSLink(
   moves: ToolpathMove[],
   linkStartIndex: number,
   contour: Point[],
@@ -2088,7 +2088,7 @@ function prepareOffsetOuterContour(
 }
 
 /** Ring perimeter metadata is geometry-only and reusable across traversal orders. */
-function buildRingPerimeterIndex(
+export function buildRingPerimeterIndex(
   regionTrees: OffsetRegionNode[],
   direction: CutDirection,
   smoothRadius: number | null,
@@ -2299,7 +2299,7 @@ function engagementTraversalKey(moves: ToolpathMove[], startIndex: number, endIn
   return parts.join('|')
 }
 
-function orderNodesGreedy(nodes: OffsetRegionNode[], start: Point | null): OffsetRegionNode[] {
+export function orderNodesGreedy(nodes: OffsetRegionNode[], start: Point | null): OffsetRegionNode[] {
   if (nodes.length <= 1 || start === null) {
     return nodes
   }
@@ -2351,7 +2351,7 @@ function seedPlanEntryPoint(
   return firstCircle ? nearestContourEntryPoint(firstCircle, current, z) : null
 }
 
-function offsetSectionEntryPoint(
+export function offsetSectionEntryPoint(
   section: OffsetRingSection,
   current: ToolpathPoint | null,
   z: number,
@@ -2423,7 +2423,7 @@ interface OffsetUnit {
  * exactly when its last child completes and is promoted through the per-node
  * map with its pending-children count at zero.
  */
-function buildOffsetUnitFrontier(
+export function buildOffsetUnitFrontier(
   regionTrees: readonly OffsetRegionNode[],
   direction: CutDirection,
   smoothRadius: number | null | undefined,
@@ -2466,7 +2466,7 @@ function buildOffsetUnitFrontier(
   return { frontier, pendingChildren, unitByNode }
 }
 
-function offsetUnitEntryPoint(
+export function offsetUnitEntryPoint(
   unit: OffsetUnit,
   current: ToolpathPoint | null,
   z: number,
@@ -2477,7 +2477,7 @@ function offsetUnitEntryPoint(
     : nearestContourEntryPoint(unit.entryContour, current, z)
 }
 
-function nextRoughSection<T>(
+export function nextRoughSection<T>(
   seedPlans: readonly SeedCirclePlan[],
   offsetCandidates: readonly T[],
   offsetEntryPoint: (candidate: T, current: ToolpathPoint | null, z: number) => ToolpathPoint | null,
@@ -2538,7 +2538,7 @@ function nextRoughSection<T>(
  *    the tool into the island and gouge it. So island loops are emitted
  *    as-is, already rounded (or mitered when the option is off).
  */
-function cutOffsetNodeRings(
+export function cutOffsetNodeRings(
   moves: ToolpathMove[],
   node: OffsetRegionNode,
   z: number,
@@ -2593,7 +2593,7 @@ function cutOffsetNodeRings(
   )
 }
 
-function cutOffsetRegionNode(
+export function cutOffsetRegionNode(
   moves: ToolpathMove[],
   node: OffsetRegionNode,
   z: number,

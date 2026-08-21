@@ -1355,6 +1355,42 @@ test('surface_clean default entry remains byte-identical to explicit plunge', ()
   assert(JSON.stringify(implicit) === JSON.stringify(explicit), 'unset and explicit plunge toolpaths must match')
 })
 
+test('surface_clean: engagement feed reduction emits telemetry (issue #583 parity with pocket)', () => {
+  // surface_clean must route through the same frontier clearing + applyLevelFeed /
+  // resolveSlotFeedScale (surface_clean gate) wiring ported from pocket.ts.
+  const tool = makeFlatEndmill('t1', 4)
+  const feat: SketchFeature = {
+    ...makeRectFeature('a', 0, 0, 20, 20, 4, 0),
+    operation: 'add',
+  }
+  const project = baseProject([tool], [feat])
+  const op = makePocketOp({
+    kind: 'surface_clean',
+    target: { source: 'features', featureIds: ['a'] },
+    toolRef: 't1',
+    stepdown: 1,
+    stepover: 0.4,
+    pocketFeedReduction: 'engagement',
+    pocketSlotFeedPercent: 40,
+  })
+
+  const result = generateSurfaceCleanToolpath(project, op)
+  assert(result.moves.length > 0, 'surface_clean with engagement feed reduction should produce moves')
+  assert(result.moves.filter((m) => m.kind === 'cut').length > 0, 'surface_clean with engagement feed reduction should produce cut moves')
+  // Guards the ported applyLevelFeed + resolveSlotFeedScale (surface_clean gate)
+  // wiring: the engagement telemetry accumulator is created and emitted on the
+  // result only for surface_clean when pocketFeedReduction is engagement.
+  assert(result.engagementTelemetry !== undefined, 'surface_clean with pocketFeedReduction engagement should emit engagement telemetry')
+  assert(
+    result.engagementTelemetry?.totalCutDistance !== undefined,
+    'engagement telemetry should carry a total cut distance',
+  )
+
+  // Contrasting the nominal path: the accumulator is not built and slot feed is skipped.
+  const nominal = generateSurfaceCleanToolpath(project, { ...op, pocketFeedReduction: undefined, pocketSlotFeedPercent: undefined })
+  assert(nominal.engagementTelemetry === undefined, 'nominal surface_clean should not emit engagement telemetry')
+})
+
 test('follow_line: generates toolpath + posts to non-empty G-code', () => {
   const tool = makeFlatEndmill('t1', 1)
   const line = makeLineFeature('line1', 0, 5, 10, 5)
