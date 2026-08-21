@@ -465,12 +465,13 @@ const FEED_COLOUR_RUNG_COUNT = 6
 
 /**
  * The operation's pocket slot-feed percentage (1-99), or null when it has no
- * scaled-feed ladder in force — non-pocket, unset, or 100%. Mirrors the
- * engine's `resolveSlotFeedScale` gate, which skips all slot-feed work in
- * those cases so the emitted move stream carries no scaled feeds at all.
+ * scaled-feed ladder in force — non-pocket/surface-clean, unset, or 100%.
+ * Mirrors the engine's `resolveSlotFeedScale` gate, which skips all slot-feed
+ * work in those cases so the emitted move stream carries no scaled feeds at
+ * all.
  */
 export function pocketSlotFeedPercent(operation: Operation | null | undefined): number | null {
-  if (!operation || operation.kind !== 'pocket') return null
+  if (!operation || (operation.kind !== 'pocket' && operation.kind !== 'surface_clean')) return null
   const percent = operation.pocketSlotFeedPercent
   if (percent === undefined || !(percent > 0) || percent >= 100) return null
   return percent
