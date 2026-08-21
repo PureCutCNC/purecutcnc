@@ -51,6 +51,7 @@ export function OverlapFeaturePicker({ picker }: OverlapFeaturePickerProps) {
         position={picker.workflowPanel.position}
         panelRef={picker.workflowPanel.panelRef}
         handleProps={picker.workflowPanel.handleProps}
+        pageLevel
         actionRowProps={picker.workflowPanel.actionRowProps}
         className="overlap-feature-picker__panel"
         moveLabel={t('canvas.overlap.moveLabel')}

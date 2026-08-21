@@ -150,6 +150,7 @@ export function useDrivingDimensionWorkflow(ctx: DrivingDimensionWorkflowCtx): D
     canvasRef,
     clearTransientCanvasState,
     focusCanvasOnOpen: false,
+    pageLevel: true,
   })
 
   const drivingFocusKey = drivingEdit

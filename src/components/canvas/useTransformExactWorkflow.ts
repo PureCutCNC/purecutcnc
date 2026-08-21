@@ -109,6 +109,7 @@ export function useTransformExactWorkflow(ctx: TransformExactWorkflowCtx): Trans
     canvasRef,
     clearTransientCanvasState,
     focusCanvasOnOpen: !transformExactEditActive && !rotateCopyCountPromptActive,
+    pageLevel: true,
   })
 
   function cancelTransformFromPanel() {

@@ -77,6 +77,7 @@ export function useOffsetWorkflow(ctx: OffsetWorkflowCtx): OffsetWorkflow {
     canvasRef,
     clearTransientCanvasState,
     focusCanvasOnOpen: !offsetDistanceEditActive,
+    pageLevel: true,
   })
 
   function cancelOffsetFromPanel() {

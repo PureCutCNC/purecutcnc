@@ -36,6 +36,7 @@ export function ConstraintEditPanel({ constraint }: ConstraintEditPanelProps) {
       position={constraint.constraintEditWorkflowPanel.position}
       panelRef={constraint.constraintEditWorkflowPanel.panelRef}
       handleProps={constraint.constraintEditWorkflowPanel.handleProps}
+      pageLevel
       actionRowProps={constraint.constraintEditWorkflowPanel.actionRowProps}
       className="canvas-workflow-panel--constraint-edit"
       moveLabel={t('canvas.constraint.moveLabel')}
