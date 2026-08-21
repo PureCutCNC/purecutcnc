@@ -3246,11 +3246,34 @@ function generateFinishBandMoves(
   const floorIslandJoin = operation.roundOutsideCorners
     ? ClipperLib.JoinType.jtRound
     : ClipperLib.JoinType.jtMiter
+  // Seeded circle clearing on the finish floor (issue #579): the same phase 1
+  // the rough pass runs (issue #554), planned against each region the floor
+  // tree is actually built from so every circle fits whole. Each plan's last
+  // circle is injected as an island so the rings offset around — but never
+  // cut — the seed discs; the root keeps its original islands because the
+  // seed stacks emit those exact laps separately.
+  const floorSeedStart = operation.pocketPattern === 'seeded_offset'
+    ? seedStartRadius(operation, toolRadius)
+    : 0
+  const floorSeedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
   const floorTrees = operation.finishFloor && !isParallelPocket
     ? finishRegions
       .flatMap((region) => buildInsetRegions(region, 0))
       .flatMap((region) => buildInsetRegions(region, floorStepover, ClipperLib.JoinType.jtMiter, floorIslandJoin))
-      .map((region) => buildOffsetRegionTree(region, floorStepover, floorIslandJoin))
+      .flatMap((region) => {
+        const plans = floorSeedStart > 0
+          ? planSeedCircles(region, floorSeedStart, floorStepover, toolRadius * 2)
+          : []
+        if (plans.length === 0) return [buildOffsetRegionTree(region, floorStepover, floorIslandJoin)]
+        const seeded = buildOffsetRegionTree(
+          { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
+          floorStepover,
+          floorIslandJoin,
+        )
+        const tree: OffsetRegionNode = { region, children: seeded.children }
+        floorSeedPlans.set(tree, plans)
+        return [tree]
+      })
     : []
   // Tangential link junctions for the offset floor rings; the domain is the
   // wall-finish tool-centre path (finishRegions), which is the hard boundary
@@ -3301,29 +3324,136 @@ function generateFinishBandMoves(
   for (const z of floorStepLevels) {
     const floorStartIndex = moves.length
 
-    const orderedTrees = orderNodesGreedy(
-      floorTrees,
-      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
-    )
-    for (const tree of orderedTrees) {
-      currentPosition = cutOffsetRegionNode(
-        moves,
-        tree,
-        z,
-        safeZ,
-        maxLinkDistance,
-        currentPosition,
+    const remainingSeedPlans = floorTrees.flatMap((tree) => floorSeedPlans.get(tree) ?? [])
+    if (remainingSeedPlans.length === 0) {
+      const orderedTrees = orderNodesGreedy(
+        floorTrees,
+        currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+      )
+      for (const tree of orderedTrees) {
+        currentPosition = cutOffsetRegionNode(
+          moves,
+          tree,
+          z,
+          safeZ,
+          maxLinkDistance,
+          currentPosition,
+          direction,
+          undefined,
+          'inner-first',
+          'all',
+          floorSmoothRadius,
+          0,
+          entryPolicy,
+          floorTangentLink,
+          floorWallCleanup,
+          toolRadius,
+        )
+      }
+    } else {
+      // Seeded schedule (issue #575 machinery, shared with the rough pass):
+      // offset work is a frontier of ring units, and after every seed stack or
+      // offset unit the next entry is re-chosen globally from the actual
+      // endpoint. A seed stack is an independent section — its links are only
+      // safe inside the stack — so every cross-section transition retracts
+      // before the nearest-entry choice moves in XY.
+      const { frontier, pendingChildren, unitByNode } = buildOffsetUnitFrontier(
+        floorTrees,
         direction,
-        undefined,
-        'inner-first',
-        'all',
         floorSmoothRadius,
-        0,
-        entryPolicy,
-        floorTangentLink,
         floorWallCleanup,
         toolRadius,
       )
+      let previousUnitRoot: OffsetRegionNode | null = null
+      const cutSeedStack = (seedPlan: SeedCirclePlan): void => {
+        currentPosition = retractToSafe(moves, currentPosition, safeZ)
+        const circles = applyContourDirection(
+          seedCircleContours(seedPlan, floorStepover),
+          direction,
+        )
+        let previousCircleEnd: ToolpathPoint | null = null
+        for (const baseCircle of circles) {
+          const circle = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
+          const linkStartIndex = moves.length
+          currentPosition = transitionToCutEntry(
+            moves,
+            currentPosition,
+            contourStartPoint(circle, z),
+            safeZ,
+            maxLinkDistance,
+            undefined,
+            entryPolicy,
+          )
+          let circleMoves = toClosedCutMoves(circle, z)
+          const tangentSplice = spliceTangentSLink(
+            moves,
+            linkStartIndex,
+            circle,
+            circleMoves,
+            floorTangentLink,
+          )
+          if (tangentSplice) {
+            circleMoves = tangentSplice.cutMoves
+            currentPosition = tangentSplice.nextPosition
+          }
+          moves.push(...circleMoves)
+          currentPosition = circleMoves.at(-1)?.to ?? currentPosition
+          previousCircleEnd = currentPosition
+        }
+      }
+      while (remainingSeedPlans.length > 0 || frontier.length > 0) {
+        const choice = nextRoughSection(
+          remainingSeedPlans,
+          frontier,
+          offsetUnitEntryPoint,
+          currentPosition,
+          z,
+          floorStepover,
+          direction,
+        )
+        if (choice.kind === 'seed') {
+          const [seedPlan] = remainingSeedPlans.splice(choice.index, 1)
+          cutSeedStack(seedPlan)
+          previousUnitRoot = null
+          continue
+        }
+
+        const [unit] = frontier.splice(choice.index, 1)
+        if (previousUnitRoot !== unit.root) {
+          currentPosition = retractToSafe(moves, currentPosition, safeZ)
+        }
+        currentPosition = cutOffsetNodeRings(
+          moves,
+          unit.node,
+          z,
+          safeZ,
+          maxLinkDistance,
+          currentPosition,
+          direction,
+          undefined,
+          [],
+          'all',
+          floorSmoothRadius,
+          unit.depth,
+          entryPolicy,
+          floorTangentLink,
+          floorWallCleanup,
+          toolRadius,
+          unit.parent ?? undefined,
+        )
+        previousUnitRoot = unit.root
+        const parentNode = unit.parent
+        if (parentNode !== null) {
+          const remaining = (pendingChildren.get(parentNode) ?? 0) - 1
+          pendingChildren.set(parentNode, remaining)
+          if (remaining <= 0) {
+            const promoted = unitByNode.get(parentNode)
+            if (promoted !== undefined) {
+              frontier.push(promoted)
+            }
+          }
+        }
+      }
     }
 
     const orderedFloorSegments = orderOpenSegmentsGreedy(
