@@ -16,6 +16,7 @@
 
 import { sampleProfilePoints } from '../types/project'
 import type { Matrix2D, Point, SketchProfile } from '../types/project'
+import type { Units } from '../utils/units'
 
 const EPSILON = 1e-9
 const FULL_TURN = Math.PI * 2
@@ -98,13 +99,14 @@ export interface ProfilePathMeasure {
   at: (distance: number) => PathPoint
 }
 
-export function createDefaultFeatureDistributionSpec(): FeatureDistributionSpec {
+export function createDefaultFeatureDistributionSpec(units: Units = 'mm'): FeatureDistributionSpec {
+  const spacing = units === 'inch' ? 2 : 20
   return {
     mode: 'grid',
     rows: 1,
     columns: 2,
-    spacingX: 20,
-    spacingY: 20,
+    spacingX: spacing,
+    spacingY: spacing,
     startScale: 100,
     endScale: 100,
   }

@@ -15,12 +15,12 @@
  */
 
 import type { RefObject } from 'react'
-import type { PendingFeatureDistribution } from '../../store/types'
+import type { FeatureDistributionPickTarget, PendingFeatureDistribution } from '../../store/types'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
 
 interface FeatureDistributionWorkflowCtx {
   pendingFeatureDistribution: PendingFeatureDistribution | null
-  setFeatureDistributionGuidePicking: (selecting: boolean) => void
+  setFeatureDistributionPickTarget: (target: FeatureDistributionPickTarget) => void
   cancelFeatureDistribution: () => void
   completeFeatureDistribution: () => string[]
   containerRef: RefObject<HTMLDivElement | null>
@@ -31,13 +31,14 @@ interface FeatureDistributionWorkflowCtx {
 export interface FeatureDistributionWorkflow {
   featureDistributionWorkflowPanel: ReturnType<typeof useCanvasWorkflowPanel>
   pickGuideFromPanel: () => void
+  pickRadialCenterFromPanel: () => void
   cancelFeatureDistributionFromPanel: () => void
   completeFeatureDistributionFromPanel: () => void
 }
 
 export function useFeatureDistributionWorkflow({
   pendingFeatureDistribution,
-  setFeatureDistributionGuidePicking,
+  setFeatureDistributionPickTarget,
   cancelFeatureDistribution,
   completeFeatureDistribution,
   containerRef,
@@ -47,7 +48,7 @@ export function useFeatureDistributionWorkflow({
   const featureDistributionWorkflowPanel = useCanvasWorkflowPanel({
     open: pendingFeatureDistribution !== null,
     phaseKey: pendingFeatureDistribution
-      ? `${pendingFeatureDistribution.spec.mode}:${pendingFeatureDistribution.selectingGuide ? 'guide' : 'configure'}`
+      ? `${pendingFeatureDistribution.spec.mode}:${pendingFeatureDistribution.pickTarget ?? 'configure'}`
       : null,
     containerRef,
     canvasRef,
@@ -55,7 +56,12 @@ export function useFeatureDistributionWorkflow({
   })
 
   function pickGuideFromPanel() {
-    setFeatureDistributionGuidePicking(true)
+    setFeatureDistributionPickTarget('guide')
+    featureDistributionWorkflowPanel.focusCanvasAfterAction()
+  }
+
+  function pickRadialCenterFromPanel() {
+    setFeatureDistributionPickTarget('radial-center')
     featureDistributionWorkflowPanel.focusCanvasAfterAction()
   }
 
@@ -72,6 +78,7 @@ export function useFeatureDistributionWorkflow({
   return {
     featureDistributionWorkflowPanel,
     pickGuideFromPanel,
+    pickRadialCenterFromPanel,
     cancelFeatureDistributionFromPanel,
     completeFeatureDistributionFromPanel,
   }

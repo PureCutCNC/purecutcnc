@@ -15,7 +15,7 @@
  */
 
 import type { SketchProfile } from '../types/project'
-import { applyFeatureDistributionTransform, measureProfilePath, planFeatureDistribution } from './featureDistribution'
+import { applyFeatureDistributionTransform, createDefaultFeatureDistributionSpec, measureProfilePath, planFeatureDistribution } from './featureDistribution'
 
 const epsilon = 1e-6
 
@@ -25,6 +25,16 @@ function assert(condition: unknown, message: string): asserts condition {
 
 function close(actual: number, expected: number, message: string) {
   assert(Math.abs(actual - expected) < epsilon, `${message}: expected ${expected}, got ${actual}`)
+}
+
+function testDefaultGridSpacingUsesTheProjectUnits() {
+  const metric = createDefaultFeatureDistributionSpec('mm')
+  const imperial = createDefaultFeatureDistributionSpec('inch')
+  assert(metric.mode === 'grid', 'metric default should be a grid')
+  assert(imperial.mode === 'grid', 'inch default should be a grid')
+  assert(metric.spacingX === 20 && metric.spacingY === 20, 'metric grid spacing should remain 20 mm')
+  assert(imperial.spacingX === 2 && imperial.spacingY === 2, 'inch grid spacing should default to 2 in')
+  console.log('unit-aware grid defaults: PASSED')
 }
 
 function testGridKeepsTheSourceAsOriginAndTapersCreatedCopies() {
@@ -139,6 +149,7 @@ function testPlacementTransformMapsTheGroupPivotToTheTarget() {
   console.log('placement pivot mapping: PASSED')
 }
 
+testDefaultGridSpacingUsesTheProjectUnits()
 testGridKeepsTheSourceAsOriginAndTapersCreatedCopies()
 testRadialFullCircleAvoidsDuplicatingTheEndpoint()
 testPathSupportsMixedLineAndArcAtEqualArcLength()

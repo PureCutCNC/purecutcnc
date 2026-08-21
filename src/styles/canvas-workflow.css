@@ -423,6 +423,21 @@
   text-transform: uppercase;
 }
 
+.canvas-workflow-panel__help {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+/* The picker panel can overlap the outline to be clicked. Keep its instruction
+   visible while allowing the click to reach the sketch; Escape returns to the
+   normal interactive configuration panel. */
+.canvas-workflow-panel--picking {
+  pointer-events: none;
+}
+
 .overlap-feature-picker {
   position: absolute;
   inset: 0;

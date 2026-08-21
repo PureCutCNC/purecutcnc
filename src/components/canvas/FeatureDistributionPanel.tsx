@@ -15,8 +15,9 @@
  */
 
 import type { Point } from '../../types/project'
-import type { FeatureDistributionPlan, FeatureDistributionSpec } from '../../sketch/featureDistribution'
+import { createDefaultFeatureDistributionSpec, type FeatureDistributionPlan, type FeatureDistributionSpec } from '../../sketch/featureDistribution'
 import type { PendingFeatureDistribution } from '../../store/types'
+import type { Units } from '../../utils/units'
 import { useI18n } from '../../i18n/i18nContext'
 import { CanvasWorkflowAction, CanvasWorkflowCancel, CanvasWorkflowConfirm } from './CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
@@ -27,9 +28,11 @@ interface FeatureDistributionPanelProps {
   plan: FeatureDistributionPlan
   sourcePivot: Point
   guideName: string | null
+  units: Units
   panel: ReturnType<typeof useCanvasWorkflowPanel>
   onUpdate: (spec: FeatureDistributionSpec) => void
   onPickGuide: () => void
+  onPickCenter: () => void
   onComplete: () => void
   onCancel: () => void
 }
@@ -44,15 +47,17 @@ export function FeatureDistributionPanel({
   plan,
   sourcePivot,
   guideName,
+  units,
   panel,
   onUpdate,
   onPickGuide,
+  onPickCenter,
   onComplete,
   onCancel,
 }: FeatureDistributionPanelProps) {
   const { t } = useI18n()
   const { spec } = pending
-  const error = plan.ok ? null : {
+  const planError = plan.ok ? null : {
     'invalid-grid': t('canvas.featureDistribution.error.invalidGrid'),
     'invalid-copy-count': t('canvas.featureDistribution.error.invalidCount'),
     'invalid-scale': t('canvas.featureDistribution.error.invalidScale'),
@@ -61,19 +66,25 @@ export function FeatureDistributionPanel({
     'path-guide-empty': t('canvas.featureDistribution.error.guideEmpty'),
     'invalid-path-offsets': t('canvas.featureDistribution.error.invalidOffsets'),
   }[plan.code]
+  const radialCenterRequired = spec.mode === 'radial' && !pending.radialCenterPicked
+  const error = radialCenterRequired
+    ? t('canvas.featureDistribution.error.centerRequired')
+    : planError
 
   function selectMode(mode: FeatureDistributionSpec['mode']) {
+    if (mode === spec.mode) return
     const shared = { startScale: spec.startScale, endScale: spec.endScale }
     if (mode === 'grid') {
-      onUpdate({ mode, rows: 1, columns: 2, spacingX: 20, spacingY: 20, ...shared })
+      const defaults = createDefaultFeatureDistributionSpec(units)
+      if (defaults.mode === 'grid') onUpdate({ ...defaults, ...shared })
     } else if (mode === 'radial') {
       onUpdate({
         mode,
-        center: { x: sourcePivot.x - 20, y: sourcePivot.y },
+        // This fallback is never exposed as a coordinate. Radial copies remain
+        // unavailable until the user picks an actual point on the sketch.
+        center: sourcePivot,
         copyCount: 4,
-        // Keep the initial preview clear of the source, which sits at the
-        // 0° radius from this default center.
-        startAngleDegrees: 90,
+        startAngleDegrees: 0,
         sweepDegrees: 360,
         orientation: 'follow',
         ...shared,
@@ -83,24 +94,39 @@ export function FeatureDistributionPanel({
     }
   }
 
+  const step = pending.pickTarget === 'guide'
+    ? t('canvas.featureDistribution.step.pickGuide')
+    : pending.pickTarget === 'radial-center'
+      ? t('canvas.featureDistribution.step.pickCenter')
+      : t('canvas.featureDistribution.step.configure')
+  const orientationHelp = spec.mode !== 'grid' && spec.orientation === 'fixed'
+    ? t('canvas.featureDistribution.fixedOrientationHint')
+    : t('canvas.featureDistribution.followOrientationHint')
+
   return (
     <CanvasWorkflowPanel
       title={t('canvas.featureDistribution.title')}
-      step={pending.selectingGuide ? t('canvas.featureDistribution.step.pickGuide') : t('canvas.featureDistribution.step.configure')}
+      step={step}
       position={panel.position}
       panelRef={panel.panelRef}
       handleProps={panel.handleProps}
       actionRowProps={panel.actionRowProps}
-      className="canvas-workflow-panel--feature-distribution"
+      className={`canvas-workflow-panel--feature-distribution${pending.pickTarget ? ' canvas-workflow-panel--picking' : ''}`}
       actions={(
         <>
+          {spec.mode === 'radial' && (
+            <CanvasWorkflowAction
+              label={pending.radialCenterPicked ? t('canvas.featureDistribution.changeCenter') : t('canvas.featureDistribution.pickCenter')}
+              onClick={onPickCenter}
+            />
+          )}
           {spec.mode === 'path' && (
             <CanvasWorkflowAction
               label={guideName ? t('canvas.featureDistribution.changeGuide') : t('canvas.featureDistribution.pickGuide')}
               onClick={onPickGuide}
             />
           )}
-          <CanvasWorkflowConfirm label={t('canvas.featureDistribution.create')} onClick={onComplete} disabled={!plan.ok || pending.selectingGuide} />
+          <CanvasWorkflowConfirm label={t('canvas.featureDistribution.create')} onClick={onComplete} disabled={!plan.ok || radialCenterRequired || pending.pickTarget !== null} />
           <CanvasWorkflowCancel label={t('canvas.common.cancel')} onClick={onCancel} />
         </>
       )}
@@ -114,6 +140,13 @@ export function FeatureDistributionPanel({
         </div>
       </div>
 
+      {pending.pickTarget === 'radial-center' && (
+        <p className="canvas-workflow-panel__help">{t('canvas.featureDistribution.pickCenterHint')}</p>
+      )}
+      {pending.pickTarget === 'guide' && (
+        <p className="canvas-workflow-panel__help">{t('canvas.featureDistribution.pickGuideHint')}</p>
+      )}
+
       {spec.mode === 'grid' && (
         <div className="canvas-workflow-panel__grid">
           <NumberField label={t('canvas.featureDistribution.rows')} value={spec.rows} onChange={(event) => onUpdate({ ...spec, rows: inputNumber(event) })} />
@@ -125,12 +158,15 @@ export function FeatureDistributionPanel({
 
       {spec.mode === 'radial' && (
         <div className="canvas-workflow-panel__grid">
-          <NumberField label={t('canvas.featureDistribution.centerX')} value={spec.center.x} onChange={(event) => onUpdate({ ...spec, center: { ...spec.center, x: inputNumber(event) } })} />
-          <NumberField label={t('canvas.featureDistribution.centerY')} value={spec.center.y} onChange={(event) => onUpdate({ ...spec, center: { ...spec.center, y: inputNumber(event) } })} />
+          <div className="canvas-workflow-panel__field">
+            <span>{t('canvas.featureDistribution.center')}</span>
+            <strong>{pending.radialCenterPicked ? t('canvas.featureDistribution.centerPicked') : t('canvas.featureDistribution.centerNotPicked')}</strong>
+          </div>
           <NumberField label={t('canvas.field.copies')} value={spec.copyCount} integer onChange={(event) => onUpdate({ ...spec, copyCount: inputNumber(event) })} />
           <NumberField label={t('canvas.featureDistribution.startAngle')} value={spec.startAngleDegrees} onChange={(event) => onUpdate({ ...spec, startAngleDegrees: inputNumber(event) })} />
           <NumberField label={t('canvas.featureDistribution.sweep')} value={spec.sweepDegrees} onChange={(event) => onUpdate({ ...spec, sweepDegrees: inputNumber(event) })} />
           <OrientationField value={spec.orientation} onChange={(orientation) => onUpdate({ ...spec, orientation })} />
+          <p className="canvas-workflow-panel__help">{orientationHelp}</p>
         </div>
       )}
 
@@ -144,6 +180,7 @@ export function FeatureDistributionPanel({
           <NumberField label={t('canvas.featureDistribution.startOffset')} value={spec.startOffset} onChange={(event) => onUpdate({ ...spec, startOffset: inputNumber(event) })} />
           <NumberField label={t('canvas.featureDistribution.endOffset')} value={spec.endOffset} onChange={(event) => onUpdate({ ...spec, endOffset: inputNumber(event) })} />
           <OrientationField value={spec.orientation} onChange={(orientation) => onUpdate({ ...spec, orientation })} />
+          <p className="canvas-workflow-panel__help">{orientationHelp}</p>
         </div>
       )}
 

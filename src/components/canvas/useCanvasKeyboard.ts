@@ -24,6 +24,7 @@ import {
 import type {
   PendingAddTool,
   PendingDimensionTool,
+  FeatureDistributionPickTarget,
   PendingFeatureDistribution,
   PendingMoveTool,
   PendingOffsetTool,
@@ -119,6 +120,7 @@ export interface CanvasKeyboardCtx {
   cancelPendingTransform: () => void
   cancelPendingOffset: () => void
   cancelFeatureDistribution: () => void
+  setFeatureDistributionPickTarget: (target: FeatureDistributionPickTarget) => void
   confirmCutCutters: () => void
   cancelPendingShapeAction: () => void
   setSketchEditTool: (tool: SketchEditTool | null) => void
@@ -196,6 +198,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     cancelPendingTransform,
     cancelPendingOffset,
     cancelFeatureDistribution,
+    setFeatureDistributionPickTarget,
     confirmCutCutters,
     cancelPendingShapeAction,
     setSketchEditTool,
@@ -721,6 +724,10 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     }
 
     if (event.key === 'Escape' && pendingFeatureDistribution) {
+      if (pendingFeatureDistribution.pickTarget) {
+        setFeatureDistributionPickTarget(null)
+        return
+      }
       cancelFeatureDistribution()
       return
     }

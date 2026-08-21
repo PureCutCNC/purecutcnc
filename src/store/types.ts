@@ -193,10 +193,13 @@ export interface PendingOffsetTool {
 }
 
 /** Transient one-shot copy-placement workflow; never stored in .camj. */
+export type FeatureDistributionPickTarget = 'guide' | 'radial-center' | null
+
 export interface PendingFeatureDistribution {
   sourceIds: string[]
   guideId: string | null
-  selectingGuide: boolean
+  pickTarget: FeatureDistributionPickTarget
+  radialCenterPicked: boolean
   spec: FeatureDistributionSpec
   session: number
 }
@@ -537,8 +540,9 @@ export interface ProjectStore {
   completePendingMove: (toPoint: Point, copyCount?: number) => void
   startFeatureDistribution: () => void
   updateFeatureDistribution: (spec: FeatureDistributionSpec) => void
-  setFeatureDistributionGuidePicking: (selecting: boolean) => void
+  setFeatureDistributionPickTarget: (target: FeatureDistributionPickTarget) => void
   setFeatureDistributionGuide: (featureId: string) => void
+  setFeatureDistributionRadialCenter: (center: Point) => void
   cancelFeatureDistribution: () => void
   completeFeatureDistribution: () => string[]
   cancelPendingTransform: () => void

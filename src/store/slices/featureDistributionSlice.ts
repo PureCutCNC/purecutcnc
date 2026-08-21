@@ -35,8 +35,9 @@ export type FeatureDistributionSlice = Pick<
   | 'pendingFeatureDistribution'
   | 'startFeatureDistribution'
   | 'updateFeatureDistribution'
-  | 'setFeatureDistributionGuidePicking'
+  | 'setFeatureDistributionPickTarget'
   | 'setFeatureDistributionGuide'
+  | 'setFeatureDistributionRadialCenter'
   | 'cancelFeatureDistribution'
   | 'completeFeatureDistribution'
 >
@@ -70,8 +71,9 @@ export function createFeatureDistributionSlice(
         pendingFeatureDistribution: {
           sourceIds,
           guideId: null,
-          selectingGuide: false,
-          spec: createDefaultFeatureDistributionSpec(),
+          pickTarget: null,
+          radialCenterPicked: false,
+          spec: createDefaultFeatureDistributionSpec(s.project.meta.units),
           session: nextPlacementSession(),
         },
         selection: {
@@ -86,17 +88,34 @@ export function createFeatureDistributionSlice(
       }
     }),
 
-    updateFeatureDistribution: (spec: FeatureDistributionSpec) => set((s) => ({
-      pendingFeatureDistribution: s.pendingFeatureDistribution
-        ? { ...s.pendingFeatureDistribution, spec, selectingGuide: spec.mode === 'path' ? s.pendingFeatureDistribution.selectingGuide : false }
-        : null,
-    })),
+    updateFeatureDistribution: (spec: FeatureDistributionSpec) => set((s) => {
+      const pending = s.pendingFeatureDistribution
+      if (!pending) return { pendingFeatureDistribution: null }
+      const modeChanged = pending.spec.mode !== spec.mode
+      const pickTarget = pending.pickTarget === 'guide' && spec.mode !== 'path'
+        ? null
+        : pending.pickTarget === 'radial-center' && spec.mode !== 'radial'
+          ? null
+          : pending.pickTarget
+      return {
+        pendingFeatureDistribution: {
+          ...pending,
+          spec,
+          pickTarget,
+          radialCenterPicked: spec.mode === 'radial' && !modeChanged
+            ? pending.radialCenterPicked
+            : false,
+        },
+      }
+    }),
 
-    setFeatureDistributionGuidePicking: (selectingGuide) => set((s) => ({
-      pendingFeatureDistribution: s.pendingFeatureDistribution?.spec.mode === 'path'
-        ? { ...s.pendingFeatureDistribution, selectingGuide }
-        : s.pendingFeatureDistribution,
-    })),
+    setFeatureDistributionPickTarget: (pickTarget) => set((s) => {
+      const pending = s.pendingFeatureDistribution
+      if (!pending) return { pendingFeatureDistribution: null }
+      if (pickTarget === 'guide' && pending.spec.mode !== 'path') return {}
+      if (pickTarget === 'radial-center' && pending.spec.mode !== 'radial') return {}
+      return { pendingFeatureDistribution: { ...pending, pickTarget } }
+    }),
 
     setFeatureDistributionGuide: (featureId) => set((s) => {
       const pending = s.pendingFeatureDistribution
@@ -109,7 +128,7 @@ export function createFeatureDistributionSlice(
         pendingFeatureDistribution: {
           ...pending,
           guideId: featureId,
-          selectingGuide: false,
+          pickTarget: null,
           spec: {
             ...pending.spec,
             // A newly chosen guide defaults to its full length. This keeps the
@@ -121,6 +140,19 @@ export function createFeatureDistributionSlice(
       }
     }),
 
+    setFeatureDistributionRadialCenter: (center) => set((s) => {
+      const pending = s.pendingFeatureDistribution
+      if (!pending || pending.spec.mode !== 'radial') return {}
+      return {
+        pendingFeatureDistribution: {
+          ...pending,
+          pickTarget: null,
+          radialCenterPicked: true,
+          spec: { ...pending.spec, center },
+        },
+      }
+    }),
+
     cancelFeatureDistribution: () => set({ pendingFeatureDistribution: null }),
 
     completeFeatureDistribution: () => {
@@ -128,6 +160,7 @@ export function createFeatureDistributionSlice(
       set((s) => {
         const pending = s.pendingFeatureDistribution
         if (!pending) return {}
+        if (pending.spec.mode === 'radial' && !pending.radialCenterPicked) return {}
         const sources = resolvedFeatures(s.project, pending.sourceIds)
         if (!sources) return { pendingFeatureDistribution: null }
         const guide = pending.guideId ? resolveFeatureInstance(s.project, pending.guideId) : null

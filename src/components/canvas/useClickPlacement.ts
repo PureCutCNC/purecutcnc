@@ -228,6 +228,7 @@ export interface ClickPlacementCtx {
   completePendingOffset: (distance: number) => void
   cancelPendingOffset: () => void
   setFeatureDistributionGuide: (featureId: string) => void
+  setFeatureDistributionRadialCenter: (center: Point) => void
   beginHistoryTransaction: () => void
 }
 
@@ -331,6 +332,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     completePendingOffset,
     cancelPendingOffset,
     setFeatureDistributionGuide,
+    setFeatureDistributionRadialCenter,
     beginHistoryTransaction,
   } = ctx
 
@@ -376,7 +378,12 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     })
     const pickedPoint = snap.requiresResolvedSnapForPointPick() && !resolvedSnap.mode ? null : resolvedSnap.point
 
-    if (pendingFeatureDistribution?.selectingGuide) {
+    if (pendingFeatureDistribution?.pickTarget === 'radial-center') {
+      setFeatureDistributionRadialCenter(pickedPoint ?? world)
+      return
+    }
+
+    if (pendingFeatureDistribution?.pickTarget === 'guide') {
       const guideHit = resolveFeatureSelectionHit(world, resolvedProjectFeatures(project), vt)
       if (guideHit.kind === 'direct') {
         setFeatureDistributionGuide(guideHit.featureId)

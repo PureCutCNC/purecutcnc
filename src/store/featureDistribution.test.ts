@@ -93,7 +93,7 @@ function testIndependentDistributionClonesDefinitionsAndLeavesGuideUntouched() {
     mode: 'path', copyCount: 2, startOffset: 0, endOffset: 0,
     orientation: 'follow', startScale: 100, endScale: 80,
   })
-  state.setFeatureDistributionGuidePicking(true)
+  state.setFeatureDistributionPickTarget('guide')
   state.setFeatureDistributionGuide('guide')
   const ids = useProjectStore.getState().completeFeatureDistribution()
   const after = useProjectStore.getState()
@@ -119,6 +119,34 @@ function testCancelDoesNotChangeTheProject() {
   console.log('distribution cancel: PASSED')
 }
 
+function testInchDefaultsAndRadialCenterPickingStayTransientUntilConfirmed() {
+  const project = makeProject()
+  project.meta = { ...project.meta, units: 'inch' }
+  resetStore(project)
+  const state = useProjectStore.getState()
+  state.startFeatureDistribution()
+
+  const gridPending = useProjectStore.getState().pendingFeatureDistribution
+  assert(gridPending?.spec.mode === 'grid', 'workflow should start with the grid mode')
+  if (gridPending?.spec.mode === 'grid') {
+    assert(gridPending.spec.spacingX === 2 && gridPending.spec.spacingY === 2, 'inch projects should start with 2 in spacing')
+  }
+
+  state.updateFeatureDistribution({
+    mode: 'radial', center: { x: 5, y: 5 }, copyCount: 4,
+    startAngleDegrees: 0, sweepDegrees: 360, orientation: 'follow', startScale: 100, endScale: 100,
+  })
+  assert(!useProjectStore.getState().pendingFeatureDistribution?.radialCenterPicked, 'switching to radial should require a picked center')
+
+  state.setFeatureDistributionPickTarget('radial-center')
+  state.setFeatureDistributionRadialCenter({ x: 30, y: 30 })
+  const radialPending = useProjectStore.getState().pendingFeatureDistribution
+  assert(radialPending?.pickTarget === null, 'a point pick should exit center-picking mode')
+  assert(radialPending?.radialCenterPicked, 'a point pick should mark the radial center as chosen')
+  assert(radialPending?.spec.mode === 'radial' && radialPending.spec.center.x === 30 && radialPending.spec.center.y === 30, 'the selected sketch point should become the radial center')
+  console.log('inch defaults and radial center pick: PASSED')
+}
+
 function testGroupedSourcesCreateOneIndividuallySelectableMemberPerSource() {
   const project = makeProject()
   resetStore(project)
@@ -138,4 +166,5 @@ function testGroupedSourcesCreateOneIndividuallySelectableMemberPerSource() {
 testReferenceDistributionKeepsSourceAndCreatesOneUndoStep()
 testIndependentDistributionClonesDefinitionsAndLeavesGuideUntouched()
 testCancelDoesNotChangeTheProject()
+testInchDefaultsAndRadialCenterPickingStayTransientUntilConfirmed()
 testGroupedSourcesCreateOneIndividuallySelectableMemberPerSource()

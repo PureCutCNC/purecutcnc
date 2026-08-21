@@ -228,7 +228,8 @@ function testToggleActiveStates() {
     pendingFeatureDistribution: {
       sourceIds: ['feature-1'],
       guideId: null,
-      selectingGuide: false,
+      pickTarget: null,
+      radialCenterPicked: false,
       spec: { mode: 'grid', rows: 1, columns: 2, spacingX: 10, spacingY: 10, startScale: 100, endScale: 100 },
       session: 1,
     },

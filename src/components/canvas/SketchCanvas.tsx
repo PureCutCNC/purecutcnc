@@ -338,8 +338,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     completePendingOffset,
     cancelPendingOffset,
     updateFeatureDistribution,
-    setFeatureDistributionGuidePicking,
+    setFeatureDistributionPickTarget,
     setFeatureDistributionGuide,
+    setFeatureDistributionRadialCenter,
     cancelFeatureDistribution,
     completeFeatureDistribution,
     completePendingShapeAction,
@@ -741,7 +742,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   const featureDistribution = useFeatureDistributionWorkflow({
     pendingFeatureDistribution,
-    setFeatureDistributionGuidePicking,
+    setFeatureDistributionPickTarget,
     cancelFeatureDistribution,
     completeFeatureDistribution,
     containerRef,
@@ -1730,7 +1731,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.stroke()
         ctx.restore()
       }
-      if (sources.length === pendingFeatureDistribution.sourceIds.length) {
+      if (pendingFeatureDistribution.spec.mode === 'radial' && pendingFeatureDistribution.radialCenterPicked) {
+        drawPendingPoint(
+          ctx,
+          pendingFeatureDistribution.spec.center,
+          vt,
+          pendingFeatureDistribution.pickTarget === 'radial-center',
+        )
+      }
+      if (
+        sources.length === pendingFeatureDistribution.sourceIds.length
+        && (pendingFeatureDistribution.spec.mode !== 'radial' || pendingFeatureDistribution.radialCenterPicked)
+      ) {
         const plan = planFeatureDistribution({
           spec: pendingFeatureDistribution.spec,
           sourcePivot: featureDistributionPivot(sources.map((source) => source.sketch.profile)),
@@ -2663,6 +2675,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingTransform,
     cancelPendingOffset,
     cancelFeatureDistribution,
+    setFeatureDistributionPickTarget,
     confirmCutCutters,
     cancelPendingShapeAction,
     setSketchEditTool,
@@ -2860,6 +2873,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     completePendingOffset,
     cancelPendingOffset,
     setFeatureDistributionGuide,
+    setFeatureDistributionRadialCenter,
     beginHistoryTransaction,
   })
 
@@ -2975,9 +2989,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           plan={featureDistributionPanelState.plan}
           sourcePivot={featureDistributionPanelState.sourcePivot}
           guideName={featureDistributionPanelState.guideName}
+          units={project.meta.units}
           panel={featureDistribution.featureDistributionWorkflowPanel}
           onUpdate={updateFeatureDistribution}
           onPickGuide={featureDistribution.pickGuideFromPanel}
+          onPickCenter={featureDistribution.pickRadialCenterFromPanel}
           onComplete={featureDistribution.completeFeatureDistributionFromPanel}
           onCancel={featureDistribution.cancelFeatureDistributionFromPanel}
         />
