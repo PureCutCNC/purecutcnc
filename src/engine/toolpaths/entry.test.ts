@@ -318,6 +318,35 @@ test('still places a helix when the cut start sits on the region boundary', () =
   assert(descending.length > 0, 'boundary-start helix should still descend')
 })
 
+test('places the reachable helix next to the cut start, not in the roomiest spot', () => {
+  // Regression for #581: roomiest-first exploration placed the fallback
+  // helix at the region's largest-clearance spot (mid-pocket) and linked to
+  // a boundary cut start at full depth, several diameters away.
+  const moves: ToolpathMove[] = []
+  const toolDiameter = 4
+  const target = entryTarget(0, 100, -2)
+  const result = synthesizeEntry(
+    moves,
+    null,
+    target,
+    2,
+    policy(rectangle(200, 200), { toolDiameter }),
+  )
+  assert(result.usedStrategy === 'helix', `expected helix, got ${result.usedStrategy}`)
+
+  const leadIns = moves.filter((move) => move.kind === 'lead_in')
+  const maxDistance = Math.max(...leadIns.flatMap((move) => [
+    Math.hypot(move.from.x - target.x, move.from.y - target.y),
+    Math.hypot(move.to.x - target.x, move.to.y - target.y),
+  ]))
+  // A tangent placement caps this at one helix radius; the reachable
+  // fallback must stay within a couple of tool diameters of the cut start.
+  assert(
+    maxDistance <= toolDiameter * 2 + 1e-6,
+    'helix strayed ' + maxDistance.toFixed(3) + ' from the cut start; expected <= ' + toolDiameter * 2,
+  )
+})
+
 // ── Center-locked circular bore (emitCenterLockedCircularBore) ──────────
 
 test('center-locked bore: swept-envelope inequality at every emitted point', () => {
