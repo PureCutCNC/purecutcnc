@@ -93,6 +93,7 @@ interface ClearanceCell {
   h: number
   distance: number
   maxDistance: number
+  priority?: number
 }
 
 interface HelixPlacement {
@@ -491,7 +492,7 @@ function findReachableHelixPlacement(
   const half = cellSize / 2
   for (let x = bounds.minX; x < bounds.maxX; x += cellSize) {
     for (let y = bounds.minY; y < bounds.maxY; y += cellSize) {
-      cells.push(makeCell(x + half, y + half, half, region))
+      cells.push(makeCell(x + half, y + half, half, region, target))
     }
   }
 
@@ -518,10 +519,10 @@ function findReachableHelixPlacement(
 
     if (cell.h <= precision / 2) continue
     const nextHalf = cell.h / 2
-    cells.push(makeCell(cell.x - nextHalf, cell.y - nextHalf, nextHalf, region))
-    cells.push(makeCell(cell.x + nextHalf, cell.y - nextHalf, nextHalf, region))
-    cells.push(makeCell(cell.x - nextHalf, cell.y + nextHalf, nextHalf, region))
-    cells.push(makeCell(cell.x + nextHalf, cell.y + nextHalf, nextHalf, region))
+    cells.push(makeCell(cell.x - nextHalf, cell.y - nextHalf, nextHalf, region, target))
+    cells.push(makeCell(cell.x + nextHalf, cell.y - nextHalf, nextHalf, region, target))
+    cells.push(makeCell(cell.x - nextHalf, cell.y + nextHalf, nextHalf, region, target))
+    cells.push(makeCell(cell.x + nextHalf, cell.y + nextHalf, nextHalf, region, target))
   }
   return null
 }
@@ -910,12 +911,16 @@ class ClearanceCellQueue {
     return this.cells.length
   }
 
+  private static cellPriority(cell: ClearanceCell): number {
+    return cell.priority ?? cell.maxDistance
+  }
+
   push(cell: ClearanceCell): void {
     this.cells.push(cell)
     let index = this.cells.length - 1
     while (index > 0) {
       const parent = Math.floor((index - 1) / 2)
-      if (this.cells[parent].maxDistance >= cell.maxDistance) break
+      if (ClearanceCellQueue.cellPriority(this.cells[parent]) >= ClearanceCellQueue.cellPriority(cell)) break
       this.cells[index] = this.cells[parent]
       index = parent
     }
@@ -933,10 +938,10 @@ class ClearanceCellQueue {
       const right = left + 1
       if (left >= this.cells.length) break
       const child = right < this.cells.length
-        && this.cells[right].maxDistance > this.cells[left].maxDistance
+        && ClearanceCellQueue.cellPriority(this.cells[right]) > ClearanceCellQueue.cellPriority(this.cells[left])
         ? right
         : left
-      if (this.cells[child].maxDistance <= last.maxDistance) break
+      if (ClearanceCellQueue.cellPriority(this.cells[child]) <= ClearanceCellQueue.cellPriority(last)) break
       this.cells[index] = this.cells[child]
       index = child
     }
@@ -945,14 +950,23 @@ class ClearanceCellQueue {
   }
 }
 
-function makeCell(x: number, y: number, h: number, region: EntryClearanceRegion): ClearanceCell {
+const HELIX_CENTER_PROXIMITY_WEIGHT = 0.01
+
+function makeCell(x: number, y: number, h: number, region: EntryClearanceRegion, target?: Point): ClearanceCell {
   const distance = pointToRegionDistance({ x, y }, region)
+  const maxDistance = distance + h * Math.SQRT2
+  let priority: number | undefined
+  if (target) {
+    const distanceToTarget = Math.hypot(x - target.x, y - target.y)
+    priority = maxDistance - distanceToTarget * HELIX_CENTER_PROXIMITY_WEIGHT
+  }
   return {
     x,
     y,
     h,
     distance,
-    maxDistance: distance + h * Math.SQRT2,
+    maxDistance,
+    priority,
   }
 }
 
