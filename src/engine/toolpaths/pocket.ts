@@ -1796,7 +1796,7 @@ interface TangentSLinkSplice {
  *   flat-revolution chord is structurally identical to a handoff.
  * When no S fits, the straight link stays.
  */
-function spliceTangentSLink(
+export function spliceTangentSLink(
   moves: ToolpathMove[],
   linkStartIndex: number,
   contour: Point[],

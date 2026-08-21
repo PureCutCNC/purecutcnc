@@ -68,6 +68,7 @@ import {
   SLOT_FEED_ADJACENCY_FACTOR,
   SLOT_FEED_ENGAGEMENT_FACTOR,
   SLOT_FEED_OWN_TRAIL_FACTOR,
+  spliceTangentSLink,
   toClosedCutMoves,
   toOpenCutMoves,
   transitionToCutEntry,
@@ -587,6 +588,7 @@ function generateRoughBandMoves(
       let previousCircleEnd: ToolpathPoint | null = null
       for (const baseCircle of circles) {
         const circle = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
+        const linkStartIndex = moves.length
         currentPosition = transitionToCutEntry(
           moves,
           currentPosition,
@@ -596,7 +598,18 @@ function generateRoughBandMoves(
           undefined,
           levelEntryPolicy,
         )
-        const circleMoves = toClosedCutMoves(circle, z)
+        let circleMoves = toClosedCutMoves(circle, z)
+        const tangentSplice = spliceTangentSLink(
+          moves,
+          linkStartIndex,
+          circle,
+          circleMoves,
+          tangentLink,
+        )
+        if (tangentSplice) {
+          circleMoves = tangentSplice.cutMoves
+          currentPosition = tangentSplice.nextPosition
+        }
         moves.push(...circleMoves)
         currentPosition = circleMoves.at(-1)?.to ?? currentPosition
         previousCircleEnd = currentPosition
@@ -948,6 +961,7 @@ function generateFinishBandMoves(
         let previousCircleEnd: ToolpathPoint | null = null
         for (const baseCircle of circles) {
           const circle = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
+          const linkStartIndex = moves.length
           currentPosition = transitionToCutEntry(
             moves,
             currentPosition,
@@ -957,7 +971,18 @@ function generateFinishBandMoves(
             undefined,
             entryPolicy,
           )
-          const circleMoves = toClosedCutMoves(circle, z)
+          let circleMoves = toClosedCutMoves(circle, z)
+          const tangentSplice = spliceTangentSLink(
+            moves,
+            linkStartIndex,
+            circle,
+            circleMoves,
+            floorTangentLink,
+          )
+          if (tangentSplice) {
+            circleMoves = tangentSplice.cutMoves
+            currentPosition = tangentSplice.nextPosition
+          }
           moves.push(...circleMoves)
           currentPosition = circleMoves.at(-1)?.to ?? currentPosition
           previousCircleEnd = currentPosition
