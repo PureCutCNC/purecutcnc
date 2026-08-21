@@ -72,6 +72,7 @@ export function DrivingDimensionPanel({ driving }: DrivingDimensionPanelProps) {
       position={driving.drivingDimensionWorkflowPanel.position}
       panelRef={driving.drivingDimensionWorkflowPanel.panelRef}
       handleProps={driving.drivingDimensionWorkflowPanel.handleProps}
+      pageLevel
       actionRowProps={driving.drivingDimensionWorkflowPanel.actionRowProps}
       className="canvas-workflow-panel--driving-edit"
       moveLabel={t('canvas.driving.moveLabel')}

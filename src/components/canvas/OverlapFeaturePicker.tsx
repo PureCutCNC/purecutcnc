@@ -43,14 +43,20 @@ export function OverlapFeaturePicker({ picker }: OverlapFeaturePickerProps) {
 
   const candidateCount = picker.candidates.length
 
+  // The wrapper is a layout shim only (fills the canvas, pointer-events: none,
+  // container for the list's cqh sizing). The dialog role lives on the portaled
+  // panel itself via dialogAria, so the accessible dialog travels with its
+  // content instead of remaining an empty shell in the canvas container.
   return (
-    <div className="overlap-feature-picker" role="dialog" aria-label={t('canvas.overlap.dialogAria')} aria-modal="false">
+    <div className="overlap-feature-picker">
       <CanvasWorkflowPanel
         title={t('canvas.overlap.title')}
         step={tPlural(candidateCount, 'canvas.overlap.step.one', 'canvas.overlap.step.other')}
         position={picker.workflowPanel.position}
         panelRef={picker.workflowPanel.panelRef}
         handleProps={picker.workflowPanel.handleProps}
+        pageLevel
+        dialogAria={{ label: t('canvas.overlap.dialogAria'), modal: false }}
         actionRowProps={picker.workflowPanel.actionRowProps}
         className="overlap-feature-picker__panel"
         moveLabel={t('canvas.overlap.moveLabel')}

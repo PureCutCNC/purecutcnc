@@ -132,6 +132,7 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     canvasRef,
     clearTransientCanvasState,
     focusCanvasOnOpen: !creationDimEditActive && !(pendingAdd?.shape === 'gear' && pendingAdd.outsideRadius !== null),
+    pageLevel: true,
   })
 
   const placementPanelActive = !!pendingAdd && !creationPanelShape
@@ -141,6 +142,7 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    pageLevel: true,
   })
 
   function triggerDimensionFromCreationPanel() {

@@ -455,6 +455,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    pageLevel: true,
   })
   const showJoinFlowPanel = pendingShapeAction?.kind === 'join'
   const joinWorkflowPanel = useCanvasWorkflowPanel({
@@ -463,6 +464,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    pageLevel: true,
   })
 
   const editModeActive = selection.mode === 'sketch_edit' && !pendingAdd
@@ -488,6 +490,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    pageLevel: true,
   })
   const dimensionWorkflowPanel = useCanvasWorkflowPanel({
     open: !!pendingDimension,
@@ -495,6 +498,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    pageLevel: true,
   })
   const dimensionDeleteWorkflowPanel = useCanvasWorkflowPanel({
     open: dimensionDeleteArmed,
@@ -502,6 +506,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    pageLevel: true,
   })
   const clipboardPlacementWorkflowPanel = useCanvasWorkflowPanel({
     open: pendingClipboardPlacement !== null,
@@ -509,6 +514,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    pageLevel: true,
   })
   const dimensionTitleKey: MessageKey | null = pendingDimension
     ? `canvas.dimension.title.${pendingDimension.type}` as MessageKey
@@ -3019,6 +3025,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           position={offset.offsetWorkflowPanel.position}
           panelRef={offset.offsetWorkflowPanel.panelRef}
           handleProps={offset.offsetWorkflowPanel.handleProps}
+          pageLevel
           actionRowProps={offset.offsetWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--offset"
           moveLabel={t('canvas.offset.moveLabel')}
@@ -3073,6 +3080,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           position={joinWorkflowPanel.position}
           panelRef={joinWorkflowPanel.panelRef}
           handleProps={joinWorkflowPanel.handleProps}
+          pageLevel
           actionRowProps={joinWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--join"
           moveLabel={t('canvas.join.moveLabel')}
@@ -3110,6 +3118,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           position={cutWorkflowPanel.position}
           panelRef={cutWorkflowPanel.panelRef}
           handleProps={cutWorkflowPanel.handleProps}
+          pageLevel
           actionRowProps={cutWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--cut"
           moveLabel={t('canvas.cut.moveLabel')}
@@ -3202,6 +3211,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           position={creation.creationWorkflowPanel.position}
           panelRef={creation.creationWorkflowPanel.panelRef}
           handleProps={creation.creationWorkflowPanel.handleProps}
+          pageLevel
           actionRowProps={creation.creationWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--creation"
           moveLabel={t('canvas.creation.moveLabel')}
@@ -3575,6 +3585,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           position={creation.placementWorkflowPanel.position}
           panelRef={creation.placementWorkflowPanel.panelRef}
           handleProps={creation.placementWorkflowPanel.handleProps}
+          pageLevel
           actions={
             <CanvasWorkflowCancel label={t('canvas.placement.cancel')} onClick={cancelPendingAdd} />
           }
@@ -3595,6 +3606,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           position={constraint.constraintWorkflowPanel.position}
           panelRef={constraint.constraintWorkflowPanel.panelRef}
           handleProps={constraint.constraintWorkflowPanel.handleProps}
+          pageLevel
           actions={constraint.constraintDistanceReady ? (
             <>
               <CanvasWorkflowConfirm label={t('canvas.constraint.confirm')} onClick={constraint.commitConstraintFromPanel} />
@@ -3652,6 +3664,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           position={move.moveWorkflowPanel.position}
           panelRef={move.moveWorkflowPanel.panelRef}
           handleProps={move.moveWorkflowPanel.handleProps}
+          pageLevel
           actionRowProps={move.moveWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--move"
           moveLabel={t('canvas.move.moveLabel', { mode: pendingMove.mode })}
@@ -3765,6 +3778,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           position={transformExact.transformWorkflowPanel.position}
           panelRef={transformExact.transformWorkflowPanel.panelRef}
           handleProps={transformExact.transformWorkflowPanel.handleProps}
+          pageLevel
           actionRowProps={transformExact.transformWorkflowPanel.actionRowProps}
           className="canvas-workflow-panel--transform"
           moveLabel={t('canvas.transform.moveLabel', { mode: pendingTransform.mode })}
@@ -3886,6 +3900,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           position={tapeWorkflowPanel.position}
           panelRef={tapeWorkflowPanel.panelRef}
           handleProps={tapeWorkflowPanel.handleProps}
+          pageLevel
           actions={(
             <CanvasWorkflowCancel label={t('canvas.tape.done')} onClick={() => { clearTapeMeasure(); tapeWorkflowPanel.focusCanvasAfterAction() }} />
           )}
@@ -3902,6 +3917,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           position={dimensionWorkflowPanel.position}
           panelRef={dimensionWorkflowPanel.panelRef}
           handleProps={dimensionWorkflowPanel.handleProps}
+          pageLevel
           actions={(
             <CanvasWorkflowCancel label={t('canvas.dimension.addCancel')} onClick={() => { cancelPendingDimension(); dimensionWorkflowPanel.focusCanvasAfterAction() }} />
           )}
@@ -3918,6 +3934,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           position={dimensionDeleteWorkflowPanel.position}
           panelRef={dimensionDeleteWorkflowPanel.panelRef}
           handleProps={dimensionDeleteWorkflowPanel.handleProps}
+          pageLevel
           actions={(
             <CanvasWorkflowAction variant="confirm" icon="check" shortcut={CANVAS_SHORTCUT.cancel} label={t('canvas.dimension.deleteDone')} onClick={() => { setDimensionDeleteArmed(false); dimensionDeleteWorkflowPanel.focusCanvasAfterAction() }} />
           )}
@@ -3934,6 +3951,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           position={clipboardPlacementWorkflowPanel.position}
           panelRef={clipboardPlacementWorkflowPanel.panelRef}
           handleProps={clipboardPlacementWorkflowPanel.handleProps}
+          pageLevel
           actionRowProps={clipboardPlacementWorkflowPanel.actionRowProps}
           actions={(
             <CanvasWorkflowCancel label={t('canvas.paste.cancel')} onClick={cancelClipboardPlacement} />

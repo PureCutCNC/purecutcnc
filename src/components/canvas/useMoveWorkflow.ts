@@ -98,6 +98,7 @@ export function useMoveWorkflow(ctx: MoveWorkflowCtx): MoveWorkflow {
     canvasRef,
     clearTransientCanvasState,
     focusCanvasOnOpen: !moveDistanceEditActive && !copyCountPromptActive,
+    pageLevel: true,
   })
 
   function cancelMoveFromPanel() {

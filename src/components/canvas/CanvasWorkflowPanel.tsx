@@ -43,6 +43,13 @@ interface CanvasWorkflowPanelProps {
   className?: string
   moveLabel?: string
   /**
+   * Render the panel root as a non-modal dialog with this accessible name.
+   * Use when the panel *is* the dialog (overlap picker): the role lives on
+   * the portaled element itself, so queries scoped through the dialog find
+   * the panel content instead of an empty shell left behind in the canvas.
+   */
+  dialogAria?: { label: string; modal?: boolean }
+  /**
    * Render through a portal to document.body with `position: fixed`, so the
    * panel can be dragged anywhere on the page. Must match the `pageLevel`
    * option on the `useCanvasWorkflowPanel` call that produced `position`.
@@ -62,6 +69,7 @@ export function CanvasWorkflowPanel({
   className = '',
   moveLabel,
   pageLevel = false,
+  dialogAria,
 }: CanvasWorkflowPanelProps) {
   const { t } = useI18n()
   const resolvedMoveLabel = moveLabel ?? t('canvas.common.moveControls')
@@ -115,6 +123,9 @@ export function CanvasWorkflowPanel({
       ref={panelRef}
       className={panelClassName}
       style={{ left: position.x, top: position.y }}
+      role={dialogAria ? 'dialog' : undefined}
+      aria-label={dialogAria?.label}
+      aria-modal={dialogAria ? dialogAria.modal ?? true : undefined}
       onKeyDownCapture={containTabWithinPanel}
     >
       <div className="canvas-workflow-panel__header">

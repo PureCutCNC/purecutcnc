@@ -67,6 +67,7 @@ export function useOverlapFeaturePicker({
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    pageLevel: true,
   })
 
   useEffect(() => {
