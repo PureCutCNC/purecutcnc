@@ -19,6 +19,7 @@ import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Point, Project } from '../../types/project'
 import {
   createEntryPolicy,
+  isEntryHandoffMove,
   synthesizeEntry,
   withEntryHandoffFeedScale,
   withEntryStartZ,
@@ -1784,9 +1785,16 @@ interface TangentSLinkSplice {
 }
 
 /**
- * Replace one planar direct cut link with a tangent S and re-seam its arrival
- * contour. Both the offset-tree rings and phase-1 seed circles use this exact
- * transition, so keeping the splice here prevents the two paths drifting.
+ * Replace one trailing straight planar link with a tangent S and re-seam its
+ * arrival contour. Two link shapes share this transition, so keeping the
+ * splice here prevents the paths drifting:
+ * - legacy (#545): exactly one appended move — a planar direct cut link whose
+ *   exit tangent comes from the previous contour's closing chord.
+ * - entry (#581): a synthesized helix/ramp ends in one straight planar
+ *   lead_in handoff; its exit tangent is the entry path's own final chord.
+ *   The handoff is recognized by its emission-time mark — a trailing
+ *   flat-revolution chord is structurally identical to a handoff.
+ * When no S fits, the straight link stays.
  */
 function spliceTangentSLink(
   moves: ToolpathMove[],
@@ -1795,20 +1803,21 @@ function spliceTangentSLink(
   cutMoves: ToolpathMove[],
   tangentLink: TangentLinkOptions | undefined,
 ): TangentSLinkSplice | null {
-  if (!tangentLink || cutMoves.length === 0 || moves.length !== linkStartIndex + 1 || linkStartIndex === 0) {
+  if (!tangentLink || cutMoves.length === 0 || moves.length <= linkStartIndex || linkStartIndex === 0) {
     return null
   }
 
-  // A single direct cut link: try the tangent S-link (issue #545). The S
-  // departs the previous contour's closing cut along its tangent and arrives
-  // on a vertex of this contour along this contour's tangent, so the contour
-  // re-seams at the arrival vertex. When no S fits, the straight link stays.
-  const linkMove = moves[linkStartIndex]
-  const previous = moves[linkStartIndex - 1]
+  const legacySingle = moves.length === linkStartIndex + 1
+  const linkIndex = moves.length - 1
+  const linkMove = moves[linkIndex]
+  const previous = moves[linkIndex - 1]
+  if (legacySingle) {
+    if (linkMove.kind !== 'cut' || previous.kind !== 'cut') return null
+  } else if (!isEntryHandoffMove(linkMove)) {
+    return null
+  }
   if (
-    linkMove.kind !== 'cut'
-    || previous.kind !== 'cut'
-    || Math.abs(previous.to.x - linkMove.from.x) > 1e-9
+    Math.abs(previous.to.x - linkMove.from.x) > 1e-9
     || Math.abs(previous.to.y - linkMove.from.y) > 1e-9
     // The S is an XY planar link; a ramping cut link (3D) has no planar S and
     // must not be spliced at the wrong Z.
@@ -1855,7 +1864,7 @@ function spliceTangentSLink(
   }
   if (sMoves.length === 0) return null
 
-  moves.splice(linkStartIndex, 1, ...sMoves)
+  moves.splice(linkIndex, 1, ...sMoves)
   const rotated = [...contour.slice(result.arrivalIndex), ...contour.slice(0, result.arrivalIndex)]
   return {
     cutMoves: toClosedCutMoves(rotated, z),

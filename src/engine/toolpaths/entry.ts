@@ -53,6 +53,19 @@ const clearanceCircleCache = new WeakMap<
   Map<number, EntryClearanceCircle | null>
 >()
 
+/**
+ * The straight planar link an entry emits to reach the cut start when the
+ * helix/ramp bottom does not land on it exactly. Marked at emission because a
+ * trailing flat-revolution chord is structurally identical to a handoff — the
+ * difference is only whether the emitter pushed one. Consumers (the pocket
+ * S-link splice) must not mistake the two.
+ */
+const entryHandoffMoves = new WeakSet<object>()
+
+export function isEntryHandoffMove(move: ToolpathMove): boolean {
+  return entryHandoffMoves.has(move)
+}
+
 export type EntryCutSide = 'internal' | 'external'
 
 export interface EntryClearanceRegion {
@@ -335,12 +348,14 @@ function emitHelix(
   }
 
   if (!sameXY(current, target)) {
-    moves.push({
+    const handoff: ToolpathMove = {
       kind: 'lead_in',
       from: current,
       to: target,
       ...(policy.handoffFeedScale === undefined ? {} : { feedScale: policy.handoffFeedScale }),
-    })
+    }
+    entryHandoffMoves.add(handoff)
+    moves.push(handoff)
   }
   return target
 }
@@ -379,12 +394,14 @@ function emitRamp(
   }
 
   if (!sameXY(current, target)) {
-    moves.push({
+    const handoff: ToolpathMove = {
       kind: 'lead_in',
       from: current,
       to: target,
       ...(policy.handoffFeedScale === undefined ? {} : { feedScale: policy.handoffFeedScale }),
-    })
+    }
+    entryHandoffMoves.add(handoff)
+    moves.push(handoff)
   }
   return target
 }

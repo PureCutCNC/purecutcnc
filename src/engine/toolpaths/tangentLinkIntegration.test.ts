@@ -639,6 +639,85 @@ function testEntryHandoffUntouched() {
   console.log('entry handoff: PASSED')
 }
 
+interface EntryRunCensus {
+  runs: number
+  followedByLeadIn: number
+  followedByCut: number
+}
+
+/** Classify what follows each helix entry (a maximal lead_in run of >= 20).
+  * A straight entry handoff survives as one more lead_in; a spliced S (or a
+  * helix that landed exactly on its target) continues with cut moves. */
+function censusEntryRuns(moves: ToolpathMove[]): EntryRunCensus {
+  const census: EntryRunCensus = { runs: 0, followedByLeadIn: 0, followedByCut: 0 }
+  let index = 0
+  while (index < moves.length) {
+    if (moves[index].kind !== 'lead_in') { index += 1; continue }
+    let end = index
+    while (end + 1 < moves.length && moves[end + 1].kind === 'lead_in' && contiguous(moves[end], moves[end + 1])) end += 1
+    if (end - index + 1 >= 20) {
+      census.runs += 1
+      const next = moves[end + 1]
+      if (next === undefined) continue
+      if (next.kind === 'lead_in') census.followedByLeadIn += 1
+      if (next.kind === 'cut') census.followedByCut += 1
+    }
+    index = end + 1
+  }
+  return census
+}
+
+function contiguous(a: ToolpathMove, b: ToolpathMove): boolean {
+  return Math.hypot(a.to.x - b.from.x, a.to.y - b.from.y, a.to.z - b.from.z) <= 1e-9
+}
+
+function testHelixEntryHandoffSplicesToS() {
+  console.log('Testing the helix entry handoff joins the ring through an S (#581)...')
+  // The wall-adjacent ring starts ON the tool-centre domain boundary, where
+  // the tangent helix placement can never fit - every wall-ring entry falls
+  // to the reachable placement and ends in a straight handoff. With tangent
+  // links enabled that handoff must splice into an S; disabled it stays.
+  const { project, operation } = squarePocket({ entryStrategy: 'helix', roundLinkCorners: true })
+  const on = generatePocket(project, operation).moves
+
+  const onCensus = censusEntryRuns(on)
+  assert(onCensus.runs > 0, 'helix fixture emits entries (got ' + onCensus.runs + ')')
+  assert(onCensus.followedByLeadIn === 0,
+    'enabled variant leaves no straight handoff after an entry (got ' + onCensus.followedByLeadIn + ')')
+  assert(onCensus.followedByCut === onCensus.runs, 'every enabled entry flows into cut moves')
+
+  // Positive evidence of the S: the first cut chords after some entry must
+  // TURN. Tessellated S arcs bend by roughly arcStep per chord; a straight
+  // handoff flows into a straight ring chord with ~zero turn.
+  const turnOfRun = (a: ToolpathMove, b: ToolpathMove): number => {
+    const dot = (a.to.x - a.from.x) * (b.to.x - b.from.x) + (a.to.y - a.from.y) * (b.to.y - b.from.y)
+    const mag = Math.hypot(a.to.x - a.from.x, a.to.y - a.from.y) * Math.hypot(b.to.x - b.from.x, b.to.y - b.from.y)
+    return mag <= 1e-9 ? 0 : Math.acos(Math.max(-1, Math.min(1, dot / mag)))
+  }
+  let curvedEntries = 0
+  let index = 0
+  while (index < on.length) {
+    if (on[index].kind !== 'lead_in') { index += 1; continue }
+    let end = index
+    while (end + 1 < on.length && on[end + 1].kind === 'lead_in' && contiguous(on[end], on[end + 1])) end += 1
+    if (end - index + 1 >= 20 && typeof on[end + 1] !== 'undefined' && on[end + 1].kind === 'cut'
+        && typeof on[end + 2] !== 'undefined' && on[end + 2].kind === 'cut') {
+      if (turnOfRun(on[end + 1], on[end + 2]) > (2 * Math.PI) / 180) curvedEntries += 1
+    }
+    index = end + 1
+  }
+  assert(curvedEntries > 0, 'no entry handoff shows S curvature (curved ' + curvedEntries + ' of ' + onCensus.runs + ')')
+
+  for (let index = 0; index + 1 < on.length; index += 1) {
+    const a = on[index]
+    const b = on[index + 1]
+    const gap = Math.hypot(a.to.x - b.from.x, a.to.y - b.from.y, a.to.z - b.from.z)
+    assert(gap <= 1e-6, 'spliced stream gap ' + gap.toFixed(4) + ' between moves ' + index + ' and ' + (index + 1))
+  }
+  console.log('helix handoff S-splice: PASSED (' + onCensus.runs + ' entries, ' +
+    curvedEntries + ' with S curvature at the handoff)')
+}
+
 function testDeterminism() {
   console.log('Testing determinism...')
   const { project, operation } = squarePocket({ roundLinkCorners: true })
@@ -736,6 +815,7 @@ try {
   testSweptCoverageParity()
   testParallelAndOtherOperationsByteIdentical()
   testEntryHandoffUntouched()
+  testHelixEntryHandoffSplicesToS()
   testDeterminism()
   testSlotFeedStillStampsSlots()
   testArcRunBudgetOnRealFixture()
