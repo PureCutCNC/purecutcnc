@@ -26,6 +26,7 @@ import {
 import { buildTransformedCopiedFeatures, extractClonedDefinitions } from '../helpers/copyFeatures'
 import { createFeatureInstance } from '../helpers/featureDefinitions'
 import { nextPlacementSession } from '../helpers/ids'
+import { multiplyMatrix } from '../helpers/instanceTransforms'
 import { cloneProject, syncFeatureTreeProject } from '../helpers/normalize'
 import { resolveFeatureInstance, type ResolvedSketchFeature } from '../helpers/resolveFeatures'
 import type { ProjectStore } from '../types'
@@ -182,9 +183,18 @@ export function createFeatureDistributionSlice(
         const definitions = extractClonedDefinitions(created)
         const instances = created.map((feature) => createFeatureInstance(feature, feature.definitionId, feature.transform))
         createdIds = created.map((feature) => feature.id)
+        const sourceIds = new Set(pending.sourceIds)
+        const sourcePlacement = plan.sourcePlacement
+        const features = sourcePlacement
+          ? s.project.features.map((feature) => (
+            sourceIds.has(feature.id)
+              ? { ...feature, transform: multiplyMatrix(sourcePlacement.transform, feature.transform) }
+              : feature
+          ))
+          : s.project.features
         const nextProject = syncFeatureTreeProject({
           ...s.project,
-          features: [...s.project.features, ...instances],
+          features: [...features, ...instances],
           featureDefinitions: { ...s.project.featureDefinitions, ...definitions },
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         })

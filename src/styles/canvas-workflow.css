@@ -431,11 +431,27 @@
   line-height: 1.35;
 }
 
-/* The picker panel can overlap the outline to be clicked. Keep its instruction
-   visible while allowing the click to reach the sketch; Escape returns to the
-   normal interactive configuration panel. */
-.canvas-workflow-panel--picking {
-  pointer-events: none;
+.canvas-workflow-panel__picker-instruction {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.canvas-workflow-panel__picker-instruction > span {
+  min-width: 0;
+}
+
+.canvas-workflow-panel__picker-selection {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
 
 .overlap-feature-picker {

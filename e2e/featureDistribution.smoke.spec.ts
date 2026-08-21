@@ -75,16 +75,20 @@ test('radial distribution picks its center from the sketch', async ({ app }) => 
   await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeDisabled()
 
   await panel.getByRole('button', { name: 'Pick center', exact: true }).click()
-  await expect(panel).toContainText('Click the desired center point on the sketch.')
-  await canvas.focus()
-  await app.page.keyboard.press('Escape')
+  const centerHint = panel.getByText('Click a center point on the sketch outside this dialog. Drag this panel if it covers the point.', { exact: true })
+  await expect(centerHint).toBeVisible()
+  await centerHint.click()
+  await expect(centerHint).toBeVisible()
+  await panel.getByRole('button', { name: 'Cancel picking', exact: true }).click()
   await expect(panel).toBeVisible()
   await expect(panel.getByRole('button', { name: 'Pick center', exact: true })).toBeVisible()
 
   await panel.getByRole('button', { name: 'Pick center', exact: true }).click()
   await clickCanvasWorld(canvas, 80, 20)
-  await expect(panel).toContainText('Point selected')
+  await expect(panel.getByRole('button', { name: 'Change center', exact: true })).toBeVisible()
   await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeEnabled()
+  await panel.getByRole('button', { name: 'Create copies', exact: true }).click()
+  await expect.poll(() => getFeatureCount(app.page)).toBe(4)
 })
 
 test('along-path distribution names a guide chosen from its visible outline', async ({ app }) => {
@@ -97,11 +101,16 @@ test('along-path distribution names a guide chosen from its visible outline', as
   await panel.getByRole('button', { name: 'Along path', exact: true }).click()
   await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeDisabled()
   await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
-  await expect(panel).toContainText('Click the separate guide’s visible outline on the sketch.')
+  await expect(panel).toContainText('Click a separate guide outline on the sketch outside this dialog. Drag this panel if it covers the guide.')
+  await panel.getByRole('button', { name: 'Cancel picking', exact: true }).click()
+  await expect(panel.getByRole('button', { name: 'Pick guide', exact: true })).toBeVisible()
+  await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
   await clickCanvasWorld(canvas, 10, 45)
 
-  await expect(panel).toContainText('Top overlap')
+  await expect(panel.getByRole('button', { name: 'Change guide', exact: true })).toBeVisible()
   await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeEnabled()
+  await panel.getByRole('button', { name: 'Create copies', exact: true }).click()
+  await expect.poll(() => getFeatureCount(app.page)).toBe(5)
 })
 
 test.describe('tablet command bar', () => {

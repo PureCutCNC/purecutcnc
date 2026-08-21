@@ -99,8 +99,9 @@ function testIndependentDistributionClonesDefinitionsAndLeavesGuideUntouched() {
   const after = useProjectStore.getState()
   const source = after.project.features.find((feature) => feature.id === 'source')
 
-  assert(ids.length === 2, 'closed guide should create requested copies')
+  assert(ids.length === 1, 'closed guide should create the requested total less the moved source')
   assert(source, 'source should remain')
+  assert(source.transform.e === 15 && source.transform.f === -5, 'the existing source should move so its pivot starts on the guide')
   assert(ids.every((id) => after.project.features.find((feature) => feature.id === id)?.definitionId !== source.definitionId), 'independent copies need separate definitions')
   assert(ids.every((id) => after.project.featureDefinitions[after.project.features.find((feature) => feature.id === id)!.definitionId]), 'independent definitions should be committed')
   assert(JSON.stringify(after.project.features.find((feature) => feature.id === 'guide')) === JSON.stringify(guideBefore), 'guide must remain unchanged')
@@ -134,7 +135,7 @@ function testInchDefaultsAndRadialCenterPickingStayTransientUntilConfirmed() {
 
   state.updateFeatureDistribution({
     mode: 'radial', center: { x: 5, y: 5 }, copyCount: 4,
-    startAngleDegrees: 0, sweepDegrees: 360, orientation: 'follow', startScale: 100, endScale: 100,
+    sweepDegrees: 360, orientation: 'follow', startScale: 100, endScale: 100,
   })
   assert(!useProjectStore.getState().pendingFeatureDistribution?.radialCenterPicked, 'switching to radial should require a picked center')
 
@@ -144,6 +145,8 @@ function testInchDefaultsAndRadialCenterPickingStayTransientUntilConfirmed() {
   assert(radialPending?.pickTarget === null, 'a point pick should exit center-picking mode')
   assert(radialPending?.radialCenterPicked, 'a point pick should mark the radial center as chosen')
   assert(radialPending?.spec.mode === 'radial' && radialPending.spec.center.x === 30 && radialPending.spec.center.y === 30, 'the selected sketch point should become the radial center')
+  const ids = useProjectStore.getState().completeFeatureDistribution()
+  assert(ids.length === 3, 'a four-instance radial distribution should create three copies')
   console.log('inch defaults and radial center pick: PASSED')
 }
 

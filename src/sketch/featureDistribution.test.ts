@@ -52,21 +52,21 @@ function testGridKeepsTheSourceAsOriginAndTapersCreatedCopies() {
   console.log('grid placement and scale taper: PASSED')
 }
 
-function testRadialFullCircleAvoidsDuplicatingTheEndpoint() {
+function testRadialStartsAtTheSourceAndAvoidsDuplicatingTheEndpoint() {
   const plan = planFeatureDistribution({
     sourcePivot: { x: 10, y: 0 },
     spec: {
       mode: 'radial', center: { x: 0, y: 0 }, copyCount: 4,
-      startAngleDegrees: 0, sweepDegrees: 360, orientation: 'follow', startScale: 100, endScale: 100,
+      sweepDegrees: 360, orientation: 'follow', startScale: 100, endScale: 100,
     },
   })
   assert(plan.ok, 'radial plan should be valid')
-  assert(plan.placements.length === 4, 'full circle should produce the requested count')
-  close(plan.placements[0]!.position.x, 10, 'radial start x')
-  close(plan.placements[1]!.position.y, 10, 'radial quarter turn y')
-  close(plan.placements[3]!.position.y, -10, 'radial final copy y')
-  close(plan.placements[3]!.rotationRadians, Math.PI * 1.5, 'follow rotation should advance with the radial copy')
-  console.log('radial full circle endpoint: PASSED')
+  assert(plan.placements.length === 3, 'the source plus three copies should make four radial instances')
+  close(plan.placements[0]!.position.x, 0, 'first radial copy x')
+  close(plan.placements[0]!.position.y, 10, 'first radial copy y')
+  close(plan.placements[2]!.position.y, -10, 'radial final copy y')
+  close(plan.placements[2]!.rotationRadians, Math.PI * 1.5, 'follow rotation should advance from the source position')
+  console.log('radial source anchor and full-circle endpoint: PASSED')
 }
 
 function testPathSupportsMixedLineAndArcAtEqualArcLength() {
@@ -84,10 +84,13 @@ function testPathSupportsMixedLineAndArcAtEqualArcLength() {
     spec: { mode: 'path', copyCount: 3, startOffset: 0, endOffset: 10 + Math.PI * 5, orientation: 'follow', startScale: 100, endScale: 100 },
   })
   assert(plan.ok, 'mixed path plan should be valid')
-  assert(plan.placements.length === 3, 'path should create requested copies')
-  close(plan.placements[0]!.position.x, 0, 'path start x')
-  close(plan.placements[2]!.position.x, 20, 'path end x')
-  close(plan.placements[2]!.position.y, 10, 'path end y')
+  assert(plan.placements.length === 2, 'path should create the requested total less the moved source')
+  assert(plan.sourcePlacement, 'path should place the existing source at the guide start')
+  const sourceStart = applyFeatureDistributionTransform(plan.sourcePlacement.transform, { x: 0, y: 0 })
+  close(sourceStart.x, 0, 'path source start x')
+  close(sourceStart.y, 0, 'path source start y')
+  close(plan.placements[1]!.position.x, 20, 'path end x')
+  close(plan.placements[1]!.position.y, 10, 'path end y')
   console.log('mixed line and arc path spacing: PASSED')
 }
 
@@ -108,7 +111,8 @@ function testBezierPathIsDeterministicAndUsesItsTangent() {
   const second = planFeatureDistribution(input)
   assert(first.ok && second.ok, 'Bézier plans should be valid')
   assert(JSON.stringify(first.placements) === JSON.stringify(second.placements), 'Bézier planning should be deterministic')
-  assert(first.placements[0]!.rotationRadians > 1.5, 'initial Bézier tangent should face downward in screen coordinates')
+  assert(first.sourcePlacement, 'path should include an existing-source placement')
+  assert(first.sourcePlacement.rotationRadians > 1.5, 'initial Bézier tangent should face downward in screen coordinates')
   console.log('Bézier path determinism and tangent: PASSED')
 }
 
@@ -129,11 +133,13 @@ function testClosedPathUsesTheSeamWithoutDuplicatingIt() {
     spec: { mode: 'path', copyCount: 4, startOffset: 0, endOffset: 0, orientation: 'fixed', startScale: 100, endScale: 100 },
   })
   assert(plan.ok, 'closed path plan should be valid')
-  assert(plan.placements.length === 4, 'closed path should create requested copies')
-  close(plan.placements[0]!.position.x, 0, 'closed path first x')
-  close(plan.placements[1]!.position.x, 10, 'closed path second x')
-  close(plan.placements[3]!.position.y, 10, 'closed path final copy should precede the seam')
-  assert(plan.placements[3]!.position.x === 0 && plan.placements[3]!.position.y !== 0, 'closed path must not duplicate its first point')
+  assert(plan.placements.length === 3, 'closed path should create the requested total less the source')
+  assert(plan.sourcePlacement, 'closed path should start with the existing source')
+  close(plan.sourcePlacement.position.x, 0, 'closed path source x')
+  close(plan.placements[0]!.position.x, 10, 'closed path first copy x')
+  close(plan.placements[1]!.position.x, 10, 'closed path second copy x')
+  close(plan.placements[2]!.position.y, 10, 'closed path final copy should precede the seam')
+  assert(plan.placements[2]!.position.x === 0 && plan.placements[2]!.position.y !== 0, 'closed path must not duplicate its first point')
   console.log('closed path seam: PASSED')
 }
 
@@ -151,7 +157,7 @@ function testPlacementTransformMapsTheGroupPivotToTheTarget() {
 
 testDefaultGridSpacingUsesTheProjectUnits()
 testGridKeepsTheSourceAsOriginAndTapersCreatedCopies()
-testRadialFullCircleAvoidsDuplicatingTheEndpoint()
+testRadialStartsAtTheSourceAndAvoidsDuplicatingTheEndpoint()
 testPathSupportsMixedLineAndArcAtEqualArcLength()
 testBezierPathIsDeterministicAndUsesItsTangent()
 testClosedPathUsesTheSeamWithoutDuplicatingIt()

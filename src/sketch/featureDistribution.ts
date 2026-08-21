@@ -38,7 +38,6 @@ export type FeatureDistributionSpec =
       mode: 'radial'
       center: Point
       copyCount: number
-      startAngleDegrees: number
       sweepDegrees: number
       orientation: FeatureDistributionOrientation
       startScale: number
@@ -72,7 +71,13 @@ export interface FeatureDistributionPlacement {
 }
 
 export type FeatureDistributionPlan =
-  | { ok: true; placements: FeatureDistributionPlacement[]; guideLength?: number }
+  | {
+      ok: true
+      placements: FeatureDistributionPlacement[]
+      /** Transform applied to the existing source for an along-guide distribution. */
+      sourcePlacement?: FeatureDistributionPlacement
+      guideLength?: number
+    }
   | { ok: false; code: FeatureDistributionValidationCode; guideLength?: number }
 
 export interface FeatureDistributionPlannerInput {
@@ -154,9 +159,9 @@ export function planFeatureDistribution(input: FeatureDistributionPlannerInput):
   }
 
   if (spec.mode === 'radial') {
-    if (!isPositiveInteger(spec.copyCount)
+    if (!isDistributionCount(spec.copyCount)
       || !Number.isFinite(spec.center.x) || !Number.isFinite(spec.center.y)
-      || !Number.isFinite(spec.startAngleDegrees) || !Number.isFinite(spec.sweepDegrees)) {
+      || !Number.isFinite(spec.sweepDegrees)) {
       return { ok: false, code: 'invalid-copy-count' }
     }
     const radius = distance(sourcePivot, spec.center)
@@ -164,14 +169,16 @@ export function planFeatureDistribution(input: FeatureDistributionPlannerInput):
       return { ok: false, code: 'radial-center-overlaps-source' }
     }
 
-    const startAngle = degreesToRadians(spec.startAngleDegrees)
+    // The source stays as the first instance, so its existing position defines
+    // both the radius and the start of the radial sweep.
+    const startAngle = Math.atan2(sourcePivot.y - spec.center.y, sourcePivot.x - spec.center.x)
     const sweep = degreesToRadians(spec.sweepDegrees)
     const fullCircle = Math.abs(Math.abs(sweep) - FULL_TURN) < 1e-6
     const increment = fullCircle
       ? sweep / spec.copyCount
-      : spec.copyCount === 1 ? 0 : sweep / (spec.copyCount - 1)
-    const targets = Array.from({ length: spec.copyCount }, (_, index) => {
-      const angle = startAngle + increment * index
+      : sweep / (spec.copyCount - 1)
+    const targets = Array.from({ length: spec.copyCount - 1 }, (_, copyIndex) => {
+      const angle = startAngle + increment * (copyIndex + 1)
       return {
         position: {
           x: spec.center.x + Math.cos(angle) * radius,
@@ -183,7 +190,7 @@ export function planFeatureDistribution(input: FeatureDistributionPlannerInput):
     return { ok: true, placements: placementsFromTargets(sourcePivot, targets, spec.startScale, spec.endScale) }
   }
 
-  if (!isPositiveInteger(spec.copyCount)) {
+  if (!isDistributionCount(spec.copyCount)) {
     return { ok: false, code: 'invalid-copy-count' }
   }
   if (!input.guideProfile) {
@@ -200,9 +207,13 @@ export function planFeatureDistribution(input: FeatureDistributionPlannerInput):
   }
   const step = path.closed
     ? pathRange.span / spec.copyCount
-    : spec.copyCount === 1 ? 0 : pathRange.span / (spec.copyCount - 1)
-  const targets = Array.from({ length: spec.copyCount }, (_, index) => {
-    const pathPoint = path.at(pathRange.start + step * index)
+    : pathRange.span / (spec.copyCount - 1)
+  const sourcePathPoint = path.at(pathRange.start)
+  const sourceRotationRadians = spec.orientation === 'follow'
+    ? Math.atan2(sourcePathPoint.tangent.y, sourcePathPoint.tangent.x) - sourceOrientation
+    : 0
+  const targets = Array.from({ length: spec.copyCount - 1 }, (_, copyIndex) => {
+    const pathPoint = path.at(pathRange.start + step * (copyIndex + 1))
     return {
       position: pathPoint.point,
       rotationRadians: spec.orientation === 'follow'
@@ -212,6 +223,12 @@ export function planFeatureDistribution(input: FeatureDistributionPlannerInput):
   })
   return {
     ok: true,
+    sourcePlacement: {
+      position: sourcePathPoint.point,
+      rotationRadians: sourceRotationRadians,
+      scale: 1,
+      transform: placementTransform(sourcePivot, sourcePathPoint.point, sourceRotationRadians, 1),
+    },
     placements: placementsFromTargets(sourcePivot, targets, spec.startScale, spec.endScale),
     guideLength: path.length,
   }
@@ -387,8 +404,8 @@ function validScaleRange(startScale: number, endScale: number): boolean {
   return Number.isFinite(startScale) && Number.isFinite(endScale) && startScale > 0 && endScale > 0
 }
 
-function isPositiveInteger(value: number): boolean {
-  return Number.isInteger(value) && value > 0
+function isDistributionCount(value: number): boolean {
+  return Number.isInteger(value) && value >= 2
 }
 
 function cubicBezierPoint(start: Point, control1: Point, control2: Point, end: Point, t: number): Point {

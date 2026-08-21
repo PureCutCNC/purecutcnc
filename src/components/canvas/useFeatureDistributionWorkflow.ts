@@ -32,6 +32,7 @@ export interface FeatureDistributionWorkflow {
   featureDistributionWorkflowPanel: ReturnType<typeof useCanvasWorkflowPanel>
   pickGuideFromPanel: () => void
   pickRadialCenterFromPanel: () => void
+  cancelFeatureDistributionPickFromPanel: () => void
   cancelFeatureDistributionFromPanel: () => void
   completeFeatureDistributionFromPanel: () => void
 }
@@ -57,11 +58,17 @@ export function useFeatureDistributionWorkflow({
 
   function pickGuideFromPanel() {
     setFeatureDistributionPickTarget('guide')
+    featureDistributionWorkflowPanel.moveAsideForSketchPick()
     featureDistributionWorkflowPanel.focusCanvasAfterAction()
   }
 
   function pickRadialCenterFromPanel() {
     setFeatureDistributionPickTarget('radial-center')
+    featureDistributionWorkflowPanel.focusCanvasAfterAction()
+  }
+
+  function cancelFeatureDistributionPickFromPanel() {
+    setFeatureDistributionPickTarget(null)
     featureDistributionWorkflowPanel.focusCanvasAfterAction()
   }
 
@@ -79,6 +86,7 @@ export function useFeatureDistributionWorkflow({
     featureDistributionWorkflowPanel,
     pickGuideFromPanel,
     pickRadialCenterFromPanel,
+    cancelFeatureDistributionPickFromPanel,
     cancelFeatureDistributionFromPanel,
     completeFeatureDistributionFromPanel,
   }

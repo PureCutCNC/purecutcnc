@@ -915,6 +915,25 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const operationHighlightIds = operationHighlightKind
       ? new Set(compatibleFeatureIdsForOperation(project, operationHighlightKind))
       : null
+    const distributionSources = pendingFeatureDistribution
+      ? resolveFeatureInstances(project, pendingFeatureDistribution.sourceIds)
+      : []
+    const distributionGuide = pendingFeatureDistribution?.guideId
+      ? resolveFeatureInstance(project, pendingFeatureDistribution.guideId)
+      : null
+    const distributionPlan = pendingFeatureDistribution
+      && distributionSources.length === pendingFeatureDistribution.sourceIds.length
+      && (pendingFeatureDistribution.spec.mode !== 'radial' || pendingFeatureDistribution.radialCenterPicked)
+      ? planFeatureDistribution({
+          spec: pendingFeatureDistribution.spec,
+          sourcePivot: featureDistributionPivot(distributionSources.map((source) => source.sketch.profile)),
+          sourceOrientationRadians: Math.atan2(distributionSources[0]!.transform.b, distributionSources[0]!.transform.a),
+          guideProfile: distributionGuide?.sketch.profile,
+        })
+      : null
+    const hiddenDistributionSourceIds = distributionPlan?.ok && distributionPlan.sourcePlacement
+      ? new Set(pendingFeatureDistribution?.sourceIds)
+      : null
 
     const { width, height } = canvas
     const vt = computeViewTransform(project.stock, width, height, viewState)
@@ -957,7 +976,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     const batchedLineFeatures: SketchFeature[] = []
     for (const feature of features) {
-      if (!feature.visible) continue
+      if (!feature.visible || hiddenDistributionSourceIds?.has(feature.id)) continue
 
       const selected = selection.selectedFeatureIds.includes(feature.id)
       const hovered = feature.id === selection.hoveredFeatureId
@@ -1719,15 +1738,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     }
 
     if (pendingFeatureDistribution) {
-      const sources = resolveFeatureInstances(project, pendingFeatureDistribution.sourceIds)
-      const guide = pendingFeatureDistribution.guideId
-        ? resolveFeatureInstance(project, pendingFeatureDistribution.guideId)
-        : null
-      if (guide) {
+      if (distributionGuide) {
         ctx.save()
         ctx.strokeStyle = canvasRgba('constraintHighlight', 0.95)
         ctx.lineWidth = 3
-        traceProfilePath(ctx, guide.sketch.profile, vt)
+        traceProfilePath(ctx, distributionGuide.sketch.profile, vt)
         ctx.stroke()
         ctx.restore()
       }
@@ -1739,26 +1754,25 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           pendingFeatureDistribution.pickTarget === 'radial-center',
         )
       }
-      if (
-        sources.length === pendingFeatureDistribution.sourceIds.length
-        && (pendingFeatureDistribution.spec.mode !== 'radial' || pendingFeatureDistribution.radialCenterPicked)
-      ) {
-        const plan = planFeatureDistribution({
-          spec: pendingFeatureDistribution.spec,
-          sourcePivot: featureDistributionPivot(sources.map((source) => source.sketch.profile)),
-          sourceOrientationRadians: Math.atan2(sources[0]!.transform.b, sources[0]!.transform.a),
-          guideProfile: guide?.sketch.profile,
-        })
-        if (plan.ok) {
-          for (const placement of plan.placements) {
-            for (const source of sources) {
+      if (distributionPlan?.ok) {
+        if (distributionPlan.sourcePlacement) {
+          for (const source of distributionSources) {
+            drawPreviewProfile(
+              ctx,
+              transformProfile(source.sketch.profile, (point) => applyFeatureDistributionTransform(distributionPlan.sourcePlacement!.transform, point)),
+              vt,
+              'Feature distribution source preview',
+            )
+          }
+        }
+        for (const placement of distributionPlan.placements) {
+          for (const source of distributionSources) {
               drawPreviewProfile(
                 ctx,
                 transformProfile(source.sketch.profile, (point) => applyFeatureDistributionTransform(placement.transform, point)),
                 vt,
                 'Feature distribution preview',
               )
-            }
           }
         }
       }
@@ -2994,6 +3008,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           onUpdate={updateFeatureDistribution}
           onPickGuide={featureDistribution.pickGuideFromPanel}
           onPickCenter={featureDistribution.pickRadialCenterFromPanel}
+          onCancelPick={featureDistribution.cancelFeatureDistributionPickFromPanel}
           onComplete={featureDistribution.completeFeatureDistributionFromPanel}
           onCancel={featureDistribution.cancelFeatureDistributionFromPanel}
         />
