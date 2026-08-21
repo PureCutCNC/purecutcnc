@@ -536,7 +536,7 @@ function generateRoughBandMoves(
   // straight links). The domain is the band's tool-centre region — the tree
   // roots are exactly that construction — and the solver falls back to the
   // straight link when nothing fits.
-  const tangentLink = operation.kind === 'pocket' && operation.roundLinkCorners
+  const tangentLink = (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.roundLinkCorners
     ? pocketTangentLinkOptions(
       operation.roundLinkCorners,
       toolRadius * 2,
@@ -544,7 +544,7 @@ function generateRoughBandMoves(
     )
     : undefined
   const engagementCacheEnabled = telemetry !== null && operation.pocketFeedReduction === 'engagement'
-  const wallCleanup = operation.kind === 'pocket' && operation.roundOutsideCorners
+  const wallCleanup = (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.roundOutsideCorners
     && operation.cleanWallCorners === true
     ? {
       enabled: true,
@@ -870,14 +870,14 @@ function generateFinishBandMoves(
   // Tangential link junctions for the offset floor rings; the domain is the
   // wall-finish tool-centre path (finishRegions), which is the hard boundary a
   // floor-ring link may sweep up to.
-  const floorTangentLink = operation.kind === 'pocket' && operation.finishFloor && !isParallelPocket
+  const floorTangentLink = (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.finishFloor && !isParallelPocket
     ? pocketTangentLinkOptions(
       operation.roundLinkCorners,
       toolRadius * 2,
       finishRegions,
     )
     : undefined
-  const floorWallCleanup = operation.kind === 'pocket' && operation.roundOutsideCorners
+  const floorWallCleanup = (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.roundOutsideCorners
     && operation.cleanWallCorners === true
     ? {
       enabled: true,

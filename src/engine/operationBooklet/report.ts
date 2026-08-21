@@ -115,7 +115,7 @@ function operationUsesRoundOutsideCorners(operation: Operation): boolean {
  *  parallel pattern has no ring-to-ring links, so the setting is a no-op
  *  there and the booklet must not show it. */
 function operationUsesTangentLinks(operation: Operation): boolean {
-  return operation.kind === 'pocket' && operation.pocketPattern !== 'parallel'
+  return (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.pocketPattern !== 'parallel'
 }
 
 function targetSummary(project: Project, target: OperationTarget): string {

@@ -113,7 +113,7 @@ function isWaterlineFinish(operation: Operation): boolean {
 
 /** Pocket feed reduction applies wherever the cutter can end up fully engaged. */
 function cutsSlots(operation: Operation): boolean {
-  return operation.kind === 'pocket'
+  return (operation.kind === 'pocket' || operation.kind === 'surface_clean')
     && (operation.pass === 'rough' || (operation.pass === 'finish' && operation.finishFloor))
 }
 
@@ -468,13 +468,14 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   {
     id: 'roundLinkCorners',
     group: 'corners',
-    appliesTo: (operation) => operation.kind === 'pocket' && operation.pocketPattern !== 'parallel',
+    appliesTo: (operation) => (operation.kind === 'pocket' || operation.kind === 'surface_clean')
+      && operation.pocketPattern !== 'parallel',
   },
   {
     id: 'cleanWallCorners',
     group: 'corners',
     // Only meaningful once the interior rings are already rounded.
-    appliesTo: (operation) => operation.kind === 'pocket'
+    appliesTo: (operation) => (operation.kind === 'pocket' || operation.kind === 'surface_clean')
       && operation.pocketPattern !== 'parallel'
       && (operation.roundOutsideCorners ?? false),
   },
