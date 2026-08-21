@@ -3001,9 +3001,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         <FeatureDistributionPanel
           pending={pendingFeatureDistribution}
           plan={featureDistributionPanelState.plan}
-          sourcePivot={featureDistributionPanelState.sourcePivot}
           guideName={featureDistributionPanelState.guideName}
-          units={project.meta.units}
           panel={featureDistribution.featureDistributionWorkflowPanel}
           onUpdate={updateFeatureDistribution}
           onPickGuide={featureDistribution.pickGuideFromPanel}

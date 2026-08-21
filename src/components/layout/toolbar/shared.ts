@@ -61,6 +61,7 @@ interface PopoverMenuOption<T extends string> {
   value: T
   icon: string
   label: string
+  enabled?: boolean
 }
 
 export {

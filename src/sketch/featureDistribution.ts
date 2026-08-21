@@ -34,6 +34,7 @@ export type FeatureDistributionSpec =
       startScale: number
       endScale: number
     }
+
   | {
       mode: 'radial'
       center: Point
@@ -43,6 +44,7 @@ export type FeatureDistributionSpec =
       startScale: number
       endScale: number
     }
+
   | {
       mode: 'path'
       copyCount: number
@@ -52,6 +54,8 @@ export type FeatureDistributionSpec =
       startScale: number
       endScale: number
     }
+
+export type FeatureDistributionMode = FeatureDistributionSpec['mode']
 
 export type FeatureDistributionValidationCode =
   | 'invalid-grid'
@@ -105,9 +109,44 @@ export interface ProfilePathMeasure {
 }
 
 export function createDefaultFeatureDistributionSpec(units: Units = 'mm'): FeatureDistributionSpec {
+  return createFeatureDistributionSpec('grid', units, { x: 0, y: 0 })
+}
+
+/** Creates the mode-specific starting values for a new distribution workflow. */
+export function createFeatureDistributionSpec(
+  mode: FeatureDistributionMode,
+  units: Units = 'mm',
+  sourcePivot: Point = { x: 0, y: 0 },
+): FeatureDistributionSpec {
+  if (mode === 'radial') {
+    return {
+      mode,
+      // The radial dialog always asks the user to pick a real center before it
+      // can be committed; the source pivot is only a safe transient fallback.
+      center: sourcePivot,
+      copyCount: 4,
+      sweepDegrees: 360,
+      orientation: 'follow',
+      startScale: 100,
+      endScale: 100,
+    }
+  }
+
+  if (mode === 'path') {
+    return {
+      mode,
+      copyCount: 4,
+      startOffset: 0,
+      endOffset: 0,
+      orientation: 'follow',
+      startScale: 100,
+      endScale: 100,
+    }
+  }
+
   const spacing = units === 'inch' ? 2 : 20
   return {
-    mode: 'grid',
+    mode,
     rows: 1,
     columns: 2,
     spacingX: spacing,

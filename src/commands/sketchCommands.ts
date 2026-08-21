@@ -22,7 +22,6 @@ import type {
   FeatureDistribution,
   PendingConstraint,
   PendingDimensionTool,
-  PendingFeatureDistribution,
   PendingMoveTool,
   PendingOffsetTool,
   PendingShapeActionTool,
@@ -31,6 +30,7 @@ import type {
   SketchEditTool,
   TapeMeasureState,
 } from '../store/types'
+import type { FeatureDistributionMode } from '../sketch/featureDistribution'
 import { featureHasClosedGeometry } from '../text'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../store/helpers/resolveFeatures'
 
@@ -60,6 +60,7 @@ export interface SketchCommandPredicates {
   alignableFeatureIds: string[]
   canAlignSelectedFeatures: boolean
   canDistributeSelectedFeatures: boolean
+  canCreateFeatureDistribution: boolean
   featureSketchEditActive: boolean
   sketchEditFeatureOpen: boolean
   selectedConstraintFeatureId: string | null
@@ -68,7 +69,7 @@ export interface SketchCommandPredicates {
 type CommandStatus = Pick<CommandDescriptor, 'enabled' | 'active'>
 
 export interface SketchCommandStatus {
-  transform: Record<'copy' | 'move' | 'delete' | 'resize' | 'rotate' | 'mirror' | 'featureDistribution', CommandStatus>
+  transform: Record<'copy' | 'move' | 'delete' | 'resize' | 'rotate' | 'mirror', CommandStatus>
   boolean: Record<'join' | 'cut' | 'offset', CommandStatus>
   arrange: Record<'align' | 'distribute', CommandStatus>
   sketchEdit: Record<SketchEditTool, CommandStatus>
@@ -87,7 +88,6 @@ export interface SketchCommandStateInput {
   pendingMove: PendingMoveTool | null
   pendingTransform: PendingTransformTool | null
   pendingOffset: PendingOffsetTool | null
-  pendingFeatureDistribution?: PendingFeatureDistribution | null
   pendingShapeAction: PendingShapeActionTool | null
   pendingConstraint: PendingConstraint | null
   tapeMeasure: TapeMeasureState | null
@@ -150,6 +150,9 @@ export function deriveSketchCommandPredicates({
     alignableFeatureIds,
     canAlignSelectedFeatures: alignableFeatureIds.length >= 2,
     canDistributeSelectedFeatures: alignableFeatureIds.length >= 3,
+    canCreateFeatureDistribution: hasSelectedFeatures
+      && !hasLockedSelectedFeatures
+      && selectedFeatures.every((feature) => feature.kind !== 'stl'),
     featureSketchEditActive,
     sketchEditFeatureOpen,
     selectedConstraintFeatureId,
@@ -187,10 +190,6 @@ export function deriveSketchCommandState(input: SketchCommandStateInput): Sketch
         enabled: featureTransformAvailable,
         active: input.pendingTransform?.entityType === 'feature' && input.pendingTransform.mode === 'mirror',
       },
-      featureDistribution: {
-        enabled: featureTransformAvailable && predicates.selectedFeatures.every((feature) => feature.kind !== 'stl'),
-        active: input.pendingFeatureDistribution !== null && input.pendingFeatureDistribution !== undefined,
-      },
     },
     boolean: {
       join: {
@@ -212,7 +211,7 @@ export function deriveSketchCommandState(input: SketchCommandStateInput): Sketch
         active: false,
       },
       distribute: {
-        enabled: predicates.canDistributeSelectedFeatures,
+        enabled: predicates.hasSelectedFeatures,
         active: false,
       },
     },
@@ -289,13 +288,14 @@ function command(
 }
 
 export function useSketchCommands(): SketchCommandState & {
-  transform: Record<'copy' | 'move' | 'delete' | 'resize' | 'rotate' | 'mirror' | 'featureDistribution', CommandDescriptor>
+  transform: Record<'copy' | 'move' | 'delete' | 'resize' | 'rotate' | 'mirror', CommandDescriptor>
   boolean: Record<'join' | 'cut' | 'offset', CommandDescriptor>
   arrange: {
     align: CommandDescriptor
     distribute: CommandDescriptor
     alignFeature: (alignment: FeatureAlignment) => void
     distributeFeatures: (distribution: FeatureDistribution) => void
+    startFeatureDistribution: (mode: FeatureDistributionMode) => void
   }
   sketchEdit: Record<SketchEditTool, CommandDescriptor>
   constraint: CommandDescriptor
@@ -348,12 +348,11 @@ export function useSketchCommands(): SketchCommandState & {
     }
   }
 
-  function toggleFeatureDistribution() {
-    if (store.pendingFeatureDistribution) {
-      store.cancelFeatureDistribution()
+  function startFeatureDistribution(mode: FeatureDistributionMode) {
+    if (!state.predicates.canCreateFeatureDistribution) {
       return
     }
-    store.startFeatureDistribution()
+    store.startFeatureDistribution(mode)
   }
 
   function toggleSketchEditTool(tool: SketchEditTool) {
@@ -460,13 +459,6 @@ export function useSketchCommands(): SketchCommandState & {
       resize: command('resize', 'resize', state.transform.resize.active ? t('sketch.transform.cancelResize') : t('sketch.transform.resize'), state.transform.resize, () => startFeatureTransform('resize')),
       rotate: command('rotate', 'rotate', state.transform.rotate.active ? t('sketch.transform.cancelRotate') : t('sketch.transform.rotate'), state.transform.rotate, () => startFeatureTransform('rotate')),
       mirror: command('mirror', 'mirror', state.transform.mirror.active ? t('sketch.transform.cancelMirror') : t('sketch.transform.mirror'), state.transform.mirror, () => startFeatureTransform('mirror')),
-      featureDistribution: command(
-        'featureDistribution',
-        'feature-distribution',
-        state.transform.featureDistribution.active ? t('sketch.transform.cancelFeatureDistribution') : t('sketch.transform.featureDistribution'),
-        state.transform.featureDistribution,
-        toggleFeatureDistribution,
-      ),
     },
     boolean: {
       join: command('join', 'merge', state.boolean.join.active ? t('sketch.boolean.cancelJoin') : t('sketch.boolean.join'), state.boolean.join, () => toggleShapeAction('join')),
@@ -478,6 +470,7 @@ export function useSketchCommands(): SketchCommandState & {
       distribute: command('distribute', 'distribute', t('sketch.arrange.distribute'), state.arrange.distribute, () => undefined),
       alignFeature,
       distributeFeatures,
+      startFeatureDistribution,
     },
     sketchEdit: {
       add_point: command('add_point', 'point-add', state.sketchEdit.add_point.active ? t('sketch.edit.cancelAddPoint') : t('sketch.edit.addPoint'), state.sketchEdit.add_point, () => toggleSketchEditTool('add_point')),

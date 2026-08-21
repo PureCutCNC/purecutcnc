@@ -43,7 +43,7 @@ import type {
 import type { TextToolConfig } from '../text'
 import type { ToolLibraryEntry } from '../toolLibrary'
 import type { GearCreationParams } from '../sketch/gearProfile'
-import type { FeatureDistributionSpec } from '../sketch/featureDistribution'
+import type { FeatureDistributionMode, FeatureDistributionSpec } from '../sketch/featureDistribution'
 
 export type SelectionMode = 'feature' | 'sketch_edit'
 
@@ -538,7 +538,7 @@ export interface ProjectStore {
   setPendingMoveFrom: (point: Point) => void
   setPendingMoveTo: (point: Point) => void
   completePendingMove: (toPoint: Point, copyCount?: number) => void
-  startFeatureDistribution: () => void
+  startFeatureDistribution: (mode?: FeatureDistributionMode) => void
   updateFeatureDistribution: (spec: FeatureDistributionSpec) => void
   setFeatureDistributionPickTarget: (target: FeatureDistributionPickTarget) => void
   setFeatureDistributionGuide: (featureId: string) => void

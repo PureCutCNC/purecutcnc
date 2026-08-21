@@ -115,7 +115,7 @@ function testLockedSelectionGating() {
   assert(!result.transform.resize.enabled, 'resize is disabled for locked selection')
   assert(!result.transform.rotate.enabled, 'rotate is disabled for locked selection')
   assert(!result.transform.mirror.enabled, 'mirror is disabled for locked selection')
-  assert(!result.transform.featureDistribution.enabled, 'feature distribution is disabled for locked selection')
+  assert(!result.predicates.canCreateFeatureDistribution, 'pattern distribution is disabled for locked selection')
   assert(!result.boolean.offset.enabled, 'offset is disabled for locked selection')
   assert(!result.constraint.enabled, 'constraint is disabled for locked selection')
 
@@ -125,7 +125,7 @@ function testLockedSelectionGating() {
 function testFeatureDistributionRejectsModelSelection() {
   const project = makeProject([makeFeature('model', { kind: 'stl' })])
   const result = makeCommandState(project, makeSelection(['model']))
-  assert(!result.transform.featureDistribution.enabled, 'feature distribution is limited to 2D sketch instances')
+  assert(!result.predicates.canCreateFeatureDistribution, 'pattern distribution is limited to 2D sketch instances')
   console.log('feature distribution 2D gate: PASSED')
 }
 
@@ -177,15 +177,19 @@ function testArrangeThresholds() {
 
   const one = makeCommandState(project, makeSelection(['feature-1']))
   assert(!one.arrange.align.enabled, 'align disabled below two unlocked features')
-  assert(!one.arrange.distribute.enabled, 'distribute disabled below three unlocked features')
+  assert(one.arrange.distribute.enabled, 'distribute drawer is visible with one selected feature')
+  assert(!one.predicates.canDistributeSelectedFeatures, 'even distribution is unavailable below three unlocked features')
+  assert(one.predicates.canCreateFeatureDistribution, 'pattern distribution is available with one selected feature')
 
   const two = makeCommandState(project, makeSelection(['feature-1', 'feature-2']))
   assert(two.arrange.align.enabled, 'align enabled at two unlocked features')
-  assert(!two.arrange.distribute.enabled, 'distribute disabled at two unlocked features')
+  assert(two.arrange.distribute.enabled, 'distribute drawer remains visible at two unlocked features')
+  assert(!two.predicates.canDistributeSelectedFeatures, 'even distribution remains unavailable at two unlocked features')
 
   const three = makeCommandState(project, makeSelection(['feature-1', 'feature-2', 'feature-3']))
   assert(three.arrange.align.enabled, 'align enabled at three unlocked features')
   assert(three.arrange.distribute.enabled, 'distribute enabled at three unlocked features')
+  assert(three.predicates.canDistributeSelectedFeatures, 'even distribution is available at three unlocked features')
 
   console.log('align/distribute thresholds: PASSED')
 }
@@ -225,14 +229,6 @@ function testToggleActiveStates() {
     pendingMove: { mode: 'copy', entityType: 'feature', entityIds: ['feature-1'], fromPoint: null, toPoint: null, session: 1 },
     pendingTransform: { mode: 'rotate', entityType: 'feature', entityIds: ['feature-1'], referenceStart: null, referenceEnd: null, keepOriginals: false, session: 1 },
     pendingOffset: { entityIds: ['feature-1'], session: 1 },
-    pendingFeatureDistribution: {
-      sourceIds: ['feature-1'],
-      guideId: null,
-      pickTarget: null,
-      radialCenterPicked: false,
-      spec: { mode: 'grid', rows: 1, columns: 2, spacingX: 10, spacingY: 10, startScale: 100, endScale: 100 },
-      session: 1,
-    },
     pendingShapeAction: { kind: 'join', entityIds: ['feature-1'], keepOriginals: false, session: 1 },
     pendingConstraint: { featureId: 'feature-1', anchor: null, reference: null, session: 1 },
     pendingDimension: { type: 'horizontal', a: null, b: null, c: null, session: 1 },
@@ -242,7 +238,6 @@ function testToggleActiveStates() {
   assert(result.transform.copy.active, 'copy pending is active')
   assert(!result.transform.move.active, 'move is inactive when copy is pending')
   assert(result.transform.rotate.active, 'rotate pending is active')
-  assert(result.transform.featureDistribution.active, 'feature distribution pending is active')
   assert(result.boolean.offset.active, 'offset pending is active')
   assert(result.boolean.join.active, 'join pending is active')
   assert(!result.boolean.cut.active, 'cut inactive when join is pending')

@@ -388,8 +388,8 @@ export const canvasEn = {
   // ── Feature distribution ──
   'canvas.featureDistribution.title': 'Feature distribution',
   'canvas.featureDistribution.step.configure': 'Configure copies',
-  'canvas.featureDistribution.step.pickGuide': 'Select a separate guide path',
-  'canvas.featureDistribution.step.pickCenter': 'Select the radial center point',
+  'canvas.featureDistribution.step.pickGuide': 'Click a separate guide outline on the sketch — Esc cancels',
+  'canvas.featureDistribution.step.pickCenter': 'Click a center point on the sketch — Esc cancels',
   'canvas.featureDistribution.grid': 'Grid',
   'canvas.featureDistribution.radial': 'Radial',
   'canvas.featureDistribution.path': 'Along path',

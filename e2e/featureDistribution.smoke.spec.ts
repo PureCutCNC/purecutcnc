@@ -20,21 +20,39 @@ import { clickCanvasWorld, seedObviousOverlapFeatureProject, seedOverlapFeatureP
 
 const PANEL = '.canvas-workflow-panel--feature-distribution'
 
-async function openFeatureDistribution(page: Parameters<typeof seedOverlapFeatureProject>[0]) {
+async function openFeatureDistribution(
+  page: Parameters<typeof seedOverlapFeatureProject>[0],
+  mode: 'Grid' | 'Radial' | 'Along path' = 'Grid',
+) {
   await seedOverlapFeatureProject(page, 1)
   await selectFeatures(page, ['f-overlap-1'])
-  const command = page.getByRole('button', { name: 'Feature distribution', exact: true })
+  await expect(page.getByRole('button', { name: 'Feature distribution', exact: true })).toHaveCount(0)
+  const command = page.getByRole('button', { name: 'Distribute selected features', exact: true }).first()
   await expect(command).toBeEnabled()
   await command.click()
+  const menu = page.getByRole('menu')
+  await expect(menu).toBeVisible()
+  await menu.getByRole('button', { name: mode, exact: true }).click()
   await expect(page.locator(PANEL)).toBeVisible()
 }
 
-test('Feature distribution command opens a configurable grid preview and cancel leaves the project unchanged', async ({ app }) => {
-  await openFeatureDistribution(app.page)
+test('Distribute drawer opens a grid preview and leaves standard distribution disabled for one feature', async ({ app }) => {
+  await seedOverlapFeatureProject(app.page, 1)
+  await selectFeatures(app.page, ['f-overlap-1'])
+  const command = app.page.getByRole('button', { name: 'Distribute selected features', exact: true }).first()
+  await expect(command).toBeEnabled()
+  await command.click()
+  const menu = app.page.getByRole('menu')
+  await expect(menu.getByRole('button', { name: 'Distribute horizontally (equal gaps)', exact: true })).toBeDisabled()
+  await expect(menu.getByRole('button', { name: 'Grid', exact: true })).toBeEnabled()
+  await expect(menu.getByRole('button', { name: 'Radial', exact: true })).toBeEnabled()
+  await expect(menu.getByRole('button', { name: 'Along path', exact: true })).toBeEnabled()
+  await menu.getByRole('button', { name: 'Grid', exact: true }).click()
+  await expect(app.page.locator(PANEL)).toBeVisible()
+
   const panel = app.page.locator(PANEL)
 
   await expect(panel.locator('.canvas-workflow-panel__title')).toHaveText('Feature distribution')
-  await expect(panel.getByRole('button', { name: 'Grid', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expect(panel.getByLabel('X spacing')).toHaveValue('2')
   await expect(panel.getByLabel('Y spacing')).toHaveValue('2')
   await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeEnabled()
@@ -65,20 +83,16 @@ test('Escape cancels Feature Distribution without changing the project', async (
 })
 
 test('radial distribution picks its center from the sketch', async ({ app }) => {
-  await openFeatureDistribution(app.page)
+  await openFeatureDistribution(app.page, 'Radial')
   const panel = app.page.locator(PANEL)
   const canvas = app.page.locator('canvas.sketch-canvas')
 
-  await panel.getByRole('button', { name: 'Radial', exact: true }).click()
   await expect(panel.getByLabel('Center X')).toHaveCount(0)
   await expect(panel.getByLabel('Center Y')).toHaveCount(0)
   await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeDisabled()
 
   await panel.getByRole('button', { name: 'Pick center', exact: true }).click()
-  const centerHint = panel.getByText('Click a center point on the sketch outside this dialog. Drag this panel if it covers the point.', { exact: true })
-  await expect(centerHint).toBeVisible()
-  await centerHint.click()
-  await expect(centerHint).toBeVisible()
+  await expect(panel.getByText('Click a center point on the sketch — Esc cancels', { exact: true })).toBeVisible()
   await panel.getByRole('button', { name: 'Cancel picking', exact: true }).click()
   await expect(panel).toBeVisible()
   await expect(panel.getByRole('button', { name: 'Pick center', exact: true })).toBeVisible()
@@ -94,14 +108,14 @@ test('radial distribution picks its center from the sketch', async ({ app }) => 
 test('along-path distribution names a guide chosen from its visible outline', async ({ app }) => {
   await seedObviousOverlapFeatureProject(app.page)
   await selectFeatures(app.page, ['f-overlap-1'])
-  await app.page.getByRole('button', { name: 'Feature distribution', exact: true }).click()
+  await app.page.getByRole('button', { name: 'Distribute selected features', exact: true }).first().click()
+  await app.page.getByRole('menu').getByRole('button', { name: 'Along path', exact: true }).click()
   const panel = app.page.locator(PANEL)
   const canvas = app.page.locator('canvas.sketch-canvas')
 
-  await panel.getByRole('button', { name: 'Along path', exact: true }).click()
   await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeDisabled()
   await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
-  await expect(panel).toContainText('Click a separate guide outline on the sketch outside this dialog. Drag this panel if it covers the guide.')
+  await expect(panel.getByText('Click a separate guide outline on the sketch — Esc cancels', { exact: true })).toBeVisible()
   await panel.getByRole('button', { name: 'Cancel picking', exact: true }).click()
   await expect(panel.getByRole('button', { name: 'Pick guide', exact: true })).toBeVisible()
   await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
@@ -113,17 +127,26 @@ test('along-path distribution names a guide chosen from its visible outline', as
   await expect.poll(() => getFeatureCount(app.page)).toBe(5)
 })
 
+test('a toolbar action cancels an active sketch pick', async ({ app }) => {
+  await openFeatureDistribution(app.page, 'Radial')
+  const panel = app.page.locator(PANEL)
+  await panel.getByRole('button', { name: 'Pick center', exact: true }).click()
+  await app.page.locator('.toolbar').first().getByRole('button').first().click()
+  await expect(panel).toHaveCount(0)
+})
+
 test.describe('tablet command bar', () => {
   test.use({ hasTouch: true, viewport: { width: 1024, height: 768 } })
 
-  test('keeps Feature Distribution discoverable and opens its workflow', async ({ app }) => {
+  test('keeps pattern distribution discoverable from the Distribute drawer', async ({ app }) => {
     await seedOverlapFeatureProject(app.page, 1)
     await selectFeatures(app.page, ['f-overlap-1'])
 
-    const command = app.page.getByRole('button', { name: 'Feature distribution', exact: true }).first()
+    const command = app.page.getByRole('button', { name: 'Distribute selected features', exact: true }).first()
     await expect(command).toBeVisible()
     await expect(command).toBeEnabled()
     await command.click()
+    await app.page.locator('.tool-rail__popover').getByRole('button', { name: 'Grid', exact: true }).click()
     await expect(app.page.locator(PANEL)).toBeVisible()
   })
 })

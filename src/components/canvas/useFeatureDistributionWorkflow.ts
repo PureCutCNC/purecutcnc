@@ -16,6 +16,7 @@
 
 import type { RefObject } from 'react'
 import type { FeatureDistributionPickTarget, PendingFeatureDistribution } from '../../store/types'
+import { useDocumentEvent } from '../../hooks/useEventListener'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
 
 interface FeatureDistributionWorkflowCtx {
@@ -46,6 +47,7 @@ export function useFeatureDistributionWorkflow({
   canvasRef,
   clearTransientCanvasState,
 }: FeatureDistributionWorkflowCtx): FeatureDistributionWorkflow {
+  const pickTarget = pendingFeatureDistribution?.pickTarget ?? null
   const featureDistributionWorkflowPanel = useCanvasWorkflowPanel({
     open: pendingFeatureDistribution !== null,
     phaseKey: pendingFeatureDistribution
@@ -54,6 +56,15 @@ export function useFeatureDistributionWorkflow({
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+  })
+
+  useDocumentEvent('pointerdown', (event) => {
+    if (!pickTarget || !(event.target instanceof Element)) {
+      return
+    }
+    if (event.target.closest('.toolbar button, .toolbar-popover button, .tool-rail button, .tool-rail__popover button')) {
+      cancelFeatureDistribution()
+    }
   })
 
   function pickGuideFromPanel() {

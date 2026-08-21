@@ -116,8 +116,6 @@ export function Toolbar({
           pendingMoveMode={toolbar.sketchCommands.transform.move.active ? 'move' : toolbar.sketchCommands.transform.copy.active ? 'copy' : null}
           pendingTransformMode={toolbar.sketchCommands.transform.resize.active ? 'resize' : toolbar.sketchCommands.transform.rotate.active ? 'rotate' : toolbar.sketchCommands.transform.mirror.active ? 'mirror' : null}
           pendingOffset={toolbar.sketchCommands.boolean.offset.active}
-          pendingFeatureDistribution={toolbar.sketchCommands.transform.featureDistribution.active}
-          featureDistributionEnabled={toolbar.sketchCommands.transform.featureDistribution.enabled}
           onCopy={toolbar.sketchCommands.transform.copy.onActivate}
           onMove={toolbar.sketchCommands.transform.move.onActivate}
           onDelete={toolbar.sketchCommands.transform.delete.onActivate}
@@ -125,7 +123,6 @@ export function Toolbar({
           onRotate={toolbar.sketchCommands.transform.rotate.onActivate}
           onMirror={toolbar.sketchCommands.transform.mirror.onActivate}
           onOffset={toolbar.sketchCommands.boolean.offset.onActivate}
-          onFeatureDistribution={toolbar.sketchCommands.transform.featureDistribution.onActivate}
           onConstraint={toolbar.sketchCommands.constraint.onActivate}
           constraintActive={toolbar.sketchCommands.constraint.active}
         />
@@ -134,8 +131,11 @@ export function Toolbar({
           onAlign={toolbar.sketchCommands.arrange.alignFeature}
         />
         <DistributionActions
-          enabled={toolbar.sketchCommands.predicates.canDistributeSelectedFeatures}
+          enabled={toolbar.sketchCommands.predicates.hasSelectedFeatures}
+          canDistributeEvenly={toolbar.sketchCommands.predicates.canDistributeSelectedFeatures}
+          canCreatePattern={toolbar.sketchCommands.predicates.canCreateFeatureDistribution}
           onDistribute={toolbar.sketchCommands.arrange.distributeFeatures}
+          onCreatePattern={toolbar.sketchCommands.arrange.startFeatureDistribution}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}

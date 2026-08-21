@@ -133,11 +133,8 @@ function testInchDefaultsAndRadialCenterPickingStayTransientUntilConfirmed() {
     assert(gridPending.spec.spacingX === 2 && gridPending.spec.spacingY === 2, 'inch projects should start with 2 in spacing')
   }
 
-  state.updateFeatureDistribution({
-    mode: 'radial', center: { x: 5, y: 5 }, copyCount: 4,
-    sweepDegrees: 360, orientation: 'follow', startScale: 100, endScale: 100,
-  })
-  assert(!useProjectStore.getState().pendingFeatureDistribution?.radialCenterPicked, 'switching to radial should require a picked center')
+  state.startFeatureDistribution('radial')
+  assert(!useProjectStore.getState().pendingFeatureDistribution?.radialCenterPicked, 'radial distribution should require a picked center')
 
   state.setFeatureDistributionPickTarget('radial-center')
   state.setFeatureDistributionRadialCenter({ x: 30, y: 30 })
@@ -147,6 +144,10 @@ function testInchDefaultsAndRadialCenterPickingStayTransientUntilConfirmed() {
   assert(radialPending?.spec.mode === 'radial' && radialPending.spec.center.x === 30 && radialPending.spec.center.y === 30, 'the selected sketch point should become the radial center')
   const ids = useProjectStore.getState().completeFeatureDistribution()
   assert(ids.length === 3, 'a four-instance radial distribution should create three copies')
+
+  state.startFeatureDistribution('path')
+  const pathPending = useProjectStore.getState().pendingFeatureDistribution
+  assert(pathPending?.spec.mode === 'path', 'the along-path command should open a path-specific workflow')
   console.log('inch defaults and radial center pick: PASSED')
 }
 

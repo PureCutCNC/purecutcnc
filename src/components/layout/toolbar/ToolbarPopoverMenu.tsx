@@ -183,6 +183,7 @@ export function ToolbarPopoverMenu<T extends string>({
                   key={option.value}
                   icon={option.icon}
                   label={option.label}
+                  disabled={option.enabled === false}
                   tooltipSide="bottom"
                   onClick={() => {
                     onSelect(option.value)

@@ -17,7 +17,7 @@
 import type { StateCreator } from 'zustand'
 import type { Project } from '../../types/project'
 import {
-  createDefaultFeatureDistributionSpec,
+  createFeatureDistributionSpec,
   featureDistributionPivot,
   planFeatureDistribution,
   profilePathLength,
@@ -56,12 +56,13 @@ export function createFeatureDistributionSlice(
   return {
     pendingFeatureDistribution: null,
 
-    startFeatureDistribution: () => set((s) => {
+    startFeatureDistribution: (mode = 'grid') => set((s) => {
       const sourceIds = s.selection.selectedFeatureIds
       const sources = resolvedFeatures(s.project, sourceIds)
       if (!sources || sources.length === 0 || sources.some((feature) => feature.locked || feature.kind === 'stl')) {
         return {}
       }
+      const sourcePivot = featureDistributionPivot(sources.map((source) => source.sketch.profile))
       return {
         pendingAdd: null,
         pendingMove: null,
@@ -74,7 +75,7 @@ export function createFeatureDistributionSlice(
           guideId: null,
           pickTarget: null,
           radialCenterPicked: false,
-          spec: createDefaultFeatureDistributionSpec(s.project.meta.units),
+          spec: createFeatureDistributionSpec(mode, s.project.meta.units, sourcePivot),
           session: nextPlacementSession(),
         },
         selection: {
