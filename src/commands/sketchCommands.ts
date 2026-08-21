@@ -30,6 +30,7 @@ import type {
   SketchEditTool,
   TapeMeasureState,
 } from '../store/types'
+import type { FeatureDistributionMode } from '../sketch/featureDistribution'
 import { featureHasClosedGeometry } from '../text'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../store/helpers/resolveFeatures'
 
@@ -59,6 +60,7 @@ export interface SketchCommandPredicates {
   alignableFeatureIds: string[]
   canAlignSelectedFeatures: boolean
   canDistributeSelectedFeatures: boolean
+  canCreateFeatureDistribution: boolean
   featureSketchEditActive: boolean
   sketchEditFeatureOpen: boolean
   selectedConstraintFeatureId: string | null
@@ -148,6 +150,9 @@ export function deriveSketchCommandPredicates({
     alignableFeatureIds,
     canAlignSelectedFeatures: alignableFeatureIds.length >= 2,
     canDistributeSelectedFeatures: alignableFeatureIds.length >= 3,
+    canCreateFeatureDistribution: hasSelectedFeatures
+      && !hasLockedSelectedFeatures
+      && selectedFeatures.every((feature) => feature.kind !== 'stl'),
     featureSketchEditActive,
     sketchEditFeatureOpen,
     selectedConstraintFeatureId,
@@ -206,7 +211,7 @@ export function deriveSketchCommandState(input: SketchCommandStateInput): Sketch
         active: false,
       },
       distribute: {
-        enabled: predicates.canDistributeSelectedFeatures,
+        enabled: predicates.hasSelectedFeatures,
         active: false,
       },
     },
@@ -290,6 +295,7 @@ export function useSketchCommands(): SketchCommandState & {
     distribute: CommandDescriptor
     alignFeature: (alignment: FeatureAlignment) => void
     distributeFeatures: (distribution: FeatureDistribution) => void
+    startFeatureDistribution: (mode: FeatureDistributionMode) => void
   }
   sketchEdit: Record<SketchEditTool, CommandDescriptor>
   constraint: CommandDescriptor
@@ -340,6 +346,13 @@ export function useSketchCommands(): SketchCommandState & {
     } else {
       store.startMirrorFeature(state.predicates.primarySelectedFeatureId)
     }
+  }
+
+  function startFeatureDistribution(mode: FeatureDistributionMode) {
+    if (!state.predicates.canCreateFeatureDistribution) {
+      return
+    }
+    store.startFeatureDistribution(mode)
   }
 
   function toggleSketchEditTool(tool: SketchEditTool) {
@@ -457,6 +470,7 @@ export function useSketchCommands(): SketchCommandState & {
       distribute: command('distribute', 'distribute', t('sketch.arrange.distribute'), state.arrange.distribute, () => undefined),
       alignFeature,
       distributeFeatures,
+      startFeatureDistribution,
     },
     sketchEdit: {
       add_point: command('add_point', 'point-add', state.sketchEdit.add_point.active ? t('sketch.edit.cancelAddPoint') : t('sketch.edit.addPoint'), state.sketchEdit.add_point, () => toggleSketchEditTool('add_point')),

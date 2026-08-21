@@ -17,6 +17,7 @@
 import { useI18n } from '../../../i18n/i18nContext'
 import type { MessageKey } from '../../../i18n/locales/en'
 import type { FeatureAlignment, FeatureDistribution } from '../../../store/types'
+import type { FeatureDistributionMode } from '../../../sketch/featureDistribution'
 import { ToolbarPopoverMenu } from './ToolbarPopoverMenu'
 import type { PopoverMenuOption } from './shared'
 
@@ -27,6 +28,8 @@ interface AlignmentMenuOption extends PopoverMenuOption<FeatureAlignment> {
 interface DistributionMenuOption extends PopoverMenuOption<FeatureDistribution> {
   labelKey: MessageKey
 }
+
+type DistributionAction = FeatureDistribution | FeatureDistributionMode
 
 const ALIGNMENT_OPTIONS: AlignmentMenuOption[] = [
   { value: 'left', icon: 'align-left', label: '', labelKey: 'sketch.align.left' },
@@ -80,21 +83,41 @@ function AlignmentActions({
 function DistributionActions({
   enabled,
   tooltipSide,
+  canDistributeEvenly,
+  canCreatePattern,
   onDistribute,
+  onCreatePattern,
 }: {
   enabled: boolean
   tooltipSide?: 'bottom' | 'right'
+  canDistributeEvenly: boolean
+  canCreatePattern: boolean
   onDistribute: (distribution: FeatureDistribution) => void
+  onCreatePattern: (mode: FeatureDistributionMode) => void
 }) {
   const { t } = useI18n()
 
   if (!enabled) return null
 
-  const options = DISTRIBUTION_OPTIONS.map((option) => ({
-    value: option.value,
-    icon: option.icon,
-    label: t(option.labelKey),
-  }))
+  const options: PopoverMenuOption<DistributionAction>[] = [
+    ...DISTRIBUTION_OPTIONS.map<PopoverMenuOption<DistributionAction>>((option) => ({
+      value: option.value,
+      icon: option.icon,
+      label: t(option.labelKey),
+      enabled: canDistributeEvenly,
+    })),
+    { value: 'grid', icon: 'grid', label: t('canvas.featureDistribution.grid'), enabled: canCreatePattern },
+    { value: 'radial', icon: 'rotate', label: t('canvas.featureDistribution.radial'), enabled: canCreatePattern },
+    { value: 'path', icon: 'spline', label: t('canvas.featureDistribution.path'), enabled: canCreatePattern },
+  ]
+
+  function selectDistribution(action: DistributionAction) {
+    if (DISTRIBUTION_OPTIONS.some((option) => option.value === action)) {
+      onDistribute(action as FeatureDistribution)
+      return
+    }
+    onCreatePattern(action as FeatureDistributionMode)
+  }
 
   return (
     <ToolbarPopoverMenu
@@ -103,9 +126,9 @@ function DistributionActions({
       triggerLabelClosed={t('sketch.arrange.distribute')}
       enabled={enabled}
       tooltipSide={tooltipSide}
-      columns={2}
+      columns={4}
       options={options}
-      onSelect={onDistribute}
+      onSelect={selectDistribution}
     />
   )
 }

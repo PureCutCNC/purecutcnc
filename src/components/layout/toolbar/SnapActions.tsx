@@ -44,7 +44,7 @@ function SnapActions({
 
   return (
     <>
-      <div className="toolbar-group">
+      <div className="toolbar-group toolbar-group--snap">
         <ToolbarActionButton
           icon="snap"
           label={snapSettings.enabled ? t('shell.snap.disable') : t('shell.snap.enable')}

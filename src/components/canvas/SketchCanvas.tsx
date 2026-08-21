@@ -54,6 +54,8 @@ import { useFilletWorkflow } from './useFilletWorkflow'
 import { useMoveWorkflow } from './useMoveWorkflow'
 import { useOffsetWorkflow } from './useOffsetWorkflow'
 import { useTransformExactWorkflow } from './useTransformExactWorkflow'
+import { useFeatureDistributionWorkflow } from './useFeatureDistributionWorkflow'
+import { FeatureDistributionPanel } from './FeatureDistributionPanel'
 import { useCreationWorkflow } from './useCreationWorkflow'
 import { useCanvasKeyboard } from './useCanvasKeyboard'
 import { useClickPlacement } from './useClickPlacement'
@@ -127,6 +129,8 @@ import {
 } from './scenePrimitives'
 import { setCanvasPalette, canvasRgba, canvasColors } from './canvasPalette'
 import { generateTextShapes } from '../../text'
+import { transformProfile } from '../../geometry/profile'
+import { applyFeatureDistributionTransform, featureDistributionPivot, planFeatureDistribution } from '../../sketch/featureDistribution'
 import {
   getProfileBounds,
   polygonProfile,
@@ -257,6 +261,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingMove,
     pendingTransform,
     pendingOffset,
+    pendingFeatureDistribution,
     pendingShapeAction,
     pendingConstraint,
     tapeMeasure,
@@ -332,6 +337,12 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setPendingTransformKeepOriginals,
     completePendingOffset,
     cancelPendingOffset,
+    updateFeatureDistribution,
+    setFeatureDistributionPickTarget,
+    setFeatureDistributionGuide,
+    setFeatureDistributionRadialCenter,
+    cancelFeatureDistribution,
+    completeFeatureDistribution,
     completePendingShapeAction,
     cancelPendingShapeAction, confirmCutCutters,
     setPendingShapeActionKeepOriginals,
@@ -355,6 +366,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const pendingMoveRef = useRef(pendingMove)
   const pendingTransformRef = useRef(pendingTransform)
   const pendingOffsetRef = useRef(pendingOffset)
+  const pendingFeatureDistributionRef = useRef(pendingFeatureDistribution)
   const pendingShapeActionRef = useRef(pendingShapeAction)
   const pendingConstraintRef = useRef(pendingConstraint)
   const viewStateRef = useRef(viewState)
@@ -380,6 +392,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   pendingMoveRef.current = pendingMove
   pendingTransformRef.current = pendingTransform
   pendingOffsetRef.current = pendingOffset
+  pendingFeatureDistributionRef.current = pendingFeatureDistribution
   pendingShapeActionRef.current = pendingShapeAction
   pendingConstraintRef.current = pendingConstraint
   const pendingSketchEditRef = useRef(pendingSketchEdit)
@@ -727,6 +740,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     clearTransientCanvasState,
   })
 
+  const featureDistribution = useFeatureDistributionWorkflow({
+    pendingFeatureDistribution,
+    setFeatureDistributionPickTarget,
+    cancelFeatureDistribution,
+    completeFeatureDistribution,
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
+
   function confirmCutCuttersFromTabletPanel() { confirmCutCutters(); cutWorkflowPanel.focusCanvasAfterAction() }
   function completeCutFromTabletPanel() { completePendingShapeAction(); cutWorkflowPanel.focusCanvasAfterAction() }
   function cancelCutFromTabletPanel() { cancelPendingShapeAction(); cutWorkflowPanel.focusCanvasAfterAction() }
@@ -881,6 +904,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
     const pendingOffset = pendingOffsetRef.current
+    const pendingFeatureDistribution = pendingFeatureDistributionRef.current
     const viewState = viewStateRef.current
     const backdropImage = backdropImageRef.current
     const toolpaths = toolpathsRef.current
@@ -890,6 +914,25 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     // A1.3: features the armed operation could act on (null = nothing armed).
     const operationHighlightIds = operationHighlightKind
       ? new Set(compatibleFeatureIdsForOperation(project, operationHighlightKind))
+      : null
+    const distributionSources = pendingFeatureDistribution
+      ? resolveFeatureInstances(project, pendingFeatureDistribution.sourceIds)
+      : []
+    const distributionGuide = pendingFeatureDistribution?.guideId
+      ? resolveFeatureInstance(project, pendingFeatureDistribution.guideId)
+      : null
+    const distributionPlan = pendingFeatureDistribution
+      && distributionSources.length === pendingFeatureDistribution.sourceIds.length
+      && (pendingFeatureDistribution.spec.mode !== 'radial' || pendingFeatureDistribution.radialCenterPicked)
+      ? planFeatureDistribution({
+          spec: pendingFeatureDistribution.spec,
+          sourcePivot: featureDistributionPivot(distributionSources.map((source) => source.sketch.profile)),
+          sourceOrientationRadians: Math.atan2(distributionSources[0]!.transform.b, distributionSources[0]!.transform.a),
+          guideProfile: distributionGuide?.sketch.profile,
+        })
+      : null
+    const hiddenDistributionSourceIds = distributionPlan?.ok && distributionPlan.sourcePlacement
+      ? new Set(pendingFeatureDistribution?.sourceIds)
       : null
 
     const { width, height } = canvas
@@ -933,7 +976,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
     const batchedLineFeatures: SketchFeature[] = []
     for (const feature of features) {
-      if (!feature.visible) continue
+      if (!feature.visible || hiddenDistributionSourceIds?.has(feature.id)) continue
 
       const selected = selection.selectedFeatureIds.includes(feature.id)
       const hovered = feature.id === selection.hoveredFeatureId
@@ -1690,6 +1733,47 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             vt,
             previewDistance < 0 ? 'Offset in preview' : 'Offset out preview',
           )
+        }
+      }
+    }
+
+    if (pendingFeatureDistribution) {
+      if (distributionGuide) {
+        ctx.save()
+        ctx.strokeStyle = canvasRgba('constraintHighlight', 0.95)
+        ctx.lineWidth = 3
+        traceProfilePath(ctx, distributionGuide.sketch.profile, vt)
+        ctx.stroke()
+        ctx.restore()
+      }
+      if (pendingFeatureDistribution.spec.mode === 'radial' && pendingFeatureDistribution.radialCenterPicked) {
+        drawPendingPoint(
+          ctx,
+          pendingFeatureDistribution.spec.center,
+          vt,
+          pendingFeatureDistribution.pickTarget === 'radial-center',
+        )
+      }
+      if (distributionPlan?.ok) {
+        if (distributionPlan.sourcePlacement) {
+          for (const source of distributionSources) {
+            drawPreviewProfile(
+              ctx,
+              transformProfile(source.sketch.profile, (point) => applyFeatureDistributionTransform(distributionPlan.sourcePlacement!.transform, point)),
+              vt,
+              'Feature distribution source preview',
+            )
+          }
+        }
+        for (const placement of distributionPlan.placements) {
+          for (const source of distributionSources) {
+              drawPreviewProfile(
+                ctx,
+                transformProfile(source.sketch.profile, (point) => applyFeatureDistributionTransform(placement.transform, point)),
+                vt,
+                'Feature distribution preview',
+              )
+          }
         }
       }
     }
@@ -2564,6 +2648,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingMoveRef,
     pendingTransformRef,
     pendingOffsetRef,
+    pendingFeatureDistributionRef,
     pendingShapeActionRef,
     pendingSketchEditRef,
     viewStateRef,
@@ -2603,6 +2688,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingMove,
     cancelPendingTransform,
     cancelPendingOffset,
+    cancelFeatureDistribution,
+    setFeatureDistributionPickTarget,
     confirmCutCutters,
     cancelPendingShapeAction,
     setSketchEditTool,
@@ -2649,6 +2736,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingMoveRef,
     pendingTransformRef,
     pendingOffsetRef,
+    pendingFeatureDistributionRef,
     pendingShapeActionRef,
     pendingMovePreviewPointRef,
     pendingConstraintRef,
@@ -2719,6 +2807,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingMoveRef,
     pendingTransformRef,
     pendingOffsetRef,
+    pendingFeatureDistributionRef,
     pendingShapeActionRef,
     viewStateRef,
     pendingConstraintRef,
@@ -2798,6 +2887,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     completePendingTransform,
     completePendingOffset,
     cancelPendingOffset,
+    setFeatureDistributionGuide,
+    setFeatureDistributionRadialCenter,
     beginHistoryTransaction,
   })
 
@@ -2842,6 +2933,27 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingDraftProfile ? profileHasSelfIntersection(pendingDraftProfile) : false
   const pendingDraftExceedsStock =
     pendingDraftProfile ? profileExceedsStock(pendingDraftProfile, project.stock) : false
+  const featureDistributionPanelState = pendingFeatureDistribution
+    ? (() => {
+        const sources = resolveFeatureInstances(project, pendingFeatureDistribution.sourceIds)
+        const guide = pendingFeatureDistribution.guideId
+          ? resolveFeatureInstance(project, pendingFeatureDistribution.guideId)
+          : null
+        const sourcePivot = featureDistributionPivot(sources.map((source) => source.sketch.profile))
+        return {
+          sourcePivot,
+          guideName: guide?.name ?? null,
+          plan: planFeatureDistribution({
+            spec: pendingFeatureDistribution.spec,
+            sourcePivot,
+            sourceOrientationRadians: sources[0]
+              ? Math.atan2(sources[0].transform.b, sources[0].transform.a)
+              : 0,
+            guideProfile: guide?.sketch.profile,
+          }),
+        }
+      })()
+    : null
 
   // Feed-colour legend steps for every toolpath the preview draws (issue #535).
   // Selection-independent; the per-toolpath scans are cached by toolpath
@@ -2857,7 +2969,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     <div ref={containerRef} className="sketch-canvas-container">
       <canvas
         ref={canvasRef}
-        className={`sketch-canvas ${pendingAdd || pendingMove || pendingTransform || pendingOffset || pendingShapeAction || pendingClipboardPlacement ? 'sketch-canvas--placing' : ''}`}
+        className={`sketch-canvas ${pendingAdd || pendingMove || pendingTransform || pendingOffset || pendingFeatureDistribution || pendingShapeAction || pendingClipboardPlacement ? 'sketch-canvas--placing' : ''}`}
         onPointerDown={gestures.handlePointerDown}
         onPointerUp={gestures.handlePointerUp}
         onPointerCancel={gestures.handlePointerUp}
@@ -2886,6 +2998,20 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       )}
       <ConstraintEditPanel constraint={constraint} />
       <DrivingDimensionPanel driving={drivingWf} />
+      {pendingFeatureDistribution && featureDistributionPanelState && (
+        <FeatureDistributionPanel
+          pending={pendingFeatureDistribution}
+          plan={featureDistributionPanelState.plan}
+          guideName={featureDistributionPanelState.guideName}
+          panel={featureDistribution.featureDistributionWorkflowPanel}
+          onUpdate={updateFeatureDistribution}
+          onPickGuide={featureDistribution.pickGuideFromPanel}
+          onPickCenter={featureDistribution.pickRadialCenterFromPanel}
+          onCancelPick={featureDistribution.cancelFeatureDistributionPickFromPanel}
+          onComplete={featureDistribution.completeFeatureDistributionFromPanel}
+          onCancel={featureDistribution.cancelFeatureDistributionFromPanel}
+        />
+      )}
       {pendingOffset && (
         <CanvasWorkflowPanel
           title={t('canvas.offset.title')}

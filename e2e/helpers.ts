@@ -126,6 +126,14 @@ export async function getFeatureCount(page: Page): Promise<number> {
   })
 }
 
+/** Set the selected sketch features before invoking a visible command control. */
+export async function selectFeatures(page: Page, ids: string[]): Promise<void> {
+  await page.evaluate(async (featureIds: string[]) => {
+    const w = window as unknown as { __pcTest: { selectFeatures: (ids: string[]) => Promise<void> } }
+    await w.__pcTest.selectFeatures(featureIds)
+  }, ids)
+}
+
 /** Select the given features and open the Join workflow panel. */
 export async function startJoinFeatures(page: Page, ids: string[]): Promise<void> {
   await page.evaluate(async (featureIds: string[]) => {

@@ -180,6 +180,11 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
     setShowDistributePopover(false)
   }
 
+  function startFeatureDistribution(mode: Parameters<typeof sketchCommands.arrange.startFeatureDistribution>[0]) {
+    sketchCommands.arrange.startFeatureDistribution(mode)
+    setShowDistributePopover(false)
+  }
+
   return (
     <>
       <nav className="tool-rail" aria-label={t('appShell.drawer.tools')}>
@@ -275,39 +280,42 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
           </div>
         )}
 
-        {/* Alignment/distribution (multi-select) */}
-        {sketchCommands.predicates.canAlignSelectedFeatures && (
+        {/* Alignment and pattern distribution */}
+        {sketchCommands.predicates.hasSelectedFeatures && (
           <div className="tool-rail__section">
-            <RailFlyout
-              icon="align"
-              label={t('sketch.arrange.align')}
-              tooltip={t('appShell.toolRail.align')}
-              open={showAlignPopover}
-              onToggle={() => { setShowAlignPopover((v) => !v); setShowDistributePopover(false) }}
-              onClose={() => setShowAlignPopover(false)}
-            >
-              <button type="button" aria-label={t('sketch.align.left')} onClick={() => handleAlign('left')}><Icon id="align-left" /></button>
-              <button type="button" aria-label={t('sketch.align.centerHorizontal')} onClick={() => handleAlign('center_horizontal')}><Icon id="align-center-horizontal" /></button>
-              <button type="button" aria-label={t('sketch.align.right')} onClick={() => handleAlign('right')}><Icon id="align-right" /></button>
-              <button type="button" aria-label={t('sketch.align.top')} onClick={() => handleAlign('top')}><Icon id="align-top" /></button>
-              <button type="button" aria-label={t('sketch.align.centerVertical')} onClick={() => handleAlign('center_vertical')}><Icon id="align-center-vertical" /></button>
-              <button type="button" aria-label={t('sketch.align.bottom')} onClick={() => handleAlign('bottom')}><Icon id="align-bottom" /></button>
-            </RailFlyout>
-            {sketchCommands.predicates.canDistributeSelectedFeatures && (
+            {sketchCommands.predicates.canAlignSelectedFeatures && (
               <RailFlyout
-                icon="distribute"
-                label={t('sketch.arrange.distribute')}
-                tooltip={t('appShell.toolRail.distribute')}
-                open={showDistributePopover}
-                onToggle={() => { setShowDistributePopover((v) => !v); setShowAlignPopover(false) }}
-                onClose={() => setShowDistributePopover(false)}
+                icon="align"
+                label={t('sketch.arrange.align')}
+                tooltip={t('appShell.toolRail.align')}
+                open={showAlignPopover}
+                onToggle={() => { setShowAlignPopover((v) => !v); setShowDistributePopover(false) }}
+                onClose={() => setShowAlignPopover(false)}
               >
-                <button type="button" aria-label={t('sketch.distribute.horizontalGaps')} onClick={() => handleDistribute('horizontal_gaps')}><Icon id="distribute-horizontal-gaps" /></button>
-                <button type="button" aria-label={t('sketch.distribute.horizontalCenters')} onClick={() => handleDistribute('horizontal_centers')}><Icon id="distribute-horizontal-centers" /></button>
-                <button type="button" aria-label={t('sketch.distribute.verticalGaps')} onClick={() => handleDistribute('vertical_gaps')}><Icon id="distribute-vertical-gaps" /></button>
-                <button type="button" aria-label={t('sketch.distribute.verticalCenters')} onClick={() => handleDistribute('vertical_centers')}><Icon id="distribute-vertical-centers" /></button>
+                <button type="button" aria-label={t('sketch.align.left')} onClick={() => handleAlign('left')}><Icon id="align-left" /></button>
+                <button type="button" aria-label={t('sketch.align.centerHorizontal')} onClick={() => handleAlign('center_horizontal')}><Icon id="align-center-horizontal" /></button>
+                <button type="button" aria-label={t('sketch.align.right')} onClick={() => handleAlign('right')}><Icon id="align-right" /></button>
+                <button type="button" aria-label={t('sketch.align.top')} onClick={() => handleAlign('top')}><Icon id="align-top" /></button>
+                <button type="button" aria-label={t('sketch.align.centerVertical')} onClick={() => handleAlign('center_vertical')}><Icon id="align-center-vertical" /></button>
+                <button type="button" aria-label={t('sketch.align.bottom')} onClick={() => handleAlign('bottom')}><Icon id="align-bottom" /></button>
               </RailFlyout>
             )}
+            <RailFlyout
+              icon="distribute"
+              label={t('sketch.arrange.distribute')}
+              tooltip={t('appShell.toolRail.distribute')}
+              open={showDistributePopover}
+              onToggle={() => { setShowDistributePopover((v) => !v); setShowAlignPopover(false) }}
+              onClose={() => setShowDistributePopover(false)}
+            >
+              <button type="button" aria-label={t('sketch.distribute.horizontalGaps')} disabled={!sketchCommands.predicates.canDistributeSelectedFeatures} onClick={() => handleDistribute('horizontal_gaps')}><Icon id="distribute-horizontal-gaps" /></button>
+              <button type="button" aria-label={t('sketch.distribute.horizontalCenters')} disabled={!sketchCommands.predicates.canDistributeSelectedFeatures} onClick={() => handleDistribute('horizontal_centers')}><Icon id="distribute-horizontal-centers" /></button>
+              <button type="button" aria-label={t('sketch.distribute.verticalGaps')} disabled={!sketchCommands.predicates.canDistributeSelectedFeatures} onClick={() => handleDistribute('vertical_gaps')}><Icon id="distribute-vertical-gaps" /></button>
+              <button type="button" aria-label={t('sketch.distribute.verticalCenters')} disabled={!sketchCommands.predicates.canDistributeSelectedFeatures} onClick={() => handleDistribute('vertical_centers')}><Icon id="distribute-vertical-centers" /></button>
+              <button type="button" aria-label={t('canvas.featureDistribution.grid')} disabled={!sketchCommands.predicates.canCreateFeatureDistribution} onClick={() => startFeatureDistribution('grid')}><Icon id="grid" /></button>
+              <button type="button" aria-label={t('canvas.featureDistribution.radial')} disabled={!sketchCommands.predicates.canCreateFeatureDistribution} onClick={() => startFeatureDistribution('radial')}><Icon id="rotate" /></button>
+              <button type="button" aria-label={t('canvas.featureDistribution.path')} disabled={!sketchCommands.predicates.canCreateFeatureDistribution} onClick={() => startFeatureDistribution('path')}><Icon id="spline" /></button>
+            </RailFlyout>
           </div>
         )}
       </nav>

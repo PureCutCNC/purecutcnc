@@ -200,6 +200,73 @@ export function buildCopiedFeatures(
 }
 
 /**
+ * Builds copy rows from arbitrary placement matrices. The caller owns the
+ * placement plan; this helper owns the existing reference/independent-copy
+ * contract so every copy workflow keeps the same definition semantics.
+ */
+export function buildTransformedCopiedFeatures(
+  sourceFeatures: ReferencedSketchFeature[],
+  existingFeatures: Array<{ name: string }>,
+  placementTransforms: Matrix2D[],
+  projectDefinitions: Record<string, FeatureDefinition>,
+  copyMode: 'reference' | 'independent',
+): Array<ReferencedSketchFeature & { _clonedDefinition?: FeatureDefinition }> {
+  const created: Array<ReferencedSketchFeature & { _clonedDefinition?: FeatureDefinition }> = []
+  const projectLike = newProject()
+
+  for (const [placementIndex, placementTransform] of placementTransforms.entries()) {
+    for (const sourceFeature of sourceFeatures) {
+      const nextId = nextUniqueGeneratedId(projectLike, 'f')
+      const newTransform = multiplyMatrix(placementTransform, sourceFeature.transform)
+      const definition = projectDefinitions[sourceFeature.definitionId]
+      if (!definition) {
+        throw new Error(`Cannot copy feature ${sourceFeature.id}: definition ${sourceFeature.definitionId} is missing`)
+      }
+
+      const clonedDefinition = copyMode === 'independent'
+        ? {
+            ...definition,
+            id: `f-${nextId}`,
+            profile: { ...definition.profile, segments: definition.profile.segments.map((segment) => ({ ...segment } as typeof segment)) },
+            dimensions: definition.dimensions.map((dimension) => ({ ...dimension })),
+            text: definition.text ? { ...definition.text } : null,
+            stl: definition.stl ? { ...definition.stl } : null,
+          }
+        : undefined
+      const definitionForProfile = clonedDefinition ?? definition
+      const transformedPoint = (point: Point) => applyMatrix(placementTransform, point)
+      const nextDefinitionId = clonedDefinition?.id ?? sourceFeature.definitionId
+
+      created.push({
+        ...sourceFeature,
+        id: nextId,
+        definitionId: nextDefinitionId,
+        name: duplicateFeatureName(
+          sourceFeature.name,
+          [...existingFeatures, ...created],
+          placementTransforms.length,
+          placementIndex + 1,
+        ),
+        folderId: sourceFeature.folderId,
+        stl: transformStlFeatureData(sourceFeature.stl, transformedPoint),
+        sketch: {
+          ...sourceFeature.sketch,
+          origin: ['text', 'stl'].includes(sourceFeature.kind)
+            ? transformedPoint(sourceFeature.sketch.origin)
+            : sourceFeature.sketch.origin,
+          profile: resolveProfile(definitionForProfile, newTransform),
+        },
+        locked: false,
+        transform: newTransform,
+        ...(clonedDefinition ? { _clonedDefinition: clonedDefinition } : {}),
+      })
+    }
+  }
+
+  return created
+}
+
+/**
  * Extract cloned definitions from features created by
  * {@link buildCopiedFeatures} in independent mode.
  */
@@ -214,6 +281,13 @@ export function extractClonedDefinitions(
     }
   }
   return defs
+}
+
+function applyMatrix(matrix: Matrix2D, point: Point): Point {
+  return {
+    x: matrix.a * point.x + matrix.c * point.y + matrix.e,
+    y: matrix.b * point.x + matrix.d * point.y + matrix.f,
+  }
 }
 
 export function buildCopiedClamps(

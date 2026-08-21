@@ -239,6 +239,61 @@
   border-color: var(--accent);
 }
 
+/* Feature distribution is a compact inspector with mode-specific controls. */
+.canvas-workflow-panel--feature-distribution {
+  width: min(480px, calc(100% - 24px));
+}
+
+.canvas-workflow-panel--feature-distribution .canvas-workflow-panel__field {
+  grid-template-columns: minmax(104px, 1fr) minmax(84px, 1fr);
+}
+
+.canvas-workflow-panel__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+}
+
+.canvas-workflow-panel--feature-distribution select {
+  height: 32px;
+  width: 100%;
+  min-width: 180px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-panel);
+  color: var(--text);
+  padding: 0 6px;
+  font-size: 13px;
+}
+
+.canvas-workflow-panel--feature-distribution .canvas-workflow-panel__field--orientation {
+  grid-column: 1 / -1;
+  grid-template-columns: 105px minmax(180px, 1fr);
+}
+
+.canvas-workflow-panel--feature-distribution .canvas-workflow-panel__field--orientation select {
+  justify-self: start;
+  width: min(232px, 100%);
+}
+
+.canvas-workflow-panel__picking-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.canvas-workflow-panel__warning {
+  margin: 0;
+  color: var(--warning-text);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+@media (max-width: 520px) {
+  .canvas-workflow-panel__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .canvas-workflow-panel__select-input {
   width: min(180px, 100%);
 }
@@ -345,6 +400,22 @@
   font-weight: 700;
   letter-spacing: 0.03em;
   text-transform: uppercase;
+}
+
+.canvas-workflow-panel__help {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.canvas-workflow-panel__picker-selection {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
 
 .overlap-feature-picker {

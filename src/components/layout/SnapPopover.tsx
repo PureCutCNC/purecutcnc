@@ -54,7 +54,7 @@ export function SnapPopover({
   const enabledCount = snapSettings.modes.length
 
   return (
-    <div className="snap-popover-host" ref={containerRef}>
+    <div className="snap-popover-host snap-popover-host--snap" ref={containerRef}>
       <div className="toolbar-action">
         <button
           className={`toolbar-icon-btn ${snapSettings.enabled ? 'toolbar-icon-btn--active' : ''} ${activeSnapMode ? 'toolbar-icon-btn--live' : ''}`}

@@ -54,6 +54,8 @@ export const sketchEs: Record<keyof typeof sketchEn, string> = {
   'sketch.transform.cancelRotate': 'Cancelar rotación',
   'sketch.transform.mirror': 'Reflejar elementos seleccionados',
   'sketch.transform.cancelMirror': 'Cancelar espejo',
+  'sketch.transform.featureDistribution': 'Distribución de elementos',
+  'sketch.transform.cancelFeatureDistribution': 'Cancelar distribución de elementos',
   'sketch.boolean.join': 'Unir elementos cerrados',
   'sketch.boolean.cancelJoin': 'Cancelar unión',
   'sketch.boolean.cut': 'Cortar elementos',

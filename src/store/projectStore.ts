@@ -47,6 +47,7 @@ import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
+import { createFeatureDistributionSlice } from './slices/featureDistributionSlice'
 import { createSelectionSlice, sanitizeSelection } from './slices/selectionSlice'
 import { createDimensionsSlice } from './slices/dimensionsSlice'
 import { createDimensionToolSlice } from './slices/dimensionToolSlice'
@@ -242,6 +243,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     previewOffsetFeatures,
     createDerivedFeature,
   }),
+  ...createFeatureDistributionSlice(set, get),
   ...createPendingAddSlice(set, get),
   ...createDimensionsSlice(set, get),
   ...createDimensionToolSlice(set, get),

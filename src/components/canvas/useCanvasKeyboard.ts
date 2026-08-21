@@ -24,6 +24,8 @@ import {
 import type {
   PendingAddTool,
   PendingDimensionTool,
+  FeatureDistributionPickTarget,
+  PendingFeatureDistribution,
   PendingMoveTool,
   PendingOffsetTool,
   PendingShapeActionTool,
@@ -75,6 +77,7 @@ export interface CanvasKeyboardCtx {
   pendingMoveRef: MutableRefObject<PendingMoveTool | null>
   pendingTransformRef: MutableRefObject<PendingTransformTool | null>
   pendingOffsetRef: MutableRefObject<PendingOffsetTool | null>
+  pendingFeatureDistributionRef: MutableRefObject<PendingFeatureDistribution | null>
   pendingShapeActionRef: MutableRefObject<PendingShapeActionTool | null>
   pendingSketchEditRef: MutableRefObject<PendingSketchEdit | null>
   viewStateRef: MutableRefObject<SketchViewState>
@@ -116,6 +119,8 @@ export interface CanvasKeyboardCtx {
   cancelPendingMove: () => void
   cancelPendingTransform: () => void
   cancelPendingOffset: () => void
+  cancelFeatureDistribution: () => void
+  setFeatureDistributionPickTarget: (target: FeatureDistributionPickTarget) => void
   confirmCutCutters: () => void
   cancelPendingShapeAction: () => void
   setSketchEditTool: (tool: SketchEditTool | null) => void
@@ -152,6 +157,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     pendingMoveRef,
     pendingTransformRef,
     pendingOffsetRef,
+    pendingFeatureDistributionRef,
     pendingShapeActionRef,
     pendingSketchEditRef,
     viewStateRef,
@@ -191,6 +197,8 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     cancelPendingMove,
     cancelPendingTransform,
     cancelPendingOffset,
+    cancelFeatureDistribution,
+    setFeatureDistributionPickTarget,
     confirmCutCutters,
     cancelPendingShapeAction,
     setSketchEditTool,
@@ -223,6 +231,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
     const pendingOffset = pendingOffsetRef.current
+    const pendingFeatureDistribution = pendingFeatureDistributionRef.current
     const pendingShapeAction = pendingShapeActionRef.current
     const viewState = viewStateRef.current
 
@@ -711,6 +720,15 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
       setPendingOffsetPreviewPointRef(null)
       setPendingOffsetRawPreviewPointRef(null)
       setOperationDimEdit(null)
+      return
+    }
+
+    if (event.key === 'Escape' && pendingFeatureDistribution) {
+      if (pendingFeatureDistribution.pickTarget) {
+        setFeatureDistributionPickTarget(null)
+        return
+      }
+      cancelFeatureDistribution()
       return
     }
 

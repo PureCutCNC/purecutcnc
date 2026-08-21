@@ -115,10 +115,18 @@ function testLockedSelectionGating() {
   assert(!result.transform.resize.enabled, 'resize is disabled for locked selection')
   assert(!result.transform.rotate.enabled, 'rotate is disabled for locked selection')
   assert(!result.transform.mirror.enabled, 'mirror is disabled for locked selection')
+  assert(!result.predicates.canCreateFeatureDistribution, 'pattern distribution is disabled for locked selection')
   assert(!result.boolean.offset.enabled, 'offset is disabled for locked selection')
   assert(!result.constraint.enabled, 'constraint is disabled for locked selection')
 
   console.log('locked-selection command gating: PASSED')
+}
+
+function testFeatureDistributionRejectsModelSelection() {
+  const project = makeProject([makeFeature('model', { kind: 'stl' })])
+  const result = makeCommandState(project, makeSelection(['model']))
+  assert(!result.predicates.canCreateFeatureDistribution, 'pattern distribution is limited to 2D sketch instances')
+  console.log('feature distribution 2D gate: PASSED')
 }
 
 function testClosedProfileOffsetGating() {
@@ -169,15 +177,19 @@ function testArrangeThresholds() {
 
   const one = makeCommandState(project, makeSelection(['feature-1']))
   assert(!one.arrange.align.enabled, 'align disabled below two unlocked features')
-  assert(!one.arrange.distribute.enabled, 'distribute disabled below three unlocked features')
+  assert(one.arrange.distribute.enabled, 'distribute drawer is visible with one selected feature')
+  assert(!one.predicates.canDistributeSelectedFeatures, 'even distribution is unavailable below three unlocked features')
+  assert(one.predicates.canCreateFeatureDistribution, 'pattern distribution is available with one selected feature')
 
   const two = makeCommandState(project, makeSelection(['feature-1', 'feature-2']))
   assert(two.arrange.align.enabled, 'align enabled at two unlocked features')
-  assert(!two.arrange.distribute.enabled, 'distribute disabled at two unlocked features')
+  assert(two.arrange.distribute.enabled, 'distribute drawer remains visible at two unlocked features')
+  assert(!two.predicates.canDistributeSelectedFeatures, 'even distribution remains unavailable at two unlocked features')
 
   const three = makeCommandState(project, makeSelection(['feature-1', 'feature-2', 'feature-3']))
   assert(three.arrange.align.enabled, 'align enabled at three unlocked features')
   assert(three.arrange.distribute.enabled, 'distribute enabled at three unlocked features')
+  assert(three.predicates.canDistributeSelectedFeatures, 'even distribution is available at three unlocked features')
 
   console.log('align/distribute thresholds: PASSED')
 }
@@ -237,6 +249,7 @@ function testToggleActiveStates() {
 }
 
 testLockedSelectionGating()
+testFeatureDistributionRejectsModelSelection()
 testClosedProfileOffsetGating()
 testArrangeThresholds()
 testSketchEditActive()

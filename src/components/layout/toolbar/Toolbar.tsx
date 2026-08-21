@@ -131,8 +131,11 @@ export function Toolbar({
           onAlign={toolbar.sketchCommands.arrange.alignFeature}
         />
         <DistributionActions
-          enabled={toolbar.sketchCommands.predicates.canDistributeSelectedFeatures}
+          enabled={toolbar.sketchCommands.predicates.hasSelectedFeatures}
+          canDistributeEvenly={toolbar.sketchCommands.predicates.canDistributeSelectedFeatures}
+          canCreatePattern={toolbar.sketchCommands.predicates.canCreateFeatureDistribution}
           onDistribute={toolbar.sketchCommands.arrange.distributeFeatures}
+          onCreatePattern={toolbar.sketchCommands.arrange.startFeatureDistribution}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}
