@@ -103,19 +103,6 @@ export function useCanvasWorkflowPanel({
     })
   }
 
-  /** Move a left-docked panel aside before the user must click the sketch. */
-  function moveAsideForSketchPick() {
-    const panelRect = panelRef.current?.getBoundingClientRect()
-    const containerRect = containerRef.current?.getBoundingClientRect()
-    if (!panelRect || !containerRect) return
-
-    const maxX = Math.max(margin, containerRect.width - panelRect.width - margin)
-    // Respect a panel the user has already moved to the right side.
-    if (position.x < maxX / 2) {
-      setPosition((current) => ({ ...current, x: maxX }))
-    }
-  }
-
   useEffect(() => {
     const wasOpen = wasOpenRef.current
     if ((open && focusCanvasOnOpen) || (!open && wasOpen)) {
@@ -194,7 +181,6 @@ export function useCanvasWorkflowPanel({
     position,
     panelRef,
     focusCanvasAfterAction,
-    moveAsideForSketchPick,
     handleProps: {
       onPointerDown: startDrag,
       onPointerMove: drag,

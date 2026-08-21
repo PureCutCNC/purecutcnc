@@ -16,7 +16,7 @@
 
 import { expect, test } from './fixtures'
 import { getFeatureCount, selectFeatures } from './helpers'
-import { clickCanvasWorld, seedObviousOverlapFeatureProject, seedOverlapFeatureProject } from './overlapFeatureSelection.helpers'
+import { canvasWorldPoint, clickCanvasWorld, seedObviousOverlapFeatureProject, seedOverlapFeatureProject } from './overlapFeatureSelection.helpers'
 
 const PANEL = '.canvas-workflow-panel--feature-distribution'
 
@@ -53,6 +53,7 @@ test('Distribute drawer opens a grid preview and leaves standard distribution di
   const panel = app.page.locator(PANEL)
 
   await expect(panel.locator('.canvas-workflow-panel__title')).toHaveText('Feature distribution')
+  await expect(panel).toHaveCSS('position', 'fixed')
   await expect(panel.getByLabel('X spacing')).toHaveValue('2')
   await expect(panel.getByLabel('Y spacing')).toHaveValue('2')
   await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeEnabled()
@@ -90,14 +91,24 @@ test('radial distribution picks its center from the sketch', async ({ app }) => 
   await expect(panel.getByLabel('Center X')).toHaveCount(0)
   await expect(panel.getByLabel('Center Y')).toHaveCount(0)
   await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeDisabled()
+  const sweepBox = await panel.getByLabel('Sweep').boundingBox()
+  const orientationBox = await panel.getByLabel('Orientation').boundingBox()
+  if (!sweepBox || !orientationBox) {
+    throw new Error('Feature distribution fields did not render')
+  }
+  expect(Math.abs(orientationBox.x - sweepBox.x)).toBeLessThanOrEqual(1)
 
   await panel.getByRole('button', { name: 'Pick center', exact: true }).click()
   await expect(panel.getByText('Click a center point on the sketch — Esc cancels', { exact: true })).toBeVisible()
+  await expect(panel.getByLabel('Sweep')).toHaveCount(0)
+  await expect(panel.getByLabel('Orientation')).toHaveCount(0)
   await panel.getByRole('button', { name: 'Cancel picking', exact: true }).click()
   await expect(panel).toBeVisible()
   await expect(panel.getByRole('button', { name: 'Pick center', exact: true })).toBeVisible()
 
   await panel.getByRole('button', { name: 'Pick center', exact: true }).click()
+  await canvas.hover({ position: await canvasWorldPoint(canvas, 80.1, 20.1) })
+  await expect(app.page.getByRole('button', { name: 'Snap to grid', exact: true })).toHaveClass(/toolbar-icon-btn--live/)
   await clickCanvasWorld(canvas, 80, 20)
   await expect(panel.getByRole('button', { name: 'Change center', exact: true })).toBeVisible()
   await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeEnabled()
@@ -114,8 +125,10 @@ test('along-path distribution names a guide chosen from its visible outline', as
   const canvas = app.page.locator('canvas.sketch-canvas')
 
   await expect(panel.getByRole('button', { name: 'Create copies', exact: true })).toBeDisabled()
+  const initialPanelBox = await panel.boundingBox()
   await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
   await expect(panel.getByText('Click a separate guide outline on the sketch — Esc cancels', { exact: true })).toBeVisible()
+  expect((await panel.boundingBox())?.x).toBe(initialPanelBox?.x)
   await panel.getByRole('button', { name: 'Cancel picking', exact: true }).click()
   await expect(panel.getByRole('button', { name: 'Pick guide', exact: true })).toBeVisible()
   await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
@@ -127,12 +140,24 @@ test('along-path distribution names a guide chosen from its visible outline', as
   await expect.poll(() => getFeatureCount(app.page)).toBe(5)
 })
 
-test('a toolbar action cancels an active sketch pick', async ({ app }) => {
-  await openFeatureDistribution(app.page, 'Radial')
+test('a toolbar action cancels Feature Distribution while configuring and while picking', async ({ app }) => {
+  await openFeatureDistribution(app.page)
   const panel = app.page.locator(PANEL)
+  await app.page.locator('.toolbar').first().getByRole('button').first().click()
+  await expect(panel).toHaveCount(0)
+
+  await openFeatureDistribution(app.page, 'Radial')
   await panel.getByRole('button', { name: 'Pick center', exact: true }).click()
   await app.page.locator('.toolbar').first().getByRole('button').first().click()
   await expect(panel).toHaveCount(0)
+})
+
+test('snap controls keep Feature Distribution open', async ({ app }) => {
+  await openFeatureDistribution(app.page)
+  const panel = app.page.locator(PANEL)
+
+  await app.page.getByRole('button', { name: 'Snap to grid', exact: true }).click()
+  await expect(panel).toBeVisible()
 })
 
 test.describe('tablet command bar', () => {

@@ -266,9 +266,19 @@
   font-size: 13px;
 }
 
-.canvas-workflow-panel--feature-distribution .canvas-workflow-panel__field--wide {
+.canvas-workflow-panel--feature-distribution .canvas-workflow-panel__field--orientation {
   grid-column: 1 / -1;
-  grid-template-columns: minmax(104px, 1fr) minmax(180px, 1.5fr);
+  grid-template-columns: 105px minmax(180px, 1fr);
+}
+
+.canvas-workflow-panel--feature-distribution .canvas-workflow-panel__field--orientation select {
+  justify-self: start;
+  width: min(232px, 100%);
+}
+
+.canvas-workflow-panel__picking-actions {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .canvas-workflow-panel__warning {

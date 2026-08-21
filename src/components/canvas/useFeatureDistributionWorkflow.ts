@@ -47,7 +47,6 @@ export function useFeatureDistributionWorkflow({
   canvasRef,
   clearTransientCanvasState,
 }: FeatureDistributionWorkflowCtx): FeatureDistributionWorkflow {
-  const pickTarget = pendingFeatureDistribution?.pickTarget ?? null
   const featureDistributionWorkflowPanel = useCanvasWorkflowPanel({
     open: pendingFeatureDistribution !== null,
     phaseKey: pendingFeatureDistribution
@@ -56,20 +55,23 @@ export function useFeatureDistributionWorkflow({
     containerRef,
     canvasRef,
     clearTransientCanvasState,
+    pageLevel: true,
   })
 
   useDocumentEvent('pointerdown', (event) => {
-    if (!pickTarget || !(event.target instanceof Element)) {
+    if (!pendingFeatureDistribution || !(event.target instanceof Element)) {
       return
     }
-    if (event.target.closest('.toolbar button, .toolbar-popover button, .tool-rail button, .tool-rail__popover button')) {
+    if (event.target.closest('.toolbar-group--snap, .snap-popover-host--snap')) {
+      return
+    }
+    if (event.target.closest('.toolbar, .toolbar-popover, .tool-rail, .tool-rail__popover, .app-toolbar')) {
       cancelFeatureDistribution()
     }
   })
 
   function pickGuideFromPanel() {
     setFeatureDistributionPickTarget('guide')
-    featureDistributionWorkflowPanel.moveAsideForSketchPick()
     featureDistributionWorkflowPanel.focusCanvasAfterAction()
   }
 

@@ -2736,6 +2736,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingMoveRef,
     pendingTransformRef,
     pendingOffsetRef,
+    pendingFeatureDistributionRef,
     pendingShapeActionRef,
     pendingMovePreviewPointRef,
     pendingConstraintRef,

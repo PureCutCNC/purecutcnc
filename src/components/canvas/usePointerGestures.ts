@@ -20,6 +20,7 @@ import type {
   PendingAddTool,
   PendingConstraint,
   PendingDimensionTool,
+  PendingFeatureDistribution,
   PendingMoveTool,
   PendingOffsetTool,
   PendingShapeActionTool,
@@ -120,6 +121,7 @@ export interface PointerGesturesCtx {
   pendingMoveRef: MutableRefObject<PendingMoveTool | null>
   pendingTransformRef: MutableRefObject<PendingTransformTool | null>
   pendingOffsetRef: MutableRefObject<PendingOffsetTool | null>
+  pendingFeatureDistributionRef: MutableRefObject<PendingFeatureDistribution | null>
   pendingShapeActionRef: MutableRefObject<PendingShapeActionTool | null>
   pendingConstraintRef: MutableRefObject<PendingConstraint | null>
   pendingDimensionRef: MutableRefObject<PendingDimensionTool | null>
@@ -270,6 +272,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     pendingMoveRef,
     pendingTransformRef,
     pendingOffsetRef,
+    pendingFeatureDistributionRef,
     pendingShapeActionRef,
     pendingConstraintRef,
     pendingDimensionRef,
@@ -611,6 +614,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const constraintAnchorPicking = !!pendingConstraintLive && !pendingConstraintLive.anchor
     const constraintRefPicking = !!pendingConstraintLive && !!pendingConstraintLive.anchor && !pendingConstraintLive.reference
     const constraintPicking = constraintAnchorPicking || constraintRefPicking
+    const radialCenterPicking = pendingFeatureDistributionRef.current?.pickTarget === 'radial-center'
     const shouldPreviewSnap =
       !zoomWindowActive && (
         !!pendingAdd
@@ -623,6 +627,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
         || (selection.mode === 'sketch_edit' && (sketchEditTool === 'add_point' || sketchEditTool === 'fillet' || sketchEditTool === 'chamfer'))
         || isDraggingNodeRef.current
         || constraintPicking
+        || radialCenterPicking
       )
     const resolvedSnap = shouldPreviewSnap
       ? snap.resolveCurrentSketchSnap(world, vt, {
