@@ -717,6 +717,92 @@ function testParallelAndIslandsAreUnaffected(): void {
   console.log('parallel + island: PASSED')
 }
 
+// ── finish pass (issue #579) ───────────────────────────────────────────────
+
+/**
+ * A finish-pass pocket honours `seeded_offset`. The defect this guards
+ * against: the finish band generator never read the pattern, so a finish
+ * operation with the seeded-circles option emitted the plain-offset stream
+ * unchanged — the option silently did nothing exactly where users select it.
+ */
+function testFinishPassEmitsSeedCircles(): void {
+  const project = projectWith([rect('pocket', 0, 0, 70, 50)])
+  const base = pocketOperation('finish', ['pocket'], {
+    pass: 'finish',
+    finishWalls: true,
+    finishFloor: true,
+    entryStrategy: 'helix',
+    entryHelixDiameterPercent: 80,
+  })
+  const offset = generatePocketToolpath(project, base)
+  const seeded = generatePocketToolpath(project, { ...base, pocketPattern: 'seeded_offset' })
+
+  assert(offset.moves.length > 0, 'the offset baseline must produce moves')
+  assert(seeded.moves.length !== offset.moves.length, 'the seeded pattern must change the finish stream')
+
+  // The floor seed of a 70x50 pocket sits at its middle. Some cut move must
+  // run on a circle about it — present in the output, not just planned.
+  const centre = { x: 35, y: 25 }
+  const onSameCircle = seeded.moves.filter((move) => {
+    if (move.kind !== 'cut') return false
+    const from = Math.hypot(move.from.x - centre.x, move.from.y - centre.y)
+    const to = Math.hypot(move.to.x - centre.x, move.to.y - centre.y)
+    return Math.abs(from - to) < 1e-6 && from > 1
+  })
+  assert(onSameCircle.length > 40, `expected concentric circle moves about the finish seed, got ${onSameCircle.length}`)
+
+  // Nothing the offset finish cleared may be left behind. Self-referential,
+  // like the rough-pass check above.
+  const toolRadius = 3
+  const offsetCoverage = buildSweptCoverage(cutCentrelines(offset.moves), toolRadius)
+  const seededCoverage = buildSweptCoverage(cutCentrelines(seeded.moves), toolRadius)
+  let missed = 0
+  for (let x = 0; x <= 70; x += 0.5) {
+    for (let y = 0; y <= 50; y += 0.5) {
+      if (offsetCoverage.covers(x, y) && !seededCoverage.covers(x, y)) missed += 1
+    }
+  }
+  assert(missed === 0, `${missed} samples cleared by the offset finish are left uncut by the seeded finish`)
+  console.log(`finish pass seeds: PASSED (${onSameCircle.length} circle moves, 0 samples lost)`)
+}
+
+/**
+ * The finish pass keeps the byte-identical fallback when no area schedules
+ * three circles. A 20 mm-wide pocket leaves a floor tool-centre strip whose
+ * inscribed radius holds fewer than three circles, so the seeded pattern
+ * must emit exactly the offset stream — walls included.
+ */
+function testFinishNoSeedFallsBackByteIdentical(): void {
+  const project = projectWith([rect('narrow', 0, 0, 120, 20)])
+  const base = pocketOperation('narrow-finish', ['narrow'], {
+    pass: 'finish',
+    finishWalls: true,
+    finishFloor: true,
+    stepover: 0.4,
+    roundOutsideCorners: true,
+  })
+  const offset = generatePocketToolpath(project, base)
+  const seeded = generatePocketToolpath(project, { ...base, pocketPattern: 'seeded_offset' })
+
+  assert(offset.moves.length > 0, 'the narrow pocket must still produce moves')
+  assert(
+    seeded.moves.length === offset.moves.length,
+    `move count must match: offset ${offset.moves.length}, seeded ${seeded.moves.length}`,
+  )
+  for (let index = 0; index < offset.moves.length; index += 1) {
+    const a = offset.moves[index]
+    const b = seeded.moves[index]
+    assert(
+      a.kind === b.kind
+        && a.from.x === b.from.x && a.from.y === b.from.y && a.from.z === b.from.z
+        && a.to.x === b.to.x && a.to.y === b.to.y && a.to.z === b.to.z
+        && (a.feedScale ?? null) === (b.feedScale ?? null),
+      `move ${index} differs between offset and an unseeded finish seeded_offset`,
+    )
+  }
+  console.log(`finish no-seed fallback: PASSED (${offset.moves.length} moves identical)`)
+}
+
 try {
   testScheduleStopsAtTheFirstRadiusThatDoesNotFit()
   testThreeCircleMinimumKeepsTheExactBoundary()
@@ -732,6 +818,8 @@ try {
   testNearestQueueMixesSeedAndOffsetSections()
   testNoSeedFallsBackByteIdentical()
   testParallelAndIslandsAreUnaffected()
+  testFinishPassEmitsSeedCircles()
+  testFinishNoSeedFallsBackByteIdentical()
   console.log('\nAll seedClearing tests PASSED.')
 } catch (e) {
   console.error(e)
