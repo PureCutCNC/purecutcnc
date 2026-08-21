@@ -53,6 +53,19 @@ const clearanceCircleCache = new WeakMap<
   Map<number, EntryClearanceCircle | null>
 >()
 
+/**
+ * The straight planar link an entry emits to reach the cut start when the
+ * helix/ramp bottom does not land on it exactly. Marked at emission because a
+ * trailing flat-revolution chord is structurally identical to a handoff — the
+ * difference is only whether the emitter pushed one. Consumers (the pocket
+ * S-link splice) must not mistake the two.
+ */
+const entryHandoffMoves = new WeakSet<object>()
+
+export function isEntryHandoffMove(move: ToolpathMove): boolean {
+  return entryHandoffMoves.has(move)
+}
+
 export type EntryCutSide = 'internal' | 'external'
 
 export interface EntryClearanceRegion {
@@ -93,6 +106,8 @@ interface ClearanceCell {
   h: number
   distance: number
   maxDistance: number
+  /** Set only when the queue serves a target-seeded search (helix placement). */
+  distanceToTarget?: number
 }
 
 interface HelixPlacement {
@@ -333,12 +348,14 @@ function emitHelix(
   }
 
   if (!sameXY(current, target)) {
-    moves.push({
+    const handoff: ToolpathMove = {
       kind: 'lead_in',
       from: current,
       to: target,
       ...(policy.handoffFeedScale === undefined ? {} : { feedScale: policy.handoffFeedScale }),
-    })
+    }
+    entryHandoffMoves.add(handoff)
+    moves.push(handoff)
   }
   return target
 }
@@ -377,12 +394,14 @@ function emitRamp(
   }
 
   if (!sameXY(current, target)) {
-    moves.push({
+    const handoff: ToolpathMove = {
       kind: 'lead_in',
       from: current,
       to: target,
       ...(policy.handoffFeedScale === undefined ? {} : { feedScale: policy.handoffFeedScale }),
-    })
+    }
+    entryHandoffMoves.add(handoff)
+    moves.push(handoff)
   }
   return target
 }
@@ -491,11 +510,16 @@ function findReachableHelixPlacement(
   const half = cellSize / 2
   for (let x = bounds.minX; x < bounds.maxX; x += cellSize) {
     for (let y = bounds.minY; y < bounds.maxY; y += cellSize) {
-      cells.push(makeCell(x + half, y + half, half, region))
+      cells.push(makeCell(x + half, y + half, half, region, target))
     }
   }
 
   const requiredClearance = radius + safety
+  // A coarse cell's centre can be legal while a much closer legal centre sits
+  // inside it or in a neighbour. Refuse placements above this cell size so the
+  // proximity-ordered queue must refine around the cut start first; otherwise
+  // the first coarse cell over open floor wins and the entry lands mid-pocket.
+  const acceptCellSize = Math.max(precision, radius / 2)
   let visited = 0
   let endpointAttempts = 0
   while (cells.length > 0 && visited < MAX_CLEARANCE_SEARCH_CELLS) {
@@ -504,11 +528,14 @@ function findReachableHelixPlacement(
     visited += 1
     if (cell.maxDistance < requiredClearance - ENTRY_EPSILON) continue
 
-    if (cell.distance >= requiredClearance - ENTRY_EPSILON) {
-      // Cells pop in descending clearance order, so the first candidates are
-      // the roomiest ones. If none of them can reach the cut start, sweeping
-      // the rest of the quadtree will not help — give up and let the caller
-      // shrink the radius or fall back.
+    if (
+      cell.distance >= requiredClearance - ENTRY_EPSILON
+      && cell.h <= acceptCellSize + ENTRY_EPSILON
+    ) {
+      // Cells pop nearest-to-target first, so the first legal candidates are
+      // the ones that keep the entry next to the cut start. If none of them
+      // can reach the cut start, sweeping farther out cannot help — give up
+      // and let the caller shrink the radius or fall back.
       if (endpointAttempts >= MAX_HELIX_ENDPOINT_CANDIDATES) return null
       endpointAttempts += 1
       const center = { x: cell.x, y: cell.y }
@@ -518,10 +545,10 @@ function findReachableHelixPlacement(
 
     if (cell.h <= precision / 2) continue
     const nextHalf = cell.h / 2
-    cells.push(makeCell(cell.x - nextHalf, cell.y - nextHalf, nextHalf, region))
-    cells.push(makeCell(cell.x + nextHalf, cell.y - nextHalf, nextHalf, region))
-    cells.push(makeCell(cell.x - nextHalf, cell.y + nextHalf, nextHalf, region))
-    cells.push(makeCell(cell.x + nextHalf, cell.y + nextHalf, nextHalf, region))
+    cells.push(makeCell(cell.x - nextHalf, cell.y - nextHalf, nextHalf, region, target))
+    cells.push(makeCell(cell.x + nextHalf, cell.y - nextHalf, nextHalf, region, target))
+    cells.push(makeCell(cell.x - nextHalf, cell.y + nextHalf, nextHalf, region, target))
+    cells.push(makeCell(cell.x + nextHalf, cell.y + nextHalf, nextHalf, region, target))
   }
   return null
 }
@@ -910,12 +937,32 @@ class ClearanceCellQueue {
     return this.cells.length
   }
 
+  /**
+   * True when `a` should be explored before `b`. A target-seeded search (any
+   * cell carries a distanceToTarget) explores nearest-to-target first — the
+   * closest legal helix centre wins, so the entry ends next to the cut start.
+   * Cells whose whole extent lacks the required clearance are pruned by the
+   * caller before their children exist, so proximity ordering cannot promote
+   * an unsafe centre. The plain largest-clearance search keeps roomiest-first.
+   * Lexicographic on exact keys: heaps need a strict weak order, and an
+   * epsilon-banded mix of the two keys is not transitive.
+   */
+  private static precedes(a: ClearanceCell, b: ClearanceCell): boolean {
+    if (a.distanceToTarget !== undefined && b.distanceToTarget !== undefined) {
+      if (a.distanceToTarget !== b.distanceToTarget) {
+        return a.distanceToTarget < b.distanceToTarget
+      }
+      return a.maxDistance > b.maxDistance
+    }
+    return a.maxDistance > b.maxDistance
+  }
+
   push(cell: ClearanceCell): void {
     this.cells.push(cell)
     let index = this.cells.length - 1
     while (index > 0) {
       const parent = Math.floor((index - 1) / 2)
-      if (this.cells[parent].maxDistance >= cell.maxDistance) break
+      if (!ClearanceCellQueue.precedes(cell, this.cells[parent])) break
       this.cells[index] = this.cells[parent]
       index = parent
     }
@@ -933,10 +980,10 @@ class ClearanceCellQueue {
       const right = left + 1
       if (left >= this.cells.length) break
       const child = right < this.cells.length
-        && this.cells[right].maxDistance > this.cells[left].maxDistance
+        && ClearanceCellQueue.precedes(this.cells[right], this.cells[left])
         ? right
         : left
-      if (this.cells[child].maxDistance <= last.maxDistance) break
+      if (!ClearanceCellQueue.precedes(this.cells[child], last)) break
       this.cells[index] = this.cells[child]
       index = child
     }
@@ -945,7 +992,7 @@ class ClearanceCellQueue {
   }
 }
 
-function makeCell(x: number, y: number, h: number, region: EntryClearanceRegion): ClearanceCell {
+function makeCell(x: number, y: number, h: number, region: EntryClearanceRegion, target?: Point): ClearanceCell {
   const distance = pointToRegionDistance({ x, y }, region)
   return {
     x,
@@ -953,6 +1000,7 @@ function makeCell(x: number, y: number, h: number, region: EntryClearanceRegion)
     h,
     distance,
     maxDistance: distance + h * Math.SQRT2,
+    ...(target === undefined ? {} : { distanceToTarget: Math.hypot(x - target.x, y - target.y) }),
   }
 }
 
