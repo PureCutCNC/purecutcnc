@@ -323,11 +323,13 @@ test.describe('Feed-coloured toolpath smoke', () => {
     // The legend prints the rungs derived from the 75% slot feed, not the
     // hardcoded 40% ladder the engine no longer emits (issue #498 S5), and
     // since #535 it is data-driven: it lists only the rungs the emitted moves
-    // actually carry. The 0.80 rung is absent because this fixture's geometry
-    // never quantizes there (minimum-fragment merges take the lower scale),
-    // so nothing on the canvas paints it and the legend must not claim it.
+    // actually carry. Since #591 the ladder is non-uniform, so the stretches
+    // this geometry used to charge as one 95% rung now split across the two
+    // finer top rungs (99% / 98%), and the 0.80/0.85-zone rung is absent
+    // because minimum-fragment merges take the lower scale — nothing on the
+    // canvas paints them and the legend must not claim them.
     await expect(panel.locator('.viewport-toolpath-vis__legend-step')).toHaveText([
-      '100%', '95%', '90%', '85%', '75%',
+      '100%', '99%', '98%', '90%', '85%', '75%',
     ])
 
     // Baseline: explicit off.
@@ -411,10 +413,10 @@ test.describe('Feed-coloured toolpath smoke', () => {
     const feedToggle = ui.toolpathVis.sketchItems(app.page).filter({ hasText: 'Feed colours' })
     await expect(feedToggle).toHaveCount(1)
 
-    // The union of the engagement ladder (this fixture's geometry emits all
-    // rungs except 0.80 — see the 75% test) and the slots-only pocket's 60%
-    // rung, whichever operation is selected.
-    const unionSteps = ['100%', '95%', '90%', '85%', '75%', '60%']
+    // The union of the engagement ladder (this fixture's geometry emits the
+    // fine top rungs but skips the mid zone — see the 75% test) and the
+    // slots-only pocket's 60% rung, whichever operation is selected.
+    const unionSteps = ['100%', '99%', '98%', '90%', '85%', '75%', '60%']
 
     // Selecting the engagement pocket defaults the toggle on; the legend is
     // the union of the engagement ladder and the slots-only pocket's 60% rung.

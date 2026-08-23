@@ -31,6 +31,7 @@ import assert from 'node:assert/strict'
 import type { ToolpathMove, ToolpathResult } from '../engine/toolpaths/types'
 import {
   feedColourLegendSteps,
+  feedLegendStepLabels,
   scanFeedColourLegendSteps,
   unionFeedColourLegendSteps,
   type FeedColourLegendStep,
@@ -54,12 +55,12 @@ function keys(steps: readonly FeedColourLegendStep[]): string[] {
   const steps = scanFeedColourLegendSteps([
     cut(0, 1),                 // absent -> scale 1, step 0
     cut(1, 2, 1),              // explicit 1 -> same entry
-    cut(2, 3, 0.6),            // reduced under slotScale 0.6 -> step 5 (slowest)
+    cut(2, 3, 0.6),            // reduced under slotScale 0.6 -> step 7 (slowest)
     cut(3, 4, 0.6),            // duplicate scale/step
     { kind: 'rapid', from: { x: 0, y: 0, z: 1 }, to: { x: 1, y: 0, z: 1 }, feedScale: 0.5 },
     { kind: 'lead_in', from: { x: 0, y: 0, z: 1 }, to: { x: 0, y: 0, z: 0 }, feedScale: 0.5 },
   ], 0.6)
-  assert.deepEqual(keys(steps), ['1:0', '0.6:5'], 'cut moves only; absent and 1 collapse to full feed')
+  assert.deepEqual(keys(steps), ['1:0', '0.6:7'], 'cut moves only; absent and 1 collapse to full feed')
 }
 
 {
@@ -67,8 +68,8 @@ function keys(steps: readonly FeedColourLegendStep[]): string[] {
   // slot feeds — the step is what the swatch colour derives from.
   const at60 = scanFeedColourLegendSteps([cut(0, 1, 0.6)], 0.6)
   const at40 = scanFeedColourLegendSteps([cut(0, 1, 0.6)], 0.4)
-  assert.equal(at60[0].step, 5, '0.6 at slotScale 0.6 is the slowest rung')
-  assert.equal(at40[0].step, 4, '0.6 at slotScale 0.4 sits one rung up the ladder')
+  assert.equal(at60[0].step, 7, '0.6 at slotScale 0.6 is the slowest rung')
+  assert.equal(at40[0].step, 6, '0.6 at slotScale 0.4 sits one rung up the ladder')
 }
 
 // ── cache: one scan per toolpath identity + slot scale ─────────────────
@@ -81,7 +82,7 @@ function keys(steps: readonly FeedColourLegendStep[]): string[] {
 
   const otherScale = feedColourLegendSteps(tp, 0.4)
   assert.notEqual(otherScale, first, 'a different slot scale must recompute')
-  assert.deepEqual(keys(otherScale), ['1:0', '0.6:4'])
+  assert.deepEqual(keys(otherScale), ['1:0', '0.6:6'])
 
   const otherToolpath = toolpath('op-b', tp.moves)
   assert.notEqual(feedColourLegendSteps(otherToolpath, 0.6), first, 'a different toolpath object must not share the cache')
@@ -96,12 +97,43 @@ function keys(steps: readonly FeedColourLegendStep[]): string[] {
   const slotScaleOf = (id: string): number => (id === 'op-a' ? 0.75 : 0.6)
 
   const union = unionFeedColourLegendSteps([engagement, slots, empty], slotScaleOf)
-  assert.deepEqual(keys(union), ['1:0', '0.9:2', '0.75:5', '0.6:5'],
+  assert.deepEqual(keys(union), ['1:0', '0.9:4', '0.75:7', '0.6:7'],
     'union of engagement ladder and slot scale, full feed first, empty toolpath skipped')
 
   // Two entries may share a step but never a (scale, step) pair.
   const dup = unionFeedColourLegendSteps([engagement, engagement, slots], slotScaleOf)
   assert.deepEqual(keys(dup), keys(union), 'duplicate toolpaths contribute one entry per pair')
+}
+
+// ── legend labels: whole percents, one decimal only when rounding collides ──
+
+{
+  assert.deepEqual(
+    feedLegendStepLabels([1, 0.95, 0.9]),
+    ['100%', '95%', '90%'],
+    'distinct rounded percents stay whole percents',
+  )
+  // Slot 90% ladder head: 1 / 0.995 / 0.99 — two entries round to 100%, so
+  // every label drops to one decimal (trailing .0 stripped).
+  assert.deepEqual(
+    feedLegendStepLabels([1, 0.995, 0.99]),
+    ['100%', '99.5%', '99%'],
+    'colliding rounded labels fall back to one decimal across all entries',
+  )
+  // Slot 99% ladder head: 1 / 0.9995 / 0.999 — one decimal still collides
+  // ((99.95).toFixed(1) prints back as 100%), so the fallback escalates.
+  assert.deepEqual(
+    feedLegendStepLabels([1, 0.9995, 0.999]),
+    ['100%', '99.95%', '99.9%'],
+    'one decimal is not guaranteed to separate rungs; escalate until distinct',
+  )
+  // The same scale carried at two ramp steps by two operations reads
+  // identically on purpose — repeated scales must not force decimals.
+  assert.deepEqual(
+    feedLegendStepLabels([1, 0.9, 0.9]),
+    ['100%', '90%', '90%'],
+    'repeated scales stay whole percents',
+  )
 }
 
 console.log('toolpathFeedLegend.test.ts passed')

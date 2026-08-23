@@ -156,3 +156,22 @@ export function unionFeedColourLegendSteps(
   }
   return [...byKey.values()].sort((a, b) => b.scale - a.scale || a.step - b.step)
 }
+
+/**
+ * Legend labels for the given legend scales, full-feed first. Whole percents,
+ * escalating decimal places until every distinct scale reads distinctly — on
+ * the non-uniform ladder (#591) the fine top rungs collide at high slot feeds
+ * (slot 90 % yields two "100 %" entries at whole percents, slot 99 % still
+ * collides at one decimal), and a single-shot fallback cannot cover the whole
+ * 1–99 % range. Scales repeated across operations' union (the same scale
+ * carried at two ramp steps) are supposed to read identically, so
+ * distinctness counts distinct scales, not entries.
+ */
+export function feedLegendStepLabels(scales: ReadonlyArray<number>): string[] {
+  const distinct = new Set(scales).size
+  for (let decimals = 0; decimals <= 3; decimals += 1) {
+    const labels = scales.map((scale) => `${Number((scale * 100).toFixed(decimals))}%`)
+    if (new Set(labels).size === distinct) return labels
+  }
+  return scales.map((scale) => `${Number((scale * 100).toFixed(3))}%`)
+}
