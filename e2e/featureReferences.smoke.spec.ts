@@ -25,6 +25,7 @@
  * ─────────────────────────────────────────────────────────────────────
  */
 
+import { LATEST_PROJECT_VERSION } from '../src/types/project'
 import { test, expect } from './fixtures'
 import { seedLinkedProject } from './featureReferences.helpers'
 import {
@@ -263,7 +264,7 @@ test.describe('Feature references browser smoke', () => {
     await expect(ui.tree.featureRows(app.page)).toHaveCount(4)
     await expect(ui.badge.linked(app.page)).toHaveCount(2)
     const saved = await getProject(app.page)
-    expect(saved.version).toBe('3.1')
+    expect(saved.version).toBe(LATEST_PROJECT_VERSION)
     expect((saved.features as Array<Record<string, unknown>>).every((feature) => !('sketch' in feature))).toBe(true)
   })
 
@@ -312,7 +313,7 @@ test.describe('Feature references browser smoke', () => {
     expect(alertMessage).toContain('not compatible with older')
 
     const saved = await getProject(app.page)
-    expect(saved.version).toBe('3.1')
+    expect(saved.version).toBe(LATEST_PROJECT_VERSION)
     expect((saved.features as Array<Record<string, unknown>>).every((feature) => !('sketch' in feature))).toBe(true)
   })
 

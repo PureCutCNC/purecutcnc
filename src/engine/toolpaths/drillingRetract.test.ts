@@ -284,12 +284,12 @@ test('a negative retract distance is raised to the surface and warned', () => {
 
   const warning = result.warnings.find((w) => w.code === 'drillRetractBelowStockTop')
   assert(warning !== undefined, 'a drillRetractBelowStockTop warning should be raised')
-  // requested/clamped report the resolved absolute Zs (2 below the surface of
-  // the 4 mm stock, raised back to 4).
-  assert(warning!.params?.requested === 2, `warning should report the requested value, got ${warning!.params?.requested}`)
+  // The reported numbers are distances, matching what the field holds:
+  // entered −2, clamped back onto the surface (offset 0).
+  assert(warning!.params?.requested === -2, `warning should report the entered distance, got ${warning!.params?.requested}`)
   assert(
-    warning!.params?.clamped === STOCK_THICKNESS,
-    `warning should report the clamped value ${STOCK_THICKNESS}, got ${warning!.params?.clamped}`,
+    warning!.params?.clamped === 0,
+    `warning should report the clamped offset 0, got ${warning!.params?.clamped}`,
   )
 })
 
@@ -339,6 +339,21 @@ test('a positive retract distance is resolved above the surface and left alone',
     assert(cycle.retractZ === STOCK_THICKNESS + 2, `retractZ should be the surface + 2, got ${cycle.retractZ}`)
   }
   assertRetractSafe(result.moves, STOCK_THICKNESS, 'simple drilling, safe retract')
+})
+
+test('a zero retract distance warns even though it needs no clamp', () => {
+  const project = drillFixture(makeDrill())
+  const operation = drillOp({ drillType: 'simple', retractHeight: 0 })
+  const result = generateDrillingToolpath(project, operation)
+
+  assert(
+    result.warnings.some((w) => w.code === 'drillRetractBelowStockTop'),
+    'a retract plane exactly on the surface should warn',
+  )
+  for (const cycle of result.drillCycles ?? []) {
+    assert(cycle.retractZ === STOCK_THICKNESS, `retractZ should sit at the surface, got ${cycle.retractZ}`)
+  }
+  assertRetractSafe(result.moves, STOCK_THICKNESS, 'zero retract distance')
 })
 
 test('the same distance resolves to the same plane from any origin preset', () => {

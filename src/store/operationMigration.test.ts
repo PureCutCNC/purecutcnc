@@ -22,10 +22,12 @@
  */
 
 import {
+  circleProfile,
   defaultGrid,
   defaultStock,
   defaultTool,
   rectProfile,
+  type DimensionRef,
   type Operation,
   type SketchFeature,
   type Tool,
@@ -192,20 +194,53 @@ test('legacy edge routes default to contour strategy on load', () => {
 
 // ── Format 3.1: retractHeight becomes a distance above the material ──
 
-function drillingOperation(retractHeight: number | undefined): Operation {
+function drillingOperation(retractHeight: number | undefined, featureIds = ['f1']): Operation {
   return {
     ...recursiveOperation(),
     id: 'drill-op',
     kind: 'drilling',
     drillType: 'simple',
+    target: { source: 'features', featureIds },
     ...(retractHeight === undefined ? {} : { retractHeight }),
   } as Operation
 }
 
-function projectWithDrillingOp(version: '3.0' | '3.1', retractHeight: number | undefined): ProjectFormatInput {
+/** Drilling targets must be circles, or normalizeOperation replaces the
+ *  target with its fallback before the retract migration ever runs. */
+function drillableFeature(id: string, zTop: number | DimensionRef): SketchFeature {
+  return {
+    ...subtractFeature(id),
+    kind: 'circle',
+    sketch: {
+      profile: circleProfile(15, 15, 4),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    z_top: zTop,
+  }
+}
+
+function drillingProject(options: {
+  version?: '3.0' | '3.1'
+  retractHeight?: number
+  omitRetractHeight?: boolean
+  featureIds?: string[]
+  extraFeatures?: SketchFeature[]
+  dropStockThickness?: boolean
+} = {}): ProjectFormatInput {
   const project = legacyProjectWithRecursiveOp()
-  project.version = version
-  project.operations = [drillingOperation(retractHeight)]
+  project.version = options.version ?? '3.0'
+  project.operations = [drillingOperation(
+    options.omitRetractHeight ? undefined : options.retractHeight,
+    options.featureIds,
+  )]
+  if (options.extraFeatures?.length) project.features = [...project.features, ...options.extraFeatures]
+  if (options.dropStockThickness) {
+    // defaultStock always sets a thickness; strip it to simulate a malformed file.
+    ;(project.stock as unknown as Record<string, unknown>).thickness = undefined
+  }
   return project
 }
 
@@ -215,22 +250,76 @@ function findDrillOp(project: { operations: Operation[] }): Operation {
   return op
 }
 
-test('format ≤ 3.0 absolute retract heights become distances above the material (#481)', () => {
-  // The fixture stock is 20 mm thick, so an absolute project Z of 22 sits
-  // 2 mm above the material surface — the migrated offset must be exactly 2.
-  const op = findDrillOp(normalizeProject(projectWithDrillingOp('3.0', 22)))
+test('format ≤ 3.0 absolute retract heights become distances above their own targets (#481)', () => {
+  // Stock is 20 mm thick and the op drills a hole whose top sits at the
+  // stock surface; an absolute Z of 22 is 2 mm above that surface.
+  const op = findDrillOp(normalizeProject(drillingProject({
+    retractHeight: 22,
+    extraFeatures: [drillableFeature('hole', 20)],
+    featureIds: ['hole'],
+  })))
   assert(Math.abs((op.retractHeight ?? NaN) - 2) < 1e-9, `expected offset 2, got ${op.retractHeight}`)
+})
+
+test('an operation without a stored value keeps the injected relative default', () => {
+  // normalizeOperation fills the *new* relative default on load; migrating
+  // that as an absolute Z would collapse the plane onto the material surface
+  // instead of leaving it 1 mm above (issue #481 review, blocker 1).
+  const op = findDrillOp(normalizeProject(drillingProject({ omitRetractHeight: true })))
+  assert(op.retractHeight === 1, `expected the relative default 1 to survive, got ${op.retractHeight}`)
+})
+
+test('the offset resolves against the operation\'s own targets, not the tallest feature', () => {
+  // A non-target feature towers over the stock while the drilled surface is
+  // still the stock top: "2 above the stock" must survive as 2 rather than be
+  // collapsed onto the surface by the bystander's height (issue #481 review,
+  // blocker 2).
+  const op = findDrillOp(normalizeProject(drillingProject({
+    retractHeight: 22,
+    extraFeatures: [drillableFeature('hole', 20), drillableFeature('tall-bystander', 30)],
+    featureIds: ['hole'],
+  })))
+  assert(Math.abs((op.retractHeight ?? NaN) - 2) < 1e-9, `expected offset 2, got ${op.retractHeight}`)
+
+  // When the tall feature IS the target, its top is the drilled surface.
+  const targeted = findDrillOp(normalizeProject(drillingProject({
+    retractHeight: 32,
+    extraFeatures: [drillableFeature('tall-target', 30)],
+    featureIds: ['tall-target'],
+  })))
+  assert(Math.abs((targeted.retractHeight ?? NaN) - 2) < 1e-9, `expected offset 2 against the tall target, got ${targeted.retractHeight}`)
+})
+
+test('a constraint-linked target top leaves the stored value untouched', () => {
+  // A DimensionRef string top cannot reveal a numeric surface here; keeping
+  // the raw number resolves high under the new reading and is capped at the
+  // clearance plane — safe-side, never skimmed. (An outright missing target
+  // cannot reach the migration: normalizeOperation swaps invalid targets for
+  // their fallback before it runs.)
+  const op = findDrillOp(normalizeProject(drillingProject({
+    retractHeight: 22,
+    extraFeatures: [drillableFeature('linked-top', 'linked-height')],
+    featureIds: ['linked-top'],
+  })))
+  assert(Math.abs((op.retractHeight ?? NaN) - 22) < 1e-9, `expected the value left alone, got ${op.retractHeight}`)
 })
 
 test('legacy retract heights below the surface land on the surface offset', () => {
   // Exactly what the issue #479 runtime clamp produced at generation time,
   // so no pre-3.1 project changes behaviour through the migration.
-  const op = findDrillOp(normalizeProject(projectWithDrillingOp('3.0', 15)))
+  const op = findDrillOp(normalizeProject(drillingProject({ retractHeight: 15 })))
   assert(op.retractHeight === 0, `expected the surface offset 0, got ${op.retractHeight}`)
 })
 
+test('a stock without a finite thickness skips the migration instead of writing NaN', () => {
+  // NaN survives Math.max(0, …); committing it would post a literal Z NaN.
+  const op = findDrillOp(normalizeProject(drillingProject({ retractHeight: 22, dropStockThickness: true })))
+  assert(Number.isFinite(op.retractHeight), `retractHeight must stay finite, got ${op.retractHeight}`)
+  assert(Math.abs((op.retractHeight ?? NaN) - 22) < 1e-9, `expected the value untouched, got ${op.retractHeight}`)
+})
+
 test('3.1 files already carry distances and are never re-migrated', () => {
-  const once = normalizeProject(projectWithDrillingOp('3.1', 2))
+  const once = normalizeProject(drillingProject({ version: '3.1', retractHeight: 2 }))
   const op = findDrillOp(once)
   assert(Math.abs((op.retractHeight ?? NaN) - 2) < 1e-9, `a 3.1 distance must survive untouched, got ${op.retractHeight}`)
   const reloaded = findDrillOp(normalizeProject(JSON.parse(JSON.stringify(once))))

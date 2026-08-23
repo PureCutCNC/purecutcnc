@@ -24,7 +24,7 @@
  */
 
 import { useProjectStore } from './projectStore'
-import { newProject } from '../types/project'
+import { LATEST_PROJECT_VERSION, newProject } from '../types/project'
 import type { Project, SketchFeature } from '../types/project'
 import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
 
@@ -400,7 +400,7 @@ function testSaveVersionStamping(): void {
   freshStore()
   useProjectStore.getState().addRectFeature('Base', 0, 0, 30, 30, 5)
   const withoutConstruction = JSON.parse(useProjectStore.getState().saveProject()) as { version: string }
-  assert(withoutConstruction.version === '3.1', 'all current saves use the strict current format')
+  assert(withoutConstruction.version === LATEST_PROJECT_VERSION, 'all current saves use the strict current format')
 
   // Add an OPEN construction polyline directly (as the open-path tool does).
   const open: SketchFeature = {
@@ -433,7 +433,7 @@ function testSaveVersionStamping(): void {
 
   const saved = useProjectStore.getState().saveProject()
   const parsed = JSON.parse(saved) as { version: string }
-  assert(parsed.version === '3.1', 'construction project remains stamped with the current format')
+  assert(parsed.version === LATEST_PROJECT_VERSION, 'construction project remains stamped with the current format')
 
   // Round trip: the open construction profile must survive load untouched
   // (the legacy open-profile → line migration must skip construction).

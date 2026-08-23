@@ -18,6 +18,7 @@
 
 import {
   IDENTITY_MATRIX,
+  LATEST_PROJECT_VERSION,
   defaultGrid,
   defaultStock,
   getProfileBounds,
@@ -186,7 +187,7 @@ function test(name: string, fn: () => void): void {
 
 test('new projects use the current format and lightweight rows', () => {
   const project = newProject('Current')
-  assert(project.version === '3.1', `expected 3.1, got ${project.version}`)
+  assert(project.version === LATEST_PROJECT_VERSION, `expected ${LATEST_PROJECT_VERSION}, got ${project.version}`)
   assert(Object.keys(project.featureDefinitions).length === 0, 'new project definitions should be empty')
 })
 
@@ -196,7 +197,7 @@ for (const version of ['1.0', '2.0', '2.1'] as const) {
     const row = decoded.project.features[0] as unknown as Record<string, unknown>
     assert(decoded.convertedLegacy, 'legacy input should report conversion')
     assert(decoded.sourceVersion === version, 'source version should be retained in decode metadata')
-    assert(decoded.project.version === '3.1', 'decoded project should be current')
+    assert(decoded.project.version === LATEST_PROJECT_VERSION, 'decoded project should be current')
     assert(!('sketch' in row), 'converted instance must not retain baked sketch geometry')
     assert(!('operation' in row), 'converted instance must not retain definition-owned operation')
     assert(decoded.project.features[0].definitionId === `rect-${version}`, 'instance should reference definition')

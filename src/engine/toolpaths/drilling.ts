@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { defaultRetractOffset } from '../../types/project'
 import type { DrillType, Operation, Point, Project, SketchFeature, SketchProfile } from '../../types/project'
 import type { ToolpathWarning } from './warningCodes'
 import type { DrillCycle, NormalizedTool, ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
@@ -534,24 +535,25 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
   // `getOperationSafeZ` is `max(stockTop, highestFeatureMax) + clearance`, and
   // every target that passes the `bottomZ >= topZ` guard has
   // `span.max === span.top`, so `safeZ === materialTopZ + clearance >= materialTopZ`.
-  const defaultRetractOffset = 1 // small offset above the surface, project units
   const highestTop = featureSpans.reduce((max, span) => Math.max(max, span.top), 0)
   const materialTopZ = Math.max(project.stock.thickness, highestTop)
-  const requestedRetractOffset = operation.retractHeight ?? defaultRetractOffset
+  const requestedRetractOffset = operation.retractHeight ?? defaultRetractOffset(project.meta.units)
   const requestedRetractZ = materialTopZ + requestedRetractOffset
   const retractZ = Math.min(safeZ, Math.max(requestedRetractZ, materialTopZ))
 
-  // Only an explicit operator value earns a warning. The default above is
-  // already at or above the surface, so clamping it would be reporting our own
-  // arithmetic back to the user. A negative stored distance (the UI prevents
-  // one; old files are migrated) would park the plane inside the part — the
-  // warning reports the resolved absolute Zs.
-  if (requestedRetractOffset < 0) {
+  // Only an explicit operator value earns a warning. The shared default above
+  // is already clear of the surface, so clamping it would be reporting our own
+  // arithmetic back to the user. A stored distance of zero or less parks the
+  // plane at or inside the part — the UI prevents negatives and the format
+  // migration floors legacy values here, but both remain possible through old
+  // files and direct edits, so they warn. The reported numbers are the same
+  // distances the field holds (issue #481 review), not absolute Zs.
+  if (operation.retractHeight !== undefined && requestedRetractOffset <= 0) {
     warnings.push({
       code: 'drillRetractBelowStockTop',
       params: {
-        requested: Number(requestedRetractZ.toFixed(4)),
-        clamped: Number(retractZ.toFixed(4)),
+        requested: Number(requestedRetractOffset.toFixed(4)),
+        clamped: Number((retractZ - materialTopZ).toFixed(4)),
       },
     })
   }

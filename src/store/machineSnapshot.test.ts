@@ -32,7 +32,7 @@ import {
   resetMachineLibraryForTests,
   saveCustomMachine,
 } from '../machine/store'
-import { defaultTool, newProject, type Operation, type Project } from '../types/project'
+import { LATEST_PROJECT_VERSION, defaultTool, newProject, type Operation, type Project } from '../types/project'
 import { decodeProjectFormat } from './helpers/projectFormat'
 import { instantiateProjectTemplate } from './helpers/normalize'
 import { useProjectStore } from './projectStore'
@@ -221,7 +221,7 @@ function freshLibrary(): void {
     saved.meta.selectedMachineId === (saved.meta.machineDefinitions[0]?.id ?? null),
     'the saved file satisfies the zero-or-one invariant',
   )
-  assert(saved.version === '3.1', 'the compact snapshot stays on the current format')
+  assert(saved.version === LATEST_PROJECT_VERSION, 'the compact snapshot stays on the current format')
 
   const reopened = decodeProjectFormat(saved)
   assert(

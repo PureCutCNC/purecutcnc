@@ -1199,6 +1199,16 @@ export function defaultOperationClearanceZ(units: ProjectMeta['units'] = 'mm'): 
   return units === 'mm' ? 5 : 0.2
 }
 
+/** How far above the material surface a fresh drilling operation retracts by
+ *  default, and what an operation without a stored `retractHeight` falls back
+ *  to at generation time (issue #481). One definition shared by the creation
+ *  seed, the CAM panel's display fallback, and the engine's field fallback so
+ *  the three can never disagree on units again. */
+export function defaultRetractOffset(units: ProjectMeta['units'] = 'mm'): number {
+  // 1 mm / 1/25.4 inch — identical to convertLength(1, 'mm', units).
+  return units === 'mm' ? 1 : 1 / 25.4
+}
+
 export function defaultMaxTravelZ(units: ProjectMeta['units'] = 'mm'): number {
   return units === 'mm' ? 50 : 2
 }
@@ -1447,14 +1457,17 @@ export const LATEST_PROJECT_VERSION = '3.1'
  * (the file was saved by a future version). Such files still open best-effort,
  * but newer data may be missing or fail to round-trip. Compares major.minor.
  */
+/** Parse a project schema version into comparable major.minor numbers.
+ *  Malformed components degrade to 0 so comparisons stay total. */
+export function parseProjectVersion(version: string): [number, number] {
+  const [maj, min] = version.split('.')
+  return [Number.parseInt(maj, 10) || 0, Number.parseInt(min ?? '0', 10) || 0]
+}
+
 export function isProjectVersionNewerThanSupported(version: string | null | undefined): boolean {
   if (!version) return false
-  const parse = (v: string): [number, number] => {
-    const [maj, min] = v.split('.')
-    return [Number.parseInt(maj, 10) || 0, Number.parseInt(min ?? '0', 10) || 0]
-  }
-  const [fileMaj, fileMin] = parse(version)
-  const [curMaj, curMin] = parse(LATEST_PROJECT_VERSION)
+  const [fileMaj, fileMin] = parseProjectVersion(version)
+  const [curMaj, curMin] = parseProjectVersion(LATEST_PROJECT_VERSION)
   return fileMaj > curMaj || (fileMaj === curMaj && fileMin > curMin)
 }
 

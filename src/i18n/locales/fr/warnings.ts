@@ -140,7 +140,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.drillHelicalBoreTooSmall': "Le diamètre du cercle ({holeDiameter}) n'est pas supérieur au diamètre de l'outil ({toolDiameter}); perçage hélicoïdal ignoré — le trou doit être strictement plus grand que la fraise",
   'warnings.drillHelicalBoreTooLarge': "Le diamètre du cercle ({holeDiameter}) dépasse 2× le diamètre de l'outil ({maxDiameter}); le perçage hélicoïdal est limité à 2× le diamètre de la fraise — utilisez Contour Intérieur à la place",
   'warnings.drillHelicalBoreUnmachinable': 'Le perçage hélicoïdal demandé ne peut pas être généré dans la limite de mouvements ; aucune sortie produite pour cette cible',
-  'warnings.drillRetractBelowStockTop': 'La hauteur de retrait ({requested}) est sous la face supérieure de la matière ; relevée à {clamped} pour que l’outil n’entre pas dans la pièce en avance rapide. La hauteur de retrait est stockée comme une distance au-dessus de la surface de la matière (issue #481).',
+  'warnings.drillRetractBelowStockTop': 'La hauteur de retrait ({requested}) est au niveau ou sous la face supérieure de la matière ; le plan de retrait est ramené à {clamped} au-dessus afin que l’outil n’entre pas dans la pièce en avance rapide. Définissez une distance positive au-dessus de la surface de la matière.',
   'warnings.drillTargetsNotCircles': 'Certaines entités cibles ne sont pas des cercles et ont été ignorées',
   // fraisurage
   'warnings.drillCountersinkNeedsVBit': 'Le fraisurage nécessite une fraise en V ; affectez-en une à cette opération — aucune fraisure n’a été usinée',

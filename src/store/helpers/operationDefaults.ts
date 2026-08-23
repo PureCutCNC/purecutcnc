@@ -16,7 +16,7 @@
 
 import { featureHasClosedGeometry } from '../../text'
 import { convertLength } from '../../utils/units'
-import { defaultTool } from '../../types/project'
+import { defaultRetractOffset, defaultTool } from '../../types/project'
 import { isConstruction, isMachinable, isRegion, sectionForOperation } from './featureRoles'
 import { isVCarveCompatibleFeature } from './vcarveTargets'
 import { resolveProject } from './resolveFeatures'
@@ -363,7 +363,7 @@ export function defaultOperationForTarget(
       // diameter instead of a zero that only produces a warning.
       countersinkDiameter: convertLength(6, 'mm', project.meta.units),
       // A plain offset above the material surface since format 3.1 (issue #481).
-      retractHeight: convertLength(1, 'mm', project.meta.units),
+      retractHeight: defaultRetractOffset(project.meta.units),
     } : {}),
   }
 }
