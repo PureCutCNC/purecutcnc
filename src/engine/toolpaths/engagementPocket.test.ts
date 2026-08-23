@@ -37,6 +37,7 @@ import {
   ENGAGEMENT_ESTIMATE_EPSILON,
   ENGAGEMENT_FEED_BUCKET_COUNT,
   SweptMaterialIndex,
+  engagementFeedRungs,
   engagementFeedScale,
   nominalEngagement,
 } from './engagement'
@@ -456,12 +457,20 @@ test('controller friendliness: bounded distinct scales and minimum fragment leng
       // slot floor is refused. This is the same "genuine short feature" carve-
       // out the S8 fix made for full feed, and it is the fragmentation the
       // arc-run bound (run count ≤ +25%, longest run ≥ 50) tolerates.
-      const bucketWidth = (1 - SLOT_SCALE) / (ENGAGEMENT_FEED_BUCKET_COUNT - 1)
-      const lowerNeighbour = Math.min(
-        prevScale === null ? Number.POSITIVE_INFINITY : prevScale,
-        nextScale === null ? Number.POSITIVE_INFINITY : nextScale,
-      )
-      const refusedMultiRungMerge = run.scale < 1 && lowerNeighbour < run.scale - bucketWidth * (1 + 1e-9)
+      // Rung adjacency on the non-uniform ladder (#591): the short run stays
+      // only when every possible consolidation is itself a refused
+      // multi-rung merge — i.e. each reduced neighbour sits more than one
+      // rung away from this run (merging takes the lower scale, so the
+      // distance that matters is symmetric in rung-index terms).
+      const rungs = engagementFeedRungs(SLOT_SCALE)
+      const thisIndex = rungs.findIndex((rung) => Math.abs(rung - run.scale) <= 1e-9)
+      const reducedNeighbourIndices = [prevScale, nextScale]
+        .filter((scale): scale is number => scale !== null && scale < 1)
+        .map((scale) => rungs.findIndex((rung) => Math.abs(rung - scale) <= 1e-9))
+        .filter((index) => index >= 0)
+      const refusedMultiRungMerge =
+        run.scale < 1 && thisIndex >= 0 && reducedNeighbourIndices.length > 0
+        && reducedNeighbourIndices.every((index) => Math.abs(index - thisIndex) > 1)
       assert(
         adjacentToFull || isClearedGap || refusedMultiRungMerge,
         `${spec.name}: scale run ${run.scale} of ${run.length} is shorter than the ${minFragment} minimum fragment length and is not next to full feed`,

@@ -78,13 +78,62 @@ const ZERO_LENGTH_EPS = 1e-9
 const DEGENERATE_DIRECTION_EPS = 1e-12
 
 /**
- * Number of feed-scale buckets emitted by `engagementFeedScale`; the ladder's
- * top rung is 1.0 (full feed) and its bottom rung is the slot scale. Small on
- * purpose: arc fitting refuses to join two moves whose `feedScale` differs at
- * all (`sameRun`, `src/engine/gcode/arcFitting.ts`), so a continuously varying
- * scale would shatter every arc run into linear moves.
+ * The feed-scale ladder, as cumulative fractions of the total drop
+ * `(1 − slotScale)` measured DOWN from full feed: rung k is
+ * `1 − FEED_RUNG_DROP_FRACTIONS[k] · (1 − slotScale)`, so the first entry (0)
+ * is always full feed and the last (1) is always the slot scale.
+ *
+ * Non-uniform on purpose (issue #591): quantization error concentrates at the
+ * top of the range, where curved constant-engagement laps sit — a lap a few
+ * percent over nominal used to fall a whole 20%-of-drop rung (a 3.6% heavier
+ * cut billed as an 8% feed reduction). The top three gaps price that zone at
+ * 5% / 5% / 10% of the drop; everything below repeats the uniform ladder's
+ * 20%-of-drop rungs verbatim, so corner and slot pricing is identical to the
+ * pre-#591 engine at every slot percent.
+ *
+ * Small on purpose: arc fitting refuses to join two moves whose `feedScale`
+ * differs at all (`sameRun`, `src/engine/gcode/arcFitting.ts`), so a
+ * continuously varying scale would shatter every arc run into linear moves,
+ * and extra resolution anywhere except the top adds fragment boundaries
+ * without changing any price that mattered.
  */
-export const ENGAGEMENT_FEED_BUCKET_COUNT = 6
+const FEED_RUNG_DROP_FRACTIONS = [0, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1]
+
+/**
+ * Number of feed-scale rungs emitted by `engagementFeedScale` — the length
+ * of the ladder above (8 since issue #591).
+ */
+export const ENGAGEMENT_FEED_BUCKET_COUNT = FEED_RUNG_DROP_FRACTIONS.length
+
+/**
+ * The emitted rung set for a slot scale, descending from full feed (index 0)
+ * to `slotScale` (last index). Single source of truth: the theme colour ramp
+ * and the structural tests consume this instead of re-deriving the arithmetic,
+ * so what they render and assert can never desync from what the engine emits.
+ */
+export function engagementFeedRungs(slotScale: number): readonly number[] {
+  const clamped = Math.min(1, Math.max(0, slotScale))
+  const drop = 1 - clamped
+  return FEED_RUNG_DROP_FRACTIONS.map((fraction) => clamped + drop * (1 - fraction))
+}
+
+/** Index of `scale` among the emitted rungs (to rounding dust), or −1. */
+function rungIndexOf(scale: number, slotScale: number): number {
+  return engagementFeedRungs(slotScale).findIndex((rung) => Math.abs(rung - scale) <= 1e-12)
+}
+
+/**
+ * Whether two emitted feed scales sit at most one rung apart on the ladder —
+ * the merge-admissibility rule shared by `EngagementFeedQuantizer.fragments`
+ * and the pocket's per-level run merge (issue #498 slice S9). On the
+ * non-uniform ladder adjacent gaps differ, so "one rung apart" is judged by
+ * rung index, not by any single width.
+ */
+function withinOneRungIndices(a: number, b: number, slotScale: number): boolean {
+  const ia = rungIndexOf(a, slotScale)
+  const ib = rungIndexOf(b, slotScale)
+  return ia >= 0 && ib >= 0 && Math.abs(ia - ib) <= 1
+}
 
 /**
  * Worst-case over-report of the engagement estimate, in radians — the
@@ -613,9 +662,13 @@ function continuousFeedScale(engagement: number, nominal: number, slotScale: num
  * the deadband covering the estimator's worst-case over-report — the scale
  * is exactly `1`. Above that it interpolates linearly from 1 down to
  * `slotScale` (the feed at full-slot engagement) between nominal and `π`,
- * then quantizes to `ENGAGEMENT_FEED_BUCKET_COUNT` buckets whose top rung is
- * 1.0 and whose bottom rung is `slotScale`, rounding DOWN — toward the
- * lower feed, so quantization is itself conservative.
+ * then quantizes onto the fixed non-uniform rung ladder
+ * (`FEED_RUNG_DROP_FRACTIONS`, issue #591) whose top rung is 1.0 and whose
+ * bottom rung is `slotScale`, rounding DOWN — toward the lower feed, so
+ * quantization is itself conservative. The ladder is deliberately finer near
+ * full feed, where curved constant-engagement laps carry entitlements a few
+ * percent below 1, and coarser near slot, where corner pricing is already
+ * well-scaled.
  *
  * The quantization is not a preference: arc fitting refuses to join moves
  * whose `feedScale` differs at all, so a continuous scale would shatter
@@ -632,12 +685,17 @@ export function engagementFeedScale(engagement: number, nominal: number, slotSca
   if (clampedSlot >= 1) return 1
   if (!(nominal < Math.PI)) return 1
   const continuous = continuousFeedScale(engagement, nominal, clampedSlot)
-  const bucketWidth = (1 - clampedSlot) / (ENGAGEMENT_FEED_BUCKET_COUNT - 1)
-  const bucket = Math.min(
-    ENGAGEMENT_FEED_BUCKET_COUNT - 1,
-    Math.max(0, Math.floor((continuous - clampedSlot) / bucketWidth + 1e-12)),
-  )
-  return clampedSlot + bucket * bucketWidth
+  // Round DOWN onto the ladder: the first (highest-priced) entry in the
+  // descending rung set that does not exceed the continuous scale. The 1e-12
+  // slack keeps evaluation dust from dropping a whole rung — straight offset
+  // rings hit rung boundaries analytically exactly, so a value one ulp under
+  // a boundary must still charge the boundary's rung (the uniform ladder's
+  // +1e-12 floor nudge, restated for the scanned table).
+  const rungs = engagementFeedRungs(clampedSlot)
+  for (let index = 0; index < rungs.length; index += 1) {
+    if (rungs[index] <= continuous + 1e-12) return rungs[index]
+  }
+  return clampedSlot
 }
 
 export interface EngagementFeedFragment {
@@ -655,6 +713,21 @@ export interface EngagementFeedFragment {
 const DEFAULT_HYSTERESIS_FRACTION = 0.25
 
 /**
+ * Floor on the up-switch margin, as a fraction of the whole drop
+ * `(1 − slotScale)`. On the pre-#591 uniform ladder every rung's proportional
+ * margin worked out to exactly this share of the drop (a quarter of its
+ * one-fifth width); on the non-uniform ladder the narrow top rungs would
+ * otherwise leave an anti-chatter band several times finer than any engagement
+ * sample can resolve, letting the feed alternate across their boundaries along
+ * a ring whose engagement barely wanders. The floor keeps every rung's rise
+ * margin at least as wide — in absolute scale terms — as the uniform ladder's
+ * ever was (#591). A side effect is that the finest top rungs are drop-only:
+ * the feed falls onto them immediately but re-enters full feed through the
+ * deadband, like everywhere else.
+ */
+const MIN_HYSTERESIS_DROP_FRACTION = 0.05
+
+/**
  * Tolerance for minimum-fragment comparisons. A ring's scaled minimum is
  * `perimeter / 8`, which a fragment distance summed from chunk lengths can
  * undershoot by one ulp; the tolerance is far below any meaningful precision
@@ -670,11 +743,18 @@ const MIN_FRAGMENT_EPSILON = 1e-9
  * - Hysteresis: drops to a lower bucket are immediate (a feed reduction is
  *   never delayed), rises to a higher bucket require the raw scale to sit
  *   past a hysteresis margin inside the target bucket, so a bucket boundary
- *   crossed repeatedly does not alternate. The top rung (scale 1) is
- *   special: `ENGAGEMENT_ESTIMATE_EPSILON` inside `engagementFeedScale` is
- *   its margin — engagement within the estimator's worst-case error of
- *   nominal counts as exactly 1 and rises to full feed with no further
- *   margin.
+ *   crossed repeatedly does not alternate. The margin is a quarter of the
+ *   target rung's own width, floored at `MIN_HYSTERESIS_DROP_FRACTION` of the
+ *   whole drop — on the non-uniform ladder (#591) the narrow top rungs would
+ *   otherwise leave an anti-chatter band finer than any sample resolves. The
+ *   floor is capped at half the gap to the rung above so every rung stays
+ *   climbable: without the cap the rung below full feed could never be risen
+ *   onto, and a pocket that touched one corner would run its following
+ *   straight stretch at slot feed forever. The top rung (scale 1) itself is
+ *   special:
+ *   `ENGAGEMENT_ESTIMATE_EPSILON` inside `engagementFeedScale` is its
+ *   margin — engagement within the estimator's worst-case error of nominal
+ *   counts as exactly 1 and rises to full feed with no further margin.
  * - Minimum fragment length: no emitted stretch is shorter than its own
  *   minimum fragment length — the tightest `minFragmentLength` carried by any
  *   of its chunks, overridable per ring via `setMinFragmentLength`; a shorter
@@ -701,8 +781,6 @@ export class EngagementFeedQuantizer {
   private readonly nominal: number
   private readonly slotScale: number
   private readonly hysteresisFraction: number
-  /** Width of one feed-scale rung; exposed so the pocket's run merge applies the same one-rung rule. */
-  readonly bucketWidth: number
   private readonly emitted: QuantizedFragment[] = []
   private currentScale: number | null = null
   private heldDistance = 0
@@ -720,7 +798,43 @@ export class EngagementFeedQuantizer {
     this.minFragmentLength = Math.max(0, options.minFragmentLength)
     this.heldMinFragmentLength = this.minFragmentLength
     this.hysteresisFraction = options.hysteresis ?? DEFAULT_HYSTERESIS_FRACTION
-    this.bucketWidth = (1 - this.slotScale) / (ENGAGEMENT_FEED_BUCKET_COUNT - 1)
+  }
+
+  /**
+   * Whether two emitted scales sit at most one rung apart on this operation's
+   * ladder — the pocket's per-level run merge applies the same rule
+   * `fragments` applies to its own stretches.
+   */
+  scalesWithinOneRung(a: number, b: number): boolean {
+    return withinOneRungIndices(a, b, this.slotScale)
+  }
+
+  /**
+   * Width of the continuous-scale bucket a rung owns: the gap down to the
+   * next lower rung; the bottom rung reuses the final gap so its width is
+   * never zero.
+   */
+  private rungWidth(scale: number): number {
+    const rungs = engagementFeedRungs(this.slotScale)
+    const index = rungIndexOf(scale, this.slotScale)
+    if (index < 0 || index >= rungs.length) {
+      return (1 - this.slotScale) / (ENGAGEMENT_FEED_BUCKET_COUNT - 1)
+    }
+    return index === rungs.length - 1 ? rungs[index - 1] - rungs[index] : rungs[index] - rungs[index + 1]
+  }
+
+  /**
+   * Gap from a rung up to the next higher rung — the room a rise into this
+   * rung has before the entitlement itself moves up a rung. The top reduced
+   * rung's gap reaches to full feed.
+   */
+  private gapAbove(scale: number): number {
+    const rungs = engagementFeedRungs(this.slotScale)
+    const index = rungIndexOf(scale, this.slotScale)
+    if (index <= 0 || index >= rungs.length) {
+      return (1 - this.slotScale) / (ENGAGEMENT_FEED_BUCKET_COUNT - 1)
+    }
+    return rungs[index - 1] - rungs[index]
   }
 
   /**
@@ -765,7 +879,20 @@ export class EngagementFeedQuantizer {
     // comparisons are false). Otherwise hold the current (lower) feed.
     const continuous = continuousFeedScale(clamped, this.nominal, this.slotScale)
     const effective = clamped <= this.nominal + ENGAGEMENT_ESTIMATE_EPSILON ? 1 : continuous
-    const margin = rawScale >= 1 ? 0 : this.hysteresisFraction * this.bucketWidth
+    // A quarter of the target rung's own width, floored at the share of the
+    // drop the uniform ladder gave every rung (#591). The floor yields — down
+    // to half the gap to the rung above — when it would otherwise exceed the
+    // room that rise has, so every rung stays climbable and a straight
+    // stretch after a corner recovers onto the fine top rungs.
+    const margin = rawScale >= 1
+      ? 0
+      : Math.max(
+          this.hysteresisFraction * this.rungWidth(rawScale),
+          Math.min(
+            MIN_HYSTERESIS_DROP_FRACTION * (1 - this.slotScale),
+            this.gapAbove(rawScale) / 2,
+          ),
+        )
     const fragmentGate = rawScale >= 1 || this.heldDistance >= this.heldMinFragmentLength - MIN_FRAGMENT_EPSILON
     if (effective >= rawScale + margin && fragmentGate) {
       this.emitted.push({ scale: this.currentScale, distance: this.heldDistance, minFragmentLength: this.heldMinFragmentLength })
@@ -811,8 +938,9 @@ export class EngagementFeedQuantizer {
       // fragment entitled to a near-full scale must not be dragged to the slot
       // floor by a slot it merely touches (issue #498, slice S9). Adjacent
       // rungs still consolidate, so the minimum-fragment guarantee does not
-      // shatter the path into alternations.
-      if (Math.abs(fragment.scale - target.scale) > this.bucketWidth * (1 + 1e-9)) {
+      // shatter the path into alternations. On the non-uniform ladder (#591)
+      // "one rung apart" is pair-specific — adjacency is judged by rung index.
+      if (!withinOneRungIndices(fragment.scale, target.scale, this.slotScale)) {
         i += 1
         continue
       }

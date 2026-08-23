@@ -20,6 +20,7 @@ import {
   EngagementFeedQuantizer,
   EngagementTelemetryAccumulator,
   SweptMaterialIndex,
+  engagementFeedRungs,
   engagementFeedScale,
   nominalEngagement,
 } from './engagement'
@@ -347,7 +348,7 @@ console.log('Testing engagementFeedScale anchors and quantization...')
   assert(approx(engagementFeedScale(nominal, nominal, slotScale), 1), 'at nominal the scale must be exactly 1')
   assert(approx(engagementFeedScale(Math.PI, nominal, slotScale), slotScale), 'at π the scale must be exactly slotScale')
 
-  const bucketWidth = (1 - slotScale) / (ENGAGEMENT_FEED_BUCKET_COUNT - 1)
+  const rungs = engagementFeedRungs(slotScale)
   const distinct = new Set<number>()
   let previous = Infinity
   const step = 0.0005
@@ -360,11 +361,10 @@ console.log('Testing engagementFeedScale anchors and quantization...')
     const t = Math.min(engagement, Math.PI) <= nominal ? 0 : (Math.min(engagement, Math.PI) - nominal) / (Math.PI - nominal)
     const continuous = 1 + (slotScale - 1) * t
     assert(scale <= continuous + 1e-12, `scale ${scale} must round down from continuous ${continuous}`)
-    // Values must come from the stated bucket set.
-    const k = Math.round((scale - slotScale) / bucketWidth)
+    // Values must come from the engine's stated rung set.
     assert(
-      scale === 1 || (Number.isInteger(k) && k >= 0 && k < ENGAGEMENT_FEED_BUCKET_COUNT - 1 && approx(scale, slotScale + k * bucketWidth, 1e-12)),
-      `scale ${scale} is not a member of the ${ENGAGEMENT_FEED_BUCKET_COUNT}-bucket set`,
+      rungs.some((rung) => approx(rung, scale, 1e-12)),
+      `scale ${scale} is not a member of the ${ENGAGEMENT_FEED_BUCKET_COUNT}-rung ladder`,
     )
   }
   assert(
@@ -440,6 +440,84 @@ console.log('Testing the bucket ladder includes 1.0 as its top rung...')
   )
   // The value at π must be exactly slotScale — not slotScale minus a step.
   assert(engagementFeedScale(Math.PI, nominal, slotScale) === slotScale, 'the value at π must be exactly slotScale')
+  // And the emitted set must be exactly the engine's ladder — no stray value
+  // between rungs may leak through quantization.
+  const expected = [...engagementFeedRungs(slotScale)].sort((a, b) => a - b)
+  const got = [...distinct].sort((a, b) => a - b)
+  assert(
+    got.length === expected.length && got.every((value, i) => approx(value, expected[i], 1e-12)),
+    `the dense sweep must emit exactly the engine ladder, got ${got.join(', ')}`,
+  )
+}
+
+// ── 5d. Top-of-range resolution and the frozen deep ladder (issue #591) ──
+
+console.log('Testing fine top rungs and the unchanged deep ladder...')
+{
+  const nominal = 1.2025 // arccos(1 − 0.240 / 0.375): the #591 fixture's stepover wrap angle
+  const slotScale = 0.6
+  const rungs = engagementFeedRungs(slotScale)
+  // Continuous entitlement c ↔ the engagement that produces it.
+  const engagementAtContinuous = (c: number): number =>
+    nominal + ((1 - c) / (1 - slotScale)) * (Math.PI - nominal)
+  const scaleAtContinuous = (c: number): number =>
+    engagementFeedScale(engagementAtContinuous(c), nominal, slotScale)
+
+  // The issue's measured case: a curved lap 3.6% over nominal carries a
+  // continuous entitlement of 0.991. Before #591 it fell a whole 20%-of-drop
+  // rung to 0.92; now it lands on the second rung, ~1% under entitlement.
+  assert(
+    approx(scaleAtContinuous(0.991), 0.98, 1e-12),
+    `continuous 0.991 must charge the 0.98 rung, got ${scaleAtContinuous(0.991)}`,
+  )
+
+  // Mid-boundary samples charge the LOWER rung: quantization rounds down
+  // everywhere on the ladder. (The top boundary sits inside the estimator
+  // deadband by design, so the walk starts below the second rung.)
+  for (let i = 2; i < rungs.length; i += 1) {
+    const mid = (rungs[i] + rungs[i - 1]) / 2
+    assert(
+      approx(scaleAtContinuous(mid), rungs[i], 1e-12),
+      `mid-boundary ${mid.toFixed(4)} must charge the lower rung ${rungs[i]}, got ${scaleAtContinuous(mid)}`,
+    )
+  }
+
+  // Deep-ladder freeze: below the finest pre-existing rung the ladder is the
+  // old uniform six, verbatim — corner and slot pricing did not move.
+  const deep = rungs.filter((rung) => rung < 0.96).sort((a, b) => a - b)
+  const legacyUniform = [0, 1, 2, 3, 4].map((k) => slotScale + k * ((1 - slotScale) / 5))
+  assert(
+    deep.length === legacyUniform.length && deep.every((value, i) => approx(value, legacyUniform[i], 1e-12)),
+    `the deep ladder must equal the uniform six, got ${deep.join(', ')} vs ${legacyUniform.join(', ')}`,
+  )
+}
+
+// ── 5e. No flutter across a fine top-rung boundary (issue #591) ──
+
+console.log('Testing the absolute rise-margin floor at a narrow top boundary...')
+{
+  const nominal = Math.PI / 2
+  const slotScale = 0.6
+  const engagementAtContinuous = (s: number): number =>
+    nominal + ((1 - s) / (1 - slotScale)) * (Math.PI - nominal)
+  // Hold just above the 0.98 boundary, dip just below it repeatedly. Each dip
+  // is an entitled immediate drop to 0.96; each recovery toward 0.98 must be
+  // stopped by the absolute rise-margin floor, or the feed alternates along a
+  // ring whose engagement barely wanders. (minFragmentLength 0 isolates the
+  // hysteresis gate from the fragment-length gate.)
+  const quantizer = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 0 })
+  quantizer.push(engagementAtContinuous(0.988), 1.0)
+  for (let i = 0; i < 6; i += 1) {
+    quantizer.push(engagementAtContinuous(0.978), 0.05)
+    quantizer.push(engagementAtContinuous(0.988), 0.05)
+  }
+  const fragments = quantizer.fragments()
+  assert(
+    fragments.length === 2,
+    `boundary wander must not alternate rungs, got ${fragments.length} fragments: ${JSON.stringify(fragments)}`,
+  )
+  assert(approx(fragments[0].scale, 0.98, 1e-12), 'the initial stretch holds the 0.98 rung')
+  assert(approx(fragments[1].scale, 0.96, 1e-12), 'after the first dip the feed stays on the 0.96 rung')
 }
 
 // ── 6. Determinism: identical input sequences, identical output ──
@@ -510,9 +588,11 @@ console.log('Testing nominalEngagement...')
 
 // ── 8. Quantizer: hysteresis and minimum fragment length ──
 //
-// Bucket reference (nominal = π/2, slotScale = 0.4, bucket width 0.12):
-// engagement 3.0 → scale 0.4; 2.60 → 0.52 (continuous ≈ 0.607, past the
-// 0.55 up-switch margin); 2.82 → 0.52 (continuous ≈ 0.523, inside the margin).
+// Ladder reference (nominal = π/2, slotScale = 0.4 → rungs 1 / .97 / .94 /
+// .88 / .76 / .64 / .52 / .40): engagement 3.0 → scale 0.4; 2.60 → 0.52
+// (continuous ≈ 0.607, past the 0.55 up-switch margin); 2.82 → 0.52
+// (continuous ≈ 0.523, inside the margin — the 0.52 rung's quarter-width is
+// 0.03 and the absolute floor is also 0.03).
 
 console.log('Testing quantizer hysteresis margin...')
 {

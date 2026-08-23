@@ -979,8 +979,10 @@ function applyEngagementFeedToLevel(
       // A bucket-to-bucket merge takes the lower scale, so a merge that would
       // lower the higher-scale run by more than one rung is refused: a run
       // entitled to a near-full scale must not be dragged to the slot floor by
-      // a slot it merely touches (issue #498, slice S9).
-      if (Math.abs(runs[runIndex].scale - target.scale) > quantizer.bucketWidth * (1 + 1e-9)) {
+      // a slot it merely touches (issue #498, slice S9). Rung adjacency is the
+      // quantizer's own rule — on the non-uniform ladder (#591) adjacent gaps
+      // differ, so no single width expresses "one rung".
+      if (!quantizer.scalesWithinOneRung(runs[runIndex].scale, target.scale)) {
         runIndex += 1
         continue
       }
