@@ -156,3 +156,16 @@ export function unionFeedColourLegendSteps(
   }
   return [...byKey.values()].sort((a, b) => b.scale - a.scale || a.step - b.step)
 }
+
+/**
+ * Legend labels for the given legend scales, full-feed first. Whole percents,
+ * unless rounding would make two distinct rungs read identically — on the
+ * non-uniform ladder (#591) the fine top rungs collide at high slot feeds
+ * (e.g. slot 90 % yields 0.9875 and 0.975, both "99 %") — in which case every
+ * label drops to one decimal so adjacent swatches stay tellable apart.
+ */
+export function feedLegendStepLabels(scales: ReadonlyArray<number>): string[] {
+  const integerLabels = scales.map((scale) => `${Math.round(scale * 100)}%`)
+  if (new Set(integerLabels).size === scales.length) return integerLabels
+  return scales.map((scale) => `${(scale * 100).toFixed(1).replace(/\.0$/, '')}%`)
+}

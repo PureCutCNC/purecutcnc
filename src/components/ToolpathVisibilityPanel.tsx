@@ -15,6 +15,7 @@
  */
 
 import type { FeedColourLegendStep, ToolpathVisibility } from './toolpathVisibility'
+import { feedLegendStepLabels } from './toolpathVisibility'
 import { useI18n } from '../i18n/i18nContext'
 import type { MessageKey } from '../i18n/locales/en'
 import { useTheme } from '../theme/themeContext'
@@ -67,6 +68,9 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
   const showLegend = expanded
     && feedColoursOn
     && (legendSteps?.some((entry) => entry.step > 0) ?? false)
+  // Whole percents unless two distinct rungs would round to the same label —
+  // then one decimal for every label so the swatches stay tellable apart.
+  const legendLabels = showLegend && legendSteps ? feedLegendStepLabels(legendSteps.map((entry) => entry.scale)) : []
 
   return (
     <div className={`viewport-toolpath-vis${expanded ? ' viewport-toolpath-vis--expanded' : ''}${className ? ` ${className}` : ''}`}>
@@ -109,15 +113,15 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
           aria-label={t('appShell.toolpath.feedLegend')}
           style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 10px 6px' }}
         >
-          {legendSteps.map(({ scale, step }) => (
+          {legendSteps.map(({ scale, step }, index) => (
             <span
               key={`${scale}:${step}`}
               className="viewport-toolpath-vis__legend-step"
-              title={`${Math.round(scale * 100)}%`}
+              title={legendLabels[index]}
               style={{ display: 'flex', alignItems: 'center', gap: '3px' }}
             >
               <span className="viewport-toolpath-vis__swatch" style={{ background: canvasFeedColour(step, palette.canvas) }} />
-              <span style={{ fontSize: '10px', lineHeight: 1 }}>{Math.round(scale * 100)}%</span>
+              <span style={{ fontSize: '10px', lineHeight: 1 }}>{legendLabels[index]}</span>
             </span>
           ))}
         </div>

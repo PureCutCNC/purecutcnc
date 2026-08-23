@@ -472,9 +472,8 @@ console.log('Testing fine top rungs and the unchanged deep ladder...')
   )
 
   // Mid-boundary samples charge the LOWER rung: quantization rounds down
-  // everywhere on the ladder. (The top boundary sits inside the estimator
-  // deadband by design, so the walk starts below the second rung.)
-  for (let i = 2; i < rungs.length; i += 1) {
+  // everywhere on the ladder, including the fine top boundary #591 adds.
+  for (let i = 1; i < rungs.length; i += 1) {
     const mid = (rungs[i] + rungs[i - 1]) / 2
     assert(
       approx(scaleAtContinuous(mid), rungs[i], 1e-12),
@@ -494,7 +493,7 @@ console.log('Testing fine top rungs and the unchanged deep ladder...')
 
 // ── 5e. No flutter across a fine top-rung boundary (issue #591) ──
 
-console.log('Testing the absolute rise-margin floor at a narrow top boundary...')
+console.log('Testing the rise-margin cap at a narrow top boundary...')
 {
   const nominal = Math.PI / 2
   const slotScale = 0.6
@@ -502,9 +501,10 @@ console.log('Testing the absolute rise-margin floor at a narrow top boundary...'
     nominal + ((1 - s) / (1 - slotScale)) * (Math.PI - nominal)
   // Hold just above the 0.98 boundary, dip just below it repeatedly. Each dip
   // is an entitled immediate drop to 0.96; each recovery toward 0.98 must be
-  // stopped by the absolute rise-margin floor, or the feed alternates along a
-  // ring whose engagement barely wanders. (minFragmentLength 0 isolates the
-  // hysteresis gate from the fragment-length gate.)
+  // stopped by the rise margin — here the climbability cap, half the 0.02 gap
+  // to full feed — or the feed alternates along a ring whose engagement barely
+  // wanders. (minFragmentLength 0 isolates the hysteresis gate from the
+  // fragment-length gate.)
   const quantizer = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 0 })
   quantizer.push(engagementAtContinuous(0.988), 1.0)
   for (let i = 0; i < 6; i += 1) {

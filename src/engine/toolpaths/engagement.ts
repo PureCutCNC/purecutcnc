@@ -110,16 +110,32 @@ export const ENGAGEMENT_FEED_BUCKET_COUNT = FEED_RUNG_DROP_FRACTIONS.length
  * to `slotScale` (last index). Single source of truth: the theme colour ramp
  * and the structural tests consume this instead of re-deriving the arithmetic,
  * so what they render and assert can never desync from what the engine emits.
+ *
+ * The table is memoized for the most recent slot scale: this sits on hot paths
+ * (`engagementFeedScale` per sample, `feedColourStep` per rendered cut move)
+ * and the slot scale changes at most once per operation, so callers share one
+ * array instead of allocating per call. Treat the result as immutable.
  */
+let rungsCacheSlotScale = Number.NaN
+let rungsCache: readonly number[] = []
 export function engagementFeedRungs(slotScale: number): readonly number[] {
-  const clamped = Math.min(1, Math.max(0, slotScale))
-  const drop = 1 - clamped
-  return FEED_RUNG_DROP_FRACTIONS.map((fraction) => clamped + drop * (1 - fraction))
+  if (!(slotScale === rungsCacheSlotScale) || rungsCache.length === 0) {
+    const clamped = Math.min(1, Math.max(0, slotScale))
+    const drop = 1 - clamped
+    rungsCache = FEED_RUNG_DROP_FRACTIONS.map((fraction) => clamped + drop * (1 - fraction))
+    rungsCacheSlotScale = slotScale
+  }
+  return rungsCache
 }
 
-/** Index of `scale` among the emitted rungs (to rounding dust), or −1. */
+/** Index of `scale` among an emitted rung set (to rounding dust), or −1. */
+function rungIndexOfIn(rungs: readonly number[], scale: number): number {
+  return rungs.findIndex((rung) => Math.abs(rung - scale) <= 1e-12)
+}
+
+/** Index of `scale` among the emitted rungs for a slot scale, or −1. */
 function rungIndexOf(scale: number, slotScale: number): number {
-  return engagementFeedRungs(slotScale).findIndex((rung) => Math.abs(rung - scale) <= 1e-12)
+  return rungIndexOfIn(engagementFeedRungs(slotScale), scale)
 }
 
 /**
@@ -714,16 +730,16 @@ const DEFAULT_HYSTERESIS_FRACTION = 0.25
 
 /**
  * Floor on the up-switch margin, as a fraction of the whole drop
- * `(1 − slotScale)`. On the pre-#591 uniform ladder every rung's proportional
- * margin worked out to exactly this share of the drop (a quarter of its
- * one-fifth width); on the non-uniform ladder the narrow top rungs would
- * otherwise leave an anti-chatter band several times finer than any engagement
- * sample can resolve, letting the feed alternate across their boundaries along
- * a ring whose engagement barely wanders. The floor keeps every rung's rise
- * margin at least as wide — in absolute scale terms — as the uniform ladder's
- * ever was (#591). A side effect is that the finest top rungs are drop-only:
- * the feed falls onto them immediately but re-enters full feed through the
- * deadband, like everywhere else.
+ * `(1 − slotScale)` at the default hysteresis fraction; the configured
+ * fraction scales it proportionally, so `hysteresis: 0` means no margin at
+ * all. On the pre-#591 uniform ladder every rung's proportional margin worked
+ * out to exactly this share of the drop, so the floor preserves the
+ * anti-chatter band widths that shipped against rings whose engagement barely
+ * wanders. It is a target, not the realised value: the rise margin is capped
+ * at half the gap to the rung above, and on the non-uniform ladder (#591)
+ * that cap is what binds on the two finest top rungs. Without the cap they
+ * would be drop-only — a pocket that touched one corner would run its
+ * following straight stretch at slot feed forever.
  */
 const MIN_HYSTERESIS_DROP_FRACTION = 0.05
 
@@ -745,13 +761,12 @@ const MIN_FRAGMENT_EPSILON = 1e-9
  *   past a hysteresis margin inside the target bucket, so a bucket boundary
  *   crossed repeatedly does not alternate. The margin is a quarter of the
  *   target rung's own width, floored at `MIN_HYSTERESIS_DROP_FRACTION` of the
- *   whole drop — on the non-uniform ladder (#591) the narrow top rungs would
- *   otherwise leave an anti-chatter band finer than any sample resolves. The
- *   floor is capped at half the gap to the rung above so every rung stays
- *   climbable: without the cap the rung below full feed could never be risen
- *   onto, and a pocket that touched one corner would run its following
- *   straight stretch at slot feed forever. The top rung (scale 1) itself is
- *   special:
+ *   whole drop and capped at half the gap to the rung above: the floor keeps
+ *   an anti-chatter band as wide as the uniform ladder's ever was, and the
+ *   cap keeps every rung climbable — without it the fine top rungs (#591)
+ *   could be dropped onto but never risen back out of. The configured
+ *   `hysteresis` fraction scales the whole margin; `hysteresis: 0` means no
+ *   margin at all. The top rung (scale 1) itself is special:
  *   `ENGAGEMENT_ESTIMATE_EPSILON` inside `engagementFeedScale` is its
  *   margin — engagement within the estimator's worst-case error of nominal
  *   counts as exactly 1 and rises to full feed with no further margin.
@@ -781,6 +796,8 @@ export class EngagementFeedQuantizer {
   private readonly nominal: number
   private readonly slotScale: number
   private readonly hysteresisFraction: number
+  /** This operation's ladder, captured once — every rung lookup uses it. */
+  private readonly rungs: readonly number[]
   private readonly emitted: QuantizedFragment[] = []
   private currentScale: number | null = null
   private heldDistance = 0
@@ -795,6 +812,7 @@ export class EngagementFeedQuantizer {
   }) {
     this.nominal = options.nominal
     this.slotScale = Math.min(1, Math.max(0, options.slotScale))
+    this.rungs = engagementFeedRungs(this.slotScale)
     this.minFragmentLength = Math.max(0, options.minFragmentLength)
     this.heldMinFragmentLength = this.minFragmentLength
     this.hysteresisFraction = options.hysteresis ?? DEFAULT_HYSTERESIS_FRACTION
@@ -812,29 +830,30 @@ export class EngagementFeedQuantizer {
   /**
    * Width of the continuous-scale bucket a rung owns: the gap down to the
    * next lower rung; the bottom rung reuses the final gap so its width is
-   * never zero.
+   * never zero. Throws on a scale that is not an emitted rung — margins are
+   * only ever taken for scales `engagementFeedScale` produced, so that is a
+   * programming error, not a degenerate input.
    */
   private rungWidth(scale: number): number {
-    const rungs = engagementFeedRungs(this.slotScale)
-    const index = rungIndexOf(scale, this.slotScale)
-    if (index < 0 || index >= rungs.length) {
-      return (1 - this.slotScale) / (ENGAGEMENT_FEED_BUCKET_COUNT - 1)
+    const index = rungIndexOfIn(this.rungs, scale)
+    if (index < 0 || index >= this.rungs.length) {
+      throw new RangeError(`EngagementFeedQuantizer: ${scale} is not an emitted feed-scale rung`)
     }
-    return index === rungs.length - 1 ? rungs[index - 1] - rungs[index] : rungs[index] - rungs[index + 1]
+    return index === this.rungs.length - 1 ? this.rungs[index - 1] - this.rungs[index] : this.rungs[index] - this.rungs[index + 1]
   }
 
   /**
    * Gap from a rung up to the next higher rung — the room a rise into this
    * rung has before the entitlement itself moves up a rung. The top reduced
-   * rung's gap reaches to full feed.
+   * rung's gap reaches to full feed. Throws on anything but a reduced rung:
+   * the call site short-circuits scale ≥ 1 before asking.
    */
   private gapAbove(scale: number): number {
-    const rungs = engagementFeedRungs(this.slotScale)
-    const index = rungIndexOf(scale, this.slotScale)
-    if (index <= 0 || index >= rungs.length) {
-      return (1 - this.slotScale) / (ENGAGEMENT_FEED_BUCKET_COUNT - 1)
+    const index = rungIndexOfIn(this.rungs, scale)
+    if (index <= 0 || index >= this.rungs.length) {
+      throw new RangeError(`EngagementFeedQuantizer: ${scale} is not a reduced emitted rung`)
     }
-    return rungs[index - 1] - rungs[index]
+    return this.rungs[index - 1] - this.rungs[index]
   }
 
   /**
@@ -880,17 +899,18 @@ export class EngagementFeedQuantizer {
     const continuous = continuousFeedScale(clamped, this.nominal, this.slotScale)
     const effective = clamped <= this.nominal + ENGAGEMENT_ESTIMATE_EPSILON ? 1 : continuous
     // A quarter of the target rung's own width, floored at the share of the
-    // drop the uniform ladder gave every rung (#591). The floor yields — down
-    // to half the gap to the rung above — when it would otherwise exceed the
-    // room that rise has, so every rung stays climbable and a straight
-    // stretch after a corner recovers onto the fine top rungs.
+    // drop the uniform ladder gave every rung (#591), and capped at half the
+    // gap to the rung above so every rung stays climbable — without the cap,
+    // a pocket that touched one corner would run its following straight
+    // stretch at slot feed forever. The cap binds on the fine top rungs;
+    // elsewhere the floor and proportional terms dominate.
     const margin = rawScale >= 1
       ? 0
-      : Math.max(
-          this.hysteresisFraction * this.rungWidth(rawScale),
-          Math.min(
-            MIN_HYSTERESIS_DROP_FRACTION * (1 - this.slotScale),
-            this.gapAbove(rawScale) / 2,
+      : Math.min(
+          this.gapAbove(rawScale) / 2,
+          Math.max(
+            this.hysteresisFraction * this.rungWidth(rawScale),
+            MIN_HYSTERESIS_DROP_FRACTION * (this.hysteresisFraction / DEFAULT_HYSTERESIS_FRACTION) * (1 - this.slotScale),
           ),
         )
     const fragmentGate = rawScale >= 1 || this.heldDistance >= this.heldMinFragmentLength - MIN_FRAGMENT_EPSILON

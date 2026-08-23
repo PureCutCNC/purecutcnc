@@ -16,7 +16,7 @@
 
 import type { ResolvedTheme } from './theme'
 import type { Operation } from '../types/project'
-import { engagementFeedRungs } from '../engine/toolpaths/engagement'
+import { ENGAGEMENT_FEED_BUCKET_COUNT, engagementFeedRungs } from '../engine/toolpaths/engagement'
 
 /**
  * Every colour the 2D sketch canvas draws with. `CanvasRenderingContext2D`
@@ -513,7 +513,7 @@ export function feedColourStep(feedScale: number | undefined, slotScale: number)
 interface Rgb { r: number; g: number; b: number }
 
 /** Number of ramp steps — one per engine rung (the count is slot-independent). */
-const FEED_COLOUR_STEP_COUNT = engagementFeedRungs(0).length
+const FEED_COLOUR_STEP_COUNT = ENGAGEMENT_FEED_BUCKET_COUNT
 
 function parseRgbChannels(color: string): Rgb {
   const match = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(color)

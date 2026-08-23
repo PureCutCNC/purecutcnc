@@ -31,6 +31,7 @@ import assert from 'node:assert/strict'
 import type { ToolpathMove, ToolpathResult } from '../engine/toolpaths/types'
 import {
   feedColourLegendSteps,
+  feedLegendStepLabels,
   scanFeedColourLegendSteps,
   unionFeedColourLegendSteps,
   type FeedColourLegendStep,
@@ -102,6 +103,23 @@ function keys(steps: readonly FeedColourLegendStep[]): string[] {
   // Two entries may share a step but never a (scale, step) pair.
   const dup = unionFeedColourLegendSteps([engagement, engagement, slots], slotScaleOf)
   assert.deepEqual(keys(dup), keys(union), 'duplicate toolpaths contribute one entry per pair')
+}
+
+// ── legend labels: whole percents, one decimal only when rounding collides ──
+
+{
+  assert.deepEqual(
+    feedLegendStepLabels([1, 0.95, 0.9]),
+    ['100%', '95%', '90%'],
+    'distinct rounded percents stay whole percents',
+  )
+  // Slot 90% ladder head: 1 / 0.995 / 0.99 — two entries round to 100%, so
+  // every label drops to one decimal (trailing .0 stripped).
+  assert.deepEqual(
+    feedLegendStepLabels([1, 0.995, 0.99]),
+    ['100%', '99.5%', '99%'],
+    'colliding rounded labels fall back to one decimal across all entries',
+  )
 }
 
 console.log('toolpathFeedLegend.test.ts passed')

@@ -57,10 +57,38 @@ const SLOT_PERCENTS = [40, 60, 75] as const
 
 // --- Feed-scale bucket mapping ---------------------------------------------
 //
-// The thresholds are the engine's rungs. Semantics under test: absent or
-// >= 1 maps to step 0, scales below the bottom rung clamp to the last step,
-// every rung maps to its own distinct step, and a value between two rungs
-// rounds toward the slower one.
+// Semantics under test: absent or >= 1 maps to step 0, scales below the
+// bottom rung clamp to the last step, every rung maps to its own distinct
+// step, and a value between two rungs rounds toward the slower one. The
+// table below is a deliberate independent oracle: it pins actual rung values
+// at a 40% slot feed (ladder 1 / .97 / .94 / .88 / .76 / .64 / .52 / .4), so
+// swapping FEED_RUNG_DROP_FRACTIONS for any other table fails here even
+// though every derived assertion below would still agree with itself.
+
+const BUCKET_CASES_40: Array<[number | undefined, number]> = [
+  [undefined, 0],
+  [1, 0],
+  [1.000001, 0],
+  [0.99, 1],
+  [0.97, 1],
+  [0.96, 2],
+  [0.88, 3],
+  [0.87, 4],
+  [0.76, 4],
+  [0.75, 5],
+  [0.64, 5],
+  [0.63, 6],
+  [0.52, 6],
+  [0.51, 7],
+  [0.4, 7],
+  [0.3, 7],
+  [-1, 7],
+]
+
+for (const [scale, expected] of BUCKET_CASES_40) {
+  const actual = feedColourStep(scale, 0.4)
+  assert(actual === expected, `feedColourStep(${scale}, 0.4) = ${actual}, expected ${expected}`)
+}
 
 for (const slotPercent of SLOT_PERCENTS) {
   const slotScale = slotPercent / 100
