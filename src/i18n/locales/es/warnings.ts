@@ -140,7 +140,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.drillHelicalBoreTooSmall': 'El diámetro del círculo seleccionado ({holeDiameter}) no es mayor que el diámetro de la herramienta ({toolDiameter}); taladrado helicoidal omitido — el agujero debe ser estrictamente mayor que la fresa',
   'warnings.drillHelicalBoreTooLarge': 'El diámetro del círculo seleccionado ({holeDiameter}) supera 2× el diámetro de la herramienta ({maxDiameter}); el taladrado helicoidal está limitado a 2× el diámetro de la fresa — use Contorno Interior en su lugar',
   'warnings.drillHelicalBoreUnmachinable': 'El taladrado helicoidal solicitado no puede generarse dentro del límite de movimientos; no se produce salida para este objetivo',
-  'warnings.drillRetractBelowStockTop': 'La altura de retracción ({requested}) está por debajo de la cara superior del material; elevada a {clamped} para que la herramienta no entre en la pieza en avance rápido. La altura de retracción es una Z absoluta en coordenadas del proyecto, no una distancia sobre el material.',
+  'warnings.drillRetractBelowStockTop': 'La altura de retracción ({requested}) está en o por debajo de la cara superior del material; el plano de retracción se ajusta a {clamped} sobre ella para que la herramienta no entre en la pieza en avance rápido. Fije una distancia positiva sobre la superficie del material.',
   'warnings.drillTargetsNotCircles': 'Algunos elementos objetivo seleccionados no son círculos y se omitieron.',
   // avellanado
   'warnings.drillCountersinkNeedsVBit': 'El avellanado requiere una fresa en V; asigna una a esta operación: no se mecanizó ningún avellanado.',

@@ -736,9 +736,9 @@ test('drilling helical: spiral lead_in descent, bottom flatten, no canned cycle'
 })
 
 test('drilling: a retract height inside the stock is clamped before posting', () => {
-  // Issue #479 — `retractHeight` is an absolute project Z, so a value below the
-  // stock top used to rapid the drill into the part. Runs through postToolpath
-  // so the shared assertEntrySafe check sees it too.
+  // Issues #479/#481 — a retract plane inside the stock used to rapid the drill
+  // into the part (pre-3.1 files stored an absolute Z with exactly this trap).
+  // Runs through postToolpath so the shared assertEntrySafe check sees it too.
   const drill = makeDrill('t1', 3)
   const circle = makeCircleFeature('c1', 20, 20, 2.5, 20, 14)
   const project = baseProject([drill], [circle])
@@ -748,7 +748,7 @@ test('drilling: a retract height inside the stock is clamped before posting', ()
     toolRef: 't1',
     stepdown: 2,
     drillType: 'simple',
-    retractHeight: 2, // 18 mm inside a 20 mm stock
+    retractHeight: -18, // 18 mm below the surface of a 20 mm stock
   })
 
   const result = generateDrillingToolpath(project, op)

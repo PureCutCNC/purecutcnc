@@ -19,7 +19,7 @@ import type { CornerReliefStyle, Operation, OperationKind, OperationPass, Operat
 // it maps structured warnings to localized text here via the i18n layer.
 import { translate } from '../../i18n/store'
 import { toolpathWarningTexts } from '../../i18n/warningText'
-import { getStockBounds, isTrochoidalCarve, isTrochoidalEdgeRoughing } from '../../types/project'
+import { defaultRetractOffset, getStockBounds, isTrochoidalCarve, isTrochoidalEdgeRoughing } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import type { Units } from '../../utils/units'
 import type { NormalizedTool, ToolpathResult } from '../toolpaths/types'
@@ -358,7 +358,9 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
       { label: translate('booklet.label.drillType'), value: operation.drillType ?? 'simple' },
       { label: translate('booklet.label.peckDepth'), value: lengthWithUnits(operation.peckDepth ?? 0, units) },
       { label: translate('booklet.label.dwellTime'), value: `${formatNumber(operation.dwellTime ?? 0, 3)} s` },
-      { label: translate('booklet.label.retractHeight'), value: lengthWithUnits(operation.retractHeight ?? 0, units) },
+      // The stored distance is what the operator measures against the material;
+      // a missing field retracts by the engine's default offset, not zero.
+      { label: translate('booklet.label.retractHeight'), value: lengthWithUnits(operation.retractHeight ?? defaultRetractOffset(units), units) },
     )
     // The setup sheet has to carry the dimension the operator measures — the
     // mouth diameter — plus the depth the machine will actually plunge, which is

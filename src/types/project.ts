@@ -605,6 +605,11 @@ export interface Operation {
    *  V-bit's included angle. Missing on every operation saved before issue #489,
    *  which is safe: those are not countersink operations. */
   countersinkDiameter?: number
+  /** Distance above the material surface — `max(stock.thickness, highest
+   *  feature top)` — where the drill parks between holes (issue #481).
+   *  Format 3.1 stores this relative distance; files saved by ≤ 3.0 builds
+   *  carry an absolute project-space Z and are migrated on load. Negative
+   *  values are clamped back to the surface and warned about (#479). */
   retractHeight?: number
   debugShowRejectedCorners?: boolean
   waterlineAdaptiveRefinement?: boolean
@@ -753,8 +758,10 @@ export interface MachineOrigin {
 }
 
 export interface Project {
-  /** Schema version. '3.0' makes lightweight definition-backed instances authoritative. */
-  version: '1.0' | '2.0' | '2.1' | '3.0'
+  /** Schema version. '3.0' made lightweight definition-backed instances
+ *  authoritative; '3.1' reinterpreted drilling `retractHeight` as a distance
+ *  above the material surface (issue #481). */
+  version: '1.0' | '2.0' | '2.1' | '3.0' | '3.1'
   meta: ProjectMeta
   grid: GridSettings
   stock: Stock
@@ -1192,6 +1199,16 @@ export function defaultOperationClearanceZ(units: ProjectMeta['units'] = 'mm'): 
   return units === 'mm' ? 5 : 0.2
 }
 
+/** How far above the material surface a fresh drilling operation retracts by
+ *  default, and what an operation without a stored `retractHeight` falls back
+ *  to at generation time (issue #481). One definition shared by the creation
+ *  seed, the CAM panel's display fallback, and the engine's field fallback so
+ *  the three can never disagree on units again. */
+export function defaultRetractOffset(units: ProjectMeta['units'] = 'mm'): number {
+  // 1 mm / 1/25.4 inch — identical to convertLength(1, 'mm', units).
+  return units === 'mm' ? 1 : 1 / 25.4
+}
+
 export function defaultMaxTravelZ(units: ProjectMeta['units'] = 'mm'): number {
   return units === 'mm' ? 50 : 2
 }
@@ -1433,21 +1450,24 @@ export function profileExceedsStock(profile: SketchProfile, stock: Stock): boole
 }
 
 /** The newest project schema version this build understands. */
-export const LATEST_PROJECT_VERSION = '3.0'
+export const LATEST_PROJECT_VERSION = '3.1'
 
 /**
  * True when a loaded project's `version` is newer than this build supports
  * (the file was saved by a future version). Such files still open best-effort,
  * but newer data may be missing or fail to round-trip. Compares major.minor.
  */
+/** Parse a project schema version into comparable major.minor numbers.
+ *  Malformed components degrade to 0 so comparisons stay total. */
+export function parseProjectVersion(version: string): [number, number] {
+  const [maj, min] = version.split('.')
+  return [Number.parseInt(maj, 10) || 0, Number.parseInt(min ?? '0', 10) || 0]
+}
+
 export function isProjectVersionNewerThanSupported(version: string | null | undefined): boolean {
   if (!version) return false
-  const parse = (v: string): [number, number] => {
-    const [maj, min] = v.split('.')
-    return [Number.parseInt(maj, 10) || 0, Number.parseInt(min ?? '0', 10) || 0]
-  }
-  const [fileMaj, fileMin] = parse(version)
-  const [curMaj, curMin] = parse(LATEST_PROJECT_VERSION)
+  const [fileMaj, fileMin] = parseProjectVersion(version)
+  const [curMaj, curMin] = parseProjectVersion(LATEST_PROJECT_VERSION)
   return fileMaj > curMaj || (fileMaj === curMaj && fileMin > curMin)
 }
 

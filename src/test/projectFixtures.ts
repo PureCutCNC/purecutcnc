@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { IDENTITY_MATRIX, type FeatureInstance, type Project, type SketchFeature } from '../types/project'
+import { IDENTITY_MATRIX, LATEST_PROJECT_VERSION, type FeatureInstance, type Project, type SketchFeature } from '../types/project'
 import { normalizeProject } from '../store/helpers/projectFormat'
 import {
   createDefinitionForFeatureWithId,
@@ -41,13 +41,13 @@ function withAuthoritativeFeatures(base: Project, features: TestFeatureRow[]): P
   })
   return normalizeProject({
     ...base,
-    version: '3.0',
+    version: LATEST_PROJECT_VERSION,
     featureDefinitions,
     features: instances,
   } as ProjectFormatInput)
 }
 
-/** Build an authoritative 3.0 project from concise geometry-bearing test drafts. */
+/** Build an authoritative current-format project from concise geometry-bearing test drafts. */
 export function projectWithFeatures(base: Project, features: TestFeatureRow[]): Project {
   return withAuthoritativeFeatures(base, features)
 }
