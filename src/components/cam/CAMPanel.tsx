@@ -40,7 +40,7 @@ import type {
   Tool,
   ToolType,
 } from '../../types/project'
-import { isTrochoidalEdgeRoughing } from '../../types/project'
+import { defaultRetractOffset, isTrochoidalEdgeRoughing } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
 import { countersinkTipDepth } from '../../engine/toolpaths/drilling'
@@ -1670,11 +1670,11 @@ export function CAMPanel({
         <label className="properties-field">
           <span>{camT('cam.operation.retractHeight')}</span>
           <DraftLengthInput
-            value={operation.retractHeight ?? (project.stock.thickness + 1)}
+            value={operation.retractHeight ?? defaultRetractOffset(project.meta.units)}
             units={project.meta.units}
-            // Absolute project Z, so the stock top is the floor: below it the
-            // generator would clamp and warn anyway (issue #479).
-            min={project.stock.thickness}
+            // A distance above the material surface (issue #481), so it cannot
+            // be negative; the generator clamps negatives to the surface anyway.
+            min={0}
             onCommit={(value) => updateOperation(operation.id, { retractHeight: value })}
           />
           <OperationParameterReference kind="retractHeight" />

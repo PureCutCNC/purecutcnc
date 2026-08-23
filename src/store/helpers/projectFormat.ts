@@ -29,10 +29,12 @@ import type {
   FeatureDefinition,
   FeatureInstance,
   Matrix2D,
+  Operation,
   PersistedImportedMesh,
   Project,
   SketchFeature,
 } from '../../types/project'
+import { parseProjectVersion } from '../../types/project'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { syncIdCounter } from './ids'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
@@ -317,7 +319,77 @@ function assertProjectEnvelope(input: unknown): asserts input is ProjectFormatIn
   if (!isRecord(input.stock)) throw new Error('Failed to load project: missing stock.')
 }
 
-/** Decode 1.0/2.0/2.1 baked rows or validate a lightweight 3.0 project. */
+/**
+ * Format 3.1 reinterpreted drilling's `retractHeight` from an absolute
+ * project-space Z into a distance above the material surface (issue #481).
+ * Files saved by older builds are rewritten on load: each stored Z becomes an
+ * offset from that operation's own material surface — `max(stock.thickness,
+ * top of the operation's target features)`, the same quantity the generator
+ * clamps against. The serialized instance `z_top` is authoritative for this:
+ * resolving full geometry here would duplicate the engine's read model.
+ *
+ * Values below their surface land on 0, which reproduces exactly what the
+ * issue #479 runtime clamp already produced at generation time — no saved
+ * project changes behaviour. A target whose top cannot be determined from
+ * serialized data (missing feature, constraint-linked DimensionRef top) leaves
+ * the value untouched: under the new reading it resolves high and is capped at
+ * the clearance plane, never skimming the part. The version gate makes the
+ * migration idempotent — files stamped ≥ 3.1 already carry relative distances
+ * and are never rewritten; positions without a file-read value are skipped so
+ * normalizeOperation's injected default is not mistaken for an absolute Z.
+ */
+function migrateRetractHeightToRelative(
+  project: Project,
+  sourceVersion: string | null,
+  fileRetractPositions: ReadonlySet<number>,
+): Project {
+  if (sourceVersion !== null) {
+    const [major, minor] = parseProjectVersion(sourceVersion)
+    if (major > 3 || (major === 3 && minor >= 1)) return project
+  }
+  // A stock without a finite thickness has no meaningful surface. Leave
+  // everything untouched rather than compute NaN offsets — NaN survives
+  // Math.max(0, …) and would post as a literal Z NaN (issue #481 review).
+  if (!Number.isFinite(project.stock.thickness)) return project
+  const stockTop = project.stock.thickness
+
+  // z_top is a DimensionRef — constraint-linked instances carry a key string,
+  // which contributes no literal top of its own and reads as unknown here.
+  const featureTops = new Map<string, number>()
+  for (const feature of project.features) {
+    if (typeof feature.z_top === 'number' && Number.isFinite(feature.z_top)) {
+      featureTops.set(feature.id, feature.z_top)
+    }
+  }
+
+  /** This operation's own material surface, or null when it cannot be
+   *  determined from serialized data and the value must be left alone. */
+  const operationSurface = (operation: Operation): number | null => {
+    if (operation.target.source !== 'features') return stockTop
+    let top: number | null = null
+    for (const id of operation.target.featureIds) {
+      const featureTop = featureTops.get(id)
+      if (featureTop === undefined) return null
+      top = top === null ? featureTop : Math.max(top, featureTop)
+    }
+    return Math.max(stockTop, top ?? stockTop)
+  }
+
+  let changed = false
+  const operations = project.operations.map((operation, index) => {
+    if (!fileRetractPositions.has(index)) return operation
+    if (typeof operation.retractHeight !== 'number' || !Number.isFinite(operation.retractHeight)) return operation
+    const surface = operationSurface(operation)
+    if (surface === null) return operation
+    const next = Math.max(0, operation.retractHeight - surface)
+    if (next === operation.retractHeight) return operation
+    changed = true
+    return { ...operation, retractHeight: next }
+  })
+  return changed ? { ...project, operations } : project
+}
+
+/** Decode 1.0/2.0/2.1 baked rows or validate a lightweight 3.x project. */
 export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
   assertProjectEnvelope(input)
   const sourceVersion = typeof input.version === 'string' ? input.version : null
@@ -346,6 +418,17 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
 
 /** Normalize a decoded project without ever placing resolved geometry in features. */
 export function normalizeProject(input: ProjectFormatInput): Project {
+  // Read before the envelope below is stamped with LATEST_PROJECT_VERSION:
+  // the retract-height migration keys on what the file claims to be.
+  const sourceVersion = typeof input.version === 'string' ? input.version : null
+  // Positions whose retractHeight was actually read from the file. Everything
+  // else gets its value injected by normalizeOperation's *relative* default
+  // further down; migrating those would re-read the new default as an absolute
+  // Z and collapse it onto the surface (issue #481 review).
+  const fileRetractPositions = new Set<number>()
+  input.operations.forEach((operation, index) => {
+    if (typeof operation.retractHeight === 'number') fileRetractPositions.add(index)
+  })
   const modelAssets: Record<string, PersistedImportedMesh> = { ...(input.modelAssets ?? {}) }
   const rawDefinitions = isRecord(input.featureDefinitions)
     ? input.featureDefinitions as Record<string, FeatureDefinition>
@@ -492,7 +575,7 @@ export function normalizeProject(input: ProjectFormatInput): Project {
   const resolvedStockSource = prunedProject.stock.sourceFeature
     ? resolveFeatureRow(prunedProject, prunedProject.stock.sourceFeature)
     : null
-  const project = resolvedStockSource
+  const project = migrateRetractHeightToRelative(resolvedStockSource
     ? {
         ...prunedProject,
         stock: {
@@ -503,7 +586,7 @@ export function normalizeProject(input: ProjectFormatInput): Project {
             : prunedProject.stock.thickness,
         },
       }
-    : prunedProject
+    : prunedProject, sourceVersion, fileRetractPositions)
   syncIdCounter(project)
   return project
 }

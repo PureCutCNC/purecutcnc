@@ -15,12 +15,15 @@
  */
 
 /**
- * Drilling retract-plane safety (issue #479).
+ * Drilling retract-plane safety (issues #479/#481).
  *
- * `retractHeight` is an absolute project-space Z. A value below the top of the
- * material used to be accepted verbatim, so the tool rapid-plunged into the
- * part and — on the first hole, where the postprocessor has no known machine
- * position and therefore emits Z before XY — rapid-traversed *through* it.
+ * Since format 3.1 `retractHeight` is a distance above the material surface.
+ * While it was an absolute project-space Z, a value below the top of the
+ * material was accepted verbatim, so the tool rapid-plunged into the part and —
+ * on the first hole, where the postprocessor has no known machine position and
+ * therefore emits Z before XY — rapid-traversed *through* it. The engine still
+ * clamps a negative stored distance back to the surface; the hostile values
+ * below are negatives the UI itself prevents.
  *
  * The invariant asserted here is deliberately narrower than "no rapid ever goes
  * below the stock top": G83 peck re-entries legitimately rapid back down inside
@@ -146,12 +149,12 @@ function makeCircleFeature(id: string, cx: number, cy: number, r: number): Sketc
   }
 }
 
-/** 4 mm stock, two through-holes, machine origin on the stock top. */
-function drillFixture(tool: Tool, holeRadius = 1.5): Project {
+/** 4 mm stock, two through-holes, machine origin on the stock top by default. */
+function drillFixture(tool: Tool, holeRadius = 1.5, originZ = STOCK_THICKNESS): Project {
   const base = newProject('retract', 'mm')
   const stock = { ...base.stock, thickness: STOCK_THICKNESS }
   return projectWithFeatures(
-    { ...base, stock, origin: { ...base.origin, z: STOCK_THICKNESS }, tools: [tool] },
+    { ...base, stock, origin: { ...base.origin, z: originZ }, tools: [tool] },
     [makeCircleFeature('h1', 20, 20, holeRadius), makeCircleFeature('h2', 40, 20, holeRadius)],
   )
 }
@@ -266,9 +269,9 @@ function rapids(moves: ToolpathMove[]): ToolpathMove[] {
 
 console.log('\nDrilling retract plane (issue #479)')
 
-test('retract height below the stock top is raised to the surface and warned', () => {
+test('a negative retract distance is raised to the surface and warned', () => {
   const project = drillFixture(makeDrill())
-  const operation = drillOp({ drillType: 'simple', retractHeight: 2 })
+  const operation = drillOp({ drillType: 'simple', retractHeight: -2 }) // 2 below the surface
   const result = generateDrillingToolpath(project, operation)
 
   // Safety first, diagnostics second: the invariant is what protects the part.
@@ -281,16 +284,18 @@ test('retract height below the stock top is raised to the surface and warned', (
 
   const warning = result.warnings.find((w) => w.code === 'drillRetractBelowStockTop')
   assert(warning !== undefined, 'a drillRetractBelowStockTop warning should be raised')
-  assert(warning!.params?.requested === 2, `warning should report the requested value, got ${warning!.params?.requested}`)
+  // The reported numbers are distances, matching what the field holds:
+  // entered −2, clamped back onto the surface (offset 0).
+  assert(warning!.params?.requested === -2, `warning should report the entered distance, got ${warning!.params?.requested}`)
   assert(
-    warning!.params?.clamped === STOCK_THICKNESS,
-    `warning should report the clamped value ${STOCK_THICKNESS}, got ${warning!.params?.clamped}`,
+    warning!.params?.clamped === 0,
+    `warning should report the clamped offset 0, got ${warning!.params?.clamped}`,
   )
 })
 
 test('first hole traverses at the clearance plane, not the retract plane', () => {
   const project = drillFixture(makeDrill())
-  const operation = drillOp({ drillType: 'simple', retractHeight: 2 })
+  const operation = drillOp({ drillType: 'simple', retractHeight: -2 })
   const result = generateDrillingToolpath(project, operation)
 
   // The zero-length entry marker that tells the postprocessor to position at
@@ -320,25 +325,59 @@ test('first hole traverses at the clearance plane, not the retract plane', () =>
   )
 })
 
-test('retract height at or above the stock top is left alone', () => {
+test('a positive retract distance is resolved above the surface and left alone', () => {
   const project = drillFixture(makeDrill())
-  const operation = drillOp({ drillType: 'simple', retractHeight: 6 })
+  // 2 above the material surface → project Z 6, below the clearance plane.
+  const operation = drillOp({ drillType: 'simple', retractHeight: 2 })
   const result = generateDrillingToolpath(project, operation)
 
   assert(
     !result.warnings.some((w) => w.code === 'drillRetractBelowStockTop'),
-    'a retract height above the stock top should not warn',
+    'a positive retract distance should not warn',
   )
   for (const cycle of result.drillCycles ?? []) {
-    assert(cycle.retractZ === 6, `retractZ should be the requested 6, got ${cycle.retractZ}`)
+    assert(cycle.retractZ === STOCK_THICKNESS + 2, `retractZ should be the surface + 2, got ${cycle.retractZ}`)
   }
   assertRetractSafe(result.moves, STOCK_THICKNESS, 'simple drilling, safe retract')
+})
+
+test('a zero retract distance warns even though it needs no clamp', () => {
+  const project = drillFixture(makeDrill())
+  const operation = drillOp({ drillType: 'simple', retractHeight: 0 })
+  const result = generateDrillingToolpath(project, operation)
+
+  assert(
+    result.warnings.some((w) => w.code === 'drillRetractBelowStockTop'),
+    'a retract plane exactly on the surface should warn',
+  )
+  for (const cycle of result.drillCycles ?? []) {
+    assert(cycle.retractZ === STOCK_THICKNESS, `retractZ should sit at the surface, got ${cycle.retractZ}`)
+  }
+  assertRetractSafe(result.moves, STOCK_THICKNESS, 'zero retract distance')
+})
+
+test('the same distance resolves to the same plane from any origin preset', () => {
+  // Issue #481's motivating setup: Z-zero on the spoilboard (the "bottom left"
+  // origin preset sets origin.z to 0) must not change where "2 above the
+  // material" is. The stored distance is origin-independent by construction.
+  const onStockTop = drillFixture(makeDrill())
+  const onTable = drillFixture(makeDrill(), 1.5, 0)
+  const operation = drillOp({ drillType: 'simple', retractHeight: 2 })
+  const topResult = generateDrillingToolpath(onStockTop, operation)
+  const tableResult = generateDrillingToolpath(onTable, operation)
+
+  const planeOf = (result: ToolpathResult): number | null =>
+    result.drillCycles && result.drillCycles.length > 0 ? result.drillCycles[0].retractZ : null
+  assert(planeOf(topResult) === STOCK_THICKNESS + 2,
+    `retractZ should be ${STOCK_THICKNESS + 2}, got ${planeOf(topResult)}`)
+  assert(planeOf(tableResult) === planeOf(topResult),
+    `origin.z must not move the retract plane, got ${planeOf(tableResult)} vs ${planeOf(topResult)}`)
 })
 
 test('retract height above the clearance plane is still capped at safe Z', () => {
   const project = drillFixture(makeDrill())
   const safeZ = STOCK_THICKNESS + project.meta.operationClearanceZ
-  const operation = drillOp({ drillType: 'simple', retractHeight: safeZ + 50 })
+  const operation = drillOp({ drillType: 'simple', retractHeight: 50 }) // ≫ the clearance offset
   const result = generateDrillingToolpath(project, operation)
 
   assert(
@@ -352,7 +391,7 @@ test('retract height above the clearance plane is still capped at safe Z', () =>
 
 test('peck re-entries into the open hole are not treated as unsafe', () => {
   const project = drillFixture(makeDrill())
-  const operation = drillOp({ drillType: 'peck', peckDepth: 1.5, retractHeight: 2 })
+  const operation = drillOp({ drillType: 'peck', peckDepth: 1.5, retractHeight: -2 })
   const result = generateDrillingToolpath(project, operation)
 
   // The cycle still pecks below the surface — inside the hole it has already
@@ -371,7 +410,7 @@ test('peck re-entries into the open hole are not treated as unsafe', () => {
 
 test('helical boring obeys the same invariant', () => {
   const project = drillFixture(makeEndmill(2))
-  const operation = drillOp({ drillType: 'helical', retractHeight: 2, entryRampAngle: 5 })
+  const operation = drillOp({ drillType: 'helical', retractHeight: -2, entryRampAngle: 5 })
   const result = generateDrillingToolpath(project, operation)
 
   assert(result.moves.length > 0, 'helical boring should produce moves')
@@ -389,7 +428,7 @@ test('helical boring obeys the same invariant', () => {
 
 test('canned-cycle R plane carries the clamped retract height', () => {
   const project = drillFixture(makeDrill())
-  const operation = drillOp({ drillType: 'simple', retractHeight: 2 })
+  const operation = drillOp({ drillType: 'simple', retractHeight: -2 })
   const result = generateDrillingToolpath(project, operation)
   const gcode = post(project, operation, result, true)
 
