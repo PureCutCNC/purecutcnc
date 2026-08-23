@@ -263,11 +263,11 @@ test.describe('Feature references browser smoke', () => {
     await expect(ui.tree.featureRows(app.page)).toHaveCount(4)
     await expect(ui.badge.linked(app.page)).toHaveCount(2)
     const saved = await getProject(app.page)
-    expect(saved.version).toBe('3.0')
+    expect(saved.version).toBe('3.1')
     expect((saved.features as Array<Record<string, unknown>>).every((feature) => !('sketch' in feature))).toBe(true)
   })
 
-  test('legacy project warns, becomes unsaved, and saves as strict 3.0', async ({ app }) => {
+  test('legacy project warns, becomes unsaved, and saves as strict current format', async ({ app }) => {
     await seedLinkedProject(app.page)
     const current = await getProject(app.page)
     const instance = (current.features as Array<Record<string, unknown>>)[0]
@@ -312,7 +312,7 @@ test.describe('Feature references browser smoke', () => {
     expect(alertMessage).toContain('not compatible with older')
 
     const saved = await getProject(app.page)
-    expect(saved.version).toBe('3.0')
+    expect(saved.version).toBe('3.1')
     expect((saved.features as Array<Record<string, unknown>>).every((feature) => !('sketch' in feature))).toBe(true)
   })
 
@@ -325,7 +325,7 @@ test.describe('Feature references browser smoke', () => {
       await dialog.accept()
     })
 
-    // Load a project with version > LATEST_PROJECT_VERSION (3.0)
+    // Load a project with version > LATEST_PROJECT_VERSION (3.1)
     const base = await getProject(app.page)
     ;(base as Record<string, unknown>).version = '4.0'
     await seedProject(app.page, JSON.stringify(base))
