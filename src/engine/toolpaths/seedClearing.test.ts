@@ -37,6 +37,7 @@
 import {
   planSeedCircles,
   seedArcTolerance,
+  seedIslandRadius,
   seedCircleContour,
   seedCircleContours,
   seedStartRadius,
@@ -339,11 +340,82 @@ function testTessellationTracksTheTrueCircle(): void {
   console.log('tessellation: PASSED')
 }
 
-function testHandoffLandsOneStepoverOutsideTheSeed(): void {
-  // A 30x30 region holds exactly one area: after the first disc is consumed
-  // the corners left over are under the start radius. That makes the nearest
-  // phase-2 point unambiguously this seed's own ring rather than a neighbour's.
-  const region = rectRegion(30, 30)
+function testIslandExtendsToWhatTheStackActuallyCleared(): void {
+  // The extension (issue #576) is what the ring tree offsets around, and the
+  // laps the stack cuts are unchanged by it.
+  const stepover = 2.4
+  const epsilon = seedArcTolerance(stepover)
+  assert(
+    Math.abs(seedIslandRadius(20, stepover, 3, 0) - (20 + 3 - epsilon)) < 1e-12,
+    'with no radial leave the island reaches the stock boundary less one chord tolerance',
+  )
+  assert(
+    Math.abs(seedIslandRadius(20, stepover, 3, 0.5) - (20 + 2.5 - epsilon)) < 1e-12,
+    'radial leave comes straight off the extension',
+  )
+  assert(
+    seedIslandRadius(20, stepover, 3, 3) === 20,
+    'a leave at the tool radius reproduces the pre-#576 island exactly',
+  )
+  assert(
+    seedIslandRadius(20, stepover, 3, 99) === 20,
+    'a leave beyond the tool radius never shrinks the island below the last lap',
+  )
+  // The cap: above a 50% stepover the first ring outside the island would stop
+  // overlapping what the stack swept, and the ridge that opens costs more to
+  // walk out than the graze rings the extension removes.
+  assert(
+    Math.abs(seedIslandRadius(20, 3.6, 3, 0) - (20 + 2.4 - seedArcTolerance(3.6))) < 1e-12,
+    'a 60% stepover caps the extension at 2*toolRadius - stepover',
+  )
+  assert(
+    Math.abs(seedIslandRadius(20, 0.9, 3, 0) - (20 + 3 - seedArcTolerance(0.9))) < 1e-12,
+    'a fine stepover leaves the cap slack',
+  )
+  // The schedule itself must not move: the extension is an exclusion, not a lap.
+  const plans = planSeedCircles(rectRegion(60, 60), 3, stepover, 6)
+  const bare = planSeedCircles(rectRegion(60, 60), 3, stepover, 6, 99)
+  assert(plans.length === bare.length && plans.length > 0, 'the leave must not change the number of areas')
+  for (let index = 0; index < plans.length; index += 1) {
+    assert(
+      plans[index].radii.join() === bare[index].radii.join(),
+      'the extension must not move a single cut radius',
+    )
+    assert(
+      plans[index].islandRadius > plans[index].lastRadius,
+      'an unleaved plan must extend its island past the last lap',
+    )
+    assert(bare[index].islandRadius === bare[index].lastRadius, 'a fully leaved plan must not extend')
+  }
+  console.log('island extension: PASSED')
+}
+
+function testExtendedIslandsStayTwoStepoversApart(): void {
+  // `seedSeparation` charges a tool radius plus two stepovers from
+  // `lastRadius`, and the extension adds at most a tool radius — so extending
+  // cannot let two islands meet and collapse the region between them. Asserted
+  // rather than reasoned about, on a region wide enough to hold several areas.
+  const stepover = 2.4
+  const plans = planSeedCircles(rectRegion(160, 44), 3, stepover, 6)
+  assert(plans.length >= 3, `this region must hold several areas, got ${plans.length}`)
+  for (let a = 0; a < plans.length; a += 1) {
+    for (let b = a + 1; b < plans.length; b += 1) {
+      const gap = Math.hypot(plans[a].centre.x - plans[b].centre.x, plans[a].centre.y - plans[b].centre.y)
+        - plans[a].islandRadius - plans[b].islandRadius
+      assert(
+        gap >= 2 * stepover - 1e-9,
+        `extended islands ${a} and ${b} are ${gap.toFixed(3)} apart, under two stepovers`,
+      )
+    }
+  }
+  console.log(`extended island separation: PASSED (${plans.length} areas)`)
+}
+
+function testHandoffLandsOneStepoverOutsideTheIsland(): void {
+  // A 60x60 region holds exactly one area whose corners still leave lobes for
+  // phase 2 once the island is extended. That makes the nearest phase-2 point
+  // unambiguously this seed's own ring rather than a neighbour's.
+  const region = rectRegion(60, 60)
   const stepover = 2.4
   const plans = planSeedCircles(region, 3, stepover, 6)
   assert(plans.length === 1, `this region must hold exactly one area, got ${plans.length}`)
@@ -356,10 +428,10 @@ function testHandoffLandsOneStepoverOutsideTheSeed(): void {
   // The schedule always grows until it touches the inscribed radius, so the
   // seed reaches the wall somewhere and there is no closed ring around it —
   // what remains are the lobes the disc did not reach. The property that
-  // matters is radial, not topological: because the circle is injected in
+  // matters is radial, not topological: because the island is injected in
   // TOOL-CENTRE space and `buildInsetRegions` expands islands by exactly one
   // stepover, the nearest point of everything phase 2 still has to cut sits at
-  // `lastRadius + stepover`. That is the claim, and it needs no radius
+  // `islandRadius + stepover`. That is the claim, and it needs no radius
   // conversion anywhere to hold.
   const childPoints = tree.children.flatMap((child) => child.region.outer)
   assert(childPoints.length > 0, 'the tree must leave lobes for phase 2')
@@ -368,10 +440,16 @@ function testHandoffLandsOneStepoverOutsideTheSeed(): void {
     Infinity,
   )
   assert(
-    Math.abs(nearest - (plan.lastRadius + stepover)) < stepover * 0.05,
-    `phase 2 must start at ${(plan.lastRadius + stepover).toFixed(3)} from the seed centre, got ${nearest.toFixed(3)}`,
+    Math.abs(nearest - (plan.islandRadius + stepover)) < stepover * 0.05,
+    `phase 2 must start at ${(plan.islandRadius + stepover).toFixed(3)} from the seed centre, got ${nearest.toFixed(3)}`,
   )
-  console.log(`handoff: PASSED (seed ${plan.lastRadius.toFixed(2)} -> phase 2 at ${nearest.toFixed(2)}, one stepover out)`)
+  // And it starts strictly further out than the pre-#576 handoff did: that gap
+  // is the graze ring this issue removes.
+  assert(
+    nearest > plan.lastRadius + stepover + 1e-6,
+    'the extended handoff must sit outside the pre-#576 one',
+  )
+  console.log(`handoff: PASSED (island ${plan.islandRadius.toFixed(2)} -> phase 2 at ${nearest.toFixed(2)}, one stepover out)`)
 }
 
 // ── integration ────────────────────────────────────────────────────────────
@@ -810,7 +888,9 @@ try {
   testSeedDiscIsFullyCleared()
   testStartRadiusNeverExceedsToolRadius()
   testTessellationTracksTheTrueCircle()
-  testHandoffLandsOneStepoverOutsideTheSeed()
+  testIslandExtendsToWhatTheStackActuallyCleared()
+  testExtendedIslandsStayTwoStepoversApart()
+  testHandoffLandsOneStepoverOutsideTheIsland()
   testSeededStreamEmitsCirclesAndClearsEverything()
   testSeedCircleTransitionsUseTangentSLinks()
   testSeedIsNotCutTwice()
