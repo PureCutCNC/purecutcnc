@@ -400,7 +400,7 @@ function testSaveVersionStamping(): void {
   freshStore()
   useProjectStore.getState().addRectFeature('Base', 0, 0, 30, 30, 5)
   const withoutConstruction = JSON.parse(useProjectStore.getState().saveProject()) as { version: string }
-  assert(withoutConstruction.version === '3.0', 'all current saves use the strict 3.0 format')
+  assert(withoutConstruction.version === '3.1', 'all current saves use the strict current format')
 
   // Add an OPEN construction polyline directly (as the open-path tool does).
   const open: SketchFeature = {
@@ -433,7 +433,7 @@ function testSaveVersionStamping(): void {
 
   const saved = useProjectStore.getState().saveProject()
   const parsed = JSON.parse(saved) as { version: string }
-  assert(parsed.version === '3.0', 'construction project remains stamped 3.0')
+  assert(parsed.version === '3.1', 'construction project remains stamped with the current format')
 
   // Round trip: the open construction profile must survive load untouched
   // (the legacy open-profile → line migration must skip construction).
@@ -442,7 +442,7 @@ function testSaveVersionStamping(): void {
   assert(reloaded !== undefined, 'open construction survives a save/load round trip')
   assert(reloaded.operation === 'construction', 'open construction keeps its operation on load')
   assert(!reloaded.sketch.profile.closed, 'open construction stays open on load')
-  assert(useProjectStore.getState().loadWarning === null, 'a current 3.0 file opens without a version warning')
+  assert(useProjectStore.getState().loadWarning === null, 'a current-format file opens without a version warning')
 }
 
 testConstructionCreation()

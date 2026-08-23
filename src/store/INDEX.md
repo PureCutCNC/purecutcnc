@@ -47,7 +47,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `copyFeatures.ts` — build rotated, mirrored, linear, and arbitrary-affine copies of features, clamps, and tabs; reference-vs-independent duplicate semantics with extractClonedDefinitions
   - `instanceTransforms.ts` — affine matrix builders and transform-delta composition for feature instances
   - `resolveFeatures.ts` — strict definition+instance resolver, ephemeral world-space read model, and commit boundary back to lightweight instances
-  - `projectFormat.ts` — validates format 3.0 projects and performs the one-way 1.0/2.0/2.1 legacy conversion without retaining baked rows
+  - `projectFormat.ts` — validates format 3.x projects, performs the one-way 1.0/2.0/2.1 legacy conversion without retaining baked rows, and migrates pre-3.1 absolute `retractHeight` values to distances above the material on load (issue #481)
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `buildShapeFeature.ts` — shared feature builder for the addRect/Circle/Ellipse/… constructors; consolidates duplicated shape-construction logic
   - `manualFeatureOperation.ts` — resolves existing world-space Add/Subtract instances and applies the shared strict-containment classifier to default a newly-created closed feature; also `inferLineTopZFromEnclosingFeature` (issue #351) picks a newly-created Line's initial `z_top` from the smallest enclosing solid (subtract floor / add top)

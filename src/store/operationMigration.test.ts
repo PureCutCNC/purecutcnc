@@ -190,6 +190,53 @@ test('legacy edge routes default to contour strategy on load', () => {
   assert(operation.edgeStrategy === 'contour', `expected contour default, got ${operation.edgeStrategy}`)
 })
 
+// ── Format 3.1: retractHeight becomes a distance above the material ──
+
+function drillingOperation(retractHeight: number | undefined): Operation {
+  return {
+    ...recursiveOperation(),
+    id: 'drill-op',
+    kind: 'drilling',
+    drillType: 'simple',
+    ...(retractHeight === undefined ? {} : { retractHeight }),
+  } as Operation
+}
+
+function projectWithDrillingOp(version: '3.0' | '3.1', retractHeight: number | undefined): ProjectFormatInput {
+  const project = legacyProjectWithRecursiveOp()
+  project.version = version
+  project.operations = [drillingOperation(retractHeight)]
+  return project
+}
+
+function findDrillOp(project: { operations: Operation[] }): Operation {
+  const op = project.operations.find((entry) => entry.id === 'drill-op')
+  assert(op !== undefined, 'expected the drilling operation to survive load')
+  return op
+}
+
+test('format ≤ 3.0 absolute retract heights become distances above the material (#481)', () => {
+  // The fixture stock is 20 mm thick, so an absolute project Z of 22 sits
+  // 2 mm above the material surface — the migrated offset must be exactly 2.
+  const op = findDrillOp(normalizeProject(projectWithDrillingOp('3.0', 22)))
+  assert(Math.abs((op.retractHeight ?? NaN) - 2) < 1e-9, `expected offset 2, got ${op.retractHeight}`)
+})
+
+test('legacy retract heights below the surface land on the surface offset', () => {
+  // Exactly what the issue #479 runtime clamp produced at generation time,
+  // so no pre-3.1 project changes behaviour through the migration.
+  const op = findDrillOp(normalizeProject(projectWithDrillingOp('3.0', 15)))
+  assert(op.retractHeight === 0, `expected the surface offset 0, got ${op.retractHeight}`)
+})
+
+test('3.1 files already carry distances and are never re-migrated', () => {
+  const once = normalizeProject(projectWithDrillingOp('3.1', 2))
+  const op = findDrillOp(once)
+  assert(Math.abs((op.retractHeight ?? NaN) - 2) < 1e-9, `a 3.1 distance must survive untouched, got ${op.retractHeight}`)
+  const reloaded = findDrillOp(normalizeProject(JSON.parse(JSON.stringify(once))))
+  assert(Math.abs((reloaded.retractHeight ?? NaN) - 2) < 1e-9, 'save/reload must be stable for the field')
+})
+
 console.log(`\noperationMigration.test.ts: ${passed} passed, ${failed} failed`)
 if (failed > 0) {
   throw new Error(`${failed} operationMigration test(s) failed`)

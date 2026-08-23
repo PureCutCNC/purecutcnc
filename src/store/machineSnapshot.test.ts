@@ -221,7 +221,7 @@ function freshLibrary(): void {
     saved.meta.selectedMachineId === (saved.meta.machineDefinitions[0]?.id ?? null),
     'the saved file satisfies the zero-or-one invariant',
   )
-  assert(saved.version === '3.0', 'the compact snapshot stays format 3.0')
+  assert(saved.version === '3.1', 'the compact snapshot stays on the current format')
 
   const reopened = decodeProjectFormat(saved)
   assert(

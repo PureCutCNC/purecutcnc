@@ -317,7 +317,46 @@ function assertProjectEnvelope(input: unknown): asserts input is ProjectFormatIn
   if (!isRecord(input.stock)) throw new Error('Failed to load project: missing stock.')
 }
 
-/** Decode 1.0/2.0/2.1 baked rows or validate a lightweight 3.0 project. */
+/**
+ * Format 3.1 reinterpreted drilling's `retractHeight` from an absolute
+ * project-space Z into a distance above the material surface (issue #481).
+ * Files saved by older builds are rewritten on load: the stored Z becomes an
+ * offset from `max(stock.thickness, highest feature top)`, clamped at zero.
+ * Values below the old surface land on 0, which reproduces exactly what the
+ * issue #479 runtime clamp already produced at generation time — no saved
+ * project changes behaviour. The project-wide maximum is a deliberate
+ * approximation of the per-operation quantity the engine resolves: worst case
+ * an offset comes out slightly smaller than it was, never below the surface.
+ * The version gate makes this idempotent — files stamped ≥ 3.1 already carry
+ * relative distances and are never rewritten.
+ */
+function migrateRetractHeightToRelative(project: Project, sourceVersion: string | null): Project {
+  if (sourceVersion !== null) {
+    const [major, minor] = sourceVersion.split('.')
+    const majorNumber = Number.parseInt(major, 10) || 0
+    const minorNumber = Number.parseInt(minor ?? '0', 10) || 0
+    if (majorNumber > 3 || (majorNumber === 3 && minorNumber >= 1)) return project
+  }
+  // z_top is a DimensionRef — constraint-linked instances carry a key string,
+  // which contributes no literal top of its own.
+  const materialTopZ = project.features.reduce(
+    (top, feature) => (typeof feature.z_top === 'number' && Number.isFinite(feature.z_top)
+      ? Math.max(top, feature.z_top)
+      : top),
+    project.stock.thickness,
+  )
+  let changed = false
+  const operations = project.operations.map((operation) => {
+    if (operation.retractHeight === undefined) return operation
+    const next = Math.max(0, operation.retractHeight - materialTopZ)
+    if (next === operation.retractHeight) return operation
+    changed = true
+    return { ...operation, retractHeight: next }
+  })
+  return changed ? { ...project, operations } : project
+}
+
+/** Decode 1.0/2.0/2.1 baked rows or validate a lightweight 3.x project. */
 export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
   assertProjectEnvelope(input)
   const sourceVersion = typeof input.version === 'string' ? input.version : null
@@ -346,6 +385,9 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
 
 /** Normalize a decoded project without ever placing resolved geometry in features. */
 export function normalizeProject(input: ProjectFormatInput): Project {
+  // Read before the envelope below is stamped with LATEST_PROJECT_VERSION:
+  // the retract-height migration keys on what the file claims to be.
+  const sourceVersion = typeof input.version === 'string' ? input.version : null
   const modelAssets: Record<string, PersistedImportedMesh> = { ...(input.modelAssets ?? {}) }
   const rawDefinitions = isRecord(input.featureDefinitions)
     ? input.featureDefinitions as Record<string, FeatureDefinition>
@@ -492,7 +534,7 @@ export function normalizeProject(input: ProjectFormatInput): Project {
   const resolvedStockSource = prunedProject.stock.sourceFeature
     ? resolveFeatureRow(prunedProject, prunedProject.stock.sourceFeature)
     : null
-  const project = resolvedStockSource
+  const project = migrateRetractHeightToRelative(resolvedStockSource
     ? {
         ...prunedProject,
         stock: {
@@ -503,7 +545,7 @@ export function normalizeProject(input: ProjectFormatInput): Project {
             : prunedProject.stock.thickness,
         },
       }
-    : prunedProject
+    : prunedProject, sourceVersion)
   syncIdCounter(project)
   return project
 }

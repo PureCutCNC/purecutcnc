@@ -9,7 +9,7 @@ Geometry file importers: SVG, DXF, STL, OBJ, and .camj.
 - `svg.ts` — SVG parser: path/shape/text extraction, unit handling, paint-intent tracking (fill/stroke)
 - `dxf.ts` — DXF parser: entity extraction, INSERT expansion, polyline/spline/lwpolyline profiles, open-profile stitching, deduplication
 - `stl.ts` — STL/OBJ mesh silhouette extraction
-- `camj.ts` — .camj inspection and folder/stock merge through the shared strict 3.0 decoder, including legacy-source conversion
+- `camj.ts` — .camj inspection and folder/stock merge through the shared strict format decoder, including legacy-source conversion
 - `index.ts` — barrel re-exports
 
 ## Tests

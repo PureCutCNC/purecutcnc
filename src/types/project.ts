@@ -605,6 +605,11 @@ export interface Operation {
    *  V-bit's included angle. Missing on every operation saved before issue #489,
    *  which is safe: those are not countersink operations. */
   countersinkDiameter?: number
+  /** Distance above the material surface — `max(stock.thickness, highest
+   *  feature top)` — where the drill parks between holes (issue #481).
+   *  Format 3.1 stores this relative distance; files saved by ≤ 3.0 builds
+   *  carry an absolute project-space Z and are migrated on load. Negative
+   *  values are clamped back to the surface and warned about (#479). */
   retractHeight?: number
   debugShowRejectedCorners?: boolean
   waterlineAdaptiveRefinement?: boolean
@@ -753,8 +758,10 @@ export interface MachineOrigin {
 }
 
 export interface Project {
-  /** Schema version. '3.0' makes lightweight definition-backed instances authoritative. */
-  version: '1.0' | '2.0' | '2.1' | '3.0'
+  /** Schema version. '3.0' made lightweight definition-backed instances
+ *  authoritative; '3.1' reinterpreted drilling `retractHeight` as a distance
+ *  above the material surface (issue #481). */
+  version: '1.0' | '2.0' | '2.1' | '3.0' | '3.1'
   meta: ProjectMeta
   grid: GridSettings
   stock: Stock
@@ -1433,7 +1440,7 @@ export function profileExceedsStock(profile: SketchProfile, stock: Stock): boole
 }
 
 /** The newest project schema version this build understands. */
-export const LATEST_PROJECT_VERSION = '3.0'
+export const LATEST_PROJECT_VERSION = '3.1'
 
 /**
  * True when a loaded project's `version` is newer than this build supports

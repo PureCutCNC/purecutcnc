@@ -144,7 +144,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.drillHelicalBoreTooSmall': '选定圆直径 ({holeDiameter}) 不大于刀具直径 ({toolDiameter})；已跳过螺旋钻孔 — 孔径必须严格大于铣刀直径',
   'warnings.drillHelicalBoreTooLarge': '选定圆直径 ({holeDiameter}) 超过 2 倍刀具直径 ({maxDiameter})；螺旋钻孔限于 2 倍铣刀直径 — 请改用内侧轮廓加工',
   'warnings.drillHelicalBoreUnmachinable': '请求的螺旋镗孔无法在移动限制内生成；此目标未产生输出',
-  'warnings.drillRetractBelowStockTop': '退刀高度（{requested}）低于材料上表面；已提高到 {clamped}，以免刀具以快速移动进入工件。退刀高度是项目坐标系中的绝对 Z 值，而不是高出毛坯的距离。',
+  'warnings.drillRetractBelowStockTop': '退刀高度（{requested}）低于材料上表面；已提高到 {clamped}，以免刀具以快速移动进入工件。退刀高度以高出材料表面的距离存储（issue #481）。',
   'warnings.drillTargetsNotCircles': '部分选定的目标特征不是圆形，已跳过',
   // 锪孔
   'warnings.drillCountersinkNeedsVBit': '锪孔需要 V 型刀；请为此工序指定一把——未生成锪孔',

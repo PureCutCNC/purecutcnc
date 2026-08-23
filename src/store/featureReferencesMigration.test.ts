@@ -184,9 +184,9 @@ function test(name: string, fn: () => void): void {
   }
 }
 
-test('new projects use format 3.0 and lightweight rows', () => {
+test('new projects use the current format and lightweight rows', () => {
   const project = newProject('Current')
-  assert(project.version === '3.0', `expected 3.0, got ${project.version}`)
+  assert(project.version === '3.1', `expected 3.1, got ${project.version}`)
   assert(Object.keys(project.featureDefinitions).length === 0, 'new project definitions should be empty')
 })
 
@@ -196,7 +196,7 @@ for (const version of ['1.0', '2.0', '2.1'] as const) {
     const row = decoded.project.features[0] as unknown as Record<string, unknown>
     assert(decoded.convertedLegacy, 'legacy input should report conversion')
     assert(decoded.sourceVersion === version, 'source version should be retained in decode metadata')
-    assert(decoded.project.version === '3.0', 'decoded project should be current')
+    assert(decoded.project.version === '3.1', 'decoded project should be current')
     assert(!('sketch' in row), 'converted instance must not retain baked sketch geometry')
     assert(!('operation' in row), 'converted instance must not retain definition-owned operation')
     assert(decoded.project.features[0].definitionId === `rect-${version}`, 'instance should reference definition')
@@ -262,11 +262,11 @@ test('legacy imported-model conversion rejects non-invertible placement', () => 
   assert(message.includes('non-invertible placement'), `expected clear placement error, got: ${message}`)
 })
 
-test('current 3.0 decode is idempotent and is not reported as legacy', () => {
+test('current-format decode is idempotent and is not reported as legacy', () => {
   const current = projectWithFeatures(newProject('Current', 'mm'), [makeRectFeature('rect-current')])
   const decoded = decodeProjectFormat(JSON.parse(JSON.stringify(current)))
   assert(!decoded.convertedLegacy, 'current project should not report conversion')
-  assert(decoded.sourceVersion === '3.0', 'source version should remain 3.0')
+  assert(decoded.sourceVersion === '3.1', 'source version should remain the current one')
   assert(JSON.stringify(decoded.project) === JSON.stringify(normalizeProject(current)), 'normalization should be idempotent')
 })
 

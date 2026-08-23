@@ -528,25 +528,29 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
   // The retract plane is where every rapid descent stops before the fed plunge
   // begins, so it must never sit inside material: below it the tool would enter
   // the part at rapid, and the first hole's XY traverse would cross the stock at
-  // that height (issue #479). Clamp up to the material surface first, then cap at
-  // the clearance plane. The two bounds can never fight — `getOperationSafeZ` is
-  // `max(stockTop, highestFeatureMax) + clearance`, and every target that passes
-  // the `bottomZ >= topZ` guard has `span.max === span.top`, so
-  // `safeZ === materialTopZ + clearance >= materialTopZ`.
-  const defaultRetractOffset = 1 // small offset in project units
+  // that height (issue #479). `retractHeight` is stored as a distance above the
+  // material surface (issue #481); resolve it against that surface, then clamp
+  // up to it and cap at the clearance plane. The two bounds can never fight —
+  // `getOperationSafeZ` is `max(stockTop, highestFeatureMax) + clearance`, and
+  // every target that passes the `bottomZ >= topZ` guard has
+  // `span.max === span.top`, so `safeZ === materialTopZ + clearance >= materialTopZ`.
+  const defaultRetractOffset = 1 // small offset above the surface, project units
   const highestTop = featureSpans.reduce((max, span) => Math.max(max, span.top), 0)
   const materialTopZ = Math.max(project.stock.thickness, highestTop)
-  const requestedRetractZ = operation.retractHeight ?? materialTopZ + defaultRetractOffset
+  const requestedRetractOffset = operation.retractHeight ?? defaultRetractOffset
+  const requestedRetractZ = materialTopZ + requestedRetractOffset
   const retractZ = Math.min(safeZ, Math.max(requestedRetractZ, materialTopZ))
 
   // Only an explicit operator value earns a warning. The default above is
   // already at or above the surface, so clamping it would be reporting our own
-  // arithmetic back to the user.
-  if (operation.retractHeight !== undefined && operation.retractHeight < materialTopZ) {
+  // arithmetic back to the user. A negative stored distance (the UI prevents
+  // one; old files are migrated) would park the plane inside the part — the
+  // warning reports the resolved absolute Zs.
+  if (requestedRetractOffset < 0) {
     warnings.push({
       code: 'drillRetractBelowStockTop',
       params: {
-        requested: Number(operation.retractHeight.toFixed(4)),
+        requested: Number(requestedRetractZ.toFixed(4)),
         clamped: Number(retractZ.toFixed(4)),
       },
     })
