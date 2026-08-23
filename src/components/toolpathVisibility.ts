@@ -159,13 +159,19 @@ export function unionFeedColourLegendSteps(
 
 /**
  * Legend labels for the given legend scales, full-feed first. Whole percents,
- * unless rounding would make two distinct rungs read identically — on the
- * non-uniform ladder (#591) the fine top rungs collide at high slot feeds
- * (e.g. slot 90 % yields 0.9875 and 0.975, both "99 %") — in which case every
- * label drops to one decimal so adjacent swatches stay tellable apart.
+ * escalating decimal places until every distinct scale reads distinctly — on
+ * the non-uniform ladder (#591) the fine top rungs collide at high slot feeds
+ * (slot 90 % yields two "100 %" entries at whole percents, slot 99 % still
+ * collides at one decimal), and a single-shot fallback cannot cover the whole
+ * 1–99 % range. Scales repeated across operations' union (the same scale
+ * carried at two ramp steps) are supposed to read identically, so
+ * distinctness counts distinct scales, not entries.
  */
 export function feedLegendStepLabels(scales: ReadonlyArray<number>): string[] {
-  const integerLabels = scales.map((scale) => `${Math.round(scale * 100)}%`)
-  if (new Set(integerLabels).size === scales.length) return integerLabels
-  return scales.map((scale) => `${(scale * 100).toFixed(1).replace(/\.0$/, '')}%`)
+  const distinct = new Set(scales).size
+  for (let decimals = 0; decimals <= 3; decimals += 1) {
+    const labels = scales.map((scale) => `${Number((scale * 100).toFixed(decimals))}%`)
+    if (new Set(labels).size === distinct) return labels
+  }
+  return scales.map((scale) => `${Number((scale * 100).toFixed(3))}%`)
 }

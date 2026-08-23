@@ -120,6 +120,20 @@ function keys(steps: readonly FeedColourLegendStep[]): string[] {
     ['100%', '99.5%', '99%'],
     'colliding rounded labels fall back to one decimal across all entries',
   )
+  // Slot 99% ladder head: 1 / 0.9995 / 0.999 — one decimal still collides
+  // ((99.95).toFixed(1) prints back as 100%), so the fallback escalates.
+  assert.deepEqual(
+    feedLegendStepLabels([1, 0.9995, 0.999]),
+    ['100%', '99.95%', '99.9%'],
+    'one decimal is not guaranteed to separate rungs; escalate until distinct',
+  )
+  // The same scale carried at two ramp steps by two operations reads
+  // identically on purpose — repeated scales must not force decimals.
+  assert.deepEqual(
+    feedLegendStepLabels([1, 0.9, 0.9]),
+    ['100%', '90%', '90%'],
+    'repeated scales stay whole percents',
+  )
 }
 
 console.log('toolpathFeedLegend.test.ts passed')
