@@ -80,6 +80,7 @@ import type { OffsetRegionNode } from './pocket'
 import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
 import { pocketTangentLinkOptions } from './tangentLink'
 import { seedStartRadius, planSeedCircles, seedCircleContours } from './seedClearing'
+import { areaCoverage, effectivePocketPattern } from './pocketPatterns'
 import type { SeedCirclePlan } from './seedClearing'
 import { cornerSmoothingRadius } from './offsetSmoothing'
 import {
@@ -389,6 +390,10 @@ function generateRoughBandMoves(
     }
   }
   const initialInset = radialLeave
+  // What the stored pattern actually clears with (issue #609): the declared
+  // table decides, so the raster branch below and the seed gate further down
+  // can no longer disagree about which patterns exist.
+  const roughCoverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
   const stepLevels = generateStepLevels(band.topZ, effectiveBottom, stepdown)
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
   const effectiveStepover = Math.max(stepoverDistance, minStepover)
@@ -399,7 +404,7 @@ function generateRoughBandMoves(
     effectiveStepover * SLOT_FEED_ADJACENCY_FACTOR,
   )
 
-  if (operation.pocketPattern === 'parallel') {
+  if (roughCoverage.rasterSegments) {
     const roughRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, initialInset))
     if (roughRegions.length === 0) {
       return {
@@ -509,7 +514,7 @@ function generateRoughBandMoves(
   // stays one stepover outside the cleared disc. Both are independent inner
   // sections in the travel scheduler below. The pattern is the only gate: any
   // other value plans nothing and takes the previous path.
-  const seedStart = operation.pocketPattern === 'seeded_offset'
+  const seedStart = roughCoverage.seedCircles
     ? seedStartRadius(operation, toolRadius)
     : 0
   const seedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
@@ -858,14 +863,15 @@ function generateFinishBandMoves(
   const floorIslandJoin = operation.roundOutsideCorners
     ? ClipperLib.JoinType.jtRound
     : ClipperLib.JoinType.jtMiter
-  const isParallelPocket = operation.pocketPattern === 'parallel'
+  const finishCoverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
+  const isParallelPocket = finishCoverage.rasterSegments
   // Seeded circle clearing on the finish floor (issue #579): the same phase 1
   // the rough pass runs (issue #554), planned against each region the floor
   // tree is actually built from so every circle fits whole. Each plan's last
   // circle is injected as an island so the rings offset around — but never
   // cut — the seed discs; the root keeps its original islands because the
   // seed stacks emit those exact laps separately.
-  const floorSeedStart = operation.pocketPattern === 'seeded_offset'
+  const floorSeedStart = finishCoverage.seedCircles
     ? seedStartRadius(operation, toolRadius)
     : 0
   const floorSeedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()

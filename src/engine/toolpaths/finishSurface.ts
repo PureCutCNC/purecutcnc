@@ -41,6 +41,7 @@ import {
   type FinishSurfaceParallelCacheHost,
 } from './finishSurfaceParallel'
 import { generateFinishSurfaceWaterline } from './finishSurfaceWaterline'
+import { effectivePocketPattern } from './pocketPatterns'
 
 export { maxContourGap } from './finishSurfaceWaterline'
 
@@ -48,6 +49,11 @@ export function generateFinishSurfaceToolpath(
   project: Project,
   operation: Operation,
 ): PocketToolpathResult {
+  // The strategy this kind runs for the stored pattern (issue #609). Only
+  // `waterline` is its own strategy here; every other stored value has always
+  // taken the parallel branch, and `OPERATION_PATTERN_SUPPORT` is now where
+  // that is written down rather than in the `else` of each test below.
+  const isWaterline = effectivePocketPattern(operation.kind, operation.pocketPattern) === 'waterline'
   const target = operation.target
   if (target.source !== 'features' || target.featureIds.length === 0) {
     return {
@@ -141,7 +147,7 @@ export function generateFinishSurfaceToolpath(
   // otherwise a thin ring of material is left between the lowest evenly-spaced
   // stepdown and the actual floor.
   const horizontalFloorZs = new Set<number>()
-  if (operation.pocketPattern === 'waterline') {
+  if (isWaterline) {
     for (let i = 0; i < index.length; i += 3) {
       const z0 = transformedPos[index[i] * 3 + 2]
       const z1 = transformedPos[index[i + 1] * 3 + 2]
@@ -169,7 +175,7 @@ export function generateFinishSurfaceToolpath(
     project,
     new Set(target.featureIds),
     modelSilhouettePaths,
-    { excludeContainingAddFeatures: operation.pocketPattern === 'waterline' },
+    { excludeContainingAddFeatures: isWaterline },
   )
   const intersectingAddTopMax = intersectingAdds.length === 0
     ? -Infinity
@@ -201,11 +207,11 @@ export function generateFinishSurfaceToolpath(
   // pokes higher than the mesh — those exposed walls live above the model
   // surface and need finishing too. For other strategies, keep modelTopZ as
   // the upper bound (parallel finish samples the model surface only).
-  const stepLevelTopZ = operation.pocketPattern === 'waterline'
+  const stepLevelTopZ = isWaterline
     ? Math.max(modelTopZ, intersectingAddTopMax)
     : modelTopZ
   let stepLevels = generateStepLevels(stepLevelTopZ, effectiveBottom, operation.stepdown)
-  if (operation.pocketPattern === 'waterline') {
+  if (isWaterline) {
     // Insert stepLevelTopZ, modelTopZ, and horizontal floor Zs within the
     // effective range as additional waterline rings. The floor levels are
     // critical to leave a clean foot at the base of bumps (and a clean top at
@@ -249,7 +255,7 @@ export function generateFinishSurfaceToolpath(
     return tabTop !== null ? Math.max(floor, tabTop) : floor
   }
 
-  const strategyResult = operation.pocketPattern === 'waterline'
+  const strategyResult = isWaterline
     ? generateFinishSurfaceWaterline(
       project,
       operation,

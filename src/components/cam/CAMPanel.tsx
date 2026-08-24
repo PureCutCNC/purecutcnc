@@ -43,6 +43,7 @@ import type {
 import { defaultRetractOffset, isTrochoidalEdgeRoughing } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
+import { offeredPocketPatterns } from '../../engine/toolpaths/pocketPatterns'
 import { countersinkTipDepth } from '../../engine/toolpaths/drilling'
 import { createOperationBookletPdf } from '../../engine/operationBooklet'
 import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
@@ -1467,18 +1468,14 @@ export function CAMPanel({
           <span>{camT('cam.operation.pattern')}</span>
           <Select
             value={operation.pocketPattern}
-            // The offered patterns are the kind's own: only 3D surface
-            // finishing waterlines, and only the 2.5D kinds offset.
-            options={operation.kind === 'finish_surface'
-              ? [
-                { value: 'parallel', label: pocketPatternLabel('parallel') },
-                { value: 'waterline', label: pocketPatternLabel('waterline') },
-              ]
-              : [
-                { value: 'offset', label: pocketPatternLabel('offset') },
-                { value: 'seeded_offset', label: pocketPatternLabel('seeded_offset') },
-                { value: 'parallel', label: pocketPatternLabel('parallel') },
-              ]}
+            // The offered patterns are the kind's own, and the kind's own is
+            // `OPERATION_PATTERN_SUPPORT` — the same table the generators
+            // dispatch on, so a pattern can never be offered by a kind that
+            // does not implement it (issue #609).
+            options={offeredPocketPatterns(operation.kind).map((pattern) => ({
+              value: pattern,
+              label: pocketPatternLabel(pattern),
+            }))}
             onChange={(value) => {
               const waterlineSpacing = value === 'waterline'
                 ? defaultWaterlineAdaptiveSpacing(selectedOperationTool, project.meta.units)
