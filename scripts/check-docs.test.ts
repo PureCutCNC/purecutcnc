@@ -15,11 +15,15 @@
  */
 
 import assert from 'node:assert/strict'
-import { resolve } from 'node:path'
+import { existsSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
+  AGENT_ENTRYPOINTS,
   extractMarkdownLinkTargets,
   normalizeLocalLinkTarget,
   parseFrontmatter,
+  readTextFileOrProblem,
   validateAgentEntrypoint,
   validateDocumentLinks,
   validatePlanningMetadata,
@@ -118,6 +122,44 @@ function testAgentEntrypointValidation(): void {
   )
 }
 
+function testUnreadableReadBecomesProblem(): void {
+  const enoent = Object.assign(
+    new Error("ENOENT: no such file or directory, open '/repo/.roorulez'"),
+    { code: 'ENOENT' },
+  )
+  assert.deepEqual(
+    readTextFileOrProblem('agent entrypoint', '.roorulez', '/repo/.roorulez', () => {
+      throw enoent
+    }),
+    { file: '.roorulez', message: 'agent entrypoint is missing from the repository' },
+  )
+
+  const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+  assert.deepEqual(
+    readTextFileOrProblem('planning document', 'planning/design.md', '/repo/planning/design.md', () => {
+      throw eacces
+    }),
+    { file: 'planning/design.md', message: 'planning document could not be read (EACCES)' },
+  )
+
+  assert.equal(
+    readTextFileOrProblem('agent entrypoint', 'CLAUDE.md', '/repo/CLAUDE.md', () => 'content'),
+    'content',
+  )
+}
+
+function testEveryAgentEntrypointExists(): void {
+  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+  for (const file of AGENT_ENTRYPOINTS) {
+    assert.ok(
+      existsSync(join(repositoryRoot, file)),
+      `${file} is listed in AGENT_ENTRYPOINTS but missing from the repository`,
+    )
+  }
+}
+
+testUnreadableReadBecomesProblem()
+testEveryAgentEntrypointExists()
 testFrontmatterParsing()
 testPlanningMetadataValidation()
 testMarkdownLinkExtractionAndNormalization()

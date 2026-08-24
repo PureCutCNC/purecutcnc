@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 import {
   AGENT_ENTRYPOINTS,
   type DocumentationProblem,
+  readTextFileOrProblem,
   validateAgentEntrypoint,
   validateDocumentLinks,
   validatePlanningMetadata,
@@ -74,12 +75,13 @@ function main(): void {
   })
   for (const document of planningDocuments) {
     const file = relative(REPOSITORY_ROOT, document)
-    problems.push(...validatePlanningMetadata(file, readFileSync(document, 'utf8')))
+    const content = readTextFileOrProblem('planning document', file, document)
+    problems.push(...(typeof content === 'string' ? validatePlanningMetadata(file, content) : [content]))
   }
 
   for (const file of AGENT_ENTRYPOINTS) {
-    const path = join(REPOSITORY_ROOT, file)
-    problems.push(...validateAgentEntrypoint(file, readFileSync(path, 'utf8')))
+    const content = readTextFileOrProblem('agent entrypoint', file, join(REPOSITORY_ROOT, file))
+    problems.push(...(typeof content === 'string' ? validateAgentEntrypoint(file, content) : [content]))
   }
 
   problems.sort((left, right) => {
