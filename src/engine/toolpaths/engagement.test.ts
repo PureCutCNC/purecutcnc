@@ -22,7 +22,9 @@ import {
   SweptMaterialIndex,
   engagementFeedRungs,
   engagementFeedScale,
+  mergedFragmentPricing,
   nominalEngagement,
+  type MergeCandidate,
 } from './engagement'
 
 let passed = 0
@@ -694,6 +696,119 @@ console.log('Testing quantizer minimum fragment length...')
     kept.some((fragment) => approx(fragment.scale, 0.76, 1e-12) && approx(fragment.distance, 0.1, 1e-9)),
     `a short fragment more than one rung above its neighbours must keep its own scale, got ${JSON.stringify(kept)}`,
   )
+}
+
+// ── 8a-594. Merge pricing and the rung-aware rise bar ──
+//
+// Same ladder reference as above (nominal = π/2, slotScale = 0.4 → rungs
+// 1 / .97 / .94 / .88 / .76 / .64 / .52 / .40). Issue #594: a sub-minimum
+// stretch takes the LONGER partner's rung instead of always dragging the pair
+// down, and a rise that has to climb more than one rung holds only a quarter
+// of the minimum fragment length before it is allowed.
+
+console.log('Testing a sub-minimum stretch is priced at the longer partner\'s rung...')
+{
+  const nominal = Math.PI / 2
+  const slotScale = 0.4
+  const rungs = engagementFeedRungs(slotScale)
+  /** Engagement whose continuous scale sits three quarters up `rungs[index]`'s own band. */
+  const engagementFor = (index: number): number => {
+    if (index === 0) return nominal
+    const continuous = rungs[index] + 0.75 * (rungs[index - 1] - rungs[index])
+    return nominal + ((1 - continuous) / (1 - slotScale)) * (Math.PI - nominal)
+  }
+
+  // The stream ends with a short stretch one rung below a long one — the tail
+  // of a lap, and the case #594 exists for. The merge takes the long
+  // stretch's rung, so 2.0 of path entitled to it keeps it and only the 0.1
+  // tail is lifted; before #594 the pair was priced at the lower rung and the
+  // whole 2.1 ran a rung slow.
+  const tail = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 0.4 })
+  tail.push(engagementFor(3), 2.0)
+  tail.push(engagementFor(4), 0.1)
+  const tailFragments = tail.fragments()
+  assert(tailFragments.length === 1, `the sub-minimum tail must merge, got ${tailFragments.length} fragments`)
+  assert(
+    approx(tailFragments[0].scale, rungs[3], 1e-12) && approx(tailFragments[0].distance, 2.1, 1e-9),
+    `the merged stretch must hold the longer partner's rung, got ${JSON.stringify(tailFragments)}`,
+  )
+
+  // A spike two rungs down is a recovery, not chatter: the rise back clears a
+  // quarter of the minimum fragment length, so the spike is emitted at its own
+  // 0.15 and the lap that follows is not charged the spike's price. The merge
+  // then leaves it alone — two rungs apart is more than it may consolidate.
+  const spike = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 0.4 })
+  spike.push(engagementFor(3), 2.0)
+  spike.push(engagementFor(5), 0.15)
+  for (let index = 0; index < 20; index += 1) spike.push(engagementFor(3), 0.1)
+  const spikeFragments = spike.fragments()
+  assert(spikeFragments.length === 3, `a two-rung spike must stay its own stretch, got ${spikeFragments.length}`)
+  assert(
+    approx(spikeFragments[1].scale, rungs[5], 1e-12) && approx(spikeFragments[1].distance, 0.15, 1e-9),
+    `the spike must keep its own length, got ${JSON.stringify(spikeFragments[1])}`,
+  )
+
+  // A one-rung drop is exactly the chatter the bar was built for, so it still
+  // holds the full minimum fragment length before rising — the same 0.15 spike
+  // stretches to 0.45 here.
+  const chatter = new EngagementFeedQuantizer({ nominal, slotScale, minFragmentLength: 0.4 })
+  chatter.push(engagementFor(3), 2.0)
+  chatter.push(engagementFor(4), 0.15)
+  for (let index = 0; index < 20; index += 1) chatter.push(engagementFor(3), 0.1)
+  const chatterFragments = chatter.fragments()
+  assert(chatterFragments.length === 3, `a one-rung drop must still rise back, got ${chatterFragments.length}`)
+  assert(
+    approx(chatterFragments[1].scale, rungs[4], 1e-12) && approx(chatterFragments[1].distance, 0.45, 1e-9),
+    `a one-rung rise must hold the full minimum fragment, got ${JSON.stringify(chatterFragments[1])}`,
+  )
+}
+
+console.log('Testing the merge never prices a stretch far above its entitlement...')
+{
+  const slotScale = 0.4
+  const rungs = engagementFeedRungs(slotScale)
+  const candidate = (scale: number, distance: number, extra: Partial<MergeCandidate> = {}): MergeCandidate => ({
+    scale, distance, minFragmentLength: 0.4, rawFloor: scale, overDistance: 0, ...extra,
+  })
+
+  // The longer partner sets the price, and the lifted side counts in full
+  // toward the distance the merged stretch runs above its entitlement.
+  const lifted = mergedFragmentPricing(candidate(rungs[4], 0.1), candidate(rungs[3], 2.0), slotScale)
+  assert(approx(lifted.scale, rungs[3], 1e-12), `the longer partner must set the price, got ${lifted.scale}`)
+  assert(approx(lifted.rawFloor, rungs[4], 1e-12), 'the merged stretch must carry the lower floor')
+  assert(approx(lifted.overDistance, 0.1, 1e-9), `the lifted side must count in full, got ${lifted.overDistance}`)
+
+  // Bound 1, one rung: the same pair rises when its floor is its own scale...
+  const fresh = mergedFragmentPricing(candidate(rungs[3], 0.1), candidate(rungs[2], 2.0), slotScale)
+  assert(approx(fresh.scale, rungs[2], 1e-12), `a one-rung lift must be allowed, got ${fresh.scale}`)
+  // ...and refuses when the short side was already lifted a rung, which would
+  // otherwise walk it two rungs above the verdict it is entitled to.
+  const chained = mergedFragmentPricing(
+    candidate(rungs[3], 0.1, { rawFloor: rungs[4], overDistance: 0.1 }),
+    candidate(rungs[2], 2.0),
+    slotScale,
+  )
+  assert(approx(chained.scale, rungs[3], 1e-12), `a second rung of lift must be refused, got ${chained.scale}`)
+
+  // Bound 2, one minimum fragment: a lift that would carry more than a
+  // minimum fragment length above entitlement falls back to the lower rung...
+  const far = mergedFragmentPricing(
+    candidate(rungs[4], 0.3),
+    candidate(rungs[3], 2.0, { overDistance: 0.2 }),
+    slotScale,
+  )
+  assert(approx(far.scale, rungs[4], 1e-12), `an over-long lift must be refused, got ${far.scale}`)
+  // ...while the same shape inside the bound still rises.
+  const near = mergedFragmentPricing(
+    candidate(rungs[4], 0.3),
+    candidate(rungs[3], 2.0, { overDistance: 0.05 }),
+    slotScale,
+  )
+  assert(approx(near.scale, rungs[3], 1e-12), `a lift inside the distance bound must be allowed, got ${near.scale}`)
+
+  // Equal lengths keep the pre-#594 preference: the lower rung, conservative.
+  const tied = mergedFragmentPricing(candidate(rungs[4], 1.0), candidate(rungs[3], 1.0), slotScale)
+  assert(approx(tied.scale, rungs[4], 1e-12), `equal lengths must resolve to the lower rung, got ${tied.scale}`)
 }
 
 // ── 8b. Quantizer recovers to full feed through the deadband ──
