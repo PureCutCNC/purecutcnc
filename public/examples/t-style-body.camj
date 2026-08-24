@@ -1,5 +1,5 @@
 {
-  "version": "3.0",
+  "version": "3.1",
   "meta": {
     "name": "t-style-body",
     "created": "2026-05-27T23:07:37.953Z",
@@ -72,7 +72,7 @@
   },
   "origin": {
     "name": "Origin",
-    "x": 3.025701179911668e-08,
+    "x": 3.025701179911668e-8,
     "y": 7.500006054020719,
     "z": 1.75,
     "visible": true
@@ -645,7 +645,10 @@
       "pocketPattern": "offset",
       "pocketAngle": 0,
       "pocketSlotFeedPercent": 60,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": true,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0.04,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -688,7 +691,10 @@
       "pocketPattern": "offset",
       "pocketAngle": 0,
       "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": false,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -731,7 +737,10 @@
       "pocketPattern": "offset",
       "pocketAngle": 0,
       "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": false,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -749,7 +758,8 @@
       "drillType": "chip_breaking",
       "peckDepth": 0.07874015748031496,
       "dwellTime": 0.5,
-      "retractHeight": 1.5393700787401574
+      "countersinkDiameter": 0.2362204724409449,
+      "retractHeight": 0
     },
     {
       "id": "op0164",
@@ -784,7 +794,10 @@
       "pocketPattern": "offset",
       "pocketAngle": 0,
       "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": false,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -802,7 +815,8 @@
       "drillType": "simple",
       "peckDepth": 0.07874015748031496,
       "dwellTime": 0.5,
-      "retractHeight": 1.5393700787401574
+      "countersinkDiameter": 0.2362204724409449,
+      "retractHeight": 0
     },
     {
       "id": "op0165",
@@ -827,8 +841,14 @@
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
+      "edgeStrategy": "contour",
+      "entryStrategy": "helix",
+      "entryRampAngle": 5,
       "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": false,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0.04,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -867,8 +887,14 @@
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
+      "edgeStrategy": "contour",
+      "entryStrategy": "helix",
+      "entryRampAngle": 5,
       "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": false,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -895,7 +921,8 @@
       "h": 1.2757766192184399,
       "z_top": 0.11811023622047245,
       "z_bottom": 0,
-      "visible": true
+      "visible": true,
+      "shape": "rect"
     },
     {
       "id": "tb0168",
@@ -906,7 +933,8 @@
       "h": 1.2757766192184399,
       "z_top": 0.11811023622047245,
       "z_bottom": 0,
-      "visible": true
+      "visible": true,
+      "shape": "rect"
     },
     {
       "id": "tb0169",
@@ -917,7 +945,8 @@
       "h": 1.2757766192184399,
       "z_top": 0.11811023622047245,
       "z_bottom": 0,
-      "visible": true
+      "visible": true,
+      "shape": "rect"
     },
     {
       "id": "tb0170",
@@ -928,7 +957,8 @@
       "h": 1.2757766192184399,
       "z_top": 0.11811023622047245,
       "z_bottom": 0,
-      "visible": true
+      "visible": true,
+      "shape": "rect"
     }
   ],
   "clamps": [],
@@ -1785,7 +1815,7 @@
       "kind": "polygon",
       "profile": {
         "start": {
-          "x": 3.025701179911668e-08,
+          "x": 3.025701179911668e-8,
           "y": 7.500006054020719
         },
         "segments": [
