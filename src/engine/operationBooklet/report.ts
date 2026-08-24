@@ -26,6 +26,7 @@ import type { NormalizedTool, ToolpathResult } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
 import { countersinkTipDepth } from '../toolpaths/drilling'
 import { usesTangentLinks } from '../toolpaths/pocketPatterns'
+import { clearingControlApplies } from '../toolpaths/clearingControls'
 import type { OperationBookletInput, OperationBookletReport, OperationBookletRow } from './types'
 
 function operationKindLabel(kind: OperationKind): string {
@@ -76,7 +77,10 @@ function operationSupportsCutDirection(kind: OperationKind): boolean {
 }
 
 function operationSupportsMachiningOrder(operation: Operation): boolean {
-  return operation.kind === 'pocket'
+  // Which clearing kinds offer machining order is CLEARING_CONTROL_SUPPORT's
+  // call (#616). The edge routes are not clearing kinds; their half stays
+  // inline, outside #614's scope.
+  return clearingControlApplies(operation.kind, 'machiningOrder')
     || operation.kind === 'edge_route_inside'
     || operation.kind === 'edge_route_outside'
 }
@@ -95,8 +99,10 @@ function cornerReliefLabel(style: Exclude<CornerReliefStyle, 'none'>): string {
 }
 
 function operationUsesCornerRelief(operation: Operation): boolean {
+  // Same split as machining order: the table owns the clearing kinds (#616),
+  // the edge routes stay inline.
   return (
-    operation.kind === 'pocket'
+    clearingControlApplies(operation.kind, 'cornerRelief')
     || operation.kind === 'edge_route_inside'
     || operation.kind === 'edge_route_outside'
   )
@@ -104,11 +110,8 @@ function operationUsesCornerRelief(operation: Operation): boolean {
 
 function operationUsesRoundOutsideCorners(operation: Operation): boolean {
   return (
-    operation.kind === 'edge_route_outside'
-    || operation.kind === 'pocket'
-    || operation.kind === 'surface_clean'
-    || operation.kind === 'rough_surface'
-    || operation.kind === 'finish_surface_cleanup'
+    clearingControlApplies(operation.kind, 'roundOutsideCorners')
+    || operation.kind === 'edge_route_outside'
   )
 }
 
@@ -320,10 +323,12 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
   }
 
   // Only meaningful alongside rounded corners, and it changes the wall the job
-  // leaves, so it belongs on the sheet whenever it is on.
+  // leaves, so it belongs on the sheet whenever it is on. The kind gate reads
+  // the declaration (#616), so surface_clean -- which the engine honours --
+  // prints the row too.
   if ((operation.cleanWallCorners ?? false)
     && (operation.roundOutsideCorners ?? false)
-    && operation.kind === 'pocket') {
+    && clearingControlApplies(operation.kind, 'cleanWallCorners')) {
     rows.push({ label: translate('booklet.label.cleanWallCorners'), value: translate('booklet.value.enabled') })
   }
 
@@ -339,11 +344,14 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
     )
   }
 
-  if (operation.kind === 'pocket' && (operation.pocketSlotFeedPercent ?? 100) < 100) {
+  // Both rows read the declaration (#616). surface_clean getting the control
+  // and the behaviour but no row at the machine was the one disagreement this
+  // issue deliberately fixes: its feed-reduction rows start printing here.
+  if (clearingControlApplies(operation.kind, 'slotFeed') && (operation.pocketSlotFeedPercent ?? 100) < 100) {
     rows.push({ label: translate('booklet.label.slotFeed'), value: translate('booklet.value.slotFeed', { percent: formatNumber(operation.pocketSlotFeedPercent ?? 100, 0) }) })
   }
 
-  if (operation.kind === 'pocket' && (operation.pocketFeedReduction ?? 'slots_only') !== 'slots_only') {
+  if (clearingControlApplies(operation.kind, 'engagementMode') && (operation.pocketFeedReduction ?? 'slots_only') !== 'slots_only') {
     rows.push({ label: translate('booklet.label.engagementMode'), value: translate('booklet.engagementMode.engagementFeed') })
   }
 

@@ -42,6 +42,7 @@ import {
   type OperationPass,
   type PocketPattern,
 } from '../../types/project'
+import { CLEARING_CONTROL_SUPPORT, clearingControlApplies } from '../../engine/toolpaths/clearingControls'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -62,7 +63,10 @@ const ALL_KINDS: OperationKind[] = [
 ]
 
 const ALL_PASSES: OperationPass[] = ['rough', 'finish']
-const ALL_PATTERNS: PocketPattern[] = ['offset', 'parallel', 'waterline']
+// seeded_offset included (issue #616): despite the exhaustive-enumeration
+// comment below, nothing here constructed a seeded operation before, so the
+// roundLinkCorners row #554 added was never exercised.
+const ALL_PATTERNS: PocketPattern[] = ['offset', 'seeded_offset', 'parallel', 'waterline']
 const ALL_DRILL_TYPES: DrillType[] = ['simple', 'peck', 'dwell', 'chip_breaking', 'helical', 'countersink']
 const ALL_ENTRY_STRATEGIES: EntryStrategy[] = ['plunge', 'helix', 'ramp']
 
@@ -346,6 +350,67 @@ function testRoundLinkCornersFollowsTheGeneratorsOwnLinking() {
   )
 }
 
+/**
+ * The panel's exposed clearing controls must equal CLEARING_CONTROL_SUPPORT's
+ * declaration (issue #616). Two directions:
+ *
+ *   - equality on the canonical shape of every kind whose row clears: a
+ *     control wired to one kind and forgotten on another fails here;
+ *   - no shape may ever expose a control the kind's row does not declare,
+ *     except the deliberate edge-route inline half (#616): the routes are not
+ *     clearing kinds, but they keep sharing rounding, relief and order.
+ */
+function testClearingControlsMatchTheDeclaration() {
+  const controls = [
+    'slotFeed',
+    'engagementMode',
+    'roundOutsideCorners',
+    'cleanWallCorners',
+    'cornerRelief',
+    'machiningOrder',
+  ] as const
+  const fieldOf = new Map<string, (typeof OPERATION_FIELDS)[number]>()
+  for (const id of controls) {
+    const field = OPERATION_FIELDS.find((candidate) => candidate.id === id)
+    assert(field, `'${id}' must be declared`)
+    fieldOf.set(id, field)
+  }
+
+  // Every secondary gate satisfied: rough pass (feed reduction), an offset
+  // pattern and rounding on (wall-corner cleanup). On this shape the panel's
+  // exposed set is exactly the declared one, for every clearing kind.
+  const canonicalShape = (kind: OperationKind): Operation => makeOperation({
+    kind,
+    pass: 'rough',
+    finishFloor: true,
+    pocketPattern: 'offset',
+    roundOutsideCorners: true,
+  })
+  const exposedOn = (operation: Operation) => controls.filter((control) => fieldOf.get(control)!.appliesTo(operation))
+
+  for (const kind of ALL_KINDS) {
+    if (!CLEARING_CONTROL_SUPPORT[kind].clears) continue
+    const shown = exposedOn(canonicalShape(kind))
+    const declared = controls.filter((control) => clearingControlApplies(kind, control))
+    assert(
+      shown.join(',') === declared.join(','),
+      `${kind}: the panel exposes [${shown.join(',')}] but the declaration says [${declared.join(',')}]`,
+    )
+  }
+
+  for (const shape of everyOperationShape()) {
+    for (const control of controls) {
+      if (clearingControlApplies(shape.kind, control)) continue
+      const edgeRouteHalf = (shape.kind === 'edge_route_inside' || shape.kind === 'edge_route_outside')
+        && (control === 'roundOutsideCorners' || control === 'cornerRelief' || control === 'machiningOrder')
+      assert(
+        edgeRouteHalf || !fieldOf.get(control)!.appliesTo(shape),
+        `${shape.kind} exposes '${control}' but its declaration row does not apply it`,
+      )
+    }
+  }
+}
+
 function testDrillingHidesTheTwoDimensionalStrategyFields() {
   const drilling = makeOperation({ kind: 'drilling' })
   for (const id of ['stepdown', 'stepover', 'cutDirection', 'machiningOrder', 'pattern'] as const) {
@@ -367,5 +432,6 @@ testRampAngleRendersFromExactlyOnePlace()
 testStockToLeaveFollowsTheSurfacePattern()
 testRoundLinkCornersFollowsTheGeneratorsOwnLinking()
 testDrillingHidesTheTwoDimensionalStrategyFields()
+testClearingControlsMatchTheDeclaration()
 
 console.log('operationFields tests passed')
