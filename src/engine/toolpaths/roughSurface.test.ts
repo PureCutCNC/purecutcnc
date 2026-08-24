@@ -20,11 +20,14 @@
  * Run with: npx tsx src/engine/toolpaths/roughSurface.test.ts
  */
 
-import { defaultTool, newProject, rectProfile, type Operation, type Project, type SketchFeature, type Tool } from '../../types/project'
+import { defaultTool, newProject, rectProfile, type Operation, type PocketPattern, type Point, type Project, type SketchFeature, type Tool } from '../../types/project'
 import { serializeImportedMesh } from '../importedMesh'
 import { generateRoughSurfaceToolpath } from './roughSurface'
 import { transitionToCutEntry } from './pocket'
-import type { ToolpathMove, ToolpathPoint } from './types'
+import { offsetClipperPaths, segmentInsideClipperPaths } from './modelProtection'
+import { resolve3DSurfaceStepdown } from './surfaceStepdown3d'
+import { offeredPocketPatterns } from './pocketPatterns'
+import type { PocketToolpathResult, ToolpathMove, ToolpathPoint } from './types'
 import { projectWithFeatures, replaceProjectFeatures } from '../../test/projectFixtures'
 
 function assert(condition: boolean, message: string): void {
@@ -312,6 +315,47 @@ function makeLegacyProject(featureIds: string[]): { project: Project; operation:
   }, [model, region])
   project.stock.thickness = TEST_STOCK_THICKNESS
   return { project, operation: makeRoughOperation(featureIds) }
+}
+
+function makeSplitRegionFeature(id: string, x: number, width: number): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(x, -2, width, 12),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'region',
+    z_top: 0,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+}
+
+/**
+ * The frustum masked by two region rects separated by a 0.5 mm strip the
+ * operation never clears. The coarse stepover (ratio 1) puts maxLinkDistance
+ * at 0.75 mm, so raster segments flanking the strip are close enough that a
+ * greedy nearest-endpoint link WANTS to cross it — and must be rejected by the
+ * per-level safe-link gate instead.
+ */
+function makeSplitRegionProject(): { project: Project; operation: Operation } {
+  const model = makeModelFeature()
+  const left = makeSplitRegionFeature('region-l', -2, 9)
+  const right = makeSplitRegionFeature('region-r', 7.5, 6.5)
+  const project = projectWithFeatures({
+    ...newProject('rough-surface-split-region-test', 'mm'),
+    tools: [makeTool()],
+  }, [left, right, model])
+  project.stock.thickness = TEST_STOCK_THICKNESS
+  const operation = { ...makeRoughOperation(['model1', 'region-l', 'region-r']), stepover: 1 }
+  return { project, operation }
 }
 
 function makeInvertedProject(featureIds: string[]): { project: Project; operation: Operation } {
@@ -854,6 +898,266 @@ function testRoughSurfaceLinksOffsetRingsAtZ(): void {
     `expected plunges (${plungesAtZ}) to be at most half the closed-loop count (${closedLoopsAtZ}) at Z=${targetZ}; at-Z linking does not appear to be firing`)
 }
 
+// ── Pattern dispatch: generation matrix + model protection (issue #618) ────
+//
+// rough_surface offered no pattern control until #618, so its generator
+// hard-coded concentric rings no matter what was stored. The matrix proves
+// every pattern the table now offers emits motion on a real stream — an empty
+// level with no warning is the exact failure #609 shipped three times — and
+// the protection assertions prove the per-level safeLinkCheck gate survives on
+// the two new patterns. A raster link shortcutting across standing stock a
+// shallower level never cut is the failure mode to catch.
+
+/** Consecutive same-Z cut moves that stay connected end to end. */
+function connectedCutRuns(moves: ToolpathMove[]): ToolpathMove[][] {
+  const runs: ToolpathMove[][] = []
+  let current: ToolpathMove[] = []
+  for (const move of moves) {
+    if (move.kind !== 'cut' || Math.abs(move.from.z - move.to.z) > 1e-9) {
+      if (current.length > 0) runs.push(current)
+      current = []
+      continue
+    }
+    const previous = current[current.length - 1]
+    if (
+      previous
+      && (Math.hypot(previous.to.x - move.from.x, previous.to.y - move.from.y) > 1e-9
+        || Math.abs(previous.to.z - move.to.z) > 1e-9)
+    ) {
+      runs.push(current)
+      current = []
+    }
+    current.push(move)
+  }
+  if (current.length > 0) runs.push(current)
+  return runs
+}
+
+/**
+ * Full tessellated circles in a move stream.
+ *
+ * A seed circle is a regular polygon: every chord the same length, every turn
+ * the same angle, and the turns summing to exactly one revolution. Nothing
+ * else this generator emits has that shape — an offset ring's chords vary with
+ * the geometry it follows, and the radial link into a circle breaks the run on
+ * both counts, so the detected run is the circle and only the circle.
+ * (Same detector as finishSurfaceCleanup.test.ts.)
+ */
+function fullCircles(moves: ToolpathMove[]): Array<{ z: number; centre: Point; radius: number }> {
+  const chordLength = (move: ToolpathMove): number => Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y)
+  const turnBetween = (a: ToolpathMove, b: ToolpathMove): number => {
+    const ax = a.to.x - a.from.x
+    const ay = a.to.y - a.from.y
+    const bx = b.to.x - b.from.x
+    const by = b.to.y - b.from.y
+    return Math.atan2(ax * by - ay * bx, ax * bx + ay * by)
+  }
+
+  const circles: Array<{ z: number; centre: Point; radius: number }> = []
+  for (const run of connectedCutRuns(moves)) {
+    let start = 0
+    while (start < run.length) {
+      const chord = chordLength(run[start])
+      let turn: number | null = null
+      let end = start
+      while (end + 1 < run.length) {
+        if (Math.abs(chordLength(run[end + 1]) - chord) > 1e-6 * Math.max(1, chord)) break
+        const next = turnBetween(run[end], run[end + 1])
+        if (turn === null) turn = next
+        else if (Math.abs(next - turn) > 1e-6) break
+        end += 1
+      }
+
+      const chords = end - start + 1
+      // 24 is MIN_SEED_CIRCLE_POINTS; the revolution test is what makes this a
+      // circle rather than a merely uniform arc.
+      if (turn !== null && chords >= 24 && Math.abs(chords * Math.abs(turn) - 2 * Math.PI) < 1e-6) {
+        const points = run.slice(start, end + 1).map((move) => ({ x: move.from.x, y: move.from.y }))
+        const centre = {
+          x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+          y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+        }
+        const radii = points.map((point) => Math.hypot(point.x - centre.x, point.y - centre.y))
+        circles.push({ z: run[start].to.z, centre, radius: (Math.min(...radii) + Math.max(...radii)) / 2 })
+      }
+      start = end + 1
+    }
+  }
+  return circles
+}
+
+function generateForPattern(pattern: PocketPattern): PocketToolpathResult {
+  const { project, operation } = makeProject(['model1'])
+  return generateRoughSurfaceToolpath(project, { ...operation, pocketPattern: pattern })
+}
+
+/**
+ * Closed cut loops across the whole stream.
+ *
+ * Tracks contiguous same-Z cut runs; when a run returns to an earlier point of
+ * itself that span is one closed loop (loops stitched by at-Z links are still
+ * counted individually). Raster scanlines are open serpentine chains and never
+ * close, so on a parallel stream this counts exactly what the level-boundary
+ * contour pass emits.
+ */
+function countClosedCutLoops(moves: ToolpathMove[]): number {
+  const eps = 1e-6
+  const sameXY = (a: { x: number; y: number }, b: { x: number; y: number }): boolean =>
+    Math.abs(a.x - b.x) <= eps && Math.abs(a.y - b.y) <= eps
+
+  let loops = 0
+  let runZ: number | null = null
+  let run: Array<{ x: number; y: number }> = []
+  for (const move of moves) {
+    if (move.kind !== 'cut' || Math.abs(move.from.z - move.to.z) > eps) {
+      runZ = null
+      run = []
+      continue
+    }
+    if (runZ === null || Math.abs(move.from.z - runZ) > eps) {
+      runZ = move.from.z
+      run = []
+    }
+    run.push({ x: move.from.x, y: move.from.y })
+    run.push({ x: move.to.x, y: move.to.y })
+    const here = run[run.length - 1]
+    for (let index = 0; index < run.length - 1; index += 1) {
+      if (sameXY(run[index], here)) {
+        loops += 1
+        // Drop up to the loop start so later stitched loops still count.
+        run = run.slice(index)
+        break
+      }
+    }
+  }
+  return loops
+}
+
+function testRoughSurfaceGenerationMatrix(): void {
+  console.log('Testing rough_surface generation matrix over the offered patterns...')
+  const offered = offeredPocketPatterns('rough_surface')
+  assert(
+    offered.join(',') === 'offset,seeded_offset,parallel',
+    `rough_surface must offer exactly the clearing set, got ${offered.join(',')}`,
+  )
+
+  const streams = new Map<PocketPattern, PocketToolpathResult>()
+  for (const pattern of offered) {
+    const result = generateForPattern(pattern)
+    assert(
+      result.warnings.length === 0,
+      `${pattern}: unexpected warnings ${JSON.stringify(result.warnings)}`,
+    )
+    assert(
+      cutMoves(result.moves).length > 0,
+      `${pattern}: emitted no cut moves — an empty floor with no warning is the exact defect #609 shipped three times`,
+    )
+    streams.set(pattern, result)
+  }
+
+  const offset = streams.get('offset')!
+  const seeded = streams.get('seeded_offset')!
+  const parallel = streams.get('parallel')!
+
+  // Each new pattern must take its own branch, not fall through to the rings:
+  // a stream byte-identical to plain offset means the dispatch never fired.
+  assert(
+    JSON.stringify(seeded.moves) !== JSON.stringify(offset.moves),
+    'seeded_offset fell through to the offset stream',
+  )
+  const seededCircles = fullCircles(seeded.moves)
+  assert(seededCircles.length >= 3, `expected seed circles on the seeded_offset stream, detected ${seededCircles.length}`)
+  assert(fullCircles(offset.moves).length === 0, 'the plain offset stream must contain no full circles')
+  assert(
+    JSON.stringify(parallel.moves) !== JSON.stringify(offset.moves),
+    'parallel fell through to the offset stream',
+  )
+
+  // The raster branch must cut the level boundary before its segments, as the
+  // pocket and surface_clean raster branches do: scanlines alone leave a
+  // scalloped ridge of standing stock at the silhouette on every level, while
+  // the offset pattern's outermost ring is that same contour. One closed loop
+  // per level is the signature only the boundary pass leaves — open scanlines
+  // never close, and the detector above would count zero without it.
+  const parallelLevels = distinctCutZs(parallel.moves).length
+  const parallelLoops = countClosedCutLoops(parallel.moves)
+  assert(
+    parallelLoops >= parallelLevels,
+    `parallel emitted ${parallelLoops} closed boundary loops across ${parallelLevels} levels `
+      + '— the level-boundary contour pass is missing',
+  )
+}
+
+/**
+ * Every fed move stays inside the clearable region of the deepest level it
+ * reaches.
+ *
+ * Attribution: after the levels down to floor z have run, the material state
+ * at depth d is whatever the deepest level with floor <= d left behind, so a
+ * move reaching depth d is legal only inside that level's domain. The domain
+ * is the generator's own safe-link construction — clearable paths inset by the
+ * tool radius — relaxed by 0.0001 mm so geometry lying exactly on the boundary
+ * (a raster scanline's endpoints sit on it by design) still passes.
+ */
+function assertEverySegmentStaysInItsLevel(
+  pattern: PocketPattern,
+  source: () => { project: Project; operation: Operation } = () => makeProject(['model1']),
+): void {
+  const { project, operation } = source()
+  const subject = { ...operation, pocketPattern: pattern }
+  const result = generateRoughSurfaceToolpath(project, subject)
+  assert(cutMoves(result.moves).length > 0, `${pattern}: expected motion to protect`)
+
+  const resolvedResult = resolve3DSurfaceStepdown(project, subject, { operationLabel: 'Rough surface' })
+  assert(resolvedResult.ok, `${pattern}: expected the stepdown to resolve`)
+  if (!resolvedResult.ok) {
+    return
+  }
+  const { resolved } = resolvedResult
+  const domains = resolved.levels
+    .map((level) => ({
+      z: level.z,
+      paths: offsetClipperPaths(level.clearablePaths, -(resolved.tool.radius - 1e-4)),
+    }))
+    .sort((a, b) => b.z - a.z)
+  const spacing = Math.max(resolved.tool.radius * 0.25, resolved.effectiveStepover * 0.1)
+
+  let checked = 0
+  for (const move of result.moves) {
+    // Rapids travel at safe Z, above stock; everything else must be contained.
+    if (move.kind === 'rapid') continue
+    const zFloor = Math.min(move.from.z, move.to.z)
+    const level = domains.find((candidate) => candidate.z <= zFloor + 1e-6)
+    if (!level) continue // above the shallowest level: nothing to protect yet
+    assert(
+      segmentInsideClipperPaths(level.paths, move.from, move.to, spacing),
+      `${pattern}: ${move.kind} (${move.from.x},${move.from.y},${move.from.z}) -> `
+        + `(${move.to.x},${move.to.y},${move.to.z}) leaves the Z=${level.z} clearable region`,
+    )
+    checked += 1
+  }
+  assert(checked >= 50, `${pattern}: expected to check a meaningful number of segments, got ${checked}`)
+}
+
+function testRoughSurfaceParallelStaysInClearableRegions(): void {
+  console.log('Testing rough_surface parallel raster stays inside each level...')
+  assertEverySegmentStaysInItsLevel('parallel')
+}
+
+function testRoughSurfaceSeededStaysInClearableRegions(): void {
+  console.log('Testing rough_surface seeded_offset stays inside each level...')
+  assertEverySegmentStaysInItsLevel('seeded_offset')
+}
+
+function testRoughSurfaceRasterNeverLinksAcrossStandingStrip(): void {
+  console.log('Testing rough_surface raster rejects the cross-strip link the greedy order wants...')
+  // On the plain frustum every nearest-endpoint raster link is contained
+  // anyway, so the gate's rejection path never fires there. The split-region
+  // fixture dangles links across an uncleared 0.5 mm strip within
+  // maxLinkDistance; without the gate they are emitted and leave the region.
+  assertEverySegmentStaysInItsLevel('parallel', makeSplitRegionProject)
+}
+
 testRoughSurfaceGeneratesChangingZCuts()
 testRoughSurfaceHelixEntryUsesModelSafeRegions()
 testRoughSurfaceRegionMaskAllowsEntry()
@@ -870,6 +1174,10 @@ testRoughSurfaceIgnoresTightBaseWhenPocketLimitsEnvelope()
 testRoughSurfaceRespectsContainingPocketDepth()
 testRoughSurfaceRespectsSplitPocketDepths()
 testRoughSurfaceLinksOffsetRingsAtZ()
+testRoughSurfaceGenerationMatrix()
+testRoughSurfaceParallelStaysInClearableRegions()
+testRoughSurfaceSeededStaysInClearableRegions()
+testRoughSurfaceRasterNeverLinksAcrossStandingStrip()
 
 function testTransitionToCutEntryPlungesAtAlignedXY(): void {
   console.log('Testing transitionToCutEntry plunges straight down at aligned XY...')

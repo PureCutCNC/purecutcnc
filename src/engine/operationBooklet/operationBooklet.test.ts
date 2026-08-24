@@ -788,12 +788,38 @@ async function testGermanPdfSmoke(): Promise<void> {
   }
 }
 
+/** The pattern rows follow the declared table (#618): rough_surface now
+ *  renders the control, so its sheet must print the pattern and raster angle.
+ *  The inline four-kind list this replaces excluded rough_surface, which would
+ *  have shown a pattern-driven operation with no pattern on it. */
+function testReportPatternRowFollowsTakesPocketPattern(): void {
+  console.log('Testing rough_surface prints the pattern rows...')
+  const { project, operation, toolpath } = fixture()
+  const tool = normalizeToolForProject(project.tools[0], project)
+  const report = buildOperationBookletReport({
+    project,
+    operation: { ...operation, kind: 'rough_surface', pass: 'rough', pocketPattern: 'parallel', pocketAngle: 30 },
+    tool,
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    report.settingRows.some((row) => row.label === translate('booklet.label.pattern') && row.value === 'parallel'),
+    'rough_surface takes a pocket pattern; the sheet must say which one',
+  )
+  assert(
+    report.settingRows.some((row) => row.label === translate('booklet.label.pocketAngle')),
+    'rough_surface renders the raster-angle field, so the sheet must print it',
+  )
+}
+
 testReportContent()
 testFeedTimeFallsBackToToolDefaultFeed()
 testFeedTimeUsesScaledSlotFeed()
 testReportIncludesEngagementModeRow()
 testReportIncludesSurfaceCleanFeedReductionRows()
 testReportCleanWallCornersFollowsTheDeclaration()
+testReportPatternRowFollowsTakesPocketPattern()
 testReportIncludesEnabledRoundOutsideCorners()
 testReportIncludesEnabledRoundLinkCorners()
 testReportIncludesRoundLinkCornersForSeededCleanup()
