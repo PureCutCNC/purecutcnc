@@ -1,5 +1,5 @@
 {
-  "version": "3.0",
+  "version": "3.1",
   "meta": {
     "name": "badge",
     "created": "2026-06-04T15:02:32.745Z",
@@ -15,7 +15,7 @@
       {
         "id": "mach3",
         "name": "Mach3",
-        "description": "Mach3 \u2014 Windows-based CNC controller",
+        "description": "Mach3 — Windows-based CNC controller",
         "builtin": true,
         "fileExtension": "tap",
         "coordinateSystem": {
@@ -63,7 +63,8 @@
           "cwArcCommand": "G2",
           "ccwArcCommand": "G3",
           "arcFormat": "ij",
-          "modalMotion": true
+          "modalMotion": true,
+          "arcInterpolation": false
         },
         "feedSpeed": {
           "feedCommand": "F",
@@ -649,7 +650,10 @@
       "pocketPattern": "parallel",
       "pocketAngle": 0,
       "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": false,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -662,7 +666,8 @@
       "waterlineMicroStepover": 0.08,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
-      "waterlineTipStepdown": 0
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true
     },
     {
       "id": "op0047",
@@ -687,8 +692,14 @@
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
+      "edgeStrategy": "contour",
+      "entryStrategy": "helix",
+      "entryRampAngle": 5,
       "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": false,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -701,7 +712,8 @@
       "waterlineMicroStepover": 0.08,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
-      "waterlineTipStepdown": 0
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true
     },
     {
       "id": "op0107",
@@ -728,7 +740,10 @@
       "pocketPattern": "offset",
       "pocketAngle": 0,
       "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": false,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -742,10 +757,12 @@
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
       "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true,
       "drillType": "simple",
       "peckDepth": 0.07874015748031496,
       "dwellTime": 0.5,
-      "retractHeight": 0.5393700787401575
+      "countersinkDiameter": 0.2362204724409449,
+      "retractHeight": 0.03937007874015752
     },
     {
       "id": "op0071",
@@ -786,7 +803,10 @@
       "pocketPattern": "parallel",
       "pocketAngle": 0,
       "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": false,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -799,7 +819,8 @@
       "waterlineMicroStepover": 0.08,
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
-      "waterlineTipStepdown": 0
+      "waterlineTipStepdown": 0,
+      "arcFittingEnabled": true
     }
   ],
   "tabs": [
@@ -812,7 +833,8 @@
       "h": 0.3125,
       "z_top": 0.11811023622047245,
       "z_bottom": 0,
-      "visible": true
+      "visible": true,
+      "shape": "rect"
     },
     {
       "id": "tb0049",
@@ -823,7 +845,8 @@
       "h": 0.3125,
       "z_top": 0.11811023622047245,
       "z_bottom": 0,
-      "visible": true
+      "visible": true,
+      "shape": "rect"
     },
     {
       "id": "tb0050",
@@ -834,7 +857,8 @@
       "h": 0.3125,
       "z_top": 0.11811023622047245,
       "z_bottom": 0,
-      "visible": true
+      "visible": true,
+      "shape": "rect"
     },
     {
       "id": "tb0051",
@@ -845,7 +869,8 @@
       "h": 0.3125,
       "z_top": 0.11811023622047245,
       "z_bottom": 0,
-      "visible": true
+      "visible": true,
+      "shape": "rect"
     }
   ],
   "clamps": [

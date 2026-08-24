@@ -1,5 +1,5 @@
 {
-  "version": "3.0",
+  "version": "3.1",
   "meta": {
     "name": "purecutcnc",
     "created": "2026-04-13T12:31:15.471Z",
@@ -235,7 +235,7 @@
     },
     {
       "id": "t0012",
-      "name": "60\u00b0 V-Bit",
+      "name": "60° V-Bit",
       "units": "inch",
       "type": "v_bit",
       "diameter": 0.25,
@@ -275,7 +275,10 @@
       "pocketPattern": "offset",
       "pocketAngle": 0,
       "pocketSlotFeedPercent": 60,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": true,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0.05,
       "stockToLeaveAxial": 0.05,
       "finishWalls": true,
@@ -315,7 +318,10 @@
       "pocketPattern": "offset",
       "pocketAngle": 0,
       "pocketSlotFeedPercent": 70,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": true,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -355,7 +361,10 @@
       "pocketPattern": "offset",
       "pocketAngle": 0,
       "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": false,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -395,7 +404,10 @@
       "pocketPattern": "offset",
       "pocketAngle": 0,
       "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": false,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -434,8 +446,14 @@
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
+      "edgeStrategy": "contour",
+      "entryStrategy": "helix",
+      "entryRampAngle": 5,
       "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": true,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0.02,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -474,8 +492,14 @@
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
+      "edgeStrategy": "contour",
+      "entryStrategy": "helix",
+      "entryRampAngle": 5,
       "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
       "roundOutsideCorners": true,
+      "roundLinkCorners": true,
+      "cornerRelief": "none",
       "stockToLeaveRadial": 0,
       "stockToLeaveAxial": 0,
       "finishWalls": true,
@@ -502,7 +526,8 @@
       "h": 0.225,
       "z_top": 0.11811023622047245,
       "z_bottom": 0,
-      "visible": true
+      "visible": true,
+      "shape": "rect"
     },
     {
       "id": "tb0023",
@@ -513,7 +538,8 @@
       "h": 0.225,
       "z_top": 0.11811023622047245,
       "z_bottom": 0,
-      "visible": true
+      "visible": true,
+      "shape": "rect"
     },
     {
       "id": "tb0024",
@@ -524,7 +550,8 @@
       "h": 0.225,
       "z_top": 0.11811023622047245,
       "z_bottom": 0,
-      "visible": true
+      "visible": true,
+      "shape": "rect"
     },
     {
       "id": "tb0025",
@@ -535,7 +562,8 @@
       "h": 0.225,
       "z_top": 0.11811023622047245,
       "z_bottom": 0,
-      "visible": true
+      "visible": true,
+      "shape": "rect"
     }
   ],
   "clamps": [

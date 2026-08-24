@@ -29,6 +29,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { normalizeProject } from '../../store/projectStore'
+import { LATEST_PROJECT_VERSION } from '../../types/project'
 import type { Project } from '../../types/project'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -63,6 +64,13 @@ for (const entry of manifest) {
   // Throws if the file is missing — locking the manifest against dangling refs.
   const raw = readFileSync(join(examplesDir, entry.file), 'utf8')
   const parsed = JSON.parse(raw) as Project
+
+  // Bundled examples must carry the current format version: an older stamp
+  // makes every example load run the decode/migration machinery (and, once
+  // #599's warning lands, show a conversion banner in the demos).
+  assert(parsed.version === LATEST_PROJECT_VERSION,
+    `example ${entry.file} ships at format ${parsed.version ?? '(none)'}; regenerate it at ${LATEST_PROJECT_VERSION} so loading never converts (#606)`)
+
   const normalized = normalizeProject(parsed)
 
   assert(Array.isArray(normalized.features), `example ${entry.file} should normalize to a project with features`)
