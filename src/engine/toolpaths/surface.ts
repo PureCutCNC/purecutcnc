@@ -914,15 +914,16 @@ function generateFinishBandMoves(
   ))
   // Tangential link junctions for the offset floor rings; the domain is the
   // wall-finish tool-centre path (finishRegions), which is the hard boundary a
-  // floor-ring link may sweep up to.
-  const floorTangentLink = (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.finishFloor && !isParallelPocket
+  // floor-ring link may sweep up to. Which kinds link on which patterns is
+  // usesTangentLinks's call (#616), same as the rough band above.
+  const floorTangentLink = usesTangentLinks(operation.kind, operation.pocketPattern) && operation.finishFloor
     ? pocketTangentLinkOptions(
       operation.roundLinkCorners,
       toolRadius * 2,
       finishRegions,
     )
     : undefined
-  const floorWallCleanup = (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.roundOutsideCorners
+  const floorWallCleanup = clearingControlApplies(operation.kind, 'cleanWallCorners') && operation.roundOutsideCorners
     && operation.cleanWallCorners === true
     ? {
       enabled: true,
