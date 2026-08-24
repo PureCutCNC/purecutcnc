@@ -323,13 +323,20 @@ test.describe('Feed-coloured toolpath smoke', () => {
     // The legend prints the rungs derived from the 75% slot feed, not the
     // hardcoded 40% ladder the engine no longer emits (issue #498 S5), and
     // since #535 it is data-driven: it lists only the rungs the emitted moves
-    // actually carry. Since #591 the ladder is non-uniform, so the stretches
-    // this geometry used to charge as one 95% rung now split across the two
-    // finer top rungs (99% / 98%), and the 0.80/0.85-zone rung is absent
-    // because minimum-fragment merges take the lower scale — nothing on the
-    // canvas paints them and the legend must not claim them.
+    // actually carry. Since #594 a sub-minimum stretch is priced at its longer
+    // neighbour's rung instead of dragging the pair down, so the 98% and 90%
+    // slivers this geometry used to emit are gone and the 95% rung between
+    // them is held instead. Measured on this exact fixture, same cut length
+    // (1400.2066 in), same 100% share, moves 1294 → 1086:
+    //
+    //   before  100%:48.5  99%:45.9  98%:0.0  90%:0.3  85%:4.6  75%:0.7
+    //   after   100%:48.5  99%:48.9  95%:0.3           85%:1.6  75%:0.7
+    //
+    // i.e. 85% gave up two thirds of its length upward and the mean feed scale
+    // rose 0.9853 → 0.9896. Nothing paints the absent rungs, so the legend
+    // must not claim them.
     await expect(panel.locator('.viewport-toolpath-vis__legend-step')).toHaveText([
-      '100%', '99%', '98%', '90%', '85%', '75%',
+      '100%', '99%', '95%', '85%', '75%',
     ])
 
     // Baseline: explicit off.
@@ -413,10 +420,10 @@ test.describe('Feed-coloured toolpath smoke', () => {
     const feedToggle = ui.toolpathVis.sketchItems(app.page).filter({ hasText: 'Feed colours' })
     await expect(feedToggle).toHaveCount(1)
 
-    // The union of the engagement ladder (this fixture's geometry emits the
-    // fine top rungs but skips the mid zone — see the 75% test) and the
-    // slots-only pocket's 60% rung, whichever operation is selected.
-    const unionSteps = ['100%', '99%', '98%', '90%', '85%', '75%', '60%']
+    // The union of the engagement ladder (the rungs this geometry actually
+    // emits — see the 75% test for the measured distribution behind them) and
+    // the slots-only pocket's 60% rung, whichever operation is selected.
+    const unionSteps = ['100%', '99%', '95%', '85%', '75%', '60%']
 
     // Selecting the engagement pocket defaults the toggle on; the legend is
     // the union of the engagement ladder and the slots-only pocket's 60% rung.

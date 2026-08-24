@@ -1089,6 +1089,48 @@ function overSlowedPathLength(project: Project, operation: Operation): number {
 }
 
 /**
+ * Share of cut path carried by feed runs at least `floor` long — the property
+ * the arc-run count is a proxy FOR, measured directly (issue #594). Arc
+ * fitting can only join moves inside one run, so what matters is how much of
+ * the path sits in runs long enough to fit an arc, not how many runs there
+ * are. The two came apart when #594 stopped erasing short feed distinctions:
+ * the count grew while the coverage did not move.
+ */
+function longFeedRunShare(moves: ToolpathMove[], floor: number): number {
+  const cutKinds = new Set(['cut', 'lead-in', 'lead-out'])
+  let total = 0
+  let long = 0
+  let current = 0
+  let previousScale: number | null | undefined
+  let previousTo: ToolpathPoint | null = null
+  const close = (): void => {
+    if (current >= floor) long += current
+    total += current
+    current = 0
+  }
+  for (const move of moves) {
+    if (!cutKinds.has(move.kind)) {
+      close()
+      previousScale = undefined
+      previousTo = null
+      continue
+    }
+    const contiguous = previousTo !== null
+      && Math.hypot(move.from.x - previousTo.x, move.from.y - previousTo.y, move.from.z - previousTo.z) < 1e-6
+    const length = Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y, move.to.z - move.from.z)
+    if (current > 0 && contiguous && (move.feedScale ?? 1) === previousScale) current += length
+    else {
+      close()
+      current = length
+    }
+    previousScale = move.feedScale ?? 1
+    previousTo = move.to
+  }
+  close()
+  return total > 0 ? long / total : 1
+}
+
+/**
  * Maximal contiguous cut runs sharing a feed scale — the arc-fitting proxy the
  * probe reports. Matches `scripts/pocket-output-probe.ts` `arcRuns` so the run
  * counts are directly comparable with the handoff's table (12→61, 33→84).
@@ -1174,10 +1216,26 @@ test('S9: a synthetic island fixture also keeps over-slowed path length bounded'
   )
 })
 
-test('S9: the arc-run constraint holds — runs stay within +25%, longest run stays ≥ 50', () => {
+test('S9: the arc-run constraint holds — long-run coverage held, runs within +25%', () => {
+  // Re-cut for issue #594. The count baselines moved because #594 stops
+  // erasing feed distinctions — a lap no longer inherits the price of the
+  // corner spike beside it — and every run it adds is short: on
+  // `pocket-feed-reduction`, runs of 1in or more stayed at 20 and the longest
+  // stayed at 72, while runs under 0.15in went 24 → 39. A raw count cannot
+  // tell that apart from real fragmentation, so the coverage floor below is
+  // now the binding half of this guard and the count is the canary.
+  //
+  // Measured, engagement feed, `main` @ 5f0fdc8 → this branch:
+  //
+  //   | fixture                          | runs    | longest | share ≥ 4d    |
+  //   | pocket-feed-reduction            | 66 → 81 | 72 → 72 | 76.9% → 76.3% |
+  //   | pocket-feed-reduction-parallel-2 | 92 → 94 | 60 → 38 | 67.8% → 65.5% |
+  //
+  // (The previous baselines, 61 and 84, were measured for #498 and had already
+  // drifted under the +25% headroom before this change.)
   const cases = [
-    { name: 'pocket-feed-reduction', engagementRuns: 61, longestFloor: 50 },
-    { name: 'pocket-feed-reduction-parallel-2', engagementRuns: 84, longestFloor: 0 },
+    { name: 'pocket-feed-reduction', engagementRuns: 81, longestFloor: 50, coverageFloor: 0.74 },
+    { name: 'pocket-feed-reduction-parallel-2', engagementRuns: 94, longestFloor: 0, coverageFloor: 0.63 },
   ] as const
   for (const fixture of cases) {
     const project = normalizeProject(
@@ -1190,12 +1248,21 @@ test('S9: the arc-run constraint holds — runs stay within +25%, longest run st
     // separately in tangentLinkIntegration.test.ts. Strip the field here so
     // this guard keeps measuring the engagement feed on the legacy stream it
     // was calibrated for.
-    const { runs, longest } = arcRunStats(
-      generatePocketToolpath(project, {
-        ...operation,
-        pocketFeedReduction: 'engagement',
-        roundLinkCorners: undefined,
-      }).moves,
+    const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
+    assert(tool !== undefined, `${fixture.name}: the fixture operation must resolve its tool`)
+    const moves = generatePocketToolpath(project, {
+      ...operation,
+      pocketFeedReduction: 'engagement',
+      roundLinkCorners: undefined,
+    }).moves
+    const { runs, longest } = arcRunStats(moves)
+    // Four tool diameters: long enough that arc fitting has something to fit,
+    // and expressed in tool diameters so the floor means the same thing on a
+    // fixture with a different cutter.
+    const coverage = longFeedRunShare(moves, 4 * tool.diameter)
+    assert(
+      coverage >= fixture.coverageFloor,
+      `${fixture.name}: ${(coverage * 100).toFixed(1)}% of the cut sits in runs ≥ 4 tool diameters, below the ${(fixture.coverageFloor * 100).toFixed(0)}% floor`,
     )
     const runBound = Math.ceil(fixture.engagementRuns * 1.25)
     assert(runs <= runBound, `${fixture.name}: ${runs} runs exceed the ${runBound} bound (+25% over ${fixture.engagementRuns})`)

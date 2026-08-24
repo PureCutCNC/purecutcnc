@@ -744,6 +744,37 @@ const DEFAULT_HYSTERESIS_FRACTION = 0.25
 const MIN_HYSTERESIS_DROP_FRACTION = 0.05
 
 /**
+ * Share of the minimum fragment length a rise spanning MORE than one rung has
+ * to hold before it is allowed (issue #594). A one-rung rise still holds the
+ * full length: that is the chatter case the bar was built for, two rungs
+ * either side of a boundary the engagement is wandering across. A rise of two
+ * or more rungs is not chatter — the material genuinely fell away — and
+ * holding there means feeding a whole lap at the price of the corner spike
+ * that dropped it, since drops are immediate and only rises are gated. With
+ * #591's finer top rungs that asymmetry became a ratchet: a spike to a low
+ * rung had to climb back through gated rises instead of landing inside one
+ * coarse rung, and 37% of one real pocket's cut length was held a rung or two
+ * below its own entitlement.
+ *
+ * The fragment it emits is real either way — `fragments()` refuses to
+ * consolidate stretches more than one rung apart (#498 slice S9), so the spike
+ * keeps its own scale whether the bar is paid or not; paying it only stretches
+ * the spike's PRICE over the lap that follows.
+ *
+ * A quarter, mirroring the hysteresis margin's quarter of a rung width. It
+ * still keeps a real floor under an emitted fragment — a quarter of a tool
+ * diameter, or a thirty-second of a ring's perimeter — so no single sample can
+ * open one. Measured on `work/big-pocket-test.camj` op0047 (`seeded_offset`,
+ * 60% slot), where the recovery saturates well above this value and only the
+ * fragment count keeps growing below it:
+ *
+ *   | fraction | 1.00 | 0.50 | 0.35 | 0.30 | 0.25 | 0.20 | 0.00 |
+ *   | minutes  | 12.29| 12.15| 11.82| 11.74| 11.74| 11.75| 11.75|
+ *   | runs     |  440 |  466 |  482 |  490 |  494 |  506 |  543 |
+ */
+const MULTI_RUNG_RISE_BAR_FRACTION = 0.25
+
+/**
  * Tolerance for minimum-fragment comparisons. A ring's scaled minimum is
  * `perimeter / 8`, which a fragment distance summed from chunk lengths can
  * undershoot by one ulp; the tolerance is far below any meaningful precision
@@ -770,14 +801,18 @@ const MIN_FRAGMENT_EPSILON = 1e-9
  *   `ENGAGEMENT_ESTIMATE_EPSILON` inside `engagementFeedScale` is its
  *   margin — engagement within the estimator's worst-case error of nominal
  *   counts as exactly 1 and rises to full feed with no further margin.
- * - Minimum fragment length: no emitted stretch is shorter than its own
+ * - Minimum fragment length: an emitted stretch is not cut short of its own
  *   minimum fragment length — the tightest `minFragmentLength` carried by any
- *   of its chunks, overridable per ring via `setMinFragmentLength`; a shorter
- *   stretch is merged into its lower-scale neighbour, so the merge itself also
- *   resolves toward the lower feed.
+ *   of its chunks, overridable per ring via `setMinFragmentLength`, and a
+ *   quarter of that where a rise climbs more than one rung
+ *   (`MULTI_RUNG_RISE_BAR_FRACTION`); a shorter stretch is merged into an
+ *   adjacent one and the pair is priced by
+ *   `mergedFragmentPricing` — the longer partner's rung, under the two bounds
+ *   documented there (issue #594).
  *
- * Both guarantees are conservative: while in doubt the quantizer holds the
- * lower feed.
+ * Both guarantees are conservative: hysteresis holds the lower feed while in
+ * doubt, and a merge only ever prices a sub-minimum stretch above its own
+ * entitlement, never a stretch long enough to stand on its own.
  */
 /**
  * One quantized stretch, tracking the minimum fragment length in force while
@@ -790,6 +825,77 @@ interface QuantizedFragment {
   scale: number
   distance: number
   minFragmentLength: number
+  /**
+   * Lowest raw quantized verdict contributing to this stretch. A stretch is
+   * born at the raw verdict of its first chunk and only ever holds a scale at
+   * or below what its later chunks are entitled to — a drop emits immediately
+   * while a rise is held — so the emitted scale is itself the floor, and a
+   * merge carries the lower of the two.
+   */
+  rawFloor: number
+  /** Distance inside this stretch priced above its own raw verdict. */
+  overDistance: number
+}
+
+/** One side of a minimum-fragment merge, as `mergedFragmentPricing` reads it. */
+export interface MergeCandidate {
+  scale: number
+  distance: number
+  minFragmentLength: number
+  rawFloor: number
+  overDistance: number
+}
+
+/**
+ * Price a minimum-fragment merge (issue #594). The merged stretch takes the
+ * LONGER partner's scale, not the lower of the two: a sub-minimum fragment is
+ * the part that cannot stand on its own, so it is the part that should take
+ * the other's price. Merging always down-priced before #594, which turned the
+ * finer top rungs of #591 into a net slowdown — a lap entitled to one rung end
+ * to end was dragged a rung lower by the short fragments its own added
+ * resolution produced.
+ *
+ * Lifting a stretch above its entitlement is bounded twice, and the merge
+ * falls back to the pre-#594 rule (the lower scale) whenever either bound
+ * would be broken:
+ *
+ * - **One rung.** The lifted price must sit at most one rung above the merged
+ *   stretch's `rawFloor`, so no chunk is ever fed more than one rung above its
+ *   own raw verdict. For a fresh within-one-rung pair this is exactly the
+ *   longer partner's scale; it binds on merge chains, where an unbounded rule
+ *   would walk a stretch two or more rungs up.
+ * - **One minimum fragment.** The distance priced above entitlement must not
+ *   exceed the minimum fragment length that applied to the part being lifted.
+ *   A single lift always clears this (the lifted part is sub-minimum by
+ *   definition); a run of alternating short fragments is what it stops.
+ *
+ * Ties and equal scales resolve to the lower scale, so the result is
+ * deterministic and conservative wherever the longer partner is not strictly
+ * longer.
+ *
+ * A lift cannot breach the pocket's composition with the shipped slot feed:
+ * that clamp is applied to the emitted chunks AFTER quantization, with a
+ * `Math.min` against the legacy span's scale, so it wins over whatever price
+ * this rule produced.
+ */
+export function mergedFragmentPricing(
+  a: MergeCandidate,
+  b: MergeCandidate,
+  slotScale: number,
+): { scale: number; rawFloor: number; overDistance: number } {
+  const rawFloor = Math.min(a.rawFloor, b.rawFloor)
+  const lower = a.scale <= b.scale ? a : b
+  const higher = a.scale <= b.scale ? b : a
+  const lowerPrice = { scale: lower.scale, rawFloor, overDistance: a.overDistance + b.overDistance }
+  // Nothing to lift: equal scales, or the lower-priced side is the longer one
+  // (its price already governs the merged stretch).
+  if (higher.scale <= lower.scale || higher.distance <= lower.distance) return lowerPrice
+  if (!withinOneRungIndices(higher.scale, rawFloor, slotScale)) return lowerPrice
+  // The lifted side counts in full: this layer knows the stretch's floor, not
+  // its chunks, so every part of it is treated as priced above entitlement.
+  const overDistance = lower.distance + higher.overDistance
+  if (overDistance > lower.minFragmentLength + MIN_FRAGMENT_EPSILON) return lowerPrice
+  return { scale: higher.scale, rawFloor, overDistance }
 }
 
 export class EngagementFeedQuantizer {
@@ -885,15 +991,16 @@ export class EngagementFeedQuantizer {
     }
     if (rawScale < this.currentScale) {
       // Engagement rose: drop the feed immediately (conservative).
-      this.emitted.push({ scale: this.currentScale, distance: this.heldDistance, minFragmentLength: this.heldMinFragmentLength })
+      this.emitted.push({ scale: this.currentScale, distance: this.heldDistance, minFragmentLength: this.heldMinFragmentLength, rawFloor: this.currentScale, overDistance: 0 })
       this.currentScale = rawScale
       this.heldDistance = safeDistance
       this.heldMinFragmentLength = this.minFragmentLength
       return
     }
     // Engagement fell: rise only past the hysteresis margin inside the target
-    // bucket and only after the current stretch has reached its own minimum
-    // fragment length (the tightest of its chunks). The top rung (scale 1)
+    // bucket and only after the current stretch has reached its own rise bar
+    // (its minimum fragment length, or a quarter of it when the rise spans
+    // more than one rung). The top rung (scale 1)
     // uses the deadband as its margin; a NaN sample never rises (NaN
     // comparisons are false). Otherwise hold the current (lower) feed.
     const continuous = continuousFeedScale(clamped, this.nominal, this.slotScale)
@@ -913,9 +1020,15 @@ export class EngagementFeedQuantizer {
             MIN_HYSTERESIS_DROP_FRACTION * (this.hysteresisFraction / DEFAULT_HYSTERESIS_FRACTION) * (1 - this.slotScale),
           ),
         )
-    const fragmentGate = rawScale >= 1 || this.heldDistance >= this.heldMinFragmentLength - MIN_FRAGMENT_EPSILON
+    // The held stretch must reach its own minimum fragment length before the
+    // feed may rise — a quarter of it when the rise spans more than one rung,
+    // which is a recovery from a spike rather than chatter across a boundary
+    // (`MULTI_RUNG_RISE_BAR_FRACTION`, issue #594).
+    const riseBar = this.heldMinFragmentLength
+      * (withinOneRungIndices(rawScale, this.currentScale, this.slotScale) ? 1 : MULTI_RUNG_RISE_BAR_FRACTION)
+    const fragmentGate = rawScale >= 1 || this.heldDistance >= riseBar - MIN_FRAGMENT_EPSILON
     if (effective >= rawScale + margin && fragmentGate) {
-      this.emitted.push({ scale: this.currentScale, distance: this.heldDistance, minFragmentLength: this.heldMinFragmentLength })
+      this.emitted.push({ scale: this.currentScale, distance: this.heldDistance, minFragmentLength: this.heldMinFragmentLength, rawFloor: this.currentScale, overDistance: 0 })
       this.currentScale = rawScale
       this.heldDistance = safeDistance
       this.heldMinFragmentLength = this.minFragmentLength
@@ -929,7 +1042,7 @@ export class EngagementFeedQuantizer {
   fragments(): EngagementFeedFragment[] {
     const result: QuantizedFragment[] = this.emitted.slice()
     if (this.currentScale !== null) {
-      result.push({ scale: this.currentScale, distance: this.heldDistance, minFragmentLength: this.heldMinFragmentLength })
+      result.push({ scale: this.currentScale, distance: this.heldDistance, minFragmentLength: this.heldMinFragmentLength, rawFloor: this.currentScale, overDistance: 0 })
     }
     for (let i = 0; i < result.length; ) {
       const fragment = result[i]
@@ -937,41 +1050,59 @@ export class EngagementFeedQuantizer {
         i += 1
         continue
       }
-      const next = result[i + 1]
-      const prev = result[i - 1]
-      const targetIndex = next && (!prev || next.scale <= prev.scale) ? i + 1 : i - 1
+      const targetIndex = this.mergeTargetIndex(result, i)
+      if (targetIndex === null) {
+        i += 1
+        continue
+      }
       const target = result[targetIndex]
-      // A minimum-fragment merge must not bridge the full-feed ceiling in
-      // either direction. Extending a reduced stretch into a full-feed
-      // neighbour holds the slot feed into material measured at or below
-      // nominal, and absorbing a short full-feed stretch into a reduced one
-      // does the same from the other side. A short stretch next to full feed
-      // is a genuine short slot or a genuine short cleared gap (a neck
-      // crossing): it keeps its own scale at its own length. Only
-      // bucket-to-bucket merges (both reduced) are still consolidated.
-      if (fragment.scale >= 1 || target.scale >= 1) {
-        i += 1
-        continue
-      }
-      // A bucket-to-bucket merge takes the lower scale, so a merge that would
-      // lower the higher-scale stretch by more than one rung is refused: a
-      // fragment entitled to a near-full scale must not be dragged to the slot
-      // floor by a slot it merely touches (issue #498, slice S9). Adjacent
-      // rungs still consolidate, so the minimum-fragment guarantee does not
-      // shatter the path into alternations. On the non-uniform ladder (#591)
-      // "one rung apart" is pair-specific — adjacency is judged by rung index.
-      if (!withinOneRungIndices(fragment.scale, target.scale, this.slotScale)) {
-        i += 1
-        continue
-      }
+      const priced = mergedFragmentPricing(fragment, target, this.slotScale)
       result.splice(Math.min(i, targetIndex), 2, {
-        scale: Math.min(fragment.scale, target.scale),
+        scale: priced.scale,
         distance: fragment.distance + target.distance,
         minFragmentLength: Math.min(fragment.minFragmentLength, target.minFragmentLength),
+        rawFloor: priced.rawFloor,
+        overDistance: priced.overDistance,
       })
       if (targetIndex < i) i = targetIndex
     }
     return result.map(({ scale, distance }) => ({ scale, distance }))
+  }
+
+  /**
+   * Neighbour a sub-minimum stretch merges into, or `null` when neither side
+   * is eligible and the stretch keeps its own scale at its own length.
+   *
+   * Eligibility is unchanged from before #594. A merge must not bridge the
+   * full-feed ceiling in either direction: extending a reduced stretch into a
+   * full-feed neighbour holds the slot feed into material measured at or below
+   * nominal, and absorbing a short full-feed stretch into a reduced one does
+   * the same from the other side — a short stretch next to full feed is a
+   * genuine short slot or a genuine short cleared gap (a neck crossing). And a
+   * pair more than one rung apart is refused, so a fragment entitled to a
+   * near-full scale is not dragged to the slot floor by a slot it merely
+   * touches (issue #498, slice S9); on the non-uniform ladder (#591) "one rung
+   * apart" is pair-specific, so adjacency is judged by rung index.
+   *
+   * Among the eligible neighbours the LONGER one wins, because it is the one
+   * whose price governs the merged stretch (`mergedFragmentPricing`). Equal
+   * lengths fall back to the lower scale, the pre-#594 preference.
+   */
+  private mergeTargetIndex(result: QuantizedFragment[], index: number): number | null {
+    const fragment = result[index]
+    if (fragment.scale >= 1) return null
+    const eligible = (candidateIndex: number): boolean => {
+      const candidate: QuantizedFragment | undefined = result[candidateIndex]
+      if (candidate === undefined || candidate.scale >= 1) return false
+      return withinOneRungIndices(fragment.scale, candidate.scale, this.slotScale)
+    }
+    const before = eligible(index - 1) ? index - 1 : null
+    const after = eligible(index + 1) ? index + 1 : null
+    if (before === null || after === null) return before ?? after
+    if (result[after].distance !== result[before].distance) {
+      return result[after].distance > result[before].distance ? after : before
+    }
+    return result[after].scale <= result[before].scale ? after : before
   }
 }
 
