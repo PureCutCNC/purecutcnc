@@ -20,11 +20,13 @@ import type { Operation } from '../../types/project'
 import type { PocketToolpathResult, ResolvedPocketRegion, ToolpathBounds, ToolpathMove, ToolpathPoint } from './types'
 import { createEntryPolicy } from './entry'
 import {
+  buildContourLoops,
   buildOffsetRegionTree,
   buildPocketParallelSegments,
   contourStartPoint,
   cutOffsetRegionNode,
   cutOffsetRegionRecursive,
+  orderClosedContoursGreedy,
   orderOpenSegmentsGreedy,
   orderRegionsGreedy,
   retractToSafe,
@@ -111,10 +113,18 @@ export function generateRoughSurfaceToolpath(
     // rejected exactly like a ring-to-ring one.
 
     if (coverage.rasterSegments) {
+      // The level boundary is cut first, exactly as the pocket and surface_clean
+      // raster branches do: scanlines alone leave a scalloped ridge of standing
+      // stock at the silhouette on every level, while the offset pattern's
+      // outermost ring is that same contour. Contours are rebuilt per level
+      // because 3D roughing has no level-independent footprint to reuse.
+      const boundaryContours = orderedRegions.length > 0
+        ? applyContourDirection(buildContourLoops(orderedRegions), resolved.direction)
+        : []
       const segments = orderedRegions.length > 0
         ? buildPocketParallelSegments(orderedRegions, resolved.effectiveStepover, operation.pocketAngle)
         : []
-      if (segments.length === 0) {
+      if (boundaryContours.length === 0 && segments.length === 0) {
         continue
       }
       const entryPolicy = createEntryPolicy(
@@ -123,6 +133,26 @@ export function generateRoughSurfaceToolpath(
         orderedRegions,
         (warning) => appendUniqueWarning(warnings, warning),
       )
+
+      const orderedBoundaryContours = orderClosedContoursGreedy(
+        boundaryContours,
+        currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+      )
+      for (const contour of orderedBoundaryContours) {
+        currentPosition = transitionToCutEntry(
+          allMoves,
+          currentPosition,
+          contourStartPoint(contour, level.z),
+          resolved.safeZ,
+          resolved.maxLinkDistance,
+          safeLinkCheck,
+          entryPolicy,
+        )
+        const cutMoves = toClosedCutMoves(contour, level.z)
+        allMoves.push(...cutMoves)
+        currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+      }
+
       const orderedSegments = orderOpenSegmentsGreedy(
         segments,
         currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,

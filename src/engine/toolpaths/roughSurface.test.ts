@@ -991,6 +991,48 @@ function generateForPattern(pattern: PocketPattern): PocketToolpathResult {
   return generateRoughSurfaceToolpath(project, { ...operation, pocketPattern: pattern })
 }
 
+/**
+ * Closed cut loops across the whole stream.
+ *
+ * Tracks contiguous same-Z cut runs; when a run returns to an earlier point of
+ * itself that span is one closed loop (loops stitched by at-Z links are still
+ * counted individually). Raster scanlines are open serpentine chains and never
+ * close, so on a parallel stream this counts exactly what the level-boundary
+ * contour pass emits.
+ */
+function countClosedCutLoops(moves: ToolpathMove[]): number {
+  const eps = 1e-6
+  const sameXY = (a: { x: number; y: number }, b: { x: number; y: number }): boolean =>
+    Math.abs(a.x - b.x) <= eps && Math.abs(a.y - b.y) <= eps
+
+  let loops = 0
+  let runZ: number | null = null
+  let run: Array<{ x: number; y: number }> = []
+  for (const move of moves) {
+    if (move.kind !== 'cut' || Math.abs(move.from.z - move.to.z) > eps) {
+      runZ = null
+      run = []
+      continue
+    }
+    if (runZ === null || Math.abs(move.from.z - runZ) > eps) {
+      runZ = move.from.z
+      run = []
+    }
+    run.push({ x: move.from.x, y: move.from.y })
+    run.push({ x: move.to.x, y: move.to.y })
+    const here = run[run.length - 1]
+    for (let index = 0; index < run.length - 1; index += 1) {
+      if (sameXY(run[index], here)) {
+        loops += 1
+        // Drop up to the loop start so later stitched loops still count.
+        run = run.slice(index)
+        break
+      }
+    }
+  }
+  return loops
+}
+
 function testRoughSurfaceGenerationMatrix(): void {
   console.log('Testing rough_surface generation matrix over the offered patterns...')
   const offered = offeredPocketPatterns('rough_surface')
@@ -1029,6 +1071,20 @@ function testRoughSurfaceGenerationMatrix(): void {
   assert(
     JSON.stringify(parallel.moves) !== JSON.stringify(offset.moves),
     'parallel fell through to the offset stream',
+  )
+
+  // The raster branch must cut the level boundary before its segments, as the
+  // pocket and surface_clean raster branches do: scanlines alone leave a
+  // scalloped ridge of standing stock at the silhouette on every level, while
+  // the offset pattern's outermost ring is that same contour. One closed loop
+  // per level is the signature only the boundary pass leaves — open scanlines
+  // never close, and the detector above would count zero without it.
+  const parallelLevels = distinctCutZs(parallel.moves).length
+  const parallelLoops = countClosedCutLoops(parallel.moves)
+  assert(
+    parallelLoops >= parallelLevels,
+    `parallel emitted ${parallelLoops} closed boundary loops across ${parallelLevels} levels `
+      + '— the level-boundary contour pass is missing',
   )
 }
 
