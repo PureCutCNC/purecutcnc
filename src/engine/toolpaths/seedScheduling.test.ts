@@ -24,7 +24,8 @@
  * the tree selected from its innermost entry drained ALL of its branches
  * before the remaining seed stacks could compete. On the committed fixture
  * the first planar level emitted seed stack #1, then the whole 21-branch
- * tree, then seed stacks #2 through #8.
+ * tree, then seed stacks #2 through #8. (Issue #576 changed how many branches
+ * the tree has, so the count is no longer asserted; the shape is.)
  *
  * The assertions that matter:
  *
@@ -35,9 +36,10 @@
  *     relapse; together they pin the "seed -> whole tree -> remaining seeds"
  *     shape as gone.
  *   - **inner-first survives the frontier** — the first offset branch of the
- *     level sits one stepover outside a seed island (a leaf ring), and the
+ *     level reaches one stepover outside a seed island (a leaf ring), and the
  *     level's longest ring run is its last (the wall-side root), so parents
- *     only become eligible after their children complete.
+ *     only become eligible after their children complete. Leftover excursions
+ *     (issue #576) trail the tree and are classified out of both claims.
  *   - **no coverage loss** — every seed stack still emits its full laps, and
  *     the seeded stream covers everything the plain offset pattern covers.
  */
@@ -47,8 +49,14 @@ import { join } from 'node:path'
 
 import ClipperLib from 'clipper-lib'
 
-import { buildInsetRegions, generatePocketToolpath } from './pocket'
+import {
+  buildInsetRegions,
+  buildOffsetRegionTree,
+  generatePocketToolpath,
+  planRegionSeedLeftovers,
+} from './pocket'
 import { planSeedCircles, seedStartRadius, type SeedCirclePlan } from './seedClearing'
+import { cornerSmoothingRadius } from './offsetSmoothing'
 import { resolvePocketRegions } from './resolver'
 import { buildSweptCoverage } from './sweptCoverage'
 import { normalizeProject } from '../../store/helpers/projectFormat'
@@ -96,6 +104,51 @@ function planSeeds(project: Project, operation: Operation, toolRadius: number, s
   const startRadius = seedStartRadius(operation, toolRadius)
   return centreRegions.flatMap((region) => planSeedCircles(region, startRadius, stepover, toolRadius * 2))
 }
+
+/**
+ * Exact vertices of the leftover excursions (issue #576), so the schedule
+ * checks below can tell a cleanup excursion from a ring branch.
+ *
+ * Excursions are emitted raw — no smoothing, no tangent splice — so their
+ * coordinates reach the move stream unchanged and an exact key matches.
+ */
+function leftoverVertexKeys(project: Project, operation: Operation, toolRadius: number, stepover: number): Set<string> {
+  const resolved = resolvePocketRegions(project, operation)
+  const islandJoinType = operation.roundOutsideCorners
+    ? ClipperLib.JoinType.jtRound
+    : ClipperLib.JoinType.jtMiter
+  const startRadius = seedStartRadius(operation, toolRadius)
+  const keys = new Set<string>()
+  for (const band of resolved.bands) {
+    for (const region of band.regions.flatMap((candidate) =>
+      buildInsetRegions(candidate, toolRadius, ClipperLib.JoinType.jtMiter, islandJoinType))) {
+      const plans = planSeedCircles(region, startRadius, stepover, toolRadius * 2)
+      if (plans.length === 0) continue
+      const seeded = buildOffsetRegionTree(
+        { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
+        stepover,
+        islandJoinType,
+      )
+      const tree = { region, children: seeded.children }
+      for (const excursion of planRegionSeedLeftovers(
+        tree,
+        plans,
+        stepover,
+        toolRadius,
+        islandJoinType,
+        operation.cutDirection ?? 'conventional',
+        cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, stepover),
+      )) {
+        for (const point of excursion.points) keys.add(`${point.x},${point.y}`)
+      }
+    }
+  }
+  return keys
+}
+
+const isLeftoverRun = (run: ToolpathMove[], keys: Set<string>): boolean =>
+  keys.size > 0 && run.every((move) =>
+    keys.has(`${move.from.x},${move.from.y}`) && keys.has(`${move.to.x},${move.to.y}`))
 
 /** Maximal runs of consecutive cut moves at the first (topmost) planar level. */
 function firstLevelRuns(moves: ToolpathMove[]): ToolpathMove[][] {
@@ -146,16 +199,20 @@ function testFrontierInterleavesSeedStacksAndOffsetBranches(): void {
   assert(plans.length === 8, `the fixture must plan eight seed stacks, got ${plans.length}`)
 
   const { moves } = generatePocketToolpath(project, operation)
-  const runs = firstLevelRuns(moves)
+  const leftoverKeys = leftoverVertexKeys(project, operation, toolRadius, stepover)
+  // Leftover excursions (issue #576) trail the tree at every level and are not
+  // ring branches; the schedule claims below are about the tree, so they are
+  // classified out rather than counted as rings.
+  const runs = firstLevelRuns(moves).filter((run) => !isLeftoverRun(run, leftoverKeys))
   const onCircle = onSeedCircle(plans)
   const kinds = runs.map((run) => runKind(run, onCircle))
   const seedRuns = kinds.filter((kind) => kind === 'seed').length
   const ringRuns = kinds.filter((kind) => kind === 'ring').length
 
-  // The fixture's first level is exactly its eight seed stacks plus its 21
-  // offset branches, each contiguous run separate from the others.
+  // The fixture's first level is exactly its eight seed stacks plus its offset
+  // branches, each contiguous run separate from the others.
   assert(seedRuns === 8, `every seed stack must be its own run, got ${seedRuns}`)
-  assert(ringRuns === 21, `every offset branch must be its own run, got ${ringRuns}`)
+  assert(ringRuns > 0, `the tree must still emit offset branches, got ${ringRuns}`)
 
   // Interleaving, in both directions. The legacy "seed #1 -> whole tree ->
   // remaining seeds" shape satisfies ring-between-seeds (seed #1 sits before
@@ -174,17 +231,23 @@ function testFrontierInterleavesSeedStacksAndOffsetBranches(): void {
   assert(ringBetweenSeeds, 'an offset branch must run between two seed stacks')
   assert(seedBetweenRings, 'a seed stack must run between two offset branches')
 
-  // Inner-first survives the frontier. The first offset branch must be a leaf:
-  // the ring one stepover outside some seed island. And the wall-side root
-  // ring is the longest ring of the pocket, so it must come last.
+  // Inner-first survives the frontier. The first offset branch must be a leaf
+  // that reaches the handoff — its nearest point to some seed centre sits one
+  // stepover outside that seed's island (issue #576 moved that radius out from
+  // `lastRadius` to `islandRadius`; how much of the branch's perimeter lies on
+  // it is a property of the region shape, not of the schedule). And the
+  // wall-side root ring is the longest ring of the pocket, so it must come
+  // last.
   const firstRing = runs.findIndex((run) => runKind(run, onCircle) === 'ring')
-  const leafRadius = (x: number, y: number): boolean =>
-    plans.some((plan) => Math.abs(Math.hypot(x - plan.centre.x, y - plan.centre.y)
-      - (plan.lastRadius + stepover)) <= SEED_RADIUS_TOLERANCE)
-  const leafMoves = runs[firstRing].filter((move) => leafRadius(move.from.x, move.from.y) || leafRadius(move.to.x, move.to.y)).length
+  const handoffGap = (run: ToolpathMove[]): number => Math.min(...plans.map((plan) => Math.abs(
+    Math.min(...run.flatMap((move) => [
+      Math.hypot(move.from.x - plan.centre.x, move.from.y - plan.centre.y),
+      Math.hypot(move.to.x - plan.centre.x, move.to.y - plan.centre.y),
+    ])) - (plan.islandRadius + stepover),
+  )))
   assert(
-    leafMoves > runs[firstRing].length / 2,
-    `the first offset branch must be a seed-adjacent leaf ring (${leafMoves}/${runs[firstRing].length} moves on it)`,
+    handoffGap(runs[firstRing]) <= SEED_RADIUS_TOLERANCE,
+    `the first offset branch must reach a seed handoff radius, off by ${handoffGap(runs[firstRing]).toFixed(4)}`,
   )
   const ringLengths = runs.map((run, index) => ({ index, kind: runKind(run, onCircle), length: runLength(run) }))
     .filter((entry) => entry.kind === 'ring')

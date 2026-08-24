@@ -33,9 +33,11 @@
 //   - The regions handed to the ring builder are already in TOOL-CENTRE space
 //     (`initialInset = toolRadius + radialLeave` in `generateRoughBandMoves`),
 //     and `buildInsetRegions` expands islands by exactly `stepover` per
-//     recursion. Injecting the last circle as-is therefore puts the first
-//     phase-2 ring at `lastRadius + stepover` — correct radial engagement with
-//     no radius conversion anywhere.
+//     recursion, so the injected island needs no radius conversion: the first
+//     phase-2 ring lands one stepover outside whatever radius it is given.
+//     Which radius that is, is `seedIslandRadius`'s decision (issue #576) —
+//     the centreline under-states what the stack cleared by a tool radius, and
+//     handing the tree that under-statement is what produced the graze rings.
 //   - `findLargestClearanceCircle` measures against `[outer, ...islands]` and
 //     is refined by branch-and-bound until the bound closes, so it UNDER-
 //     reports `R_max` and never over-reports. One query yields the whole
@@ -112,10 +114,15 @@ export interface SeedCirclePlan {
   maxRadius: number
   /** Tool-centre radii to cut, innermost first. Always at least one entry. */
   radii: number[]
-  /** Radius of the last circle — the one injected as an island. */
+  /** Radius of the last circle — the outermost lap the seed stack cuts. */
   lastRadius: number
   /**
-   * The last circle as a closed contour, wound like a region outer so
+   * Radius of the virtual island, `>= lastRadius` (issue #576). This is the
+   * exclusion the ring tree offsets around, not a lap anybody cuts.
+   */
+  islandRadius: number
+  /**
+   * The virtual island as a closed contour, wound like a region outer so
    * `buildInsetRegions` treats it exactly as it treats a real island.
    */
   island: Point[]
@@ -170,6 +177,62 @@ export function seedCircleContour(centre: Point, radius: number, arcTolerance: n
 }
 
 /**
+ * Radius of the virtual island the ring tree offsets around (issue #576).
+ *
+ * The seed stack's last lap is a CENTRELINE at `lastRadius`; the cutter
+ * following it removes stock out to `lastRadius + toolRadius`. Injecting the
+ * centreline itself as the island therefore under-states what phase 1 emptied
+ * by a whole tool radius, and the ring tree spends its innermost levels
+ * threading slivers through metal that is already gone — 7-18% of the seeded
+ * stream's cut length removes nothing measurable.
+ *
+ * Extending the island to the cleared boundary less the radial leave puts the
+ * first ring where there is still stock. The epsilon is deliberate and it is
+ * tied to the chord tolerance rather than picked: the island is a tessellated
+ * polygon whose chords already sit up to one sagitta INSIDE the true circle,
+ * so subtracting the same tolerance is what makes "err toward a hairline air
+ * pass, never a hairline uncut ridge" a property of the emitted geometry
+ * instead of of the ideal circle.
+ *
+ * The island is hard for offset generation and soft for cleanup entry: its
+ * interior is stock the seed stack already removed, so `seedLeftover.ts` may
+ * plunge into it and cut back out. Nothing here forbids entering it.
+ *
+ * A radial leave at or beyond the tool radius clamps the extension to zero and
+ * reproduces the pre-#576 island exactly.
+ */
+export function seedIslandRadius(
+  lastRadius: number,
+  stepover: number,
+  toolRadius: number,
+  stockToLeaveRadial: number,
+): number {
+  const leave = Math.max(0, stockToLeaveRadial)
+  const epsilon = seedArcTolerance(stepover)
+  // Never extend past the point where the first ring outside the island stops
+  // overlapping what the stack swept. That ring's cutter reaches inward to
+  // `lastRadius + extension + stepover - toolRadius`, and the stack cleared to
+  // `lastRadius + toolRadius`, so an extension above `2*toolRadius - stepover`
+  // opens a ridge all the way around the seed — one the probe then has to walk
+  // out in full, which on a coarse stepover costs more than the graze rings the
+  // extension removed. The cap only binds above a 50% stepover.
+  const extension = Math.min(toolRadius - leave, 2 * toolRadius - stepover) - epsilon
+  return lastRadius + Math.max(0, extension)
+}
+
+/**
+ * The pre-extension island — the last seed centreline itself.
+ *
+ * This is the "domain minus island BEFORE" half of the leftover probe: the
+ * tree built around it is the shipped behaviour, so every contour it holds is
+ * a legal tool-centre path, which is what lets an excursion be a subpath of
+ * one instead of newly synthesised geometry.
+ */
+export function seedBaselineIsland(plan: SeedCirclePlan, stepover: number): Point[] {
+  return seedCircleContour(plan.centre, plan.lastRadius, seedArcTolerance(stepover))
+}
+
+/**
  * How far a later area must stand off from what an earlier one emptied.
  *
  * `toolRadius` is what phase 1's last circle physically reached past its own
@@ -185,6 +248,13 @@ export function seedCircleContour(centre: Point, radius: number, arcTolerance: n
  * — below it, two circles far enough apart to need a ring always have room for
  * one. Charging the full separation at every stepover costs a few seeds on
  * fine ones and keeps a single rule.
+ *
+ * Extending the island (issue #576) does not weaken this. `seedIslandRadius`
+ * adds at most one tool radius, and the separation charged here is a tool
+ * radius PLUS two stepovers measured from the same `lastRadius`, so two
+ * EXTENDED islands are still at least two stepovers apart and still cannot
+ * meet. `seedScheduling.test.ts` pins that as an assertion rather than a
+ * comment.
  */
 function seedSeparation(stepover: number, toolRadius: number): number {
   return toolRadius + 2 * stepover
@@ -231,12 +301,17 @@ function seedExclusionPolygon(centre: Point, radius: number): Point[] {
  * soon as the largest remaining circle cannot hold even the first radius.
  * `MAX_SEED_AREAS` is a backstop against pathological tessellation, not the
  * expected exit.
+ *
+ * `stockToLeaveRadial` only ever reaches `seedIslandRadius`: the schedule
+ * itself is bounded by the inscribed radius of a region that already has the
+ * leave taken out of it, so the laps do not need it a second time.
  */
 export function planSeedCircles(
   region: ResolvedPocketRegion,
   startRadius: number,
   stepover: number,
   toolDiameter: number,
+  stockToLeaveRadial = 0,
 ): SeedCirclePlan[] {
   if (!(startRadius > 0) || !(stepover > 0) || !(toolDiameter > 0)) return []
 
@@ -270,12 +345,14 @@ export function planSeedCircles(
     const lastRadius = radii[radii.length - 1]
     if (!(lastRadius >= minRadius)) break
 
+    const islandRadius = seedIslandRadius(lastRadius, stepover, toolDiameter / 2, stockToLeaveRadial)
     plans.push({
       centre: { x: circle.center.x, y: circle.center.y },
       maxRadius: circle.radius,
       radii,
       lastRadius,
-      island: seedCircleContour(circle.center, lastRadius, arcTolerance),
+      islandRadius,
+      island: seedCircleContour(circle.center, islandRadius, arcTolerance),
     })
     consumed.push(seedExclusionPolygon(
       circle.center,

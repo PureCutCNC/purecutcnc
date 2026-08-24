@@ -50,6 +50,7 @@ import {
   buildPocketParallelSegments,
   buildRingPerimeterIndex,
   contourStartPoint,
+  cutSeedLeftoverExcursions,
   cutOffsetNodeRings,
   cutOffsetRegionNode,
   executeDifference,
@@ -60,6 +61,7 @@ import {
   orderClosedContoursGreedy,
   orderNodesGreedy,
   orderOpenSegmentsGreedy,
+  planRegionSeedLeftovers,
   polyTreeToRegions,
   retractToSafe,
   resolveBandBottomZ,
@@ -513,7 +515,7 @@ function generateRoughBandMoves(
   const seedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
   const regionTrees = centreRegions.map((region) => {
     const plans = seedStart > 0
-      ? planSeedCircles(region, seedStart, effectiveStepover, toolRadius * 2)
+      ? planSeedCircles(region, seedStart, effectiveStepover, toolRadius * 2, radialLeave)
       : []
     if (plans.length === 0) return buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
 
@@ -531,6 +533,19 @@ function generateRoughBandMoves(
     seedPlans.set(tree, plans)
     return tree
   })
+  // Leftover excursions (issue #576): the enlarged island is what deletes the
+  // graze rings, and it is also what can strand a sliver where it merges with
+  // a wall or a real island. Planned once per band and cut after the rings at
+  // every level.
+  const seedLeftovers = regionTrees.flatMap((tree) => planRegionSeedLeftovers(
+    tree,
+    seedPlans.get(tree) ?? [],
+    effectiveStepover,
+    toolRadius,
+    islandJoinType,
+    direction,
+    smoothRadius,
+  ))
   // Tangential links (issue #545): replace the straight ring-to-ring link
   // with a tangent S-curve, gated by the operation field (absent = today's
   // straight links). The domain is the band's tool-centre region — the tree
@@ -731,6 +746,17 @@ function generateRoughBandMoves(
       }
     }
 
+    if (seedLeftovers.length > 0) {
+      currentPosition = cutSeedLeftoverExcursions(
+        moves,
+        seedLeftovers,
+        z,
+        safeZ,
+        currentPosition,
+        levelEntryPolicy,
+      )
+    }
+
     const levelEndIndex = moves.length
     const engagementCache = ringPerimeters !== null
       ? buildOffsetBandEngagementClassification(moves, levelStartIndex, levelEndIndex, { toolRadius, ringPerimeters })
@@ -849,7 +875,7 @@ function generateFinishBandMoves(
       .flatMap((region) => buildInsetRegions(region, floorStepover, ClipperLib.JoinType.jtMiter, floorIslandJoin))
       .flatMap((region) => {
         const plans = floorSeedStart > 0
-          ? planSeedCircles(region, floorSeedStart, floorStepover, toolRadius * 2)
+          ? planSeedCircles(region, floorSeedStart, floorStepover, toolRadius * 2, radialLeave)
           : []
         if (plans.length === 0) return [buildOffsetRegionTree(region, floorStepover, floorIslandJoin)]
         const seeded = buildOffsetRegionTree(
@@ -867,6 +893,17 @@ function generateFinishBandMoves(
         return [tree]
       })
     : []
+  // Leftover excursions on the floor tree (issue #576), same construction as
+  // the rough band's.
+  const floorSeedLeftovers = floorTrees.flatMap((tree) => planRegionSeedLeftovers(
+    tree,
+    floorSeedPlans.get(tree) ?? [],
+    floorStepover,
+    toolRadius,
+    floorIslandJoin,
+    direction,
+    floorSmoothRadius,
+  ))
   // Tangential link junctions for the offset floor rings; the domain is the
   // wall-finish tool-centre path (finishRegions), which is the hard boundary a
   // floor-ring link may sweep up to.
@@ -1041,6 +1078,17 @@ function generateFinishBandMoves(
           }
         }
       }
+    }
+
+    if (floorSeedLeftovers.length > 0) {
+      currentPosition = cutSeedLeftoverExcursions(
+        moves,
+        floorSeedLeftovers,
+        z,
+        safeZ,
+        currentPosition,
+        entryPolicy,
+      )
     }
 
     const orderedFloorSegments = orderOpenSegmentsGreedy(

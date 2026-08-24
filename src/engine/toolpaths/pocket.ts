@@ -69,10 +69,12 @@ import {
 import { buildWallCornerCleanupContour } from './wallCornerCleanup'
 import {
   planSeedCircles,
+  seedBaselineIsland,
   seedCircleContours,
   seedStartRadius,
   type SeedCirclePlan,
 } from './seedClearing'
+import { planSeedLeftovers, type SeedLeftoverExcursion } from './seedLeftover'
 import {
   EngagementFeedQuantizer,
   EngagementTelemetryAccumulator,
@@ -2749,6 +2751,164 @@ export function toOpenCutMoves(points: Point[], z: number): ToolpathMove[] {
   return moves
 }
 
+/**
+ * Every tool centreline an offset tree will cut: each node's outer ring plus
+ * its island loops, root first.
+ *
+ * `smoothing` matters when the answer feeds a coverage question. With rounding
+ * on, the emitter cuts each outer corner short, so the RAW contour claims a
+ * corner tip the tool never sweeps — six samples' worth on a rounded 70x50
+ * pocket, enough for the leftover probe to skip an excursion that was needed.
+ * Passing the same smoothing the emitter uses removes the over-claim; the
+ * wall-corner cleanup loops it still leaves out only ever ADD coverage, so the
+ * result stays on the conservative side. Islands are emitted as-is either way
+ * (`cutOffsetNodeRings`), so they are never smoothed here.
+ */
+export interface TreeContourSmoothing {
+  direction: CutDirection
+  smoothRadius: number | null | undefined
+  toolRadius: number | undefined
+}
+
+export function treeCutContours(node: OffsetRegionNode, smoothing?: TreeContourSmoothing): Point[][] {
+  const contours: Point[][] = []
+  const visit = (current: OffsetRegionNode, parent: OffsetRegionNode | undefined, depth: number): void => {
+    const prepared = smoothing
+      ? prepareOffsetOuterContour(
+        current, smoothing.direction, smoothing.smoothRadius, depth, undefined, smoothing.toolRadius, parent,
+      )
+      : null
+    if (prepared) contours.push(prepared.points)
+    else if (current.region.outer.length >= 3) contours.push(current.region.outer)
+    for (const island of current.region.islands) {
+      if (island.length >= 3) contours.push(island)
+    }
+    for (const child of current.children) visit(child, current, depth + 1)
+  }
+  visit(node, undefined, 0)
+  return contours
+}
+
+/**
+ * The pre-extension tree's contours, in cut direction — the candidate paths
+ * the leftover probe (issue #576) trims into excursions.
+ *
+ * Built exactly the way the real tree is, down to stripping the root's seed
+ * islands, so any contour the extension did not move comes back identical and
+ * drops straight out of the probe against its own sweep.
+ */
+export function seedLeftoverCandidates(
+  region: ResolvedPocketRegion,
+  plans: readonly SeedCirclePlan[],
+  stepover: number,
+  islandJoinType: number,
+  direction: CutDirection,
+): Point[][] {
+  const baseline = buildOffsetRegionTree(
+    {
+      ...region,
+      islands: [...region.islands, ...plans.map((plan) => seedBaselineIsland(plan, stepover))],
+    },
+    stepover,
+    islandJoinType,
+  )
+  // Deepest first. The stock an enlarged island strands sits between the seed
+  // disc and the innermost ring the extended tree still emits, so the deepest
+  // candidates are the ones that hug it; probing them first lets them claim it
+  // with the shortest paths and leaves the long outer candidates fully covered.
+  return treeCutContours({ region, children: baseline.children })
+    .reverse()
+    .map((contour) => applyContourDirection([contour], direction)[0])
+    .filter((contour) => contour !== undefined)
+}
+
+/**
+ * Plan the leftover excursions for one seeded region, or nothing when no seed
+ * stack got an extension.
+ *
+ * The gate is the extension itself: with `stockToLeaveRadial` at or beyond the
+ * tool radius every island is the pre-#576 one, the tree is the shipped tree,
+ * and there is nothing to recover — so the baseline tree is never built.
+ */
+export function planRegionSeedLeftovers(
+  tree: OffsetRegionNode,
+  plans: readonly SeedCirclePlan[],
+  stepover: number,
+  toolRadius: number,
+  islandJoinType: number,
+  direction: CutDirection,
+  smoothRadius?: number,
+): SeedLeftoverExcursion[] {
+  if (plans.length === 0) return []
+  if (!plans.some((plan) => plan.islandRadius > plan.lastRadius)) return []
+  return planSeedLeftovers(
+    seedLeftoverCandidates(tree.region, plans, stepover, islandJoinType, direction),
+    [
+      ...plans.flatMap((plan) => seedCircleContours(plan, stepover)),
+      ...treeCutContours(tree, { direction, smoothRadius, toolRadius }),
+    ],
+    toolRadius,
+  )
+}
+
+/**
+ * Emit the leftover excursions after a level's rings, nearest first.
+ *
+ * Each open excursion begins on a vertex whose swept disc is already empty, so
+ * it travels at safe Z and drops straight in — the entry policy is spent on
+ * work that cuts virgin stock, not on re-entering a cleared pocket. A closed
+ * excursion is the case where the whole candidate loop was needed and no such
+ * start exists; that one goes through the ordinary entry.
+ *
+ * The plain plunge is safe only because this runs AFTER the level's rings and
+ * seed stacks. "Already empty" is measured against the envelope those cut at
+ * THIS Z, so the plunge drops through the slot they just left rather than a
+ * stepdown of stock. Move this call earlier in the level and that stops being
+ * true.
+ */
+export function cutSeedLeftoverExcursions(
+  moves: ToolpathMove[],
+  excursions: readonly SeedLeftoverExcursion[],
+  z: number,
+  safeZ: number,
+  from: ToolpathPoint | null,
+  entryPolicy?: EntryPolicy,
+): ToolpathPoint | null {
+  let position = from
+  const remaining = [...excursions]
+  while (remaining.length > 0) {
+    let bestIndex = 0
+    if (position !== null) {
+      let bestDistance = Number.POSITIVE_INFINITY
+      for (let index = 0; index < remaining.length; index += 1) {
+        const start = remaining[index].points[0]
+        if (!start) continue
+        const distance = xyDistanceSquared(position, start)
+        if (distance < bestDistance) {
+          bestIndex = index
+          bestDistance = distance
+        }
+      }
+    }
+    const [excursion] = remaining.splice(bestIndex, 1)
+    if (excursion.points.length < 2) continue
+    position = retractToSafe(moves, position, safeZ)
+    position = pushRapidAndPlunge(
+      moves,
+      position,
+      contourStartPoint(excursion.points, z),
+      safeZ,
+      excursion.closed ? entryPolicy : undefined,
+    )
+    const cutMoves = excursion.closed
+      ? toClosedCutMoves(excursion.points, z)
+      : toOpenCutMoves(excursion.points, z)
+    moves.push(...cutMoves)
+    position = cutMoves.at(-1)?.to ?? position
+  }
+  return position
+}
+
 function generateRoughBandMoves(
   band: ResolvedPocketBand,
   operation: Operation,
@@ -2899,7 +3059,7 @@ function generateRoughBandMoves(
   const seedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
   const regionTrees = centreRegions.map((region) => {
     const plans = seedStart > 0
-      ? planSeedCircles(region, seedStart, effectiveStepover, toolRadius * 2)
+      ? planSeedCircles(region, seedStart, effectiveStepover, toolRadius * 2, radialLeave)
       : []
     if (plans.length === 0) return buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
 
@@ -2918,6 +3078,20 @@ function generateRoughBandMoves(
     return tree
   })
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
+  // Leftover excursions (issue #576): the enlarged island is what deletes the
+  // graze rings, and it is also what can strand a sliver where it merges with
+  // a wall or a real island. Planned once per band — the ring tree is
+  // Z-independent, so the excursions are too — and cut after the rings at
+  // every level.
+  const seedLeftovers = regionTrees.flatMap((tree) => planRegionSeedLeftovers(
+    tree,
+    seedPlans.get(tree) ?? [],
+    effectiveStepover,
+    toolRadius,
+    islandJoinType,
+    direction,
+    smoothRadius,
+  ))
   // Tangential links (issue #545): replace the straight ring-to-ring link
   // with a tangent S-curve, gated by the operation field (absent = today's
   // straight links). The domain is the band's tool-centre region — the tree
@@ -3136,6 +3310,17 @@ function generateRoughBandMoves(
       }
     }
 
+    if (seedLeftovers.length > 0) {
+      currentPosition = cutSeedLeftoverExcursions(
+        moves,
+        seedLeftovers,
+        z,
+        safeZ,
+        currentPosition,
+        levelEntryPolicy,
+      )
+    }
+
     const levelEndIndex = moves.length
     let engagementCache: OffsetBandEngagementClassification | null = null
     if (ringPerimeters !== null) {
@@ -3273,7 +3458,7 @@ function generateFinishBandMoves(
       .flatMap((region) => buildInsetRegions(region, floorStepover, ClipperLib.JoinType.jtMiter, floorIslandJoin))
       .flatMap((region) => {
         const plans = floorSeedStart > 0
-          ? planSeedCircles(region, floorSeedStart, floorStepover, toolRadius * 2)
+          ? planSeedCircles(region, floorSeedStart, floorStepover, toolRadius * 2, radialLeave)
           : []
         if (plans.length === 0) return [buildOffsetRegionTree(region, floorStepover, floorIslandJoin)]
         const seeded = buildOffsetRegionTree(
@@ -3286,6 +3471,17 @@ function generateFinishBandMoves(
         return [tree]
       })
     : []
+  // Leftover excursions on the floor tree (issue #576), same construction as
+  // the rough band's.
+  const floorSeedLeftovers = floorTrees.flatMap((tree) => planRegionSeedLeftovers(
+    tree,
+    floorSeedPlans.get(tree) ?? [],
+    floorStepover,
+    toolRadius,
+    floorIslandJoin,
+    direction,
+    floorSmoothRadius,
+  ))
   // Tangential link junctions for the offset floor rings; the domain is the
   // wall-finish tool-centre path (finishRegions), which is the hard boundary
   // a floor-ring link may sweep up to.
@@ -3465,6 +3661,17 @@ function generateFinishBandMoves(
           }
         }
       }
+    }
+
+    if (floorSeedLeftovers.length > 0) {
+      currentPosition = cutSeedLeftoverExcursions(
+        moves,
+        floorSeedLeftovers,
+        z,
+        safeZ,
+        currentPosition,
+        entryPolicy,
+      )
     }
 
     const orderedFloorSegments = orderOpenSegmentsGreedy(
