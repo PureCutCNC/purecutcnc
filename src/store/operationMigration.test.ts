@@ -32,7 +32,7 @@ import {
   type SketchFeature,
   type Tool,
 } from '../types/project'
-import { normalizeProject, type ProjectFormatInput } from './helpers/projectFormat'
+import { decodeProjectFormat, normalizeProject, type ProjectFormatInput } from './helpers/projectFormat'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -324,6 +324,56 @@ test('3.1 files already carry distances and are never re-migrated', () => {
   assert(Math.abs((op.retractHeight ?? NaN) - 2) < 1e-9, `a 3.1 distance must survive untouched, got ${op.retractHeight}`)
   const reloaded = findDrillOp(normalizeProject(JSON.parse(JSON.stringify(once))))
   assert(Math.abs((reloaded.retractHeight ?? NaN) - 2) < 1e-9, 'save/reload must be stable for the field')
+})
+
+/** A modern-envelope .camj body with one drilling operation, as a real 3.0/3.1
+ *  file would carry it. Built by normalizing once (decodeProjectFormat rejects
+ *  legacy baked rows outright), then re-stamping the claimed version and — when
+ *  given — the raw absolute retractHeight the file "read". */
+function drillingFile(options: { retractHeight?: number; version?: '3.0' | '3.1' }): ProjectFormatInput {
+  const base = normalizeProject(drillingProject({
+    omitRetractHeight: true,
+    extraFeatures: [drillableFeature('hole', 20)],
+    featureIds: ['hole'],
+  }))
+  const stored = findDrillOp(base)
+  const fileOp: typeof stored = { ...stored }
+  if (options.retractHeight === undefined) {
+    // The first normalize injected the relative default; a real file with no
+    // stored value simply lacks the key, so remove it rather than let decode
+    // mistake the injected number for an absolute Z.
+    delete fileOp.retractHeight
+  } else {
+    fileOp.retractHeight = options.retractHeight
+  }
+  return {
+    ...base,
+    version: options.version ?? '3.0',
+    operations: [fileOp],
+  }
+}
+
+test('decode reports how many retract heights were re-expressed (#599)', () => {
+  // The load warning keys on this count: a 3.0 file whose stored absolute Z
+  // actually moves must surface the conversion instead of silently changing
+  // what the number in the panel means.
+  const decoded = decodeProjectFormat(drillingFile({ retractHeight: 22 }))
+  assert(decoded.retractHeightsReexpressed === 1, `expected 1 rewrite, got ${decoded.retractHeightsReexpressed}`)
+  const op = findDrillOp(decoded.project)
+  assert(Math.abs((op.retractHeight ?? NaN) - 2) < 1e-9, `expected offset 2 alongside the report, got ${op.retractHeight}`)
+})
+
+test('no re-expression is reported when no stored value moved', () => {
+  // Without a file-read value the migration deliberately skips the position —
+  // normalizeOperation's injected relative default is not a rewrite.
+  const decoded = decodeProjectFormat(drillingFile({}))
+  assert(decoded.retractHeightsReexpressed === 0, `expected 0 rewrites, got ${decoded.retractHeightsReexpressed}`)
+})
+
+test('3.1 files report zero re-expressions', () => {
+  const decoded = decodeProjectFormat(drillingFile({ retractHeight: 2, version: '3.1' }))
+  assert(decoded.retractHeightsReexpressed === 0, `expected 0 rewrites, got ${decoded.retractHeightsReexpressed}`)
+  assert(findDrillOp(decoded.project).retractHeight === 2, 'a 3.1 distance must survive untouched')
 })
 
 console.log(`\noperationMigration.test.ts: ${passed} passed, ${failed} failed`)

@@ -313,6 +313,9 @@ export function createProjectLifecycleSlice(
           migratedMachineLibrary
             ? 'Machine definitions moved to the application library. This project now stores only its selected machine; any custom machines it carried were added to My Machines. The original file is unchanged until you save.'
             : null,
+          decoded.retractHeightsReexpressed > 0
+            ? `${decoded.retractHeightsReexpressed === 1 ? 'One drilling retract height was' : `${decoded.retractHeightsReexpressed} drilling retract heights were`} re-expressed relative to the material surface to match the current file format (issue #481). The original file is unchanged until you save.`
+            : null,
           machineWarning,
         ),
         pendingAdd: null,
