@@ -43,7 +43,7 @@
 import type { camEn } from '../../i18n/locales/en/cam'
 import type { EntryStrategy, Operation, OperationKind } from '../../types/project'
 import { isTrochoidalCarve, isTrochoidalEdgeRoughing } from '../../types/project'
-import { clearingControlApplies } from '../../engine/toolpaths/clearingControls'
+import { clearingControlApplies, type ClearingControl } from '../../engine/toolpaths/clearingControls'
 import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
 import type { OperationParamRefKind } from './operationParamRefData'
 
@@ -122,11 +122,13 @@ function isWaterlineFinish(operation: Operation): boolean {
   return operation.kind === 'finish_surface' && operation.pocketPattern === 'waterline'
 }
 
-/** Pocket feed reduction applies wherever the cutter can end up fully engaged.
- *  Which kinds offer it at all is CLEARING_CONTROL_SUPPORT's call (#616); the
- *  pass/floor half here is where full engagement can actually happen. */
-function cutsSlots(operation: Operation): boolean {
-  return clearingControlApplies(operation.kind, 'slotFeed')
+/** Feed reduction applies wherever the cutter can end up fully engaged.
+ *  Each control reads its own CLEARING_CONTROL_SUPPORT cell (#616); this
+ *  pass/floor half is where full engagement can actually happen. One shared
+ *  cell for both rows would let #619 flip slotFeed and silently drag
+ *  engagementMode along with it. */
+function feedReductionApplies(operation: Operation, control: ClearingControl): boolean {
+  return clearingControlApplies(operation.kind, control)
     && (operation.pass === 'rough' || (operation.pass === 'finish' && operation.finishFloor))
 }
 
@@ -345,8 +347,8 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   //   above it is applied, so splitting them reads as two unrelated settings.
   { id: 'feed', group: 'feeds', paramRef: 'feed', appliesTo: always },
   { id: 'plungeFeed', group: 'feeds', paramRef: 'plungeFeed', appliesTo: always },
-  { id: 'slotFeed', group: 'feeds', paramRef: 'slotFeed', appliesTo: cutsSlots },
-  { id: 'engagementMode', group: 'feeds', paramRef: 'engagementMode', appliesTo: cutsSlots },
+  { id: 'slotFeed', group: 'feeds', paramRef: 'slotFeed', appliesTo: (operation) => feedReductionApplies(operation, 'slotFeed') },
+  { id: 'engagementMode', group: 'feeds', paramRef: 'engagementMode', appliesTo: (operation) => feedReductionApplies(operation, 'engagementMode') },
   { id: 'rpm', group: 'feeds', paramRef: 'rpm', appliesTo: always },
   // ── Strategy — how the cutter covers the material.
   {

@@ -93,13 +93,13 @@ function machiningOrderPending(kind: string, reachable: string): string {
     + ' The stored feature_first value ships inside saved files, so switching the control on rewrites their output.'
 }
 
-// Wall-corner cleanup repairs the coverage a rounded ring loses against a wall
-// something seats against -- the owner's corner-relief reasoning, scoped to
-// rounding rather than to relief excursions.
+// Undecided, not settled: #614's matrix deliberately leaves cleanWallCorners
+// out (it is gated on rounding being enabled), so no owner call exists for the
+// model-sliced kinds. The observation below stands until one lands.
 const WALL_CLEANUP_MODEL_SLICED =
-  'wall-corner cleanup repairs the coverage a rounded ring loses against a designed pocket wall '
-  + 'a mating part seats into; these kinds\u2019 level boundaries are sliced model silhouettes, '
-  + 'and no decision extends rounding cleanup to them.'
+  'undecided: the #614 matrix deliberately excludes this control (it is gated on rounding being enabled), '
+  + 'so no owner call exists for these kinds yet. Wall-corner cleanup repairs the coverage a rounded ring loses '
+  + 'against a designed pocket wall a mating part seats into; these kinds\u2019 level boundaries are sliced model silhouettes.'
 
 export const CLEARING_CONTROL_SUPPORT: Readonly<Record<OperationKind, ClearingKindSupport>> = {
   pocket: {
