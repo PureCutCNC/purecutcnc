@@ -55,6 +55,7 @@ import { generatePocketToolpath } from './pocket'
 import { generateSurfaceCleanToolpath } from './surface'
 import { generateFinishSurfaceToolpath } from './finishSurface'
 import { generateFinishSurfaceCleanupToolpath } from './finishSurfaceCleanup'
+import { generateRoughSurfaceToolpath } from './roughSurface'
 import type { PocketToolpathResult } from './types'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -268,6 +269,14 @@ function generateFloor(kind: OperationKind, pattern: PocketPattern): PocketToolp
       finishFloor: true,
     })
   }
+  if (kind === 'rough_surface') {
+    // Roughing is model-aware with no wall/floor split; the whole pass is the
+    // level clearing. The stored op in this fixture keeps every other setting.
+    const project = loadFixture('model-in-pocket.camj')
+    const operation = project.operations.find((candidate) => candidate.kind === 'rough_surface')
+    assert(operation, 'expected a rough_surface operation in model-in-pocket.camj')
+    return generateRoughSurfaceToolpath(project, { ...operation, pocketPattern: pattern })
+  }
   throw new Error(`no fixture for pattern-taking kind ${kind}`)
 }
 
@@ -312,6 +321,15 @@ function testTangentLinkApplicability(): void {
   // Kinds with no clearing pattern never link.
   for (const kind of ['drilling', 'v_carve', 'follow_line', 'edge_route_inside'] as const) {
     assert(!usesTangentLinks(kind, 'offset'), `${kind} does not clear with rings`)
+  }
+  // rough_surface joins the clearing set (#618) without S-links: its per-level
+  // safeLinkCheck gate is the only link protection it has, and no stored
+  // pattern may render the roundLinkCorners checkbox for it.
+  for (const pattern of ALL_PATTERNS) {
+    assert(
+      !usesTangentLinks('rough_surface', pattern),
+      `rough_surface ${pattern} must not link — the control stays out of scope for #618`,
+    )
   }
 }
 

@@ -25,7 +25,7 @@ import type { Units } from '../../utils/units'
 import type { NormalizedTool, ToolpathResult } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
 import { countersinkTipDepth } from '../toolpaths/drilling'
-import { usesTangentLinks } from '../toolpaths/pocketPatterns'
+import { takesPocketPattern, usesTangentLinks } from '../toolpaths/pocketPatterns'
 import { clearingControlApplies } from '../toolpaths/clearingControls'
 import type { OperationBookletInput, OperationBookletReport, OperationBookletRow } from './types'
 
@@ -337,7 +337,12 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
     rows.push({ label: translate('booklet.label.cornerRelief'), value: cornerReliefLabel(cornerRelief) })
   }
 
-  if (operation.kind === 'pocket' || operation.kind === 'surface_clean' || operation.kind === 'finish_surface' || operation.kind === 'finish_surface_cleanup') {
+  // The pattern and raster-angle rows print for every kind that renders the
+  // pattern control (#618). The inline four-kind list this replaces was an
+  // exact duplicate of takesPocketPattern that predated both pattern issues;
+  // rough_surface's absence from it would have printed a pattern-driven
+  // operation with no pattern on its sheet.
+  if (takesPocketPattern(operation.kind)) {
     rows.push(
       { label: translate('booklet.label.pattern'), value: operation.pocketPattern },
       { label: translate('booklet.label.pocketAngle'), value: `${formatNumber(operation.pocketAngle, 2)} deg` },

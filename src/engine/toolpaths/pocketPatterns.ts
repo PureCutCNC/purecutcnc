@@ -71,9 +71,10 @@ export interface OperationPatternSupport {
 
 /**
  * The 2.5D clearing set: concentric offset rings, the same rings preceded by a
- * seed-circle stack, or a parallel raster. Shared by `pocket`, `surface_clean`
- * and `finish_surface_cleanup`, whose stored `waterline` predates the pattern
- * being 3D-finishing-only and has always resolved to the rings.
+ * seed-circle stack, or a parallel raster. Shared by `pocket`, `surface_clean`,
+ * `rough_surface` (issue #618) and `finish_surface_cleanup`, whose stored
+ * `waterline` predates the pattern being 3D-finishing-only and has always
+ * resolved to the rings.
  */
 const CLEARING_PATTERNS: OperationPatternSupport = {
   offered: ['offset', 'seeded_offset', 'parallel'],
@@ -115,7 +116,13 @@ export const OPERATION_PATTERN_SUPPORT: Readonly<Record<OperationKind, Operation
   v_carve_medial: null,
   edge_route_inside: null,
   edge_route_outside: null,
-  rough_surface: null,
+  // Roughing clears area a level at a time (issue #614 measured 0% sloped cuts
+  // on both committed fixtures) with the same ResolvedPocketRegion inputs the
+  // other clearing kinds raster and seed from, so it takes the 2.5D set. A
+  // stored `waterline` maps to the rings: the kind ignored `pocketPattern`
+  // entirely before this row existed and hard-coded the rings, so every saved
+  // project stays on the toolpath it already cuts.
+  rough_surface: CLEARING_PATTERNS,
   follow_line: null,
   drilling: null,
 }
