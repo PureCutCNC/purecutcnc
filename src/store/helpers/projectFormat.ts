@@ -78,7 +78,16 @@ export interface DecodedProjectFormat {
   project: Project
   sourceVersion: string | null
   convertedLegacy: boolean
+  /** Drilling retract-height values re-expressed absolute → relative by the
+   *  format-3.1 migration on this decode (#481/#599); 0 when nothing moved. */
+  retractHeightsReexpressed: number
   machineMigration: DecodedMachineMigration
+}
+
+/** Out-param for callers that need to know what {@link normalizeProject}'s
+ *  migrations rewrote, without widening its Project-returning signature. */
+export interface ProjectMigrationInfo {
+  retractHeightsReexpressed: number
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -342,15 +351,15 @@ function migrateRetractHeightToRelative(
   project: Project,
   sourceVersion: string | null,
   fileRetractPositions: ReadonlySet<number>,
-): Project {
+): { project: Project; rewritten: number } {
   if (sourceVersion !== null) {
     const [major, minor] = parseProjectVersion(sourceVersion)
-    if (major > 3 || (major === 3 && minor >= 1)) return project
+    if (major > 3 || (major === 3 && minor >= 1)) return { project, rewritten: 0 }
   }
   // A stock without a finite thickness has no meaningful surface. Leave
   // everything untouched rather than compute NaN offsets — NaN survives
   // Math.max(0, …) and would post as a literal Z NaN (issue #481 review).
-  if (!Number.isFinite(project.stock.thickness)) return project
+  if (!Number.isFinite(project.stock.thickness)) return { project, rewritten: 0 }
   const stockTop = project.stock.thickness
 
   // z_top is a DimensionRef — constraint-linked instances carry a key string,
@@ -375,7 +384,7 @@ function migrateRetractHeightToRelative(
     return Math.max(stockTop, top ?? stockTop)
   }
 
-  let changed = false
+  let rewritten = 0
   const operations = project.operations.map((operation, index) => {
     if (!fileRetractPositions.has(index)) return operation
     if (typeof operation.retractHeight !== 'number' || !Number.isFinite(operation.retractHeight)) return operation
@@ -383,10 +392,10 @@ function migrateRetractHeightToRelative(
     if (surface === null) return operation
     const next = Math.max(0, operation.retractHeight - surface)
     if (next === operation.retractHeight) return operation
-    changed = true
+    rewritten += 1
     return { ...operation, retractHeight: next }
   })
-  return changed ? { ...project, operations } : project
+  return rewritten > 0 ? { project: { ...project, operations }, rewritten } : { project, rewritten: 0 }
 }
 
 /** Decode 1.0/2.0/2.1 baked rows or validate a lightweight 3.x project. */
@@ -404,10 +413,12 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
     throw new Error(`Project format ${sourceVersion ?? '(missing)'} contains legacy baked feature geometry.`)
   }
   const machines = normalizeMachineDefinitions(input as unknown as Project)
+  const migrationInfo: ProjectMigrationInfo = { retractHeightsReexpressed: 0 }
   return {
-    project: normalizeProject(input),
+    project: normalizeProject(input, migrationInfo),
     sourceVersion,
     convertedLegacy,
+    retractHeightsReexpressed: migrationInfo.retractHeightsReexpressed,
     machineMigration: {
       customDefinitions: machines.customDefinitions,
       compacted: machines.compacted,
@@ -417,7 +428,7 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
 }
 
 /** Normalize a decoded project without ever placing resolved geometry in features. */
-export function normalizeProject(input: ProjectFormatInput): Project {
+export function normalizeProject(input: ProjectFormatInput, migrationInfo?: ProjectMigrationInfo): Project {
   // Read before the envelope below is stamped with LATEST_PROJECT_VERSION:
   // the retract-height migration keys on what the file claims to be.
   const sourceVersion = typeof input.version === 'string' ? input.version : null
@@ -575,7 +586,7 @@ export function normalizeProject(input: ProjectFormatInput): Project {
   const resolvedStockSource = prunedProject.stock.sourceFeature
     ? resolveFeatureRow(prunedProject, prunedProject.stock.sourceFeature)
     : null
-  const project = migrateRetractHeightToRelative(resolvedStockSource
+  const migrated = migrateRetractHeightToRelative(resolvedStockSource
     ? {
         ...prunedProject,
         stock: {
@@ -587,6 +598,7 @@ export function normalizeProject(input: ProjectFormatInput): Project {
         },
       }
     : prunedProject, sourceVersion, fileRetractPositions)
-  syncIdCounter(project)
-  return project
+  if (migrationInfo) migrationInfo.retractHeightsReexpressed = migrated.rewritten
+  syncIdCounter(migrated.project)
+  return migrated.project
 }
