@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
 
 export interface DocumentationProblem {
@@ -204,4 +204,29 @@ export function validateAgentEntrypoint(
   return REQUIRED_AGENT_MARKERS
     .filter((marker) => !content.includes(marker))
     .map((marker) => ({ file, message: `agent entrypoint is missing ${marker}` }))
+}
+
+export type TextFileReader = (path: string) => string
+
+/**
+ * Read a repository text file, turning an unreadable path into a normal
+ * DocumentationProblem so one bad entry cannot abort the whole check run.
+ */
+export function readTextFileOrProblem(
+  subject: string,
+  file: string,
+  path: string,
+  readFile: TextFileReader = (candidate) => readFileSync(candidate, 'utf8'),
+): string | DocumentationProblem {
+  try {
+    return readFile(path)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code
+    return {
+      file,
+      message: code === 'ENOENT'
+        ? `${subject} is missing from the repository`
+        : `${subject} could not be read${code ? ` (${code})` : ''}`,
+    }
+  }
 }
