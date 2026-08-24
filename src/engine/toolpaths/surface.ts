@@ -80,7 +80,8 @@ import type { OffsetRegionNode } from './pocket'
 import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
 import { pocketTangentLinkOptions } from './tangentLink'
 import { seedStartRadius, planSeedCircles, seedCircleContours } from './seedClearing'
-import { areaCoverage, effectivePocketPattern } from './pocketPatterns'
+import { areaCoverage, effectivePocketPattern, usesTangentLinks } from './pocketPatterns'
+import { clearingControlApplies } from './clearingControls'
 import type { SeedCirclePlan } from './seedClearing'
 import { cornerSmoothingRadius } from './offsetSmoothing'
 import {
@@ -555,8 +556,9 @@ function generateRoughBandMoves(
   // with a tangent S-curve, gated by the operation field (absent = today's
   // straight links). The domain is the band's tool-centre region — the tree
   // roots are exactly that construction — and the solver falls back to the
-  // straight link when nothing fits.
-  const tangentLink = (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.roundLinkCorners
+  // straight link when nothing fits. Which kinds link on which patterns is
+  // usesTangentLinks's call (#616); this gate no longer keeps its own list.
+  const tangentLink = usesTangentLinks(operation.kind, operation.pocketPattern) && operation.roundLinkCorners
     ? pocketTangentLinkOptions(
       operation.roundLinkCorners,
       toolRadius * 2,
@@ -564,7 +566,7 @@ function generateRoughBandMoves(
     )
     : undefined
   const engagementCacheEnabled = telemetry !== null && operation.pocketFeedReduction === 'engagement'
-  const wallCleanup = (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.roundOutsideCorners
+  const wallCleanup = clearingControlApplies(operation.kind, 'cleanWallCorners') && operation.roundOutsideCorners
     && operation.cleanWallCorners === true
     ? {
       enabled: true,

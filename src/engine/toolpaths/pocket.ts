@@ -76,6 +76,7 @@ import {
 } from './seedClearing'
 import { planSeedLeftovers, type SeedLeftoverExcursion } from './seedLeftover'
 import { areaCoverage, effectivePocketPattern } from './pocketPatterns'
+import { clearingControlApplies } from './clearingControls'
 import {
   EngagementFeedQuantizer,
   EngagementTelemetryAccumulator,
@@ -379,12 +380,14 @@ export function resetEngagementCacheProbeCounts(): void {
 
 /**
  * Resolve the operation's slot-feed percentage into a cut-feed multiplier.
- * Returns null when the reduction is disabled (non-pocket kinds, undefined,
- * out-of-range, or 100%), which callers use to skip all slot-feed work so the
- * generated move stream is byte-identical to the pre-feature output.
+ * Returns null when the reduction is disabled (kinds that do not declare the
+ * slot-feed control -- CLEARING_CONTROL_SUPPORT decides, issue #616 --
+ * undefined, out-of-range, or 100%), which callers use to skip all slot-feed
+ * work so the generated move stream is byte-identical to the pre-feature
+ * output.
  */
 export function resolveSlotFeedScale(operation: Operation): number | null {
-  if (operation.kind !== 'pocket' && operation.kind !== 'surface_clean') return null
+  if (!clearingControlApplies(operation.kind, 'slotFeed')) return null
   const percent = operation.pocketSlotFeedPercent
   if (percent === undefined || !(percent > 0) || percent >= 100) return null
   return percent / 100

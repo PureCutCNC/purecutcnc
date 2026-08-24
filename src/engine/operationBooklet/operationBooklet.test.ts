@@ -627,6 +627,101 @@ function testReportIncludesEngagementModeRow(): void {
   )
 }
 
+/**
+ * Issue #616's one deliberate behaviour change: surface_clean gets the control
+ * and the engine honours it, so the booklet now prints the feed-reduction rows
+ * it always printed for pocket. A cell the declaration declines must stay off
+ * the sheet even when a stale stored value says otherwise.
+ */
+function testReportIncludesSurfaceCleanFeedReductionRows(): void {
+  console.log('Testing surface_clean prints the feed-reduction rows...')
+  const { project, operation, toolpath } = fixture()
+  const tool = normalizeToolForProject(project.tools[0], project)
+
+  const engagement = buildOperationBookletReport({
+    project,
+    operation: {
+      ...operation,
+      kind: 'surface_clean',
+      pass: 'rough',
+      pocketSlotFeedPercent: 60,
+      pocketFeedReduction: 'engagement',
+    },
+    tool,
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    engagement.settingRows.some((row) => row.label === translate('booklet.label.slotFeed') && row.value === translate('booklet.value.slotFeed', { percent: 60 })),
+    'surface_clean runs the slot-feed reduction, so the sheet must carry it',
+  )
+  assert(
+    engagement.settingRows.some((row) => row.label === translate('booklet.label.engagementMode') && row.value === translate('booklet.engagementMode.engagementFeed')),
+    'surface_clean set to engagement mode prints the feed-reduction row (#616)',
+  )
+
+  const slotsOnly = buildOperationBookletReport({
+    project,
+    operation: { ...operation, kind: 'surface_clean', pass: 'rough', pocketFeedReduction: 'slots_only' },
+    tool,
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    !slotsOnly.settingRows.some((row) => row.label === translate('booklet.label.engagementMode')),
+    'slots_only stays unreported on surface_clean exactly as on pocket',
+  )
+
+  const relieved = buildOperationBookletReport({
+    project,
+    operation: { ...operation, kind: 'surface_clean', cornerRelief: 'dogbone' },
+    tool,
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    !relieved.settingRows.some((row) => row.label === translate('booklet.label.cornerRelief')),
+    'corner relief does not apply to surface_clean; a stale stored style must not print',
+  )
+}
+
+/** The clean-wall-corners row follows the same declaration (#616): it prints
+ *  for surface_clean (which the generator honours) and stays silent for the
+ *  kinds whose row declines the control. */
+function testReportCleanWallCornersFollowsTheDeclaration(): void {
+  console.log('Testing clean wall corners booklet rows follow the declaration...')
+  const { project, operation, toolpath } = fixture()
+  const tool = normalizeToolForProject(project.tools[0], project)
+  const base = {
+    roundOutsideCorners: true,
+    cleanWallCorners: true as const,
+  }
+
+  const cleanup = buildOperationBookletReport({
+    project,
+    operation: { ...operation, kind: 'surface_clean', ...base },
+    tool,
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    cleanup.settingRows.some((row) => row.label === translate('booklet.label.cleanWallCorners') && row.value === translate('booklet.value.enabled')),
+    'surface_clean honours wall-corner cleanup, so the sheet must say so',
+  )
+
+  const rough = buildOperationBookletReport({
+    project,
+    operation: { ...operation, kind: 'rough_surface', ...base },
+    tool,
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    !rough.settingRows.some((row) => row.label === translate('booklet.label.cleanWallCorners')),
+    'rough_surface declines wall-corner cleanup; a stale stored flag must not print',
+  )
+}
+
 async function testGermanLabelLayout(): Promise<void> {
   console.log('Testing German booklet label layout...')
   const { project, operation, toolpath } = fixture()
@@ -697,6 +792,8 @@ testReportContent()
 testFeedTimeFallsBackToToolDefaultFeed()
 testFeedTimeUsesScaledSlotFeed()
 testReportIncludesEngagementModeRow()
+testReportIncludesSurfaceCleanFeedReductionRows()
+testReportCleanWallCornersFollowsTheDeclaration()
 testReportIncludesEnabledRoundOutsideCorners()
 testReportIncludesEnabledRoundLinkCorners()
 testReportIncludesRoundLinkCornersForSeededCleanup()

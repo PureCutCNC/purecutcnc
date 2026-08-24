@@ -41,8 +41,9 @@
  */
 
 import type { camEn } from '../../i18n/locales/en/cam'
-import type { EntryStrategy, Operation } from '../../types/project'
+import type { EntryStrategy, Operation, OperationKind } from '../../types/project'
 import { isTrochoidalCarve, isTrochoidalEdgeRoughing } from '../../types/project'
+import { clearingControlApplies } from '../../engine/toolpaths/clearingControls'
 import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
 import type { OperationParamRefKind } from './operationParamRefData'
 
@@ -75,6 +76,15 @@ export function showStepdown(operation: Operation): boolean {
 export function isRoughEdgeRoute(operation: Operation): boolean {
   return operation.pass === 'rough'
     && (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside')
+}
+
+/** Either flavour of edge route. Not a clearing kind, but it shares pocket's
+ *  rounding/relief/order controls; that inline half is deliberate (#616) —
+ *  edge routes sit outside #614's scope, so CLEARING_CONTROL_SUPPORT does not
+ *  classify them and each predicate keeps this boundary check beside the
+ *  table lookup. */
+function isEdgeRouteKind(kind: OperationKind): boolean {
+  return kind === 'edge_route_inside' || kind === 'edge_route_outside'
 }
 
 /** Either flavour of trochoidal motion: rough edge routing or engraving. */
@@ -112,9 +122,11 @@ function isWaterlineFinish(operation: Operation): boolean {
   return operation.kind === 'finish_surface' && operation.pocketPattern === 'waterline'
 }
 
-/** Pocket feed reduction applies wherever the cutter can end up fully engaged. */
+/** Pocket feed reduction applies wherever the cutter can end up fully engaged.
+ *  Which kinds offer it at all is CLEARING_CONTROL_SUPPORT's call (#616); the
+ *  pass/floor half here is where full engagement can actually happen. */
 function cutsSlots(operation: Operation): boolean {
-  return (operation.kind === 'pocket' || operation.kind === 'surface_clean')
+  return clearingControlApplies(operation.kind, 'slotFeed')
     && (operation.pass === 'rough' || (operation.pass === 'finish' && operation.finishFloor))
 }
 
@@ -370,9 +382,8 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     id: 'machiningOrder',
     group: 'strategy',
     paramRef: 'machiningOrder',
-    appliesTo: (operation) => operation.kind === 'pocket'
-      || operation.kind === 'edge_route_inside'
-      || operation.kind === 'edge_route_outside',
+    appliesTo: (operation) => clearingControlApplies(operation.kind, 'machiningOrder')
+      || isEdgeRouteKind(operation.kind),
   },
   { id: 'edgeStrategy', group: 'strategy', paramRef: 'edgeStrategy', appliesTo: isRoughEdgeRoute },
   {
@@ -455,11 +466,8 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   {
     id: 'roundOutsideCorners',
     group: 'corners',
-    appliesTo: (operation) => operation.kind === 'edge_route_outside'
-      || operation.kind === 'pocket'
-      || operation.kind === 'surface_clean'
-      || operation.kind === 'rough_surface'
-      || operation.kind === 'finish_surface_cleanup',
+    appliesTo: (operation) => clearingControlApplies(operation.kind, 'roundOutsideCorners')
+      || operation.kind === 'edge_route_outside',
   },
   {
     id: 'roundLinkCorners',
@@ -469,8 +477,10 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   {
     id: 'cleanWallCorners',
     group: 'corners',
-    // Only meaningful once the interior rings are already rounded.
-    appliesTo: (operation) => (operation.kind === 'pocket' || operation.kind === 'surface_clean')
+    // Only meaningful once the interior rings are already rounded. Which kinds
+    // participate at all is CLEARING_CONTROL_SUPPORT's call (#616); the pattern
+    // and rounding conditions stay local, exactly as at the generators.
+    appliesTo: (operation) => clearingControlApplies(operation.kind, 'cleanWallCorners')
       && operation.pocketPattern !== 'parallel'
       && (operation.roundOutsideCorners ?? false),
   },
@@ -478,9 +488,8 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     id: 'cornerRelief',
     group: 'corners',
     paramRef: 'cornerRelief',
-    appliesTo: (operation) => operation.kind === 'pocket'
-      || operation.kind === 'edge_route_inside'
-      || operation.kind === 'edge_route_outside',
+    appliesTo: (operation) => clearingControlApplies(operation.kind, 'cornerRelief')
+      || isEdgeRouteKind(operation.kind),
   },
   // ── Drilling — applies to one kind, so the group is absent everywhere else.
   {
