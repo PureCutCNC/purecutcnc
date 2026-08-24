@@ -43,7 +43,7 @@
 import type { camEn } from '../../i18n/locales/en/cam'
 import type { EntryStrategy, Operation } from '../../types/project'
 import { isTrochoidalCarve, isTrochoidalEdgeRoughing } from '../../types/project'
-import { takesPocketPattern } from '../../engine/toolpaths/pocketPatterns'
+import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
 import type { OperationParamRefKind } from './operationParamRefData'
 
 // ── Shared operation predicates ────────────────────────────────────
@@ -464,8 +464,7 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   {
     id: 'roundLinkCorners',
     group: 'corners',
-    appliesTo: (operation) => (operation.kind === 'pocket' || operation.kind === 'surface_clean')
-      && operation.pocketPattern !== 'parallel',
+    appliesTo: (operation) => usesTangentLinks(operation.kind, operation.pocketPattern),
   },
   {
     id: 'cleanWallCorners',

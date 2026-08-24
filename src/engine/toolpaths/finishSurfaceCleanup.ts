@@ -29,6 +29,7 @@ import {
   polyTreeToRegions,
   retractToSafe,
   rotateContourToNearestEntry,
+  spliceTangentSLink,
   toClosedCutMoves,
   toOpenCutMoves,
   transitionToCutEntry,
@@ -44,6 +45,7 @@ import {
 } from './seedClearing'
 import { planSeedLeftovers, type SeedLeftoverExcursion } from './seedLeftover'
 import { areaCoverage, effectivePocketPattern } from './pocketPatterns'
+import { pocketTangentLinkOptions } from './tangentLink'
 import {
   calculateClipperArea,
   differenceClipperPaths,
@@ -886,11 +888,26 @@ export function generateFinishSurfaceCleanupToolpath(
     const seedStacks = seededFloorRegions.flatMap((entry) => entry.plans.map((plan) => (
       applyContourDirection(seedCircleContours(plan, resolved.effectiveStepover), resolved.direction)
     )))
+    // Tangential S-links on the seed path only (issue #609). The domain is the
+    // level's own floor regions — the hard tool-centre boundary a link may
+    // sweep up to. The seed island is deliberately NOT in it: its interior is
+    // stock the stack already removed, so a link may cross the disc.
+    //
+    // Deliberately scoped to the seed path. The ordinary floor rings are not
+    // S-linked today, and `roundLinkCorners` is backfilled `true` on every
+    // operation by `normalize.ts`, so honouring it there would rewrite the
+    // emitted program for every saved project carrying a cleanup operation.
+    // Here it changes nothing that exists, because this pattern emitted no
+    // floor at all before.
+    const seedTangentLink = seedStacks.length > 0
+      ? pocketTangentLinkOptions(operation.roundLinkCorners, resolved.tool.radius * 2, floorRegions)
+      : undefined
     for (const circles of seedStacks) {
       currentPosition = retractToSafe(moves, currentPosition, resolved.safeZ)
       let previousCircleEnd: ToolpathPoint | null = null
       for (const baseCircle of circles) {
         const circle = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
+        const linkStartIndex = moves.length
         currentPosition = transitionToCutEntry(
           moves,
           currentPosition,
@@ -898,7 +915,14 @@ export function generateFinishSurfaceCleanupToolpath(
           resolved.safeZ,
           resolved.maxLinkDistance,
         )
-        const circleMoves = toClosedCutMoves(circle, z)
+        let circleMoves = toClosedCutMoves(circle, z)
+        // The splice re-seams the arrival circle onto the S's tangent point, so
+        // the next circle departs from the new seam rather than the old one.
+        const splice = spliceTangentSLink(moves, linkStartIndex, circle, circleMoves, seedTangentLink)
+        if (splice) {
+          circleMoves = splice.cutMoves
+          currentPosition = splice.nextPosition
+        }
         moves.push(...circleMoves)
         currentPosition = circleMoves.at(-1)?.to ?? currentPosition
         previousCircleEnd = currentPosition
@@ -909,6 +933,12 @@ export function generateFinishSurfaceCleanupToolpath(
       floorContours,
       currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
     )
+    // No S on the phase-1 -> phase-2 handoff. `transitionToCutEntry` leaves the
+    // last seed circle by retracting to safe Z and plunging back down, so there
+    // is no in-plane link for `spliceTangentSLink` to make tangent — it returns
+    // null every time. Measured: it fired twice on `model-in-pocket` and spliced
+    // nothing, and the output was byte-identical to not calling it. Linking here
+    // needs the transition to stay down first; that is a separate change.
     for (const contour of orderedFloorContours) {
       const entryPoint = contourStartPoint(contour, z)
       currentPosition = transitionToCutEntry(

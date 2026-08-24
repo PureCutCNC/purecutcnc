@@ -191,6 +191,46 @@ function testReportIncludesEnabledRoundLinkCorners(): void {
   )
 }
 
+function testReportIncludesRoundLinkCornersForSeededCleanup(): void {
+  console.log('Testing operation booklet reports round link corners for seeded cleanup...')
+  const { project, operation, toolpath } = fixture()
+  const report = buildOperationBookletReport({
+    project,
+    operation: {
+      ...operation,
+      kind: 'finish_surface_cleanup',
+      pocketPattern: 'seeded_offset',
+      roundLinkCorners: true,
+    },
+    tool: normalizeToolForProject(project.tools[0], project),
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    report.settingRows.some((row) => row.label === translate('booklet.label.roundLinkCorners') && row.value === translate('booklet.value.enabled')),
+    'seeded cleanup links its seed circles, so the sheet must say so',
+  )
+
+  // The cleanup floor rings are not linked, so the same flag on any other
+  // pattern is a no-op and must not reach the shop floor as if it were live.
+  const offsetReport = buildOperationBookletReport({
+    project,
+    operation: {
+      ...operation,
+      kind: 'finish_surface_cleanup',
+      pocketPattern: 'offset',
+      roundLinkCorners: true,
+    },
+    tool: normalizeToolForProject(project.tools[0], project),
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    !offsetReport.settingRows.some((row) => row.label === translate('booklet.label.roundLinkCorners')),
+    'offset cleanup does not link its rings, so the booklet must omit the row',
+  )
+}
+
 function testReportOmitsRoundLinkCornersWhenInapplicable(): void {
   console.log('Testing operation booklet omits round link corners when inapplicable...')
   const { project, operation, toolpath } = fixture()
@@ -659,6 +699,7 @@ testFeedTimeUsesScaledSlotFeed()
 testReportIncludesEngagementModeRow()
 testReportIncludesEnabledRoundOutsideCorners()
 testReportIncludesEnabledRoundLinkCorners()
+testReportIncludesRoundLinkCornersForSeededCleanup()
 testReportOmitsRoundLinkCornersWhenInapplicable()
 testReportIncludesTrochoidalSettings()
 testReportIncludesTrochoidalEdgeSettingsResolvedFromTool()

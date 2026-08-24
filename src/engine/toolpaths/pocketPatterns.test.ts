@@ -49,6 +49,7 @@ import {
   offeredPocketPatterns,
   takesPocketPattern,
   type EffectivePocketPattern,
+  usesTangentLinks,
 } from './pocketPatterns'
 import { generatePocketToolpath } from './pocket'
 import { generateSurfaceCleanToolpath } from './surface'
@@ -288,12 +289,39 @@ function testEveryOfferedPairCutsSomething(): void {
   assert(rows >= 11, `expected the full offered matrix, only ran ${rows} rows`)
 }
 
+function testTangentLinkApplicability(): void {
+  console.log('Testing tangential S-link applicability per kind and pattern...')
+  // Pocket and surface_clean link ring-to-ring on every non-parallel pattern.
+  for (const kind of ['pocket', 'surface_clean'] as const) {
+    assert(usesTangentLinks(kind, 'offset'), `${kind} offset links ring to ring`)
+    assert(usesTangentLinks(kind, 'seeded_offset'), `${kind} seeded links ring to ring`)
+    assert(!usesTangentLinks(kind, 'parallel'), `${kind} parallel has no ring-to-ring link`)
+  }
+  // Cleanup links the seed path ONLY. Offering the control on any other
+  // pattern would be a checkbox the generator ignores — the #609 defect.
+  assert(
+    usesTangentLinks('finish_surface_cleanup', 'seeded_offset'),
+    'cleanup links its seed-circle path',
+  )
+  for (const pattern of ['offset', 'parallel', 'waterline'] as const) {
+    assert(
+      !usesTangentLinks('finish_surface_cleanup', pattern),
+      `cleanup ${pattern} floor rings are not linked, so the setting is a no-op`,
+    )
+  }
+  // Kinds with no clearing pattern never link.
+  for (const kind of ['drilling', 'v_carve', 'follow_line', 'edge_route_inside'] as const) {
+    assert(!usesTangentLinks(kind, 'offset'), `${kind} does not clear with rings`)
+  }
+}
+
 async function run(): Promise<void> {
   testEveryKindIsClassified()
   testOfferedIsAlwaysImplemented()
   testKindsWithoutAPatternRowResolveToNothing()
   testCoverageIsSingleValued()
   testEveryOfferedPairCutsSomething()
+  testTangentLinkApplicability()
   console.log('pocketPatterns.test.ts: all tests passed')
 }
 
