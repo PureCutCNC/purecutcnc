@@ -43,6 +43,7 @@
 import type { camEn } from '../../i18n/locales/en/cam'
 import type { EntryStrategy, Operation } from '../../types/project'
 import { isTrochoidalCarve, isTrochoidalEdgeRoughing } from '../../types/project'
+import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
 import type { OperationParamRefKind } from './operationParamRefData'
 
 // ── Shared operation predicates ────────────────────────────────────
@@ -340,20 +341,15 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     id: 'pattern',
     group: 'strategy',
     paramRef: 'pattern',
-    // One row; the offered patterns differ per kind and live in the renderer.
-    appliesTo: (operation) => operation.kind === 'pocket'
-      || operation.kind === 'surface_clean'
-      || operation.kind === 'finish_surface'
-      || operation.kind === 'finish_surface_cleanup',
+    // One row; which patterns it offers is `OPERATION_PATTERN_SUPPORT`'s call
+    // (issue #609), so the row and the options can no longer disagree.
+    appliesTo: (operation) => takesPocketPattern(operation.kind),
   },
   {
     id: 'rasterAngle',
     group: 'strategy',
     paramRef: 'rasterAngle',
-    appliesTo: (operation) => (operation.kind === 'pocket'
-      || operation.kind === 'surface_clean'
-      || operation.kind === 'finish_surface'
-      || operation.kind === 'finish_surface_cleanup')
+    appliesTo: (operation) => takesPocketPattern(operation.kind)
       && operation.pocketPattern === 'parallel',
   },
   {
@@ -468,8 +464,7 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   {
     id: 'roundLinkCorners',
     group: 'corners',
-    appliesTo: (operation) => (operation.kind === 'pocket' || operation.kind === 'surface_clean')
-      && operation.pocketPattern !== 'parallel',
+    appliesTo: (operation) => usesTangentLinks(operation.kind, operation.pocketPattern),
   },
   {
     id: 'cleanWallCorners',

@@ -25,6 +25,7 @@ import type { Units } from '../../utils/units'
 import type { NormalizedTool, ToolpathResult } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
 import { countersinkTipDepth } from '../toolpaths/drilling'
+import { usesTangentLinks } from '../toolpaths/pocketPatterns'
 import type { OperationBookletInput, OperationBookletReport, OperationBookletRow } from './types'
 
 function operationKindLabel(kind: OperationKind): string {
@@ -109,13 +110,6 @@ function operationUsesRoundOutsideCorners(operation: Operation): boolean {
     || operation.kind === 'rough_surface'
     || operation.kind === 'finish_surface_cleanup'
   )
-}
-
-/** Tangential S-links apply to offset pocket clearing only (issue #545): the
- *  parallel pattern has no ring-to-ring links, so the setting is a no-op
- *  there and the booklet must not show it. */
-function operationUsesTangentLinks(operation: Operation): boolean {
-  return (operation.kind === 'pocket' || operation.kind === 'surface_clean') && operation.pocketPattern !== 'parallel'
 }
 
 function targetSummary(project: Project, target: OperationTarget): string {
@@ -321,7 +315,7 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
     rows.push({ label: translate('booklet.label.roundOutsideCorners'), value: translate('booklet.value.enabled') })
   }
 
-  if ((operation.roundLinkCorners ?? false) && operationUsesTangentLinks(operation)) {
+  if ((operation.roundLinkCorners ?? false) && usesTangentLinks(operation.kind, operation.pocketPattern)) {
     rows.push({ label: translate('booklet.label.roundLinkCorners'), value: translate('booklet.value.enabled') })
   }
 

@@ -322,6 +322,30 @@ function testStockToLeaveFollowsTheSurfacePattern() {
   }
 }
 
+function testRoundLinkCornersFollowsTheGeneratorsOwnLinking() {
+  const field = OPERATION_FIELDS.find((candidate) => candidate.id === 'roundLinkCorners')
+  assert(field, 'roundLinkCorners must be declared')
+
+  assert(
+    field.appliesTo(makeOperation({ kind: 'pocket', pocketPattern: 'offset' })),
+    'offset pockets link ring to ring',
+  )
+  assert(
+    !field.appliesTo(makeOperation({ kind: 'pocket', pocketPattern: 'parallel' })),
+    'parallel pockets have no ring-to-ring link',
+  )
+  // Cleanup S-links only the seed-circle path. Showing the control on its
+  // other patterns would offer a checkbox the generator ignores.
+  assert(
+    field.appliesTo(makeOperation({ kind: 'finish_surface_cleanup', pocketPattern: 'seeded_offset' })),
+    'seeded cleanup links its seed circles, so the control applies',
+  )
+  assert(
+    !field.appliesTo(makeOperation({ kind: 'finish_surface_cleanup', pocketPattern: 'offset' })),
+    'cleanup floor rings are not linked, so the control must stay hidden',
+  )
+}
+
 function testDrillingHidesTheTwoDimensionalStrategyFields() {
   const drilling = makeOperation({ kind: 'drilling' })
   for (const id of ['stepdown', 'stepover', 'cutDirection', 'machiningOrder', 'pattern'] as const) {
@@ -341,6 +365,7 @@ testGroupsWithNothingToShowDoNotRender()
 testTrochoidalPredicatesMatchTheEnginesOwn()
 testRampAngleRendersFromExactlyOnePlace()
 testStockToLeaveFollowsTheSurfacePattern()
+testRoundLinkCornersFollowsTheGeneratorsOwnLinking()
 testDrillingHidesTheTwoDimensionalStrategyFields()
 
 console.log('operationFields tests passed')

@@ -22,17 +22,30 @@ import {
   buildInsetRegions,
   buildPocketParallelSegments,
   contourStartPoint,
+  cutSeedLeftoverExcursions,
   executeDifference,
   orderClosedContoursGreedy,
   orderOpenSegmentsGreedy,
   polyTreeToRegions,
   retractToSafe,
+  rotateContourToNearestEntry,
+  spliceTangentSLink,
   toClosedCutMoves,
   toOpenCutMoves,
   transitionToCutEntry,
   updateBounds,
 } from './pocket'
 import { cornerSmoothingRadius, smoothClosedContours } from './offsetSmoothing'
+import {
+  planSeedCircles,
+  seedBaselineIsland,
+  seedCircleContours,
+  seedStartRadius,
+  type SeedCirclePlan,
+} from './seedClearing'
+import { planSeedLeftovers, type SeedLeftoverExcursion } from './seedLeftover'
+import { areaCoverage, effectivePocketPattern } from './pocketPatterns'
+import { pocketTangentLinkOptions } from './tangentLink'
 import {
   calculateClipperArea,
   differenceClipperPaths,
@@ -359,8 +372,27 @@ function splitContourBySuppressedSegments(
   return extractPathsFromMask(trimmed, selected)
 }
 
+/**
+ * Build the floor passes for one region, plus whatever seed clearing has
+ * already emptied inside it.
+ *
+ * `seedIslands` is the insertion point for seeded circles (issue #609). The
+ * builder below already understands an island as "offset around this, never cut
+ * it", so a seed stack's virtual island needs no new traversal — but it is an
+ * exclusion, not a lap, so it is added only to what the inset recursion sees.
+ * The depth-0 boundary contours still come from the region's own outer and
+ * islands, which is what keeps the suppressed-wall-segment contract intact: the
+ * set of contours suppression is applied to is byte-for-byte the unseeded one.
+ * (This mirrors `pocket.ts`, which builds the seeded tree and then restores the
+ * root's original island list for the same reason.)
+ */
+interface CleanupFloorRegion {
+  region: ResolvedPocketRegion
+  seedIslands: Point[][]
+}
+
 function buildCleanupFloorOffsetPasses(
-  regions: ResolvedPocketRegion[],
+  regions: readonly CleanupFloorRegion[],
   stepoverDistance: number,
   suppressedBoundarySegments: ReadonlySet<string>,
 ): CleanupFloorOffsetPasses {
@@ -380,7 +412,7 @@ function buildCleanupFloorOffsetPasses(
     }
   }
 
-  const visitRegion = (region: ResolvedPocketRegion, depth: number): void => {
+  const visitRegion = (region: ResolvedPocketRegion, depth: number, seedIslands: Point[][]): void => {
     const boundaryContours = [region.outer, ...region.islands].filter((points) => points.length >= 3)
     for (const contour of boundaryContours) {
       if (depth === 0) {
@@ -392,19 +424,80 @@ function buildCleanupFloorOffsetPasses(
       }
     }
 
-    for (const child of buildInsetRegions(region, stepoverDistance)) {
-      visitRegion(child, depth + 1)
+    const insetSource = seedIslands.length === 0
+      ? region
+      : { ...region, islands: [...region.islands, ...seedIslands] }
+    for (const child of buildInsetRegions(insetSource, stepoverDistance)) {
+      visitRegion(child, depth + 1, [])
     }
   }
 
-  for (const region of regions) {
-    visitRegion(region, 0)
+  for (const entry of regions) {
+    visitRegion(entry.region, 0, entry.seedIslands)
   }
 
   return {
     contours: [...uniqueContours.values()],
     segments: [...uniqueSegments.values()],
   }
+}
+
+/** One residual floor region plus the seed stacks phase 1 will cut inside it. */
+interface CleanupFloorSeededRegion {
+  region: ResolvedPocketRegion
+  plans: SeedCirclePlan[]
+}
+
+/**
+ * The excursions that recover whatever the extended seed islands strand on a
+ * cleanup floor (issue #576's probe, wired for #609).
+ *
+ * `seedIslandRadius` extends each island out to the stock boundary the stack
+ * actually reached, which is what deletes the graze rings — and also what can
+ * strand stock where an extended island merges with a wall or a real island and
+ * the inset recursion collapses over a partial ring. Skipping the probe here
+ * would ship the defect #590 just fixed everywhere else.
+ *
+ * Candidates come from this file's own builder around the PRE-extension island,
+ * so every one is a path the cleanup floor already emits and an excursion is a
+ * subpath of a legal tool-centre path rather than fresh geometry. Only the
+ * closed passes are candidates: an open pass is a boundary run the wall pass
+ * already suppressed, and re-cutting it is exactly what the suppression exists
+ * to prevent.
+ */
+function planCleanupFloorSeedLeftovers(
+  seeded: readonly CleanupFloorSeededRegion[],
+  stepoverDistance: number,
+  suppressedBoundarySegments: ReadonlySet<string>,
+  toolRadius: number,
+  direction: Operation['cutDirection'],
+  emitted: readonly Point[][],
+): SeedLeftoverExcursion[] {
+  const plans = seeded.flatMap((entry) => entry.plans)
+  if (plans.length === 0) {
+    return []
+  }
+  // With the radial leave at or beyond the tool radius every island is the
+  // pre-#576 one, the passes are the shipped passes, and there is nothing to
+  // recover — so the baseline build is never paid for.
+  if (!plans.some((plan) => plan.islandRadius > plan.lastRadius)) {
+    return []
+  }
+
+  const baseline = buildCleanupFloorOffsetPasses(
+    seeded.map((entry) => ({
+      region: entry.region,
+      seedIslands: entry.plans.map((plan) => seedBaselineIsland(plan, stepoverDistance)),
+    })),
+    stepoverDistance,
+    suppressedBoundarySegments,
+  )
+  // Deepest first. The stock an enlarged island strands sits between the seed
+  // disc and the innermost pass the extended build still emits, so the deepest
+  // candidates claim it with the shortest paths and leave the long outer ones
+  // fully covered.
+  const candidates = applyContourDirection([...baseline.contours].reverse(), direction)
+  return planSeedLeftovers(candidates, emitted, toolRadius)
 }
 
 function collectCleanupWallPaths(
@@ -667,6 +760,18 @@ export function generateFinishSurfaceCleanupToolpath(
     resolved.tool.radius,
     resolved.effectiveStepover,
   )
+  // What the stored pattern clears the floor with (issue #609). The declared
+  // table is the only gate; before it, `seeded_offset` matched none of the
+  // ternaries below and the floor came out empty with no warning at all.
+  const floorCoverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
+  const radialLeave = Math.max(0, operation.stockToLeaveRadial)
+  // Seeded circle clearing on the cleanup floor (issues #554/#579/#609). The
+  // schedule starts at the disc the entry has already cleared, which for a kind
+  // that offers no entry strategy is the tool radius — the largest first circle
+  // that still sweeps its own centre.
+  const floorSeedStart = floorCoverage.seedCircles
+    ? seedStartRadius(operation, resolved.tool.radius)
+    : 0
   let currentPosition: ToolpathPoint | null = null
 
   for (const z of sortedLevels) {
@@ -741,25 +846,99 @@ export function generateFinishSurfaceCleanupToolpath(
       }
     }
 
-    const offsetFloorPasses = operation.pocketPattern === 'offset'
-      ? buildCleanupFloorOffsetPasses(floorRegions, resolved.effectiveStepover, suppressedWallSegments)
+    // Phase 1 is planned against the residual floor regions the passes are
+    // built from — the same regions, so every circle fits whole and needs no
+    // containment test of its own.
+    const seededFloorRegions: CleanupFloorSeededRegion[] = floorRegions.map((region) => ({
+      region,
+      plans: floorSeedStart > 0
+        ? planSeedCircles(
+          region,
+          floorSeedStart,
+          resolved.effectiveStepover,
+          resolved.tool.radius * 2,
+          radialLeave,
+        )
+        : [],
+    }))
+    const offsetFloorPasses = floorCoverage.rings
+      ? buildCleanupFloorOffsetPasses(
+        seededFloorRegions.map((entry) => ({
+          region: entry.region,
+          seedIslands: entry.plans.map((plan) => plan.island),
+        })),
+        resolved.effectiveStepover,
+        suppressedWallSegments,
+      )
       : { contours: [], segments: [] }
-    const floorContours = operation.pocketPattern === 'offset'
+    const floorContours = floorCoverage.rings
       ? applyContourDirection(
         smoothClosedContours(offsetFloorPasses.contours, floorSmoothRadius),
         resolved.direction,
       )
       : []
-    const floorSegments = operation.pocketPattern === 'parallel'
+    const floorSegments = floorCoverage.rasterSegments
       ? buildPocketParallelSegments(floorRegions, resolved.effectiveStepover, operation.pocketAngle)
-      : operation.pocketPattern === 'offset'
+      : floorCoverage.rings
         ? applyContourDirection(offsetFloorPasses.segments, resolved.direction)
-      : []
+        : []
+    // Innermost first, so each lap runs one stepover outside the disc the
+    // previous one left. Every open area's stack is cut before the first ring
+    // is, matching the pocket's phase-1-then-phase-2 handoff.
+    const seedStacks = seededFloorRegions.flatMap((entry) => entry.plans.map((plan) => (
+      applyContourDirection(seedCircleContours(plan, resolved.effectiveStepover), resolved.direction)
+    )))
+    // Tangential S-links on the seed path only (issue #609). The domain is the
+    // level's own floor regions — the hard tool-centre boundary a link may
+    // sweep up to. The seed island is deliberately NOT in it: its interior is
+    // stock the stack already removed, so a link may cross the disc.
+    //
+    // Deliberately scoped to the seed path. The ordinary floor rings are not
+    // S-linked today, and `roundLinkCorners` is backfilled `true` on every
+    // operation by `normalize.ts`, so honouring it there would rewrite the
+    // emitted program for every saved project carrying a cleanup operation.
+    // Here it changes nothing that exists, because this pattern emitted no
+    // floor at all before.
+    const seedTangentLink = seedStacks.length > 0
+      ? pocketTangentLinkOptions(operation.roundLinkCorners, resolved.tool.radius * 2, floorRegions)
+      : undefined
+    for (const circles of seedStacks) {
+      currentPosition = retractToSafe(moves, currentPosition, resolved.safeZ)
+      let previousCircleEnd: ToolpathPoint | null = null
+      for (const baseCircle of circles) {
+        const circle = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
+        const linkStartIndex = moves.length
+        currentPosition = transitionToCutEntry(
+          moves,
+          currentPosition,
+          contourStartPoint(circle, z),
+          resolved.safeZ,
+          resolved.maxLinkDistance,
+        )
+        let circleMoves = toClosedCutMoves(circle, z)
+        // The splice re-seams the arrival circle onto the S's tangent point, so
+        // the next circle departs from the new seam rather than the old one.
+        const splice = spliceTangentSLink(moves, linkStartIndex, circle, circleMoves, seedTangentLink)
+        if (splice) {
+          circleMoves = splice.cutMoves
+          currentPosition = splice.nextPosition
+        }
+        moves.push(...circleMoves)
+        currentPosition = circleMoves.at(-1)?.to ?? currentPosition
+        previousCircleEnd = currentPosition
+      }
+    }
 
     const orderedFloorContours = orderClosedContoursGreedy(
       floorContours,
       currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
     )
+    // No S on the phase-1 -> phase-2 handoff. `transitionToCutEntry` leaves the
+    // last seed circle by retracting to safe Z and plunging back down, so there
+    // is no in-plane link for `spliceTangentSLink` to make tangent — it returns
+    // null every time. Measured: it fired twice on `model-in-pocket` and spliced
+    // nothing, and the output was byte-identical to not calling it. Linking here
+    // needs the transition to stay down first; that is a separate change.
     for (const contour of orderedFloorContours) {
       const entryPoint = contourStartPoint(contour, z)
       currentPosition = transitionToCutEntry(
@@ -790,6 +969,27 @@ export function generateFinishSurfaceCleanupToolpath(
       const cutMoves = toOpenCutMoves(segment, z)
       moves.push(...cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+    }
+
+    // Last at the level, and only last: "already swept" is measured against the
+    // envelope the circles and passes above cut at THIS Z, which is what makes
+    // each excursion's plunge land in a slot rather than in a step of stock.
+    const seedLeftovers = planCleanupFloorSeedLeftovers(
+      seededFloorRegions,
+      resolved.effectiveStepover,
+      suppressedWallSegments,
+      resolved.tool.radius,
+      resolved.direction,
+      [...seedStacks.flat(), ...floorContours],
+    )
+    if (seedLeftovers.length > 0) {
+      currentPosition = cutSeedLeftoverExcursions(
+        moves,
+        seedLeftovers,
+        z,
+        resolved.safeZ,
+        currentPosition,
+      )
     }
 
     currentPosition = retractToSafe(moves, currentPosition, resolved.safeZ)

@@ -26,6 +26,8 @@ import { normalizeProject } from '../../store/projectStore'
 import { replaceProjectFeatures } from '../../test/projectFixtures'
 import { serializeImportedMesh } from '../importedMesh'
 import { generateFinishSurfaceCleanupToolpath } from './finishSurfaceCleanup'
+import { buildSweptCoverage } from './sweptCoverage'
+import type { Point } from '../../types/project'
 import type { ToolpathMove } from './types'
 
 function assert(condition: boolean, message: string): void {
@@ -746,6 +748,260 @@ function testCleanupRespectsContainingPocketWallsAndFloor(): void {
   assert(floorZs.includes(0.5), `expected floor cleanup to include the containing pocket floor at Z=0.5, got ${floorZs.join(', ')}`)
 }
 
+// ── Seeded circles on the cleanup floor (issue #609) ────────────────
+//
+// `finish_surface_cleanup` offered `seeded_offset` and had no branch for it, so
+// the floor came out empty — no motion and no warning. These four cover what
+// the implementation has to be true for: it cuts circles, it clears everything
+// the plain offset pattern clears (which needs the #576 leftover recovery), it
+// falls back byte-identically where no area schedules a seed, and it leaves the
+// suppressed-wall-segment contract alone.
+
+/** Consecutive same-Z cut moves that stay connected end to end. */
+function connectedCutRuns(moves: ToolpathMove[]): ToolpathMove[][] {
+  const runs: ToolpathMove[][] = []
+  let current: ToolpathMove[] = []
+  for (const move of moves) {
+    if (move.kind !== 'cut' || Math.abs(move.from.z - move.to.z) > 1e-9) {
+      if (current.length > 0) runs.push(current)
+      current = []
+      continue
+    }
+    const previous = current[current.length - 1]
+    if (
+      previous
+      && (Math.hypot(previous.to.x - move.from.x, previous.to.y - move.from.y) > 1e-9
+        || Math.abs(previous.to.z - move.to.z) > 1e-9)
+    ) {
+      runs.push(current)
+      current = []
+    }
+    current.push(move)
+  }
+  if (current.length > 0) runs.push(current)
+  return runs
+}
+
+/**
+ * Full tessellated circles in a move stream.
+ *
+ * A seed circle is a regular polygon: every chord the same length, every turn
+ * the same angle, and the turns summing to exactly one revolution. Nothing else
+ * this generator emits has that shape — an offset ring's chords vary with the
+ * geometry it follows, and the link into a circle breaks the run on both
+ * counts, so the detected run is the circle and only the circle.
+ */
+function fullCircles(moves: ToolpathMove[]): Array<{ z: number; centre: Point; radius: number }> {
+  const chordLength = (move: ToolpathMove): number => Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y)
+  const turnBetween = (a: ToolpathMove, b: ToolpathMove): number => {
+    const ax = a.to.x - a.from.x
+    const ay = a.to.y - a.from.y
+    const bx = b.to.x - b.from.x
+    const by = b.to.y - b.from.y
+    return Math.atan2(ax * by - ay * bx, ax * bx + ay * by)
+  }
+
+  const circles: Array<{ z: number; centre: Point; radius: number }> = []
+  for (const run of connectedCutRuns(moves)) {
+    let start = 0
+    while (start < run.length) {
+      const chord = chordLength(run[start])
+      let turn: number | null = null
+      let end = start
+      while (end + 1 < run.length) {
+        if (Math.abs(chordLength(run[end + 1]) - chord) > 1e-6 * Math.max(1, chord)) break
+        const next = turnBetween(run[end], run[end + 1])
+        if (turn === null) turn = next
+        else if (Math.abs(next - turn) > 1e-6) break
+        end += 1
+      }
+
+      const chords = end - start + 1
+      // 24 is `MIN_SEED_CIRCLE_POINTS`; the revolution test is what makes this a
+      // circle rather than a merely uniform arc.
+      if (turn !== null && chords >= 24 && Math.abs(chords * Math.abs(turn) - 2 * Math.PI) < 1e-6) {
+        const points = run.slice(start, end + 1).map((move) => ({ x: move.from.x, y: move.from.y }))
+        const centre = {
+          x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+          y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+        }
+        const radii = points.map((point) => Math.hypot(point.x - centre.x, point.y - centre.y))
+        circles.push({ z: run[start].to.z, centre, radius: (Math.min(...radii) + Math.max(...radii)) / 2 })
+      }
+      start = end + 1
+    }
+  }
+  return circles
+}
+
+/** Cut centrelines at one Z, as two-point polylines for the swept envelope. */
+function cutLinesAtZ(moves: ToolpathMove[], z: number): Point[][] {
+  return cutMoves(moves)
+    .filter((move) => Math.abs(move.to.z - z) < 1e-6 && Math.abs(move.from.z - z) < 1e-6)
+    .map((move) => [{ x: move.from.x, y: move.from.y }, { x: move.to.x, y: move.to.y }])
+}
+
+/**
+ * Grid samples the reference stream removes that the subject stream does not.
+ *
+ * Measured on the swept envelope of the emitted centrelines, per Z level, so it
+ * answers "did the new pattern leave stock the old one took?" rather than
+ * comparing two path descriptions.
+ */
+function coverageSamplesLost(
+  reference: ToolpathMove[],
+  subject: ToolpathMove[],
+  toolRadius: number,
+): { checked: number; lost: number } {
+  const zs = [...new Set(cutMoves(reference).map((move) => Number(move.to.z.toFixed(6))))]
+  const pitch = toolRadius / 2
+  let checked = 0
+  let lost = 0
+  for (const z of zs) {
+    const referenceLines = cutLinesAtZ(reference, z)
+    if (referenceLines.length === 0) continue
+    const referenceCoverage = buildSweptCoverage(referenceLines, toolRadius)
+    const subjectCoverage = buildSweptCoverage(cutLinesAtZ(subject, z), toolRadius)
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const line of referenceLines) {
+      for (const point of line) {
+        minX = Math.min(minX, point.x)
+        maxX = Math.max(maxX, point.x)
+        minY = Math.min(minY, point.y)
+        maxY = Math.max(maxY, point.y)
+      }
+    }
+    for (let x = minX - toolRadius; x <= maxX + toolRadius; x += pitch) {
+      for (let y = minY - toolRadius; y <= maxY + toolRadius; y += pitch) {
+        if (!referenceCoverage.covers(x, y)) continue
+        checked += 1
+        if (!subjectCoverage.covers(x, y)) lost += 1
+      }
+    }
+  }
+  return { checked, lost }
+}
+
+function levelSegmentKey(move: ToolpathMove): string {
+  const round = (value: number): string => (Math.round(value * 1000) / 1000).toFixed(3)
+  const forward = `${round(move.from.x)},${round(move.from.y)}|${round(move.to.x)},${round(move.to.y)}`
+  const reverse = `${round(move.to.x)},${round(move.to.y)}|${round(move.from.x)},${round(move.from.y)}`
+  return `${move.to.z.toFixed(4)}#${forward < reverse ? forward : reverse}`
+}
+
+function testCleanupSeededFloorCutsCircles(): void {
+  console.log('Testing finish_surface_cleanup seeded_offset cuts seed circles on the floor...')
+  const { project, operation } = makePocketBlockProject(['model1'])
+  operation.finishWalls = false
+  operation.finishFloor = true
+  const seeded = generateFinishSurfaceCleanupToolpath(project, { ...operation, pocketPattern: 'seeded_offset' })
+  const offset = generateFinishSurfaceCleanupToolpath(project, { ...operation, pocketPattern: 'offset' })
+
+  assert(seeded.warnings.length === 0, `unexpected seeded warnings: ${JSON.stringify(seeded.warnings)}`)
+  assert(cutMoves(seeded.moves).length > 0, 'expected seeded cleanup floor moves')
+
+  const seededCircles = fullCircles(seeded.moves)
+  assert(fullCircles(offset.moves).length === 0, 'the plain offset floor must not contain full circles')
+  assert(seededCircles.length >= 3, `expected at least three seed circles, got ${seededCircles.length}`)
+
+  // The schedule is r0, r0 + stepover, ... from one centre, with r0 the tool
+  // radius (no entry strategy is offered here, so nothing smaller is cleared).
+  const toolRadius = project.tools[0].diameter / 2
+  const stepover = project.tools[0].diameter * operation.stepover
+  const stack = seededCircles
+    .filter((circle) => Math.hypot(circle.centre.x - seededCircles[0].centre.x, circle.centre.y - seededCircles[0].centre.y) < 1e-6)
+    .map((circle) => circle.radius)
+    .sort((left, right) => left - right)
+  assert(stack.length >= 3, `expected a concentric stack of at least three circles, got ${stack.length}`)
+  assert(
+    Math.abs(stack[0] - toolRadius) < 1e-6,
+    `expected the first seed circle at the tool radius ${toolRadius}, got ${stack[0]}`,
+  )
+  for (let index = 1; index < stack.length; index += 1) {
+    assert(
+      Math.abs(stack[index] - stack[index - 1] - stepover) < 1e-6,
+      `expected seed circles one stepover (${stepover}) apart, got ${stack[index - 1]} then ${stack[index]}`,
+    )
+  }
+}
+
+function testCleanupSeededFloorLosesNoCoverageAgainstOffset(): void {
+  console.log('Testing finish_surface_cleanup seeded_offset clears everything offset clears...')
+  const { project, operation } = makePocketBlockProject(['model1'])
+  operation.finishWalls = false
+  operation.finishFloor = true
+  const offset = generateFinishSurfaceCleanupToolpath(project, { ...operation, pocketPattern: 'offset' })
+  const seeded = generateFinishSurfaceCleanupToolpath(project, { ...operation, pocketPattern: 'seeded_offset' })
+
+  const { checked, lost } = coverageSamplesLost(offset.moves, seeded.moves, project.tools[0].diameter / 2)
+  assert(checked > 5000, `expected a meaningful sample count, got ${checked}`)
+  // Not a tolerance. The extended seed island (issue #576) hands the offset
+  // passes a smaller domain, and without the leftover recovery this fixture
+  // strands 95 of these samples — measured, by taking the excursions back out.
+  assert(lost === 0, `seeded_offset left ${lost} of ${checked} offset-cleared samples uncut`)
+}
+
+function testCleanupSeededFloorFallsBackToOffsetByteIdentically(): void {
+  console.log('Testing finish_surface_cleanup seeded_offset is byte-identical to offset when nothing seeds...')
+  // A 2 mm cutter at an 0.8 stepover ratio needs an inscribed radius of
+  // 1 + 2 x 1.6 = 4.2 mm before an area can schedule the three circles the
+  // handoff requires; nothing on this fixture is that open, so phase 1 plans
+  // nothing and phase 2 must be the shipped offset floor exactly.
+  const { project, operation } = makePocketBlockProject(['model1'])
+  project.tools[0].diameter = 2
+  operation.stepover = 0.8
+  operation.finishWalls = false
+  operation.finishFloor = true
+
+  const offset = generateFinishSurfaceCleanupToolpath(project, { ...operation, pocketPattern: 'offset' })
+  const seeded = generateFinishSurfaceCleanupToolpath(project, { ...operation, pocketPattern: 'seeded_offset' })
+
+  assert(cutMoves(offset.moves).length > 0, 'expected a non-empty floor to compare')
+  assert(fullCircles(seeded.moves).length === 0, 'this fixture must schedule no seed circles')
+  assert(
+    JSON.stringify(seeded.moves) === JSON.stringify(offset.moves),
+    `expected the no-seed fallback to be byte-identical to offset, got ${seeded.moves.length} vs ${offset.moves.length} moves`,
+  )
+
+  const withWalls = { ...operation, finishWalls: true }
+  assert(
+    JSON.stringify(generateFinishSurfaceCleanupToolpath(project, { ...withWalls, pocketPattern: 'seeded_offset' }).moves)
+    === JSON.stringify(generateFinishSurfaceCleanupToolpath(project, { ...withWalls, pocketPattern: 'offset' }).moves),
+    'expected the no-seed fallback to be byte-identical to offset with walls on too',
+  )
+}
+
+function testCleanupSeededFloorKeepsSuppressedWallSegments(): void {
+  console.log('Testing finish_surface_cleanup seeding does not reinstate a suppressed wall pass...')
+  const { project, operation } = makePocketBlockProject(['model1'])
+  const wallsOnly = generateFinishSurfaceCleanupToolpath(project, {
+    ...operation,
+    pocketPattern: 'seeded_offset',
+    finishFloor: false,
+  })
+  const wallSegments = new Set(cutMoves(wallsOnly.moves).map(levelSegmentKey))
+  assert(wallSegments.size > 0, 'expected wall cleanup segments to suppress')
+
+  // The seed island is an exclusion the inset recursion offsets around, never a
+  // depth-0 boundary pass, so the contours suppression is applied to are the
+  // unseeded ones and each wall segment is still cut exactly once.
+  for (const pattern of ['offset', 'seeded_offset'] as const) {
+    const both = generateFinishSurfaceCleanupToolpath(project, { ...operation, pocketPattern: pattern })
+    const counts = new Map<string, number>()
+    for (const move of cutMoves(both.moves)) {
+      const key = levelSegmentKey(move)
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    for (const key of wallSegments) {
+      const count = counts.get(key) ?? 0
+      assert(count === 1, `${pattern}: wall segment ${key} is cut ${count} times, expected exactly once`)
+    }
+  }
+}
+
 async function run(): Promise<void> {
   testCleanupRejectsDisabledFinishModes()
   testCleanupUsesInternalSamplingStepdown()
@@ -760,6 +1016,10 @@ async function run(): Promise<void> {
   testCleanupRespectsRegionMask()
   testCleanupWarnsOnOpenSliceFallback()
   testCleanupRespectsContainingPocketWallsAndFloor()
+  testCleanupSeededFloorCutsCircles()
+  testCleanupSeededFloorLosesNoCoverageAgainstOffset()
+  testCleanupSeededFloorFallsBackToOffsetByteIdentically()
+  testCleanupSeededFloorKeepsSuppressedWallSegments()
   console.log('finishSurfaceCleanup.test.ts: all tests passed')
 }
 

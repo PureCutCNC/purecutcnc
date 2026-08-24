@@ -137,6 +137,14 @@ export function tangentSLink(
     const arrival = ringVertices[index]
     const straightDist = Math.hypot(arrival.x - exit.x, arrival.y - exit.y)
     if (straightDist > options.maxLength || straightDist <= 1e-9) continue
+    // Exact prune (issue #609). Any arc-line-arc path from `exit` to `arrival`
+    // is at least the straight-line distance between them, so an arrival whose
+    // straight distance already matches the best length found cannot produce a
+    // shorter path. The winner is chosen with a strict `<`, so a candidate that
+    // merely ties never replaces the incumbent either — skipping these cannot
+    // change which S is selected, only how long it takes to find it. Iteration
+    // order is untouched, so first-found tie-breaking is preserved.
+    if (straightDist >= bestLength) continue
     const nextVertex = ringVertices[(index + 1) % count]
     const arrivalTangent = norm(sub(nextVertex, arrival))
 
