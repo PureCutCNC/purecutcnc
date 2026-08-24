@@ -1,7 +1,7 @@
 ---
-status: proposed
-authoritative-for: issue-546 delegated slice boundaries and review evidence
-last-verified: 2026-08-17
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #546 (delivered by PR #553)
+last-verified: 2026-08-24
 ---
 
 # Issue #546 integration handoff

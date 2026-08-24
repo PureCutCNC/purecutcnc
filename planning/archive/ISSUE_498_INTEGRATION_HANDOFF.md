@@ -1,7 +1,7 @@
 ---
-status: current
-authoritative-for: issue #498 delegated slice execution and manager review ledger
-last-verified: 2026-08-14
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #498 (delivered by PR #515)
+last-verified: 2026-08-24
 ---
 
 # Integration Handoff — Cutter engagement model (#498)
