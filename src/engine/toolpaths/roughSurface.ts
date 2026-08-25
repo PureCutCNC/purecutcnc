@@ -53,6 +53,7 @@ import type { ToolpathWarning } from './warningCodes'
 import { isFeatureFirst, perFeatureOperations, mergePocketToolpathResults } from './multiFeature'
 import { createSharedEngagementTelemetry } from './pocket'
 import { resolvedFeatureMap } from '../../store/helpers/resolveFeatures'
+import { clearingControlApplies } from './clearingControls'
 
 function appendUniqueWarning(warnings: ToolpathWarning[], warning: ToolpathWarning): void {
   const key = `${warning.code}:${JSON.stringify(warning.params ?? {})}`
@@ -167,6 +168,16 @@ function generateRoughSurfaceToolpathSingle(
     )
   }
   let currentPosition: ToolpathPoint | null = null
+
+  // Wall-corner cleanup (issue #633). The declaration decides whether this kind
+  // offers the control; the gate mirrors surface.ts's exactly.
+  const wallCleanup = clearingControlApplies(operation.kind, 'cleanWallCorners') && operation.roundOutsideCorners
+    && operation.cleanWallCorners === true
+    ? {
+        enabled: true as const,
+        onFallback: (): void => appendUniqueWarning(warnings, { code: 'pocketWallCornerCleanupFallback' }),
+      }
+    : undefined
 
   for (const level of resolved.levels) {
     const levelStartIndex = allMoves.length
@@ -308,6 +319,8 @@ function generateRoughSurfaceToolpathSingle(
           islandJoinType,
           entryPolicy,
           levelTangentLink,
+          wallCleanup,
+          resolved.tool.radius,
         )
 
       const plans = coverage.seedCircles && seedStart > 0
@@ -371,6 +384,8 @@ function generateRoughSurfaceToolpathSingle(
         0,
         entryPolicy,
         levelTangentLink,
+        wallCleanup,
+        resolved.tool.radius,
       )
     }
 
