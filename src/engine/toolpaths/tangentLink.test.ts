@@ -287,17 +287,27 @@ function testProbeCountersAndPruneGuard() {
   assert(counts.arrivalsPruned > 0, 'arrivalsPruned must be > 0, got ' + counts.arrivalsPruned)
   assert(counts.arrivalsConsidered > 0, 'arrivalsConsidered must be > 0')
 
-  // Each considered arrival sweeps ~81 middle directions, each producing up to
-  // 2 candidates. The prune must cut the evaluated count materially below that
-  // ceiling.
-  const maxCandidates = counts.arrivalsConsidered * 81 * 2
+  // `arrivalsPruned > 0` alone only catches the prune being deleted outright.
+  // It sails through the prune being *neutered* — counting but no longer
+  // skipping — which is the same regression with the counter still moving. So
+  // the evaluated count is pinned against measured rows rather than against a
+  // derived ceiling, the way AGENTS.md sizes a perf assertion:
+  //
+  //   prune working                       10 candidates evaluated
+  //   prune counts but does not skip     288 candidates evaluated  (28.8x)
+  //   threshold, geometric mid-point      53  (5.4x headroom either side)
+  //
+  // A derived ceiling does not work here: arrivals × sweep × 2 is 3240 on this
+  // input, so a `< half the ceiling` bound passes at 288 and constrains nothing.
+  const EVALUATED_BUDGET = 53
   assert(
-    counts.candidatesEvaluated < maxCandidates * 0.5,
-    'candidatesEvaluated (' + counts.candidatesEvaluated + ') must be materially below the unpruned ceiling (' + maxCandidates + ')',
+    counts.candidatesEvaluated <= EVALUATED_BUDGET,
+    'candidatesEvaluated (' + counts.candidatesEvaluated + ') exceeded ' + EVALUATED_BUDGET
+      + ' — the prune has stopped removing search, even if it still counts',
   )
 
-  // The selected link must be unchanged — the counters are observational.
-  // Re-run without resetting to confirm determinism, then check geometry.
+  // The selected link must be unchanged — the counters are observational, so
+  // the same geometry expectations the other cases assert still hold here.
   const points = result.points
   assert(
     approx(points[0].x, exit.x) && approx(points[0].y, exit.y),
@@ -317,7 +327,7 @@ function testProbeCountersAndPruneGuard() {
   console.log('probe counters: considered=' + counts.arrivalsConsidered
     + ' pruned=' + counts.arrivalsPruned
     + ' evaluated=' + counts.candidatesEvaluated
-    + ' ceiling=' + maxCandidates)
+    + ' budget=' + EVALUATED_BUDGET)
   console.log('probe counters and prune guard: PASSED')
 }
 
