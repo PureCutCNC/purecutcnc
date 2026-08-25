@@ -183,3 +183,38 @@ chained, while `nextRoughSection`'s ordering and `rotateContourToNearestEntry`'s
 seam take a level-invariant planning seed. That is a parameter threaded through
 `cutOffsetRegionNode` / `cutOffsetNodeRings`, which are shared with the pocket
 finish floor, `surface_clean` and `rough_surface`.
+
+### Slice 3 — the design, and the obstacle in the way of it
+
+The seam choice and the motion source must separate, but the discontinuity was
+**not** caused by choosing a canonical seam — it was caused by passing `null` as
+the transition's `from`. Choosing the seam canonically while still passing the
+real position keeps the stream chained: the level-boundary traverse simply
+targets a different point.
+
+```
+today   [1108] rapid (58,38,4) -> (58,38,25)            retract
+        [1109] rapid (58,38,25) -> (40.283,20.283,25)   traverse to the nearest seam
+wanted  [1109] rapid (58,38,25) -> (40.400,20.000,25)   traverse to the canonical seam
+```
+
+So the parameter to thread is a **seam anchor**, consumed only by the first
+contour's `rotateContourToNearestEntry` / ordering, while `fromPosition` keeps
+driving `transitionToCutEntry` untouched.
+
+The obstacle is shape, not logic: `cutOffsetNodeRings` already takes seventeen
+positional parameters and `cutOffsetRegionNode` mirrors it. An eighteenth
+positional flag would be the wrong answer — per AGENTS.md's structural
+conventions this is the point at which the parameter list should become an
+options object. That refactor touches every caller (pocket rough, pocket finish
+floor, `surface_clean`, `rough_surface`), so it wants to be its own slice with
+byte-identity evidence per caller **before** the seam anchor is introduced, not
+bundled with it.
+
+Suggested split:
+
+1. `cutOffsetNodeRings` / `cutOffsetRegionNode` take an options object;
+   byte-identical output asserted for every caller.
+2. The seam anchor is added to that object and set level-invariantly by the
+   rough band; per-level identity asserted, move-chain continuity asserted
+   (`from` of every move equals `to` of the previous one).
