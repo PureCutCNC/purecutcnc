@@ -18,6 +18,7 @@ import type { Operation, Point, Project } from '../../types/project'
 import type { PocketToolpathResult, ResolvedPocketRegion, ToolpathBounds, ToolpathMove, ToolpathPoint } from './types'
 import { DEFAULT_CLIPPER_SCALE, applyContourDirection, normalizeWinding, toClipperPath } from './geometry'
 import {
+  applyLevelFeed,
   buildContourLoops,
   buildInsetRegions,
   buildPocketParallelSegments,
@@ -27,6 +28,7 @@ import {
   orderClosedContoursGreedy,
   orderOpenSegmentsGreedy,
   polyTreeToRegions,
+  resolveSlotFeedScale,
   retractToSafe,
   rotateContourToNearestEntry,
   spliceTangentSLink,
@@ -34,6 +36,9 @@ import {
   toOpenCutMoves,
   transitionToCutEntry,
   updateBounds,
+  SLOT_FEED_ADJACENCY_FACTOR,
+  SLOT_FEED_ENGAGEMENT_FACTOR,
+  SLOT_FEED_OWN_TRAIL_FACTOR,
 } from './pocket'
 import { cornerSmoothingRadius, smoothClosedContours } from './offsetSmoothing'
 import {
@@ -46,6 +51,7 @@ import {
 import { planSeedLeftovers, type SeedLeftoverExcursion } from './seedLeftover'
 import { areaCoverage, effectivePocketPattern } from './pocketPatterns'
 import { pocketTangentLinkOptions } from './tangentLink'
+import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
 import {
   calculateClipperArea,
   differenceClipperPaths,
@@ -772,9 +778,24 @@ export function generateFinishSurfaceCleanupToolpath(
   const floorSeedStart = floorCoverage.seedCircles
     ? seedStartRadius(operation, resolved.tool.radius)
     : 0
+  // Feed reduction (issue #619). Cleanup clears its floor with the same offset
+  // rings a pocket does, so the same classifier prices them; the declaration
+  // decides whether the kind offers the control, and `resolveSlotFeedScale`
+  // reads it, so no kind test appears here. Cleanup synthesizes no entry
+  // policy, so there is no entry hand-off to scale.
+  const slotScale = resolveSlotFeedScale(operation)
+  const slotDistance = Math.max(
+    resolved.tool.radius * 2 * SLOT_FEED_ENGAGEMENT_FACTOR,
+    resolved.effectiveStepover * SLOT_FEED_ADJACENCY_FACTOR,
+  )
+  const ownTrailTolerance = resolved.effectiveStepover * SLOT_FEED_OWN_TRAIL_FACTOR
+  const telemetry = operation.pocketFeedReduction === 'engagement'
+    ? new EngagementTelemetryAccumulator(nominalEngagement(resolved.effectiveStepover, resolved.tool.radius))
+    : null
   let currentPosition: ToolpathPoint | null = null
 
   for (const z of sortedLevels) {
+    const levelStartIndex = moves.length
     const wallPaths = wallPathsByZ.get(z) ?? []
     const wallContours = wallPaths
       .filter((path) => path.closed)
@@ -992,6 +1013,21 @@ export function generateFinishSurfaceCleanupToolpath(
       )
     }
 
+    // Last at the level, over the level's whole move range: the classifier
+    // decides what each cut was already adjacent to, which only reads true
+    // once every pass at this Z is emitted.
+    applyLevelFeed(
+      moves,
+      levelStartIndex,
+      operation,
+      slotScale,
+      slotDistance,
+      ownTrailTolerance,
+      resolved.tool.radius * 2,
+      resolved.effectiveStepover,
+      telemetry,
+    )
+
     currentPosition = retractToSafe(moves, currentPosition, resolved.safeZ)
   }
 
@@ -1011,5 +1047,6 @@ export function generateFinishSurfaceCleanupToolpath(
     warnings,
     bounds,
     stepLevels: sortedLevels,
+    ...(telemetry ? { engagementTelemetry: telemetry.toTelemetry() } : {}),
   }
 }

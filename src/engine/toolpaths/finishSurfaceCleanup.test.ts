@@ -1002,6 +1002,62 @@ function testCleanupSeededFloorKeepsSuppressedWallSegments(): void {
   }
 }
 
+/**
+ * Feed reduction on the cleanup floor (issue #619).
+ *
+ * #583 closed this gap for `surface_clean` and left it open here: cleanup
+ * clears its floor with the same offset rings a pocket does and never reduced
+ * feed. `pocketSlotFeedPercent` defaults to 60 on every kind and already ships
+ * inside saved files, so the reduction starts applying on load — the owner's
+ * take-the-change decision. At 100% the stream must carry no `feedScale` at
+ * all, which is what keeps the change attributable to the stored value rather
+ * than to the wiring.
+ */
+function testCleanupReducesSlotFeed(): void {
+  console.log('Testing cleanup floor reduces slot feed...')
+  const { project, operation } = makePocketBlockProject(['model1'])
+  const reduced = generateFinishSurfaceCleanupToolpath(project, {
+    ...operation, pocketSlotFeedPercent: 60,
+  })
+  const scaled = cutMoves(reduced.moves).filter((move) => move.feedScale !== undefined)
+  assert(
+    scaled.length > 0,
+    'no cut carried a feedScale, so the slot-feed reduction never reached the cleanup stream',
+  )
+  assert(
+    scaled.every((move) => move.feedScale === 0.6),
+    `expected every scaled cut at 0.6, got ${[...new Set(scaled.map((move) => move.feedScale))].join(', ')}`,
+  )
+
+  const full = generateFinishSurfaceCleanupToolpath(project, {
+    ...operation, pocketSlotFeedPercent: 100,
+  })
+  assert(
+    cutMoves(full.moves).every((move) => move.feedScale === undefined),
+    'at 100% no move may carry a feedScale — absent means full feed everywhere else in the engine',
+  )
+}
+
+/** Engagement telemetry rides the result only when the mode asks for it (#619). */
+function testCleanupEngagementTelemetry(): void {
+  console.log('Testing cleanup engagement telemetry follows the mode...')
+  const { project, operation } = makePocketBlockProject(['model1'])
+  const engagement = generateFinishSurfaceCleanupToolpath(project, {
+    ...operation, pocketFeedReduction: 'engagement',
+  })
+  assert(
+    engagement.engagementTelemetry !== undefined,
+    'engagement mode must publish telemetry, or the mode has nothing to price against',
+  )
+  const slotsOnly = generateFinishSurfaceCleanupToolpath(project, {
+    ...operation, pocketFeedReduction: 'slots_only',
+  })
+  assert(
+    slotsOnly.engagementTelemetry === undefined,
+    'slots_only must not publish engagement telemetry',
+  )
+}
+
 async function run(): Promise<void> {
   testCleanupRejectsDisabledFinishModes()
   testCleanupUsesInternalSamplingStepdown()
@@ -1020,6 +1076,8 @@ async function run(): Promise<void> {
   testCleanupSeededFloorLosesNoCoverageAgainstOffset()
   testCleanupSeededFloorFallsBackToOffsetByteIdentically()
   testCleanupSeededFloorKeepsSuppressedWallSegments()
+  testCleanupReducesSlotFeed()
+  testCleanupEngagementTelemetry()
   console.log('finishSurfaceCleanup.test.ts: all tests passed')
 }
 

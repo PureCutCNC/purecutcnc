@@ -1158,6 +1158,67 @@ function testRoughSurfaceRasterNeverLinksAcrossStandingStrip(): void {
   assertEverySegmentStaysInItsLevel('parallel', makeSplitRegionProject)
 }
 
+/**
+ * Feed reduction on the roughing stream (issue #619).
+ *
+ * The owner's decision was to take the emitted-output change rather than
+ * migrate around it: `pocketSlotFeedPercent` defaults to 60 on every kind and
+ * is already live in saved files, so this operation starts reducing feed in
+ * its slots the moment the declaration offers the control. What must stay true
+ * is that the reduction is driven by the parameter and by nothing else — at
+ * 100% the stream carries no `feedScale` at all, which is what makes the
+ * change attributable to the stored value rather than to the wiring.
+ *
+ * Asserted on every offered pattern: a level cleared by the raster branch
+ * prices its slots exactly as a ring level does.
+ */
+function testRoughSurfaceReducesSlotFeed(): void {
+  console.log('Testing rough_surface reduces slot feed on every offered pattern...')
+  for (const pattern of offeredPocketPatterns('rough_surface')) {
+    const { project, operation } = makeProject(['model1'])
+    const reduced = generateRoughSurfaceToolpath(project, {
+      ...operation, pocketPattern: pattern, pocketSlotFeedPercent: 60,
+    })
+    const scaled = cutMoves(reduced.moves).filter((move) => move.feedScale !== undefined)
+    assert(
+      scaled.length > 0,
+      `${pattern}: no cut carried a feedScale, so the slot-feed reduction never reached the stream`,
+    )
+    assert(
+      scaled.every((move) => move.feedScale === 0.6),
+      `${pattern}: expected every scaled cut at 0.6, got ${[...new Set(scaled.map((move) => move.feedScale))].join(', ')}`,
+    )
+
+    const full = generateRoughSurfaceToolpath(project, {
+      ...operation, pocketPattern: pattern, pocketSlotFeedPercent: 100,
+    })
+    assert(
+      cutMoves(full.moves).every((move) => move.feedScale === undefined),
+      `${pattern}: at 100% no move may carry a feedScale — absent means full feed everywhere else in the engine`,
+    )
+  }
+}
+
+/** Engagement telemetry rides the result only when the mode asks for it (#619). */
+function testRoughSurfaceEngagementTelemetry(): void {
+  console.log('Testing rough_surface engagement telemetry follows the mode...')
+  const { project, operation } = makeProject(['model1'])
+  const engagement = generateRoughSurfaceToolpath(project, {
+    ...operation, pocketFeedReduction: 'engagement',
+  })
+  assert(
+    engagement.engagementTelemetry !== undefined,
+    'engagement mode must publish telemetry, or the mode has nothing to price against',
+  )
+  const slotsOnly = generateRoughSurfaceToolpath(project, {
+    ...operation, pocketFeedReduction: 'slots_only',
+  })
+  assert(
+    slotsOnly.engagementTelemetry === undefined,
+    'slots_only must not publish engagement telemetry',
+  )
+}
+
 testRoughSurfaceGeneratesChangingZCuts()
 testRoughSurfaceHelixEntryUsesModelSafeRegions()
 testRoughSurfaceRegionMaskAllowsEntry()
@@ -1178,6 +1239,8 @@ testRoughSurfaceGenerationMatrix()
 testRoughSurfaceParallelStaysInClearableRegions()
 testRoughSurfaceSeededStaysInClearableRegions()
 testRoughSurfaceRasterNeverLinksAcrossStandingStrip()
+testRoughSurfaceReducesSlotFeed()
+testRoughSurfaceEngagementTelemetry()
 
 function testTransitionToCutEntryPlungesAtAlignedXY(): void {
   console.log('Testing transitionToCutEntry plunges straight down at aligned XY...')
