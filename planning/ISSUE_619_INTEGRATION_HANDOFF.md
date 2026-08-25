@@ -22,7 +22,7 @@ issues with their own handoffs.
 - Base commit: `fe1db94` (`main` after #618)
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/619
 - Manager session: 2026-08-24
-- Status: `slice in progress`
+- Status: `implemented and delivered; PR #626 open`
 - User authorization for external-worker dispatch: granted 2026-08-24 for every
   slice needed to finish #619, #620 and #621.
 
@@ -67,7 +67,7 @@ That is not a caveat, it is the deliverable's shape:
 
 | Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| S1 | Flip the four cells; wire slot feed + engagement into both model-aware generators | `fe1db94` | `feat/issue-619-feed-reduction-model-aware` | `dispatched` | `pending` | `-` | focused suites + `scripts/build-summary.sh` | Fixture evidence is produced by the manager at review time |
+| S1 | Flip the four cells; wire slot feed + engagement into both model-aware generators | `fe1db94` | dispatched 3x, then implemented by the manager | `failed` | `rejected` | `4c2b73d` (manager) | 208 test files; `npm run build` | See the dispatch record below |
 
 ## Slice instructions
 
@@ -203,3 +203,30 @@ CHANGED_FILES: <comma-separated paths>
 CHECKS: <each command and pass/fail result>
 RISKS: <none or concise unresolved risks>
 ```
+
+## Dispatch record
+
+The DSH worker was dispatched three times and produced nothing acceptable.
+
+| Attempt | Outcome |
+| --- | --- |
+| 1 | `dsh: RATE_LIMIT: 429` from the shared upstream pool, before any tool activity. Worktree clean. |
+| 2 | `dsh: PI_AI_ERROR: Provider returned error`, immediately after MCP init. Worktree clean. |
+| 3 | Worker exited 0 and the dispatcher committed `d94be7d`, but the result did not compile: `applyLevelFeed` was never imported, the second call sat outside the level loop referencing a loop-scoped `levelStartIndex`, and the orphaned `feedReductionPending` helper failed lint. `finishSurfaceCleanup.ts` was never touched, no tests were added, and the telemetry accumulator was built but never attached to the result. Rejected; branch and worktree discarded. |
+
+The user's standing direction was DSH or the manager, never `claude-deepseek`, so the
+manager implemented the slice directly. The completion block from attempt 3 is the
+reason this project treats a worker report as a report and not as acceptance.
+
+## Verification performed by the manager
+
+- Fixture sweep, generator through postprocessor, all twelve committed fixtures:
+  the three affected operations changed, the other fifteen are byte-identical to
+  `main`.
+- The same sweep with `pocketSlotFeedPercent` neutralised to 100 on both kinds:
+  **all eighteen byte-identical**, which attributes the whole change to the
+  stored value rather than to the wiring.
+- Five mutations, each confirmed to fail for its stated reason and restored from
+  a `cp` backup: ring-branch feed call removed, cleanup feed call removed, either
+  telemetry detached, and a declaration cell reverted.
+- `npm run build` green (208 test files).
