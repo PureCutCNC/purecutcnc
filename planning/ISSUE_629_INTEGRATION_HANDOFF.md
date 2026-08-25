@@ -22,7 +22,7 @@ numbers justify it) stay with the manager and are not part of this slice.
 - Base commit: `4edad5d` (`main` after #621)
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/629
 - Manager session: 2026-08-25
-- Status: `slice in progress`
+- Status: `step 2 accepted with one manager correction; steps 1 and 3 still open`
 - User authorization for external-worker dispatch: granted; the manager owns
   the choice of what to delegate and is responsible for final delivery.
 
@@ -80,7 +80,7 @@ delete it and every test in `tangentLink.test.ts` and
 
 | Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| S1 | Probe counters in `tangentLink.ts` + a guard that fails when the prune stops working | `4edad5d` | `feat/issue-629-slink-probes` | `dispatched` | `pending` | `-` | focused suites + `scripts/build-summary.sh` | Byte-identity sweep run by the manager |
+| S1 | Probe counters in `tangentLink.ts` + a guard that fails when the prune stops working | `4edad5d` | `feat/issue-629-slink-probes` / removed after merge | `done` | `accepted with correction` | `bbddb2b` + `540f4de`; merge `27fd217` | 208 test files; `npm run build`; byte-identity sweep | See the review record below |
 
 ## Slice instructions
 
@@ -198,3 +198,51 @@ CHANGED_FILES: <comma-separated paths>
 CHECKS: <each command and pass/fail result>
 RISKS: <none or concise unresolved risks>
 ```
+
+## Manager review record
+
+The instrumentation was accepted as delivered: three module-level counters advancing
+only inside `tangentSLink`, a reader and a reset mirroring `pocket.ts:362`/`:375`, no
+timing, no toggle, no control-flow change. The prune line became
+`{ counter += 1; continue }`, which is the same branch with an observation on it.
+
+**One correction was required (`540f4de`).** The guard was under-powered in the exact
+dimension the issue exists to protect.
+
+`arrivalsPruned > 0` catches the prune being deleted outright. It does not catch the
+prune being *neutered* — still counting, no longer skipping — which is the same
+regression with the counter still moving. The second assertion was meant to cover
+that, but it compared against a derived ceiling (`arrivals x 81 x 2` = 3240 on the
+test input) while the real figure is 10, so a "below half the ceiling" bound had 324x
+of slack:
+
+| prune state | candidates evaluated | old guard |
+| --- | ---: | --- |
+| working | 10 | passes |
+| counts but does not skip | 288 | **passes** |
+| deleted | — | fails on `arrivalsPruned > 0` |
+
+Replaced with a budget sized from measured rows at their geometric mid-point, the
+shape AGENTS.md prescribes for a perf assertion: baseline 10, regressed 288, budget
+53, 5.4x headroom either side. Both failure modes now fail for their own stated
+reason, and both rows are recorded in the test so the next reader can re-derive the
+constant instead of guessing at it.
+
+## Verification performed by the manager
+
+- Byte-identity sweep, all twelve committed fixtures: **18/18 unchanged** against
+  `main`. The counters observe and never gate.
+- Two mutations, each restored from a `cp` backup: prune deleted fails on
+  `arrivalsPruned must be > 0, got 0`; prune neutered fails on
+  `candidatesEvaluated (288) exceeded 53`.
+- Confirmed the contrast this slice exists to create: with the prune deleted,
+  `tangentLinkIntegration.test.ts` still passes. Before this slice, nothing in the
+  repo caught that at all.
+- `npm run build` green (208 test files).
+
+## What remains on #629
+
+Step 2 is done. Step 1 (characterise solver cost per kind and pattern using these
+counters) and step 3 (optimise, if the numbers justify it) stay with the manager, and
+must not run concurrently with any dispatched worker — benchmarking under a parallel
+test pool is what crashed this machine once before.
