@@ -44,7 +44,8 @@ import {
 import { cornerSmoothingRadius } from './offsetSmoothing'
 import { offsetClipperPaths, segmentInsideClipperPaths } from './modelProtection'
 import { resolve3DSurfaceStepdown } from './surfaceStepdown3d'
-import { areaCoverage, effectivePocketPattern } from './pocketPatterns'
+import { areaCoverage, effectivePocketPattern, usesTangentLinks } from './pocketPatterns'
+import { pocketTangentLinkOptions } from './tangentLink'
 import { planSeedCircles, seedCircleContours, seedStartRadius } from './seedClearing'
 import { applyContourDirection } from './geometry'
 import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
@@ -183,6 +184,18 @@ function generateRoughSurfaceToolpathSingle(
       currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
     )
 
+    // Tangential S-links for rough_surface rings (issue #621). The domain is
+    // the level's own inset regions — the same clearable boundary the per-level
+    // safeLinkCheck enforces for straight links. A link that leaves it drives
+    // the cutter through standing stock.
+    const levelTangentLink = usesTangentLinks(operation.kind, operation.pocketPattern) && operation.roundLinkCorners
+      ? pocketTangentLinkOptions(
+        operation.roundLinkCorners,
+        resolved.tool.diameter,
+        level.insetRegions,
+      )
+      : undefined
+
     // No withEntryStartZ() here, unlike pocket and surface clearing. Those
     // reuse one XY footprint for every level, so the previous level's floor is
     // guaranteed cleared and the entry can start just above it. 3D roughing
@@ -294,6 +307,7 @@ function generateRoughSurfaceToolpathSingle(
           smoothRadius,
           islandJoinType,
           entryPolicy,
+          levelTangentLink,
         )
 
       const plans = coverage.seedCircles && seedStart > 0
@@ -356,6 +370,7 @@ function generateRoughSurfaceToolpathSingle(
         smoothRadius,
         0,
         entryPolicy,
+        levelTangentLink,
       )
     }
 

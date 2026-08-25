@@ -1058,6 +1058,86 @@ function testCleanupEngagementTelemetry(): void {
   )
 }
 
+// ── Tangent link tests (issue #621) ────────────────────────────────────
+
+/**
+ * Count cut-to-cut junctions with turn ≥ thresholdDeg. A reduction in sharp
+ * junctions when tangent links are enabled is the signature of spliced S-links.
+ */
+function sharpLinkJunctionCount(moves: ToolpathMove[], thresholdDeg = 60): number {
+  const cuts = moves.filter((m) => m.kind === 'cut')
+  let count = 0
+  for (let i = 0; i + 1 < cuts.length; i += 1) {
+    const a = cuts[i]!
+    const b = cuts[i + 1]!
+    if (Math.abs(a.to.x - b.from.x) > 1e-9 || Math.abs(a.to.y - b.from.y) > 1e-9) continue
+    const inX = a.to.x - a.from.x
+    const inY = a.to.y - a.from.y
+    const outX = b.to.x - b.from.x
+    const outY = b.to.y - b.from.y
+    const inLen = Math.hypot(inX, inY)
+    const outLen = Math.hypot(outX, outY)
+    if (inLen < 1e-9 || outLen < 1e-9) continue
+    const cos = Math.max(-1, Math.min(1, (inX * outX + inY * outY) / (inLen * outLen)))
+    const turn = (Math.acos(cos) * 180) / Math.PI
+    if (turn >= thresholdDeg) count += 1
+  }
+  return count
+}
+
+function testCleanupFloorSplicesTangentLinksOnOffset(): void {
+  console.log('Testing cleanup floor splices tangent links on offset pattern...')
+  const { project, operation } = makePocketBlockProject(['model1'])
+  const enabled = generateFinishSurfaceCleanupToolpath(project, {
+    ...operation, pocketPattern: 'offset', roundLinkCorners: true,
+  })
+  const disabled = generateFinishSurfaceCleanupToolpath(project, {
+    ...operation, pocketPattern: 'offset', roundLinkCorners: false,
+  })
+  assert(cutMoves(enabled.moves).length > 0, 'enabled stream must have cuts')
+  assert(cutMoves(disabled.moves).length > 0, 'disabled stream must have cuts')
+  const enabledSharp = sharpLinkJunctionCount(enabled.moves)
+  const disabledSharp = sharpLinkJunctionCount(disabled.moves)
+  assert(
+    enabledSharp < disabledSharp,
+    `offset: enabled must reduce sharp link junctions (enabled ${enabledSharp}, disabled ${disabledSharp})`,
+  )
+}
+
+function testCleanupFloorSplicesTangentLinksOnSeededOffset(): void {
+  console.log('Testing cleanup floor splices tangent links on seeded_offset pattern...')
+  const { project, operation } = makePocketBlockProject(['model1'])
+  const enabled = generateFinishSurfaceCleanupToolpath(project, {
+    ...operation, pocketPattern: 'seeded_offset', roundLinkCorners: true,
+  })
+  const disabled = generateFinishSurfaceCleanupToolpath(project, {
+    ...operation, pocketPattern: 'seeded_offset', roundLinkCorners: false,
+  })
+  assert(cutMoves(enabled.moves).length > 0, 'enabled stream must have cuts')
+  assert(cutMoves(disabled.moves).length > 0, 'disabled stream must have cuts')
+  const enabledSharp = sharpLinkJunctionCount(enabled.moves)
+  const disabledSharp = sharpLinkJunctionCount(disabled.moves)
+  assert(
+    enabledSharp < disabledSharp,
+    `seeded_offset: enabled must reduce sharp link junctions (enabled ${enabledSharp}, disabled ${disabledSharp})`,
+  )
+}
+
+function testCleanupFloorParallelSplicesNothing(): void {
+  console.log('Testing cleanup floor parallel pattern splices no tangent links...')
+  const { project, operation } = makePocketBlockProject(['model1'])
+  const enabled = generateFinishSurfaceCleanupToolpath(project, {
+    ...operation, pocketPattern: 'parallel', roundLinkCorners: true,
+  })
+  const disabled = generateFinishSurfaceCleanupToolpath(project, {
+    ...operation, pocketPattern: 'parallel', roundLinkCorners: false,
+  })
+  assert(
+    JSON.stringify(enabled.moves) === JSON.stringify(disabled.moves),
+    'parallel pattern must produce byte-identical streams regardless of roundLinkCorners',
+  )
+}
+
 async function run(): Promise<void> {
   testCleanupRejectsDisabledFinishModes()
   testCleanupUsesInternalSamplingStepdown()
@@ -1078,6 +1158,9 @@ async function run(): Promise<void> {
   testCleanupSeededFloorKeepsSuppressedWallSegments()
   testCleanupReducesSlotFeed()
   testCleanupEngagementTelemetry()
+  testCleanupFloorSplicesTangentLinksOnOffset()
+  testCleanupFloorSplicesTangentLinksOnSeededOffset()
+  testCleanupFloorParallelSplicesNothing()
   console.log('finishSurfaceCleanup.test.ts: all tests passed')
 }
 

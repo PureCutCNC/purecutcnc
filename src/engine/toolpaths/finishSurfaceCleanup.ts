@@ -49,7 +49,7 @@ import {
   type SeedCirclePlan,
 } from './seedClearing'
 import { planSeedLeftovers, type SeedLeftoverExcursion } from './seedLeftover'
-import { areaCoverage, effectivePocketPattern } from './pocketPatterns'
+import { areaCoverage, effectivePocketPattern, usesTangentLinks } from './pocketPatterns'
 import { pocketTangentLinkOptions } from './tangentLink'
 import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
 import {
@@ -923,6 +923,13 @@ export function generateFinishSurfaceCleanupToolpath(
     const seedTangentLink = seedStacks.length > 0
       ? pocketTangentLinkOptions(operation.roundLinkCorners, resolved.tool.radius * 2, floorRegions)
       : undefined
+    // Tangential S-links on the floor rings (issue #621). The domain is the
+    // level's own floor regions — the same hard tool-centre boundary the seed
+    // path already uses. The phase-1 -> phase-2 handoff stays unlinked (the
+    // comment below records why); consecutive floor contours are linked.
+    const floorTangentLink = usesTangentLinks(operation.kind, operation.pocketPattern) && operation.roundLinkCorners
+      ? pocketTangentLinkOptions(operation.roundLinkCorners, resolved.tool.radius * 2, floorRegions)
+      : undefined
     for (const circles of seedStacks) {
       currentPosition = retractToSafe(moves, currentPosition, resolved.safeZ)
       let previousCircleEnd: ToolpathPoint | null = null
@@ -961,15 +968,20 @@ export function generateFinishSurfaceCleanupToolpath(
     // nothing, and the output was byte-identical to not calling it. Linking here
     // needs the transition to stay down first; that is a separate change.
     for (const contour of orderedFloorContours) {
-      const entryPoint = contourStartPoint(contour, z)
+      const linkStartIndex = moves.length
       currentPosition = transitionToCutEntry(
         moves,
         currentPosition,
-        entryPoint,
+        contourStartPoint(contour, z),
         resolved.safeZ,
         resolved.maxLinkDistance,
       )
-      const cutMoves = toClosedCutMoves(contour, z)
+      let cutMoves = toClosedCutMoves(contour, z)
+      const splice = spliceTangentSLink(moves, linkStartIndex, contour, cutMoves, floorTangentLink)
+      if (splice) {
+        cutMoves = splice.cutMoves
+        currentPosition = splice.nextPosition
+      }
       moves.push(...cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
     }
