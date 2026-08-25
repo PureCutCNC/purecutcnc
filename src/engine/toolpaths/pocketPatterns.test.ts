@@ -300,36 +300,16 @@ function testEveryOfferedPairCutsSomething(): void {
 
 function testTangentLinkApplicability(): void {
   console.log('Testing tangential S-link applicability per kind and pattern...')
-  // Pocket and surface_clean link ring-to-ring on every non-parallel pattern.
-  for (const kind of ['pocket', 'surface_clean'] as const) {
+  // Every clearing kind links ring-to-ring on every non-parallel pattern.
+  // The parallel raster has no rings to move between, so it is excluded.
+  for (const kind of ['pocket', 'surface_clean', 'rough_surface', 'finish_surface_cleanup'] as const) {
     assert(usesTangentLinks(kind, 'offset'), `${kind} offset links ring to ring`)
     assert(usesTangentLinks(kind, 'seeded_offset'), `${kind} seeded links ring to ring`)
     assert(!usesTangentLinks(kind, 'parallel'), `${kind} parallel has no ring-to-ring link`)
   }
-  // Cleanup links the seed path ONLY. Offering the control on any other
-  // pattern would be a checkbox the generator ignores — the #609 defect.
-  assert(
-    usesTangentLinks('finish_surface_cleanup', 'seeded_offset'),
-    'cleanup links its seed-circle path',
-  )
-  for (const pattern of ['offset', 'parallel', 'waterline'] as const) {
-    assert(
-      !usesTangentLinks('finish_surface_cleanup', pattern),
-      `cleanup ${pattern} floor rings are not linked, so the setting is a no-op`,
-    )
-  }
   // Kinds with no clearing pattern never link.
   for (const kind of ['drilling', 'v_carve', 'follow_line', 'edge_route_inside'] as const) {
     assert(!usesTangentLinks(kind, 'offset'), `${kind} does not clear with rings`)
-  }
-  // rough_surface joins the clearing set (#618) without S-links: its per-level
-  // safeLinkCheck gate is the only link protection it has, and no stored
-  // pattern may render the roundLinkCorners checkbox for it.
-  for (const pattern of ALL_PATTERNS) {
-    assert(
-      !usesTangentLinks('rough_surface', pattern),
-      `rough_surface ${pattern} must not link — the control stays out of scope for #618`,
-    )
   }
 }
 
