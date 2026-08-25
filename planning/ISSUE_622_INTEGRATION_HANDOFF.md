@@ -21,7 +21,7 @@ delivers one pull request once the behaviour and the required checks are green.
 - Base commit: `a8e09a1` (`main` after #632)
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/622
 - Manager session: 2026-08-25
-- Status: `slice 1 landed; slice 2 dispatched`
+- Status: `slice 2 landed; slice 3 pending`
 - User authorization for external-worker dispatch: granted 2026-08-25 for as
   many slices as the issue needs.
 
@@ -34,7 +34,7 @@ ownership are delegated.
 | slice | scope | owner | state |
 | --- | --- | --- | --- |
 | 1 | D1 + D2 — one `applyLevelFeed` per finish band level (`pocket.ts`, `surface.ts`) | manager | landed |
-| 2 | D6 — feed-colour legend scoped to the selected operation | delegated | dispatched |
+| 2 | D6 — feed-colour legend scoped to the selected operation | delegated | landed |
 | 3 | D4 — Z-invariant traversal | manager | pending |
 | 4 | D5 — `cleanWallCorners` on the finish wall contour | manager | pending |
 | 5 | audit fixtures per (kind, control) | delegated | pending |
