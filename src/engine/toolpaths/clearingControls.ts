@@ -79,13 +79,6 @@ function doesNotApply(reason: string): ControlSupport {
 // today's gaps honestly; the sibling decides them, then edits the cell here
 // (which is why #616 blocks every other sub-issue).
 
-// #620 -- surface_clean + rough_surface x machining order.
-function machiningOrderPending(kind: string, reachable: string): string {
-  return 'not offered today; whether ' + kind + ' gains machining order is issue #620\u2019s decision. '
-    + reachable
-    + ' The stored feature_first value ships inside saved files, so switching the control on rewrites their output.'
-}
-
 // Undecided, not settled: #614's matrix deliberately leaves cleanWallCorners
 // out (it is gated on rounding being enabled), so no owner call exists for the
 // model-sliced kinds. The observation below stands until one lands.
@@ -119,9 +112,7 @@ export const CLEARING_CONTROL_SUPPORT: Readonly<Record<OperationKind, ClearingKi
         'corner relief exists so a mating part can seat in an inside corner -- a pocket-shaped intent -- '
         + 'and surface_clean faces a region down to a level rather than cutting a wall something is fitted into.',
       ),
-      machiningOrder: doesNotApply(
-        machiningOrderPending('surface_clean', 'It clears from sketch geometry, so the split is reachable.'),
-      ),
+      machiningOrder: APPLIES,
     },
   },
   rough_surface: {
@@ -137,12 +128,7 @@ export const CLEARING_CONTROL_SUPPORT: Readonly<Record<OperationKind, ClearingKi
         + '(pocket.ts:3846); these kinds\u2019 level boundaries are sliced model silhouettes, '
         + 'not designed corners with a mating part to seat.',
       ),
-      machiningOrder: doesNotApply(
-        machiningOrderPending(
-          'rough_surface',
-          'Its validity is .some(model) among multiple machining features (operationDefaults.ts:189), so the split is reachable.',
-        ),
-      ),
+      machiningOrder: APPLIES,
     },
   },
   finish_surface_cleanup: {

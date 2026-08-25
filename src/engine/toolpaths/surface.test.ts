@@ -432,6 +432,128 @@ function testCornerSettingsNoOp() {
     'roundLinkCorners must switch ring links to tangent curves')
 }
 
+// ── 6. Machining order: feature_first splits per feature ─────────────
+
+function testMachiningOrderFeatureFirst() {
+  console.log('6. machining order feature_first splits per feature...')
+  // Two disjoint bosses at different XY positions so we can tell which
+  // feature a cut move belongs to.
+  const features = [
+    makeBoss('boss-a', 0, 0, 10, 10, 4),
+    makeBoss('boss-b', 50, 50, 10, 10, 4),
+  ]
+  const project = baseProject([makeEndmill()], features)
+
+  const featureFirst = generateSurfaceCleanToolpath(project, makeSurfaceOp({
+    featureIds: ['boss-a', 'boss-b'],
+    machiningOrder: 'feature_first',
+    id: 'sc-mo-ff',
+  }))
+
+  assert(featureFirst.moves.length > 0, 'feature_first should produce moves')
+
+  // Find the XY boundary between the two features. Boss A's tool-centre
+  // region is roughly X ∈ [-2, 12], boss B's is roughly X ∈ [48, 62].
+  // A cut at X < 30 belongs to feature A; X ≥ 30 belongs to feature B.
+  const cutMoves = featureFirst.moves.filter((m) => m.kind === 'cut')
+  assert(cutMoves.length > 0, 'feature_first should produce cut moves')
+
+  // Find the last cut for feature A and the first cut for feature B.
+  let lastACut = -1
+  let firstBCut = cutMoves.length
+  for (let i = 0; i < cutMoves.length; i++) {
+    if (cutMoves[i]!.to.x < 30) lastACut = i
+    if (cutMoves[i]!.to.x >= 30 && firstBCut === cutMoves.length) firstBCut = i
+  }
+  assert(lastACut >= 0, 'must have cuts for feature A')
+  assert(firstBCut < cutMoves.length, 'must have cuts for feature B')
+  assert(lastACut < firstBCut,
+    `feature_first: all feature-A cuts must precede feature-B cuts (last A at ${lastACut}, first B at ${firstBCut})`)
+  console.log('   PASSED')
+}
+
+// ── 7. Machining order: level_first interleaves ──────────────────────
+
+function testMachiningOrderLevelFirst() {
+  console.log('7. machining order level_first interleaves across features...')
+  const features = [
+    makeBoss('boss-a', 0, 0, 10, 10, 4),
+    makeBoss('boss-b', 50, 50, 10, 10, 4),
+  ]
+  const project = baseProject([makeEndmill()], features)
+
+  const levelFirst = generateSurfaceCleanToolpath(project, makeSurfaceOp({
+    featureIds: ['boss-a', 'boss-b'],
+    machiningOrder: 'level_first',
+    id: 'sc-mo-lf',
+  }))
+
+  assert(levelFirst.moves.length > 0, 'level_first should produce moves')
+
+  const cutMoves = levelFirst.moves.filter((m) => m.kind === 'cut')
+  // With level_first the operation is NOT split per feature, so the two
+  // features' regions are merged and cleared together. The stream should
+  // contain cuts from both features interleaved at each level.
+  const hasA = cutMoves.some((m) => m.to.x < 30)
+  const hasB = cutMoves.some((m) => m.to.x >= 30)
+  assert(hasA && hasB, 'level_first stream must contain cuts from both features')
+
+  // Verify the two settings produce different streams.
+  const featureFirst = generateSurfaceCleanToolpath(project, makeSurfaceOp({
+    featureIds: ['boss-a', 'boss-b'],
+    machiningOrder: 'feature_first',
+    id: 'sc-mo-ff2',
+  }))
+  assert(serializeMoves(featureFirst.moves) !== serializeMoves(levelFirst.moves),
+    'feature_first and level_first must produce different streams')
+  console.log('   PASSED')
+}
+
+// ── 8. Single-feature: both settings identical ───────────────────────
+
+function testMachiningOrderSingleFeatureIdentical() {
+  console.log('8. single-feature operation identical under both settings...')
+  const features = [makeBoss('boss-s', 0, 0, 20, 20, 4)]
+  const project = baseProject([makeEndmill()], features)
+
+  const levelFirst = generateSurfaceCleanToolpath(project, makeSurfaceOp({
+    featureIds: ['boss-s'],
+    machiningOrder: 'level_first',
+    id: 'sc-sf-lf',
+  }))
+  const featureFirst = generateSurfaceCleanToolpath(project, makeSurfaceOp({
+    featureIds: ['boss-s'],
+    machiningOrder: 'feature_first',
+    id: 'sc-sf-ff',
+  }))
+  assert(serializeMoves(levelFirst.moves) === serializeMoves(featureFirst.moves),
+    'single-feature operation must be byte-identical under both machiningOrder settings')
+  console.log('   PASSED')
+}
+
+// ── 9. Telemetry survives feature-first split ────────────────────────
+
+function testMachiningOrderTelemetrySurvives() {
+  console.log('9. engagement telemetry survives feature-first split...')
+  const features = [
+    makeBoss('boss-a', 0, 0, 10, 10, 4),
+    makeBoss('boss-b', 50, 50, 10, 10, 4),
+  ]
+  const project = baseProject([makeEndmill()], features)
+
+  const result = generateSurfaceCleanToolpath(project, makeSurfaceOp({
+    featureIds: ['boss-a', 'boss-b'],
+    machiningOrder: 'feature_first',
+    pocketFeedReduction: 'engagement',
+    id: 'sc-tel',
+  }))
+  assert(result.engagementTelemetry !== undefined,
+    'feature-first engagement mode must attach telemetry')
+  assert(result.engagementTelemetry!.totalCutDistance > 0,
+    'telemetry must record sampled distance')
+  console.log('   PASSED')
+}
+
 // ── Runner ───────────────────────────────────────────────────────────
 
 try {
@@ -440,6 +562,10 @@ try {
   testFeedReductionAcrossBranches()
   testEngagementTelemetry()
   testCornerSettingsNoOp()
+  testMachiningOrderFeatureFirst()
+  testMachiningOrderLevelFirst()
+  testMachiningOrderSingleFeatureIdentical()
+  testMachiningOrderTelemetrySurvives()
   console.log('\nAll surface.test.ts tests PASSED.')
 } catch (e) {
   console.error(e)

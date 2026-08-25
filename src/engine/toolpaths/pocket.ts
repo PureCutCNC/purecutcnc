@@ -3904,15 +3904,15 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
   return generatePocketToolpathSingle(project, operation)
 }
 
-/** Shared engagement telemetry for feature-first pockets: one accumulator fed
+/** Shared engagement telemetry for feature-first clearing: one accumulator fed
  * by every per-feature part so the merged result reports operation totals.
  * Mirrors generatePocketToolpathSingle's tool/stepover validation; when the
  * operation could not cut anyway there is nothing to measure. */
-function createSharedEngagementTelemetry(
+export function createSharedEngagementTelemetry(
   project: Project,
   operation: Operation,
 ): EngagementTelemetryAccumulator | null {
-  if (!(operation.kind === 'pocket' && operation.pocketFeedReduction === 'engagement')) return null
+  if (!(clearingControlApplies(operation.kind, 'engagementMode') && operation.pocketFeedReduction === 'engagement')) return null
   const toolRecord = operation.toolRef
     ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
     : null

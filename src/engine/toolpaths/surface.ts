@@ -50,6 +50,7 @@ import {
   buildPocketParallelSegments,
   buildRingPerimeterIndex,
   contourStartPoint,
+  createSharedEngagementTelemetry,
   cutSeedLeftoverExcursions,
   cutOffsetNodeRings,
   cutOffsetRegionNode,
@@ -92,6 +93,7 @@ import { resolveRegionDomainCentre } from './regionDomain'
 import { unionClipperPaths } from './modelProtection'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { isFeatureFirst, perFeatureOperations, mergePocketToolpathResults } from './multiFeature'
 
 interface PolyTreeNode {
   IsHole(): boolean
@@ -1172,6 +1174,26 @@ function generateFinishBandMoves(
 }
 
 export function generateSurfaceCleanToolpath(project: Project, operation: Operation): PocketToolpathResult {
+  if (isFeatureFirst(operation, project)) {
+    const parts = perFeatureOperations(operation, project)
+    const sharedTelemetry = createSharedEngagementTelemetry(project, operation)
+    const merged = mergePocketToolpathResults(
+      operation.id,
+      parts.map((subOp) => generateSurfaceCleanToolpathSingle(project, subOp, sharedTelemetry)),
+      { orderBlocks: 'nearest' },
+    )
+    return sharedTelemetry
+      ? { ...merged, engagementTelemetry: sharedTelemetry.toTelemetry() }
+      : merged
+  }
+  return generateSurfaceCleanToolpathSingle(project, operation)
+}
+
+function generateSurfaceCleanToolpathSingle(
+  project: Project,
+  operation: Operation,
+  sharedTelemetry?: EngagementTelemetryAccumulator | null,
+): PocketToolpathResult {
   const resolved = resolveSurfaceCleanRegions(project, operation)
   const toolRecord = operation.toolRef
     ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
@@ -1214,9 +1236,11 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
   const effectiveStepover = Math.max(stepoverDistance, 1 / DEFAULT_CLIPPER_SCALE)
   const maxLinkDistance = tool.diameter
   const direction = operation.cutDirection ?? 'conventional'
-  const telemetry = operation.pocketFeedReduction === 'engagement'
-    ? new EngagementTelemetryAccumulator(nominalEngagement(effectiveStepover, tool.radius))
-    : null
+  const telemetry = sharedTelemetry !== undefined
+    ? sharedTelemetry
+    : operation.pocketFeedReduction === 'engagement'
+      ? new EngagementTelemetryAccumulator(nominalEngagement(effectiveStepover, tool.radius))
+      : null
   const allMoves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
   const allStepLevels = new Set<number>()
@@ -1270,6 +1294,6 @@ export function generateSurfaceCleanToolpath(project: Project, operation: Operat
     warnings,
     bounds,
     stepLevels: [...allStepLevels].sort((a, b) => b - a),
-    ...(telemetry ? { engagementTelemetry: telemetry.toTelemetry() } : {}),
+    ...(!sharedTelemetry && telemetry ? { engagementTelemetry: telemetry.toTelemetry() } : {}),
   }
 }
