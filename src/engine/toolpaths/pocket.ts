@@ -2546,6 +2546,27 @@ export function nextRoughSection<T>(
  *    the tool into the island and gouge it. So island loops are emitted
  *    as-is, already rounded (or mitered when the option is off).
  */
+/**
+ * Everything a ring traversal needs beyond the four values that change on every
+ * call (`moves`, the node, the Z, and where the tool is). Collected into one
+ * object for issue #622: `cutOffsetNodeRings` and `cutOffsetRegionNode` had
+ * grown to seventeen positional parameters each, which made the next one --
+ * the seam anchor -- unaddable without guessing at call sites. Optional fields
+ * keep their previous defaults (`loops` 'all', `depth` 0).
+ */
+export interface OffsetRingOptions {
+  direction: CutDirection
+  safeLinkCheck?: SafeLinkCheck
+  loops?: 'all' | 'outer'
+  smoothRadius?: number
+  depth?: number
+  entryPolicy?: EntryPolicy
+  tangentLink?: TangentLinkOptions
+  wallCleanup?: WallCornerCleanupContext
+  toolRadius?: number
+  parent?: OffsetRegionNode
+}
+
 export function cutOffsetNodeRings(
   moves: ToolpathMove[],
   node: OffsetRegionNode,
@@ -2553,18 +2574,21 @@ export function cutOffsetNodeRings(
   safeZ: number,
   maxLinkDistance: number,
   fromPosition: ToolpathPoint | null,
-  direction: CutDirection,
-  safeLinkCheck: SafeLinkCheck | undefined,
   childAnchors: Point[],
-  loops: 'all' | 'outer' = 'all',
-  smoothRadius?: number,
-  depth = 0,
-  entryPolicy?: EntryPolicy,
-  tangentLink?: TangentLinkOptions,
-  wallCleanup?: WallCornerCleanupContext,
-  toolRadius?: number,
-  parent?: OffsetRegionNode,
+  options: OffsetRingOptions,
 ): ToolpathPoint | null {
+  const {
+    direction,
+    safeLinkCheck,
+    loops = 'all',
+    smoothRadius,
+    depth = 0,
+    entryPolicy,
+    tangentLink,
+    wallCleanup,
+    toolRadius,
+    parent,
+  } = options
   const outer = prepareOffsetOuterContour(
     node, direction, smoothRadius, depth, wallCleanup, toolRadius, parent,
   )
@@ -2608,18 +2632,10 @@ export function cutOffsetRegionNode(
   safeZ: number,
   maxLinkDistance: number,
   currentPosition: ToolpathPoint | null,
-  direction: CutDirection,
-  safeLinkCheck: SafeLinkCheck | undefined,
   traversalMode: OffsetTraversalMode,
-  loops: 'all' | 'outer' = 'all',
-  smoothRadius?: number,
-  depth = 0,
-  entryPolicy?: EntryPolicy,
-  tangentLink?: TangentLinkOptions,
-  wallCleanup?: WallCornerCleanupContext,
-  toolRadius?: number,
-  parent?: OffsetRegionNode,
+  options: OffsetRingOptions,
 ): ToolpathPoint | null {
+  const { depth = 0 } = options
   let nextPosition = currentPosition
   if (traversalMode === 'outer-first') {
     const childAnchors = node.children
@@ -2633,17 +2649,8 @@ export function cutOffsetRegionNode(
       safeZ,
       maxLinkDistance,
       nextPosition,
-      direction,
-      safeLinkCheck,
       childAnchors,
-      loops,
-      smoothRadius,
-      depth,
-      entryPolicy,
-      tangentLink,
-      wallCleanup,
-      toolRadius,
-      parent,
+      options,
     )
   }
 
@@ -2660,17 +2667,8 @@ export function cutOffsetRegionNode(
       safeZ,
       maxLinkDistance,
       nextPosition,
-      direction,
-      safeLinkCheck,
       traversalMode,
-      loops,
-      smoothRadius,
-      depth + 1,
-      entryPolicy,
-      tangentLink,
-      wallCleanup,
-      toolRadius,
-      node,
+      { ...options, depth: depth + 1, parent: node },
     )
     remainingChildren.splice(remainingChildren.indexOf(childNode), 1)
   }
@@ -2683,17 +2681,8 @@ export function cutOffsetRegionNode(
       safeZ,
       maxLinkDistance,
       nextPosition,
-      direction,
-      safeLinkCheck,
       [],
-      loops,
-      smoothRadius,
-      depth,
-      entryPolicy,
-      tangentLink,
-      wallCleanup,
-      toolRadius,
-      parent,
+      options,
     )
   }
 
@@ -2725,16 +2714,8 @@ export function cutOffsetRegionRecursive(
     safeZ,
     maxLinkDistance,
     currentPosition,
-    direction,
-    safeLinkCheck,
     traversalMode,
-    'all',
-    smoothRadius,
-    0,
-    entryPolicy,
-    tangentLink,
-    wallCleanup,
-    toolRadius,
+    { direction, safeLinkCheck, loops: 'all', smoothRadius, depth: 0, entryPolicy, tangentLink, wallCleanup, toolRadius },
   )
 }
 
@@ -3232,17 +3213,17 @@ function generateRoughBandMoves(
           safeZ,
           maxLinkDistance,
           currentPosition,
-          direction,
-          undefined,
           'inner-first',
-          'all',
-          smoothRadius,
-          section.depth,
-          levelEntryPolicy,
-          tangentLink,
-          wallCleanup,
-          toolRadius,
-          undefined,
+          {
+            direction,
+            loops: 'all',
+            smoothRadius,
+            depth: section.depth,
+            entryPolicy: levelEntryPolicy,
+            tangentLink,
+            wallCleanup,
+            toolRadius,
+          },
         )
       }
     } else {
@@ -3291,17 +3272,18 @@ function generateRoughBandMoves(
           safeZ,
           maxLinkDistance,
           currentPosition,
-          direction,
-          undefined,
           [],
-          'all',
-          smoothRadius,
-          unit.depth,
-          levelEntryPolicy,
-          tangentLink,
-          wallCleanup,
-          toolRadius,
-          unit.parent ?? undefined,
+          {
+            direction,
+            loops: 'all',
+            smoothRadius,
+            depth: unit.depth,
+            entryPolicy: levelEntryPolicy,
+            tangentLink,
+            wallCleanup,
+            toolRadius,
+            parent: unit.parent ?? undefined,
+          },
         )
         previousUnitRoot = unit.root
         const parentNode = unit.parent
@@ -3566,16 +3548,17 @@ function generateFinishBandMoves(
           safeZ,
           maxLinkDistance,
           currentPosition,
-          direction,
-          undefined,
           'inner-first',
-          'all',
-          floorSmoothRadius,
-          0,
-          entryPolicy,
-          floorTangentLink,
-          floorWallCleanup,
-          toolRadius,
+          {
+            direction,
+            loops: 'all',
+            smoothRadius: floorSmoothRadius,
+            depth: 0,
+            entryPolicy,
+            tangentLink: floorTangentLink,
+            wallCleanup: floorWallCleanup,
+            toolRadius,
+          },
         )
       }
     } else {
@@ -3657,17 +3640,18 @@ function generateFinishBandMoves(
           safeZ,
           maxLinkDistance,
           currentPosition,
-          direction,
-          undefined,
           [],
-          'all',
-          floorSmoothRadius,
-          unit.depth,
-          entryPolicy,
-          floorTangentLink,
-          floorWallCleanup,
-          toolRadius,
-          unit.parent ?? undefined,
+          {
+            direction,
+            loops: 'all',
+            smoothRadius: floorSmoothRadius,
+            depth: unit.depth,
+            entryPolicy,
+            tangentLink: floorTangentLink,
+            wallCleanup: floorWallCleanup,
+            toolRadius,
+            parent: unit.parent ?? undefined,
+          },
         )
         previousUnitRoot = unit.root
         const parentNode = unit.parent
