@@ -18,8 +18,9 @@ import ClipperLib from 'clipper-lib'
 import type { Project } from '../../types/project'
 import type { Operation } from '../../types/project'
 import type { PocketToolpathResult, ResolvedPocketRegion, ToolpathBounds, ToolpathMove, ToolpathPoint } from './types'
-import { createEntryPolicy } from './entry'
+import { createEntryPolicy, withEntryHandoffFeedScale } from './entry'
 import {
+  applyLevelFeed,
   buildContourLoops,
   buildOffsetRegionTree,
   buildPocketParallelSegments,
@@ -29,12 +30,16 @@ import {
   orderClosedContoursGreedy,
   orderOpenSegmentsGreedy,
   orderRegionsGreedy,
+  resolveSlotFeedScale,
   retractToSafe,
   rotateContourToNearestEntry,
   toClosedCutMoves,
   toOpenCutMoves,
   transitionToCutEntry,
   updateBounds,
+  SLOT_FEED_ADJACENCY_FACTOR,
+  SLOT_FEED_ENGAGEMENT_FACTOR,
+  SLOT_FEED_OWN_TRAIL_FACTOR,
 } from './pocket'
 import { cornerSmoothingRadius } from './offsetSmoothing'
 import { offsetClipperPaths, segmentInsideClipperPaths } from './modelProtection'
@@ -42,6 +47,7 @@ import { resolve3DSurfaceStepdown } from './surfaceStepdown3d'
 import { areaCoverage, effectivePocketPattern } from './pocketPatterns'
 import { planSeedCircles, seedCircleContours, seedStartRadius } from './seedClearing'
 import { applyContourDirection } from './geometry'
+import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
 import type { ToolpathWarning } from './warningCodes'
 
 function appendUniqueWarning(warnings: ToolpathWarning[], warning: ToolpathWarning): void {
@@ -81,9 +87,37 @@ export function generateRoughSurfaceToolpath(
   const coverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   const seedStart = coverage.seedCircles ? seedStartRadius(operation, resolved.tool.radius) : 0
+  // Feed reduction (issue #619). The declaration decides whether this kind
+  // offers the control at all; `resolveSlotFeedScale` reads it, so there is no
+  // kind test here. Both the slot classifier and the engagement quantizer live
+  // in `applyLevelFeed`, applied once per cleared level over that level's own
+  // moves — the same shape `surface.ts` uses.
+  const slotScale = resolveSlotFeedScale(operation)
+  const slotDistance = Math.max(
+    resolved.tool.diameter * SLOT_FEED_ENGAGEMENT_FACTOR,
+    resolved.effectiveStepover * SLOT_FEED_ADJACENCY_FACTOR,
+  )
+  const ownTrailTolerance = resolved.effectiveStepover * SLOT_FEED_OWN_TRAIL_FACTOR
+  const telemetry = operation.pocketFeedReduction === 'engagement'
+    ? new EngagementTelemetryAccumulator(nominalEngagement(resolved.effectiveStepover, resolved.tool.radius))
+    : null
+  const applyFeedForLevel = (startIndex: number): void => {
+    applyLevelFeed(
+      allMoves,
+      startIndex,
+      operation,
+      slotScale,
+      slotDistance,
+      ownTrailTolerance,
+      resolved.tool.diameter,
+      resolved.effectiveStepover,
+      telemetry,
+    )
+  }
   let currentPosition: ToolpathPoint | null = null
 
   for (const level of resolved.levels) {
+    const levelStartIndex = allMoves.length
     allStepLevels.add(level.z)
 
     const safeLinkPaths = offsetClipperPaths(level.clearablePaths, -resolved.tool.radius)
@@ -127,11 +161,16 @@ export function generateRoughSurfaceToolpath(
       if (boundaryContours.length === 0 && segments.length === 0) {
         continue
       }
-      const entryPolicy = createEntryPolicy(
-        operation,
-        resolved.tool.diameter,
-        orderedRegions,
-        (warning) => appendUniqueWarning(warnings, warning),
+      // The entry hands off at the reduced feed when one applies, so the first
+      // cut after a plunge is not run at full feed into a slot.
+      const entryPolicy = withEntryHandoffFeedScale(
+        createEntryPolicy(
+          operation,
+          resolved.tool.diameter,
+          orderedRegions,
+          (warning) => appendUniqueWarning(warnings, warning),
+        ),
+        slotScale,
       )
 
       const orderedBoundaryContours = orderClosedContoursGreedy(
@@ -171,15 +210,20 @@ export function generateRoughSurfaceToolpath(
         allMoves.push(...cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
+
+      applyFeedForLevel(levelStartIndex)
       continue
     }
 
     for (const region of orderedRegions) {
-      const entryPolicy = createEntryPolicy(
-        operation,
-        resolved.tool.diameter,
-        [region],
-        (warning) => appendUniqueWarning(warnings, warning),
+      const entryPolicy = withEntryHandoffFeedScale(
+        createEntryPolicy(
+          operation,
+          resolved.tool.diameter,
+          [region],
+          (warning) => appendUniqueWarning(warnings, warning),
+        ),
+        slotScale,
       )
       const cutRingsForRegion = (
         target: ResolvedPocketRegion,
@@ -263,6 +307,10 @@ export function generateRoughSurfaceToolpath(
         entryPolicy,
       )
     }
+
+    // After every region on this level, never per region: the classifier reads
+    // the level's whole move range to decide what was already cleared.
+    applyFeedForLevel(levelStartIndex)
   }
 
   if (currentPosition && currentPosition.z !== resolved.safeZ) {
@@ -281,5 +329,6 @@ export function generateRoughSurfaceToolpath(
     warnings,
     bounds,
     stepLevels: [...allStepLevels].sort((a, b) => b - a),
+    ...(telemetry ? { engagementTelemetry: telemetry.toTelemetry() } : {}),
   }
 }

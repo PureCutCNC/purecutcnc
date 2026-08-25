@@ -79,13 +79,6 @@ function doesNotApply(reason: string): ControlSupport {
 // today's gaps honestly; the sibling decides them, then edits the cell here
 // (which is why #616 blocks every other sub-issue).
 
-// #619 -- rough_surface + finish_surface_cleanup x slot feed / engagement.
-function feedReductionPending(kind: string): string {
-  return 'not offered today; whether ' + kind + ' honours feed reduction is issue #619\u2019s decision. '
-    + 'The stored defaults (60%, slots_only) are live in saved files, so honouring the control '
-    + 'rewrites their output and waits for that decision rather than being recorded as impossible.'
-}
-
 // #620 -- surface_clean + rough_surface x machining order.
 function machiningOrderPending(kind: string, reachable: string): string {
   return 'not offered today; whether ' + kind + ' gains machining order is issue #620\u2019s decision. '
@@ -134,8 +127,8 @@ export const CLEARING_CONTROL_SUPPORT: Readonly<Record<OperationKind, ClearingKi
   rough_surface: {
     clears: true,
     controls: {
-      slotFeed: doesNotApply(feedReductionPending('rough_surface')),
-      engagementMode: doesNotApply(feedReductionPending('rough_surface')),
+      slotFeed: APPLIES,
+      engagementMode: APPLIES,
       roundOutsideCorners: APPLIES,
       cleanWallCorners: doesNotApply(WALL_CLEANUP_MODEL_SLICED),
       cornerRelief: doesNotApply(
@@ -155,8 +148,8 @@ export const CLEARING_CONTROL_SUPPORT: Readonly<Record<OperationKind, ClearingKi
   finish_surface_cleanup: {
     clears: true,
     controls: {
-      slotFeed: doesNotApply(feedReductionPending('finish_surface_cleanup')),
-      engagementMode: doesNotApply(feedReductionPending('finish_surface_cleanup')),
+      slotFeed: APPLIES,
+      engagementMode: APPLIES,
       roundOutsideCorners: APPLIES,
       cleanWallCorners: doesNotApply(WALL_CLEANUP_MODEL_SLICED),
       cornerRelief: doesNotApply(
