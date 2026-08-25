@@ -254,6 +254,52 @@ function testParallelLateralStep() {
   console.log('parallel lateral step: PASSED (arrival ' + result.arrivalIndex + ')')
 }
 
+/**
+ * The domain check's bounding-box prefilter must keep rejecting most samples
+ * before any vertex scan (issue #629).
+ *
+ * The check is the solver's dominant cost: measured at 3.7 us per call on a
+ * 385-vertex level, against ~3,000-6,800 calls per link, it accounted for
+ * essentially the whole per-link budget. The prefilter cannot change an answer
+ * — a point outside a loop's bounds, inflated by the edge tolerance, is
+ * outside the loop — so this guards speed only, which is exactly why nothing
+ * else would catch its removal.
+ *
+ * Measured on this fixture:
+ *
+ *   prefilter present        2 scans in 1600 checks
+ *   prefilter removed     3199 scans in 1600 checks  (1600x)
+ *   budget                 400 scans, i.e. 1 per 4 checks
+ *
+ * The budget sits far below the regressed row rather than at a geometric
+ * mid-point: unlike a timing figure these counts are exact, so the only
+ * question is whether the prefilter is working at all, and a partial
+ * regression here has no meaningful middle ground.
+ */
+function testDomainPrefilterSkipsScans() {
+  console.log('Testing the domain prefilter skips vertex scans...')
+  // Two small squares far apart: most sampled points fall outside both boxes.
+  const square = (ox: number, oy: number): Point[] => [
+    { x: ox, y: oy }, { x: ox + 1, y: oy }, { x: ox + 1, y: oy + 1 }, { x: ox, y: oy + 1 },
+  ]
+  const check = buildOffsetDomainCheck([
+    { outer: square(0, 0), islands: [] },
+    { outer: square(50, 50), islands: [] },
+  ])
+  resetSlinkProbeCounts()
+  for (let i = 0; i < 40; i += 1) {
+    for (let j = 0; j < 40; j += 1) check(i * 1.5, j * 1.5)
+  }
+  const counts = slinkProbeCounts()
+  assert(counts.domainChecks === 1600, 'expected 1600 domain checks, got ' + counts.domainChecks)
+  assert(
+    counts.domainScans * 4 <= counts.domainChecks,
+    'domainScans (' + counts.domainScans + ') must stay well under domainChecks ('
+      + counts.domainChecks + ') — the bounding-box prefilter has stopped rejecting',
+  )
+  console.log('domain prefilter: PASSED (' + counts.domainScans + ' scans in ' + counts.domainChecks + ' checks)')
+}
+
 function testProbeCountersAndPruneGuard() {
   console.log('Testing probe counters and prune guard...')
   // A 20-vertex rectangular ring: enough vertices that the prune has real work
@@ -341,6 +387,7 @@ try {
   testDomainCheck()
   testPocketOptionsGating()
   testProbeCountersAndPruneGuard()
+testDomainPrefilterSkipsScans()
   console.log('\nAll tangentLink tests PASSED.')
 } catch (e) {
   console.error(e)
