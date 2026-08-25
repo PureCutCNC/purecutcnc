@@ -1427,6 +1427,47 @@ function testTransitionToCutEntryRetractsAcrossDifferentXY(): void {
   assert(kinds.includes('plunge'), `expected a plunge, got ${kinds.join(',')}`)
 }
 
+/**
+ * A mixed target must not split the mesh away from its own operation (#620).
+ *
+ * This kind's validity is `.some(model)` among its machining features, so one
+ * STL model plus an `add` feature is a legal target that has always roughed as
+ * a single operation. A naive per-feature split hands one part the model and
+ * the other nothing to slice, and that part reports `surface3dNotMesh` — a
+ * "must be an imported mesh" warning on an operation that plainly has a mesh.
+ * Saved projects would hit it without touching anything, because
+ * `machiningOrder` ships stored as `feature_first`.
+ */
+function testRoughSurfaceMixedTargetDoesNotSplitAwayTheMesh(): void {
+  console.log('Testing rough_surface keeps a mixed target whole...')
+  const model = makeOffsetModelFeature('model-a', 0, 0)
+  const region = makeOffsetRegionFeature('region-a', 0, 0)
+  const addFeature = makeProtectedAddFeature()
+  const project = projectWithFeatures({
+    ...newProject('rough-surface-mixed-target-test', 'mm'),
+    tools: [makeTool()],
+  }, [model, region, addFeature])
+  project.stock.thickness = TEST_STOCK_THICKNESS
+
+  const targetIds = ['model-a', addFeature.id, 'region-a']
+  const featureFirst = generateRoughSurfaceToolpath(project, {
+    ...makeRoughOperation(targetIds), machiningOrder: 'feature_first',
+  })
+  const levelFirst = generateRoughSurfaceToolpath(project, {
+    ...makeRoughOperation(targetIds), machiningOrder: 'level_first',
+  })
+
+  assert(
+    !featureFirst.warnings.some((warning) => warning.code === 'surface3dNotMesh'),
+    'splitting a mixed target must not orphan the mesh into a part that cannot slice it',
+  )
+  assert(
+    JSON.stringify(featureFirst.moves) === JSON.stringify(levelFirst.moves),
+    'a target with only one mesh among its machining features has one roughing part, so both orders must emit the same stream',
+  )
+}
+
+testRoughSurfaceMixedTargetDoesNotSplitAwayTheMesh()
 testTransitionToCutEntryPlungesAtAlignedXY()
 testTransitionToCutEntryRetractsAcrossDifferentXY()
 

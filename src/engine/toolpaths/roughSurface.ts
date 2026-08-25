@@ -51,6 +51,7 @@ import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
 import type { ToolpathWarning } from './warningCodes'
 import { isFeatureFirst, perFeatureOperations, mergePocketToolpathResults } from './multiFeature'
 import { createSharedEngagementTelemetry } from './pocket'
+import { resolvedFeatureMap } from '../../store/helpers/resolveFeatures'
 
 function appendUniqueWarning(warnings: ToolpathWarning[], warning: ToolpathWarning): void {
   const key = `${warning.code}:${JSON.stringify(warning.params ?? {})}`
@@ -59,12 +60,38 @@ function appendUniqueWarning(warnings: ToolpathWarning[], warning: ToolpathWarni
   }
 }
 
+/**
+ * Whether every part of a per-feature split would still carry a mesh to rough.
+ *
+ * This kind's target validity is `.some(model)` among its machining features
+ * (`operationDefaults.ts:189`), so a target of one STL model plus an `add`
+ * feature is legal and has always roughed as a single operation. Splitting it
+ * hands one part the model and the other nothing to slice, and that part
+ * resolves to `surface3dNotMesh` — a warning on an operation that plainly has
+ * a mesh, raised on saved projects because `machiningOrder` is stored
+ * `feature_first` by default (`operationDefaults.ts:350`).
+ *
+ * Region features never reach this question: `perFeatureOperations` carries
+ * them into every part rather than splitting on them.
+ */
+function everyPartKeepsAMesh(project: Project, parts: Operation[]): boolean {
+  const featuresById = resolvedFeatureMap(project)
+  return parts.every((part) => part.target.source === 'features'
+    && part.target.featureIds.some((featureId) => {
+      const feature = featuresById.get(featureId)
+      return feature?.operation === 'model' && feature.kind === 'stl'
+    }))
+}
+
 export function generateRoughSurfaceToolpath(
   project: Project,
   operation: Operation,
 ): PocketToolpathResult {
-  if (isFeatureFirst(operation, project)) {
-    const parts = perFeatureOperations(operation, project)
+  const featureFirstParts = isFeatureFirst(operation, project)
+    ? perFeatureOperations(operation, project)
+    : []
+  if (featureFirstParts.length > 1 && everyPartKeepsAMesh(project, featureFirstParts)) {
+    const parts = featureFirstParts
     const sharedTelemetry = createSharedEngagementTelemetry(project, operation)
     const merged = mergePocketToolpathResults(
       operation.id,
