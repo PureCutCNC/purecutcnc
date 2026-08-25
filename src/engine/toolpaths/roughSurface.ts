@@ -178,6 +178,15 @@ function generateRoughSurfaceToolpathSingle(
         onFallback: (): void => appendUniqueWarning(warnings, { code: 'pocketWallCornerCleanupFallback' }),
       }
     : undefined
+  // Passed only alongside the cleanup context, deliberately. `toolRadius` also
+  // gates a redundant-loop prune inside the ring walker (`pocket.ts:2044`) that
+  // has nothing to do with wall cleanup: `pocket` and `surface_clean` pass it
+  // unconditionally and have always had that prune, while this kind never has.
+  // Passing it unconditionally here shortens saved programs by 20-27% on the
+  // committed 3D fixtures — a real improvement, but an undeclared output change
+  // for every saved project, which this issue explicitly does not make. That
+  // prune is its own question with its own evidence.
+  const wallCleanupToolRadius = wallCleanup ? resolved.tool.radius : undefined
 
   for (const level of resolved.levels) {
     const levelStartIndex = allMoves.length
@@ -320,7 +329,7 @@ function generateRoughSurfaceToolpathSingle(
           entryPolicy,
           levelTangentLink,
           wallCleanup,
-          resolved.tool.radius,
+          wallCleanupToolRadius,
         )
 
       const plans = coverage.seedCircles && seedStart > 0
@@ -385,7 +394,7 @@ function generateRoughSurfaceToolpathSingle(
         entryPolicy,
         levelTangentLink,
         wallCleanup,
-        resolved.tool.radius,
+        wallCleanupToolRadius,
       )
     }
 
