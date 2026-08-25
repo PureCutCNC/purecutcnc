@@ -38,6 +38,36 @@
 import type { Point } from '../../types/project'
 import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
 
+// Call-count probes for the S-link solver. Cost assertions count work — never
+// wall clocks (AGENTS.md § Build & Verify) — so tests reset and read these
+// counters instead of timing generation. Only `slinkProbeCounts` and
+// `resetSlinkProbeCounts` are public; the counters advance only inside
+// `tangentSLink`.
+
+let slinkArrivalsConsidered = 0
+let slinkArrivalsPruned = 0
+let slinkCandidatesEvaluated = 0
+
+/** Read the S-link probe counters (arrivals considered, pruned, and candidates evaluated). */
+export function slinkProbeCounts(): {
+  arrivalsConsidered: number
+  arrivalsPruned: number
+  candidatesEvaluated: number
+} {
+  return {
+    arrivalsConsidered: slinkArrivalsConsidered,
+    arrivalsPruned: slinkArrivalsPruned,
+    candidatesEvaluated: slinkCandidatesEvaluated,
+  }
+}
+
+/** Reset the S-link probe counters. Tests call this before measuring. */
+export function resetSlinkProbeCounts(): void {
+  slinkArrivalsConsidered = 0
+  slinkArrivalsPruned = 0
+  slinkCandidatesEvaluated = 0
+}
+
 interface Vec {
   x: number
   y: number
@@ -137,6 +167,7 @@ export function tangentSLink(
     const arrival = ringVertices[index]
     const straightDist = Math.hypot(arrival.x - exit.x, arrival.y - exit.y)
     if (straightDist > options.maxLength || straightDist <= 1e-9) continue
+    slinkArrivalsConsidered += 1
     // Exact prune (issue #609). Any arc-line-arc path from `exit` to `arrival`
     // is at least the straight-line distance between them, so an arrival whose
     // straight distance already matches the best length found cannot produce a
@@ -144,7 +175,7 @@ export function tangentSLink(
     // merely ties never replaces the incumbent either — skipping these cannot
     // change which S is selected, only how long it takes to find it. Iteration
     // order is untouched, so first-found tie-breaking is preserved.
-    if (straightDist >= bestLength) continue
+    if (straightDist >= bestLength) { slinkArrivalsPruned += 1; continue }
     const nextVertex = ringVertices[(index + 1) % count]
     const arrivalTangent = norm(sub(nextVertex, arrival))
 
@@ -198,6 +229,7 @@ export function tangentSLink(
       // Absolute floor so a degenerate minRadius cannot explode the samples.
       const chordBudget = Math.max(2 * rMin * Math.sin(arcStep / 2), 1e-6)
       for (const candidate of candidates) {
+        slinkCandidatesEvaluated += 1
         let pathLength = 0
         let domainOk = true
         for (let step = 0; step + 1 < candidate.length && domainOk; step += 1) {
