@@ -50,6 +50,7 @@
 // streams rather than on the table's own word.
 
 import type { OperationKind, PocketPattern } from '../../types/project'
+import { CLEARING_CONTROL_SUPPORT } from './clearingControls'
 
 /**
  * The pattern a generator actually runs for a stored `(kind, pattern)` pair.
@@ -129,22 +130,16 @@ export const OPERATION_PATTERN_SUPPORT: Readonly<Record<OperationKind, Operation
 
 /**
  * Whether a `(kind, pattern)` pair actually splices tangential S-links
- * (issues #545/#609), and so whether `roundLinkCorners` means anything.
+ * (issues #545/#609/#621), and so whether `roundLinkCorners` means anything.
  *
- * `pocket` and `surface_clean` link ring-to-ring on every non-parallel
- * pattern. `finish_surface_cleanup` links only the seed-circle path — its
- * ordinary floor rings are not linked and never have been — so the setting is
- * a no-op there on any other pattern.
- *
- * One definition, consumed by the CAM panel and the operation booklet. Two
- * copies of this predicate is how #609 happened: a control offered for a
- * combination the generator does nothing with.
+ * One rule: every clearing kind on every non-parallel pattern. The parallel
+ * raster has no rings to move between, so it is excluded for every kind.
+ * `CLEARING_CONTROL_SUPPORT` owns the clearing predicate; this function owns
+ * the pattern half. One definition, consumed by the CAM panel, the operation
+ * booklet, and the generators.
  */
 export function usesTangentLinks(kind: OperationKind, pattern: PocketPattern): boolean {
-  if (kind === 'pocket' || kind === 'surface_clean') {
-    return pattern !== 'parallel'
-  }
-  return kind === 'finish_surface_cleanup' && pattern === 'seeded_offset'
+  return CLEARING_CONTROL_SUPPORT[kind].clears && pattern !== 'parallel'
 }
 
 /** The patterns `kind` offers, in dropdown order. Empty means no pattern row. */

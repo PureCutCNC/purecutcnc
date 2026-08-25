@@ -338,15 +338,14 @@ function testRoundLinkCornersFollowsTheGeneratorsOwnLinking() {
     !field.appliesTo(makeOperation({ kind: 'pocket', pocketPattern: 'parallel' })),
     'parallel pockets have no ring-to-ring link',
   )
-  // Cleanup S-links only the seed-circle path. Showing the control on its
-  // other patterns would offer a checkbox the generator ignores.
+  // Cleanup S-links its seed-circle path and its floor rings (issue #621).
   assert(
     field.appliesTo(makeOperation({ kind: 'finish_surface_cleanup', pocketPattern: 'seeded_offset' })),
     'seeded cleanup links its seed circles, so the control applies',
   )
   assert(
-    !field.appliesTo(makeOperation({ kind: 'finish_surface_cleanup', pocketPattern: 'offset' })),
-    'cleanup floor rings are not linked, so the control must stay hidden',
+    field.appliesTo(makeOperation({ kind: 'finish_surface_cleanup', pocketPattern: 'offset' })),
+    'cleanup floor rings are linked (issue #621), so the control applies',
   )
 }
 

@@ -211,8 +211,8 @@ function testReportIncludesRoundLinkCornersForSeededCleanup(): void {
     'seeded cleanup links its seed circles, so the sheet must say so',
   )
 
-  // The cleanup floor rings are not linked, so the same flag on any other
-  // pattern is a no-op and must not reach the shop floor as if it were live.
+  // The cleanup floor rings are now linked (issue #621), so the same flag on
+  // offset must reach the shop floor.
   const offsetReport = buildOperationBookletReport({
     project,
     operation: {
@@ -226,8 +226,8 @@ function testReportIncludesRoundLinkCornersForSeededCleanup(): void {
     generatedAt: new Date('2026-06-04T12:00:00Z'),
   })
   assert(
-    !offsetReport.settingRows.some((row) => row.label === translate('booklet.label.roundLinkCorners')),
-    'offset cleanup does not link its rings, so the booklet must omit the row',
+    offsetReport.settingRows.some((row) => row.label === translate('booklet.label.roundLinkCorners') && row.value === translate('booklet.value.enabled')),
+    'offset cleanup links its floor rings (issue #621), so the booklet must include the row',
   )
 }
 
