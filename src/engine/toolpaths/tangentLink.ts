@@ -47,17 +47,23 @@ import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
 let slinkArrivalsConsidered = 0
 let slinkArrivalsPruned = 0
 let slinkCandidatesEvaluated = 0
+let slinkDomainChecks = 0
+let slinkDomainScans = 0
 
 /** Read the S-link probe counters (arrivals considered, pruned, and candidates evaluated). */
 export function slinkProbeCounts(): {
   arrivalsConsidered: number
   arrivalsPruned: number
   candidatesEvaluated: number
+  domainChecks: number
+  domainScans: number
 } {
   return {
     arrivalsConsidered: slinkArrivalsConsidered,
     arrivalsPruned: slinkArrivalsPruned,
     candidatesEvaluated: slinkCandidatesEvaluated,
+    domainChecks: slinkDomainChecks,
+    domainScans: slinkDomainScans,
   }
 }
 
@@ -66,6 +72,8 @@ export function resetSlinkProbeCounts(): void {
   slinkArrivalsConsidered = 0
   slinkArrivalsPruned = 0
   slinkCandidatesEvaluated = 0
+  slinkDomainChecks = 0
+  slinkDomainScans = 0
 }
 
 interface Vec {
@@ -311,18 +319,62 @@ export interface TangentLinkDomainRegion {
  * Point-in-cleared-domain predicate for the band's tool-centre regions: inside
  * at least one outer and outside every island expansion.
  */
+interface BoxedLoop {
+  points: Point[]
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
+/** Axis-aligned bounds, computed once so the per-sample scan can be skipped. */
+function boxLoop(points: Point[]): BoxedLoop {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  for (const p of points) {
+    if (p.x < minX) minX = p.x
+    if (p.x > maxX) maxX = p.x
+    if (p.y < minY) minY = p.y
+    if (p.y > maxY) maxY = p.y
+  }
+  return { points, minX, maxX, minY, maxY }
+}
+
+// `pointOnPolygonEdge` accepts a point within 1e-6 of an edge (it compares a
+// squared distance against 1e-12), so a point marginally outside the bounds can
+// still legitimately test as on-boundary. The box is inflated by exactly that
+// tolerance before rejecting, which is what makes the prefilter conservative
+// rather than merely plausible — an uninflated box changed the emitted program
+// on three fixtures.
+const EDGE_TOLERANCE = 1e-6
+
+const outsideBox = (box: BoxedLoop, x: number, y: number): boolean =>
+  x < box.minX - EDGE_TOLERANCE || x > box.maxX + EDGE_TOLERANCE
+  || y < box.minY - EDGE_TOLERANCE || y > box.maxY + EDGE_TOLERANCE
+
 export function buildOffsetDomainCheck(
   regions: TangentLinkDomainRegion[],
 ): (x: number, y: number) => boolean {
+  // Bounds are precomputed per loop and rejected before any vertex scan. A
+  // point outside a loop's bounding box cannot be inside the loop or on its
+  // edge, so this cannot change an answer — only how many of the O(vertices)
+  // scans run. The scan is the S-link solver's dominant cost: it runs twice
+  // per loop per sample (containment, then edge), thousands of times per link.
+  const boxed = regions.map((region) => ({
+    outer: boxLoop(region.outer),
+    islands: region.islands.map(boxLoop),
+  }))
   return (x: number, y: number): boolean => {
+    slinkDomainChecks += 1
     // Inside or ON an outer boundary (the ring paths ride the boundary);
     // rejected only when STRICTLY inside an island expansion — the island
     // rings themselves also ride that boundary, so boundary points pass.
-    const inOuter = regions.some((region) =>
-      pointInPolygon(x, y, region.outer) || pointOnPolygonEdge(x, y, region.outer))
+    const inOuter = boxed.some((region) => !outsideBox(region.outer, x, y)
+      && (slinkDomainScans += 1) > 0
+      && (pointInPolygon(x, y, region.outer.points) || pointOnPolygonEdge(x, y, region.outer.points)))
     if (!inOuter) return false
-    return !regions.some((region) => region.islands.some((island) =>
-      pointInPolygon(x, y, island) && !pointOnPolygonEdge(x, y, island)))
+    return !boxed.some((region) => region.islands.some((island) => !outsideBox(island, x, y)
+      && (slinkDomainScans += 1) > 0
+      && pointInPolygon(x, y, island.points) && !pointOnPolygonEdge(x, y, island.points)))
   }
 }
 
