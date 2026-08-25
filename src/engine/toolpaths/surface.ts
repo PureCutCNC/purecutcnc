@@ -956,8 +956,12 @@ function generateFinishBandMoves(
   // the floor first removes that skin (with its first pass at the reduced
   // slot feed), so the wall pass only shaves the radial stock — and cutting
   // walls last leaves the cleanest final wall surface.
+  // One feed classification for the whole band level, floor and walls together
+  // (issue #622) -- the same fix as the pocket finish band, which this function
+  // mirrors. Classifying only the floor block left every wall cut at full feed
+  // regardless of engagement, in both reduction modes.
+  const levelStartIndex = moves.length
   for (const z of floorStepLevels) {
-    const floorStartIndex = moves.length
     const remainingSeedPlans = floorTrees.flatMap((tree) => floorSeedPlans.get(tree) ?? [])
     if (remainingSeedPlans.length === 0) {
       const orderedTrees = orderNodesGreedy(
@@ -1122,22 +1126,6 @@ function generateFinishBandMoves(
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
     }
 
-    const slotDistance = Math.max(
-      toolRadius * 2 * SLOT_FEED_ENGAGEMENT_FACTOR,
-      floorStepover * SLOT_FEED_ADJACENCY_FACTOR,
-    )
-    applyLevelFeed(
-      moves,
-      floorStartIndex,
-      operation,
-      slotScale,
-      slotDistance,
-      floorStepover * SLOT_FEED_OWN_TRAIL_FACTOR,
-      toolRadius * 2,
-      floorStepover,
-      telemetry,
-    )
-
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
 
@@ -1165,6 +1153,22 @@ function generateFinishBandMoves(
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
+
+  const slotDistance = Math.max(
+    toolRadius * 2 * SLOT_FEED_ENGAGEMENT_FACTOR,
+    floorStepover * SLOT_FEED_ADJACENCY_FACTOR,
+  )
+  applyLevelFeed(
+    moves,
+    levelStartIndex,
+    operation,
+    slotScale,
+    slotDistance,
+    floorStepover * SLOT_FEED_OWN_TRAIL_FACTOR,
+    toolRadius * 2,
+    floorStepover,
+    telemetry,
+  )
 
   return {
     moves,
