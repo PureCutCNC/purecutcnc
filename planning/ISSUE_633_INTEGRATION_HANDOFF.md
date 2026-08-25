@@ -21,7 +21,7 @@ checks are green. This closes the last blank cell left by #614.
 - Base commit: `a8e09a1` (`main` after #629)
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/633
 - Manager session: 2026-08-25
-- Status: `slice in progress`
+- Status: `worker slice accepted with two manager corrections; delivered`
 - User authorization for external-worker dispatch: granted.
 
 ## What this slice is, and why the recorded reason was wrong
@@ -66,7 +66,7 @@ movement is a bug in this slice, not a consequence of the decision.
 
 | Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| S1 | Flip the `rough_surface` cell, pass the context through its two ring calls, correct cleanup's reason | `a8e09a1` | `feat/issue-633-wall-cleanup-rough` | `dispatched` | `pending` | `-` | focused suites + `scripts/build-summary.sh` | Byte-identity sweep run by the manager |
+| S1 | Flip the `rough_surface` cell, pass the context through its two ring calls, correct cleanup's reason | `a8e09a1` | `feat/issue-633-wall-cleanup-rough` / removed after merge | `done` | `accepted with corrections` | `6a4491d` + `c1bb01f`; merge `b54fdfa` | 208 test files; `npm run build`; byte-identity sweep | See the review record below |
 
 ## Slice instructions
 
@@ -201,3 +201,57 @@ CHANGED_FILES: <comma-separated paths>
 CHECKS: <each command and pass/fail result>
 RISKS: <none or concise unresolved risks>
 ```
+
+## Manager review record
+
+The declaration and generator changes were right as delivered: the cell flipped,
+the now-single-use `WALL_CLEANUP_MODEL_SLICED` constant removed rather than left
+describing one kind, cleanup's reason rewritten to name `buildCleanupFloorOffsetPasses`,
+and the gate mirroring `surface.ts` exactly. All four required tests were written,
+and the coverage one asserts on where the cutter body reaches rather than on a move
+count.
+
+**Two corrections were required (`c1bb01f`).**
+
+**1. `toolRadius` is not only the wall-cleanup argument.** It also gates a
+redundant-loop prune inside the ring walker (`pocket.ts:2044`) that drops
+rounded-corner loops whose material neighbouring rings already sweep. `pocket` and
+`surface_clean` pass it unconditionally and have always had that prune;
+`rough_surface` never has. Passing it unconditionally switched the prune on:
+
+| fixture | moves before | after |
+| --- | ---: | ---: |
+| `3d-imported-block-test3` rough_surface | 86,888 | 63,579 |
+| `model-in-pocket` rough_surface | 92,007 | 74,274 |
+
+A 20-27% shorter program is a real improvement, but it is an undeclared output
+change for every saved project, and this issue's whole premise was that the control
+is opt-in and nothing saved moves. Scoped the argument to the cleanup context.
+**The prune is worth having on its own merits and is filed separately** — it needs
+its own evidence, particularly whether "material covered elsewhere" answers the same
+question against a per-level model boundary as against a fixed pocket footprint.
+
+**2. The booklet test encoded the old rule** and asserted `rough_surface` must *not*
+print the row. It could not be fixed by the worker because
+`src/engine/operationBooklet/**` was in the slice's forbidden list — the same
+handoff error made on #621, where the worker edited the forbidden test anyway and
+was right to. Inverted here, plus the matching case added for
+`finish_surface_cleanup`, the kind that still declines the control.
+
+**Handoff lesson, recorded so it stops recurring:** when a slice changes a declared
+rule, every test that encodes the old rule belongs in the allowed list, whatever
+directory it lives in.
+
+## Verification performed by the manager
+
+- Byte-identity sweep, all twelve committed fixtures: **18/18 unchanged** against
+  `main` after the correction. Before it, two operations moved.
+- Mutation: dropping the cleanup context from the recursive ring call fails with
+  "cleanup-on must add motion (cleanup loops at rounded corners)".
+- Mutation: removing the `roundOutsideCorners` half of the gate fails nothing — and
+  that is correct rather than a hole. With rounding off there are no rounded loops
+  to clean, so the control is inert structurally; the worker's test asserts that
+  behaviour directly.
+- `npm run build` green (208 test files), run in a checkout with real
+  `node_modules` — the worker's own build gate reported EPERM writing `tsbuildinfo`
+  through the dispatcher's symlinked `node_modules`, which is environmental.
