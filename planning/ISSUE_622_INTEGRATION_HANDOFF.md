@@ -102,3 +102,32 @@ the union assertion is gone. The same applies to any union assertion in
   leave it alone.
 - `toolpathFeedLegendCpu.test.ts` guards that the legend scan does not run per
   render. Keep whatever it asserts true.
+
+### Slice 2 dispatch card
+
+- **Slice id:** `legend-selected-op`
+- **Summary:** the feed-colour legend describes the selected operation instead of
+  the union of every toolpath in the preview.
+- **Allowed files:**
+  `src/components/toolpathVisibility.ts`,
+  `src/components/canvas/SketchCanvas.tsx`,
+  `src/components/viewport3d/Viewport3D.tsx`,
+  `src/components/toolpathFeedLegend.test.ts`,
+  `src/components/toolpathFeedLegendCpu.test.ts`,
+  `e2e/feedColours.smoke.spec.ts`
+- **Forbidden files:** everything under `src/engine/**` (the manager owns
+  `pocket.ts` and `surface.ts` on this branch), `src/theme/**`, `src/types/**`,
+  `src/store/**`, and every other `planning/` document.
+- **Required invariants:**
+  1. A legend rendered for one operation can never contain two entries with the
+     same label, and its ramp step increases monotonically as the scale falls.
+  2. No move scan on a render path — the per-toolpath `WeakMap` cache stays.
+  3. `src/theme/palette.ts` is untouched; this is a scoping change, not a
+     colour-mapping change.
+  4. The e2e union assertion is rewritten, not deleted, and its replacement says
+     why the union is gone.
+- **Required checks:** `npx tsx src/components/toolpathFeedLegend.test.ts`,
+  `npx tsx src/components/toolpathFeedLegendCpu.test.ts`,
+  `scripts/build-summary.sh` once, and
+  `PURECUT_E2E_PORT=1441 PURECUT_E2E_ISOLATED=1 npx playwright test e2e/feedColours.smoke.spec.ts --workers=2`
+  (kill strays afterwards with `lsof -ti tcp:1441 | xargs -r kill`).
