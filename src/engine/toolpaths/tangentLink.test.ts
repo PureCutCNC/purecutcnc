@@ -22,6 +22,8 @@
 import {
   buildOffsetDomainCheck,
   pocketTangentLinkOptions,
+  resetSlinkProbeCounts,
+  slinkProbeCounts,
   tangentSLink,
   type TangentLinkOptions,
 } from './tangentLink'
@@ -252,6 +254,83 @@ function testParallelLateralStep() {
   console.log('parallel lateral step: PASSED (arrival ' + result.arrivalIndex + ')')
 }
 
+function testProbeCountersAndPruneGuard() {
+  console.log('Testing probe counters and prune guard...')
+  // A 20-vertex rectangular ring: enough vertices that the prune has real work
+  // to do once a candidate is found. The exit is placed near one corner so
+  // several arrivals are within the length budget.
+  const ring: Point[] = []
+  const n = 20
+  for (let i = 0; i < n; i += 1) {
+    const t = i / n
+    if (t < 0.25) {
+      ring.push({ x: 0.5 + (t / 0.25) * 3.5, y: 1 })
+    } else if (t < 0.5) {
+      ring.push({ x: 4, y: 1 + ((t - 0.25) / 0.25) * 2 })
+    } else if (t < 0.75) {
+      ring.push({ x: 4 - ((t - 0.5) / 0.25) * 3.5, y: 3 })
+    } else {
+      ring.push({ x: 0.5, y: 3 - ((t - 0.75) / 0.25) * 2 })
+    }
+  }
+  const exit: Point = { x: 0, y: 0 }
+  const t0: Point = { x: 1, y: 0 }
+  const options: TangentLinkOptions = { minRadius: 0.25, maxLength: 10, isInsideDomain: () => true }
+
+  // Reset counters immediately before the measured call.
+  resetSlinkProbeCounts()
+  const result = tangentSLink(exit, t0, ring, options)
+  assert(result !== null, 'the 20-vertex ring must admit an S')
+  const counts = slinkProbeCounts()
+
+  // The prune must be removing work.
+  assert(counts.arrivalsPruned > 0, 'arrivalsPruned must be > 0, got ' + counts.arrivalsPruned)
+  assert(counts.arrivalsConsidered > 0, 'arrivalsConsidered must be > 0')
+
+  // `arrivalsPruned > 0` alone only catches the prune being deleted outright.
+  // It sails through the prune being *neutered* — counting but no longer
+  // skipping — which is the same regression with the counter still moving. So
+  // the evaluated count is pinned against measured rows rather than against a
+  // derived ceiling, the way AGENTS.md sizes a perf assertion:
+  //
+  //   prune working                       10 candidates evaluated
+  //   prune counts but does not skip     288 candidates evaluated  (28.8x)
+  //   threshold, geometric mid-point      53  (5.4x headroom either side)
+  //
+  // A derived ceiling does not work here: arrivals × sweep × 2 is 3240 on this
+  // input, so a `< half the ceiling` bound passes at 288 and constrains nothing.
+  const EVALUATED_BUDGET = 53
+  assert(
+    counts.candidatesEvaluated <= EVALUATED_BUDGET,
+    'candidatesEvaluated (' + counts.candidatesEvaluated + ') exceeded ' + EVALUATED_BUDGET
+      + ' — the prune has stopped removing search, even if it still counts',
+  )
+
+  // The selected link must be unchanged — the counters are observational, so
+  // the same geometry expectations the other cases assert still hold here.
+  const points = result.points
+  assert(
+    approx(points[0].x, exit.x) && approx(points[0].y, exit.y),
+    'S starts at the exit point',
+  )
+  assert(
+    approx(points[points.length - 1].x, ring[result.arrivalIndex].x)
+    && approx(points[points.length - 1].y, ring[result.arrivalIndex].y),
+    'S ends on the arrival vertex',
+  )
+  const firstDir = segmentDirection(points[0], points[1])
+  const lastDir = segmentDirection(points[points.length - 2], points[points.length - 1])
+  assert(angleBetween(firstDir, t0) < 0.06, 'first segment tangent to exit direction')
+  const ringTangent = segmentDirection(ring[result.arrivalIndex], ring[(result.arrivalIndex + 1) % ring.length])
+  assert(angleBetween(lastDir, ringTangent) < 0.06, 'last segment tangent to arrival direction')
+
+  console.log('probe counters: considered=' + counts.arrivalsConsidered
+    + ' pruned=' + counts.arrivalsPruned
+    + ' evaluated=' + counts.candidatesEvaluated
+    + ' budget=' + EVALUATED_BUDGET)
+  console.log('probe counters and prune guard: PASSED')
+}
+
 try {
   testLateralStepSTangentAtBothEnds()
   testParallelLateralStep()
@@ -261,6 +340,7 @@ try {
   testDeterminism()
   testDomainCheck()
   testPocketOptionsGating()
+  testProbeCountersAndPruneGuard()
   console.log('\nAll tangentLink tests PASSED.')
 } catch (e) {
   console.error(e)
