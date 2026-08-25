@@ -21,7 +21,7 @@ delivers one pull request once the behaviour and the required checks are green.
 - Base commit: `a8e09a1` (`main` after #632)
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/622
 - Manager session: 2026-08-25
-- Status: `slice 2 landed; slice 3 pending`
+- Status: `slices 1-2 landed; slice 3 (D4) in design`
 - User authorization for external-worker dispatch: granted 2026-08-25 for as
   many slices as the issue needs.
 
@@ -35,7 +35,7 @@ ownership are delegated.
 | --- | --- | --- | --- |
 | 1 | D1 + D2 — one `applyLevelFeed` per finish band level (`pocket.ts`, `surface.ts`) | manager | landed |
 | 2 | D6 — feed-colour legend scoped to the selected operation | delegated | landed |
-| 3 | D4 — Z-invariant traversal | manager | pending |
+| 3 | D4 — Z-invariant traversal | manager | in design; first approach rejected, see below |
 | 4 | D5 — `cleanWallCorners` on the finish wall contour | manager | pending |
 | 5 | audit fixtures per (kind, control) | delegated | pending |
 
@@ -131,3 +131,55 @@ the union assertion is gone. The same applies to any union assertion in
   `scripts/build-summary.sh` once, and
   `PURECUT_E2E_PORT=1441 PURECUT_E2E_ISOLATED=1 npx playwright test e2e/feedColours.smoke.spec.ts --workers=2`
   (kill strays afterwards with `lsof -ti tcp:1441 | xargs -r kill`).
+
+
+## Slice 2 — accepted with a manager correction
+
+The worker's scoping change was correct at both call sites. It was merged only
+after a defect the slice's own checks could not have caught.
+
+`unionFeedColourLegendSteps` was the only place the legend steps were **sorted**.
+`scanFeedColourLegendSteps` returns first-encounter order — whatever order the
+toolpath emits its scales in — so moving the panel onto `feedColourLegendSteps`
+handed it an unordered ladder and it rendered `75%` first.
+
+Three e2e assertions caught it, two of them in tests the slice never touched.
+The worker's own Playwright run had failed to start (no `node_modules` in the
+task worktree, so `vite.config.ts` would not load) and it proceeded anyway, so
+the new legend expectations had never been executed once. `npm run build` passed
+throughout — it does not run e2e.
+
+Manager fix in `3431156`: sort in `feedColourLegendSteps`, not in the scan, so
+the scan stays a pure encounter-order primitive and the sort is paid once per
+cache miss and stored in the `WeakMap` alongside the steps. Re-run: 5 passed.
+
+**Process lesson for the remaining delegated slices:** a task worktree has no
+`node_modules`. Symlink the primary checkout's copy before dispatching any slice
+whose required checks include Playwright, or the worker will silently skip them.
+
+Two items accepted rather than corrected, both recorded rather than acted on:
+
+- the worker edited this ledger's status table, which the dispatch card
+  forbade — benign and accurate, so it stands;
+- `unionFeedColourLegendSteps` is now dead in production. The worker kept it
+  with a comment calling it a building block for a future multi-toolpath
+  summary. That is speculative, but removing it is outside the slice.
+
+## Slice 3 — D4, first approach rejected
+
+Discarding the carried position at the start of each level (`currentPosition =
+null`) makes every level byte-identical — 0 divergent segments on four fixtures
+in both reduction modes — but emits a **discontinuous move stream**: the
+traverse from the previous level's end to the new entry disappears into a
+fabricated zero-length rapid, because `retractToSafe(moves, null, …)` emits
+nothing and `pushRapidAndPlunge` starts from the destination. Not a gouge, but
+every consumer that walks the chain — simulation, the 3D preview, the time
+estimator — is then wrong about the travel. It also invalidated the "cheaper
+travel" figure first reported on the issue, which had measured the broken chain.
+
+The fix has to separate the two roles `currentPosition` currently plays:
+`transitionToCutEntry` must keep receiving the real position so the stream stays
+chained, while `nextRoughSection`'s ordering and `rotateContourToNearestEntry`'s
+seam take a level-invariant planning seed. That is a parameter threaded through
+`cutOffsetRegionNode` / `cutOffsetNodeRings`, which are shared with the pocket
+finish floor, `surface_clean` and `rough_surface`.
