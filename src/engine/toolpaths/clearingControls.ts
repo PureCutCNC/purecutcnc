@@ -79,14 +79,6 @@ function doesNotApply(reason: string): ControlSupport {
 // today's gaps honestly; the sibling decides them, then edits the cell here
 // (which is why #616 blocks every other sub-issue).
 
-// Undecided, not settled: #614's matrix deliberately leaves cleanWallCorners
-// out (it is gated on rounding being enabled), so no owner call exists for the
-// model-sliced kinds. The observation below stands until one lands.
-const WALL_CLEANUP_MODEL_SLICED =
-  'undecided: the #614 matrix deliberately excludes this control (it is gated on rounding being enabled), '
-  + 'so no owner call exists for these kinds yet. Wall-corner cleanup repairs the coverage a rounded ring loses '
-  + 'against a designed pocket wall a mating part seats into; these kinds\u2019 level boundaries are sliced model silhouettes.'
-
 export const CLEARING_CONTROL_SUPPORT: Readonly<Record<OperationKind, ClearingKindSupport>> = {
   pocket: {
     clears: true,
@@ -121,7 +113,7 @@ export const CLEARING_CONTROL_SUPPORT: Readonly<Record<OperationKind, ClearingKi
       slotFeed: APPLIES,
       engagementMode: APPLIES,
       roundOutsideCorners: APPLIES,
-      cleanWallCorners: doesNotApply(WALL_CLEANUP_MODEL_SLICED),
+      cleanWallCorners: APPLIES,
       cornerRelief: doesNotApply(
         // Settled by the owner on #616; recorded verbatim.
         'Relief corners are collected from the wall contours of a band built from a sketch '
@@ -137,7 +129,11 @@ export const CLEARING_CONTROL_SUPPORT: Readonly<Record<OperationKind, ClearingKi
       slotFeed: APPLIES,
       engagementMode: APPLIES,
       roundOutsideCorners: APPLIES,
-      cleanWallCorners: doesNotApply(WALL_CLEANUP_MODEL_SLICED),
+      cleanWallCorners: doesNotApply(
+        'Its floor rings come from buildCleanupFloorOffsetPasses (finishSurfaceCleanup.ts:400), '
+        + 'a bespoke builder, not the shared cutOffsetRegionNode that carries the wall-cleanup context; '
+        + 'there is no hook to pass the context through.',
+      ),
       cornerRelief: doesNotApply(
         // Settled by the owner on #616; recorded verbatim.
         'Relief corners are collected from the wall contours of a band built from a sketch '
