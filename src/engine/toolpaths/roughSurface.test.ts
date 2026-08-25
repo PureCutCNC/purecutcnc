@@ -35,26 +35,30 @@ function assert(condition: boolean, message: string): void {
 }
 
 function makeFrustumStlDataUrl(inverted = false): string {
+  return makeOffsetFrustumStlDataUrl(0, 0, inverted)
+}
+
+function makeOffsetFrustumStlDataUrl(ox: number, oy: number, inverted = false): string {
   const vertices = inverted
     ? {
-        b0: [4, 2, 0],
-        b1: [8, 2, 0],
-        b2: [8, 6, 0],
-        b3: [4, 6, 0],
-        t0: [0, 0, 6],
-        t1: [12, 0, 6],
-        t2: [12, 8, 6],
-        t3: [0, 8, 6],
+        b0: [4 + ox, 2 + oy, 0],
+        b1: [8 + ox, 2 + oy, 0],
+        b2: [8 + ox, 6 + oy, 0],
+        b3: [4 + ox, 6 + oy, 0],
+        t0: [0 + ox, 0 + oy, 6],
+        t1: [12 + ox, 0 + oy, 6],
+        t2: [12 + ox, 8 + oy, 6],
+        t3: [0 + ox, 8 + oy, 6],
       } as const
     : {
-        b0: [0, 0, 0],
-        b1: [12, 0, 0],
-        b2: [12, 8, 0],
-        b3: [0, 8, 0],
-        t0: [4, 2, 6],
-        t1: [8, 2, 6],
-        t2: [8, 6, 6],
-        t3: [4, 6, 6],
+        b0: [0 + ox, 0 + oy, 0],
+        b1: [12 + ox, 0 + oy, 0],
+        b2: [12 + ox, 8 + oy, 0],
+        b3: [0 + ox, 8 + oy, 0],
+        t0: [4 + ox, 2 + oy, 6],
+        t1: [8 + ox, 2 + oy, 6],
+        t2: [8 + ox, 6 + oy, 6],
+        t3: [4 + ox, 6 + oy, 6],
       } as const
 
   const faces: Array<[keyof typeof vertices, keyof typeof vertices, keyof typeof vertices]> = [
@@ -1241,6 +1245,163 @@ testRoughSurfaceSeededStaysInClearableRegions()
 testRoughSurfaceRasterNeverLinksAcrossStandingStrip()
 testRoughSurfaceReducesSlotFeed()
 testRoughSurfaceEngagementTelemetry()
+
+// ── Machining order tests (issue #620) ───────────────────────────────
+
+const serializeMoves = (moves: ToolpathMove[]): string => JSON.stringify(moves)
+
+function makeOffsetModelFeature(id: string, ox: number, oy: number): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'stl',
+    stl: {
+      format: 'stl' as const,
+      fileData: makeOffsetFrustumStlDataUrl(ox, oy),
+      scale: 1,
+      axisSwap: 'none',
+    },
+    folderId: null,
+    sketch: {
+      profile: rectProfile(ox, oy, 12, 8),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'model',
+    z_top: 6,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+}
+
+function makeOffsetRegionFeature(id: string, ox: number, oy: number): SketchFeature {
+  return {
+    id,
+    name: id,
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(ox - 2, oy - 2, 16, 12),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'region',
+    z_top: 0,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+}
+
+function testRoughSurfaceMachiningOrderFeatureFirst(): void {
+  console.log('Testing rough_surface machining order feature_first splits per feature...')
+  // Two disjoint frustums at different XY positions.
+  const modelA = makeOffsetModelFeature('model-a', 0, 0)
+  const modelB = makeOffsetModelFeature('model-b', 50, 50)
+  const regionA = makeOffsetRegionFeature('region-a', 0, 0)
+  const regionB = makeOffsetRegionFeature('region-b', 50, 50)
+  const project = projectWithFeatures({
+    ...newProject('rough-surface-mo-ff-test', 'mm'),
+    tools: [makeTool()],
+  }, [modelA, modelB, regionA, regionB])
+  project.stock.thickness = TEST_STOCK_THICKNESS
+
+  const featureFirst = generateRoughSurfaceToolpath(project, {
+    ...makeRoughOperation(['model-a', 'model-b', 'region-a', 'region-b']),
+    machiningOrder: 'feature_first',
+  })
+
+  assert(featureFirst.moves.length > 0, 'feature_first should produce moves')
+  const cutMoves = featureFirst.moves.filter((m) => m.kind === 'cut')
+  assert(cutMoves.length > 0, 'feature_first should produce cut moves')
+
+  // Feature A's frustum is at X ∈ [0, 12], feature B's at X ∈ [50, 62].
+  // A cut at X < 25 belongs to feature A; X ≥ 25 belongs to feature B.
+  let lastACut = -1
+  let firstBCut = cutMoves.length
+  for (let i = 0; i < cutMoves.length; i++) {
+    if (cutMoves[i]!.to.x < 25) lastACut = i
+    if (cutMoves[i]!.to.x >= 25 && firstBCut === cutMoves.length) firstBCut = i
+  }
+  assert(lastACut >= 0, 'must have cuts for feature A')
+  assert(firstBCut < cutMoves.length, 'must have cuts for feature B')
+  assert(lastACut < firstBCut,
+    `feature_first: all feature-A cuts must precede feature-B cuts (last A at ${lastACut}, first B at ${firstBCut})`)
+}
+
+function testRoughSurfaceMachiningOrderLevelFirst(): void {
+  console.log('Testing rough_surface machining order level_first produces different stream...')
+  const modelA = makeOffsetModelFeature('model-a', 0, 0)
+  const modelB = makeOffsetModelFeature('model-b', 50, 50)
+  const regionA = makeOffsetRegionFeature('region-a', 0, 0)
+  const regionB = makeOffsetRegionFeature('region-b', 50, 50)
+  const project = projectWithFeatures({
+    ...newProject('rough-surface-mo-lf-test', 'mm'),
+    tools: [makeTool()],
+  }, [modelA, modelB, regionA, regionB])
+  project.stock.thickness = TEST_STOCK_THICKNESS
+
+  const levelFirst = generateRoughSurfaceToolpath(project, {
+    ...makeRoughOperation(['model-a', 'model-b', 'region-a', 'region-b']),
+    machiningOrder: 'level_first',
+  })
+
+  assert(levelFirst.moves.length > 0, 'level_first should produce moves')
+
+  const featureFirst = generateRoughSurfaceToolpath(project, {
+    ...makeRoughOperation(['model-a', 'model-b', 'region-a', 'region-b']),
+    machiningOrder: 'feature_first',
+  })
+  assert(serializeMoves(featureFirst.moves) !== serializeMoves(levelFirst.moves),
+    'feature_first and level_first must produce different streams')
+}
+
+function testRoughSurfaceMachiningOrderSingleFeatureIdentical(): void {
+  console.log('Testing rough_surface single-feature operation identical under both settings...')
+  const { project, operation } = makeProject(['model1'])
+
+  const levelFirst = generateRoughSurfaceToolpath(project, {
+    ...operation, machiningOrder: 'level_first',
+  })
+  const featureFirst = generateRoughSurfaceToolpath(project, {
+    ...operation, machiningOrder: 'feature_first',
+  })
+  assert(serializeMoves(levelFirst.moves) === serializeMoves(featureFirst.moves),
+    'single-feature rough_surface must be byte-identical under both machiningOrder settings')
+}
+
+function testRoughSurfaceMachiningOrderTelemetrySurvives(): void {
+  console.log('Testing rough_surface engagement telemetry survives feature-first split...')
+  const modelA = makeOffsetModelFeature('model-a', 0, 0)
+  const modelB = makeOffsetModelFeature('model-b', 50, 50)
+  const regionA = makeOffsetRegionFeature('region-a', 0, 0)
+  const regionB = makeOffsetRegionFeature('region-b', 50, 50)
+  const project = projectWithFeatures({
+    ...newProject('rough-surface-mo-tel-test', 'mm'),
+    tools: [makeTool()],
+  }, [modelA, modelB, regionA, regionB])
+  project.stock.thickness = TEST_STOCK_THICKNESS
+
+  const result = generateRoughSurfaceToolpath(project, {
+    ...makeRoughOperation(['model-a', 'model-b', 'region-a', 'region-b']),
+    machiningOrder: 'feature_first',
+    pocketFeedReduction: 'engagement',
+  })
+  assert(result.engagementTelemetry !== undefined,
+    'feature-first engagement mode must attach telemetry')
+  assert(result.engagementTelemetry!.totalCutDistance > 0,
+    'telemetry must record sampled distance')
+}
+
+testRoughSurfaceMachiningOrderFeatureFirst()
+testRoughSurfaceMachiningOrderLevelFirst()
+testRoughSurfaceMachiningOrderSingleFeatureIdentical()
+testRoughSurfaceMachiningOrderTelemetrySurvives()
 
 function testTransitionToCutEntryPlungesAtAlignedXY(): void {
   console.log('Testing transitionToCutEntry plunges straight down at aligned XY...')
