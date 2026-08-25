@@ -22,7 +22,7 @@ numbers justify it) stay with the manager and are not part of this slice.
 - Base commit: `4edad5d` (`main` after #621)
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/629
 - Manager session: 2026-08-25
-- Status: `step 2 accepted with one manager correction; steps 1 and 3 still open`
+- Status: `steps 1 and 2 done; step 3 (optimise) open and justified by the numbers below`
 - User authorization for external-worker dispatch: granted; the manager owns
   the choice of what to delegate and is responsible for final delivery.
 
@@ -246,3 +246,84 @@ Step 2 is done. Step 1 (characterise solver cost per kind and pattern using thes
 counters) and step 3 (optimise, if the numbers justify it) stay with the manager, and
 must not run concurrently with any dispatched worker — benchmarking under a parallel
 test pool is what crashed this machine once before.
+
+# Step 1 — Measured cost characterisation
+
+Taken on `main` at `b889b29` with the probe counters from step 2. Counts are
+deterministic and reproduce exactly; re-run
+`work/slink-cost-probe.ts`-equivalent instrumentation against any branch to
+compare.
+
+## Solver work per operation, offset and seeded patterns
+
+`considered` = arrivals passing the length budget, `pruned` = arrivals the exact
+prune skipped, `evaluated` = arc-line-arc candidates actually built and
+domain-sampled.
+
+| fixture | kind | pattern | considered | pruned | evaluated | moves |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| `another-pocket-test` | pocket | offset | 1629 | 1106 | 1262 | 6397 |
+| `another-pocket-test` | pocket | seeded | 3490 | 2004 | 2313 | 7479 |
+| `pocket-feed-reduction` | pocket | offset | 161 | 32 | 780 | 838 |
+| `pocket-feed-reduction-2` | pocket | offset | 542 | 277 | 711 | 1738 |
+| `pocket-feed-reduction-3` | pocket | offset | 318 | 239 | 427 | 1830 |
+| `pocket-finish-island-leftover` | pocket op0011 | offset | 1017 | 568 | 2172 | 3984 |
+| `pocket-finish-island-leftover` | pocket op0011 | seeded | 3729 | 2247 | 4469 | 7883 |
+| `pocket-rounded-corner-coverage` | pocket | offset | 649 | 576 | 96 | 2581 |
+| `model-in-pocket` | rough_surface | offset | 7725 | 4869 | 6994 | 92179 |
+| `model-in-pocket` | rough_surface | seeded | 4671 | 1838 | 15392 | 68290 |
+| `model-in-pocket` | cleanup | offset | 1811 | 1083 | 1408 | 20699 |
+| `3d-imported-block-test3` | rough_surface | offset | 13200 | 8457 | 14482 | 87235 |
+| `3d-imported-block-test3` | rough_surface | seeded | 4627 | 1982 | 7834 | 76914 |
+
+The prune removes **20–89%** of arrivals depending on geometry, so it is doing
+substantial work and is worth the guard step 2 added.
+
+## What that costs in time
+
+A one-off investigation spot check, **not** a committed assertion — AGENTS.md
+keeps timing out of the suite, and these figures are recorded here so step 3 has
+a reason to exist, not as a budget anything asserts against. `process.cpuUsage`,
+minimum of 5 serial repetitions, machine otherwise idle.
+
+| fixture | kind | links on | links off | ratio | evaluated |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `another-pocket-test` | pocket | 1055 ms | 820 ms | **1.29x** | 1262 |
+| `model-in-pocket` | rough_surface | 1530 ms | 790 ms | **1.94x** | 6994 |
+| `3d-imported-block-test3` | rough_surface | 2500 ms | 807 ms | **3.10x** | 14482 |
+
+Two things follow.
+
+**The pocket figure corroborates #614.** 1.29x sits inside the owner's measured
+1.2–1.6x band, which is a useful check that this instrument agrees with the
+earlier one.
+
+**Roughing is materially worse than the band the cost was accepted on.** #621's
+decision accepted the S-link cost knowingly, but the only figure available then
+was measured on pockets. On the larger roughing fixture the same feature costs
+**3.10x** — +1.7 s of CPU on a single operation. That is the finding step 1
+exists to produce.
+
+The ratio tracks `evaluated` closely across all three rows, which confirms the
+counter is a sound optimisation target: reduce candidates evaluated and the time
+follows.
+
+## Where the work is, from the code
+
+Per arrival surviving the prune, the solver sweeps ~83 middle directions and
+attempts `buildS` for each, pushing a candidate only when the tangent solve
+yields `s >= 0`. Measured, that is ~3 built candidates per surviving arrival
+(14,482 evaluated against ~4,743 survivors on the largest row) — so roughly 166
+tangent solves per arrival produce 3 sampled paths.
+
+That makes the **sweep**, not the sampling, the likely dominant term. Step 3
+should confirm that before optimising it.
+
+## Constraint on step 3, restated
+
+Byte-identity is the gate. The S selected is a geometric choice, so a faster
+search that picks a different arc is a behaviour change, not a speedup. In
+particular, reordering arrivals to make `bestLength` fall faster would prune
+more — and would break the first-found tie-breaking the prune comment
+explicitly preserves. Optimisation has to make the existing search cheaper, not
+change what it searches.
