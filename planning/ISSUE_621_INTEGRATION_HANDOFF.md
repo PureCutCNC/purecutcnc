@@ -21,7 +21,7 @@ checks are green. This is the last of #614's sub-issues.
 - Base commit: `edf26e0` (`main` after #620)
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/621
 - Manager session: 2026-08-25
-- Status: `slice in progress`
+- Status: `worker slice accepted; delivered`
 - User authorization for external-worker dispatch: granted for every slice
   needed to finish #619, #620 and #621.
 
@@ -101,7 +101,7 @@ stock.
 
 | Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| S1 | Collapse `usesTangentLinks` to one rule; splice S-links on rough_surface rings and cleanup floor rings | `edf26e0` | `feat/issue-621-tangent-links-rings` | `dispatched` | `pending` | `-` | focused suites + `scripts/build-summary.sh` | Fixture and containment evidence produced by the manager at review time |
+| S1 | Collapse `usesTangentLinks` to one rule; splice S-links on rough_surface rings and cleanup floor rings | `edf26e0` | `feat/issue-621-tangent-links-rings` / removed after merge | `done` | `accepted` | `e58b478`; merge `1fa9bbc` | 208 test files; `npm run build`; sweep + containment probe | See the review record below |
 
 ## Slice instructions
 
@@ -250,3 +250,60 @@ CHANGED_FILES: <comma-separated paths>
 CHECKS: <each command and pass/fail result>
 RISKS: <none or concise unresolved risks>
 ```
+
+## Manager review record
+
+Accepted without correction — the first slice in this family to need none.
+
+The predicate collapsed to `CLEARING_CONTROL_SUPPORT[kind].clears && pattern !== 'parallel'`
+with its doc comment rewritten, both generators took the domain from the level they
+were cutting, and the `tangentLink` arguments landed in the right positions of
+`cutOffsetRegionRecursive` (14th) and `cutOffsetRegionNode` (14th).
+
+**Two test files outside the allowed list were edited** —
+`src/components/cam/operationFields.test.ts` and
+`src/engine/operationBooklet/operationBooklet.test.ts`. Both encoded the *old* rule
+("cleanup floor rings are not linked, so the control must stay hidden"), so they had
+to invert. Reviewed line by line: they are expectation inversions that still assert
+something, not assertions weakened to pass. The forbidden list should have carved out
+the tests of those directories; that is a handoff imprecision, not worker overreach.
+
+`pocketPatterns.test.ts` lost its per-kind exception blocks in favour of a loop over
+all four clearing kinds — stronger coverage, not deleted coverage. One assertion did
+disappear without replacement: `!usesTangentLinks('finish_surface_cleanup', 'waterline')`.
+That pair now returns true, but cleanup's waterline resolves to `'none'`, so no floor
+contours exist and nothing splices; it is unreachable from the dropdown either way.
+
+## Verification performed by the manager
+
+- Fixture sweep, all twelve committed fixtures: **only the two `rough_surface`
+  operations changed**. Both are stored `offset`, so both now link. The committed
+  `finish_surface_cleanup` operation is stored `parallel` and is untouched, as are
+  all nine `pocket`, four `finish_surface` and two `v_carve_medial` operations.
+- Containment across all three patterns on both 3D fixtures: 91,825 / 67,756 / 2,334
+  and 86,885 / 76,249 / 6,625 at-depth segments checked against each level's own
+  clearable region, **zero escapes**. S-links are emitted as polylined cut moves, so
+  the arc itself is sampled, not just its chord.
+- Invariant 7 proved by comparison against the base: `parallel` is byte-identical on
+  both fixtures and on the pocket contrast case, while `offset` and `seeded_offset`
+  both change.
+- Cleanup's floor links, which no fixture exercises (its operation is stored
+  `parallel`): driven directly on `offset`, the stream gains 999 moves with
+  `roundLinkCorners` on, and with it off is byte-identical to base — so the flag now
+  genuinely gates the feature where it was previously a no-op.
+- `seeded_offset` cleanup is unchanged, and that is not a wiring failure: its floor
+  contours are entered by retract 101 times with only 5 candidate in-plane segments
+  (against 53 on `offset`), and the solver declined those 5. A splice can only make an
+  existing in-plane link tangent.
+- Three mutations, each restored from a `cp` backup: suppressing rough_surface's links
+  and dropping cleanup's splice each failed with "enabled output must reduce sharp
+  link junctions", a geometric assertion rather than a move count.
+
+**One honest limitation.** Hoisting rough_surface's link domain from the cutting level
+to level 0 — the mutation that would expose a link validated against the wrong
+region — does *not* fail any test, and does not produce an escape in the probe either.
+On these fixtures no link actually bulges outside a deeper level's region, so there is
+nothing to catch. The per-level domain is implemented correctly and general containment
+is asserted on the split-region fixture; what is not pinned is per-level-ness itself.
+Falsifying it needs a fixture whose clearable region shrinks with depth across a link
+span, which none of the committed models provide.
