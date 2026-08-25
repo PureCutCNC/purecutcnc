@@ -21,7 +21,7 @@ checks are green. Stop at the merged PR for #620; #621 is a separate issue.
 - Base commit: `c8d22f5` (`main` after #619)
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/620
 - Manager session: 2026-08-24
-- Status: `slice in progress`
+- Status: `worker slice accepted with one manager correction; delivered`
 - User authorization for external-worker dispatch: granted 2026-08-24 for every
   slice needed to finish #619, #620 and #621.
 
@@ -100,7 +100,7 @@ declaration now owns. This slice is the reason to fix it.
 
 | Slice | Scope | Base commit | Task branch/worktree | Worker status | Manager review | Accepted commit / merge | Required checks | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| S1 | Flip both cells; wire the per-feature split and shared telemetry into the two surface generators | `c8d22f5` | `feat/issue-620-machining-order-surfaces` | `dispatched` | `pending` | `-` | focused suites + `scripts/build-summary.sh` | Fixture evidence produced by the manager at review time |
+| S1 | Flip both cells; wire the per-feature split and shared telemetry into the two surface generators | `c8d22f5` | `feat/issue-620-machining-order-surfaces` / removed after merge | `done` | `accepted with correction` | `2dd4792` + `6503d24`; merge `a5dceff` | 208 test files; `npm run build`; fixture sweep | See the review record below |
 
 ## Slice instructions
 
@@ -241,3 +241,37 @@ CHANGED_FILES: <comma-separated paths>
 CHECKS: <each command and pass/fail result>
 RISKS: <none or concise unresolved risks>
 ```
+
+## Manager review record
+
+The DSH worker's slice was accepted on structure: it mirrored `generatePocketToolpath`'s
+split faithfully, deleted the orphaned `machiningOrderPending` helper, confined its
+`pocket.ts` edit to `createSharedEngagementTelemetry`, and its telemetry attachment is
+correct in all three cases (unsplit, split with engagement, split without). Three
+mutations — suppressing each split and detaching the shared accumulator — each failed
+the matching test for its stated reason, so the new assertions bite.
+
+**One correction was required (`6503d24`).** The split orphaned the mesh on a legal
+mixed target. `rough_surface` validity is `.some(model)` among machining features, so
+one STL model plus an `add` feature is a valid target that had always roughed as a
+single operation; `perFeatureOperations` split it into a model part and a modelless
+part, and the latter resolved to `surface3dNotMesh` — "Model feature must be an
+imported mesh model" on an operation that plainly has a mesh. Because `machiningOrder`
+ships stored as `feature_first`, saved projects with that target shape would have hit
+it on load without anyone touching a setting.
+
+Measured on `model-in-pocket` with the operation retargeted to model + add feature:
+`level_first` emitted 89982 moves with no warnings, `feature_first` emitted the same
+89982 moves plus `surface3dNotMesh`. After the guard both orders emit 89982 moves and
+no warnings. A regression test covers it and fails when the guard is removed.
+
+## Verification performed by the manager
+
+- Fixture sweep, all twelve committed fixtures: **18/18 byte-identical** to `main`.
+  This is the expected result and not evidence of the feature — no committed fixture
+  has a `surface_clean` operation, and both `rough_surface` fixture operations target
+  a single feature, so the split never engages there.
+- Mixed-target probe on a real fixture, before and after the correction (above).
+- Four mutations, each restored from a `cp` backup: both split gates, the shared
+  accumulator, and the new mesh guard.
+- `npm run build` green (208 test files).
