@@ -724,15 +724,26 @@ function predicateCleanWallCorners(
   onResult: PocketToolpathResult,
   offResult: PocketToolpathResult,
 ): void {
-  const extent = (moves: ToolpathMove[]): number =>
-    Math.max(
-      ...moves
-        .filter((m) => m.kind === 'cut')
-        .flatMap((m) => [
-          Math.abs(m.from.x), Math.abs(m.to.x),
-          Math.abs(m.from.y), Math.abs(m.to.y),
-        ]),
-    )
+  // Folded, not spread. `Math.max(...arr)` passes every element as an argument
+  // and blows the stack on the mesh kinds, whose move streams run to hundreds
+  // of thousands of cuts -- it surfaced the moment #633 flipped
+  // `rough_surface`'s cleanWallCorners to APPLIES and this predicate began
+  // running against a mesh fixture.
+  const extent = (moves: ToolpathMove[]): number => {
+    let best = 0
+    for (const move of moves) {
+      if (move.kind !== 'cut') continue
+      const a = Math.abs(move.from.x)
+      const b = Math.abs(move.to.x)
+      const c = Math.abs(move.from.y)
+      const d = Math.abs(move.to.y)
+      if (a > best) best = a
+      if (b > best) best = b
+      if (c > best) best = c
+      if (d > best) best = d
+    }
+    return best
+  }
 
   const offExtent = extent(offResult.moves)
   const onExtent  = extent(onResult.moves)
@@ -766,15 +777,17 @@ function predicateCleanWallCorners(
     `got ${offWall} → ${onWall} moves`,
   )
 
-  const cutLength = (moves: ToolpathMove[]): number =>
-    moves
-      .filter((m) => m.kind === 'cut')
-      .reduce((s, m) => s + Math.hypot(m.to.x - m.from.x, m.to.y - m.from.y), 0)
-
-  assert(
-    cutLength(onResult.moves) > cutLength(offResult.moves),
-    `${kind} cleanWallCorners: total cut length must grow when control is on`,
-  )
+  // There is deliberately no "total cut length must grow" assertion here.
+  // It held on the 2D fixtures and looked like a reasonable second signal, but
+  // it is not what the control claims and it is not true in general. On a mesh
+  // silhouette the wall ring has many corners, and rounding them removes more
+  // length than the cleanup loops put back -- measured on `rough_surface`:
+  //
+  //   wall band  92 -> 2366 moves      total length  1153.183 -> 1102.875 mm
+  //
+  // The wall gains motion by a factor of 25 while the path gets shorter. The
+  // claim this control makes is about WHERE the motion goes, not how much
+  // there is, so the wall-band assertion above is the one that carries it.
 }
 
 /**
@@ -859,7 +872,14 @@ function predicateMachiningOrder(
       .filter((m) => m.kind === 'cut')
       .map((m) => (m.from.x + m.to.x) / 2)
     if (xs.length === 0) return true
-    const mid = (Math.min(...xs) + Math.max(...xs)) / 2
+    // Folded for the same reason as `extent` above.
+    let lo = xs[0]
+    let hi = xs[0]
+    for (const x of xs) {
+      if (x < lo) lo = x
+      if (x > hi) hi = x
+    }
+    const mid = (lo + hi) / 2
     const zones = moves
       .filter((m) => m.kind === 'cut')
       .map((m) => ((m.from.x + m.to.x) / 2 < mid ? 0 : 1))
