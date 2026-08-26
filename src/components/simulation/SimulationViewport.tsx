@@ -342,9 +342,15 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   useEffect(() => {
     setPlaybackMaxStep(defaultStep)
   }, [defaultStep])
+
   const [zoomWindowBox, setZoomWindowBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const mountRef = useRef<HTMLDivElement>(null)
+
+  // Playback bar drag state — simple pointer-based dragging
+  const [barPosition, setBarPosition] = useState<{ x: number; y: number } | null>(null)
+  const barDragRef = useRef<{ pointerId: number; startX: number; startY: number; startBarX: number; startBarY: number } | null>(null)
+
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
@@ -1186,7 +1192,51 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         </div>
       </div>
       {playbackEnabled && playbackInput && (
-        <div className="simulation-playback-bar">
+        <div
+          className={`simulation-playback-bar${barPosition ? ' simulation-playback-bar--dragged' : ''}`}
+          style={barPosition ? { left: barPosition.x, top: barPosition.y } : undefined}
+        >
+          <div
+            className="simulation-playback-bar__handle"
+            onPointerDown={(event) => {
+              if (event.button !== 0) return
+              event.preventDefault()
+              event.currentTarget.setPointerCapture(event.pointerId)
+              const bar = event.currentTarget.parentElement
+              const rect = bar?.getBoundingClientRect()
+              barDragRef.current = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                startBarX: rect?.left ?? event.clientX,
+                startBarY: rect?.top ?? event.clientY,
+              }
+            }}
+            onPointerMove={(event) => {
+              const drag = barDragRef.current
+              if (!drag || drag.pointerId !== event.pointerId) return
+              event.preventDefault()
+              setBarPosition({
+                x: Math.max(0, Math.min(window.innerWidth - 200, drag.startBarX + event.clientX - drag.startX)),
+                y: Math.max(0, Math.min(window.innerHeight - 40, drag.startBarY + event.clientY - drag.startY)),
+              })
+            }}
+            onPointerUp={(event) => {
+              const drag = barDragRef.current
+              if (!drag || drag.pointerId !== event.pointerId) return
+              event.preventDefault()
+              barDragRef.current = null
+              try { event.currentTarget.releasePointerCapture(event.pointerId) } catch { /* already released */ }
+            }}
+            onPointerCancel={(event) => {
+              const drag = barDragRef.current
+              if (!drag || drag.pointerId !== event.pointerId) return
+              barDragRef.current = null
+              try { event.currentTarget.releasePointerCapture(event.pointerId) } catch { /* already released */ }
+            }}
+          >
+            ⠿
+          </div>
           <div className="simulation-playback-bar__controls">
             <button
               type="button"
@@ -1258,12 +1308,18 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
             </select>
           </label>
           <div className="simulation-playback-bar__xyz">
-            <span className="simulation-playback-bar__xyz-label">X</span>
-            <span className="simulation-playback-bar__xyz-value">{formatCoord(displayPose.x, playbackUnits)}</span>
-            <span className="simulation-playback-bar__xyz-label">Y</span>
-            <span className="simulation-playback-bar__xyz-value">{formatCoord(displayPose.y, playbackUnits)}</span>
-            <span className="simulation-playback-bar__xyz-label">Z</span>
-            <span className="simulation-playback-bar__xyz-value">{formatCoord(displayPose.z, playbackUnits)}</span>
+            <div className="simulation-playback-bar__coord">
+              <span className="simulation-playback-bar__coord-label">X</span>
+              <span className="simulation-playback-bar__coord-value">{formatCoord(displayPose.x, playbackUnits)}</span>
+            </div>
+            <div className="simulation-playback-bar__coord">
+              <span className="simulation-playback-bar__coord-label">Y</span>
+              <span className="simulation-playback-bar__coord-value">{formatCoord(displayPose.y, playbackUnits)}</span>
+            </div>
+            <div className="simulation-playback-bar__coord">
+              <span className="simulation-playback-bar__coord-label">Z</span>
+              <span className="simulation-playback-bar__coord-value">{formatCoord(displayPose.z, playbackUnits)}</span>
+            </div>
           </div>
           <div
             className="simulation-playback-bar__feed"
@@ -1276,8 +1332,13 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
             <span className="simulation-playback-bar__feed-value">
               {(() => {
                 const feed = currentFeedPerSecond(displayPose, playbackInput.feedPerSecond, playbackInput.plungeFeedPerSecond)
-                return feed !== null ? formatSpeedLabel(feed, playbackUnits) : '—'
+                if (feed !== null) return formatSpeedLabel(feed, playbackUnits)
+                if (isPlaying && displayPose.moveKind === 'rapid') return 'Rapid'
+                return '—'
               })()}
+            </span>
+            <span className="simulation-playback-bar__engagement">
+              {displayPose.feedScale !== undefined ? `${Math.round(displayPose.feedScale * 100)}%` : '100%'}
             </span>
           </div>
         </div>
