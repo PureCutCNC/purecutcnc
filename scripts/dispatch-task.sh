@@ -9,7 +9,16 @@
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# REPO_ROOT must be the repository, never the checkout the invoked copy lives
+# in (issue #637): every worktree has its own scripts/, so deriving it from
+# SCRIPT_DIR nests new worktrees inside the current one. The common dir points
+# at the primary checkout's .git from every worktree.
+if repo_common_dir="$(git -C "$SCRIPT_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+  readonly REPO_ROOT="$(dirname "$repo_common_dir")"
+else
+  printf 'dispatch-task: not inside a git repository: %s\n' "$SCRIPT_DIR" >&2
+  exit 1
+fi
 readonly CLAUDE_DEEPSEEK_LEAF="$SCRIPT_DIR/run-claude-deepseek-agent.sh"
 readonly DSH_LEAF="$SCRIPT_DIR/run-dsh-agent.sh"
 readonly DEFAULT_BASE="feat/core-arch-simplification"
@@ -67,6 +76,37 @@ EOF
 }
 
 fail() { printf 'dispatch-task: %s\n' "$*" >&2; exit 1; }
+
+# Absolute, symlink-resolved path (like realpath). The leaf may not exist yet,
+# so resolve the deepest existing ancestor and append the remainder textually.
+abs_path() {
+  local target="$1" resolved=""
+  if resolved="$(cd "$target" 2>/dev/null && pwd -P)"; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+  local parent base
+  parent="$(dirname "$target")"
+  base="$(basename "$target")"
+  if ! resolved="$(cd "$parent" 2>/dev/null && pwd -P)"; then
+    resolved="$parent"
+  fi
+  printf '%s/%s\n' "$resolved" "$base"
+}
+
+# Hard rule (issue #637): a worktree is never created inside a checkout of this
+# repository — not the primary, not another worktree, not a dot-directory of
+# either. Compares symlink-resolved paths against every checkout git knows.
+assert_outside_checkouts() {
+  local candidate="$(abs_path "$1")" registered="" other=""
+  while IFS= read -r registered; do
+    [[ -n "$registered" ]] || continue
+    other="$(abs_path "$registered")"
+    if [[ "$candidate" == "$other" || "$candidate" == "$other"/* ]]; then
+      fail "refusing to create a worktree inside a checkout: $candidate would land inside checkout $registered; worktrees must live under an external base like <parent-of-repo>/worktrees/<repo-name>/"
+    fi
+  done < <(git -C "$REPO_ROOT" worktree list --porcelain | sed -n 's/^worktree //p')
+}
 
 mode="implement"
 provider="claude-deepseek"
@@ -200,6 +240,10 @@ fi
 
 branch="feat/issue-${issue}-${slug}"
 worktree_dir="$WORKTREE_BASE/$slug"
+
+# An explicitly-set base pointing inside a checkout must not bypass the guard.
+assert_outside_checkouts "$WORKTREE_BASE"
+assert_outside_checkouts "$worktree_dir"
 
 git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
   || fail "primary checkout is not a git repo: $REPO_ROOT"

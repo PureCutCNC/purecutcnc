@@ -5,7 +5,7 @@
  * the same custom mesh-slicing algorithm as roughSurface.ts, and verifies
  * that different Z levels produce different cross-sections.
  *
- * Run: npx tsx scripts/test-rough-pipeline.ts "/Users/frankp/Projects/purecutcnc/work/springycat-keyring.stl"
+ * Run: npx tsx scripts/test-rough-pipeline.ts "work/springycat-keyring.stl"
  */
 
 import fs from 'node:fs'

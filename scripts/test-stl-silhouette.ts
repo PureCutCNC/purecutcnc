@@ -28,7 +28,7 @@ import { renderSilhouetteToDataUrl } from '../src/import/stl'
 import { profileVertices, getProfileBounds, polygonProfile, type Point, type SketchProfile } from '../src/types/project'
 
 // ── Configuration ──────────────────────────────────────────────────────────
-const STL_PATH = '/Users/frankp/Projects/purecutcnc/work/Oldman-splash-final.STL'
+const STL_PATH = process.argv[2] ?? 'work/Oldman-splash-final.STL'
 const STL_SCALE = 1
 const STL_AXIS_SWAP: 'none' | 'yz' | 'xz' | 'xy' = 'none'
 const OUTPUT_PNG = '/tmp/stl-silhouette.png'

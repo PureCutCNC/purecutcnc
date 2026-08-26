@@ -882,7 +882,7 @@ function censusFile(file: string): FileRow | null {
 
 const trackedOnly = process.argv.includes('tracked')
 const noMesh = process.argv.includes('nomesh')
-const ROOT = '/Users/frankp/Projects/purecutcnc'
+const ROOT = process.argv[2] ?? '.'
 const allFiles = execSync("find . -path ./node_modules -prune -o -name '*.camj' -print", { cwd: ROOT })
   .toString().trim().split('\n')
   .filter((f) => f.includes('work/') || f.includes('public/examples') || f.includes('src/engine/test-fixtures'))

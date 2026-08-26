@@ -19,6 +19,10 @@ coverage
 work/
 temp/
 
+# Worktrees must live outside every checkout (issue #637); ignored as
+# belt-and-braces so a stray nested one still cannot pollute git status.
+worktrees/
+
 # Env files (.env.agent contains the local DeepSeek worker token)
 .env
 .env.*

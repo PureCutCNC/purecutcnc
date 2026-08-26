@@ -172,4 +172,56 @@ assert_contains "$failed_output" 'commit result: not-attempted (worker failed)'
 [[ "$(git -C "$failed_worktree" status --short)" == '?? failed-change.txt' ]] \
   || fail 'failed DSH worker changes were not left for inspection'
 
+# ---- issue #637: default base resolves outside any checkout, even when the ----
+# ---- invoked copy of dispatch-task.sh lives in a worktree                   ----
+prepare_committed_scripts_fixture() {
+  local fixture_repo="$TEMP_DIR/wtbase-repo"
+  mkdir -p "$fixture_repo/scripts"
+  git init -q "$fixture_repo"
+  git -C "$fixture_repo" config user.name test
+  git -C "$fixture_repo" config user.email test@example.com
+  printf 'fixture\n' > "$fixture_repo/README.md"
+  cp "$DISPATCH" "$SCRIPT_DIR/run-dsh-agent.sh" "$SCRIPT_DIR/dsh-progress-filter.jq" "$fixture_repo/scripts/"
+  chmod +x "$fixture_repo/scripts/dispatch-task.sh" "$fixture_repo/scripts/run-dsh-agent.sh"
+  git -C "$fixture_repo" add README.md scripts
+  git -C "$fixture_repo" commit -qm 'fixture base'
+  printf '%s' "$fixture_repo"
+}
+
+wtbase_repo="$(prepare_committed_scripts_fixture)"
+wtbase_base="$(git -C "$wtbase_repo" branch --show-current)"
+git -C "$wtbase_repo" worktree add -q "$TEMP_DIR/wtbase-invoking-wt" -b invoking-copy
+invoking_wt_resolved="$(cd "$TEMP_DIR/wtbase-invoking-wt" && pwd -P)"
+temp_resolved="$(cd "$TEMP_DIR" && pwd -P)"
+
+outside_base_output="$(printf 'implement\n' | PATH="$TEMP_DIR/bin:$PATH" HOME="$TEMP_DIR/home" \
+  FAKE_DSH_WRITE_FILE=worker-change.txt \
+  "$TEMP_DIR/wtbase-invoking-wt/scripts/dispatch-task.sh" --provider dsh --issue 104 \
+    --task-slug outside-base --base "$wtbase_base" --skip-build)"
+[[ -d "$TEMP_DIR/worktrees/wtbase-repo/outside-base" ]] \
+  || fail 'dispatch from a worktree copy did not use <parent-of-repo>/worktrees/<repo-name>'
+created_worktree_resolved="$(cd "$TEMP_DIR/worktrees/wtbase-repo/outside-base" && pwd -P)"
+case "$created_worktree_resolved" in
+  "$temp_resolved"/worktrees/wtbase-repo/*) ;;
+  *) fail "task worktree landed outside the shared sibling base: $created_worktree_resolved" ;;
+esac
+case "$created_worktree_resolved" in
+  "$invoking_wt_resolved"|"$invoking_wt_resolved"/*) fail 'task worktree nested inside the invoking worktree' ;;
+esac
+[[ ! -e "$TEMP_DIR/wtbase-invoking-wt/worktrees" ]] \
+  || fail 'a nested worktrees/ directory appeared inside the invoking worktree'
+
+# ---- issue #637: guard rejects a PURECUT_WORKTREE_BASE inside a checkout ----
+if inside_base_error="$(printf 'implement\n' | PATH="$TEMP_DIR/bin:$PATH" HOME="$TEMP_DIR/home" \
+  PURECUT_WORKTREE_BASE="$wtbase_repo/nested-worktrees" \
+  "$wtbase_repo/scripts/dispatch-task.sh" --provider dsh --issue 105 \
+    --task-slug inside-base --base "$wtbase_base" --skip-build 2>&1)"; then
+  fail 'dispatch unexpectedly accepted a worktree base inside a checkout'
+fi
+assert_contains "$inside_base_error" 'refusing to create a worktree inside a checkout'
+wtbase_repo_resolved="$(cd "$wtbase_repo" && pwd -P)"
+assert_contains "$inside_base_error" "$wtbase_repo_resolved/nested-worktrees"
+[[ ! -e "$wtbase_repo/nested-worktrees" ]] \
+  || fail 'guard rejected the base but side effects already happened'
+
 printf 'test-dispatch-task: passed\n'

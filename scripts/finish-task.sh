@@ -9,7 +9,14 @@
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# REPO_ROOT is the repository (primary checkout), not the invoked copy's
+# worktree — see issue #637.
+if repo_common_dir="$(git -C "$SCRIPT_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+  readonly REPO_ROOT="$(dirname "$repo_common_dir")"
+else
+  printf 'finish-task: not inside a git repository: %s\n' "$SCRIPT_DIR" >&2
+  exit 1
+fi
 readonly DEFAULT_BASE="feat/core-arch-simplification"
 WORKTREE_BASE="${PURECUT_WORKTREE_BASE:-$(dirname "$REPO_ROOT")/worktrees/$(basename "$REPO_ROOT")}"
 
