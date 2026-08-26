@@ -3414,6 +3414,44 @@ function generateFinishBandMoves(
       wallContours = buildContourLoops(finishRegions)
     }
   }
+  // "Round wall corners" acts on the ring that defines the wall (issue #622).
+  // In a finish pass that ring is the WALL CONTOUR, cut in its own block below
+  // -- not the outermost floor ring, which is where this used to land. The
+  // outermost floor ring sits one stepover inside the wall path, so rounding it
+  // rounded nothing the wall is made of, while the wall contour itself stayed a
+  // sharp mitered corner in every variant. The control's own tooltip says it
+  // "rounds the ring that defines the wall, cleaning each corner immediately
+  // afterwards so the wall keeps its full coverage" -- which is exactly what the
+  // rough pass's wall ring already does through `planContourSmoothing` plus
+  // `buildWallCornerCleanupContour`, and what the wall block now does too.
+  const wallCornerCleanupEnabled = operation.kind === 'pocket' && operation.roundOutsideCorners
+    && operation.cleanWallCorners === true
+  const onWallCleanupFallback = (): void => appendUniqueWarning(warnings, {
+    code: 'pocketWallCornerCleanupFallback',
+  })
+  // Round the wall contour and clean each corner immediately afterwards, the
+  // same construction the rough wall ring uses: the arc gives up coverage in
+  // the corner and the cleanup loop traverses the exact sharp source span to
+  // put it back. A corner whose arc or return leaves the tool-centre domain
+  // keeps its exact sharp geometry, so one reflex corner costs only itself.
+  let wallRotationPreserved = false
+  if (wallCornerCleanupEnabled && wallOuterContours.length > 0) {
+    const wallSmoothRadius = cornerSmoothingRadius(true, toolRadius, stepoverDistance)
+    if (wallSmoothRadius) {
+      const isInsideDomain = buildOffsetDomainCheck(finishRegions)
+      wallOuterContours = applyContourDirection(wallOuterContours, direction).map((directed) => {
+        const plan = planContourSmoothing(directed, wallSmoothRadius)
+        const cleaned = buildWallCornerCleanupContour(plan, { isInsideDomain })
+        if (!cleaned) {
+          onWallCleanupFallback()
+          return directed
+        }
+        if (cleaned.cleanupCount === 0 && plan.transitions.length > 0) onWallCleanupFallback()
+        if (cleaned.cleanupCount > 0) wallRotationPreserved = true
+        return cleaned.points
+      })
+    }
+  }
   const finishCoverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
   const isParallelPocket = finishCoverage.rasterSegments
   // Offset floors are cut through the same inner-first ring traversal as the
@@ -3483,15 +3521,6 @@ function generateFinishBandMoves(
       finishRegions,
     )
     : undefined
-  const floorWallCleanup = operation.kind === 'pocket' && operation.roundOutsideCorners
-    && operation.cleanWallCorners === true
-    ? {
-        enabled: true,
-        onFallback: (): void => appendUniqueWarning(warnings, {
-          code: 'pocketWallCornerCleanupFallback',
-        }),
-      }
-    : undefined
   const floorSegments = operation.finishFloor && isParallelPocket
     ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
     : []
@@ -3556,7 +3585,6 @@ function generateFinishBandMoves(
             depth: 0,
             entryPolicy,
             tangentLink: floorTangentLink,
-            wallCleanup: floorWallCleanup,
             toolRadius,
           },
         )
@@ -3572,7 +3600,7 @@ function generateFinishBandMoves(
         floorTrees,
         direction,
         floorSmoothRadius,
-        floorWallCleanup,
+        undefined,
         toolRadius,
       )
       let previousUnitRoot: OffsetRegionNode | null = null
@@ -3648,7 +3676,6 @@ function generateFinishBandMoves(
             depth: unit.depth,
             entryPolicy,
             tangentLink: floorTangentLink,
-            wallCleanup: floorWallCleanup,
             toolRadius,
             parent: unit.parent ?? undefined,
           },
@@ -3711,10 +3738,12 @@ function generateFinishBandMoves(
         safeZ,
         maxLinkDistance,
         currentPosition,
-        false,
+        wallRotationPreserved,
         direction,
         undefined,
         entryPolicy,
+        undefined,
+        wallCornerCleanupEnabled,
       )
       const orderedCleanupSegments = orderOpenSegmentsGreedy(
         wallCleanupSegments,
