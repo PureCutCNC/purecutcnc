@@ -21,7 +21,7 @@ delivers one pull request once the behaviour and the required checks are green.
 - Base commit: `a8e09a1` (`main` after #632)
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/622
 - Manager session: 2026-08-25
-- Status: `slices 1-2 landed; slice 3 (D4) in design`
+- Status: `slices 1-2 landed; slice 3 (D4) parked unmerged; slice 4 (D5) next`
 - User authorization for external-worker dispatch: granted 2026-08-25 for as
   many slices as the issue needs.
 
@@ -35,7 +35,7 @@ ownership are delegated.
 | --- | --- | --- | --- |
 | 1 | D1 + D2 — one `applyLevelFeed` per finish band level (`pocket.ts`, `surface.ts`) | manager | landed |
 | 2 | D6 — feed-colour legend scoped to the selected operation | delegated | landed |
-| 3 | D4 — Z-invariant traversal | manager | in design; first approach rejected, see below |
+| 3 | D4 — Z-invariant traversal | manager | **parked unmerged** on `wip/issue-622-d4-seam-anchor` |
 | 4 | D5 — `cleanWallCorners` on the finish wall contour | manager | pending |
 | 5 | audit fixtures per (kind, control) | delegated | pending |
 
@@ -218,3 +218,39 @@ Suggested split:
 2. The seam anchor is added to that object and set level-invariantly by the
    rough band; per-level identity asserted, move-chain continuity asserted
    (`from` of every move equals `to` of the previous one).
+
+
+## Slice 3 — parked, and why
+
+The seam-anchor fix works: `levelInvariance.test.ts` passes 19/19, every level
+emits byte-identical geometry and feed across pocket and `surface_clean` with
+zero chain breaks, and 8 of its 9 invariance assertions fail against the pre-fix
+engine. It is committed on `wip/issue-622-d4-seam-anchor` and merged nowhere.
+
+It is parked because the owner did not ask for it. The question was *why do the
+cleanup loops jump left and right between the two rough passes* — a question,
+answered by: per-level traversal is seeded from wherever the previous level
+finished, so seams and S-links land differently at each depth. Turning that
+explanation into a change removed a deliberate travel optimisation and tripped
+`engagementPocket.test.ts`'s cache-equivalence test, whose three-lobe fixture
+exists **to prove that per-level traversals differ** — i.e. the behaviour is
+documented design, not an oversight.
+
+Costs measured before parking, so a later decision has numbers rather than
+adjectives:
+
+| fixture | sections | levels | rapid XY |
+| --- | --- | --- | --- |
+| pocket, no island | 1 | 3 | 50.1 -> 50.3 mm (+0.5 %) |
+| pocket, island | several | 3 | 350 -> 420 mm (+20 %) |
+| `surface_clean`, two bosses | several | 14 | 879 -> 1932 mm (+120 %) |
+
+The cost scales with sections x level boundaries, not with the seam rotation:
+with a single section it is ~nothing. In cycle-time terms the worst case is
+small — 1,053 mm of extra rapid against 24 m of cutting is roughly 0.3–1.2 %
+depending on the machine's rapid rate — but it buys determinism nobody asked for.
+
+If it is ever revived: `engagementPocket.test.ts`'s cache-equivalence premise has
+to be inverted (levels then share one traversal, so one classification is built
+and every level consumes it), and the depth-dependent feed it fixes should be
+argued on its own merits first.
