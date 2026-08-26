@@ -60,6 +60,7 @@ import {
   offsetSectionEntryPoint,
   offsetUnitEntryPoint,
   orderClosedContoursGreedy,
+  orderClosedContoursGreedyPreservingRotation,
   orderNodesGreedy,
   orderOpenSegmentsGreedy,
   planRegionSeedLeftovers,
@@ -79,12 +80,13 @@ import {
 } from './pocket'
 import type { OffsetRegionNode } from './pocket'
 import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
-import { pocketTangentLinkOptions } from './tangentLink'
+import { buildOffsetDomainCheck, pocketTangentLinkOptions } from './tangentLink'
+import { buildWallCornerCleanupContour } from './wallCornerCleanup'
 import { seedStartRadius, planSeedCircles, seedCircleContours } from './seedClearing'
 import { areaCoverage, effectivePocketPattern, usesTangentLinks } from './pocketPatterns'
 import { clearingControlApplies } from './clearingControls'
 import type { SeedCirclePlan } from './seedClearing'
-import { cornerSmoothingRadius } from './offsetSmoothing'
+import { cornerSmoothingRadius, planContourSmoothing } from './offsetSmoothing'
 import {
   buildRegionMask,
   splitFeatureTargets,
@@ -861,7 +863,44 @@ function generateFinishBandMoves(
     ),
     slotScale,
   )
-  const wallContours = operation.finishWalls ? applyContourDirection(buildContourLoops(finishRegions), direction) : []
+  let wallContours = operation.finishWalls ? applyContourDirection(buildContourLoops(finishRegions), direction) : []
+  // "Round wall corners" acts on the ring that defines the wall (issue #622).
+  // In a finish pass that ring is the WALL CONTOUR, cut in its own block below
+  // -- not the outermost floor ring, which is where this used to land. This is
+  // the same defect D5 fixed in pocket.ts's `generateFinishBandMoves`; this
+  // function is its sibling copy and carried it unchanged, exactly as D1's gap
+  // was mirrored here as D2. The outermost floor ring sits one stepover inside
+  // the wall path, so rounding it rounded nothing the wall is made of while the
+  // wall contour stayed a sharp mitered corner in every variant.
+  const wallCornerCleanupEnabled = clearingControlApplies(operation.kind, 'cleanWallCorners')
+    && operation.roundOutsideCorners && operation.cleanWallCorners === true
+  const onWallCleanupFallback = (): void => appendUniqueWarning(warnings, {
+    code: 'pocketWallCornerCleanupFallback',
+  })
+  // Round the wall contour and clean each corner immediately afterwards, the
+  // same construction the rough wall ring uses: the arc gives up coverage in
+  // the corner and the cleanup loop traverses the exact sharp source span to
+  // put it back. A corner whose arc or return leaves the tool-centre domain
+  // keeps its exact sharp geometry, so one reflex corner costs only itself.
+  let wallRotationPreserved = false
+  if (wallCornerCleanupEnabled && wallContours.length > 0) {
+    const wallSmoothRadius = cornerSmoothingRadius(true, toolRadius, stepoverDistance)
+    if (wallSmoothRadius) {
+      const isInsideDomain = buildOffsetDomainCheck(finishRegions)
+      // wallContours is already direction-applied above.
+      wallContours = wallContours.map((directed) => {
+        const plan = planContourSmoothing(directed, wallSmoothRadius)
+        const cleaned = buildWallCornerCleanupContour(plan, { isInsideDomain })
+        if (!cleaned) {
+          onWallCleanupFallback()
+          return directed
+        }
+        if (cleaned.cleanupCount === 0 && plan.transitions.length > 0) onWallCleanupFallback()
+        if (cleaned.cleanupCount > 0) wallRotationPreserved = true
+        return cleaned.points
+      })
+    }
+  }
   const minFloorStepover = 1 / DEFAULT_CLIPPER_SCALE
   const floorStepover = Math.max(stepoverDistance, minFloorStepover)
   const floorSmoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, floorStepover)
@@ -926,13 +965,6 @@ function generateFinishBandMoves(
       finishRegions,
     )
     : undefined
-  const floorWallCleanup = clearingControlApplies(operation.kind, 'cleanWallCorners') && operation.roundOutsideCorners
-    && operation.cleanWallCorners === true
-    ? {
-      enabled: true,
-      onFallback: (): void => appendUniqueWarning(warnings, { code: 'pocketWallCornerCleanupFallback' }),
-    }
-    : undefined
   const floorSegments = operation.finishFloor && isParallelPocket
     ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
     : []
@@ -985,7 +1017,6 @@ function generateFinishBandMoves(
             depth: 0,
             entryPolicy,
             tangentLink: floorTangentLink,
-            wallCleanup: floorWallCleanup,
             toolRadius,
           },
         )
@@ -1001,7 +1032,7 @@ function generateFinishBandMoves(
         floorTrees,
         direction,
         floorSmoothRadius,
-        floorWallCleanup,
+        undefined,
         toolRadius,
       )
       let previousUnitRoot: OffsetRegionNode | null = null
@@ -1077,7 +1108,6 @@ function generateFinishBandMoves(
             depth: unit.depth,
             entryPolicy,
             tangentLink: floorTangentLink,
-            wallCleanup: floorWallCleanup,
             toolRadius,
             parent: unit.parent ?? undefined,
           },
@@ -1132,10 +1162,14 @@ function generateFinishBandMoves(
   }
 
   for (const z of wallStepLevels) {
-    const orderedWallContours = orderClosedContoursGreedy(
-      wallContours,
-      currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
-    )
+    // A cleaned wall contour carries its cleanup excursions at fixed points in
+    // the sequence; re-seaming it to the nearest entry would cut into the
+    // middle of one. Preserve the rotation whenever cleanup actually ran, the
+    // same call pocket.ts's wall block makes through `cutClosedContours`.
+    const start = currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null
+    const orderedWallContours = wallRotationPreserved
+      ? orderClosedContoursGreedyPreservingRotation(wallContours, start)
+      : orderClosedContoursGreedy(wallContours, start)
 
     for (const contour of orderedWallContours) {
       const entryPoint = contourStartPoint(contour, z)

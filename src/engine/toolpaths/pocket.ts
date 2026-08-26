@@ -1665,7 +1665,7 @@ export function orderClosedContoursGreedy(contours: Point[][], start: Point | nu
   return ordered
 }
 
-function orderClosedContoursGreedyPreservingRotation(contours: Point[][], start: Point | null): Point[][] {
+export function orderClosedContoursGreedyPreservingRotation(contours: Point[][], start: Point | null): Point[][] {
   if (contours.length <= 1 || start === null) {
     return contours
   }
