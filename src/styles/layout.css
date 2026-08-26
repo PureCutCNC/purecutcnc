@@ -1254,6 +1254,188 @@
   background: transparent;
 }
 
+/* Simulation playback dialog — movable panel replacing the fixed playback bar */
+.simulation-playback-dialog__content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  min-width: 220px;
+}
+
+.simulation-playback-dialog__controls {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.simulation-playback-dialog__btn {
+  width: 32px;
+  height: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-sheen-soft);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.simulation-playback-dialog__btn:hover {
+  background: var(--surface-sheen-strong);
+}
+
+.simulation-playback-dialog__btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.simulation-playback-dialog__btn--primary:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  filter: brightness(1.08);
+}
+
+.simulation-playback-dialog__progress {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.simulation-playback-dialog__progress input[type='range'] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.simulation-playback-dialog__readout {
+  min-width: 36px;
+  text-align: right;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.simulation-playback-dialog__speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.simulation-playback-dialog__speed--slider input[type='range'] {
+  width: 90px;
+  accent-color: var(--accent);
+}
+
+.simulation-playback-dialog__speed select {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-sheen-soft);
+  color: var(--text);
+  font-size: 11px;
+}
+
+/* Stacked X, Y, Z coordinates in a single column */
+.simulation-playback-dialog__xyz {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+  border-top: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.simulation-playback-dialog__coord {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.simulation-playback-dialog__coord-label {
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 11px;
+  min-width: 14px;
+}
+
+.simulation-playback-dialog__coord-value {
+  color: var(--text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5em;
+  text-align: right;
+}
+
+.simulation-playback-dialog__feed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line-strong);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.simulation-playback-dialog__move-kind {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.simulation-playback-dialog__feed-value {
+  color: var(--text);
+  min-width: 7em;
+  text-align: right;
+}
+
+.simulation-playback-dialog__move-kind--cut,
+.simulation-playback-dialog__move-kind--lead_in,
+.simulation-playback-dialog__move-kind--lead_out {
+  background: var(--toolpath-cut);
+}
+
+.simulation-playback-dialog__move-kind--plunge {
+  background: var(--toolpath-plunge);
+}
+
+.simulation-playback-dialog__move-kind--rapid {
+  background: var(--toolpath-rapid);
+}
+
+.simulation-playback-dialog__move-kind--none {
+  background: transparent;
+}
+
+/* Tool engagement percentage — below feed readout */
+.simulation-playback-dialog__engagement {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.simulation-playback-dialog__engagement-label {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.simulation-playback-dialog__engagement-value {
+  color: var(--text);
+  min-width: 4em;
+  text-align: right;
+}
+
 .panel-right {
   min-height: 0;
 }

@@ -33,6 +33,8 @@ import { effectiveFeed } from '../../engine/toolpaths/feed'
 import type { Clamp, MachineOrigin, Operation, ToolType } from '../../types/project'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
+import { useCanvasWorkflowPanel } from '../canvas/useCanvasWorkflowPanel'
+import { CanvasWorkflowPanel } from '../canvas/CanvasWorkflowPanel'
 
 const EMPTY_PLAYBACK_POSE: PlaybackPose = { x: 0, y: 0, z: 0, moveKind: null, feedScale: undefined }
 
@@ -342,9 +344,22 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   useEffect(() => {
     setPlaybackMaxStep(defaultStep)
   }, [defaultStep])
+
   const [zoomWindowBox, setZoomWindowBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const mountRef = useRef<HTMLDivElement>(null)
+
+  // Playback status dialog — movable like sketch dialogs (pageLevel for viewport coordinates)
+  const playbackPanel = useCanvasWorkflowPanel({
+    open: playbackEnabled,
+    phaseKey: playbackEnabled ? 'playback' : null,
+    containerRef: mountRef,
+    canvasRef: mountRef,
+    clearTransientCanvasState: () => {},
+    focusCanvasOnOpen: false,
+    margin: 16,
+    pageLevel: true,
+  })
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
@@ -1186,101 +1201,124 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
         </div>
       </div>
       {playbackEnabled && playbackInput && (
-        <div className="simulation-playback-bar">
-          <div className="simulation-playback-bar__controls">
-            <button
-              type="button"
-              className="simulation-playback-bar__btn simulation-playback-bar__btn--primary"
-              onClick={handlePlayPause}
-              disabled={playbackControlsDisabled}
-              title={isPlaying ? t('viewport.sim.pause') : t('viewport.sim.play')}
+        <CanvasWorkflowPanel
+          title={t('viewport.sim.playbackTitle')}
+          position={playbackPanel.position}
+          panelRef={playbackPanel.panelRef}
+          handleProps={playbackPanel.handleProps}
+          actions={<></>}
+          pageLevel
+          dialogAria={{ label: t('viewport.sim.playbackTitle'), modal: false }}
+          className="simulation-playback-dialog"
+        >
+          <div className="simulation-playback-dialog__content">
+            <div className="simulation-playback-dialog__controls">
+              <button
+                type="button"
+                className="simulation-playback-dialog__btn simulation-playback-dialog__btn--primary"
+                onClick={handlePlayPause}
+                disabled={playbackControlsDisabled}
+                title={isPlaying ? t('viewport.sim.pause') : t('viewport.sim.play')}
+              >
+                {isPlaying ? '❚❚' : '▶'}
+              </button>
+              <button
+                type="button"
+                className="simulation-playback-dialog__btn"
+                onClick={handleStop}
+                disabled={playbackControlsDisabled}
+                title={t('viewport.sim.stop')}
+              >
+                ■
+              </button>
+            </div>
+            <div className="simulation-playback-dialog__progress">
+              <span className="simulation-playback-dialog__readout">
+                {Math.round(playbackProgress * 100)}%
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={1000}
+                step={1}
+                value={Math.round(playbackProgress * 1000)}
+                onChange={(event) => handleSeek(Number(event.target.value) / 1000)}
+                disabled={playbackControlsDisabled}
+                aria-label={t('viewport.sim.progressAria')}
+              />
+            </div>
+            <label
+              className="simulation-playback-dialog__speed simulation-playback-dialog__speed--slider"
+              title={
+                playbackInput.feedPerSecond && playbackInput.feedPerSecond > 0
+                  ? t('viewport.sim.speedTooltipFeed', { feed: formatSpeedLabel(baseSpeed, playbackUnits), multiplier: formatMultiplierLabel(playbackMultiplier) })
+                  : t('viewport.sim.speedTooltipFallback', { feed: formatSpeedLabel(baseSpeed, playbackUnits), multiplier: formatMultiplierLabel(playbackMultiplier) })
+              }
             >
-              {isPlaying ? '❚❚' : '▶'}
-            </button>
-            <button
-              type="button"
-              className="simulation-playback-bar__btn"
-              onClick={handleStop}
-              disabled={playbackControlsDisabled}
-              title={t('viewport.sim.stop')}
+              <span>{t('viewport.sim.speedLabel')}</span>
+              <input
+                type="range"
+                min={0}
+                max={PLAYBACK_SLIDER_STEPS}
+                step={1}
+                value={multiplierToSliderPosition(playbackMultiplier)}
+                onChange={(event) => setPlaybackMultiplier(sliderPositionToMultiplier(Number(event.target.value)))}
+                disabled={playbackControlsDisabled}
+                aria-label={t('viewport.sim.speedAria')}
+              />
+            </label>
+            <label
+              className="simulation-playback-dialog__speed"
+              title={t('viewport.sim.stepTooltip')}
             >
-              ■
-            </button>
-          </div>
-          <div className="simulation-playback-bar__progress">
-            <span className="simulation-playback-bar__readout">
-              {Math.round(playbackProgress * 100)}%
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={1000}
-              step={1}
-              value={Math.round(playbackProgress * 1000)}
-              onChange={(event) => handleSeek(Number(event.target.value) / 1000)}
-              disabled={playbackControlsDisabled}
-              aria-label={t('viewport.sim.progressAria')}
-            />
-          </div>
-          <label
-            className="simulation-playback-bar__speed simulation-playback-bar__speed--slider"
-            title={
-              playbackInput.feedPerSecond && playbackInput.feedPerSecond > 0
-                ? t('viewport.sim.speedTooltipFeed', { feed: formatSpeedLabel(baseSpeed, playbackUnits), multiplier: formatMultiplierLabel(playbackMultiplier) })
-                : t('viewport.sim.speedTooltipFallback', { feed: formatSpeedLabel(baseSpeed, playbackUnits), multiplier: formatMultiplierLabel(playbackMultiplier) })
-            }
-          >
-            <span>{t('viewport.sim.speedLabel')}</span>
-            <input
-              type="range"
-              min={0}
-              max={PLAYBACK_SLIDER_STEPS}
-              step={1}
-              value={multiplierToSliderPosition(playbackMultiplier)}
-              onChange={(event) => setPlaybackMultiplier(sliderPositionToMultiplier(Number(event.target.value)))}
-              disabled={playbackControlsDisabled}
-              aria-label={t('viewport.sim.speedAria')}
-            />
-          </label>
-          <label
-            className="simulation-playback-bar__speed"
-            title={t('viewport.sim.stepTooltip')}
-          >
-            <span>{t('viewport.sim.stepLabel')}</span>
-            <select
-              value={playbackMaxStep}
-              onChange={(event) => setPlaybackMaxStep(Number(event.target.value))}
-              disabled={playbackControlsDisabled}
+              <span>{t('viewport.sim.stepLabel')}</span>
+              <select
+                value={playbackMaxStep}
+                onChange={(event) => setPlaybackMaxStep(Number(event.target.value))}
+                disabled={playbackControlsDisabled}
+              >
+                {stepSizes.map((value) => (
+                  <option key={value} value={value}>{value} {playbackUnits}</option>
+                ))}
+              </select>
+            </label>
+            <div className="simulation-playback-dialog__xyz">
+              <div className="simulation-playback-dialog__coord">
+                <span className="simulation-playback-dialog__coord-label">X</span>
+                <span className="simulation-playback-dialog__coord-value">{formatCoord(displayPose.x, playbackUnits)}</span>
+              </div>
+              <div className="simulation-playback-dialog__coord">
+                <span className="simulation-playback-dialog__coord-label">Y</span>
+                <span className="simulation-playback-dialog__coord-value">{formatCoord(displayPose.y, playbackUnits)}</span>
+              </div>
+              <div className="simulation-playback-dialog__coord">
+                <span className="simulation-playback-dialog__coord-label">Z</span>
+                <span className="simulation-playback-dialog__coord-value">{formatCoord(displayPose.z, playbackUnits)}</span>
+              </div>
+            </div>
+            <div
+              className="simulation-playback-dialog__feed"
+              title={t('viewport.sim.feedTooltip')}
             >
-              {stepSizes.map((value) => (
-                <option key={value} value={value}>{value} {playbackUnits}</option>
-              ))}
-            </select>
-          </label>
-          <div className="simulation-playback-bar__xyz">
-            <span className="simulation-playback-bar__xyz-label">X</span>
-            <span className="simulation-playback-bar__xyz-value">{formatCoord(displayPose.x, playbackUnits)}</span>
-            <span className="simulation-playback-bar__xyz-label">Y</span>
-            <span className="simulation-playback-bar__xyz-value">{formatCoord(displayPose.y, playbackUnits)}</span>
-            <span className="simulation-playback-bar__xyz-label">Z</span>
-            <span className="simulation-playback-bar__xyz-value">{formatCoord(displayPose.z, playbackUnits)}</span>
+              <span
+                className={`simulation-playback-dialog__move-kind simulation-playback-dialog__move-kind--${displayPose.moveKind ?? 'none'}`}
+                title={t('viewport.sim.moveKindIdle')}
+              />
+              <span className="simulation-playback-dialog__feed-value">
+                {(() => {
+                  const feed = currentFeedPerSecond(displayPose, playbackInput.feedPerSecond, playbackInput.plungeFeedPerSecond)
+                  return feed !== null ? formatSpeedLabel(feed, playbackUnits) : '—'
+                })()}
+              </span>
+            </div>
+            <div className="simulation-playback-dialog__engagement" title={t('viewport.sim.engagementTooltip')}>
+              <span className="simulation-playback-dialog__engagement-label">{t('viewport.sim.engagementLabel')}</span>
+              <span className="simulation-playback-dialog__engagement-value">
+                {displayPose.feedScale !== undefined ? `${Math.round(displayPose.feedScale * 100)}%` : '100%'}
+              </span>
+            </div>
           </div>
-          <div
-            className="simulation-playback-bar__feed"
-            title={t('viewport.sim.feedTooltip')}
-          >
-            <span
-              className={`simulation-playback-bar__move-kind simulation-playback-bar__move-kind--${displayPose.moveKind ?? 'none'}`}
-              title={t('viewport.sim.moveKindIdle')}
-            />
-            <span className="simulation-playback-bar__feed-value">
-              {(() => {
-                const feed = currentFeedPerSecond(displayPose, playbackInput.feedPerSecond, playbackInput.plungeFeedPerSecond)
-                return feed !== null ? formatSpeedLabel(feed, playbackUnits) : '—'
-              })()}
-            </span>
-          </div>
-        </div>
+        </CanvasWorkflowPanel>
       )}
     </div>
   )
