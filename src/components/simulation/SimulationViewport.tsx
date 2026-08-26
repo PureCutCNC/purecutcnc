@@ -1333,7 +1333,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
               {(() => {
                 const feed = currentFeedPerSecond(displayPose, playbackInput.feedPerSecond, playbackInput.plungeFeedPerSecond)
                 if (feed !== null) return formatSpeedLabel(feed, playbackUnits)
-                if (displayPose.moveKind === 'rapid') return 'Rapid'
+                if (isPlaying && displayPose.moveKind === 'rapid') return 'Rapid'
                 return '—'
               })()}
             </span>
