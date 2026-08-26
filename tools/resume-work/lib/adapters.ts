@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { DatabaseSync } from 'node:sqlite'
+import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs'
 import { basename, extname, join, resolve } from 'node:path'
@@ -26,6 +26,25 @@ import type { Adapter, Agent, ResumeConfig, SessionCandidate, SessionTranscript,
 
 const MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024
 const MAX_SESSION_META_BYTES = 64 * 1024
+
+type DatabaseSyncCtor = new (path: string, options?: { readOnly?: boolean }) => {
+  prepare(sql: string): { all(...params: unknown[]): unknown[]; run(...params: unknown[]): void }
+  exec(sql: string): void
+  close(): void
+}
+
+let _DatabaseSync: DatabaseSyncCtor | null | undefined
+function getDatabaseSync(): DatabaseSyncCtor | null {
+  if (_DatabaseSync === undefined) {
+    try {
+      const require = createRequire(import.meta.url)
+      _DatabaseSync = require('node:sqlite').DatabaseSync as DatabaseSyncCtor
+    } catch {
+      _DatabaseSync = null
+    }
+  }
+  return _DatabaseSync
+}
 
 function safeStat(path: string): number {
   try {
@@ -278,6 +297,8 @@ const codexAdapter: Adapter = {
 const openCodeAdapter: Adapter = {
   agent: 'opencode',
   locate(cwd, config) {
+    const DatabaseSync = getDatabaseSync()
+    if (!DatabaseSync) return []
     const path = join(expandHome(config.stores.opencode), 'opencode.db')
     if (!existsSync(path)) return []
     const database = new DatabaseSync(path, { readOnly: true })
@@ -296,6 +317,8 @@ const openCodeAdapter: Adapter = {
     }
   },
   read(candidate, config) {
+    const DatabaseSync = getDatabaseSync()
+    if (!DatabaseSync) throw new Error('resume-work: opencode adapter requires node:sqlite (Node >= 22.5)')
     const database = new DatabaseSync(candidate.path, { readOnly: true })
     try {
       const parts = database.prepare(`

@@ -1,7 +1,7 @@
 # `/resume-work`
 
-`/resume-work` is a transcript-backed worktree handoff reader. Start a fresh
-agent session in the existing worktree, then run:
+`resume-work` is a transcript-backed worktree handoff reader. Start a fresh
+agent session in the existing worktree, then use its native entry point or run:
 
 ```sh
 npx tsx tools/resume-work/run.ts
@@ -24,11 +24,23 @@ Use `--from` only to correct a missing or stale first-run attribution:
 npx tsx tools/resume-work/run.ts --from codex
 ```
 
-## Agent integration
+## Agent entry points
 
-Add this sentence to the repository's `AGENTS.md`:
+Agents do not share one slash-command parser. Use the native route for the
+agent that is taking over the worktree:
 
-> If the user says `/resume-work`, run `tools/resume-work/run.ts` and follow its output.
+| Agent | Invocation | Project configuration |
+| --- | --- | --- |
+| Claude Code | `/resume-work` | `.claude/skills/resume-work/SKILL.md` |
+| Codex | `$resume-work` | `.agents/skills/resume-work/SKILL.md` |
+| OpenCode | `/resume-work` | `.opencode/command/resume-work.md` |
+| DSH headless | `/resume-work` as a prompt | `AGENTS.md` |
+| Any agent | `npx tsx tools/resume-work/run.ts` | none |
+
+Claude Code and Codex intercept unknown slash commands before repository
+instructions are considered, so raw `/resume-work` is intentionally not the
+Codex route. Restart OpenCode after adding or updating its command file: it
+loads project configuration at startup.
 
 ## Adapter contract
 

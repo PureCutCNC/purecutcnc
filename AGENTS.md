@@ -334,7 +334,11 @@ Regardless of mode, one owner remains accountable for the issue plan, scope,
 repository state, test evidence, and final handoff. A worker report or generated
 patch is input to review, not proof of completion.
 
-If the user says `/resume-work`, run `tools/resume-work/run.ts` and follow its output.
+If the user asks to resume work — including through the agent-native `resume-work`
+skill or command — run `npx tsx tools/resume-work/run.ts` from the repository
+root, read its briefing, and continue from that context. See
+[`tools/resume-work/README.md`](tools/resume-work/README.md) for the invocation
+route supported by each agent.
 
 ## Assigned-Task Intake
 

@@ -16,7 +16,7 @@ Map of the repo. Start here when picking up new work. Each entry is a one-line s
 - [tools/resume-work/](tools/resume-work/INDEX.md) — transcript-backed `/resume-work` handoff reader for agents taking over a worktree
 - [public/](public/) — static assets served as-is (incl. generated `icons.svg`)
 - [.github/](.github/) — workflows and PR templates
-- [.agents/skills/](.agents/skills/) — reusable agent skills: `github-issues` (issue/board/Priority wiring), `manager-delegate` (delegated slices), `frontend-design`
+- [.agents/skills/](.agents/skills/) — reusable agent skills: `github-issues` (issue/board/Priority wiring), `manager-delegate` (delegated slices), `frontend-design`, `resume-work`
 
 ## Config / metadata
 - `package.json` — npm scripts and deps
