@@ -87,6 +87,8 @@ function test(name: string, fn: () => void): void {
     passed += 1
     console.log(`   ✓ ${name}`)
   } catch (err: unknown) {
+    // `skipCell` already recorded and printed it; do not also count a pass.
+    if (err instanceof SkipSignal) return
     failed += 1
     const msg = err instanceof Error ? err.message : String(err)
     console.log(`   ✗ ${name}: ${msg}`)
@@ -96,6 +98,18 @@ function test(name: string, fn: () => void): void {
 function skip(name: string, reason: string): void {
   skipped += 1
   console.log(`   ○ ${name}: ${reason}`)
+}
+
+/**
+ * Thrown by `skipCell` so a skip raised *inside* a predicate ends that cell
+ * instead of falling out of the predicate and being counted as a pass. A cell
+ * that reports both a skip and a tick is telling you two different things.
+ */
+class SkipSignal extends Error {}
+
+function skipCell(name: string, reason: string): never {
+  skip(name, reason)
+  throw new SkipSignal(reason)
 }
 
 // ── 2-D helpers ───────────────────────────────────────────────────────
@@ -619,39 +633,84 @@ function predicateRoundOutsideCorners(
   onResult: PocketToolpathResult,
   offResult: PocketToolpathResult,
 ): void {
-  // Mesh kinds: level boundaries come from model silhouettes, which
-  // planContourSmoothing ignores when the path already tracks a circle.
-  if (kind === 'rough_surface' || kind === 'finish_surface_cleanup') {
-    skip(
+  // `finish_surface_cleanup` only. Its level boundaries are sliced model
+  // silhouettes, which `planContourSmoothing` leaves alone when the path
+  // already tracks a circle at least as broad as the request, so no fixture
+  // available here can make the control bite: measured 205 sharp turns with it
+  // both off and on. Recorded as a reason, not asserted as inert.
+  //
+  // `rough_surface` is deliberately NOT in this branch. It was, and that was
+  // wrong -- with the assertion below actually run against it the cell PASSES,
+  // which is what #618 wired it up to do. A skip that covers a working cell
+  // hides the one thing this suite exists to check.
+  if (kind === 'finish_surface_cleanup') {
+    skipCell(
       `${kind} roundOutsideCorners`,
-      'level boundaries are sliced model silhouettes; planContourSmoothing ' +
-      'leaves them alone when the path already tracks a circle at least as ' +
-      'broad as the request',
+      'level boundaries are sliced model silhouettes; planContourSmoothing '
+      + 'leaves them alone when the path already tracks a circle at least as '
+      + 'broad as the request (measured: 205 sharp turns both off and on)',
     )
-    return
   }
 
-  // 2D kinds (pocket, surface_clean): rounding replaces each sharp corner
-  // with many arc segments, so the total cut segment count at the deepest
-  // Z increases significantly.
-  const deepestZ = Math.min(
-    ...onResult.moves.filter((m) => m.kind === 'cut').map((m) => m.to.z),
-  )
-  const countCutsAtZ = (moves: ToolpathMove[]): number =>
-    moves.filter(
-      (m) => m.kind === 'cut' && Math.abs(m.to.z - deepestZ) <= 1e-6,
-    ).length
-  const offCount = countCutsAtZ(offResult.moves)
-  const onCount  = countCutsAtZ(onResult.moves)
-
+  // 2D kinds (pocket, surface_clean). The claim is shape, not volume: "a sharp
+  // turn is replaced by an arc of many small turns". So assert the turn
+  // DISTRIBUTION, on the angle between consecutive connected cut segments.
+  //
+  // Deliberately NOT the maximum turn. #622 withdrew D3 because its probe
+  // summarised a span by an extremum, and the same trap is live here: on the
+  // 30x20 pocket the max turn goes 135.0 deg -> 153.4 deg with rounding ON,
+  // because a handful of ring-collapse vertices survive and one is sharper
+  // than anything in the mitered path. Read as a max, rounding looks broken.
+  // Read as a distribution it is plainly working -- the 95th percentile falls
+  // 135.0 deg -> 5.0 deg and the count of sharp turns falls 39 -> 14 on that
+  // same fixture. Never summarise a span by an extremum (#622 method note).
+  const turns = (moves: ToolpathMove[]): number[] => {
+    const cuts = moves.filter((m) => m.kind === 'cut')
+    const out: number[] = []
+    for (let i = 1; i < cuts.length; i += 1) {
+      const a = cuts[i - 1]
+      const b = cuts[i]
+      // Only real vertices: consecutive cuts that share a point. A gap means a
+      // link or a new contour, and the angle across it is not a corner.
+      if (Math.hypot(b.from.x - a.to.x, b.from.y - a.to.y) > 1e-9) continue
+      if (Math.abs(b.from.z - a.to.z) > 1e-9) continue
+      const v1x = a.to.x - a.from.x
+      const v1y = a.to.y - a.from.y
+      const v2x = b.to.x - b.from.x
+      const v2y = b.to.y - b.from.y
+      if (Math.hypot(v1x, v1y) < 1e-9 || Math.hypot(v2x, v2y) < 1e-9) continue
+      let delta = Math.atan2(v2y, v2x) - Math.atan2(v1y, v1x)
+      while (delta > Math.PI) delta -= Math.PI * 2
+      while (delta < -Math.PI) delta += Math.PI * 2
+      out.push(Math.abs(delta) * 180 / Math.PI)
+    }
+    return out
+  }
+  const SHARP_DEG = 60
+  const offTurns = turns(offResult.moves)
+  const onTurns = turns(onResult.moves)
   assert(
-    offCount > 0,
-    `${kind} roundOutsideCorners: no cut moves at deepest Z in off result`,
+    offTurns.length > 0,
+    `${kind} roundOutsideCorners: no connected cut vertices in the off result`,
   )
+  const offSharp = offTurns.filter((t) => t > SHARP_DEG).length
+  const onSharp = onTurns.filter((t) => t > SHARP_DEG).length
   assert(
-    onCount > offCount,
-    `${kind} roundOutsideCorners: rounding must add arc segments at the deepest Z ` +
-    `(got ${offCount} → ${onCount} cuts)`,
+    offSharp > 0,
+    `${kind} roundOutsideCorners: the off result has no sharp corner to round ` +
+    `(fixture cannot express the control)`,
+  )
+  // The sharp corners are what the arc removes.
+  assert(
+    onSharp < offSharp,
+    `${kind} roundOutsideCorners: rounding must reduce the number of sharp ` +
+    `(>${SHARP_DEG} deg) turns, got ${offSharp} → ${onSharp}`,
+  )
+  // ...and it removes them by substituting many small ones, not by cutting less.
+  assert(
+    onTurns.length > offTurns.length,
+    `${kind} roundOutsideCorners: the arc must add many small turns, ` +
+    `got ${offTurns.length} → ${onTurns.length} vertices`,
   )
 }
 
@@ -693,20 +752,19 @@ function predicateCleanWallCorners(
   const offWall = wallMoveCount(offResult.moves, offExtent)
   const onWall  = wallMoveCount(onResult.moves, onExtent)
 
-  // surface_clean's wall may have no sharp corners when the geometry is a
-  // simple rect boss. Skip rather than hard-fail on that kind.
-  if (onWall <= offWall && kind === 'surface_clean') {
-    skip(
-      `${kind} cleanWallCorners wall motion`,
-      'surface_clean wall contour has no sharp corners in this fixture',
-    )
-  } else {
-    assert(
-      onWall > offWall,
-      `${kind} cleanWallCorners: wall band must gain motion, ` +
-      `got ${offWall} → ${onWall} moves`,
-    )
-  }
+  // No kind is exempt here. This assertion previously carried a
+  // `kind === 'surface_clean'` escape hatch that turned its own failure into a
+  // skip reading "no sharp corners in this fixture" -- on a `rectProfile` boss
+  // with four 90 degree corners. The assertion was not failing for want of a
+  // corner; it was failing because `surface.ts`'s finish band still handed this
+  // control to the floor tree, the very D5 defect this row exists to catch. A
+  // failure-triggered skip cannot tell "cannot be exercised" from "is broken",
+  // which is the distinction this whole suite is for, so it is gone.
+  assert(
+    onWall > offWall,
+    `${kind} cleanWallCorners: wall band must gain motion, ` +
+    `got ${offWall} → ${onWall} moves`,
+  )
 
   const cutLength = (moves: ToolpathMove[]): number =>
     moves
@@ -925,7 +983,11 @@ for (const kind of allKinds) {
       onResult  = generateToolpath(kind, fixture.project, onOp)
       offResult = generateToolpath(kind, fixture.project, offOp)
     } catch (err: unknown) {
-      skip(testName, `generator error: ${String(err)}`)
+      // NOT a skip. A generator that throws on a fixture it is declared to
+      // support is a failure; recording it as "skipped with a reason" is how a
+      // broken cell hides in a green run.
+      failed += 1
+      console.log(`   ✗ ${testName}: generator threw — ${String(err)}`)
       continue
     }
 
