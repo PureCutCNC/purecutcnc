@@ -1332,11 +1332,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
             <span className="simulation-playback-bar__feed-value">
               {(() => {
                 const feed = currentFeedPerSecond(displayPose, playbackInput.feedPerSecond, playbackInput.plungeFeedPerSecond)
-                if (feed === null) return '—'
-                const label = formatSpeedLabel(feed, playbackUnits)
-                const engagementPct = displayPose.feedScale !== undefined ? Math.round(displayPose.feedScale * 100) : 100
-                return `${label} (${engagementPct}%)`
+                return feed !== null ? formatSpeedLabel(feed, playbackUnits) : '—'
               })()}
+            </span>
+            <span className="simulation-playback-bar__engagement">
+              {displayPose.feedScale !== undefined ? `${Math.round(displayPose.feedScale * 100)}%` : '100%'}
             </span>
           </div>
         </div>
