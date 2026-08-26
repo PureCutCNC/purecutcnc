@@ -429,3 +429,50 @@ What it does **not** tell us, and what review still owes:
 Merge with
 `scripts/finish-task.sh --slug control-effect-contract --base fix/issue-622-feed-and-corner-controls`
 only after that.
+
+## Slice 5 review and close-out
+
+Slice `control-effect-contract` was reviewed against the real diff and merged.
+Scope held — only the two allowed files, no engine source. Its checks did run
+this time (its own build gate passed before the manager commit).
+
+**Three corrections were needed before the suite could be trusted**, each of the
+kind this ledger's review obligations were written to catch:
+
+1. `surface_clean` × `cleanWallCorners` carried a `kind === 'surface_clean'`
+   escape hatch that turned its own assertion failure into a skip reading "wall
+   contour has no sharp corners in this fixture" — on a `rectProfile` boss with
+   four 90° corners. The reason was false and the failure was real.
+2. `roundOutsideCorners` had been weakened from the issue's shape claim to a
+   segment count. Restored to the turn distribution; the original `max`-based
+   version failed because `max` goes 135.0° → 153.4° while p95 goes 135.0° →
+   5.0°, which is the D3 extremum trap repeating.
+3. `rough_surface` × `roundOutsideCorners` was skipped as a mesh kind. It is
+   not one; the cell passes when actually asserted.
+
+**That first skip was hiding a real engine defect.** `surface.ts`'s
+`generateFinishBandMoves` is a sibling copy of `pocket.ts`'s and never received
+D5, so `surface_clean`'s finish pass still rounded its outermost floor ring.
+Measured wall band `3 → 3` (the exact pre-D5 pocket signature), fixed to
+`3 → 9`. The owner authorised extending D5 rather than filing a follow-up.
+
+**Two more defects surfaced during delivery:**
+
+- Rebasing picked up #633, which flips `rough_surface`'s `cleanWallCorners` to
+  `APPLIES`. Conflict in `roughSurface.ts` resolved by folding #633's
+  `wallCleanup`/`toolRadius` into this branch's `OffsetRingOptions` object. The
+  newly-live predicate then exposed a `Math.max(...arr)` stack overflow on mesh
+  move streams and a false "total cut length must grow" assertion —
+  `rough_surface` gains 92 → 2366 wall moves while the path gets *shorter*.
+- `e2e/feedColours.smoke.spec.ts:414` had an unterminated string, so Playwright
+  collected **no specs at all** since a9baf4d. `npm run build` does not run e2e,
+  and that slice's own Playwright run never started. The suite had been
+  unrunnable for the whole issue.
+
+**Final verification.** `npm run build` 209 test files, 0 skipped. Full e2e 175
+passed on port 1441 isolated at `--workers=2`. Contract test 19 asserted, 5
+skipped with verified reasons, 0 failed, 24 cells accounted for. Both D5 rows
+mutation-checked, each failing only its own cell at `3 → 3 moves`.
+
+D3 stays withdrawn, D4 stays parked on `wip/issue-622-d4-seam-anchor`, #635
+stays out of scope.
