@@ -334,6 +334,8 @@ Regardless of mode, one owner remains accountable for the issue plan, scope,
 repository state, test evidence, and final handoff. A worker report or generated
 patch is input to review, not proof of completion.
 
+If the user says `/resume-work`, run `tools/resume-work/run.ts` and follow its output.
+
 ## Assigned-Task Intake
 
 Before editing:

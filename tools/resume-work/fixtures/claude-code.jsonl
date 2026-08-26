@@ -1,0 +1,3 @@
+{"type":"user","message":{"role":"user","content":"Do not reopen the approved design."}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Implementing the agreed path."},{"type":"tool_use","name":"Read","input":{"file_path":"AGENTS.md"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"agent instructions loaded"}]}}

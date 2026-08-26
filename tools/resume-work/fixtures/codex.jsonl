@@ -1,0 +1,5 @@
+{"type":"session_meta","payload":{"id":"codex-fixture","cwd":"/fixture/worktree"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"Run the focused test before build."}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I will run the narrow test."}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"npm test\"}"}}
+{"type":"response_item","payload":{"type":"function_call_output","output":"tests passed"}}

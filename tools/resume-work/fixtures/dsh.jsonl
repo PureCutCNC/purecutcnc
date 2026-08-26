@@ -1,0 +1,4 @@
+{"seq":1,"type":"user/message","data":{"message":{"content":[{"type":"text","text":"Keep the emitted path fail-closed."}]}}}
+{"seq":2,"type":"assistant/message","data":{"message":{"content":[{"type":"text","text":"I will inspect the existing guard."}]}}}
+{"seq":3,"type":"tool/call","data":{"name":"exec_command","arguments":"{\"cmd\":\"npm test\"}"}}
+{"seq":4,"type":"tool/result","data":{"message":{"content":[{"type":"text","text":"tests passed"}]}}}

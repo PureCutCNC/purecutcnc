@@ -49,3 +49,6 @@ playwright-report/
 
 # G-code conformance corpus output and built validators (issue #450)
 .gcode-conformance/
+
+# Local agent handoff attribution (intentionally never committed)
+.handoff/
