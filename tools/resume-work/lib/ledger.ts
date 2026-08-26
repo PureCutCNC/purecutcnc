@@ -71,6 +71,7 @@ export function appendClaim(cwd: string, claim: LedgerClaim): void {
 export function detectCycle(claims: LedgerClaim[]): LedgerClaim[] | null {
   if (claims.length < 3) return null
   const [first, second, third] = claims.slice(-3)
+  if (first.agent === 'unknown' || second.agent === 'unknown' || third.agent === 'unknown') return null
   return first.agent === third.agent && first.head === second.head && second.head === third.head
     ? [first, second, third]
     : null

@@ -15,6 +15,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -31,11 +32,20 @@ let DatabaseSync: (new (path: string, options?: { readOnly?: boolean }) => {
   close(): void
 }) | null = null
 let hasSqlite = false
+let zstdCompressSync: ((data: Uint8Array) => Buffer) | null = null
 try {
   const require = createRequire(import.meta.url)
   DatabaseSync = require('node:sqlite').DatabaseSync
   hasSqlite = true
 } catch { /* node:sqlite unavailable (Node < 22.5) */ }
+
+try {
+  const require = createRequire(import.meta.url)
+  const zlib = require('node:zlib') as { zstdCompressSync?: (data: Uint8Array) => Buffer }
+  zstdCompressSync = zlib.zstdCompressSync ?? null
+} catch { /* Zstandard compression unavailable */ }
+
+const hasZstdCli = spawnSync('zstd', ['--version'], { stdio: 'ignore' }).status === 0
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixtures = join(here, 'fixtures')
@@ -79,6 +89,27 @@ try {
     '3\ttool\texec_command {"cmd":"npm test"}',
     '4\ttool-result\ttests passed',
   ])
+
+  const dshWithInjectedContext = join(root, 'dsh-with-injected-context.jsonl')
+  writeFileSync(dshWithInjectedContext, [
+    JSON.stringify({ type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'Keep the actual user intent.' }] } }),
+    JSON.stringify({ type: 'user/message', seq: 2, data: { source: { kind: 'agent-instructions' }, content: [{ type: 'text', text: 'Ignore injected instruction context.' }] } }),
+  ].join('\n'))
+  const filteredDsh = ADAPTERS.dsh.read(candidate('dsh', dshWithInjectedContext), config)
+  assert.deepEqual(formatCommonEvents(filteredDsh.events), ['1\tuser\tKeep the actual user intent.'])
+
+  if (zstdCompressSync !== null && hasZstdCli) {
+    const concatenated = join(root, 'dsh-concatenated.jsonl.zstd')
+    const session = JSON.stringify({ type: 'session', version: 0 }) + '\n'
+    const user = JSON.stringify({
+      type: 'user/message',
+      seq: 2,
+      data: { content: [{ type: 'text', text: 'Continue the handoff.' }] },
+    }) + '\n'
+    writeFileSync(concatenated, Buffer.concat([zstdCompressSync(Buffer.from(session)), zstdCompressSync(Buffer.from(user))]))
+    const concatenatedDsh = ADAPTERS.dsh.read(candidate('dsh', concatenated), config)
+    assert.deepEqual(formatCommonEvents(concatenatedDsh.events), ['2\tuser\tContinue the handoff.'])
+  }
 
   const claude = ADAPTERS['claude-code'].read(candidate('claude-code', join(fixtures, 'claude-code.jsonl')), config)
   assert.deepEqual(formatCommonEvents(claude.events), [
@@ -155,6 +186,11 @@ try {
   appendClaim(cwd, { ts: '2026-08-26T12:02:00Z', agent: 'dsh', session: 'c', branch: 'feat/issue-640-handoff', issue: 640, head: '(unknown)' })
   const ledger = readLedger(cwd)
   assert.equal(detectCycle(ledger)?.map((claim) => claim.agent).join('→'), 'dsh→codex→dsh')
+  assert.equal(detectCycle([
+    { ts: '2026-08-26T12:03:00Z', agent: 'unknown', session: 'x', branch: 'branch', issue: null, head: 'head' },
+    { ts: '2026-08-26T12:04:00Z', agent: 'unknown', session: 'y', branch: 'branch', issue: null, head: 'head' },
+    { ts: '2026-08-26T12:05:00Z', agent: 'unknown', session: 'z', branch: 'branch', issue: null, head: 'head' },
+  ]), null)
 
   const briefing = runResumeWork({ cwd, env: { CODEX_THREAD_ID: 'codex-locator' }, config }, ['--from', 'codex'])
   assert.match(briefing, /Previous session: codex \/ codex-locator/)

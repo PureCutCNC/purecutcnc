@@ -18,7 +18,6 @@ import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs'
 import { basename, extname, join, resolve } from 'node:path'
-import { zstdDecompressSync } from 'node:zlib'
 
 import { expandHome } from './config.ts'
 import { isRecord, normalizeEvents, oneLine, textParts } from './text.ts'
@@ -44,6 +43,22 @@ function getDatabaseSync(): DatabaseSyncCtor | null {
     }
   }
   return _DatabaseSync
+}
+
+type ZstdDecompressSync = (data: Uint8Array, options?: { maxOutputLength?: number }) => Uint8Array
+
+let _zstdDecompressSync: ZstdDecompressSync | null | undefined
+function getZstdDecompressSync(): ZstdDecompressSync | null {
+  if (_zstdDecompressSync === undefined) {
+    try {
+      const require = createRequire(import.meta.url)
+      const zlib = require('node:zlib') as { zstdDecompressSync?: ZstdDecompressSync }
+      _zstdDecompressSync = zlib.zstdDecompressSync ?? null
+    } catch {
+      _zstdDecompressSync = null
+    }
+  }
+  return _zstdDecompressSync
 }
 
 function safeStat(path: string): number {
@@ -90,11 +105,13 @@ function readTranscriptText(path: string): string {
   }
   if (size > MAX_TRANSCRIPT_BYTES) throw new Error(`resume-work: compressed transcript exceeds ${MAX_TRANSCRIPT_BYTES} byte safety limit: ${path}`)
   const bytes = readFileSync(path)
+  const cli = spawnSync('zstd', ['-q', '-dc', path], { encoding: 'buffer', maxBuffer: MAX_TRANSCRIPT_BYTES })
+  if (cli.error === undefined && cli.status === 0) return cli.stdout.toString('utf8')
+  const zstdDecompressSync = getZstdDecompressSync()
+  if (zstdDecompressSync === null) throw new Error(`resume-work: cannot decompress ${path}: zstd is unavailable`)
   try {
-    return zstdDecompressSync(bytes, { maxOutputLength: MAX_TRANSCRIPT_BYTES }).toString('utf8')
+    return Buffer.from(zstdDecompressSync(bytes, { maxOutputLength: MAX_TRANSCRIPT_BYTES })).toString('utf8')
   } catch (error) {
-    const fallback = spawnSync('zstd', ['-dc', path], { encoding: 'buffer', maxBuffer: MAX_TRANSCRIPT_BYTES })
-    if (fallback.error === undefined && fallback.status === 0) return fallback.stdout.toString('utf8')
     throw new Error(`resume-work: cannot decompress ${path}: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
@@ -129,6 +146,8 @@ function dshEvents(records: Record<string, unknown>[], maxChars: number): Transc
     const seq = typeof record.seq === 'number' ? record.seq : index + 1
     const data = isRecord(record.data) ? record.data : {}
     if (record.type === 'user/message') {
+      const source = isRecord(data.source) ? data.source : null
+      if (source !== null && source.kind !== 'user') continue
       events.push({ seq, kind: 'user', text: contentText(messageContent(record)) })
     } else if (record.type === 'assistant/message') {
       events.push({ seq, kind: 'assistant', text: contentText(messageContent(record)) })

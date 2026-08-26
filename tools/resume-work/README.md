@@ -42,6 +42,10 @@ instructions are considered, so raw `/resume-work` is intentionally not the
 Codex route. Restart OpenCode after adding or updating its command file: it
 loads project configuration at startup.
 
+DSH appends Zstandard frames as its session grows. Its handoffs therefore need
+the `zstd` executable on `PATH` to read the complete archive; the Node decoder
+is retained only as a single-frame fallback.
+
 ## Adapter contract
 
 Each adapter converts its native transcript to newline-safe records in this
