@@ -3,7 +3,7 @@
   "meta": {
     "name": "purecutcnc",
     "created": "2026-04-13T12:31:15.471Z",
-    "modified": "2026-07-27T19:45:24.094Z",
+    "modified": "2026-08-26T13:01:14.377Z",
     "units": "inch",
     "showFeatureInfo": false,
     "maxTravelZ": 2,
@@ -128,7 +128,7 @@
         "c": 0,
         "d": 1,
         "e": 0,
-        "f": 0
+        "f": 0.125
       },
       "constraints": [],
       "z_top": 0.75,
@@ -147,7 +147,7 @@
         "c": 0,
         "d": 1,
         "e": 0,
-        "f": 0
+        "f": 0.125
       },
       "constraints": [],
       "z_top": 0.75,
@@ -268,14 +268,14 @@
       },
       "toolRef": "t0009",
       "stepdown": 0.1,
-      "stepover": 0.6,
+      "stepover": 0.32,
       "feed": 30,
       "plungeFeed": 8,
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
       "pocketSlotFeedPercent": 60,
-      "pocketFeedReduction": "slots_only",
+      "pocketFeedReduction": "engagement",
       "roundOutsideCorners": true,
       "roundLinkCorners": true,
       "cornerRelief": "none",
@@ -292,7 +292,8 @@
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
       "waterlineTipStepdown": 0,
-      "arcFittingEnabled": true
+      "arcFittingEnabled": true,
+      "cleanWallCorners": false
     },
     {
       "id": "op0017",
@@ -311,14 +312,14 @@
       },
       "toolRef": "t0008",
       "stepdown": 0.05,
-      "stepover": 0.5,
+      "stepover": 0.4,
       "feed": 30,
       "plungeFeed": 8,
       "rpm": 18000,
       "pocketPattern": "offset",
       "pocketAngle": 0,
       "pocketSlotFeedPercent": 70,
-      "pocketFeedReduction": "slots_only",
+      "pocketFeedReduction": "engagement",
       "roundOutsideCorners": true,
       "roundLinkCorners": true,
       "cornerRelief": "none",
@@ -335,7 +336,8 @@
       "waterlineRefinementThreshold": 0,
       "waterlineMaxRingsPerBand": 0,
       "waterlineTipStepdown": 0,
-      "arcFittingEnabled": true
+      "arcFittingEnabled": true,
+      "cleanWallCorners": true
     },
     {
       "id": "op0018",
