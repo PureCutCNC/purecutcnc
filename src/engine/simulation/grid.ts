@@ -15,7 +15,7 @@
  */
 
 import type { Project, Point } from '../../types/project'
-import { getStockBounds, getEffectiveStockProfile, profileVertices } from '../../types/project'
+import { getStockBounds, getEffectiveStockProfile, sampleProfilePoints } from '../../types/project'
 import type { SimulationBuildOptions, SimulationGrid } from './types'
 
 const DEFAULT_LONG_AXIS_CELLS = 180
@@ -67,10 +67,13 @@ export function createSimulationGrid(
   const topZ = new Float32Array(cellCount)
   topZ.fill(spec.stockTopZ)
 
-  // If stock has a non-rectangular profile (from a source feature), mask cells outside the profile
+  // If stock has a non-rectangular profile (from a source feature), mask cells
+  // outside the profile. Use sampleProfilePoints (not profileVertices) so that
+  // circle and arc segments are properly tessellated — profileVertices returns
+  // a single point for circle-only profiles, which silently skips masking (issue #644).
   const effectiveProfile = getEffectiveStockProfile(project.stock)
   if (effectiveProfile && project.stock.sourceFeatureId) {
-    const vertices = profileVertices(effectiveProfile)
+    const vertices = sampleProfilePoints(effectiveProfile)
     if (vertices.length >= 3) {
       const halfCell = spec.cellSize / 2
       for (let row = 0; row < spec.rows; row++) {
