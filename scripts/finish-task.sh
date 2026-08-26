@@ -77,22 +77,49 @@ task_branch="$(git -C "$worktree_dir" rev-parse --abbrev-ref HEAD)"
 
 git -C "$REPO_ROOT" rev-parse --verify --quiet "refs/heads/$base" >/dev/null \
   || fail "base branch does not exist: $base"
-[[ -z "$(git -C "$REPO_ROOT" status --porcelain)" ]] \
-  || fail "integration checkout has uncommitted changes; clean it before merging: $REPO_ROOT"
+# Find the checkout that has $base checked out. If another worktree holds it
+# (which is the normal integration-manager layout), merge there; falling back to
+# REPO_ROOT when nobody does. Blindly running "checkout $base" in REPO_ROOT
+# fails when git refuses to check out a branch that is already in use elsewhere.
+find_checkout_for_branch() {
+  local want="$1" entry="" branch_line=""
+  local worktree="" found=""
+  while IFS= read -r entry; do
+    case "$entry" in
+      worktree\ *) worktree="${entry#worktree }" ;;
+      branch\ *)   branch_line="${entry#branch }" ;;
+      "")          # blank line = end of record
+        if [[ "$branch_line" == "refs/heads/$want" ]]; then
+          found="$worktree"
+          break
+        fi
+        worktree=""; branch_line=""
+        ;;
+    esac
+  done < <(git -C "$REPO_ROOT" worktree list --porcelain; printf '\n')
+  [[ -n "$found" ]] && printf '%s\n' "$found" || printf '%s\n' "$REPO_ROOT"
+}
 
-original_branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+merge_target="$(find_checkout_for_branch "$base")"
 
-printf '== checking out %s and merging %s (--no-ff) ==\n' "$base" "$task_branch" >&2
-git -C "$REPO_ROOT" checkout "$base" || fail "could not checkout $base"
+[[ -z "$(git -C "$merge_target" status --porcelain)" ]] \
+  || fail "checkout holding $base has uncommitted changes; clean it before merging: $merge_target"
 
-if ! git -C "$REPO_ROOT" merge --no-ff "$task_branch" \
+original_branch="$(git -C "$merge_target" rev-parse --abbrev-ref HEAD)"
+
+printf '== checking out %s and merging %s (--no-ff) in %s ==\n' "$base" "$task_branch" "$merge_target" >&2
+git -C "$merge_target" checkout "$base" || fail "could not checkout $base in $merge_target"
+
+if ! git -C "$merge_target" merge --no-ff "$task_branch" \
        -m "Merge slice ${slug} (${task_branch}) into ${base}"; then
-  git -C "$REPO_ROOT" merge --abort 2>/dev/null || true
-  git -C "$REPO_ROOT" checkout "$original_branch" 2>/dev/null || true
+  git -C "$merge_target" merge --abort 2>/dev/null || true
+  git -C "$merge_target" checkout "$original_branch" 2>/dev/null || true
   fail "merge produced conflicts and was aborted; resolve manually"
 fi
 
-merge_commit="$(git -C "$REPO_ROOT" log -1 --oneline)"
+git -C "$merge_target" checkout "$original_branch" 2>/dev/null || true
+
+merge_commit="$(git -C "$merge_target" log -1 --oneline)"
 
 if [[ "$keep_worktree" == true ]]; then
   printf '\nMerged: %s\nKept worktree: %s (branch %s)\n' "$merge_commit" "$worktree_dir" "$task_branch"

@@ -32,10 +32,11 @@
  *     island boundaries) exactly as the implementation's domain check would.
  *     Reports the tangent-vs-fallback split and the segment-count delta.
  *
- * Usage: npx tsx scripts/issue-545-junction-census.ts [tracked] [nomesh]
- *   tracked — restrict the corpus to git-tracked .camj files
- *   nomesh  — exclude mesh/rest fixtures (stl-test-cat, rest-test,
- *             excluded-region-test, Tele53*)
+ * Usage: npx tsx scripts/issue-545-junction-census.ts [--root DIR] [tracked] [nomesh]
+ *   --root DIR  scan DIR instead of . (repo root)
+ *   tracked     restrict the corpus to git-tracked .camj files
+ *   nomesh      exclude mesh/rest fixtures (stl-test-cat, rest-test,
+ *               excluded-region-test, Tele53*)
  */
 
 import { readFileSync } from 'node:fs'
@@ -882,7 +883,8 @@ function censusFile(file: string): FileRow | null {
 
 const trackedOnly = process.argv.includes('tracked')
 const noMesh = process.argv.includes('nomesh')
-const ROOT = process.argv[2] ?? '.'
+const rootIdx = process.argv.indexOf('--root')
+const ROOT = rootIdx !== -1 && process.argv[rootIdx + 1] ? process.argv[rootIdx + 1] : '.'
 const allFiles = execSync("find . -path ./node_modules -prune -o -name '*.camj' -print", { cwd: ROOT })
   .toString().trim().split('\n')
   .filter((f) => f.includes('work/') || f.includes('public/examples') || f.includes('src/engine/test-fixtures'))

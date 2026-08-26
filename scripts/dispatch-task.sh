@@ -24,6 +24,10 @@ readonly DSH_LEAF="$SCRIPT_DIR/run-dsh-agent.sh"
 readonly DEFAULT_BASE="feat/core-arch-simplification"
 readonly MAX_DIRECT_PROMPT_BYTES=4096
 WORKTREE_BASE="${PURECUT_WORKTREE_BASE:-$(dirname "$REPO_ROOT")/worktrees/$(basename "$REPO_ROOT")}"
+if [[ -n "${PURECUT_WORKTREE_BASE:-}" && "$PURECUT_WORKTREE_BASE" != /* ]]; then
+  printf 'dispatch-task: PURECUT_WORKTREE_BASE must be an absolute path: %s\n' "$PURECUT_WORKTREE_BASE" >&2
+  exit 1
+fi
 
 usage() {
   cat <<'EOF'
@@ -78,20 +82,31 @@ EOF
 fail() { printf 'dispatch-task: %s\n' "$*" >&2; exit 1; }
 
 # Absolute, symlink-resolved path (like realpath). The leaf may not exist yet,
-# so resolve the deepest existing ancestor and append the remainder textually.
+# so walk up to the deepest existing ancestor and append the remainder textually.
 abs_path() {
   local target="$1" resolved=""
+  # Fast path: target itself exists.
   if resolved="$(cd "$target" 2>/dev/null && pwd -P)"; then
     printf '%s\n' "$resolved"
     return 0
   fi
-  local parent base
-  parent="$(dirname "$target")"
-  base="$(basename "$target")"
-  if ! resolved="$(cd "$parent" 2>/dev/null && pwd -P)"; then
-    resolved="$parent"
-  fi
-  printf '%s/%s\n' "$resolved" "$base"
+  # Walk up until we find an existing ancestor.
+  local cur="$target" suffix=""
+  while true; do
+    local dir
+    dir="$(dirname "$cur")"
+    if resolved="$(cd "$dir" 2>/dev/null && pwd -P)"; then
+      local leaf="${cur#"$dir"}"
+      # dir has no trailing / (except when root), leaf has a leading /.
+      printf '%s%s%s\n' "$resolved" "$leaf" "$suffix"
+      return 0
+    fi
+    [[ "$dir" != "$cur" ]] || break   # reached filesystem root
+    suffix="$(basename "$cur")${suffix:+/$suffix}"
+    cur="$dir"
+  done
+  # Last resort: nothing resolved — return the original unchanged.
+  printf '%s\n' "$target"
 }
 
 # Hard rule (issue #637): a worktree is never created inside a checkout of this
@@ -241,10 +256,6 @@ fi
 branch="feat/issue-${issue}-${slug}"
 worktree_dir="$WORKTREE_BASE/$slug"
 
-# An explicitly-set base pointing inside a checkout must not bypass the guard.
-assert_outside_checkouts "$WORKTREE_BASE"
-assert_outside_checkouts "$worktree_dir"
-
 git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
   || fail "primary checkout is not a git repo: $REPO_ROOT"
 git -C "$REPO_ROOT" rev-parse --verify --quiet "refs/heads/$base" >/dev/null \
@@ -252,6 +263,12 @@ git -C "$REPO_ROOT" rev-parse --verify --quiet "refs/heads/$base" >/dev/null \
 git -C "$REPO_ROOT" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null \
   && fail "branch already exists: $branch"
 [[ -e "$worktree_dir" ]] && fail "worktree path already exists: $worktree_dir"
+
+# An explicitly-set base pointing inside a checkout must not bypass the guard.
+# Checked after the existence test so a re-dispatched slug gets a clear error
+# rather than the guard's "would land inside checkout" message (issue #637).
+assert_outside_checkouts "$WORKTREE_BASE"
+assert_outside_checkouts "$worktree_dir"
 
 mkdir -p "$WORKTREE_BASE"
 printf '== creating worktree %s on %s (from %s) ==\n' "$worktree_dir" "$branch" "$base" >&2
