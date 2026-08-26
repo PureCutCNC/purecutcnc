@@ -1566,4 +1566,202 @@ testRoughSurfaceSplicesTangentLinksOnSeededOffset()
 testRoughSurfaceParallelSplicesNothing()
 testRoughSurfaceTangentLinksContainment()
 
+// ── Wall-corner cleanup tests (issue #633) ─────────────────────────────
+
+function pointSegmentDistance(point: Point, from: Point, to: Point): number {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const lengthSquared = dx * dx + dy * dy
+  if (lengthSquared <= 1e-18) return Math.hypot(point.x - from.x, point.y - from.y)
+  const t = Math.max(0, Math.min(1,
+    ((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSquared))
+  return Math.hypot(point.x - (from.x + dx * t), point.y - (from.y + dy * t))
+}
+
+function cutDistanceToPoint(point: Point, moves: ToolpathMove[]): number {
+  const cuts = moves.filter((m) => m.kind === 'cut')
+  return Math.min(...cuts.map((move) => Math.min(
+    pointSegmentDistance(point, move.from, move.to),
+  )))
+}
+
+/**
+ * Coverage recovery: on the pocket-block fixture (vertical outside walls),
+ * cleanWallCorners: true with roundOutsideCorners: true recovers coverage
+ * at the rounded corners that cleanWallCorners: false leaves behind.
+ *
+ * Asserts on where the cutter body reaches, not on move counts.
+ */
+function testRoughSurfaceWallCleanupRecoversCoverage(): void {
+  console.log('Testing rough_surface wall-corner cleanup recovers coverage...')
+  const { project, operation } = makePocketBlockProject()
+  const off = generateRoughSurfaceToolpath(project, {
+    ...operation, roundOutsideCorners: true, cleanWallCorners: false,
+  })
+  const on = generateRoughSurfaceToolpath(project, {
+    ...operation, roundOutsideCorners: true, cleanWallCorners: true,
+  })
+  assert(cutMoves(off.moves).length > 0, 'cleanup-off stream must have cuts')
+  assert(cutMoves(on.moves).length > 0, 'cleanup-on stream must have cuts')
+  assert(cutMoves(on.moves).length > cutMoves(off.moves).length,
+    'cleanup-on must add motion (cleanup loops at rounded corners)')
+
+  // The pocket block's outside wall is 0,0 to 20,10. At Z=4 (the top deck
+  // level), the tool-centre ring rides at one tool radius inside the wall.
+  // With rounding, the four outside corners lose coverage. Sample points at
+  // the actual wall corners — cleanup-on must reach closer to them.
+  const toolRadius = operation.stepover / 2 // 0.25
+  const wallCorners: Point[] = [
+    { x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 10 }, { x: 0, y: 10 },
+  ]
+  const offCuts = cutMoves(off.moves)
+  const onCuts = cutMoves(on.moves)
+  for (const corner of wallCorners) {
+    const offDist = cutDistanceToPoint(corner, offCuts)
+    const onDist = cutDistanceToPoint(corner, onCuts)
+    assert(onDist < offDist,
+      `cleanup must reach closer to wall corner (${corner.x},${corner.y}): off=${offDist.toFixed(4)}, on=${onDist.toFixed(4)}`)
+    // The cleanup loop should reach within one tool radius of the wall.
+    assert(onDist <= toolRadius + 0.01,
+      `cleanup must reach within tool radius of wall corner (${corner.x},${corner.y}): ${onDist.toFixed(4)}`)
+  }
+}
+
+/**
+ * Off-state identity: with cleanWallCorners absent or false, the stream is
+ * byte-identical. And with roundOutsideCorners false, the stream is
+ * byte-identical regardless of cleanWallCorners.
+ */
+function testRoughSurfaceWallCleanupOffStateIdentity(): void {
+  console.log('Testing rough_surface wall-corner cleanup off-state identity...')
+  const { project, operation } = makePocketBlockProject()
+
+  // Absent vs explicit false
+  const { cleanWallCorners: _absent, ...withoutField } = operation
+  const absent = generateRoughSurfaceToolpath(project, {
+    ...withoutField, roundOutsideCorners: true,
+  })
+  const explicitlyOff = generateRoughSurfaceToolpath(project, {
+    ...operation, roundOutsideCorners: true, cleanWallCorners: false,
+  })
+  assert(
+    serializeMoves(absent.moves) === serializeMoves(explicitlyOff.moves),
+    'absent and explicit false must produce byte-identical streams',
+  )
+
+  // With rounding off, cleanup flag is inert
+  const roundingOffNoCleanup = generateRoughSurfaceToolpath(project, {
+    ...operation, roundOutsideCorners: false, cleanWallCorners: false,
+  })
+  const roundingOffWithCleanup = generateRoughSurfaceToolpath(project, {
+    ...operation, roundOutsideCorners: false, cleanWallCorners: true,
+  })
+  assert(
+    serializeMoves(roundingOffNoCleanup.moves) === serializeMoves(roundingOffWithCleanup.moves),
+    'with roundOutsideCorners off, cleanWallCorners must be inert',
+  )
+}
+
+/**
+ * Containment: the cleanup contour stays inside the level's clearable region.
+ * Extends the existing per-level containment assertion with cleanup enabled.
+ */
+function testRoughSurfaceWallCleanupStaysInClearableRegions(): void {
+  console.log('Testing rough_surface wall-corner cleanup stays inside clearable regions...')
+  const { project, operation } = makePocketBlockProject()
+  const subject = {
+    ...operation,
+    roundOutsideCorners: true,
+    cleanWallCorners: true,
+  }
+  const result = generateRoughSurfaceToolpath(project, subject)
+  assert(cutMoves(result.moves).length > 0, 'expected motion to protect')
+
+  const resolvedResult = resolve3DSurfaceStepdown(project, subject, { operationLabel: 'Rough surface' })
+  assert(resolvedResult.ok, 'expected the stepdown to resolve')
+  if (!resolvedResult.ok) return
+  const { resolved } = resolvedResult
+  const domains = resolved.levels
+    .map((level) => ({
+      z: level.z,
+      paths: offsetClipperPaths(level.clearablePaths, -(resolved.tool.radius - 1e-4)),
+    }))
+    .sort((a, b) => b.z - a.z)
+  const spacing = Math.max(resolved.tool.radius * 0.25, resolved.effectiveStepover * 0.1)
+
+  let checked = 0
+  for (const move of result.moves) {
+    if (move.kind === 'rapid') continue
+    const zFloor = Math.min(move.from.z, move.to.z)
+    const level = domains.find((candidate) => candidate.z <= zFloor + 1e-6)
+    if (!level) continue
+    assert(
+      segmentInsideClipperPaths(level.paths, move.from, move.to, spacing),
+      `cleanup move (${move.from.x.toFixed(3)},${move.from.y.toFixed(3)},${move.from.z.toFixed(3)}) -> `
+        + `(${move.to.x.toFixed(3)},${move.to.y.toFixed(3)},${move.to.z.toFixed(3)}) leaves the Z=${level.z} clearable region`,
+    )
+    checked += 1
+  }
+  assert(checked >= 50, `expected to check a meaningful number of segments, got ${checked}`)
+}
+
+/**
+ * Stock-to-leave: with stockToLeaveRadial > 0, the cleanup contour must not
+ * cut inside the leave boundary. The tool-centre region already carries the
+ * radial leave — this proves it.
+ *
+ * The cleanup loops at corners extend outward past the wall to recover
+ * coverage, so we check containment against the clearable region (which
+ * already accounts for stock-to-leave) rather than a simple distance-to-wall
+ * bound.
+ */
+function testRoughSurfaceWallCleanupRespectsStockToLeave(): void {
+  console.log('Testing rough_surface wall-corner cleanup respects stock-to-leave...')
+  const { project, operation } = makePocketBlockProject()
+  const leave = 0.3
+  const subject = {
+    ...operation,
+    roundOutsideCorners: true,
+    cleanWallCorners: true,
+    stockToLeaveRadial: leave,
+  }
+  const result = generateRoughSurfaceToolpath(project, subject)
+  assert(cutMoves(result.moves).length > 0, 'expected motion with stock-to-leave')
+
+  // Verify containment: every cut stays inside the clearable region, which
+  // already accounts for the radial leave. This is the same approach as
+  // assertEverySegmentStaysInItsLevel but with stock-to-leave enabled.
+  const resolvedResult = resolve3DSurfaceStepdown(project, subject, { operationLabel: 'Rough surface' })
+  assert(resolvedResult.ok, 'expected the stepdown to resolve')
+  if (!resolvedResult.ok) return
+  const { resolved } = resolvedResult
+  const domains = resolved.levels
+    .map((level) => ({
+      z: level.z,
+      paths: offsetClipperPaths(level.clearablePaths, -(resolved.tool.radius - 1e-4)),
+    }))
+    .sort((a, b) => b.z - a.z)
+  const spacing = Math.max(resolved.tool.radius * 0.25, resolved.effectiveStepover * 0.1)
+
+  let checked = 0
+  for (const move of result.moves) {
+    if (move.kind === 'rapid') continue
+    const zFloor = Math.min(move.from.z, move.to.z)
+    const level = domains.find((candidate) => candidate.z <= zFloor + 1e-6)
+    if (!level) continue
+    assert(
+      segmentInsideClipperPaths(level.paths, move.from, move.to, spacing),
+      `stock-to-leave: ${move.kind} (${move.from.x.toFixed(3)},${move.from.y.toFixed(3)},${move.from.z.toFixed(3)}) -> `
+        + `(${move.to.x.toFixed(3)},${move.to.y.toFixed(3)},${move.to.z.toFixed(3)}) leaves the Z=${level.z} clearable region`,
+    )
+    checked += 1
+  }
+  assert(checked >= 50, `expected to check a meaningful number of segments, got ${checked}`)
+}
+
+testRoughSurfaceWallCleanupRecoversCoverage()
+testRoughSurfaceWallCleanupOffStateIdentity()
+testRoughSurfaceWallCleanupStaysInClearableRegions()
+testRoughSurfaceWallCleanupRespectsStockToLeave()
+
 console.log('roughSurface tests passed')

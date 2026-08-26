@@ -717,8 +717,23 @@ function testReportCleanWallCornersFollowsTheDeclaration(): void {
     generatedAt: new Date('2026-06-04T12:00:00Z'),
   })
   assert(
-    !rough.settingRows.some((row) => row.label === translate('booklet.label.cleanWallCorners')),
-    'rough_surface declines wall-corner cleanup; a stale stored flag must not print',
+    rough.settingRows.some((row) => row.label === translate('booklet.label.cleanWallCorners')
+      && row.value === translate('booklet.value.enabled')),
+    'rough_surface honours wall-corner cleanup since #633, so the sheet must say so',
+  )
+
+  // The kind that still declines it: cleanup's floor rings come from a builder
+  // with no wall-cleanup hook, so a stale stored flag must not reach the sheet.
+  const cleanupKind = buildOperationBookletReport({
+    project,
+    operation: { ...operation, kind: 'finish_surface_cleanup', ...base },
+    tool,
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  assert(
+    !cleanupKind.settingRows.some((row) => row.label === translate('booklet.label.cleanWallCorners')),
+    'finish_surface_cleanup declines wall-corner cleanup; a stale stored flag must not print',
   )
 }
 

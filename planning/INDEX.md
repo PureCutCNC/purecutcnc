@@ -31,6 +31,7 @@ architecture contracts.
 - [REGION_FEATURE_SEMANTICS.md](REGION_FEATURE_SEMANTICS.md) — regions as machining filters rather than material or standalone targets.
 - [TROCHOIDAL_EDGE_DESIGN.md](TROCHOIDAL_EDGE_DESIGN.md) — trochoidal Edge Route roughing: guide-domain fragmentation, the clearance budget, and the pipeline stages it must bypass.
 - [INTEGRATION_HANDOFF_TEMPLATE.md](INTEGRATION_HANDOFF_TEMPLATE.md) — optional execution-ledger template for explicitly delegated, multi-slice work.
+- [ISSUE_633_INTEGRATION_HANDOFF.md](ISSUE_633_INTEGRATION_HANDOFF.md) — active execution ledger for issue #633 (wall-corner cleanup on `rough_surface`) on `feat/issue-633-wall-cleanup`.
 - [ISSUE_629_INTEGRATION_HANDOFF.md](ISSUE_629_INTEGRATION_HANDOFF.md) — active execution ledger for issue #629 (S-link probe counters and prune guard) on `perf/issue-629-slink-probes`.
 - [ISSUE_621_INTEGRATION_HANDOFF.md](ISSUE_621_INTEGRATION_HANDOFF.md) — active execution ledger for issue #621 (tangential S-links on `rough_surface` and the cleanup floor rings) on `feat/issue-621-tangent-links`.
 - [ISSUE_620_INTEGRATION_HANDOFF.md](ISSUE_620_INTEGRATION_HANDOFF.md) — active execution ledger for issue #620 (machining order on `surface_clean` and `rough_surface`) on `feat/issue-620-machining-order`.
