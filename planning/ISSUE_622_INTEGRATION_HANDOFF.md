@@ -21,7 +21,7 @@ delivers one pull request once the behaviour and the required checks are green.
 - Base commit: `a8e09a1` (`main` after #632)
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/622
 - Manager session: 2026-08-25
-- Status: `slices 1, 2, 4 landed; slice 3 (D4) parked unmerged; slice 5 dispatched, awaiting review`
+- Status: `slices 1, 2, 4 landed; slice 3 (D4) parked unmerged; slice 5 worker finished, awaiting review and merge`
 - User authorization for external-worker dispatch: granted 2026-08-25 for as
   many slices as the issue needs.
 
@@ -37,7 +37,7 @@ ownership are delegated.
 | 2 | D6 — feed-colour legend scoped to the selected operation | delegated | landed |
 | 3 | D4 — Z-invariant traversal | manager | **parked unmerged** on `wip/issue-622-d4-seam-anchor` |
 | 4 | D5 — `cleanWallCorners` on the finish wall contour | manager | landed |
-| 5 | audit fixtures per (kind, control) | delegated | dispatched 2026-08-26, in flight |
+| 5 | audit fixtures per (kind, control) | delegated | worker finished; unreviewed, unmerged |
 
 ## Slice 2 — the legend describes the selected operation
 
@@ -367,7 +367,7 @@ merged nowhere. Its costs and the reason it is parked are recorded above. Do not
 revive it without an explicit owner decision — the behaviour it changes is
 documented design, not a defect.
 
-**In flight.** One delegated slice:
+**Awaiting review.** One delegated slice, worker finished, nothing merged:
 
 - slug `control-effect-contract`, branch `feat/issue-622-control-effect-contract`
 - worktree `$PURECUT_WORKTREE_BASE/control-effect-contract`
@@ -398,3 +398,34 @@ both should stay that way in the PR description.
 
 **Filed separately:** #635, the finish pass's inner double-slot opening —
 pre-existing since v0.3.0, deliberately out of this issue's scope.
+
+
+## Slice 5 — worker finished, review not started
+
+Dispatch reported `worker exit: 0`, build gate passed, manager-owned commit
+`99ca340` on `feat/issue-622-control-effect-contract`.
+
+Diffstat against the integration branch:
+
+```
+ src/engine/toolpaths/INDEX.md                 |   1 +
+ src/engine/toolpaths/clearingControlEffects.test.ts | 952 +++++++++++++
+ 2 files changed, 953 insertions(+)
+```
+
+What that already tells us: the slice respected its file boundary — the two
+allowed files and nothing else, no engine source touched, so the "if a predicate
+cannot be satisfied, report it rather than change the engine" instruction held.
+
+What it does **not** tell us, and what review still owes:
+
+1. whether the assertions bite — mutation-check the `cleanWallCorners` row
+   against `3829781^`, where the control still rounded the floor root;
+2. whether any cell was skipped because it genuinely cannot be exercised, or
+   because a fixture was hard to build — the difference is the whole point of
+   the slice, and 952 lines is enough room to hide either;
+3. whether the reported checks actually ran (the previous slice's did not).
+
+Merge with
+`scripts/finish-task.sh --slug control-effect-contract --base fix/issue-622-feed-and-corner-controls`
+only after that.
