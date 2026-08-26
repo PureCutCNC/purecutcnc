@@ -223,8 +223,8 @@ function buildSlotsOnlyAtSlotFeedProjectJson(slotPercent: number): string {
 }
 
 /** Two pockets on the same feature: engagement at 75% (emits its ladder) plus
- *  slots-only at 60% (emits its single slot scale). The legend must show the
- *  union of both, whichever operation is selected. */
+ *  slots-only at 60% (emits its single slot scale). The legend describes only
+ *  the selected operation — one ladder per selection, no union (issue #622). */
 function buildMixedFeedColoursProjectJson(): string {
   return feedColoursProjectJson('mixed', [
     pocketOperationJson({ id: 'op-pocket-a', name: 'Pocket A', mode: 'engagement', slotPercent: 75 }),
@@ -411,7 +411,7 @@ test.describe('Feed-coloured toolpath smoke', () => {
     await expect(panel.locator('.viewport-toolpath-vis__legend')).toHaveCount(0)
   })
 
-  test('mixed pockets show the union of emitted scales in both panels, independent of selection', async ({ app, ui }) => {
+  test("mixed pockets show each operation's own ladder in the legend, not the union", async ({ app, ui }) => {
     await seedProject(app.page, MIXED_FIXTURE_JSON)
 
     const panel = ui.toolpathVis.sketchPanel(app.page)
@@ -420,29 +420,34 @@ test.describe('Feed-coloured toolpath smoke', () => {
     const feedToggle = ui.toolpathVis.sketchItems(app.page).filter({ hasText: 'Feed colours' })
     await expect(feedToggle).toHaveCount(1)
 
-    // The union of the engagement ladder (the rungs this geometry actually
-    // emits — see the 75% test for the measured distribution behind them) and
-    // the slots-only pocket's 60% rung, whichever operation is selected.
-    const unionSteps = ['100%', '99%', '95%', '85%', '75%', '60%']
+    // Pocket A is engagement at 75% — its own ladder, not the union with B.
+    // (The rungs this geometry actually emits are measured in the 75% test.)
+    const pocketALadder = ['100%', '99%', '95%', '85%', '75%']
+    // Pocket B is slots-only at 60% — full feed plus its single slot rung.
+    const pocketBSteps = ['100%', '60%']
 
-    // Selecting the engagement pocket defaults the toggle on; the legend is
-    // the union of the engagement ladder and the slots-only pocket's 60% rung.
+    // Selecting the engagement pocket defaults the toggle on; the legend
+    // shows only Pocket A's ladder.
     await ui.operations.rowByName(app.page, 'Pocket A').click()
     await expect(feedToggle).toHaveAttribute('aria-pressed', 'true')
-    await expect(panel.locator('.viewport-toolpath-vis__legend-step')).toHaveText(unionSteps)
+    await expect(panel.locator('.viewport-toolpath-vis__legend-step')).toHaveText(pocketALadder)
 
     // Make the toggle explicit so a selection change cannot move its default,
-    // then select the other operation: the union must not change.
+    // then select the slots-only pocket: the legend switches to Pocket B's
+    // own rungs. Before #622 the legend was the union of every toolpath and
+    // showed the same six entries regardless of selection; now it scopes to
+    // the selected operation so each ladder is self-consistent.
     await feedToggle.click()
     await feedToggle.click()
     await ui.operations.rowByName(app.page, 'Pocket B').click()
     await expect(feedToggle).toHaveAttribute('aria-pressed', 'true')
-    await expect(panel.locator('.viewport-toolpath-vis__legend-step')).toHaveText(unionSteps)
+    await expect(panel.locator('.viewport-toolpath-vis__legend-step')).toHaveText(pocketBSteps)
 
-    // The 3D panel shares the visibility state and must show the same union.
+    // The 3D panel shares the visibility state and must show the same
+    // per-operation legend.
     const view3d = ui.toolpathVis.view3dPanel(app.page)
     await expect(view3d).toBeAttached({ timeout: 15000 })
-    await expect(view3d.locator('.viewport-toolpath-vis__legend-step')).toHaveText(unionSteps)
+    await expect(view3d.locator('.viewport-toolpath-vis__legend-step')).toHaveText(pocketBSteps)
 
     // Toggle off hides the legend in both panels.
     await feedToggle.click()

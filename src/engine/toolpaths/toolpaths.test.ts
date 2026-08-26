@@ -3930,7 +3930,11 @@ function testPocketFinishFloorSlotFeedOffset() {
   assert(firstCut.feedScale !== undefined, 'the innermost floor loop should be stamped')
 
   // Wall contour runs at the tool-radius inset (x/y = 2 or 28) and must stay
-  // at normal feed; floor loops start one stepover further in.
+  // at normal feed; floor loops start one stepover further in. This is the
+  // other half of issue #622: the wall block is classified now, so it has to
+  // come back UNstamped here, where the outermost floor ring sits one stepover
+  // inside it and absorbs the cut. Only a wall with no floor ring beside it is
+  // a slot -- see the walls-only case below.
   for (const move of stamped) {
     for (const value of [move.from.x, move.from.y, move.to.x, move.to.y]) {
       assert(value > 3 && value < 27, `stamped floor move coordinate ${value} should be inside the wall contour`)
@@ -3942,9 +3946,30 @@ function testPocketFinishFloorSlotFeedOffset() {
     [move.from.x, move.from.y, move.to.x, move.to.y].every((value) => value > 3 && value < 27))
   assert(unstampedFloor.length > 0, 'expected later floor loops at normal feed')
 
-  // Walls only + slot feed => nothing stamped.
+  // Walls only + slot feed => the wall contour IS a slot and must be stamped
+  // (issue #622). This assertion used to read "walls-only finish should have no
+  // stamped moves", which recorded the defect rather than the requirement: the
+  // finish band ran its feed classifier over the floor block only, so every
+  // wall cut left the engine at full feed however engaged it was. With the
+  // floor pass off, nothing has cleared this level, so the wall contour cuts
+  // full width the whole way round.
   const wallsOnly = generatePocketToolpath(project, { ...op, finishFloor: false })
-  assert(stampedCutMoves(wallsOnly.moves).length === 0, 'walls-only finish should have no stamped moves')
+  const wallsOnlyCuts = cutMoves(wallsOnly.moves)
+  const wallsOnlyStamped = stampedCutMoves(wallsOnly.moves)
+  assert(wallsOnlyCuts.length > 0, 'walls-only finish should still cut')
+  assert(
+    wallsOnlyStamped.length > 0,
+    `walls-only finish cuts virgin material and must carry slot feed, got ${wallsOnlyStamped.length} of ${wallsOnlyCuts.length} stamped`,
+  )
+  for (const move of wallsOnlyStamped) {
+    assert(move.feedScale === 0.5, `walls-only slot feed must be exactly the operation's 50%, got ${String(move.feedScale)}`)
+  }
+  // The stamped stretches are on the wall contour itself (tool-centre inset of
+  // one tool radius), not somewhere inboard of it.
+  for (const move of wallsOnlyStamped) {
+    const onWall = [move.from.x, move.from.y, move.to.x, move.to.y].some((value) => approx(value, 2) || approx(value, 28))
+    assert(onWall, 'a stamped walls-only move should lie on the wall contour')
+  }
 
   // Floor cuts before walls: if roughing left axial stock, a wall pass at
   // final depth would slot through the uncleared floor skin at full feed, so

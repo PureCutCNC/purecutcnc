@@ -89,6 +89,12 @@ function keys(steps: readonly FeedColourLegendStep[]): string[] {
 }
 
 // ── union: dedupe by (scale, step), sort by descending scale ──────────
+//
+// The UI no longer calls unionFeedColourLegendSteps — since #622 the legend
+// scopes to the selected operation via feedColourLegendSteps, so one ladder is
+// shown at a time and the duplicate-label / non-monotonic-ramp defects of the
+// union are unreachable. The helper is retained and tested here because it
+// remains a valid building block for any future multi-toolpath summary.
 
 {
   const engagement = toolpath('op-a', [cut(0, 1, 0.9), cut(1, 2, 0.75), cut(2, 3)])

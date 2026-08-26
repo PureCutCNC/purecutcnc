@@ -20,7 +20,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
-import { toolpathHasEngagementTelemetry, unionFeedColourLegendSteps, type ToolpathVisibility } from '../toolpathVisibility'
+import { toolpathHasEngagementTelemetry, feedColourLegendSteps as getFeedColourLegendSteps, type ToolpathVisibility } from '../toolpathVisibility'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
 import { modelFeatures } from '../../store/helpers/featureRoles'
@@ -916,17 +916,18 @@ useImperativeHandle(ref, () => ({
     : null
 
   // The feed-colour toggle's auto default: on when the selected operation is
-  // an engagement-mode pocket, off otherwise (issue #498 S4). The legend rungs
-  // are the scales every toolpath in the preview emits (issue #535) — the
-  // per-toolpath scans are cached by toolpath identity, so no move scan runs
-  // on this render path.
+  // an engagement-mode pocket, off otherwise (issue #498 S4). The legend
+  // describes only the selected operation's toolpath — one ladder, no union
+  // across operations, so duplicate labels and non-monotonic ramps are
+  // unreachable (issue #622). The per-toolpath scan is cached by toolpath
+  // identity, so no move scan runs on this render path.
   const selectedToolpathForLegend = toolpaths.find((toolpath) => toolpath.operationId === selectedOperationId) ?? null
   const feedColoursDefault = selectedToolpathForLegend !== null && toolpathHasEngagementTelemetry(selectedToolpathForLegend)
-  const feedColourLegendSteps = toolpaths.length > 0
-    ? unionFeedColourLegendSteps(toolpaths, (operationId) => {
-        const percent = pocketSlotFeedPercent(project.operations.find((op) => op.id === operationId))
+  const feedColourLegendSteps = selectedToolpathForLegend !== null
+    ? getFeedColourLegendSteps(selectedToolpathForLegend, (() => {
+        const percent = pocketSlotFeedPercent(project.operations.find((op) => op.id === selectedOperationId))
         return percent === null ? 1 : percent / 100
-      })
+      })())
     : []
 
   return (

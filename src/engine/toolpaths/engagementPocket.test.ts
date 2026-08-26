@@ -1311,6 +1311,164 @@ test('issue #517: the worst real fixture keeps exact index work bounded', () => 
   )
 })
 
+// ── Issue #622: the finish band classifies its wall block ─────────────
+//
+// `generateFinishBandMoves` used to run `applyLevelFeed` at the end of its
+// FLOOR loop only. The wall block -- the wall contour, the acute island-corner
+// cleanup segments, and the island contours -- is emitted after that call and
+// was therefore never classified, so every wall cut left the engine at full
+// feed however engaged it was. The fix runs the classifier once over the whole
+// band level, floor and walls together.
+//
+// The corridor fixture below is the shape that makes it dangerous, reduced from
+// `public/examples/purecutcnc.camj`: a square island leaving a corridor exactly
+// two tool diameters wide. In tool-centre space that corridor is one tool
+// diameter across, so
+//
+//   - the wall contour and the island contour are the only two passes in it,
+//     one tool diameter apart, and their kerfs touch without overlapping --
+//     both are full-width slots;
+//   - no floor ring fits: the corridor inset by one floor stepover from each
+//     side is empty, which is why the floor pass leaves it entirely to the
+//     wall block.
+//
+// The fixture needs a 0.5 stepover for that last point to hold (floor stepover
+// = the tool radius), which is what the shipped example uses.
+
+const CORRIDOR_POCKET_HALF = 30
+/** Corridor two tool diameters wide, so the two tool-centre paths sit one apart. */
+const CORRIDOR_ISLAND_HALF = CORRIDOR_POCKET_HALF - TOOL_DIAMETER * 2
+/** Tool-centre path of the wall contour, and of the expanded island contour. */
+const CORRIDOR_WALL_HALF = CORRIDOR_POCKET_HALF - TOOL_DIAMETER / 2
+const CORRIDOR_ISLAND_PATH_HALF = CORRIDOR_ISLAND_HALF + TOOL_DIAMETER / 2
+
+function buildCorridorFixture(overrides: Partial<Operation> = {}): { project: Project; operation: Operation } {
+  const project = projectWithFeatures({
+    ...newProject('finish-wall-corridor', 'mm'),
+    tools: [makeTool()],
+  }, [
+    makeSquareFeature('pocket', CORRIDOR_POCKET_HALF, 2, 0, 'subtract'),
+    makeSquareFeature('island', CORRIDOR_ISLAND_HALF, 2, 0, 'add'),
+  ])
+  const operation: Operation = {
+    id: 'op-corridor',
+    name: 'corridor finish',
+    kind: 'pocket',
+    pass: 'finish',
+    enabled: true,
+    showToolpath: true,
+    debugToolpath: false,
+    target: { source: 'features', featureIds: ['pocket'] },
+    toolRef: 'tool-1',
+    stepdown: 2,
+    stepover: 0.5,
+    feed: 800,
+    plungeFeed: 300,
+    rpm: 18000,
+    pocketPattern: 'offset',
+    pocketAngle: 0,
+    pocketSlotFeedPercent: 50,
+    pocketFeedReduction: 'slots_only',
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+    finishWalls: true,
+    finishFloor: true,
+    carveDepth: 2,
+    maxCarveDepth: 2,
+    cutDirection: 'conventional',
+    machiningOrder: 'level_first',
+    ...overrides,
+  }
+  return { project, operation }
+}
+
+/** Cut moves whose whole extent lies on the axis-aligned square of this half-size. */
+function movesOnSquare(moves: ToolpathMove[], half: number, tolerance = 0.05): ToolpathMove[] {
+  const onSquare = (x: number, y: number): boolean =>
+    (Math.abs(Math.abs(x) - half) <= tolerance && Math.abs(y) <= half + tolerance)
+    || (Math.abs(Math.abs(y) - half) <= tolerance && Math.abs(x) <= half + tolerance)
+  return moves.filter((move) =>
+    move.kind === 'cut'
+    && onSquare(move.from.x, move.from.y)
+    && onSquare(move.to.x, move.to.y))
+}
+
+const cutLength = (moves: ToolpathMove[]): number =>
+  moves.reduce((sum, move) => sum + Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y), 0)
+
+test('#622 the finish wall contour in a one-diameter corridor carries the slot feed', () => {
+  const { project, operation } = buildCorridorFixture()
+  const result = generatePocketToolpath(project, operation)
+
+  // Premise 1: the corridor really is the two-pass shape described above.
+  const wallPasses = movesOnSquare(result.moves, CORRIDOR_WALL_HALF)
+  const islandPasses = movesOnSquare(result.moves, CORRIDOR_ISLAND_PATH_HALF)
+  assert(wallPasses.length > 0, 'fixture must emit a wall contour')
+  assert(islandPasses.length > 0, 'fixture must emit an island contour')
+
+  // Premise 2: nothing else cuts inside the corridor -- no floor ring fits.
+  const between = result.moves.filter((move) => {
+    if (move.kind !== 'cut') return false
+    const ring = (point: ToolpathPoint): number => Math.max(Math.abs(point.x), Math.abs(point.y))
+    const mid = (ring(move.from) + ring(move.to)) / 2
+    return mid > CORRIDOR_ISLAND_PATH_HALF + 0.05 && mid < CORRIDOR_WALL_HALF - 0.05
+  })
+  assert(between.length === 0, `no pass may fit between the two corridor paths, found ${between.length}`)
+
+  // The claim: both corridor passes are full-width slots, so both carry the
+  // operation's slot feed. Before the fix the wall block was never classified
+  // and every one of these came out at full feed.
+  const wallStamped = wallPasses.filter((move) => move.feedScale !== undefined)
+  assert(
+    wallStamped.length > 0,
+    `the wall contour is a slot here and must carry the slot feed, got ${wallStamped.length} of ${wallPasses.length} stamped`,
+  )
+  assert(
+    cutLength(wallStamped) > cutLength(wallPasses) * 0.5,
+    `most of the wall contour is slotting, got ${cutLength(wallStamped).toFixed(2)} of ${cutLength(wallPasses).toFixed(2)} mm stamped`,
+  )
+  for (const move of wallStamped) {
+    assert(
+      Math.abs((move.feedScale ?? 1) - SLOT_SCALE) <= 1e-9,
+      `slots_only must stamp exactly the slot scale, got ${String(move.feedScale)}`,
+    )
+  }
+})
+
+test('#622 adding the wall pass does not disturb the floor block', () => {
+  // The fix widened the classifier's range from the floor block to the whole
+  // band level. Both classifiers walk the stream forward-only, so the floor
+  // block's own output may not move -- asserted, not assumed, because a
+  // regression here would silently reprice every saved finish pass.
+  // Not the corridor fixture: that one deliberately has no floor block at all,
+  // which is what makes the wall pass the only thing cutting there. This needs a
+  // pocket with both halves, so it uses the plain finish fixture.
+  for (const reduction of ['slots_only', 'engagement'] as const) {
+    const { project, operation } = buildFixture(specByName('finish-offset-single'), {
+      pocketFeedReduction: reduction,
+    })
+    const floorOnly = generatePocketToolpath(project, { ...operation, finishWalls: false })
+    const both = generatePocketToolpath(project, operation)
+    assert(
+      floorOnly.moves.length > 0 && both.moves.length > floorOnly.moves.length,
+      `${reduction}: the walls-on stream must extend the floor-only one`,
+    )
+    assert(
+      JSON.stringify(both.moves.slice(0, floorOnly.moves.length)) === JSON.stringify(floorOnly.moves),
+      `${reduction}: the floor block must be byte-identical with and without the wall pass`,
+    )
+  }
+})
+
+test('#622 the wall block emits no feed scale when the control is off', () => {
+  // 100% slot feed is the control's off position, and `resolveSlotFeedScale`
+  // returns null for it, so the widened range must still stamp nothing.
+  const { project, operation } = buildCorridorFixture({ pocketSlotFeedPercent: 100 })
+  const result = generatePocketToolpath(project, operation)
+  const stamped = result.moves.filter((move) => move.kind === 'cut' && move.feedScale !== undefined)
+  assert(stamped.length === 0, `100% slot feed must stamp nothing, got ${stamped.length} moves`)
+})
+
 // ── Summary ──
 
 console.log(`\nengagementPocket: ${passed} passed, ${failed} failed`)

@@ -127,7 +127,15 @@ export function feedColourLegendSteps(
   if (cached !== undefined && cached.slotScale === slotScale) {
     return cached.steps
   }
+  // Sorted descending by scale, full feed first — the order the legend renders
+  // in. `scanFeedColourLegendSteps` returns first-encounter order, which is
+  // whatever order the toolpath happens to emit its scales in; the sort used to
+  // live in `unionFeedColourLegendSteps`, so scoping the legend to one
+  // operation (issue #622) would otherwise have handed the panel an unordered
+  // ladder. Sorting here rather than in the scan keeps the scan a pure
+  // encounter-order primitive and pays the sort once per cache miss.
   const steps = scanFeedColourLegendSteps(toolpath.moves, slotScale)
+    .sort((a, b) => b.scale - a.scale || a.step - b.step)
   legendStepsCache.set(toolpath, { slotScale, steps })
   return steps
 }

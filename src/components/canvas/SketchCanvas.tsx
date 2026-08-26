@@ -17,7 +17,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
 import { pocketSlotFeedPercent } from '../../theme/palette'
-import { toolpathHasEngagementTelemetry, unionFeedColourLegendSteps } from '../toolpathVisibility'
+import { toolpathHasEngagementTelemetry, feedColourLegendSteps as getFeedColourLegendSteps } from '../toolpathVisibility'
 import type { OpenProfileEndpoint, SketchControlRef } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import { previewOffsetFeatures } from '../../store/helpers/derivedFeatures'
@@ -2961,14 +2961,16 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       })()
     : null
 
-  // Feed-colour legend steps for every toolpath the preview draws (issue #535).
-  // Selection-independent; the per-toolpath scans are cached by toolpath
-  // identity, so no move scan runs on this render path.
-  const feedColourLegendSteps = toolpaths && toolpaths.length > 0
-    ? unionFeedColourLegendSteps(toolpaths, (operationId) => {
-        const percent = pocketSlotFeedPercent(project.operations.find((op) => op.id === operationId))
+  // Feed-colour legend steps for the selected operation's toolpath (issue #622).
+  // One ladder per selection — no union across operations, so duplicate labels
+  // and non-monotonic ramps are unreachable. The per-toolpath scan is cached by
+  // toolpath identity, so no move scan runs on this render path.
+  const selectedToolpathForLegend = toolpaths?.find((tp) => tp.operationId === selectedOperationId) ?? null
+  const feedColourLegendSteps = selectedToolpathForLegend !== null
+    ? getFeedColourLegendSteps(selectedToolpathForLegend, (() => {
+        const percent = pocketSlotFeedPercent(project.operations.find((op) => op.id === selectedOperationId))
         return percent === null ? 1 : percent / 100
-      })
+      })())
     : []
 
   return (

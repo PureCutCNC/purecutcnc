@@ -198,8 +198,71 @@ function testWallCleanupIsOptIn(): void {
     'clearing roundOutsideCorners collapses the interior regardless of the wall flag')
 }
 
+/**
+ * The finish pass rounds and cleans its WALL CONTOUR, not its outermost floor
+ * ring (issue #622).
+ *
+ * `cleanWallCorners` is labelled "Round wall corners" and its tooltip promises
+ * it "rounds the ring that defines the wall, cleaning each corner immediately
+ * afterwards so the wall keeps its full coverage". In a finish pass the ring
+ * that defines the wall is the wall contour, cut in its own block. The control
+ * used to land on the floor tree's root instead -- one stepover inside the wall
+ * path -- so the outermost floor ring gained arcs and cleanup loops while the
+ * wall contour stayed a sharp mitered rectangle in every variant.
+ */
+function testFinishWallContourIsRounded(): void {
+  const project = normalizeProject(
+    JSON.parse(readFileSync('src/engine/test-fixtures/pocket-finish-island-leftover.camj', 'utf8')) as Project,
+  )
+  const finish = project.operations.find(
+    (operation) => operation.kind === 'pocket' && operation.pass === 'finish' && operation.enabled !== false,
+  )
+  assert(finish !== undefined, 'the fixture must carry a finish pocket')
+  assert(finish.roundOutsideCorners === true, 'the fixture must have rounding on for the control to apply')
+
+  const off = generatePocketToolpath(project, { ...finish, cleanWallCorners: false })
+  const on = generatePocketToolpath(project, { ...finish, cleanWallCorners: true })
+
+  // The wall contour is the outermost cut: at the tool-centre inset it reaches
+  // further out than anything the floor cuts. Measure how far the emitted path
+  // extends, and how much motion lives out there.
+  const extent = (moves: ToolpathMove[]): number => Math.max(
+    ...moves.filter((move) => move.kind === 'cut').flatMap((move) => [
+      Math.abs(move.from.x), Math.abs(move.to.x), Math.abs(move.from.y), Math.abs(move.to.y),
+    ]),
+  )
+  assert(
+    Math.abs(extent(off.moves) - extent(on.moves)) <= 1e-6,
+    'turning the control on must not move the wall path outward or inward',
+  )
+
+  const wallBand = (moves: ToolpathMove[]): ToolpathMove[] => {
+    const limit = extent(moves) - 1e-3
+    return moves.filter((move) => move.kind === 'cut'
+      && [move.from.x, move.to.x, move.from.y, move.to.y].some((value) => Math.abs(value) >= limit))
+  }
+  const wallOff = wallBand(off.moves).length
+  const wallOn = wallBand(on.moves).length
+  assert(
+    wallOn > wallOff,
+    `the wall contour must gain rounding and cleanup motion when the control is on, got ${wallOff} -> ${wallOn} moves`,
+  )
+
+  // And the total cut grows: the cleanup loops are extra motion, not a
+  // redistribution of the floor's.
+  const cutLength = (moves: ToolpathMove[]): number => moves
+    .filter((move) => move.kind === 'cut')
+    .reduce((sum, move) => sum + Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y), 0)
+  assert(
+    cutLength(on.moves) > cutLength(off.moves),
+    'the cleanup loops must add cut motion',
+  )
+  console.log('   finish wall contour rounds and cleans when the control is on: PASSED')
+}
+
 testRootRingRoundsAndCleans('conventional')
 testRootRingRoundsAndCleans('climb')
 testDisabledIsByteIdentical()
 testWallCleanupIsOptIn()
+testFinishWallContourIsRounded()
 console.log('wallCornerCleanup integration tests: PASSED')

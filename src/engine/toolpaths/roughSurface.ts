@@ -385,16 +385,18 @@ function generateRoughSurfaceToolpathSingle(
         resolved.safeZ,
         resolved.maxLinkDistance,
         currentPosition,
-        resolved.direction,
-        safeLinkCheck,
         'outer-first',
-        'all',
-        smoothRadius,
-        0,
-        entryPolicy,
-        levelTangentLink,
-        wallCleanup,
-        wallCleanupToolRadius,
+        {
+          direction: resolved.direction,
+          safeLinkCheck,
+          loops: 'all',
+          smoothRadius,
+          depth: 0,
+          entryPolicy,
+          tangentLink: levelTangentLink,
+          wallCleanup,
+          toolRadius: wallCleanupToolRadius,
+        },
       )
     }
 

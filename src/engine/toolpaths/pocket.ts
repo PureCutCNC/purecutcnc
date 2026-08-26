@@ -1665,7 +1665,7 @@ export function orderClosedContoursGreedy(contours: Point[][], start: Point | nu
   return ordered
 }
 
-function orderClosedContoursGreedyPreservingRotation(contours: Point[][], start: Point | null): Point[][] {
+export function orderClosedContoursGreedyPreservingRotation(contours: Point[][], start: Point | null): Point[][] {
   if (contours.length <= 1 || start === null) {
     return contours
   }
@@ -2546,6 +2546,27 @@ export function nextRoughSection<T>(
  *    the tool into the island and gouge it. So island loops are emitted
  *    as-is, already rounded (or mitered when the option is off).
  */
+/**
+ * Everything a ring traversal needs beyond the four values that change on every
+ * call (`moves`, the node, the Z, and where the tool is). Collected into one
+ * object for issue #622: `cutOffsetNodeRings` and `cutOffsetRegionNode` had
+ * grown to seventeen positional parameters each, which made the next one --
+ * the seam anchor -- unaddable without guessing at call sites. Optional fields
+ * keep their previous defaults (`loops` 'all', `depth` 0).
+ */
+export interface OffsetRingOptions {
+  direction: CutDirection
+  safeLinkCheck?: SafeLinkCheck
+  loops?: 'all' | 'outer'
+  smoothRadius?: number
+  depth?: number
+  entryPolicy?: EntryPolicy
+  tangentLink?: TangentLinkOptions
+  wallCleanup?: WallCornerCleanupContext
+  toolRadius?: number
+  parent?: OffsetRegionNode
+}
+
 export function cutOffsetNodeRings(
   moves: ToolpathMove[],
   node: OffsetRegionNode,
@@ -2553,18 +2574,21 @@ export function cutOffsetNodeRings(
   safeZ: number,
   maxLinkDistance: number,
   fromPosition: ToolpathPoint | null,
-  direction: CutDirection,
-  safeLinkCheck: SafeLinkCheck | undefined,
   childAnchors: Point[],
-  loops: 'all' | 'outer' = 'all',
-  smoothRadius?: number,
-  depth = 0,
-  entryPolicy?: EntryPolicy,
-  tangentLink?: TangentLinkOptions,
-  wallCleanup?: WallCornerCleanupContext,
-  toolRadius?: number,
-  parent?: OffsetRegionNode,
+  options: OffsetRingOptions,
 ): ToolpathPoint | null {
+  const {
+    direction,
+    safeLinkCheck,
+    loops = 'all',
+    smoothRadius,
+    depth = 0,
+    entryPolicy,
+    tangentLink,
+    wallCleanup,
+    toolRadius,
+    parent,
+  } = options
   const outer = prepareOffsetOuterContour(
     node, direction, smoothRadius, depth, wallCleanup, toolRadius, parent,
   )
@@ -2608,18 +2632,10 @@ export function cutOffsetRegionNode(
   safeZ: number,
   maxLinkDistance: number,
   currentPosition: ToolpathPoint | null,
-  direction: CutDirection,
-  safeLinkCheck: SafeLinkCheck | undefined,
   traversalMode: OffsetTraversalMode,
-  loops: 'all' | 'outer' = 'all',
-  smoothRadius?: number,
-  depth = 0,
-  entryPolicy?: EntryPolicy,
-  tangentLink?: TangentLinkOptions,
-  wallCleanup?: WallCornerCleanupContext,
-  toolRadius?: number,
-  parent?: OffsetRegionNode,
+  options: OffsetRingOptions,
 ): ToolpathPoint | null {
+  const { depth = 0 } = options
   let nextPosition = currentPosition
   if (traversalMode === 'outer-first') {
     const childAnchors = node.children
@@ -2633,17 +2649,8 @@ export function cutOffsetRegionNode(
       safeZ,
       maxLinkDistance,
       nextPosition,
-      direction,
-      safeLinkCheck,
       childAnchors,
-      loops,
-      smoothRadius,
-      depth,
-      entryPolicy,
-      tangentLink,
-      wallCleanup,
-      toolRadius,
-      parent,
+      options,
     )
   }
 
@@ -2660,17 +2667,8 @@ export function cutOffsetRegionNode(
       safeZ,
       maxLinkDistance,
       nextPosition,
-      direction,
-      safeLinkCheck,
       traversalMode,
-      loops,
-      smoothRadius,
-      depth + 1,
-      entryPolicy,
-      tangentLink,
-      wallCleanup,
-      toolRadius,
-      node,
+      { ...options, depth: depth + 1, parent: node },
     )
     remainingChildren.splice(remainingChildren.indexOf(childNode), 1)
   }
@@ -2683,17 +2681,8 @@ export function cutOffsetRegionNode(
       safeZ,
       maxLinkDistance,
       nextPosition,
-      direction,
-      safeLinkCheck,
       [],
-      loops,
-      smoothRadius,
-      depth,
-      entryPolicy,
-      tangentLink,
-      wallCleanup,
-      toolRadius,
-      parent,
+      options,
     )
   }
 
@@ -2725,16 +2714,8 @@ export function cutOffsetRegionRecursive(
     safeZ,
     maxLinkDistance,
     currentPosition,
-    direction,
-    safeLinkCheck,
     traversalMode,
-    'all',
-    smoothRadius,
-    0,
-    entryPolicy,
-    tangentLink,
-    wallCleanup,
-    toolRadius,
+    { direction, safeLinkCheck, loops: 'all', smoothRadius, depth: 0, entryPolicy, tangentLink, wallCleanup, toolRadius },
   )
 }
 
@@ -3232,17 +3213,17 @@ function generateRoughBandMoves(
           safeZ,
           maxLinkDistance,
           currentPosition,
-          direction,
-          undefined,
           'inner-first',
-          'all',
-          smoothRadius,
-          section.depth,
-          levelEntryPolicy,
-          tangentLink,
-          wallCleanup,
-          toolRadius,
-          undefined,
+          {
+            direction,
+            loops: 'all',
+            smoothRadius,
+            depth: section.depth,
+            entryPolicy: levelEntryPolicy,
+            tangentLink,
+            wallCleanup,
+            toolRadius,
+          },
         )
       }
     } else {
@@ -3291,17 +3272,18 @@ function generateRoughBandMoves(
           safeZ,
           maxLinkDistance,
           currentPosition,
-          direction,
-          undefined,
           [],
-          'all',
-          smoothRadius,
-          unit.depth,
-          levelEntryPolicy,
-          tangentLink,
-          wallCleanup,
-          toolRadius,
-          unit.parent ?? undefined,
+          {
+            direction,
+            loops: 'all',
+            smoothRadius,
+            depth: unit.depth,
+            entryPolicy: levelEntryPolicy,
+            tangentLink,
+            wallCleanup,
+            toolRadius,
+            parent: unit.parent ?? undefined,
+          },
         )
         previousUnitRoot = unit.root
         const parentNode = unit.parent
@@ -3432,6 +3414,44 @@ function generateFinishBandMoves(
       wallContours = buildContourLoops(finishRegions)
     }
   }
+  // "Round wall corners" acts on the ring that defines the wall (issue #622).
+  // In a finish pass that ring is the WALL CONTOUR, cut in its own block below
+  // -- not the outermost floor ring, which is where this used to land. The
+  // outermost floor ring sits one stepover inside the wall path, so rounding it
+  // rounded nothing the wall is made of, while the wall contour itself stayed a
+  // sharp mitered corner in every variant. The control's own tooltip says it
+  // "rounds the ring that defines the wall, cleaning each corner immediately
+  // afterwards so the wall keeps its full coverage" -- which is exactly what the
+  // rough pass's wall ring already does through `planContourSmoothing` plus
+  // `buildWallCornerCleanupContour`, and what the wall block now does too.
+  const wallCornerCleanupEnabled = operation.kind === 'pocket' && operation.roundOutsideCorners
+    && operation.cleanWallCorners === true
+  const onWallCleanupFallback = (): void => appendUniqueWarning(warnings, {
+    code: 'pocketWallCornerCleanupFallback',
+  })
+  // Round the wall contour and clean each corner immediately afterwards, the
+  // same construction the rough wall ring uses: the arc gives up coverage in
+  // the corner and the cleanup loop traverses the exact sharp source span to
+  // put it back. A corner whose arc or return leaves the tool-centre domain
+  // keeps its exact sharp geometry, so one reflex corner costs only itself.
+  let wallRotationPreserved = false
+  if (wallCornerCleanupEnabled && wallOuterContours.length > 0) {
+    const wallSmoothRadius = cornerSmoothingRadius(true, toolRadius, stepoverDistance)
+    if (wallSmoothRadius) {
+      const isInsideDomain = buildOffsetDomainCheck(finishRegions)
+      wallOuterContours = applyContourDirection(wallOuterContours, direction).map((directed) => {
+        const plan = planContourSmoothing(directed, wallSmoothRadius)
+        const cleaned = buildWallCornerCleanupContour(plan, { isInsideDomain })
+        if (!cleaned) {
+          onWallCleanupFallback()
+          return directed
+        }
+        if (cleaned.cleanupCount === 0 && plan.transitions.length > 0) onWallCleanupFallback()
+        if (cleaned.cleanupCount > 0) wallRotationPreserved = true
+        return cleaned.points
+      })
+    }
+  }
   const finishCoverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
   const isParallelPocket = finishCoverage.rasterSegments
   // Offset floors are cut through the same inner-first ring traversal as the
@@ -3501,15 +3521,6 @@ function generateFinishBandMoves(
       finishRegions,
     )
     : undefined
-  const floorWallCleanup = operation.kind === 'pocket' && operation.roundOutsideCorners
-    && operation.cleanWallCorners === true
-    ? {
-        enabled: true,
-        onFallback: (): void => appendUniqueWarning(warnings, {
-          code: 'pocketWallCornerCleanupFallback',
-        }),
-      }
-    : undefined
   const floorSegments = operation.finishFloor && isParallelPocket
     ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
     : []
@@ -3537,8 +3548,20 @@ function generateFinishBandMoves(
   // the floor first removes that skin (with its first pass at the reduced
   // slot feed), so the wall pass only shaves the radial stock — and cutting
   // walls last leaves the cleanest final wall surface.
+  // One feed classification for the whole band level, floor and walls together
+  // (issue #622). The band is a single Z level -- `floorStepLevels` and
+  // `wallStepLevels` hold at most one entry each -- and the wall pass cuts at
+  // the same depth immediately after the floor. Classifying only the floor
+  // block left every wall-finish and wall-cleanup cut at full feed however
+  // engaged it was: on the shipped `purecutcnc` example that is 15.428 in of
+  // cutting, including two full-width slots 1.81 in long where a one-diameter
+  // corridor admits no floor ring at all. Running the classifier once from
+  // here gives the wall block the floor's kerf as prior context, which is what
+  // the geometry says -- a wall contour one stepover outside the outermost
+  // floor ring is not slotting and keeps full feed, one with no floor ring
+  // beside it is and does not.
+  const levelStartIndex = moves.length
   for (const z of floorStepLevels) {
-    const floorStartIndex = moves.length
 
     const remainingSeedPlans = floorTrees.flatMap((tree) => floorSeedPlans.get(tree) ?? [])
     if (remainingSeedPlans.length === 0) {
@@ -3554,16 +3577,16 @@ function generateFinishBandMoves(
           safeZ,
           maxLinkDistance,
           currentPosition,
-          direction,
-          undefined,
           'inner-first',
-          'all',
-          floorSmoothRadius,
-          0,
-          entryPolicy,
-          floorTangentLink,
-          floorWallCleanup,
-          toolRadius,
+          {
+            direction,
+            loops: 'all',
+            smoothRadius: floorSmoothRadius,
+            depth: 0,
+            entryPolicy,
+            tangentLink: floorTangentLink,
+            toolRadius,
+          },
         )
       }
     } else {
@@ -3577,7 +3600,7 @@ function generateFinishBandMoves(
         floorTrees,
         direction,
         floorSmoothRadius,
-        floorWallCleanup,
+        undefined,
         toolRadius,
       )
       let previousUnitRoot: OffsetRegionNode | null = null
@@ -3645,17 +3668,17 @@ function generateFinishBandMoves(
           safeZ,
           maxLinkDistance,
           currentPosition,
-          direction,
-          undefined,
           [],
-          'all',
-          floorSmoothRadius,
-          unit.depth,
-          entryPolicy,
-          floorTangentLink,
-          floorWallCleanup,
-          toolRadius,
-          unit.parent ?? undefined,
+          {
+            direction,
+            loops: 'all',
+            smoothRadius: floorSmoothRadius,
+            depth: unit.depth,
+            entryPolicy,
+            tangentLink: floorTangentLink,
+            toolRadius,
+            parent: unit.parent ?? undefined,
+          },
         )
         previousUnitRoot = unit.root
         const parentNode = unit.parent
@@ -3703,22 +3726,6 @@ function generateFinishBandMoves(
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
     }
 
-    const slotDistance = Math.max(
-      toolRadius * 2 * SLOT_FEED_ENGAGEMENT_FACTOR,
-      floorStepover * SLOT_FEED_ADJACENCY_FACTOR,
-    )
-    applyLevelFeed(
-      moves,
-      floorStartIndex,
-      operation,
-      slotScale,
-      slotDistance,
-      floorStepover * SLOT_FEED_OWN_TRAIL_FACTOR,
-      toolRadius * 2,
-      floorStepover,
-      telemetry,
-    )
-
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
 
@@ -3731,10 +3738,12 @@ function generateFinishBandMoves(
         safeZ,
         maxLinkDistance,
         currentPosition,
-        false,
+        wallRotationPreserved,
         direction,
         undefined,
         entryPolicy,
+        undefined,
+        wallCornerCleanupEnabled,
       )
       const orderedCleanupSegments = orderOpenSegmentsGreedy(
         wallCleanupSegments,
@@ -3784,6 +3793,22 @@ function generateFinishBandMoves(
 
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
+
+  const slotDistance = Math.max(
+    toolRadius * 2 * SLOT_FEED_ENGAGEMENT_FACTOR,
+    floorStepover * SLOT_FEED_ADJACENCY_FACTOR,
+  )
+  applyLevelFeed(
+    moves,
+    levelStartIndex,
+    operation,
+    slotScale,
+    slotDistance,
+    floorStepover * SLOT_FEED_OWN_TRAIL_FACTOR,
+    toolRadius * 2,
+    floorStepover,
+    telemetry,
+  )
 
   return {
     moves,
