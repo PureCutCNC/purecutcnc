@@ -12,7 +12,7 @@
     "check:gcode": "npx tsx scripts/gcode-conformance/run.ts",
     "check:fast-lane": "bash scripts/check-fast-lane.sh",
     "docs:check": "npx tsx scripts/check-docs.test.ts && npx tsx scripts/check-docs.ts",
-    "lint": "eslint src vite.config.ts scripts/run-tests.ts scripts/check-license-headers.ts scripts/check-i18n-format.ts scripts/docs-check-core.ts scripts/check-docs.ts scripts/check-docs.test.ts scripts/backlog-hygiene.ts scripts/gcode-conformance/corpus.ts scripts/gcode-conformance/run.ts",
+    "lint": "eslint src vite.config.ts scripts/run-tests.ts scripts/check-license-headers.ts scripts/check-i18n-format.ts scripts/docs-check-core.ts scripts/check-docs.ts scripts/check-docs.test.ts scripts/backlog-hygiene.ts scripts/gcode-conformance/corpus.ts scripts/gcode-conformance/run.ts tools/resume-work",
     "lint:scripts": "eslint scripts",
     "preview": "vite preview",
     "sync-icons": "npx tsx scripts/build-icon-sprite.ts",

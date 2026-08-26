@@ -1,0 +1,12 @@
+{
+  "stores": {
+    "dsh": "~/.dsh/sessions",
+    "claude-code": "~/.claude/projects",
+    "codex": "~/.codex/sessions",
+    "opencode": "~/.local/share/opencode"
+  },
+  "worktreeBase": "~/Projects/worktrees",
+  "branchIssuePattern": "issue-(\\d+)",
+  "maxToolCalls": 20,
+  "maxEventChars": 480
+}

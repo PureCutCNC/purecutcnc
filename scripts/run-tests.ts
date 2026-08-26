@@ -1,5 +1,6 @@
 /**
- * Test runner — discovers every `src/**\/*.test.ts` file and executes it as a
+ * Test runner — discovers every `src/**\/*.test.ts` and `tools/**\/*.test.ts`
+ * file and executes it as a
  * standalone tsx module. Each test file runs its assertions at module top
  * level and throws on failure; this runner executes them in a bounded
  * parallel pool (files are independent processes), buffers each file's
@@ -22,6 +23,7 @@ const require = createRequire(import.meta.url)
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..')
 const srcRoot = join(repoRoot, 'src')
+const toolsRoot = join(repoRoot, 'tools')
 const tsxCliPath = require.resolve('tsx/cli')
 const testExecutable = process.execPath
 
@@ -47,9 +49,9 @@ function findTestFiles(root: string): string[] {
   return results.sort()
 }
 
-const testFiles = findTestFiles(srcRoot)
+const testFiles = [srcRoot, toolsRoot].flatMap(findTestFiles)
 if (testFiles.length === 0) {
-  console.error('run-tests: no .test.ts files found under src/')
+  console.error('run-tests: no .test.ts files found under src/ or tools/')
   process.exit(1)
 }
 

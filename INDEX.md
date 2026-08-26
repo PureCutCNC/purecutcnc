@@ -13,9 +13,10 @@ Map of the repo. Start here when picking up new work. Each entry is a one-line s
 - [src/](src/INDEX.md) — application source (React + TS). **See its INDEX for the breakdown.**
 - [src-tauri/](src-tauri/) — Tauri (Rust) wrapper for desktop builds
 - [scripts/](scripts/INDEX.md) — quality gates, build/codegen tools, optional agent-dispatch harness, and one-off diagnostics
+- [tools/resume-work/](tools/resume-work/INDEX.md) — transcript-backed `/resume-work` handoff reader for agents taking over a worktree
 - [public/](public/) — static assets served as-is (incl. generated `icons.svg`)
 - [.github/](.github/) — workflows and PR templates
-- [.agents/skills/](.agents/skills/) — reusable agent skills: `github-issues` (issue/board/Priority wiring), `manager-delegate` (delegated slices), `frontend-design`
+- [.agents/skills/](.agents/skills/) — reusable agent skills: `github-issues` (issue/board/Priority wiring), `manager-delegate` (delegated slices), `frontend-design`, `resume-work`
 
 ## Config / metadata
 - `package.json` — npm scripts and deps

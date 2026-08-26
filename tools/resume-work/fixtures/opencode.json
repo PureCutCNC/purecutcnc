@@ -1,0 +1,15 @@
+{
+  "parts": [
+    {
+      "id": "1",
+      "time": 1,
+      "data": { "type": "text", "role": "user", "text": "Use the issue as the plan." }
+    },
+    {
+      "id": "2",
+      "time": 2,
+      "data": { "type": "tool_call", "name": "Read", "arguments": { "file": "AGENTS.md" } }
+    }
+  ],
+  "todos": ["Run build"]
+}
