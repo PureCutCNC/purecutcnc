@@ -1201,8 +1201,10 @@
 
 .simulation-playback-bar__feed-value {
   color: var(--text);
-  min-width: 7em;
+  width: 13em;
   text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Match the toolpath preview colours from Viewport3D.tsx buildToolpathOverlay().
@@ -1279,8 +1281,10 @@
 
 .simulation-playback-bar__coord-value {
   color: var(--text);
-  min-width: 4.5em;
+  width: 5.5em;
   text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .panel-right {
