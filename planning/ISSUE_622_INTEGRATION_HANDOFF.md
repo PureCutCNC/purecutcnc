@@ -21,7 +21,7 @@ delivers one pull request once the behaviour and the required checks are green.
 - Base commit: `a8e09a1` (`main` after #632)
 - Approved issue and plan: https://github.com/PureCutCNC/purecutcnc/issues/622
 - Manager session: 2026-08-25
-- Status: `slices 1, 2, 4 landed; slice 3 (D4) parked unmerged; slice 5 pending`
+- Status: `slices 1, 2, 4 landed; slice 3 (D4) parked unmerged; slice 5 dispatched, awaiting review`
 - User authorization for external-worker dispatch: granted 2026-08-25 for as
   many slices as the issue needs.
 
@@ -37,7 +37,7 @@ ownership are delegated.
 | 2 | D6 — feed-colour legend scoped to the selected operation | delegated | landed |
 | 3 | D4 — Z-invariant traversal | manager | **parked unmerged** on `wip/issue-622-d4-seam-anchor` |
 | 4 | D5 — `cleanWallCorners` on the finish wall contour | manager | landed |
-| 5 | audit fixtures per (kind, control) | delegated | pending |
+| 5 | audit fixtures per (kind, control) | delegated | dispatched 2026-08-26, in flight |
 
 ## Slice 2 — the legend describes the selected operation
 
@@ -349,3 +349,52 @@ reuse the committed `.camj` fixtures (`3d-imported-block-test3.camj`,
   declaration test lives), and `scripts/build-summary.sh` once.
 - **Note:** a task worktree may lack `node_modules`. If a check cannot run, say
   so in `CHECKS` — do not report a check as passed that you did not run.
+
+
+## Session handoff — state as of slice 5 dispatch
+
+Everything needed to pick this up is on disk or on the issue; nothing
+load-bearing lives only in a conversation.
+
+**Branch.** `fix/issue-622-feed-and-corner-controls`, local only, not pushed, no
+PR. Landed: D1+D2 (finish wall block feed classification), D6 (legend scoped to
+the selected operation), the `OffsetRingOptions` refactor, D5 (wall-corner
+rounding moved onto the finish wall contour). `npm run build` green at
+`3829781`.
+
+**Parked.** `wip/issue-622-d4-seam-anchor` holds the D4 seam-anchor experiment,
+merged nowhere. Its costs and the reason it is parked are recorded above. Do not
+revive it without an explicit owner decision — the behaviour it changes is
+documented design, not a defect.
+
+**In flight.** One delegated slice:
+
+- slug `control-effect-contract`, branch `feat/issue-622-control-effect-contract`
+- worktree `$PURECUT_WORKTREE_BASE/control-effect-contract`
+- poll with `scripts/worker-status.sh --slug control-effect-contract`
+- `node_modules` was symlinked into the worktree at dispatch, so its checks can
+  actually run — the previous slice's Playwright run failed to start for want of
+  it and the worker proceeded anyway
+- merge with
+  `scripts/finish-task.sh --slug control-effect-contract --base fix/issue-622-feed-and-corner-controls`
+  **after** review, never on the strength of the completion block
+
+**Review obligations for slice 5**, learned the hard way on slice 2:
+
+1. Confirm each reported check actually ran. Slice 2 reported a green build while
+   its e2e run had failed to start; three assertions were wrong.
+2. Treat every "skipped with a reason" as a claim to test. A cell skipped because
+   the worker could not build a fixture is not the same as a cell that cannot be
+   exercised, and the difference is the whole point of the slice.
+3. Mutation-check the `cleanWallCorners` row against `3829781^` — it must fail
+   there, since that is the commit where the control still rounded the floor
+   root. If it passes against the pre-D5 engine it is not testing D5.
+4. Read the real diff, not the report.
+
+**Remaining after slice 5:** rebase onto current `main`, `npm run build`,
+`npm run test:e2e`, then open the PR with `Closes #622`. The issue body carries
+D1–D6 with their measurements; D3 is recorded as withdrawn and D4 as parked, and
+both should stay that way in the PR description.
+
+**Filed separately:** #635, the finish pass's inner double-slot opening —
+pre-existing since v0.3.0, deliberately out of this issue's scope.
