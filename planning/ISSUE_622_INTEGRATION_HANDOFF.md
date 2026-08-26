@@ -254,3 +254,98 @@ If it is ever revived: `engagementPocket.test.ts`'s cache-equivalence premise ha
 to be inverted (levels then share one traversal, so one classification is built
 and every level consumes it), and the depth-dependent feed it fixes should be
 argued on its own merits first.
+
+## Slice 5 — clearing-control effect contract
+
+### What this is for
+
+`operationFields.test.ts` already asserts that the panel's exposed set matches
+`CLEARING_CONTROL_SUPPORT`. Nothing asserts that a control declared to apply
+actually **does the thing its name says, in the place its name says**. That gap
+is what let D5 ship: `cleanWallCorners` was declared to apply to `pocket`, the
+panel offered it, toggling it changed the output — every existing check passed —
+and it was rounding the wrong ring the whole time. The owner found it by looking
+at the preview.
+
+An on/off sweep cannot close this. The manager ran one across every kind and
+every control: it produced four "offered but inert" flags and **all four were
+fixture limitations, not defects**, while all five real defects in this issue
+were invisible to it. So this slice asserts *where the effect lands*.
+
+### The deliverable
+
+One new test file, `src/engine/toolpaths/clearingControlEffects.test.ts`, that
+walks `CLEARING_CONTROL_SUPPORT` and for every (kind, control) cell asserts:
+
+- **declared `applies: false`** — toggling the control leaves the emitted move
+  stream byte-identical, on a fixture that could have expressed it;
+- **declared `applies: true`** — toggling changes the output **and** the change
+  lands where the control claims, per the predicate table below.
+
+Iterate the declaration rather than hand-listing cells, so a new kind or control
+fails until it is classified — the same ratchet the declaration already carries.
+
+### Predicates — what "lands in the right place" means
+
+| control | assert |
+| --- | --- |
+| `roundOutsideCorners` | the clearing rings' sharpest single-vertex turn drops; a sharp turn is replaced by an arc of many small turns |
+| `cleanWallCorners` | the **wall-defining** ring gains motion, and the interior rings and floor do not. For a finish pass the wall-defining ring is the wall contour, not the outermost floor ring — that distinction is the D5 defect and this is its regression test |
+| `slotFeed` | `feedScale` appears, equals exactly `pocketSlotFeedPercent / 100`, and appears only on cuts that are far from any prior kerf |
+| `engagementMode` | more than one distinct `feedScale` is emitted — a ladder, not a single rung |
+| `machiningOrder` | `feature_first` emits each feature's moves contiguously; `level_first` interleaves them |
+| `cornerRelief` | extra motion appears at the region's **concave** corners and nowhere else |
+
+Out of scope: `roundLinkCorners` and `pocketPattern`. They are owned by
+`usesTangentLinks` and `OPERATION_PATTERN_SUPPORT`, not by
+`CLEARING_CONTROL_SUPPORT`, and pulling them in widens the slice past one file.
+
+### Fixtures — read this before writing any
+
+Every false "inert" in the manager's sweep came from a fixture that could not
+express the control. A cell that cannot be exercised must be **skipped with a
+recorded reason in the test**, never asserted as inert.
+
+- `cornerRelief` needs a **concave** corner. A plain rectangle has none, which is
+  why relief read as inert on `edge_route_outside`.
+- `machiningOrder` needs **two or more target features**. A single-feature
+  `rough_surface` is byte-identical under both settings by design —
+  `roughSurface.test.ts:1375` asserts exactly that.
+- `finish_surface` offers `parallel`/`waterline`; `offset` **resolves to**
+  `parallel`, so an offset↔parallel toggle compares a pattern with itself.
+- `finish_surface_cleanup` × `roundOutsideCorners` is wired
+  (`floorSmoothRadius`, `finishSurfaceCleanup.ts:765`) but its level boundaries
+  are sliced model silhouettes, which `planContourSmoothing` leaves alone when
+  the path already tracks a circle at least as broad as the request. If no
+  fixture can make it bite, record that as the reason rather than asserting.
+- `edge_route_inside` produced no moves at all in the sweep — it needs a closed
+  region to cut inside of. Close that gap or record why it stays open.
+
+Build 2D fixtures in the test file with the existing helpers. For the 3D kinds
+reuse the committed `.camj` fixtures (`3d-imported-block-test3.camj`,
+`model-in-pocket.camj`) rather than adding new ones.
+
+### Slice 5 dispatch card
+
+- **Slice id:** `control-effect-contract`
+- **Allowed files:** `src/engine/toolpaths/clearingControlEffects.test.ts` (new),
+  `src/engine/toolpaths/INDEX.md` (its Tests entry only).
+- **Forbidden files:** every other file. In particular **all engine source** —
+  `pocket.ts`, `surface.ts`, `roughSurface.ts`, `finishSurfaceCleanup.ts`,
+  `clearingControls.ts` — is manager-owned on this branch. If a predicate cannot
+  be satisfied, that is a **finding to report**, not a licence to change the
+  engine. Report it in `RISKS` and leave the assertion failing or skipped with a
+  reason.
+- **Required invariants:**
+  1. The suite iterates the declaration; it does not hand-list cells.
+  2. A cell that cannot be exercised is skipped with a written reason, never
+     asserted as inert.
+  3. Assertions are on the **location** of the effect, not merely that the move
+     stream changed.
+  4. No engine behaviour changes. `npm run build` must be green **without** any
+     edit outside the two allowed files.
+- **Required checks:** `npx tsx src/engine/toolpaths/clearingControlEffects.test.ts`,
+  `npx tsx src/engine/toolpaths/operationFields.test.ts` (or wherever the
+  declaration test lives), and `scripts/build-summary.sh` once.
+- **Note:** a task worktree may lack `node_modules`. If a check cannot run, say
+  so in `CHECKS` — do not report a check as passed that you did not run.
