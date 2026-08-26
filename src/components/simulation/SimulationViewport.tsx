@@ -1334,8 +1334,8 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
                 const feed = currentFeedPerSecond(displayPose, playbackInput.feedPerSecond, playbackInput.plungeFeedPerSecond)
                 if (feed === null) return '—'
                 const label = formatSpeedLabel(feed, playbackUnits)
-                const engagement = displayPose.feedScale !== undefined ? ` (${Math.round(displayPose.feedScale * 100)}%)` : ''
-                return `${label}${engagement}`
+                const engagementPct = displayPose.feedScale !== undefined ? Math.round(displayPose.feedScale * 100) : 100
+                return `${label} (${engagementPct}%)`
               })()}
             </span>
           </div>
