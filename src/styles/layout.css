@@ -1180,31 +1180,6 @@
   font-size: 11px;
 }
 
-.simulation-playback-bar__xyz {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 10px;
-  border-left: 1px solid var(--line-strong);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.simulation-playback-bar__xyz-label {
-  color: var(--text-dim);
-  font-weight: 500;
-}
-
-.simulation-playback-bar__xyz-value {
-  color: var(--text);
-  min-width: 4.5em;
-  text-align: right;
-}
-
-.simulation-playback-bar__xyz-value + .simulation-playback-bar__xyz-label {
-  margin-left: 6px;
-}
-
 .simulation-playback-bar__move-kind {
   display: inline-block;
   width: 8px;
@@ -1226,8 +1201,18 @@
 
 .simulation-playback-bar__feed-value {
   color: var(--text);
-  min-width: 7em;
+  width: 8em;
   text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.simulation-playback-bar__engagement {
+  color: var(--text-dim);
+  width: 3.5em;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Match the toolpath preview colours from Viewport3D.tsx buildToolpathOverlay().
@@ -1252,6 +1237,62 @@
 
 .simulation-playback-bar__move-kind--none {
   background: transparent;
+}
+
+/* Playback bar drag handle */
+.simulation-playback-bar__handle {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  padding: 0 4px;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+
+.simulation-playback-bar__handle:active {
+  cursor: grabbing;
+}
+
+/* When dragged, switch to fixed positioning */
+.simulation-playback-bar--dragged {
+  position: fixed;
+  left: auto;
+  bottom: auto;
+  transform: none;
+}
+
+/* Stacked X, Y, Z coordinates in a single column */
+.simulation-playback-bar__xyz {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 10px;
+  border-left: 1px solid var(--line-strong);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.simulation-playback-bar__coord {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.simulation-playback-bar__coord-label {
+  color: var(--text-dim);
+  font-weight: 500;
+  min-width: 12px;
+}
+
+.simulation-playback-bar__coord-value {
+  color: var(--text);
+  width: 5.5em;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .panel-right {
