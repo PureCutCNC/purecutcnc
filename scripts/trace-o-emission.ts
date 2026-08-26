@@ -9,7 +9,7 @@ import { resolvePocketRegions } from '../src/engine/toolpaths/resolver.ts'
 import { buildInsetRegions } from '../src/engine/toolpaths/pocket.ts'
 import type { Operation, Project, Point } from '../src/types/project.ts'
 
-const PROJECT_PATH = '/Users/frankp/Projects/purecutcnc/work/v-carve-skeleton-tests.camj'
+const PROJECT_PATH = process.argv[2] ?? 'work/v-carve-skeleton-tests.camj'
 const project = JSON.parse(fs.readFileSync(PROJECT_PATH, 'utf8')) as Project
 const operation = project.operations.find(o => o.id === 'op0046')!
 

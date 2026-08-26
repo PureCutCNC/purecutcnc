@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import { extractStlProfileAndBounds } from '../src/import/stl.ts'
 
 async function run() {
-  const filePath = '/Users/frankp/Projects/purecutcnc/work/springycat-keyring.stl'
+  const filePath = process.argv[2] ?? 'work/springycat-keyring.stl'
   const buffer = fs.readFileSync(filePath)
   const base64Data = buffer.toString('base64')
   

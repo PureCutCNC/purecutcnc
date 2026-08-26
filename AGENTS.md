@@ -292,6 +292,16 @@ Two independent choices: **where** the work happens, and **who** does it.
 
 **Where — default to an isolated worktree.** New work starts in its own `git worktree` on its own branch unless the user says otherwise. This includes fast-lane changes: the reason is parallelism, not diff size. A worktree lets several branches be in flight at once without one agent's edits, build artifacts, or checkout state disturbing another's, and a one-line fix benefits from that as much as a large change does. Create it outside the repository directory, and do not commit the path.
 
+**Hard rule — a worktree is never created inside a checkout of this repository** (issue #637). Not inside the primary project folder, not inside another worktree, and not inside a dot-directory of either (`.claude/worktrees/`, `.tmp/`, …) — a leading dot does not put it outside. There is no exception for a scratch tree, a delegation slice, or one removed afterwards: a nested worktree pollutes the parent's `git status`, breaks scripts that derive paths from their location, recurses, and makes cleanup ambiguous.
+
+All task worktrees live under an external base, outside every checkout:
+
+```
+<parent-of-repo>/worktrees/<repo-name>/<branch-or-slug>
+```
+
+This is contributor-agnostic by construction: the base is always a sibling of whatever directory holds the checkout, on any machine, with nothing configured. `PURECUT_WORKTREE_BASE` is an escape hatch for a different layout; if set, it must be an absolute path, and `scripts/dispatch-task.sh` validates both the default and the override against every registered checkout (symlink-resolved), refusing to create a worktree inside one.
+
 A fresh worktree has no `node_modules`. Symlinking the primary checkout's copy avoids a full install:
 
 ```bash

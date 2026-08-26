@@ -6,7 +6,7 @@ import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUti
 import ManifoldModule from 'manifold-3d'
 
 async function run() {
-  const filePath = '/Users/frankp/Projects/purecutcnc/work/springycat-keyring.stl'
+  const filePath = process.argv[2] ?? 'work/springycat-keyring.stl'
   const buffer = fs.readFileSync(filePath)
   
   console.log(`Loading STL: ${filePath} (${buffer.length} bytes)`)
