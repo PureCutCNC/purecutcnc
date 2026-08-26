@@ -411,7 +411,7 @@ test.describe('Feed-coloured toolpath smoke', () => {
     await expect(panel.locator('.viewport-toolpath-vis__legend')).toHaveCount(0)
   })
 
-  test('mixed pockets show each operation's own ladder in the legend, not the union', async ({ app, ui }) => {
+  test("mixed pockets show each operation's own ladder in the legend, not the union", async ({ app, ui }) => {
     await seedProject(app.page, MIXED_FIXTURE_JSON)
 
     const panel = ui.toolpathVis.sketchPanel(app.page)
