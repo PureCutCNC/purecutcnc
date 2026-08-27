@@ -31,9 +31,9 @@ import { profileVertices, getProfileBounds, polygonProfile, type Point, type Ske
 const STL_PATH = process.argv[2] ?? 'work/Oldman-splash-final.STL'
 const STL_SCALE = 1
 const STL_AXIS_SWAP: 'none' | 'yz' | 'xz' | 'xy' = 'none'
-const OUTPUT_PNG = '/tmp/stl-silhouette.png'
+const OUTPUT_PNG = '/tmp/stl-silhouette.png' // portable-exempt: dev diagnostic writes to macOS tmp dir
 const OUTPUT_PNG_FLIPPED = '/tmp/stl-silhouette-flipped.png'
-const OUTPUT_SVG = '/tmp/stl-silhouette.svg'
+const OUTPUT_SVG = '/tmp/stl-silhouette.svg' // portable-exempt: dev diagnostic writes to macOS tmp dir
 const OUTPUT_JSON = '/tmp/stl-silhouette-points.json'
 const MAX_IMG_PX = 1024 // match renderSilhouetteToDataUrl
 
@@ -262,7 +262,7 @@ async function run() {
   if (dataUrl) {
     console.log(`   ✅ Success! Data URL length: ${dataUrl.length} chars`)
     const b64data = dataUrl.replace(/^data:image\/png;base64,/, '')
-    const pngPath = '/tmp/stl-silhouette-from-canvas.png'
+    const pngPath = '/tmp/stl-silhouette-from-canvas.png' // portable-exempt: dev diagnostic, macOS-only tmp output
     fs.writeFileSync(pngPath, Buffer.from(b64data, 'base64'))
     console.log(`   Wrote PNG: ${pngPath}`)
   } else {
@@ -312,7 +312,7 @@ async function run() {
 
   // 9. Summary
   // 10. Write an HTML diagnostic page that uses Canvas2D fill() API
-  const htmlPath = '/tmp/stl-silhouette-diag.html'
+  const htmlPath = '/tmp/stl-silhouette-diag.html' // portable-exempt: dev diagnostic, macOS-only tmp output
   const html = `<!DOCTYPE html>
 <html>
 <head>

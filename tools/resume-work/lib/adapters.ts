@@ -73,7 +73,7 @@ function safeStat(path: string): number {
  * cwd → store directory slug, portable across drive letters and separators.
  *
  * The dsh and claude-code store layouts name a session's directory after the
- * worktree path. The old `slice(1).replaceAll('/', '-')` was POSIX-only: on
+ * worktree path. The old `slice(1).replaceAll('/', '-')` was POSIX-only: on (portable-exempt: comment quotes the pre-#651 code)
  * Windows the drive-letter colon and the backslashes survived, producing an
  * invalid directory segment (`--:\Users\...--`) that could never be created or
  * found. `resolve()` makes the input absolute first, so the slug is stable

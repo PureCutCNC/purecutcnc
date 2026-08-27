@@ -51,7 +51,7 @@ const hasZstdCli = spawnSync('zstd', ['--version'], { stdio: 'ignore' }).status 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixtures = join(here, 'fixtures')
 const projectRoot = resolve(here, '../..')
-// os.tmpdir() rather than a hardcoded /tmp: POSIX-only, and Node on Windows
+// os.tmpdir() rather than a hardcoded /tmp: POSIX-only, and Node on Windows (portable-exempt: comment explains the pre-#649 bug)
 // resolves `/tmp` to a drive-root `\tmp` that does not exist (ENOENT).
 const root = mkdtempSync(join(tmpdir(), 'resume-work-test-'))
 const cwd = join(root, 'worktree')
