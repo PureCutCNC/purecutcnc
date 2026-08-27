@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { ADAPTERS, formatCommonEvents, locateSessions } from './lib/adapters.ts'
+import { ADAPTERS, formatCommonEvents, locateSessions, sessionDirSlug } from './lib/adapters.ts'
 import { appendClaim, detectCycle, readLedger } from './lib/ledger.ts'
 import { runResumeWork } from './run.ts'
 import type { ResumeConfig, SessionCandidate } from './lib/types.ts'
@@ -158,10 +158,10 @@ try {
     assert.deepEqual(openCode.todos, ['Run build'])
   }
 
-  const dshArtifact = join(config.stores.dsh, `--${cwd.slice(1).replaceAll('/', '-')}--`, 'session-fixture')
+  const dshArtifact = join(config.stores.dsh, `--${sessionDirSlug(cwd)}--`, 'session-fixture')
   mkdirSync(dshArtifact, { recursive: true })
   cpSync(join(fixtures, 'dsh.jsonl'), join(dshArtifact, 'session.jsonl.zstd'))
-  const claudeDirectory = join(config.stores['claude-code'], `-${cwd.slice(1).replaceAll('/', '-')}`)
+  const claudeDirectory = join(config.stores['claude-code'], `-${sessionDirSlug(cwd)}`)
   mkdirSync(claudeDirectory, { recursive: true })
   cpSync(join(fixtures, 'claude-code.jsonl'), join(claudeDirectory, 'claude-fixture.jsonl'))
   const codexDirectory = join(config.stores.codex, '2026', '08', '26')
