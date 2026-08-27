@@ -209,13 +209,32 @@ function testBoundsLargeNonFittingSearch(): void {
   // regressions in the table fail `testSplitsLargeCircularRunWithoutChanging-
   // ItsCircle` before reaching this point), so this assertion only has to guard
   // a structural return to unbounded scanning.
+  //
+  // Warm each size once so JIT tiering/compilation stays out of the measured
+  // region (mirrors the guidance in src/test/cpuRatio.ts).
+  findArcRunsInPoints(nonFittingPoints(400), FIT_OPTIONS)
+  findArcRunsInPoints(nonFittingPoints(800), FIT_OPTIONS)
+
   const small = bestNonFittingCpuMs(400)
   const large = bestNonFittingCpuMs(800)
-  const ratio = large / small
 
-  assert(ratio < 4,
-    `expected sub-cubic scaling for 2x the input (linear ~2x, cubic ~8x), got ${ratio.toFixed(1)}x `
-    + `(${small.toFixed(1)}ms -> ${large.toFixed(1)}ms CPU)`)
+  // On Windows, process.cpuUsage() rounds to whole milliseconds, so a sub-ms
+  // baseline reads exactly 0 and `large / small` is undefined (Infinity) — a
+  // measurement floor, not a regression (the assertion passed there on
+  // 2026-08-12 and failed spuriously on 2026-08-27). The deterministic
+  // window-contract tests above are the primary guard and run on every
+  // platform; this ratio only backstops a structural return to unbounded
+  // scanning, so skip it where it cannot be measured, loudly.
+  if (small === 0) {
+    console.log(`arc-search scaling ratio skipped: baseline below timer resolution `
+      + `(${small.toFixed(1)}ms -> ${large.toFixed(1)}ms CPU)`)
+  } else {
+    const ratio = large / small
+
+    assert(ratio < 4,
+      `expected sub-cubic scaling for 2x the input (linear ~2x, cubic ~8x), got ${ratio.toFixed(1)}x `
+      + `(${small.toFixed(1)}ms -> ${large.toFixed(1)}ms CPU)`)
+  }
 }
 
 testFindsLongestValidArcRun()
