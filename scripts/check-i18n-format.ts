@@ -170,8 +170,20 @@ function readPrefix(trivia: string): string[] {
   return prefix
 }
 
+/**
+ * Read a locale file with line endings normalized to LF.
+ *
+ * The canonical form is LF, but a Windows checkout (`core.autocrlf`) supplies
+ * CRLF working-tree files, and the gate compares byte-for-byte. Normalizing
+ * here keeps the canonical comparison free of line-ending noise without
+ * changing what `--fix` writes (LF, as today).
+ */
+function readSource(path: string): string {
+  return readFileSync(path, 'utf8').replace(/\r\n?/g, '\n')
+}
+
 function parseFile(path: string): ParsedFile {
-  const text = readFileSync(path, 'utf8')
+  const text = readSource(path)
   const source = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS)
 
   let valueImport: string | null = null
@@ -507,7 +519,7 @@ function run(fix: boolean): number {
         }
       }
 
-      const original = readFileSync(path, 'utf8')
+      const original = readSource(path)
       let canonical = render(parsed, order)
       if (parsed.valueImport) {
         canonical = canonicalizeImport(canonical, parsed.valueImport)
