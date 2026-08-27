@@ -18,6 +18,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -50,7 +51,9 @@ const hasZstdCli = spawnSync('zstd', ['--version'], { stdio: 'ignore' }).status 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixtures = join(here, 'fixtures')
 const projectRoot = resolve(here, '../..')
-const root = mkdtempSync('/tmp/resume-work-test-')
+// os.tmpdir() rather than a hardcoded /tmp: POSIX-only, and Node on Windows
+// resolves `/tmp` to a drive-root `\tmp` that does not exist (ENOENT).
+const root = mkdtempSync(join(tmpdir(), 'resume-work-test-'))
 const cwd = join(root, 'worktree')
 mkdirSync(cwd)
 
