@@ -702,6 +702,73 @@ function testCutDirectionParityOnOpenGuide(): void {
   console.log('cut-direction parity on open guide: PASSED')
 }
 
+/**
+ * Level sharing in the carve branch (issue #661).
+ *
+ * The carve guide is fragmented by the region mask alone, outside the level
+ * loop, so nothing here is Z-dependent and every level is generated from the
+ * identical guide. That is exactly the case the path store collapses, and the
+ * consequence to guard is that every level still cuts the same XY: a signature
+ * that handed back the wrong path would show up here as one level's geometry
+ * differing from the rest.
+ */
+function testTrochoidalLevelsAreIdentical(): void {
+  console.log('Testing multi-level trochoidal carve emits one path per level...')
+
+  // Two guides, so the store has something to tell apart. With one guide every
+  // level is identical whether or not sharing works, and the test proves
+  // nothing.
+  const tool = makeFlatEndmill('t1', 4)
+  const project = baseProject([tool], [
+    makeLineFeature('line1', 0, 0, 20, 0),
+    makeLineFeature('line2', 0, 20, 20, 20),
+  ])
+  const op = makeCarveOp({
+    kind: 'follow_line',
+    target: { source: 'features', featureIds: ['line1', 'line2'] },
+    toolRef: 't1',
+    carveDepth: 4,
+    maxCarveDepth: 4,
+    stepdown: 0.5,
+    carveStrategy: 'trochoidal',
+    trochoidalCutWidth: 6,
+    trochoidalAdvance: 0.2,
+    entryStrategy: 'helix',
+    entryRampAngle: 5,
+  })
+
+  const result = generateFollowLineToolpath(project, op)
+  assert(result.warnings.length === 0,
+    `multi-level carve warned: ${result.warnings.map((w) => w.code).join(', ')}`)
+
+  const byLevel = new Map<string, string>()
+  for (const move of cutMoves(result.moves)) {
+    const key = move.to.z.toFixed(6)
+    const step = `${move.from.x},${move.from.y}->${move.to.x},${move.to.y}`
+    byLevel.set(key, `${byLevel.get(key) ?? ''}${step};`)
+  }
+  const levels = [...byLevel.keys()]
+  assert(levels.length >= 5, `expected a multi-level carve, got ${levels.length} levels`)
+
+  const first = byLevel.get(levels[0])!
+  assert(first.length > 0, 'the first level must cut something')
+  for (const level of levels.slice(1)) {
+    assert(byLevel.get(level) === first,
+      `level ${level} cut different XY from level ${levels[0]} — a shared path reached the wrong level`)
+  }
+
+  // Both guides must still be cut where they are. A key that cannot tell the
+  // two apart machines one of them twice and never touches the other.
+  const orbitRadius = (6 - 4) / 2
+  const cutY = cutMoves(result.moves).map((move) => move.to.y)
+  assert(cutY.some((y) => Math.abs(y) <= orbitRadius + 1e-6),
+    'the guide at y=0 must be cut')
+  assert(cutY.some((y) => Math.abs(y - 20) <= orbitRadius + 1e-6),
+    'the guide at y=20 must be cut — a collided signature would cut y=0 twice instead')
+
+  console.log('multi-level trochoidal carve: PASSED')
+}
+
 // ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
@@ -715,5 +782,6 @@ testCutWidthTooSmallFailsClosed()
 testVBitFailsClosed()
 testBudgetExhaustion()
 testCutDirectionParityOnOpenGuide()
+testTrochoidalLevelsAreIdentical()
 
 console.log('\ncarving tests passed.')

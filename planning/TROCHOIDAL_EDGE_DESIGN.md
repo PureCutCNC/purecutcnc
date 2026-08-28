@@ -137,6 +137,12 @@ and the protected obstacles. If the guide-domain maths ever misses a case the
 operation fails closed rather than emitting the path. The backstop is a
 safety net, not the mechanism — a trip is a bug, not an expected outcome.
 
+**Sharing a path across levels never shares its check.** Since #661 a level may
+reuse the path an earlier level generated, and the backstop then runs again for
+that level, at that level's own Z. A path proven safe at −1 mm is not a path
+proven safe at −15 mm, and the whole reason interruptions are planned in the
+guide domain is to keep an orbit out of material it was never cleared for.
+
 ### Tight spots interrupt, they do not fail the job
 
 A span that survives fragmentation but is too short to hold a safe helical entry
@@ -304,6 +310,17 @@ stationary entry and exit orbits, helical entries, tab-top fragments, and
 fragment transitions. Entry and operation budgets fail atomically with
 structured warnings.
 
+Since #661 the budget counts **distinct generated paths, not emitted levels**.
+Levels whose guide fragments identically share one generated path, keyed by the
+planned fragment geometry (`trochoidalLevelPaths.ts`), and that path is charged
+once; the helical entry and the fragment transitions are still charged per
+level, because they are still generated per level. The machine's motion is
+unchanged — every level is still cut, and the emitted program is byte-identical.
+
+The consequence, deliberate and temporary: the emitted cut moves are no longer
+what the 500,000 bounds. Deriving a ceiling from a memory target is #662's job,
+and it is the reason #659 orders these three children the way it does.
+
 Warnings that refer to a place — skipped spans, unsafe tab fragments, channels
 that do not fit — carry the offending XY in their params so the UI can point at
 it.
@@ -314,6 +331,7 @@ it.
 - `src/engine/toolpaths/trochoidalPath.ts` — shared entry synthesis and point budget; both integrations consume it rather than re-deriving the clearance
 - `src/engine/toolpaths/guideFragments.ts` — cyclic guide splitting
 - `src/engine/toolpaths/edge.ts` — integration, clearances, safety backstop
+- `src/engine/toolpaths/trochoidalLevelPaths.ts` — the fragmentation signature and the per-operation path store; one generated path per distinct guide, checked per level
 - `src/engine/toolpaths/carving.ts` — engrave integration
 - #447 — arc fitting; without it this exports as raw G1
 - #452 — region redesign; restores region support here

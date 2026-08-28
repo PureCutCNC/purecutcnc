@@ -17,12 +17,22 @@
 import type { Operation, Point } from '../../types/project'
 import type { ToolpathMove, ToolpathPoint } from './types'
 import { plungeLimitedFeedScale } from './entry'
+import type { TrochoidalPathStore } from './trochoidalLevelPaths'
 
 export const TROCHOIDAL_ENTRY_STEPS_PER_REVOLUTION = 36
 export const MAX_TROCHOIDAL_ENTRY_MOVES = 20_000
 
 export interface TrochoidalOperationBudget {
   remainingPoints: number
+  /**
+   * Paths generated so far this operation, keyed by guide fragmentation
+   * signature (issue #661). Levels whose planner produced the same guide share
+   * one generated path and are charged for it once; the per-level safety
+   * backstop and entry synthesis still run for every level. Shares the budget's
+   * lifetime because it answers the same question: what has this operation
+   * already paid to generate.
+   */
+  paths: TrochoidalPathStore
 }
 
 export function trochoidalEntryStrategy(operation: Operation): 'helix' | 'plunge' {

@@ -32,6 +32,8 @@ import { resolveRegionDomainCurve } from './regionDomain'
 import { buildRegionMask, splitFeatureTargets } from './regions'
 import { helixAngularDirection } from './entry'
 import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET } from './trochoidalEdge'
+import { createTrochoidalPathStore } from './trochoidalLevelPaths'
+import type { TrochoidalPathParams } from './trochoidalLevelPaths'
 import {
   appendTrochoidalEntry,
   MAX_TROCHOIDAL_ENTRY_MOVES,
@@ -311,8 +313,14 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
 
   // One budget per operation, threaded through every target and every fragment.
   const budget: TrochoidalOperationBudget | undefined = isTrochoidal
-    ? { remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET }
+    ? { remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET, paths: createTrochoidalPathStore() }
     : undefined
+  const pathParams: TrochoidalPathParams = {
+    orbitRadius,
+    advance,
+    toolDiameter: tool.diameter,
+    angularDirection,
+  }
 
   for (const feature of targetFeatures) {
     const flattened = flattenProfile(feature.sketch.profile)
@@ -357,14 +365,23 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
             break
           }
 
-          const built = buildTrochoidalContour(fragment.points, {
-            orbitRadius,
-            advance,
-            toolDiameter: tool.diameter,
-            angularDirection,
-            closed: fragment.closed,
-            maxPoints: remainingPoints - entryMoves - 3,
-          })
+          // The guide here is fragmented by the region mask alone, outside the
+          // level loop, so every level asks for the identical path and only Z
+          // differs. Same store, same contract as the Edge Route branch
+          // (issue #661): generated once, emitted and entered per level.
+          const { built, generated } = budget!.paths.resolve(
+            fragment.points,
+            fragment.closed,
+            pathParams,
+            () => buildTrochoidalContour(fragment.points, {
+              orbitRadius,
+              advance,
+              toolDiameter: tool.diameter,
+              angularDirection,
+              closed: fragment.closed,
+              maxPoints: remainingPoints - entryMoves - 3,
+            }),
+          )
 
           if (built.error || built.points.length < 2 || !built.entryCenter) {
             warnings.push({
@@ -375,7 +392,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
             break
           }
 
-          const consumedPoints = entryMoves + built.points.length + 3
+          const consumedPoints = entryMoves + 3 + (generated ? built.points.length : 0)
           if (consumedPoints > remainingPoints) {
             warnings.push({ code: 'carveTrochoidalMoveBudget', params: { x: fragX, y: fragY } })
             preparationFailed = true
