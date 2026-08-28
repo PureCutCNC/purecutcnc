@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: trochoidal Edge Route roughing and trochoidal Engrave — guide-domain fragmentation, clearance budget, and the pipeline stages they must bypass
-last-verified: 2026-08-10
+last-verified: 2026-08-28
 ---
 
 # Trochoidal Routing
@@ -55,10 +55,22 @@ a closed guide's seam and leave no uncut ridge.
 
 ### Why the allowance is 1% of D and not less
 
-The orbit is emitted as a polyline. Chords are capped at `0.1 x D` with a
-36-step floor, so the worst-case sagitta — at the crossover where the floor
-stops binding, `R ~= 0.573 D` — is about `0.0022 D`. The `0.01 D` allowance
-covers that discretisation error with room to spare, on both cut sides:
+The orbit is emitted as a polyline, and what the allowance has to cover is the
+**sagitta** — how far a chord sits inside the true orbit. Two bounds set the
+step count, whichever of the two demands more:
+
+```text
+tol          = 0.0022 x D                      sagitta bound
+sagittaSteps = ceil(pi / acos(1 - tol / R))    steps that hold it on radius R
+chordSteps   = ceil(2*pi*R / (0.1 x D))        steps that hold the chord cap
+stepsPerLoop = max(sagittaSteps, chordSteps)
+```
+
+They cross at `R ~= 0.568 D`, where both ask for the same ~36 steps;
+`chordSteps` governs above it and `sagittaSteps` below. So the worst-case
+sagitta over all `R` is `0.0022 D`, reached at that crossover. The `0.01 D`
+allowance covers that discretisation error with room to spare, on both cut
+sides:
 
 ```text
 cutter centre reach toward the wall = guideOffset - R = toolRadius + S + 0.01 D
@@ -67,6 +79,21 @@ cutter centre reach toward the wall = guideOffset - R = toolRadius + S + 0.01 D
 which is exactly `0.01 D` clear of the retained wall, inside and outside alike.
 That single expression is why `guideOffset` must be computed once and reused.
 Two approximations of the same clearance is how a visible seam becomes a gouge.
+
+**The bound used to be reached through a 36-step floor** (issue #660). That
+floor took its own maximum sagitta at this same crossover — `R ~= 0.573 D`,
+`0.0022 D` — which is where the `0.0022` came from; below the crossover it then
+held the orbit several times finer than the allowance ever needed, at full cost
+in emitted points. Enforcing the sagitta directly therefore leaves the maximum
+exactly where it was and cannot loosen the clearance. Measured on a 200 x 150
+guide, `D = 6`, `W = 1.5 D`, `advance = 0.1 D`: 42,049 points per level became
+28,033, with no `R` anywhere in `W/D` [1.15, 2.5] exceeding the bound.
+
+`src/engine/toolpaths/trochoidalEdge.test.ts` asserts that bound on **emitted
+chords** — the stationary orbit against its own centre, the advancing orbit
+against a closed-form trochoid — and never on the step count. The count is a
+consequence now, not the contract; pinning it would restore the proxy this
+replaced.
 
 ### Cut width bounds
 

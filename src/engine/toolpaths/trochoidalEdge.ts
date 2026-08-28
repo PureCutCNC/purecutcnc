@@ -17,7 +17,29 @@
 import type { Point } from '../../types/project'
 import { XY_EPSILON, samePointXY } from './geometry'
 
-const MIN_STEPS_PER_LOOP = 36
+/**
+ * The orbit accuracy contract is a **sagitta**, not a step count — see
+ * `planning/TROCHOIDAL_EDGE_DESIGN.md` §"Why the allowance is 1% of D and not
+ * less". An emitted chord may deviate from the true orbit by at most this
+ * fraction of the cutter diameter, and the `0.01 x D` guide allowance is sized
+ * to swallow that deviation on both cut sides.
+ *
+ * `0.0022` is the worst case the previous 36-step floor already produced, at
+ * the crossover `R ~= 0.573 x D` where the `0.1 x D` chord cap took over.
+ * Enforcing it directly therefore leaves the maximum exactly where it was; what
+ * it removes is small orbits being cut several times finer than the contract
+ * asks for, at full cost in points.
+ */
+const ORBIT_SAGITTA_FRACTION = 0.0022
+
+/**
+ * Totality floor for a degenerate orbit radius, not an accuracy floor: it keeps
+ * a vanishing orbit a recognisable polygon instead of a triangle. It can only
+ * bind below `R = 0.029 x D`, and `W >= 1.15 x D` already forces
+ * `R >= 0.075 x D`, so no reachable operation sees it.
+ */
+const MIN_STEPS_PER_LOOP = 8
+
 const GEOMETRY_EPSILON = XY_EPSILON
 
 export const DEFAULT_TROCHOIDAL_POINT_BUDGET = 500_000
@@ -27,7 +49,7 @@ export type TrochoidalContourError = 'invalid-guide' | 'move-budget'
 export interface TrochoidalContourOptions {
   orbitRadius: number
   advance: number
-  /** The cutter diameter determines the orbit chord bound (0.1 × diameter). */
+  /** The cutter diameter sets both orbit bounds: chords ≤ 0.1 × diameter, sagitta ≤ 0.0022 × diameter. */
   toolDiameter: number
   angularDirection: 1 | -1
   closed?: boolean
@@ -125,6 +147,30 @@ function sampleFrame(path: ArcLengthPath, distance: number, lookaround: number):
   return { tangent, normal: { x: -tangent.y, y: tangent.x } }
 }
 
+/**
+ * Steps per orbit, from the two bounds the design contracts for: no chord
+ * longer than `0.1 x D`, and no chord deviating from the true circle by more
+ * than `ORBIT_SAGITTA_FRACTION x D`. A chord subtending `2θ` on radius `R`
+ * has sagitta `R(1 - cos θ)`, so the tolerated half-angle is
+ * `acos(1 - tol / R)` and a full turn needs `π / acos(1 - tol / R)` of them.
+ *
+ * The two cross at `R ~= 0.568 x D`, where both ask for the same ~36 steps:
+ * the chord cap governs above it, the sagitta bound below.
+ * Neither ever asks for more steps than the 36-step floor this replaced, so the
+ * change is a strict reduction in emitted points at unchanged worst-case
+ * accuracy. Deliberately not exported: a test that pins the step count would
+ * re-freeze the proxy this bound exists to remove.
+ */
+function orbitStepsPerLoop(orbitRadius: number, toolDiameter: number): number {
+  const maxChord = Math.max(toolDiameter * 0.1, GEOMETRY_EPSILON)
+  const chordSteps = Math.ceil(2 * Math.PI * orbitRadius / maxChord)
+  const tolerance = toolDiameter * ORBIT_SAGITTA_FRACTION
+  const sagittaSteps = tolerance < orbitRadius
+    ? Math.ceil(Math.PI / Math.acos(1 - tolerance / orbitRadius))
+    : MIN_STEPS_PER_LOOP
+  return Math.max(MIN_STEPS_PER_LOOP, chordSteps, sagittaSteps)
+}
+
 function orbitPoint(center: Point, tangent: Point, normal: Point, radius: number, phase: number): Point {
   return {
     x: center.x + radius * (Math.cos(phase) * tangent.x + Math.sin(phase) * normal.x),
@@ -149,11 +195,7 @@ export function buildTrochoidalContour(
 
   const loopCount = Math.max(1, Math.ceil(path.length / options.advance))
   const actualAdvance = path.length / loopCount
-  const maxChord = Math.max(options.toolDiameter * 0.1, GEOMETRY_EPSILON)
-  const stepsPerLoop = Math.max(
-    MIN_STEPS_PER_LOOP,
-    Math.ceil(2 * Math.PI * options.orbitRadius / maxChord),
-  )
+  const stepsPerLoop = orbitStepsPerLoop(options.orbitRadius, options.toolDiameter)
   const movingSteps = loopCount * stepsPerLoop
   const maxPoints = Math.min(DEFAULT_TROCHOIDAL_POINT_BUDGET, options.maxPoints ?? DEFAULT_TROCHOIDAL_POINT_BUDGET)
   const stationarySteps = stepsPerLoop * (closed ? 1 : 2)

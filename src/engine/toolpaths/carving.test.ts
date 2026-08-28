@@ -490,15 +490,29 @@ function testRegionIncludeExcludePolarity(): void {
   // to.  Dilate the region by the swept half-width instead and the tool centre
   // runs to 18.0 and the body to 20.0 — a full cut width past the boundary, and
   // the overhang that was visibly wrong on screen.
+  //
+  // The tolerance is the orbit sagitta, not an epsilon.  An orbit is emitted as
+  // a polyline, so an extreme of the swept envelope is only hit exactly when a
+  // step happens to land on it — under the old 36-step floor every orbit had a
+  // step at phase pi, and this read exactly 3.5.  Issue #660 replaced that floor
+  // with the sagitta bound the design contracts for (0.0022 x D, here 0.0088),
+  // and at this fixture's radius the orbit takes an odd number of steps, so the
+  // leftmost emitted point sits one sagitta inside the circle: 3.5088.
+  //
+  // Chords always fall *inside* the orbit, so this can only ever shorten the
+  // reach past the region edge, never extend it.  A wrong inset magnitude — the
+  // regression this test exists for — is off by the swept half-width, 3.5 mm,
+  // some 400x this bound.
   const orbitRadius = (cutWidth - toolDiameter) / 2 // 1.5
   const toolRadius = toolDiameter / 2
+  const sagitta = toolDiameter * 0.0022
   const centreMaxT = Math.max(...cutsT.flatMap((m) => [m.from.x, m.to.x]))
   const centreMinT = Math.min(...cutsT.flatMap((m) => [m.from.x, m.to.x]))
-  assert(Math.abs(centreMaxT - (15 + orbitRadius)) <= 1e-6,
+  assert(centreMaxT <= 15 + orbitRadius + 1e-6 && centreMaxT >= 15 + orbitRadius - sagitta,
     `trochoidal tool centre must stop at ${15 + orbitRadius} (include edge + orbit radius), got ${centreMaxT.toFixed(4)}`)
-  assert(Math.abs(centreMinT - (5 - orbitRadius)) <= 1e-6,
+  assert(centreMinT >= 5 - orbitRadius - 1e-6 && centreMinT <= 5 - orbitRadius + sagitta,
     `trochoidal tool centre must start at ${5 - orbitRadius} (include edge − orbit radius), got ${centreMinT.toFixed(4)}`)
-  assert(Math.abs((centreMaxT + toolRadius) - (15 + halfWidth)) <= 1e-6,
+  assert(Math.abs((centreMaxT + toolRadius) - (15 + halfWidth)) <= sagitta + 1e-6,
     `trochoidal cutter body must overhang the include region by exactly the swept half-width ${halfWidth}`)
 
   // The exclude region is far enough away that the include edge binds first, so
