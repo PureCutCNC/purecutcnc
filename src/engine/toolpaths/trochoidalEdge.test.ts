@@ -16,6 +16,7 @@
 
 import type { Point } from '../../types/project'
 import { buildTrochoidalContour } from './trochoidalEdge'
+import type { TrochoidalContourResult } from './trochoidalEdge'
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -32,6 +33,46 @@ const rectangle: Point[] = [
   { x: 0, y: 10 },
 ]
 
+/**
+ * The orbit accuracy contract (issue #660, `planning/TROCHOIDAL_EDGE_DESIGN.md`)
+ * is a sagitta: an emitted chord may sit at most this fraction of the cutter
+ * diameter inside the true orbit.
+ */
+const SAGITTA_FRACTION = 0.0022
+
+/**
+ * Steps per orbit, recovered from the emitted array purely so the tests below
+ * can *locate* chords. Nothing asserts on it, and nothing should: the step
+ * count is a derived quantity now, and pinning it would re-freeze the 36-step
+ * proxy #660 removed.
+ */
+function stepsPerLoopOf(result: TrochoidalContourResult, closed: boolean): number {
+  const orbits = result.loopCount + (closed ? 1 : 2)
+  const steps = (result.points.length - 1) / orbits
+  assert(
+    Number.isInteger(steps) && steps >= 3,
+    `unexpected point layout: ${result.points.length} points over ${orbits} orbits`,
+  )
+  return steps
+}
+
+/**
+ * Sagitta of a stationary orbit: its chords are inscribed in a circle whose
+ * centre and radius the caller already knows, so the deviation is measured
+ * directly off emitted geometry.
+ */
+function stationaryOrbitSagitta(points: Point[], center: Point, radius: number, steps: number): number {
+  let worst = 0
+  for (let index = 0; index < steps; index += 1) {
+    const from = points[index]
+    const to = points[index + 1]
+    const midX = (from.x + to.x) / 2
+    const midY = (from.y + to.y) / 2
+    worst = Math.max(worst, radius - Math.hypot(midX - center.x, midY - center.y))
+  }
+  return worst
+}
+
 function testClosedPeriodicPath(): void {
   const result = buildTrochoidalContour(rectangle, {
     orbitRadius: 2,
@@ -43,7 +84,13 @@ function testClosedPeriodicPath(): void {
   assert(result.loopCount === 40, `expected 40 loops, got ${result.loopCount}`)
   assert(approx(result.actualAdvance, 1), `expected 1 mm actual advance, got ${result.actualAdvance}`)
   assert(result.entryCenter !== null, 'expected entry center')
-  assert(result.points.length > result.loopCount * 36, 'expected entry orbit plus moving loops')
+  // Structural, not numeric: one entry orbit plus one orbit per advancing loop.
+  // The old form asserted `points.length > loopCount * 36`, and so quietly
+  // depended on the step-count floor #660 replaced.
+  assert(
+    result.points.length === 1 + stepsPerLoopOf(result, true) * (result.loopCount + 1),
+    `expected entry orbit plus moving loops, got ${result.points.length} points`,
+  )
 
   const first = result.points[0]
   const last = result.points.at(-1)!
@@ -129,10 +176,103 @@ function testOpenGuideCompletesExitOrbit(): void {
   assert(!approx(result.points[0].x, result.points.at(-1)!.x), 'open guide must not close across its gap')
 }
 
+/**
+ * The sagitta bound, asserted on emitted chords (issue #660).
+ *
+ * This deliberately does not look at `stepsPerLoop`. The step count is how the
+ * bound happens to be reached; the bound is what the `0.01 x D` guide allowance
+ * is sized against, and it is the only thing safety depends on. A test that
+ * froze the count would pass while defeating its own purpose.
+ */
+function testStationaryOrbitSagittaBound(): void {
+  const guide: Point[] = [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }, { x: 0, y: 30 }]
+  for (const diameter of [3.175, 6, 12]) {
+    for (const widthRatio of [1.15, 1.2, 1.25, 1.5, 1.8, 2, 2.25, 2.5]) {
+      const label = `D=${diameter} W/D=${widthRatio}`
+      const orbitRadius = (widthRatio * diameter - diameter) / 2
+      const result = buildTrochoidalContour(guide, {
+        orbitRadius,
+        advance: 0.1 * diameter,
+        toolDiameter: diameter,
+        angularDirection: 1,
+      })
+      assert(result.error === undefined, `${label}: ${result.error}`)
+      assert(result.entryCenter !== null, `${label}: expected entry center`)
+      const steps = stepsPerLoopOf(result, true)
+      const sagitta = stationaryOrbitSagitta(result.points, result.entryCenter, orbitRadius, steps)
+      const bound = SAGITTA_FRACTION * diameter
+      assert(sagitta <= bound + 1e-12, `${label}: orbit sagitta ${sagitta} exceeds ${bound}`)
+    }
+  }
+}
+
+/**
+ * The same bound on the chords that actually do the cutting.
+ *
+ * On a straight open guide the centre track is linear and the frame constant,
+ * so the intended path is a closed-form trochoid — centre at `L * s /
+ * movingSteps` along +X, phase `2 * pi * s / stepsPerLoop` — which this test
+ * evaluates *between* emitted points. The deviation measured is therefore the
+ * real chord-to-curve error, not a restatement of the circle formula.
+ *
+ * Analytically the advancing case cannot be the worse one: for a trochoid,
+ * `speed^2 * curvature = R(R - c sin t) / sqrt(R^2 - 2cR sin t + c^2) <= R`, so
+ * its chord sagitta is bounded by the stationary orbit's. It is measured rather
+ * than trusted.
+ */
+function testAdvancingOrbitSagittaBound(): void {
+  const length = 60
+  for (const diameter of [3.175, 6, 12]) {
+    for (const widthRatio of [1.15, 1.2, 1.25, 1.5, 1.8, 2, 2.25, 2.5]) {
+      const label = `D=${diameter} W/D=${widthRatio}`
+      const orbitRadius = (widthRatio * diameter - diameter) / 2
+      const result = buildTrochoidalContour([{ x: 0, y: 0 }, { x: length, y: 0 }], {
+        orbitRadius,
+        advance: 0.1 * diameter,
+        toolDiameter: diameter,
+        angularDirection: 1,
+        closed: false,
+      })
+      assert(result.error === undefined, `${label}: ${result.error}`)
+      const steps = stepsPerLoopOf(result, false)
+      const movingSteps = result.loopCount * steps
+      const curve = (step: number): Point => {
+        const phase = 2 * Math.PI * step / steps
+        return {
+          x: length * step / movingSteps + orbitRadius * Math.cos(phase),
+          y: orbitRadius * Math.sin(phase),
+        }
+      }
+
+      // Self-check: the closed form must reproduce the emitted advancing points
+      // exactly, or the sagitta measured between them means nothing.
+      let modelError = 0
+      for (let step = 0; step <= movingSteps; step += 1) {
+        const emitted = result.points[steps + step]
+        const expected = curve(step)
+        modelError = Math.max(modelError, Math.hypot(emitted.x - expected.x, emitted.y - expected.y))
+      }
+      assert(modelError < 1e-9, `${label}: advancing points diverge from the trochoid by ${modelError}`)
+
+      let worst = 0
+      for (let step = 0; step < movingSteps; step += 1) {
+        const from = result.points[steps + step]
+        const to = result.points[steps + step + 1]
+        const middle = curve(step + 0.5)
+        worst = Math.max(worst, Math.hypot((from.x + to.x) / 2 - middle.x, (from.y + to.y) / 2 - middle.y))
+      }
+      const bound = SAGITTA_FRACTION * diameter
+      assert(worst <= bound + 1e-12, `${label}: advancing sagitta ${worst} exceeds ${bound}`)
+    }
+  }
+}
+
 testClosedPeriodicPath()
 testOrbitRadiusAndDirection()
 testDeterminismAndSeam()
 testInvalidInputsAndBudget()
 testOpenGuideCompletesExitOrbit()
+testStationaryOrbitSagittaBound()
+testAdvancingOrbitSagittaBound()
 
 console.log('trochoidal edge tests passed.')

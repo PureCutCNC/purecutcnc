@@ -18,11 +18,12 @@
  * Arc fitting over real trochoidal output (issue #448).
  *
  * Trochoidal roughing is the densest thing this exporter emits: overlapping
- * orbits sampled to a 0.1 x D chord bound produce tens of thousands of linear
- * moves per operation. Arc output is the only lever that keeps that exportable —
- * measured here, a 30 mm square drops from ~237 KB to ~52 KB — so if fitting
- * ever silently stops applying to this geometry the practical consequence is a
- * multi-megabyte file per operation, not a subtly wrong path.
+ * orbits sampled to the design's chord and sagitta bounds produce tens of
+ * thousands of linear moves per operation. Arc output is the only lever that
+ * keeps that exportable — measured here, a 30 mm square drops from ~159 KB to
+ * ~52 KB — so if fitting ever silently stops applying to this geometry the
+ * practical consequence is a multi-megabyte file per operation, not a subtly
+ * wrong path.
  *
  * The other suites cover the fitter in isolation on hand-built chords. This one
  * covers it end to end on generated trochoidal geometry, which is where the
@@ -155,8 +156,21 @@ function testTrochoidalExportFitsArcs(): void {
     fittedLines * 3 < linearLines,
     `arc fitting must materially shrink trochoidal output, got ${linearLines} -> ${fittedLines} lines`,
   )
+  // The byte ratio is 2.5x, not 3x, and the difference is the input not the
+  // fitter. Issue #660 replaced the 36-step orbit floor with the sagitta bound
+  // the design actually contracts for, so the same orbits arrive as a third
+  // fewer, longer chords:
+  //
+  //   before #660   9554 lines / 237,505 B  ->  1699 lines / 51,598 B (1572 arcs)
+  //   after  #660   6410 lines / 159,304 B  ->  1699 lines / 51,577 B (1570 arcs)
+  //
+  // Fitting is unchanged — same arcs, same output, from less input — but the
+  // achievable compression fell from 4.6x to 3.1x, leaving the old 3x threshold
+  // 2.9% of headroom. That is a tripwire, not a guard. At 2.5x the headroom is
+  // 19% and a fitting failure (which collapses the ratio toward 1x) is still
+  // caught with room to spare.
   assert(
-    fitted.gcode.length * 3 < linear.gcode.length,
+    fitted.gcode.length * 2.5 < linear.gcode.length,
     `arc fitting must materially shrink the exported bytes, got ${linear.gcode.length} -> ${fitted.gcode.length}`,
   )
 
