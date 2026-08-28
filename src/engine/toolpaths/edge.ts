@@ -764,6 +764,7 @@ export function appendTrochoidalContoursAtLevels(
   const pathParams: TrochoidalPathParams = { orbitRadius, advance, toolDiameter, angularDirection }
   const prepared: PreparedTrochoidalPath[] = []
   let remainingPoints = budget.remainingPoints
+  let remainingMoves = budget.remainingMoves
 
   for (const contour of contours) {
     let previousZ = topZ
@@ -778,7 +779,7 @@ export function appendTrochoidalContoursAtLevels(
       }
       for (const fragment of fragments) {
         const entryMoves = trochoidalEntryMoveCount(fragment.entryStartZ, fragment.z, orbitRadius, operation)
-        if (entryMoves > MAX_TROCHOIDAL_ENTRY_MOVES || entryMoves + 3 >= remainingPoints) {
+        if (entryMoves > MAX_TROCHOIDAL_ENTRY_MOVES || entryMoves + 3 >= remainingMoves) {
           warnings.push({ code: 'edgeTrochoidalEntryBudget', params: { x: fragment.points[0]?.x ?? 0, y: fragment.points[0]?.y ?? 0 } })
           return currentPosition
         }
@@ -786,6 +787,7 @@ export function appendTrochoidalContoursAtLevels(
         // path (issue #661). The store keys on the planned geometry, so a tab,
         // an obstacle or a region mask that changed the fragmentation is a
         // different key and cannot reuse anything.
+        const maxPoints = Math.min(remainingPoints, remainingMoves) - entryMoves - 3
         const { built, generated } = budget.paths.resolve(
           fragment.points,
           fragment.closed,
@@ -796,12 +798,18 @@ export function appendTrochoidalContoursAtLevels(
             toolDiameter,
             angularDirection,
             closed: fragment.closed,
-            maxPoints: remainingPoints - entryMoves - 3,
+            maxPoints,
           }),
         )
-        if (built.error || built.points.length < 2 || !built.entryCenter) {
+        // A reused path never entered the generator, so it never met the
+        // generator's own budget check. Apply it here, or a hit and a miss
+        // refuse in different places and report it differently.
+        const overBudget = built.points.length > maxPoints
+        if (built.error || overBudget || built.points.length < 2 || !built.entryCenter) {
           warnings.push({
-            code: built.error === 'move-budget' ? 'edgeTrochoidalMoveBudget' : 'edgeTrochoidalInvalidGuide',
+            code: built.error === 'move-budget' || overBudget
+              ? 'edgeTrochoidalMoveBudget'
+              : 'edgeTrochoidalInvalidGuide',
             params: { x: fragment.points[0]?.x ?? 0, y: fragment.points[0]?.y ?? 0 },
           })
           return currentPosition
@@ -834,21 +842,26 @@ export function appendTrochoidalContoursAtLevels(
           }
           previousEntryPoint = entryPoint
         }
-        // Generated points are charged once, when the path is actually built.
-        // The entry helix and the transition moves are emitted per level, so
-        // they are charged per level.
-        const consumedPoints = entryMoves + 3 + (generated ? built.points.length : 0)
-        if (consumedPoints > remainingPoints) {
+        // Generation is charged once, when the path is actually built; emission
+        // is charged for every level, because every level is cut. The emission
+        // account carries the pre-#661 arithmetic, so an operation refuses at
+        // exactly the depth it always did — sharing a path must not turn a
+        // refusal into a nine-million-move toolpath.
+        const generatedPoints = entryMoves + 3 + (generated ? built.points.length : 0)
+        const emittedPoints = entryMoves + 3 + built.points.length
+        if (emittedPoints > remainingMoves || generatedPoints > remainingPoints) {
           warnings.push({ code: 'edgeTrochoidalMoveBudget' })
           return currentPosition
         }
-        remainingPoints -= consumedPoints
+        remainingPoints -= generatedPoints
+        remainingMoves -= emittedPoints
         prepared.push({ built, z: fragment.z, entryStartZ: fragment.entryStartZ, closed: fragment.closed })
       }
       previousZ = z
     }
   }
   budget.remainingPoints = remainingPoints
+  budget.remainingMoves = remainingMoves
 
   let nextPosition = currentPosition
   for (const path of prepared) {
@@ -1005,7 +1018,11 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
     // here and threaded through every sub-operation, so N features share the
     // 500,000 points rather than quietly claiming N x 500,000.
     const sharedBudget: TrochoidalOperationBudget | undefined = isTrochoidal
-      ? { remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET, paths: createTrochoidalPathStore() }
+      ? {
+          remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET,
+          remainingMoves: DEFAULT_TROCHOIDAL_POINT_BUDGET,
+          paths: createTrochoidalPathStore(),
+        }
       : undefined
     const parts = perFeatureOperations(operation, project).map((subOp) =>
       generateEdgeRouteToolpathSingle(project, subOp, sharedBudget),
@@ -1222,6 +1239,7 @@ function generateEdgeRouteToolpathSingle(
   // only when this call *is* the whole operation. The budget is per operation.
   const trochoidalBudget: TrochoidalOperationBudget = sharedTrochoidalBudget ?? {
     remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET,
+    remainingMoves: DEFAULT_TROCHOIDAL_POINT_BUDGET,
     paths: createTrochoidalPathStore(),
   }
   let currentPosition: ToolpathPoint | null = null

@@ -310,16 +310,28 @@ stationary entry and exit orbits, helical entries, tab-top fragments, and
 fragment transitions. Entry and operation budgets fail atomically with
 structured warnings.
 
-Since #661 the budget counts **distinct generated paths, not emitted levels**.
-Levels whose guide fragments identically share one generated path, keyed by the
-planned fragment geometry (`trochoidalLevelPaths.ts`), and that path is charged
-once; the helical entry and the fragment transitions are still charged per
-level, because they are still generated per level. The machine's motion is
-unchanged — every level is still cut, and the emitted program is byte-identical.
+Since #661 that is **two accounts**, because the question split in two.
 
-The consequence, deliberate and temporary: the emitted cut moves are no longer
-what the 500,000 bounds. Deriving a ceiling from a memory target is #662's job,
-and it is the reason #659 orders these three children the way it does.
+- **Emission** (`remainingMoves`) is what the operation cuts: one array of moves
+  per level, every level. It carries the arithmetic the single pre-#661 budget
+  had, so an operation refuses at exactly the depth it always did. This is the
+  account that binds, and the one #662 re-derives from a memory target.
+- **Generation** (`remainingPoints`) is what the operation builds. Levels whose
+  guide fragments identically share one generated path, keyed by the planned
+  fragment geometry (`trochoidalLevelPaths.ts`), and that path is charged once,
+  so this term stops scaling with depth.
+
+Generation is always a subset of emission, so separating them changes no
+output — that is the point, and `trochoidalLevelSharing.test.ts` pins it. The
+separation exists so #662 can raise the emission ceiling without also
+multiplying what generation costs.
+
+**Charging generation alone is not enough, and this was learned the expensive
+way.** With emission uncharged, a 60 x 40 inch outside route that had refused
+with `edgeTrochoidalMoveBudget` instead ran to completion at 9,873,183 moves and
+~2 GB of heap — in a browser, a dead tab rather than a warning. A reused array
+of points describes the same motion N times; the machine still cuts it N times.
+A path shared for generation is never a level that costs nothing to emit.
 
 Warnings that refer to a place — skipped spans, unsafe tab fragments, channels
 that do not fit — carry the offending XY in their params so the UI can point at

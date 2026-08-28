@@ -19,12 +19,12 @@
  *
  * Four things have to hold, and they are the four tests below.
  *
- * 1. The emitted program does not move. This is a representation change: the
- *    machine still cuts every level, so the move count is unchanged by design
- *    and the G-code must be byte-identical. Asserted by running the same input
- *    twice — once with the real store, once with one that never reuses — rather
- *    than against a checked-in golden, so it keeps meaning something after
- *    #662 moves the point ceiling.
+ * 1. The emitted program does not move — including *when it refuses*. This is a
+ *    representation change: the machine still cuts every level, so the move
+ *    count is unchanged by design and the G-code must be byte-identical.
+ *    Asserted by running the same input twice — once with the real store, once
+ *    with one that never reuses — rather than against a checked-in golden, so it
+ *    keeps meaning something after #662 moves the point ceiling.
  * 2. Generation happens once per distinct path, not once per level. Call count,
  *    never timing: AGENTS.md § Performance assertions, and #383/#386/#508.
  * 3. A tab activating partway down splits the signature. Levels either side of
@@ -49,13 +49,18 @@
  * | key ignores a build parameter | `every build parameter splits the signature` |
  * | backstop skipped on a cache hit | `a shared path still fails closed…` |
  * | emission mutates the shared points array | `byte-identical G-code` and the tab test |
+ * | emission charged once instead of per level | `sharing does not move the point at which an operation refuses` |
+ * | generator budget check skipped on a cache hit | same |
  *
- * Two limits worth naming rather than leaving to be discovered. The
+ * The last two are there because the first version of this change shipped
+ * without them and CI caught it: charging generation only turned a real
+ * fixture's honest budget refusal into 9,873,183 moves and ~2 GB of heap.
+ *
+ * One limit worth naming rather than leaving to be discovered: the
  * shared-vs-unshared comparison is differential, so it catches divergence
  * *caused by sharing* and not emission bugs that would affect both runs alike —
  * the branch-against-`main` byte comparison on the real 15-level fixture covers
- * that, and lives in the PR, not here. And charging the budget per level again
- * leaves every test green, because none of these is a budget test.
+ * that, and lives in the PR, not here.
  *
  * Run with: npx tsx src/engine/toolpaths/trochoidalLevelSharing.test.ts
  */
@@ -211,11 +216,17 @@ function run(options: {
   levels?: number[]
   tabs?: Tab[]
   isSegmentSafe?: (from: Point, to: Point, z: number) => boolean
+  budget?: number
 }): RunResult {
   const op = operation()
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
-  const budget: TrochoidalOperationBudget = { remainingPoints: 500_000, paths: options.store }
+  const ceiling = options.budget ?? 500_000
+  const budget: TrochoidalOperationBudget = {
+    remainingPoints: ceiling,
+    remainingMoves: ceiling,
+    paths: options.store,
+  }
   const tabs = options.tabs ?? []
   const planner = tabs.length > 0
     ? createTrochoidalFragmentPlanner(tabs, [], TAB_GUIDE_CLEARANCE, TOOL_DIAMETER, op, warnings)
@@ -417,6 +428,47 @@ test('congruent spans in different places never share a path', () => {
   assert(
     JSON.stringify(shared.moves) === JSON.stringify(unshared.moves),
     'congruent spans must each be cut where they are',
+  )
+})
+
+/**
+ * The regression this file exists to prevent, and the one that got through:
+ * sharing the *generated* path must not stop the *emitted* moves being charged.
+ *
+ * It reached CI. Charging generation only, an operation that refused with
+ * `edgeTrochoidalMoveBudget` on a real fixture instead ran to completion at
+ * 9,873,183 moves and ~2 GB of heap — in the browser, a dead tab rather than a
+ * warning. The machine cuts every level whether or not one array of points was
+ * reused to describe them, so emission is charged per level and the depth at
+ * which an operation refuses is exactly where it was before #661.
+ */
+test('sharing does not move the point at which an operation refuses', () => {
+  // Sized to refuse partway down rather than at the first level, so the test
+  // distinguishes "refuses in the same place" from "refuses at all".
+  const perLevel = run({ store: createTrochoidalPathStore(), levels: [-1] })
+  assert(perLevel.moves.length > 0, 'the calibration run must emit')
+  const ceiling = Math.floor(perLevel.moves.length * 3.5)
+
+  const shared = run({ store: createTrochoidalPathStore(), budget: ceiling })
+  const unshared = run({ store: new NeverReusingPathStore(), budget: ceiling })
+
+  assert(
+    shared.warnings.some((warning) => warning.code === 'edgeTrochoidalMoveBudget'),
+    `expected the shared run to refuse, got: ${shared.warnings.map((w) => w.code).join(', ') || 'none'}`,
+  )
+  assert(
+    JSON.stringify(shared.warnings) === JSON.stringify(unshared.warnings),
+    `sharing must not change which warning is raised, or where: ${JSON.stringify(shared.warnings)} vs ${JSON.stringify(unshared.warnings)}`,
+  )
+  assert(
+    JSON.stringify(shared.moves) === JSON.stringify(unshared.moves),
+    'sharing must not change what a refusing operation emits',
+  )
+  // And the generation account really is the cheaper one — otherwise this test
+  // would pass with the sharing removed entirely.
+  assert(
+    shared.generatedCount < unshared.generatedCount,
+    `sharing must still be in effect: ${shared.generatedCount} vs ${unshared.generatedCount}`,
   )
 })
 
