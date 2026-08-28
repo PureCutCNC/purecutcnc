@@ -59,6 +59,8 @@ import {
 import { splitClosedGuideByForbiddenPaths, type ClosedGuideFragment } from './guideFragments'
 import { resolveRegionDomainCurve } from './regionDomain'
 import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET } from './trochoidalEdge'
+import { createTrochoidalPathStore } from './trochoidalLevelPaths'
+import type { TrochoidalPathParams } from './trochoidalLevelPaths'
 import { expandedTabFootprints } from './tabs'
 
 const TROCHOIDAL_GUIDE_SAFETY_FRACTION = 0.01
@@ -391,14 +393,14 @@ function polylineLength(points: Point[]): number {
   ), 0)
 }
 
-interface TrochoidalGuideFragment {
+export interface TrochoidalGuideFragment {
   points: Point[]
   z: number
   closed: boolean
   entryStartZ: number
 }
 
-type TrochoidalFragmentPlanner = (
+export type TrochoidalFragmentPlanner = (
   contour: Point[],
   z: number,
   previousZ: number,
@@ -498,8 +500,13 @@ function tabTopForGuideFragment(fragment: Point[], tabs: Tab[], tabGuideClearanc
  * Every interruption is planned against the guide itself before trochoids are
  * emitted. Post-clipping a generated orbit would manufacture an unproven
  * re-entry, so these short spans are independent, helix-entered toolpaths.
+ *
+ * Exported so the level-sharing tests can drive the real planner rather than a
+ * hand-written stand-in: what those tests assert is that a tab crossing
+ * `z_top` yields a different fragmentation signature, and a stand-in planner
+ * would only assert that about itself.
  */
-function createTrochoidalFragmentPlanner(
+export function createTrochoidalFragmentPlanner(
   tabs: Tab[],
   staticForbiddenPaths: ClipperPath[],
   tabGuideClearance: number,
@@ -727,8 +734,16 @@ interface PreparedTrochoidalPath {
 /**
  * Prepare every level before appending moves. This preserves all-target atomicity:
  * a bad guide, unsafe cutter segment, or budget overflow cannot leave a partial cut.
+ *
+ * Exported for `trochoidalLevelSharing.test.ts`. The level-sharing contract is
+ * that a shared path is still checked at every level's own Z, and
+ * `isSegmentSafe` is derived inside `generateEdgeRouteToolpathSingle` from wall
+ * and obstacle geometry — there is no fixture that makes it fail at one level
+ * and pass at its neighbours while leaving the fragmentation identical, which
+ * is exactly the case the contract is about. Driving this directly is the only
+ * way to assert it.
  */
-function appendTrochoidalContoursAtLevels(
+export function appendTrochoidalContoursAtLevels(
   moves: ToolpathMove[],
   currentPosition: ToolpathPoint | null,
   contours: Point[][],
@@ -746,8 +761,10 @@ function appendTrochoidalContoursAtLevels(
   const cutWidth = operation.trochoidalCutWidth ?? toolDiameter * 1.5
   const orbitRadius = (cutWidth - toolDiameter) / 2
   const advance = (operation.trochoidalAdvance ?? 0.1) * toolDiameter
+  const pathParams: TrochoidalPathParams = { orbitRadius, advance, toolDiameter, angularDirection }
   const prepared: PreparedTrochoidalPath[] = []
   let remainingPoints = budget.remainingPoints
+  let remainingMoves = budget.remainingMoves
 
   for (const contour of contours) {
     let previousZ = topZ
@@ -762,25 +779,44 @@ function appendTrochoidalContoursAtLevels(
       }
       for (const fragment of fragments) {
         const entryMoves = trochoidalEntryMoveCount(fragment.entryStartZ, fragment.z, orbitRadius, operation)
-        if (entryMoves > MAX_TROCHOIDAL_ENTRY_MOVES || entryMoves + 3 >= remainingPoints) {
+        if (entryMoves > MAX_TROCHOIDAL_ENTRY_MOVES || entryMoves + 3 >= remainingMoves) {
           warnings.push({ code: 'edgeTrochoidalEntryBudget', params: { x: fragment.points[0]?.x ?? 0, y: fragment.points[0]?.y ?? 0 } })
           return currentPosition
         }
-        const built = buildTrochoidalContour(fragment.points, {
-          orbitRadius,
-          advance,
-          toolDiameter,
-          angularDirection,
-          closed: fragment.closed,
-          maxPoints: remainingPoints - entryMoves - 3,
-        })
-        if (built.error || built.points.length < 2 || !built.entryCenter) {
+        // Levels whose planner produced this exact guide share one generated
+        // path (issue #661). The store keys on the planned geometry, so a tab,
+        // an obstacle or a region mask that changed the fragmentation is a
+        // different key and cannot reuse anything.
+        const maxPoints = Math.min(remainingPoints, remainingMoves) - entryMoves - 3
+        const { built, generated } = budget.paths.resolve(
+          fragment.points,
+          fragment.closed,
+          pathParams,
+          () => buildTrochoidalContour(fragment.points, {
+            orbitRadius,
+            advance,
+            toolDiameter,
+            angularDirection,
+            closed: fragment.closed,
+            maxPoints,
+          }),
+        )
+        // A reused path never entered the generator, so it never met the
+        // generator's own budget check. Apply it here, or a hit and a miss
+        // refuse in different places and report it differently.
+        const overBudget = built.points.length > maxPoints
+        if (built.error || overBudget || built.points.length < 2 || !built.entryCenter) {
           warnings.push({
-            code: built.error === 'move-budget' ? 'edgeTrochoidalMoveBudget' : 'edgeTrochoidalInvalidGuide',
+            code: built.error === 'move-budget' || overBudget
+              ? 'edgeTrochoidalMoveBudget'
+              : 'edgeTrochoidalInvalidGuide',
             params: { x: fragment.points[0]?.x ?? 0, y: fragment.points[0]?.y ?? 0 },
           })
           return currentPosition
         }
+        // Sharing the path must not share the check. The backstop runs for
+        // every level that uses this path, at that level's own Z — a reused
+        // path is not a path already proven safe here.
         if (!trochoidalPathIsSafe(built.points, (from, to) => isSegmentSafe(from, to, fragment.z))) {
           warnings.push({ code: 'edgeTrochoidalSafetyCheck', params: { x: fragment.points[0]?.x ?? 0, y: fragment.points[0]?.y ?? 0 } })
           return currentPosition
@@ -806,18 +842,26 @@ function appendTrochoidalContoursAtLevels(
           }
           previousEntryPoint = entryPoint
         }
-        const consumedPoints = entryMoves + built.points.length + 3
-        if (consumedPoints > remainingPoints) {
+        // Generation is charged once, when the path is actually built; emission
+        // is charged for every level, because every level is cut. The emission
+        // account carries the pre-#661 arithmetic, so an operation refuses at
+        // exactly the depth it always did — sharing a path must not turn a
+        // refusal into a nine-million-move toolpath.
+        const generatedPoints = entryMoves + 3 + (generated ? built.points.length : 0)
+        const emittedPoints = entryMoves + 3 + built.points.length
+        if (emittedPoints > remainingMoves || generatedPoints > remainingPoints) {
           warnings.push({ code: 'edgeTrochoidalMoveBudget' })
           return currentPosition
         }
-        remainingPoints -= consumedPoints
+        remainingPoints -= generatedPoints
+        remainingMoves -= emittedPoints
         prepared.push({ built, z: fragment.z, entryStartZ: fragment.entryStartZ, closed: fragment.closed })
       }
       previousZ = z
     }
   }
   budget.remainingPoints = remainingPoints
+  budget.remainingMoves = remainingMoves
 
   let nextPosition = currentPosition
   for (const path of prepared) {
@@ -974,7 +1018,11 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
     // here and threaded through every sub-operation, so N features share the
     // 500,000 points rather than quietly claiming N x 500,000.
     const sharedBudget: TrochoidalOperationBudget | undefined = isTrochoidal
-      ? { remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET }
+      ? {
+          remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET,
+          remainingMoves: DEFAULT_TROCHOIDAL_POINT_BUDGET,
+          paths: createTrochoidalPathStore(),
+        }
       : undefined
     const parts = perFeatureOperations(operation, project).map((subOp) =>
       generateEdgeRouteToolpathSingle(project, subOp, sharedBudget),
@@ -1191,6 +1239,8 @@ function generateEdgeRouteToolpathSingle(
   // only when this call *is* the whole operation. The budget is per operation.
   const trochoidalBudget: TrochoidalOperationBudget = sharedTrochoidalBudget ?? {
     remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET,
+    remainingMoves: DEFAULT_TROCHOIDAL_POINT_BUDGET,
+    paths: createTrochoidalPathStore(),
   }
   let currentPosition: ToolpathPoint | null = null
   const maxLinkDistance = tool.diameter

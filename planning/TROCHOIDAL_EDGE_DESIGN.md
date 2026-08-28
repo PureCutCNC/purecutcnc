@@ -137,6 +137,12 @@ and the protected obstacles. If the guide-domain maths ever misses a case the
 operation fails closed rather than emitting the path. The backstop is a
 safety net, not the mechanism — a trip is a bug, not an expected outcome.
 
+**Sharing a path across levels never shares its check.** Since #661 a level may
+reuse the path an earlier level generated, and the backstop then runs again for
+that level, at that level's own Z. A path proven safe at −1 mm is not a path
+proven safe at −15 mm, and the whole reason interruptions are planned in the
+guide domain is to keep an orbit out of material it was never cleared for.
+
 ### Tight spots interrupt, they do not fail the job
 
 A span that survives fragmentation but is too short to hold a safe helical entry
@@ -304,6 +310,29 @@ stationary entry and exit orbits, helical entries, tab-top fragments, and
 fragment transitions. Entry and operation budgets fail atomically with
 structured warnings.
 
+Since #661 that is **two accounts**, because the question split in two.
+
+- **Emission** (`remainingMoves`) is what the operation cuts: one array of moves
+  per level, every level. It carries the arithmetic the single pre-#661 budget
+  had, so an operation refuses at exactly the depth it always did. This is the
+  account that binds, and the one #662 re-derives from a memory target.
+- **Generation** (`remainingPoints`) is what the operation builds. Levels whose
+  guide fragments identically share one generated path, keyed by the planned
+  fragment geometry (`trochoidalLevelPaths.ts`), and that path is charged once,
+  so this term stops scaling with depth.
+
+Generation is always a subset of emission, so separating them changes no
+output — that is the point, and `trochoidalLevelSharing.test.ts` pins it. The
+separation exists so #662 can raise the emission ceiling without also
+multiplying what generation costs.
+
+**Charging generation alone is not enough, and this was learned the expensive
+way.** With emission uncharged, a 60 x 40 inch outside route that had refused
+with `edgeTrochoidalMoveBudget` instead ran to completion at 9,873,183 moves and
+~2 GB of heap — in a browser, a dead tab rather than a warning. A reused array
+of points describes the same motion N times; the machine still cuts it N times.
+A path shared for generation is never a level that costs nothing to emit.
+
 Warnings that refer to a place — skipped spans, unsafe tab fragments, channels
 that do not fit — carry the offending XY in their params so the UI can point at
 it.
@@ -314,6 +343,7 @@ it.
 - `src/engine/toolpaths/trochoidalPath.ts` — shared entry synthesis and point budget; both integrations consume it rather than re-deriving the clearance
 - `src/engine/toolpaths/guideFragments.ts` — cyclic guide splitting
 - `src/engine/toolpaths/edge.ts` — integration, clearances, safety backstop
+- `src/engine/toolpaths/trochoidalLevelPaths.ts` — the fragmentation signature and the per-operation path store; one generated path per distinct guide, checked per level
 - `src/engine/toolpaths/carving.ts` — engrave integration
 - #447 — arc fitting; without it this exports as raw G1
 - #452 — region redesign; restores region support here

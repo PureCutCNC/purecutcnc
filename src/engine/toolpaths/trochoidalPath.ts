@@ -17,12 +17,44 @@
 import type { Operation, Point } from '../../types/project'
 import type { ToolpathMove, ToolpathPoint } from './types'
 import { plungeLimitedFeedScale } from './entry'
+import type { TrochoidalPathStore } from './trochoidalLevelPaths'
 
 export const TROCHOIDAL_ENTRY_STEPS_PER_REVOLUTION = 36
 export const MAX_TROCHOIDAL_ENTRY_MOVES = 20_000
 
+/**
+ * Two accounts, because #661 split one question into two.
+ *
+ * `remainingMoves` is what the operation **emits**: one array of cut moves per
+ * level, every level, because the machine cuts every level. It carries the
+ * arithmetic the single pre-#661 budget had, so the point at which an operation
+ * refuses is exactly where it always was. It is the account #662 re-derives
+ * from a memory target.
+ *
+ * `remainingPoints` is what the operation **generates**. Levels whose guide
+ * fragments identically share one generated path and are charged for it once,
+ * so this term stops scaling with depth. It is the term that has to be separate
+ * for #662 to raise the emission ceiling without also multiplying generation
+ * cost — the whole point of #661.
+ *
+ * Generation is always a subset of emission, so `remainingMoves` is what binds
+ * today. Both are checked anyway: an account that is only ever inferred is an
+ * account that quietly goes wrong.
+ */
 export interface TrochoidalOperationBudget {
+  /** Generated points: charged once per distinct path (issue #661). */
   remainingPoints: number
+  /** Emitted points: charged per level, as before #661. This is what refuses. */
+  remainingMoves: number
+  /**
+   * Paths generated so far this operation, keyed by guide fragmentation
+   * signature (issue #661). Levels whose planner produced the same guide share
+   * one generated path and are charged for it once; the per-level safety
+   * backstop and entry synthesis still run for every level. Shares the budget's
+   * lifetime because it answers the same question: what has this operation
+   * already paid to generate.
+   */
+  paths: TrochoidalPathStore
 }
 
 export function trochoidalEntryStrategy(operation: Operation): 'helix' | 'plunge' {

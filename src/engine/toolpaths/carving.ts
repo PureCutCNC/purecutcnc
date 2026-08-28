@@ -32,6 +32,8 @@ import { resolveRegionDomainCurve } from './regionDomain'
 import { buildRegionMask, splitFeatureTargets } from './regions'
 import { helixAngularDirection } from './entry'
 import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET } from './trochoidalEdge'
+import { createTrochoidalPathStore } from './trochoidalLevelPaths'
+import type { TrochoidalPathParams } from './trochoidalLevelPaths'
 import {
   appendTrochoidalEntry,
   MAX_TROCHOIDAL_ENTRY_MOVES,
@@ -311,8 +313,18 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
 
   // One budget per operation, threaded through every target and every fragment.
   const budget: TrochoidalOperationBudget | undefined = isTrochoidal
-    ? { remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET }
+    ? {
+        remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET,
+        remainingMoves: DEFAULT_TROCHOIDAL_POINT_BUDGET,
+        paths: createTrochoidalPathStore(),
+      }
     : undefined
+  const pathParams: TrochoidalPathParams = {
+    orbitRadius,
+    advance,
+    toolDiameter: tool.diameter,
+    angularDirection,
+  }
 
   for (const feature of targetFeatures) {
     const flattened = flattenProfile(feature.sketch.profile)
@@ -340,6 +352,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
       // A bad guide or a budget overflow must not leave a partially cut slot.
       const prepared: PreparedCarvePath[] = []
       let remainingPoints = budget!.remainingPoints
+      let remainingMoves = budget!.remainingMoves
       let preparationFailed = false
 
       for (const fragment of fragments) {
@@ -351,44 +364,66 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
           const fragX = fragment.points[0]?.x ?? 0
           const fragY = fragment.points[0]?.y ?? 0
 
-          if (entryMoves > MAX_TROCHOIDAL_ENTRY_MOVES || entryMoves + 3 >= remainingPoints) {
+          if (entryMoves > MAX_TROCHOIDAL_ENTRY_MOVES || entryMoves + 3 >= remainingMoves) {
             warnings.push({ code: 'carveTrochoidalEntryBudget', params: { x: fragX, y: fragY } })
             preparationFailed = true
             break
           }
 
-          const built = buildTrochoidalContour(fragment.points, {
-            orbitRadius,
-            advance,
-            toolDiameter: tool.diameter,
-            angularDirection,
-            closed: fragment.closed,
-            maxPoints: remainingPoints - entryMoves - 3,
-          })
+          // The guide here is fragmented by the region mask alone, outside the
+          // level loop, so every level asks for the identical path and only Z
+          // differs. Same store, same contract as the Edge Route branch
+          // (issue #661): generated once, emitted and entered per level.
+          const maxPoints = Math.min(remainingPoints, remainingMoves) - entryMoves - 3
+          const { built, generated } = budget!.paths.resolve(
+            fragment.points,
+            fragment.closed,
+            pathParams,
+            () => buildTrochoidalContour(fragment.points, {
+              orbitRadius,
+              advance,
+              toolDiameter: tool.diameter,
+              angularDirection,
+              closed: fragment.closed,
+              maxPoints,
+            }),
+          )
 
-          if (built.error || built.points.length < 2 || !built.entryCenter) {
+          // A reused path never entered the generator, so it never met the
+          // generator's own budget check. Apply it here, or a hit and a miss
+          // refuse in different places.
+          const overBudget = built.points.length > maxPoints
+          if (built.error || overBudget || built.points.length < 2 || !built.entryCenter) {
             warnings.push({
-              code: built.error === 'move-budget' ? 'carveTrochoidalMoveBudget' : 'carveTrochoidalInvalidGuide',
+              code: built.error === 'move-budget' || overBudget
+                ? 'carveTrochoidalMoveBudget'
+                : 'carveTrochoidalInvalidGuide',
               params: { x: fragX, y: fragY },
             })
             preparationFailed = true
             break
           }
 
-          const consumedPoints = entryMoves + built.points.length + 3
-          if (consumedPoints > remainingPoints) {
+          // Generation once per distinct path, emission per level — see
+          // `TrochoidalOperationBudget`. The emission account is what refuses,
+          // and it refuses exactly where it did before #661.
+          const generatedPoints = entryMoves + 3 + (generated ? built.points.length : 0)
+          const emittedPoints = entryMoves + 3 + built.points.length
+          if (emittedPoints > remainingMoves || generatedPoints > remainingPoints) {
             warnings.push({ code: 'carveTrochoidalMoveBudget', params: { x: fragX, y: fragY } })
             preparationFailed = true
             break
           }
 
-          remainingPoints -= consumedPoints
+          remainingPoints -= generatedPoints
+          remainingMoves -= emittedPoints
           prepared.push({ built, z: levelZ, entryStartZ, closed: fragment.closed })
           previousZ = levelZ
         }
       }
 
       budget!.remainingPoints = remainingPoints
+      budget!.remainingMoves = remainingMoves
 
       if (hasFatalCarveTrochoidalWarning(warnings)) {
         return { operationId: operation.id, moves: [], warnings, bounds: null }
