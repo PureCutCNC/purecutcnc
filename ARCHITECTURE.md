@@ -147,3 +147,72 @@ There is **no MCP server or agent-facing tool surface in the app today**. Earlie
 - All mutations should flow through `projectStore` actions (same rule as the UI).
 - An agent will need a project-state inspection call before making changes.
 - Geometric modifications must produce valid closed profiles, except for explicit open-path engrave features.
+
+## 11. End-to-End Pipeline (UI action → G-code)
+
+Sections 2–8 own each layer's contract in isolation. This section owns the
+**ordering between them**: the path one operation takes from a user action to
+emitted G-code. Each stage names its entry point; per-stage detail stays in the
+area `INDEX.md` files rather than being restated here.
+
+### The path
+
+1. **User action → store.** All mutations go through `projectStore` actions
+   (`src/store/projectStore.ts`, slices under `src/store/slices/`). Operation
+   target selection filters with `isMachinable` in `operationsSlice.ts` — this
+   is where construction geometry stops being eligible for CAM (§3).
+2. **Generation is driven from the app layer, not the engine.**
+   `useToolpathGeneration` (`src/app/useToolpathGeneration.ts`) owns
+   `generateToolpathForOperation`, which dispatches on `operation.kind` to
+   exactly one generator. There is no single engine-level `generateToolpath()`:
+   the engine exports one `generate*Toolpath` per strategy and the hook chooses
+   between them. Results are cached per operation id and revalidated by
+   `isCacheHit`, so a cache miss — not a store subscription — is what triggers
+   recomputation.
+3. **Inside a generator**, using `generatePocketToolpath` (`pocket.ts`) as the
+   reference shape:
+   1. `resolveFeatureInstance` (`src/store/helpers/resolveFeatures.ts`) —
+      definition + transform into world geometry (§4 resolver boundary).
+   2. `resolvePocketRegions` / `resolveInsideEdgeRegions` (`resolver.ts`) —
+      features and operation into Clipper input regions.
+   3. `buildRegionMask` (`regions.ts`) — compose the region mask.
+   4. `resolveRegionDomainArea` / `…Centre` / `…Curve` (`regionDomain.ts`) —
+      mask into a typed operation domain. Which resolver a kind uses is owned
+      by the table in [`planning/REGION_FEATURE_SEMANTICS.md`](planning/REGION_FEATURE_SEMANTICS.md), not by the
+      generator (§8).
+   5. The pattern branch, dispatched through `OPERATION_PATTERN_SUPPORT`
+      (`pocketPatterns.ts`) — kind → generator is step 2's job; pattern *within*
+      a kind is this table's.
+4. **Post-generation, back in the hook**, in this order: tab warnings → tab
+   motion → `optimizeLinearMoves` → clamp warnings. The order is load-bearing —
+   `applyTabWarnings` judges each tab against the cut Z range and the tab
+   appliers raise that range, so warning after applying would report every
+   applied tab as lying outside the range it just created.
+5. **Emission.** `ExportDialog` resolves the machine through
+   `getActiveMachineDefinition(project)` — the export boundary (§3) — then calls
+   `runPostProcessor` (`src/engine/gcode/postprocessor.ts`), which owns arc
+   fitting, modal tracking, and canned cycles.
+6. **Parallel consumers.** The same `ToolpathResult` also feeds simulation
+   (`simulateOperationHeightfield`, `src/engine/simulation/replay.ts`), the
+   operation booklet, and model export. They consume generator output; they are
+   not stages on the export path.
+
+### Three crossings worth knowing
+
+- **Y-down → Y-up happens exactly once**, at `projectToMachinePoint`
+  (`src/engine/gcode/utils.ts`), called only from inside `postprocessor.ts`.
+  Everything upstream — resolver, region mask, generators, simulation — is
+  internal Y-down (§8).
+- **Units are not converted per stage.** A project is stored in one system and
+  every generator works in it unchanged. `convertProjectUnits` runs only on an
+  explicit unit switch (`workpieceSlice.ts`) and on import merge
+  (`src/import/camj.ts`); the postprocessor reads `project.meta.units` once as
+  its output units. A generator that converts units is a bug, not a stage.
+- **Construction geometry is excluded at each point of use, not filtered once
+  upstream.** `isMachinable` gates CAM target selection
+  (`operationsSlice.ts`); `modelFeatures()` gates CSG (`src/engine/csg.ts`) and
+  the 3D viewport. Use those predicates rather than ad-hoc checks (§3).
+
+Toolpath warnings raised anywhere in stages 3–4 are structured
+`{ code, params }` (`warningCodes.ts`) and are translated only at presentation
+by `src/i18n/warningText.ts` — the engine stays free of i18n (§9).

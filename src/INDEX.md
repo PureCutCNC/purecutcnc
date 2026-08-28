@@ -35,5 +35,5 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 
 ## Conventions
 - Strict TS, no `any`. See `types/project.ts` for canonical data shapes.
-- 2D internal coords have Y growing downward; G-code export inverts to Cartesian. See [ARCHITECTURE.md §6](../ARCHITECTURE.md).
+- 2D internal coords have Y growing downward; G-code export inverts to Cartesian. See [ARCHITECTURE.md §8](../ARCHITECTURE.md).
 - Use `utils/units.ts` for mm/inch conversions — never hardcode unit math.
