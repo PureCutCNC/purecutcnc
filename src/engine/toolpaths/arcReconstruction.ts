@@ -1066,27 +1066,71 @@ function perpendicularDistance(p: Point, a: Point, b: Point): number {
   return Math.abs(dy * p.x - dx * p.y + b.x * a.y - b.y * a.x) / Math.sqrt(len2)
 }
 
-function rdpSimplifyOpenRun(points: Point[], tolerance: number): Point[] {
+/**
+ * Distance from `p` to the *segment* a-b, clamped at both ends.
+ *
+ * `perpendicularDistance` above measures to the infinite line, which is the
+ * textbook RDP formulation and is what `applyRDPToLineRuns` has always used.
+ * It can under-report when the foot of the perpendicular falls outside the
+ * segment, so the tolerance it enforces is not a true Hausdorff bound. That is
+ * harmless for cosmetic profile tidying; it is not harmless for
+ * `simplifyClosedRing`, whose whole contract is that the simplified ring stays
+ * within `tolerance` of the original so a keep-out expanded by that same
+ * tolerance provably contains the original (issue #674).
+ */
+function segmentDistance(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len2 = dx * dx + dy * dy
+  if (len2 < 1e-18) return Math.hypot(p.x - a.x, p.y - a.y)
+  const t = Math.min(1, Math.max(0, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+}
+
+interface RdpRun {
+  points: Point[]
+  /**
+   * Greatest distance any *dropped* vertex sits from the polyline that replaced
+   * it, and 0 when nothing was dropped. This is the error the simplification
+   * actually introduced, which is at most `tolerance` but is usually far less —
+   * and is exactly 0 for a run whose every vertex is a corner.
+   */
+  deviation: number
+}
+
+function rdpSimplify(
+  points: Point[],
+  tolerance: number,
+  distance: (p: Point, a: Point, b: Point) => number,
+): RdpRun {
   const n = points.length
-  if (n < 3) return points
+  if (n < 3) return { points, deviation: 0 }
 
   // Iterative stack-based RDP to avoid stack overflow on long runs.
   const keep = new Uint8Array(n)
   keep[0] = 1
   keep[n - 1] = 1
   const stack: [number, number][] = [[0, n - 1]]
+  let deviation = 0
   while (stack.length > 0) {
     const [lo, hi] = stack.pop()!
     let maxDist = 0
     let maxIdx = -1
     for (let i = lo + 1; i < hi; i += 1) {
-      const d = perpendicularDistance(points[i], points[lo], points[hi])
+      const d = distance(points[i], points[lo], points[hi])
       if (d > maxDist) { maxDist = d; maxIdx = i }
     }
     if (maxDist > tolerance && maxIdx >= 0) {
       keep[maxIdx] = 1
       stack.push([lo, maxIdx])
       stack.push([maxIdx, hi])
+    } else if (hi > lo + 1 && maxDist > deviation) {
+      // This range is done: every interior point it still holds is dropped, and
+      // `maxDist` is how far the furthest of them sits from the segment that
+      // replaces them. A range with no interior points drops nothing and
+      // contributes no error, which is what keeps `deviation` exactly 0 on a
+      // contour RDP could not thin.
+      deviation = maxDist
     }
   }
 
@@ -1094,7 +1138,81 @@ function rdpSimplifyOpenRun(points: Point[], tolerance: number): Point[] {
   for (let i = 0; i < n; i += 1) {
     if (keep[i]) result.push(points[i])
   }
-  return result
+  return { points: result, deviation }
+}
+
+function rdpSimplifyOpenRun(points: Point[], tolerance: number): Point[] {
+  return rdpSimplify(points, tolerance, perpendicularDistance).points
+}
+
+function ringSignedArea(cycle: Point[]): number {
+  let sum = 0
+  for (let i = 0; i < cycle.length; i += 1) {
+    const a = cycle[i]
+    const b = cycle[(i + 1) % cycle.length]
+    sum += a.x * b.y - b.x * a.y
+  }
+  return sum / 2
+}
+
+/**
+ * Douglas-Peucker for a *closed* ring, with a true `tolerance` bound.
+ *
+ * Lives beside the profile RDP above so there is one implementation of the
+ * recursion, but it is not the same operation: the caller is
+ * `slicePolygonsToClipperPaths` in `surfaceStepdown3d.ts`, thinning mesh-slice
+ * contours before they reach Clipper (issue #674). `applyRDPToLineRuns` and
+ * every 2.5D path through it are untouched.
+ *
+ * Accepts a ring either closed (last point repeats the first) or open, and
+ * returns it in the same closed form `toClipperPath` expects. A ring has no
+ * external anchors, so it is split at the vertex farthest from the start and
+ * each half simplified, exactly as the fully-closed profile case does.
+ *
+ * **Degeneracy falls back to the original ring, deliberately.** RDP can
+ * collapse a small island to under three vertices or to zero area, and that
+ * deletes protection outright rather than moving it by at most `tolerance` —
+ * no expansion afterwards brings back a keep-out that is no longer there.
+ * Keeping such a ring unsimplified costs a handful of vertices and preserves
+ * the containment guarantee the caller relies on.
+ *
+ * `deviation` is what the caller pays for, not `tolerance`: it is the error
+ * this call actually introduced, so a ring RDP could not thin — a rectangular
+ * cross-section, say — reports 0 and needs no safety margin at all.
+ */
+export interface SimplifiedRing {
+  points: Point[]
+  deviation: number
+}
+
+export function simplifyClosedRing(ring: Point[], tolerance: number): SimplifiedRing {
+  if (!(tolerance > 0) || ring.length < 4) return { points: ring, deviation: 0 }
+
+  const cycle = dist2D(ring[0], ring[ring.length - 1]) < 1e-12 ? ring.slice(0, -1) : ring
+  const n = cycle.length
+  if (n < 4) return { points: ring, deviation: 0 }
+
+  let splitIdx = 0
+  let maxD = 0
+  for (let i = 1; i < n; i += 1) {
+    const d = dist2D(cycle[i], cycle[0])
+    if (d > maxD) { maxD = d; splitIdx = i }
+  }
+  if (splitIdx < 2 || splitIdx > n - 2) return { points: ring, deviation: 0 }
+
+  const first = rdpSimplify(cycle.slice(0, splitIdx + 1), tolerance, segmentDistance)
+  const second = rdpSimplify([...cycle.slice(splitIdx), cycle[0]], tolerance, segmentDistance)
+  // `second` ends on the start vertex and begins on the split vertex, both of
+  // which `first` already carries.
+  const simplified = [...first.points, ...second.points.slice(1, -1)]
+
+  if (simplified.length < 3 || Math.abs(ringSignedArea(simplified)) <= 0) {
+    return { points: ring, deviation: 0 }
+  }
+  return {
+    points: [...simplified, simplified[0]],
+    deviation: Math.max(first.deviation, second.deviation),
+  }
 }
 
 function applyRDPToLineRuns(profile: SketchProfile, tolerance: number): SketchProfile {

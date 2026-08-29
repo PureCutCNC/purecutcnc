@@ -55,7 +55,7 @@ const ALL_CODES = [
   'edgeNoContourForFeature', 'edgeNoInsideContour', 'edgeClosedProfilesOnly',
   'surface3dNeedsModel', 'surface3dNotMesh', 'surface3dLoadFailed', 'surface3dStockToLeaveTooLarge',
   'surface3dDegenerateBoundary', 'surface3dNoDepthInPocket', 'surface3dNoStepLevels', 'surface3dOpenMesh',
-  'surface3dFloorCollapsed', 'surface3dNoLevels',
+  'surface3dFloorCollapsed', 'surface3dNoLevels', 'surface3dMeshTooDense',
   'tabOnlyEdgeRoute', 'tabsOverlapAmbiguous', 'tabNoIntersect', 'tabAboveStockTop', 'tabBelowStockBottom',
   'tabInvalidZRange', 'tabOutsideCutZ', 'tabsOutsideCutZ', 'tabsOutsideCutZList', 'tabsOutsideCutZListMore',
   'tabsBlockFinalDepth',

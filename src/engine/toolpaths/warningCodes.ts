@@ -119,6 +119,13 @@ export type ToolpathWarningCode =
   | 'surface3dOpenMesh'
   | 'surface3dFloorCollapsed'
   | 'surface3dNoLevels'
+  /** Fail closed, not warn. Island offsetting is superlinear in the contour
+   *  vertex count entering one `ClipperOffset.Execute`, so a mesh dense enough
+   *  past this budget spins for minutes and the browser kills the script
+   *  (issue #673). A partial 3D rough path is not safe to run, so the operation
+   *  refuses instead of emitting what it managed before the level that blew the
+   *  budget. */
+  | 'surface3dMeshTooDense'
   // finish surface
   | 'finishNeedsModel'
   | 'finishNotMesh'
