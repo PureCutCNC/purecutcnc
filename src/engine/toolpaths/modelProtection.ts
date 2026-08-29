@@ -26,6 +26,7 @@ import {
 } from './geometry'
 import { significantSilhouettePaths } from './silhouette'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { appendAll } from './appendAll'
 
 // clipper-lib exposes pftEvenOdd at runtime, but its TS type only includes pftNonZero.
 const POLY_FILL_EVEN_ODD = 0
@@ -144,7 +145,7 @@ function isActiveAtZ(project: Project, feature: SketchFeature, z: number | undef
 }
 
 function appendExpanded(paths: ClipperPath[], nextPaths: ClipperPath[], expansion: number): void {
-  paths.push(...offsetClipperPaths(nextPaths, Math.max(0, expansion)))
+  appendAll(paths, offsetClipperPaths(nextPaths, Math.max(0, expansion)))
 }
 
 export function pathsContainEnvelope(candidatePaths: ClipperPath[], envelopePaths: ClipperPath[] | undefined): boolean {
@@ -453,7 +454,7 @@ export function buildProtectedFootprintPaths(
 
     const expandedFootprints = offsetClipperPaths(featureFootprintPaths(feature), featureExpansion)
     if (pathsContainEnvelope(expandedFootprints, options.machiningEnvelopePaths)) continue
-    protectedPaths.push(...expandedFootprints)
+    appendAll(protectedPaths, expandedFootprints)
   }
 
   if (options.includeTabs !== false) {

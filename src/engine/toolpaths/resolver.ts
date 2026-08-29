@@ -35,6 +35,7 @@ import {
   resolveFeatureZSpan,
   toClipperPath,
 } from './geometry'
+import { appendAll } from './appendAll'
 
 interface FeatureWithSpan {
   feature: SketchFeature
@@ -214,7 +215,7 @@ function polyTreeToRegions(
   }
 
   for (const child of getChildren(node)) {
-    regions.push(...polyTreeToRegions(child, targetFeatureIds, islandFeatureIds, scale))
+    appendAll(regions, polyTreeToRegions(child, targetFeatureIds, islandFeatureIds, scale))
   }
 
   return regions

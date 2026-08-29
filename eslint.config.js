@@ -81,4 +81,23 @@ export default defineConfig([
       'max-lines': ['error', { max: 3800, skipBlankLines: true, skipComments: true }],
     },
   },
+  // Toolpath generation routinely builds arrays of hundreds of thousands of
+  // moves or points, and `target.push(...source)` passes one *argument* per
+  // element — it throws `RangeError: Maximum call stack size exceeded` past the
+  // engine's argument limit (124,413 on node v26.0.0, stack-size dependent).
+  // One trochoidal Edge Route fragment on a 60 x 40 in guide emits 203,232 cut
+  // moves inside the 500,000-point budget, and the spread threw instead of
+  // producing a path (issue #668). `appendAll` from
+  // src/engine/toolpaths/appendAll.ts appends in a loop instead; tests are
+  // exempt because their arrays are fixtures, not generated geometry.
+  {
+    files: ['src/engine/toolpaths/**/*.ts'],
+    ignores: ['src/engine/toolpaths/**/*.test.ts'],
+    rules: {
+      'no-restricted-syntax': ['error', {
+        selector: 'CallExpression[callee.type="MemberExpression"][callee.property.name="push"] > SpreadElement',
+        message: 'Spreading into push() throws RangeError past ~124k elements — use appendAll(target, source) from src/engine/toolpaths/appendAll.ts (issue #668).',
+      }],
+    },
+  },
 ])

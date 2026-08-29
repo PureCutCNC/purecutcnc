@@ -29,6 +29,7 @@ import {
 import { unionClipperPaths } from './modelProtection'
 import { planSmoothTabMotion, splitCutMoveWithSmoothTabs } from './tabSmoothing'
 import { convertLength } from '../../utils/units'
+import { appendAll } from './appendAll'
 
 interface PreservedObstacle {
   id: string
@@ -486,7 +487,7 @@ export function applyTabsToEdgeRoute(project: Project, operation: Operation, res
       ) {
         changed = true
       }
-      adjustedMoves.push(...splitMoves)
+      appendAll(adjustedMoves, splitMoves)
       continue
     }
 

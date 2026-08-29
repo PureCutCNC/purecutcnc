@@ -23,6 +23,7 @@ import { buildRegionMask } from './regions'
 import { resolveRegionDomainCentre } from './regionDomain'
 import { significantSilhouettePaths } from './silhouette'
 import { buildProtectedFootprintPaths, clipperPathsToTupleContours, differenceClipperPaths, unionClipperPaths } from './modelProtection'
+import { appendAll } from './appendAll'
 
 function computeContourBounds(
   contours: Iterable<Array<Array<[number, number]>>>,
@@ -665,7 +666,7 @@ export function generateFinishSurfaceParallel(
       for (const [x1, x2] of intervals) {
         const segment = buildTopSurfaceSegment(x1, x2, rotY, cosPos, sinPos, heightMap, topSurfaceSampleDistance)
         if (segment.length >= 2) {
-          scanSegments.push(...splitAndClampSurfaceSegmentToMinZ(segment, minCutZAtPoint))
+          appendAll(scanSegments, splitAndClampSurfaceSegmentToMinZ(segment, minCutZAtPoint))
         }
       }
 
@@ -716,7 +717,7 @@ export function generateFinishSurfaceParallel(
         const entryPoint = cutPoints3D[0]
 
         pos = transitionToCutEntry(moves, pos, entryPoint, safeZ, linkMaxDistance, safeLinkCheck)
-        moves.push(...toOpenCutMoves3D(cutPoints3D))
+        appendAll(moves, toOpenCutMoves3D(cutPoints3D))
         pos = cutPoints3D[cutPoints3D.length - 1]
       }
     }

@@ -19,6 +19,7 @@ import { resolvedFeatureMap } from '../../store/helpers/resolveFeatures'
 import type { Operation, Project } from '../../types/project'
 import type { PocketToolpathResult, ToolpathBounds, ToolpathPoint, ToolpathResult } from './types'
 import { greedyNearestNeighbor } from './geometry'
+import { appendAll } from './appendAll'
 
 interface MergeToolpathOptions {
   orderBlocks?: 'input' | 'nearest'
@@ -143,7 +144,7 @@ function mergeMoves(parts: ToolpathResult[], normalizeTransitions: boolean): Too
     } else {
       moves.push(firstMove)
     }
-    moves.push(...remainingMoves)
+    appendAll(moves, remainingMoves)
     previousEnd = part.moves.at(-1)?.to ?? previousEnd
   }
 

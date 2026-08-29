@@ -91,6 +91,7 @@ import {
 import { resolveRegionDomainArea } from './regionDomain'
 import { unionClipperPaths } from './modelProtection'
 import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
+import { appendAll } from './appendAll'
 
 const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
 const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.01
@@ -190,7 +191,7 @@ export function polyTreeToRegions(
   }
 
   for (const child of getChildren(node)) {
-    regions.push(...polyTreeToRegions(child, targetFeatureIds, islandFeatureIds, scale))
+    appendAll(regions, polyTreeToRegions(child, targetFeatureIds, islandFeatureIds, scale))
   }
 
   return regions
@@ -1415,7 +1416,7 @@ export function buildPocketFloorContours(
       break
     }
 
-    contours.push(...loops)
+    appendAll(contours, loops)
     currentRegions = currentRegions.flatMap((region) => buildInsetRegions(region, effectiveStepover))
   }
 
@@ -1921,7 +1922,7 @@ export function cutClosedContours(
       cutMoves = tangentSplice.cutMoves
       nextPosition = tangentSplice.nextPosition
     }
-    moves.push(...cutMoves)
+    appendAll(moves, cutMoves)
     nextPosition = cutMoves.at(-1)?.to ?? nextPosition
   }
 
@@ -1987,11 +1988,11 @@ function neighbourCentrelines(
     // these starved corners live — the loop running along the island is the
     // pass that reaches the tip, and leaving it out declines every corner
     // there.
-    lines.push(...region.islands.filter((island) => island.length >= 3))
+    appendAll(lines, region.islands.filter((island) => island.length >= 3))
   }
   if (parent) add(parent.region)
   for (const child of node.children) add(child.region)
-  lines.push(...node.region.islands.filter((island) => island.length >= 3))
+  appendAll(lines, node.region.islands.filter((island) => island.length >= 3))
   return lines
 }
 
@@ -2888,7 +2889,7 @@ export function cutSeedLeftoverExcursions(
     const cutMoves = excursion.closed
       ? toClosedCutMoves(excursion.points, z)
       : toOpenCutMoves(excursion.points, z)
-    moves.push(...cutMoves)
+    appendAll(moves, cutMoves)
     position = cutMoves.at(-1)?.to ?? position
   }
   return position
@@ -2982,7 +2983,7 @@ function generateRoughBandMoves(
           levelEntryPolicy,
         )
         const cutMoves = toClosedCutMoves(contour, z)
-        moves.push(...cutMoves)
+        appendAll(moves, cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
 
@@ -3003,7 +3004,7 @@ function generateRoughBandMoves(
           levelEntryPolicy,
         )
         const cutMoves = toOpenCutMoves(segment, z)
-        moves.push(...cutMoves)
+        appendAll(moves, cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
 
@@ -3178,7 +3179,7 @@ function generateRoughBandMoves(
           circleMoves = tangentSplice.cutMoves
           currentPosition = tangentSplice.nextPosition
         }
-        moves.push(...circleMoves)
+        appendAll(moves, circleMoves)
         currentPosition = circleMoves.at(-1)?.to ?? currentPosition
         previousCircleEnd = currentPosition
       }
@@ -3635,7 +3636,7 @@ function generateFinishBandMoves(
             circleMoves = tangentSplice.cutMoves
             currentPosition = tangentSplice.nextPosition
           }
-          moves.push(...circleMoves)
+          appendAll(moves, circleMoves)
           currentPosition = circleMoves.at(-1)?.to ?? currentPosition
           previousCircleEnd = currentPosition
         }
@@ -3722,7 +3723,7 @@ function generateFinishBandMoves(
         entryPolicy,
       )
       const cutMoves = toOpenCutMoves(segment, z)
-      moves.push(...cutMoves)
+      appendAll(moves, cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
     }
 
@@ -3761,7 +3762,7 @@ function generateFinishBandMoves(
           entryPolicy,
         )
         const cutMoves = toOpenCutMoves(segment, z)
-        moves.push(...cutMoves)
+        appendAll(moves, cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
       currentPosition = cutClosedContours(
@@ -3905,12 +3906,12 @@ function appendPocketCornerRelief(
       ...(operation.debugToolpath ? { source: 'cornerRelief' } : {}),
     })
     pass.warnings.forEach((warning) => appendUniqueWarning(warnings, warning))
-    reliefMoves.push(...pass.moves)
+    appendAll(reliefMoves, pass.moves)
     position = pass.endPosition
   }
 
   retractToSafe(reliefMoves, position, safeZ)
-  allMoves.push(...reliefMoves)
+  appendAll(allMoves, reliefMoves)
 }
 
 export function generatePocketToolpath(project: Project, operation: Operation): PocketToolpathResult {
@@ -4115,7 +4116,7 @@ function generatePocketToolpathSingle(
     const { moves, stepLevels, warnings: bandWarnings } = result
     moves.forEach((move) => allMoves.push(move))
     stepLevels.forEach((level) => allStepLevels.add(level))
-    warnings.push(...bandWarnings)
+    appendAll(warnings, bandWarnings)
     if (reliefStepdown !== null && moves.length > 0) {
       const reliefBottom = resolveBandBottomZ(band, operation)
       if (reliefBottom !== null) {

@@ -40,6 +40,7 @@ import {
   trochoidalEntryMoveCount,
   type TrochoidalOperationBudget,
 } from './trochoidalPath'
+import { appendAll } from './appendAll'
 
 function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): ToolpathBounds {
   if (!bounds) {
@@ -470,7 +471,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
         }
 
         const cutMoves = toProfileCutMoves(built.points, z, closed)
-        moves.push(...cutMoves)
+        appendAll(moves, cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
     } else {
@@ -480,7 +481,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
           const entryPoint = profileStartPoint(fragment.points, levelZ)
           currentPosition = pushRapidAndPlunge(moves, currentPosition, entryPoint, safeZ)
           const cutMoves = toProfileCutMoves(fragment.points, levelZ, fragment.closed)
-          moves.push(...cutMoves)
+          appendAll(moves, cutMoves)
           currentPosition = cutMoves.at(-1)?.to ?? currentPosition
           currentPosition = retractToSafe(moves, currentPosition, safeZ)
         }

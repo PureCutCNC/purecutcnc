@@ -96,6 +96,7 @@ import { unionClipperPaths } from './modelProtection'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { isFeatureFirst, perFeatureOperations, mergePocketToolpathResults } from './multiFeature'
+import { appendAll } from './appendAll'
 
 interface PolyTreeNode {
   IsHole(): boolean
@@ -462,7 +463,7 @@ function generateRoughBandMoves(
           levelEntryPolicy,
         )
         const cutMoves = toClosedCutMoves(contour, z)
-        moves.push(...cutMoves)
+        appendAll(moves, cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
 
@@ -483,7 +484,7 @@ function generateRoughBandMoves(
           levelEntryPolicy,
         )
         const cutMoves = toOpenCutMoves(segment, z)
-        moves.push(...cutMoves)
+        appendAll(moves, cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
 
@@ -636,7 +637,7 @@ function generateRoughBandMoves(
           circleMoves = tangentSplice.cutMoves
           currentPosition = tangentSplice.nextPosition
         }
-        moves.push(...circleMoves)
+        appendAll(moves, circleMoves)
         currentPosition = circleMoves.at(-1)?.to ?? currentPosition
         previousCircleEnd = currentPosition
       }
@@ -1067,7 +1068,7 @@ function generateFinishBandMoves(
             circleMoves = tangentSplice.cutMoves
             currentPosition = tangentSplice.nextPosition
           }
-          moves.push(...circleMoves)
+          appendAll(moves, circleMoves)
           currentPosition = circleMoves.at(-1)?.to ?? currentPosition
           previousCircleEnd = currentPosition
         }
@@ -1154,7 +1155,7 @@ function generateFinishBandMoves(
         entryPolicy,
       )
       const cutMoves = toOpenCutMoves(segment, z)
-      moves.push(...cutMoves)
+      appendAll(moves, cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
     }
 
@@ -1183,7 +1184,7 @@ function generateFinishBandMoves(
         entryPolicy,
       )
       const cutMoves = toClosedCutMoves(contour, z)
-      moves.push(...cutMoves)
+      appendAll(moves, cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
     }
 
@@ -1319,7 +1320,7 @@ function generateSurfaceCleanToolpathSingle(
     const { moves, stepLevels, warnings: bandWarnings } = result
     moves.forEach((move) => allMoves.push(move))
     stepLevels.forEach((level) => allStepLevels.add(level))
-    warnings.push(...bandWarnings)
+    appendAll(warnings, bandWarnings)
   }
 
   let bounds: ToolpathBounds | null = null

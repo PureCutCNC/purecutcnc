@@ -39,6 +39,7 @@ import { resolveRegionDomainCentre } from './regionDomain'
 import { resolveInsideEdgeRegions, resolvePocketRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
 import type { ClipperPath, ClipperPoint, ResolvedPocketRegion, ResolvedPocketResult } from './types'
+import { appendAll } from './appendAll'
 
 export interface RestRegionDraft {
   profile: SketchFeature['sketch']['profile']
@@ -135,7 +136,7 @@ function rebuildOriginalRestComponents(restPaths: ClipperPath[], splitPaths: Cli
     const bounds = clipperPathBounds(path)
     if (!bounds) continue
     const localRest = intersectClipperPaths(restPaths, [rectanglePath(bounds, expansion)])
-    rebuilt.push(...localRest)
+    appendAll(rebuilt, localRest)
   }
 
   const rebuiltUnion = unionClipperPaths(rebuilt)
@@ -454,14 +455,14 @@ function generateAreaRestRegionDrafts(
 
   for (const band of resolved.bands) {
     for (const region of band.regions) {
-      sourceAreaPaths.push(...pocketRegionToAreaPaths(region))
-      islandPaths.push(...region.islands
+      appendAll(sourceAreaPaths, pocketRegionToAreaPaths(region))
+      appendAll(islandPaths, region.islands
         .filter((island) => island.length >= 3)
         .map((island) => toClipperPath(normalizeWinding(island, false), DEFAULT_CLIPPER_SCALE)))
 
       const centerRegions = buildInsetRegions(region, centerInset)
       const centerAreaPaths = centerRegions.flatMap(pocketRegionToAreaPaths)
-      reachableAreaPaths.push(...offsetClosedPaths(centerAreaPaths, toolRadius, ClipperLib.JoinType.jtRound))
+      appendAll(reachableAreaPaths, offsetClosedPaths(centerAreaPaths, toolRadius, ClipperLib.JoinType.jtRound))
     }
   }
 
@@ -505,7 +506,7 @@ function generateAreaRestRegionDrafts(
     for (const region of band.regions) {
       for (const loop of [region.outer, ...region.islands]) {
         if (loop.length >= 3) {
-          cornerTriangles.push(...cornerCuspTriangles(loop, sourceUnion, centerInset, backExtension))
+          appendAll(cornerTriangles, cornerCuspTriangles(loop, sourceUnion, centerInset, backExtension))
         }
       }
     }
@@ -524,7 +525,7 @@ function generateAreaRestRegionDrafts(
     const remainingArea = remaining.reduce((sum, path) => sum + pathArea(path), 0)
     if (remainingArea < gateArea) continue
 
-    cornerRegions.push(...intersectClipperPaths([triangle], safeSourceUnion))
+    appendAll(cornerRegions, intersectClipperPaths([triangle], safeSourceUnion))
   }
 
   // Corners alone don't cover unreachable material away from a convex corner —

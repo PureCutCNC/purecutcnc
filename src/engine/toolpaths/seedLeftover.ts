@@ -53,6 +53,7 @@
 
 import { buildSweptCoverage, type SweptCoverage } from './sweptCoverage'
 import type { Point } from '../../types/project'
+import { appendAll } from './appendAll'
 
 /**
  * Sampling pitch of the per-vertex disc test, as a fraction of the tool
@@ -211,13 +212,13 @@ export function planSeedLeftovers(
       }
     }
     if (planned.length === 0) continue
-    excursions.push(...planned)
+    appendAll(excursions, planned)
     // Fold the new excursions into the coverage before the next candidate is
     // judged. Without this the deeper candidates re-answer "uncut?" against a
     // stream that no longer matches what will be cut, and every level of the
     // pre-extension tree emits its own pass over the same ridge — which cost
     // more than the graze rings the extension removed on a coarse stepover.
-    swept.push(...planned.map((excursion) => excursion.points))
+    appendAll(swept, planned.map((excursion) => excursion.points))
     coverage = buildSweptCoverage(swept, toolRadius)
   }
   return excursions

@@ -54,6 +54,7 @@ import { isFeatureFirst, perFeatureOperations, mergePocketToolpathResults } from
 import { createSharedEngagementTelemetry } from './pocket'
 import { resolvedFeatureMap } from '../../store/helpers/resolveFeatures'
 import { clearingControlApplies } from './clearingControls'
+import { appendAll } from './appendAll'
 
 function appendUniqueWarning(warnings: ToolpathWarning[], warning: ToolpathWarning): void {
   const key = `${warning.code}:${JSON.stringify(warning.params ?? {})}`
@@ -272,7 +273,7 @@ function generateRoughSurfaceToolpathSingle(
           entryPolicy,
         )
         const cutMoves = toClosedCutMoves(contour, level.z)
-        allMoves.push(...cutMoves)
+        appendAll(allMoves, cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
 
@@ -291,7 +292,7 @@ function generateRoughSurfaceToolpathSingle(
           entryPolicy,
         )
         const cutMoves = toOpenCutMoves(segment, level.z)
-        allMoves.push(...cutMoves)
+        appendAll(allMoves, cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
 
@@ -364,7 +365,7 @@ function generateRoughSurfaceToolpathSingle(
             entryPolicy,
           )
           const circleMoves = toClosedCutMoves(circle, level.z)
-          allMoves.push(...circleMoves)
+          appendAll(allMoves, circleMoves)
           currentPosition = circleMoves.at(-1)?.to ?? currentPosition
           previousCircleEnd = currentPosition
         }

@@ -28,6 +28,7 @@ import {
 import { differenceClipperPaths, intersectClipperPaths, offsetClipperPaths, unionClipperPaths } from './modelProtection'
 import type { RegionMask } from './regions'
 import type { ClipperPath } from './types'
+import { appendAll } from './appendAll'
 
 /**
  * Resolve a region mask into an area domain (polygon set) so the generator
@@ -267,7 +268,7 @@ function splitOpenGuideByAllowedPaths(guide: Point[], allowed: ClipperPath[]): C
       for (let j = 0; j < path.length; j += 1) {
         const edgeFrom = path[j]
         const edgeTo = path[(j + 1) % path.length]
-        params.push(...segmentIntersectionParameters(from, to, edgeFrom, edgeTo))
+        appendAll(params, segmentIntersectionParameters(from, to, edgeFrom, edgeTo))
       }
     }
 
