@@ -163,6 +163,32 @@ function testInvalidInputsAndBudget(): void {
   assert(degenerate.error === 'degenerate-advance', `expected degenerate-advance, got ${degenerate.error}`)
   assert(degenerate.points.length === 0, 'a degenerate advance must not emit partial output')
 
+  // Exactly `0.01 x D` is the smallest advance the CAM panel offers, so it is an
+  // ordinary setting and must generate. The guide length is deliberately not a
+  // whole number of advances (40 mm / 0.03 mm = 1333.33): the first form of this
+  // cap compared the ceil'd loop count with that real quotient, so `ceil(m) > m`
+  // refused every such guide at the bound — the panel's minimum, refusing
+  // ordinary parts.
+  const atTheBound = buildTrochoidalContour(rectangle, {
+    orbitRadius: 1,
+    advance: 0.03,
+    toolDiameter: 3,
+    angularDirection: 1,
+  })
+  assert(atTheBound.error === undefined, `an advance of exactly 0.01 x D must generate, got ${atTheBound.error}`)
+  assert(atTheBound.points.length > 0, 'the boundary advance must emit a path')
+  assert(atTheBound.loopCount === 1334, `the fixture must not divide evenly, got ${atTheBound.loopCount} loops`)
+
+  // A hair below it is degenerate, so the bound discriminates rather than
+  // passing everything.
+  const belowTheBound = buildTrochoidalContour(rectangle, {
+    orbitRadius: 1,
+    advance: 0.0299,
+    toolDiameter: 3,
+    angularDirection: 1,
+  })
+  assert(belowTheBound.error === 'degenerate-advance', `just under the bound must refuse, got ${belowTheBound.error}`)
+
   // A guide too short to hold more than one orbit cannot be degenerate however
   // fine the advance is. Without that exemption every sub-millimetre tab
   // fragment would refuse on an otherwise ordinary operation.

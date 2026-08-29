@@ -75,6 +75,7 @@ import {
   type TrochoidalGuideFragment,
 } from './edge'
 import { normalizeToolForProject } from './geometry'
+import { DEFAULT_TROCHOIDAL_POINT_BUDGET } from './trochoidalEdge'
 import type { TrochoidalContourResult } from './trochoidalEdge'
 import { expandedTabFootprints } from './tabs'
 import {
@@ -221,7 +222,9 @@ function run(options: {
   const op = operation()
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
-  const ceiling = options.budget ?? 500_000
+  // Track the production ceiling rather than a literal, or this harness quietly
+  // keeps exercising a budget the engine no longer uses (issue #662 moved it).
+  const ceiling = options.budget ?? DEFAULT_TROCHOIDAL_POINT_BUDGET
   const budget: TrochoidalOperationBudget = {
     remainingPoints: ceiling,
     remainingMoves: ceiling,

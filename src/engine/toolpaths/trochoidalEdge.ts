@@ -87,6 +87,11 @@ export const DEFAULT_TROCHOIDAL_POINT_BUDGET = 1_000_000
  * This is the check the global ceiling can never be: `0.005 x D` on a 50 mm
  * guide costs about 40,000 points — comfortably inside any ceiling — while
  * re-cutting the same material 1,667 times.
+ *
+ * The bound is strict on purpose: `0.01` itself is the smallest advance the CAM
+ * panel offers (`min={1}` percent, clamped by `Math.max(0.01, …)`), so exactly
+ * `0.01 x D` is an ordinary setting a user can select and must generate. Only
+ * something below it is defective.
  */
 const MIN_ADVANCE_FRACTION = 0.01
 
@@ -241,13 +246,20 @@ export function buildTrochoidalContour(
 
   const loopCount = Math.max(1, Math.ceil(path.length / options.advance))
   const actualAdvance = path.length / loopCount
-  // Orbit count against guide length, which is where a degenerate advance shows
-  // and a merely large job does not. A fragment shorter than one advance has
-  // exactly one orbit and cannot be degenerate however small the advance is, so
-  // the single-loop case is exempt rather than measured — otherwise a
-  // sub-millimetre tab fragment would refuse on a perfectly ordinary operation.
-  const maxLoops = path.length / (options.toolDiameter * MIN_ADVANCE_FRACTION)
-  if (loopCount > 1 && loopCount > maxLoops) {
+  // The *requested* advance is what is defective or not, so that is what is
+  // measured. Deriving the test from the orbit count instead — `loopCount >
+  // path.length / (D x MIN_ADVANCE_FRACTION)` — compared a ceil'd integer with
+  // the real quotient it was rounded up from, so at exactly `0.01 x D` the two
+  // sides were the same quantity and `ceil(m) > m` refused every guide whose
+  // length was not a whole number of advances. That is the smallest advance the
+  // panel offers, refusing ordinary parts: a 60 x 40 mm outside route at
+  // `0.01 x D` generates 94,743 moves and that form emitted none.
+  //
+  // A fragment shorter than one advance still has exactly one orbit and cannot
+  // be degenerate however small the advance is, so the single-loop case is
+  // exempt rather than measured — otherwise a sub-millimetre tab fragment would
+  // refuse on a perfectly ordinary operation.
+  if (loopCount > 1 && options.advance < options.toolDiameter * MIN_ADVANCE_FRACTION) {
     return { points: [], entryCenter: null, loopCount, actualAdvance, error: 'degenerate-advance' }
   }
 

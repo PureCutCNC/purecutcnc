@@ -165,7 +165,7 @@ had to be added for it to be *correct* rather than merely safe:
 - **The point budget is per operation, not per target.** It is created once in
   `generateEdgeRouteToolpath` and threaded into every sub-operation. Left to
   `generateEdgeRouteToolpathSingle` to create, N targets would each claim the
-  full 500,000 points.
+  full `DEFAULT_TROCHOIDAL_POINT_BUDGET`.
 - **Multi-target generation stays atomic.** `mergeToolpathResults` concatenates
   parts and flattens warnings with no failure check, so a target that failed
   closed would be silently skipped while its neighbours were cut. Feature-first
@@ -305,17 +305,42 @@ byte-identical.
 
 ## Budgets
 
-One shared operation budget of 500,000 generated points covers trochoidal loops,
+Two guards, answering two different questions. Keeping them apart is the whole
+of #662: one flat ceiling used to serve as both, so a large, legitimate part was
+refused with the message written for a defective parameter.
+
+### The ceiling — how big a job may be
+
+One shared operation budget of 1,000,000 points covers trochoidal loops,
 stationary entry and exit orbits, helical entries, tab-top fragments, and
 fragment transitions. Entry and operation budgets fail atomically with
 structured warnings.
 
-Since #661 that is **two accounts**, because the question split in two.
+The number is **stated as a memory target and derived from it**, not chosen as a
+round point count: one operation's emitted moves may claim at most 248 MB of
+heap, and an emitted `ToolpathMove` was measured to retain 248 bytes. Four such
+operations is roughly a gigabyte, about what a desktop tab carries alongside the
+CSG, the meshes and the render buffers. `DEFAULT_TROCHOIDAL_POINT_BUDGET` in
+`trochoidalEdge.ts` carries the measurement; change the target there and the
+point count follows.
+
+**It is not a renderability limit and must not be read as one.** #664 measures
+the UI unusable at about 249,663 moves — already below the 500,000 this
+replaced. Clamping the ceiling to that figure would refuse the large, deep cuts
+#662 exists to stop refusing, including its own acceptance case at 576,123
+moves. Renderability is a separate, lower limit and #664 owns it.
+
+Fatal, deliberately: a partial trochoidal path re-enters material the orbit
+never cleared, so there is no safe half-answer.
+
+#### Two accounts, since #661
+
+That one ceiling is kept as **two accounts**, because the question split in two.
 
 - **Emission** (`remainingMoves`) is what the operation cuts: one array of moves
   per level, every level. It carries the arithmetic the single pre-#661 budget
   had, so an operation refuses at exactly the depth it always did. This is the
-  account that binds, and the one #662 re-derives from a memory target.
+  account that binds, and the one #662 re-derived from a memory target.
 - **Generation** (`remainingPoints`) is what the operation builds. Levels whose
   guide fragments identically share one generated path, keyed by the planned
   fragment geometry (`trochoidalLevelPaths.ts`), and that path is charged once,
@@ -323,7 +348,7 @@ Since #661 that is **two accounts**, because the question split in two.
 
 Generation is always a subset of emission, so separating them changes no
 output — that is the point, and `trochoidalLevelSharing.test.ts` pins it. The
-separation exists so #662 can raise the emission ceiling without also
+separation is what let #662 raise the emission ceiling without also
 multiplying what generation costs.
 
 **Charging generation alone is not enough, and this was learned the expensive
@@ -332,6 +357,33 @@ with `edgeTrochoidalMoveBudget` instead ran to completion at 9,873,183 moves and
 ~2 GB of heap — in a browser, a dead tab rather than a warning. A reused array
 of points describes the same motion N times; the machine still cuts it N times.
 A path shared for generation is never a level that costs nothing to emit.
+
+### The degeneracy cap — whether a parameter is defective
+
+Per fragment, and independent of size: an advance below `0.01 x D` is refused
+with `edgeTrochoidalAdvanceDegenerate` / `carveTrochoidalAdvanceDegenerate`,
+which name the advance rather than the budget. An orbit that progresses less
+than 1% of the cutter diameter per loop is not a fine cut, it is the same arc
+traced over and over.
+
+No ceiling can stand in for this. `0.005 x D` on a 50 mm guide costs about
+40,000 points — comfortably inside any ceiling — while re-cutting the same
+material 1,667 times, and before the cap it generated silently.
+
+Two boundaries hold it in place:
+
+- **Exactly `0.01 x D` generates.** It is the smallest advance the CAM panel
+  offers (`min={1}` percent), so it is an ordinary setting. The cap therefore
+  measures the *requested* advance; deriving it from the ceil'd orbit count
+  compared an integer with the real quotient it was rounded up from and refused
+  the panel's own minimum on any guide whose length was not a whole number of
+  advances.
+- **A single-orbit fragment is exempt.** A fragment shorter than one advance has
+  exactly one loop and cannot be degenerate however fine the advance is, or
+  every sub-millimetre tab fragment would refuse an ordinary operation.
+
+`trochoidalPointBudget.test.ts` holds both guards apart, asserting which one
+fires and not merely that one did.
 
 Warnings that refer to a place — skipped spans, unsafe tab fragments, channels
 that do not fit — carry the offending XY in their params so the UI can point at

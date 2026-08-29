@@ -43,6 +43,7 @@
  * | ceiling lowered back towards 500,000 | `the 400 x 300 mm case…` |
  * | ceiling made non-fatal / partial | both refusal tests assert zero moves |
  * | `loopCount > 1` exemption dropped | `trochoidalEdge.test.ts` single-orbit guide |
+ * | cap measured on the ceil'd loop count again | `the panel's smallest advance…` |
  *
  * Run with: npx tsx src/engine/toolpaths/trochoidalPointBudget.test.ts
  */
@@ -204,6 +205,36 @@ test('a degenerate advance refuses by naming the advance, on a part no ceiling w
   assert(
     healthy.moves.length * 10 < DEFAULT_TROCHOIDAL_POINT_BUDGET,
     `the control must sit far below the ceiling, got ${healthy.moves.length}`,
+  )
+})
+
+/**
+ * The other end of the cap: the smallest advance the CAM panel offers is exactly
+ * `0.01 x D` (`CAMPanel.tsx`, `min={1}` percent clamped by `Math.max(0.01, …)`),
+ * so it is an ordinary setting, not a defect, and must cut.
+ *
+ * The first form of the cap compared the ceil'd orbit count with the real
+ * quotient it was rounded up from, which made `ceil(m) > m` true for every guide
+ * whose length was not a whole number of advances — so the panel's minimum
+ * refused these three parts outright, where before the cap they generated
+ * 70,743 / 94,743 / 94,743 moves.
+ */
+test("the panel's smallest advance cuts on ordinary parts", () => {
+  for (const [width, height] of [[40, 30], [50, 50], [60, 40]] as const) {
+    const result = generateEdgeRouteToolpath(partProject(width, height, 2), trochoidalOutside(2, 0.01))
+    assert(
+      result.warnings.length === 0,
+      `${width} x ${height} at the panel minimum must generate: [${result.warnings.map((w) => w.code).join(', ')}]`,
+    )
+    assert(result.moves.length > 0, `${width} x ${height} at the panel minimum must emit motion`)
+  }
+
+  // And the bound still discriminates: a hair below it is degenerate.
+  const under = generateEdgeRouteToolpath(partProject(60, 40, 2), trochoidalOutside(2, 0.0099))
+  assert(under.moves.length === 0, `just under the panel minimum must refuse, got ${under.moves.length} moves`)
+  assert(
+    under.warnings.some((w) => w.code === 'edgeTrochoidalAdvanceDegenerate'),
+    `expected the advance to be named, got [${under.warnings.map((w) => w.code).join(', ') || 'none'}]`,
   )
 })
 
