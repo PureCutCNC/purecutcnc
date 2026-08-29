@@ -43,6 +43,7 @@ import {
 import type { ClipperPath } from './types'
 import { bezierPoint, polygonProfile } from '../../types/project'
 import type { Point, Segment, SketchFeature, SketchProfile } from '../../types/project'
+import { appendAll } from './appendAll'
 
 export interface KnownCircle {
   center: Point
@@ -437,7 +438,7 @@ export function clipperContourToProfilePreserving(
       })
       // Adjust: we'll treat indices >= n as wrapping (mod n)
       runs.length = 0
-      runs.push(...merged)
+      appendAll(runs, merged)
     }
   }
 

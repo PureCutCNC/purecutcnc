@@ -62,6 +62,7 @@ import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET } from './troch
 import { createTrochoidalPathStore } from './trochoidalLevelPaths'
 import type { TrochoidalPathParams } from './trochoidalLevelPaths'
 import { expandedTabFootprints } from './tabs'
+import { appendAll } from './appendAll'
 
 const TROCHOIDAL_GUIDE_SAFETY_FRACTION = 0.01
 
@@ -683,7 +684,7 @@ function appendFragmentedContoursAtLevels(
           const entry = contourStartPoint(ff.points, z)
           nextPosition = transitionToCutEntry(moves, nextPosition, entry, safeZ, maxLinkDistance)
           const cutMoves = toClosedCutMoves(ff.points, z)
-          moves.push(...cutMoves)
+          appendAll(moves, cutMoves)
           nextPosition = cutMoves.at(-1)?.to ?? nextPosition
         } else {
           // Open span: retract to safe Z, rapid to the start, descend.  This
@@ -692,7 +693,7 @@ function appendFragmentedContoursAtLevels(
           const entry = { x: ff.points[0].x, y: ff.points[0].y, z }
           nextPosition = retractToSafe(moves, nextPosition, safeZ)
           nextPosition = pushRapidAndPlunge(moves, nextPosition, entry, safeZ)
-          moves.push(...toOpenCutMoves(ff.points, z))
+          appendAll(moves, toOpenCutMoves(ff.points, z))
           nextPosition = moves.at(-1)?.to ?? nextPosition
           nextPosition = retractToSafe(moves, nextPosition, safeZ)
         }
@@ -897,7 +898,7 @@ export function appendTrochoidalContoursAtLevels(
       )
     }
     const cutMoves = closed ? toClosedCutMoves(built.points, z) : toOpenCutMoves(built.points, z)
-    moves.push(...cutMoves)
+    appendAll(moves, cutMoves)
     nextPosition = cutMoves.at(-1)?.to ?? nextPosition
   }
   return nextPosition
@@ -992,12 +993,12 @@ function appendEdgeCornerRelief(
       ...(operation.debugToolpath ? { source: 'cornerRelief' } : {}),
     })
     pass.warnings.forEach((warning) => appendUniqueWarning(warnings, warning))
-    reliefMoves.push(...pass.moves)
+    appendAll(reliefMoves, pass.moves)
     position = pass.endPosition
   }
 
   retractToSafe(reliefMoves, position, safeZ)
-  moves.push(...reliefMoves)
+  appendAll(moves, reliefMoves)
 }
 
 export function generateEdgeRouteToolpath(project: Project, operation: Operation): ToolpathResult {
@@ -1276,7 +1277,7 @@ function generateEdgeRouteToolpathSingle(
 
   if (operation.kind === 'edge_route_inside') {
     const resolved = resolveInsideEdgeRegions(project, operation)
-    warnings.push(...resolved.warnings)
+    appendAll(warnings, resolved.warnings)
     const insideInset = isTrochoidal ? trochoidalGuideOffset : tool.radius + radialLeave
 
     for (const band of resolved.bands) {
@@ -1374,7 +1375,7 @@ function generateEdgeRouteToolpathSingle(
             const entry = { x: frag.points[0].x, y: frag.points[0].y, z }
             currentPosition = retractToSafe(moves, currentPosition, safeZ)
             currentPosition = pushRapidAndPlunge(moves, currentPosition, entry, safeZ)
-            moves.push(...toOpenCutMoves(frag.points, z))
+            appendAll(moves, toOpenCutMoves(frag.points, z))
             currentPosition = moves.at(-1)?.to ?? currentPosition
             currentPosition = retractToSafe(moves, currentPosition, safeZ)
           }

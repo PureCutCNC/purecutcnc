@@ -57,6 +57,7 @@ import { retractToSafe, rotateContourToNearestEntry, toClosedCutMoves, toOpenCut
 import { resolveRegionDomainCentre } from './regionDomain'
 import { buildRegionMask } from './regions'
 import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
+import { appendAll } from './appendAll'
 
 const WATERLINE_LENGTH_EPSILON_MM = 0.01
 const WATERLINE_PROJECTED_MAX_RINGS_PER_BAND = 96
@@ -1316,7 +1317,7 @@ export function generateFinishSurfaceWaterline(
     const addPaths: ClipperPath[] = []
     for (const add of intersectingAdds) {
       if (z > add.topZ + 1e-9 || z < add.bottomZ - 1e-9) continue
-      addPaths.push(...add.paths)
+      appendAll(addPaths, add.paths)
     }
     if (addPaths.length === 0) return meshPaths
     if (meshPaths.length === 0) return unionClipperPaths(addPaths)
@@ -1972,7 +1973,7 @@ export function generateFinishSurfaceWaterline(
               ? toClosedCutMoves(safeRun.contour, ringEntry.z)
               : toOpenCutMoves(safeRun.contour, ringEntry.z)
           const simplified = simplifyContiguousCutMoves(cutMovesForContour)
-          allMoves.push(...simplified)
+          appendAll(allMoves, simplified)
           for (const move of simplified) {
             allStepLevels.add(move.from.z)
             allStepLevels.add(move.to.z)

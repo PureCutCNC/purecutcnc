@@ -24,6 +24,7 @@ import { buildContourLoops, buildInsetRegions, contourStartPoint, executeDiffere
 import { resolveRegionDomainArea } from './regionDomain'
 import { buildRegionMask, splitFeatureTargets } from './regions'
 import { resolvePocketRegions } from './resolver'
+import { appendAll } from './appendAll'
 
 function regionCentroid(region: { outer: Point[] }): { x: number; y: number } {
   let sx = 0
@@ -254,7 +255,7 @@ function generateVCarveToolpathSingle(project: Project, operation: Operation): T
           const linkBudget = isCrossZ ? stepoverDistance * 8 : 0
           currentPosition = transitionToCutEntry(moves, currentPosition, entryPoint, safeZ, linkBudget)
           const cutMoves = toClosedCutMoves(contour, z)
-          moves.push(...cutMoves)
+          appendAll(moves, cutMoves)
           currentPosition = cutMoves.at(-1)?.to ?? currentPosition
         }
         currentDepth += stepoverDistance / slope

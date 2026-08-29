@@ -18,6 +18,7 @@ import type { Clamp, Operation, Project } from '../../types/project'
 import type { ToolpathWarning } from './warningCodes'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
 import { normalizeToolForProject } from './geometry'
+import { appendAll } from './appendAll'
 
 interface ExpandedClampBounds {
   clamp: Clamp
@@ -230,7 +231,7 @@ export function applyClampWarnings(project: Project, result: ToolpathResult, ope
         }
       }
     } else if (canAutoLiftRapid(move, unsafe)) {
-      adjustedMoves.push(...liftRapidMove(move, requiredZ))
+      appendAll(adjustedMoves, liftRapidMove(move, requiredZ))
       continue
     }
 
@@ -260,7 +261,7 @@ export function applyClampWarnings(project: Project, result: ToolpathResult, ope
   }
 
   const warnings = [...result.warnings]
-  warnings.push(...travelLimitWarnings.values())
+  appendAll(warnings, travelLimitWarnings.values())
   for (const entry of warningCounts.values()) {
     warnings.push({
       code: entry.count === 1 ? 'clampCrossedOne' : 'clampCrossedMany',

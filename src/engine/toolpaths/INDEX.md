@@ -53,6 +53,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `meshSlicing.ts` — slices a mesh at Z heights (used by surface strategies)
 - `modelProtection.ts` — keeps cuts from violating the imported model
 - `clamps.ts` — clamp clearance / avoidance regions
+- `appendAll.ts` — `appendAll(target, source)`, the one way this folder splices a generated array onto another (issue #668). `target.push(...source)` passes one *argument* per element and throws `RangeError: Maximum call stack size exceeded` past the engine's argument limit — 124,413 on node v26.0.0, stack-size dependent — and generation routinely builds arrays past that: one trochoidal Edge Route fragment on a 60 x 40 in guide emits 204,696 cut moves, inside the 500,000-point budget and well past the limit. A scoped `no-restricted-syntax` rule in `eslint.config.js` keeps the spread from coming back here
 
 ## Tests
 - `cornerRelief.test.ts` — corner relief asserted on **coverage of the emitted motion**, never on "the region changed": a swept-envelope model decides whether the corner wedge is cut, because a region-level assertion passes on the silent no-op that region union produces. The same model is run with the excursion ending at `1.2r` and must *fail*, which is what makes the touch-the-corner rule falsifiable rather than merely satisfied. Also covers the corner-qualification sets (convex boundary, reflex island, concave part outline), tessellated arcs and fillets producing nothing, `'none'`/legacy identity, the tool-derived stepdown, every guard path, the rough-big-then-finish-small workflow, `optimizeLinearMoves` preserving the out-and-back (it survives only because the collinear merge requires `dot > 0`), and mm/inch plus a cross-unit tool
@@ -94,6 +95,9 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 - `pocketTessellationConsistency.test.ts` — regression for circle/arc sampling consistency (issue #359): full-circle and broken-circle pockets must have identical chord sagitta
 - `arcReconstruction.test.ts` — direct partial-run arc-search coverage: greedy longest valid runs, sweep direction, and the bounded large non-fitting path (issue #369)
 - additional arc-reconstruction coverage lives with its store-level callers: `store/helpers/offsetSimplify.test.ts` (offset simplification) and `store/second_cut_test.ts` (segment-preserving boolean reconstruction)
+
+- `appendAll.test.ts` — appends 200,000 elements, a size checked against the spread limit measured on the running engine (`src/test/spreadLimit.ts`) so the fixture cannot decay into an array a spread would have handled anyway; plus order, object identity, empty source, and a non-array iterable
+- `edgeTrochoidalEmission.test.ts` — the issue #668 regression through the real generator: a 60 x 40 in outside trochoidal route emits one fragment of 204,696 cut moves, which must be generated rather than thrown on or refused. Asserts against the measured spread limit rather than a constant, so a fixture that stopped exceeding it fails loudly instead of passing quietly
 
 ## Adding a new strategy
 1. New file `myStrategy.ts` exporting a generator function.

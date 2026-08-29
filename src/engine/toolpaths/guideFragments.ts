@@ -17,6 +17,7 @@
 import type { Point } from '../../types/project'
 import { DEFAULT_CLIPPER_SCALE, XY_EPSILON, samePointXY } from './geometry'
 import type { ClipperPath } from './types'
+import { appendAll } from './appendAll'
 
 const EPSILON = XY_EPSILON
 
@@ -185,7 +186,7 @@ export function splitClosedGuideByForbiddenPaths(
     const parameters = [0, 1]
     for (const path of forbidden) {
       for (let edgeIndex = 0; edgeIndex < path.length; edgeIndex += 1) {
-        parameters.push(...segmentIntersectionParameters(
+        appendAll(parameters, segmentIntersectionParameters(
           from,
           to,
           path[edgeIndex],

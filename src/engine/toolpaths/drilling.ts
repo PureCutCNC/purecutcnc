@@ -30,6 +30,7 @@ import {
   DEFAULT_ENTRY_RAMP_ANGLE,
   emitCenterLockedCircularBore,
 } from './entry'
+import { appendAll } from './appendAll'
 
 const CHIP_BREAK_CLEARANCE = 0.5    // tiny retract between pecks in chip-breaking mode (project units)
 
@@ -509,7 +510,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
 
   // Precompute and sort targets by nearest-neighbor travel
   const { targets: drillTargets, warnings: precomputeWarnings } = precomputeDrillTargets(targetFeatures, project, regionMask)
-  warnings.push(...precomputeWarnings)
+  appendAll(warnings, precomputeWarnings)
 
   if (drillTargets.length === 0) {
     return {
@@ -672,7 +673,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
           if (!result.warnings.some((w) => w.code === 'drillHelicalBoreUnmachinable')) {
             currentPosition = result.position
           }
-          warnings.push(...result.warnings)
+          appendAll(warnings, result.warnings)
         }
       } else {
         // Should not reach here (getCircleCenter already passed), but be safe

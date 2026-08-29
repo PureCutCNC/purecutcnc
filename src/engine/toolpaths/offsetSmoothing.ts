@@ -66,6 +66,7 @@
 import type { Point } from '../../types/project'
 import { findBroadCornerArc, type BroadCornerArc } from './broadCornerArc'
 import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
+import { appendAll } from './appendAll'
 
 export interface RoundContourOptions {
   /** Only round turns whose accumulated deflection (0 = straight, 180 = full
@@ -669,7 +670,7 @@ function buildSpanGeometry(
       && (inner.end !== last
         || edgeParameter(ring, arc.exitEdge, inner.exit) < exitLimit - EPS)
     if (inner && spliceable) {
-      points.push(...inner.points)
+      appendAll(points, inner.points)
       offset += innerLength + 1
       continue
     }
@@ -929,14 +930,14 @@ export function planContourSmoothing(
     : [...planned].sort((a, b) => a.start - b.start)
   const out: Point[] = []
   let cursor = wrapped ? wrapped.end + 1 : 0
-  if (wrapped) out.push(...wrapped.points)
+  if (wrapped) appendAll(out, wrapped.points)
   for (const transition of walkOrder) {
     if (transition === wrapped) continue
     while (cursor < transition.start) {
       out.push(ring[cursor])
       cursor += 1
     }
-    out.push(...transition.points)
+    appendAll(out, transition.points)
     cursor = transition.end + 1
   }
   while (cursor < (wrapped ? wrapped.start : count)) {

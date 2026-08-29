@@ -66,6 +66,7 @@ import { splitFeatureTargets } from './regions'
 import { resolve3DSurfaceStepdown } from './surfaceStepdown3d'
 import type { Resolved3DSurfaceLevel } from './surfaceStepdown3d'
 import type { ClipperPath } from './types'
+import { appendAll } from './appendAll'
 
 const KEY_SCALE = 1_000
 const CLEANUP_SAMPLE_LEVEL_COUNT = 32
@@ -820,7 +821,7 @@ export function generateFinishSurfaceCleanupToolpath(
           resolved.maxLinkDistance,
         )
         const cutMoves = toClosedCutMoves(contour, z)
-        moves.push(...cutMoves)
+        appendAll(moves, cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
 
@@ -842,7 +843,7 @@ export function generateFinishSurfaceCleanupToolpath(
           resolved.maxLinkDistance,
         )
         const cutMoves = toOpenCutMoves(segment, z)
-        moves.push(...cutMoves)
+        appendAll(moves, cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
       }
 
@@ -951,7 +952,7 @@ export function generateFinishSurfaceCleanupToolpath(
           circleMoves = splice.cutMoves
           currentPosition = splice.nextPosition
         }
-        moves.push(...circleMoves)
+        appendAll(moves, circleMoves)
         currentPosition = circleMoves.at(-1)?.to ?? currentPosition
         previousCircleEnd = currentPosition
       }
@@ -982,7 +983,7 @@ export function generateFinishSurfaceCleanupToolpath(
         cutMoves = splice.cutMoves
         currentPosition = splice.nextPosition
       }
-      moves.push(...cutMoves)
+      appendAll(moves, cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
     }
 
@@ -1000,7 +1001,7 @@ export function generateFinishSurfaceCleanupToolpath(
         resolved.maxLinkDistance,
       )
       const cutMoves = toOpenCutMoves(segment, z)
-      moves.push(...cutMoves)
+      appendAll(moves, cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
     }
 
