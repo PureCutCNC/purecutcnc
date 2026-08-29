@@ -58,7 +58,7 @@ import {
 } from './trochoidalPath'
 import { splitClosedGuideByForbiddenPaths, type ClosedGuideFragment } from './guideFragments'
 import { resolveRegionDomainCurve } from './regionDomain'
-import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET } from './trochoidalEdge'
+import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET, type TrochoidalContourError } from './trochoidalEdge'
 import { createTrochoidalPathStore } from './trochoidalLevelPaths'
 import type { TrochoidalPathParams } from './trochoidalLevelPaths'
 import { expandedTabFootprints } from './tabs'
@@ -706,6 +706,7 @@ function appendFragmentedContoursAtLevels(
 function hasFatalTrochoidalWarning(warnings: ToolpathWarning[]): boolean {
   return warnings.some((warning) => (
     warning.code === 'edgeTrochoidalInvalidGuide'
+    || warning.code === 'edgeTrochoidalAdvanceDegenerate'
     || warning.code === 'edgeTrochoidalParametersInvalid'
     || warning.code === 'edgeTrochoidalMoveBudget'
     || warning.code === 'edgeTrochoidalEntryBudget'
@@ -723,6 +724,20 @@ function hasFatalTrochoidalWarning(warnings: ToolpathWarning[]): boolean {
     || warning.code === 'edgeFeatureNoCutDepth'
     || warning.code === 'edgeNoContourForFeature'
   ))
+}
+
+/**
+ * A degenerate advance and an exhausted ceiling are different failures and get
+ * different warnings — that separation is the point of issue #662. `overBudget`
+ * covers a reused path, which never entered the generator's own check.
+ */
+function trochoidalGuideWarningCode(
+  error: TrochoidalContourError | undefined,
+  overBudget: boolean,
+): 'edgeTrochoidalAdvanceDegenerate' | 'edgeTrochoidalMoveBudget' | 'edgeTrochoidalInvalidGuide' {
+  if (error === 'degenerate-advance') return 'edgeTrochoidalAdvanceDegenerate'
+  if (error === 'move-budget' || overBudget) return 'edgeTrochoidalMoveBudget'
+  return 'edgeTrochoidalInvalidGuide'
 }
 
 interface PreparedTrochoidalPath {
@@ -808,9 +823,7 @@ export function appendTrochoidalContoursAtLevels(
         const overBudget = built.points.length > maxPoints
         if (built.error || overBudget || built.points.length < 2 || !built.entryCenter) {
           warnings.push({
-            code: built.error === 'move-budget' || overBudget
-              ? 'edgeTrochoidalMoveBudget'
-              : 'edgeTrochoidalInvalidGuide',
+            code: trochoidalGuideWarningCode(built.error, overBudget),
             params: { x: fragment.points[0]?.x ?? 0, y: fragment.points[0]?.y ?? 0 },
           })
           return currentPosition
@@ -1016,8 +1029,8 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
     // Trochoidal needs two things the contour path gets for free.
     //
     // The point budget is per operation, not per target: one budget is created
-    // here and threaded through every sub-operation, so N features share the
-    // 500,000 points rather than quietly claiming N x 500,000.
+    // here and threaded through every sub-operation, so N features share
+    // `DEFAULT_TROCHOIDAL_POINT_BUDGET` rather than quietly claiming N of it.
     const sharedBudget: TrochoidalOperationBudget | undefined = isTrochoidal
       ? {
           remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET,

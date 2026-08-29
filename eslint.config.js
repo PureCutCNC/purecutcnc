@@ -86,7 +86,7 @@ export default defineConfig([
   // element — it throws `RangeError: Maximum call stack size exceeded` past the
   // engine's argument limit (124,413 on node v26.0.0, stack-size dependent).
   // One trochoidal Edge Route fragment on a 60 x 40 in guide emits 203,232 cut
-  // moves inside the 500,000-point budget, and the spread threw instead of
+  // moves inside the operation point budget, and the spread threw instead of
   // producing a path (issue #668). `appendAll` from
   // src/engine/toolpaths/appendAll.ts appends in a loop instead; tests are
   // exempt because their arrays are fixtures, not generated geometry.

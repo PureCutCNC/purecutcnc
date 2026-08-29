@@ -23,7 +23,7 @@
  * on node v26.0.0 at the default stack size, and stack-size dependent rather
  * than a fixed constant. Toolpath generation routinely builds arrays past that:
  * one trochoidal Edge Route fragment on a 60 x 40 in guide emits 203,232 cut
- * moves, well inside the 500,000-point budget and well past the limit, and the
+ * moves, well inside the operation point budget and well past the limit, and the
  * spread threw instead of producing a path (issue #668).
  *
  * Order and object identity are preserved, so emitted output is unchanged.

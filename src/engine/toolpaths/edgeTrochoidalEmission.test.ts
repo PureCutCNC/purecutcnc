@@ -18,7 +18,7 @@
  * Trochoidal Edge Route emission past the engine's argument limit — issue #668.
  *
  * One trochoidal fragment is emitted as a whole array of cut moves, and its
- * size is bounded only by the 500,000-point operation budget. Splicing it in
+ * size is bounded only by `DEFAULT_TROCHOIDAL_POINT_BUDGET`. Splicing it in
  * with `moves.push(...cutMoves)` therefore threw `RangeError: Maximum call
  * stack size exceeded` on a real 60 x 40 in outside route — no toolpath, no
  * warning, a thrown generator. This asserts the emitted fragment really does

@@ -31,7 +31,7 @@ import { pushRapidAndPlunge, retractToSafe } from './pocket'
 import { resolveRegionDomainCurve } from './regionDomain'
 import { buildRegionMask, splitFeatureTargets } from './regions'
 import { helixAngularDirection } from './entry'
-import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET } from './trochoidalEdge'
+import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET, type TrochoidalContourError } from './trochoidalEdge'
 import { createTrochoidalPathStore } from './trochoidalLevelPaths'
 import type { TrochoidalPathParams } from './trochoidalLevelPaths'
 import {
@@ -125,9 +125,9 @@ function buildCarveLevels(topZ: number, finalZ: number, stepdown: number, single
 }
 
 /**
- * Returns true when any of the seven fatal carve-trochoidal warning codes is
- * present.  When true the operation must refuse to emit moves — an all-or-nothing
- * result matching the edge-route contract.
+ * Returns true when any of the fatal carve-trochoidal warning codes is present.
+ * When true the operation must refuse to emit moves — an all-or-nothing result
+ * matching the edge-route contract.
  */
 function hasFatalCarveTrochoidalWarning(warnings: ToolpathWarning[]): boolean {
   return warnings.some((warning) => (
@@ -136,9 +136,24 @@ function hasFatalCarveTrochoidalWarning(warnings: ToolpathWarning[]): boolean {
     || warning.code === 'carveTrochoidalAdvanceRange'
     || warning.code === 'carveTrochoidalEntryStrategyUnsupported'
     || warning.code === 'carveTrochoidalInvalidGuide'
+    || warning.code === 'carveTrochoidalAdvanceDegenerate'
     || warning.code === 'carveTrochoidalMoveBudget'
     || warning.code === 'carveTrochoidalEntryBudget'
   ))
+}
+
+/**
+ * A degenerate advance and an exhausted ceiling are different failures and get
+ * different warnings — that separation is the point of issue #662. `overBudget`
+ * covers a reused path, which never entered the generator's own check.
+ */
+function carveGuideWarningCode(
+  error: TrochoidalContourError | undefined,
+  overBudget: boolean,
+): 'carveTrochoidalAdvanceDegenerate' | 'carveTrochoidalMoveBudget' | 'carveTrochoidalInvalidGuide' {
+  if (error === 'degenerate-advance') return 'carveTrochoidalAdvanceDegenerate'
+  if (error === 'move-budget' || overBudget) return 'carveTrochoidalMoveBudget'
+  return 'carveTrochoidalInvalidGuide'
 }
 
 interface PreparedCarvePath {
@@ -396,9 +411,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
           const overBudget = built.points.length > maxPoints
           if (built.error || overBudget || built.points.length < 2 || !built.entryCenter) {
             warnings.push({
-              code: built.error === 'move-budget' || overBudget
-                ? 'carveTrochoidalMoveBudget'
-                : 'carveTrochoidalInvalidGuide',
+              code: carveGuideWarningCode(built.error, overBudget),
               params: { x: fragX, y: fragY },
             })
             preparationFailed = true

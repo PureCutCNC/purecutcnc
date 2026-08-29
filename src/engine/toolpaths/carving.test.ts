@@ -614,14 +614,16 @@ function testVBitFailsClosed(): void {
   console.log('V-bit fails closed: PASSED')
 }
 
-function testBudgetExhaustion(): void {
-  console.log('Testing budget exhaustion...')
+function testDegenerateAdvance(): void {
+  console.log('Testing a degenerate advance refuses by naming the advance...')
 
   const tool = makeFlatEndmill('t1', 4)
 
-  // Create a very long line with tiny advance to blow the budget.
-  // At 0.000001 advance and D=4, advance = 0.000004 mm per loop.
-  // A 20mm line needs 5,000,000 loops → well past 500,000.
+  // 0.000001 x D is 0.000004 mm of progress per orbit — the same arc traced over
+  // and over. This is a defective parameter, and issue #662 separates it from the
+  // point ceiling: on a 20 mm line it never comes close to the ceiling, so before
+  // the degeneracy cap existed the only thing that could catch it was the guard
+  // firing for the wrong reason with the wrong message.
   const line = makeLineFeature('line1', 0, 0, 20, 0)
   const project = baseProject([tool], [line])
   const op = makeCarveOp({
@@ -635,11 +637,51 @@ function testBudgetExhaustion(): void {
   })
 
   const result = generateFollowLineToolpath(project, op)
+  assert(result.moves.length === 0, 'a degenerate advance must produce zero moves')
+
+  const warning = result.warnings.find((w) => w.code === 'carveTrochoidalAdvanceDegenerate')
+  assert(warning !== undefined,
+    `must name the advance, got [${result.warnings.map((w) => w.code).join(', ') || 'none'}]`)
+  assert(!result.warnings.some((w) => w.code === 'carveTrochoidalMoveBudget'),
+    'a degenerate advance must not be reported as an exhausted point ceiling')
+  assert(typeof warning!.params?.x === 'number' && typeof warning!.params?.y === 'number',
+    `degeneracy warning must carry numeric x,y params, got ${JSON.stringify(warning!.params)}`)
+  assert(Number.isFinite(warning!.params!.x) && Number.isFinite(warning!.params!.y),
+    'degeneracy warning params must be finite numbers')
+
+  console.log('degenerate advance: PASSED')
+}
+
+function testBudgetExhaustion(): void {
+  console.log('Testing budget exhaustion...')
+
+  const tool = makeFlatEndmill('t1', 4)
+
+  // A big job rather than a bad parameter: the advance is a legal 0.02 x D and
+  // the channel is wide, so the orbit is finely stepped and a 400 mm line asks
+  // for more points than one operation may hold. This is the branch the ceiling
+  // is for, and it must stay distinct from the degeneracy cap above.
+  const line = makeLineFeature('line1', 0, 0, 400, 0)
+  const project = baseProject([tool], [line])
+  const op = makeCarveOp({
+    kind: 'follow_line',
+    target: { source: 'features', featureIds: ['line1'] },
+    toolRef: 't1',
+    carveDepth: 1,
+    carveStrategy: 'trochoidal',
+    trochoidalCutWidth: 40,
+    trochoidalAdvance: 0.02,
+  })
+
+  const result = generateFollowLineToolpath(project, op)
   assert(result.moves.length === 0, 'budget exhaustion must produce zero moves')
 
   const budgetWarning = result.warnings.find((w) =>
     w.code === 'carveTrochoidalMoveBudget' || w.code === 'carveTrochoidalEntryBudget')
-  assert(budgetWarning !== undefined, 'must emit a budget warning')
+  assert(budgetWarning !== undefined,
+    `must emit a budget warning, got [${result.warnings.map((w) => w.code).join(', ') || 'none'}]`)
+  assert(!result.warnings.some((w) => w.code === 'carveTrochoidalAdvanceDegenerate'),
+    'a job that is merely too big must not be reported as a degenerate advance')
   assert(typeof budgetWarning!.params?.x === 'number' && typeof budgetWarning!.params?.y === 'number',
     `budget warning must carry numeric x,y params, got ${JSON.stringify(budgetWarning!.params)}`)
   assert(Number.isFinite(budgetWarning!.params!.x) && Number.isFinite(budgetWarning!.params!.y),
@@ -780,6 +822,7 @@ testSweptEnvelope()
 testRegionIncludeExcludePolarity()
 testCutWidthTooSmallFailsClosed()
 testVBitFailsClosed()
+testDegenerateAdvance()
 testBudgetExhaustion()
 testCutDirectionParityOnOpenGuide()
 testTrochoidalLevelsAreIdentical()

@@ -2596,22 +2596,37 @@ function testTrochoidalFeatureFirstSharesBudgetAndFailsAtomically() {
     'feature-first must emit separate blocks per target',
   )
 
-  // The 500,000-point budget belongs to the operation, not to each target. If it
-  // were re-created per sub-operation, two targets would quietly get twice the
-  // allowance — so an advance fine enough to exhaust one budget across both must
-  // fail, not silently succeed.
-  const starved = generateEdgeRouteToolpath(project, {
+  // The point budget belongs to the operation, not to each target. If it were
+  // re-created per sub-operation, two targets would quietly get twice the
+  // allowance. The parameters below straddle the ceiling deliberately: **one**
+  // target fits and two do not, which is what makes the assertion discriminating.
+  // The previous form used an advance so fine that a single target already blew
+  // the whole budget, so it passed whether or not the budget was shared — and
+  // that advance is now caught by the degeneracy cap instead (issue #662).
+  const straddling = {
     ...makeTrochoidalEdgeOperation('left', 'edge_route_outside'),
-    target: targets,
-    machiningOrder: 'feature_first',
-    trochoidalAdvance: 0.0005,
-  })
+    machiningOrder: 'feature_first' as const,
+    trochoidalAdvance: 0.02,
+    stepdown: 0.09,
+  }
+  const single = generateEdgeRouteToolpath(project, straddling)
+  assert(
+    single.warnings.length === 0,
+    `one target alone must fit the budget: [${single.warnings.map((w) => w.code).join(', ')}]`,
+  )
+  assert(single.moves.length > 0, 'the single-target calibration run must emit motion')
+
+  const starved = generateEdgeRouteToolpath(project, { ...straddling, target: targets })
   assert(starved.moves.length === 0, 'an operation-wide budget overrun must emit no motion')
   assert(
     starved.warnings.some((warning) => (
       warning.code === 'edgeTrochoidalMoveBudget' || warning.code === 'edgeTrochoidalEntryBudget'
     )),
     `expected a budget warning, got [${starved.warnings.map((w) => w.code).join(', ')}]`,
+  )
+  assert(
+    !starved.warnings.some((warning) => warning.code === 'edgeTrochoidalAdvanceDegenerate'),
+    'the starvation fixture must exhaust the ceiling, not trip the degeneracy cap',
   )
 
   // Atomicity: one target failing closed must refuse the whole operation rather

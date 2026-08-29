@@ -151,9 +151,71 @@ function testInvalidInputsAndBudget(): void {
   })
   assert(duplicateVertex.error === undefined, 'repeated closing vertex must normalize')
 
-  const budget = buildTrochoidalContour(rectangle, {
+  // Degeneracy and the ceiling are different failures (issue #662). This advance
+  // is 0.000025 x D: the orbit re-cuts the same arc rather than progressing, and
+  // the parameter is what is wrong, not the size of the job.
+  const degenerate = buildTrochoidalContour(rectangle, {
     orbitRadius: 2,
     advance: 0.0001,
+    toolDiameter: 4,
+    angularDirection: 1,
+  })
+  assert(degenerate.error === 'degenerate-advance', `expected degenerate-advance, got ${degenerate.error}`)
+  assert(degenerate.points.length === 0, 'a degenerate advance must not emit partial output')
+
+  // Exactly `0.01 x D` is the smallest advance the CAM panel offers, so it is an
+  // ordinary setting and must generate. The guide length is deliberately not a
+  // whole number of advances (40 mm / 0.03 mm = 1333.33): the first form of this
+  // cap compared the ceil'd loop count with that real quotient, so `ceil(m) > m`
+  // refused every such guide at the bound — the panel's minimum, refusing
+  // ordinary parts.
+  const atTheBound = buildTrochoidalContour(rectangle, {
+    orbitRadius: 1,
+    advance: 0.03,
+    toolDiameter: 3,
+    angularDirection: 1,
+  })
+  assert(atTheBound.error === undefined, `an advance of exactly 0.01 x D must generate, got ${atTheBound.error}`)
+  assert(atTheBound.points.length > 0, 'the boundary advance must emit a path')
+  assert(atTheBound.loopCount === 1334, `the fixture must not divide evenly, got ${atTheBound.loopCount} loops`)
+
+  // A hair below it is degenerate, so the bound discriminates rather than
+  // passing everything.
+  const belowTheBound = buildTrochoidalContour(rectangle, {
+    orbitRadius: 1,
+    advance: 0.0299,
+    toolDiameter: 3,
+    angularDirection: 1,
+  })
+  assert(belowTheBound.error === 'degenerate-advance', `just under the bound must refuse, got ${belowTheBound.error}`)
+
+  // A guide too short to hold more than one orbit cannot be degenerate however
+  // fine the advance is. Without that exemption every sub-millimetre tab
+  // fragment would refuse on an otherwise ordinary operation.
+  const singleLoop = buildTrochoidalContour([
+    { x: 0, y: 0 },
+    { x: 0.01, y: 0 },
+    { x: 0.01, y: 0.01 },
+  ], {
+    orbitRadius: 2,
+    advance: 0.4,
+    toolDiameter: 4,
+    angularDirection: 1,
+  })
+  assert(singleLoop.loopCount === 1, `single-orbit fixture must hold one loop, got ${singleLoop.loopCount}`)
+  assert(singleLoop.error === undefined, `a single-orbit guide must generate, got ${singleLoop.error}`)
+
+  // The ceiling still refuses on its own terms: a legal 0.02 x D advance on a
+  // 12 m guide is a job too big to hold, not a defective parameter.
+  const oversize: Point[] = [
+    { x: 0, y: 0 },
+    { x: 3000, y: 0 },
+    { x: 3000, y: 3000 },
+    { x: 0, y: 3000 },
+  ]
+  const budget = buildTrochoidalContour(oversize, {
+    orbitRadius: 2,
+    advance: 0.08,
     toolDiameter: 4,
     angularDirection: 1,
   })
