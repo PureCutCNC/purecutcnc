@@ -42,9 +42,55 @@ const MIN_STEPS_PER_LOOP = 8
 
 const GEOMETRY_EPSILON = XY_EPSILON
 
-export const DEFAULT_TROCHOIDAL_POINT_BUDGET = 500_000
+/**
+ * The ceiling is a **memory** target, stated as one, with the point count
+ * derived from it rather than the other way round (issue #662).
+ *
+ * One operation's emitted moves may claim at most **248 MB** of heap. At the
+ * 248 bytes an emitted `ToolpathMove` was measured to retain, that is 1,000,000
+ * moves. Four such operations in one project is roughly a gigabyte of emitted
+ * moves, which is about as much as a desktop browser tab carries alongside the
+ * CSG, the meshes and the render buffers.
+ *
+ * The 248 B/move is measured, not assumed: retaining the real
+ * `ToolpathResult.moves` array under `--expose-gc`, after a warm-up run so
+ * one-time caches are not charged to it, a 400 x 300 mm trochoidal outside
+ * route gives 252.4 B/move at 115,227 moves and 247.9 B/move at 576,123, and
+ * the slope between the two is 246.8. Consecutive moves do **not** share point
+ * objects — 1,082 of 576,122 — so every move retains two distinct `{x, y, z}`.
+ * That is why the figure is higher than the 178 B/move quoted in #659, and why
+ * the 500,000 this replaces was already worth about 124 MB rather than 89 MB.
+ *
+ * **This is not the point at which the app stays usable, and must not be read
+ * as one.** #664 measures the UI unusable at about 249,663 moves, already below
+ * the 500,000 this replaces. Clamping the ceiling to a renderability figure
+ * would refuse the large, deep, legitimate cuts #662 exists to stop refusing;
+ * renderability is a lower, separate limit and #664 owns raising it.
+ *
+ * Fatal, deliberately: a partial trochoidal path is unsafe — see
+ * `planning/TROCHOIDAL_EDGE_DESIGN.md` § Budgets.
+ */
+export const DEFAULT_TROCHOIDAL_POINT_BUDGET = 1_000_000
 
-export type TrochoidalContourError = 'invalid-guide' | 'move-budget'
+/**
+ * Degeneracy, not size (issue #662). An orbit that advances less than 1% of the
+ * cutter diameter per loop is not a fine cut, it is the same arc traced over and
+ * over, and the parameter that produced it is defective rather than ambitious.
+ *
+ * `trochoidalAdvance` is the only one of the three shape parameters that can do
+ * this: `W >= 1.15 x D` is refused before generation, which floors the orbit
+ * radius at `0.075 x D`, and a small radius *lowers* the step count rather than
+ * raising it (`MIN_STEPS_PER_LOOP` holds the bottom). The advance passes its own
+ * validation at any value in `(0, 1]` and can still make a bounded guide cost
+ * unbounded points.
+ *
+ * This is the check the global ceiling can never be: `0.005 x D` on a 50 mm
+ * guide costs about 40,000 points — comfortably inside any ceiling — while
+ * re-cutting the same material 1,667 times.
+ */
+const MIN_ADVANCE_FRACTION = 0.01
+
+export type TrochoidalContourError = 'invalid-guide' | 'move-budget' | 'degenerate-advance'
 
 export interface TrochoidalContourOptions {
   orbitRadius: number
@@ -195,6 +241,16 @@ export function buildTrochoidalContour(
 
   const loopCount = Math.max(1, Math.ceil(path.length / options.advance))
   const actualAdvance = path.length / loopCount
+  // Orbit count against guide length, which is where a degenerate advance shows
+  // and a merely large job does not. A fragment shorter than one advance has
+  // exactly one orbit and cannot be degenerate however small the advance is, so
+  // the single-loop case is exempt rather than measured — otherwise a
+  // sub-millimetre tab fragment would refuse on a perfectly ordinary operation.
+  const maxLoops = path.length / (options.toolDiameter * MIN_ADVANCE_FRACTION)
+  if (loopCount > 1 && loopCount > maxLoops) {
+    return { points: [], entryCenter: null, loopCount, actualAdvance, error: 'degenerate-advance' }
+  }
+
   const stepsPerLoop = orbitStepsPerLoop(options.orbitRadius, options.toolDiameter)
   const movingSteps = loopCount * stepsPerLoop
   const maxPoints = Math.min(DEFAULT_TROCHOIDAL_POINT_BUDGET, options.maxPoints ?? DEFAULT_TROCHOIDAL_POINT_BUDGET)

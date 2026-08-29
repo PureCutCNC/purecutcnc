@@ -70,6 +70,12 @@ export type ToolpathWarningCode =
   | 'edgeTrochoidalParametersInvalid'
   | 'edgeTrochoidalEntryStrategyUnsupported'
   | 'edgeTrochoidalInvalidGuide'
+  /** The advance is degenerate for the cutter, not merely fine: the orbit
+   *  advances less than 1% of the cutter diameter per loop, so the same arc is
+   *  traced over and over. Distinct from the point ceiling on purpose — the
+   *  ceiling is about how big a job is, this is about a defective parameter,
+   *  and it fires on guides far too short to reach any ceiling (issue #662). */
+  | 'edgeTrochoidalAdvanceDegenerate'
   | 'edgeTrochoidalMoveBudget'
   | 'edgeTrochoidalEntryBudget'
   | 'edgeTrochoidalTabsRequireHelix'
@@ -90,6 +96,8 @@ export type ToolpathWarningCode =
   | 'carveTrochoidalAdvanceRange'
   | 'carveTrochoidalEntryStrategyUnsupported'
   | 'carveTrochoidalInvalidGuide'
+  /** As `edgeTrochoidalAdvanceDegenerate`, for trochoidal Engrave. */
+  | 'carveTrochoidalAdvanceDegenerate'
   | 'carveTrochoidalMoveBudget'
   | 'carveTrochoidalEntryBudget'
   /** Fail closed, not warn. A V-bit has no constant cutting diameter, so
