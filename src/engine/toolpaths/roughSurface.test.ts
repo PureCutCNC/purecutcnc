@@ -716,6 +716,28 @@ function testRoughSurfaceCutsVerticalPocketAndOutsideWall(): void {
   assert(outsideWallCuts.length > 0, 'expected rough cuts around the outside wall')
 }
 
+function testRoughSurfaceKeepsEveryGenuineFloorLevel(): void {
+  console.log('Testing rough_surface keeps a critical level at every genuine floor...')
+  // The pocket block has three horizontal faces the cutter can sit on — the
+  // block bottom (200 mm^2), the pocket floor (32 mm^2) and the top deck
+  // (168 mm^2) — against a 0.196 mm^2 bound for its 0.5 mm tool. The flat-area
+  // rule that culls quantization plateaus (#682) must not touch any of them:
+  // losing one silently drops a floor pass and leaves that face proud.
+  const { project, operation } = makePocketBlockProject()
+  const resolvedResult = resolve3DSurfaceStepdown(project, operation)
+  assert(resolvedResult.ok, 'expected the pocket block stepdown to resolve')
+  if (!resolvedResult.ok) return
+
+  const criticalZs = resolvedResult.resolved.levels
+    .filter((level) => level.isCriticalFloorLevel)
+    .map((level) => Number(level.z.toFixed(6)))
+    .sort((a, b) => b - a)
+  assert(
+    criticalZs.length === 3 && criticalZs[0] === 4 && criticalZs[1] === 2 && criticalZs[2] === 0,
+    `expected critical floor levels at Z=4, 2 and 0, got [${criticalZs.join(', ')}]`,
+  )
+}
+
 function testRoughSurfaceKeepsOuterWallEnvelopeTight(): void {
   console.log('Testing rough_surface keeps outer wall envelope close to the model silhouette...')
   const { project, operation } = makePocketBlockProject()
@@ -1230,6 +1252,7 @@ testRoughSurfaceDefaultEntryMatchesExplicitPlunge()
 testRoughSurfaceFindsModelWhenRegionIsFirst()
   testRoughSurfaceDefaultsLegacyModelFormatToStl()
   testRoughSurfaceCutsVerticalPocketAndOutsideWall()
+  testRoughSurfaceKeepsEveryGenuineFloorLevel()
   testRoughSurfaceKeepsOuterWallEnvelopeTight()
   testRoughSurfaceProtectsOverhangingModelShadow()
 testRoughSurfaceProtectsOpenMeshSlicesConservatively()

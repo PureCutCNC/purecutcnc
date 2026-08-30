@@ -248,6 +248,47 @@ function dedupeZLevelsDescending(levels: number[]): number[] {
   return deduped
 }
 
+/**
+ * Smallest flat area at one Z that could hold the cutter, given the inset the
+ * level is about to be charged (issue #682).
+ *
+ * A connected region containing a disc of radius `R` has area at least
+ * `PI * R^2`, so a plateau under this bound provably cannot survive
+ * `buildInsetRegions(baseRegion, initialInset)` — the level would be built,
+ * sliced, offset and unioned only to produce nothing. It is a *necessary*
+ * condition, never a sufficient one: a long thin sliver can clear the bound and
+ * still admit no disc, and that case is left to the inset itself to reject.
+ */
+function minMachinableFloorArea(initialInset: number): number {
+  return Math.PI * initialInset * initialInset
+}
+
+/**
+ * Flat area per Z, merged on exactly the tolerance `dedupeZLevelsDescending`
+ * merges levels on.
+ *
+ * The merge matters because the filter is a threshold on the summed area: a
+ * plateau whose vertices differ in the last bits would otherwise land in two
+ * buckets, and both halves could fall under the bound that the whole clears.
+ * The Z that survives a merge is the same one `dedupeZLevelsDescending` would
+ * keep, so this changes which levels *exist* not at all — only which of them
+ * are worth machining.
+ */
+function dedupeFloorAreasDescending(areaByZ: Map<number, number>): Array<{ z: number; area: number }> {
+  const sorted = [...areaByZ.entries()].sort((a, b) => b[0] - a[0])
+  const merged: Array<{ z: number; area: number }> = []
+  for (const [z, area] of sorted) {
+    const previous = merged[merged.length - 1]
+    if (previous !== undefined && sameZ(previous.z, z)) {
+      previous.z = Math.min(previous.z, z)
+      previous.area += area
+      continue
+    }
+    merged.push({ z, area })
+  }
+  return merged
+}
+
 function modelSilhouetteClipperPaths(modelFeature: SketchFeature): ClipperPath[] {
   if (modelFeature.kind === 'stl' && modelFeature.stl?.silhouettePaths?.length) {
     return significantSilhouettePaths(modelFeature.stl.silhouettePaths)
@@ -330,7 +371,12 @@ export function resolve3DSurfaceStepdown(
 
   let modelTopZ = -Infinity
   let modelBottomZ = Infinity
-  const floorLevels = new Set<number>()
+  // Flat-triangle area per Z, accumulated here because this is the one loop
+  // that already visits every triangle (issue #682). It is what decides which
+  // flat regions earn their own rough level further down; anywhere else it
+  // would be a second pass over the whole mesh. Positions are transformed, so
+  // the area is in final project mm^2 and comparable to the tool's own disc.
+  const floorAreaByZ = new Map<number, number>()
 
   for (let i = 0; i < index.length; i += 3) {
     const i1 = index[i] * 3
@@ -350,7 +396,11 @@ export function resolve3DSurfaceStepdown(
     if (z3 < modelBottomZ) modelBottomZ = z3
 
     if (Math.abs(z1 - z2) < 1e-6 && Math.abs(z2 - z3) < 1e-6) {
-      floorLevels.add(z1)
+      const area = Math.abs(
+        (transformedPos[i2] - transformedPos[i1]) * (transformedPos[i3 + 1] - transformedPos[i1 + 1])
+        - (transformedPos[i3] - transformedPos[i1]) * (transformedPos[i2 + 1] - transformedPos[i1 + 1]),
+      ) / 2
+      floorAreaByZ.set(z1, (floorAreaByZ.get(z1) ?? 0) + area)
     }
   }
 
@@ -460,8 +510,23 @@ export function resolve3DSurfaceStepdown(
 
   const stepLevels = generateStepLevels(stockTop, effectiveBottom, resolvedStepdown)
   const subtractFloorLevels = relatedSubtracts.map((subtract) => subtract.bottomZ + axialLeave)
+  // A flat region earns its own level only when the cutter could sit on it
+  // (issue #682). Without this every distinct horizontal Z became a level, and
+  // a quantized depth map has one per grey step: the reporter's 291k-triangle
+  // relief carried 431 of them, spaced 18 um apart under a 3.175 mm cutter,
+  // and the whole per-level pipeline ran 431 extra times to emit 431 skim
+  // passes no machine needs. Dropping a level can only leave more material for
+  // the finish pass, never less, so nothing here can move a contour toward the
+  // model.
+  //
+  // `subtractFloorLevels` are exempt: those are the bottoms of 2D subtract
+  // features, real machining floors that exist whether or not the mesh has a
+  // plateau there.
+  const floorAreaThreshold = minMachinableFloorArea(initialInset)
+  const mergedFloorAreas = dedupeFloorAreasDescending(floorAreaByZ)
+  const machinableFloorLevels = mergedFloorAreas.filter((entry) => entry.area >= floorAreaThreshold)
   const criticalLevels = dedupeZLevelsDescending([
-    ...[...floorLevels].map((floorZ) => floorZ + axialLeave),
+    ...machinableFloorLevels.map((entry) => entry.z + axialLeave),
     ...subtractFloorLevels,
   ])
   const roughLevels = dedupeZLevelsDescending([...stepLevels, ...criticalLevels])
@@ -483,7 +548,8 @@ export function resolve3DSurfaceStepdown(
   if (operation.debugToolpath) {
     warnings.push({ code: 'debug', params: { text: `Debug: Z range ${stockTop.toFixed(4)} -> ${modelBottomZ.toFixed(4)}, bottom ${effectiveBottom.toFixed(4)}` } })
     warnings.push({ code: 'debug', params: { text: `Debug: silhouette area = ${silhouetteArea.toFixed(4)}` } })
-    warnings.push({ code: 'debug', params: { text: `Debug: floor candidate Zs = ${[...floorLevels].map((z) => z.toFixed(4)).join(', ')}` } })
+    warnings.push({ code: 'debug', params: { text: `Debug: flat Zs = ${mergedFloorAreas.length}, machinable at >= ${floorAreaThreshold.toFixed(4)} mm^2 = ${machinableFloorLevels.length}` } })
+    warnings.push({ code: 'debug', params: { text: `Debug: floor candidate Zs = ${machinableFloorLevels.map((entry) => entry.z.toFixed(4)).join(', ')}` } })
     warnings.push({ code: 'debug', params: { text: `Debug: rough levels = ${roughLevels.map((z) => z.toFixed(4)).join(', ')}` } })
     warnings.push({ code: 'debug', params: { text: `Debug: mesh triangles = ${index.length / 3}` } })
     warnings.push({ code: 'debug', params: { text: `Debug: initialInset=${initialInset.toFixed(4)} stepover=${effectiveStepover.toFixed(4)} stepdown=${resolvedStepdown.toFixed(4)}` } })
