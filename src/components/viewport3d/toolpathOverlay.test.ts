@@ -27,6 +27,8 @@ import {
   buildToolpathOverlayLayers,
   moveMatchesZFilter,
   movesForToolpathLayer,
+  splitMovesIntoLayers,
+  toolpathLayerBuckets,
   toolpathPointToWorldTuple,
   TOOLPATH_LAYER_Z_EPSILON,
   type ToolpathOverlayLayerKey,
@@ -219,8 +221,90 @@ function testZFilterPredicate(): void {
   }
 }
 
+// --- splitMovesIntoLayers / toolpathLayerBuckets: the one-pass split (#664) ---
+//
+// The one-pass split replaced five `movesForToolpathLayer` calls per animation
+// frame. `movesForToolpathLayer` is kept as the primitive precisely so it can
+// be the **oracle** here: the two are written differently — a per-layer
+// `kinds.includes` filter against a single `switch` — so the assertion is a
+// real cross-check rather than the split compared against itself.
+//
+// What each mutation kills:
+//   lead_out dropped from leadIns          -> agrees with movesForToolpathLayer
+//   retract/nonRetract branches swapped    -> agrees with movesForToolpathLayer
+//   plunge routed to cuts                  -> agrees with movesForToolpathLayer
+//   cache keyed on anything but identity   -> caches on toolpath identity
+//   cache shared across toolpaths          -> distinct toolpaths do not share
+
+const ALL_LAYER_KEYS: ToolpathOverlayLayerKey[] = ['cuts', 'leadIns', 'rapids', 'plunges', 'retractions']
+
+/** Every kind, plus rapids on both sides of the Z split and a lead_out. */
+function mixedMoves(): ToolpathMove[] {
+  const kinds: ToolpathMove['kind'][] = ['cut', 'lead_in', 'lead_out', 'plunge', 'rapid']
+  const moves: ToolpathMove[] = []
+  for (let i = 0; i < 40; i += 1) {
+    // Deterministic Z motion: ascending, descending, level, and a step under
+    // the epsilon, so both rapid layers and the boundary are all exercised.
+    const dz = [0, 1, -1, TOOLPATH_LAYER_Z_EPSILON / 2][i % 4]
+    moves.push({
+      kind: kinds[i % kinds.length],
+      from: { x: i, y: i * 2, z: 5 },
+      to: { x: i + 1, y: i * 2 + 1, z: 5 + dz },
+    })
+  }
+  return moves
+}
+
+function testSplitAgreesWithMovesForToolpathLayer(): void {
+  console.log('Testing one-pass layer split agrees with movesForToolpathLayer...')
+  const moves = mixedMoves()
+  const buckets = splitMovesIntoLayers(moves)
+  // Visibility only gates whether a layer draws, never what it holds, so any
+  // visibility yields the same kinds/zFilter per key.
+  const layers = buildToolpathOverlayLayers({
+    cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true,
+  })
+
+  let covered = 0
+  for (const key of ALL_LAYER_KEYS) {
+    const layer = layers.find((entry) => entry.key === key)
+    assert(layer !== undefined, `layer ${key} should exist`)
+    const expected = movesForToolpathLayer(moves, layer!)
+    const actual = buckets[key]
+    assert(
+      actual.length === expected.length,
+      `layer ${key}: expected ${expected.length} moves, got ${actual.length}`,
+    )
+    for (let i = 0; i < expected.length; i += 1) {
+      assert(actual[i] === expected[i], `layer ${key}: move ${i} must be the same object, in the same order`)
+    }
+    covered += actual.length
+  }
+  assert(covered === moves.length, `every move must land in exactly one layer: ${covered} of ${moves.length}`)
+}
+
+function testLayerBucketsCachesOnToolpathIdentity(): void {
+  console.log('Testing layer buckets cache on toolpath identity...')
+  const toolpath = { moves: mixedMoves() }
+  const first = toolpathLayerBuckets(toolpath)
+  const second = toolpathLayerBuckets(toolpath)
+  assert(first === second, 'the same toolpath must return the very same buckets object')
+  for (const key of ALL_LAYER_KEYS) {
+    assert(first[key] === second[key], `layer ${key}: the cached array must be reused, not rebuilt`)
+  }
+
+  const other = { moves: mixedMoves().slice(0, 5) }
+  const otherBuckets = toolpathLayerBuckets(other)
+  assert(otherBuckets !== first, "a different toolpath must not read another toolpath's buckets")
+  const otherTotal = ALL_LAYER_KEYS.reduce((sum, key) => sum + otherBuckets[key].length, 0)
+  assert(otherTotal === 5, `the second toolpath should hold its own 5 moves, got ${otherTotal}`)
+}
+
+
 testEveryRapidLandsInExactlyOneLayer()
 testDescendingRapidFollowsTheRapidsToggle()
 testZFilterPredicate()
+testSplitAgreesWithMovesForToolpathLayer()
+testLayerBucketsCachesOnToolpathIdentity()
 
 console.log('toolpathOverlay tests passed')

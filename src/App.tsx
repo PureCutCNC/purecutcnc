@@ -431,6 +431,7 @@ function App() {
           <Viewport3D
             ref={viewport3dRef}
             toolpaths={visibleToolpaths}
+            isActive={centerTab === 'preview3d'}
             selectedOperationId={effectiveSelectedOperationId}
             collidingClampIds={collidingClampIds}
             originVisible={project.origin.visible}

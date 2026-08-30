@@ -33,13 +33,14 @@ import {
   buildToolpathLinePositionChunks,
   buildToolpathOverlayLayers,
   moveMatchesZFilter,
-  movesForToolpathLayer,
+  toolpathLayerBuckets,
   toolpathPointToWorldTuple,
   type ToolpathLayerZFilter,
   type ToolpathOverlayLayerKey,
 } from './toolpathOverlay'
 import { useTheme } from '../../theme/themeContext'
 import { feedColourStep, pocketSlotFeedPercent, threeFeedColour, type ThreeThemePalette } from '../../theme/palette'
+import { ARROW_KINDS, buildArrowBatch, type ArrowPlacement } from './arrowBatch'
 import { createOrbitControls, type OrbitControls } from './orbitControls'
 import type { ViewPreset } from './viewPresets'
 import { ViewPresetMenu } from './ViewPresetMenu'
@@ -61,6 +62,9 @@ export interface Viewport3DHandle {
 
 interface Viewport3DProps {
   toolpaths?: ToolpathResult[]
+  /** False while another centre tab is showing. Gates the render loop only —
+   *  the scene stays built so a tab switch shows the current state at once. */
+  isActive?: boolean
   selectedOperationId?: string | null
   collidingClampIds?: string[]
   originVisible?: boolean
@@ -166,6 +170,7 @@ function buildToolpathDirectionMarkers(
     cut: 0,
     rapid: 0,
   }
+  const placements: Record<'cut' | 'rapid', ArrowPlacement[]> = { cut: [], rapid: [] }
 
   function getHorizontalDirection(move: ToolpathResult['moves'][number] | undefined): THREE.Vector3 | null {
     if (!move || (move.kind !== 'cut' && move.kind !== 'rapid')) {
@@ -240,30 +245,16 @@ function buildToolpathDirectionMarkers(
     const headWidth = markerLength * 0.18
     const center = from.clone().add(to).multiplyScalar(0.5)
     const origin = center.clone().sub(direction.clone().multiplyScalar(markerLength * 0.5))
-    const color = move.kind === 'rapid' ? palette.toolpathRapid : palette.toolpathCut
-    const arrow = new THREE.ArrowHelper(
-      direction,
-      origin,
-      markerLength,
-      color,
-      headLength,
-      headWidth,
-    )
-
-    arrow.traverse((entry) => {
-      if (entry instanceof THREE.Line || entry instanceof THREE.Mesh) {
-        const material = Array.isArray(entry.material) ? entry.material : [entry.material]
-        material.forEach((item) => {
-          item.transparent = true
-          item.opacity = 0.95
-          item.depthWrite = false
-          item.depthTest = false
-        })
-      }
-    })
-
-    objects.push(arrow)
+    placements[move.kind].push({ origin, direction, markerLength, headLength, headWidth })
     distanceSinceLastArrowByKind[move.kind] = 0
+  }
+
+  // One batch per kind rather than one `ArrowHelper` per arrow (issue #664).
+  for (const kind of ARROW_KINDS) {
+    const batch = placements[kind]
+    if (batch.length === 0) continue
+    const color = kind === 'rapid' ? palette.toolpathRapid : palette.toolpathCut
+    objects.push(...buildArrowBatch(batch, color))
   }
 
   return objects
@@ -314,11 +305,13 @@ function buildToolpathOverlay(
   // thresholds match what the engine emitted for this toolpath.
   const feedColoursOn = visibility.feedColours ?? (emphasized && toolpathHasEngagementTelemetry(toolpath))
 
+  // Cached by toolpath identity — see `toolpathLayerBuckets` (issue #664).
+  const buckets = toolpathLayerBuckets(toolpath)
   const objects: THREE.Object3D[] = []
   for (const layer of layers) {
     if (!layer.visible) continue
 
-    const moves = movesForToolpathLayer(toolpath.moves, layer)
+    const moves = buckets[layer.key]
 
     if (moves.length === 0) {
       continue
@@ -375,6 +368,7 @@ function buildToolpathOverlay(
 
 export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function Viewport3D({
   toolpaths = [],
+  isActive = true,
   selectedOperationId = null,
   collidingClampIds = [],
   originVisible = true,
@@ -387,6 +381,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
 }, ref) {
   const { palette } = useTheme()
   const threePalette = palette.three
+  // Mirrored into a ref because the render loop is raw RAF, not React-driven.
+  const isActiveRef = useRef(isActive)
+  isActiveRef.current = isActive
   const threePaletteRef = useRef(threePalette)
   const mountRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
@@ -510,6 +507,12 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
 
     function animate() {
       frameRef.current = requestAnimationFrame(animate)
+      // Skip the GPU draw while another centre tab is showing (issue #664).
+      // All three tab panels stay mounted — `AppShell` hides them with CSS —
+      // so without this the 3D scene was re-submitted at 60 Hz behind the 2D
+      // sketch for the life of the session. The scene itself stays built, so
+      // switching back shows the current state on the very next frame.
+      if (!isActiveRef.current) return
       renderer.render(scene, camera)
     }
     animate()

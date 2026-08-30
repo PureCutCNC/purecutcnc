@@ -81,6 +81,78 @@ export function movesForToolpathLayer(
   )
 }
 
+/** Every layer's move list, keyed by layer. */
+export type ToolpathLayerBuckets = Record<ToolpathOverlayLayerKey, ToolpathMove[]>
+
+/**
+ * The same split as `movesForToolpathLayer`, for all five layers in **one**
+ * pass instead of five (issue #664).
+ *
+ * The five layers partition by `kind` alone except for `rapid`, which
+ * `zFilter` splits in two, so a single switch assigns every move without
+ * consulting `layer.kinds.includes` — an `Array.includes` per move per layer,
+ * which is what the per-layer filter was paying.
+ *
+ * Exported for the tests; callers on a render path want `toolpathLayerBuckets`
+ * below, which caches this.
+ */
+export function splitMovesIntoLayers(moves: readonly ToolpathMove[]): ToolpathLayerBuckets {
+  const buckets: ToolpathLayerBuckets = {
+    cuts: [], leadIns: [], rapids: [], plunges: [], retractions: [],
+  }
+  for (const move of moves) {
+    switch (move.kind) {
+      case 'cut':
+        buckets.cuts.push(move)
+        break
+      case 'lead_in':
+      case 'lead_out':
+        buckets.leadIns.push(move)
+        break
+      case 'plunge':
+        buckets.plunges.push(move)
+        break
+      case 'rapid':
+        // The one kind two layers share. `moveMatchesZFilter` is the same
+        // predicate both renderers use, so the split cannot drift from it.
+        if (moveMatchesZFilter(move, 'retract')) buckets.retractions.push(move)
+        else buckets.rapids.push(move)
+        break
+      default:
+        break
+    }
+  }
+  return buckets
+}
+
+const layerBucketsCache = new WeakMap<object, ToolpathLayerBuckets>()
+
+/**
+ * The layer split for one toolpath, computed once per toolpath object.
+ *
+ * The split depends only on each move's `kind` and Z direction — never on
+ * visibility, which gates whether a layer is *drawn*, not what it contains —
+ * so it is a pure function of the toolpath and caches on its identity. That
+ * matters because both renderers used to re-filter every frame: on issue
+ * #664's 249,663-move fixture that was five full copies of the move array per
+ * animation frame, 25% of the 2D canvas frame, and it cost the same whether or
+ * not the layer was visible.
+ *
+ * `ToolpathResult` objects come out of `useToolpathGeneration`'s memoized
+ * cache, so they are referentially stable between regens — the same property
+ * `feedColourLegendSteps` relies on. Hits cost a WeakMap lookup; misses cost
+ * one pass per regen.
+ */
+export function toolpathLayerBuckets(toolpath: { moves: readonly ToolpathMove[] }): ToolpathLayerBuckets {
+  const cached = layerBucketsCache.get(toolpath)
+  if (cached !== undefined) {
+    return cached
+  }
+  const buckets = splitMovesIntoLayers(toolpath.moves)
+  layerBucketsCache.set(toolpath, buckets)
+  return buckets
+}
+
 export interface ToolpathLinePositionChunk {
   positions: Float32Array
   segmentCount: number
