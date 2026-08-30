@@ -14,14 +14,21 @@
  * limitations under the License.
  */
 
-import type { ToolpathMove, ToolpathResult } from '../../engine/toolpaths/types'
+import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { toolpathHasEngagementTelemetry, type ToolpathVisibility } from '../toolpathVisibility'
 import {
   buildToolpathOverlayLayers,
-  toolpathLayerBuckets,
   type ToolpathOverlayLayerKey,
 } from '../viewport3d/toolpathOverlay'
 import { toolpathArrowPlacements } from './toolpathArrows'
+import {
+  canvasDisplayViewport,
+  expandDisplayViewport,
+  toolpathDisplayGeometry,
+  visibleDisplaySegments,
+  visiblePackedSegmentOffsets,
+  type DisplaySegment,
+} from './toolpathDisplay'
 import { getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
 import {
   getProfileBounds,
@@ -611,28 +618,29 @@ export function drawToolpath(
   // thresholds match what the engine emitted for this toolpath.
   const feedColoursOn = visibility.feedColours ?? (emphasized && toolpathHasEngagementTelemetry(toolpath))
 
-  // Cached by toolpath identity, so a pan no longer re-filters the whole move
-  // array once per layer (issue #664): 34.5 ms per frame on the 249,663-move
-  // fixture, measured, against 0.003 ms for the cached lookup.
-  const buckets = toolpathLayerBuckets(toolpath)
+  // Scale-specific display geometry is cached by toolpath identity. The cache
+  // uses pan-independent scaled-world coordinates, so a pan is only a viewport
+  // query instead of a walk over every emitted move (issue #679).
+  const display = toolpathDisplayGeometry(toolpath, vt.scale)
+  // The margin preserves strokes, arrowheads, and debug markers that extend a
+  // few device pixels past a segment whose centre line is just off-canvas.
+  const viewport = expandDisplayViewport(canvasDisplayViewport(ctx.canvas, vt), 12)
 
   for (const schemaLayer of buildToolpathOverlayLayers(visibility)) {
     if (!schemaLayer.visible) continue
 
     const layer = styleFor[schemaLayer.key]
-    const moves = buckets[schemaLayer.key]
+    const moves = visibleDisplaySegments(display.layers[schemaLayer.key], viewport)
 
     if (moves.length === 0) {
       continue
     }
 
-    const strokePath = (layerMoves: ToolpathMove[], stroke: string): void => {
+    const strokePath = (layerMoves: readonly DisplaySegment[], stroke: string): void => {
       ctx.beginPath()
       for (const move of layerMoves) {
-        const from = worldToCanvas({ x: move.from.x, y: move.from.y }, vt)
-        const to = worldToCanvas({ x: move.to.x, y: move.to.y }, vt)
-        ctx.moveTo(from.cx, from.cy)
-        ctx.lineTo(to.cx, to.cy)
+        ctx.moveTo(move.fromX + vt.offsetX, move.fromY + vt.offsetY)
+        ctx.lineTo(move.toX + vt.offsetX, move.toY + vt.offsetY)
       }
       ctx.strokeStyle = stroke
       ctx.globalAlpha = emphasized ? 1 : 0.34
@@ -646,7 +654,7 @@ export function drawToolpath(
     if (schemaLayer.key === 'cuts' && feedColoursOn) {
       // One stroke per emitted feed bucket. Cuts only — lead-ins, rapids,
       // plunges and retractions keep their existing tokens.
-      const byStep = new Map<number, ToolpathMove[]>()
+      const byStep = new Map<number, DisplaySegment[]>()
       for (const move of moves) {
         const step = feedColourStep(move.feedScale, slotScale)
         const stepMoves = byStep.get(step)
@@ -667,15 +675,12 @@ export function drawToolpath(
 
   // Collision warning overlay: segments that cross a clamp zone below required
   // clearance are re-drawn in red on top, regardless of layer visibility.
-  if (toolpath.collidingMoveIndices && toolpath.collidingMoveIndices.length > 0) {
+  const collisions = visibleDisplaySegments(display.collisions, viewport)
+  if (collisions.length > 0) {
     ctx.beginPath()
-    for (const index of toolpath.collidingMoveIndices) {
-      const move = toolpath.moves[index]
-      if (!move) continue
-      const from = worldToCanvas({ x: move.from.x, y: move.from.y }, vt)
-      const to = worldToCanvas({ x: move.to.x, y: move.to.y }, vt)
-      ctx.moveTo(from.cx, from.cy)
-      ctx.lineTo(to.cx, to.cy)
+    for (const move of collisions) {
+      ctx.moveTo(move.fromX + vt.offsetX, move.fromY + vt.offsetY)
+      ctx.lineTo(move.toX + vt.offsetX, move.toY + vt.offsetY)
     }
     ctx.strokeStyle = canvasColors().toolpathCollision
     ctx.globalAlpha = emphasized ? 1 : 0.55
@@ -703,8 +708,8 @@ export function drawToolpath(
   // cache still hits.
   const placements = toolpathArrowPlacements(toolpath, vt.scale, visibility)
 
-  const drawArrowSet = (packed: Float32Array, color: string): void => {
-    if (packed.length === 0) return
+  const drawArrowSet = (packed: Float32Array, offsets: readonly number[] | null, color: string): void => {
+    if (packed.length === 0 || (offsets !== null && offsets.length === 0)) return
 
     // Style is constant across the set, so it is set once rather than per
     // arrow — the save/restore and four assignments the old per-arrow helper
@@ -716,7 +721,7 @@ export function drawToolpath(
     ctx.globalAlpha = 0.95
     ctx.setLineDash([])
 
-    for (let i = 0; i < packed.length; i += 4) {
+    const drawArrow = (i: number): void => {
       const fromX = packed[i] + vt.offsetX
       const fromY = packed[i + 1] + vt.offsetY
       const toX = packed[i + 2] + vt.offsetX
@@ -724,7 +729,7 @@ export function drawToolpath(
       const dx = toX - fromX
       const dy = toY - fromY
       const length = Math.sqrt(dx * dx + dy * dy)
-      if (length <= 0.001) continue
+      if (length <= 0.001) return
 
       const ux = dx / length
       const uy = dy / length
@@ -754,22 +759,27 @@ export function drawToolpath(
       ctx.fill()
     }
 
+    if (offsets === null) {
+      for (let i = 0; i < packed.length; i += 4) drawArrow(i)
+    } else {
+      for (const offset of offsets) drawArrow(offset)
+    }
+
     ctx.globalAlpha = 1
     ctx.restore()
   }
 
-  drawArrowSet(placements.cut, canvasRgba('toolpathCut', 0.98))
-  drawArrowSet(placements.rapid, canvasRgba('toolpathRapid', 0.95))
+  const arrowViewport = expandDisplayViewport(viewport, preferredArrowLength * 0.2)
+  drawArrowSet(placements.cut, visiblePackedSegmentOffsets(placements.cut, arrowViewport), canvasRgba('toolpathCut', 0.98))
+  drawArrowSet(placements.rapid, visiblePackedSegmentOffsets(placements.rapid, arrowViewport), canvasRgba('toolpathRapid', 0.95))
 
   // --- Debug source-tag markers (shown when the operation has debugToolpath enabled) ---
   if (toolpath.debugToolpath) {
     const markerR = Math.max(3.5, Math.min(9, span * vt.scale * 0.025))
-    for (const move of toolpath.moves) {
-      if (move.kind !== 'cut' || !move.source) continue
-      const from = worldToCanvas({ x: move.from.x, y: move.from.y }, vt)
-      const to = worldToCanvas({ x: move.to.x, y: move.to.y }, vt)
-      const mx = (from.cx + to.cx) / 2
-      const my = (from.cy + to.cy) / 2
+    for (const move of visibleDisplaySegments(display.debug, viewport)) {
+      if (!move.source) continue
+      const mx = (move.fromX + move.toX) / 2 + vt.offsetX
+      const my = (move.fromY + move.toY) / 2 + vt.offsetY
       let shape = 'dot'
       if (move.source.includes('bridgeSplitArms'))   shape = 'circle'
       else if (move.source.includes('siblingBridge')) shape = 'diamond'
