@@ -296,7 +296,11 @@ function trueSliceAtLevel(project: Project, levelZ: number): ClipperPath[] {
 // ── tests ───────────────────────────────────────────────────────────────────
 
 const PERF_POINT_COUNT = 4_000
-const BUDGET_POINT_COUNT = 22_000
+// Sized to clear DEFAULT_SURFACE_3D_SLICE_VERTEX_BUDGET on the sawtooth half:
+// a tube wall contributes two slice vertices per ring point, so this lands near
+// 60,000 against the 50,000 budget. The smooth half at the same point count
+// thins on curvature rather than on N and stays far below it.
+const BUDGET_POINT_COUNT = 30_000
 
 function test_ring_simplifier_bounds_deviation(): void {
   const tolerance = 0.05

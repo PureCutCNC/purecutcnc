@@ -130,17 +130,31 @@ const MAX_SLICE_DECIMATION_TOLERANCE = 0.02
  * decimated slice, the protection accumulated from the levels above, and the
  * surrounding 2D protection.
  *
- * From #674's measurements of the island offset this guards — one
- * `ClipperOffset.Execute`, `jtMiter`, `etClosedPolygon`, islands spread over a
- * 101.6 x 76.2 mm plaque, node v26.0.0 on an i7-8850H: 10 000 vertices took
- * 504 ms, 20 000 took 2 081 ms, 40 000 took 8 970 ms and 80 000 took 42 430 ms.
- * 20 000 holds a level near two seconds on that machine; 40 000 is already
- * nine, and the operation pays it once per Z level.
- *
  * Decimation buys a large constant factor but does not change the complexity
- * class, so this is the backstop for a mesh dense enough to blow through it.
+ * class, so this is the backstop for a mesh dense enough to blow through it —
+ * at half a million contour vertices the operation runs for minutes.
+ *
+ * **Sized against whole-operation cost on real relief meshes, deliberately not
+ * against #674's island-offset harness.** That harness measured one
+ * `ClipperOffset.Execute` over 1 600 synthetic islands (20 000 vertices in
+ * 2 081 ms, 40 000 in 8 970 ms), and islands arranged that way self-intersect
+ * far more per vertex than an actual relief contour does, so its numbers do not
+ * transfer. Taking them at face value gave a 20 000 budget that refused meshes
+ * which resolve fine today. Measured instead on generated 101.6 x 76.2 mm
+ * relief plaques through this whole resolver, with decimation and this budget
+ * both disabled, node v26.0.0 on an i7-8850H:
+ *
+ *      26 092 counted vertices ->  3.0 s CPU / 2.0 s wall   (usable)
+ *     108 922 counted vertices -> 45.5 s CPU / 40.8 s wall  (not usable)
+ *
+ * 50 000 is about the geometric mid-point of those two and interpolates to
+ * roughly ten seconds, which is also about where a browser's slow-script
+ * watchdog starts complaining. It refuses what is genuinely unusable and allows
+ * what merely takes a moment.
+ *
+ * The freeze itself is #675's to remove; this only bounds it.
  */
-export const DEFAULT_SURFACE_3D_SLICE_VERTEX_BUDGET = 20_000
+export const DEFAULT_SURFACE_3D_SLICE_VERTEX_BUDGET = 50_000
 
 export function sliceDecimationTolerance(toolRadius: number): number {
   return Math.min(
