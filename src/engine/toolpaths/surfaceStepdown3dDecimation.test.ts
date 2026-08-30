@@ -509,11 +509,11 @@ function test_decimated_keep_out_contains_the_true_slice(): void {
   assert(checked >= 2, `expected several levels with a real slice, checked ${checked}`)
 }
 
-// Measured 0, 0 and 2.6e-7 mm2 across the three levels with the margin in
-// place; deleting the expansion from `slicePolygonsToClipperPaths` leaks
+// Measured 0, 0 and 8.15e-7 mm2 across the three levels with the margin in
+// place; dropping `appliedDecimation` from the erode that applies it leaks
 // 0.849 mm2 at Z=2 on this fixture. The limit is not zero because Clipper works
 // in 1/10,000 mm integers and a boundary that lands within a unit of the true
-// slice rounds to a sliver — but at 1e-3 mm2 it sits ~3,800x above the worst
+// slice rounds to a sliver — but at 1e-3 mm2 it sits ~1,200x above the worst
 // measured baseline and ~850x below a real regression.
 const CONTAINMENT_LEAK_LIMIT = 1e-3
 
@@ -558,14 +558,14 @@ function test_decimation_cost_ratio(): void {
   // Douglas-Peucker cannot thin it.
   //
   //                          subject (smooth)   reference (sawtooth)   ratio
-  //     current                31, 31, 30ms      2649, 2694, 2643ms      .012 .011 .011
-  //     decimation removed    1047, 891ms        4064, 4037ms            .258 .221
+  //     current                20, 20, 21ms      2266, 2266, 2341ms      .009 .009 .009
+  //     decimation removed    731, 776, 775ms    3666, 3753, 3741ms      .199 .207 .207
   //
   // Limit is the geometric mid-point of the worst pair — highest baseline
-  // (0.012) against lowest regression (0.221) — so ~4.3x clear either side.
+  // (0.009) against lowest regression (0.199) — so ~4.7x clear either side.
   //
   // The reference is not perfectly invariant, and the second column is why:
-  // it moved 1.5x across the mutation while the subject moved 30x. The cause is
+  // it moved 1.6x across the mutation while the subject moved 39x. The cause is
   // structural and applies to any triangulated quad wall, not to this fixture
   // alone. Slicing quad `i` at Z yields two points — one on a vertical edge,
   // one on the shared diagonal — and they come out as
@@ -584,7 +584,7 @@ function test_decimation_cost_ratio(): void {
   // That contamination makes the ratio *understate* the regression — the
   // conservative direction for a guard — and it is a fixed factor, not a
   // drifting one, so it costs sensitivity rather than stability. The measured
-  // separation is 18x with under 10% spread on either side.
+  // separation is 22x, with under 5% spread on either side.
   const smooth = makeReliefProject('smooth-ratio', PERF_POINT_COUNT, false)
   const sawtooth = makeReliefProject('sawtooth-ratio', PERF_POINT_COUNT, true)
 
@@ -607,7 +607,7 @@ function test_decimation_cost_ratio(): void {
     + 'check that mesh slice contours are still decimated before they reach Clipper')
 }
 
-const DECIMATION_RATIO_LIMIT = 0.05
+const DECIMATION_RATIO_LIMIT = 0.042
 
 // ── run ─────────────────────────────────────────────────────────────────────
 

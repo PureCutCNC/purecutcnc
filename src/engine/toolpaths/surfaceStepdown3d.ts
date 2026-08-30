@@ -65,12 +65,13 @@ export interface Resolved3DSurfaceStepdown {
   effectiveStepover: number
   maxLinkDistance: number
   /**
-   * How far the mesh-slice keep-out was expanded past the true cross-section to
+   * How far the level contours were pulled back from the true cross-section to
    * pay for decimation (issue #674). Consumers that measure a distance from a
    * level contour *to the model* have to add it: the contours in `levels` sit
-   * that much further out than the mesh does. Consumers that only need
-   * containment can ignore it — the expansion is always outward, so anything
-   * derived by shrinking these paths is already conservative.
+   * that much further from the mesh than it actually is. Consumers that only
+   * need containment can ignore it — the pull-back is always away from the
+   * model, so anything derived by shrinking these paths is already
+   * conservative.
    */
   decimationTolerance: number
   levels: Resolved3DSurfaceLevel[]
@@ -156,34 +157,35 @@ function countPathVertices(paths: ClipperPath[]): number {
 
 interface DecimatedSlice {
   paths: ClipperPath[]
-  /** How far `paths` was expanded, which is what decimation actually cost here. */
+  /**
+   * Greatest distance any dropped vertex sits from the contour that replaced
+   * it, and 0 when nothing was dropped. The caller owes exactly this much
+   * margin to keep the keep-out containing the true cross-section.
+   */
   deviation: number
 }
 
 /**
- * Mesh cross-section at one Z, thinned and then re-expanded by the error that
- * thinning actually introduced, so the result provably contains the true
- * cross-section.
+ * Mesh cross-section at one Z, thinned, with the error that thinning introduced
+ * reported rather than paid for here.
+ *
+ * The safety margin that error buys is applied by the caller, folded into the
+ * sliver-cleanup open/close it already runs on `clearablePaths`. That placement
+ * is not cosmetic: applying it here needs a `ClipperOffset` of its own over the
+ * whole contour set, which is the same expensive operation decimation exists to
+ * make cheaper. Measured per level on a 101.6 x 76.2 mm relief plaque, that
+ * offset cost 10 ms at 4,445 contour vertices, 107 ms at 13,690 and 810 ms at
+ * 35,308 — enough to make an ordinary model *slower* than before #674, and paid
+ * in full even on a mesh the budget was about to refuse. Folding it into the
+ * existing open/close costs nothing at all. The thinning itself is cheap by
+ * comparison: 1-13 ms across the same range.
  *
  * The margin is the *measured* deviation rather than `decimationTolerance`,
  * which matters more than it looks. A rectangular or otherwise coarse
- * cross-section has no vertex RDP can drop, so it reports 0, skips the offset
- * entirely (`offsetClipperPaths` returns its input under a 1e-9 delta) and
- * comes out byte-identical to what this function returned before #674 — no
- * margin, no envelope shift, no change to the emitted program. Only a mesh
- * dense enough to actually thin pays anything, and it pays exactly what
- * thinning cost it.
- *
- * The expansion is the safety half of the decimation and belongs here rather
- * than at the `buildInsetRegions` call site the plan first proposed. That call
- * site produces `level.insetRegions` only, and `level.clearablePaths` is
- * consumed independently by `roughSurface.ts` as the safe-link domain — a
- * keep-out that shrank there would let the link planner rule a travel move safe
- * across standing stock. Expanding at the source instead means
- * `protectedAtLevel`, `protectedAbovePaths`, `clearablePaths`, `baseRegions`,
- * `insetRegions` and that safe-link domain all inherit the containment, and the
- * outer machining envelope — built from the undecimated import silhouette, so
- * it needs no margin — is left alone.
+ * cross-section has no vertex RDP can drop, so it reports 0, the caller's
+ * erosion becomes a no-op (`offsetClipperPaths` returns its input under a 1e-9
+ * delta) and the level comes out byte-identical to pre-#674 — no margin, no
+ * envelope shift, no change to the emitted program.
  *
  * Mesh-only: the 2.5D generators never reach this function. `src/import/stl.ts`
  * has a private function of the same name for silhouette extraction and is a
@@ -201,7 +203,7 @@ function slicePolygonsToClipperPaths(
       if (simplified.deviation > deviation) deviation = simplified.deviation
       return toClipperPath(normalizeWinding(simplified.points, false), DEFAULT_CLIPPER_SCALE)
     })
-  return { paths: offsetClipperPaths(unionClipperPathsEvenOdd(paths), deviation), deviation }
+  return { paths: unionClipperPathsEvenOdd(paths), deviation }
 }
 
 function emptyResult(operation: Operation, warning: ToolpathWarning): PocketToolpathResult {
@@ -363,14 +365,19 @@ export function resolve3DSurfaceStepdown(
   // only need enough radial band to retain a machinable outer-wall pass; they
   // should not create an extra floor-width pocket around the model.
   //
-  // The envelope has to move out by whatever `slicePolygonsToClipperPaths` grew
-  // the keep-out by, because a flat-bottomed model has a slice equal to its own
-  // silhouette: the grown keep-out then eats straight into the outer-wall band,
-  // and `OUTER_WALL_MARGIN` is a single micron. Without this the level collapses
-  // and reports `surface3dFloorCollapsed`. Matching the shift keeps the band
-  // exactly the width it was; the only effect on the cut is that the outer wall
-  // keeps `stockToLeaveRadial` plus that same shift — the conservative
-  // direction, and well inside what the finish pass removes.
+  // The envelope has to move out to pay for the decimation margin, because a
+  // flat-bottomed model has a slice equal to its own silhouette: the margin then
+  // eats straight into the outer-wall band, and `OUTER_WALL_MARGIN` is a single
+  // micron. Without this the level collapses and reports
+  // `surface3dFloorCollapsed`.
+  //
+  // The shift is **twice** the margin because the margin is applied by eroding
+  // `clearablePaths`, and an erosion takes the band in from both sides at once —
+  // the outer boundary moves in by `m` and the model island grows out by `m`, so
+  // a band that started `2m` wider comes out exactly its original width. Net
+  // effect on the cut: the outer wall keeps `stockToLeaveRadial + m` instead of
+  // `stockToLeaveRadial`, the conservative direction and well inside what the
+  // finish pass removes.
   //
   // Cached by shift so a mesh that never thins (shift 0, the overwhelmingly
   // common case) builds exactly one envelope, identical to the pre-#674 one.
@@ -494,7 +501,7 @@ export function resolve3DSurfaceStepdown(
     if (decimatedSlice.deviation > appliedDecimation) {
       appliedDecimation = decimatedSlice.deviation
     }
-    const outlinePaths = outlineForShift(appliedDecimation)
+    const outlinePaths = outlineForShift(2 * appliedDecimation)
 
     const activeSubtractPaths = relatedSubtracts.length > 0
       ? unionClipperPaths(
@@ -562,9 +569,21 @@ export function resolve3DSurfaceStepdown(
 
     let clearablePaths = differenceClipperPaths(levelOutlinePaths, protectedAtLevel)
     if (clearablePaths.length > 0) {
+      // The erode/dilate pair is the pre-existing sliver cleanup; the extra
+      // `appliedDecimation` on the erode is the decimation safety margin, and
+      // it rides along for free (issue #674). Eroding by `a + m` and dilating by
+      // `a` is an opening of `C (-) m`, and opening is anti-extensive, so the
+      // result stays inside `C (-) m` — the keep-out therefore still contains
+      // the true cross-section, and every consumer inherits it: `insetRegions`
+      // for the cut, and `clearablePaths` itself, which `roughSurface.ts` insets
+      // by the tool radius for its safe-link domain. A keep-out that shrank
+      // there would let the link planner rule a travel move safe across
+      // standing stock, which is why the margin cannot live at the
+      // `buildInsetRegions` call site the plan first proposed — that reaches
+      // `insetRegions` only.
       const cleanupEpsilon = 1e-3
       clearablePaths = offsetClipperPaths(
-        offsetClipperPaths(clearablePaths, -cleanupEpsilon),
+        offsetClipperPaths(clearablePaths, -(cleanupEpsilon + appliedDecimation)),
         cleanupEpsilon,
       )
     }
