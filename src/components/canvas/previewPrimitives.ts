@@ -600,6 +600,8 @@ export function drawToolpath(
   // operation (issue #498 S5). Optional for un-threaded callers, which keep
   // the pre-S5 40% ladder; the renderers pass the operation's real slot feed.
   slotScale = 0.4,
+  // Transient navigation detail only; never write this into saved visibility.
+  deferArrows = false,
 ): void {
   // Layer membership comes from the shared declaration both renderers use; only
   // the styling below is 2D's own. This file used to re-declare the five layers
@@ -623,7 +625,7 @@ export function drawToolpath(
   // query instead of a walk over every emitted move (issue #679).
   const display = toolpathDisplayGeometry(toolpath, vt.scale)
   // The margin preserves strokes, arrowheads, and debug markers that extend a
-  // few device pixels past a segment whose centre line is just off-canvas.
+  // few canvas pixels past a segment whose centre line is just off-canvas.
   const viewport = expandDisplayViewport(canvasDisplayViewport(ctx.canvas, vt), 12)
 
   for (const schemaLayer of buildToolpathOverlayLayers(visibility)) {
@@ -699,79 +701,81 @@ export function drawToolpath(
     toolpath.bounds.maxY - toolpath.bounds.minY,
     toolpath.bounds.maxZ - toolpath.bounds.minZ,
   )
-  const preferredArrowLength = Math.max(8.5, Math.min(18, span * vt.scale * 0.03))
+  if (!deferArrows) {
+    const preferredArrowLength = Math.max(8.5, Math.min(18, span * vt.scale * 0.03))
 
-  // Which moves earn an arrow is decided once per (toolpath, scale) and cached
-  // — that pass measured 93.7 ms per frame on the 249,663-move fixture against
-  // 26.7 ms to draw the arrows it chose (issue #664). Placements come back in
-  // scaled-world space, so panning only shifts them by the view offset and the
-  // cache still hits.
-  const placements = toolpathArrowPlacements(toolpath, vt.scale, visibility)
+    // Which moves earn an arrow is decided once per (toolpath, scale) and cached
+    // — that pass measured 93.7 ms per frame on the 249,663-move fixture against
+    // 26.7 ms to draw the arrows it chose (issue #664). Placements come back in
+    // scaled-world space, so panning only shifts them by the view offset and the
+    // cache still hits.
+    const placements = toolpathArrowPlacements(toolpath, vt.scale, visibility)
 
-  const drawArrowSet = (packed: Float32Array, offsets: readonly number[] | null, color: string): void => {
-    if (packed.length === 0 || (offsets !== null && offsets.length === 0)) return
+    const drawArrowSet = (packed: Float32Array, offsets: readonly number[] | null, color: string): void => {
+      if (packed.length === 0 || (offsets !== null && offsets.length === 0)) return
 
-    // Style is constant across the set, so it is set once rather than per
-    // arrow — the save/restore and four assignments the old per-arrow helper
-    // repeated were a real share of its cost.
-    ctx.save()
-    ctx.strokeStyle = color
-    ctx.fillStyle = color
-    ctx.lineWidth = 1.4
-    ctx.globalAlpha = 0.95
-    ctx.setLineDash([])
+      // Style is constant across the set, so it is set once rather than per
+      // arrow — the save/restore and four assignments the old per-arrow helper
+      // repeated were a real share of its cost.
+      ctx.save()
+      ctx.strokeStyle = color
+      ctx.fillStyle = color
+      ctx.lineWidth = 1.4
+      ctx.globalAlpha = 0.95
+      ctx.setLineDash([])
 
-    const drawArrow = (i: number): void => {
-      const fromX = packed[i] + vt.offsetX
-      const fromY = packed[i + 1] + vt.offsetY
-      const toX = packed[i + 2] + vt.offsetX
-      const toY = packed[i + 3] + vt.offsetY
-      const dx = toX - fromX
-      const dy = toY - fromY
-      const length = Math.sqrt(dx * dx + dy * dy)
-      if (length <= 0.001) return
+      const drawArrow = (i: number): void => {
+        const fromX = packed[i] + vt.offsetX
+        const fromY = packed[i + 1] + vt.offsetY
+        const toX = packed[i + 2] + vt.offsetX
+        const toY = packed[i + 3] + vt.offsetY
+        const dx = toX - fromX
+        const dy = toY - fromY
+        const length = Math.sqrt(dx * dx + dy * dy)
+        if (length <= 0.001) return
 
-      const ux = dx / length
-      const uy = dy / length
-      const markerLength = Math.max(6.5, Math.min(preferredArrowLength, Math.max(length * 0.6, preferredArrowLength * 0.58)))
-      const headLength = markerLength * 0.52
-      const headWidth = markerLength * 0.28
-      const centerX = (fromX + toX) / 2
-      const centerY = (fromY + toY) / 2
-      const tailX = centerX - ux * markerLength * 0.5
-      const tailY = centerY - uy * markerLength * 0.5
-      const tipX = centerX + ux * markerLength * 0.5
-      const tipY = centerY + uy * markerLength * 0.5
-      const leftX = tipX - ux * headLength - uy * headWidth
-      const leftY = tipY - uy * headLength + ux * headWidth
-      const rightX = tipX - ux * headLength + uy * headWidth
-      const rightY = tipY - uy * headLength - ux * headWidth
+        const ux = dx / length
+        const uy = dy / length
+        const markerLength = Math.max(6.5, Math.min(preferredArrowLength, Math.max(length * 0.6, preferredArrowLength * 0.58)))
+        const headLength = markerLength * 0.52
+        const headWidth = markerLength * 0.28
+        const centerX = (fromX + toX) / 2
+        const centerY = (fromY + toY) / 2
+        const tailX = centerX - ux * markerLength * 0.5
+        const tailY = centerY - uy * markerLength * 0.5
+        const tipX = centerX + ux * markerLength * 0.5
+        const tipY = centerY + uy * markerLength * 0.5
+        const leftX = tipX - ux * headLength - uy * headWidth
+        const leftY = tipY - uy * headLength + ux * headWidth
+        const rightX = tipX - ux * headLength + uy * headWidth
+        const rightY = tipY - uy * headLength - ux * headWidth
 
-      ctx.beginPath()
-      ctx.moveTo(tailX, tailY)
-      ctx.lineTo(tipX, tipY)
-      ctx.stroke()
-      ctx.beginPath()
-      ctx.moveTo(tipX, tipY)
-      ctx.lineTo(leftX, leftY)
-      ctx.lineTo(rightX, rightY)
-      ctx.closePath()
-      ctx.fill()
+        ctx.beginPath()
+        ctx.moveTo(tailX, tailY)
+        ctx.lineTo(tipX, tipY)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(tipX, tipY)
+        ctx.lineTo(leftX, leftY)
+        ctx.lineTo(rightX, rightY)
+        ctx.closePath()
+        ctx.fill()
+      }
+
+      if (offsets === null) {
+        for (let i = 0; i < packed.length; i += 4) drawArrow(i)
+      } else {
+        for (const offset of offsets) drawArrow(offset)
+      }
+
+      ctx.globalAlpha = 1
+      ctx.restore()
     }
 
-    if (offsets === null) {
-      for (let i = 0; i < packed.length; i += 4) drawArrow(i)
-    } else {
-      for (const offset of offsets) drawArrow(offset)
-    }
-
-    ctx.globalAlpha = 1
-    ctx.restore()
+    const arrowViewport = expandDisplayViewport(viewport, preferredArrowLength * 0.2)
+    drawArrowSet(placements.cut, visiblePackedSegmentOffsets(placements.cut, arrowViewport), canvasRgba('toolpathCut', 0.98))
+    drawArrowSet(placements.rapid, visiblePackedSegmentOffsets(placements.rapid, arrowViewport), canvasRgba('toolpathRapid', 0.95))
   }
-
-  const arrowViewport = expandDisplayViewport(viewport, preferredArrowLength * 0.2)
-  drawArrowSet(placements.cut, visiblePackedSegmentOffsets(placements.cut, arrowViewport), canvasRgba('toolpathCut', 0.98))
-  drawArrowSet(placements.rapid, visiblePackedSegmentOffsets(placements.rapid, arrowViewport), canvasRgba('toolpathRapid', 0.95))
 
   // --- Debug source-tag markers (shown when the operation has debugToolpath enabled) ---
   if (toolpath.debugToolpath) {

@@ -31,7 +31,7 @@ import {
 } from '../viewport3d/toolpathOverlay'
 import type { ViewTransform } from './viewTransform'
 
-const SUBPIXEL_PATH_LENGTH = 0.75
+const DISPLAY_PATH_LENGTH = 3
 const INDEX_CELL_SIZE = 128
 const MAX_INDEXED_CELLS_PER_SEGMENT = 64
 
@@ -115,8 +115,11 @@ function makeSegment(move: ToolpathMove, scale: number): DisplaySegment {
 }
 
 /**
- * Coalesce only a connected run whose complete screen-space length stays under
- * one pixel. No visible curve can be more than that run length from its chord.
+ * Coalesce only connected, same-feed runs up to three canvas pixels of total
+ * travel, not endpoint distance (a tight reversal must not disappear). Every
+ * original point is at most half that travel from an endpoint of the chord;
+ * the real trochoidal fixtures stay below 0.25 px displacement at overview.
+ * Rebuilding at the new scale restores fine detail as the user zooms in.
  */
 function displaySegments(moves: readonly ToolpathMove[], scale: number): DisplaySegment[] {
   const out: DisplaySegment[] = []
@@ -140,7 +143,7 @@ function displaySegments(moves: readonly ToolpathMove[], scale: number): Display
 
     const isConnected = pending.toX === next.fromX && pending.toY === next.fromY
     const hasSameFeed = pending.feedScale === next.feedScale
-    if (isConnected && hasSameFeed && pendingLength + length <= SUBPIXEL_PATH_LENGTH) {
+    if (isConnected && hasSameFeed && pendingLength + length <= DISPLAY_PATH_LENGTH) {
       pending.toX = next.toX
       pending.toY = next.toY
       pendingLength += length

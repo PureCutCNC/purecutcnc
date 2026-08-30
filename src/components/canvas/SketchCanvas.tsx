@@ -60,6 +60,7 @@ import { useCreationWorkflow } from './useCreationWorkflow'
 import { useCanvasKeyboard } from './useCanvasKeyboard'
 import { useClickPlacement } from './useClickPlacement'
 import { usePointerGestures } from './usePointerGestures'
+import { useNavigationViewState } from './useNavigationViewState'
 import { useSnapPreview } from './useSnapPreview'
 import { useCanvasContextMenu } from './useCanvasContextMenu'
 import { drawDimensionAnchorDots, drawDimensions, drawPendingDimensionPreview, drawTapeMeasure } from './dimensionRendering'
@@ -88,7 +89,7 @@ import {
   computeViewTransform,
   worldToCanvas,
 } from './viewTransform'
-import type { CanvasPoint, SketchViewState, ViewTransform } from './viewTransform'
+import type { CanvasPoint, ViewTransform } from './viewTransform'
 import { findSketchInsertTarget, isLoopCloseCandidate, nearestPointOnSegmentWithT, projectPointOntoLine, resolveOffsetPreview } from './draftGeometry'
 import {
   distance2,
@@ -237,7 +238,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const scheduleDraw = useRafScheduler(() => drawRef.current())
   const [copyCountDraft, setCopyCountDraft] = useState('1')
 
-  const [viewState, setViewState] = useState<SketchViewState>({ zoom: 1, panX: 0, panY: 0 })
+  const { viewState, setViewState, navigation } = useNavigationViewState(canvasRef, scheduleDraw)
   const [backdropImage, setBackdropImage] = useState<HTMLImageElement | null>(null)
   const [stlImageRevision, setStlImageRevision] = useState(0)
   const copyCountInputRef = useRef<HTMLInputElement>(null)
@@ -1214,7 +1215,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         // Colour rungs derive from the toolpath's own operation slot feed so
         // the thresholds match the scales that operation emitted (issue #498 S5).
         const slotFeedPercent = pocketSlotFeedPercent(project.operations.find((op) => op.id === toolpath.operationId))
-        drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId, toolpathVisibility ?? { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }, slotFeedPercent === null ? 1 : slotFeedPercent / 100)
+        drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId, toolpathVisibility ?? { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }, slotFeedPercent === null ? 1 : slotFeedPercent / 100, navigation.active)
       }
     }
 
@@ -1979,7 +1980,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         maxY: Math.max(a.y, b.y),
       }
     },
-  }), [])
+  }), [setViewState])
 
   useEffect(() => {
     if (projectKey === 0) return
@@ -2003,7 +2004,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   //      gains nothing, so it stays — and ESLint reports it as an "unused directive"
   //      warning, which is the (intentional) cost of the bail.
   // Full analysis + reproducible reorder script: planning/archive/LINT_HOOK_TYPING_DEBT_Plan.md.
-  }, [projectKey])
+  }, [projectKey, setViewState])
 
   useEffect(() => {
     const container = containerRef.current

@@ -1,6 +1,12 @@
 # INDEX — src/engine/test-fixtures/
 
-Committed fixtures used by engine tests.
+Committed fixtures used by engine and rendering regression tests.
+
+`trochoidal-raster.camj` also serves as a 2D display stress test for #679 and
+the future #676 pocket workload: 18 parallel open 200 mm guides at 8 mm pitch,
+6 mm cutter, 9 mm trochoidal channel, 0.6 mm advance, six 2 mm depth steps.
+The existing Engrave generator emits **882,899 moves with no warnings**.
+This is a rendering surrogate, not a pocket-clearing or machining-safety test.
 
 ## Files
 - `3d-imported-block-test3.camj` — imported-surface regression project used by `toolpaths/finishSurface.test.ts` and `toolpaths/finishSurfaceCleanup.test.ts`

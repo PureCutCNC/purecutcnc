@@ -60,7 +60,7 @@ const smallViewport: DisplayViewport = { minX: 0, minY: -10, maxX: 20, maxY: 10 
 
 console.log('\ntoolpathDisplay')
 
-test('coalesces only connected same-feed paths that stay below one pixel', () => {
+test('coalesces connected same-feed runs up to three canvas pixels', () => {
   const toolpath = toolpathOf([
     { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 0.25, y: 0, z: 0 }, feedScale: 0.5 },
     { kind: 'cut', from: { x: 0.25, y: 0, z: 0 }, to: { x: 0.5, y: 0, z: 0 }, feedScale: 0.5 },
@@ -68,10 +68,31 @@ test('coalesces only connected same-feed paths that stay below one pixel', () =>
     { kind: 'cut', from: { x: 0.75, y: 0, z: 0 }, to: { x: 1.25, y: 0, z: 0 }, feedScale: 0.5 },
   ])
 
-  const segments = toolpathDisplayGeometry(toolpath, 1).layers.cuts.segments
-  assert(segments.length === 2, `expected a sub-pixel run plus one distinct segment, got ${segments.length}`)
-  assert(segments[0].fromX === 0 && segments[0].toX === 0.75, 'the first sub-pixel run should retain its endpoints')
-  assert(segments[1].fromX === 0.75 && segments[1].toX === 1.25, 'a run beyond the threshold must start a new segment')
+  const segments = toolpathDisplayGeometry(toolpath, 4).layers.cuts.segments
+  assert(segments.length === 2, `expected a three-pixel run plus one distinct segment, got ${segments.length}`)
+  assert(segments[0].fromX === 0 && segments[0].toX === 3, 'a merged run retains its original endpoints')
+  assert(segments[1].fromX === 3 && segments[1].toX === 5, 'a run beyond the threshold must start a new segment')
+})
+
+test('keeps disconnected paths separate and restores fine detail when zoomed in', () => {
+  const moves: ToolpathMove[] = [
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 1, y: 0.1, z: 0 } },
+    { kind: 'cut', from: { x: 1, y: 0.1, z: 0 }, to: { x: 2, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 2.1, y: 0, z: 0 }, to: { x: 2.2, y: 0, z: 0 } },
+  ]
+  const original = JSON.stringify(moves)
+  const toolpath = toolpathOf(moves)
+  assert(toolpathDisplayGeometry(toolpath, 1).layers.cuts.segments.length === 2, 'do not bridge disconnected guides')
+  assert(toolpathDisplayGeometry(toolpath, 4).layers.cuts.segments.length === 3, 'zoom restores the original bend')
+  assert(JSON.stringify(moves) === original, 'display simplification never rewrites generated moves')
+})
+
+test('bounds a tight reversal by accumulated travel, not endpoint distance', () => {
+  const toolpath = toolpathOf([
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 2, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 2, y: 0, z: 0 }, to: { x: 0, y: 0, z: 0 } },
+  ])
+  assert(toolpathDisplayGeometry(toolpath, 1).layers.cuts.segments.length === 2, 'a four-pixel hairpin must not collapse to a point')
 })
 
 test('does not merge display paths with different feed styles', () => {
