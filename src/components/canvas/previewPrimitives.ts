@@ -18,10 +18,10 @@ import type { ToolpathMove, ToolpathResult } from '../../engine/toolpaths/types'
 import { toolpathHasEngagementTelemetry, type ToolpathVisibility } from '../toolpathVisibility'
 import {
   buildToolpathOverlayLayers,
-  moveMatchesZFilter,
   toolpathLayerBuckets,
   type ToolpathOverlayLayerKey,
 } from '../viewport3d/toolpathOverlay'
+import { toolpathArrowPlacements } from './toolpathArrows'
 import { getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
 import {
   getProfileBounds,
@@ -694,132 +694,72 @@ export function drawToolpath(
     toolpath.bounds.maxY - toolpath.bounds.minY,
     toolpath.bounds.maxZ - toolpath.bounds.minZ,
   )
-  const preferredSpacing = Math.max(12, Math.min(40, span * vt.scale * 0.09))
   const preferredArrowLength = Math.max(8.5, Math.min(18, span * vt.scale * 0.03))
-  const distanceSinceLastArrowByKind: Record<'cut' | 'rapid', number> = {
-    cut: 0,
-    rapid: 0,
-  }
 
-  function drawDirectionArrow(fromX: number, fromY: number, toX: number, toY: number, color: string) {
-    const dx = toX - fromX
-    const dy = toY - fromY
-    const length = Math.hypot(dx, dy)
-    if (length <= 0.001) {
-      return
-    }
+  // Which moves earn an arrow is decided once per (toolpath, scale) and cached
+  // — that pass measured 93.7 ms per frame on the 249,663-move fixture against
+  // 26.7 ms to draw the arrows it chose (issue #664). Placements come back in
+  // scaled-world space, so panning only shifts them by the view offset and the
+  // cache still hits.
+  const placements = toolpathArrowPlacements(toolpath, vt.scale, visibility)
 
-    const ux = dx / length
-    const uy = dy / length
-    const markerLength = Math.max(6.5, Math.min(preferredArrowLength, Math.max(length * 0.6, preferredArrowLength * 0.58)))
-    const headLength = markerLength * 0.52
-    const headWidth = markerLength * 0.28
-    const centerX = (fromX + toX) / 2
-    const centerY = (fromY + toY) / 2
-    const tailX = centerX - ux * markerLength * 0.5
-    const tailY = centerY - uy * markerLength * 0.5
-    const tipX = centerX + ux * markerLength * 0.5
-    const tipY = centerY + uy * markerLength * 0.5
-    const leftX = tipX - ux * headLength - uy * headWidth
-    const leftY = tipY - uy * headLength + ux * headWidth
-    const rightX = tipX - ux * headLength + uy * headWidth
-    const rightY = tipY - uy * headLength - ux * headWidth
+  const drawArrowSet = (packed: Float32Array, color: string): void => {
+    if (packed.length === 0) return
 
+    // Style is constant across the set, so it is set once rather than per
+    // arrow — the save/restore and four assignments the old per-arrow helper
+    // repeated were a real share of its cost.
     ctx.save()
     ctx.strokeStyle = color
     ctx.fillStyle = color
     ctx.lineWidth = 1.4
     ctx.globalAlpha = 0.95
-    ctx.beginPath()
-    ctx.moveTo(tailX, tailY)
-    ctx.lineTo(tipX, tipY)
-    ctx.stroke()
-    ctx.beginPath()
-    ctx.moveTo(tipX, tipY)
-    ctx.lineTo(leftX, leftY)
-    ctx.lineTo(rightX, rightY)
-    ctx.closePath()
-    ctx.fill()
+    ctx.setLineDash([])
+
+    for (let i = 0; i < packed.length; i += 4) {
+      const fromX = packed[i] + vt.offsetX
+      const fromY = packed[i + 1] + vt.offsetY
+      const toX = packed[i + 2] + vt.offsetX
+      const toY = packed[i + 3] + vt.offsetY
+      const dx = toX - fromX
+      const dy = toY - fromY
+      const length = Math.sqrt(dx * dx + dy * dy)
+      if (length <= 0.001) continue
+
+      const ux = dx / length
+      const uy = dy / length
+      const markerLength = Math.max(6.5, Math.min(preferredArrowLength, Math.max(length * 0.6, preferredArrowLength * 0.58)))
+      const headLength = markerLength * 0.52
+      const headWidth = markerLength * 0.28
+      const centerX = (fromX + toX) / 2
+      const centerY = (fromY + toY) / 2
+      const tailX = centerX - ux * markerLength * 0.5
+      const tailY = centerY - uy * markerLength * 0.5
+      const tipX = centerX + ux * markerLength * 0.5
+      const tipY = centerY + uy * markerLength * 0.5
+      const leftX = tipX - ux * headLength - uy * headWidth
+      const leftY = tipY - uy * headLength + ux * headWidth
+      const rightX = tipX - ux * headLength + uy * headWidth
+      const rightY = tipY - uy * headLength - ux * headWidth
+
+      ctx.beginPath()
+      ctx.moveTo(tailX, tailY)
+      ctx.lineTo(tipX, tipY)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(tipX, tipY)
+      ctx.lineTo(leftX, leftY)
+      ctx.lineTo(rightX, rightY)
+      ctx.closePath()
+      ctx.fill()
+    }
+
+    ctx.globalAlpha = 1
     ctx.restore()
   }
 
-  function moveCanvasDelta(move: ToolpathResult['moves'][number]) {
-    const from = worldToCanvas({ x: move.from.x, y: move.from.y }, vt)
-    const to = worldToCanvas({ x: move.to.x, y: move.to.y }, vt)
-    return {
-      from,
-      to,
-      dx: to.cx - from.cx,
-      dy: to.cy - from.cy,
-      length: Math.hypot(to.cx - from.cx, to.cy - from.cy),
-    }
-  }
-
-  function normalizedMoveDirection(move: ToolpathResult['moves'][number] | undefined): { x: number; y: number } | null {
-    if (!move || (move.kind !== 'cut' && move.kind !== 'rapid')) {
-      return null
-    }
-
-    const delta = moveCanvasDelta(move)
-    if (delta.length <= 0.001) {
-      return null
-    }
-
-    return { x: delta.dx / delta.length, y: delta.dy / delta.length }
-  }
-
-  for (let moveIndex = 0; moveIndex < toolpath.moves.length; moveIndex += 1) {
-    const move = toolpath.moves[moveIndex]
-    if (move.kind !== 'cut' && move.kind !== 'rapid') {
-      continue
-    }
-
-    // Respect visibility toggles
-    if (move.kind === 'cut' && !visibility.cuts) continue
-    if (move.kind === 'rapid') {
-      // Same split as the line layers, via the same predicate — the arrow code
-      // having its own copy is how the two fell out of step (issue #482).
-      const isRetraction = moveMatchesZFilter(move, 'retract')
-      if (isRetraction && !visibility.retractions) continue
-      if (!isRetraction && !visibility.rapids) continue
-    }
-
-    const delta = moveCanvasDelta(move)
-    if (delta.length < 0.5) {
-      continue
-    }
-
-    distanceSinceLastArrowByKind[move.kind] += delta.length
-    const previousDirection = normalizedMoveDirection(toolpath.moves[moveIndex - 1])
-    const nextDirection = normalizedMoveDirection(toolpath.moves[moveIndex + 1])
-    const direction = { x: delta.dx / delta.length, y: delta.dy / delta.length }
-    const directionTurn = previousDirection && nextDirection
-      ? Math.min(
-        Math.acos(Math.max(-1, Math.min(1, direction.x * previousDirection.x + direction.y * previousDirection.y))),
-        Math.acos(Math.max(-1, Math.min(1, direction.x * nextDirection.x + direction.y * nextDirection.y))),
-      )
-      : null
-    const isConnectorCut =
-      move.kind === 'cut'
-      && delta.length <= preferredSpacing * 0.8
-      && directionTurn !== null
-      && directionTurn >= Math.PI / 10
-    const shouldForceArrow = delta.length >= preferredArrowLength * 1.1
-    const shouldPlaceBySpacing = distanceSinceLastArrowByKind[move.kind] >= preferredSpacing
-
-    if (!shouldForceArrow && !shouldPlaceBySpacing && !isConnectorCut) {
-      continue
-    }
-
-    drawDirectionArrow(
-      delta.from.cx,
-      delta.from.cy,
-      delta.to.cx,
-      delta.to.cy,
-      move.kind === 'rapid' ? canvasRgba('toolpathRapid', 0.95) : canvasRgba('toolpathCut', 0.98),
-    )
-    distanceSinceLastArrowByKind[move.kind] = 0
-  }
+  drawArrowSet(placements.cut, canvasRgba('toolpathCut', 0.98))
+  drawArrowSet(placements.rapid, canvasRgba('toolpathRapid', 0.95))
 
   // --- Debug source-tag markers (shown when the operation has debugToolpath enabled) ---
   if (toolpath.debugToolpath) {
