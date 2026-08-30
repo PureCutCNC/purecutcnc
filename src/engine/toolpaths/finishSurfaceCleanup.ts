@@ -704,7 +704,14 @@ export function generateFinishSurfaceCleanupToolpath(
     })
   }
 
-  const wallProbeDistance = resolved.tool.radius + Math.max(0, operation.stockToLeaveRadial) + WALL_PROBE_EPSILON
+  // `resolved.decimationTolerance` is in here because the level contours sit
+  // that much further from the mesh than they used to (issue #674). The probe
+  // steps inward by exactly this distance and asks whether it landed inside the
+  // target footprint, so without the term the outer-wall contour probes to just
+  // *outside* the model and stops counting as target-facing — which silently
+  // drops the outer wall pass at the block's own bottom level.
+  const wallProbeDistance = resolved.tool.radius + Math.max(0, operation.stockToLeaveRadial)
+    + WALL_PROBE_EPSILON + resolved.decimationTolerance
   const wallPathsByZ = operation.finishWalls
     ? collectCleanupWallPaths(
       descendingLevels,

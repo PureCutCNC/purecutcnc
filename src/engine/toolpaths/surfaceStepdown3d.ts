@@ -32,6 +32,7 @@ import {
   generateStepLevels,
   polyTreeToRegions,
 } from './pocket'
+import { simplifyClosedRing } from './arcReconstruction'
 import { loadSTLTransformedGeometry } from '../csg'
 import { getMeshSliceIndex, sliceMeshAtZDetailed } from './meshSlicing'
 import { buildRegionMask, splitFeatureTargets } from './regions'
@@ -63,6 +64,16 @@ export interface Resolved3DSurfaceStepdown {
   direction: CutDirection
   effectiveStepover: number
   maxLinkDistance: number
+  /**
+   * How far the level contours were pulled back from the true cross-section to
+   * pay for decimation (issue #674). Consumers that measure a distance from a
+   * level contour *to the model* have to add it: the contours in `levels` sit
+   * that much further from the mesh than it actually is. Consumers that only
+   * need containment can ignore it — the pull-back is always away from the
+   * model, so anything derived by shrinking these paths is already
+   * conservative.
+   */
+  decimationTolerance: number
   levels: Resolved3DSurfaceLevel[]
   warnings: ToolpathWarning[]
 }
@@ -87,6 +98,128 @@ interface Resolve3DSurfaceStepdownOptions {
 const Z_TOLERANCE = 1e-6
 const OUTER_WALL_MARGIN = 1e-3
 
+/**
+ * Mesh-slice decimation tolerance, as a fraction of tool radius, clamped into
+ * an absolute band. Project units are mm (issue #674).
+ *
+ * `sliceMeshAtZDetailed` emits one contour vertex per triangle-edge crossing
+ * and nothing downstream thinned it: `cleanClipperPath(path, 1.0)` in
+ * `pocket.ts` drops vertices closer than 0.1 um at `DEFAULT_CLIPPER_SCALE`,
+ * which is nothing for a real mesh. Every one of those vertices then entered a
+ * single `ClipperOffset.Execute` per Z level, whose cost is superlinear in the
+ * total — measured at roughly 4.7x per 2x vertices on #674's harness.
+ *
+ * Both finish strategies sample the mesh on a height-map cell of
+ * `min(tool.radius / 3, stepover / 2)` (`finishSurfaceParallel.ts`,
+ * `finishSurfaceWaterline.ts`), so 1% of tool radius sits about two orders of
+ * magnitude below what the finish pass can resolve and cannot be the binding
+ * fidelity limit. It is deliberately not scaled off `stockToLeaveRadial`, whose
+ * default is 0: `slicePolygonsToClipperPaths` re-expands the keep-out by what
+ * thinning actually cost, so roughing leaves *extra* stock against the model and
+ * never less — safe at zero stock-to-leave by construction.
+ *
+ * This is a ceiling on the error, not the error itself. What any given contour
+ * is charged is measured, and is usually far below it.
+ */
+const SLICE_DECIMATION_TOLERANCE_FRACTION = 0.01
+const MIN_SLICE_DECIMATION_TOLERANCE = 0.002
+const MAX_SLICE_DECIMATION_TOLERANCE = 0.02
+
+/**
+ * Contour vertices one Z level may hand to Clipper, counting this level's
+ * decimated slice, the protection accumulated from the levels above, and the
+ * surrounding 2D protection.
+ *
+ * Decimation buys a large constant factor but does not change the complexity
+ * class, so this is the backstop for a mesh dense enough to blow through it —
+ * at half a million contour vertices the operation runs for minutes.
+ *
+ * **Sized against whole-operation cost on real relief meshes, deliberately not
+ * against #674's island-offset harness.** That harness measured one
+ * `ClipperOffset.Execute` over 1 600 synthetic islands (20 000 vertices in
+ * 2 081 ms, 40 000 in 8 970 ms), and islands arranged that way self-intersect
+ * far more per vertex than an actual relief contour does, so its numbers do not
+ * transfer. Taking them at face value gave a 20 000 budget that refused meshes
+ * which resolve fine today. Measured instead on generated 101.6 x 76.2 mm
+ * relief plaques through this whole resolver, with decimation and this budget
+ * both disabled, node v26.0.0 on an i7-8850H:
+ *
+ *      26 092 counted vertices ->  3.0 s CPU / 2.0 s wall   (usable)
+ *     108 922 counted vertices -> 45.5 s CPU / 40.8 s wall  (not usable)
+ *
+ * 50 000 is about the geometric mid-point of those two and interpolates to
+ * roughly ten seconds, which is also about where a browser's slow-script
+ * watchdog starts complaining. It refuses what is genuinely unusable and allows
+ * what merely takes a moment.
+ *
+ * The freeze itself is #675's to remove; this only bounds it.
+ */
+export const DEFAULT_SURFACE_3D_SLICE_VERTEX_BUDGET = 50_000
+
+export function sliceDecimationTolerance(toolRadius: number): number {
+  return Math.min(
+    MAX_SLICE_DECIMATION_TOLERANCE,
+    Math.max(MIN_SLICE_DECIMATION_TOLERANCE, toolRadius * SLICE_DECIMATION_TOLERANCE_FRACTION),
+  )
+}
+
+function countPathVertices(paths: ClipperPath[]): number {
+  let total = 0
+  for (const path of paths) total += path.length
+  return total
+}
+
+interface DecimatedSlice {
+  paths: ClipperPath[]
+  /**
+   * Greatest distance any dropped vertex sits from the contour that replaced
+   * it, and 0 when nothing was dropped. The caller owes exactly this much
+   * margin to keep the keep-out containing the true cross-section.
+   */
+  deviation: number
+}
+
+/**
+ * Mesh cross-section at one Z, thinned, with the error that thinning introduced
+ * reported rather than paid for here.
+ *
+ * The safety margin that error buys is applied by the caller, folded into the
+ * sliver-cleanup open/close it already runs on `clearablePaths`. That placement
+ * is not cosmetic: applying it here needs a `ClipperOffset` of its own over the
+ * whole contour set, which is the same expensive operation decimation exists to
+ * make cheaper. Measured per level on a 101.6 x 76.2 mm relief plaque, that
+ * offset cost 10 ms at 4,445 contour vertices, 107 ms at 13,690 and 810 ms at
+ * 35,308 — enough to make an ordinary model *slower* than before #674, and paid
+ * in full even on a mesh the budget was about to refuse. Folding it into the
+ * existing open/close costs nothing at all. The thinning itself is cheap by
+ * comparison: 1-13 ms across the same range.
+ *
+ * The margin is the *measured* deviation rather than `decimationTolerance`,
+ * which matters more than it looks. A rectangular or otherwise coarse
+ * cross-section has no vertex RDP can drop, so it reports 0, the caller's
+ * erosion becomes a no-op (`offsetClipperPaths` returns its input under a 1e-9
+ * delta) and the level comes out byte-identical to pre-#674 — no margin, no
+ * envelope shift, no change to the emitted program.
+ *
+ * Mesh-only: the 2.5D generators never reach this function. `src/import/stl.ts`
+ * has a private function of the same name for silhouette extraction and is a
+ * different code path.
+ */
+function slicePolygonsToClipperPaths(
+  slicePolygons: Array<Array<[number, number]>>,
+  decimationTolerance: number,
+): DecimatedSlice {
+  let deviation = 0
+  const paths = slicePolygons
+    .filter((poly) => poly.length >= 3)
+    .map((poly) => {
+      const simplified = simplifyClosedRing(poly.map(([x, y]) => ({ x, y })), decimationTolerance)
+      if (simplified.deviation > deviation) deviation = simplified.deviation
+      return toClipperPath(normalizeWinding(simplified.points, false), DEFAULT_CLIPPER_SCALE)
+    })
+  return { paths: unionClipperPathsEvenOdd(paths), deviation }
+}
+
 function emptyResult(operation: Operation, warning: ToolpathWarning): PocketToolpathResult {
   return {
     operationId: operation.id,
@@ -95,16 +228,6 @@ function emptyResult(operation: Operation, warning: ToolpathWarning): PocketTool
     bounds: null,
     stepLevels: [],
   }
-}
-
-function slicePolygonsToClipperPaths(slicePolygons: Array<Array<[number, number]>>): ClipperPath[] {
-  const paths = slicePolygons
-    .filter((poly) => poly.length >= 3)
-    .map((poly) => toClipperPath(
-      normalizeWinding(poly.map(([x, y]) => ({ x, y })), false),
-      DEFAULT_CLIPPER_SCALE,
-    ))
-  return unionClipperPathsEvenOdd(paths)
 }
 
 function sameZ(left: number, right: number): boolean {
@@ -246,6 +369,7 @@ export function resolve3DSurfaceStepdown(
   const maxLinkDistance = stepoverDistance * 1.5
   const direction: CutDirection = operation.cutDirection ?? 'conventional'
   const initialInset = tool.radius + radialLeave
+  const decimationTolerance = sliceDecimationTolerance(tool.radius)
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
   const effectiveStepover = Math.max(stepoverDistance, minStepover)
 
@@ -254,13 +378,43 @@ export function resolve3DSurfaceStepdown(
   // Keep the tool-center envelope tight to the model outer wall. Rough/cleanup
   // only need enough radial band to retain a machinable outer-wall pass; they
   // should not create an extra floor-width pocket around the model.
-  const silhouetteOffset = 2 * initialInset + Math.max(minStepover, OUTER_WALL_MARGIN)
-  let outlinePaths = offsetClipperPaths(unionClipperPaths(modelSilhouettePaths), silhouetteOffset)
-  if (regionMask) {
-    outlinePaths = resolveRegionDomainArea(outlinePaths, regionMask, initialInset)
+  //
+  // The envelope has to move out to pay for the decimation margin, because a
+  // flat-bottomed model has a slice equal to its own silhouette: the margin then
+  // eats straight into the outer-wall band, and `OUTER_WALL_MARGIN` is a single
+  // micron. Without this the level collapses and reports
+  // `surface3dFloorCollapsed`.
+  //
+  // The shift is **twice** the margin because the margin is applied by eroding
+  // `clearablePaths`, and an erosion takes the band in from both sides at once —
+  // the outer boundary moves in by `m` and the model island grows out by `m`, so
+  // a band that started `2m` wider comes out exactly its original width. Net
+  // effect on the cut: the outer wall keeps `stockToLeaveRadial + m` instead of
+  // `stockToLeaveRadial`, the conservative direction and well inside what the
+  // finish pass removes.
+  //
+  // Cached by shift so a mesh that never thins (shift 0, the overwhelmingly
+  // common case) builds exactly one envelope, identical to the pre-#674 one.
+  // The shift only ever grows as levels are processed, so a level is never
+  // measured against an envelope narrower than the protection reaching it.
+  const silhouetteUnion = unionClipperPaths(modelSilhouettePaths)
+  const baseSilhouetteOffset = 2 * initialInset + Math.max(minStepover, OUTER_WALL_MARGIN)
+  const outlineCache = new Map<number, ClipperPath[]>()
+  const outlineForShift = (shift: number): ClipperPath[] => {
+    // Quantized to the Clipper unit the offset would round to anyway, so near
+    // identical shifts share one envelope.
+    const key = Math.round(shift * DEFAULT_CLIPPER_SCALE)
+    const cached = outlineCache.get(key)
+    if (cached) return cached
+    let paths = offsetClipperPaths(silhouetteUnion, baseSilhouetteOffset + key / DEFAULT_CLIPPER_SCALE)
+    if (regionMask) {
+      paths = resolveRegionDomainArea(paths, regionMask, initialInset)
+    }
+    outlineCache.set(key, paths)
+    return paths
   }
 
-  if (outlinePaths.length === 0) {
+  if (outlineForShift(0).length === 0) {
     return {
       ok: false,
       result: emptyResult(operation, { code: 'surface3dDegenerateBoundary' }),
@@ -338,6 +492,10 @@ export function resolve3DSurfaceStepdown(
   const levels: Resolved3DSurfaceLevel[] = []
   let protectedAbovePaths: ClipperPath[] = []
   let usedOpenSliceFallback = false
+  // Running maximum of what decimation has actually cost so far. It is a
+  // running maximum rather than this level's own figure because
+  // `protectedAbovePaths` carries the levels above, already expanded by theirs.
+  let appliedDecimation = 0
   const sliceSampleEpsilon = Math.max(Math.abs(modelTopZ - modelBottomZ) * 1e-6, 1e-6)
 
   for (const z of roughLevels) {
@@ -352,7 +510,12 @@ export function resolve3DSurfaceStepdown(
     const sliceResult = sliceWithinModel
       ? sliceMeshAtZDetailed(sliceIndex, sliceZ)
       : { polygons: [], openChainCount: 0, segmentCount: 0 }
-    const slicePaths = slicePolygonsToClipperPaths(sliceResult.polygons)
+    const decimatedSlice = slicePolygonsToClipperPaths(sliceResult.polygons, decimationTolerance)
+    const slicePaths = decimatedSlice.paths
+    if (decimatedSlice.deviation > appliedDecimation) {
+      appliedDecimation = decimatedSlice.deviation
+    }
+    const outlinePaths = outlineForShift(2 * appliedDecimation)
 
     const activeSubtractPaths = relatedSubtracts.length > 0
       ? unionClipperPaths(
@@ -381,6 +544,26 @@ export function resolve3DSurfaceStepdown(
       machiningEnvelopePaths: levelOutlinePaths,
     })
 
+    // Last point before any mesh-driven Clipper work at this level, and the
+    // first at which the driver is known. Everything above is either cached
+    // slicing or 2D-feature work whose cost does not move with mesh density.
+    const levelVertexCount = countPathVertices(slicePaths)
+      + countPathVertices(protectedAbovePaths)
+      + countPathVertices(surroundingProtectedPaths)
+    if (levelVertexCount > DEFAULT_SURFACE_3D_SLICE_VERTEX_BUDGET) {
+      return {
+        ok: false,
+        result: emptyResult(operation, {
+          code: 'surface3dMeshTooDense',
+          params: {
+            z: z.toFixed(4),
+            vertices: levelVertexCount,
+            budget: DEFAULT_SURFACE_3D_SLICE_VERTEX_BUDGET,
+          },
+        }),
+      }
+    }
+
     let protectedAtLevel = unionClipperPaths([
       ...protectedAbovePaths,
       ...slicePaths,
@@ -400,9 +583,21 @@ export function resolve3DSurfaceStepdown(
 
     let clearablePaths = differenceClipperPaths(levelOutlinePaths, protectedAtLevel)
     if (clearablePaths.length > 0) {
+      // The erode/dilate pair is the pre-existing sliver cleanup; the extra
+      // `appliedDecimation` on the erode is the decimation safety margin, and
+      // it rides along for free (issue #674). Eroding by `a + m` and dilating by
+      // `a` is an opening of `C (-) m`, and opening is anti-extensive, so the
+      // result stays inside `C (-) m` — the keep-out therefore still contains
+      // the true cross-section, and every consumer inherits it: `insetRegions`
+      // for the cut, and `clearablePaths` itself, which `roughSurface.ts` insets
+      // by the tool radius for its safe-link domain. A keep-out that shrank
+      // there would let the link planner rule a travel move safe across
+      // standing stock, which is why the margin cannot live at the
+      // `buildInsetRegions` call site the plan first proposed — that reaches
+      // `insetRegions` only.
       const cleanupEpsilon = 1e-3
       clearablePaths = offsetClipperPaths(
-        offsetClipperPaths(clearablePaths, -cleanupEpsilon),
+        offsetClipperPaths(clearablePaths, -(cleanupEpsilon + appliedDecimation)),
         cleanupEpsilon,
       )
     }
@@ -464,6 +659,7 @@ export function resolve3DSurfaceStepdown(
       direction,
       effectiveStepover,
       maxLinkDistance,
+      decimationTolerance: appliedDecimation,
       levels,
       warnings,
     },

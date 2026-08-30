@@ -101,6 +101,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.surface3dOpenMesh': 'El modelo tiene cortes abiertos o no es estanco. El desbaste utilizó una protección de silueta conservadora.',
   'warnings.surface3dFloorCollapsed': 'El piso de limpieza crítica en Z={z} colapsó después de la inserción y se omitió.',
   'warnings.surface3dNoLevels': 'No se encontraron niveles de superficie 3D mecanizables.',
+  'warnings.surface3dMeshTooDense': 'La malla tiene demasiado detalle para el desbaste 3D en Z={z} ({vertices} puntos de contorno frente a un presupuesto de {budget}). Reduzca el detalle de la malla antes de importarla o limite la operación a una región.',
   'warnings.tabOnlyEdgeRoute': 'La pestaña "{name}" es relevante para esta operación, pero por ahora las pestañas solo se aplican a operaciones de fresado de bordes.',
   'warnings.tabsOverlapAmbiguous': 'Las pestañas "{a}" y "{b}" se superponen de forma que pueden generar resultados ambiguos.',
   'warnings.tabNoIntersect': 'La pestaña "{name}" no interseca la trayectoria de la herramienta de la operación seleccionada.',
