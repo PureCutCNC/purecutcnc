@@ -105,7 +105,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.surface3dOpenMesh': '模型存在开放/非水密切片；粗加工采用了保守的轮廓保护',
   'warnings.surface3dFloorCollapsed': 'Z={z} 处的关键清理底面在内缩后塌缩，已跳过',
   'warnings.surface3dNoLevels': '未找到可加工的3D曲面层',
-  'warnings.surface3dMeshTooDense': 'Z={z} 处的网格对3D粗加工来说过于精细（{vertices} 个轮廓点，预算为 {budget}）——请在导入前降低网格精度，或将该操作限制在某个区域内',
+  'warnings.surface3dMeshTooDense': 'Z={z} 处的网格对3D曲面加工来说过于精细（{vertices} 个轮廓点，预算为 {budget}）——请在导入前降低网格精度，或将该操作限制在某个区域内',
   'warnings.tabOnlyEdgeRoute': '压板凸台“{name}”与此加工操作相关，但目前凸台仅应用于沿边加工操作。',
   'warnings.tabsOverlapAmbiguous': '凸台“{a}”与“{b}”的重叠方式可能产生歧义输出。',
   'warnings.tabNoIntersect': '凸台“{name}”与选定加工操作的刀路不相交。',

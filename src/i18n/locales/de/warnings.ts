@@ -112,7 +112,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.surface3dOpenMesh': 'Modell hat offene/nicht wasserdichte Schnitte; das Schruppen verwendete konservativen Silhouettenschutz',
   'warnings.surface3dFloorCollapsed': 'Kritischer Nacharbeitsboden bei Z={z} kollabierte nach Versatz und wurde übersprungen',
   'warnings.surface3dNoLevels': 'Keine bearbeitbaren 3D-Oberflächenebenen gefunden',
-  'warnings.surface3dMeshTooDense': 'Netz ist für das 3D-Schruppen bei Z={z} zu detailliert ({vertices} Konturpunkte gegenüber einem Budget von {budget}) — Netzdetails vor dem Import reduzieren oder die Operation auf einen Bereich beschränken',
+  'warnings.surface3dMeshTooDense': 'Netz ist für die 3D-Oberflächenbearbeitung bei Z={z} zu detailliert ({vertices} Konturpunkte gegenüber einem Budget von {budget}) — Netzdetails vor dem Import reduzieren oder die Operation auf einen Bereich beschränken',
   // tabs
   'warnings.tabOnlyEdgeRoute': 'Haltesteg „{name}" ist für diese Operation relevant, aber Haltestege werden derzeit nur bei Kontur-Operationen angewendet.',
   'warnings.tabsOverlapAmbiguous': 'Haltestege „{a}" und „{b}" überlappen sich auf eine Weise, die zu mehrdeutiger Ausgabe führen kann.',

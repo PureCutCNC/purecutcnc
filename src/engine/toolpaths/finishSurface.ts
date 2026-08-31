@@ -45,6 +45,101 @@ import { effectivePocketPattern } from './pocketPatterns'
 
 export { maxContourGap } from './finishSurfaceWaterline'
 
+const FLOOR_Z_TOLERANCE = 1e-6
+
+/**
+ * Zs a waterline pass takes as critical floor levels: those carrying horizontal
+ * model surface the cutter can actually reach (issue #685).
+ *
+ * Every distinct Z with a horizontal triangle used to qualify. That is right for
+ * a genuine floor and catastrophic for a quantized depth map, where every grey
+ * step is a plateau: the 291k-triangle relief behind #673 carried 431 of them a
+ * median 4.5 um apart, so 431 critical levels joined 7 real stepdowns and the
+ * whole per-level pipeline — mesh slice, even-odd union, shadow union, ring
+ * offset — ran 438 times.
+ *
+ * This is #682's rule reaching waterline, which does not go through
+ * `resolve3DSurfaceStepdown` and so never inherited it.
+ */
+export function criticalWaterlineFloorZs(
+  transformedPositions: Float32Array,
+  index: Uint32Array,
+  toolRadius: number,
+): Set<number> {
+  const flatAreaByZ = new Map<number, number>()
+  for (let i = 0; i < index.length; i += 3) {
+    const a = index[i] * 3
+    const b = index[i + 1] * 3
+    const c = index[i + 2] * 3
+    const z0 = transformedPositions[a + 2]
+    const z1 = transformedPositions[b + 2]
+    const z2 = transformedPositions[c + 2]
+    if (Math.abs(z0 - z1) >= FLOOR_Z_TOLERANCE || Math.abs(z1 - z2) >= FLOOR_Z_TOLERANCE) continue
+    // Projected area, which for a horizontal triangle is its true area, in
+    // project units — the positions are already transformed.
+    const area = Math.abs(
+      (transformedPositions[b] - transformedPositions[a]) * (transformedPositions[c + 1] - transformedPositions[a + 1])
+      - (transformedPositions[c] - transformedPositions[a]) * (transformedPositions[b + 1] - transformedPositions[a + 1]),
+    ) / 2
+    flatAreaByZ.set(z0, (flatAreaByZ.get(z0) ?? 0) + area)
+  }
+
+  const floorZs = new Set<number>()
+  const minimum = minReachableFloorArea(toolRadius)
+  for (const { z, area } of mergeFlatAreasDescending(flatAreaByZ)) {
+    if (area >= minimum) floorZs.add(z)
+  }
+  return floorZs
+}
+
+/**
+ * Smallest flat area at one Z that the cutter can reach, and so the smallest
+ * one worth a critical waterline level (issue #685).
+ *
+ * The tool tip can only sit at Z where a disc of the tool's own radius is clear
+ * of material standing above Z, and a connected region containing a disc of
+ * radius `R` has area at least `PI * R^2`. A plateau under that bound is
+ * therefore surrounded, within a tool radius, by material higher than itself:
+ * the cutter rides on the neighbours and never touches the plateau, so a ring
+ * at its Z machines nothing that the ring above it did not already machine.
+ *
+ * Deliberately *necessary* and not *sufficient*, exactly as in #682. The sum is
+ * over disconnected regions, so it keeps at least as many levels as a
+ * connected-component test would; a long thin sliver that clears the bound is
+ * left to the rest of the pipeline to produce nothing from. It is also measured
+ * against the tool's own radius rather than `tool.radius + stockToLeaveRadial`,
+ * which is the choice that keeps the *most* levels of the two.
+ *
+ * Dropping a level can only remove cutting motion, never add it, so this can
+ * only ever leave more material — it cannot move a contour toward the model. A
+ * Z that loses its critical level is left exactly as covered as any Z the mesh
+ * happens to carry no horizontal triangle at: by the evenly spaced stepdown
+ * ladder and by adaptive refinement.
+ */
+function minReachableFloorArea(toolRadius: number): number {
+  return Math.PI * toolRadius * toolRadius
+}
+
+/**
+ * Flat area per Z, merged on the same tolerance the horizontal-triangle test
+ * uses, so a plateau whose vertices differ in the last bits is not split across
+ * two buckets and dropped twice for being small.
+ */
+function mergeFlatAreasDescending(areaByZ: Map<number, number>): Array<{ z: number; area: number }> {
+  const sorted = [...areaByZ.entries()].sort((a, b) => b[0] - a[0])
+  const merged: Array<{ z: number; area: number }> = []
+  for (const [z, area] of sorted) {
+    const previous = merged[merged.length - 1]
+    if (previous !== undefined && Math.abs(previous.z - z) <= FLOOR_Z_TOLERANCE) {
+      previous.z = Math.min(previous.z, z)
+      previous.area += area
+      continue
+    }
+    merged.push({ z, area })
+  }
+  return merged
+}
+
 export function generateFinishSurfaceToolpath(
   project: Project,
   operation: Operation,
@@ -146,17 +241,17 @@ export function generateFinishSurfaceToolpath(
   // floor of a bump or the top of a pocket has to be included as a stepdown,
   // otherwise a thin ring of material is left between the lowest evenly-spaced
   // stepdown and the actual floor.
-  const horizontalFloorZs = new Set<number>()
-  if (isWaterline) {
-    for (let i = 0; i < index.length; i += 3) {
-      const z0 = transformedPos[index[i] * 3 + 2]
-      const z1 = transformedPos[index[i + 1] * 3 + 2]
-      const z2 = transformedPos[index[i + 2] * 3 + 2]
-      if (Math.abs(z0 - z1) < 1e-6 && Math.abs(z1 - z2) < 1e-6) {
-        horizontalFloorZs.add(z0)
-      }
-    }
-  }
+  //
+  // A flat region only earns one if the cutter can actually reach it
+  // (issue #685). This is #682's rule, arriving at waterline through its own
+  // copy of the critical-floor scan rather than through
+  // `resolve3DSurfaceStepdown`: on a quantized depth map every grey step is a
+  // plateau, and the reporter's 291k-triangle relief carried 431 of them a
+  // median 4.5 um apart — 431 critical levels added to 7 real stepdowns, each
+  // one paying a full mesh slice, shadow union and ring offset.
+  const horizontalFloorZs = isWaterline
+    ? criticalWaterlineFloorZs(transformedPos, index, tool.radius)
+    : new Set<number>()
 
   const axialLeave = Math.max(0, operation.stockToLeaveAxial)
   let effectiveBottom = modelBottomZ + axialLeave

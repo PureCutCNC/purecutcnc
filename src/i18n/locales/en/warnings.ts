@@ -112,7 +112,7 @@ export const warningsEn = {
   'warnings.surface3dOpenMesh': 'Model has open/non-watertight slices; roughing used conservative silhouette protection',
   'warnings.surface3dFloorCollapsed': 'Critical cleanup floor at Z={z} collapsed after inset and was skipped',
   'warnings.surface3dNoLevels': 'No machinable 3D surface levels were found',
-  'warnings.surface3dMeshTooDense': 'Mesh is too detailed for 3D roughing at Z={z} ({vertices} contour points against a budget of {budget}) — reduce the mesh detail before importing, or restrict the operation to a region',
+  'warnings.surface3dMeshTooDense': 'Mesh is too detailed for 3D surface machining at Z={z} ({vertices} contour points against a budget of {budget}) — reduce the mesh detail before importing, or restrict the operation to a region',
   // tabs
   'warnings.tabOnlyEdgeRoute': 'Tab "{name}" is relevant to this operation, but tabs are only applied to edge-route operations right now.',
   'warnings.tabsOverlapAmbiguous': 'Tabs "{a}" and "{b}" overlap in a way that may produce ambiguous output.',
