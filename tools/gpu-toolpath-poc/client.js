@@ -41,7 +41,7 @@ function finish() {
   const canvas = document.querySelector('canvas.sketch-canvas')
   const result = { fixture, gesture: run.gesture, trustedInput: run.trusted, userAgent: navigator.userAgent,
     directions: run.directions, renderer: run.renderer, label: run.label,
-    gpuStats: document.querySelector('canvas.sketch-toolpath-gpu-poc')?.dataset.pocStats ?? null,
+    gpuStats: document.querySelector('canvas.sketch-toolpath-gpu')?.dataset.pocStats ?? null,
     recordedAt: new Date().toISOString(),
     dpr: devicePixelRatio, viewport: [innerWidth, innerHeight], canvas: [canvas.width, canvas.height],
     gestureDurationMs: run.lastInput - run.start,
@@ -114,7 +114,7 @@ const alphaButton = document.createElement('button')
 alphaButton.textContent = 'Alpha swatch'
 panel.append(alphaButton)
 alphaButton.onclick = async () => {
-  const { GpuToolpathPoc } = await import('/src/components/canvas/gpuToolpathPoc.ts')
+  const { GpuToolpathRenderer } = await import('/src/components/canvas/gpuToolpathRenderer.ts')
   const { drawToolpath } = await import('/src/components/canvas/previewPrimitives.ts')
   const { canvasColors } = await import('/src/components/canvas/canvasPalette.ts')
   const host = document.createElement('div')
@@ -131,7 +131,7 @@ alphaButton.onclick = async () => {
   const visibility = {cuts:true,leadIns:true,rapids:true,plunges:true,retractions:true,directions:false,feedColours:false}
   const vt = {scale:1,offsetX:0,offsetY:0}
   drawToolpath(oracle.getContext('2d'),toolpath,vt,false,visibility,1,{simplifyForDisplay:false})
-  const gpu = new GpuToolpathPoc(gpuCanvas,()=>{})
+  const gpu = new GpuToolpathRenderer(gpuCanvas,()=>{})
   gpu.render([{toolpath,emphasized:false,slotScale:1}],vt,320,140,visibility,canvasColors())
   const readback = document.createElement('canvas');readback.width=320;readback.height=140
   const readCtx=readback.getContext('2d');readCtx.drawImage(gpuCanvas,0,0)
@@ -139,4 +139,3 @@ alphaButton.onclick = async () => {
   const pre = document.createElement('pre');pre.id='b683-alpha';pre.textContent=JSON.stringify(samples);host.append(pre)
   const close=document.createElement('button');close.textContent='Close alpha swatch';close.onclick=()=>{gpu.dispose();host.remove()};host.append(close)
 }
-

@@ -19,12 +19,12 @@ import type { Project } from '../../types/project'
 import { pocketSlotFeedPercent } from '../../theme/palette'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import { canvasColors } from './canvasPalette'
-import { drawToolpath, drawToolpathAnnotations } from './previewPrimitives'
-import type { GpuPocSurface } from './useGpuToolpathPoc'
+import { drawToolpath } from './previewPrimitives'
+import type { SketchToolpathSurface } from './useSketchToolpathRenderer'
 import type { ViewTransform } from './viewTransform'
 
 export function renderSketchToolpaths(
-  surface: GpuPocSurface | null, ctx: CanvasRenderingContext2D,
+  surface: SketchToolpathSurface | null, ctx: CanvasRenderingContext2D,
   project: Project, toolpaths: readonly ToolpathResult[], selectedId: string | null,
   vt: ViewTransform, visibility: ToolpathVisibility | undefined, deferArrows: boolean,
 ): CanvasRenderingContext2D {
@@ -40,19 +40,17 @@ export function renderSketchToolpaths(
     if (foreground.canvas.height !== ctx.canvas.height) foreground.canvas.height = ctx.canvas.height
     foreground.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
     try {
-      gpuActive = !surface.failed && surface.gpu.render(entries, vt, ctx.canvas.width, ctx.canvas.height, visible, canvasColors())
+      gpuActive = !surface.failed && surface.gpu.render(entries, vt, ctx.canvas.width, ctx.canvas.height, visible, canvasColors(), deferArrows)
     } catch (error) {
       surface.failed = true
-      ctx.canvas.dataset.toolpathRendererError = String(error)
+      surface.report(false, error)
     }
     surface.gpu.canvas.hidden = !gpuActive
-    ctx.canvas.dataset.toolpathRenderer = gpuActive ? 'gpu-poc' : 'canvas-fallback'
+    if (!surface.failed) surface.report(gpuActive)
     if (gpuActive) ctx = foreground
   }
-  for (const { toolpath, emphasized, slotScale } of entries) {
-    if (gpuActive) drawToolpathAnnotations(ctx, toolpath, vt, emphasized, visible, { deferArrows })
-    else drawToolpath(ctx, toolpath, vt, emphasized, visible, slotScale, { deferArrows })
+  if (!gpuActive) for (const { toolpath, emphasized, slotScale } of entries) {
+    drawToolpath(ctx, toolpath, vt, emphasized, visible, slotScale, { deferArrows })
   }
   return ctx
 }
-

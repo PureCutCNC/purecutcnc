@@ -16,7 +16,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
-import { useGpuToolpathPoc } from './useGpuToolpathPoc'
+import { useSketchToolpathRenderer } from './useSketchToolpathRenderer'
 import { renderSketchToolpaths } from './renderSketchToolpaths'
 import { pocketSlotFeedPercent } from '../../theme/palette'
 import { toolpathHasEngagementTelemetry, feedColourLegendSteps as getFeedColourLegendSteps } from '../toolpathVisibility'
@@ -237,7 +237,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   // Stable, frame-coalescing redraw. Replaces the former ad-hoc `scheduleDraw`
   // closure + `scheduleDrawRef`; safe to list in / omit from effect deps.
   const scheduleDraw = useRafScheduler(() => drawRef.current())
-  const gpuPoc = useGpuToolpathPoc(canvasRef, scheduleDraw)
+  const toolpathRenderer = useSketchToolpathRenderer(canvasRef, scheduleDraw, toolpaths)
   const [copyCountDraft, setCopyCountDraft] = useState('1')
 
   const { viewState, setViewState, navigation } = useNavigationViewState(canvasRef, scheduleDraw)
@@ -901,7 +901,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   drawRef.current = () => {
     const canvas = canvasRef.current
-    if (!canvas) return
+    if (!canvas || canvas.clientWidth === 0 || canvas.clientHeight === 0
+      || canvas.closest('[role="tabpanel"][aria-hidden="true"]')) return
 
     let ctx = canvas.getContext('2d')
     if (!ctx) return
@@ -1212,7 +1213,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
-    ctx = renderSketchToolpaths(gpuPoc.current, ctx, project, toolpaths, selectedOperationId, vt, toolpathVisibility, navigation.active)
+    ctx = renderSketchToolpaths(toolpathRenderer.surface.current, ctx, project, toolpaths, selectedOperationId, vt, toolpathVisibility, navigation.active)
 
     if (marqueeStartRef.current && marqueeCurrentRef.current) {
       const x = Math.min(marqueeStartRef.current.cx, marqueeCurrentRef.current.cx)
@@ -2998,6 +2999,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             toolpaths.some((toolpath) => toolpath.operationId === selectedOperationId && toolpathHasEngagementTelemetry(toolpath))
           }
           legendSteps={feedColourLegendSteps}
+          renderer={toolpathRenderer.control}
         />
       )}
       <ConstraintEditPanel constraint={constraint} />

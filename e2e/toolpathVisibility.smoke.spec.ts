@@ -15,23 +15,23 @@
  */
 
 import { test, expect } from './fixtures'
-import { seedToolpathVisProject } from './toolpathVisibility.helpers'
+import { seedToolpathVisProject, TOOLPATH_VIS_FIXTURE_JSON } from './toolpathVisibility.helpers'
 import type { Project } from '../src/types/project'
 import type { ToolpathResult } from '../src/engine/toolpaths/types'
 
-test('GPU POC coverage union, shared styles, transform and retained buffers', async ({ app }, testInfo) => {
+test('GPU renderer coverage union, shared styles, transform and retained buffers', async ({ app }, testInfo) => {
   const result = await app.page.evaluate(async () => {
-    const gpuUrl = '/src/components/canvas/gpuToolpathPoc.ts'
+    const gpuUrl = '/src/components/canvas/gpuToolpathRenderer.ts'
     const canvasUrl = '/src/components/canvas/previewPrimitives.ts'
     const paletteUrl = '/src/components/canvas/canvasPalette.ts'
-    const { GpuToolpathPoc } = await import(gpuUrl) as typeof import('../src/components/canvas/gpuToolpathPoc')
+    const { GpuToolpathRenderer } = await import(gpuUrl) as typeof import('../src/components/canvas/gpuToolpathRenderer')
     const { drawToolpath } = await import(canvasUrl) as typeof import('../src/components/canvas/previewPrimitives')
     const { canvasColors } = await import(paletteUrl) as typeof import('../src/components/canvas/canvasPalette')
     const gpuCanvas = document.createElement('canvas')
     const reference = document.createElement('canvas')
     const readback = document.createElement('canvas')
     for (const canvas of [gpuCanvas, reference, readback]) { canvas.width = 360; canvas.height = 240 }
-    const gpu = new GpuToolpathPoc(gpuCanvas, () => {})
+    const gpu = new GpuToolpathRenderer(gpuCanvas, () => {})
     const point = (x: number, y: number, z = 0) => ({ x, y, z })
     const toolpath: ToolpathResult = {
       operationId: 'synthetic-gpu-parity', bounds: null, warnings: [],
@@ -79,7 +79,14 @@ test('GPU POC coverage union, shared styles, transform and retained buffers', as
       gpu.render([], vt, 360, 240, visibility, canvasColors())
       read.clearRect(0, 0, 360, 240); read.drawImage(gpuCanvas, 0, 0)
       const cleared = sample(read, 50, 180)
-      return { alpha, crossing, layers, swatch, before, after, transformed, oldPosition, hiddenCut, collision, cleared }
+      gpu.render([{ toolpath, emphasized: true, slotScale: .4 }], vt, 360, 240, visibility, canvasColors())
+      const afterClear = gpu.stats.preparations
+      const submissions = gpu.stats.submissions
+      const zeroSize = gpu.render([], vt, 0, 0, visibility, canvasColors())
+      const zeroSizeSubmissions = gpu.stats.submissions
+      gpu.dispose()
+      const disposed = gpu.render([], vt, 360, 240, visibility, canvasColors())
+      return { alpha, crossing, layers, swatch, before, after, transformed, oldPosition, hiddenCut, collision, cleared, afterClear, submissions, zeroSize, zeroSizeSubmissions, disposed }
     } finally { gpu.dispose() }
   })
   expect(result.alpha[0].gpu[3]).toBe(result.alpha[1].gpu[3])
@@ -94,16 +101,20 @@ test('GPU POC coverage union, shared styles, transform and retained buffers', as
   expect(result.hiddenCut[3]).toBe(0)
   expect(result.collision[3]).toBeGreaterThan(0)
   expect(result.cleared[3]).toBe(0)
+  expect(result.afterClear).toBe(result.after + 1)
+  expect(result.zeroSize).toBe(false)
+  expect(result.zeroSizeSubmissions).toBe(result.submissions)
+  expect(result.disposed).toBe(false)
   await testInfo.attach('gpu-poc-layer-swatch', { body: Buffer.from(result.swatch.split(',')[1], 'base64'), contentType: 'image/png' })
 })
 
-test('GPU POC opts in, retains buffers through navigation and falls back on context loss', async ({ app, ui }) => {
+test('GPU renderer opts in, retains buffers through navigation and falls back on context loss', async ({ app, ui }) => {
   const page = app.page
   await page.goto('/?toolpathRenderer=gpu')
   await seedToolpathVisProject(page)
   const base = page.locator('canvas.sketch-canvas')
-  const gpu = page.locator('canvas.sketch-toolpath-gpu-poc')
-  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu-poc')
+  const gpu = page.locator('canvas.sketch-toolpath-gpu')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await ui.operations.rowByName(page, 'Route A').click()
   const preparations = () => gpu.getAttribute('data-poc-stats').then(value => JSON.parse(value!).preparations as number)
   const before = await preparations()
@@ -117,7 +128,7 @@ test('GPU POC opts in, retains buffers through navigation and falls back on cont
   const directions = ui.toolpathVis.sketchItems(page).filter({ hasText: 'Directions' })
   await expect(directions).toHaveAttribute('aria-pressed', 'true')
   await page.evaluate(() => {
-    const gl = document.querySelector<HTMLCanvasElement>('canvas.sketch-toolpath-gpu-poc')!.getContext('webgl2')!
+    const gl = document.querySelector<HTMLCanvasElement>('canvas.sketch-toolpath-gpu')!.getContext('webgl2')!
     const extension = gl.getExtension('WEBGL_lose_context')!
     Object.assign(window, { restoreGpuPocContext: () => extension.restoreContext() })
     extension.loseContext()
@@ -126,19 +137,19 @@ test('GPU POC opts in, retains buffers through navigation and falls back on cont
   await expect(gpu).toBeHidden()
   await expect(directions).toHaveAttribute('aria-pressed', 'true')
   await page.evaluate(() => (window as unknown as { restoreGpuPocContext: () => void }).restoreGpuPocContext())
-  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu-poc')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await expect(gpu).toBeVisible()
   await page.goto('/')
-  await expect(page.locator('canvas.sketch-toolpath-gpu-poc')).toHaveCount(0)
+  await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(0)
 })
 
-test('GPU POC initialization failure leaves Canvas toolpaths available', async ({ app, ui }) => {
+test('GPU renderer initialization failure leaves Canvas toolpaths available', async ({ app, ui }) => {
   const page = app.page
   await page.addInitScript(() => {
     const original = HTMLCanvasElement.prototype.getContext
     HTMLCanvasElement.prototype.getContext = new Proxy(original, {
       apply(target, canvas: HTMLCanvasElement, args: unknown[]) {
-        if (canvas.classList.contains('sketch-toolpath-gpu-poc') && args[0] === 'webgl2') return null
+        if (canvas.classList.contains('sketch-toolpath-gpu') && args[0] === 'webgl2') return null
         return Reflect.apply(target, canvas, args)
       },
     })
@@ -147,9 +158,326 @@ test('GPU POC initialization failure leaves Canvas toolpaths available', async (
   await seedToolpathVisProject(page)
   await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
   await expect(ui.toolpathVis.sketchPanel(page)).toBeVisible()
-  await expect(page.locator('canvas.sketch-toolpath-gpu-poc')).toHaveCount(0)
+  await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(0)
 })
 
+
+
+test('renderer preference persists without changing project, history or booklet pixels', async ({ app }) => {
+  const page = app.page
+  await seedToolpathVisProject(page)
+  const selector = page.getByRole('combobox', { name: '2D renderer', exact: true })
+  const base = page.locator('canvas.sketch-canvas')
+  await expect(selector).toHaveValue('canvas')
+  const snapshot = () => page.evaluate(async () => {
+    const storeUrl = '/src/store/projectStore.ts'
+    const snapshotUrl = '/src/components/canvas/operationSnapshot.ts'
+    const { useProjectStore } = await import(storeUrl) as typeof import('../src/store/projectStore')
+    const { renderOperationSnapshotPng } = await import(snapshotUrl) as typeof import('../src/components/canvas/operationSnapshot')
+    const state = useProjectStore.getState()
+    const toolpath: ToolpathResult = {
+      operationId: state.project.operations[0].id, warnings: [], bounds: null,
+      moves: [{ kind: 'cut', from: { x: 30, y: 30, z: 0 }, to: { x: 90, y: 30, z: 0 } }],
+    }
+    const png = await renderOperationSnapshotPng(state.project, state.project.operations[0], toolpath, { pixelRatio: 1 })
+    return { project: JSON.stringify(state.project), history: JSON.stringify(state.history), dirty: state.dirty, png: Array.from(png) }
+  })
+  const before = await snapshot()
+  await page.evaluate(async () => {
+    const url = '/src/components/canvas/gpuToolpathRenderer.ts'
+    const { GpuToolpathRenderer } = await import(url) as typeof import('../src/components/canvas/gpuToolpathRenderer')
+    const render = GpuToolpathRenderer.prototype.render
+    const seen = new Set<ToolpathResult>()
+    GpuToolpathRenderer.prototype.render = function (...args) {
+      for (const entry of args[0]) seen.add(entry.toolpath)
+      return render.apply(this, args)
+    }
+    Object.assign(window, { generatedResultCount: () => seen.size })
+  })
+  await selector.selectOption('gpu')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  expect(await snapshot()).toEqual(before)
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('gpu')
+  for (let i = 0; i < 3; i++) {
+    await selector.selectOption('canvas')
+    await expect(page.locator('canvas.sketch-toolpath-gpu, canvas.sketch-toolpath-foreground')).toHaveCount(0)
+    await selector.selectOption('gpu')
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+    await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(1)
+  }
+  expect(await snapshot()).toEqual(before)
+  expect(await page.evaluate(() => (window as unknown as { generatedResultCount: () => number }).generatedResultCount())).toBe(1)
+  await page.evaluate(() => {
+    const gl = document.querySelector<HTMLCanvasElement>('canvas.sketch-toolpath-gpu')!.getContext('webgl2')!
+    const extension = gl.getExtension('WEBGL_lose_context')!
+    Object.assign(window, { restoreBookletGpu: () => extension.restoreContext() })
+    extension.loseContext()
+  })
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
+  expect(await snapshot()).toEqual(before)
+  await page.evaluate(() => (window as unknown as { restoreBookletGpu: () => void }).restoreBookletGpu())
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  await page.reload()
+  await seedToolpathVisProject(page)
+  await expect(selector).toHaveValue('gpu')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  await page.getByRole('tab', { name: '3D view', exact: true }).click()
+  await expect(selector).toBeHidden()
+  await page.getByRole('tab', { name: 'Sketch', exact: true }).click()
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+})
+
+test('GPU startup failure has a persistent preference, visible fallback and working retry', async ({ app }) => {
+  const page = app.page
+  await seedToolpathVisProject(page)
+  await page.evaluate(() => {
+    const original = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = new Proxy(original, {
+      apply(target, canvas: HTMLCanvasElement, args: unknown[]) {
+        if (canvas.classList.contains('sketch-toolpath-gpu') && args[0] === 'webgl2') return null
+        return Reflect.apply(target, canvas, args)
+      },
+    })
+    Object.assign(window, { allowGpu: () => { HTMLCanvasElement.prototype.getContext = original } })
+  })
+  const selector = page.getByRole('combobox', { name: '2D renderer', exact: true })
+  const base = page.locator('canvas.sketch-canvas')
+  await selector.selectOption('gpu')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
+  await expect(page.getByRole('status').filter({ hasText: 'GPU unavailable; using Canvas.' })).toBeVisible()
+  await expect(selector).toHaveValue('gpu')
+  expect(await page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('gpu')
+  await page.evaluate(() => (window as unknown as { allowGpu: () => void }).allowGpu())
+  await page.getByRole('button', { name: 'Retry GPU', exact: true }).click()
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  await expect(page.getByText('GPU unavailable; using Canvas.')).toHaveCount(0)
+})
+
+test('switching away cancels a pending lazy GPU load', async ({ app }) => {
+  const page = app.page
+  await seedToolpathVisProject(page)
+  let release: () => void = () => {}
+  const pending = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/gpuToolpathRenderer.ts', async route => { await pending; await route.continue() })
+  const selector = page.getByRole('combobox', { name: '2D renderer', exact: true })
+  const request = page.waitForRequest('**/gpuToolpathRenderer.ts')
+  await selector.selectOption('gpu')
+  await request
+  await expect(page.getByRole('status').filter({ hasText: 'Starting GPU' })).toBeVisible()
+  await selector.selectOption('canvas')
+  release()
+  await page.unrouteAll({ behavior: 'wait' })
+  await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas')
+  await expect(page.locator('canvas.sketch-toolpath-gpu, canvas.sketch-toolpath-foreground')).toHaveCount(0)
+  await selector.selectOption('gpu')
+  await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(1)
+})
+
+
+test('GPU annotation painter order matches Canvas across selection, resize and navigation', async ({ app }, testInfo) => {
+  const results = await app.page.evaluate(async () => {
+    const gpuUrl = '/src/components/canvas/gpuToolpathRenderer.ts'
+    const previewUrl = '/src/components/canvas/previewPrimitives.ts'
+    const paletteUrl = '/src/components/canvas/canvasPalette.ts'
+    const { GpuToolpathRenderer } = await import(gpuUrl) as typeof import('../src/components/canvas/gpuToolpathRenderer')
+    const { drawToolpath, drawToolpathAnnotations } = await import(previewUrl) as typeof import('../src/components/canvas/previewPrimitives')
+    const { canvasColors } = await import(paletteUrl) as typeof import('../src/components/canvas/canvasPalette')
+    const canvases = Array.from({ length: 4 }, () => document.createElement('canvas'))
+    const [gpuCanvas, reference, incorrect, readback] = canvases
+    const gpu = new GpuToolpathRenderer(gpuCanvas, () => {})
+    const ctx = reference.getContext('2d')!, wrong = incorrect.getContext('2d')!, read = readback.getContext('2d')!
+    const sources = ['bridgeSplitArms', 'siblingBridge', 'sameChildBridge', 'bootstrap', 'stepArms', 'intCornerBridge', 'contour', 'tryDirectLink', 'microContour']
+    const point = (x: number, y: number) => ({ x, y, z: 0 })
+    const selected: ToolpathResult = {
+      operationId: 'annotated', warnings: [], debugToolpath: true,
+      bounds: { minX: 20, minY: 20, minZ: 0, maxX: 180, maxY: 300, maxZ: 0 },
+      moves: sources.map((source, i) => ({ kind: 'cut', from: point(20, 30 + i * 30), to: point(180, 30 + i * 30), source })),
+    }
+    const later: ToolpathResult = {
+      operationId: 'later', warnings: [], bounds: selected.bounds,
+      moves: [{ kind: 'rapid', from: point(100.5, 10), to: point(100.5, 300) }],
+      collidingMoveIndices: [0],
+    }
+    const visibility = { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true, feedColours: false }
+    const rows: { correctError: number; incorrectError: number; pixels: number }[] = []
+    const swatches: string[] = []
+    try {
+      for (const [scale, width, height] of [[1, 240, 330], [2, 460, 660], [1, 240, 330]]) {
+        for (const canvas of canvases) { canvas.width = width; canvas.height = height }
+        const vt = { scale, offsetX: 10, offsetY: 10 }
+        for (const deferArrows of [false, true]) {
+          ctx.clearRect(0, 0, width, height); wrong.clearRect(0, 0, width, height)
+          const entries = [{ toolpath: selected, emphasized: true, slotScale: 1 }, { toolpath: later, emphasized: false, slotScale: 1 }]
+          for (const { toolpath, emphasized } of entries) drawToolpath(ctx, toolpath, vt, emphasized, visibility, 1, { deferArrows, simplifyForDisplay: false })
+          for (const { toolpath, emphasized } of entries) drawToolpath(wrong, toolpath, vt, emphasized, { ...visibility, directions: false }, 1, { simplifyForDisplay: false })
+          drawToolpathAnnotations(wrong, selected, vt, true, visibility, { deferArrows })
+          gpu.render(entries, vt, width, height, visibility, canvasColors(), deferArrows)
+          read.clearRect(0, 0, width, height); read.drawImage(gpuCanvas, 0, 0)
+          if (rows.length === 2) swatches.push(reference.toDataURL(), readback.toDataURL(), incorrect.toDataURL())
+          const a = ctx.getImageData(0, 0, width, height).data
+          const b = wrong.getImageData(0, 0, width, height).data
+          const g = read.getImageData(0, 0, width, height).data
+          let correctError = 0, incorrectError = 0, pixels = 0
+          const channel = (pixels: Uint8ClampedArray, i: number, c: number) =>
+            c === 3 ? pixels[i + c] : pixels[i + c] * pixels[i + 3] / 255
+          for (let i = 0; i < a.length; i += 4) {
+            // Compare premultiplied pixels: straight RGB is undefined at zero
+            // alpha and exaggerates MSAA edge differences. Only inspect pixels
+            // that distinguish the correct order from the old all-arrows-last.
+            if (Math.max(...[0, 1, 2].map(c => Math.abs(channel(a, i, c) - channel(b, i, c)))) < 30) continue
+            for (let c = 0; c < 4; c++) {
+              correctError += Math.abs(channel(a, i, c) - channel(g, i, c))
+              incorrectError += Math.abs(channel(b, i, c) - channel(g, i, c))
+            }
+            pixels++
+          }
+          rows.push({ correctError, incorrectError, pixels })
+        }
+      }
+      gpu.render([{ toolpath: selected, emphasized: false, slotScale: 1 }], { scale: 1, offsetX: 10, offsetY: 10 }, 240, 330, visibility, canvasColors())
+      read.clearRect(0, 0, 240, 330); read.drawImage(gpuCanvas, 0, 0)
+      const unselectedMarkerAlpha = read.getImageData(110, 43, 1, 1).data[3]
+      gpu.render([], { scale: 1, offsetX: 0, offsetY: 0 }, 240, 330, visibility, canvasColors())
+      read.clearRect(0, 0, 240, 330); read.drawImage(gpuCanvas, 0, 0)
+      const emptyAlpha = read.getImageData(110, 43, 1, 1).data[3]
+      return { rows, unselectedMarkerAlpha, emptyAlpha, swatches }
+    } finally { gpu.dispose() }
+  })
+  for (const [index, swatch] of results.swatches.entries()) {
+    await testInfo.attach('annotation-order-' + ['canvas', 'gpu', 'incorrect'][index], { body: Buffer.from(swatch.split(',')[1], 'base64'), contentType: 'image/png' })
+  }
+  for (const row of results.rows) {
+    expect(row.pixels).toBeGreaterThan(0)
+    expect(row.correctError / row.pixels, JSON.stringify(results.rows)).toBeLessThan(35)
+    expect(row.correctError).toBeLessThan(row.incorrectError / 2)
+  }
+  expect(results.unselectedMarkerAlpha).toBe(0)
+  expect(results.emptyAlpha).toBe(0)
+})
+
+
+test('production renderer selector works through normal project Open and persists', async ({ page }, testInfo) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+  const production = testInfo.project.name === 'production'
+  await page.goto('/?toolpathRenderer=gpu')
+  const base = page.locator('canvas.sketch-canvas')
+  if (production) {
+    expect(await page.evaluate(() => '__pcTest' in window)).toBe(false)
+    // A DEV comparison URL must not bypass the production default.
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas')
+  }
+  await page.goto('/')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas')
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: 'Open project', exact: true }).click()
+  await (await chooser).setFiles({ name: 'renderer.camj', mimeType: 'application/json', buffer: Buffer.from(TOOLPATH_VIS_FIXTURE_JSON) })
+  const selector = page.getByRole('combobox', { name: '2D renderer', exact: true })
+  await expect(selector).toHaveValue('canvas')
+  await selector.selectOption('gpu')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  if (production) await expect(page.locator('canvas.sketch-toolpath-gpu')).not.toHaveAttribute('data-poc-stats')
+  await page.reload()
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  expect(await page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('gpu')
+  expect(errors).toEqual([])
+})
+
+
+test('render failure falls back until explicit retry, without leaving stale overlays', async ({ app }) => {
+  const page = app.page
+  await seedToolpathVisProject(page)
+  await page.evaluate(async () => {
+    const url = '/src/components/canvas/gpuToolpathRenderer.ts'
+    const { GpuToolpathRenderer } = await import(url) as typeof import('../src/components/canvas/gpuToolpathRenderer')
+    const render = GpuToolpathRenderer.prototype.render
+    GpuToolpathRenderer.prototype.render = () => { throw new Error('injected render failure') }
+    Object.assign(window, { repairGpu: () => { GpuToolpathRenderer.prototype.render = render } })
+  })
+  const selector = page.getByRole('combobox', { name: '2D renderer', exact: true })
+  const base = page.locator('canvas.sketch-canvas')
+  await selector.selectOption('gpu')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
+  await expect(base).toHaveAttribute('data-toolpath-renderer-error', /injected render failure/)
+  await expect(page.locator('canvas.sketch-toolpath-gpu')).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Retry GPU', exact: true })).toBeVisible()
+  await page.evaluate(() => (window as unknown as { repairGpu: () => void }).repairGpu())
+  await page.getByRole('button', { name: 'Retry GPU', exact: true }).click()
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(1)
+  await expect(page.locator('canvas.sketch-toolpath-foreground')).toHaveCount(1)
+  await expect(base).not.toHaveAttribute('data-toolpath-renderer-error')
+})
+
+test('hidden sketch submits no GPU work and releases hidden/replaced results', async ({ app }) => {
+  const page = app.page
+  await seedToolpathVisProject(page)
+  await page.evaluate(async () => {
+    const url = '/src/components/canvas/gpuToolpathRenderer.ts'
+    const { GpuToolpathRenderer } = await import(url) as typeof import('../src/components/canvas/gpuToolpathRenderer')
+    const render = GpuToolpathRenderer.prototype.render
+    const retain = GpuToolpathRenderer.prototype.retain
+    const observation = { submissions: 0, retained: -1 }
+    GpuToolpathRenderer.prototype.render = function (...args) { observation.submissions++; return render.apply(this, args) }
+    GpuToolpathRenderer.prototype.retain = function (toolpaths) { observation.retained = toolpaths.length; return retain.call(this, toolpaths) }
+    Object.assign(window, { gpuObservation: observation })
+  })
+  await page.getByRole('combobox', { name: '2D renderer', exact: true }).selectOption('gpu')
+  await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  await page.getByRole('tab', { name: '3D view', exact: true }).click()
+  await expect(page.locator('canvas.sketch-canvas')).toBeHidden()
+  const read = () => page.evaluate(() => (window as unknown as { gpuObservation: { submissions: number; retained: number } }).gpuObservation)
+  const before = await read()
+  await page.getByRole('button', { name: 'Hide all toolpaths', exact: true }).click()
+  await expect.poll(async () => (await read()).retained).toBe(0)
+  expect((await read()).submissions).toBe(before.submissions)
+  await seedToolpathVisProject(page)
+  await expect.poll(async () => (await read()).retained).toBeGreaterThan(0)
+  expect((await read()).submissions).toBe(before.submissions)
+  await page.getByRole('tab', { name: 'Sketch', exact: true }).click()
+  await expect.poll(async () => (await read()).submissions).toBeGreaterThan(before.submissions)
+  await expect(page.locator('canvas.sketch-toolpath-gpu')).toBeVisible()
+})
+
+
+test.describe('GPU tablet emulation', () => {
+  test.use({ hasTouch: true, deviceScaleFactor: 2, viewport: { width: 1024, height: 768 } })
+  test('touch-sized selector and pinch keep the GPU surface aligned', async ({ app }, testInfo) => {
+    const page = app.page
+    await seedToolpathVisProject(page)
+    const selector = page.getByRole('combobox', { name: '2D renderer', exact: true })
+    await expect(selector).toBeVisible()
+    expect((await selector.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    await selector.selectOption('gpu')
+    const base = page.locator('canvas.sketch-canvas')
+    const gpu = page.locator('canvas.sketch-toolpath-gpu')
+    await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+    const box = (await base.boundingBox())!
+    const x = box.x + box.width / 2, y = box.y + box.height / 2
+    const stats = async () => JSON.parse((await gpu.getAttribute('data-poc-stats'))!) as { submissions: number; preparations: number }
+    const before = await stats()
+    const touch = await page.context().newCDPSession(page)
+    try {
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 11, x: x - 40, y }, { id: 12, x: x + 40, y }] })
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ id: 11, x: x - 60, y: y + 10 }, { id: 12, x: x + 60, y: y + 10 }] })
+      await expect.poll(async () => (await stats()).submissions).toBeGreaterThan(before.submissions)
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    } finally { await touch.detach() }
+    expect((await stats()).preparations).toBe(before.preparations)
+    await page.setViewportSize({ width: 1180, height: 820 })
+    await expect.poll(async () => {
+      const a = await base.boundingBox(), b = await gpu.boundingBox()
+      return JSON.stringify(a) === JSON.stringify(b)
+    }).toBe(true)
+    const sizes = await page.evaluate(() => [...document.querySelectorAll<HTMLCanvasElement>('canvas.sketch-canvas, canvas.sketch-toolpath-gpu, canvas.sketch-toolpath-foreground')].map(canvas => [canvas.width, canvas.height]))
+    expect(sizes).toHaveLength(3)
+    expect(sizes[1]).toEqual(sizes[0])
+    expect(sizes[2]).toEqual(sizes[0])
+    await testInfo.attach('gpu-tablet-emulation', { body: await page.screenshot(), contentType: 'image/png' })
+  })
+})
 
 test.describe('Toolpath visibility panel smoke', () => {
   test('solid rapid styling renders in Canvas and booklet snapshots', async ({ app, ui }, testInfo) => {

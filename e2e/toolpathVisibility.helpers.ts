@@ -151,7 +151,7 @@ function buildToolpathVisProjectJson(): string {
   })
 }
 
-const TOOLPATH_VIS_FIXTURE_JSON = buildToolpathVisProjectJson()
+export const TOOLPATH_VIS_FIXTURE_JSON = buildToolpathVisProjectJson()
 
 export async function seedToolpathVisProject(page: Page): Promise<void> {
   await seedProject(page, TOOLPATH_VIS_FIXTURE_JSON)
