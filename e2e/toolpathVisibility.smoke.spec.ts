@@ -76,4 +76,81 @@ test.describe('Toolpath visibility panel smoke', () => {
     await expect(ui.toolpathVis.view3dPanel(app.page)).toBeAttached({ timeout: 15000 })
     await expect(ui.toolpathVis.view3dItems(app.page).first()).toBeAttached()
   })
+
+  test('navigation defers arrow rendering and restores the user setting', async ({ app, ui }) => {
+    const page = app.page
+    await seedToolpathVisProject(page)
+    await expect(ui.toolpathVis.sketchPanel(page)).toBeVisible({ timeout: 15000 })
+    await page.getByText('Route A', { exact: true }).click()
+    // Observe actual Canvas arrow fills, not a test-only production flag.
+    await page.evaluate(() => {
+      const canvas = document.querySelector<HTMLCanvasElement>('canvas.sketch-canvas')
+      if (!canvas) throw new Error('Sketch canvas missing')
+      const counts = { frames: 0, arrows: 0, completed: [] as number[] }
+      Object.assign(window, { navigationDrawCounts: counts })
+      const clear = CanvasRenderingContext2D.prototype.clearRect
+      const fill = CanvasRenderingContext2D.prototype.fill
+      CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+        if (this.canvas === canvas) { counts.completed.push(counts.arrows); counts.frames++; counts.arrows = 0 }
+        return clear.apply(this, args)
+      }
+      CanvasRenderingContext2D.prototype.fill = new Proxy(fill, {
+        apply(original, ctx: CanvasRenderingContext2D, args: unknown[]) {
+          if (ctx.canvas === canvas && Math.abs(ctx.globalAlpha - 0.95) < 0.001 && Math.abs(ctx.lineWidth - 1.4) < 0.001) counts.arrows++
+          return Reflect.apply(original, ctx, args)
+        },
+      })
+    })
+    const counts = () => page.evaluate(() => (window as unknown as {
+      navigationDrawCounts: { frames: number; arrows: number; completed: number[] }
+    }).navigationDrawCounts)
+    const canvas = page.locator('canvas.sketch-canvas')
+    const box = (await canvas.boundingBox())!
+    const x = box.x + box.width / 2, y = box.y + box.height / 2
+    const directions = ui.toolpathVis.sketchItems(page).filter({ hasText: 'Directions' })
+    await expect(directions).toHaveAttribute('aria-pressed', 'true')
+    await page.mouse.move(x, y)
+    await page.mouse.down({ button: 'middle' })
+    const beforePan = (await counts()).frames
+    await page.mouse.move(x + 30, y + 10)
+    await expect.poll(async () => (await counts()).frames).toBeGreaterThan(beforePan)
+    expect((await counts()).arrows).toBe(0)
+    // Idle timeout must not restore arrows while a pointer gesture is held.
+    await page.waitForTimeout(250)
+    expect((await counts()).arrows).toBe(0)
+    await page.mouse.up({ button: 'middle' })
+    await expect.poll(async () => (await counts()).arrows).toBeGreaterThan(0)
+    await expect(directions).toHaveAttribute('aria-pressed', 'true')
+
+    const beforeWheel = (await counts()).frames
+    await page.mouse.wheel(0, -30)
+    await expect.poll(async () => (await counts()).frames).toBeGreaterThan(beforeWheel)
+    await expect.poll(async () => (await counts()).arrows).toBeGreaterThan(0)
+    expect((await counts()).completed.slice(beforeWheel + 1)).toContain(0)
+
+    // Browser-level touches provide real pointer capture; dispatchEvent alone
+    // cannot create the active pointers required by setPointerCapture.
+    const touchSession = await page.context().newCDPSession(page)
+    await touchSession.send('Input.dispatchTouchEvent', {
+      type: 'touchStart', touchPoints: [{ id: 11, x: x - 40, y }, { id: 12, x: x + 40, y }],
+    })
+    const beforePinch = (await counts()).frames
+    await touchSession.send('Input.dispatchTouchEvent', {
+      type: 'touchMove', touchPoints: [{ id: 11, x: x - 40, y }, { id: 12, x: x + 60, y }],
+    })
+    await expect.poll(async () => (await counts()).frames).toBeGreaterThan(beforePinch)
+    await page.waitForTimeout(250)
+    expect((await counts()).arrows).toBe(0)
+    await touchSession.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] })
+    await touchSession.detach()
+    await expect.poll(async () => (await counts()).arrows).toBeGreaterThan(0)
+
+    await directions.click()
+    await expect(directions).toHaveAttribute('aria-pressed', 'false')
+    await page.mouse.move(x, y)
+    await page.mouse.wheel(0, 30)
+    await page.waitForTimeout(300)
+    expect((await counts()).arrows).toBe(0)
+    await expect(directions).toHaveAttribute('aria-pressed', 'false')
+  })
 })

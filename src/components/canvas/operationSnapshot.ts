@@ -260,7 +260,7 @@ export async function renderOperationSnapshotPng(
   }
 
   if (toolpath) {
-    drawToolpath(ctx, toolpath, vt, true, SNAPSHOT_TOOLPATH_VISIBILITY)
+    drawToolpath(ctx, toolpath, vt, true, SNAPSHOT_TOOLPATH_VISIBILITY, 0.4, { simplifyForDisplay: false })
   }
 
   drawSnapshotOrigin(ctx, project, vt, pixelRatio)

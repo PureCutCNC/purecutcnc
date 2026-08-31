@@ -1,0 +1,210 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/** Display-only 2D toolpath geometry (issue #679). */
+
+import type { ToolpathMove, ToolpathResult } from '../../engine/toolpaths/types'
+import {
+  canvasDisplayViewport,
+  toolpathDisplayGeometry,
+  visibleDisplaySegments,
+  visiblePackedSegmentOffsets,
+  type DisplayViewport,
+} from './toolpathDisplay'
+
+function assert(condition: boolean, message: string): void {
+  if (!condition) throw new Error(`Assertion failed: ${message}`)
+}
+
+let passed = 0
+let failed = 0
+
+function test(name: string, fn: () => void): void {
+  try {
+    fn()
+    passed += 1
+    console.log(`   ✓ ${name}`)
+  } catch (error: unknown) {
+    failed += 1
+    console.log(`   ✗ ${name}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+function toolpathOf(
+  moves: ToolpathMove[],
+  options: Pick<ToolpathResult, 'collidingMoveIndices' | 'debugToolpath'> = {},
+): ToolpathResult {
+  return {
+    operationId: 'display-test',
+    moves,
+    warnings: [],
+    bounds: { minX: -1_000, minY: -1_000, minZ: 0, maxX: 1_000, maxY: 1_000, maxZ: 10 },
+    ...options,
+  }
+}
+
+const smallViewport: DisplayViewport = { minX: 0, minY: -10, maxX: 20, maxY: 10 }
+
+console.log('\ntoolpathDisplay')
+
+test('coalesces connected same-feed runs up to three canvas pixels', () => {
+  const toolpath = toolpathOf([
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 0.25, y: 0, z: 0 }, feedScale: 0.5 },
+    { kind: 'cut', from: { x: 0.25, y: 0, z: 0 }, to: { x: 0.5, y: 0, z: 0 }, feedScale: 0.5 },
+    { kind: 'cut', from: { x: 0.5, y: 0, z: 0 }, to: { x: 0.75, y: 0, z: 0 }, feedScale: 0.5 },
+    { kind: 'cut', from: { x: 0.75, y: 0, z: 0 }, to: { x: 1.25, y: 0, z: 0 }, feedScale: 0.5 },
+  ])
+
+  const segments = toolpathDisplayGeometry(toolpath, 4).layers.cuts.segments
+  assert(segments.length === 2, `expected a three-pixel run plus one distinct segment, got ${segments.length}`)
+  assert(segments[0].fromX === 0 && segments[0].toX === 3, 'a merged run retains its original endpoints')
+  assert(segments[1].fromX === 3 && segments[1].toX === 5, 'a run beyond the threshold must start a new segment')
+})
+
+test('keeps disconnected paths separate and restores fine detail when zoomed in', () => {
+  const moves: ToolpathMove[] = [
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 1, y: 0.1, z: 0 } },
+    { kind: 'cut', from: { x: 1, y: 0.1, z: 0 }, to: { x: 2, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 2.1, y: 0, z: 0 }, to: { x: 2.2, y: 0, z: 0 } },
+  ]
+  const original = JSON.stringify(moves)
+  const toolpath = toolpathOf(moves)
+  assert(toolpathDisplayGeometry(toolpath, 1).layers.cuts.segments.length === 2, 'do not bridge disconnected guides')
+  assert(toolpathDisplayGeometry(toolpath, 4).layers.cuts.segments.length === 3, 'zoom restores the original bend')
+  assert(JSON.stringify(moves) === original, 'display simplification never rewrites generated moves')
+})
+
+test('bounds a tight reversal by accumulated travel, not endpoint distance', () => {
+  const toolpath = toolpathOf([
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 2, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 2, y: 0, z: 0 }, to: { x: 0, y: 0, z: 0 } },
+  ])
+  assert(toolpathDisplayGeometry(toolpath, 1).layers.cuts.segments.length === 2, 'a four-pixel hairpin must not collapse to a point')
+})
+
+test('does not merge display paths with different feed styles', () => {
+  const toolpath = toolpathOf([
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 0.2, y: 0, z: 0 }, feedScale: 0.4 },
+    { kind: 'cut', from: { x: 0.2, y: 0, z: 0 }, to: { x: 0.4, y: 0, z: 0 }, feedScale: 0.8 },
+  ])
+
+  assert(toolpathDisplayGeometry(toolpath, 1).layers.cuts.segments.length === 2, 'feed-colour boundaries must remain separate')
+})
+
+test('culls offscreen segments without dropping one that crosses the viewport', () => {
+  const toolpath = toolpathOf([
+    { kind: 'cut', from: { x: -100, y: 0, z: 0 }, to: { x: 100, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 300, y: 0, z: 0 }, to: { x: 400, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 0, y: 300, z: 0 }, to: { x: 10, y: 300, z: 0 } },
+  ])
+
+  const visible = visibleDisplaySegments(toolpathDisplayGeometry(toolpath, 1).layers.cuts, smallViewport)
+  assert(visible.length === 1, `expected only the crossing segment, got ${visible.length}`)
+  assert(visible[0].fromX === -100 && visible[0].toX === 100, 'the segment crossing the viewport edge must render')
+})
+
+test('pans reuse display geometry while zooming rebuilds it', () => {
+  const toolpath = toolpathOf([
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 10, y: 0, z: 0 } },
+  ])
+  const atOne = toolpathDisplayGeometry(toolpath, 1)
+  const sameScale = toolpathDisplayGeometry(toolpath, 1)
+  const atTwo = toolpathDisplayGeometry(toolpath, 2)
+
+  assert(atOne === sameScale, 'a pan does not change the cached scale-specific geometry')
+  assert(atTwo !== atOne, 'a zoom must rebuild screen-space display geometry')
+})
+
+test('keeps the live scale cached while a full-detail snapshot is rendered', () => {
+  const toolpath = toolpathOf([
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 0.25, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 0.25, y: 0, z: 0 }, to: { x: 0.5, y: 0, z: 0 } },
+  ])
+  const live = toolpathDisplayGeometry(toolpath, 1)
+  const snapshot = toolpathDisplayGeometry(toolpath, 1, false)
+
+  assert(snapshot.layers.cuts.segments.length === 2, 'full-detail rendering must retain every emitted move')
+  assert(toolpathDisplayGeometry(toolpath, 1) === live, 'a snapshot must not evict the live canvas geometry')
+})
+
+test('falls back to the full layer when a partial viewport contains most of it', () => {
+  const moves: ToolpathMove[] = []
+  for (let index = 0; index < 1_000; index += 1) {
+    moves.push({
+      kind: 'cut',
+      from: { x: index * 10, y: 0, z: 0 },
+      to: { x: index * 10 + 1, y: 0, z: 0 },
+    })
+  }
+  const display = toolpathDisplayGeometry(toolpathOf(moves), 1).layers.cuts
+  const visible = visibleDisplaySegments(display, { minX: -1, minY: -1, maxX: 6_000, maxY: 1 })
+
+  assert(visible === display.segments, 'near-full culls should skip query materialization and draw the full layer')
+})
+
+test('keeps sparse culled segments in source order across repeated viewport queries', () => {
+  const toolpath = toolpathOf([
+    { kind: 'cut', from: { x: 250, y: 0, z: 0 }, to: { x: 251, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 1, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 400, y: 0, z: 0 }, to: { x: 401, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 500, y: 0, z: 0 }, to: { x: 501, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 600, y: 0, z: 0 }, to: { x: 601, y: 0, z: 0 } },
+  ])
+  const display = toolpathDisplayGeometry(toolpath, 1).layers.cuts
+  const viewport = { minX: -1, minY: -1, maxX: 300, maxY: 1 }
+  const first = visibleDisplaySegments(display, viewport)
+  visibleDisplaySegments(display, { minX: 390, minY: -1, maxX: 410, maxY: 1 })
+  const second = visibleDisplaySegments(display, viewport)
+
+  assert(first.map((segment) => segment.fromX).join(',') === '250,0', 'sparse culls must retain source order')
+  assert(second.map((segment) => segment.fromX).join(',') === '250,0', 'query stamps must not leak between pans')
+})
+
+test('collisions and debug source markers use the same viewport index', () => {
+  const toolpath = toolpathOf(
+    [
+      { kind: 'cut', from: { x: -100, y: 0, z: 0 }, to: { x: 100, y: 0, z: 0 }, source: 'contour' },
+      { kind: 'cut', from: { x: 300, y: 0, z: 0 }, to: { x: 400, y: 0, z: 0 }, source: 'bootstrap' },
+    ],
+    { collidingMoveIndices: [0, 1], debugToolpath: true },
+  )
+  const geometry = toolpathDisplayGeometry(toolpath, 1)
+
+  assert(visibleDisplaySegments(geometry.collisions, smallViewport).length === 1, 'only the visible collision should redraw')
+  assert(visibleDisplaySegments(geometry.debug, smallViewport).length === 1, 'only the visible debug marker should redraw')
+})
+
+test('culls cached arrow placements by their segment bounds', () => {
+  const packed = new Float32Array([
+    -100, 0, 100, 0,
+    300, 0, 400, 0,
+    0, 300, 10, 300,
+  ])
+  const offsets = visiblePackedSegmentOffsets(packed, smallViewport)
+
+  assert(offsets !== null, 'a partial viewport should return a subset rather than the full placement array')
+  assert(offsets?.length === 1 && offsets[0] === 0, `expected only the crossing arrow, got ${offsets?.join(', ')}`)
+})
+
+test('derives a pan-independent viewport from canvas dimensions', () => {
+  const viewport = canvasDisplayViewport({ width: 200, height: 100 }, { scale: 2, offsetX: 30, offsetY: -40 })
+
+  assert(viewport?.minX === -30 && viewport.maxX === 170, 'X bounds should only remove the current pan offset')
+  assert(viewport?.minY === 40 && viewport.maxY === 140, 'Y bounds should only remove the current pan offset')
+})
+
+console.log(`\ntoolpathDisplay: ${passed} passed, ${failed} failed`)
+if (failed > 0) process.exit(1)

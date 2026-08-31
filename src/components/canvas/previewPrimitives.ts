@@ -14,14 +14,21 @@
  * limitations under the License.
  */
 
-import type { ToolpathMove, ToolpathResult } from '../../engine/toolpaths/types'
+import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { toolpathHasEngagementTelemetry, type ToolpathVisibility } from '../toolpathVisibility'
 import {
   buildToolpathOverlayLayers,
-  toolpathLayerBuckets,
   type ToolpathOverlayLayerKey,
 } from '../viewport3d/toolpathOverlay'
 import { toolpathArrowPlacements } from './toolpathArrows'
+import {
+  canvasDisplayViewport,
+  expandDisplayViewport,
+  toolpathDisplayGeometry,
+  visibleDisplaySegments,
+  visiblePackedSegmentOffsets,
+  type DisplaySegment,
+} from './toolpathDisplay'
 import { getFeatureGeometryBounds, getFeatureGeometryProfiles } from '../../text'
 import {
   getProfileBounds,
@@ -583,6 +590,13 @@ function drawSourceMarker(ctx: CanvasRenderingContext2D, cx: number, cy: number,
   ctx.restore()
 }
 
+export interface ToolpathDisplayRenderOptions {
+  /** Transient navigation detail only; never write this into saved visibility. */
+  deferArrows?: boolean
+  /** Static exports retain every move instead of using the interactive merge. */
+  simplifyForDisplay?: boolean
+}
+
 export function drawToolpath(
   ctx: CanvasRenderingContext2D,
   toolpath: ToolpathResult,
@@ -593,6 +607,7 @@ export function drawToolpath(
   // operation (issue #498 S5). Optional for un-threaded callers, which keep
   // the pre-S5 40% ladder; the renderers pass the operation's real slot feed.
   slotScale = 0.4,
+  { deferArrows = false, simplifyForDisplay = true }: ToolpathDisplayRenderOptions = {},
 ): void {
   // Layer membership comes from the shared declaration both renderers use; only
   // the styling below is 2D's own. This file used to re-declare the five layers
@@ -611,28 +626,29 @@ export function drawToolpath(
   // thresholds match what the engine emitted for this toolpath.
   const feedColoursOn = visibility.feedColours ?? (emphasized && toolpathHasEngagementTelemetry(toolpath))
 
-  // Cached by toolpath identity, so a pan no longer re-filters the whole move
-  // array once per layer (issue #664): 34.5 ms per frame on the 249,663-move
-  // fixture, measured, against 0.003 ms for the cached lookup.
-  const buckets = toolpathLayerBuckets(toolpath)
+  // Scale-specific display geometry is cached by toolpath identity. The cache
+  // uses pan-independent scaled-world coordinates, so a pan is only a viewport
+  // query instead of a walk over every emitted move (issue #679).
+  const display = toolpathDisplayGeometry(toolpath, vt.scale, simplifyForDisplay)
+  // The margin preserves strokes, arrowheads, and debug markers that extend a
+  // few canvas pixels past a segment whose centre line is just off-canvas.
+  const viewport = expandDisplayViewport(canvasDisplayViewport(ctx.canvas, vt), 12)
 
   for (const schemaLayer of buildToolpathOverlayLayers(visibility)) {
     if (!schemaLayer.visible) continue
 
     const layer = styleFor[schemaLayer.key]
-    const moves = buckets[schemaLayer.key]
+    const moves = visibleDisplaySegments(display.layers[schemaLayer.key], viewport)
 
     if (moves.length === 0) {
       continue
     }
 
-    const strokePath = (layerMoves: ToolpathMove[], stroke: string): void => {
+    const strokePath = (layerMoves: readonly DisplaySegment[], stroke: string): void => {
       ctx.beginPath()
       for (const move of layerMoves) {
-        const from = worldToCanvas({ x: move.from.x, y: move.from.y }, vt)
-        const to = worldToCanvas({ x: move.to.x, y: move.to.y }, vt)
-        ctx.moveTo(from.cx, from.cy)
-        ctx.lineTo(to.cx, to.cy)
+        ctx.moveTo(move.fromX + vt.offsetX, move.fromY + vt.offsetY)
+        ctx.lineTo(move.toX + vt.offsetX, move.toY + vt.offsetY)
       }
       ctx.strokeStyle = stroke
       ctx.globalAlpha = emphasized ? 1 : 0.34
@@ -646,7 +662,7 @@ export function drawToolpath(
     if (schemaLayer.key === 'cuts' && feedColoursOn) {
       // One stroke per emitted feed bucket. Cuts only — lead-ins, rapids,
       // plunges and retractions keep their existing tokens.
-      const byStep = new Map<number, ToolpathMove[]>()
+      const byStep = new Map<number, DisplaySegment[]>()
       for (const move of moves) {
         const step = feedColourStep(move.feedScale, slotScale)
         const stepMoves = byStep.get(step)
@@ -667,15 +683,12 @@ export function drawToolpath(
 
   // Collision warning overlay: segments that cross a clamp zone below required
   // clearance are re-drawn in red on top, regardless of layer visibility.
-  if (toolpath.collidingMoveIndices && toolpath.collidingMoveIndices.length > 0) {
+  const collisions = visibleDisplaySegments(display.collisions, viewport)
+  if (collisions.length > 0) {
     ctx.beginPath()
-    for (const index of toolpath.collidingMoveIndices) {
-      const move = toolpath.moves[index]
-      if (!move) continue
-      const from = worldToCanvas({ x: move.from.x, y: move.from.y }, vt)
-      const to = worldToCanvas({ x: move.to.x, y: move.to.y }, vt)
-      ctx.moveTo(from.cx, from.cy)
-      ctx.lineTo(to.cx, to.cy)
+    for (const move of collisions) {
+      ctx.moveTo(move.fromX + vt.offsetX, move.fromY + vt.offsetY)
+      ctx.lineTo(move.toX + vt.offsetX, move.toY + vt.offsetY)
     }
     ctx.strokeStyle = canvasColors().toolpathCollision
     ctx.globalAlpha = emphasized ? 1 : 0.55
@@ -694,82 +707,89 @@ export function drawToolpath(
     toolpath.bounds.maxY - toolpath.bounds.minY,
     toolpath.bounds.maxZ - toolpath.bounds.minZ,
   )
-  const preferredArrowLength = Math.max(8.5, Math.min(18, span * vt.scale * 0.03))
+  if (!deferArrows) {
+    const preferredArrowLength = Math.max(8.5, Math.min(18, span * vt.scale * 0.03))
 
-  // Which moves earn an arrow is decided once per (toolpath, scale) and cached
-  // — that pass measured 93.7 ms per frame on the 249,663-move fixture against
-  // 26.7 ms to draw the arrows it chose (issue #664). Placements come back in
-  // scaled-world space, so panning only shifts them by the view offset and the
-  // cache still hits.
-  const placements = toolpathArrowPlacements(toolpath, vt.scale, visibility)
+    // Which moves earn an arrow is decided once per (toolpath, scale) and cached
+    // — that pass measured 93.7 ms per frame on the 249,663-move fixture against
+    // 26.7 ms to draw the arrows it chose (issue #664). Placements come back in
+    // scaled-world space, so panning only shifts them by the view offset and the
+    // cache still hits.
+    const placements = toolpathArrowPlacements(toolpath, vt.scale, visibility)
 
-  const drawArrowSet = (packed: Float32Array, color: string): void => {
-    if (packed.length === 0) return
+    const drawArrowSet = (packed: Float32Array, offsets: readonly number[] | null, color: string): void => {
+      if (packed.length === 0 || (offsets !== null && offsets.length === 0)) return
 
-    // Style is constant across the set, so it is set once rather than per
-    // arrow — the save/restore and four assignments the old per-arrow helper
-    // repeated were a real share of its cost.
-    ctx.save()
-    ctx.strokeStyle = color
-    ctx.fillStyle = color
-    ctx.lineWidth = 1.4
-    ctx.globalAlpha = 0.95
-    ctx.setLineDash([])
+      // Style is constant across the set, so it is set once rather than per
+      // arrow — the save/restore and four assignments the old per-arrow helper
+      // repeated were a real share of its cost.
+      ctx.save()
+      ctx.strokeStyle = color
+      ctx.fillStyle = color
+      ctx.lineWidth = 1.4
+      ctx.globalAlpha = 0.95
+      ctx.setLineDash([])
 
-    for (let i = 0; i < packed.length; i += 4) {
-      const fromX = packed[i] + vt.offsetX
-      const fromY = packed[i + 1] + vt.offsetY
-      const toX = packed[i + 2] + vt.offsetX
-      const toY = packed[i + 3] + vt.offsetY
-      const dx = toX - fromX
-      const dy = toY - fromY
-      const length = Math.sqrt(dx * dx + dy * dy)
-      if (length <= 0.001) continue
+      const drawArrow = (i: number): void => {
+        const fromX = packed[i] + vt.offsetX
+        const fromY = packed[i + 1] + vt.offsetY
+        const toX = packed[i + 2] + vt.offsetX
+        const toY = packed[i + 3] + vt.offsetY
+        const dx = toX - fromX
+        const dy = toY - fromY
+        const length = Math.sqrt(dx * dx + dy * dy)
+        if (length <= 0.001) return
 
-      const ux = dx / length
-      const uy = dy / length
-      const markerLength = Math.max(6.5, Math.min(preferredArrowLength, Math.max(length * 0.6, preferredArrowLength * 0.58)))
-      const headLength = markerLength * 0.52
-      const headWidth = markerLength * 0.28
-      const centerX = (fromX + toX) / 2
-      const centerY = (fromY + toY) / 2
-      const tailX = centerX - ux * markerLength * 0.5
-      const tailY = centerY - uy * markerLength * 0.5
-      const tipX = centerX + ux * markerLength * 0.5
-      const tipY = centerY + uy * markerLength * 0.5
-      const leftX = tipX - ux * headLength - uy * headWidth
-      const leftY = tipY - uy * headLength + ux * headWidth
-      const rightX = tipX - ux * headLength + uy * headWidth
-      const rightY = tipY - uy * headLength - ux * headWidth
+        const ux = dx / length
+        const uy = dy / length
+        const markerLength = Math.max(6.5, Math.min(preferredArrowLength, Math.max(length * 0.6, preferredArrowLength * 0.58)))
+        const headLength = markerLength * 0.52
+        const headWidth = markerLength * 0.28
+        const centerX = (fromX + toX) / 2
+        const centerY = (fromY + toY) / 2
+        const tailX = centerX - ux * markerLength * 0.5
+        const tailY = centerY - uy * markerLength * 0.5
+        const tipX = centerX + ux * markerLength * 0.5
+        const tipY = centerY + uy * markerLength * 0.5
+        const leftX = tipX - ux * headLength - uy * headWidth
+        const leftY = tipY - uy * headLength + ux * headWidth
+        const rightX = tipX - ux * headLength + uy * headWidth
+        const rightY = tipY - uy * headLength - ux * headWidth
 
-      ctx.beginPath()
-      ctx.moveTo(tailX, tailY)
-      ctx.lineTo(tipX, tipY)
-      ctx.stroke()
-      ctx.beginPath()
-      ctx.moveTo(tipX, tipY)
-      ctx.lineTo(leftX, leftY)
-      ctx.lineTo(rightX, rightY)
-      ctx.closePath()
-      ctx.fill()
+        ctx.beginPath()
+        ctx.moveTo(tailX, tailY)
+        ctx.lineTo(tipX, tipY)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(tipX, tipY)
+        ctx.lineTo(leftX, leftY)
+        ctx.lineTo(rightX, rightY)
+        ctx.closePath()
+        ctx.fill()
+      }
+
+      if (offsets === null) {
+        for (let i = 0; i < packed.length; i += 4) drawArrow(i)
+      } else {
+        for (const offset of offsets) drawArrow(offset)
+      }
+
+      ctx.globalAlpha = 1
+      ctx.restore()
     }
 
-    ctx.globalAlpha = 1
-    ctx.restore()
+    const arrowViewport = expandDisplayViewport(viewport, preferredArrowLength * 0.2)
+    drawArrowSet(placements.cut, visiblePackedSegmentOffsets(placements.cut, arrowViewport), canvasRgba('toolpathCut', 0.98))
+    drawArrowSet(placements.rapid, visiblePackedSegmentOffsets(placements.rapid, arrowViewport), canvasRgba('toolpathRapid', 0.95))
   }
-
-  drawArrowSet(placements.cut, canvasRgba('toolpathCut', 0.98))
-  drawArrowSet(placements.rapid, canvasRgba('toolpathRapid', 0.95))
 
   // --- Debug source-tag markers (shown when the operation has debugToolpath enabled) ---
   if (toolpath.debugToolpath) {
     const markerR = Math.max(3.5, Math.min(9, span * vt.scale * 0.025))
-    for (const move of toolpath.moves) {
-      if (move.kind !== 'cut' || !move.source) continue
-      const from = worldToCanvas({ x: move.from.x, y: move.from.y }, vt)
-      const to = worldToCanvas({ x: move.to.x, y: move.to.y }, vt)
-      const mx = (from.cx + to.cx) / 2
-      const my = (from.cy + to.cy) / 2
+    for (const move of visibleDisplaySegments(display.debug, viewport)) {
+      if (!move.source) continue
+      const mx = (move.fromX + move.toX) / 2 + vt.offsetX
+      const my = (move.fromY + move.toY) / 2 + vt.offsetY
       let shape = 'dot'
       if (move.source.includes('bridgeSplitArms'))   shape = 'circle'
       else if (move.source.includes('siblingBridge')) shape = 'diamond'
