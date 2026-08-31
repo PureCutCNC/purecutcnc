@@ -23,6 +23,16 @@
  * language pack, so treat renames as breaking and only do them deliberately.
  */
 export const appShellEn = {
+  'appShell.toolpath.renderer': '2D renderer',
+  'appShell.toolpath.gpuSuggestionTitle': 'Try GPU for smoother navigation',
+  'appShell.toolpath.gpuSuggestionBody': 'Canvas is taking longer to draw toolpaths. GPU rendering may make panning and zooming smoother.',
+  'appShell.toolpath.gpuSuggestionEnable': 'Enable GPU',
+  'appShell.toolpath.gpuSuggestionDismiss': 'Not now',
+  'appShell.toolpath.rendererCanvas': 'Canvas',
+  'appShell.toolpath.rendererGpu': 'GPU',
+  'appShell.toolpath.rendererLoading': 'Starting GPU…',
+  'appShell.toolpath.rendererFallback': 'GPU unavailable; using Canvas.',
+  'appShell.toolpath.rendererRetry': 'Retry GPU',
   // ── Workspace tabs ──
   'appShell.workspace.sketch': 'Sketch',
   'appShell.workspace.3d': '3D view',

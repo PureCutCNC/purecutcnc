@@ -18,6 +18,16 @@ import type { appShellEn } from '../en/appShell'
 
 /** German app-shell chrome translations. See `src/i18n/GLOSSARY.md`. */
 export const appShellDe: Record<keyof typeof appShellEn, string> = {
+  'appShell.toolpath.renderer': '2D-Renderer',
+  'appShell.toolpath.gpuSuggestionTitle': 'GPU für flüssigere Navigation ausprobieren',
+  'appShell.toolpath.gpuSuggestionBody': 'Canvas benötigt länger zum Zeichnen der Werkzeugwege. GPU-Rendering kann das Verschieben und Zoomen flüssiger machen.',
+  'appShell.toolpath.gpuSuggestionEnable': 'GPU aktivieren',
+  'appShell.toolpath.gpuSuggestionDismiss': 'Nicht jetzt',
+  'appShell.toolpath.rendererCanvas': 'Canvas',
+  'appShell.toolpath.rendererGpu': 'GPU',
+  'appShell.toolpath.rendererLoading': 'GPU wird gestartet…',
+  'appShell.toolpath.rendererFallback': 'GPU nicht verfügbar; Canvas wird verwendet.',
+  'appShell.toolpath.rendererRetry': 'GPU erneut versuchen',
   // ── Workspace tabs ──
   'appShell.workspace.sketch': 'Skizze',
   'appShell.workspace.3d': '3D-Ansicht',

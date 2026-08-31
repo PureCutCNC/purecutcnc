@@ -2680,6 +2680,110 @@
   z-index: 10;
 }
 
+.viewport-toolpath-renderer__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.toolpath-gpu-suggestion {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(320px, calc(100vw - 40px));
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-popover);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.toolpath-gpu-suggestion p {
+  margin: 6px 0 10px;
+  color: var(--text-dim);
+}
+
+.toolpath-gpu-suggestion__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.toolpath-gpu-suggestion__actions button {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.toolpath-gpu-suggestion__actions button:hover {
+  background: var(--surface-hover);
+}
+
+.toolpath-gpu-suggestion__actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.toolpath-gpu-suggestion__actions .toolpath-gpu-suggestion__enable {
+  border-color: var(--accent);
+  background: var(--surface-active-bottom);
+}
+
+@media (pointer: coarse) {
+  .toolpath-gpu-suggestion__actions button {
+    min-height: 44px;
+  }
+}
+
+.viewport-toolpath-vis__swatch--gpu {
+  background: var(--accent);
+}
+
+.viewport-toolpath-renderer__loading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.viewport-toolpath-vis__gpu[aria-busy="true"] .viewport-toolpath-vis__swatch {
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  background: transparent;
+  animation: toolpath-gpu-loading 0.8s linear infinite;
+}
+
+@keyframes toolpath-gpu-loading {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewport-toolpath-vis__gpu[aria-busy="true"] .viewport-toolpath-vis__swatch {
+    animation: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .app-shell .viewport-toolpath-vis__item.viewport-toolpath-vis__gpu,
+  .viewport-toolpath-renderer__status button {
+    min-height: 44px;
+  }
+}
+
 .viewport-toolpath-vis__label {
   min-width: 0;
   min-height: 24px;

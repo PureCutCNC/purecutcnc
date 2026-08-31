@@ -21,6 +21,9 @@ import type { MessageKey } from '../i18n/locales/en'
 import { useTheme } from '../theme/themeContext'
 import { canvasFeedColour } from '../theme/palette'
 import { Icon } from './Icon'
+import { ToolpathRendererControl } from './ToolpathRendererControl'
+import { ToolpathGpuSuggestion } from './ToolpathGpuSuggestion'
+import type { ToolpathRendererControl as RendererControl } from './canvas/toolpathRendererPreference'
 
 interface ToolpathVisibilityPanelProps {
   visibility: ToolpathVisibility
@@ -42,6 +45,8 @@ interface ToolpathVisibilityPanelProps {
    * toolpath emits (and missed rungs other operations did emit).
    */
   legendSteps?: ReadonlyArray<FeedColourLegendStep>
+  /** Present only in the sketch; the 3D renderer has no backend selector. */
+  renderer?: RendererControl
 }
 
 const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch: string }> = [
@@ -55,7 +60,7 @@ const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch
   { key: 'feedColours', labelKey: 'appShell.toolpath.feedColours', swatch: 'viewport-toolpath-vis__swatch--cuts' },
 ]
 
-export function ToolpathVisibilityPanel({ visibility, onChange, className, expanded, onExpandedChange, feedColoursDefault, legendSteps }: ToolpathVisibilityPanelProps) {
+export function ToolpathVisibilityPanel({ visibility, onChange, className, expanded, onExpandedChange, feedColoursDefault, legendSteps, renderer }: ToolpathVisibilityPanelProps) {
   const { t } = useI18n()
   const { palette } = useTheme()
 
@@ -83,6 +88,8 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
       >
         <Icon id="gcode" />
       </button>
+      {expanded && renderer ? <ToolpathRendererControl renderer={renderer} /> : null}
+      {renderer?.suggestion && <ToolpathGpuSuggestion {...renderer.suggestion} />}
       {expanded ? (
         ITEMS.map(({ key, labelKey, swatch }) => {
           const selected = key === 'feedColours'

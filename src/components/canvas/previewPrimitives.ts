@@ -695,7 +695,7 @@ export function drawToolpath(
   drawToolpathAnnotations(ctx, toolpath, vt, emphasized, visibility, { deferArrows, simplifyForDisplay })
 }
 
-/** Canvas annotations retained above GPU paths during the bounded POC. */
+/** Shared annotation rules: direct Canvas output or an ordered GPU texture. */
 export function drawToolpathAnnotations(
   ctx: CanvasRenderingContext2D,
   toolpath: ToolpathResult,

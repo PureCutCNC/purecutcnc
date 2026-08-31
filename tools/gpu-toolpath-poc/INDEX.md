@@ -5,3 +5,4 @@
 - [evidence.json](evidence.json) — raw final Chrome frame traces and environment/method notes.
 - [server.mjs](server.mjs) — localhost-only Vite comparison server; no production entrypoint.
 - [client.js](client.js) — fixture loading, native-input/frame capture and synthetic alpha swatch.
+- [playwright.production.config.ts](playwright.production.config.ts) — isolated built-app selector smoke, reusing the existing workflow-UI spec.

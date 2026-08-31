@@ -35,7 +35,6 @@ const server = await createServer({
   }],
 })
 await server.listen()
-console.log('Canvas reference: http://127.0.0.1:' + port + '/')
-console.log('GPU POC: http://127.0.0.1:' + port + '/?toolpathRenderer=gpu')
+console.log('Canvas reference: http://127.0.0.1:' + port + '/?toolpathRenderer=canvas')
+console.log('GPU comparison: http://127.0.0.1:' + port + '/?toolpathRenderer=gpu')
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => { await server.close(); process.exit(0) })
-

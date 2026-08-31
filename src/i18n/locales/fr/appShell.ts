@@ -18,6 +18,16 @@ import type { appShellEn } from '../en/appShell'
 
 /** French application-shell catalog. */
 export const appShellFr: Record<keyof typeof appShellEn, string> = {
+  'appShell.toolpath.renderer': 'Moteur de rendu 2D',
+  'appShell.toolpath.gpuSuggestionTitle': 'Essayez le GPU pour une navigation plus fluide',
+  'appShell.toolpath.gpuSuggestionBody': 'Canvas met plus de temps à dessiner les parcours d’outil. Le rendu GPU peut fluidifier le déplacement et le zoom.',
+  'appShell.toolpath.gpuSuggestionEnable': 'Activer le GPU',
+  'appShell.toolpath.gpuSuggestionDismiss': 'Pas maintenant',
+  'appShell.toolpath.rendererCanvas': 'Canvas',
+  'appShell.toolpath.rendererGpu': 'GPU',
+  'appShell.toolpath.rendererLoading': 'Démarrage du GPU…',
+  'appShell.toolpath.rendererFallback': 'GPU indisponible ; utilisation de Canvas.',
+  'appShell.toolpath.rendererRetry': 'Réessayer le GPU',
   'appShell.workspace.sketch': 'Esquisse',
   'appShell.workspace.3d': 'Vue 3D',
   'appShell.workspace.simulation': 'Simulation',

@@ -9,6 +9,8 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `IconGallery.tsx` — dev/debug grid of all available icons
 - `Select.tsx` — shared styled `<select>` wrapper
 - `ToolpathVisibilityPanel.tsx` — toggles for showing/hiding toolpath layers
+- `ToolpathRendererControl.tsx` — first inline GPU toggle (off selects Canvas) and visible fallback/retry status
+- `ToolpathGpuSuggestion.tsx` — non-blocking GPU opt-in tip, outside the toggle row; `canvas/toolpathGpuSuggestion.ts` detects repeated slow navigation draws, and `canvas/useToolpathGpuSuggestion.ts` owns browser-local dismissal and result-scoped suggestion state.
 - `toolpathVisibility.ts` — `ToolpathVisibility` type, default visibility constants, and the cached feed-colour legend steps (issue #535) (kept out of the panel component for fast refresh)
 - `UnsupportedMobileScreen.tsx` — phone-sized-device blocker screen shown instead of the app (extracted from `main.tsx`)
 - `errorFormat.ts` — shared error formatting
@@ -32,7 +34,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `onboarding/` — first-run / empty-state UI (`EmptyStateOverlay` shown over the center viewport when the project has no features)
 
 ## Conventions
-- Opt-in GPU sketch POC (#683): `canvas/gpuToolpathPoc.ts` retains XY buffers and composites per-layer coverage masks; `gpuToolpathShaders.ts` owns its screen-space shaders. `useGpuToolpathPoc.ts` owns DEV-only URL activation/lifecycle; `renderSketchToolpaths.ts` selects GPU or Canvas fallback and preserves Canvas annotations. `toolpathStyles.ts` shares layer styling with Canvas/booklet output. See [`tools/gpu-toolpath-poc/`](../../tools/gpu-toolpath-poc/INDEX.md) for the reproducible comparison harness and limitations.
+- Opt-in GPU sketch renderer (#683): `canvas/gpuToolpathRenderer.ts` retains full XY buffers and composites per-layer coverage masks; `gpuToolpathShaders.ts` owns screen-space shaders. `gpuToolpathAnnotations.ts` reuses Canvas arrow/debug rules in an operation-ordered texture. `useSketchToolpathRenderer.ts` owns lazy loading, cancellation, disposal and fallback/retry; `toolpathRendererPreference.ts` owns the application-local codec and non-persisting DEV comparison override (covered by its test). `renderSketchToolpaths.ts` selects GPU or Canvas fallback without changing navigation ownership. `toolpathStyles.ts` shares styles with Canvas/booklet output. Canvas remains default and always renders booklet snapshots. See [`tools/gpu-toolpath-poc/`](../../tools/gpu-toolpath-poc/INDEX.md) for the comparison harness and remaining device gates.
 - Heavy compute (CSG, toolpath gen, sim) is debounced. See `Viewport3D` (150–300ms typical).
 - Mutations go through `projectStore` actions only — never mutate Zustand state directly from components.
 - For touch/tablet styling see `src/styles/tablet.css` and [`planning/TABLET_UX_DESIGN.md`](../../planning/TABLET_UX_DESIGN.md).

@@ -27,6 +27,7 @@ import { buildToolpathOverlayLayers, toolpathLayerBuckets, type ToolpathOverlayL
 import { toolpathLayerStyles, toolpathStrokeWidth } from './toolpathStyles'
 import type { ViewTransform } from './viewTransform'
 import { maskVertexShader, maskFragmentShader, compositeVertexShader, compositeFragmentShader } from './gpuToolpathShaders'
+import { GpuToolpathAnnotations } from './gpuToolpathAnnotations'
 
 interface LayerBatch { scene: Scene; geometries: InstancedBufferGeometry[] }
 interface PreparedToolpath {
@@ -41,7 +42,7 @@ export interface GpuToolpathEntry { toolpath: ToolpathResult; emphasized: boolea
  * Opaque MSAA coverage is resolved before applying layer alpha exactly once.
  * Independent operations/feed buckets still composite in source order.
  */
-export class GpuToolpathPoc {
+export class GpuToolpathRenderer {
   readonly canvas: HTMLCanvasElement
   private readonly renderer: WebGLRenderer
   private readonly camera = new Camera()
@@ -62,6 +63,7 @@ export class GpuToolpathPoc {
   private readonly quadGeometry = new PlaneGeometry(2, 2)
   private readonly compositeScene = new Scene()
   private readonly cache = new Map<ToolpathResult, PreparedToolpath>()
+  private readonly annotations = new GpuToolpathAnnotations()
   private lost = false
   private disposed = false
   private readonly onLoss: (event: Event) => void
@@ -72,16 +74,25 @@ export class GpuToolpathPoc {
     this.canvas = canvas
     const context = canvas.getContext('webgl2', { alpha: true, antialias: false, premultipliedAlpha: true })
     if (!context) throw new Error('WebGL2 is unavailable; retaining Canvas toolpaths')
-    this.renderer = new WebGLRenderer({ canvas, context })
+    try {
+      this.renderer = new WebGLRenderer({ canvas, context })
+    } catch (error) {
+      context.getExtension('WEBGL_lose_context')?.loseContext()
+      throw error
+    }
     this.renderer.autoClear = false
     this.renderer.setClearColor(0, 0)
     this.mask.texture.colorSpace = NoColorSpace
     this.compositeScene.add(new Mesh(this.quadGeometry, this.compositeMaterial))
-    this.renderer.debug.onShaderError = () => { throw new Error('GPU POC shader compilation failed') }
+    this.renderer.debug.onShaderError = () => { throw new Error('GPU toolpath shader compilation failed') }
     this.onLoss = (event) => { event.preventDefault(); this.lost = true; canvas.hidden = true; invalidate() }
     this.onRestore = () => { this.lost = false; invalidate() }
     canvas.addEventListener('webglcontextlost', this.onLoss)
     canvas.addEventListener('webglcontextrestored', this.onRestore)
+  }
+
+  get available(): boolean {
+    return !this.disposed && !this.lost && !this.renderer.getContext().isContextLost()
   }
 
   private batch(moves: readonly ToolpathMove[]): LayerBatch {
@@ -112,7 +123,7 @@ export class GpuToolpathPoc {
     const previous = this.cache.get(toolpath)
     if (previous?.slotScale === slotScale) return previous
     if (previous) this.release(previous)
-    const start = performance.now()
+    const start = import.meta.env.DEV ? performance.now() : 0
     const buckets = toolpathLayerBuckets(toolpath)
     const feeds = new Map<number, ToolpathMove[]>()
     for (const move of buckets.cuts) {
@@ -132,8 +143,10 @@ export class GpuToolpathPoc {
       collisions: this.batch((toolpath.collidingMoveIndices ?? []).map(i => toolpath.moves[i]).filter(Boolean)),
     }
     this.cache.set(toolpath, prepared)
-    this.stats.preparations++
-    this.stats.preparationMs += performance.now() - start
+    if (import.meta.env.DEV) {
+      this.stats.preparations++
+      this.stats.preparationMs += performance.now() - start
+    }
     return prepared
   }
 
@@ -147,20 +160,18 @@ export class GpuToolpathPoc {
     this.renderer.setRenderTarget(null)
     // Do not apply Three's linear-light conversion: Canvas blends CSS sRGB.
     const color = parseColor(stroke)
-    if (!color) throw new Error('Unsupported GPU POC theme colour: ' + stroke)
+    if (!color) throw new Error('Unsupported GPU toolpath theme colour: ' + stroke)
     ;(this.compositeMaterial.uniforms.stroke.value as Color).setRGB(color.r / 255, color.g / 255, color.b / 255)
     this.compositeMaterial.uniforms.alpha.value = alpha * color.a
     this.renderer.render(this.compositeScene, this.camera)
   }
 
   render(entries: readonly GpuToolpathEntry[], vt: ViewTransform, width: number, height: number,
-    visibility: ToolpathVisibility, palette: CanvasThemePalette): boolean {
+    visibility: ToolpathVisibility, palette: CanvasThemePalette, deferArrows = false): boolean {
+    this.retain(entries.map(entry => entry.toolpath))
     if (this.disposed || this.lost || this.renderer.getContext().isContextLost()) return false
-    const started = performance.now()
-    const active = new Set(entries.map(entry => entry.toolpath))
-    for (const [toolpath, prepared] of this.cache) {
-      if (!active.has(toolpath)) { this.release(prepared); this.cache.delete(toolpath) }
-    }
+    if (width <= 0 || height <= 0) return false
+    const started = import.meta.env.DEV ? performance.now() : 0
     if (this.viewport.x !== width || this.viewport.y !== height) {
       this.renderer.setSize(width, height, false)
       this.mask.setSize(width, height)
@@ -185,12 +196,27 @@ export class GpuToolpathPoc {
         }
       }
       this.paint(prepared.collisions, palette.toolpathCollision, emphasized ? 3 : 2.2, emphasized ? 1 : .55)
+      // Canvas owns the annotation rules for both backends. Composite the
+      // selected operation's cached raster here, before the next operation.
+      this.annotations.render(this.renderer, this.camera, toolpath, emphasized,
+        vt, width, height, visibility, palette, deferArrows)
     }
-    this.stats.submissions++
-    if (entries.length > 0 && this.stats.firstToolpathSubmissionMs === 0) this.stats.firstToolpathSubmissionMs = performance.now() - started
-    this.canvas.dataset.pocStats = JSON.stringify(this.stats)
+    if (import.meta.env.DEV) {
+      this.stats.submissions++
+      if (entries.length > 0 && this.stats.firstToolpathSubmissionMs === 0) this.stats.firstToolpathSubmissionMs = performance.now() - started
+      this.canvas.dataset.pocStats = JSON.stringify(this.stats)
+    }
     this.canvas.hidden = false
     return true
+  }
+
+  /** Also called on result replacement while the sketch pane is hidden. */
+  retain(toolpaths: readonly ToolpathResult[]): void {
+    const active = new Set(toolpaths)
+    for (const [toolpath, prepared] of this.cache) {
+      if (!active.has(toolpath)) { this.release(prepared); this.cache.delete(toolpath) }
+    }
+    this.annotations.retain(active)
   }
 
   private release(prepared: PreparedToolpath): void {
@@ -207,6 +233,7 @@ export class GpuToolpathPoc {
     this.canvas.removeEventListener('webglcontextrestored', this.onRestore)
     for (const prepared of this.cache.values()) this.release(prepared)
     this.cache.clear()
+    this.annotations.dispose()
     this.mask.dispose()
     this.maskMaterial.dispose()
     this.compositeMaterial.dispose()
