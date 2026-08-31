@@ -1624,8 +1624,17 @@ function testWaterlineAdaptiveSubdivisionIsBounded(): void {
   const projectedCuts = cutMoves(result.moves).filter((move) => move.source === 'projectedBand' || move.source === 'projectedCap')
   assert(projectedCuts.length < 350_000,
     `expected bounded projected micro-offset cuts, got ${projectedCuts.length} — debug: ${result.warnings.map(wtext).join('; ')}`)
-  assert(result.warnings.map(wtext).some((warning) => warning.includes('insert cap') || warning.includes('pass limit')),
-    `expected projected refinement to report a limit, got: ${result.warnings.map(wtext).join('; ')}`)
+  // This used to assert that an absolute subdivision cap had fired, which is
+  // exactly the bound #698 removed: the refinement is now bounded by a
+  // coverage budget that is spacing-free, so an absurd spacing buys a finer
+  // surface rather than running into a ceiling. What still has to hold is that
+  // the refinement terminates *on its own* on this model — if a future change
+  // makes it run away, the catastrophic ring backstop fires and says so here.
+  // The budget warnings themselves are covered in
+  // finishSurfaceWaterlineBudget.test.ts.
+  assert(projectedCuts.length > 0, 'expected the adaptive refinement to run at all')
+  assert(result.warnings.every((warning) => warning.code !== 'waterlineRefinementTruncated'),
+    `expected the refinement to terminate without hitting the ring backstop, got: ${result.warnings.map(wtext).join('; ')}`)
 }
 
 function testWaterlineMaxRingsPerBandLimitsProjectedRings(): void {
