@@ -76,9 +76,9 @@
   },
   "cannedCycles": null,
   "coolant": {
-    "floodOn": "M8",
-    "mistOn": "M7",
-    "off": "M9"
+    "floodOnCommand": "M8",
+    "mistOnCommand": "M7",
+    "coolantOffCommand": "M9"
   },
   "stop": {
     "programEndCommand": "M30"
