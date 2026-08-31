@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 import { seedProject } from './helpers'
 
 function resolvedRectProfile(cx: number, cy: number, w: number, h: number) {
@@ -155,4 +155,51 @@ export const TOOLPATH_VIS_FIXTURE_JSON = buildToolpathVisProjectJson()
 
 export async function seedToolpathVisProject(page: Page): Promise<void> {
   await seedProject(page, TOOLPATH_VIS_FIXTURE_JSON)
+}
+
+/** Synthetic clock only: charge one real Canvas cut stroke per frame, without
+ * busy-waiting or changing production code. This tests policy, not performance. */
+export async function installSlowCanvasClock(page: Page): Promise<void> {
+  await expect(page.getByRole('button', { name: 'GPU', exact: true })).toBeVisible()
+  await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('canvas.sketch-canvas')!
+    const now = performance.now.bind(performance)
+    const clock = { offset: 0, frames: 0, charged: false }
+    Object.assign(window, { slowCanvasClock: clock })
+    performance.now = () => now() + clock.offset
+    const clear = CanvasRenderingContext2D.prototype.clearRect
+    CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+      if (this.canvas === canvas) { clock.frames++; clock.charged = false }
+      return clear.apply(this, args)
+    }
+    const stroke = CanvasRenderingContext2D.prototype.stroke
+    CanvasRenderingContext2D.prototype.stroke = new Proxy(stroke, {
+      apply(original, context: CanvasRenderingContext2D, args: unknown[]) {
+        // Unselected toolpaths use the shared 0.34 alpha; grid/stock do not.
+        if (context.canvas === canvas && Math.abs(context.globalAlpha - 0.34) < 0.001 && !clock.charged) {
+          clock.offset += 60
+          clock.charged = true
+        }
+        return Reflect.apply(original, context, args)
+      },
+    })
+  })
+}
+
+export async function panForGpuSuggestion(page: Page): Promise<void> {
+  const box = (await page.locator('canvas.sketch-canvas').boundingBox())!
+  const x = box.x + box.width / 2, y = box.y + box.height / 2
+  const frames = () => page.evaluate(() => (window as unknown as { slowCanvasClock: { frames: number } }).slowCanvasClock.frames)
+  await page.mouse.move(x, y)
+  await page.mouse.down({ button: 'middle' })
+  try {
+    for (let i = 1; i <= 9; i++) {
+      const before = await frames()
+      await page.mouse.move(x + i * 2, y + i)
+      await expect.poll(frames).toBeGreaterThan(before)
+    }
+    await expect(page.getByRole('complementary', { name: 'Try GPU for smoother navigation' })).toHaveCount(0)
+  } finally {
+    await page.mouse.up({ button: 'middle' })
+  }
 }

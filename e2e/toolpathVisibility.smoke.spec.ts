@@ -15,9 +15,76 @@
  */
 
 import { test, expect } from './fixtures'
-import { seedToolpathVisProject, TOOLPATH_VIS_FIXTURE_JSON } from './toolpathVisibility.helpers'
+import { installSlowCanvasClock, panForGpuSuggestion, seedToolpathVisProject, TOOLPATH_VIS_FIXTURE_JSON } from './toolpathVisibility.helpers'
 import type { Project } from '../src/types/project'
 import type { ToolpathResult } from '../src/engine/toolpaths/types'
+
+for (const action of ['enable', 'dismiss'] as const) {
+  test.describe(`GPU suggestion ${action}`, () => {
+    test.use({ hasTouch: action === 'enable', viewport: { width: 1024, height: 768 } })
+    test('offers an explicit choice after slow navigation and remembers it', async ({ app }, testInfo) => {
+      const page = app.page
+      await seedToolpathVisProject(page)
+      await installSlowCanvasClock(page)
+      const snapshot = () => page.evaluate(async () => {
+        const url = '/src/store/projectStore.ts'
+        const { useProjectStore } = await import(url) as typeof import('../src/store/projectStore')
+        const state = useProjectStore.getState()
+        return { project: JSON.stringify(state.project), history: JSON.stringify(state.history), dirty: state.dirty }
+      })
+      const before = await snapshot()
+      const panel = page.locator('#workspace-panel-sketch .viewport-toolpath-vis')
+      const panelBox = await panel.boundingBox()
+      const gpu = page.getByRole('button', { name: 'GPU', exact: true })
+      const base = page.locator('canvas.sketch-canvas')
+      const suggestion = page.getByRole('complementary', { name: 'Try GPU for smoother navigation' })
+      await panForGpuSuggestion(page)
+      await expect(suggestion).toBeVisible()
+      await expect(gpu).toHaveAttribute('aria-pressed', 'false')
+      await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas')
+      expect(await panel.boundingBox()).toEqual(panelBox)
+      expect(await snapshot()).toEqual(before)
+      const enable = suggestion.getByRole('button', { name: 'Enable GPU', exact: true })
+      await expect(enable).not.toBeFocused()
+      if (action === 'enable') expect((await enable.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+      await testInfo.attach('gpu-suggestion', { body: await page.screenshot(), contentType: 'image/png' })
+      if (action === 'enable') await enable.tap()
+      else await suggestion.getByRole('button', { name: 'Not now', exact: true }).click()
+      await expect(suggestion).toHaveCount(0)
+      await expect(base).toHaveAttribute('data-toolpath-renderer', action === 'enable' ? 'gpu' : 'canvas')
+      await expect(gpu).toBeFocused()
+      expect(await snapshot()).toEqual(before)
+      await expect.poll(() => page.evaluate(() => localStorage.getItem('purecutcnc.gpuSuggestionHandled'))).toBe('true')
+      await page.reload()
+      await seedToolpathVisProject(page)
+      await installSlowCanvasClock(page)
+      await panForGpuSuggestion(page)
+      await expect(suggestion).toHaveCount(0)
+      await expect(base).toHaveAttribute('data-toolpath-renderer', action === 'enable' ? 'gpu' : 'canvas')
+    })
+  })
+}
+
+test('GPU suggestion resets with new toolpaths and respects manual Canvas selection', async ({ app }) => {
+  const page = app.page
+  await seedToolpathVisProject(page)
+  await installSlowCanvasClock(page)
+  const suggestion = page.getByRole('complementary', { name: 'Try GPU for smoother navigation' })
+  await panForGpuSuggestion(page)
+  await expect(suggestion).toBeVisible()
+  await seedToolpathVisProject(page)
+  await expect(suggestion).toHaveCount(0)
+  await panForGpuSuggestion(page)
+  await expect(suggestion).toBeVisible()
+  const gpu = page.getByRole('button', { name: 'GPU', exact: true })
+  await gpu.click()
+  await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  await gpu.click()
+  await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas')
+  await panForGpuSuggestion(page)
+  await expect(suggestion).toHaveCount(0)
+})
+
 
 test('GPU renderer coverage union, shared styles, transform and retained buffers', async ({ app }, testInfo) => {
   const result = await app.page.evaluate(async () => {
@@ -194,7 +261,10 @@ test('renderer preference persists without changing project, history or booklet 
     }
     Object.assign(window, { generatedResultCount: () => seen.size })
   })
-  await selector.click()
+  await installSlowCanvasClock(page)
+  await panForGpuSuggestion(page)
+  await page.getByRole('complementary', { name: 'Try GPU for smoother navigation' })
+    .getByRole('button', { name: 'Enable GPU', exact: true }).click()
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   expect(await snapshot()).toEqual(before)
   await expect.poll(() => page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('gpu')
@@ -394,7 +464,7 @@ test('GPU annotation painter order matches Canvas across selection, resize and n
 })
 
 
-test('production renderer toggle works through normal project Open and persists', async ({ page }, testInfo) => {
+test('production renderer suggestion works through normal project Open and persists', async ({ page }, testInfo) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
@@ -413,7 +483,10 @@ test('production renderer toggle works through normal project Open and persists'
   await (await chooser).setFiles({ name: 'renderer.camj', mimeType: 'application/json', buffer: Buffer.from(TOOLPATH_VIS_FIXTURE_JSON) })
   const selector = page.getByRole('button', { name: 'GPU', exact: true })
   await expect(selector).toHaveAttribute('aria-pressed', 'false')
-  await selector.click()
+  await installSlowCanvasClock(page)
+  await panForGpuSuggestion(page)
+  await page.getByRole('complementary', { name: 'Try GPU for smoother navigation' })
+    .getByRole('button', { name: 'Enable GPU', exact: true }).click()
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   if (production) await expect(page.locator('canvas.sketch-toolpath-gpu')).not.toHaveAttribute('data-poc-stats')
   await page.reload()

@@ -19,6 +19,10 @@ import type { appShellEn } from '../en/appShell'
 /** Spanish appShell catalog. */
 export const appShellEs: Record<keyof typeof appShellEn, string> = {
   'appShell.toolpath.renderer': 'Renderizador 2D',
+  'appShell.toolpath.gpuSuggestionTitle': 'Pruebe la GPU para una navegación más fluida',
+  'appShell.toolpath.gpuSuggestionBody': 'Canvas tarda más en dibujar las trayectorias de herramienta. El renderizado con GPU puede hacer más fluidos el desplazamiento y el zoom.',
+  'appShell.toolpath.gpuSuggestionEnable': 'Activar GPU',
+  'appShell.toolpath.gpuSuggestionDismiss': 'Ahora no',
   'appShell.toolpath.rendererCanvas': 'Canvas',
   'appShell.toolpath.rendererGpu': 'GPU',
   'appShell.toolpath.rendererLoading': 'Iniciando GPU…',

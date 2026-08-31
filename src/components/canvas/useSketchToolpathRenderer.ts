@@ -16,6 +16,7 @@
 
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { useLocalStorageState } from '../../hooks/useLocalStorageState'
+import { useToolpathGpuSuggestion } from './useToolpathGpuSuggestion'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { GpuToolpathRenderer } from './gpuToolpathRenderer'
 import { TOOLPATH_RENDERER_CODEC, TOOLPATH_RENDERER_STORAGE_KEY, toolpathRendererOverride,
@@ -41,6 +42,12 @@ export function useSketchToolpathRenderer(canvasRef: RefObject<HTMLCanvasElement
   const surface = useRef<SketchToolpathSurface | null>(null)
   const status = choice === 'canvas' ? 'canvas'
     : reported?.attempt === attempt ? reported.status : 'loading'
+  const suggestion = useToolpathGpuSuggestion(choice === 'canvas' && override === null, toolpaths)
+  const changeRenderer = (next: ToolpathRendererChoice) => {
+    suggestion.dismiss()
+    setChoice(next)
+    setAttempt(value => value + 1)
+  }
 
   useEffect(() => {
     const base = canvasRef.current
@@ -111,10 +118,12 @@ export function useSketchToolpathRenderer(canvasRef: RefObject<HTMLCanvasElement
 
   return {
     surface,
+    observeCanvasDraw: suggestion.observe,
     control: {
       choice, status,
-      onChange: (next: ToolpathRendererChoice) => { setChoice(next); setAttempt(value => value + 1) },
+      onChange: changeRenderer,
       onRetry: () => setAttempt(value => value + 1),
+      suggestion: suggestion.visible ? { onEnable: () => changeRenderer('gpu'), onDismiss: suggestion.dismiss } : undefined,
     },
   }
 }

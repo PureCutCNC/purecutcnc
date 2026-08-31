@@ -2688,6 +2688,63 @@
   color: var(--text-dim);
 }
 
+.toolpath-gpu-suggestion {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(320px, calc(100vw - 40px));
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-popover);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.toolpath-gpu-suggestion p {
+  margin: 6px 0 10px;
+  color: var(--text-dim);
+}
+
+.toolpath-gpu-suggestion__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.toolpath-gpu-suggestion__actions button {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.toolpath-gpu-suggestion__actions button:hover {
+  background: var(--surface-hover);
+}
+
+.toolpath-gpu-suggestion__actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.toolpath-gpu-suggestion__actions .toolpath-gpu-suggestion__enable {
+  border-color: var(--accent);
+  background: var(--surface-active-bottom);
+}
+
+@media (pointer: coarse) {
+  .toolpath-gpu-suggestion__actions button {
+    min-height: 44px;
+  }
+}
+
 .viewport-toolpath-vis__swatch--gpu {
   background: var(--accent);
 }

@@ -23,6 +23,7 @@ export interface ToolpathRendererControl {
   status: ToolpathRendererStatus
   onChange: (choice: ToolpathRendererChoice) => void
   onRetry: () => void
+  suggestion?: { onEnable: () => void; onDismiss: () => void }
 }
 
 export const TOOLPATH_RENDERER_STORAGE_KEY = 'purecutcnc.toolpathRenderer'

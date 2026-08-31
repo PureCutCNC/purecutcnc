@@ -22,11 +22,13 @@ import { canvasColors } from './canvasPalette'
 import { drawToolpath } from './previewPrimitives'
 import type { SketchToolpathSurface } from './useSketchToolpathRenderer'
 import type { ViewTransform } from './viewTransform'
+import type { CanvasDrawSample } from './toolpathGpuSuggestion'
 
 export function renderSketchToolpaths(
   surface: SketchToolpathSurface | null, ctx: CanvasRenderingContext2D,
   project: Project, toolpaths: readonly ToolpathResult[], selectedId: string | null,
   vt: ViewTransform, visibility: ToolpathVisibility | undefined, deferArrows: boolean,
+  observeCanvasDraw?: (sample: CanvasDrawSample) => void,
 ): CanvasRenderingContext2D {
   const visible = visibility ?? { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }
   const entries = toolpaths.filter(tp => tp.moves.length > 0).map(toolpath => {
@@ -49,8 +51,15 @@ export function renderSketchToolpaths(
     if (!surface.failed) surface.report(gpuActive)
     if (gpuActive) ctx = foreground
   }
-  if (!gpuActive) for (const { toolpath, emphasized, slotScale } of entries) {
-    drawToolpath(ctx, toolpath, vt, emphasized, visible, slotScale, { deferArrows })
+  if (!gpuActive) {
+    const start = observeCanvasDraw && entries.length > 0 ? performance.now() : null
+    for (const { toolpath, emphasized, slotScale } of entries) {
+      drawToolpath(ctx, toolpath, vt, emphasized, visible, slotScale, { deferArrows })
+    }
+    if (start !== null) {
+      const now = performance.now()
+      observeCanvasDraw?.({ durationMs: now - start, now, navigating: deferArrows })
+    }
   }
   return ctx
 }

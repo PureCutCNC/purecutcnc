@@ -25,6 +25,10 @@ import type { appShellEn } from '../en/appShell'
  */
 export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
   'appShell.toolpath.renderer': '2D 渲染器',
+  'appShell.toolpath.gpuSuggestionTitle': '试用 GPU，让导航更流畅',
+  'appShell.toolpath.gpuSuggestionBody': 'Canvas 绘制刀路耗时较长。GPU 渲染可能让平移和缩放更流畅。',
+  'appShell.toolpath.gpuSuggestionEnable': '启用 GPU',
+  'appShell.toolpath.gpuSuggestionDismiss': '暂不启用',
   'appShell.toolpath.rendererCanvas': 'Canvas',
   'appShell.toolpath.rendererGpu': 'GPU',
   'appShell.toolpath.rendererLoading': '正在启动 GPU…',

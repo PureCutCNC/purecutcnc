@@ -2,6 +2,14 @@
 
 The sketch toolpath panel offers **GPU** as its first inline toggle in production:
 on selects GPU, off selects Canvas.
+When Canvas repeatedly takes longer to draw toolpaths during navigation, a
+non-blocking tip offers **Enable GPU** or **Not now** after the gesture ends.
+Either action, or a manual renderer selection, suppresses future tips in that
+browser (`purecutcnc.gpuSuggestionHandled`). Nothing switches automatically.
+The bounded heuristic ignores the first navigation draw, then requires six
+consecutive draws of at least 40 ms with no idle gap above 1.5 seconds (drawing
+time does not count as idle). These are UX
+trigger settings, not an FPS measurement or a universal toolpath-size limit.
 Canvas remains the default, fallback and booklet renderer. The choice is stored
 locally for this application, not in the project or undo history, and never
 invalidates CAM results. GPU failures display a Canvas fallback message and

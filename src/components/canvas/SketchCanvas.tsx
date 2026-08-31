@@ -1213,7 +1213,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
-    ctx = renderSketchToolpaths(toolpathRenderer.surface.current, ctx, project, toolpaths, selectedOperationId, vt, toolpathVisibility, navigation.active)
+    ctx = renderSketchToolpaths(toolpathRenderer.surface.current, ctx, project, toolpaths, selectedOperationId, vt, toolpathVisibility, navigation.active, toolpathRenderer.observeCanvasDraw)
 
     if (marqueeStartRef.current && marqueeCurrentRef.current) {
       const x = Math.min(marqueeStartRef.current.cx, marqueeCurrentRef.current.cx)

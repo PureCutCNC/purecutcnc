@@ -22,6 +22,7 @@ import { useTheme } from '../theme/themeContext'
 import { canvasFeedColour } from '../theme/palette'
 import { Icon } from './Icon'
 import { ToolpathRendererControl } from './ToolpathRendererControl'
+import { ToolpathGpuSuggestion } from './ToolpathGpuSuggestion'
 import type { ToolpathRendererControl as RendererControl } from './canvas/toolpathRendererPreference'
 
 interface ToolpathVisibilityPanelProps {
@@ -88,6 +89,7 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
         <Icon id="gcode" />
       </button>
       {expanded && renderer ? <ToolpathRendererControl renderer={renderer} /> : null}
+      {renderer?.suggestion && <ToolpathGpuSuggestion {...renderer.suggestion} />}
       {expanded ? (
         ITEMS.map(({ key, labelKey, swatch }) => {
           const selected = key === 'feedColours'
