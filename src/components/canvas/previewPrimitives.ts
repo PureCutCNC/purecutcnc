@@ -18,9 +18,9 @@ import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { toolpathHasEngagementTelemetry, type ToolpathVisibility } from '../toolpathVisibility'
 import {
   buildToolpathOverlayLayers,
-  type ToolpathOverlayLayerKey,
 } from '../viewport3d/toolpathOverlay'
 import { toolpathArrowPlacements } from './toolpathArrows'
+import { toolpathLayerStyles, toolpathStrokeWidth } from './toolpathStyles'
 import {
   canvasDisplayViewport,
   expandDisplayViewport,
@@ -612,13 +612,7 @@ export function drawToolpath(
   // Layer membership comes from the shared declaration both renderers use; only
   // the styling below is 2D's own. This file used to re-declare the five layers
   // inline, which is how the 3D and 2D views drifted apart in issue #482.
-  const styleFor: Record<ToolpathOverlayLayerKey, { stroke: string; lineWidth: number; dash: number[] }> = {
-    cuts: { stroke: canvasColors().toolpathCut, lineWidth: 2.1, dash: [] },
-    leadIns: { stroke: canvasColors().toolpathCut, lineWidth: 2.1, dash: [] },
-    rapids: { stroke: canvasColors().toolpathRapid, lineWidth: 1.3, dash: [] },
-    plunges: { stroke: canvasColors().toolpathPlunge, lineWidth: 1.5, dash: [3, 4] },
-    retractions: { stroke: canvasColors().toolpathRapid, lineWidth: 1.3, dash: [] },
-  }
+  const styleFor = toolpathLayerStyles(canvasColors())
   // Feed colours are on when the toggle says so, or by default for the
   // selected engagement-mode operation (issue #498 S4). A move whose
   // feedScale is absent or 1 maps to step 0, which is toolpathCut exactly.
@@ -652,7 +646,7 @@ export function drawToolpath(
       }
       ctx.strokeStyle = stroke
       ctx.globalAlpha = emphasized ? 1 : 0.34
-      ctx.lineWidth = emphasized ? layer.lineWidth + 0.35 : Math.max(1, layer.lineWidth - 0.35)
+      ctx.lineWidth = toolpathStrokeWidth(layer.lineWidth, emphasized)
       ctx.setLineDash(layer.dash)
       ctx.stroke()
       ctx.setLineDash([])
@@ -698,6 +692,19 @@ export function drawToolpath(
     ctx.globalAlpha = 1
   }
 
+  drawToolpathAnnotations(ctx, toolpath, vt, emphasized, visibility, { deferArrows, simplifyForDisplay })
+}
+
+/** Canvas annotations retained above GPU paths during the bounded POC. */
+export function drawToolpathAnnotations(
+  ctx: CanvasRenderingContext2D,
+  toolpath: ToolpathResult,
+  vt: ViewTransform,
+  emphasized: boolean,
+  visibility: ToolpathVisibility,
+  { deferArrows = false, simplifyForDisplay = true }: ToolpathDisplayRenderOptions = {},
+): void {
+  const viewport = expandDisplayViewport(canvasDisplayViewport(ctx.canvas, vt), 12)
   if (!emphasized || !toolpath.bounds || !visibility.directions) {
     return
   }
@@ -785,6 +792,7 @@ export function drawToolpath(
 
   // --- Debug source-tag markers (shown when the operation has debugToolpath enabled) ---
   if (toolpath.debugToolpath) {
+    const display = toolpathDisplayGeometry(toolpath, vt.scale, simplifyForDisplay)
     const markerR = Math.max(3.5, Math.min(9, span * vt.scale * 0.025))
     for (const move of visibleDisplaySegments(display.debug, viewport)) {
       if (!move.source) continue

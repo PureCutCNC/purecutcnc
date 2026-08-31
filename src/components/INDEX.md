@@ -32,6 +32,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `onboarding/` — first-run / empty-state UI (`EmptyStateOverlay` shown over the center viewport when the project has no features)
 
 ## Conventions
+- Opt-in GPU sketch POC (#683): `canvas/gpuToolpathPoc.ts` retains XY buffers and composites per-layer coverage masks; `gpuToolpathShaders.ts` owns its screen-space shaders. `useGpuToolpathPoc.ts` owns DEV-only URL activation/lifecycle; `renderSketchToolpaths.ts` selects GPU or Canvas fallback and preserves Canvas annotations. `toolpathStyles.ts` shares layer styling with Canvas/booklet output. See [`tools/gpu-toolpath-poc/`](../../tools/gpu-toolpath-poc/INDEX.md) for the reproducible comparison harness and limitations.
 - Heavy compute (CSG, toolpath gen, sim) is debounced. See `Viewport3D` (150–300ms typical).
 - Mutations go through `projectStore` actions only — never mutate Zustand state directly from components.
 - For touch/tablet styling see `src/styles/tablet.css` and [`planning/TABLET_UX_DESIGN.md`](../../planning/TABLET_UX_DESIGN.md).
