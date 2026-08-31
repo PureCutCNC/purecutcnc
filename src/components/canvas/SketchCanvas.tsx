@@ -16,6 +16,8 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
+import { useGpuToolpathPoc } from './useGpuToolpathPoc'
+import { renderSketchToolpaths } from './renderSketchToolpaths'
 import { pocketSlotFeedPercent } from '../../theme/palette'
 import { toolpathHasEngagementTelemetry, feedColourLegendSteps as getFeedColourLegendSteps } from '../toolpathVisibility'
 import type { OpenProfileEndpoint, SketchControlRef } from '../../store/types'
@@ -79,7 +81,6 @@ import {
   drawPendingRoundRect,
   drawPendingChamferRect,
   drawPreviewProfile,
-  drawToolpath,
   translateProfile,
 } from './previewPrimitives'
 import {
@@ -236,6 +237,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   // Stable, frame-coalescing redraw. Replaces the former ad-hoc `scheduleDraw`
   // closure + `scheduleDrawRef`; safe to list in / omit from effect deps.
   const scheduleDraw = useRafScheduler(() => drawRef.current())
+  const gpuPoc = useGpuToolpathPoc(canvasRef, scheduleDraw)
   const [copyCountDraft, setCopyCountDraft] = useState('1')
 
   const { viewState, setViewState, navigation } = useNavigationViewState(canvasRef, scheduleDraw)
@@ -901,7 +903,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const ctx = canvas.getContext('2d')
+    let ctx = canvas.getContext('2d')
     if (!ctx) return
 
     const project = projectRef.current
@@ -1210,14 +1212,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
-    for (const toolpath of toolpaths) {
-      if (toolpath.moves.length > 0) {
-        // Colour rungs derive from the toolpath's own operation slot feed so
-        // the thresholds match the scales that operation emitted (issue #498 S5).
-        const slotFeedPercent = pocketSlotFeedPercent(project.operations.find((op) => op.id === toolpath.operationId))
-        drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId, toolpathVisibility ?? { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }, slotFeedPercent === null ? 1 : slotFeedPercent / 100, { deferArrows: navigation.active })
-      }
-    }
+    ctx = renderSketchToolpaths(gpuPoc.current, ctx, project, toolpaths, selectedOperationId, vt, toolpathVisibility, navigation.active)
 
     if (marqueeStartRef.current && marqueeCurrentRef.current) {
       const x = Math.min(marqueeStartRef.current.cx, marqueeCurrentRef.current.cx)

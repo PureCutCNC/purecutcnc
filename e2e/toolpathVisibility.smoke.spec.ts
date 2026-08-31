@@ -19,6 +19,138 @@ import { seedToolpathVisProject } from './toolpathVisibility.helpers'
 import type { Project } from '../src/types/project'
 import type { ToolpathResult } from '../src/engine/toolpaths/types'
 
+test('GPU POC coverage union, shared styles, transform and retained buffers', async ({ app }, testInfo) => {
+  const result = await app.page.evaluate(async () => {
+    const gpuUrl = '/src/components/canvas/gpuToolpathPoc.ts'
+    const canvasUrl = '/src/components/canvas/previewPrimitives.ts'
+    const paletteUrl = '/src/components/canvas/canvasPalette.ts'
+    const { GpuToolpathPoc } = await import(gpuUrl) as typeof import('../src/components/canvas/gpuToolpathPoc')
+    const { drawToolpath } = await import(canvasUrl) as typeof import('../src/components/canvas/previewPrimitives')
+    const { canvasColors } = await import(paletteUrl) as typeof import('../src/components/canvas/canvasPalette')
+    const gpuCanvas = document.createElement('canvas')
+    const reference = document.createElement('canvas')
+    const readback = document.createElement('canvas')
+    for (const canvas of [gpuCanvas, reference, readback]) { canvas.width = 360; canvas.height = 240 }
+    const gpu = new GpuToolpathPoc(gpuCanvas, () => {})
+    const point = (x: number, y: number, z = 0) => ({ x, y, z })
+    const toolpath: ToolpathResult = {
+      operationId: 'synthetic-gpu-parity', bounds: null, warnings: [],
+      moves: [
+        ...Array.from({ length: 1000 }, () => ({ kind: 'cut' as const, from: point(20, 30), to: point(140, 30) })),
+        { kind: 'cut', from: point(80, 15), to: point(80, 40) },
+        { kind: 'cut', from: point(20, 50), to: point(140, 50) },
+        { kind: 'lead_in', from: point(20, 70), to: point(140, 70) },
+        { kind: 'rapid', from: point(20, 90, 5), to: point(140, 90, 5) },
+        { kind: 'plunge', from: point(20, 110, 5), to: point(140, 110) },
+        { kind: 'rapid', from: point(20, 130), to: point(140, 130, 5) },
+        { kind: 'cut', from: point(20, 150), to: point(140, 150), feedScale: .4 },
+        { kind: 'rapid', from: point(20, 170, 5), to: point(140, 170, 5) },
+      ], collidingMoveIndices: [1007],
+    }
+    const visibility = { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: false, feedColours: true }
+    const vt = { scale: 1, offsetX: 10, offsetY: 10 }
+    const ctx = reference.getContext('2d')!, read = readback.getContext('2d')!
+    const sample = (context: CanvasRenderingContext2D, x: number, y: number) => Array.from(context.getImageData(x, y, 1, 1).data)
+    const render = (emphasized: boolean) => {
+      ctx.clearRect(0, 0, 360, 240)
+      drawToolpath(ctx, toolpath, vt, emphasized, visibility, .4, { simplifyForDisplay: false })
+      gpu.render([{ toolpath, emphasized, slotScale: .4 }], vt, 360, 240, visibility, canvasColors())
+      read.clearRect(0, 0, 360, 240); read.drawImage(gpuCanvas, 0, 0)
+    }
+    try {
+      render(false)
+      const alpha = [40, 60].map(y => ({ canvas: sample(ctx, 50, y), gpu: sample(read, 50, y) }))
+      const crossing = sample(read, 90, 40)
+      render(true)
+      const layers = [80, 100, 140, 160, 180].map(y => ({ canvas: sample(ctx, 50, y), gpu: sample(read, 50, y) }))
+      const swatch = readback.toDataURL()
+      const before = gpu.stats.preparations
+      gpu.render([{ toolpath, emphasized: true, slotScale: .4 }], { scale: 1.5, offsetX: 20, offsetY: 15 }, 480, 300, visibility, canvasColors())
+      const after = gpu.stats.preparations
+      read.clearRect(0, 0, 360, 240); read.drawImage(gpuCanvas, 0, 0)
+      const transformed = sample(read, 70, 60)
+      const oldPosition = sample(read, 70, 40)
+      // Hidden ordinary layers must not hide collision warnings.
+      const hidden = { ...visibility, cuts: false, leadIns: false, rapids: false, plunges: false, retractions: false }
+      gpu.render([{ toolpath, emphasized: true, slotScale: .4 }], vt, 360, 240, hidden, canvasColors())
+      read.clearRect(0, 0, 360, 240); read.drawImage(gpuCanvas, 0, 0)
+      const hiddenCut = sample(read, 50, 40)
+      const collision = sample(read, 50, 180)
+      gpu.render([], vt, 360, 240, visibility, canvasColors())
+      read.clearRect(0, 0, 360, 240); read.drawImage(gpuCanvas, 0, 0)
+      const cleared = sample(read, 50, 180)
+      return { alpha, crossing, layers, swatch, before, after, transformed, oldPosition, hiddenCut, collision, cleared }
+    } finally { gpu.dispose() }
+  })
+  expect(result.alpha[0].gpu[3]).toBe(result.alpha[1].gpu[3])
+  expect(result.crossing[3]).toBe(result.alpha[0].gpu[3])
+  for (const row of [...result.alpha, ...result.layers]) {
+    expect(row.gpu[3]).toBeGreaterThan(0)
+    for (let i = 0; i < 4; i++) expect(Math.abs(row.canvas[i] - row.gpu[i])).toBeLessThanOrEqual(12)
+  }
+  expect(result.before).toBe(result.after)
+  expect(result.transformed[3]).toBeGreaterThan(0)
+  expect(result.oldPosition[3]).toBe(0)
+  expect(result.hiddenCut[3]).toBe(0)
+  expect(result.collision[3]).toBeGreaterThan(0)
+  expect(result.cleared[3]).toBe(0)
+  await testInfo.attach('gpu-poc-layer-swatch', { body: Buffer.from(result.swatch.split(',')[1], 'base64'), contentType: 'image/png' })
+})
+
+test('GPU POC opts in, retains buffers through navigation and falls back on context loss', async ({ app, ui }) => {
+  const page = app.page
+  await page.goto('/?toolpathRenderer=gpu')
+  await seedToolpathVisProject(page)
+  const base = page.locator('canvas.sketch-canvas')
+  const gpu = page.locator('canvas.sketch-toolpath-gpu-poc')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu-poc')
+  await ui.operations.rowByName(page, 'Route A').click()
+  const preparations = () => gpu.getAttribute('data-poc-stats').then(value => JSON.parse(value!).preparations as number)
+  const before = await preparations()
+  const box = (await base.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down({ button: 'middle' })
+  await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 + 15, { steps: 8 })
+  await page.mouse.up({ button: 'middle' })
+  await page.mouse.wheel(0, -120)
+  expect(await preparations()).toBe(before)
+  const directions = ui.toolpathVis.sketchItems(page).filter({ hasText: 'Directions' })
+  await expect(directions).toHaveAttribute('aria-pressed', 'true')
+  await page.evaluate(() => {
+    const gl = document.querySelector<HTMLCanvasElement>('canvas.sketch-toolpath-gpu-poc')!.getContext('webgl2')!
+    const extension = gl.getExtension('WEBGL_lose_context')!
+    Object.assign(window, { restoreGpuPocContext: () => extension.restoreContext() })
+    extension.loseContext()
+  })
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
+  await expect(gpu).toBeHidden()
+  await expect(directions).toHaveAttribute('aria-pressed', 'true')
+  await page.evaluate(() => (window as unknown as { restoreGpuPocContext: () => void }).restoreGpuPocContext())
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu-poc')
+  await expect(gpu).toBeVisible()
+  await page.goto('/')
+  await expect(page.locator('canvas.sketch-toolpath-gpu-poc')).toHaveCount(0)
+})
+
+test('GPU POC initialization failure leaves Canvas toolpaths available', async ({ app, ui }) => {
+  const page = app.page
+  await page.addInitScript(() => {
+    const original = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = new Proxy(original, {
+      apply(target, canvas: HTMLCanvasElement, args: unknown[]) {
+        if (canvas.classList.contains('sketch-toolpath-gpu-poc') && args[0] === 'webgl2') return null
+        return Reflect.apply(target, canvas, args)
+      },
+    })
+  })
+  await page.goto('/?toolpathRenderer=gpu')
+  await seedToolpathVisProject(page)
+  await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
+  await expect(ui.toolpathVis.sketchPanel(page)).toBeVisible()
+  await expect(page.locator('canvas.sketch-toolpath-gpu-poc')).toHaveCount(0)
+})
+
+
 test.describe('Toolpath visibility panel smoke', () => {
   test('solid rapid styling renders in Canvas and booklet snapshots', async ({ app, ui }, testInfo) => {
     await seedToolpathVisProject(app.page)
