@@ -615,9 +615,9 @@ export function drawToolpath(
   const styleFor: Record<ToolpathOverlayLayerKey, { stroke: string; lineWidth: number; dash: number[] }> = {
     cuts: { stroke: canvasColors().toolpathCut, lineWidth: 2.1, dash: [] },
     leadIns: { stroke: canvasColors().toolpathCut, lineWidth: 2.1, dash: [] },
-    rapids: { stroke: canvasColors().toolpathRapid, lineWidth: 1.3, dash: [8, 6] },
+    rapids: { stroke: canvasColors().toolpathRapid, lineWidth: 1.3, dash: [] },
     plunges: { stroke: canvasColors().toolpathPlunge, lineWidth: 1.5, dash: [3, 4] },
-    retractions: { stroke: canvasColors().toolpathRapid, lineWidth: 1.3, dash: [8, 6] },
+    retractions: { stroke: canvasColors().toolpathRapid, lineWidth: 1.3, dash: [] },
   }
   // Feed colours are on when the toggle says so, or by default for the
   // selected engagement-mode operation (issue #498 S4). A move whose

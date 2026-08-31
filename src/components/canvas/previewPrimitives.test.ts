@@ -21,6 +21,7 @@ import type { ToolpathVisibility } from '../toolpathVisibility'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import type { ViewTransform } from './viewTransform'
 import { toolpathDisplayGeometry } from './toolpathDisplay'
+import { canvasColors } from './canvasPalette'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -182,6 +183,59 @@ function testDrawToolpathDrawsDescendingRapids(): void {
 
 testDrawToolpathLayerSplit()
 testDrawToolpathDrawsDescendingRapids()
+
+// Issue #683 Phase 0: interactive and full-detail booklet paths share styling.
+function testSolidRapidStyles(): void {
+  const toolpath: ToolpathResult = {
+    operationId: 'rapid-style-test',
+    moves: [
+      { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 20, y: 0, z: 0 } },
+      { kind: 'lead_in', from: { x: 0, y: 10, z: 0 }, to: { x: 20, y: 10, z: 0 } },
+      { kind: 'rapid', from: { x: 0, y: 20, z: 5 }, to: { x: 20, y: 20, z: 5 } },
+      { kind: 'plunge', from: { x: 0, y: 30, z: 5 }, to: { x: 20, y: 30, z: 0 } },
+      { kind: 'rapid', from: { x: 0, y: 40, z: 0 }, to: { x: 20, y: 40, z: 5 } },
+    ],
+    warnings: [],
+    bounds: null,
+  }
+  const allOff: ToolpathVisibility = {
+    cuts: false, leadIns: false, rapids: false, plunges: false, retractions: false, directions: false,
+  }
+  const colors = canvasColors()
+  const cases = [
+    { key: 'cuts', stroke: colors.toolpathCut, width: 2.1, dash: [] },
+    { key: 'leadIns', stroke: colors.toolpathCut, width: 2.1, dash: [] },
+    { key: 'rapids', stroke: colors.toolpathRapid, width: 1.3, dash: [] },
+    { key: 'plunges', stroke: colors.toolpathPlunge, width: 1.5, dash: [3, 4] },
+    { key: 'retractions', stroke: colors.toolpathRapid, width: 1.3, dash: [] },
+  ] as const
+  for (const simplifyForDisplay of [true, false]) {
+    for (const emphasized of [true, false]) {
+      for (const expected of cases) {
+        const { ctx: mockCtx } = recordingContext()
+        let dash: number[] = []
+        let strokes = 0
+        mockCtx.setLineDash = value => { dash = [...value] }
+        mockCtx.stroke = () => {
+          strokes++
+          assert(JSON.stringify(dash) === JSON.stringify(expected.dash), `${expected.key} dash pattern`)
+          assert(mockCtx.strokeStyle === expected.stroke, `${expected.key} keeps its colour`)
+          const width = emphasized ? expected.width + 0.35 : Math.max(1, expected.width - 0.35)
+          assert(mockCtx.lineWidth === width, `${expected.key} keeps its line weight`)
+          assert(mockCtx.globalAlpha === (emphasized ? 1 : 0.34), `${expected.key} keeps its emphasis`)
+        }
+        drawToolpath(mockCtx, toolpath, { scale: 1, offsetX: 0, offsetY: 0 }, emphasized,
+          { ...allOff, [expected.key]: true }, 0.4, { simplifyForDisplay })
+        assert(strokes === 1, `${expected.key} strokes exactly once when visible`)
+        assert(dash.length === 0 && mockCtx.globalAlpha === 1, 'dash and alpha reset after drawing')
+        drawToolpath(mockCtx, toolpath, { scale: 1, offsetX: 0, offsetY: 0 }, emphasized,
+          allOff, 0.4, { simplifyForDisplay })
+        assert(strokes === 1, 'hidden layers do not stroke')
+      }
+    }
+  }
+}
+testSolidRapidStyles()
 
 function testFullDetailDisplaySkipsInteractiveMerging(): void {
   const toolpath: ToolpathResult = {
