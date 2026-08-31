@@ -285,11 +285,12 @@ const PERF_POINT_COUNT = 3_000
 // this wide lands just past DEFAULT_WATERLINE_SLICE_VERTEX_BUDGET while the same
 // point count smooth enough to thin stays far under it.
 //
-// Not 14,000, which hangs this generator on `main` as well as here — a ring
-// sampled at an exact multiple of its own 8-lobe period degenerates somewhere in
-// the offset, and 13,900 and 14,100 both resolve in under a second. That is a
-// pre-existing defect with its own issue (#689), not something this fixture
-// should carry.
+// 14,000 used to hang this generator, and the lobe period had nothing to do with
+// it: one slice crossing landed on x = 30.5447945, exactly the boundary `ptKey`
+// rounds at, which split the ring into an open path that `chainSegments`
+// fragmented into 12,333 chains — and `stitchOpenChains` is cubic in that count
+// (issue #689, fixed in `meshSlicing.ts`). 13,000 is chosen for the budget, not
+// to avoid that.
 const BUDGET_POINT_COUNT = 13_000
 
 /**

@@ -388,12 +388,14 @@ function chainSegments(
     nodes.get(b)!.edges.push(edgeIndex)
   }
 
-  const chains: SegmentChain[] = []
-  for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex += 1) {
-    const firstEdge = edges[edgeIndex]
-    if (firstEdge.visited) continue
-
-    const startKey = chooseStartNode(nodes, firstEdge)
+  /**
+   * Walk one chain out of `startKey`, consuming the edges it crosses.
+   *
+   * The walk leaves `startKey` in a single direction, which is invisible on a
+   * closed ring — it arrives back at the start — but decides the whole cost of
+   * an open one. See the caller for the second half.
+   */
+  function walkFrom(startKey: string): SegmentChain {
     let currentKey = startKey
     let prevKey: string | null = null
     const points: Vec3[] = [nodes.get(startKey)!.pt]
@@ -416,10 +418,7 @@ function chainSegments(
       const edge = edges[nextEdgeIndex]
       edge.visited = true
       const nextKey = otherEdgeNode(edge, currentKey)
-      if (nextKey === startKey) {
-        chains.push({ points, closed: true })
-        break
-      }
+      if (nextKey === startKey) return { points, closed: true }
 
       points.push(nodes.get(nextKey)!.pt)
       prevKey = currentKey
@@ -427,9 +426,44 @@ function chainSegments(
       if (points.length > segments.length * 2) break
     }
 
-    if (!chains.at(-1)?.closed || chains.at(-1)?.points !== points) {
-      chains.push({ points, closed: false })
+    return { points, closed: false }
+  }
+
+  const chains: SegmentChain[] = []
+  for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex += 1) {
+    const firstEdge = edges[edgeIndex]
+    if (firstEdge.visited) continue
+
+    const startKey = chooseStartNode(nodes, firstEdge)
+    const forward = walkFrom(startKey)
+    if (forward.closed) {
+      chains.push(forward)
+      continue
     }
+
+    // An open chain, so `startKey` was almost certainly in the middle of it and
+    // the other half is still unvisited: `chooseStartNode` can prefer a real
+    // endpoint only when the first unvisited edge happens to touch one, and
+    // with edges enumerated in triangle order it essentially never does. A
+    // second walk from the same node takes the edge the first one left behind.
+    //
+    // Without this the outer loop re-enters at the next unvisited edge and
+    // emits the remainder two edges at a time. That is what made issue #689
+    // hang: one node split by a `ptKey` rounding tie turned a 28,000-segment
+    // ring into 12,333 chains, and `stitchOpenChains` is cubic in that count.
+    const backward = walkFrom(startKey)
+    if (backward.closed) {
+      // A lasso — the second half looped back through the start rather than
+      // ending. There is no sensible join, so keep the two pieces as they came.
+      chains.push(forward)
+      chains.push(backward)
+      continue
+    }
+
+    chains.push({
+      points: [...backward.points.slice(1).reverse(), ...forward.points],
+      closed: false,
+    })
   }
 
   const stitchTolerance = computeStitchTolerance(segments)

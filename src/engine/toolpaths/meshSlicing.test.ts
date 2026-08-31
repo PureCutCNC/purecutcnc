@@ -21,6 +21,7 @@
  */
 
 import { buildMeshSliceIndex, sliceMeshAtZ, sliceMeshAtZDetailed } from './meshSlicing'
+import { cpuRatio } from '../../test/cpuRatio'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -119,6 +120,69 @@ function appendVerticalQuad(
   )
   indices.push(offset, offset + 1, offset + 2, offset, offset + 2, offset + 3)
 }
+
+// ── issue #689: an open contour must arrive as one chain ───────────────────
+//
+// `chainSegments` leaves its start node in one direction. On a closed ring that
+// is invisible, because the walk arrives back where it began. On an open one it
+// decides everything: `chooseStartNode` can prefer a real endpoint only when the
+// first unvisited edge happens to touch one, so the walk starts mid-chain and
+// stops as soon as it runs into its own visited edges, and the outer loop emits
+// the remainder two edges at a time. `stitchOpenChains` is cubic in that count.
+//
+// One node split by a `ptKey` rounding tie is enough to reach it. On the
+// 14,000-point relief in `finishSurfaceWaterlineDecimation.test.ts` a crossing
+// landed on x = 30.5447945 — exactly the boundary `toFixed(6)` rounds at — which
+// put a 28,000-segment ring in as 12,333 chains, and the operation never
+// returned.
+
+/** Columns of a vertical wall, evenly spaced around `span` radians. */
+function ringColumns(count: number, radius: number, span: number): Array<[number, number]> {
+  const columns: Array<[number, number]> = []
+  for (let i = 0; i < count; i += 1) {
+    const theta = (i / count) * span
+    columns.push([radius * Math.cos(theta), radius * Math.sin(theta)])
+  }
+  return columns
+}
+
+/** One vertical quad per column pair; `closed` adds the wrap-around quad. */
+function wallMesh(
+  columns: Array<[number, number]>,
+  closed: boolean,
+): { positions: Float32Array; index: Uint32Array } {
+  const vertices: number[] = []
+  const indices: number[] = []
+  const quads = closed ? columns.length : columns.length - 1
+  for (let i = 0; i < quads; i += 1) {
+    appendVerticalQuad(vertices, indices, columns[i], columns[(i + 1) % columns.length])
+  }
+  return { positions: new Float32Array(vertices), index: new Uint32Array(indices) }
+}
+
+/**
+ * Subject and reference size for the cost ratio below, in quads. Big enough
+ * that a regression is unmistakable, small enough that it fails rather than
+ * hangs: at 400 quads the fragmented walk takes seconds, not minutes.
+ */
+const OPEN_CONTOUR_RATIO_QUADS = 400
+
+/**
+ * How much more the open contour may cost than the closed one.
+ *
+ * Measured over four runs each, node v26.0.0 on an i7-8850H, this file run on
+ * its own. Worst row of each — highest baseline against lowest regression:
+ *
+ *     second walk present   subject 2.3ms     reference 2.2ms   ratio 1.07
+ *     second walk deleted   subject 2759.5ms  reference 2.3ms   ratio 1184
+ *
+ * The reference does not move across that mutation, which is why it is the
+ * right one: a closed ring returns `closed` from the first walk and never
+ * reaches the stitcher, so it cannot benefit from the fix being guarded. The
+ * geometric mid-point of that pair is sqrt(1.07 * 1184) = 35.6, leaving 33x of
+ * headroom over the baseline and 34x under the regression.
+ */
+const MAX_OPEN_CONTOUR_COST_RATIO = 35
 
 function testCubeMidSlice(): void {
   console.log('Testing cube mid-slice...')
@@ -236,11 +300,100 @@ function testOpenSliceIsNotClosedWithShortcut(): void {
   assert(result.openChainCount > 0, 'expected open chains to be reported')
 }
 
+/**
+ * A ring broken at exactly one node still slices to one contour.
+ *
+ * Issue #689's topology without its floating-point coincidence: the corner
+ * shared by two neighbouring quads is displaced in one of them by more than
+ * `ptKey`'s 1e-6 quantum and less than the stitch tolerance, so the ring
+ * reaches `chainSegments` as a single open path and the stitcher closes it
+ * again. What this pins is the join — the second walk's half is prepended
+ * reversed, and getting that backwards folds the contour and wrecks its area.
+ */
+function testRingSplitAtOneNodeSlicesAsOneContour(): void {
+  console.log('Testing a ring split at one node slices as one contour...')
+
+  const half = 10
+  const perSide = 8
+  const corners: Array<[number, number]> = [[-half, -half], [half, -half], [half, half], [-half, half]]
+  const columns: Array<[number, number]> = []
+  for (let side = 0; side < 4; side += 1) {
+    const from = corners[side]
+    const to = corners[(side + 1) % 4]
+    for (let step = 0; step < perSide; step += 1) {
+      const t = step / perSide
+      columns.push([from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t])
+    }
+  }
+
+  const split = 1e-5
+  const vertices: number[] = []
+  const indices: number[] = []
+  for (let i = 0; i < columns.length; i += 1) {
+    const a = columns[i]
+    const b = columns[(i + 1) % columns.length]
+    const start: [number, number] = i === 1 ? [a[0], a[1] + split] : a
+    appendVerticalQuad(vertices, indices, start, b)
+  }
+
+  const sliceIndex = buildMeshSliceIndex(new Float32Array(vertices), new Uint32Array(indices))
+  const result = sliceMeshAtZDetailed(sliceIndex, 0)
+
+  assert(result.polygons.length === 1, `expected one contour, got ${result.polygons.length}`)
+  assert(result.openChainCount === 0, `expected the split to stitch closed, got ${result.openChainCount} open`)
+
+  const polygon = result.polygons[0]
+  // Two crossings per quad — one on the shared vertical edge, one on the quad's
+  // diagonal — plus the node the split adds, plus the explicit closing point.
+  assert(polygon.length >= columns.length * 2,
+    `expected every crossing kept, got ${polygon.length} points`)
+  assert(approx(polygonArea(polygon), (half * 2) ** 2, 1e-2),
+    `expected area near ${(half * 2) ** 2}, got ${polygonArea(polygon)}`)
+}
+
+/**
+ * An open contour costs about what the same wall costs closed.
+ *
+ * Both halves are the same wall at the same segment count through the same
+ * code; only whether the ring wraps differs. See `MAX_OPEN_CONTOUR_COST_RATIO`
+ * for the measured rows.
+ */
+function testOpenContourCostsWhatTheClosedRingCosts(): void {
+  console.log('Testing open-contour slicing cost against the closed ring...')
+
+  const openMesh = wallMesh(ringColumns(OPEN_CONTOUR_RATIO_QUADS + 1, 10, Math.PI * 2), false)
+  const closedMesh = wallMesh(ringColumns(OPEN_CONTOUR_RATIO_QUADS, 10, Math.PI * 2), true)
+  const openIndex = buildMeshSliceIndex(openMesh.positions, openMesh.index)
+  const closedIndex = buildMeshSliceIndex(closedMesh.positions, closedMesh.index)
+
+  const openResult = sliceMeshAtZDetailed(openIndex, 0)
+  const closedResult = sliceMeshAtZDetailed(closedIndex, 0)
+  assert(openResult.segmentCount === closedResult.segmentCount,
+    `subject and reference must slice the same segment count, `
+    + `${openResult.segmentCount} vs ${closedResult.segmentCount}`)
+  assert(openResult.openChainCount === 1,
+    `subject must slice to one open contour, got ${openResult.openChainCount}`)
+  assert(closedResult.openChainCount === 0,
+    `reference must slice closed, got ${closedResult.openChainCount}`)
+
+  const { ratio, subjectMs, referenceMs } = cpuRatio(
+    { run: () => { sliceMeshAtZDetailed(openIndex, 0) }, setup: () => openIndex.sliceCache.clear() },
+    { run: () => { sliceMeshAtZDetailed(closedIndex, 0) }, setup: () => closedIndex.sliceCache.clear() },
+  )
+  console.log(`  open ${subjectMs.toFixed(1)}ms / closed ${referenceMs.toFixed(1)}ms = ${ratio.toFixed(2)}x`)
+
+  assert(ratio < MAX_OPEN_CONTOUR_COST_RATIO,
+    `open contour cost ${ratio.toFixed(2)}x the closed ring `
+    + `(${subjectMs.toFixed(1)}ms vs ${referenceMs.toFixed(1)}ms), budget ${MAX_OPEN_CONTOUR_COST_RATIO}x`)
+}
+
 testCubeMidSlice()
 testSliceCacheReuse()
 testSeparatedIslands()
 testSmallOpenGapsAreStitched()
 testMultipleSmallGapLoopsStaySeparate()
 testOpenSliceIsNotClosedWithShortcut()
+testRingSplitAtOneNodeSlicesAsOneContour()
+testOpenContourCostsWhatTheClosedRingCosts()
 
 console.log('meshSlicing tests passed')
