@@ -275,16 +275,27 @@ Whichever you write, record in the test the measured baseline row, the measured 
 Applies to every agent in this repo — the main session, in-process subagents,
 and delegated workers (Codex, opencode, the DeepSeek worker, etc.) alike.
 
+- **Human-facing replies are a conversation, not a handoff.** Lead with the
+  outcome in natural language. For a completed task, default to one or two
+  short paragraphs: what changed, then only the check or caveat that matters.
+  Do not repeat progress narration, tool output, or internal process details.
+- **Make a needed decision easy to see.** Ask for it in the first sentence in
+  ordinary language, with the smallest useful amount of context. Do not bury a
+  question in a recap, and do not end a completed task with an implied wait.
+- **Challenge constructively.** When a concern matters, state the evidence,
+  offer a practical alternative, and explain the trade-off briefly. Once the
+  user chooses a reasonable direction, implement it rather than reopening the
+  debate. Raise a true safety, authority, or scope blocker plainly and ask for
+  the specific decision needed.
 - **Be terse.** Skip preamble, restating the request, and narrating what
   you're about to do. State results and decisions directly.
 - **Stay on the task at hand.** Don't expand scope or chase tangential
   findings mid-task. Flag out-of-scope issues briefly at the end (or as a
   follow-up issue) instead of interrupting the current work.
-- **Close with a short, structured summary, not a wall of prose.** What
-  changed and what's next, skimmable as bullets — or the
-  `STATUS/COMMIT/CHANGED_FILES/CHECKS/RISKS` block already used for delegated
-  workers (`.agents/skills/manager-delegate/SKILL.md`). Scale the summary to
-  the change: a one-line fix gets a one-line summary, not a paragraph.
+- **Keep structured reports internal.** The
+  `STATUS/COMMIT/CHANGED_FILES/CHECKS/RISKS` block is for delegated workers and
+  managers, not for user-facing replies. It carries implementation metadata;
+  the manager translates it into the natural summary above.
 
 ## Execution Modes
 
