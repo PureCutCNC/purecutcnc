@@ -9,7 +9,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `IconGallery.tsx` — dev/debug grid of all available icons
 - `Select.tsx` — shared styled `<select>` wrapper
 - `ToolpathVisibilityPanel.tsx` — toggles for showing/hiding toolpath layers
-- `ToolpathRendererControl.tsx` — sketch-only Canvas/GPU selector and visible fallback/retry status
+- `ToolpathRendererControl.tsx` — first inline GPU toggle (off selects Canvas) and visible fallback/retry status
 - `toolpathVisibility.ts` — `ToolpathVisibility` type, default visibility constants, and the cached feed-colour legend steps (issue #535) (kept out of the panel component for fast refresh)
 - `UnsupportedMobileScreen.tsx` — phone-sized-device blocker screen shown instead of the app (extracted from `main.tsx`)
 - `errorFormat.ts` — shared error formatting

@@ -166,9 +166,9 @@ test('GPU renderer initialization failure leaves Canvas toolpaths available', as
 test('renderer preference persists without changing project, history or booklet pixels', async ({ app }) => {
   const page = app.page
   await seedToolpathVisProject(page)
-  const selector = page.getByRole('combobox', { name: '2D renderer', exact: true })
+  const selector = page.getByRole('button', { name: 'GPU', exact: true })
   const base = page.locator('canvas.sketch-canvas')
-  await expect(selector).toHaveValue('canvas')
+  await expect(selector).toHaveAttribute('aria-pressed', 'false')
   const snapshot = () => page.evaluate(async () => {
     const storeUrl = '/src/store/projectStore.ts'
     const snapshotUrl = '/src/components/canvas/operationSnapshot.ts'
@@ -194,14 +194,14 @@ test('renderer preference persists without changing project, history or booklet 
     }
     Object.assign(window, { generatedResultCount: () => seen.size })
   })
-  await selector.selectOption('gpu')
+  await selector.click()
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   expect(await snapshot()).toEqual(before)
   await expect.poll(() => page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('gpu')
   for (let i = 0; i < 3; i++) {
-    await selector.selectOption('canvas')
+    await selector.click()
     await expect(page.locator('canvas.sketch-toolpath-gpu, canvas.sketch-toolpath-foreground')).toHaveCount(0)
-    await selector.selectOption('gpu')
+    await selector.click()
     await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
     await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(1)
   }
@@ -219,7 +219,7 @@ test('renderer preference persists without changing project, history or booklet 
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await page.reload()
   await seedToolpathVisProject(page)
-  await expect(selector).toHaveValue('gpu')
+  await expect(selector).toHaveAttribute('aria-pressed', 'true')
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await page.getByRole('tab', { name: '3D view', exact: true }).click()
   await expect(selector).toBeHidden()
@@ -240,12 +240,12 @@ test('GPU startup failure has a persistent preference, visible fallback and work
     })
     Object.assign(window, { allowGpu: () => { HTMLCanvasElement.prototype.getContext = original } })
   })
-  const selector = page.getByRole('combobox', { name: '2D renderer', exact: true })
+  const selector = page.getByRole('button', { name: 'GPU', exact: true })
   const base = page.locator('canvas.sketch-canvas')
-  await selector.selectOption('gpu')
+  await selector.click()
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
   await expect(page.getByRole('status').filter({ hasText: 'GPU unavailable; using Canvas.' })).toBeVisible()
-  await expect(selector).toHaveValue('gpu')
+  await expect(selector).toHaveAttribute('aria-pressed', 'true')
   expect(await page.evaluate(() => localStorage.getItem('purecutcnc.toolpathRenderer'))).toBe('gpu')
   await page.evaluate(() => (window as unknown as { allowGpu: () => void }).allowGpu())
   await page.getByRole('button', { name: 'Retry GPU', exact: true }).click()
@@ -259,17 +259,17 @@ test('switching away cancels a pending lazy GPU load', async ({ app }) => {
   let release: () => void = () => {}
   const pending = new Promise<void>(resolve => { release = resolve })
   await page.route('**/gpuToolpathRenderer.ts', async route => { await pending; await route.continue() })
-  const selector = page.getByRole('combobox', { name: '2D renderer', exact: true })
+  const selector = page.getByRole('button', { name: 'GPU', exact: true })
   const request = page.waitForRequest('**/gpuToolpathRenderer.ts')
-  await selector.selectOption('gpu')
+  await selector.click()
   await request
   await expect(page.getByRole('status').filter({ hasText: 'Starting GPU' })).toBeVisible()
-  await selector.selectOption('canvas')
+  await selector.click()
   release()
   await page.unrouteAll({ behavior: 'wait' })
   await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas')
   await expect(page.locator('canvas.sketch-toolpath-gpu, canvas.sketch-toolpath-foreground')).toHaveCount(0)
-  await selector.selectOption('gpu')
+  await selector.click()
   await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(1)
 })
@@ -357,7 +357,7 @@ test('GPU annotation painter order matches Canvas across selection, resize and n
 })
 
 
-test('production renderer selector works through normal project Open and persists', async ({ page }, testInfo) => {
+test('production renderer toggle works through normal project Open and persists', async ({ page }, testInfo) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
@@ -374,9 +374,9 @@ test('production renderer selector works through normal project Open and persist
   const chooser = page.waitForEvent('filechooser')
   await page.getByRole('button', { name: 'Open project', exact: true }).click()
   await (await chooser).setFiles({ name: 'renderer.camj', mimeType: 'application/json', buffer: Buffer.from(TOOLPATH_VIS_FIXTURE_JSON) })
-  const selector = page.getByRole('combobox', { name: '2D renderer', exact: true })
-  await expect(selector).toHaveValue('canvas')
-  await selector.selectOption('gpu')
+  const selector = page.getByRole('button', { name: 'GPU', exact: true })
+  await expect(selector).toHaveAttribute('aria-pressed', 'false')
+  await selector.click()
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
   if (production) await expect(page.locator('canvas.sketch-toolpath-gpu')).not.toHaveAttribute('data-poc-stats')
   await page.reload()
@@ -396,9 +396,9 @@ test('render failure falls back until explicit retry, without leaving stale over
     GpuToolpathRenderer.prototype.render = () => { throw new Error('injected render failure') }
     Object.assign(window, { repairGpu: () => { GpuToolpathRenderer.prototype.render = render } })
   })
-  const selector = page.getByRole('combobox', { name: '2D renderer', exact: true })
+  const selector = page.getByRole('button', { name: 'GPU', exact: true })
   const base = page.locator('canvas.sketch-canvas')
-  await selector.selectOption('gpu')
+  await selector.click()
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
   await expect(base).toHaveAttribute('data-toolpath-renderer-error', /injected render failure/)
   await expect(page.locator('canvas.sketch-toolpath-gpu')).toBeHidden()
@@ -424,7 +424,7 @@ test('hidden sketch submits no GPU work and releases hidden/replaced results', a
     GpuToolpathRenderer.prototype.retain = function (toolpaths) { observation.retained = toolpaths.length; return retain.call(this, toolpaths) }
     Object.assign(window, { gpuObservation: observation })
   })
-  await page.getByRole('combobox', { name: '2D renderer', exact: true }).selectOption('gpu')
+  await page.getByRole('button', { name: 'GPU', exact: true }).click()
   await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await page.getByRole('tab', { name: '3D view', exact: true }).click()
   await expect(page.locator('canvas.sketch-canvas')).toBeHidden()
@@ -444,16 +444,19 @@ test('hidden sketch submits no GPU work and releases hidden/replaced results', a
 
 test.describe('GPU tablet emulation', () => {
   test.use({ hasTouch: true, deviceScaleFactor: 2, viewport: { width: 1024, height: 768 } })
-  test('touch-sized selector and pinch keep the GPU surface aligned', async ({ app }, testInfo) => {
+  test('touch-sized toggle and pinch keep the GPU surface aligned', async ({ app }, testInfo) => {
     const page = app.page
     await seedToolpathVisProject(page)
-    const selector = page.getByRole('combobox', { name: '2D renderer', exact: true })
+    const selector = page.getByRole('button', { name: 'GPU', exact: true })
     await expect(selector).toBeVisible()
     expect((await selector.boundingBox())!.height).toBeGreaterThanOrEqual(44)
-    await selector.selectOption('gpu')
+    await selector.tap()
     const base = page.locator('canvas.sketch-canvas')
     const gpu = page.locator('canvas.sketch-toolpath-gpu')
     await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+    const panel = page.locator('#workspace-panel-sketch .viewport-toolpath-vis')
+    const toggleBox = (await selector.boundingBox())!
+    expect((await panel.boundingBox())!.height).toBeLessThanOrEqual(toggleBox.height + 16)
     const box = (await base.boundingBox())!
     const x = box.x + box.width / 2, y = box.y + box.height / 2
     const stats = async () => JSON.parse((await gpu.getAttribute('data-poc-stats'))!) as { submissions: number; preparations: number }
@@ -480,6 +483,30 @@ test.describe('GPU tablet emulation', () => {
 })
 
 test.describe('Toolpath visibility panel smoke', () => {
+  test('GPU is the first inline toggle and supports keyboard switching', async ({ app, ui }, testInfo) => {
+    const page = app.page
+    await seedToolpathVisProject(page)
+    const panel = ui.toolpathVis.sketchPanel(page)
+    const items = ui.toolpathVis.sketchItems(page)
+    await expect(items).toHaveText(['GPU', 'Cuts', 'Lead-ins', 'Rapids', 'Plunges', 'Retractions', 'Directions', 'Feed colours'])
+    await expect(panel.getByRole('combobox')).toHaveCount(0)
+    const centers = await items.evaluateAll(buttons => buttons.map(button => {
+      const box = button.getBoundingClientRect()
+      return box.y + box.height / 2
+    }))
+    expect(new Set(centers).size).toBe(1)
+    const gpu = items.first()
+    await expect(gpu).toHaveAttribute('aria-pressed', 'false')
+    await gpu.focus()
+    await page.keyboard.press('Enter')
+    await expect(gpu).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'gpu')
+    await page.keyboard.press('Space')
+    await expect(gpu).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'canvas')
+    await testInfo.attach('inline-gpu-toggle', { body: await panel.screenshot(), contentType: 'image/png' })
+  })
+
   test('solid rapid styling renders in Canvas and booklet snapshots', async ({ app, ui }, testInfo) => {
     await seedToolpathVisProject(app.page)
     await expect(ui.toolpathVis.sketchPanel(app.page)).toBeVisible({ timeout: 15000 })
@@ -585,7 +612,7 @@ test.describe('Toolpath visibility panel smoke', () => {
 
     // Toggle off one item
     const sketchItems = ui.toolpathVis.sketchItems(app.page)
-    const firstItem = sketchItems.first()
+    const firstItem = sketchItems.filter({ hasText: 'Cuts' })
     await expect(firstItem).toHaveAttribute('aria-pressed', 'true')
     await firstItem.click()
     await expect(firstItem).toHaveAttribute('aria-pressed', 'false')
@@ -597,7 +624,7 @@ test.describe('Toolpath visibility panel smoke', () => {
     await expect(sketchPanel).toHaveClass(/viewport-toolpath-vis--expanded/)
 
     // Selection preserved
-    await expect(sketchItems.first()).toHaveAttribute('aria-pressed', 'false')
+    await expect(firstItem).toHaveAttribute('aria-pressed', 'false')
   })
 
   test('panel renders in both sketch and 3D views', async ({ app, ui }) => {

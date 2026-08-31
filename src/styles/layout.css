@@ -2680,43 +2680,21 @@
   z-index: 10;
 }
 
-.viewport-toolpath-renderer {
-  display: flex;
-  flex-basis: 100%;
-  flex-wrap: wrap;
+.viewport-toolpath-renderer__status {
+  display: inline-flex;
   align-items: center;
-  gap: 6px 12px;
-  border-top: 1px solid var(--line-strong);
-  padding-top: 5px;
+  gap: 8px;
+  font-size: 11px;
   color: var(--text-dim);
 }
 
-.viewport-toolpath-renderer label,
-.viewport-toolpath-renderer__fallback {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.viewport-toolpath-renderer select,
-.viewport-toolpath-renderer button {
-  min-height: 28px;
-  border: 1px solid var(--line-strong);
-  border-radius: 5px;
-  padding: 2px 6px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-}
-
-.viewport-toolpath-renderer__fallback {
-  flex-wrap: wrap;
-  font-size: 11px;
+.viewport-toolpath-vis__swatch--gpu {
+  background: var(--accent);
 }
 
 @media (pointer: coarse) {
-  .viewport-toolpath-renderer select,
-  .viewport-toolpath-renderer button {
+  .app-shell .viewport-toolpath-vis__item.viewport-toolpath-vis__gpu,
+  .viewport-toolpath-renderer__status button {
     min-height: 44px;
   }
 }

@@ -21,26 +21,26 @@ import type { ToolpathRendererControl as RendererControl } from './canvas/toolpa
 export function ToolpathRendererControl({ renderer }: { renderer: RendererControl }) {
   const { t } = useI18n()
   return (
-    <div className="viewport-toolpath-renderer">
-      <label>
-        <span>{t('appShell.toolpath.renderer')}</span>
-        <select value={renderer.choice} onChange={event => {
-          const value = event.target.value
-          if (value === 'canvas' || value === 'gpu') renderer.onChange(value)
-        }}>
-          <option value="canvas">{t('appShell.toolpath.rendererCanvas')}</option>
-          <option value="gpu">{t('appShell.toolpath.rendererGpu')}</option>
-        </select>
-      </label>
+    <>
+      <button
+        className={`viewport-toolpath-vis__item viewport-toolpath-vis__gpu ${renderer.choice === 'gpu' ? 'viewport-toolpath-vis__item--selected' : ''}`}
+        type="button"
+        aria-pressed={renderer.choice === 'gpu'}
+        title={`${t('appShell.toolpath.renderer')}: ${t(renderer.choice === 'gpu' ? 'appShell.toolpath.rendererGpu' : 'appShell.toolpath.rendererCanvas')}`}
+        onClick={() => renderer.onChange(renderer.choice === 'gpu' ? 'canvas' : 'gpu')}
+      >
+        <span className="viewport-toolpath-vis__swatch viewport-toolpath-vis__swatch--gpu" />
+        {t('appShell.toolpath.rendererGpu')}
+      </button>
       {renderer.status === 'loading' && (
-        <span role="status">{t('appShell.toolpath.rendererLoading')}</span>
+        <span className="viewport-toolpath-renderer__status" role="status">{t('appShell.toolpath.rendererLoading')}</span>
       )}
       {renderer.status === 'fallback' && (
-        <div className="viewport-toolpath-renderer__fallback" role="status">
+        <span className="viewport-toolpath-renderer__status" role="status">
           <span>{t('appShell.toolpath.rendererFallback')}</span>
           <button type="button" onClick={renderer.onRetry}>{t('appShell.toolpath.rendererRetry')}</button>
-        </div>
+        </span>
       )}
-    </div>
+    </>
   )
 }

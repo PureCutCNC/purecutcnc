@@ -1,6 +1,7 @@
 # GPU toolpath renderer and comparison harness — issue #683
 
-The sketch toolpath panel now offers **2D renderer: Canvas / GPU** in production.
+The sketch toolpath panel offers **GPU** as its first inline toggle in production:
+on selects GPU, off selects Canvas.
 Canvas remains the default, fallback and booklet renderer. The choice is stored
 locally for this application, not in the project or undo history, and never
 invalidates CAM results. GPU failures display a Canvas fallback message and

@@ -87,6 +87,7 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
       >
         <Icon id="gcode" />
       </button>
+      {expanded && renderer ? <ToolpathRendererControl renderer={renderer} /> : null}
       {expanded ? (
         ITEMS.map(({ key, labelKey, swatch }) => {
           const selected = key === 'feedColours'
@@ -111,7 +112,6 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
           )
         })
       ) : null}
-      {expanded && renderer ? <ToolpathRendererControl renderer={renderer} /> : null}
       {showLegend && legendSteps ? (
         <div
           className="viewport-toolpath-vis__legend"
