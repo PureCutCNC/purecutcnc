@@ -263,7 +263,8 @@ test('switching away cancels a pending lazy GPU load', async ({ app }) => {
   const request = page.waitForRequest('**/gpuToolpathRenderer.ts')
   await selector.click()
   await request
-  await expect(page.getByRole('status').filter({ hasText: 'Starting GPU' })).toBeVisible()
+  await expect(selector).toHaveAttribute('aria-busy', 'true')
+  await expect(page.getByRole('status').filter({ hasText: 'Starting GPU' })).toHaveCount(1)
   await selector.click()
   release()
   await page.unrouteAll({ behavior: 'wait' })
@@ -273,6 +274,42 @@ test('switching away cancels a pending lazy GPU load', async ({ app }) => {
   await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'gpu')
   await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(1)
 })
+
+for (const hasTouch of [false, true]) {
+  test.describe(`GPU loading layout (${hasTouch ? 'tablet' : 'desktop'})`, () => {
+    test.use({ hasTouch, viewport: { width: 1024, height: 768 } })
+    test('pending startup keeps the panel and toggle positions stable', async ({ app }, testInfo) => {
+      const page = app.page
+      await seedToolpathVisProject(page)
+      let release: () => void = () => {}
+      const pending = new Promise<void>(resolve => { release = resolve })
+      await page.route('**/gpuToolpathRenderer.ts', async route => { await pending; await route.continue() })
+      const gpu = page.getByRole('button', { name: 'GPU', exact: true })
+      const panel = page.locator('#workspace-panel-sketch .viewport-toolpath-vis')
+      const layout = () => panel.evaluate(element => [element, ...element.querySelectorAll('button')].map(node => {
+        const { x, y, width, height } = node.getBoundingClientRect()
+        return { x, y, width, height }
+      }))
+      try {
+        if (hasTouch) await gpu.tap()
+        else await gpu.click()
+        await expect(gpu).toHaveAttribute('aria-busy', 'true')
+        await expect(gpu).toHaveAttribute('title', /Starting GPU/)
+        const loadingLayout = await layout()
+        await testInfo.attach('gpu-loading', { body: await panel.screenshot(), contentType: 'image/png' })
+        release()
+        await page.unrouteAll({ behavior: 'wait' })
+        await expect(page.locator('canvas.sketch-canvas')).toHaveAttribute('data-toolpath-renderer', 'gpu')
+        await expect(gpu).toHaveAttribute('aria-busy', 'false')
+        await expect(page.getByRole('status').filter({ hasText: 'Starting GPU' })).toHaveCount(0)
+        expect(await layout()).toEqual(loadingLayout)
+      } finally {
+        release()
+        await page.unrouteAll({ behavior: 'wait' })
+      }
+    })
+  })
+}
 
 
 test('GPU annotation painter order matches Canvas across selection, resize and navigation', async ({ app }, testInfo) => {

@@ -2692,6 +2692,34 @@
   background: var(--accent);
 }
 
+.viewport-toolpath-renderer__loading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.viewport-toolpath-vis__gpu[aria-busy="true"] .viewport-toolpath-vis__swatch {
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  background: transparent;
+  animation: toolpath-gpu-loading 0.8s linear infinite;
+}
+
+@keyframes toolpath-gpu-loading {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewport-toolpath-vis__gpu[aria-busy="true"] .viewport-toolpath-vis__swatch {
+    animation: none;
+  }
+}
+
 @media (pointer: coarse) {
   .app-shell .viewport-toolpath-vis__item.viewport-toolpath-vis__gpu,
   .viewport-toolpath-renderer__status button {
