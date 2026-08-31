@@ -189,6 +189,8 @@ export const warningsEn = {
   'warnings.finishNeedsModel': 'Finish surface requires a model feature and optionally one or more region features',
   'warnings.finishNotMesh': 'Finish surface requires an imported mesh model feature',
   'warnings.finishNoDepthInPocket': 'Containing subtract feature leaves no finish depth for this model',
+  'warnings.waterlineRefinementCoarsened': 'Waterline refinement was coarsened from {requested} to {effective} to fit its budget — the finish is rougher than the adaptive spacing asks for; restrict the operation to a region to get the full spacing',
+  'warnings.waterlineRefinementTruncated': 'Waterline refinement stopped after {rings} passes — part of the surface carries no refinement at all; restrict the operation to a region, or increase the adaptive spacing',
   'warnings.surfaceHeightMapReduced': 'Finish surface height map reduced from {from} to about {to} cells for performance',
   'warnings.surfaceSilhouetteDegenerate': 'Model silhouette is degenerate — no finish surface coverage generated',
   'warnings.cleanupStockToLeaveOffsets': '3D surface cleanup uses stock-to-leave values; non-zero radial or axial leave offsets cleanup from the final surface',

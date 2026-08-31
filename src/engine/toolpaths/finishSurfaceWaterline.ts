@@ -61,8 +61,79 @@ import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from '.
 import { appendAll } from './appendAll'
 
 const WATERLINE_LENGTH_EPSILON_MM = 0.01
-const WATERLINE_PROJECTED_MAX_RINGS_PER_BAND = 96
-const WATERLINE_PROJECTED_MAX_TOTAL_RINGS = 1000
+
+/**
+ * How many times over the adaptive refinement may cover the model footprint
+ * (issue #698).
+ *
+ * The refinement's cost is the length of path it emits, and covering an area
+ * `A` at spacing `s` costs `A / s` of path. So the bound is stated as an area
+ * ratio, with the spacing cancelling out of it: the refinement may cover
+ * `WATERLINE_REFINEMENT_COVERAGE * footprintArea`, and when the bands and caps
+ * it has to fill add up to more than that, every one of them is machined at a
+ * proportionally coarser spacing
+ *
+ *     effective = requested * demandArea / (COVERAGE * footprintArea)
+ *
+ * rather than the first ones getting everything they ask for and the rest
+ * getting nothing.
+ *
+ * **What this replaces was a single global ring counter spent top-down**, which
+ * made a finer Adaptive spacing produce *worse* coverage: halving the spacing
+ * doubled what each band consumed, so the counter ran out higher up the model
+ * and everything below it was left uncut. On a synthetic hills-and-flats
+ * fixture (3 mm ball, 0.5 mm stepdown) the share of flat area never cut ran
+ * 14.3 / 14.3 / 16.2 / 33.9 % at 1.20 / 0.60 / 0.30 / 0.15 mm — backwards, and
+ * at 0.15 mm no better than switching adaptive refinement off entirely.
+ *
+ * Stating the bound this way fixes that by construction rather than by tuning.
+ * `demandArea` is a property of the model and the coarse level set, not of the
+ * spacing — measured at 1.00x footprint on the hills fixture at 0.30 mm and the
+ * same 1.00x at 0.15 mm — so `effective` is a *fixed multiple* of `requested`.
+ * Halving Adaptive spacing halves the spacing actually machined, budget or no
+ * budget. It is also scale-free, which a ring count is not: a 600 mm part gets
+ * 100x the budget of a 60 mm one, so the same setting means the same thing on
+ * both.
+ *
+ * Measured demand, i.e. what each fixture would need for the budget never to
+ * bind at all:
+ *
+ *     hills fixture, 0.30 mm and 0.15 mm    1.00x footprint
+ *     hills fixture, 0.25 mm stepdown       3.43x footprint
+ *     Makera_Model.camj, default            4.56x footprint
+ *
+ * 2 sits well above the first and below the last on purpose. The hills fixture
+ * is the one whose acceptance criterion is monotone coverage, and it clears the
+ * bound at every spacing tested, so its refinement is never coarsened. Makera
+ * is the one that pays, and what it buys there is the pair of criteria that
+ * pull against each other, since cusp height goes as the *square* of spacing:
+ *
+ *                      spacing            flat p90   never cut   moves     gen
+ *     shipped          0.0100 in          0.992 mm      0.3 %  115,828    8.6 s
+ *     COVERAGE 3       0.0100 -> 0.0152   0.048 mm      0.0 %  177,119   24.2 s
+ *     COVERAGE 2       0.0100 -> 0.0228   0.064 mm      0.0 %  117,791   14.1 s
+ *     COVERAGE 1.5     0.0100 -> 0.0304   0.098 mm      0.0 %   90,157   11.8 s
+ *     no bound         0.0100             0.041 mm      0.0 %  271,836   33.1 s
+ *
+ * 3 costs 2.8x the shipped generation time, and 1.5 lands on the 0.10 mm cusp
+ * budget with nothing to spare. 2 is the only row with room on both.
+ */
+const WATERLINE_REFINEMENT_COVERAGE = 2
+
+/**
+ * Catastrophic backstop on inserted rings — **not** the allocator (issue #698).
+ *
+ * `WATERLINE_REFINEMENT_COVERAGE` bounds the refinement's total path length but
+ * not the number of rings that length is cut into, and a model dense in tiny
+ * peaks emits very short rings that each still cost a Clipper offset and a
+ * link. This stops that case spinning, and nothing else — it sits an order of
+ * magnitude above both calibration fixtures (2,199 rings on the hills fixture
+ * at 0.15 mm, 2,888 on Makera with no bound at all), so an ordinary model never
+ * reaches it. When it does fire the operation says so with
+ * `waterlineRefinementTruncated`, because unlike coarsening it leaves the
+ * surface uneven rather than uniformly rougher.
+ */
+const WATERLINE_PROJECTED_MAX_TOTAL_RINGS = 20_000
 const WATERLINE_ADAPTIVE_Z_KEY_DECIMALS = 6
 const WATERLINE_PROJECTED_MIN_BBOX_OVERLAP = 0.05
 const WATERLINE_PROJECTED_PARENT_MAX_AREA_RATIO = 8
@@ -469,6 +540,49 @@ interface WaterlineRefinementMetrics {
   hitPassLimit: boolean
 }
 
+/**
+ * State shared by the refinement's two passes (issue #698).
+ *
+ * The same walk runs twice: once with `dryRun` set, which prices every band and
+ * cap the refinement would fill and emits nothing, and once for real at the
+ * spacing that pricing chose. Pricing before emitting is the whole point — a
+ * band's share must not depend on how far down the model it sits.
+ *
+ * Repeating the walk is safe because it is deterministic: `processTipStack`
+ * branches only on sliced contours and `pathsAreRelatedForProjectedBand`, never
+ * on what was emitted, `upperPathHasHigherParent` reads the caller's coarse
+ * levels rather than the mutated copy, and every other piece of walk state is
+ * local to one call.
+ *
+ * The caches make the repeat close to free, and keep the slice budget honest:
+ * the projected slices are the only expensive thing the dry pass does, and
+ * memoizing them means each Z is sliced exactly once across both passes, which
+ * is what a single pass did.
+ */
+interface WaterlineRefinementPass {
+  dryRun: boolean
+  /** Total band/cap area the refinement would cover, in project units squared. */
+  demandArea: number
+  contourCache: Map<string, ClipperPath[]>
+  materialCache: Map<string, ClipperPath[]>
+}
+
+/** Net area of a Clipper path set in project units, holes subtracted. */
+function clipperPathsArea(paths: ClipperPath[]): number {
+  let area = 0
+  for (const path of paths) area += ClipperLib.Clipper.Area(path)
+  return Math.abs(area) / (DEFAULT_CLIPPER_SCALE * DEFAULT_CLIPPER_SCALE)
+}
+
+/** Machinable footprint of the model, in project units squared. */
+function heightMapFootprintArea(heightMap: HeightMap): number {
+  let cells = 0
+  for (let at = 0; at < heightMap.data.length; at += 1) {
+    if (Number.isFinite(heightMap.data[at])) cells += 1
+  }
+  return cells * heightMap.cellSize * heightMap.cellSize
+}
+
 interface WaterlineSuppressedPath {
   z: number
   path: ClipperPath
@@ -677,6 +791,7 @@ function generateProjectedWaterlineLevels(
   sliceProjectedAtZ: (z: number) => ClipperPath[],
   projectTerminalCapsToTargetContact: boolean,
   budget: WaterlineSliceBudget,
+  pass: WaterlineRefinementPass,
 ): WaterlineLevelBuild & { metrics: WaterlineRefinementMetrics; suppressedCoarsePaths: WaterlineSuppressedPath[] } {
   // Active intersecting-add footprints expanded by toolOffset, so projected
   // band/cap rings can be subtracted away from areas occupied by add features
@@ -734,18 +849,43 @@ function generateProjectedWaterlineLevels(
   // emerged island found as an unmatched lower in the previous pair).
   const processedTipPaths = new Set<ClipperPath>()
 
+  // Memoized across both refinement passes so the dry pass costs no extra
+  // slicing and the slice vertex budget is charged exactly once per Z, as it
+  // was when the refinement ran only once (issue #698).
+  const zCacheKey = (z: number): string => z.toFixed(WATERLINE_ADAPTIVE_Z_KEY_DECIMALS)
   const projectedContourPathsAtZ = (z: number): ClipperPath[] => {
+    const key = zCacheKey(z)
+    const cached = pass.contourCache.get(key)
+    if (cached) return cached
     const slice = sliceProjectedAtZ(z)
-    if (slice.length === 0) return []
-    return clipRingsAgainstAdds(offsetClipperPaths(slice, toolOffset), z)
+    const contours = slice.length === 0
+      ? []
+      : clipRingsAgainstAdds(offsetClipperPaths(slice, toolOffset), z)
+    pass.contourCache.set(key, contours)
+    return contours
+  }
+  const projectedMaterialAtZ = (z: number): ClipperPath[] => {
+    const key = zCacheKey(z)
+    const cached = pass.materialCache.get(key)
+    if (cached) return cached
+    const material = sliceProjectedAtZ(z)
+    pass.materialCache.set(key, material)
+    return material
   }
 
   const emitProjectedCapTerminal = (path: ClipperPath, z: number): boolean => {
     const center = clipperPathCentroid(path)
     const terminalCapPaths = clipRingsAgainstAdds([path], z)
     if (!pointInClipperPaths(terminalCapPaths, center)) return true
-    const terminalMaterial = sliceProjectedAtZ(z - waterlineLengthEpsilon)
+    const terminalMaterial = projectedMaterialAtZ(z - waterlineLengthEpsilon)
     if (!pointInClipperPaths(terminalMaterial, center)) return true
+
+    // The inward fill below sweeps the whole cap disc, so its cost is that
+    // disc's area at whatever spacing the allocator picks (issue #698).
+    if (pass.dryRun) {
+      if (projectTerminalCapsToTargetContact) pass.demandArea += clipperPathsArea(terminalCapPaths)
+      return true
+    }
 
     // Tool-offset contours around a peak stop shrinking when their radius
     // approaches the cutter radius. Fill that remaining disk at the requested
@@ -821,6 +961,15 @@ function generateProjectedWaterlineLevels(
 
     const bandPaths = differenceClipperPaths([lowerPath], matchedUpperPaths)
     if (bandPaths.length === 0) return true
+
+    // Pricing pass: a band is charged its own area, because filling it costs
+    // `area / spacing` of path whatever the spacing turns out to be. Nothing is
+    // emitted and the per-ring offsets below — the expensive part — are skipped
+    // entirely (issue #698).
+    if (pass.dryRun) {
+      pass.demandArea += clipperPathsArea(bandPaths)
+      return true
+    }
 
     let stoppedByCollapse = false
     for (let step = 1; step <= maxRingsPerBand; step += 1) {
@@ -1417,17 +1566,17 @@ export function generateFinishSurfaceWaterline(
       : stepoverDistance,
     waterlineLengthEpsilon,
   )
-  const maxRingsPerBand = Math.max(
-    1,
-    Math.min(
-      WATERLINE_PROJECTED_MAX_TOTAL_RINGS,
-      Math.floor(
-        operation.waterlineMaxRingsPerBand && operation.waterlineMaxRingsPerBand > 0
-          ? operation.waterlineMaxRingsPerBand
-          : WATERLINE_PROJECTED_MAX_RINGS_PER_BAND,
-      ),
-    ),
-  )
+  // Rings per band is a loop guard, not an allocator: the coverage budget below
+  // bounds what the refinement costs, so this only has to stop an offset loop
+  // that never collapses. It was a fixed 96, which reproduced #698's own bug one
+  // level down — a fixed *count* at half the spacing reaches half as far, so the
+  // widest bands lost coverage as Adaptive spacing got finer (14.3 % of the
+  // hills fixture's flat area never cut at 0.30 mm, 14.6 % at 0.15 mm, with the
+  // global budget already fixed). Expressed as a reach it cannot: a band may be
+  // refined across the whole model whatever the spacing.
+  const userMaxRingsPerBand = operation.waterlineMaxRingsPerBand && operation.waterlineMaxRingsPerBand > 0
+    ? Math.floor(operation.waterlineMaxRingsPerBand)
+    : 0
   const tipStepdownDistance = Math.max(
     operation.waterlineTipStepdown && operation.waterlineTipStepdown > 0
       ? operation.waterlineTipStepdown
@@ -1476,7 +1625,8 @@ export function generateFinishSurfaceWaterline(
     warnings.push({ code: 'debug', params: { text: `Debug: waterline mode, adaptive=${adaptiveRefinementEnabled ? 'on' : 'off'}, ` +
       `spacing=${stepoverDistance.toFixed(4)}, triggerGap=${refinementGapThreshold.toFixed(4)}, ` +
       `tipStepdown=${tipStepdownDistance.toFixed(4)}, ` +
-      `maxRingsPerBand=${maxRingsPerBand}, epsilon=${waterlineLengthEpsilon.toFixed(6)}, ` +
+      `maxRingsPerBand=${userMaxRingsPerBand > 0 ? userMaxRingsPerBand : 'auto'}, ` +
+      `epsilon=${waterlineLengthEpsilon.toFixed(6)}, ` +
       `toolOffset=${toolOffset.toFixed(4)}` } })
     warnings.push({ code: 'debug', params: { text: `Debug: intersectingAdds=${intersectingAdds.length} ` +
       `[${intersectingAdds.map((a) => `${a.feature.name}:z=${a.bottomZ.toFixed(2)}..${a.topZ.toFixed(2)}`).join(', ')}], ` +
@@ -1624,20 +1774,59 @@ export function generateFinishSurfaceWaterline(
     ) return Number.NEGATIVE_INFINITY
     return safetyHeightMap.data[row * safetyHeightMap.width + col]
   }
-  const projectedLevelBuild = adaptiveRefinementEnabled && regionFeatures.length === 0
-    ? generateProjectedWaterlineLevels(
-        projectedInputBuild,
-        stepoverDistance,
-        refinementGapThreshold,
-        maxRingsPerBand,
-        waterlineLengthEpsilon,
-        intersectingAdds,
-        toolOffset,
-        tipStepdownDistance,
-        projectedSliceAtZ,
-        shouldProjectToTargetContact,
-        sliceBudget,
-      )
+  // Adaptive refinement, priced then filled (issue #698). The first pass walks
+  // the whole level list and charges every band and cap the area it would have
+  // to cover, emitting nothing; the second runs at the spacing that pricing
+  // chose. Allocating from a total known in advance is what stops a band's
+  // share depending on where it sits in the model — the previous bound was a
+  // global ring counter spent from the top down, so the flats at the bottom got
+  // whatever the hills above them had left, which was nothing.
+  const refinementEnabled = adaptiveRefinementEnabled && regionFeatures.length === 0
+  const refinementPass: WaterlineRefinementPass = {
+    dryRun: true,
+    demandArea: 0,
+    contourCache: new Map<string, ClipperPath[]>(),
+    materialCache: new Map<string, ClipperPath[]>(),
+  }
+  // A band can be no wider than the model, so the reach that can never truncate
+  // a real band is the footprint's diagonal (issue #698).
+  const refinementReach = Math.hypot(
+    heightMapBbox.maxX - heightMapBbox.minX,
+    heightMapBbox.maxY - heightMapBbox.minY,
+  )
+  const bandRingLimit = (spacing: number): number => Math.max(1, Math.min(
+    WATERLINE_PROJECTED_MAX_TOTAL_RINGS,
+    userMaxRingsPerBand > 0 ? userMaxRingsPerBand : Math.ceil(refinementReach / spacing),
+  ))
+  const buildRefinement = (
+    spacing: number,
+    activePass: WaterlineRefinementPass,
+  ): ReturnType<typeof generateProjectedWaterlineLevels> => generateProjectedWaterlineLevels(
+    projectedInputBuild,
+    spacing,
+    refinementGapThreshold,
+    bandRingLimit(spacing),
+    waterlineLengthEpsilon,
+    intersectingAdds,
+    toolOffset,
+    tipStepdownDistance,
+    projectedSliceAtZ,
+    shouldProjectToTargetContact,
+    sliceBudget,
+    activePass,
+  )
+  const refinementFootprintArea = heightMapFootprintArea(baseHeightMap)
+  const refinementBudgetArea = WATERLINE_REFINEMENT_COVERAGE * refinementFootprintArea
+  let effectiveStepover = stepoverDistance
+  if (refinementEnabled && refinementBudgetArea > 0) {
+    buildRefinement(stepoverDistance, refinementPass)
+    if (sliceBudget.exceeded) return refuseMeshTooDense(sliceBudget, warnings)
+    if (refinementPass.demandArea > refinementBudgetArea) {
+      effectiveStepover = stepoverDistance * (refinementPass.demandArea / refinementBudgetArea)
+    }
+  }
+  const projectedLevelBuild = refinementEnabled
+    ? buildRefinement(effectiveStepover, { ...refinementPass, dryRun: false, demandArea: 0 })
     : null
   const coarseLevelsWithSuppressedCaps = projectedLevelBuild
     ? suppressProjectedCoarsePaths(
@@ -1676,7 +1865,30 @@ export function generateFinishSurfaceWaterline(
   // winding, which can flip during open-path difference.
   const sliceMaterialByZ = refinedLevelBuild.sliceMaterialByZ
 
+  // The refinement budget is a real bound on the surface produced, so it says so
+  // out loud rather than in a `debug` line nobody has switched on (issue #698).
+  if (effectiveStepover > stepoverDistance * (1 + 1e-9)) {
+    warnings.push({
+      code: 'waterlineRefinementCoarsened',
+      params: {
+        requested: stepoverDistance.toFixed(4),
+        effective: effectiveStepover.toFixed(4),
+      },
+    })
+  }
+  if (refinedLevelBuild.metrics.hitCap) {
+    warnings.push({
+      code: 'waterlineRefinementTruncated',
+      params: { rings: WATERLINE_PROJECTED_MAX_TOTAL_RINGS.toLocaleString() },
+    })
+  }
+
   if (operation.debugToolpath) {
+    warnings.push({ code: 'debug', params: { text: `Debug: waterline refinement demand ` +
+      `${refinementPass.demandArea.toFixed(2)} (${(refinementPass.demandArea / Math.max(refinementFootprintArea, 1e-9)).toFixed(2)}x footprint) ` +
+      `against a budget of ${refinementBudgetArea.toFixed(2)} ` +
+      `(${WATERLINE_REFINEMENT_COVERAGE}x a ${refinementFootprintArea.toFixed(2)} footprint), ` +
+      `spacing ${stepoverDistance.toFixed(4)} -> ${effectiveStepover.toFixed(4)}` } })
     warnings.push({ code: 'debug', params: { text: `Debug: waterline densest slice ${sliceBudget.maxSlice} of a ` +
       `${sliceBudget.limit} vertex budget (${sliceBudget.spent} contour vertices over the whole operation) ` +
       `at a ${sliceDecimationTolerance.toFixed(6)} decimation tolerance` } })

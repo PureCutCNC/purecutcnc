@@ -76,6 +76,7 @@ const ALL_CODES = [
   'restOnlyEdgeRoute', 'restOnlyPocket', 'restNoValidOutsideTargets',
   'clampCrossedOne', 'clampCrossedMany', 'clampTravelLimitExceeded',
   'finishNeedsModel', 'finishNotMesh', 'finishNoDepthInPocket',
+  'waterlineRefinementCoarsened', 'waterlineRefinementTruncated',
   'surfaceHeightMapReduced', 'surfaceSilhouetteDegenerate', 'cleanupStockToLeaveOffsets', 'cleanupNoContours',
   'pocketNoFloorRegion', 'pocketNoFloorSegments', 'pocketWallCornerCleanupFallback',
   'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',

@@ -171,6 +171,8 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.finishNeedsModel': 'La superficie de acabado requiere una operación de modelo y, opcionalmente, una o más operaciones de región.',
   'warnings.finishNotMesh': 'La superficie de acabado requiere una operación de modelo de malla importada.',
   'warnings.finishNoDepthInPocket': 'La operación de sustracción no deja profundidad de acabado para este modelo.',
+  'warnings.waterlineRefinementCoarsened': 'El refinado por línea de flotación se engrosó de {requested} a {effective} para ajustarse a su presupuesto: el acabado es más basto de lo que pide el espaciado adaptativo. Limite la operación a una región para obtener el espaciado completo.',
+  'warnings.waterlineRefinementTruncated': 'El refinado por línea de flotación se detuvo tras {rings} pasadas: parte de la superficie no lleva ningún refinado. Limite la operación a una región o aumente el espaciado adaptativo.',
   'warnings.surfaceHeightMapReduced': 'El mapa de altura de la superficie de acabado se redujo de {from} a aproximadamente {to} celdas para optimizar el rendimiento.',
   'warnings.surfaceSilhouetteDegenerate': 'La silueta del modelo está degenerada; no se generó cobertura de acabado de superficie.',
   'warnings.cleanupStockToLeaveOffsets': 'La limpieza de superficie 3D utiliza valores de material a dejar; los desplazamientos radiales o axiales de salida distintos de cero limpian la superficie final.',

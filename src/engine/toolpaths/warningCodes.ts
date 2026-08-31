@@ -130,6 +130,17 @@ export type ToolpathWarningCode =
   | 'finishNeedsModel'
   | 'finishNotMesh'
   | 'finishNoDepthInPocket'
+  /** The waterline adaptive refinement asked to cover more ground than its
+   *  budget allows, so every band was machined at a proportionally coarser
+   *  spacing than the one requested. Warn, not refuse: the program is safe and
+   *  complete, it is just not the finish that was asked for, and that has to be
+   *  visible without Debug toolpath (issue #698). */
+  | 'waterlineRefinementCoarsened'
+  /** The catastrophic ring backstop fired — the refinement was cut short rather
+   *  than merely coarsened, so part of the surface carries no refinement at all.
+   *  Distinct from `waterlineRefinementCoarsened` on purpose: one says the
+   *  finish is uniformly coarser, this one says it is uneven (issue #698). */
+  | 'waterlineRefinementTruncated'
   // tabs
   | 'tabOnlyEdgeRoute'
   | 'tabsOverlapAmbiguous'
