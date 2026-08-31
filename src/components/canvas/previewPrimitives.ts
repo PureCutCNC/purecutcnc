@@ -590,6 +590,13 @@ function drawSourceMarker(ctx: CanvasRenderingContext2D, cx: number, cy: number,
   ctx.restore()
 }
 
+export interface ToolpathDisplayRenderOptions {
+  /** Transient navigation detail only; never write this into saved visibility. */
+  deferArrows?: boolean
+  /** Static exports retain every move instead of using the interactive merge. */
+  simplifyForDisplay?: boolean
+}
+
 export function drawToolpath(
   ctx: CanvasRenderingContext2D,
   toolpath: ToolpathResult,
@@ -600,8 +607,7 @@ export function drawToolpath(
   // operation (issue #498 S5). Optional for un-threaded callers, which keep
   // the pre-S5 40% ladder; the renderers pass the operation's real slot feed.
   slotScale = 0.4,
-  // Transient navigation detail only; never write this into saved visibility.
-  deferArrows = false,
+  { deferArrows = false, simplifyForDisplay = true }: ToolpathDisplayRenderOptions = {},
 ): void {
   // Layer membership comes from the shared declaration both renderers use; only
   // the styling below is 2D's own. This file used to re-declare the five layers
@@ -623,7 +629,7 @@ export function drawToolpath(
   // Scale-specific display geometry is cached by toolpath identity. The cache
   // uses pan-independent scaled-world coordinates, so a pan is only a viewport
   // query instead of a walk over every emitted move (issue #679).
-  const display = toolpathDisplayGeometry(toolpath, vt.scale)
+  const display = toolpathDisplayGeometry(toolpath, vt.scale, simplifyForDisplay)
   // The margin preserves strokes, arrowheads, and debug markers that extend a
   // few canvas pixels past a segment whose centre line is just off-canvas.
   const viewport = expandDisplayViewport(canvasDisplayViewport(ctx.canvas, vt), 12)

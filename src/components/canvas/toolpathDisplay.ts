@@ -34,6 +34,9 @@ import type { ViewTransform } from './viewTransform'
 const DISPLAY_PATH_LENGTH = 3
 const INDEX_CELL_SIZE = 128
 const MAX_INDEXED_CELLS_PER_SEGMENT = 64
+const FULL_LAYER_QUERY_FRACTION = 0.5
+const MIN_MATCHED_SEGMENTS_FOR_FULL_LAYER_FALLBACK = 512
+const MAX_CACHED_SCALES_PER_TOOLPATH = 2
 
 export interface DisplayViewport {
   minX: number
@@ -66,11 +69,18 @@ export interface ToolpathDisplayGeometry {
 
 interface CachedDisplayGeometry {
   scale: number
+  simplify: boolean
   geometry: ToolpathDisplayGeometry
 }
 
-const displayGeometryCache = new WeakMap<ToolpathResult, CachedDisplayGeometry>()
+interface QueryScratch {
+  stamps: Uint32Array
+  generation: number
+}
+
+const displayGeometryCache = new WeakMap<ToolpathResult, CachedDisplayGeometry[]>()
 const packedSegmentIndexCache = new WeakMap<Float32Array, DisplaySegmentIndex>()
+const queryScratchCache = new WeakMap<DisplaySegmentIndex, QueryScratch>()
 
 function cellKey(x: number, y: number): string {
   return `${x}:${y}`
@@ -99,6 +109,13 @@ function intersects(a: DisplayViewport, b: DisplayViewport): boolean {
   return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
 }
 
+function segmentIntersectsViewport(segment: DisplaySegment, viewport: DisplayViewport): boolean {
+  return Math.min(segment.fromX, segment.toX) <= viewport.maxX
+    && Math.max(segment.fromX, segment.toX) >= viewport.minX
+    && Math.min(segment.fromY, segment.toY) <= viewport.maxY
+    && Math.max(segment.fromY, segment.toY) >= viewport.minY
+}
+
 function contains(a: DisplayViewport, b: DisplayViewport): boolean {
   return a.minX <= b.minX && a.minY <= b.minY && a.maxX >= b.maxX && a.maxY >= b.maxY
 }
@@ -121,7 +138,9 @@ function makeSegment(move: ToolpathMove, scale: number): DisplaySegment {
  * the real trochoidal fixtures stay below 0.25 px displacement at overview.
  * Rebuilding at the new scale restores fine detail as the user zooms in.
  */
-function displaySegments(moves: readonly ToolpathMove[], scale: number): DisplaySegment[] {
+function displaySegments(moves: readonly ToolpathMove[], scale: number, simplify: boolean): DisplaySegment[] {
+  if (!simplify) return moves.map((move) => makeSegment(move, scale))
+
   const out: DisplaySegment[] = []
   let pending: DisplaySegment | null = null
   let pendingLength = 0
@@ -198,11 +217,34 @@ function visibleSegmentIndices(index: DisplaySegmentIndex, viewport: DisplayView
   if (!viewport || !index.bounds || contains(viewport, index.bounds)) return null
   if (!intersects(viewport, index.bounds) && index.alwaysVisible.length === 0) return []
 
-  const matched = new Set<number>()
-  for (const segmentIndex of index.alwaysVisible) {
-    if (intersects(segmentBounds(index.segments[segmentIndex]), viewport)) {
-      matched.add(segmentIndex)
+  let scratch = queryScratchCache.get(index)
+  if (!scratch) {
+    scratch = { stamps: new Uint32Array(index.segments.length), generation: 0 }
+    queryScratchCache.set(index, scratch)
+  }
+  scratch.generation += 1
+  if (scratch.generation === 0) {
+    scratch.stamps.fill(0)
+    scratch.generation = 1
+  }
+
+  const { stamps, generation } = scratch
+  let matchedCount = 0
+  const fullLayerThreshold = Math.max(
+    MIN_MATCHED_SEGMENTS_FOR_FULL_LAYER_FALLBACK,
+    index.segments.length * FULL_LAYER_QUERY_FRACTION,
+  )
+  const addIfVisible = (segmentIndex: number): boolean => {
+    if (stamps[segmentIndex] === generation || !segmentIntersectsViewport(index.segments[segmentIndex], viewport)) {
+      return false
     }
+    stamps[segmentIndex] = generation
+    matchedCount += 1
+    return matchedCount >= fullLayerThreshold
+  }
+
+  for (const segmentIndex of index.alwaysVisible) {
+    if (addIfVisible(segmentIndex)) return null
   }
   const minCellX = Math.floor(viewport.minX / INDEX_CELL_SIZE)
   const maxCellX = Math.floor(viewport.maxX / INDEX_CELL_SIZE)
@@ -211,14 +253,17 @@ function visibleSegmentIndices(index: DisplaySegmentIndex, viewport: DisplayView
   for (let x = minCellX; x <= maxCellX; x += 1) {
     for (let y = minCellY; y <= maxCellY; y += 1) {
       for (const segmentIndex of index.cells.get(cellKey(x, y)) ?? []) {
-        if (intersects(segmentBounds(index.segments[segmentIndex]), viewport)) {
-          matched.add(segmentIndex)
-        }
+        if (addIfVisible(segmentIndex)) return null
       }
     }
   }
 
-  return [...matched].sort((a, b) => a - b)
+  if (matchedCount === 0) return []
+  const matched: number[] = []
+  for (let segmentIndex = 0; segmentIndex < stamps.length; segmentIndex += 1) {
+    if (stamps[segmentIndex] === generation) matched.push(segmentIndex)
+  }
+  return matched
 }
 
 function queryIndex(index: DisplaySegmentIndex, viewport: DisplayViewport | null): readonly DisplaySegment[] {
@@ -245,24 +290,39 @@ function collisionSegments(toolpath: ToolpathResult, scale: number): DisplaySegm
   return out
 }
 
-/** Cache one scale-specific display geometry per stable toolpath identity. */
-export function toolpathDisplayGeometry(toolpath: ToolpathResult, scale: number): ToolpathDisplayGeometry {
-  const cached = displayGeometryCache.get(toolpath)
-  if (cached?.scale === scale) return cached.geometry
+/**
+ * Cache the two most-recent scale/detail variants per stable toolpath identity.
+ * The second entry keeps booklet snapshots from evicting the live canvas's
+ * pan cache, while bounding memory during continuous zooming.
+ */
+export function toolpathDisplayGeometry(
+  toolpath: ToolpathResult,
+  scale: number,
+  simplify = true,
+): ToolpathDisplayGeometry {
+  const cachedEntries = displayGeometryCache.get(toolpath) ?? []
+  const cachedIndex = cachedEntries.findIndex((entry) => entry.scale === scale && entry.simplify === simplify)
+  if (cachedIndex >= 0) {
+    const [cached] = cachedEntries.splice(cachedIndex, 1)
+    cachedEntries.push(cached)
+    return cached.geometry
+  }
 
   const buckets = toolpathLayerBuckets(toolpath)
   const geometry: ToolpathDisplayGeometry = {
     layers: {
-      cuts: indexSegments(displaySegments(buckets.cuts, scale)),
-      leadIns: indexSegments(displaySegments(buckets.leadIns, scale)),
-      rapids: indexSegments(displaySegments(buckets.rapids, scale)),
-      plunges: indexSegments(displaySegments(buckets.plunges, scale)),
-      retractions: indexSegments(displaySegments(buckets.retractions, scale)),
+      cuts: indexSegments(displaySegments(buckets.cuts, scale, simplify)),
+      leadIns: indexSegments(displaySegments(buckets.leadIns, scale, simplify)),
+      rapids: indexSegments(displaySegments(buckets.rapids, scale, simplify)),
+      plunges: indexSegments(displaySegments(buckets.plunges, scale, simplify)),
+      retractions: indexSegments(displaySegments(buckets.retractions, scale, simplify)),
     },
     collisions: indexSegments(collisionSegments(toolpath, scale)),
     debug: indexSegments(debugSegments(toolpath, scale)),
   }
-  displayGeometryCache.set(toolpath, { scale, geometry })
+  cachedEntries.push({ scale, simplify, geometry })
+  if (cachedEntries.length > MAX_CACHED_SCALES_PER_TOOLPATH) cachedEntries.shift()
+  displayGeometryCache.set(toolpath, cachedEntries)
   return geometry
 }
 

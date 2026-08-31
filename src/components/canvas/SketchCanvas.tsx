@@ -1215,7 +1215,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         // Colour rungs derive from the toolpath's own operation slot feed so
         // the thresholds match the scales that operation emitted (issue #498 S5).
         const slotFeedPercent = pocketSlotFeedPercent(project.operations.find((op) => op.id === toolpath.operationId))
-        drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId, toolpathVisibility ?? { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }, slotFeedPercent === null ? 1 : slotFeedPercent / 100, navigation.active)
+        drawToolpath(ctx, toolpath, vt, toolpath.operationId === selectedOperationId, toolpathVisibility ?? { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }, slotFeedPercent === null ? 1 : slotFeedPercent / 100, { deferArrows: navigation.active })
       }
     }
 

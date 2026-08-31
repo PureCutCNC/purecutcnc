@@ -183,6 +183,29 @@ function testDrawToolpathDrawsDescendingRapids(): void {
 testDrawToolpathLayerSplit()
 testDrawToolpathDrawsDescendingRapids()
 
+function testFullDetailDisplaySkipsInteractiveMerging(): void {
+  const toolpath: ToolpathResult = {
+    operationId: 'snapshot-detail-test',
+    moves: [
+      { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 0.25, y: 0, z: 0 } },
+      { kind: 'cut', from: { x: 0.25, y: 0, z: 0 }, to: { x: 0.5, y: 0, z: 0 } },
+    ],
+    warnings: [],
+    bounds: null,
+  }
+  const cutsOnly: ToolpathVisibility = { cuts: true, leadIns: false, rapids: false, plunges: false, retractions: false, directions: false }
+  const vt = { scale: 1, offsetX: 0, offsetY: 0 }
+
+  const interactive = recordingContext()
+  drawToolpath(interactive.ctx, toolpath, vt, false, cutsOnly)
+  const fullDetail = recordingContext()
+  drawToolpath(fullDetail.ctx, toolpath, vt, false, cutsOnly, 0.4, { simplifyForDisplay: false })
+
+  assert(interactive.segments.length === 1, 'interactive rendering may coalesce a short connected run')
+  assert(fullDetail.segments.length === 2, 'static rendering must preserve every emitted move')
+}
+testFullDetailDisplaySkipsInteractiveMerging()
+
 function testNavigationSkipsArrowWork(): void {
   const { ctx: mockCtx, segments } = recordingContext()
   let fills = 0
@@ -212,11 +235,11 @@ function testNavigationSkipsArrowWork(): void {
   drawToolpath(mockCtx, toolpath, vt, true, { ...visibility, directions: false })
   assert(moveReads === 0 && fills === 0, 'Directions off skips the placement pass and arrow fills')
   segments.length = 0
-  drawToolpath(mockCtx, toolpath, vt, true, visibility, 1, true)
+  drawToolpath(mockCtx, toolpath, vt, true, visibility, 1, { deferArrows: true })
   assert(moveReads === 0 && fills === 0, 'navigation skips the placement pass and arrow fills')
   assert(segments.filter(s => s.fromX === 0 && s.toX === 30).length === 2, 'cut and collision remain visible during navigation')
   assert(segments.length > 2, 'source-tag debug markers remain visible during navigation')
-  drawToolpath(mockCtx, toolpath, vt, true, visibility, 1, false)
+  drawToolpath(mockCtx, toolpath, vt, true, visibility, 1, { deferArrows: false })
   assert(moveReads > 0 && fills > 0, 'settling calculates and draws arrows again')
   assert(visibility.directions, 'transient suppression never changes the user setting')
 }

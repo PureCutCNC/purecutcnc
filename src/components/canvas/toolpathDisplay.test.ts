@@ -128,6 +128,51 @@ test('pans reuse display geometry while zooming rebuilds it', () => {
   assert(atTwo !== atOne, 'a zoom must rebuild screen-space display geometry')
 })
 
+test('keeps the live scale cached while a full-detail snapshot is rendered', () => {
+  const toolpath = toolpathOf([
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 0.25, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 0.25, y: 0, z: 0 }, to: { x: 0.5, y: 0, z: 0 } },
+  ])
+  const live = toolpathDisplayGeometry(toolpath, 1)
+  const snapshot = toolpathDisplayGeometry(toolpath, 1, false)
+
+  assert(snapshot.layers.cuts.segments.length === 2, 'full-detail rendering must retain every emitted move')
+  assert(toolpathDisplayGeometry(toolpath, 1) === live, 'a snapshot must not evict the live canvas geometry')
+})
+
+test('falls back to the full layer when a partial viewport contains most of it', () => {
+  const moves: ToolpathMove[] = []
+  for (let index = 0; index < 1_000; index += 1) {
+    moves.push({
+      kind: 'cut',
+      from: { x: index * 10, y: 0, z: 0 },
+      to: { x: index * 10 + 1, y: 0, z: 0 },
+    })
+  }
+  const display = toolpathDisplayGeometry(toolpathOf(moves), 1).layers.cuts
+  const visible = visibleDisplaySegments(display, { minX: -1, minY: -1, maxX: 6_000, maxY: 1 })
+
+  assert(visible === display.segments, 'near-full culls should skip query materialization and draw the full layer')
+})
+
+test('keeps sparse culled segments in source order across repeated viewport queries', () => {
+  const toolpath = toolpathOf([
+    { kind: 'cut', from: { x: 250, y: 0, z: 0 }, to: { x: 251, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 1, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 400, y: 0, z: 0 }, to: { x: 401, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 500, y: 0, z: 0 }, to: { x: 501, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 600, y: 0, z: 0 }, to: { x: 601, y: 0, z: 0 } },
+  ])
+  const display = toolpathDisplayGeometry(toolpath, 1).layers.cuts
+  const viewport = { minX: -1, minY: -1, maxX: 300, maxY: 1 }
+  const first = visibleDisplaySegments(display, viewport)
+  visibleDisplaySegments(display, { minX: 390, minY: -1, maxX: 410, maxY: 1 })
+  const second = visibleDisplaySegments(display, viewport)
+
+  assert(first.map((segment) => segment.fromX).join(',') === '250,0', 'sparse culls must retain source order')
+  assert(second.map((segment) => segment.fromX).join(',') === '250,0', 'query stamps must not leak between pans')
+})
+
 test('collisions and debug source markers use the same viewport index', () => {
   const toolpath = toolpathOf(
     [
