@@ -34,6 +34,7 @@ import {
   toClipperPath,
 } from './geometry'
 import { getMeshSliceIndex, sliceMeshAtZ } from './meshSlicing'
+import { simplifyClosedRing } from './arcReconstruction'
 import {
   chooseHeightMapCellSize,
   computeXYBounds,
@@ -65,6 +66,129 @@ const WATERLINE_PROJECTED_MAX_TOTAL_RINGS = 1000
 const WATERLINE_ADAPTIVE_Z_KEY_DECIMALS = 6
 const WATERLINE_PROJECTED_MIN_BBOX_OVERLAP = 0.05
 const WATERLINE_PROJECTED_PARENT_MAX_AREA_RATIO = 8
+
+/**
+ * Deviation a waterline finish contour may carry, in mm (issue #685).
+ *
+ * `sliceMeshAtZDetailed` emits one contour vertex per triangle-edge crossing
+ * and nothing downstream thinned it — `cleanClipperPath(path, 1.0)` drops
+ * vertices closer than 0.1 um at `DEFAULT_CLIPPER_SCALE`, i.e. nothing for a
+ * real mesh. Every one of them then entered a `ClipperOffset.Execute` per Z
+ * level over a shadow that only ever grows, and that cost is superlinear in the
+ * total: the mesh behind #673 handed 3,978,229 contour vertices to Clipper and
+ * spent 177.9 s of a 305.2 s run inside that one offset.
+ *
+ * **This is not #677's tolerance and cannot be argued the way #677's was.** In
+ * roughing the contours are a keep-out, so thinning could be paid for by
+ * expanding the keep-out by the error measured — the error always moves the
+ * boundary away from the model and the worst case is extra stock. Here the
+ * offset contours *are* the cut path, so the error lands in the finished
+ * surface and can go either way.
+ *
+ * **The obvious bound is wrong, and measuring it is what found that out.**
+ * `simplifyClosedRing` reports a true Hausdorff bound, and it is tempting to
+ * conclude that a constant offset carries it through to the ring. It does not:
+ * an outward offset at a *concave* corner is trimmed where the two walls'
+ * offsets collide, and moving each wall by `d` moves that trim vertex along the
+ * valley bisector by `d / sin(theta / 2)`, which is unbounded as the valley
+ * narrows. Measured on `Oldman-splash-final.camj` at 5 um, the emitted ring
+ * moves by up to **129x** the tolerance.
+ *
+ * That excursion is a tool-*centre* artifact, not a surface error. At a trim
+ * vertex the cutter is simultaneously tangent to both valley walls — it has
+ * bottomed out — so what moves is where it stops, not what it removes. The
+ * surface is the boundary the cutter stays tangent to, and that is the shadow
+ * the ring is offset from. Measured there, on the same two models, per boundary
+ * vertex against the undecimated boundary:
+ *
+ *                          p50     p99     p99.9   worst
+ *     #673's relief       0.0d    1.0d    1.3d     1.5d  (7.4 um)
+ *     Oldman-splash       0.0d    1.0d    1.3d     5.0d  (25.0 um)
+ *
+ * 5 um is chosen against that measurement rather than against the nominal
+ * bound. Oldman's own scallop between adjacent passes — a 1.5875 mm ball at its
+ * 0.02 in micro-stepover — is 21.7 um, so even that model's worst single vertex
+ * sits at the finish the pass already leaves, and 99.9% of its surface is
+ * inside 6.5 um.
+ *
+ * Tightening does not buy what it looks like it should: at 2.5 um the worst case
+ * only improves to 5.1 um and 17.8 um, the operation costs 31% more, and the
+ * densest slice grows to 10,531 vertices, which spends most of the headroom
+ * under `DEFAULT_WATERLINE_SLICE_VERTEX_BUDGET`. Loosening falls off a cliff: at
+ * 10 um Oldman's worst case jumps to 294 um, because features start collapsing
+ * rather than merely shifting.
+ *
+ * It is expressed in mm and converted, because waterline runs in project units
+ * and `sliceDecimationTolerance`'s `clamp(r * 0.01, 0.002, 0.02)` — fine where
+ * it lives, since roughing re-expands the keep-out by the measured error — would
+ * mean 51-508 um on an inch project.
+ */
+export const WATERLINE_SLICE_DECIMATION_TOLERANCE_MM = 0.005
+
+/**
+ * Contour vertices one mesh slice may hand to Clipper before the operation is
+ * refused (issue #685).
+ *
+ * Decimation buys a large constant factor but not a complexity class, so this
+ * is the backstop for a mesh dense enough to blow through it. Measured through
+ * `generateFinishSurfaceWaterline` with decimation in place and this budget
+ * disabled, node v26.0.0 on an i7-8850H, two fixture families that agree:
+ *
+ *     densest slice   wall          CPU        source
+ *              649    3.2 s         4.1 s      Oldman-splash-final.camj (real)
+ *            4 001    3.2 s         4.6 s      tapered relief tube, sawtooth
+ *            8 001    9.8-16.0 s   11.4-12.2 s tapered relief tube, sawtooth
+ *            8 334    9.6 s        11.7 s      the mesh behind #673 (real)
+ *           16 001   40.4-151.3 s  43.6-68.1 s tapered relief tube, sawtooth
+ *           32 001  197.9-208.6 s 204.2-216.2 s tapered relief tube, sawtooth
+ *
+ * The synthetic tube and the real relief landing within 15% of each other at
+ * ~8 000 is the cross-validation #677 could not get, and it is why this number
+ * is trusted where that issue's island harness was not.
+ *
+ * **Deliberately per-slice, and the first draft of this was per-operation.** A
+ * cumulative count was tried first and does not work: the same real mesh spends
+ * 210 428 vertices in 6.8 s at a 0.005 in stepdown and 77 918 in 9.6 s at
+ * 0.02 in, because a finer stepdown gives the adaptive refinement less to
+ * insert. Meanwhile the tube spends 224 007 in 198 s. Any threshold that
+ * refuses the tube refuses the real file too. The vertex count of a *single*
+ * slice is what the superlinear `ClipperOffset.Execute` is charged for, and it
+ * is the quantity that orders the table above correctly.
+ *
+ * 12 000 is about the geometric mid-point of the densest usable row (8 334 real
+ * at 11.7 s) and the lowest unusable one (16 001 at 43.6-68.1 s), and
+ * interpolates to roughly 20 s. It is only 1.4x over the densest real mesh
+ * measured, which is tighter headroom than #677 has, and that is a property of
+ * this resolver rather than a choice: real relief work already sits at ten
+ * seconds here, so a ten-second refusal point is not available. A mesh twice
+ * that dense takes the better part of a minute, which is past where a browser's
+ * slow-script watchdog starts complaining — refusing it with an actionable
+ * message beats freezing the tab, which is #673's failure mode.
+ *
+ * The freeze itself is #675's to remove; this only bounds it.
+ */
+export const DEFAULT_WATERLINE_SLICE_VERTEX_BUDGET = 12_000
+
+/**
+ * Densest slice the operation has produced, checked as slices are built.
+ *
+ * Once `exceeded` is set every further mesh slice returns empty, which winds the
+ * level builds and the adaptive refinement down within one iteration instead of
+ * letting them run to completion on a mesh already known to be unbounded. The
+ * caller then refuses the whole operation rather than emitting a partial
+ * program built from the slices that happened to fit.
+ *
+ * `spent` is a diagnostic only — it is reported by `debugToolpath` and nothing
+ * is refused on it; see the budget constant for why it cannot be the instrument.
+ */
+interface WaterlineSliceBudget {
+  limit: number
+  spent: number
+  maxSlice: number
+  exceeded: boolean
+  /** Z of the slice that crossed the limit. */
+  exceededAtZ: number
+}
 
 interface XYPoint {
   x: number
@@ -241,13 +365,47 @@ function clipContourBoundariesAgainstRegion(
   return clipContourBoundariesByRegion(subjectPaths, clipPaths, subjectClosed, false)
 }
 
-function slicePolygonsToClipperPaths(slicePolygons: Array<Array<[number, number]>>): ClipperPath[] {
+/**
+ * Mesh cross-section at one Z, thinned to `decimationTolerance` and charged
+ * against the operation's vertex budget.
+ *
+ * Unlike `surfaceStepdown3d.ts`'s function of the same name there is no margin
+ * to re-expand by and no deviation to report: these contours are the cut path,
+ * not a keep-out, so the tolerance itself is the bound on the surface error and
+ * expanding the ring would gouge on one side while leaving a ridge on the other
+ * (issue #685).
+ *
+ * A tolerance of 0 disables thinning outright, which is what keeps a coarse or
+ * box-like cross-section byte-identical: RDP has no vertex to drop there, but
+ * skipping it also skips the ring rebuild.
+ */
+function slicePolygonsToClipperPaths(
+  slicePolygons: Array<Array<[number, number]>>,
+  decimationTolerance: number,
+  budget: WaterlineSliceBudget,
+  z: number,
+): ClipperPath[] {
   const paths = slicePolygons
     .filter((poly) => poly.length >= 3)
-    .map((poly) => toClipperPath(
-      normalizeWinding(poly.map(([x, y]) => ({ x, y })), false),
-      DEFAULT_CLIPPER_SCALE,
-    ))
+    .map((poly) => {
+      const ring = poly.map(([x, y]) => ({ x, y }))
+      const thinned = decimationTolerance > 0
+        ? simplifyClosedRing(ring, decimationTolerance).points
+        : ring
+      return toClipperPath(normalizeWinding(thinned, false), DEFAULT_CLIPPER_SCALE)
+    })
+  // Counted before the even-odd union rather than after it: the union is itself
+  // a Clipper boolean over these vertices, so a slice that unions down to
+  // nothing has still been paid for.
+  let sliceVerts = 0
+  for (const path of paths) sliceVerts += path.length
+  budget.spent += sliceVerts
+  if (sliceVerts > budget.maxSlice) budget.maxSlice = sliceVerts
+  if (!budget.exceeded && sliceVerts > budget.limit) {
+    budget.exceeded = true
+    budget.exceededAtZ = z
+    return []
+  }
   return unionClipperPathsEvenOdd(paths)
 }
 
@@ -332,12 +490,17 @@ function buildWaterlineLevels(
   zLevels: number[],
   sliceAtZ: (z: number) => ClipperPath[],
   toolOffset: number,
+  budget: WaterlineSliceBudget,
 ): WaterlineLevelBuild {
   const levels: WaterlineLevel[] = []
   const sliceMaterialByZ = new Map<number, ClipperPath[]>()
   let shadow: ClipperPath[] = []
 
   for (const z of uniqueDescendingZLevels(zLevels)) {
+    // The shadow only grows, so every level past the budget costs more than the
+    // one that blew it. The caller refuses the operation outright; stopping here
+    // is what keeps the refusal cheap rather than arriving after the freeze.
+    if (budget.exceeded) break
     const slice = sliceAtZ(z)
     if (slice.length > 0) {
       shadow = shadow.length === 0
@@ -513,6 +676,7 @@ function generateProjectedWaterlineLevels(
   tipStepdownDistance: number,
   sliceProjectedAtZ: (z: number) => ClipperPath[],
   projectTerminalCapsToTargetContact: boolean,
+  budget: WaterlineSliceBudget,
 ): WaterlineLevelBuild & { metrics: WaterlineRefinementMetrics; suppressedCoarsePaths: WaterlineSuppressedPath[] } {
   // Active intersecting-add footprints expanded by toolOffset, so projected
   // band/cap rings can be subtracted away from areas occupied by add features
@@ -548,6 +712,7 @@ function generateProjectedWaterlineLevels(
   let hitCap = false
   let hitPassLimit = false
   const emitLevel = (level: WaterlineLevel): boolean => {
+    if (budget.exceeded) return false
     if (insertedLevels >= WATERLINE_PROJECTED_MAX_TOTAL_RINGS) {
       hitCap = true
       return false
@@ -1200,6 +1365,25 @@ export interface RelatedSubtractFeature {
   topZ: number
 }
 
+/**
+ * Refuse the operation rather than emit a program built from whichever slices
+ * happened to fit inside the budget (issue #685).
+ */
+function refuseMeshTooDense(
+  budget: WaterlineSliceBudget,
+  warnings: ToolpathWarning[],
+): { moves: ToolpathMove[]; stepLevels: Set<number> } {
+  warnings.push({
+    code: 'surface3dMeshTooDense',
+    params: {
+      z: budget.exceededAtZ.toFixed(4),
+      vertices: budget.maxSlice.toLocaleString(),
+      budget: budget.limit.toLocaleString(),
+    },
+  })
+  return { moves: [], stepLevels: new Set<number>() }
+}
+
 export function generateFinishSurfaceWaterline(
   project: Project,
   operation: Operation,
@@ -1266,6 +1450,18 @@ export function generateFinishSurfaceWaterline(
     : null
   const sliceIndex = getMeshSliceIndex(stlData as Parameters<typeof getMeshSliceIndex>[0])
   const sliceSampleEpsilon = Math.max(Math.abs(modelTopZ - effectiveBottom) * 1e-6, 1e-6)
+  const sliceDecimationTolerance = convertLength(
+    WATERLINE_SLICE_DECIMATION_TOLERANCE_MM,
+    'mm',
+    project.meta.units,
+  )
+  const sliceBudget: WaterlineSliceBudget = {
+    limit: DEFAULT_WATERLINE_SLICE_VERTEX_BUDGET,
+    spent: 0,
+    maxSlice: 0,
+    exceeded: false,
+    exceededAtZ: 0,
+  }
 
   const targetFeatureIds = new Set(
     operation.target.source === 'features' ? operation.target.featureIds : [],
@@ -1294,6 +1490,10 @@ export function generateFinishSurfaceWaterline(
   const meshTopZ = modelTopZ
 
   const sliceMeshOnlyAtZ = (z: number): ClipperPath[] => {
+    // Past the budget every slice is empty, so the level builds and the adaptive
+    // refinement wind down instead of running to completion on a mesh the
+    // operation is already going to refuse.
+    if (sliceBudget.exceeded) return []
     // Skip the mesh slice entirely above the mesh top; the slicer would return
     // empty anyway but the clamp below would force it to the top silhouette.
     if (z > meshTopZ + sliceSampleEpsilon) return []
@@ -1306,7 +1506,9 @@ export function generateFinishSurfaceWaterline(
       ? Math.max(effectiveBottom + sliceSampleEpsilon, meshTopZ - sliceSampleEpsilon)
       : Math.min(meshTopZ - sliceSampleEpsilon, Math.max(effectiveBottom + sliceSampleEpsilon, z + sliceSampleEpsilon))
     const polygons = sliceMeshAtZ(sliceIndex, clampedZ)
-    return polygons.length === 0 ? [] : slicePolygonsToClipperPaths(polygons)
+    return polygons.length === 0
+      ? []
+      : slicePolygonsToClipperPaths(polygons, sliceDecimationTolerance, sliceBudget, clampedZ)
   }
 
   const sliceAtZ = (z: number): ClipperPath[] => {
@@ -1377,11 +1579,14 @@ export function generateFinishSurfaceWaterline(
       : subtractMask
   }
 
-  const coarseLevelBuild = buildWaterlineLevels(stepLevels, sliceAtZ, toolOffset)
+  const coarseLevelBuild = buildWaterlineLevels(stepLevels, sliceAtZ, toolOffset, sliceBudget)
   const projectedSliceAtZ = intersectingAdds.length > 0 ? sliceMeshOnlyAtZ : sliceAtZ
   const projectedInputBuild = intersectingAdds.length > 0
-    ? buildWaterlineLevels(stepLevels, projectedSliceAtZ, toolOffset)
+    ? buildWaterlineLevels(stepLevels, projectedSliceAtZ, toolOffset, sliceBudget)
     : coarseLevelBuild
+  // Refuse before the height map, the adaptive refinement and the move
+  // emission, all of which scale with what the level build just produced.
+  if (sliceBudget.exceeded) return refuseMeshTooDense(sliceBudget, warnings)
 
   // Build (or reuse) the mesh heightmap for intersecting-add plunge/split
   // safety later in this function. Cell size mirrors the parallel-finish
@@ -1431,6 +1636,7 @@ export function generateFinishSurfaceWaterline(
         tipStepdownDistance,
         projectedSliceAtZ,
         shouldProjectToTargetContact,
+        sliceBudget,
       )
     : null
   const coarseLevelsWithSuppressedCaps = projectedLevelBuild
@@ -1461,6 +1667,7 @@ export function generateFinishSurfaceWaterline(
           hitPassLimit: false,
         },
       }
+  if (sliceBudget.exceeded) return refuseMeshTooDense(sliceBudget, warnings)
   const waterlineLevels = refinedLevelBuild.levels
   // Slice material at each level — kept around so we can geometrically classify
   // each ring as tool-inside (pocket cavity, centroid in empty space) vs
@@ -1470,6 +1677,9 @@ export function generateFinishSurfaceWaterline(
   const sliceMaterialByZ = refinedLevelBuild.sliceMaterialByZ
 
   if (operation.debugToolpath) {
+    warnings.push({ code: 'debug', params: { text: `Debug: waterline densest slice ${sliceBudget.maxSlice} of a ` +
+      `${sliceBudget.limit} vertex budget (${sliceBudget.spent} contour vertices over the whole operation) ` +
+      `at a ${sliceDecimationTolerance.toFixed(6)} decimation tolerance` } })
     const metrics = refinedLevelBuild.metrics
     warnings.push({ code: 'debug', params: { text: `Debug: adaptive waterline inserted ${metrics.insertedLevels} projected rings (${coarseLevelBuild.levels.length} coarse levels → ${waterlineLevels.length} projected levels), ` +
       `maxGap=${metrics.maxObservedGap.toFixed(4)}, threshold=${metrics.gapThreshold.toFixed(4)}, spacing=${metrics.microStepover.toFixed(4)}` } })
