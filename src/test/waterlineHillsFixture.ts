@@ -23,7 +23,7 @@
  * shallow ground. This mixes all four deliberately:
  *
  *   - a large flat background plane      (waterline's worst case)
- *   - flat plateau tops on clamped domes (waterline's worst case, and #700)
+ *   - flat plateau tops on clamped domes (waterline's worst case, and #699)
  *   - steep dome flanks                  (waterline's best case)
  *   - a gentle ramp                      (shallow without being horizontal)
  *

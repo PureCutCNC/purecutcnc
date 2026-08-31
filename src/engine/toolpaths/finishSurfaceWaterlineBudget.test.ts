@@ -163,7 +163,7 @@ function testFinerSpacingNeverLosesCoverage(): void {
     const coarser = measured[i - 1]
     const finer = measured[i]
     // Equal is fine — the hills fixture has a floor of flat plateau tops that no
-    // spacing reaches (issue #700). What must never happen is the finer setting
+    // spacing reaches (issue #699). What must never happen is the finer setting
     // covering *less*, which is what the top-down ring counter produced.
     assert(finer.flatNeverCut <= coarser.flatNeverCut + 1e-9,
       `expected ${finer.spacing}mm to cover at least as much flat area as ${coarser.spacing}mm, `

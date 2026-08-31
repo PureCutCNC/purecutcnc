@@ -1,5 +1,5 @@
 /**
- * Surface-finish coverage and scallop probe (issues #697, #698, #700).
+ * Surface-finish coverage and scallop probe (issues #697, #698, #699).
  *
  * Answers the question a move count cannot: how much material does the emitted
  * pass actually leave on the model, and *where* — sorted by surface slope, which
