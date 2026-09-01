@@ -36,6 +36,14 @@ export type ToolpathWarningCode =
   | 'entryStrategyFallback'
 
   | 'entryHelixDiameterClamped'
+  // clearing-operation XY leads (issue #695)
+  /** The operation asked for an XY lead its kind/pattern does not carry. */
+  | 'xyLeadUnsupported'
+  /** A region mask is in force; XY leads are disabled while it is. */
+  | 'xyLeadRegionMask'
+  /** No candidate lead stayed inside the safe domain within the budget, so the
+   *  ordinary direct entry/retract was emitted and the ring order kept. */
+  | 'xyLeadNoViablePath'
   // developer diagnostics (debugToolpath) — untranslated passthrough
   | 'debug'
   // shared generator preconditions

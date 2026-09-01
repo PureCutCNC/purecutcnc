@@ -81,6 +81,16 @@ import {
 import type { OffsetRegionNode } from './pocket'
 import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
 import { buildOffsetDomainCheck, pocketTangentLinkOptions } from './tangentLink'
+import {
+  beginXyLeadLevel,
+  emitXyLead,
+  emitXyLeadOut,
+  recordXyLeadExit,
+  resolveXyLeadOptions,
+  rotateRingForLead,
+  takeXyLeadIn,
+  warnXyLeadDeclined,
+} from './xyLead'
 import { buildWallCornerCleanupContour } from './wallCornerCleanup'
 import { seedStartRadius, planSeedCircles, seedCircleContours } from './seedClearing'
 import { areaCoverage, effectivePocketPattern, usesTangentLinks } from './pocketPatterns'
@@ -431,6 +441,9 @@ function generateRoughBandMoves(
       ),
       slotScale,
     )
+    // Raster clearing has no ring for a lead to join, so a request here is
+    // answered rather than dropped (issue #695).
+    warnXyLeadDeclined(operation, band.regionMask !== null, (warning) => appendUniqueWarning(warnings, warning))
     if (segments.length === 0) {
       return {
         moves,
@@ -590,12 +603,25 @@ function generateRoughBandMoves(
     ),
     slotScale,
   )
+  // XY leads (issue #695) on the S-link's own domain and budget; resolved once
+  // per band because the domain predicate precomputes its loop bounds.
+  const xyLeadPassOptions = resolveXyLeadOptions(
+    operation,
+    toolRadius * 2,
+    regionTrees.map((tree) => tree.region),
+    band.regionMask !== null,
+    (warning) => appendUniqueWarning(warnings, warning),
+  )
 
   for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
     const z = stepLevels[levelIndex]
     const levelEntryPolicy = withEntryStartZ(
       entryPolicy,
       levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
+    )
+    const levelXyLead = beginXyLeadLevel(
+      xyLeadPassOptions,
+      (warning) => appendUniqueWarning(warnings, warning),
     )
 
     if (regionTrees.length === 0) {
@@ -614,19 +640,26 @@ function generateRoughBandMoves(
       const circles = applyContourDirection(seedCircleContours(seedPlan, effectiveStepover), direction)
       let previousCircleEnd: ToolpathPoint | null = null
       for (const baseCircle of circles) {
-        const circle = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
+        const nearest = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
+        // A seed circle is a clearing ring like any other, so when the level
+        // opens on a seed stack the lead-in belongs to its first circle.
+        const leadPlan = takeXyLeadIn(levelXyLead, nearest)
+        const circle = rotateRingForLead(nearest, leadPlan)
         const linkStartIndex = moves.length
         currentPosition = transitionToCutEntry(
           moves,
           currentPosition,
-          contourStartPoint(circle, z),
+          leadPlan ? { x: leadPlan.staging.x, y: leadPlan.staging.y, z } : contourStartPoint(circle, z),
           safeZ,
           maxLinkDistance,
           undefined,
           levelEntryPolicy,
         )
+        if (leadPlan && levelXyLead) {
+          currentPosition = emitXyLead(moves, currentPosition, leadPlan, z, levelXyLead.options, 'lead_in')
+        }
         let circleMoves = toClosedCutMoves(circle, z)
-        const tangentSplice = spliceTangentSLink(
+        const tangentSplice = leadPlan ? null : spliceTangentSLink(
           moves,
           linkStartIndex,
           circle,
@@ -639,6 +672,7 @@ function generateRoughBandMoves(
         }
         appendAll(moves, circleMoves)
         currentPosition = circleMoves.at(-1)?.to ?? currentPosition
+        recordXyLeadExit(levelXyLead, circleMoves)
         previousCircleEnd = currentPosition
       }
     }
@@ -682,6 +716,7 @@ function generateRoughBandMoves(
             tangentLink,
             wallCleanup,
             toolRadius,
+            xyLead: levelXyLead,
           },
         )
       }
@@ -742,6 +777,7 @@ function generateRoughBandMoves(
             wallCleanup,
             toolRadius,
             parent: unit.parent ?? undefined,
+            xyLead: levelXyLead,
           },
         )
         previousUnitRoot = unit.root
@@ -788,6 +824,9 @@ function generateRoughBandMoves(
       engagementCache,
     )
 
+    // After the level's last ring and before the safe-Z transition, so the
+    // feed stamping above never sees the lead (issue #695).
+    currentPosition = emitXyLeadOut(moves, currentPosition, z, levelXyLead)
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
 

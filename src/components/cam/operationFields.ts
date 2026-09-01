@@ -246,6 +246,7 @@ export const OPERATION_FIELD_IDS = [
   'entryStrategy',
   'entryRampAngle',
   'entryHelixDiameter',
+  'xyLeadStrategy',
   'retractHeight',
   // Corners.
   'roundOutsideCorners',
@@ -457,6 +458,21 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     // Deliberately not offered for helical drilling: there the selected circle
     // defines the bore diameter, not this shared setting (issue #412).
     appliesTo: (operation) => supportsEntryStrategy(operation) && resolvedEntryStrategy(operation) === 'helix',
+  },
+  {
+    // XY approach & exit (issue #695). Shown in the same group as the Z entry
+    // but gated independently of it: the two compose, and hiding this row
+    // behind a particular Z strategy would imply a dependency that does not
+    // exist. It needs a clearing ring to lead onto, which is the same question
+    // the S-link asks, so it asks it the same way.
+    id: 'xyLeadStrategy',
+    group: 'entry',
+    paramRef: 'xyLeadStrategy',
+    appliesTo: (operation) => operation.pass === 'rough'
+      && (operation.kind === 'pocket'
+        || operation.kind === 'surface_clean'
+        || operation.kind === 'rough_surface')
+      && usesTangentLinks(operation.kind, operation.pocketPattern),
   },
   {
     id: 'retractHeight',

@@ -27,6 +27,7 @@ import { effectiveFeed } from '../toolpaths/feed'
 import { countersinkTipDepth } from '../toolpaths/drilling'
 import { takesPocketPattern, usesTangentLinks } from '../toolpaths/pocketPatterns'
 import { clearingControlApplies } from '../toolpaths/clearingControls'
+import { supportsXyLead } from '../toolpaths/xyLead'
 import type { OperationBookletInput, OperationBookletReport, OperationBookletRow } from './types'
 
 function operationKindLabel(kind: OperationKind): string {
@@ -312,6 +313,17 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
       { label: translate('booklet.label.trochoidalCutWidth'), value: lengthWithUnits(operation.trochoidalCutWidth ?? (tool ? tool.diameter * 1.5 : 0), units) },
       { label: translate('booklet.label.trochoidalAdvance'), value: `${formatNumber(operation.trochoidalAdvance ?? 0.1, 3)} × D` },
     )
+  }
+
+  // The XY lead changes where the cutter reaches depth and how it meets the
+  // first ring, so the sheet has to say when it is on. Gated on the same
+  // predicate the generator uses, so the printout can never claim a lead an
+  // unsupported pattern would never emit.
+  if (supportsXyLead(operation) && operation.xyLeadStrategy === 'tangent_s') {
+    rows.push({
+      label: translate('booklet.label.xyLeadStrategy'),
+      value: translate('booklet.xyLead.tangentS'),
+    })
   }
 
   if ((operation.roundOutsideCorners ?? false) && operationUsesRoundOutsideCorners(operation)) {

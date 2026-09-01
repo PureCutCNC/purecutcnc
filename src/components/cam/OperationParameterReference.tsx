@@ -222,6 +222,30 @@ export function OperationParameterReference({
         </OpParamRefFrame>
       )
 
+    case 'xyLeadStrategy': {
+      if (variant === 'tangent_s') {
+        // The ring (outline), the staging point the descent lands on (guide
+        // cross), and the S that carries the cutter from one to the other.
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__outline" d="M20 5H52V29H20" />
+            <path className="gear-reference__guide" d="M7 14v6M4 17h6" />
+            <path className="gear-reference__accent" d="M7 17c7 0 6-9 13-9" />
+            <path className="gear-reference__accent-fill" d="M22 8l-5 2.6V5.4z" />
+          </OpParamRefFrame>
+        )
+      }
+      // Direct: the descent lands on the ring start and cutting begins there.
+      return (
+        <OpParamRefFrame label={label}>
+          <path className="gear-reference__outline" d="M20 5H52V29H20" />
+          <path className="gear-reference__guide" d="M20 3v6M17 6h6" />
+          <path className="gear-reference__accent" d="M7 6h9" />
+          <path className="gear-reference__accent-fill" d="M20 6l-5 2.6V3.4z" />
+        </OpParamRefFrame>
+      )
+    }
+
     case 'entryHelixDiameter':
       return (
         <OpParamRefFrame label={label}>

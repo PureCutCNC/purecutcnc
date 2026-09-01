@@ -39,6 +39,7 @@ import type {
   Project,
   Tool,
   ToolType,
+  XyLeadStrategy,
 } from '../../types/project'
 import { defaultRetractOffset, isTrochoidalEdgeRoughing } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
@@ -1662,6 +1663,23 @@ export function CAMPanel({
             </div>
           ) : null}
         </>
+      ),
+      xyLeadStrategy: () => (
+        <label
+          className="properties-field"
+          title={camT('cam.operation.xyLeadStrategyTooltip')}
+        >
+          <span>{camT('cam.operation.xyLeadStrategy')}</span>
+          <Select<XyLeadStrategy>
+            value={operation.xyLeadStrategy ?? 'none'}
+            options={[
+              { value: 'none', label: camT('cam.operation.xyLeadNone') },
+              { value: 'tangent_s', label: camT('cam.operation.xyLeadTangentS') },
+            ]}
+            onChange={(value) => updateOperation(operation.id, { xyLeadStrategy: value })}
+          />
+          <OperationParameterReference kind="xyLeadStrategy" variant={operation.xyLeadStrategy ?? 'none'} />
+        </label>
       ),
       retractHeight: () => (
         <label className="properties-field">

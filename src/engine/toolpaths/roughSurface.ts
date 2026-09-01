@@ -46,6 +46,16 @@ import { offsetClipperPaths, segmentInsideClipperPaths } from './modelProtection
 import { resolve3DSurfaceStepdown } from './surfaceStepdown3d'
 import { areaCoverage, effectivePocketPattern, usesTangentLinks } from './pocketPatterns'
 import { pocketTangentLinkOptions } from './tangentLink'
+import {
+  beginXyLeadLevel,
+  emitXyLead,
+  emitXyLeadOut,
+  recordXyLeadExit,
+  resolveXyLeadOptions,
+  rotateRingForLead,
+  takeXyLeadIn,
+  warnXyLeadDeclined,
+} from './xyLead'
 import { planSeedCircles, seedCircleContours, seedStartRadius } from './seedClearing'
 import { applyContourDirection } from './geometry'
 import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
@@ -217,6 +227,20 @@ function generateRoughSurfaceToolpathSingle(
       )
       : undefined
 
+    // Per level, not per band: 3D roughing recomputes its clearable region at
+    // every level, so the lead's domain is this level's own inset regions --
+    // the same boundary the level's safeLinkCheck enforces (issue #695).
+    const levelXyLead = beginXyLeadLevel(
+      resolveXyLeadOptions(
+        operation,
+        resolved.tool.diameter,
+        level.insetRegions,
+        resolved.regionMasked,
+        (warning) => appendUniqueWarning(warnings, warning),
+      ),
+      (warning) => appendUniqueWarning(warnings, warning),
+    )
+
     // No withEntryStartZ() here, unlike pocket and surface clearing. Those
     // reuse one XY footprint for every level, so the previous level's floor is
     // guaranteed cleared and the entry can start just above it. 3D roughing
@@ -257,6 +281,9 @@ function generateRoughSurfaceToolpathSingle(
         ),
         slotScale,
       )
+      // Raster clearing has no ring for a lead to join, so a request here is
+      // answered rather than dropped (issue #695).
+      warnXyLeadDeclined(operation, resolved.regionMasked, (warning) => appendUniqueWarning(warnings, warning))
 
       const orderedBoundaryContours = orderClosedContoursGreedy(
         boundaryContours,
@@ -331,6 +358,7 @@ function generateRoughSurfaceToolpathSingle(
           levelTangentLink,
           wallCleanup,
           wallCleanupToolRadius,
+          levelXyLead,
         )
 
       const plans = coverage.seedCircles && seedStart > 0
@@ -354,19 +382,31 @@ function generateRoughSurfaceToolpathSingle(
         )
         let previousCircleEnd: ToolpathPoint | null = null
         for (const baseCircle of circles) {
-          const circle = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
+          const nearest = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
+          // A seed circle is a clearing ring like any other, so when the level
+          // opens on a seed stack the lead-in belongs to its first circle.
+          const leadPlan = takeXyLeadIn(levelXyLead, nearest)
+          const circle = rotateRingForLead(nearest, leadPlan)
           currentPosition = transitionToCutEntry(
             allMoves,
             currentPosition,
-            contourStartPoint(circle, level.z),
+            leadPlan
+              ? { x: leadPlan.staging.x, y: leadPlan.staging.y, z: level.z }
+              : contourStartPoint(circle, level.z),
             resolved.safeZ,
             resolved.maxLinkDistance,
             undefined,
             entryPolicy,
           )
+          if (leadPlan && levelXyLead) {
+            currentPosition = emitXyLead(
+              allMoves, currentPosition, leadPlan, level.z, levelXyLead.options, 'lead_in',
+            )
+          }
           const circleMoves = toClosedCutMoves(circle, level.z)
           appendAll(allMoves, circleMoves)
           currentPosition = circleMoves.at(-1)?.to ?? currentPosition
+          recordXyLeadExit(levelXyLead, circleMoves)
           previousCircleEnd = currentPosition
         }
       }
@@ -397,6 +437,7 @@ function generateRoughSurfaceToolpathSingle(
           tangentLink: levelTangentLink,
           wallCleanup,
           toolRadius: wallCleanupToolRadius,
+          xyLead: levelXyLead,
         },
       )
     }
@@ -404,6 +445,9 @@ function generateRoughSurfaceToolpathSingle(
     // After every region on this level, never per region: the classifier reads
     // the level's whole move range to decide what was already cleared.
     applyFeedForLevel(levelStartIndex)
+    // Then the lead-out, after the feed stamping so the lead keeps its own
+    // ramp, and before the next level's travel (issue #695).
+    currentPosition = emitXyLeadOut(allMoves, currentPosition, level.z, levelXyLead)
   }
 
   if (currentPosition && currentPosition.z !== resolved.safeZ) {

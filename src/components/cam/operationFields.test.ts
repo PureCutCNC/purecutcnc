@@ -209,7 +209,7 @@ function testGoldenRenderOrder() {
       'stepdown', 'stockToLeaveRadial', 'stockToLeaveAxial',
       'feed', 'plungeFeed', 'slotFeed', 'engagementMode', 'rpm',
       'pattern', 'cutDirection', 'machiningOrder', 'stepover',
-      'entryStrategy',
+      'entryStrategy', 'xyLeadStrategy',
       'roundOutsideCorners', 'roundLinkCorners', 'cornerRelief',
       'arcFitting',
     ].join(','),
