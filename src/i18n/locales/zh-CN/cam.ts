@@ -24,6 +24,11 @@ import type { camEn } from '../en/cam'
  * `.one`/`.other` variants intentionally share one string.
  */
 export const camZhCN: Record<keyof typeof camEn, string> = {
+  'cam.operation.slopeFilter': '按曲面坡度筛选',
+  'cam.operation.slopeMin': '最小坡度 (°)',
+  'cam.operation.slopeMax': '最大坡度 (°)',
+  'cam.operation.slopeHelp': '坡度取自刀尖接触曲面，相对于水平面测量。刀具可伸出边界。清空两个限值即可禁用。高度图无法表示倒扣。 边界遵循高度图的分辨率。',
+
   // ── Tool type labels ──
   'cam.toolType.flatEndmill': '平底立铣刀',
   'cam.toolType.ballEndmill': '球头立铣刀',

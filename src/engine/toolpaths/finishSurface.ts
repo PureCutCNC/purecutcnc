@@ -20,6 +20,7 @@
  * - finishSurfaceWaterline.ts
  */
 
+import { surfaceSlopeRange } from './finishSurfaceSlope'
 import type { Operation, Point, Project } from '../../types/project'
 import type { ToolpathWarning } from './warningCodes'
 import type { PocketToolpathResult, ToolpathBounds } from './types'
@@ -148,6 +149,9 @@ export function generateFinishSurfaceToolpath(
   // `waterline` is its own strategy here; every other stored value has always
   // taken the parallel branch, and `OPERATION_PATTERN_SUPPORT` is now where
   // that is written down rather than in the `else` of each test below.
+  if (surfaceSlopeRange(operation) === 'invalid') {
+    return { operationId: operation.id, moves: [], warnings: [{ code: 'finishSlopeInvalid' }], bounds: null, stepLevels: [] }
+  }
   const isWaterline = effectivePocketPattern(operation.kind, operation.pocketPattern) === 'waterline'
   const target = operation.target
   if (target.source !== 'features' || target.featureIds.length === 0) {

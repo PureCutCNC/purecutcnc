@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { SurfaceSlopeFields } from './SurfaceSlopeFields'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
 import { useI18n } from '../../i18n/i18nContext'
@@ -1780,6 +1781,7 @@ export function CAMPanel({
           <OperationParameterReference kind="stockRadial" />
         </label>
       ),
+      slopeFilter: () => <SurfaceSlopeFields operation={operation} updateOperation={updateOperation} />,
       adaptiveRefinement: () => (
         <label
           className="properties-check"

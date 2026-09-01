@@ -612,6 +612,9 @@ export interface Operation {
    *  values are clamped back to the surface and warned about (#479). */
   retractHeight?: number
   debugShowRejectedCorners?: boolean
+  /** Optional CL-surface slope bounds in degrees from horizontal (finish_surface only). */
+  finishSlopeMin?: number
+  finishSlopeMax?: number
   waterlineAdaptiveRefinement?: boolean
   waterlineMicroStepover?: number
   waterlineRefinementThreshold?: number

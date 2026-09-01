@@ -28,6 +28,7 @@ function assert(condition: boolean, message: string): void {
 // is checked against the catalog, and the exhaustiveness helper below
 // ensures the list IS the union.
 const ALL_CODES = [
+  'finishSlopeInvalid', 'finishSlopeEmpty', 'finishSlopeTooComplex',
   'targetsMissingOrWrongRole', 'closedProfilesOnly', 'bandEmptySubject', 'bandNoRegions', 'resolverNoBands',
   'resolverOnlyInsideEdge', 'resolverOnlyPocketVcarve', 'resolverNoValidKindTargets', 'resolverNoValidSubtracts', 'resolverNoTargets',
   'cutDepthExceedsToolMax', 'cutDepthExceedsToolMaxForFeature',

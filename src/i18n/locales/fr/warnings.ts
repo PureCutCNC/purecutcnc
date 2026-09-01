@@ -18,6 +18,9 @@ import type { warningsEn } from '../en/warnings'
 
 /** French structured toolpath and postprocessor warnings. */
 export const warningsFr: Record<keyof typeof warningsEn, string> = {
+  'warnings.finishSlopeInvalid': 'Les limites de pente doivent être des angles finis entre 0 et 90°, avec un minimum inférieur ou égal au maximum. Aucun parcours généré.',
+  'warnings.finishSlopeEmpty': 'Aucune surface accessible ne correspond à la plage de pente choisie.',
+  'warnings.finishSlopeTooComplex': 'La limite de pente est trop complexe pour être résolue en sécurité. Aucun parcours généré.',
   'warnings.debug': '{text}',
   'warnings.targetsMissingOrWrongRole': 'Certaines entités cibles sélectionnées sont absentes ou ne sont pas des entités {roles}',
   'warnings.closedProfilesOnly': 'Les opérations {operation} ne prennent en charge que des profils cibles fermés',

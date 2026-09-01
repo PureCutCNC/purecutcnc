@@ -18,6 +18,11 @@ import type { camEn } from '../en/cam'
 
 /** German CAM operation / tool / add-menu / description translations. */
 export const camDe: Record<keyof typeof camEn, string> = {
+  'cam.operation.slopeFilter': 'Nach Oberflächenneigung filtern',
+  'cam.operation.slopeMin': 'Minimale Neigung (°)',
+  'cam.operation.slopeMax': 'Maximale Neigung (°)',
+  'cam.operation.slopeHelp': 'Die Neigung folgt der Kontaktfläche der Werkzeugspitze, gemessen zur Horizontalen. Das Werkzeug kann über die Grenze hinausragen. Beide Grenzen leeren, um den Filter zu deaktivieren. Höhenkarten stellen keine Hinterschneidungen dar. Grenzen folgen der Auflösung der Höhenkarte.',
+
   // ── Tool type labels ──
   'cam.toolType.flatEndmill': 'Schaftfräser (flach)',
   'cam.toolType.ballEndmill': 'Kugelfräser',

@@ -126,6 +126,8 @@ const OPERATION_FIELDS: Record<keyof Required<Operation>, FieldProbe> = {
   dwellTime: { role: 'computation', change: { dwellTime: 1 } },
   countersinkDiameter: { role: 'computation', change: { countersinkDiameter: 6 } },
   retractHeight: { role: 'computation', change: { retractHeight: 5 } },
+  finishSlopeMin: { role: 'computation', change: { finishSlopeMin: 10 } },
+  finishSlopeMax: { role: 'computation', change: { finishSlopeMax: 30 } },
   waterlineAdaptiveRefinement: { role: 'computation', change: { waterlineAdaptiveRefinement: false } },
   waterlineMicroStepover: { role: 'computation', change: { waterlineMicroStepover: 0.1 } },
   waterlineRefinementThreshold: { role: 'computation', change: { waterlineRefinementThreshold: 1 } },

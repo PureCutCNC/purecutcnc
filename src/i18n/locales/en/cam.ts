@@ -22,6 +22,11 @@
  * language pack, so treat renames as breaking and only do them deliberately.
  */
 export const camEn = {
+  'cam.operation.slopeFilter': 'Filter by surface slope',
+  'cam.operation.slopeMin': 'Minimum slope (°)',
+  'cam.operation.slopeMax': 'Maximum slope (°)',
+  'cam.operation.slopeHelp': 'Slope follows the tool-tip contact surface, measured from horizontal. The cutter can extend across the boundary. Clear both bounds to disable. Height maps cannot represent undercuts. Boundaries follow the displayed height-map resolution.',
+
   // ── Tool type labels ──
   'cam.toolType.flatEndmill': 'Flat endmill',
   'cam.toolType.ballEndmill': 'Ball endmill',
