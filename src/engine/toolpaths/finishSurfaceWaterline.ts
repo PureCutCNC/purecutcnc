@@ -789,6 +789,7 @@ function generateProjectedWaterlineLevels(
   toolOffset: number,
   tipStepdownDistance: number,
   sliceProjectedAtZ: (z: number) => ClipperPath[],
+  isCriticalFloorZ: (z: number) => boolean,
   projectTerminalCapsToTargetContact: boolean,
   budget: WaterlineSliceBudget,
   pass: WaterlineRefinementPass,
@@ -1132,11 +1133,29 @@ function generateProjectedWaterlineLevels(
       const matchedLowerArea = matchedLowerPath
         ? Math.abs(ClipperLib.Clipper.Area(matchedLowerPath))
         : 0
+      // Nothing above covers a ring at a top, and the region inside a topmost
+      // contour is filled by the tip stack or by nothing at all —
+      // `emitProjectedBandFill` only ever covers the annulus *between* two
+      // contours. So what a top looks like has to be recognised here, and there
+      // are two shapes of it that no single test sees.
+      //
+      // A peak — a cone, a nose, a dome apex — shrinks fast as Z rises, and
+      // carries no horizontal triangle at all, so only the area ratio finds it.
       const isShrinkingFromLower = matchedLowerPath
         ? matchedLowerArea > upperSignedArea * 1.3
         : false
+      // A plateau is the opposite: it does not shrink, which is why the ratio
+      // alone left every flat top in the model unmachined (issue #699). The
+      // hills fixture's largest clamped dome is 6.82 mm across at its top
+      // against 7.16 mm one stepdown down, a ratio of 1.10 against the 1.3 the
+      // gate wanted, and its whole face went uncut. `criticalWaterlineFloorZs`
+      // already answers this half: it keeps a Z only when its flat area clears
+      // `PI * r^2`, the bound below which the cutter cannot stand on the plateau
+      // at all, so a top too small to reach still gets nothing and #682/#685's
+      // reachability rule is inherited rather than worked around.
       const isLocalTop = forcedLocalTopPaths.has(upperPath)
-        || (!upperPathHasHigherParent(upperPath, higher) && isShrinkingFromLower)
+        || (!upperPathHasHigherParent(upperPath, higher)
+          && (isShrinkingFromLower || isCriticalFloorZ(upper.z)))
       if (!isLocalTop) continue
 
       processedTipPaths.add(upperPath)
@@ -1547,6 +1566,7 @@ export function generateFinishSurfaceWaterline(
   intersectingAdds: IntersectingAddFeature[] = [],
   modelSilhouettePaths: ClipperPath[] = [],
   relatedSubtracts: RelatedSubtractFeature[] = [],
+  criticalFloorZs: Set<number> = new Set(),
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   const toolOffset = tool.radius + radialLeave
@@ -1798,6 +1818,13 @@ export function generateFinishSurfaceWaterline(
     WATERLINE_PROJECTED_MAX_TOTAL_RINGS,
     userMaxRingsPerBand > 0 ? userMaxRingsPerBand : Math.ceil(refinementReach / spacing),
   ))
+  // Zs carrying horizontal model surface the cutter can actually reach, which
+  // is what tells a tip apart from a continuing wall (issue #699). Keyed the
+  // same way `uniqueDescendingZLevels` dedupes the ladder, so a critical floor
+  // that merged with a stepdown one bit away is still recognised at the level
+  // that survived.
+  const criticalFloorZKeys = new Set([...criticalFloorZs].map(waterlineZKey))
+  const isCriticalFloorZ = (z: number): boolean => criticalFloorZKeys.has(waterlineZKey(z))
   const buildRefinement = (
     spacing: number,
     activePass: WaterlineRefinementPass,
@@ -1811,6 +1838,7 @@ export function generateFinishSurfaceWaterline(
     toolOffset,
     tipStepdownDistance,
     projectedSliceAtZ,
+    isCriticalFloorZ,
     shouldProjectToTargetContact,
     sliceBudget,
     activePass,
