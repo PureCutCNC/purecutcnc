@@ -25,7 +25,8 @@ import { normalizeToolForProject } from './geometry'
 import { runPostProcessor } from '../gcode/postprocessor'
 import { validateMachineDefinition, type MachineDefinition } from '../gcode/types'
 
-// Captured BEFORE #702's generator changes at 31b36dbe256b68b11b702e44c1e79b1c607c0db2.
+// Captured BEFORE #702's generator changes at c2354aa618a45d4eba147d2d33123a5147958de7.
+// Compared with the prior 31b36db capture, only #704's three flat-top waterline rows changed.
 // Both the raw toolpath result and posted program must remain byte-identical.
 const baseline: Record<string, {moves: number; motion: string; gcode: string}> = {
   "3d-imported-block-test3.camj/op6792424/parallel": {
@@ -34,9 +35,9 @@ const baseline: Record<string, {moves: number; motion: string; gcode: string}> =
     "gcode": "4bdc3fd0790fc22797aecfa1acd4db4ca09e0089fcaa12fa0313ef2dd8ff1500"
   },
   "3d-imported-block-test3.camj/op6792424/waterline": {
-    "moves": 2679,
-    "motion": "707321d379e550cb393189f99507fcd311e9a6755ef4a3f4ba107451ba1b6009",
-    "gcode": "05a15d26f8f32a0b73190551ddcc7393ae1c7443a00a547b15f8b7a2626e57ba"
+    "moves": 3321,
+    "motion": "03443fc401d29e3da124f57af6c6378839f289a2b5187ee823180ed66e4209de",
+    "gcode": "23a929748dd41929ad79bed98e6861ae9762771d4f23cfe9a77022485c76177c"
   },
   "3d-imported-block-test3.camj/op6792425/parallel": {
     "moves": 3915,
@@ -44,9 +45,9 @@ const baseline: Record<string, {moves: number; motion: string; gcode: string}> =
     "gcode": "11756942fc4e249272cf0f8ca4870fe08a1a5fae749a160b78a66e0be5accbbe"
   },
   "3d-imported-block-test3.camj/op6792425/waterline": {
-    "moves": 2679,
-    "motion": "8c72f789bc58ac3ee1b5c39417eeb0710f755bd8d88343463e70a0d14748579c",
-    "gcode": "174a9d265f0d86a872324062fddaa1bea637c6c511f4e88e5e6fefd59c20e437"
+    "moves": 3321,
+    "motion": "29a74a1af1be28985a6b3cec25a15e25cd670aa7ab3a71cef7a3a9ec92b2d19c",
+    "gcode": "21c1732f2a990faa154dd82b09080e63c4467c274f983228f693ad8032050aab"
   },
   "issue-401-cone-finish.camj/op0925/parallel": {
     "moves": 28245,
@@ -74,9 +75,9 @@ const baseline: Record<string, {moves: number; motion: string; gcode: string}> =
     "gcode": "5df9b0905683601f9e16dacdb780cef8f3f6c2f2e5f5e63117cf890c7af4e52d"
   },
   "model-in-pocket.camj/op6792442/waterline": {
-    "moves": 1468,
-    "motion": "11ae19f8a5f133d7a02eb358a4cb91bc5c912a09938b1667ab465ec131f89d6b",
-    "gcode": "f5c4e1cfa8e19117d83995528a413041c6a16cc1e27277ebd512e65516879a43"
+    "moves": 3836,
+    "motion": "e31625615929fefa03233a3dd1eb3554ecdcd27beb0578724958c5ddaa706a22",
+    "gcode": "eae4febf8d8c3abc5dafc52b40ea4526cf7fff4a0a9e9f8c877cb858179c873d"
   }
 }
 

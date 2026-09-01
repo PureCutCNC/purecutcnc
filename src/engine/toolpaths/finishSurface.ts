@@ -145,13 +145,13 @@ export function generateFinishSurfaceToolpath(
   project: Project,
   operation: Operation,
 ): PocketToolpathResult {
+  if (surfaceSlopeRange(operation) === 'invalid') {
+    return { operationId: operation.id, moves: [], warnings: [{ code: 'finishSlopeInvalid' }], bounds: null, stepLevels: [] }
+  }
   // The strategy this kind runs for the stored pattern (issue #609). Only
   // `waterline` is its own strategy here; every other stored value has always
   // taken the parallel branch, and `OPERATION_PATTERN_SUPPORT` is now where
   // that is written down rather than in the `else` of each test below.
-  if (surfaceSlopeRange(operation) === 'invalid') {
-    return { operationId: operation.id, moves: [], warnings: [{ code: 'finishSlopeInvalid' }], bounds: null, stepLevels: [] }
-  }
   const isWaterline = effectivePocketPattern(operation.kind, operation.pocketPattern) === 'waterline'
   const target = operation.target
   if (target.source !== 'features' || target.featureIds.length === 0) {

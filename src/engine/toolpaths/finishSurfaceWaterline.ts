@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { buildSurfaceSlopeDomain, intersectSurfaceSlopeDomain, segmentInSurfaceDomain } from './finishSurfaceSlope'
+import { buildSurfaceSlopeDomain, createSurfaceDomainLinkCheck, intersectSurfaceSlopeDomain } from './finishSurfaceSlope'
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
@@ -1776,8 +1776,22 @@ export function generateFinishSurfaceWaterline(
     (x, y) => safeToolTipZAt(x, y, baseHeightMap, tool), warnings)
   const slopeDomain = slopeMask === null ? null
     : intersectSurfaceSlopeDomain(compositeAllowedForRegion ?? modelSilhouettePaths, slopeMask)
-  if (slopeDomain !== null && slopeDomain.length === 0) return { moves: [], stepLevels: new Set() }
+  if (slopeDomain !== null && slopeDomain.length === 0) {
+    if (!warnings.some((warning) => warning.code === 'finishSlopeEmpty')) warnings.push({ code: 'finishSlopeEmpty' })
+    return { moves: [], stepLevels: new Set() }
+  }
   const safetyHeightMap = heightMapWithIntersectingAddTops(baseHeightMap, intersectingAdds)
+  const linkInSlopeDomain = slopeDomain === null ? null : createSurfaceDomainLinkCheck(slopeDomain)
+  const slopeSafeLink = linkInSlopeDomain === null ? undefined : (from: ToolpathPoint, to: ToolpathPoint): boolean => {
+    if (!linkInSlopeDomain(from, to)) return false
+    const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / (heightMapCellSize / 2)))
+    for (let sample = 0; sample <= steps; sample += 1) {
+      const t = sample / steps
+      const required = safeToolTipZAt(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, safetyHeightMap, tool)
+      if (from.z + (to.z - from.z) * t + waterlineLengthEpsilon < required) return false
+    }
+    return true
+  }
   const shouldProjectToTargetContact = radialLeave <= 1e-9
     && operation.stockToLeaveAxial <= 1e-9
   const targetToolTipZCache = new Map<string, number>()
@@ -2410,16 +2424,6 @@ export function generateFinishSurfaceWaterline(
             && entryIsNearIntersectingAdd(entry)
           ) {
             currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
-          }
-          const slopeSafeLink = slopeDomain === null ? undefined : (from: ToolpathPoint, to: ToolpathPoint): boolean => {
-            if (!segmentInSurfaceDomain(slopeDomain, from, to)) return false
-            const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / (heightMapCellSize / 2)))
-            for (let sample = 0; sample <= steps; sample += 1) {
-              const t = sample / steps
-              const required = safeToolTipZAt(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, safetyHeightMap, tool)
-              if (from.z + (to.z - from.z) * t + waterlineLengthEpsilon < required) return false
-            }
-            return true
           }
           if (currentPosition && slopeSafeLink && currentPosition.z < safeZ && !slopeSafeLink(currentPosition, entry)) {
             currentPosition = retractToSafe(allMoves, currentPosition, safeZ)

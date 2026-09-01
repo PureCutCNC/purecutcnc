@@ -16,7 +16,7 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { buildSurfaceSlopeDomain, segmentInSurfaceDomain, surfaceSlopeRange } from './finishSurfaceSlope'
+import { buildSurfaceSlopeDomain, createSurfaceDomainLinkCheck, surfaceSlopeRange } from './finishSurfaceSlope'
 import { generateFinishSurfaceToolpath } from './finishSurface'
 import { pointInClipperPaths } from './modelProtection'
 import { DEFAULT_CLIPPER_SCALE, getOperationSafeZ } from './geometry'
@@ -78,12 +78,14 @@ test('missing samples and sharp ridges cannot be mistaken for flat surface', () 
   assert.equal(empty.length, 0)
 })
 
-test('links reject a thin exclusion between valid endpoints', () => {
+test('links reject holes and gaps even when contour winding is lost', () => {
   const rect = (x: number, y: number, w: number, h: number) =>
     [[x,y],[x+w,y],[x+w,y+h],[x,y+h]].map(([X,Y]) => ({X:Math.round(X*DEFAULT_CLIPPER_SCALE),Y:Math.round(Y*DEFAULT_CLIPPER_SCALE)}))
-  const domain = [rect(0,0,10,10), rect(4.001,4,0.002,2).reverse()]
-  assert(!segmentInSurfaceDomain(domain, {x:1,y:5}, {x:9,y:5}))
-  assert(segmentInSurfaceDomain(domain, {x:1,y:2}, {x:9,y:2}))
+  const sameWindingHole = createSurfaceDomainLinkCheck([rect(0,0,10,10), rect(4.001,4,0.002,2)])
+  assert(!sameWindingHole({x:1,y:5}, {x:9,y:5}), 'thin interior hole crossed')
+  assert(sameWindingHole({x:1,y:2}, {x:9,y:2}), 'clear link inside outer contour')
+  const disjoint = createSurfaceDomainLinkCheck([rect(0,0,3,3), rect(7,0,3,3)])
+  assert(!disjoint({x:1,y:1}, {x:9,y:1}), 'gap between disjoint islands crossed')
 })
 
 for (const pattern of ['parallel', 'waterline'] as const) for (const adaptive of [false, true]) {
@@ -155,5 +157,25 @@ test('slope, ordered regions, tabs and clamps compose before both generators', (
     for(const move of result.moves) if(move.kind==='rapid' && Math.hypot(move.to.x-move.from.x,move.to.y-move.from.y)>1e-6) {
       assert.equal(move.from.z,safe);assert.equal(move.to.z,safe)
     }
+  }
+})
+
+test('an eligible mask emptied by region composition warns for both generators', () => {
+  const exclude = (id: string, x: number, w: number): SketchFeature => ({
+    id, name: id, kind: 'rect', folderId: null, operation: 'region', regionMaskMode: 'exclude',
+    sketch: { profile: rectProfile(x,0,w,24), origin:{x:0,y:0}, orientationAngle:0, dimensions:[], constraints:[] },
+    z_top: 30, z_bottom: 0, visible: true, locked: false,
+  })
+  for (const pattern of ['parallel','waterline'] as const) {
+    const { project, operation } = fixture()
+    const model = asSketchFeature(resolvedFeature(project,'hills-model'))
+    const regions = [exclude('exclude-left',0,20), exclude('exclude-right',40,20)]
+    replaceProjectFeatures(project,[model,...regions])
+    const result = generateFinishSurfaceToolpath(project, {
+      ...operation, pocketPattern: pattern, finishSlopeMax: 30,
+      target:{source:'features',featureIds:['hills-model',...regions.map((region) => region.id)]},
+    })
+    assert.equal(result.moves.length,0)
+    assert(result.warnings.some((warning) => warning.code === 'finishSlopeEmpty'), `${pattern} must explain the empty result`)
   }
 })

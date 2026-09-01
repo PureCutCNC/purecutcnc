@@ -3,8 +3,8 @@
 Zustand store. The single source of truth for the current `.camj` project. **All project mutations must go through actions on `projectStore` — never mutate state directly.**
 
 ## Files
-- `projectStore.ts` — store composition root
-- `surfaceSlope.test.ts` — slope-setting normalization, save/open, clearing, undo/redo, malformed-input fail-closed behavior, and cache invalidation lifecycle: initial state, shared dependencies, and slice assembly
+- `projectStore.ts` — store composition root: initial state, shared dependencies, and slice assembly
+- `surfaceSlope.test.ts` — slope-setting normalization, save/open, clearing, undo/redo, malformed-input fail-closed behavior, and cache invalidation lifecycle
 - `types.ts` — store-internal types (state shape, action signatures)
 
 ## Subfolders

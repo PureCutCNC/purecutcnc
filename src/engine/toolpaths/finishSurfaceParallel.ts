@@ -18,7 +18,7 @@ import { getProfileBounds, type Operation, type Point, type Project, type Sketch
 import type { ToolpathWarning } from './warningCodes'
 import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 import { DEFAULT_CLIPPER_SCALE, flattenProfile, normalizeWinding, toClipperPath } from './geometry'
-import { buildSurfaceSlopeDomain, intersectSurfaceSlopeDomain, segmentInSurfaceDomain } from './finishSurfaceSlope'
+import { buildSurfaceSlopeDomain, createSurfaceDomainLinkCheck, intersectSurfaceSlopeDomain } from './finishSurfaceSlope'
 import { retractToSafe, transitionToCutEntry } from './pocket'
 import { buildRegionMask } from './regions'
 import { resolveRegionDomainCentre } from './regionDomain'
@@ -596,7 +596,7 @@ export function generateFinishSurfaceParallel(
   const slopeDomain = buildSurfaceSlopeDomain(operation, heightMap,
     (x, y) => safeToolTipZAt(x, y, heightMap, tool), warnings)
   if (slopeDomain !== null && slopeDomain.length === 0) return { moves: [], stepLevels: new Set() }
-  let linkDomain: ClipperPath[] = []
+  let linkInSlopeDomain: ((from: Point, to: Point) => boolean) | null = null
   const topSurfaceSampleDistance = Math.max(heightMapCellSize, Math.min(stepoverDistance, tool.radius * 0.5))
 
   // Safe link check for scanline → scanline transitions. The straight 3D
@@ -609,7 +609,7 @@ export function generateFinishSurfaceParallel(
   const linkSampleSpacing = Math.max(heightMapCellSize, tool.radius * 0.5)
   const linkCushion = Math.max(heightMapCellSize * 0.5, 1e-3)
   const safeLinkCheck = (from: ToolpathPoint, to: ToolpathPoint): boolean => {
-    if (slopeDomain !== null && !segmentInSurfaceDomain(linkDomain, from, to)) return false
+    if (slopeDomain !== null && (!linkInSlopeDomain || !linkInSlopeDomain(from, to))) return false
     const dx = to.x - from.x
     const dy = to.y - from.y
     const dz = to.z - from.z
@@ -769,8 +769,12 @@ export function generateFinishSurfaceParallel(
     : baseContours
   const slopeContours = slopeDomain === null ? coverageContours
     : clipperPathsToTupleContours(intersectSurfaceSlopeDomain(coverageContoursToClipperPaths(coverageContours), slopeDomain))
+  if (slopeDomain !== null && slopeContours.length === 0) {
+    warnings.push({ code: 'finishSlopeEmpty' })
+    return { moves: allMoves, stepLevels: allStepLevels }
+  }
   const clippedContours = subtractProtectedContours(slopeContours, protectedPaths)
-  if (slopeDomain !== null) linkDomain = coverageContoursToClipperPaths(clippedContours)
+  if (slopeDomain !== null) linkInSlopeDomain = createSurfaceDomainLinkCheck(coverageContoursToClipperPaths(clippedContours))
   const clippedBounds = computeContourBounds([clippedContours])
   if (clippedBounds) {
     emitScanlines(clippedContours, clippedBounds, scanIndex, allMoves, allStepLevels, null)

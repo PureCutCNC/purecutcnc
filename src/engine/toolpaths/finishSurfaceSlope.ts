@@ -127,17 +127,63 @@ export function intersectSurfaceSlopeDomain(domain: ClipperPath[], slope: Clippe
   }, 0)
 }
 
-/** Exact open-segment difference catches even a narrow hole between samples. */
-export function segmentInSurfaceDomain(paths: ClipperPath[], from: Point, to: Point): boolean {
-  if (!pointInClipperPaths(paths, from) || !pointInClipperPaths(paths, to)) return false
-  const a = { X: Math.round(from.x * DEFAULT_CLIPPER_SCALE), Y: Math.round(from.y * DEFAULT_CLIPPER_SCALE) }
-  const b = { X: Math.round(to.x * DEFAULT_CLIPPER_SCALE), Y: Math.round(to.y * DEFAULT_CLIPPER_SCALE) }
-  if (a.X === b.X && a.Y === b.Y) return true
-  const clipper = new ClipperLib.Clipper()
-  addOpenSubject(clipper, [a, b])
-  clipper.AddPaths(paths, ClipperLib.PolyType.ptClip, true)
-  const tree = new ClipperLib.PolyTree()
-  clipper.Execute(ClipperLib.ClipType.ctDifference, tree,
-    ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero)
-  return openPathsFromPolyTree(tree).length === 0
+interface IntegerBounds { minX: number; minY: number; maxX: number; maxY: number }
+
+interface BoundedDomainPath extends IntegerBounds {
+  path: ClipperPath
+  edges: IntegerBounds[]
+}
+
+function boundsOverlap(a: IntegerBounds, b: IntegerBounds): boolean {
+  return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
+}
+
+/** Build the exact link predicate once per generated operation. Path and edge
+ * bounds reject the common case without constructing Clipper state; a link
+ * that can touch any boundary still uses an exact open-path difference. */
+export function createSurfaceDomainLinkCheck(paths: ClipperPath[]): (from: Point, to: Point) => boolean {
+  const boundedPaths: BoundedDomainPath[] = paths.filter((path) => path.length >= 3).map((path) => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    const edges: IntegerBounds[] = []
+    for (let i = 0; i < path.length; i += 1) {
+      const from = path[i]
+      const to = path[(i + 1) % path.length]
+      minX = Math.min(minX, from.X)
+      minY = Math.min(minY, from.Y)
+      maxX = Math.max(maxX, from.X)
+      maxY = Math.max(maxY, from.Y)
+      edges.push({
+        minX: Math.min(from.X, to.X), minY: Math.min(from.Y, to.Y),
+        maxX: Math.max(from.X, to.X), maxY: Math.max(from.Y, to.Y),
+      })
+    }
+    return { path, edges, minX, minY, maxX, maxY }
+  })
+
+  return (from: Point, to: Point): boolean => {
+    const a = { X: Math.round(from.x * DEFAULT_CLIPPER_SCALE), Y: Math.round(from.y * DEFAULT_CLIPPER_SCALE) }
+    const b = { X: Math.round(to.x * DEFAULT_CLIPPER_SCALE), Y: Math.round(to.y * DEFAULT_CLIPPER_SCALE) }
+    const segmentBounds = {
+      minX: Math.min(a.X, b.X), minY: Math.min(a.Y, b.Y),
+      maxX: Math.max(a.X, b.X), maxY: Math.max(a.Y, b.Y),
+    }
+    const candidates: ClipperPath[] = []
+    let mayCrossBoundary = false
+    for (const bounded of boundedPaths) {
+      if (!boundsOverlap(bounded, segmentBounds)) continue
+      candidates.push(bounded.path)
+      if (!mayCrossBoundary && bounded.edges.some((edge) => boundsOverlap(edge, segmentBounds))) {
+        mayCrossBoundary = true
+      }
+    }
+    if (!pointInClipperPaths(candidates, from) || !pointInClipperPaths(candidates, to)) return false
+    if (a.X === b.X && a.Y === b.Y || !mayCrossBoundary) return true
+    const clipper = new ClipperLib.Clipper()
+    addOpenSubject(clipper, [a, b])
+    clipper.AddPaths(candidates, ClipperLib.PolyType.ptClip, true)
+    const tree = new ClipperLib.PolyTree()
+    clipper.Execute(ClipperLib.ClipType.ctDifference, tree,
+      ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftEvenOdd)
+    return openPathsFromPolyTree(tree).length === 0
+  }
 }
