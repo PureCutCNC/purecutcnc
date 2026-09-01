@@ -365,6 +365,7 @@ export function generateFinishSurfaceToolpath(
       intersectingAdds,
       modelSilhouettePaths,
       relatedSubtracts,
+      horizontalFloorZs,
     )
     : generateFinishSurfaceParallel(
       project,
