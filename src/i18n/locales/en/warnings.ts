@@ -43,6 +43,7 @@ export const warningsEn = {
   'warnings.xyLeadUnsupported': 'This operation cannot use an XY approach and exit, so the ordinary entry and retract were used. Only a roughing pattern that clears in rings can carry them.',
   'warnings.xyLeadRegionMask': 'XY approach and exit are unavailable while a region mask is applied to this operation, so the ordinary entry and retract were used.',
   'warnings.xyLeadNoViablePath': 'No XY approach or exit curve fitted inside the available cutting area, so the ordinary entry and retract were used and the cutting order was kept.',
+  'warnings.xyLeadNeedsRampedEntry': 'An edge route reaches depth in a single plunge, so an XY approach would have to plunge at full width to reach its arc. The ordinary entry and retract were used; a helix or ramp entry is needed first.',
   'warnings.noToolAssigned': 'No tool assigned to this operation',
   'warnings.vBitAngleRange': 'V-bit angle must be between 0 and 180 degrees',
   'warnings.maxCarveDepthPositive': 'Max carve depth must be greater than zero',

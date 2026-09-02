@@ -36,6 +36,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.xyLeadUnsupported': 'Esta operación no admite aproximación y salida en XY, por lo que se utilizaron la entrada y la retracción habituales. Solo un patrón de desbaste que vacía en anillos las admite.',
   'warnings.xyLeadRegionMask': 'La aproximación y la salida en XY no están disponibles mientras esta operación tenga aplicada una máscara de región; se utilizaron la entrada y la retracción habituales.',
   'warnings.xyLeadNoViablePath': 'Ninguna curva de aproximación o salida en XY cabía en la zona de mecanizado disponible, por lo que se utilizaron la entrada y la retracción habituales y se conservó el orden de corte.',
+  'warnings.xyLeadNeedsRampedEntry': 'Un contorneado de borde alcanza la profundidad en una sola entrada vertical, por lo que una aproximación en XY tendría que entrar a todo el ancho para llegar a su arco. Se utilizaron la entrada y la retracción habituales; primero hace falta una entrada helicoidal o en rampa.',
   'warnings.noToolAssigned': 'No se ha asignado ninguna herramienta a esta operación',
   'warnings.vBitAngleRange': 'El ángulo de la broca en V debe estar entre 0 y 180 grados',
   'warnings.maxCarveDepthPositive': 'La profundidad máxima de grabado debe ser mayor que cero',

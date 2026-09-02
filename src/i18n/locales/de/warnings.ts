@@ -43,6 +43,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.xyLeadUnsupported': 'Diese Operation kann keinen XY-An- und Abfahrbogen verwenden; stattdessen wurden das normale Eintauchen und Zurückziehen genutzt. Nur ein Schruppmuster, das in Ringen räumt, unterstützt sie.',
   'warnings.xyLeadRegionMask': 'XY-An- und Abfahrbögen sind nicht verfügbar, solange für diese Operation eine Bereichsmaske gilt; stattdessen wurden das normale Eintauchen und Zurückziehen genutzt.',
   'warnings.xyLeadNoViablePath': 'Es passte kein XY-An- oder Abfahrbogen in den verfügbaren Bearbeitungsbereich; stattdessen wurden das normale Eintauchen und Zurückziehen genutzt und die Schnittreihenfolge beibehalten.',
+  'warnings.xyLeadNeedsRampedEntry': 'Eine Kantenfräsbahn erreicht die Tiefe in einem einzigen Eintauchvorgang, daher müsste eine XY-Anfahrt zum Erreichen ihres Bogens mit voller Breite eintauchen. Es wurden das normale Eintauchen und Zurückziehen genutzt; zuerst wird eine Helix- oder Rampeneinfahrt benötigt.',
   'warnings.noToolAssigned': 'Dieser Operation ist kein Werkzeug zugewiesen',
   'warnings.vBitAngleRange': 'Der V-Nutfräser-Winkel muss zwischen 0 und 180 Grad liegen',
   'warnings.maxCarveDepthPositive': 'Max. Gravurtiefe muss größer als null sein',

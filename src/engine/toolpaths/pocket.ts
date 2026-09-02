@@ -1962,7 +1962,7 @@ export function cutClosedContours(
       maxLinkDistance,
       safeLinkCheck,
     )
-    const leadPlan = planWallLeadIn(xyLead, contour, isFullEntry)
+    const leadPlan = planWallLeadIn(xyLead, contour, isFullEntry, nextPosition)
     const ring = rotateRingForLead(contour, leadPlan)
     const entryPoint = leadPlan
       ? { x: leadPlan.staging.x, y: leadPlan.staging.y, z }

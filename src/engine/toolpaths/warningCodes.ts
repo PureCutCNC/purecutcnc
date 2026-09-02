@@ -44,6 +44,11 @@ export type ToolpathWarningCode =
   /** No candidate lead stayed inside the safe domain within the budget, so the
    *  ordinary direct entry/retract was emitted and the ring order kept. */
   | 'xyLeadNoViablePath'
+  /** An edge route asked for a lead it cannot afford: the descent is a single
+   *  plunge to depth, so staging it off the wall trades a sliver-engagement
+   *  plunge for a full-width one. Lifted once edge routes gain a helix or ramp
+   *  entry (#708). */
+  | 'xyLeadNeedsRampedEntry'
   // developer diagnostics (debugToolpath) — untranslated passthrough
   | 'debug'
   // shared generator preconditions

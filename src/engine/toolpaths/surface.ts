@@ -1233,7 +1233,7 @@ function generateFinishBandMoves(
         safeZ,
         maxLinkDistance,
       )
-      const leadPlan = planWallLeadIn(levelWallLead, baseContour, isFullEntry)
+      const leadPlan = planWallLeadIn(levelWallLead, baseContour, isFullEntry, currentPosition)
       const contour = rotateRingForLead(baseContour, leadPlan)
       currentPosition = transitionToCutEntry(
         moves,

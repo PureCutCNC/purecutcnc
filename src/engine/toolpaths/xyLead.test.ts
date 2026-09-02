@@ -555,6 +555,106 @@ function testWithKeepOutSubtractsFromTheDomain() {
   console.log('keep-out subtraction: PASSED')
 }
 
+/**
+ * Where the join lands, now that candidates are ranked rather than walked in
+ * contour order.
+ *
+ * The defect this ranking fixes: in open space EVERY candidate is valid, so the
+ * first one offered won — and the first offered was `contour[0]`, a vertex.
+ * On an edge route that is wherever Clipper's offset happened to start, which
+ * is routinely a corner; the cut's take-up and the exit's overlap then land on
+ * the feature most likely to be a datum or a mating face.
+ */
+function testJoinAvoidsCornersThenTakesTheNearest() {
+  console.log('Testing the join avoids corners, then takes the nearest...')
+  // A rectangle inside the open domain: four corners, four straight runs, and
+  // room for the widest arc at any of them.
+  const ring: Point[] = [
+    { x: 20, y: 20 }, { x: 80, y: 20 }, { x: 80, y: 60 }, { x: 20, y: 60 },
+  ]
+  const cornerDistance = (point: Point): number => Math.min(
+    ...ring.map((corner) => Math.hypot(point.x - corner.x, point.y - corner.y)),
+  )
+
+  const plan = planXyLeadIn(ring, openOptions(), null)
+  assert(plan !== null, 'the ring takes a lead')
+  const join = plan.points[plan.points.length - 1]
+  assert(cornerDistance(join) > TOOL_DIAMETER,
+    `the join clears every corner by more than a diameter (${cornerDistance(join).toFixed(2)} mm)`)
+  // Not merely "not exactly on a vertex": the seam must move too, or the exit
+  // would still depart from the old corner.
+  assert(plan.seam !== null && cornerDistance(plan.seam[0]) > TOOL_DIAMETER,
+    'and the contour is re-seamed there, so the exit inherits the clearance')
+
+  // Among positions equally clear of a corner — anywhere along one straight
+  // run — the nearest to the cutter wins. Approach from opposite ends and the
+  // join follows, without ever climbing back onto a corner.
+  const near = planXyLeadIn(ring, openOptions(), { x: 22, y: 90 })
+  const far = planXyLeadIn(ring, openOptions(), { x: 78, y: 90 })
+  assert(near !== null && far !== null, 'both approaches take a lead')
+  const nearJoin = near.points[near.points.length - 1]
+  const farJoin = far.points[far.points.length - 1]
+  assert(nearJoin.x < farJoin.x, 'the join tracks the side the cutter comes from')
+  assert(cornerDistance(nearJoin) > TOOL_DIAMETER && cornerDistance(farJoin) > TOOL_DIAMETER,
+    'and neither travels back onto a corner to get there')
+  console.log('corner avoidance then travel: PASSED')
+}
+
+/**
+ * A fillet is a corner too. `roundOutsideCorners` turns one 90 degree vertex
+ * into eighteen 5 degree ones, and a per-vertex sharpness test would read that
+ * as a smooth run and put the join in the middle of it. Scoring ACCUMULATED
+ * turn within a diameter is what makes the two spellings of a corner rank the
+ * same.
+ */
+function testAFilletedCornerRanksLikeAMitredOne() {
+  console.log('Testing a filleted corner still reads as a corner...')
+  const radius = 6
+  const ring: Point[] = []
+  // A 60 x 40 ring whose top-right corner is a quarter-circle fillet.
+  ring.push({ x: 20, y: 20 }, { x: 80, y: 20 })
+  for (let step = 0; step <= 18; step += 1) {
+    const angle = (-Math.PI / 2) + (step / 18) * (Math.PI / 2)
+    ring.push({ x: 80 + radius * Math.cos(angle), y: 60 - radius + radius * Math.sin(angle) })
+  }
+  ring.push({ x: 20, y: 60 })
+
+  const plan = planXyLeadIn(ring, openOptions(), null)
+  assert(plan !== null, 'the filleted ring takes a lead')
+  const join = plan.points[plan.points.length - 1]
+  // The fillet spans the corner at (80, 60); nothing within it should win.
+  const toFilletCentre = Math.hypot(join.x - (80 - radius), join.y - (60 - radius))
+  assert(toFilletCentre > radius + TOOL_DIAMETER,
+    `the join stays clear of the whole fillet, not just its vertices (${toFilletCentre.toFixed(2)} mm)`)
+  console.log('filleted corner ranks as a corner: PASSED')
+}
+
+/**
+ * A tessellated circle has no corners: every 5 degree vertex is tessellation,
+ * not geometry. Quantising the turn score to the tessellation step is what
+ * makes every position tie, so travel — not whichever window happened to hold
+ * one fewer vertex — decides.
+ */
+function testACircleFallsThroughToTravel() {
+  console.log('Testing a circle ranks purely on travel...')
+  const ring: Point[] = []
+  for (let step = 0; step < 72; step += 1) {
+    const angle = (step / 72) * 2 * Math.PI
+    ring.push({ x: 50 + 20 * Math.cos(angle), y: 50 + 20 * Math.sin(angle) })
+  }
+
+  for (const [label, from, expect] of [
+    ['east', { x: 95, y: 50 }, (p: Point) => p.x > 60],
+    ['west', { x: 5, y: 50 }, (p: Point) => p.x < 40],
+  ] as const) {
+    const plan = planXyLeadIn(ring, openOptions(), from)
+    assert(plan !== null, `the circle takes a lead from the ${label}`)
+    const join = plan.points[plan.points.length - 1]
+    assert(expect(join), `and joins on the ${label} side (${join.x.toFixed(2)}, ${join.y.toFixed(2)})`)
+  }
+  console.log('circle falls through to travel: PASSED')
+}
+
 try {
   testEntryArrivesTangentToTheRing()
   testExitDepartsTangentFromTheRing()
@@ -570,6 +670,9 @@ try {
   testOnlyAFullEntryIsLed()
   testExitLeavesTheContourItStandsOn()
   testLengthBudgetIsEnforced()
+  testJoinAvoidsCornersThenTakesTheNearest()
+  testAFilletedCornerRanksLikeAMitredOne()
+  testACircleFallsThroughToTravel()
   testDomainOutsideLoopsInvertsTheDomain()
   testWithKeepOutSubtractsFromTheDomain()
   console.log('\nAll xyLead tests PASSED.')

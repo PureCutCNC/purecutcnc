@@ -242,6 +242,37 @@ function edgeLinksAtDepth(
   return distance > 0 && distance <= maxLinkDistance
 }
 
+/**
+ * Can this route reach a lead's staging point without paying more than the
+ * lead saves?
+ *
+ * Always false today, and the reason is measured rather than cautious. A rough
+ * edge route clears a channel of exactly `2r` — the finish tool's own diameter
+ * — so there is NO radial room for the finish tool to step sideways and stay
+ * in cut air. Staging a lead off the wall therefore moves the descent out of
+ * that channel and into virgin stock. On a 6 mm cutter round a 15 mm boss,
+ * after a rough pass leaving 0.5 mm:
+ *
+ *   direct    tool centre 3.00 mm from the part, 0.50 mm of the plunge engaged (8%)
+ *   arc lead  tool centre 9.93 mm from the part, 6.00 mm of the plunge engaged (100%)
+ *
+ * That trades a witness line for a full-width full-depth plunge — 0.75 in of
+ * it on a typical part, which breaks cutters. No arc radius escapes it: the
+ * staging point sits at perpendicular distance about R from the wall path, so
+ * the widest rung is worst and the narrowest still lands near 17%.
+ *
+ * The escape is the entry policy `edge.ts` never picked up from #412: a helix
+ * or ramp makes the axial bite per revolution small, at which point full radial
+ * engagement is ordinary slotting rather than a plunge. The lead and the entry
+ * want the same thing — the lead already stages the cutter in open,
+ * domain-validated space clear of the finished wall, which is exactly the
+ * clearance a helix needs — so neither is safe alone here. #708 supplies it,
+ * and this becomes the policy check rather than a constant.
+ */
+function descentCanAffordALead(): boolean {
+  return false
+}
+
 function generateStepLevels(topZ: number, bottomZ: number, stepdown: number): number[] {
   if (!(stepdown > 0)) {
     return [bottomZ]
@@ -731,7 +762,7 @@ function appendFragmentedContoursAtLevels(
           const isFullEntry = !edgeLinksAtDepth(
             nextPosition, contourStartPoint(ff.points, z), maxLinkDistance,
           )
-          const leadPlan = planWallLeadIn(levelLead, ff.points, isFullEntry)
+          const leadPlan = planWallLeadIn(levelLead, ff.points, isFullEntry, nextPosition)
           const points = rotateRingForLead(ff.points, leadPlan)
           const entry = leadPlan
             ? { x: leadPlan.staging.x, y: leadPlan.staging.y, z }
@@ -1281,16 +1312,20 @@ function generateEdgeRouteToolpathSingle(
   const safeZ = getOperationSafeZ(project)
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   // XY leads (issue #695). An edge route cuts nothing BUT wall contours, so a
-  // finish pass always carries them, and a roughing pass carries them exactly
-  // when it leaves no radial stock for a finish pass to take the mark away.
+  // finish pass always qualifies, and a roughing pass qualifies exactly when it
+  // leaves no radial stock for a finish pass to take the mark away.
   //
   // Trochoidal roughing is excluded on the measured ground that it has no
   // descent to move: it enters through its own helical entry away from the
   // wall and reaches the wall by widening orbits, so a fixture that plunges
   // onto the wall three times as a contour route produces zero such descents
   // as a trochoidal one. There is no mark here for a lead to prevent.
-  const carriesWallLead = !isTrochoidal
+  const wallQualifiesForLead = !isTrochoidal
     && (operation.pass === 'finish' || roughingRingIsTheFinishedWall(operation))
+  const carriesWallLead = wallQualifiesForLead && descentCanAffordALead()
+  if (wallQualifiesForLead && !carriesWallLead && operation.xyLeadStrategy === 'arc') {
+    appendUniqueWarning(warnings, { code: 'xyLeadNeedsRampedEntry' })
+  }
   // This is the one guide clearance used to keep the complete orbit and cutter
   // off the retained wall. Reusing the same value in every guide calculation is
   // load-bearing: separate approximations can turn a visual seam into a gouge.

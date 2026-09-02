@@ -40,6 +40,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.xyLeadUnsupported': '此操作无法使用 XY 进刀与退刀圆弧，已改用常规下刀和抬刀。仅按环形清料的粗加工图案支持该功能。',
   'warnings.xyLeadRegionMask': '该操作应用了区域遮罩时无法使用 XY 进刀与退刀圆弧，已改用常规下刀和抬刀。',
   'warnings.xyLeadNoViablePath': '没有 XY 进刀或退刀圆弧能放入可用加工区域，已改用常规下刀和抬刀，并保持原有切削顺序。',
+  'warnings.xyLeadNeedsRampedEntry': '轮廓铣一次下刀即到达深度，因此 XY 进刀需要全宽下刀才能到达其圆弧。已改用常规下刀和抬刀；需要先提供螺旋或斜坡下刀。',
   'warnings.noToolAssigned': '此加工操作未指定刀具',
   'warnings.vBitAngleRange': 'V刀角度必须在 0 到 180 度之间',
   'warnings.maxCarveDepthPositive': '最大雕刻深度必须大于零',

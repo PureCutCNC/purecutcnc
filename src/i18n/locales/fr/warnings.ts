@@ -36,6 +36,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.xyLeadUnsupported': 'Cette opération ne peut pas utiliser d’approche et de sortie en XY ; l’entrée et le retrait habituels ont été utilisés. Seul un motif d’ébauche qui évide en anneaux les prend en charge.',
   'warnings.xyLeadRegionMask': 'L’approche et la sortie en XY sont indisponibles tant qu’un masque de région s’applique à cette opération ; l’entrée et le retrait habituels ont été utilisés.',
   'warnings.xyLeadNoViablePath': 'Aucune courbe d’approche ou de sortie en XY ne tenait dans la zone d’usinage disponible ; l’entrée et le retrait habituels ont été utilisés et l’ordre de coupe a été conservé.',
+  'warnings.xyLeadNeedsRampedEntry': 'Un détourage atteint la profondeur en une seule plongée ; une approche en XY devrait donc plonger sur toute la largeur pour rejoindre son arc. L’entrée et le retrait habituels ont été utilisés ; une entrée hélicoïdale ou en rampe est nécessaire au préalable.',
   'warnings.noToolAssigned': 'Aucun outil n’est affecté à cette opération',
   'warnings.vBitAngleRange': 'L’angle de fraise en V doit être compris entre 0 et 180 degrés',
   'warnings.maxCarveDepthPositive': 'La profondeur maximale de gravure doit être supérieure à zéro',

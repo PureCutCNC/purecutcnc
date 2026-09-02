@@ -466,9 +466,10 @@ export function planWallLeadIn(
   context: XyLeadContext | undefined,
   contour: Point[],
   isFullEntry: boolean,
+  from: Point | null = null,
 ): XyLeadPlan | null {
   if (!context || !isFullEntry) return null
-  const plan = planXyLeadIn(contour, context.options)
+  const plan = planXyLeadIn(contour, context.options, from)
   if (plan === null) context.onWarning({ code: 'xyLeadNoViablePath' })
   return plan
 }
@@ -516,12 +517,24 @@ export function rotateRingForLead(contour: Point[], plan: XyLeadPlan | null): Po
 }
 
 /**
- * Fractions along each edge at which a lead may join, in candidate order.
- * Zero is the edge's own vertex; the rest let the join slide off a corner,
- * which is the only way a sparse contour (a rectangle is four corners and
- * nothing else) can take a lead at all.
+ * Fractions along each edge at which a lead may join. Zero is the edge's own
+ * vertex; the rest let the join slide off a corner, which is the only way a
+ * sparse contour (a rectangle is four corners and nothing else) can take a
+ * lead at all. The order here is not the candidate order — see
+ * `contourArrivals`, which ranks them.
  */
 const LEAD_ARRIVAL_FRACTIONS = [0, 0.5, 0.25, 0.75] as const
+
+/**
+ * How far either way along the contour counts as "at" a join, as a multiple of
+ * tool diameter.
+ *
+ * A lead's engagement transient is local: what matters is whether the cutter is
+ * turning while it takes up the cut, not whether there is a corner somewhere
+ * else on the ring. One diameter is the lead's own scale — the widest arc in
+ * the ladder and the length budget are both set from it.
+ */
+const LEAD_CORNER_WINDOW_FACTOR = 1
 
 /**
  * Plan the arc that arrives on `contour` tangent-continuously.
@@ -534,12 +547,19 @@ const LEAD_ARRIVAL_FRACTIONS = [0, 0.5, 0.25, 0.75] as const
  * source contour's first vertex, it only reaches it in the same fixed order as
  * every other position.
  */
-export function planXyLeadIn(contour: Point[], options: XyLeadOptions): XyLeadPlan | null {
+export function planXyLeadIn(
+  contour: Point[],
+  options: XyLeadOptions,
+  from: Point | null = null,
+): XyLeadPlan | null {
   if (contour.length < 3) return null
 
+  // Ranked once, not once per rung: the order depends on the contour and the
+  // tool's position, neither of which changes as the radius ladder descends.
+  const arrivals = contourArrivals(contour, options, from)
   for (const arc of leadArcs(options)) {
     const chordBudget = domainChordBudget(arc.radius, options.arcStepRadians) * LEAD_SAMPLE_REFINEMENT
-    for (const arrival of contourArrivals(contour)) {
+    for (const arrival of arrivals) {
       // Built backwards from the contour and then reversed: the path that
       // leaves along -t is exactly the path that arrives along +t. The turn
       // sign flips with it, so the arc still curves to the free side.
@@ -553,7 +573,7 @@ export function planXyLeadIn(contour: Point[], options: XyLeadOptions): XyLeadPl
         )
         if (validateLead(arrival.point, departing, arc.radius, chordBudget, options) === null) continue
         const points = [...departing].reverse()
-        return { points, staging: points[0], seam: arrival.seam }
+        return { points, staging: points[0], seam: arrivalSeam(contour, arrival) }
       }
     }
   }
@@ -564,36 +584,158 @@ export function planXyLeadIn(contour: Point[], options: XyLeadOptions): XyLeadPl
  * Every position a lead may join `contour` at, with its tangent and the
  * contour re-seamed to start there. Vertices first, then along each edge.
  */
-function* contourArrivals(
+interface LeadArrival {
+  /** Index of the edge the join sits on, and how far along it. */
+  index: number
+  fraction: number
+  point: Point
+  tangent: Point
+  /** Turn accumulated within a diameter either way, in tessellation steps. */
+  corner: number
+  /** Distance from where the cutter is now. */
+  travel: number
+}
+
+/**
+ * The contour re-seamed to start at `arrival`, built only for the candidate
+ * that wins. Materialising a seam for every candidate would copy the whole
+ * contour once per candidate, which on a tessellated ring is quadratic in
+ * points for a value all but one of them throws away.
+ */
+function arrivalSeam(contour: Point[], arrival: LeadArrival): Point[] {
+  const { index, fraction, point } = arrival
+  if (fraction === 0) {
+    return [...contour.slice(index), ...contour.slice(0, index)]
+  }
+  // Cut in at `point`, run the rest of the contour, and close over the
+  // remainder of this edge — the same material, seamed elsewhere.
+  return [point, ...contour.slice(index + 1), ...contour.slice(0, index + 1)]
+}
+
+/**
+ * "How much does the contour turn near here", as a count of tessellation steps,
+ * for any position measured in arc length from `contour[0]`.
+ *
+ * This is the "is this a corner" measure, and two choices in it are
+ * load-bearing.
+ *
+ * It sums ACCUMULATED turn across a window rather than reading one vertex's
+ * angle. A mitred 90 degree corner puts all 90 degrees in a single vertex; a
+ * filleted one spreads the same 90 degrees over eighteen 5 degree vertices.
+ * Both are corners and must rank alike, which a per-vertex threshold cannot do
+ * — it reads the fillet as a smooth run and drops the join in the middle of it.
+ *
+ * And it is evaluated at the candidate's own position, never inherited from the
+ * vertices an edge lies between. The midpoint of a 60 mm edge is 30 mm from
+ * either corner, far outside the window, and is exactly the position worth
+ * choosing; scoring it by its endpoints would make every candidate on that edge
+ * tie with the corners themselves.
+ *
+ * Quantising to the tessellation step is what lets travel break ties: two
+ * positions on one straight run score exactly 0, and every position on a
+ * tessellated circle lands in the same bucket, so the choice falls through to
+ * the distance the cutter has to travel. Without it the winner would be
+ * whichever candidate's window happened to hold one fewer vertex.
+ */
+function turnScorer(
   contour: Point[],
-): Generator<{ point: Point; tangent: Point; seam: Point[] }> {
+  options: XyLeadOptions,
+): { at: (position: number) => number; edgeStart: number[]; edgeLength: number[] } {
+  const count = contour.length
+  const edgeLength: number[] = new Array(count)
+  const edgeStart: number[] = new Array(count)
+  let perimeter = 0
+  for (let index = 0; index < count; index += 1) {
+    const here = contour[index]
+    const next = contour[(index + 1) % count]
+    edgeStart[index] = perimeter
+    edgeLength[index] = Math.hypot(next.x - here.x, next.y - here.y)
+    perimeter += edgeLength[index]
+  }
+
+  const turns: number[] = new Array(count)
+  for (let index = 0; index < count; index += 1) {
+    const previous = contour[(index + count - 1) % count]
+    const here = contour[index]
+    const next = contour[(index + 1) % count]
+    const inX = here.x - previous.x, inY = here.y - previous.y
+    const outX = next.x - here.x, outY = next.y - here.y
+    const inLength = Math.hypot(inX, inY), outLength = Math.hypot(outX, outY)
+    turns[index] = inLength > LEAD_EPSILON && outLength > LEAD_EPSILON
+      ? Math.abs(Math.atan2(inX * outY - inY * outX, inX * outX + inY * outY))
+      : 0
+  }
+
+  const window = options.toolDiameter * LEAD_CORNER_WINDOW_FACTOR
+  const step = Math.max(options.arcStepRadians, LEAD_EPSILON)
+  const at = (position: number): number => {
+    let total = 0
+    for (let index = 0; index < count; index += 1) {
+      if (turns[index] <= LEAD_EPSILON) continue
+      const raw = Math.abs(edgeStart[index] - position)
+      // Shorter way round the ring.
+      if (Math.min(raw, perimeter - raw) <= window) total += turns[index]
+    }
+    return Math.round(total / step)
+  }
+  return { at, edgeStart, edgeLength }
+}
+
+/**
+ * Every position a lead may join `contour` at, best first.
+ *
+ * Ranked by corner clearance, then by travel. Corner first because the join is
+ * where the cutter takes up the cut and where the exit's overlap re-cuts: at a
+ * corner that transient lands on the feature most likely to be a datum or a
+ * mating face, on top of the machine's own deceleration, and the arc has to
+ * project diagonally to clear two edges at once instead of one. Travel second
+ * because among positions that are equally clear of a corner — anywhere along
+ * one straight edge, or anywhere at all on a circle — the nearest is free.
+ *
+ * Ordering by contour index, which is what this did before, means the join
+ * lands on `contour[0]`: in open space every candidate is valid, so the first
+ * offered wins. On an edge route that vertex is wherever Clipper's offset
+ * happened to start, which is routinely a corner.
+ *
+ * Travel is measured to the JOIN, not to the staging point the rapid actually
+ * targets, because staging depends on the radius and side that have not been
+ * chosen yet. They sit within about one and a half diameters of each other.
+ */
+function contourArrivals(
+  contour: Point[],
+  options: XyLeadOptions,
+  from: Point | null,
+): LeadArrival[] {
+  const { at, edgeStart } = turnScorer(contour, options)
+  const arrivals: LeadArrival[] = []
   for (const fraction of LEAD_ARRIVAL_FRACTIONS) {
     for (let index = 0; index < contour.length; index += 1) {
-      const from = contour[index]
-      const to = contour[(index + 1) % contour.length]
-      const dx = to.x - from.x
-      const dy = to.y - from.y
+      const start = contour[index]
+      const end = contour[(index + 1) % contour.length]
+      const dx = end.x - start.x
+      const dy = end.y - start.y
       const edge = Math.hypot(dx, dy)
       if (!(edge > LEAD_EPSILON)) continue
-      const tangent = { x: dx / edge, y: dy / edge }
-      if (fraction === 0) {
-        yield {
-          point: from,
-          tangent,
-          seam: [...contour.slice(index), ...contour.slice(0, index)],
-        }
-        continue
-      }
-      const point = { x: from.x + dx * fraction, y: from.y + dy * fraction }
-      // Cut in at `point`, run the rest of the contour, and close over the
-      // remainder of this edge — the same material, seamed elsewhere.
-      yield {
+      const point = fraction === 0
+        ? start
+        : { x: start.x + dx * fraction, y: start.y + dy * fraction }
+      arrivals.push({
+        index,
+        fraction,
         point,
-        tangent,
-        seam: [point, ...contour.slice(index + 1), ...contour.slice(0, index + 1)],
-      }
+        tangent: { x: dx / edge, y: dy / edge },
+        corner: at(edgeStart[index] + edge * fraction),
+        travel: from ? Math.hypot(point.x - from.x, point.y - from.y) : 0,
+      })
     }
   }
+  // Index and fraction last so the order is total, and identical inputs always
+  // produce an identical program.
+  arrivals.sort((left, right) => left.corner - right.corner
+    || left.travel - right.travel
+    || left.index - right.index
+    || left.fraction - right.fraction)
+  return arrivals
 }
 
 /**
