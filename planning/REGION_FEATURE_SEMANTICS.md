@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: region feature meaning and CAM filtering behavior
-last-verified: 2026-08-16
+last-verified: 2026-08-31
 ---
 
 # Region Feature Semantics
@@ -112,6 +112,12 @@ erosion remaining. Passing a non-zero `centreInset` to `resolveRegionDomainArea`
 here would pre-dilate includes expecting a full erosion that never arrives —
 the cutter sweeps a full tool radius into excluded areas. `resolveRegionDomainCentre`
 is correct at this seam.
+
+### Surface-slope composition
+
+An optional `finish_surface` slope range is a second tool-centre area domain. It is derived from the existing cutter-location (CL) height map, with angles measured from horizontal. User regions resolve first with their existing coverage/containment inset; the slope domain is then intersected with zero additional inset because its cells already describe legal cutter-centre positions. The cutter body may therefore reach across a slope boundary, just as the setting help states.
+
+Slope boundaries are raster boundaries at the operation’s bounded height-map cell size. Missing CL samples are excluded rather than interpreted as flat, opposing one-sided derivatives cannot cancel at a sharp ridge, and disconnected eligible pieces require a safe-Z traverse unless an at-depth segment is proven to remain in the composite domain and above the CL surface. There is no generated-move deletion and no boundary-only contour pass. With both slope fields absent, the slope-domain path returns before allocation and existing region behavior stays byte-identical.
 
 ### Safety guarantee
 

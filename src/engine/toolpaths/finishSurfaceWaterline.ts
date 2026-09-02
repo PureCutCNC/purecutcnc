@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { buildSurfaceSlopeDomain, createSurfaceDomainLinkCheck, intersectSurfaceSlopeDomain } from './finishSurfaceSlope'
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
@@ -1771,7 +1772,26 @@ export function generateFinishSurfaceWaterline(
     heightMapBbox,
     heightMapCellSize,
   )
+  const slopeMask = buildSurfaceSlopeDomain(operation, baseHeightMap,
+    (x, y) => safeToolTipZAt(x, y, baseHeightMap, tool), warnings)
+  const slopeDomain = slopeMask === null ? null
+    : intersectSurfaceSlopeDomain(compositeAllowedForRegion ?? modelSilhouettePaths, slopeMask)
+  if (slopeDomain !== null && slopeDomain.length === 0) {
+    if (!warnings.some((warning) => warning.code === 'finishSlopeEmpty')) warnings.push({ code: 'finishSlopeEmpty' })
+    return { moves: [], stepLevels: new Set() }
+  }
   const safetyHeightMap = heightMapWithIntersectingAddTops(baseHeightMap, intersectingAdds)
+  const linkInSlopeDomain = slopeDomain === null ? null : createSurfaceDomainLinkCheck(slopeDomain)
+  const slopeSafeLink = linkInSlopeDomain === null ? undefined : (from: ToolpathPoint, to: ToolpathPoint): boolean => {
+    if (!linkInSlopeDomain(from, to)) return false
+    const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / (heightMapCellSize / 2)))
+    for (let sample = 0; sample <= steps; sample += 1) {
+      const t = sample / steps
+      const required = safeToolTipZAt(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, safetyHeightMap, tool)
+      if (from.z + (to.z - from.z) * t + waterlineLengthEpsilon < required) return false
+    }
+    return true
+  }
   const shouldProjectToTargetContact = radialLeave <= 1e-9
     && operation.stockToLeaveAxial <= 1e-9
   const targetToolTipZCache = new Map<string, number>()
@@ -2200,7 +2220,7 @@ export function generateFinishSurfaceWaterline(
       // the resulting OPEN polyline segments break around the protected region
       // — the tool then traces each segment with a retract between them, never
       // dipping into protected material and never chord-cutting across it.
-      const { paths: clippedPaths, closed: pathClosed } = protectedAtLevel.length > 0
+      const protectedClipped = protectedAtLevel.length > 0
         ? clipContourBoundariesAgainstRegion(
             machiningClippedTrimmed.paths,
             protectedAtLevel,
@@ -2208,6 +2228,9 @@ export function generateFinishSurfaceWaterline(
           )
         : machiningClippedTrimmed
 
+      // Clip last, preserving open flags through all existing protection.
+      const { paths: clippedPaths, closed: pathClosed } = slopeDomain === null ? protectedClipped
+        : clipContourBoundariesByRegion(protectedClipped.paths, slopeDomain, protectedClipped.closed, true)
       if (clippedPaths.length === 0) {
         previousRingHadCut = false
         continue
@@ -2293,7 +2316,7 @@ export function generateFinishSurfaceWaterline(
 
         if (isClosed && currentPosition) {
           contour = rotateContourToNearestEntry(contour, { x: currentPosition.x, y: currentPosition.y })
-          contour = snapClosedContourEntryToAnchor(contour, currentPosition, entrySnapTolerance)
+          if (slopeDomain === null) contour = snapClosedContourEntryToAnchor(contour, currentPosition, entrySnapTolerance)
         }
 
         const meshBoundaryPaths = intersectingAdds.length > 0 ? sliceMeshOnlyAtZ(ringEntry.z) : []
@@ -2402,6 +2425,9 @@ export function generateFinishSurfaceWaterline(
           ) {
             currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
           }
+          if (currentPosition && slopeSafeLink && currentPosition.z < safeZ && !slopeSafeLink(currentPosition, entry)) {
+            currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
+          }
           const moveCountBeforeTransition = allMoves.length
           currentPosition = transitionToCutEntry(
             allMoves,
@@ -2409,6 +2435,7 @@ export function generateFinishSurfaceWaterline(
             entry,
             safeZ,
             canLinkFromPreviousRing ? columnLinkDistance : 0,
+            slopeSafeLink,
           )
           const transitionMove = allMoves[moveCountBeforeTransition]
           if (transitionMove?.kind === 'cut' && ringEntry.source) {
@@ -2422,7 +2449,8 @@ export function generateFinishSurfaceWaterline(
             : safeRun.closed
               ? toClosedCutMoves(safeRun.contour, ringEntry.z)
               : toOpenCutMoves(safeRun.contour, ringEntry.z)
-          const simplified = simplifyContiguousCutMoves(cutMovesForContour)
+          // Approximate simplification could shortcut across a slope-mask corner.
+          const simplified = slopeDomain === null ? simplifyContiguousCutMoves(cutMovesForContour) : cutMovesForContour
           appendAll(allMoves, simplified)
           for (const move of simplified) {
             allStepLevels.add(move.from.z)

@@ -23,6 +23,9 @@
  * never translated.
  */
 export const warningsEn = {
+  'warnings.finishSlopeInvalid': 'Surface slope bounds must be finite angles from 0 to 90°, with minimum no greater than maximum. No toolpath generated.',
+  'warnings.finishSlopeEmpty': 'No reachable surface matches the selected slope range.',
+  'warnings.finishSlopeTooComplex': 'The surface slope boundary is too complex to resolve safely. No toolpath generated.',
   'warnings.debug': '{text}',
   // resolver
   'warnings.targetsMissingOrWrongRole': 'Some selected target features are missing or are not {roles} features',
@@ -196,6 +199,8 @@ export const warningsEn = {
   'warnings.waterlineRefinementCoarsened': 'Waterline refinement was coarsened from {requested} to {effective} to fit its budget — the finish is rougher than the adaptive spacing asks for; restrict the operation to a region to get the full spacing',
   'warnings.waterlineRefinementTruncated': 'Waterline refinement stopped after {rings} passes — part of the surface carries no refinement at all; restrict the operation to a region, or increase the adaptive spacing',
   'warnings.surfaceHeightMapReduced': 'Finish surface height map reduced from {from} to about {to} cells for performance',
+  'warnings.constantScallopResolutionTooCoarse': 'Constant-scallop spacing {spacing} is finer than the bounded surface grid ({cellSize}); restrict the operation or increase the stepover',
+  'warnings.constantScallopEmpty': 'No machinable constant-scallop surface remains inside the selected model, regions, and slope range',
   'warnings.surfaceSilhouetteDegenerate': 'Model silhouette is degenerate — no finish surface coverage generated',
   'warnings.cleanupStockToLeaveOffsets': '3D surface cleanup uses stock-to-leave values; non-zero radial or axial leave offsets cleanup from the final surface',
   'warnings.cleanupNoContours': 'No cleanup contours available for this 3D surface operation',

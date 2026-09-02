@@ -18,6 +18,10 @@ import type { camEn } from '../en/cam'
 
 /** Spanish cam interface text. */
 export const camEs: Record<keyof typeof camEn, string> = {
+  'cam.operation.slopeFilter': 'Filtrar por pendiente de superficie',
+  'cam.operation.slopeMin': 'Pendiente mínima (°)',
+  'cam.operation.slopeMax': 'Pendiente máxima (°)',
+  'cam.operation.slopeHelp': 'La pendiente sigue la superficie de contacto de la punta, medida desde la horizontal. La herramienta puede sobresalir del límite. Borre ambos límites para desactivar. Los mapas de altura no representan socavados. Los límites siguen la resolución del mapa de altura.',
   'cam.toolType.flatEndmill': 'Fresa plana',
   'cam.toolType.ballEndmill': 'Fresa esférica',
   'cam.toolType.vBit': 'Fresa en V',
@@ -65,6 +69,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.quickOp.group.threeD': 'Operaciones 3D',
   'cam.pocketPattern.offset': 'Desfase',
   'cam.pocketPattern.parallel': 'Paralelo',
+  'cam.pocketPattern.constantScallop': 'Cresta constante',
   'cam.pocketPattern.waterline': 'Línea de flotación',
   'cam.pocketPattern.seededOffset': 'Círculos iniciales',
   'cam.pass.rough': 'Desbaste',
@@ -390,7 +395,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.opDesc.roughSurface.keyPoint.3': 'Operación de una sola pasada (sin separación desbaste/acabado; esta operación es de desbaste)',
   'cam.opDesc.roughSurface.keyPoint.4': 'Las regiones cerradas opcionales actúan como filtros XY',
   'cam.opDesc.finishSurface.title': 'Acabado de superficie 3D',
-  'cam.opDesc.finishSurface.fullDescription': 'El acabado de superficie produce la superficie final en un modelo 3D importado. Elija paralelo (líneas de barrido con un ángulo configurable) para geometrías menos pronunciadas o línea de flotación (contornos de Z constante) para paredes más inclinadas. Use un paso lateral pequeño para paralelo o una profundidad de pasada pequeña para línea de flotación.',
+  'cam.opDesc.finishSurface.fullDescription': 'El acabado de superficie produce la superficie final en un modelo 3D importado. Elija paralelo (líneas de barrido con un ángulo configurable) para geometrías menos pronunciadas, cresta constante (pasadas espaciadas de forma uniforme a lo largo de la propia superficie) para tapas talladas y curvas, o línea de flotación (contornos de Z constante) para paredes más inclinadas. Use un paso lateral pequeño para paralelo y cresta constante, o una profundidad de pasada pequeña para línea de flotación.',
   'cam.opDesc.finishSurface.keyPoint.0': 'Requiere un modelo 3D importado',
   'cam.opDesc.finishSurface.keyPoint.1': 'Patrón paralelo (líneas de barrido) o de línea de flotación (Z constante)',
   'cam.opDesc.finishSurface.keyPoint.2': 'Operación de una sola pasada (sin separación entre desbaste y acabado; esta operación es el acabado)',

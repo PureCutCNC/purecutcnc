@@ -124,6 +124,8 @@ const OPERATION_FIELD_CLASSIFICATION: Record<keyof Operation, FieldClass> = {
   retractHeight: 'compare',
   debugToolpath: 'compare',
   debugShowRejectedCorners: 'compare',
+  finishSlopeMin: 'compare',
+  finishSlopeMax: 'compare',
   waterlineAdaptiveRefinement: 'compare',
   waterlineMicroStepover: 'compare',
   waterlineRefinementThreshold: 'compare',

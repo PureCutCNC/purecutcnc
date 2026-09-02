@@ -18,6 +18,9 @@ import type { warningsEn } from '../en/warnings'
 
 /** Spanish toolpath and postprocessor warnings. */
 export const warningsEs: Record<keyof typeof warningsEn, string> = {
+  'warnings.finishSlopeInvalid': 'Los límites de pendiente deben ser ángulos finitos entre 0 y 90°, con el mínimo no mayor que el máximo. No se ha generado trayectoria.',
+  'warnings.finishSlopeEmpty': 'Ninguna superficie accesible coincide con el intervalo de pendiente seleccionado.',
+  'warnings.finishSlopeTooComplex': 'El límite de pendiente es demasiado complejo para resolverlo con seguridad. No se ha generado trayectoria.',
   'warnings.debug': '{text}',
   'warnings.targetsMissingOrWrongRole': 'Faltan algunos elementos objetivo seleccionados o no son elementos {roles}',
   'warnings.closedProfilesOnly': 'Las operaciones de {operation} solo admiten perfiles objetivo cerrados',
@@ -178,6 +181,8 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.waterlineRefinementCoarsened': 'El refinado por línea de flotación se engrosó de {requested} a {effective} para ajustarse a su presupuesto: el acabado es más basto de lo que pide el espaciado adaptativo. Limite la operación a una región para obtener el espaciado completo.',
   'warnings.waterlineRefinementTruncated': 'El refinado por línea de flotación se detuvo tras {rings} pasadas: parte de la superficie no lleva ningún refinado. Limite la operación a una región o aumente el espaciado adaptativo.',
   'warnings.surfaceHeightMapReduced': 'El mapa de altura de la superficie de acabado se redujo de {from} a aproximadamente {to} celdas para optimizar el rendimiento.',
+  'warnings.constantScallopResolutionTooCoarse': 'El espaciado {spacing} es menor que la cuadrícula de superficie limitada ({cellSize}); restrinja la operación o aumente el paso lateral',
+  'warnings.constantScallopEmpty': 'No queda superficie mecanizable dentro del modelo, las regiones y el intervalo de pendiente seleccionados',
   'warnings.surfaceSilhouetteDegenerate': 'La silueta del modelo está degenerada; no se generó cobertura de acabado de superficie.',
   'warnings.cleanupStockToLeaveOffsets': 'La limpieza de superficie 3D utiliza valores de material a dejar; los desplazamientos radiales o axiales de salida distintos de cero limpian la superficie final.',
   'warnings.cleanupNoContours': 'No hay contornos de limpieza disponibles para esta operación de superficie 3D.',

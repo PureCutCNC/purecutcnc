@@ -359,6 +359,19 @@ export function OperationParameterReference({
           </OpParamRefFrame>
         )
       }
+      if (variant === 'constant_scallop') {
+        // Passes that follow the boundary inward at an even spacing measured
+        // along the surface — the level sets of a distance field, not rings at
+        // constant Z and not scanlines.
+        return (
+          <OpParamRefFrame label={label}>
+            <path className="gear-reference__outline" d="M6 5h46v24H6z" />
+            <rect className="gear-reference__accent" x="11" y="10" width="36" height="14" rx="6" />
+            <rect className="gear-reference__accent" x="15" y="14" width="28" height="6" rx="3" />
+            <path className="gear-reference__accent" d="M19 17h20" />
+          </OpParamRefFrame>
+        )
+      }
       if (variant === 'waterline') {
         return (
           <OpParamRefFrame label={label}>

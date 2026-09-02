@@ -22,6 +22,11 @@
  * language pack, so treat renames as breaking and only do them deliberately.
  */
 export const camEn = {
+  'cam.operation.slopeFilter': 'Filter by surface slope',
+  'cam.operation.slopeMin': 'Minimum slope (°)',
+  'cam.operation.slopeMax': 'Maximum slope (°)',
+  'cam.operation.slopeHelp': 'Slope follows the tool-tip contact surface, measured from horizontal. The cutter can extend across the boundary. Clear both bounds to disable. Height maps cannot represent undercuts. Boundaries follow the displayed height-map resolution.',
+
   // ── Tool type labels ──
   'cam.toolType.flatEndmill': 'Flat endmill',
   'cam.toolType.ballEndmill': 'Ball endmill',
@@ -83,6 +88,7 @@ export const camEn = {
   // ── Pocket pattern labels ──
   'cam.pocketPattern.offset': 'Offset',
   'cam.pocketPattern.parallel': 'Parallel',
+  'cam.pocketPattern.constantScallop': 'Constant scallop',
   'cam.pocketPattern.waterline': 'Waterline',
   'cam.pocketPattern.seededOffset': 'Seeded circles',
 
@@ -475,7 +481,7 @@ export const camEn = {
 
   // 3D Surface finish
   'cam.opDesc.finishSurface.title': '3D surface finish',
-  'cam.opDesc.finishSurface.fullDescription': 'The finish surface operation produces the final surface on an imported 3D model. Choose parallel (scanlines at a configurable angle) for shallower geometry or waterline (constant-Z contours) for steeper walls. Use a small stepover for parallel or small stepdown for waterline.',
+  'cam.opDesc.finishSurface.fullDescription': 'The finish surface operation produces the final surface on an imported 3D model. Choose parallel (scanlines at a configurable angle) for shallower geometry, constant scallop (passes spaced evenly along the surface itself) for sculpted and carved tops, or waterline (constant-Z contours) for steeper walls. Use a small stepover for parallel and constant scallop, or a small stepdown for waterline.',
   'cam.opDesc.finishSurface.keyPoint.0': 'Requires an imported 3D model',
   'cam.opDesc.finishSurface.keyPoint.1': 'Parallel (scanline) or waterline (constant-Z) pattern',
   'cam.opDesc.finishSurface.keyPoint.2': 'Single-pass operation (no rough/finish split — this op is the finish)',

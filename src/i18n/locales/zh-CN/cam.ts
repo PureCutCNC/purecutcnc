@@ -24,6 +24,11 @@ import type { camEn } from '../en/cam'
  * `.one`/`.other` variants intentionally share one string.
  */
 export const camZhCN: Record<keyof typeof camEn, string> = {
+  'cam.operation.slopeFilter': '按曲面坡度筛选',
+  'cam.operation.slopeMin': '最小坡度 (°)',
+  'cam.operation.slopeMax': '最大坡度 (°)',
+  'cam.operation.slopeHelp': '坡度取自刀尖接触曲面，相对于水平面测量。刀具可伸出边界。清空两个限值即可禁用。高度图无法表示倒扣。 边界遵循高度图的分辨率。',
+
   // ── Tool type labels ──
   'cam.toolType.flatEndmill': '平底立铣刀',
   'cam.toolType.ballEndmill': '球头立铣刀',
@@ -84,6 +89,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   // ── Pocket pattern labels ──
   'cam.pocketPattern.offset': '偏移',
   'cam.pocketPattern.parallel': '平行',
+  'cam.pocketPattern.constantScallop': '恒残留高度',
   'cam.pocketPattern.waterline': '水平线',
   'cam.pocketPattern.seededOffset': '同心圆起始',
 
@@ -457,7 +463,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.opDesc.roughSurface.keyPoint.3': '单工序操作（无粗/精加工分开——此操作本身就是粗加工）',
   'cam.opDesc.roughSurface.keyPoint.4': '可选的闭合区域作为 XY 过滤器',
   'cam.opDesc.finishSurface.title': '3D 曲面精加工',
-  'cam.opDesc.finishSurface.fullDescription': '曲面精加工在导入的 3D 模型上生成最终表面。选择平行（可配置角度的扫描线）用于较浅的几何体，或水平线（恒定 Z 轮廓）用于较陡的壁面。平行模式使用较小的横向步距，水平线模式使用较小的下刀步距。',
+  'cam.opDesc.finishSurface.fullDescription': '曲面精加工在导入的 3D 模型上生成最终表面。选择平行（可配置角度的扫描线）用于较浅的几何体，恒残留高度（沿曲面本身等距分布的走刀）用于雕刻和弧面顶板，或水平线（恒定 Z 轮廓）用于较陡的壁面。平行和恒残留高度模式使用较小的横向步距，水平线模式使用较小的下刀步距。',
   'cam.opDesc.finishSurface.keyPoint.0': '需要一个导入的 3D 模型',
   'cam.opDesc.finishSurface.keyPoint.1': '平行（扫描线）或水平线（恒定 Z）模式',
   'cam.opDesc.finishSurface.keyPoint.2': '单工序操作（无粗/精加工分开——此操作就是精加工）',

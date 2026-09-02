@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { SurfaceSlopeFields } from './SurfaceSlopeFields'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
 import { useI18n } from '../../i18n/i18nContext'
@@ -102,6 +103,7 @@ function DraftTextInput({ value, onCommit }: DraftTextInputProps) {
 
   return (
     <input
+      key={value}
       type="text"
       defaultValue={value}
       spellCheck={false}
@@ -136,6 +138,7 @@ function DraftTextArea({ value, onCommit }: DraftTextInputProps) {
 
   return (
     <textarea
+      key={value}
       defaultValue={value}
       spellCheck
       onBlur={(event) => commit(event.currentTarget)}
@@ -186,6 +189,7 @@ function DraftLengthInput({ value, units, min, max, onCommit }: DraftLengthInput
 
   return (
     <input
+      key={value}
       type="text"
       inputMode="decimal"
       defaultValue={formatLength(value, units)}
@@ -242,6 +246,7 @@ function DraftNumberInput({ value, min, max, onCommit }: DraftNumberInputProps) 
 
   return (
     <input
+      key={value}
       type="text"
       inputMode="decimal"
       defaultValue={String(value)}
@@ -386,6 +391,8 @@ function pocketPatternLabel(pattern: PocketPattern): string {
       return camT('cam.pocketPattern.parallel')
     case 'waterline':
       return camT('cam.pocketPattern.waterline')
+    case 'constant_scallop':
+      return camT('cam.pocketPattern.constantScallop')
     case 'seeded_offset':
       return camT('cam.pocketPattern.seededOffset')
   }
@@ -1798,6 +1805,7 @@ export function CAMPanel({
           <OperationParameterReference kind="stockRadial" />
         </label>
       ),
+      slopeFilter: () => <SurfaceSlopeFields operation={operation} updateOperation={updateOperation} />,
       adaptiveRefinement: () => (
         <label
           className="properties-check"

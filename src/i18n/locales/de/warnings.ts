@@ -23,6 +23,9 @@ import type { warningsEn } from '../en/warnings'
  * passthrough and stays `{text}`.
  */
 export const warningsDe: Record<keyof typeof warningsEn, string> = {
+  'warnings.finishSlopeInvalid': 'Neigungsgrenzen müssen endliche Winkel von 0 bis 90° sein; das Minimum darf das Maximum nicht überschreiten. Kein Werkzeugweg erzeugt.',
+  'warnings.finishSlopeEmpty': 'Keine erreichbare Oberfläche entspricht dem gewählten Neigungsbereich.',
+  'warnings.finishSlopeTooComplex': 'Die Neigungsgrenze ist zu komplex, um sie sicher aufzulösen. Kein Werkzeugweg erzeugt.',
   'warnings.debug': '{text}',
   // resolver
   'warnings.targetsMissingOrWrongRole': 'Einige ausgewählte Ziel-Features fehlen oder sind keine {roles}-Features',
@@ -196,6 +199,8 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.waterlineRefinementCoarsened': 'Wasserlinien-Verfeinerung wurde von {requested} auf {effective} vergröbert, um ins Budget zu passen — die Oberfläche wird rauer, als der adaptive Abstand vorgibt; beschränken Sie die Operation auf einen Bereich, um den vollen Abstand zu erhalten',
   'warnings.waterlineRefinementTruncated': 'Wasserlinien-Verfeinerung wurde nach {rings} Durchgängen abgebrochen — ein Teil der Oberfläche ist überhaupt nicht verfeinert; beschränken Sie die Operation auf einen Bereich oder vergrößern Sie den adaptiven Abstand',
   'warnings.surfaceHeightMapReduced': 'Höhenkarte des Oberflächenschlichtens von {from} auf etwa {to} Zellen für die Leistung reduziert',
+  'warnings.constantScallopResolutionTooCoarse': 'Der Abstand {spacing} ist feiner als das begrenzte Oberflächenraster ({cellSize}); Operation begrenzen oder Zustellung erhöhen',
+  'warnings.constantScallopEmpty': 'Innerhalb von Modell, Bereichen und Neigungsgrenzen bleibt keine bearbeitbare Oberfläche übrig',
   'warnings.surfaceSilhouetteDegenerate': 'Modellsilhouette ist entartet – keine Oberflächenschlicht-Abdeckung erzeugt',
   'warnings.cleanupStockToLeaveOffsets': '3D-Oberflächen-Nacharbeit verwendet Aufmaß-Werte; von null verschiedene radiale oder axiale Aufmaße versetzen die Nacharbeit von der endgültigen Oberfläche',
   'warnings.cleanupNoContours': 'Keine Nacharbeitskonturen für diese 3D-Oberflächenoperation verfügbar',

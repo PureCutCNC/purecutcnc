@@ -140,6 +140,9 @@ export type ToolpathWarningCode =
    *  budget. */
   | 'surface3dMeshTooDense'
   // finish surface
+  | 'finishSlopeInvalid'
+  | 'finishSlopeEmpty'
+  | 'finishSlopeTooComplex'
   | 'finishNeedsModel'
   | 'finishNotMesh'
   | 'finishNoDepthInPocket'
@@ -249,6 +252,8 @@ export type ToolpathWarningCode =
   // finish surface parallel / cleanup / pocket floors
   | 'surfaceHeightMapReduced'
   | 'surfaceSilhouetteDegenerate'
+  | 'constantScallopResolutionTooCoarse'
+  | 'constantScallopEmpty'
   | 'cleanupStockToLeaveOffsets'
   | 'cleanupNoContours'
   | 'pocketNoFloorRegion'

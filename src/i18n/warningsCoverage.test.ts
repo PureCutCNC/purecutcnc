@@ -28,6 +28,7 @@ function assert(condition: boolean, message: string): void {
 // is checked against the catalog, and the exhaustiveness helper below
 // ensures the list IS the union.
 const ALL_CODES = [
+  'finishSlopeInvalid', 'finishSlopeEmpty', 'finishSlopeTooComplex',
   'targetsMissingOrWrongRole', 'closedProfilesOnly', 'bandEmptySubject', 'bandNoRegions', 'resolverNoBands',
   'resolverOnlyInsideEdge', 'resolverOnlyPocketVcarve', 'resolverNoValidKindTargets', 'resolverNoValidSubtracts', 'resolverNoTargets',
   'cutDepthExceedsToolMax', 'cutDepthExceedsToolMaxForFeature',
@@ -78,7 +79,8 @@ const ALL_CODES = [
   'clampCrossedOne', 'clampCrossedMany', 'clampTravelLimitExceeded',
   'finishNeedsModel', 'finishNotMesh', 'finishNoDepthInPocket',
   'waterlineRefinementCoarsened', 'waterlineRefinementTruncated',
-  'surfaceHeightMapReduced', 'surfaceSilhouetteDegenerate', 'cleanupStockToLeaveOffsets', 'cleanupNoContours',
+  'surfaceHeightMapReduced', 'surfaceSilhouetteDegenerate', 'constantScallopResolutionTooCoarse', 'constantScallopEmpty',
+  'cleanupStockToLeaveOffsets', 'cleanupNoContours',
   'pocketNoFloorRegion', 'pocketNoFloorSegments', 'pocketWallCornerCleanupFallback',
   'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
   'postArcNoCapability', 'postArcFallbackLinear',

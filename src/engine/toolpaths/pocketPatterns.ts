@@ -84,22 +84,24 @@ const CLEARING_PATTERNS: OperationPatternSupport = {
     seeded_offset: 'seeded_offset',
     parallel: 'parallel',
     waterline: 'offset',
+    constant_scallop: 'none',
   },
 }
 
 export const OPERATION_PATTERN_SUPPORT: Readonly<Record<OperationKind, OperationPatternSupport | null>> = {
   pocket: CLEARING_PATTERNS,
   surface_clean: CLEARING_PATTERNS,
-  // 3D surface finishing is a choice between two strategies, neither of which
+  // 3D surface finishing is a choice between three strategies, none of which
   // is a 2.5D area clearing pattern; a stored offset resolves to the parallel
   // strategy, which is the branch it has always taken.
   finish_surface: {
-    offered: ['parallel', 'waterline'],
+    offered: ['parallel', 'waterline', 'constant_scallop'],
     effective: {
       offset: 'parallel',
       seeded_offset: 'parallel',
       parallel: 'parallel',
       waterline: 'waterline',
+      constant_scallop: 'constant_scallop',
     },
   },
   // Cleanup clears its floor with the 2.5D set, but its floor builder has no
@@ -111,6 +113,7 @@ export const OPERATION_PATTERN_SUPPORT: Readonly<Record<OperationKind, Operation
       seeded_offset: 'seeded_offset',
       parallel: 'parallel',
       waterline: 'none',
+      constant_scallop: 'none',
     },
   },
   v_carve: null,
@@ -197,6 +200,7 @@ export function areaCoverage(pattern: EffectivePocketPattern): AreaCoverage {
     // Waterline is a 3D constant-Z finishing strategy, not area clearing;
     // `finish_surface` dispatches it before it ever reaches this function.
     case 'waterline':
+    case 'constant_scallop':
       return NO_COVERAGE
     case 'none':
       return NO_COVERAGE

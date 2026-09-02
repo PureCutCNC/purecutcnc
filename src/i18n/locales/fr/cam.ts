@@ -18,6 +18,10 @@ import type { camEn } from '../en/cam'
 
 /** French CAM catalog. */
 export const camFr: Record<keyof typeof camEn, string> = {
+  'cam.operation.slopeFilter': 'Filtrer par pente de surface',
+  'cam.operation.slopeMin': 'Pente minimale (°)',
+  'cam.operation.slopeMax': 'Pente maximale (°)',
+  'cam.operation.slopeHelp': 'La pente suit la surface de contact de la pointe, mesurée depuis l’horizontale. L’outil peut dépasser la limite. Effacez les deux limites pour désactiver. Les cartes de hauteur ne représentent pas les contre-dépouilles. Les limites suivent la résolution de la carte de hauteur.',
   'cam.toolType.flatEndmill': 'Fraise cylindrique',
   'cam.toolType.ballEndmill': 'Fraise hémisphérique',
   'cam.toolType.vBit': 'Fraise en V',
@@ -65,6 +69,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.quickOp.group.threeD': 'Opérations 3D',
   'cam.pocketPattern.offset': 'Décalage',
   'cam.pocketPattern.parallel': 'Parallèle',
+  'cam.pocketPattern.constantScallop': 'Crête constante',
   'cam.pocketPattern.waterline': 'Ligne d’eau',
   'cam.pocketPattern.seededOffset': 'Cercles d’amorce',
   'cam.pass.rough': 'Ébauche',
@@ -390,7 +395,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.opDesc.roughSurface.keyPoint.3': 'Opération à passe unique : cette opération est l’ébauche',
   'cam.opDesc.roughSurface.keyPoint.4': 'Les régions fermées facultatives servent de filtres XY',
   'cam.opDesc.finishSurface.title': 'Finition de surface 3D',
-  'cam.opDesc.finishSurface.fullDescription': 'La finition de surface produit la surface finale d’un modèle 3D importé. Choisissez un motif parallèle pour les géométries peu inclinées ou une ligne d’eau pour les parois raides.',
+  'cam.opDesc.finishSurface.fullDescription': 'La finition de surface produit la surface finale d’un modèle 3D importé. Choisissez un motif parallèle pour les géométries peu inclinées, une crête constante (passes espacées régulièrement le long de la surface) pour les dessus sculptés et galbés, ou une ligne d’eau pour les parois raides.',
   'cam.opDesc.finishSurface.keyPoint.0': 'Exige un modèle 3D importé',
   'cam.opDesc.finishSurface.keyPoint.1': 'Motif parallèle ou ligne d’eau',
   'cam.opDesc.finishSurface.keyPoint.2': 'Opération à passe unique : cette opération est la finition',
