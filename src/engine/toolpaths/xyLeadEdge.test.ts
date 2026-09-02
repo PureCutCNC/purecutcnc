@@ -290,6 +290,45 @@ function testLeadAvoidsTheTabItWouldOtherwiseDriveInto() {
   console.log('lead avoids tabs: PASSED')
 }
 
+/**
+ * One lead per profile per level, not one per tab fragment.
+ *
+ * This holds by construction rather than by code, and the distinction is worth
+ * pinning: tabs do not fragment an edge route into separately-plunged spans.
+ * `applyTabsToEdgeRoute` lifts the cutter over each tab and sets it back down
+ * while it stays engaged, so the profile is one continuous engagement with one
+ * entry. If tab handling ever changed to retract and re-plunge per span, every
+ * span start would be a fresh descent onto the wall and this would fail.
+ */
+function testATabbedProfileIsLedOncePerLevel() {
+  console.log('Testing a tabbed profile is led once per level...')
+  const tabs: Tab[] = [
+    { id: 'tab1', name: 'tab1', x: 52, y: 36, w: 8, h: 8, z_top: -4, shape: 'rect' } as Tab,
+    { id: 'tab2', name: 'tab2', x: 20, y: 36, w: 8, h: 8, z_top: -4, shape: 'rect' } as Tab,
+    { id: 'tab3', name: 'tab3', x: 36, y: 56, w: 8, h: 8, z_top: -4, shape: 'rect' } as Tab,
+  ]
+  const project = edgeProject(tabs)
+  const operation = outsideOperation({ pass: 'rough', stepdown: 2, xyLeadStrategy: 'arc' })
+  const led = applyTabsToEdgeRoute(project, operation, generateEdgeRouteToolpath(project, operation))
+
+  // Count contiguous lead-in RUNS, not moves: a run is one arc.
+  const entriesPerLevel = new Map<string, number>()
+  let inRun = false
+  for (const move of led.moves) {
+    if (move.kind !== 'lead_in') { inRun = false; continue }
+    if (inRun) continue
+    inRun = true
+    const level = move.to.z.toFixed(6)
+    entriesPerLevel.set(level, (entriesPerLevel.get(level) ?? 0) + 1)
+  }
+
+  assert(entriesPerLevel.size === 3, `three levels are led (saw ${entriesPerLevel.size})`)
+  for (const [level, count] of entriesPerLevel) {
+    assert(count === 1, `level ${level} is entered exactly once, not once per tab span (saw ${count})`)
+  }
+  console.log('one lead per profile per level: PASSED')
+}
+
 function testTabPassLeavesLeadsAlone() {
   console.log('Testing the tab pass does not mangle a lead...')
   const tab: Tab = {
@@ -342,6 +381,7 @@ try {
   testRadialStockGatesTheRoughingRoute()
   testTrochoidalRoughingHasNoDescentToMove()
   testLeadAvoidsTheTabItWouldOtherwiseDriveInto()
+  testATabbedProfileIsLedOncePerLevel()
   testTabPassLeavesLeadsAlone()
   testAbsentAndNoneAreByteIdentical()
   testNormalizationKeepsTheFieldOnEdgeRoutes()
