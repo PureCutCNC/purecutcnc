@@ -439,7 +439,10 @@ export function useToolpathGeneration(
   // the very first render after a parameter change, not one frame late.
   // toolpathMap is included as a dependency so the memo recomputes when the
   // async pipeline finishes and updates the map (which also updates the cache).
+  // When generation is deferred (issue #680) no computation runs, so the
+  // spinner must not show: the cache is stale by design until the defer ends.
   const generatingOperationIds = useMemo(() => {
+    if (deferGeneration) return new Set<string>()
     const ids = new Set<string>()
     for (const id of neededOperationIds) {
       const op = project.operations.find((o) => o.id === id)
@@ -455,7 +458,7 @@ export function useToolpathGeneration(
   // toolpathMap when the async pipeline finishes. Dropping it would leave the
   // generating spinner stuck on. `project` does not change when generation completes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [neededOperationIds, project, toolpathMap])
+  }, [neededOperationIds, project, toolpathMap, deferGeneration])
 
   // Async toolpath pipeline: resolves cached results immediately, defers
   // uncached operations one-per-frame with a paint gap in between so the
