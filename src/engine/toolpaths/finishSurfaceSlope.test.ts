@@ -88,7 +88,15 @@ test('links reject holes and gaps even when contour winding is lost', () => {
   assert(!disjoint({x:1,y:1}, {x:9,y:1}), 'gap between disjoint islands crossed')
 })
 
-for (const pattern of ['parallel', 'waterline'] as const) for (const adaptive of [false, true]) {
+const slopePatternCases = [
+  { pattern: 'parallel', adaptive: false },
+  { pattern: 'parallel', adaptive: true },
+  { pattern: 'waterline', adaptive: false },
+  { pattern: 'waterline', adaptive: true },
+  { pattern: 'constant_scallop', adaptive: false },
+] as const
+
+for (const { pattern, adaptive } of slopePatternCases) {
   test(`${pattern}, adaptive ${adaptive}: cuts and links stay on shallow bands; crossings travel at safe Z`, () => {
     const { project, operation } = fixture()
     const filtered = { ...operation, pocketPattern: pattern, waterlineAdaptiveRefinement: adaptive, finishSlopeMin: 0, finishSlopeMax: 30 }
@@ -116,15 +124,18 @@ for (const pattern of ['parallel', 'waterline'] as const) for (const adaptive of
 }
 
 test('unit conversion preserves the selected slope band on generated paths', () => {
-  const {project,operation} = fixture()
-  operation.finishSlopeMax = 30
-  for (const units of ['mm','inch'] as const) {
-    const converted = units === 'mm' ? project : convertProjectUnits(project, units)
-    const result = generateFinishSurfaceToolpath(converted, converted.operations[0])
-    assert(result.moves.some(m => m.kind === 'cut'))
-    for (const m of result.moves.filter(m => m.kind === 'cut')) {
-      const x = (m.from.x + m.to.x) / 2 * (units === 'mm' ? 1 : 25.4)
-      assert(x <= 20 || x >= 39.5)
+  for (const pattern of ['parallel', 'constant_scallop'] as const) {
+    const {project,operation} = fixture()
+    operation.finishSlopeMax = 30
+    operation.pocketPattern = pattern
+    for (const units of ['mm','inch'] as const) {
+      const converted = units === 'mm' ? project : convertProjectUnits(project, units)
+      const result = generateFinishSurfaceToolpath(converted, converted.operations[0])
+      assert(result.moves.some(m => m.kind === 'cut'))
+      for (const m of result.moves.filter(m => m.kind === 'cut')) {
+        const x = (m.from.x + m.to.x) / 2 * (units === 'mm' ? 1 : 25.4)
+        assert(x <= 20 || x >= 39.5)
+      }
     }
   }
 })
@@ -136,7 +147,7 @@ test('slope, ordered regions, tabs and clamps compose before both generators', (
     sketch: { profile: rectProfile(x,y,w,h), origin:{x:0,y:0}, orientationAngle:0, dimensions:[], constraints:[] },
     z_top: 30, z_bottom: 0, visible: true, locked: false,
   })
-  for (const pattern of ['parallel','waterline'] as const) {
+  for (const pattern of ['parallel','waterline','constant_scallop'] as const) {
     const {project,operation} = fixture()
     const model = asSketchFeature(resolvedFeature(project,'hills-model'))
     const regions = [region('include',2,2,56,20,'include'),region('exclude',8,0,2,24,'exclude')]
@@ -166,7 +177,7 @@ test('an eligible mask emptied by region composition warns for both generators',
     sketch: { profile: rectProfile(x,0,w,24), origin:{x:0,y:0}, orientationAngle:0, dimensions:[], constraints:[] },
     z_top: 30, z_bottom: 0, visible: true, locked: false,
   })
-  for (const pattern of ['parallel','waterline'] as const) {
+  for (const pattern of ['parallel','waterline','constant_scallop'] as const) {
     const { project, operation } = fixture()
     const model = asSketchFeature(resolvedFeature(project,'hills-model'))
     const regions = [exclude('exclude-left',0,20), exclude('exclude-right',40,20)]
@@ -176,6 +187,7 @@ test('an eligible mask emptied by region composition warns for both generators',
       target:{source:'features',featureIds:['hills-model',...regions.map((region) => region.id)]},
     })
     assert.equal(result.moves.length,0)
-    assert(result.warnings.some((warning) => warning.code === 'finishSlopeEmpty'), `${pattern} must explain the empty result`)
+    const expectedWarning = pattern === 'constant_scallop' ? 'constantScallopEmpty' : 'finishSlopeEmpty'
+    assert(result.warnings.some((warning) => warning.code === expectedWarning), `${pattern} must explain the empty result`)
   }
 })

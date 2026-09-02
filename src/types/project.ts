@@ -485,7 +485,7 @@ export type CarveStrategy = 'direct' | 'trochoidal'
  * Every project saved before it has `offset`, so the value is new-only and
  * legacy output is untouched.
  */
-export type PocketPattern = 'offset' | 'parallel' | 'waterline' | 'seeded_offset'
+export type PocketPattern = 'offset' | 'parallel' | 'waterline' | 'constant_scallop' | 'seeded_offset'
 export type CutDirection = 'conventional' | 'climb'
 /**
  * Drilling mode (issue #489 added `countersink`).

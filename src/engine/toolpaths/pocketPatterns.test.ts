@@ -76,15 +76,17 @@ const ALL_KINDS: OperationKind[] = [
   'drilling',
 ]
 
-const ALL_PATTERNS: PocketPattern[] = ['offset', 'parallel', 'waterline', 'seeded_offset']
+const ALL_PATTERNS: PocketPattern[] = ['offset', 'parallel', 'waterline', 'constant_scallop', 'seeded_offset']
 
 /** An effective pattern that emits motion — anything but the inert `'none'`. */
 function cuts(effective: EffectivePocketPattern): boolean {
   if (effective === 'none') return false
   const coverage = areaCoverage(effective)
-  // `waterline` is a 3D constant-Z strategy rather than area coverage, so it
-  // reports no coverage here and is still a pattern that cuts.
-  return effective === 'waterline' || coverage.rings || coverage.rasterSegments
+  // `waterline` and `constant_scallop` are 3D surface-finishing strategies
+  // rather than area coverage, so they report no coverage here and are still
+  // patterns that cut.
+  return effective === 'waterline' || effective === 'constant_scallop'
+    || coverage.rings || coverage.rasterSegments
 }
 
 // ── The table's own structure ───────────────────────────────────────

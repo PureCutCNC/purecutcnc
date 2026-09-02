@@ -181,6 +181,8 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.waterlineRefinementCoarsened': '水平线精修间距已从 {requested} 放宽到 {effective} 以符合预算——表面比自适应间距所要求的更粗糙；请将该操作限制在某个区域内以获得完整间距',
   'warnings.waterlineRefinementTruncated': '水平线精修在 {rings} 条路径后停止——部分表面完全没有精修；请将该操作限制在某个区域内，或增大自适应间距',
   'warnings.surfaceHeightMapReduced': '曲面精加工高度图已从 {from} 缩减到约 {to} 个单元以保证性能',
+  'warnings.constantScallopResolutionTooCoarse': '恒残留高度间距 {spacing} 小于受限曲面网格 ({cellSize})；请限制加工区域或增大步距',
+  'warnings.constantScallopEmpty': '所选模型、区域和坡度范围内没有可加工的恒残留高度曲面',
   'warnings.surfaceSilhouetteDegenerate': '模型轮廓退化 — 未生成曲面精加工覆盖',
   'warnings.cleanupStockToLeaveOffsets': '3D曲面清理使用留量值；非零的径向或轴向留量会使清理偏离最终曲面',
   'warnings.cleanupNoContours': '此3D曲面加工操作没有可用的清理轮廓',

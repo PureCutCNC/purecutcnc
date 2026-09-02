@@ -1,5 +1,5 @@
 /**
- * Surface-finish coverage and scallop probe (issues #697, #698, #699).
+ * Surface-finish coverage and scallop probe (issues #697, #698, #699, #705).
  *
  * Answers the question a move count cannot: how much material does the emitted
  * pass actually leave on the model, and *where* — sorted by surface slope, which
@@ -30,12 +30,22 @@
  *       Measure a real project instead. Add --spacing to override the
  *       operation's Adaptive spacing, repeatable to sweep it.
  *
+ *   npx tsx scripts/waterline-coverage-probe.ts --fixture guitar \
+ *     --pattern constant_scallop --tolerance 0.02
+ *       Run #705's tracked guitar-top acceptance: a 6 mm ball at the 20 um
+ *       cusp spacing on the carved top, which must hold p90 <= 0.020 mm and
+ *       over% <= 10 across the combined 0-20 degree band with no unmachined
+ *       area. For parallel and constant scallop, --spacing is the absolute
+ *       pass spacing and is converted to the persisted Stepover ratio; with no
+ *       --spacing the guitar runs at that cusp spacing.
+ *
  * Options:
  *   --spacing <n>        Adaptive spacing to run, repeatable (project units)
  *   --stepdown <n>       override the operation stepdown
- *   --cell-divisor <n>   probe grid cells per tool radius (default 6)
+ *   --cell-divisor <n>   probe grid cells per tool radius (6, guitar 10)
  *   --tolerance <n>      finish budget for the over% column (default r/50)
  *   --pattern <name>     force a pocket pattern, e.g. parallel, for comparison
+ *   --fixture <name>     synthetic fixture: hills (default) or guitar
  */
 
 import { readFileSync } from 'node:fs'
@@ -52,6 +62,8 @@ import {
   type HeightMap,
 } from '../src/engine/toolpaths/finishSurfaceParallel'
 import { hillsWaterlineProject } from '../src/test/waterlineHillsFixture'
+import { buildGuitarMesh } from '../src/test/guitarTopFixture'
+import { surfaceTestProject } from '../src/test/surfaceSlopeFixtures'
 import type { NormalizedTool, ToolpathMove } from '../src/engine/toolpaths/types'
 import type { Operation, PocketPattern, Project, SketchFeature } from '../src/types/project'
 
@@ -75,6 +87,7 @@ interface Band {
 }
 
 const SLOPE_BANDS = [
+  { label: 'accept 0-20', minDeg: 0, maxDeg: 20 },
   { label: 'flat 0-5', minDeg: 0, maxDeg: 5 },
   { label: 'shallow 5-20', minDeg: 5, maxDeg: 20 },
   { label: 'medium 20-45', minDeg: 20, maxDeg: 45 },
@@ -89,14 +102,16 @@ function parseArgs(argv: string[]): {
   cellDivisor: number
   tolerance?: number
   pattern?: PocketPattern
+  fixture: 'hills' | 'guitar'
 } {
   const spacings: number[] = []
   let project: string | undefined
   let operation: string | undefined
   let stepdown: number | undefined
-  let cellDivisor = 6
+  let cellDivisor: number | undefined
   let tolerance: number | undefined
   let pattern: PocketPattern | undefined
+  let fixture: 'hills' | 'guitar' = 'hills'
   for (let i = 0; i < argv.length; i += 1) {
     const value = argv[i + 1]
     switch (argv[i]) {
@@ -107,10 +122,49 @@ function parseArgs(argv: string[]): {
       case '--cell-divisor': cellDivisor = Number(value); i += 1; break
       case '--tolerance': tolerance = Number(value); i += 1; break
       case '--pattern': pattern = value as PocketPattern; i += 1; break
+      case '--fixture':
+        if (value !== 'hills' && value !== 'guitar') throw new Error(`unknown fixture ${value}`)
+        fixture = value
+        i += 1
+        break
       default: break
     }
   }
-  return { project, operation, spacings, stepdown, cellDivisor, tolerance, pattern }
+  // The guitar top defaults to a finer probe grid than everything else. The
+  // grid sets the path sampling too (half its pitch), and on that fixture r/6
+  // chords across curved constant-scallop contours: the *cut* envelope then
+  // misses material the pass really removes and the residual is over-stated —
+  // 0-20 degree p90 reads 0.0385 mm at r/6 against 0.0147 mm at r/10 for the
+  // same toolpath. Every #697 guitar table was measured at r/10 for that
+  // reason. An explicit --cell-divisor still wins.
+  const defaultDivisor = fixture === 'guitar' ? 10 : 6
+  return {
+    project,
+    operation,
+    spacings,
+    stepdown,
+    cellDivisor: cellDivisor ?? defaultDivisor,
+    tolerance,
+    pattern,
+    fixture,
+  }
+}
+
+function operationAtSpacing(
+  operation: Operation,
+  pattern: PocketPattern | undefined,
+  spacing: number,
+  toolDiameter: number,
+): Operation {
+  const selected = pattern ?? operation.pocketPattern
+  return {
+    ...operation,
+    debugToolpath: true,
+    ...(pattern ? { pocketPattern: pattern } : {}),
+    ...(selected === 'parallel' || selected === 'constant_scallop'
+      ? { stepover: spacing / toolDiameter }
+      : { waterlineMicroStepover: spacing }),
+  }
 }
 
 /** Lower surface of the cutter as a drop per grid offset from its centre. */
@@ -364,15 +418,27 @@ function main(): void {
     if (!base) throw new Error(`no finish_surface operation ${args.operation ?? ''} in ${args.project}`)
     const runs = args.spacings.length > 0 ? args.spacings : [base.waterlineMicroStepover ?? 0]
     for (const spacing of runs) {
+      const tool = project.tools.find((candidate) => candidate.id === base.toolRef)
+      if (!tool) throw new Error(`operation ${base.id} has no tool`)
       const operation: Operation = {
-        ...base,
-        debugToolpath: true,
-        ...(args.pattern ? { pocketPattern: args.pattern } : {}),
+        ...operationAtSpacing(base, args.pattern, spacing, tool.diameter),
         ...(args.stepdown ? { stepdown: args.stepdown } : {}),
-        waterlineMicroStepover: spacing,
       }
       console.log(`\n=== ${base.id} spacing ${spacing === 0 ? 'auto' : spacing} ===`)
       probe({ ...project, operations: [operation] }, operation, args)
+    }
+    return
+  }
+
+  if (args.fixture === 'guitar') {
+    const { project, operation } = surfaceTestProject(buildGuitarMesh({ cell: 1 }), 6)
+    const cuspSpacing = 2 * Math.sqrt(2 * 3 * 0.02 - 0.02 ** 2)
+    const runs = args.spacings.length > 0 ? args.spacings : [cuspSpacing]
+    for (const spacing of runs) {
+      const patched = operationAtSpacing(operation, args.pattern ?? 'constant_scallop', spacing, 6)
+      project.operations = [patched]
+      console.log(`\n=== guitar, ${patched.pocketPattern} spacing ${spacing} mm ===`)
+      probe(project, patched, args)
     }
     return
   }
@@ -383,11 +449,7 @@ function main(): void {
       microStepover: spacing,
       ...(args.stepdown ? { stepdown: args.stepdown } : {}),
     })
-    const patched: Operation = {
-      ...operation,
-      debugToolpath: true,
-      ...(args.pattern ? { pocketPattern: args.pattern } : {}),
-    }
+    const patched = operationAtSpacing(operation, args.pattern, spacing, project.tools[0].diameter)
     project.operations = [patched]
     console.log(`\n=== hills, Adaptive spacing ${spacing} mm ===`)
     probe(project, patched, args)
