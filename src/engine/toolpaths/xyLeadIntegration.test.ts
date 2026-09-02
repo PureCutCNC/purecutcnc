@@ -220,6 +220,43 @@ function testNoDescentLandsOnAFinishedWall() {
   console.log('no descent lands on a wall: PASSED')
 }
 
+function testEveryWallContourIsLedInAndOut() {
+  console.log('Testing every wall contour gets both an entry and an exit...')
+  const { project } = islandPocket()
+  const led = generatePocketToolpath(project, finishWallOperation({ xyLeadStrategy: 'arc' }))
+
+  // Group the contiguous lead runs and name the contour each one touches. The
+  // island wall contour sits one tool radius outside the r=8 island.
+  const onIslandWall = (point: ToolpathPoint): boolean =>
+    Math.abs(Math.hypot(point.x - 30, point.y - 30) - (8 + 3)) < 0.3
+  // The join is the LAST move of an entry run and the FIRST of an exit run, so
+  // the run has to be accumulated: reading the first move of an entry gives a
+  // point part-way round the arc, which is on no contour at all.
+  const runs: Array<{ kind: string; anchor: ToolpathPoint }> = []
+  let current: { kind: string; anchor: ToolpathPoint } | null = null
+  for (const move of led.moves) {
+    if (move.kind !== 'lead_in' && move.kind !== 'lead_out') { current = null; continue }
+    if (current !== null && current.kind === move.kind) {
+      if (move.kind === 'lead_in') current.anchor = move.to
+      continue
+    }
+    current = { kind: move.kind, anchor: move.kind === 'lead_in' ? move.to : move.from }
+    runs.push(current)
+  }
+
+  for (const wall of [false, true]) {
+    const here = runs.filter((run) => onIslandWall(run.anchor) === wall)
+    const label = wall ? 'island wall' : 'outer wall'
+    assert(here.some((run) => run.kind === 'lead_in'), `the ${label} is entered along an arc`)
+    // An exit emitted once per LEVEL leaves every wall but the last being
+    // departed by stopping and travelling away, which rubs the finished
+    // surface exactly as the plunge did. This is the assertion that caught it.
+    assert(here.some((run) => run.kind === 'lead_out'), `the ${label} is also LEFT along an arc`)
+  }
+  assert(led.warnings.length === 0, 'and neither falls back')
+  console.log('every wall led in and out: PASSED')
+}
+
 function testStockToLeaveGatesRoughingLeads() {
   console.log('Testing radial stock gates the roughing lead...')
   const { project, operation } = islandPocket()
@@ -602,6 +639,7 @@ function testNormalizationKeepsAndStripsTheField() {
 
 try {
   testNoDescentLandsOnAFinishedWall()
+  testEveryWallContourIsLedInAndOut()
   testStockToLeaveGatesRoughingLeads()
   testComposesWithEveryZEntryStrategy()
   testEveryLeadSampleStaysInsideTheSafeDomain()

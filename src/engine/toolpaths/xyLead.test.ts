@@ -26,7 +26,7 @@ import {
   leadFeedScale,
   planXyLeadIn,
   planXyLeadOut,
-  recordXyLeadExit,
+  closedContourFromMoves,
   resolveXyLeadOptions,
   rotateRingForLead,
   roughingRingIsTheFinishedWall,
@@ -450,8 +450,8 @@ function testOnlyAFullEntryIsLed() {
   console.log('full-entry gate: PASSED')
 }
 
-function testExitRecordMustMatchTheCurrentPosition() {
-  console.log('Testing the exit only leads off the ring the cutter is standing on...')
+function testExitLeavesTheContourItStandsOn() {
+  console.log('Testing the exit only leaves the contour the cutter stands on...')
   const context = beginXyLeadLevel(openOptions(), () => {})
   assert(context !== undefined, 'a level context is armed')
   const ring = squareRing(20, 80, 6)
@@ -460,29 +460,28 @@ function testExitRecordMustMatchTheCurrentPosition() {
     from: { x: point.x, y: point.y, z: -2 },
     to: { x: ring[(index + 1) % ring.length].x, y: ring[(index + 1) % ring.length].y, z: -2 },
   }))
-  recordXyLeadExit(context, cutMoves)
-  assert(context.exit !== null, 'a closed planar ring is recorded')
+
+  const contour = closedContourFromMoves(cutMoves)
+  assert(contour !== null && contour.length === ring.length, 'a closed planar run reads back as a contour')
 
   const moved: ToolpathMove[] = []
-  const elsewhere = emitXyLeadOut(moved, { x: 50, y: 50, z: -2 }, -2, context)
+  const elsewhere = emitXyLeadOut(moved, { x: 50, y: 50, z: -2 }, contour, -2, context)
   assert(moved.length === 0 && elsewhere?.x === 50,
-    'a position that is not the ring end emits nothing')
+    'a position that is not where the contour closed emits nothing')
 
   const leaving: ToolpathMove[] = []
-  const end = emitXyLeadOut(leaving, { x: ring[0].x, y: ring[0].y, z: -2 }, -2, context)
+  const end = emitXyLeadOut(leaving, { x: ring[0].x, y: ring[0].y, z: -2 }, contour, -2, context)
   assert(leaving.length > 0 && leaving.every((move) => move.kind === 'lead_out'), 'the exit is emitted')
   assert(end !== null && Math.hypot(end.x - ring[0].x, end.y - ring[0].y) > 0.5,
-    'and it leaves the ring behind')
+    'and it leaves the contour behind')
 
-  // An open run, or a ramping one, is not a ring and clears the record.
-  recordXyLeadExit(context, cutMoves.slice(0, 2))
-  assert(context.exit === null, 'an unclosed run is not a ring')
-  recordXyLeadExit(context, [
+  // An open run, or a ramping one, is not a closed contour and yields none.
+  assert(closedContourFromMoves(cutMoves.slice(0, 2)) === null, 'an unclosed run is not a contour')
+  assert(closedContourFromMoves([
     ...cutMoves.slice(0, cutMoves.length - 1),
     { ...cutMoves[cutMoves.length - 1], to: { ...cutMoves[cutMoves.length - 1].to, z: -3 } },
-  ])
-  assert(context.exit === null, 'a ramping run is not a planar ring')
-  console.log('exit record: PASSED')
+  ]) === null, 'a ramping run is not a planar contour')
+  console.log('exit anchoring: PASSED')
 }
 
 function testLengthBudgetIsEnforced() {
@@ -508,7 +507,7 @@ try {
   testEmittedLeadStaysPlanarAtZ()
   testGatesAndWarnings()
   testOnlyAFullEntryIsLed()
-  testExitRecordMustMatchTheCurrentPosition()
+  testExitLeavesTheContourItStandsOn()
   testLengthBudgetIsEnforced()
   console.log('\nAll xyLead tests PASSED.')
 } catch (e) {

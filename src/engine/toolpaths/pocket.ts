@@ -71,7 +71,8 @@ import {
   beginXyLeadLevel,
   emitXyLead,
   emitXyLeadOut,
-  recordXyLeadExit,
+  closedContourFromMoves,
+  emitOpenWallLeadOut,
   resolveXyLeadOptions,
   rotateRingForLead,
   planOpenWallLeadIn,
@@ -1992,7 +1993,14 @@ export function cutClosedContours(
     }
     appendAll(moves, cutMoves)
     nextPosition = cutMoves.at(-1)?.to ?? nextPosition
-    recordXyLeadExit(xyLead, cutMoves)
+    // Leave the surface along an arc too, and do it HERE rather than once at
+    // the end of the level: emitting it per level departs every wall but the
+    // last by simply stopping and travelling away, which rubs the finished
+    // surface exactly as the plunge did on the way in (issue #695).
+    const cutContour = closedContourFromMoves(cutMoves)
+    if (cutContour !== null) {
+      nextPosition = emitXyLeadOut(moves, nextPosition, cutContour, z, xyLead)
+    }
   }
 
   return nextPosition
@@ -3459,10 +3467,6 @@ function generateRoughBandMoves(
       engagementCache,
     )
 
-    // After the level's last ring and before the safe-Z transition, so the
-    // feed stamping above never sees the lead and the lead never inherits a
-    // slot scale that would fight its own ramp (issue #695).
-    currentPosition = emitXyLeadOut(moves, currentPosition, z, levelXyLead)
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
 
@@ -3917,6 +3921,7 @@ function generateFinishBandMoves(
         const cutMoves = toOpenCutMoves(segment, z)
         appendAll(moves, cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
+        currentPosition = emitOpenWallLeadOut(moves, currentPosition, segment, z, levelWallLead)
       }
       currentPosition = cutClosedContours(
         moves,
@@ -3951,10 +3956,6 @@ function generateFinishBandMoves(
       )
     }
 
-    // Leave the wall along an arc too, before the safe-Z transition: stopping
-    // and retracting on a finished wall dwells and rubs on the way up exactly
-    // as the plunge did on the way down (issue #695).
-    currentPosition = emitXyLeadOut(moves, currentPosition, z, levelWallLead)
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
 

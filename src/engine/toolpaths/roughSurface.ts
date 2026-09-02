@@ -48,7 +48,6 @@ import { areaCoverage, effectivePocketPattern, usesTangentLinks } from './pocket
 import { pocketTangentLinkOptions } from './tangentLink'
 import {
   beginXyLeadLevel,
-  emitXyLeadOut,
   resolveXyLeadOptions,
   roughingRingIsTheFinishedWall,
   warnXyLeadDeclined,
@@ -438,9 +437,6 @@ function generateRoughSurfaceToolpathSingle(
     // After every region on this level, never per region: the classifier reads
     // the level's whole move range to decide what was already cleared.
     applyFeedForLevel(levelStartIndex)
-    // Then the lead-out, after the feed stamping so the lead keeps its own
-    // ramp, and before the next level's travel (issue #695).
-    currentPosition = emitXyLeadOut(allMoves, currentPosition, level.z, levelXyLead)
   }
 
   if (currentPosition && currentPosition.z !== resolved.safeZ) {

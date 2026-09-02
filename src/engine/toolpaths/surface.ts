@@ -86,7 +86,7 @@ import {
   beginXyLeadLevel,
   emitXyLead,
   emitXyLeadOut,
-  recordXyLeadExit,
+  closedContourFromMoves,
   resolveXyLeadOptions,
   rotateRingForLead,
   planWallLeadIn,
@@ -824,9 +824,6 @@ function generateRoughBandMoves(
       engagementCache,
     )
 
-    // After the level's last ring and before the safe-Z transition, so the
-    // feed stamping above never sees the lead (issue #695).
-    currentPosition = emitXyLeadOut(moves, currentPosition, z, levelXyLead)
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
 
@@ -1253,12 +1250,14 @@ function generateFinishBandMoves(
       const cutMoves = toClosedCutMoves(contour, z)
       appendAll(moves, cutMoves)
       currentPosition = cutMoves.at(-1)?.to ?? currentPosition
-      recordXyLeadExit(levelWallLead, cutMoves)
+      // Per contour, not per level: an exit emitted once at the end leaves
+      // every wall but the last being departed by stopping and travelling away.
+      const cutContour = closedContourFromMoves(cutMoves)
+      if (cutContour !== null) {
+        currentPosition = emitXyLeadOut(moves, currentPosition, cutContour, z, levelWallLead)
+      }
     }
 
-    // Leave the wall along an arc too: stopping and retracting on a finished
-    // wall dwells and rubs on the way up exactly as the plunge did going down.
-    currentPosition = emitXyLeadOut(moves, currentPosition, z, levelWallLead)
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
 

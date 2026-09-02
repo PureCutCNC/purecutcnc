@@ -175,14 +175,6 @@ export interface XyLeadPlan {
  */
 export interface XyLeadContext {
   options: XyLeadOptions
-  /**
-   * The last closed ring emitted at this level and where its cut ended. The
-   * exit lead needs the ring, not just the endpoint, because it may depart from
-   * a point further along it. Kept as a record rather than threaded through the
-   * traversal because a level has several possible endings — rings, seed
-   * stacks, leftover excursions — and only the last one to write here wins.
-   */
-  exit: { ring: Point[]; end: ToolpathPoint } | null
   onWarning: (warning: ToolpathWarning) => void
 }
 
@@ -301,39 +293,35 @@ export function beginXyLeadLevel(
   options: XyLeadOptions | undefined,
   onWarning: (warning: ToolpathWarning) => void,
 ): XyLeadContext | undefined {
-  return options ? { options, exit: null, onWarning } : undefined
+  return options ? { options, onWarning } : undefined
 }
 
 /**
- * Emit the level's lead-out, if one fits, immediately before the retract.
- * Returns the position the retract should start from — unchanged when no lead
- * was emitted, so a caller can always assign the result back.
+ * Emit the arc that leaves `contour` immediately after it is cut, if one fits.
+ * Returns the position the next transition should start from — unchanged when
+ * no lead was emitted, so a caller can always assign the result back.
  *
- * The entry and exit leads are planned independently on purpose. They are
- * placed at opposite ends of the level against different local geometry, and a
- * level whose entry ring had no room is not thereby a level that must also give
- * up its exit.
+ * Per CONTOUR, not per level. Emitting it once at the end of a level leaves
+ * every wall but the last one being departed by simply stopping and travelling
+ * away, which rubs the finished surface exactly as the plunge did on the way
+ * in — measured on a pocket with an island, where the outer wall got an entry
+ * arc and no exit at all.
  */
 export function emitXyLeadOut(
   moves: ToolpathMove[],
   from: ToolpathPoint | null,
+  contour: Point[],
   z: number,
   context: XyLeadContext | undefined,
 ): ToolpathPoint | null {
-  if (!context || from === null) return from
-  const exit = context.exit
-  if (exit === null) return from
-  // The recorded ring is only the exit's ring if the cutter is still standing
-  // where that ring ended. Anything emitted afterwards — a leftover excursion,
-  // a retract, an open raster run — moves the tool off it and this check
-  // declines rather than leading off a ring that is no longer the tail.
-  if (Math.abs(exit.end.x - from.x) > LEAD_EPSILON
-    || Math.abs(exit.end.y - from.y) > LEAD_EPSILON
-    || Math.abs(exit.end.z - from.z) > LEAD_EPSILON
-    || Math.abs(exit.end.z - z) > LEAD_EPSILON) {
+  if (!context || from === null || contour.length < 3) return from
+  // The cut ends where the contour began; anything else means the caller is
+  // not standing on the contour it just cut.
+  if (Math.abs(contour[0].x - from.x) > LEAD_EPSILON
+    || Math.abs(contour[0].y - from.y) > LEAD_EPSILON) {
     return from
   }
-  const plan = planXyLeadOut(exit.ring, context.options)
+  const plan = planXyLeadOut(contour, context.options)
   if (plan === null) {
     context.onWarning({ code: 'xyLeadNoViablePath' })
     return from
@@ -342,22 +330,12 @@ export function emitXyLeadOut(
 }
 
 /**
- * Record the ring a lead-out may leave from. Called after each closed ring is
- * appended; the vertices are read back out of the emitted moves so the record
- * always describes what was actually cut, re-seamed by an S-link splice or not.
- * Anything that is not a planar closed ring clears the record.
+ * The closed contour a run of cut moves actually traced, in emission order, or
+ * null when the run is not a planar closed loop. Read back out of the moves so
+ * it always describes what was cut — re-seamed by a lead or an S-link splice
+ * or not.
  */
-export function recordXyLeadExit(
-  context: XyLeadContext | undefined,
-  cutMoves: ToolpathMove[],
-): void {
-  if (!context) return
-  context.exit = closedRingFromMoves(cutMoves)
-}
-
-function closedRingFromMoves(
-  cutMoves: ToolpathMove[],
-): { ring: Point[]; end: ToolpathPoint } | null {
+export function closedContourFromMoves(cutMoves: ToolpathMove[]): Point[] | null {
   if (cutMoves.length < 3) return null
   const z = cutMoves[0].from.z
   for (const move of cutMoves) {
@@ -366,12 +344,47 @@ function closedRingFromMoves(
   const end = cutMoves[cutMoves.length - 1].to
   const seam = cutMoves[0].from
   if (Math.abs(end.x - seam.x) > LEAD_EPSILON || Math.abs(end.y - seam.y) > LEAD_EPSILON) return null
-  return { ring: cutMoves.map((move) => ({ x: move.from.x, y: move.from.y })), end }
+  return cutMoves.map((move) => ({ x: move.from.x, y: move.from.y }))
 }
 
 /**
- * Plan the lead onto a wall-defining `contour`, or null when there is nothing
- * to lead from or nothing fits.
+ * Emit the arc that leaves an OPEN wall run — the acute-island cleanup
+ * segments. It departs the run's far end along that run's own last direction.
+ */
+export function emitOpenWallLeadOut(
+  moves: ToolpathMove[],
+  from: ToolpathPoint | null,
+  segment: Point[],
+  z: number,
+  context: XyLeadContext | undefined,
+): ToolpathPoint | null {
+  if (!context || from === null || segment.length < 2) return from
+  const options = context.options
+  const end = segment[segment.length - 1]
+  const previous = segment[segment.length - 2]
+  const dx = end.x - previous.x
+  const dy = end.y - previous.y
+  const length = Math.hypot(dx, dy)
+  if (!(length > LEAD_EPSILON)) return from
+  if (Math.abs(end.x - from.x) > LEAD_EPSILON || Math.abs(end.y - from.y) > LEAD_EPSILON) return from
+  const tangent = { x: dx / length, y: dy / length }
+
+  for (const arc of leadArcs(options)) {
+    const chordBudget = domainChordBudget(arc.radius, options.arcStepRadians) * LEAD_SAMPLE_REFINEMENT
+    for (const side of orderedSides(end, tangent, options)) {
+      const points = buildTangentLeadPath(end, tangent, arcShape(side, arc), options.arcStepRadians)
+      if (validateLead(end, points, arc.radius, chordBudget, options) === null) continue
+      return emitXyLead(moves, from, { points, staging: points[points.length - 1], seam: null },
+        z, options, 'lead_out')
+    }
+  }
+  context.onWarning({ code: 'xyLeadNoViablePath' })
+  return from
+}
+
+/**
+ * Plan the arc onto a wall-defining `contour`, or null when there is nothing to
+ * lead from or nothing fits.
  *
  * `isFullEntry` is the caller's answer to "is the cutter about to descend onto
  * this contour". A contour reached by an at-depth link is already engaged and
@@ -390,7 +403,7 @@ export function planWallLeadIn(
 }
 
 /**
- * Plan the lead onto the start of an OPEN wall run — the acute-island corner
+ * Plan the arc onto the start of an OPEN wall run — the acute-island corner
  * cleanup segments, which are polylines rather than loops. There is no seam to
  * slide, so the arrival is fixed at the run's own start and only the arc is
  * searched.
