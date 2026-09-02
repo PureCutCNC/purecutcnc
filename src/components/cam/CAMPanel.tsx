@@ -102,6 +102,7 @@ function DraftTextInput({ value, onCommit }: DraftTextInputProps) {
 
   return (
     <input
+      key={value}
       type="text"
       defaultValue={value}
       spellCheck={false}
@@ -136,6 +137,7 @@ function DraftTextArea({ value, onCommit }: DraftTextInputProps) {
 
   return (
     <textarea
+      key={value}
       defaultValue={value}
       spellCheck
       onBlur={(event) => commit(event.currentTarget)}
@@ -186,6 +188,7 @@ function DraftLengthInput({ value, units, min, max, onCommit }: DraftLengthInput
 
   return (
     <input
+      key={value}
       type="text"
       inputMode="decimal"
       defaultValue={formatLength(value, units)}
@@ -242,6 +245,7 @@ function DraftNumberInput({ value, min, max, onCommit }: DraftNumberInputProps) 
 
   return (
     <input
+      key={value}
       type="text"
       inputMode="decimal"
       defaultValue={String(value)}
