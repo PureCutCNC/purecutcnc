@@ -85,6 +85,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   // ── Pocket pattern labels ──
   'cam.pocketPattern.offset': 'Offset',
   'cam.pocketPattern.parallel': 'Parallel',
+  'cam.pocketPattern.constantScallop': 'Konstante Riefenhöhe',
   'cam.pocketPattern.waterline': 'Wasserlinie',
   'cam.pocketPattern.seededOffset': 'Startkreise',
 
@@ -472,7 +473,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // 3D Surface finish
   'cam.opDesc.finishSurface.title': '3D-Oberfläche schlichten',
-  'cam.opDesc.finishSurface.fullDescription': 'Oberflächenschlichten erzeugt die endgültige Oberfläche eines importierten 3D-Modells. Wählen Sie Parallel (Scanlinien in einstellbarem Winkel) für flachere Geometrie oder Wasserlinie (Konturen bei konstantem Z) für steilere Wände. Verwenden Sie einen kleinen Bahnabstand für Parallel oder eine kleine Zustellung für Wasserlinie.',
+  'cam.opDesc.finishSurface.fullDescription': 'Oberflächenschlichten erzeugt die endgültige Oberfläche eines importierten 3D-Modells. Wählen Sie Parallel (Scanlinien in einstellbarem Winkel) für flachere Geometrie, Konstante Riefenhöhe (Bahnen mit gleichmäßigem Abstand entlang der Oberfläche) für gewölbte und geschnitzte Decken oder Wasserlinie (Konturen bei konstantem Z) für steilere Wände. Verwenden Sie einen kleinen Bahnabstand für Parallel und Konstante Riefenhöhe oder eine kleine Zustellung für Wasserlinie.',
   'cam.opDesc.finishSurface.keyPoint.0': 'Erfordert ein importiertes 3D-Modell',
   'cam.opDesc.finishSurface.keyPoint.1': 'Parallel- (Scanlinie) oder Wasserlinien-Muster (konstantes Z)',
   'cam.opDesc.finishSurface.keyPoint.2': 'Einzeldurchgang-Operation (keine Schrupp-/Schlicht-Aufteilung – diese Operation ist das Schlichten)',

@@ -239,6 +239,8 @@ export type ToolpathWarningCode =
   // finish surface parallel / cleanup / pocket floors
   | 'surfaceHeightMapReduced'
   | 'surfaceSilhouetteDegenerate'
+  | 'constantScallopResolutionTooCoarse'
+  | 'constantScallopEmpty'
   | 'cleanupStockToLeaveOffsets'
   | 'cleanupNoContours'
   | 'pocketNoFloorRegion'

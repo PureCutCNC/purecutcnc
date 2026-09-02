@@ -645,3 +645,54 @@ test('surface slope filter edits, validates, switches pattern and survives save/
   expect(cleared[0].finishSlopeMin).toBeUndefined()
   expect(cleared[0].finishSlopeMax).toBeUndefined()
 })
+
+
+test('the constant scallop pattern is selectable, shows Stepover, hides the waterline controls and survives save/reload', async ({ app, ui }) => {
+  // #705. The claim is about the *pattern-conditional* controls and not just
+  // the stored value: constant scallop spaces its passes by Stepover, so that
+  // field has to come back, and it has no adaptive refinement, so those three
+  // waterline-only rows have to go. Waterline is visited in between so each
+  // assertion is shown flipping rather than merely holding.
+  const project = JSON.parse(readFileSync(new URL('../src/engine/test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8'))
+  project.operations = [project.operations.find((operation: {kind: string}) => operation.kind === 'finish_surface')]
+  project.operations[0].name = 'Scallop finish'
+  await seedProject(app.page, JSON.stringify(project))
+  await ui.operations.rowByName(app.page, 'Scallop finish').click()
+  await ui.cam.operationGroup(app.page, 'Strategy').click()
+
+  const pattern = ui.cam.operationField(app.page, 'Pattern')
+  const stepover = ui.cam.operationField(app.page, 'Stepover ratio')
+  const adaptive = app.page.getByRole('checkbox', { name: /Adaptive refinement/ })
+  const selectPattern = async (name: string): Promise<void> => {
+    await pattern.locator('.ui-select__trigger').click()
+    await app.page.getByRole('option', { name, exact: true }).click()
+    await expect(pattern.locator('.ui-select__label')).toHaveText(name)
+  }
+
+  await expect(pattern.locator('.ui-select__label')).toHaveText('Parallel')
+  await expect(stepover).toHaveCount(1)
+  await expect(adaptive).toHaveCount(0)
+
+  await selectPattern('Waterline')
+  await expect(stepover).toHaveCount(0)
+  await expect(adaptive).toBeChecked()
+  await expect(ui.cam.operationField(app.page, 'Adaptive spacing')).toHaveCount(1)
+  await expect(ui.cam.operationField(app.page, 'Max rings / band')).toHaveCount(1)
+
+  await selectPattern('Constant scallop')
+  await expect(stepover).toHaveCount(1)
+  await expect(adaptive).toHaveCount(0)
+  await expect(ui.cam.operationField(app.page, 'Adaptive spacing')).toHaveCount(0)
+  await expect(ui.cam.operationField(app.page, 'Max rings / band')).toHaveCount(0)
+  const stored = (await getProject(app.page)).operations as Array<Record<string, unknown>>
+  expect(stored[0].pocketPattern).toBe('constant_scallop')
+
+  const saved = await getProject(app.page)
+  await app.page.reload()
+  await seedProject(app.page, JSON.stringify(saved))
+  await ui.operations.rowByName(app.page, 'Scallop finish').click()
+  if (!(await stepover.isVisible())) await ui.cam.operationGroup(app.page, 'Strategy').click()
+  await expect(pattern.locator('.ui-select__label')).toHaveText('Constant scallop')
+  await expect(stepover).toHaveCount(1)
+  await expect(adaptive).toHaveCount(0)
+})

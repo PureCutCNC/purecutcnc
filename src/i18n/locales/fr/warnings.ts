@@ -177,6 +177,8 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.waterlineRefinementCoarsened': 'L’affinage en ligne d’eau a été élargi de {requested} à {effective} pour tenir dans son budget — la finition est plus grossière que ce que demande l’espacement adaptatif ; limitez l’opération à une région pour obtenir l’espacement complet',
   'warnings.waterlineRefinementTruncated': 'L’affinage en ligne d’eau s’est arrêté après {rings} passes — une partie de la surface n’est pas affinée du tout ; limitez l’opération à une région, ou augmentez l’espacement adaptatif',
   'warnings.surfaceHeightMapReduced': 'La carte de hauteur de finition est passée de {from} à environ {to} cellules pour les performances',
+  'warnings.constantScallopResolutionTooCoarse': 'L’espacement {spacing} est plus fin que la grille de surface bornée ({cellSize}) ; limitez l’opération ou augmentez le pas latéral',
+  'warnings.constantScallopEmpty': 'Aucune surface usinable ne reste dans le modèle, les régions et la plage de pente sélectionnés',
   'warnings.surfaceSilhouetteDegenerate': 'La silhouette du modèle est dégénérée — aucune couverture de finition de surface générée',
   'warnings.cleanupStockToLeaveOffsets': 'Le nettoyage de surface 3D utilise les valeurs de surépaisseur ; des surépaisseurs radiales ou axiales non nulles décalent le nettoyage de la surface finale',
   'warnings.cleanupNoContours': 'Aucun contour de nettoyage disponible pour cette opération de surface 3D',

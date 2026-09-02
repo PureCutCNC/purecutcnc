@@ -386,6 +386,8 @@ function pocketPatternLabel(pattern: PocketPattern): string {
       return camT('cam.pocketPattern.parallel')
     case 'waterline':
       return camT('cam.pocketPattern.waterline')
+    case 'constant_scallop':
+      return camT('cam.pocketPattern.constantScallop')
     case 'seeded_offset':
       return camT('cam.pocketPattern.seededOffset')
   }

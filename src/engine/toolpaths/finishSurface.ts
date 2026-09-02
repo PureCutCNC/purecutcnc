@@ -18,6 +18,7 @@
  * Strategy implementations live in:
  * - finishSurfaceParallel.ts
  * - finishSurfaceWaterline.ts
+ * - finishSurfaceConstantScallop.ts
  */
 
 import { surfaceSlopeRange } from './finishSurfaceSlope'
@@ -42,6 +43,7 @@ import {
   type FinishSurfaceParallelCacheHost,
 } from './finishSurfaceParallel'
 import { generateFinishSurfaceWaterline } from './finishSurfaceWaterline'
+import { generateFinishSurfaceConstantScallop } from './finishSurfaceConstantScallop'
 import { effectivePocketPattern } from './pocketPatterns'
 
 export { maxContourGap } from './finishSurfaceWaterline'
@@ -148,11 +150,12 @@ export function generateFinishSurfaceToolpath(
   if (surfaceSlopeRange(operation) === 'invalid') {
     return { operationId: operation.id, moves: [], warnings: [{ code: 'finishSlopeInvalid' }], bounds: null, stepLevels: [] }
   }
-  // The strategy this kind runs for the stored pattern (issue #609). Only
-  // `waterline` is its own strategy here; every other stored value has always
-  // taken the parallel branch, and `OPERATION_PATTERN_SUPPORT` is now where
-  // that is written down rather than in the `else` of each test below.
-  const isWaterline = effectivePocketPattern(operation.kind, operation.pocketPattern) === 'waterline'
+  // The strategy this kind runs for the stored pattern (issues #609/#705).
+  // Legacy stored values remain mapped to parallel in the central support
+  // table; constant scallop is reachable only when explicitly selected.
+  const effectivePattern = effectivePocketPattern(operation.kind, operation.pocketPattern)
+  const isWaterline = effectivePattern === 'waterline'
+  const isConstantScallop = effectivePattern === 'constant_scallop'
   const target = operation.target
   if (target.source !== 'features' || target.featureIds.length === 0) {
     return {
@@ -371,19 +374,33 @@ export function generateFinishSurfaceToolpath(
       relatedSubtracts,
       horizontalFloorZs,
     )
-    : generateFinishSurfaceParallel(
-      project,
-      operation,
-      modelFeature,
-      regionFeatures,
-      tool,
-      transformedPos,
-      index,
-      stlData as FinishSurfaceParallelCacheHost,
-      safeZ,
-      minCutZAtPoint,
-      warnings,
-    )
+    : isConstantScallop
+      ? generateFinishSurfaceConstantScallop(
+        project,
+        operation,
+        modelFeature,
+        regionFeatures,
+        tool,
+        transformedPos,
+        index,
+        stlData as FinishSurfaceParallelCacheHost,
+        safeZ,
+        minCutZAtPoint,
+        warnings,
+      )
+      : generateFinishSurfaceParallel(
+        project,
+        operation,
+        modelFeature,
+        regionFeatures,
+        tool,
+        transformedPos,
+        index,
+        stlData as FinishSurfaceParallelCacheHost,
+        safeZ,
+        minCutZAtPoint,
+        warnings,
+      )
 
   const finalMoves = strategyResult.moves
   const lastMove = finalMoves[finalMoves.length - 1]
