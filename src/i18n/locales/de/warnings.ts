@@ -23,6 +23,9 @@ import type { warningsEn } from '../en/warnings'
  * passthrough and stays `{text}`.
  */
 export const warningsDe: Record<keyof typeof warningsEn, string> = {
+  'warnings.finishSlopeInvalid': 'Neigungsgrenzen müssen endliche Winkel von 0 bis 90° sein; das Minimum darf das Maximum nicht überschreiten. Kein Werkzeugweg erzeugt.',
+  'warnings.finishSlopeEmpty': 'Keine erreichbare Oberfläche entspricht dem gewählten Neigungsbereich.',
+  'warnings.finishSlopeTooComplex': 'Die Neigungsgrenze ist zu komplex, um sie sicher aufzulösen. Kein Werkzeugweg erzeugt.',
   'warnings.debug': '{text}',
   // resolver
   'warnings.targetsMissingOrWrongRole': 'Einige ausgewählte Ziel-Features fehlen oder sind keine {roles}-Features',

@@ -127,6 +127,9 @@ export type ToolpathWarningCode =
    *  budget. */
   | 'surface3dMeshTooDense'
   // finish surface
+  | 'finishSlopeInvalid'
+  | 'finishSlopeEmpty'
+  | 'finishSlopeTooComplex'
   | 'finishNeedsModel'
   | 'finishNotMesh'
   | 'finishNoDepthInPocket'

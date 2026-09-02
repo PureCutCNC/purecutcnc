@@ -18,6 +18,9 @@ import type { warningsEn } from '../en/warnings'
 
 /** Spanish toolpath and postprocessor warnings. */
 export const warningsEs: Record<keyof typeof warningsEn, string> = {
+  'warnings.finishSlopeInvalid': 'Los límites de pendiente deben ser ángulos finitos entre 0 y 90°, con el mínimo no mayor que el máximo. No se ha generado trayectoria.',
+  'warnings.finishSlopeEmpty': 'Ninguna superficie accesible coincide con el intervalo de pendiente seleccionado.',
+  'warnings.finishSlopeTooComplex': 'El límite de pendiente es demasiado complejo para resolverlo con seguridad. No se ha generado trayectoria.',
   'warnings.debug': '{text}',
   'warnings.targetsMissingOrWrongRole': 'Faltan algunos elementos objetivo seleccionados o no son elementos {roles}',
   'warnings.closedProfilesOnly': 'Las operaciones de {operation} solo admiten perfiles objetivo cerrados',

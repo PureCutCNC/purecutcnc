@@ -20,6 +20,7 @@
  * - finishSurfaceWaterline.ts
  */
 
+import { surfaceSlopeRange } from './finishSurfaceSlope'
 import type { Operation, Point, Project } from '../../types/project'
 import type { ToolpathWarning } from './warningCodes'
 import type { PocketToolpathResult, ToolpathBounds } from './types'
@@ -144,6 +145,9 @@ export function generateFinishSurfaceToolpath(
   project: Project,
   operation: Operation,
 ): PocketToolpathResult {
+  if (surfaceSlopeRange(operation) === 'invalid') {
+    return { operationId: operation.id, moves: [], warnings: [{ code: 'finishSlopeInvalid' }], bounds: null, stepLevels: [] }
+  }
   // The strategy this kind runs for the stored pattern (issue #609). Only
   // `waterline` is its own strategy here; every other stored value has always
   // taken the parallel branch, and `OPERATION_PATTERN_SUPPORT` is now where

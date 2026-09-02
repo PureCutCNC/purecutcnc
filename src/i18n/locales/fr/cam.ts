@@ -18,6 +18,10 @@ import type { camEn } from '../en/cam'
 
 /** French CAM catalog. */
 export const camFr: Record<keyof typeof camEn, string> = {
+  'cam.operation.slopeFilter': 'Filtrer par pente de surface',
+  'cam.operation.slopeMin': 'Pente minimale (°)',
+  'cam.operation.slopeMax': 'Pente maximale (°)',
+  'cam.operation.slopeHelp': 'La pente suit la surface de contact de la pointe, mesurée depuis l’horizontale. L’outil peut dépasser la limite. Effacez les deux limites pour désactiver. Les cartes de hauteur ne représentent pas les contre-dépouilles. Les limites suivent la résolution de la carte de hauteur.',
   'cam.toolType.flatEndmill': 'Fraise cylindrique',
   'cam.toolType.ballEndmill': 'Fraise hémisphérique',
   'cam.toolType.vBit': 'Fraise en V',

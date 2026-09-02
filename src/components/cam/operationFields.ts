@@ -239,6 +239,7 @@ export const OPERATION_FIELD_IDS = [
   'trochoidalAdvance',
   'trochoidalCarveChannel',
   'stepover',
+  'slopeFilter',
   'adaptiveRefinement',
   'adaptiveSpacing',
   'maxRings',
@@ -419,6 +420,7 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
       && operation.kind !== 'edge_route_outside'
       && !isWaterlineFinish(operation),
   },
+  { id: 'slopeFilter', group: 'strategy', appliesTo: (operation) => operation.kind === 'finish_surface' },
   {
     id: 'adaptiveRefinement',
     group: 'strategy',

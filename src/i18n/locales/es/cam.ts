@@ -18,6 +18,10 @@ import type { camEn } from '../en/cam'
 
 /** Spanish cam interface text. */
 export const camEs: Record<keyof typeof camEn, string> = {
+  'cam.operation.slopeFilter': 'Filtrar por pendiente de superficie',
+  'cam.operation.slopeMin': 'Pendiente mínima (°)',
+  'cam.operation.slopeMax': 'Pendiente máxima (°)',
+  'cam.operation.slopeHelp': 'La pendiente sigue la superficie de contacto de la punta, medida desde la horizontal. La herramienta puede sobresalir del límite. Borre ambos límites para desactivar. Los mapas de altura no representan socavados. Los límites siguen la resolución del mapa de altura.',
   'cam.toolType.flatEndmill': 'Fresa plana',
   'cam.toolType.ballEndmill': 'Fresa esférica',
   'cam.toolType.vBit': 'Fresa en V',

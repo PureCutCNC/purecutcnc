@@ -117,6 +117,8 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.retractHeight === b.retractHeight
     && a.debugToolpath === b.debugToolpath
     && a.debugShowRejectedCorners === b.debugShowRejectedCorners
+    && a.finishSlopeMin === b.finishSlopeMin
+    && a.finishSlopeMax === b.finishSlopeMax
     && a.waterlineAdaptiveRefinement === b.waterlineAdaptiveRefinement
     && a.waterlineMicroStepover === b.waterlineMicroStepover
     && a.waterlineRefinementThreshold === b.waterlineRefinementThreshold

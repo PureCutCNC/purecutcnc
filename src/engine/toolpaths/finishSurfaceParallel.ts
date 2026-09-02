@@ -18,7 +18,8 @@ import { getProfileBounds, type Operation, type Point, type Project, type Sketch
 import type { ToolpathWarning } from './warningCodes'
 import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 import { DEFAULT_CLIPPER_SCALE, flattenProfile, normalizeWinding, toClipperPath } from './geometry'
-import { transitionToCutEntry } from './pocket'
+import { buildSurfaceSlopeDomain, createSurfaceDomainLinkCheck, intersectSurfaceSlopeDomain } from './finishSurfaceSlope'
+import { retractToSafe, transitionToCutEntry } from './pocket'
 import { buildRegionMask } from './regions'
 import { resolveRegionDomainCentre } from './regionDomain'
 import { significantSilhouettePaths } from './silhouette'
@@ -592,6 +593,10 @@ export function generateFinishSurfaceParallel(
   const requestedWaterlineCellSize = Math.min(tool.radius / 3, stepoverDistance * 0.5)
   const heightMapCellSize = chooseHeightMapCellSize(heightMapBbox, requestedWaterlineCellSize, warnings)
   const heightMap = getCachedHeightMap(sliceIndexHost, transformedPos, index, heightMapBbox, heightMapCellSize)
+  const slopeDomain = buildSurfaceSlopeDomain(operation, heightMap,
+    (x, y) => safeToolTipZAt(x, y, heightMap, tool), warnings)
+  if (slopeDomain !== null && slopeDomain.length === 0) return { moves: [], stepLevels: new Set() }
+  let linkInSlopeDomain: ((from: Point, to: Point) => boolean) | null = null
   const topSurfaceSampleDistance = Math.max(heightMapCellSize, Math.min(stepoverDistance, tool.radius * 0.5))
 
   // Safe link check for scanline → scanline transitions. The straight 3D
@@ -604,6 +609,7 @@ export function generateFinishSurfaceParallel(
   const linkSampleSpacing = Math.max(heightMapCellSize, tool.radius * 0.5)
   const linkCushion = Math.max(heightMapCellSize * 0.5, 1e-3)
   const safeLinkCheck = (from: ToolpathPoint, to: ToolpathPoint): boolean => {
+    if (slopeDomain !== null && (!linkInSlopeDomain || !linkInSlopeDomain(from, to))) return false
     const dx = to.x - from.x
     const dy = to.y - from.y
     const dz = to.z - from.z
@@ -716,6 +722,10 @@ export function generateFinishSurfaceParallel(
         }))
         const entryPoint = cutPoints3D[0]
 
+        // The transition helper's same-XY shortcut bypasses its link check.
+        if (slopeDomain !== null && pos && pos.z < safeZ && !safeLinkCheck(pos, entryPoint)) {
+          pos = retractToSafe(moves, pos, safeZ)
+        }
         pos = transitionToCutEntry(moves, pos, entryPoint, safeZ, linkMaxDistance, safeLinkCheck)
         appendAll(moves, toOpenCutMoves3D(cutPoints3D))
         pos = cutPoints3D[cutPoints3D.length - 1]
@@ -757,7 +767,14 @@ export function generateFinishSurfaceParallel(
   const coverageContours = regionMask
     ? clipperPathsToTupleContours(resolveRegionDomainCentre(baseCoveragePaths, regionMask, centreInset))
     : baseContours
-  const clippedContours = subtractProtectedContours(coverageContours, protectedPaths)
+  const slopeContours = slopeDomain === null ? coverageContours
+    : clipperPathsToTupleContours(intersectSurfaceSlopeDomain(coverageContoursToClipperPaths(coverageContours), slopeDomain))
+  if (slopeDomain !== null && slopeContours.length === 0) {
+    warnings.push({ code: 'finishSlopeEmpty' })
+    return { moves: allMoves, stepLevels: allStepLevels }
+  }
+  const clippedContours = subtractProtectedContours(slopeContours, protectedPaths)
+  if (slopeDomain !== null) linkInSlopeDomain = createSurfaceDomainLinkCheck(coverageContoursToClipperPaths(clippedContours))
   const clippedBounds = computeContourBounds([clippedContours])
   if (clippedBounds) {
     emitScanlines(clippedContours, clippedBounds, scanIndex, allMoves, allStepLevels, null)
