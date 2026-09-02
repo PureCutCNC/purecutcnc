@@ -271,7 +271,9 @@ export function normalizeOperation(rawOperation: Operation, project: Project, in
     xyLeadStrategy: operation.xyLeadStrategy === 'arc'
       && (operation.kind === 'pocket'
         || operation.kind === 'surface_clean'
-        || operation.kind === 'rough_surface')
+        || operation.kind === 'rough_surface'
+        || operation.kind === 'edge_route_inside'
+        || operation.kind === 'edge_route_outside')
       ? ('arc' as const)
       : undefined,
   }

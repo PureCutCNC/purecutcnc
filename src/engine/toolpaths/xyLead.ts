@@ -57,6 +57,7 @@
 import type { Operation, OperationKind, Point } from '../../types/project'
 import { usesTangentLinks } from './pocketPatterns'
 import {
+  buildKeepOutCheck,
   buildOffsetDomainCheck,
   buildTangentLeadPath,
   domainChordBudget,
@@ -71,7 +72,14 @@ import type { ToolpathWarning } from './warningCodes'
 const LEAD_EPSILON = 1e-9
 
 /** Operation kinds that carry the shared clearing-entry seam this lead hooks. */
-const XY_LEAD_KINDS: readonly OperationKind[] = ['pocket', 'surface_clean', 'rough_surface']
+const XY_LEAD_KINDS: readonly OperationKind[] = [
+  'pocket', 'surface_clean', 'rough_surface', 'edge_route_inside', 'edge_route_outside',
+]
+
+/** True when every contour `kind` cuts is a wall of the finished part. */
+function everyContourIsAWall(kind: OperationKind): boolean {
+  return kind === 'edge_route_inside' || kind === 'edge_route_outside'
+}
 
 /**
  * Arc radii tried, as multiples of tool diameter, LARGEST first.
@@ -207,6 +215,26 @@ export function xyLeadOptions(
 }
 
 /**
+ * The same options with `keepOut` also forbidden — loops the lead must miss
+ * that are not part of the domain the pass was offset from.
+ *
+ * Tab footprints are the case that needs it. A lead runs at cut depth, and the
+ * tab pass that follows generation only lifts vertical moves and splits cuts;
+ * it never sees a lead. A lead planned through a tab would drive straight into
+ * it. Tabs stand only below their own tops, so the caller composes this per
+ * level rather than once per pass.
+ */
+export function withKeepOut(
+  options: XyLeadOptions | undefined,
+  keepOut: Point[][],
+): XyLeadOptions | undefined {
+  if (!options || keepOut.length === 0) return options
+  const blocked = buildKeepOutCheck(keepOut)
+  const inDomain = options.isInsideDomain
+  return { ...options, isInsideDomain: (x, y) => inDomain(x, y) && !blocked(x, y) }
+}
+
+/**
  * Does this operation carry XY leads at all?
  *
  * Kind only. WHERE a lead is emitted is not a property of the operation, it is
@@ -233,8 +261,51 @@ export function supportsXyLead(operation: Operation): boolean {
  * motion. The other way round costs a marked wall.
  */
 export function roughingRingIsTheFinishedWall(operation: Operation): boolean {
-  return Math.max(0, operation.stockToLeaveRadial) <= LEAD_EPSILON
-    && usesTangentLinks(operation.kind, operation.pocketPattern)
+  if (Math.max(0, operation.stockToLeaveRadial) > LEAD_EPSILON) return false
+  // A clearing pass leaves a wall behind only where it cuts offset rings; a
+  // raster fill has no ring that is a wall. An edge route has nothing BUT
+  // wall contours, at every level, so it needs no second term.
+  return everyContourIsAWall(operation.kind)
+    || usesTangentLinks(operation.kind, operation.pocketPattern)
+}
+
+/**
+ * The tool-centre-safe domain on the OUTSIDE of a set of retained loops, for a
+ * route that travels around material rather than inside a cavity.
+ *
+ * `keepOut` is everything the cutter must not enter, already grown to
+ * tool-centre distance: the wall contour the route follows, other retained
+ * features, and the tab footprints standing at this level. The domain has to
+ * be bounded for the containment test to mean anything, so the outer loop is
+ * the box those loops occupy grown by `reach` — far enough that any lead
+ * within its own length budget fits, near enough that a lead cannot wander off
+ * into space the caller never reasoned about.
+ *
+ * The boundary is deliberately generous and the keep-out deliberately strict:
+ * a lead rejected here costs a fallback to the direct entry the route already
+ * had, while one admitted wrongly costs a gouge.
+ */
+export function domainOutsideLoops(
+  keepOut: Point[][],
+  reach: number,
+): TangentLinkDomainRegion[] {
+  const loops = keepOut.filter((loop) => loop.length >= 3)
+  if (loops.length === 0) return []
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const loop of loops) {
+    for (const point of loop) {
+      if (point.x < minX) minX = point.x
+      if (point.x > maxX) maxX = point.x
+      if (point.y < minY) minY = point.y
+      if (point.y > maxY) maxY = point.y
+    }
+  }
+  const lo = { x: minX - reach, y: minY - reach }
+  const hi = { x: maxX + reach, y: maxY + reach }
+  return [{
+    outer: [lo, { x: hi.x, y: lo.y }, hi, { x: lo.x, y: hi.y }],
+    islands: loops,
+  }]
 }
 
 /**

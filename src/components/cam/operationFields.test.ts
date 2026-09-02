@@ -265,6 +265,28 @@ function testGroupsWithNothingToShowDoNotRender() {
   assert(drilling.includes('drilling'), 'a drilling operation renders its own group')
 }
 
+/**
+ * The XY approach row is offered by kind, not by the pass flag that gates it in
+ * a clearing operation — an edge route cuts nothing but wall contours, so every
+ * one of its passes qualifies. The exception is trochoidal roughing, which
+ * reaches the wall by widening orbits from its own helical entry and so has no
+ * descent onto the wall for a lead to move: offering the row there would
+ * advertise a setting that cannot change the program.
+ */
+function testXyLeadIsOfferedOnEdgeRoutesButNotTrochoidalOnes() {
+  const field = OPERATION_FIELDS.find((entry) => entry.id === 'xyLeadStrategy')
+  assert(field, 'xyLeadStrategy must be declared')
+
+  for (const kind of ['edge_route_inside', 'edge_route_outside'] as const) {
+    assert(field.appliesTo(makeOperation({ kind, pass: 'finish' })),
+      `a finish ${kind} offers the XY approach`)
+    assert(field.appliesTo(makeOperation({ kind, pass: 'rough', edgeStrategy: 'contour' })),
+      `a contour-roughing ${kind} offers it too`)
+    assert(!field.appliesTo(makeOperation({ kind, pass: 'rough', edgeStrategy: 'trochoidal' })),
+      `a trochoidal ${kind} does not`)
+  }
+}
+
 function testTrochoidalPredicatesMatchTheEnginesOwn() {
   // A trochoidal path has no ramp; a stale 'ramp' must read back as a helix so
   // the panel never offers a mode the generator does not implement.
@@ -426,6 +448,7 @@ testEveryKindRendersAtLeastOneGroup()
 testGoldenRenderOrder()
 testSpeedsAndFeedsSitAboveTheFold()
 testGroupsWithNothingToShowDoNotRender()
+testXyLeadIsOfferedOnEdgeRoutesButNotTrochoidalOnes()
 testTrochoidalPredicatesMatchTheEnginesOwn()
 testRampAngleRendersFromExactlyOnePlace()
 testStockToLeaveFollowsTheSurfacePattern()

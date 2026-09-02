@@ -491,6 +491,23 @@ export function buildOffsetDomainCheck(
 }
 
 /**
+ * "Is (x, y) inside anything the cutter must stay out of?" for a set of
+ * already-grown keep-out loops — tab footprints, say, which an edge route's
+ * lead has to miss but which are not part of the domain the route was offset
+ * from. Boundary points pass: the loops arrive grown by the cutter's own
+ * clearance, so riding the boundary is tangency, not a collision.
+ *
+ * Same bounding-box prefilter as `buildOffsetDomainCheck`, for the same
+ * reason: this is called once per sample of every lead candidate.
+ */
+export function buildKeepOutCheck(loops: Point[][]): (x: number, y: number) => boolean {
+  const boxed = loops.filter((loop) => loop.length >= 3).map(boxLoop)
+  if (boxed.length === 0) return () => false
+  return (x: number, y: number): boolean => boxed.some((loop) => !outsideBox(loop, x, y)
+    && pointInPolygon(x, y, loop.points) && !pointOnPolygonEdge(x, y, loop.points))
+}
+
+/**
  * Tangent-link options for one pocket pass (issue #545). Returns undefined
  * when disabled or degenerate — undefined = today's straight links.
  */

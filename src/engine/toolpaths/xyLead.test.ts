@@ -21,6 +21,7 @@
 
 import {
   beginXyLeadLevel,
+  domainOutsideLoops,
   emitXyLead,
   emitXyLeadOut,
   leadFeedScale,
@@ -32,6 +33,7 @@ import {
   roughingRingIsTheFinishedWall,
   supportsXyLead,
   planWallLeadIn,
+  withKeepOut,
   xyLeadOptions,
   type XyLeadOptions,
 } from './xyLead'
@@ -381,7 +383,9 @@ function testGatesAndWarnings() {
   assert(supportsXyLead(baseOperation({ pass: 'finish' })), 'a finish pass does too — it is the main case')
   assert(supportsXyLead(baseOperation({ kind: 'surface_clean' })), 'surface clean does')
   assert(supportsXyLead(baseOperation({ kind: 'rough_surface' })), 'rough surface does')
-  assert(!supportsXyLead(baseOperation({ kind: 'edge_route_inside' })), 'edge routing does not yet')
+  assert(supportsXyLead(baseOperation({ kind: 'edge_route_inside' })), 'so does an edge route')
+  assert(supportsXyLead(baseOperation({ kind: 'edge_route_outside' })), 'on either side')
+  assert(!supportsXyLead(baseOperation({ kind: 'drilling' })), 'drilling has no contour to lead onto')
 
   // A roughing ring is the finished wall only when it leaves no radial stock;
   // otherwise a finish pass comes back and machines the mark away.
@@ -391,6 +395,14 @@ function testGatesAndWarnings() {
     'stock left means a finish pass will take the mark away')
   assert(!roughingRingIsTheFinishedWall(baseOperation({ pocketPattern: 'parallel' })),
     'raster clearing has no ring to lead onto')
+  // An edge route has no pattern to consult: every contour it cuts is a wall,
+  // so the radial-stock term is the whole rule there.
+  assert(roughingRingIsTheFinishedWall(
+    baseOperation({ kind: 'edge_route_outside', pocketPattern: 'parallel', stockToLeaveRadial: 0 })),
+    'an edge route at zero radial stock is the wall whatever the stale pattern says')
+  assert(!roughingRingIsTheFinishedWall(
+    baseOperation({ kind: 'edge_route_outside', stockToLeaveRadial: 0.5 })),
+    'and stock left still gates it')
 
   const off = collect()
   assert(resolveXyLeadOptions(baseOperation({ xyLeadStrategy: undefined }), 6, regions, false, off.onWarning) === undefined,
@@ -398,7 +410,7 @@ function testGatesAndWarnings() {
   assert(off.warnings.length === 0, 'and is not warned about — absent is the legacy default, not a refusal')
 
   const unsupported = collect()
-  assert(resolveXyLeadOptions(baseOperation({ kind: 'edge_route_inside' }), 6, regions, false, unsupported.onWarning) === undefined,
+  assert(resolveXyLeadOptions(baseOperation({ kind: 'drilling' }), 6, regions, false, unsupported.onWarning) === undefined,
     'a kind with no lead seam gets no options')
   assert(unsupported.warnings.some((warning) => warning.code === 'xyLeadUnsupported'),
     'and is told its request was declined')
@@ -494,6 +506,55 @@ function testLengthBudgetIsEnforced() {
   console.log('length budget: PASSED')
 }
 
+/**
+ * The outside case, where the domain is built the other way up. An edge route
+ * around a boss has no cavity to sweep into: the safe side is open air bounded
+ * only by what must survive, so the domain is the complement of the retained
+ * loops inside a box that exists only to bound the containment test.
+ */
+function testDomainOutsideLoopsInvertsTheDomain() {
+  console.log('Testing the outside domain is the complement of the loops...')
+  const boss = [{ x: 20, y: 20 }, { x: 40, y: 20 }, { x: 40, y: 40 }, { x: 20, y: 40 }]
+  const regions = domainOutsideLoops([boss], 10)
+  assert(regions.length === 1, 'one region')
+  const inside = buildOffsetDomainCheck(regions)
+
+  assert(!inside(30, 30), 'the middle of the retained loop is out of bounds')
+  assert(inside(45, 30), 'the air beside it is in bounds')
+  assert(inside(30, 45), 'and above it')
+  assert(inside(40, 30), 'a point ON the loop is in bounds — the route rides that line')
+  // The box is the loops grown by `reach`, so a lead within its own length
+  // budget always fits, and nothing beyond that budget is silently admitted.
+  assert(inside(49.9, 30), 'the boundary reaches `reach` past the loop')
+  assert(!inside(50.1, 30), 'and stops there')
+  assert(domainOutsideLoops([], 10).length === 0, 'nothing to keep out is no domain at all')
+  console.log('outside domain: PASSED')
+}
+
+/**
+ * Tab footprints are keep-outs, not domain: they are subtracted from whatever
+ * domain the pass already had. A lead runs at cut depth and the tab pass that
+ * follows generation never sees a lead, so one planned through a tab would
+ * drive into it with nothing downstream to correct it.
+ */
+function testWithKeepOutSubtractsFromTheDomain() {
+  console.log('Testing keep-outs are subtracted from the domain...')
+  const base = xyLeadOptions(baseOperation({ xyLeadStrategy: 'arc' }), 6,
+    [{ outer: DOMAIN_OUTER, islands: [] }])
+  assert(base !== undefined, 'the fixture resolves options to subtract from')
+
+  const tab = [{ x: 10, y: 10 }, { x: 20, y: 10 }, { x: 20, y: 20 }, { x: 10, y: 20 }]
+  const gated = withKeepOut(base, [tab])
+  assert(gated !== undefined, 'and keeps them')
+  assert(base.isInsideDomain(15, 15), 'the point is in the domain before the keep-out')
+  assert(!gated.isInsideDomain(15, 15), 'and out of it after')
+  assert(gated.isInsideDomain(30, 30), 'a point clear of the keep-out is untouched')
+  assert(gated.isInsideDomain(20, 15), 'a point ON the keep-out boundary passes — it arrives already grown')
+  assert(withKeepOut(base, []) === base, 'no keep-out is the same options object, not a copy')
+  assert(withKeepOut(undefined, [tab]) === undefined, 'and no options stays no options')
+  console.log('keep-out subtraction: PASSED')
+}
+
 try {
   testEntryArrivesTangentToTheRing()
   testExitDepartsTangentFromTheRing()
@@ -509,6 +570,8 @@ try {
   testOnlyAFullEntryIsLed()
   testExitLeavesTheContourItStandsOn()
   testLengthBudgetIsEnforced()
+  testDomainOutsideLoopsInvertsTheDomain()
+  testWithKeepOutSubtractsFromTheDomain()
   console.log('\nAll xyLead tests PASSED.')
 } catch (e) {
   console.error(e)

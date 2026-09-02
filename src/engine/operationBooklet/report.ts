@@ -318,8 +318,11 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
   // The XY lead changes where the cutter reaches depth and how it meets the
   // first ring, so the sheet has to say when it is on. Gated on the same
   // predicate the generator uses, so the printout can never claim a lead an
-  // unsupported pattern would never emit.
-  if (supportsXyLead(operation) && operation.xyLeadStrategy === 'arc') {
+  // unsupported pattern would never emit — including a trochoidal edge route,
+  // which has no descent onto the wall for a lead to move and so emits none.
+  if (supportsXyLead(operation)
+    && !isTrochoidalEdgeRoughing(operation)
+    && operation.xyLeadStrategy === 'arc') {
     rows.push({
       label: translate('booklet.label.xyLeadStrategy'),
       value: translate('booklet.xyLead.arc'),

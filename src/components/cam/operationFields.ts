@@ -471,15 +471,24 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     // `stockToLeaveRadial`, even though the engine only emits roughing leads at
     // zero: hiding a control because of another field's current value strands
     // the user's choice the moment they change that value back.
+    //
+    // An edge route cuts nothing but wall contours, so it always qualifies —
+    // except as trochoidal roughing, which enters through its own helix away
+    // from the wall and reaches the wall by widening orbits. There is no
+    // descent onto the wall there for a lead to move, so the row would offer a
+    // setting that could not change the program.
     id: 'xyLeadStrategy',
     group: 'entry',
     paramRef: 'xyLeadStrategy',
-    appliesTo: (operation) => (operation.kind === 'pocket'
-      || operation.kind === 'surface_clean'
-      || operation.kind === 'rough_surface')
-      && (operation.pass === 'finish'
-        ? operation.finishWalls
-        : usesTangentLinks(operation.kind, operation.pocketPattern)),
+    appliesTo: (operation) => {
+      if (isEdgeRouteKind(operation.kind)) return !isTrochoidalEdgeRoughing(operation)
+      return (operation.kind === 'pocket'
+        || operation.kind === 'surface_clean'
+        || operation.kind === 'rough_surface')
+        && (operation.pass === 'finish'
+          ? operation.finishWalls
+          : usesTangentLinks(operation.kind, operation.pocketPattern))
+    },
   },
   {
     id: 'retractHeight',

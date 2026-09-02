@@ -629,11 +629,17 @@ function testNormalizationKeepsAndStripsTheField() {
   assert(junk.xyLeadStrategy === undefined, 'an unknown stored value normalizes away')
 
   const wrongKind = normalizeOperation(
-    pocketOperation({ kind: 'edge_route_inside', xyLeadStrategy: 'arc' }),
+    pocketOperation({ kind: 'v_carve', xyLeadStrategy: 'arc' }),
     project,
     0,
   )
   assert(wrongKind.xyLeadStrategy === undefined, 'a kind with no lead seam does not keep the request')
+
+  // Edge routes DO have one, on either side: every contour they cut is a wall.
+  for (const kind of ['edge_route_inside', 'edge_route_outside'] as const) {
+    const edge = normalizeOperation(pocketOperation({ kind, xyLeadStrategy: 'arc' }), project, 0)
+    assert(edge.xyLeadStrategy === 'arc', `${kind} keeps the request through a save/load`)
+  }
   console.log('normalization: PASSED')
 }
 

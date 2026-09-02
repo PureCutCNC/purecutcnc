@@ -62,6 +62,22 @@ import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET, type Trochoida
 import { createTrochoidalPathStore } from './trochoidalLevelPaths'
 import type { TrochoidalPathParams } from './trochoidalLevelPaths'
 import { expandedTabFootprints } from './tabs'
+import {
+  beginXyLeadLevel,
+  closedContourFromMoves,
+  domainOutsideLoops,
+  emitOpenWallLeadOut,
+  emitXyLead,
+  emitXyLeadOut,
+  planOpenWallLeadIn,
+  planWallLeadIn,
+  resolveXyLeadOptions,
+  rotateRingForLead,
+  roughingRingIsTheFinishedWall,
+  withKeepOut,
+  type XyLeadContext,
+  type XyLeadOptions,
+} from './xyLead'
 import { appendAll } from './appendAll'
 
 const TROCHOIDAL_GUIDE_SAFETY_FRACTION = 0.01
@@ -202,6 +218,28 @@ function transitionToCutEntry(
 
   const safePosition = retractToSafe(moves, from, safeZ)
   return pushRapidAndPlunge(moves, safePosition, toXY, safeZ)
+}
+
+/**
+ * Will `transitionToCutEntry` above reach `toXY` already engaged at cut depth?
+ *
+ * An XY lead (issue #695) has work to do only where the cutter ARRIVES on a
+ * wall from off it. This mirrors the link branch directly above rather than
+ * reusing pocket's `transitionLinksAtDepth`: the two transitions differ, and
+ * the difference is the one that matters here. Edge's link is a `cut` move
+ * that may also change Z — a descent from safe Z lands on the wall and turns
+ * to follow it, which marks the surface exactly as a plunge does. Only a link
+ * that stays at one depth arrives already engaged.
+ */
+function edgeLinksAtDepth(
+  from: ToolpathPoint | null,
+  toXY: ToolpathPoint,
+  maxLinkDistance: number,
+): boolean {
+  if (!from) return false
+  if (Math.abs(from.z - toXY.z) > 1e-9) return false
+  const distance = Math.hypot(toXY.x - from.x, toXY.y - from.y)
+  return distance > 0 && distance <= maxLinkDistance
 }
 
 function generateStepLevels(topZ: number, bottomZ: number, stepdown: number): number[] {
@@ -643,6 +681,7 @@ function appendFragmentedContoursAtLevels(
   maxLinkDistance: number,
   regionMask: RegionMask | null,
   obstacleMaskForZ: (z: number) => RegionMask | null,
+  leadForLevel?: (z: number) => XyLeadContext | undefined,
 ): ToolpathPoint | null {
   // Fragment by region mask once — region is Z-independent.
   const regionFragments = contours.flatMap((c) =>
@@ -653,6 +692,9 @@ function appendFragmentedContoursAtLevels(
   let nextPosition = currentPosition
   for (const z of levels) {
     const obsMask = obstacleMaskForZ(z)
+    // XY leads (issue #695). Per level, because the tab footprints the lead has
+    // to stay out of stand only below their own tops.
+    const levelLead = leadForLevel?.(z)
 
     for (const frag of regionFragments) {
       let finalFragments: ClosedGuideFragment[]
@@ -681,20 +723,43 @@ function appendFragmentedContoursAtLevels(
       for (const ff of finalFragments) {
         if (ff.points.length < 2) continue
         if (ff.closed) {
-          const entry = contourStartPoint(ff.points, z)
+          // The route follows the wall itself, so every contour here is a
+          // surface that survives into the part. The plan re-seams the loop at
+          // the point it can reach tangentially and moves the descent to the
+          // far end of the arc; without it the cutter lands on the wall and
+          // starts cutting from a standstill.
+          const isFullEntry = !edgeLinksAtDepth(
+            nextPosition, contourStartPoint(ff.points, z), maxLinkDistance,
+          )
+          const leadPlan = planWallLeadIn(levelLead, ff.points, isFullEntry)
+          const points = rotateRingForLead(ff.points, leadPlan)
+          const entry = leadPlan
+            ? { x: leadPlan.staging.x, y: leadPlan.staging.y, z }
+            : contourStartPoint(points, z)
           nextPosition = transitionToCutEntry(moves, nextPosition, entry, safeZ, maxLinkDistance)
-          const cutMoves = toClosedCutMoves(ff.points, z)
+          if (leadPlan && levelLead) {
+            nextPosition = emitXyLead(moves, nextPosition, leadPlan, z, levelLead.options, 'lead_in')
+          }
+          const cutMoves = toClosedCutMoves(points, z)
           appendAll(moves, cutMoves)
           nextPosition = cutMoves.at(-1)?.to ?? nextPosition
+          const cutRing = closedContourFromMoves(cutMoves)
+          if (cutRing) nextPosition = emitXyLeadOut(moves, nextPosition, cutRing, z, levelLead)
         } else {
           // Open span: retract to safe Z, rapid to the start, descend.  This
           // follows the transition pattern already used between separate
           // contours in appendContoursAtLevels.
-          const entry = { x: ff.points[0].x, y: ff.points[0].y, z }
+          const openLead = planOpenWallLeadIn(levelLead, ff.points, true)
+          const head = openLead ? openLead.staging : ff.points[0]
+          const entry = { x: head.x, y: head.y, z }
           nextPosition = retractToSafe(moves, nextPosition, safeZ)
           nextPosition = pushRapidAndPlunge(moves, nextPosition, entry, safeZ)
+          if (openLead && levelLead) {
+            nextPosition = emitXyLead(moves, nextPosition, openLead, z, levelLead.options, 'lead_in')
+          }
           appendAll(moves, toOpenCutMoves(ff.points, z))
           nextPosition = moves.at(-1)?.to ?? nextPosition
+          nextPosition = emitOpenWallLeadOut(moves, nextPosition, ff.points, z, levelLead)
           nextPosition = retractToSafe(moves, nextPosition, safeZ)
         }
       }
@@ -1215,6 +1280,17 @@ function generateEdgeRouteToolpathSingle(
 
   const safeZ = getOperationSafeZ(project)
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
+  // XY leads (issue #695). An edge route cuts nothing BUT wall contours, so a
+  // finish pass always carries them, and a roughing pass carries them exactly
+  // when it leaves no radial stock for a finish pass to take the mark away.
+  //
+  // Trochoidal roughing is excluded on the measured ground that it has no
+  // descent to move: it enters through its own helical entry away from the
+  // wall and reaches the wall by widening orbits, so a fixture that plunges
+  // onto the wall three times as a contour route produces zero such descents
+  // as a trochoidal one. There is no mark here for a lead to prevent.
+  const carriesWallLead = !isTrochoidal
+    && (operation.pass === 'finish' || roughingRingIsTheFinishedWall(operation))
   // This is the one guide clearance used to keep the complete orbit and cutter
   // off the retained wall. Reusing the same value in every guide calculation is
   // load-bearing: separate approximations can turn a visual seam into a gouge.
@@ -1247,6 +1323,15 @@ function generateEdgeRouteToolpathSingle(
     operation.kind === 'edge_route_inside'
       ? -(isTrochoidal ? trochoidalGuideOffset : tool.radius + radialLeave)
       : isTrochoidal ? trochoidalGuideOffset : tool.radius + radialLeave
+
+  // A lead runs at cut depth, and the tab pass that comes after generation only
+  // lifts vertical moves and splits cuts — it never touches a lead — so a lead
+  // planned through a tab would plough straight into it. The keep-out therefore
+  // has to include the tabs standing at THIS level, which is why the domain is
+  // rebuilt per level rather than once per pass. `expandedTabFootprints` is the
+  // same footprint the tab pass itself uses, grown by the same clearance.
+  const tabKeepOutAtZ = (z: number): Point[][] =>
+    tabCutterPathsAtZ(project.tabs, z, tool.radius + radialLeave).map((path) => fromClipperPath(path))
 
   const moves: ToolpathMove[] = []
   // Shared across sub-operations under feature-first ordering; a fresh budget
@@ -1301,6 +1386,22 @@ function generateEdgeRouteToolpathSingle(
       }
 
       const insetRegions = band.regions.flatMap((region) => buildInsetRegions(region, insideInset))
+      // An inside route shares the pocket's domain: the tool-centre region the
+      // contour was inset from. The arc sweeps into the cavity, which is the
+      // material this route is removing.
+      const bandLeadOptions = carriesWallLead
+        ? resolveXyLeadOptions(
+          operation,
+          tool.diameter,
+          insetRegions,
+          regionMask !== null,
+          (warning) => appendUniqueWarning(warnings, warning),
+        )
+        : undefined
+      const insideLeadForLevel = (z: number): XyLeadContext | undefined => beginXyLeadLevel(
+        withKeepOut(bandLeadOptions, tabKeepOutAtZ(z)),
+        (warning) => appendUniqueWarning(warnings, warning),
+      )
       const rawContours = buildOuterContours(insetRegions)
       if (rawContours.length === 0) {
         warnings.push({ code: 'edgeNoInsideContour', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
@@ -1381,15 +1482,30 @@ function generateEdgeRouteToolpathSingle(
         const openFrags = regionFragments.filter((f) => !f.closed)
 
         for (const z of levels) {
+          const levelLead = insideLeadForLevel(z)
           if (closedFrags.length > 0) {
-            currentPosition = cutClosedContours(moves, closedFrags, z, safeZ, maxLinkDistance, currentPosition)
+            // Every contour an inside route cuts is a wall of the cavity, so
+            // the lead context goes straight in — the same call the pocket's
+            // own wall block makes, through the same function. Every argument
+            // between the position and the lead is the default this call
+            // already relied on, spelled out only to reach the last one.
+            currentPosition = cutClosedContours(
+              moves, closedFrags, z, safeZ, maxLinkDistance, currentPosition,
+              false, 'conventional', undefined, undefined, undefined, false, levelLead,
+            )
           }
           for (const frag of openFrags) {
-            const entry = { x: frag.points[0].x, y: frag.points[0].y, z }
+            const openLead = planOpenWallLeadIn(levelLead, frag.points, true)
+            const head = openLead ? openLead.staging : frag.points[0]
+            const entry = { x: head.x, y: head.y, z }
             currentPosition = retractToSafe(moves, currentPosition, safeZ)
             currentPosition = pushRapidAndPlunge(moves, currentPosition, entry, safeZ)
+            if (openLead && levelLead) {
+              currentPosition = emitXyLead(moves, currentPosition, openLead, z, levelLead.options, 'lead_in')
+            }
             appendAll(moves, toOpenCutMoves(frag.points, z))
             currentPosition = moves.at(-1)?.to ?? currentPosition
+            currentPosition = emitOpenWallLeadOut(moves, currentPosition, frag.points, z, levelLead)
             currentPosition = retractToSafe(moves, currentPosition, safeZ)
           }
         }
@@ -1483,7 +1599,13 @@ function generateEdgeRouteToolpathSingle(
     return mask
   }
 
-  function trochoidalObstaclePathsForSpan(
+  /**
+   * Other retained features standing anywhere in this Z span, grown by
+   * `clearance`. Serves both the trochoidal guide, which must keep a whole
+   * orbit off them, and the XY lead's outside domain, which must keep the arc
+   * off them — hence the caller-supplied clearance rather than a fixed one.
+   */
+  function retainedObstaclePathsForSpan(
     topZ: number,
     bottomZ: number,
     clearance: number,
@@ -1508,6 +1630,47 @@ function generateEdgeRouteToolpathSingle(
     const offset = offsetPaths(paths, offsetDistance * DEFAULT_CLIPPER_SCALE, outsideJoinType)
     return offset.map((entry) => fromClipperPath(entry)).filter((points) => points.length >= 3)
   }
+
+  /**
+   * Lead options for an OUTSIDE route around `targetPaths`, or undefined when
+   * this pass carries no lead.
+   *
+   * An outside route has no cavity to sweep into: the safe side is open air,
+   * bounded only by what must survive. So the domain is built the other way up
+   * — everything outside the target grown to tool-centre distance, and outside
+   * every other retained feature standing in this Z span, grown the same way.
+   * `jtRound` on purpose: the arc has to clear a convex corner of the part on
+   * the diagonal, which a mitre would let it cut.
+   */
+  function outsideLeadOptions(
+    targetPaths: ClipperPath[],
+    topZ: number,
+    bottomZ: number,
+  ): XyLeadOptions | undefined {
+    if (!carriesWallLead) return undefined
+    const retained = unionPaths(offsetPaths(
+      targetPaths,
+      (tool.radius + radialLeave) * DEFAULT_CLIPPER_SCALE,
+      ClipperLib.JoinType.jtRound,
+    ))
+    const keepOut = [...retained, ...retainedObstaclePathsForSpan(topZ, bottomZ, tool.radius + radialLeave)]
+      .map((path) => fromClipperPath(path))
+    return resolveXyLeadOptions(
+      operation,
+      tool.diameter,
+      // The reach is the lead's own length budget with a tool diameter of
+      // slack, so the boundary can never be what rejects a lead that fits.
+      domainOutsideLoops(keepOut, tool.diameter * 3.5),
+      regionMask !== null,
+      (warning) => appendUniqueWarning(warnings, warning),
+    )
+  }
+
+  const outsideLeadForLevel = (options: XyLeadOptions | undefined) => (z: number): XyLeadContext | undefined =>
+    beginXyLeadLevel(
+      withKeepOut(options, tabKeepOutAtZ(z)),
+      (warning) => appendUniqueWarning(warnings, warning),
+    )
 
   const shouldAttemptCombinedOutside = operation.kind === 'edge_route_outside' && routableTargets.length > 1
   if (shouldAttemptCombinedOutside) {
@@ -1545,12 +1708,12 @@ function generateEdgeRouteToolpathSingle(
             (tool.radius + radialLeave) * DEFAULT_CLIPPER_SCALE,
             ClipperLib.JoinType.jtRound,
           )
-          const obstacles = trochoidalObstaclePathsForSpan(
+          const obstacles = retainedObstaclePathsForSpan(
             referenceTarget.topZ,
             referenceTarget.bottomZ,
             tool.radius + radialLeave,
           )
-          const guideObstacles = trochoidalObstaclePathsForSpan(
+          const guideObstacles = retainedObstaclePathsForSpan(
             referenceTarget.topZ,
             referenceTarget.bottomZ,
             trochoidalGuideOffset,
@@ -1590,6 +1753,9 @@ function generateEdgeRouteToolpathSingle(
           currentPosition = appendFragmentedContoursAtLevels(
             moves, currentPosition, contours, levels, safeZ, maxLinkDistance,
             regionMask, obstacleMaskForZ,
+            outsideLeadForLevel(outsideLeadOptions(
+              combinedPaths, referenceTarget.topZ, referenceTarget.bottomZ,
+            )),
           )
         }
       }
@@ -1633,12 +1799,12 @@ function generateEdgeRouteToolpathSingle(
           (tool.radius + radialLeave) * DEFAULT_CLIPPER_SCALE,
           ClipperLib.JoinType.jtRound,
         )
-        const obstacles = trochoidalObstaclePathsForSpan(
+        const obstacles = retainedObstaclePathsForSpan(
           target.topZ,
           target.bottomZ,
           tool.radius + radialLeave,
         )
-        const guideObstacles = trochoidalObstaclePathsForSpan(
+        const guideObstacles = retainedObstaclePathsForSpan(
           target.topZ,
           target.bottomZ,
           trochoidalGuideOffset,
@@ -1679,6 +1845,7 @@ function generateEdgeRouteToolpathSingle(
         currentPosition = appendFragmentedContoursAtLevels(
           moves, currentPosition, contours, levels, safeZ, maxLinkDistance,
           regionMask, obstacleMaskForZ,
+          outsideLeadForLevel(outsideLeadOptions(target.contourPaths, target.topZ, target.bottomZ)),
         )
       }
     }
