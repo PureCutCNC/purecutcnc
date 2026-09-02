@@ -143,6 +143,15 @@ function mergeFlatAreasDescending(areaByZ: Map<number, number>): Array<{ z: numb
   return merged
 }
 
+/**
+ * How far under the depth limit the cutter-location surface has to sit before a
+ * point counts as unmachinable rather than as the cutter bottoming out on the
+ * floor (issue #711). One micron in mm, 25 nm in inch — physically negligible
+ * either way, and tight enough that it only absorbs float noise at the boundary
+ * of a subtract's footprint.
+ */
+const UNMACHINABLE_SURFACE_EPSILON = 1e-6
+
 export function generateFinishSurfaceToolpath(
   project: Project,
   operation: Operation,
@@ -351,11 +360,42 @@ export function generateFinishSurfaceToolpath(
   // is already higher and the clamp is a no-op — i.e., the toolpath sweeps
   // over deep tabs normally rather than skipping their XY footprint.
   const tabFootprints = buildExpandedTabFootprints(project, tool.radius)
+  /** The depth limit at a point, ignoring tabs — a subtract's floor, or the operation's own. */
+  const subtractFloorAtPoint = (point: Point): number =>
+    safeSubtractBottomZAtPoint(relatedSubtracts, point) ?? effectiveBottom
   const minCutZAtPoint = (point: Point): number => {
-    const floor = safeSubtractBottomZAtPoint(relatedSubtracts, point) ?? effectiveBottom
+    const floor = subtractFloorAtPoint(point)
     const tabTop = tabTopZAtPoint(tabFootprints, point)
     return tabTop !== null ? Math.max(floor, tabTop) : floor
   }
+  /**
+   * Is there anything for a finish pass to cut at this XY (issue #711)?
+   *
+   * The height-map strategies lift each point onto the cutter-location surface
+   * and then clamp it up to `minCutZAtPoint`. Where the surface sits *below* a
+   * subtract's floor that clamp used to turn "I am not allowed to reach the
+   * surface here" into "machine a flat pass at the limit" — a full-feed pass
+   * over ground the subtract's own clearing operation already took to that
+   * floor. On `Oldman-splash-final.camj` that was 27 % of the finish's cutting.
+   *
+   * Two things make this narrow rather than a blanket "skip below the floor":
+   *
+   * - **Tabs must keep clamping.** Where a tab top sits above the surface,
+   *   riding at the tab top is the point: it machines down to the tab and
+   *   preserves it. Skipping there would leave a hole in the finish over every
+   *   tab, so a tab-raised floor always stays machinable.
+   * - **The operation's own `effectiveBottom` can never trigger this.**
+   *   `safeToolTipZAt` is a maximum over the cutter footprint that includes
+   *   `d = 0`, so `surfaceZ >= modelBottomZ` and therefore
+   *   `surfaceZ + axialLeave >= modelBottomZ + axialLeave = effectiveBottom`.
+   *   Measured: zero clamped points on the guitar and hills fixtures for either
+   *   strategy, with and without axial stock. So a floor that *is* below the
+   *   surface came from a related subtract, and no extra plumbing is needed to
+   *   tell the two apart.
+   */
+  const hasMachinableSurface = (point: Point, liftedSurfaceZ: number): boolean =>
+    tabTopZAtPoint(tabFootprints, point) !== null
+    || liftedSurfaceZ >= subtractFloorAtPoint(point) - UNMACHINABLE_SURFACE_EPSILON
 
   const strategyResult = isWaterline
     ? generateFinishSurfaceWaterline(
@@ -386,6 +426,7 @@ export function generateFinishSurfaceToolpath(
         stlData as FinishSurfaceParallelCacheHost,
         safeZ,
         minCutZAtPoint,
+        hasMachinableSurface,
         warnings,
       )
       : generateFinishSurfaceParallel(
@@ -399,6 +440,7 @@ export function generateFinishSurfaceToolpath(
         stlData as FinishSurfaceParallelCacheHost,
         safeZ,
         minCutZAtPoint,
+        hasMachinableSurface,
         warnings,
       )
 

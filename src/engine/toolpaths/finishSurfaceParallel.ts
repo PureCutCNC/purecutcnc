@@ -160,7 +160,17 @@ function clampSurfaceSegmentToMinZ(
   }))
 }
 
-function splitAndClampSurfaceSegmentToMinZ(
+/**
+ * Split a scanline wherever the depth limit steps, leaving Z untouched.
+ *
+ * This used to clamp each point up to the floor as well. It no longer does, so
+ * that `applyGougeProtection` produces the *unclamped* cutter-location surface
+ * and `hasMachinableSurface` can tell a real surface from one sitting under a
+ * floor another operation owns (issue #711). Nothing is lost by dropping the
+ * clamp: `clampSurfaceSegmentToMinZ` still runs afterwards, and `Math.max` is
+ * associative, so the emitted Z is unchanged.
+ */
+function splitSurfaceSegmentOnFloorChange(
   segment: Array<{ x: number; y: number; z: number; rotX: number }>,
   minZAtPoint: (point: Point) => number,
 ): Array<Array<{ x: number; y: number; z: number; rotX: number }>> {
@@ -170,10 +180,6 @@ function splitAndClampSurfaceSegmentToMinZ(
 
   for (const point of segment) {
     const floorZ = minZAtPoint(point)
-    const clampedPoint = {
-      ...point,
-      z: Math.max(point.z, floorZ),
-    }
 
     if (currentFloor !== null && Math.abs(floorZ - currentFloor) > 1e-9) {
       if (current.length >= 2) {
@@ -182,7 +188,7 @@ function splitAndClampSurfaceSegmentToMinZ(
       current = []
     }
 
-    current.push(clampedPoint)
+    current.push(point)
     currentFloor = floorZ
   }
 
@@ -190,6 +196,30 @@ function splitAndClampSurfaceSegmentToMinZ(
     chunks.push(current)
   }
 
+  return chunks
+}
+
+/**
+ * Drop the stretches of a gouge-protected scanline that have no machinable
+ * surface under them, returning the runs that survive (issue #711). Points are
+ * judged on their lifted cutter-location Z, which is why this runs after
+ * `applyGougeProtection` and before the floor clamp.
+ */
+function splitSegmentAtUnmachinableSurface(
+  segment: Array<{ x: number; y: number; z: number; rotX: number }>,
+  hasMachinableSurface: (point: Point, liftedSurfaceZ: number) => boolean,
+): Array<Array<{ x: number; y: number; z: number; rotX: number }>> {
+  const chunks: Array<Array<{ x: number; y: number; z: number; rotX: number }>> = []
+  let current: Array<{ x: number; y: number; z: number; rotX: number }> = []
+  for (const point of segment) {
+    if (hasMachinableSurface(point, point.z)) {
+      current.push(point)
+      continue
+    }
+    if (current.length >= 2) chunks.push(current)
+    current = []
+  }
+  if (current.length >= 2) chunks.push(current)
   return chunks
 }
 
@@ -372,10 +402,23 @@ export function safeToolTipZAt(
   return safeZ
 }
 
+/**
+ * Raise each scan point to the kinematic cutter-location surface, plus the
+ * operation's axial stock to leave.
+ *
+ * The leave belongs here and not on the raw sample this receives: gouge
+ * protection raises Z to a minimum, so an offset applied beforehand would be
+ * swallowed wherever that minimum binds. Before issue #712 the leave was not
+ * applied at all — `finishSurfaceParallel.ts` never read
+ * `stockToLeaveAxial`, so a parallel finish asked to leave stock cut the part
+ * to final size, silently, while waterline and constant scallop both honoured
+ * it. At a leave of zero the arithmetic below is what it always was.
+ */
 function applyGougeProtection(
   scanPoints: Array<{ x: number; y: number; z: number; rotX: number }>,
   heightMap: HeightMap,
   tool: NormalizedTool,
+  axialLeave: number,
 ): void {
   const toolRadius = tool.radius
   const neighborCells = Math.ceil(toolRadius / heightMap.cellSize)
@@ -433,7 +476,11 @@ function applyGougeProtection(
       }
     }
 
-    sp.z = safeZ
+    // The leave lifts the cutter-location surface as a whole, so every point
+    // rises by exactly it — matching `liftFragment`'s `surfaceZ + axialLeave`
+    // in finishSurfaceConstantScallop.ts. At a leave of zero this is the
+    // original assignment unchanged.
+    sp.z = safeZ + axialLeave
   }
 }
 
@@ -572,11 +619,15 @@ export function generateFinishSurfaceParallel(
   sliceIndexHost: FinishSurfaceParallelCacheHost,
   safeZ: number,
   minCutZAtPoint: (point: Point) => number,
+  hasMachinableSurface: (point: Point, liftedSurfaceZ: number) => boolean,
   warnings: ToolpathWarning[],
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const stepoverRatio = operation.stepover ?? 0.5
   const stepoverDistance = Math.max(stepoverRatio * tool.diameter, 1e-3)
   const angleDeg = operation.pocketAngle ?? 0
+  // Issue #712: this strategy never read the field, so the value was stored,
+  // shown in the panel, and silently dropped.
+  const axialLeave = Math.max(0, operation.stockToLeaveAxial)
 
   if (operation.debugToolpath) {
     warnings.push({ code: 'debug', params: { text: `Debug: parallel mode, angle=${angleDeg}°, stepover=${stepoverDistance.toFixed(4)}` } })
@@ -672,7 +723,7 @@ export function generateFinishSurfaceParallel(
       for (const [x1, x2] of intervals) {
         const segment = buildTopSurfaceSegment(x1, x2, rotY, cosPos, sinPos, heightMap, topSurfaceSampleDistance)
         if (segment.length >= 2) {
-          appendAll(scanSegments, splitAndClampSurfaceSegmentToMinZ(segment, minCutZAtPoint))
+          appendAll(scanSegments, splitSurfaceSegmentOnFloorChange(segment, minCutZAtPoint))
         }
       }
 
@@ -708,27 +759,32 @@ export function generateFinishSurfaceParallel(
         const segment = remainingSegments.splice(bestIdx, 1)[0]
         if (bestReverse) segment.reverse()
 
-        applyGougeProtection(segment, heightMap, tool)
-        const clampedSegment = clampSurfaceSegmentToMinZ(segment, minCutZAtPoint)
+        applyGougeProtection(segment, heightMap, tool, axialLeave)
 
-        for (const sp of clampedSegment) {
-          outStepLevels.add(sp.z)
+        // A scanline can now leave the surface part-way along it (issue #711),
+        // so what used to be one emission is a run per machinable stretch.
+        for (const machinable of splitSegmentAtUnmachinableSurface(segment, hasMachinableSurface)) {
+          const clampedSegment = clampSurfaceSegmentToMinZ(machinable, minCutZAtPoint)
+
+          for (const sp of clampedSegment) {
+            outStepLevels.add(sp.z)
+          }
+
+          const cutPoints3D: ToolpathPoint[] = clampedSegment.map((sp) => ({
+            x: sp.x,
+            y: sp.y,
+            z: sp.z,
+          }))
+          const entryPoint = cutPoints3D[0]
+
+          // The transition helper's same-XY shortcut bypasses its link check.
+          if (slopeDomain !== null && pos && pos.z < safeZ && !safeLinkCheck(pos, entryPoint)) {
+            pos = retractToSafe(moves, pos, safeZ)
+          }
+          pos = transitionToCutEntry(moves, pos, entryPoint, safeZ, linkMaxDistance, safeLinkCheck)
+          appendAll(moves, toOpenCutMoves3D(cutPoints3D))
+          pos = cutPoints3D[cutPoints3D.length - 1]
         }
-
-        const cutPoints3D: ToolpathPoint[] = clampedSegment.map((sp) => ({
-          x: sp.x,
-          y: sp.y,
-          z: sp.z,
-        }))
-        const entryPoint = cutPoints3D[0]
-
-        // The transition helper's same-XY shortcut bypasses its link check.
-        if (slopeDomain !== null && pos && pos.z < safeZ && !safeLinkCheck(pos, entryPoint)) {
-          pos = retractToSafe(moves, pos, safeZ)
-        }
-        pos = transitionToCutEntry(moves, pos, entryPoint, safeZ, linkMaxDistance, safeLinkCheck)
-        appendAll(moves, toOpenCutMoves3D(cutPoints3D))
-        pos = cutPoints3D[cutPoints3D.length - 1]
       }
     }
 
