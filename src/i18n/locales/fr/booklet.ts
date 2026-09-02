@@ -82,7 +82,7 @@ export const bookletFr: Record<keyof typeof bookletEn, string> = {
   'booklet.label.roundOutsideCorners': 'Arrondir les coins extérieurs',
   'booklet.label.roundLinkCorners': 'Arrondir les jonctions de liaison',
   'booklet.label.xyLeadStrategy': 'Approche et sortie XY',
-  'booklet.xyLead.tangentS': 'Courbe en S tangente',
+  'booklet.xyLead.arc': 'Arc tangent',
   'booklet.label.cleanWallCorners': 'Arrondir les angles de paroi',
   'booklet.label.cornerRelief': 'Dégagement de coin',
   'booklet.label.pattern': 'Motif',

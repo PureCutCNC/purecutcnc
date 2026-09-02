@@ -30,6 +30,7 @@ import { generateRoughSurfaceToolpath } from './roughSurface'
 import { resolvePocketRegions } from './resolver'
 import { buildOffsetDomainCheck } from './tangentLink'
 import { optimizeLinearMoves } from './linearMoveOptimization'
+import { fitArcsInMachineMoves } from '../gcode/arcFitting'
 import { normalizeOperation } from '../../store/helpers/normalize'
 import { normalizeToolForProject } from './geometry'
 import { projectWithFeatures } from '../../test/projectFixtures'
@@ -157,12 +158,12 @@ function pocketDomainCheck(project: Project, operation: Operation): (x: number, 
 // ── Tests ────────────────────────────────────────────────────────────
 
 function testComposesWithEveryZEntryStrategy() {
-  console.log('Testing tangent_s composes with plunge, helix and ramp...')
+  console.log('Testing arc composes with plunge, helix and ramp...')
   const { project, operation } = islandPocket()
 
   for (const entryStrategy of ['plunge', 'helix', 'ramp'] as EntryStrategy[]) {
     const legacy = generatePocketToolpath(project, { ...operation, entryStrategy })
-    const led = generatePocketToolpath(project, { ...operation, entryStrategy, xyLeadStrategy: 'tangent_s' })
+    const led = generatePocketToolpath(project, { ...operation, entryStrategy, xyLeadStrategy: 'arc' })
     assert(led.warnings.length === 0, `${entryStrategy}: the lead is planned without a warning`)
     assert(countKind(led.moves, 'lead_in') > countKind(legacy.moves, 'lead_in'),
       `${entryStrategy}: entry leads were emitted`)
@@ -204,7 +205,7 @@ function testComposesWithEveryZEntryStrategy() {
 function testEveryLeadSampleStaysInsideTheSafeDomain() {
   console.log('Testing no lead sample leaves the tool-centre-safe domain...')
   const { project, operation } = islandPocket()
-  const led = generatePocketToolpath(project, { ...operation, entryStrategy: 'plunge', xyLeadStrategy: 'tangent_s' })
+  const led = generatePocketToolpath(project, { ...operation, entryStrategy: 'plunge', xyLeadStrategy: 'arc' })
   const inside = pocketDomainCheck(project, operation)
 
   let checked = 0
@@ -227,19 +228,19 @@ function testEveryLeadSampleStaysInsideTheSafeDomain() {
   console.log(`domain containment over ${checked} samples: PASSED`)
 }
 
-function testFeedRampAcrossEmittedLeads() {
-  console.log('Testing the emitted leads carry the staged feed...')
+function testEmittedLeadsCarryOneConstantFeed() {
+  console.log('Testing the emitted leads carry one constant reduced feed...')
   const { project, operation } = islandPocket()
   const led = generatePocketToolpath(project, {
-    ...operation, entryStrategy: 'plunge', xyLeadStrategy: 'tangent_s',
+    ...operation, entryStrategy: 'plunge', xyLeadStrategy: 'arc',
   })
-  const initial = Math.min(1, operation.plungeFeed / operation.feed)
+  const expected = Math.min(1, operation.plungeFeed / operation.feed)
 
+  // Only the planar XY leads at cut depth; a helix or ramp descent is also
+  // lead_in but is not what this governs.
   const runs: ToolpathMove[][] = []
   let run: ToolpathMove[] = []
   for (const move of led.moves) {
-    // Only the planar XY leads at cut depth; a helix/ramp descent is also
-    // lead_in but is not what this ramp governs.
     if (LEAD_KINDS.has(move.kind) && Math.abs(move.from.z - move.to.z) < 1e-9) {
       run.push(move)
       continue
@@ -250,30 +251,61 @@ function testFeedRampAcrossEmittedLeads() {
   if (run.length > 0) runs.push(run)
   assert(runs.length > 0, 'planar leads were emitted')
 
-  let rising = 0
-  let falling = 0
   for (const candidate of runs) {
-    if (candidate.length < 3) continue
-    const scales = candidate.map((move) => move.feedScale ?? 1)
-    assert(scales.every((scale) => scale >= initial - 1e-12 && scale <= 1 + 1e-12),
-      'every lead feed sits between the constrained feed and full cut feed')
-    if (candidate[0].kind === 'lead_in' && scales[scales.length - 1] > scales[0]) rising += 1
-    if (candidate[0].kind === 'lead_out' && scales[scales.length - 1] < scales[0]) falling += 1
+    const scales = new Set(candidate.map((move) => move.feedScale ?? 1))
+    // One scale for the whole lead. A ramp would split the run and stop arc
+    // fitting from ever seeing it as one arc.
+    assert(scales.size === 1, 'every move of a lead shares one feed scale')
+    assert(Math.abs([...scales][0] - expected) < 1e-12, 'and it is min(plungeFeed / feed, 1)')
   }
-  assert(rising > 0, 'at least one entry lead ramps up to cut feed')
-  assert(falling > 0, 'at least one exit lead ramps down before the retract')
 
   // Plunge moves are never scaled — the descent keeps plunge feed.
   assert(led.moves.every((move) => move.kind !== 'plunge' || move.feedScale === undefined),
     'no plunge move carries a feed scale')
-  console.log('feed ramp: PASSED')
+  console.log('constant lead feed: PASSED')
+}
+
+function testLeadsFitToASingleArc() {
+  console.log('Testing an emitted lead round-trips to one G2/G3 arc...')
+  const { project, operation } = islandPocket()
+  const led = generatePocketToolpath(project, {
+    ...operation, entryStrategy: 'plunge', xyLeadStrategy: 'arc',
+  })
+
+  const fitted = fitArcsInMachineMoves(led.moves, 0.01, 90)
+  const arcs = fitted.filter((descriptor) => descriptor.kind === 'arc')
+  assert(arcs.length > 0, 'the program fits some arcs at all')
+
+  // The lead is the reason this matters: a faceted G1 approach marks a finished
+  // surface much as the plunge it replaces would. Before this issue arc fitting
+  // refused every non-cut kind, so a lead could never reach G2/G3.
+  const leadRuns = new Set<number>()
+  for (let index = 0; index < led.moves.length; index += 1) {
+    if (LEAD_KINDS.has(led.moves[index].kind) && Math.abs(led.moves[index].from.z - led.moves[index].to.z) < 1e-9) {
+      leadRuns.add(index)
+    }
+  }
+  assert(leadRuns.size > 0, 'the fixture emits planar leads')
+
+  // A lead's chords must not survive as a long string of linear descriptors.
+  const linearLeads = fitted.filter((descriptor) => descriptor.kind === 'linear'
+    && (descriptor.moveKind === 'lead_in' || descriptor.moveKind === 'lead_out')
+    && Math.abs(descriptor.point.z - (-2)) < 1e-9).length
+  assert(linearLeads < leadRuns.size / 2,
+    `most lead chords were fitted rather than passed through (${linearLeads} linear of ${leadRuns.size})`)
+
+  // And a lead is never fitted together with the cut it hands over to: that
+  // would relabel it and lose the distinction the preview and booklet read.
+  const kinds = new Set(fitted.filter((d) => d.kind === 'linear').map((d) => d.moveKind))
+  assert(kinds.has('cut'), 'cuts still pass through or fit on their own')
+  console.log('lead arc fitting: PASSED')
 }
 
 function testLeadsSurviveLinearMoveOptimization() {
   console.log('Testing the linear-move optimizer preserves the leads...')
   const { project, operation } = islandPocket()
   const raw = generatePocketToolpath(project, {
-    ...operation, entryStrategy: 'plunge', xyLeadStrategy: 'tangent_s',
+    ...operation, entryStrategy: 'plunge', xyLeadStrategy: 'arc',
   })
   const optimized = optimizeLinearMoves(raw)
   for (const kind of ['lead_in', 'lead_out']) {
@@ -307,7 +339,7 @@ function testRingToRingLinksAreUntouchedByTheLead() {
   const { project, operation } = islandPocket()
   const linked = generatePocketToolpath(project, { ...operation, roundLinkCorners: true })
   const ledAndLinked = generatePocketToolpath(project, {
-    ...operation, roundLinkCorners: true, xyLeadStrategy: 'tangent_s',
+    ...operation, roundLinkCorners: true, xyLeadStrategy: 'arc',
   })
   // The lead only ever replaces the level's FIRST entry and adds an exit, so
   // the level's interior cut mileage must not collapse or explode.
@@ -326,7 +358,7 @@ function testMaskedAndUnsupportedFallBackWithAWarning() {
   console.log('Testing the masked and unsupported fallbacks...')
   const { project, operation } = islandPocket()
 
-  const raster = generatePocketToolpath(project, { ...operation, pocketPattern: 'parallel', xyLeadStrategy: 'tangent_s' })
+  const raster = generatePocketToolpath(project, { ...operation, pocketPattern: 'parallel', xyLeadStrategy: 'arc' })
   assert(raster.warnings.some((warning) => warning.code === 'xyLeadUnsupported'),
     'a raster clearing pattern warns that leads are unavailable')
   assert(countKind(raster.moves, 'lead_out') === 0, 'and emits none')
@@ -339,7 +371,7 @@ function testMaskedAndUnsupportedFallBackWithAWarning() {
     [makeRect('p1', 0, 0, 60, 60), makeRect('r1', 0, 0, 40, 60, 'region')],
   )
   const maskedOp = pocketOperation({ target: { source: 'features', featureIds: ['p1', 'r1'] } })
-  const masked = generatePocketToolpath(maskedProject, { ...maskedOp, xyLeadStrategy: 'tangent_s' })
+  const masked = generatePocketToolpath(maskedProject, { ...maskedOp, xyLeadStrategy: 'arc' })
   assert(masked.warnings.some((warning) => warning.code === 'xyLeadRegionMask'),
     'a region-masked operation warns that leads are unavailable')
   assert(countKind(masked.moves, 'lead_out') === 0, 'and emits none')
@@ -368,7 +400,7 @@ function testSurfaceCleanCarriesTheLead() {
     }),
   }
   const legacy = generateSurfaceCleanToolpath(project, operation)
-  const led = generateSurfaceCleanToolpath(project, { ...operation, xyLeadStrategy: 'tangent_s' })
+  const led = generateSurfaceCleanToolpath(project, { ...operation, xyLeadStrategy: 'arc' })
   assert(countKind(led.moves, 'lead_in') > countKind(legacy.moves, 'lead_in'), 'entry leads were emitted')
   assert(countKind(led.moves, 'lead_out') > countKind(legacy.moves, 'lead_out'), 'exit leads were emitted')
   assert(JSON.stringify(generateSurfaceCleanToolpath(project, { ...operation, xyLeadStrategy: 'none' }).moves)
@@ -380,7 +412,7 @@ function testRoughSurfaceCarriesTheLead() {
   console.log('Testing rough surface carries the lead...')
   const { project, operation } = roughSurfaceFixture()
   const legacy = generateRoughSurfaceToolpath(project, operation)
-  const led = generateRoughSurfaceToolpath(project, { ...operation, xyLeadStrategy: 'tangent_s' })
+  const led = generateRoughSurfaceToolpath(project, { ...operation, xyLeadStrategy: 'arc' })
   assert(countKind(legacy.moves, 'cut') > 0, 'the 3D fixture cuts something')
   assert(countKind(led.moves, 'lead_in') > countKind(legacy.moves, 'lead_in'), 'entry leads were emitted')
   assert(countKind(led.moves, 'lead_out') > countKind(legacy.moves, 'lead_out'), 'exit leads were emitted')
@@ -452,21 +484,21 @@ function testNormalizationKeepsAndStripsTheField() {
   console.log('Testing normalization of the stored field...')
   const { project } = islandPocket()
 
-  const kept = normalizeOperation(pocketOperation({ xyLeadStrategy: 'tangent_s' }), project, 0)
-  assert(kept.xyLeadStrategy === 'tangent_s', 'a supported kind keeps its request')
+  const kept = normalizeOperation(pocketOperation({ xyLeadStrategy: 'arc' }), project, 0)
+  assert(kept.xyLeadStrategy === 'arc', 'a supported kind keeps its request')
 
   const absent = normalizeOperation(pocketOperation(), project, 0)
   assert(absent.xyLeadStrategy === undefined, 'an operation without the field is not backfilled')
 
   const junk = normalizeOperation(
-    pocketOperation({ xyLeadStrategy: 'spiral' as unknown as 'tangent_s' }),
+    pocketOperation({ xyLeadStrategy: 'spiral' as unknown as 'arc' }),
     project,
     0,
   )
   assert(junk.xyLeadStrategy === undefined, 'an unknown stored value normalizes away')
 
   const wrongKind = normalizeOperation(
-    pocketOperation({ kind: 'edge_route_inside', xyLeadStrategy: 'tangent_s' }),
+    pocketOperation({ kind: 'edge_route_inside', xyLeadStrategy: 'arc' }),
     project,
     0,
   )
@@ -477,7 +509,8 @@ function testNormalizationKeepsAndStripsTheField() {
 try {
   testComposesWithEveryZEntryStrategy()
   testEveryLeadSampleStaysInsideTheSafeDomain()
-  testFeedRampAcrossEmittedLeads()
+  testEmittedLeadsCarryOneConstantFeed()
+  testLeadsFitToASingleArc()
   testLeadsSurviveLinearMoveOptimization()
   testAbsentAndNoneAreByteIdentical()
   testRingToRingLinksAreUntouchedByTheLead()

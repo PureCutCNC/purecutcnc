@@ -516,13 +516,13 @@ test.describe('CAM operation browser smoke', () => {
 
     await leadField.locator('.ui-select__trigger').click()
     const options = leadField.locator('.ui-select__dropdown [role="option"]')
-    await expect(options).toHaveText(['Direct', 'Tangent S-curve'])
-    await options.filter({ hasText: 'Tangent S-curve' }).click()
-    await expect(leadField.locator('.ui-select__label')).toHaveText('Tangent S-curve')
+    await expect(options).toHaveText(['Direct', 'Tangent arc'])
+    await options.filter({ hasText: 'Tangent arc' }).click()
+    await expect(leadField.locator('.ui-select__label')).toHaveText('Tangent arc')
 
     project = await getProject(app.page)
     operations = project.operations as OperationSnapshot[]
-    expect(operations[0].xyLeadStrategy).toBe('tangent_s')
+    expect(operations[0].xyLeadStrategy).toBe('arc')
 
     // A raster pattern has no clearing ring to lead onto, so the row goes away
     // rather than offering a setting the generator would decline.

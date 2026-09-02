@@ -85,7 +85,7 @@ export const bookletDe: Record<keyof typeof bookletEn, string> = {
   'booklet.label.roundOutsideCorners': 'Außenecken abrunden',
   'booklet.label.roundLinkCorners': 'Übergänge abrunden',
   'booklet.label.xyLeadStrategy': 'XY-An- und Abfahrt',
-  'booklet.xyLead.tangentS': 'Tangentiale S-Kurve',
+  'booklet.xyLead.arc': 'Tangentialer Bogen',
   'booklet.label.cleanWallCorners': 'Wandecken runden',
   'booklet.label.cornerRelief': 'Eckenfreistellung',
   'booklet.label.pattern': 'Muster',

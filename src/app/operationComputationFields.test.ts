@@ -107,7 +107,7 @@ const OPERATION_FIELDS: Record<keyof Required<Operation>, FieldProbe> = {
   entryStrategy: { role: 'computation', change: { entryStrategy: 'helix' } },
   entryRampAngle: { role: 'computation', change: { entryRampAngle: 5 } },
   entryHelixDiameterPercent: { role: 'computation', change: { entryHelixDiameterPercent: 80 } },
-  xyLeadStrategy: { role: 'computation', change: { xyLeadStrategy: 'tangent_s' } },
+  xyLeadStrategy: { role: 'computation', change: { xyLeadStrategy: 'arc' } },
   pocketSlotFeedPercent: { role: 'computation', change: { pocketSlotFeedPercent: 55 } },
   pocketFeedReduction: { role: 'computation', change: { pocketFeedReduction: 'engagement' } },
   roundOutsideCorners: { role: 'computation', change: { roundOutsideCorners: true } },

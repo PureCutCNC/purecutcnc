@@ -15,7 +15,7 @@
  */
 
 /**
- * Unit tests for XY lead planning and emission (issue #695).
+ * Unit tests for tangent-arc lead planning and emission (issue #695).
  * Run with: npx tsx src/engine/toolpaths/xyLead.test.ts
  */
 
@@ -23,7 +23,7 @@ import {
   beginXyLeadLevel,
   emitXyLead,
   emitXyLeadOut,
-  leadInitialFeedScale,
+  leadFeedScale,
   planXyLeadIn,
   planXyLeadOut,
   recordXyLeadExit,
@@ -34,7 +34,7 @@ import {
   xyLeadOptions,
   type XyLeadOptions,
 } from './xyLead'
-import { buildOffsetDomainCheck } from './tangentLink'
+import { buildOffsetDomainCheck, domainSafePathLength } from './tangentLink'
 import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
 import type { Operation, Point } from '../../types/project'
 import type { ToolpathMove, ToolpathPoint } from './types'
@@ -75,9 +75,11 @@ const DOMAIN_OUTER: Point[] = [
   { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 },
 ]
 
+const TOOL_DIAMETER = 6
+
 function openOptions(overrides: Partial<XyLeadOptions> = {}): XyLeadOptions {
   return {
-    minRadius: 1.5,
+    toolDiameter: TOOL_DIAMETER,
     maxLength: 15,
     arcStepRadians: DEFAULT_FLATTEN_ARC_STEP,
     cutFeed: 800,
@@ -97,7 +99,7 @@ function baseOperation(overrides: Partial<Operation> = {}): Operation {
     stockToLeaveRadial: 0, stockToLeaveAxial: 0,
     finishWalls: false, finishFloor: false,
     carveDepth: 1, maxCarveDepth: 1,
-    xyLeadStrategy: 'tangent_s',
+    xyLeadStrategy: 'arc',
     ...overrides,
   }
 }
@@ -117,9 +119,9 @@ function testEntryArrivesTangentToTheRing() {
   const approach = direction(plan.points[plan.points.length - 2], last)
   assert(angleBetween(approach, ringTangent) < 0.06, 'the last lead segment is tangent to the ring')
 
-  // The whole point of the feature: the descent no longer lands on the ring.
+  // The whole point of the feature: the descent no longer lands on the surface.
   const offset = Math.hypot(plan.staging.x - arrival.x, plan.staging.y - arrival.y)
-  assert(offset > options.minRadius * 0.5, `staging point is off the ring (offset ${offset})`)
+  assert(offset > options.toolDiameter * 0.25, `staging point is off the ring (offset ${offset})`)
   console.log('entry tangency and staging offset: PASSED')
 }
 
@@ -136,7 +138,7 @@ function testExitDepartsTangentFromTheRing() {
   const departure = direction(plan.points[0], plan.points[1])
   assert(angleBetween(departure, closing) < 0.06, 'the first lead-out segment continues the ring tangent')
   const offset = Math.hypot(plan.staging.x - ring[0].x, plan.staging.y - ring[0].y)
-  assert(offset > options.minRadius * 0.5, `staging point is off the ring (offset ${offset})`)
+  assert(offset > options.toolDiameter * 0.25, `staging point is off the ring (offset ${offset})`)
   console.log('exit tangency: PASSED')
 }
 
@@ -177,29 +179,27 @@ function testDomainRejectionLeavesNoLead() {
 }
 
 function testSweptSamplingSeesBetweenVertices() {
-  console.log('Testing the domain gate samples between lead vertices...')
+  console.log('Testing the domain gate samples between path vertices...')
+  // The gate that every lead candidate is validated with. A hole in the middle
+  // of a long segment is invisible to a vertex-only check and would drive the
+  // swept cutter straight through it, so this asserts the mechanism directly
+  // rather than through a planner that has fallbacks to hide behind.
+  const path: Point[] = [{ x: 0, y: 0 }, { x: 10, y: 0 }]
+  const hole = (x: number, y: number): boolean => !(x > 4.8 && x < 5.2 && Math.abs(y) < 1)
+
+  assert(hole(path[0].x, path[0].y) && hole(path[1].x, path[1].y),
+    'both vertices lie outside the hole, so only interior sampling can see it')
+  assert(domainSafePathLength(path, 0.2, hole) === null, 'a hole mid-segment is caught')
+  assert(domainSafePathLength(path, 20, hole) !== null,
+    'and is missed when the budget is coarser than the segment — which is why leads halve theirs')
+
+  const clear = domainSafePathLength(path, 0.2, () => true)
+  assert(clear !== null && Math.abs(clear - 10) < 1e-9, 'a clear path reports its true length')
+
+  // End to end: a domain that allows nothing off the contour admits no lead.
   const ring = squareRing(20, 80, 6)
-  // Punch a hole smaller than any lead vertex spacing. A gate that only tested
-  // the emitted vertices would drive the swept cutter straight through it.
-  let holeHits = 0
-  const options = openOptions({
-    isInsideDomain: (x, y) => {
-      const inside = x > 0 && x < 100 && y > 0 && y < 100
-      if (!inside) return false
-      // Ring the whole square with a forbidden collar just inside the ring, so
-      // every candidate lead has to cross it somewhere between two vertices.
-      const nearRing = Math.min(
-        Math.abs(x - 20), Math.abs(x - 80), Math.abs(y - 20), Math.abs(y - 80),
-      )
-      if (nearRing > 0.05 && nearRing < 0.35 && x >= 19 && x <= 81 && y >= 19 && y <= 81) {
-        holeHits += 1
-        return false
-      }
-      return true
-    },
-  })
-  assert(planXyLeadIn(ring, options) === null, 'a lead crossing the collar is refused')
-  assert(holeHits > 0, 'the collar was actually reached by the sampler')
+  assert(planXyLeadIn(ring, openOptions({ isInsideDomain: () => false })) === null,
+    'no lead survives a domain that refuses everything')
   console.log('swept sampling: PASSED')
 }
 
@@ -229,6 +229,65 @@ function testDeterminismAndValidatedPlacement() {
   console.log('determinism and validated placement: PASSED')
 }
 
+
+/** Circumradius of three points — recovers the radius of a tessellated arc. */
+function fittedRadius(a: Point, b: Point, c: Point): number {
+  const ab = Math.hypot(b.x - a.x, b.y - a.y)
+  const bc = Math.hypot(c.x - b.x, c.y - b.y)
+  const ca = Math.hypot(a.x - c.x, a.y - c.y)
+  const area = Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2
+  return area > 1e-12 ? (ab * bc * ca) / (4 * area) : Number.POSITIVE_INFINITY
+}
+
+/** The radius the planner actually used, read back off the emitted polyline. */
+function planRadius(points: Point[]): number {
+  const mid = Math.floor(points.length / 2)
+  return fittedRadius(points[0], points[mid], points[points.length - 1])
+}
+
+/** A corridor of half-width `h` around the square ring's own lines. */
+function corridor(h: number): (x: number, y: number) => boolean {
+  return (x, y) => {
+    if (x < 20 - h - 1 || x > 80 + h + 1 || y < 20 - h - 1 || y > 80 + h + 1) return false
+    return Math.min(Math.abs(x - 20), Math.abs(x - 80), Math.abs(y - 20), Math.abs(y - 80)) <= h
+  }
+}
+
+function testRadiusLadderTakesTheWidestArcThatFits() {
+  console.log('Testing the radius ladder...')
+  const ring = squareRing(20, 80, 6)
+
+  // Open space: the widest rung, a full tool diameter, and the widest sweep.
+  const open = planXyLeadIn(ring, openOptions())
+  assert(open !== null, 'an open domain plans a lead')
+  assert(Math.abs(planRadius(open.points) - TOOL_DIAMETER) < 0.05,
+    `the widest rung is chosen in open space (got ${planRadius(open.points).toFixed(3)})`)
+  // 90 deg at R: the staging point sits a chord of R*sqrt(2) from the arrival.
+  const arrival = ring[open.arrivalIndex]
+  const chord = Math.hypot(open.staging.x - arrival.x, open.staging.y - arrival.y)
+  assert(Math.abs(chord - TOOL_DIAMETER * Math.SQRT2) < 0.05, 'swept the full 90 degrees')
+
+  // A corridor that a 90 deg arc of full radius cannot fit. The ladder is
+  // radius-MAJOR, so it shortens the sweep before it narrows the arc: the
+  // radius must hold while the chord gets shorter.
+  const narrowed = planXyLeadIn(ring, openOptions({ isInsideDomain: corridor(3.5) }))
+  assert(narrowed !== null, 'a narrower corridor still plans a lead')
+  assert(Math.abs(planRadius(narrowed.points) - TOOL_DIAMETER) < 0.05,
+    'the radius is held and the sweep gives way first')
+  const narrowedChord = Math.hypot(
+    narrowed.staging.x - ring[narrowed.arrivalIndex].x,
+    narrowed.staging.y - ring[narrowed.arrivalIndex].y,
+  )
+  assert(narrowedChord < chord, 'so the lead is shorter than the open-space one')
+
+  // Tight enough that only the bottom rung fits.
+  const tight = planXyLeadIn(ring, openOptions({ isInsideDomain: corridor(0.5) }))
+  assert(tight !== null, 'a tight corridor still plans a lead rather than giving up')
+  assert(Math.abs(planRadius(tight.points) - TOOL_DIAMETER * 0.25) < 0.05,
+    `the ladder descended to its bottom rung (got ${planRadius(tight.points).toFixed(3)})`)
+  console.log('radius ladder: PASSED')
+}
+
 function testRotateRingForLead() {
   console.log('Testing the ring re-seams at the arrival vertex...')
   const ring = squareRing(20, 80, 4)
@@ -241,45 +300,34 @@ function testRotateRingForLead() {
   console.log('ring re-seam: PASSED')
 }
 
-function testFeedRampRisesInAndFallsOut() {
-  console.log('Testing the lead feed ramp...')
+function testLeadRunsAtOneConstantFeed() {
+  console.log('Testing the lead feed...')
   const options = openOptions()
-  const initial = leadInitialFeedScale(options)
-  assert(Math.abs(initial - 300 / 800) < 1e-12, 'the initial scale is plungeFeed / feed')
+  assert(Math.abs(leadFeedScale(options) - 300 / 800) < 1e-12, 'the scale is plungeFeed / feed')
 
   const points: Point[] = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }]
   const plan = { points, staging: points[0], arrivalIndex: 0 }
 
-  const inMoves: ToolpathMove[] = []
-  emitXyLead(inMoves, { x: 0, y: 0, z: -2 }, plan, -2, options, 'lead_in')
-  assert(inMoves.length === 4, 'one move per lead segment')
-  assert(inMoves.every((move) => move.kind === 'lead_in'), 'entry moves are classified lead_in')
-  const inScales = inMoves.map((move) => move.feedScale ?? 1)
-  assert(inScales.every((scale, index) => index === 0 || scale > inScales[index - 1]),
-    'the entry feed rises monotonically')
-  assert(inScales[0] > initial && inScales[0] < 1, 'the entry starts near the constrained feed')
-  assert(inScales[inScales.length - 1] < 1, 'the entry never claims full feed before the ring')
+  for (const kind of ['lead_in', 'lead_out'] as const) {
+    const moves: ToolpathMove[] = []
+    emitXyLead(moves, { x: 0, y: 0, z: -2 }, plan, -2, options, kind)
+    assert(moves.length === 4, `${kind}: one move per lead segment`)
+    assert(moves.every((move) => move.kind === kind), `${kind}: moves carry the lead kind`)
+    // One constant feed, entry and exit alike. A per-move ramp was tried and
+    // dropped: arc fitting groups a run by equal feedScale, so a ramp would
+    // linearise the arc into G1 chords and mark the surface it exists to
+    // protect. This assertion is what keeps a ramp from creeping back.
+    const scales = moves.map((move) => move.feedScale)
+    assert(new Set(scales).size === 1, `${kind}: every lead move shares one feed scale`)
+    assert(Math.abs((scales[0] ?? 1) - 300 / 800) < 1e-12, `${kind}: at the constrained feed`)
+  }
 
-  const outMoves: ToolpathMove[] = []
-  emitXyLead(outMoves, { x: 0, y: 0, z: -2 }, plan, -2, options, 'lead_out')
-  assert(outMoves.every((move) => move.kind === 'lead_out'), 'exit moves are classified lead_out')
-  const outScales = outMoves.map((move) => move.feedScale ?? 1)
-  assert(outScales.every((scale, index) => index === 0 || scale < outScales[index - 1]),
-    'the exit feed falls monotonically')
-  assert(Math.abs(outScales[0] - inScales[inScales.length - 1]) < 1e-12,
-    'the exit ramp is the entry ramp reversed')
-
-  // Adjacent lead moves must never be mergeable by the linear-move optimizer,
-  // which merges only same-kind moves that share a feedScale.
-  const distinct = new Set(inScales.map((scale) => scale.toFixed(12)))
-  assert(distinct.size === inScales.length, 'every collinear lead move carries a distinct feed scale')
-
-  // A plunge feed at or above the cut feed leaves no ramp to apply at all.
+  // A plunge feed at or above the cut feed leaves nothing to constrain.
   const unlimited: ToolpathMove[] = []
   emitXyLead(unlimited, { x: 0, y: 0, z: -2 }, plan, -2, openOptions({ plungeFeed: 900 }), 'lead_in')
   assert(unlimited.every((move) => move.feedScale === undefined),
     'no feedScale is stamped when the plunge feed does not constrain the lead')
-  console.log('feed ramp: PASSED')
+  console.log('constant lead feed: PASSED')
 }
 
 function testEmittedLeadStaysPlanarAtZ() {
@@ -337,7 +385,7 @@ function testGatesAndWarnings() {
   assert(ok.warnings.length === 0, 'with no warning')
   // The lead budget must be the S-link's, or the two curves would disagree
   // about what fits in the same domain.
-  assert(resolved.minRadius === 6 * 0.25 && resolved.maxLength === 6 * 2.5, 'the S-link budget is reused')
+  assert(resolved.toolDiameter === 6 && resolved.maxLength === 6 * 2.5, 'the length budget is the S-link\'s')
 
   assert(xyLeadOptions(baseOperation(), 0, regions) === undefined, 'a degenerate tool gets no options')
   assert(xyLeadOptions(baseOperation(), 6, []) === undefined, 'an empty domain gets no options')
@@ -407,10 +455,10 @@ function testExitRecordMustMatchTheCurrentPosition() {
 function testLengthBudgetIsEnforced() {
   console.log('Testing the length budget rejects an oversized lead...')
   const ring = squareRing(20, 80, 6)
-  // Every shape in the family is longer than a quarter of the floor radius.
+  // The narrowest arc in the ladder is 0.25 x D swept 45 deg — far longer.
   assert(planXyLeadIn(ring, openOptions({ maxLength: 0.25 })) === null, 'no entry lead fits the budget')
   assert(planXyLeadOut(ring, openOptions({ maxLength: 0.25 })) === null, 'no exit lead fits the budget')
-  assert(planXyLeadIn(ring, openOptions({ minRadius: 0 })) === null, 'a degenerate radius plans nothing')
+  assert(planXyLeadIn(ring, openOptions({ toolDiameter: 0 })) === null, 'a degenerate tool plans nothing')
   console.log('length budget: PASSED')
 }
 
@@ -421,8 +469,9 @@ try {
   testDomainRejectionLeavesNoLead()
   testSweptSamplingSeesBetweenVertices()
   testDeterminismAndValidatedPlacement()
+  testRadiusLadderTakesTheWidestArcThatFits()
   testRotateRingForLead()
-  testFeedRampRisesInAndFallsOut()
+  testLeadRunsAtOneConstantFeed()
   testEmittedLeadStaysPlanarAtZ()
   testGatesAndWarnings()
   testEntryLatchIsSpentOnce()

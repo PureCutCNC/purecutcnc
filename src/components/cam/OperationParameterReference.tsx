@@ -223,7 +223,7 @@ export function OperationParameterReference({
       )
 
     case 'xyLeadStrategy': {
-      if (variant === 'tangent_s') {
+      if (variant === 'arc') {
         // The ring (outline), the staging point the descent lands on (guide
         // cross), and the S that carries the cutter from one to the other.
         return (

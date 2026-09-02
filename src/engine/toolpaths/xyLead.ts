@@ -14,30 +14,45 @@
  * limitations under the License.
  */
 
-// XY lead-in / lead-out for clearing entries (issue #695).
+// XY lead-in / lead-out: a tangent arc onto and off a finished surface
+// (issue #695).
 //
-// The Z-entry strategies (#412) answer "how does the cutter get DOWN"; they all
-// arrive at final depth on the first ring vertex the generator happened to
-// emit, which is an arbitrary corner approached from an arbitrary direction.
-// This module answers the other half: WHERE at final depth the descent lands,
-// and how the cutter reaches the ring from there.
+// A plunge on a FLOOR is axial, into material the tool is about to remove, and
+// it lands at the depth the floor is going to anyway. A plunge on a WALL puts
+// the full flute radially against a surface that stays, at zero XY feed: the
+// tool deflects into it and rubs a vertical witness line. That is dimensional,
+// not just cosmetic, and stopping and retracting on the wall does the same on
+// the way up. So this module answers one question for both ends of a pass:
+// where does the cutter reach depth, and how does it meet the surface from
+// there.
 //
-// The lead is the ring-to-ring S of #545 turned around. A lead-OUT departs the
-// finished ring along its own travel tangent, arcs away, optionally runs
-// straight, and arcs back parallel — ending on a staging point the retract can
-// happen from. A lead-IN is the same construction run from a candidate ring
-// vertex along the REVERSED ring tangent and then reversed, so it arrives on
-// the ring tangent-continuously; its far end is the staging point handed to
-// plunge/helix/ramp synthesis as the descent target. One shape, one validator,
-// mirrored — an exit that disagreed with its entry would be a second geometry
-// to keep sound.
+// The lead is a SINGLE circular arc, tangent to the contour at the point it
+// joins. A lead has only one constrained end — the arrival — so the S-link's
+// second arc, which exists to return a ring-to-ring link to a parallel
+// heading, buys nothing here and costs space. Radius is the parameter that
+// matters: approaching a straight wall on a tangent arc the gap between cutter
+// and wall at arc-distance d back from tangency is about d^2 / 2R, so a wider
+// arc halves the engagement at every point of the approach. That gentler ramp
+// is what prevents the mark, which is why the radius ladder is tried
+// LARGEST-first and the sweep only breaks ties within one radius.
+//
+// The turn side is predicted, not guessed: a probe to either side of the
+// contour says which one the domain allows, and only where both are free — an
+// interior ring standing in open space — are both tried. A tangent arc on the
+// free side curves AWAY from the contour it approaches, so it cannot gouge it.
 //
 // A candidate survives only if every tessellated vertex AND every interpolated
-// sample between vertices lies inside the exact tool-centre-safe domain, the
-// path fits the S-link length budget on the S-link floor radius, and the lead
-// is a real non-zero displacement. Nothing qualifying means no lead at all:
-// the generator emits its ordinary direct final-depth entry or retract, keeps
-// the ring order it intended, and the caller reports a structured warning.
+// sample between vertices lies inside the tool-centre-safe domain, the arc fits
+// the length budget, and it is a real displacement off the contour. Nothing
+// qualifying means no lead at all: the generator emits its ordinary direct
+// entry or retract, keeps the cut order it intended, and the caller reports a
+// structured warning.
+//
+// Feed is ONE constant reduced value across the whole lead, not a ramp. Arc
+// fitting groups a run by equal feedScale, so a per-move ramp would linearise
+// the arc into a string of G1 chords — and a faceted approach on a finished
+// wall is its own source of marking. One constant-radius arc at one feed is
+// what round-trips to a single G2/G3.
 
 import type { Operation, OperationKind, Point } from '../../types/project'
 import { usesTangentLinks } from './pocketPatterns'
@@ -59,58 +74,72 @@ const LEAD_EPSILON = 1e-9
 const XY_LEAD_KINDS: readonly OperationKind[] = ['pocket', 'surface_clean', 'rough_surface']
 
 /**
- * Turn angles tried for each lead arc, largest first, degrees.
+ * Arc radii tried, as multiples of tool diameter, LARGEST first.
  *
- * Largest first because a wider turn puts the staging point further off the
- * ring, which is the whole point of the feature: the descent wants room that
- * the ring's own corner does not have. The list stops at 30 deg — below that
- * the staging point is barely off the ring and the lead stops earning the
- * extra motion.
+ * Radius sets how fast the cutter engages on the approach (see the header), so
+ * the widest arc the space allows is always the best one. The ladder falls back
+ * rather than giving up: a wall with room gets a full diameter of arc, a narrow
+ * neck still gets a quarter of one.
  */
-const LEAD_TURN_DEGREES = [90, 60, 45, 30] as const
-
-/** Straight middle run, as multiples of the floor radius; longest first. */
-const LEAD_STRAIGHT_FACTORS = [1, 0] as const
-
-/** Which way the lead turns off the ring. Both are tried; the domain decides. */
-const LEAD_TURN_SIDES = [1, -1] as const
+const LEAD_RADIUS_FACTORS = [1, 0.75, 0.5, 0.25] as const
 
 /**
- * How far past the ring's seam the exit lead may start looking for a departure,
- * as multiples of the floor radius. Zero first — the cheapest exit is the one
- * that leaves the moment the ring closes.
- *
- * A closed ring ends where it began, and a ring seamed at a corner arrives at
- * that corner pointing STRAIGHT AT the wall it was cutting: no tangent-
- * continuous departure exists there at any radius, because the first
- * infinitesimal step already leaves the domain. Every rectangular pocket seams
- * at a corner, so a zero-overlap-only exit would fall back on the commonest
- * shape there is. Continuing a little way along the ring the cutter has just
- * cut costs motion through its own kerf and nothing else, and it is what gives
- * the exit the same freedom to choose its ring position that the entry has.
+ * Sweep angles tried within one radius, widest first, degrees. 90 deg is the
+ * conventional wall lead; the shorter sweeps only exist so a candidate that is
+ * blocked at its far end can still be taken at the same radius rather than
+ * dropping to a tighter one.
  */
-const LEAD_OVERLAP_FACTORS = [0, 1, 2, 4] as const
+const LEAD_SWEEP_DEGREES = [90, 60, 45] as const
 
 /**
- * A lead must move the staging point at least this far off the ring, as a
- * fraction of the floor radius. Without it a degenerate shape that returns to
- * within float dust of its ring vertex would count as a lead and the descent
- * would land back on the ring it was supposed to stage away from.
+ * How far past a ring's seam the exit lead may start looking for a departure,
+ * as multiples of the tool diameter. Zero first — the cheapest exit leaves the
+ * moment the contour closes.
+ *
+ * A closed contour ends where it began, and one seamed at a corner arrives
+ * pointing STRAIGHT AT the wall it was cutting: no tangent departure exists
+ * there at any radius, because the first infinitesimal step already leaves the
+ * domain. Clearing rings are seamed by the traversal, not by this module, so
+ * they keep this fallback; continuing a little way along the ring the cutter
+ * has just cut costs motion through its own kerf and nothing else.
  */
+const LEAD_OVERLAP_FACTORS = [0, 0.25, 0.5, 1] as const
+
+/**
+ * Probe distance either side of the contour when predicting the free side, as a
+ * fraction of tool diameter. Large enough to clear the domain predicate's own
+ * boundary tolerance, small enough that it asks about the contour rather than
+ * about something a millimetre away.
+ */
+const LEAD_SIDE_PROBE_FRACTION = 0.05
+
+/**
+ * Fraction of the tessellation chord used as the domain-sampling budget.
+ *
+ * `domainChordBudget` returns exactly one tessellation chord, so on an arc it
+ * yields no samples BETWEEN vertices — the segment is never longer than the
+ * budget. That is what the ring-to-ring S-link uses and it is fine for a link
+ * that runs through cleared material. A lead runs against a surface that stays,
+ * where the whole point is that the cutter does not touch it early, so leads
+ * halve the budget and get an interior sample on every chord. The cost is one
+ * extra domain check per chord on a path emitted a handful of times per level.
+ */
+const LEAD_SAMPLE_REFINEMENT = 0.5
+
 const MIN_LEAD_OFFSET_FRACTION = 0.5
 
 export interface XyLeadOptions {
-  /** Floor radius for both lead arcs — the S-link's, so the two agree. */
-  minRadius: number
+  /** Cutter diameter; the radius ladder is expressed in multiples of it. */
+  toolDiameter: number
   /** Total path length budget for one lead, project units. */
   maxLength: number
-  /** Angular tessellation step for the lead arcs, radians. */
+  /** Angular tessellation step for the lead arc, radians. */
   arcStepRadians: number
-  /** Operation cut feed, for the lead's feed ramp. */
+  /** Operation cut feed, for the lead's constant reduced feed. */
   cutFeed: number
-  /** Operation plunge feed, for the lead's constrained initial feed. */
+  /** Operation plunge feed, for the lead's constant reduced feed. */
   plungeFeed: number
-  /** True when a tool-centre position lies inside the cleared domain. */
+  /** True when a tool-centre position lies inside the safe domain. */
   isInsideDomain: (x: number, y: number) => boolean
 }
 
@@ -147,24 +176,25 @@ export interface XyLeadContext {
 }
 
 /**
- * Lead options for one clearing pass, or undefined when the operation has not
- * opted in. Undefined is byte-identical legacy output — a missing or `'none'`
+ * Lead options for one pass, or undefined when the operation has not opted in.
+ * Undefined is byte-identical legacy output — a missing or `'none'`
  * `xyLeadStrategy` never reaches the planner at all.
  *
- * The geometry budget is the S-link's (`pocketTangentLinkOptions`) on purpose:
- * a lead and a ring-to-ring link are the same curve in the same domain, and two
- * separately tuned budgets would drift into disagreeing about what fits.
+ * The length budget stays the S-link's 2.5x diameter: a lead and a ring-to-ring
+ * link move through the same domain, and two separately tuned budgets would
+ * drift into disagreeing about what fits. The widest arc in the ladder needs
+ * only 1.57x, so the budget binds on the overlap, not on the arc.
  */
 export function xyLeadOptions(
   operation: Operation,
   toolDiameter: number,
   domainRegions: TangentLinkDomainRegion[],
 ): XyLeadOptions | undefined {
-  if (operation.xyLeadStrategy !== 'tangent_s') return undefined
+  if (operation.xyLeadStrategy !== 'arc') return undefined
   if (!supportsXyLead(operation)) return undefined
   if (!(toolDiameter > 0) || domainRegions.length === 0) return undefined
   return {
-    minRadius: toolDiameter * 0.25,
+    toolDiameter,
     maxLength: toolDiameter * 2.5,
     arcStepRadians: DEFAULT_FLATTEN_ARC_STEP,
     cutFeed: operation.feed,
@@ -221,7 +251,7 @@ export function warnXyLeadDeclined(
   hasRegionMask: boolean,
   onWarning: (warning: ToolpathWarning) => void,
 ): boolean {
-  if (operation.xyLeadStrategy !== 'tangent_s') return true
+  if (operation.xyLeadStrategy !== 'arc') return true
   if (!supportsXyLead(operation)) {
     onWarning({ code: 'xyLeadUnsupported' })
     return true
@@ -338,88 +368,152 @@ export function rotateRingForLead(ring: Point[], plan: XyLeadPlan | null): Point
 }
 
 /**
- * Plan the lead that arrives on `ring` tangent-continuously.
+ * Plan the arc that arrives on `contour` tangent-continuously.
  *
- * Candidate order is shape-major, vertex-minor, and the first fully valid
- * candidate wins: the widest lead the domain accepts anywhere on the ring beats
- * a narrower one that happens to fit at a lower vertex index. A closed ring can
- * be re-seamed at any vertex at no cost, so lead quality is the thing worth
- * ordering on — and the search never assumes the source contour's first vertex,
- * it only reaches it in the same fixed order as every other vertex.
+ * Candidate order is radius-major, sweep next, contour position last, and the
+ * first fully valid candidate wins: the widest arc the domain accepts anywhere
+ * on the contour beats a narrower one that happens to fit at a lower index.
+ * A closed contour can be re-seamed at any vertex at no cost, so arc quality is
+ * the thing worth ordering on — and the search never assumes the source
+ * contour's first vertex, it only reaches it in the same fixed order as every
+ * other one.
  */
-export function planXyLeadIn(ring: Point[], options: XyLeadOptions): XyLeadPlan | null {
-  if (ring.length < 3) return null
-  const chordBudget = domainChordBudget(options.minRadius, options.arcStepRadians)
+export function planXyLeadIn(contour: Point[], options: XyLeadOptions): XyLeadPlan | null {
+  if (contour.length < 3) return null
 
-  for (const shape of leadShapes(options)) {
-    for (let index = 0; index < ring.length; index += 1) {
-      const anchor = ring[index]
-      const forward = ringTangent(ring, index)
+  for (const arc of leadArcs(options)) {
+    const chordBudget = domainChordBudget(arc.radius, options.arcStepRadians) * LEAD_SAMPLE_REFINEMENT
+    for (let index = 0; index < contour.length; index += 1) {
+      const anchor = contour[index]
+      const forward = contourTangent(contour, index)
       if (forward === null) continue
-      // Built backwards from the ring, then reversed: the path that leaves the
-      // ring along -t is exactly the path that arrives along +t.
-      const departing = buildTangentLeadPath(
-        anchor,
-        { x: -forward.x, y: -forward.y },
-        shape,
-        options.arcStepRadians,
-      )
-      const validated = validateLead(anchor, departing, chordBudget, options)
-      if (validated === null) continue
-      const points = [...departing].reverse()
-      return { points, staging: points[0], arrivalIndex: index }
+      // Built backwards from the contour and then reversed: the path that
+      // leaves along -t is exactly the path that arrives along +t. The sign
+      // flips with it, so the arc still curves to the free side.
+      const reversed = { x: -forward.x, y: -forward.y }
+      for (const side of orderedSides(anchor, forward, options)) {
+        const departing = buildTangentLeadPath(
+          anchor,
+          reversed,
+          arcShape(-side, arc),
+          options.arcStepRadians,
+        )
+        if (validateLead(anchor, departing, arc.radius, chordBudget, options) === null) continue
+        const points = [...departing].reverse()
+        return { points, staging: points[0], arrivalIndex: index }
+      }
     }
   }
   return null
 }
 
 /**
- * Plan the lead that leaves `ring` — the last ring emitted at this level, in
- * emission order, so `ring[0]` is where its cut ended.
+ * Plan the arc that leaves `contour` — in emission order, so `contour[0]` is
+ * where its cut ended.
  *
- * Same shapes, same order, same validator as the entry. The one addition is the
- * overlap: the departure point may sit a short way along the ring past its
- * seam, which is the exit's counterpart to the entry's freedom to pick which
- * vertex it arrives on. Smallest overlap first, so a clean departure at the
- * seam always wins over one that re-traverses.
+ * Same ladder, same validator as the entry. The one addition is the overlap:
+ * the departure may sit a short way along the contour past its seam, which is
+ * the exit's counterpart to the entry's freedom to pick where it arrives.
+ * Smallest overlap first, so a clean departure at the seam always wins over one
+ * that re-traverses.
  */
-export function planXyLeadOut(ring: Point[], options: XyLeadOptions): XyLeadPlan | null {
-  if (ring.length < 3) return null
-  const chordBudget = domainChordBudget(options.minRadius, options.arcStepRadians)
+export function planXyLeadOut(contour: Point[], options: XyLeadOptions): XyLeadPlan | null {
+  if (contour.length < 3) return null
 
-  for (const factor of LEAD_OVERLAP_FACTORS) {
-    const departure = ringDeparture(ring, factor * options.minRadius)
-    if (departure === null) continue
-    for (const shape of leadShapes(options)) {
-      const lead = buildTangentLeadPath(
-        departure.point,
-        departure.tangent,
-        shape,
-        options.arcStepRadians,
-      )
-      const points = [...departure.overlap, ...lead.slice(1)]
-      if (validateLead(departure.point, points, chordBudget, options) === null) continue
-      return { points, staging: points[points.length - 1], arrivalIndex: 0 }
+  for (const arc of leadArcs(options)) {
+    const chordBudget = domainChordBudget(arc.radius, options.arcStepRadians) * LEAD_SAMPLE_REFINEMENT
+    for (const factor of LEAD_OVERLAP_FACTORS) {
+      const departure = contourDeparture(contour, factor * options.toolDiameter)
+      if (departure === null) continue
+      for (const side of orderedSides(departure.point, departure.tangent, options)) {
+        const lead = buildTangentLeadPath(
+          departure.point,
+          departure.tangent,
+          arcShape(side, arc),
+          options.arcStepRadians,
+        )
+        const points = [...departure.overlap, ...lead.slice(1)]
+        if (validateLead(departure.point, points, arc.radius, chordBudget, options) === null) continue
+        return { points, staging: points[points.length - 1], arrivalIndex: 0 }
+      }
     }
   }
   return null
 }
 
+/** One lead arc as a degenerate `TangentLeadShape`: no straight, no second arc. */
+function arcShape(side: number, arc: { radius: number; sweep: number }): TangentLeadShape {
+  return {
+    turn1: side * arc.sweep,
+    radius1: side * arc.radius,
+    straight: 0,
+    turn2: 0,
+    radius2: 0,
+  }
+}
+
+/** The radius ladder crossed with the sweep list, widest radius first. */
+function* leadArcs(options: XyLeadOptions): Generator<{ radius: number; sweep: number }> {
+  for (const factor of LEAD_RADIUS_FACTORS) {
+    const radius = options.toolDiameter * factor
+    if (!(radius > LEAD_EPSILON)) continue
+    for (const degrees of LEAD_SWEEP_DEGREES) {
+      yield { radius, sweep: (degrees * Math.PI) / 180 }
+    }
+  }
+}
+
 /**
- * Where a lead-out departs after running `distance` along `ring` from its seam,
- * with the tangent it arrives on and the overlap polyline that gets it there.
+ * Which way the arc should turn off the contour, best guess first.
  *
- * At distance zero that tangent is the ring's CLOSING chord — the direction the
- * cutter is actually travelling as the ring shuts — not the first edge's, which
- * is where it would be going next.
+ * A probe either side says which one the domain allows. On a wall exactly one
+ * answers — the material side is not in the domain — so the side is decided
+ * rather than searched, and the arc provably curves away from the surface it is
+ * approaching. Where both answer, the contour is standing in open space (an
+ * interior clearing ring) and either turn is sound, so both are offered in a
+ * fixed order. Where neither answers there is nothing to try.
+ *
+ * The probe only orders the candidates. The domain check over the whole
+ * tessellated path is what actually accepts one.
  */
-function ringDeparture(
-  ring: Point[],
+function orderedSides(anchor: Point, tangent: Point, options: XyLeadOptions): readonly number[] {
+  const probe = options.toolDiameter * LEAD_SIDE_PROBE_FRACTION
+  // Left of travel in screen coordinates, and its opposite.
+  const left = options.isInsideDomain(anchor.x - tangent.y * probe, anchor.y + tangent.x * probe)
+  const right = options.isInsideDomain(anchor.x + tangent.y * probe, anchor.y - tangent.x * probe)
+  if (left && !right) return [1]
+  if (right && !left) return [-1]
+  if (!left && !right) return []
+  return [1, -1]
+}
+
+/** Contour travel tangent leaving vertex `index`, or null on a degenerate edge. */
+function contourTangent(contour: Point[], index: number): Point | null {
+  const from = contour[index]
+  const to = contour[(index + 1) % contour.length]
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const length = Math.hypot(dx, dy)
+  if (!(length > LEAD_EPSILON)) return null
+  return { x: dx / length, y: dy / length }
+}
+
+/**
+ * Where a lead-out departs after running `distance` along `contour` from its
+ * seam, with the tangent it arrives on and the overlap polyline that gets it
+ * there.
+ *
+ * At distance zero that tangent is the contour's CLOSING chord — the direction
+ * the cutter is actually travelling as the contour shuts — not the first edge's,
+ * which is where it would be going next.
+ */
+function contourDeparture(
+  contour: Point[],
   distance: number,
 ): { point: Point; tangent: Point; overlap: Point[] } | null {
-  const seam = ring[0]
+  const seam = contour[0]
   if (!(distance > LEAD_EPSILON)) {
-    const closing = ring[ring.length - 1]
+    const closing = contour[contour.length - 1]
     const dx = seam.x - closing.x
     const dy = seam.y - closing.y
     const length = Math.hypot(dx, dy)
@@ -429,9 +523,9 @@ function ringDeparture(
 
   const overlap: Point[] = [seam]
   let travelled = 0
-  for (let step = 0; step < ring.length; step += 1) {
-    const from = ring[step]
-    const to = ring[(step + 1) % ring.length]
+  for (let step = 0; step < contour.length; step += 1) {
+    const from = contour[step]
+    const to = contour[(step + 1) % contour.length]
     const dx = to.x - from.x
     const dy = to.y - from.y
     const edge = Math.hypot(dx, dy)
@@ -452,13 +546,13 @@ function ringDeparture(
 /**
  * Emit one planned lead as `lead_in` / `lead_out` moves at `z`.
  *
- * Feed ramps linearly across the lead between the constrained initial feed —
- * `min(plungeFeed / feed, 1)`, the same ceiling a vertical entry move already
- * respects — and full cut feed, rising on the way in and falling on the way
- * out. The ramp is sampled at segment midpoints so a one-segment lead lands on
- * the middle of the ramp instead of on whichever end the indexing happened to
- * favour. Vertical motion is not this module's: the descent stays `plunge` at
- * plunge feed.
+ * Every move carries the SAME feed scale — `min(plungeFeed / feed, 1)`, the
+ * ceiling a vertical entry move already respects. A ramp across the lead was
+ * tried and dropped: arc fitting groups a run by equal `feedScale`, so a
+ * per-move ramp linearises the arc into G1 chords, and a faceted approach on a
+ * finished wall marks it as surely as the plunge this replaces. One arc, one
+ * feed, one G2/G3. Vertical motion is not this module's: the descent stays
+ * `plunge` at plunge feed.
  */
 export function emitXyLead(
   moves: ToolpathMove[],
@@ -470,12 +564,9 @@ export function emitXyLead(
 ): ToolpathPoint {
   const segments = plan.points.length - 1
   if (segments < 1) return from
-  const initialScale = leadInitialFeedScale(options)
+  const scale = leadFeedScale(options)
   let current: ToolpathPoint = from
   for (let index = 0; index < segments; index += 1) {
-    const ratio = (index + 0.5) / segments
-    const rising = kind === 'lead_in' ? ratio : 1 - ratio
-    const scale = initialScale + (1 - initialScale) * rising
     const next: ToolpathPoint = { x: plan.points[index + 1].x, y: plan.points[index + 1].y, z }
     moves.push({
       kind,
@@ -488,65 +579,29 @@ export function emitXyLead(
   return current
 }
 
-/** The feed ceiling a lead starts from (entry) or falls back to (exit). */
-export function leadInitialFeedScale(options: XyLeadOptions): number {
+/** The one feed scale a lead runs at, entry and exit alike. */
+export function leadFeedScale(options: XyLeadOptions): number {
   if (!(options.cutFeed > 0) || !(options.plungeFeed > 0)) return 1
   return Math.min(1, options.plungeFeed / options.cutFeed)
 }
 
 /**
- * The lead shape family, in candidate order: widest turn first, longest
- * straight first, then the turn side. One radius pinned to the S-link floor,
- * exactly as the ring-to-ring solver pins one of its two; the second arc
- * mirrors the first so the lead leaves parallel to the ring tangent and the
- * staging direction is a real direction rather than an artefact of the turn.
- */
-function* leadShapes(options: XyLeadOptions): Generator<TangentLeadShape> {
-  const radius = options.minRadius
-  if (!(radius > LEAD_EPSILON)) return
-  for (const degrees of LEAD_TURN_DEGREES) {
-    const turn = (degrees * Math.PI) / 180
-    for (const factor of LEAD_STRAIGHT_FACTORS) {
-      for (const side of LEAD_TURN_SIDES) {
-        yield {
-          turn1: side * turn,
-          radius1: side * radius,
-          straight: factor * radius,
-          turn2: -side * turn,
-          radius2: -side * radius,
-        }
-      }
-    }
-  }
-}
-
-/** Ring travel tangent leaving vertex `index`, or null on a degenerate edge. */
-function ringTangent(ring: Point[], index: number): Point | null {
-  const from = ring[index]
-  const to = ring[(index + 1) % ring.length]
-  const dx = to.x - from.x
-  const dy = to.y - from.y
-  const length = Math.hypot(dx, dy)
-  if (!(length > LEAD_EPSILON)) return null
-  return { x: dx / length, y: dy / length }
-}
-
-/**
  * Accept a candidate only when it is a real lead that stays sound end to end:
  * inside the tool-centre-safe domain at every vertex and every sample between
- * them, inside the length budget, and far enough off the ring to be worth
+ * them, inside the length budget, and far enough off the contour to be worth
  * emitting. Returns the path length, or null to reject the candidate whole.
  */
 function validateLead(
   anchor: Point,
   path: Point[],
+  radius: number,
   chordBudget: number,
   options: XyLeadOptions,
 ): number | null {
   if (path.length < 2) return null
   const far = path[path.length - 1]
   const offset = Math.hypot(far.x - anchor.x, far.y - anchor.y)
-  if (!(offset > options.minRadius * MIN_LEAD_OFFSET_FRACTION)) return null
+  if (!(offset > radius * MIN_LEAD_OFFSET_FRACTION)) return null
   const length = domainSafePathLength(path, chordBudget, options.isInsideDomain)
   if (length === null || length > options.maxLength) return null
   return length

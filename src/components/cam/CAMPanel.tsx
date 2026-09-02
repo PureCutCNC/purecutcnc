@@ -1674,7 +1674,7 @@ export function CAMPanel({
             value={operation.xyLeadStrategy ?? 'none'}
             options={[
               { value: 'none', label: camT('cam.operation.xyLeadNone') },
-              { value: 'tangent_s', label: camT('cam.operation.xyLeadTangentS') },
+              { value: 'arc', label: camT('cam.operation.xyLeadArc') },
             ]}
             onChange={(value) => updateOperation(operation.id, { xyLeadStrategy: value })}
           />

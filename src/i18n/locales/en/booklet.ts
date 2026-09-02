@@ -80,7 +80,7 @@ export const bookletEn = {
   'booklet.label.roundOutsideCorners': 'Round outside corners',
   'booklet.label.roundLinkCorners': 'Round link junctions',
   'booklet.label.xyLeadStrategy': 'XY approach & exit',
-  'booklet.xyLead.tangentS': 'Tangent S-curve',
+  'booklet.xyLead.arc': 'Tangent arc',
   'booklet.label.cleanWallCorners': 'Round wall corners',
   'booklet.label.cornerRelief': 'Corner relief',
   'booklet.label.pattern': 'Pattern',

@@ -22,10 +22,15 @@
  * calling this module, and for emitting the correct command words.
  *
  * Design contract:
- * - Only `cut` moves participate in arc fitting.
- * - A candidate run must be contiguous, share one source tag and
- *   feedScale, stay at constant Z, and contain ≥ 3 chord segments
- *   (4 points: from of the first move + to of every move in the run).
+ * - `cut`, `lead_in` and `lead_out` moves participate in arc fitting.
+ *   Leads are arcs by construction (issue #695) and are the one place a
+ *   faceted G1 approximation does visible harm: a lead exists to meet a
+ *   finished surface smoothly, and a string of chords marks it much as
+ *   the plunge it replaces would. They carry one constant feed for the
+ *   same reason — a per-move ramp would break every run below.
+ * - A candidate run must be contiguous, share one MOVE KIND, one source
+ *   tag and one feedScale, stay at constant Z, and contain ≥ 3 chord
+ *   segments (4 points: from of the first move + to of every move).
  * - Fitting uses the Kasa algebraic circle (linear least-squares).
  * - A run is rejected when any point is non-planar (Z varies),
  *   any point’s residual exceeds the supplied tolerance, the total
@@ -33,8 +38,8 @@
  *   direction is ambiguous.
  * - Every fitted run is split into sub-arcs of ≤ 90° — the caller
  *   chooses the maximum sweep.
- * - Residual moves (rapid, plunge, lead, rejected runs) pass through
- *   as linear descriptors with the same source / feedScale metadata.
+ * - Residual moves (rapid, plunge, rejected runs) pass through as
+ *   linear descriptors with the same source / feedScale metadata.
  */
 
 import type { ToolpathMove, ToolpathPoint } from '../toolpaths/types'
@@ -85,13 +90,23 @@ export type FittedMoveDescriptor = ArcMoveDescriptor | LinearMoveDescriptor
 
 // ── run predicates ────────────────────────────────────────────
 
+/** Move kinds whose runs may be fitted to an arc. */
+function isFittableKind(kind: ToolpathMove['kind']): boolean {
+  return kind === 'cut' || kind === 'lead_in' || kind === 'lead_out'
+}
+
 /**
- * True when two moves belong to the same fitting run: both are `cut`,
- * at the same Z, share source and feedScale, and are spatially
+ * True when two moves belong to the same fitting run: both fittable and of
+ * the SAME kind, at the same Z, sharing source and feedScale, and spatially
  * contiguous (the `from` of the second matches the `to` of the first).
+ *
+ * Kinds must match, not merely both be fittable: a lead and the cut it hands
+ * over to are tangent-continuous and would otherwise fit as one arc, which
+ * would relabel the lead and lose the distinction the preview and the booklet
+ * read.
  */
 function sameRun(prev: ToolpathMove, next: ToolpathMove): boolean {
-  if (next.kind !== 'cut') return false
+  if (!isFittableKind(next.kind) || next.kind !== prev.kind) return false
   if (!pointsEq(prev.to, next.from)) return false
   if (!sameZ(prev.to, next.to)) return false
   if (prev.source !== next.source) return false
@@ -515,8 +530,8 @@ export function fitArcsInMachineMoves(
   while (i < n) {
     const move = machineMoves[i]
 
-    // Non-cut moves pass through as linear.
-    if (move.kind !== 'cut') {
+    // Rapids and plunges pass through as linear.
+    if (!isFittableKind(move.kind)) {
       result.push(toLinear(move))
       i++
       continue

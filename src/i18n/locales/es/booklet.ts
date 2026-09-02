@@ -82,7 +82,7 @@ export const bookletEs: Record<keyof typeof bookletEn, string> = {
   'booklet.label.roundOutsideCorners': 'Esquinas exteriores redondeadas',
   'booklet.label.roundLinkCorners': 'Redondear uniones de enlace',
   'booklet.label.xyLeadStrategy': 'Aproximación y salida XY',
-  'booklet.xyLead.tangentS': 'Curva S tangente',
+  'booklet.xyLead.arc': 'Arco tangente',
   'booklet.label.cleanWallCorners': 'Redondear esquinas de pared',
   'booklet.label.cornerRelief': 'Relieve de esquinas',
   'booklet.label.pattern': 'Patrón',

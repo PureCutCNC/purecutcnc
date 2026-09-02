@@ -319,10 +319,10 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
   // first ring, so the sheet has to say when it is on. Gated on the same
   // predicate the generator uses, so the printout can never claim a lead an
   // unsupported pattern would never emit.
-  if (supportsXyLead(operation) && operation.xyLeadStrategy === 'tangent_s') {
+  if (supportsXyLead(operation) && operation.xyLeadStrategy === 'arc') {
     rows.push({
       label: translate('booklet.label.xyLeadStrategy'),
-      value: translate('booklet.xyLead.tangentS'),
+      value: translate('booklet.xyLead.arc'),
     })
   }
 
