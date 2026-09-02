@@ -29,8 +29,9 @@ import {
   recordXyLeadExit,
   resolveXyLeadOptions,
   rotateRingForLead,
+  roughingRingIsTheFinishedWall,
   supportsXyLead,
-  takeXyLeadIn,
+  planWallLeadIn,
   xyLeadOptions,
   type XyLeadOptions,
 } from './xyLead'
@@ -111,11 +112,12 @@ function testEntryArrivesTangentToTheRing() {
   const plan = planXyLeadIn(ring, options)
   assert(plan !== null, 'a lead is planned on an open square ring')
 
-  const arrival = ring[plan.arrivalIndex]
+  assert(plan.seam !== null, 'an entry plan re-seams the contour')
+  const arrival = plan.seam[0]
   const last = plan.points[plan.points.length - 1]
-  assert(Math.hypot(last.x - arrival.x, last.y - arrival.y) < 1e-9, 'the lead ends on the arrival vertex')
+  assert(Math.hypot(last.x - arrival.x, last.y - arrival.y) < 1e-9, 'the lead ends on the seam')
 
-  const ringTangent = direction(arrival, ring[(plan.arrivalIndex + 1) % ring.length])
+  const ringTangent = direction(arrival, plan.seam[1])
   const approach = direction(plan.points[plan.points.length - 2], last)
   assert(angleBetween(approach, ringTangent) < 0.06, 'the last lead segment is tangent to the ring')
 
@@ -209,7 +211,7 @@ function testDeterminismAndValidatedPlacement() {
   const first = planXyLeadIn(ring, openOptions())
   const second = planXyLeadIn(ring, openOptions())
   assert(first !== null && second !== null, 'both runs plan a lead')
-  assert(first.arrivalIndex === second.arrivalIndex, 'the same arrival vertex is chosen every time')
+  assert(JSON.stringify(first.seam) === JSON.stringify(second.seam), 'the same seam is chosen every time')
   assert(JSON.stringify(first.points) === JSON.stringify(second.points), 'the same path is built every time')
 
   // The source contour's first vertex is not an assumption. Forbid everything
@@ -219,12 +221,11 @@ function testDeterminismAndValidatedPlacement() {
   const halfOpen = openOptions({ isInsideDomain: (x, y) => x > 0 && x < 100 && y >= 45 })
   const walked = planXyLeadIn(ring, halfOpen)
   assert(walked !== null, 'a lead is still found when the seam cannot take one')
-  assert(walked.arrivalIndex >= 9,
-    `the search walked past every unusable vertex (landed on ${walked.arrivalIndex})`)
-  assert(ring[walked.arrivalIndex].y >= 45, 'and landed on a vertex the domain actually allows')
+  assert(walked.seam !== null && walked.seam[0].y >= 45,
+    'the search walked past every unusable position and landed where the domain allows')
   assert(walked.points.every((point) => point.y >= 45), 'no emitted lead sample leaves the domain')
   const walkedAgain = planXyLeadIn(ring, halfOpen)
-  assert(walkedAgain !== null && walkedAgain.arrivalIndex === walked.arrivalIndex,
+  assert(walkedAgain !== null && JSON.stringify(walkedAgain.seam) === JSON.stringify(walked.seam),
     'the walked placement is deterministic too')
   console.log('determinism and validated placement: PASSED')
 }
@@ -245,12 +246,15 @@ function planRadius(points: Point[]): number {
   return fittedRadius(points[0], points[mid], points[points.length - 1])
 }
 
-/** A corridor of half-width `h` around the square ring's own lines. */
-function corridor(h: number): (x: number, y: number) => boolean {
-  return (x, y) => {
-    if (x < 20 - h - 1 || x > 80 + h + 1 || y < 20 - h - 1 || y > 80 + h + 1) return false
-    return Math.min(Math.abs(x - 20), Math.abs(x - 80), Math.abs(y - 20), Math.abs(y - 80)) <= h
-  }
+/**
+ * A strip of depth `h` inward from the square ring's BOTTOM edge, and nothing
+ * else. One edge on purpose: any band that follows all four leaks at the
+ * corners, because an arc curving inward from one edge is then measured against
+ * its neighbour and passes a constraint it was meant to fail. With a single
+ * straight edge the arc's inward deviation is capped at exactly `h`.
+ */
+function strip(h: number): (x: number, y: number) => boolean {
+  return (x, y) => y >= 20 - 1e-9 && y <= 20 + h && x >= 15 && x <= 85
 }
 
 function testRadiusLadderTakesTheWidestArcThatFits() {
@@ -263,41 +267,57 @@ function testRadiusLadderTakesTheWidestArcThatFits() {
   assert(Math.abs(planRadius(open.points) - TOOL_DIAMETER) < 0.05,
     `the widest rung is chosen in open space (got ${planRadius(open.points).toFixed(3)})`)
   // 90 deg at R: the staging point sits a chord of R*sqrt(2) from the arrival.
-  const arrival = ring[open.arrivalIndex]
-  const chord = Math.hypot(open.staging.x - arrival.x, open.staging.y - arrival.y)
+  const chord = Math.hypot(open.staging.x - open.points[open.points.length - 1].x,
+    open.staging.y - open.points[open.points.length - 1].y)
   assert(Math.abs(chord - TOOL_DIAMETER * Math.SQRT2) < 0.05, 'swept the full 90 degrees')
 
-  // A corridor that a 90 deg arc of full radius cannot fit. The ladder is
-  // radius-MAJOR, so it shortens the sweep before it narrows the arc: the
-  // radius must hold while the chord gets shorter.
-  const narrowed = planXyLeadIn(ring, openOptions({ isInsideDomain: corridor(3.5) }))
-  assert(narrowed !== null, 'a narrower corridor still plans a lead')
+  // A strip that a 90 deg arc of full radius cannot fit: its inward deviation
+  // is R, and the strip is shallower than that. The ladder is radius-MAJOR, so
+  // it shortens the sweep before it narrows the arc — the radius must hold
+  // while the chord gets shorter.
+  const narrowed = planXyLeadIn(ring, openOptions({ isInsideDomain: strip(3.5) }))
+  assert(narrowed !== null, 'a shallower strip still plans a lead')
   assert(Math.abs(planRadius(narrowed.points) - TOOL_DIAMETER) < 0.05,
     'the radius is held and the sweep gives way first')
   const narrowedChord = Math.hypot(
-    narrowed.staging.x - ring[narrowed.arrivalIndex].x,
-    narrowed.staging.y - ring[narrowed.arrivalIndex].y,
+    narrowed.staging.x - narrowed.points[narrowed.points.length - 1].x,
+    narrowed.staging.y - narrowed.points[narrowed.points.length - 1].y,
   )
   assert(narrowedChord < chord, 'so the lead is shorter than the open-space one')
 
-  // Tight enough that only the bottom rung fits.
-  const tight = planXyLeadIn(ring, openOptions({ isInsideDomain: corridor(0.5) }))
-  assert(tight !== null, 'a tight corridor still plans a lead rather than giving up')
+  // Shallow enough that only the bottom rung fits.
+  const tight = planXyLeadIn(ring, openOptions({ isInsideDomain: strip(0.5) }))
+  assert(tight !== null, 'a shallow strip still plans a lead rather than giving up')
   assert(Math.abs(planRadius(tight.points) - TOOL_DIAMETER * 0.25) < 0.05,
     `the ladder descended to its bottom rung (got ${planRadius(tight.points).toFixed(3)})`)
   console.log('radius ladder: PASSED')
 }
 
 function testRotateRingForLead() {
-  console.log('Testing the ring re-seams at the arrival vertex...')
+  console.log('Testing the contour re-seams at the join...')
   const ring = squareRing(20, 80, 4)
   const plan = planXyLeadIn(ring, openOptions())
-  assert(plan !== null, 'a lead is planned')
-  const rotated = rotateRingForLead(ring, plan)
-  assert(rotated.length === ring.length, 're-seaming preserves every vertex')
-  assert(rotated[0] === ring[plan.arrivalIndex], 'the ring now starts on the arrival vertex')
-  assert(rotateRingForLead(ring, null) === ring, 'no plan leaves the ring alone')
-  console.log('ring re-seam: PASSED')
+  assert(plan !== null && plan.seam !== null, 'a lead is planned and carries a seam')
+  const seamed = rotateRingForLead(ring, plan)
+  assert(seamed === plan.seam, 'the plan\'s seam is what gets cut')
+  assert(seamed[0] === plan.points[plan.points.length - 1]
+    || Math.hypot(seamed[0].x - plan.points[plan.points.length - 1].x,
+      seamed[0].y - plan.points[plan.points.length - 1].y) < 1e-9,
+    'the contour now starts where the lead joins')
+  // A seam that slid off a vertex adds the join point; one on a vertex does not
+  // change the count. Either way no vertex is lost.
+  assert(seamed.length >= ring.length, 'no vertex is dropped by re-seaming')
+  assert(rotateRingForLead(ring, null) === ring, 'no plan leaves the contour alone')
+
+  // Perimeter is preserved: re-seaming moves where the cut starts, never what
+  // it cuts.
+  const perimeter = (loop: Point[]): number => loop.reduce((total, point, index) => {
+    const next = loop[(index + 1) % loop.length]
+    return total + Math.hypot(next.x - point.x, next.y - point.y)
+  }, 0)
+  assert(Math.abs(perimeter(seamed) - perimeter(ring)) < 1e-6,
+    'the re-seamed contour cuts exactly the same material')
+  console.log('contour re-seam: PASSED')
 }
 
 function testLeadRunsAtOneConstantFeed() {
@@ -306,7 +326,7 @@ function testLeadRunsAtOneConstantFeed() {
   assert(Math.abs(leadFeedScale(options) - 300 / 800) < 1e-12, 'the scale is plungeFeed / feed')
 
   const points: Point[] = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }]
-  const plan = { points, staging: points[0], arrivalIndex: 0 }
+  const plan = { points, staging: points[0], seam: null }
 
   for (const kind of ['lead_in', 'lead_out'] as const) {
     const moves: ToolpathMove[] = []
@@ -341,9 +361,9 @@ function testEmittedLeadStaysPlanarAtZ() {
   const end = emitXyLead(moves, from, plan, -3.5, options, 'lead_in')
   assert(moves.every((move) => move.from.z === -3.5 && move.to.z === -3.5), 'no lead move changes Z')
   assert(moves[0].from.x === from.x && moves[0].from.y === from.y, 'the lead starts at the staging point')
-  const arrival = ring[plan.arrivalIndex]
-  assert(Math.abs(end.x - arrival.x) < 1e-9 && Math.abs(end.y - arrival.y) < 1e-9,
-    'the lead ends on the ring')
+  assert(plan.seam !== null, 'the plan carries a seam')
+  assert(Math.abs(end.x - plan.seam[0].x) < 1e-9 && Math.abs(end.y - plan.seam[0].y) < 1e-9,
+    'the lead ends on the contour, where it re-seams')
   console.log('planar emission: PASSED')
 }
 
@@ -355,22 +375,32 @@ function testGatesAndWarnings() {
     return { warnings, onWarning: (warning) => warnings.push(warning) }
   }
 
-  assert(supportsXyLead(baseOperation()), 'a rough offset pocket supports leads')
-  assert(!supportsXyLead(baseOperation({ pocketPattern: 'parallel' })), 'raster clearing does not')
-  assert(!supportsXyLead(baseOperation({ pass: 'finish' })), 'a finish pass does not')
-  assert(!supportsXyLead(baseOperation({ kind: 'edge_route_inside' })), 'edge routing does not')
+  // The kind gate says nothing about pass or pattern: WHERE a lead is emitted
+  // is a property of the pass, answered by each generator for its own contours.
+  assert(supportsXyLead(baseOperation()), 'a pocket supports leads')
+  assert(supportsXyLead(baseOperation({ pass: 'finish' })), 'a finish pass does too — it is the main case')
   assert(supportsXyLead(baseOperation({ kind: 'surface_clean' })), 'surface clean does')
   assert(supportsXyLead(baseOperation({ kind: 'rough_surface' })), 'rough surface does')
+  assert(!supportsXyLead(baseOperation({ kind: 'edge_route_inside' })), 'edge routing does not yet')
+
+  // A roughing ring is the finished wall only when it leaves no radial stock;
+  // otherwise a finish pass comes back and machines the mark away.
+  assert(roughingRingIsTheFinishedWall(baseOperation({ stockToLeaveRadial: 0 })),
+    'zero radial stock makes the roughing ring the wall')
+  assert(!roughingRingIsTheFinishedWall(baseOperation({ stockToLeaveRadial: 0.5 })),
+    'stock left means a finish pass will take the mark away')
+  assert(!roughingRingIsTheFinishedWall(baseOperation({ pocketPattern: 'parallel' })),
+    'raster clearing has no ring to lead onto')
 
   const off = collect()
   assert(resolveXyLeadOptions(baseOperation({ xyLeadStrategy: undefined }), 6, regions, false, off.onWarning) === undefined,
     'an operation that did not opt in gets no options')
   assert(off.warnings.length === 0, 'and is not warned about — absent is the legacy default, not a refusal')
 
-  const raster = collect()
-  assert(resolveXyLeadOptions(baseOperation({ pocketPattern: 'parallel' }), 6, regions, false, raster.onWarning) === undefined,
-    'raster clearing gets no options')
-  assert(raster.warnings.some((warning) => warning.code === 'xyLeadUnsupported'),
+  const unsupported = collect()
+  assert(resolveXyLeadOptions(baseOperation({ kind: 'edge_route_inside' }), 6, regions, false, unsupported.onWarning) === undefined,
+    'a kind with no lead seam gets no options')
+  assert(unsupported.warnings.some((warning) => warning.code === 'xyLeadUnsupported'),
     'and is told its request was declined')
 
   const masked = collect()
@@ -392,29 +422,32 @@ function testGatesAndWarnings() {
   console.log('gates and warnings: PASSED')
 }
 
-function testEntryLatchIsSpentOnce() {
-  console.log('Testing the entry latch is spent once per level...')
+function testOnlyAFullEntryIsLed() {
+  console.log('Testing only a full entry is led...')
   const warnings: ToolpathWarning[] = []
   const context = beginXyLeadLevel(openOptions(), (warning) => warnings.push(warning))
   assert(context !== undefined, 'a level context is armed')
   const ring = squareRing(20, 80, 6)
-  assert(takeXyLeadIn(context, ring) !== null, 'the first ring takes the lead')
-  assert(takeXyLeadIn(context, ring) === null, 'a later ring at the same level does not')
-  assert(warnings.length === 0, 'a spent latch is not a failure and does not warn')
-  assert(takeXyLeadIn(undefined, ring) === null, 'no context means no lead')
 
-  // A level whose first ring cannot take a lead warns once and does not go
-  // hunting through the rest of its rings.
+  assert(planWallLeadIn(context, ring, true) !== null, 'a descent onto the contour is led')
+  // A contour reached by an at-depth link is already engaged: there is no
+  // plunge to move off the surface, so there is nothing for a lead to do and
+  // no failure to report.
+  assert(planWallLeadIn(context, ring, false) === null, 'an at-depth link is not')
+  assert(warnings.length === 0, 'and declining an at-depth link is not a failure')
+  assert(planWallLeadIn(undefined, ring, true) === null, 'no context means no lead')
+
+  // A wall the arc cannot reach warns once, so the operator learns the request
+  // was not honoured.
   const failed: ToolpathWarning[] = []
   const tight = beginXyLeadLevel(
     openOptions({ isInsideDomain: () => false }),
     (warning) => failed.push(warning),
   )
   assert(tight !== undefined, 'the tight level is armed')
-  assert(takeXyLeadIn(tight, ring) === null, 'no lead fits')
-  assert(failed.length === 1 && failed[0].code === 'xyLeadNoViablePath', 'and it says so once')
-  assert(tight.entryPending === false, 'the latch is spent either way')
-  console.log('entry latch: PASSED')
+  assert(planWallLeadIn(tight, ring, true) === null, 'no lead fits')
+  assert(failed.length === 1 && failed[0].code === 'xyLeadNoViablePath', 'and it says so')
+  console.log('full-entry gate: PASSED')
 }
 
 function testExitRecordMustMatchTheCurrentPosition() {
@@ -474,7 +507,7 @@ try {
   testLeadRunsAtOneConstantFeed()
   testEmittedLeadStaysPlanarAtZ()
   testGatesAndWarnings()
-  testEntryLatchIsSpentOnce()
+  testOnlyAFullEntryIsLed()
   testExitRecordMustMatchTheCurrentPosition()
   testLengthBudgetIsEnforced()
   console.log('\nAll xyLead tests PASSED.')

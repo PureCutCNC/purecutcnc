@@ -48,12 +48,9 @@ import { areaCoverage, effectivePocketPattern, usesTangentLinks } from './pocket
 import { pocketTangentLinkOptions } from './tangentLink'
 import {
   beginXyLeadLevel,
-  emitXyLead,
   emitXyLeadOut,
-  recordXyLeadExit,
   resolveXyLeadOptions,
-  rotateRingForLead,
-  takeXyLeadIn,
+  roughingRingIsTheFinishedWall,
   warnXyLeadDeclined,
 } from './xyLead'
 import { planSeedCircles, seedCircleContours, seedStartRadius } from './seedClearing'
@@ -229,17 +226,23 @@ function generateRoughSurfaceToolpathSingle(
 
     // Per level, not per band: 3D roughing recomputes its clearable region at
     // every level, so the lead's domain is this level's own inset regions --
-    // the same boundary the level's safeLinkCheck enforces (issue #695).
-    const levelXyLead = beginXyLeadLevel(
-      resolveXyLeadOptions(
-        operation,
-        resolved.tool.diameter,
-        level.insetRegions,
-        resolved.regionMasked,
+    // the same boundary the level's safeLinkCheck enforces. Only when the pass
+    // leaves no radial stock, because only then is the ring it cuts the wall
+    // that survives (issue #695). This kind traverses OUTER-FIRST, so unlike
+    // pocket clearing its wall-adjacent ring really is the one the descent
+    // lands on.
+    const levelXyLead = !roughingRingIsTheFinishedWall(operation)
+      ? undefined
+      : beginXyLeadLevel(
+        resolveXyLeadOptions(
+          operation,
+          resolved.tool.diameter,
+          level.insetRegions,
+          resolved.regionMasked,
+          (warning) => appendUniqueWarning(warnings, warning),
+        ),
         (warning) => appendUniqueWarning(warnings, warning),
-      ),
-      (warning) => appendUniqueWarning(warnings, warning),
-    )
+      )
 
     // No withEntryStartZ() here, unlike pocket and surface clearing. Those
     // reuse one XY footprint for every level, so the previous level's floor is
@@ -283,7 +286,7 @@ function generateRoughSurfaceToolpathSingle(
       )
       // Raster clearing has no ring for a lead to join, so a request here is
       // answered rather than dropped (issue #695).
-      warnXyLeadDeclined(operation, resolved.regionMasked, (warning) => appendUniqueWarning(warnings, warning))
+      warnXyLeadDeclined(operation, false, resolved.regionMasked, (warning) => appendUniqueWarning(warnings, warning))
 
       const orderedBoundaryContours = orderClosedContoursGreedy(
         boundaryContours,
@@ -382,31 +385,21 @@ function generateRoughSurfaceToolpathSingle(
         )
         let previousCircleEnd: ToolpathPoint | null = null
         for (const baseCircle of circles) {
-          const nearest = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
-          // A seed circle is a clearing ring like any other, so when the level
-          // opens on a seed stack the lead-in belongs to its first circle.
-          const leadPlan = takeXyLeadIn(levelXyLead, nearest)
-          const circle = rotateRingForLead(nearest, leadPlan)
+          // A seed circle clears open floor; nothing it cuts survives into the
+          // part, so it takes no lead (issue #695).
+          const circle = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
           currentPosition = transitionToCutEntry(
             allMoves,
             currentPosition,
-            leadPlan
-              ? { x: leadPlan.staging.x, y: leadPlan.staging.y, z: level.z }
-              : contourStartPoint(circle, level.z),
+            contourStartPoint(circle, level.z),
             resolved.safeZ,
             resolved.maxLinkDistance,
             undefined,
             entryPolicy,
           )
-          if (leadPlan && levelXyLead) {
-            currentPosition = emitXyLead(
-              allMoves, currentPosition, leadPlan, level.z, levelXyLead.options, 'lead_in',
-            )
-          }
           const circleMoves = toClosedCutMoves(circle, level.z)
           appendAll(allMoves, circleMoves)
           currentPosition = circleMoves.at(-1)?.to ?? currentPosition
-          recordXyLeadExit(levelXyLead, circleMoves)
           previousCircleEnd = currentPosition
         }
       }

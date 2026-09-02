@@ -15,11 +15,14 @@
  */
 
 /**
- * Integration tests for XY lead-in / lead-out on generated clearing streams
- * (issue #695): composition with each Z-entry strategy, tangent continuity into
- * the ring, containment in the tool-centre-safe domain, the feed ramp, the
- * masked and unsupported fallbacks, byte-identity for operations that did not
- * opt in, and survival of the always-on linear-move optimizer.
+ * Integration tests for tangent-arc leads on generated streams (issue #695).
+ *
+ * The headline is `testNoDescentLandsOnAFinishedWall`: the defect this feature
+ * exists for is the cutter reaching a wall by plunging onto it, which rubs a
+ * witness line down a surface that stays in the part. Everything else here —
+ * composition with each Z entry, domain containment, the constant feed, the
+ * arc-fit round trip, the `stockToLeaveRadial` gate, and byte-identity for
+ * operations that did not opt in — supports that one claim.
  *
  * Run with: npx tsx src/engine/toolpaths/xyLeadIntegration.test.ts
  */
@@ -46,7 +49,7 @@ import {
   type SketchFeature,
   type Tool,
 } from '../../types/project'
-import type { PocketToolpathResult, ToolpathMove } from './types'
+import type { PocketToolpathResult, ToolpathMove, ToolpathPoint } from './types'
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error('Assertion failed: ' + message)
@@ -143,6 +146,40 @@ function islandPocket(): { project: Project; operation: Operation } {
   return { project, operation: pocketOperation() }
 }
 
+/**
+ * How far a tool-centre sits from the nearest WALL CONTOUR of `islandPocket` —
+ * the 60 x 60 pocket and its r=8 island, cut with a 6 mm tool. Zero means the
+ * point is on the finished wall's own path.
+ */
+function wallDistance(point: ToolpathPoint): number {
+  const toOuterWall = Math.min(point.x, 60 - point.x, point.y, 60 - point.y) - 3
+  const toIslandWall = Math.hypot(point.x - 30, point.y - 30) - (8 + 3)
+  return Math.min(Math.abs(toOuterWall), Math.abs(toIslandWall))
+}
+
+/** Descents that land on a cut, and how many of those land on a wall contour. */
+function descentsOntoWalls(moves: ToolpathMove[]): { total: number; onWall: number } {
+  let total = 0
+  let onWall = 0
+  moves.forEach((move, index) => {
+    if (move.kind !== 'plunge' || move.from.z <= move.to.z) return
+    const next = moves[index + 1]
+    if (!next || next.kind !== 'cut') return
+    if (Math.abs(next.from.x - move.to.x) > 1e-9 || Math.abs(next.from.y - move.to.y) > 1e-9) return
+    total += 1
+    if (wallDistance(move.to) < 0.05) onWall += 1
+  })
+  return { total, onWall }
+}
+
+/** The wall-finishing sibling of `islandPocket`. */
+function finishWallOperation(overrides: Partial<Operation> = {}): Operation {
+  return pocketOperation({
+    pass: 'finish', finishWalls: true, finishFloor: false, stepdown: 6,
+    carveDepth: 4, maxCarveDepth: 4, ...overrides,
+  })
+}
+
 /** The tool-centre-safe domain the generator itself clears within. */
 function pocketDomainCheck(project: Project, operation: Operation): (x: number, y: number) => boolean {
   const resolved = resolvePocketRegions(project, operation)
@@ -157,48 +194,79 @@ function pocketDomainCheck(project: Project, operation: Operation): (x: number, 
 
 // ── Tests ────────────────────────────────────────────────────────────
 
-function testComposesWithEveryZEntryStrategy() {
-  console.log('Testing arc composes with plunge, helix and ramp...')
+function testNoDescentLandsOnAFinishedWall() {
+  console.log('Testing no descent lands on a finished wall...')
   const { project, operation } = islandPocket()
 
+  // The defect, measured. A wall-finish pass drops onto the outer wall contour
+  // AND onto the island wall contour, and starts cutting from the plunge point.
+  const legacyFinish = generatePocketToolpath(project, finishWallOperation())
+  const legacyLanded = descentsOntoWalls(legacyFinish.moves)
+  assert(legacyLanded.onWall > 0,
+    `the fixture reproduces the defect (${legacyLanded.onWall} of ${legacyLanded.total} descents on a wall)`)
+
+  const led = generatePocketToolpath(project, finishWallOperation({ xyLeadStrategy: 'arc' }))
+  assert(descentsOntoWalls(led.moves).onWall === 0, 'and with the lead, none of them do')
+  assert(led.warnings.length === 0, 'without falling back')
+  assert(countKind(led.moves, 'lead_in') > 0 && countKind(led.moves, 'lead_out') > 0,
+    'both ends of the wall pass are led')
+
+  // A roughing ring that leaves no radial stock IS the finished wall, so it is
+  // covered by the same rule.
+  const legacyRough = generatePocketToolpath(project, operation)
+  assert(descentsOntoWalls(legacyRough.moves).onWall > 0, 'roughing at zero stock lands on a wall too')
+  const ledRough = generatePocketToolpath(project, { ...operation, xyLeadStrategy: 'arc' })
+  assert(descentsOntoWalls(ledRough.moves).onWall === 0, 'and the lead clears that as well')
+  console.log('no descent lands on a wall: PASSED')
+}
+
+function testStockToLeaveGatesRoughingLeads() {
+  console.log('Testing radial stock gates the roughing lead...')
+  const { project, operation } = islandPocket()
+
+  const zero = generatePocketToolpath(project, { ...operation, stockToLeaveRadial: 0, xyLeadStrategy: 'arc' })
+  assert(countKind(zero.moves, 'lead_out') > 0, 'no radial stock: the ring is the wall, so it is led')
+
+  // Stock left means a finish pass comes back and machines the mark away, so
+  // the lead would be motion spent on nothing.
+  const left = generatePocketToolpath(project, { ...operation, stockToLeaveRadial: 0.5, xyLeadStrategy: 'arc' })
+  const legacy = generatePocketToolpath(project, { ...operation, stockToLeaveRadial: 0.5 })
+  assert(countKind(left.moves, 'lead_in') === 0 && countKind(left.moves, 'lead_out') === 0,
+    'stock left: no lead')
+  assert(JSON.stringify(left.moves) === JSON.stringify(legacy.moves),
+    'and the program is byte-identical to not asking for one')
+  console.log('stock-to-leave gate: PASSED')
+}
+
+function testComposesWithEveryZEntryStrategy() {
+  console.log('Testing the arc composes with plunge, helix and ramp...')
+  const { project } = islandPocket()
+
   for (const entryStrategy of ['plunge', 'helix', 'ramp'] as EntryStrategy[]) {
-    const legacy = generatePocketToolpath(project, { ...operation, entryStrategy })
-    const led = generatePocketToolpath(project, { ...operation, entryStrategy, xyLeadStrategy: 'arc' })
+    const led = generatePocketToolpath(project, finishWallOperation({ entryStrategy, xyLeadStrategy: 'arc' }))
     assert(led.warnings.length === 0, `${entryStrategy}: the lead is planned without a warning`)
-    assert(countKind(led.moves, 'lead_in') > countKind(legacy.moves, 'lead_in'),
-      `${entryStrategy}: entry leads were emitted`)
-    assert(countKind(led.moves, 'lead_out') > countKind(legacy.moves, 'lead_out'),
-      `${entryStrategy}: exit leads were emitted`)
+    assert(descentsOntoWalls(led.moves).onWall === 0, `${entryStrategy}: no descent lands on the wall`)
 
     // Kind alone cannot separate the XY lead from a helix or ramp descent —
-    // both are lead_in — so the stream is read at the seam that matters: the
-    // move that hands over to the first ring cut.
+    // both are lead_in — so read the stream at the seam that matters: the move
+    // that hands over to the first wall cut.
     const firstCut = led.moves.findIndex((move) => move.kind === 'cut')
     assert(firstCut > 0, `${entryStrategy}: the program cuts something`)
     const handover = led.moves[firstCut - 1]
-    assert(handover.kind === 'lead_in', `${entryStrategy}: a lead hands over to the ring`)
+    assert(handover.kind === 'lead_in', `${entryStrategy}: a lead hands over to the wall`)
     assert(Math.abs(handover.from.z - handover.to.z) < 1e-9, `${entryStrategy}: the handover is planar`)
     assert(angleBetween(unitDirection(handover), unitDirection(led.moves[firstCut])) < 0.12,
-      `${entryStrategy}: the lead joins the ring tangent-continuously`)
+      `${entryStrategy}: the lead joins the wall tangent-continuously`)
 
-    // Where the descent actually reached final depth, and how far that is from
-    // where cutting starts. A legacy plunge lands exactly on the ring start;
-    // this is the staging that replaces it.
+    // The descent reaches depth somewhere OTHER than where cutting starts.
     let descent = firstCut - 1
     while (descent >= 0 && led.moves[descent].from.z <= led.moves[descent].to.z + 1e-9) descent -= 1
     assert(descent >= 0, `${entryStrategy}: the program descends before it cuts`)
     const staging = led.moves[descent].to
-    const ringStart = led.moves[firstCut].from
-    assert(Math.hypot(ringStart.x - staging.x, ringStart.y - staging.y) > 0.75,
-      `${entryStrategy}: the final-depth staging point differs from the ring start`)
+    const wallStart = led.moves[firstCut].from
+    assert(Math.hypot(wallStart.x - staging.x, wallStart.y - staging.y) > 0.75,
+      `${entryStrategy}: the staging point differs from where the wall cut starts`)
   }
-
-  // The tangential handover is what the lead adds: without it the same fixture
-  // meets its first ring at whatever angle the entry happened to leave at.
-  const plungeLegacy = generatePocketToolpath(project, { ...operation, entryStrategy: 'plunge' })
-  const legacyFirstCut = plungeLegacy.moves.findIndex((move) => move.kind === 'cut')
-  assert(plungeLegacy.moves[legacyFirstCut - 1].kind === 'plunge',
-    'a legacy plunge entry drops straight onto the ring start with no XY lead at all')
   console.log('Z-entry composition: PASSED')
 }
 
@@ -381,31 +449,47 @@ function testMaskedAndUnsupportedFallBackWithAWarning() {
   console.log('masked and unsupported fallbacks: PASSED')
 }
 
-function testSurfaceCleanCarriesTheLead() {
-  console.log('Testing surface clean carries the lead...')
+function testSurfaceCleanLeadsOntoItsWall() {
+  console.log('Testing surface clean leads onto its wall...')
   const project = projectWithFeatures(
     { ...newProject('xy-lead-surface', 'mm'), tools: [makeFlatEndmill('t1', 4)] },
     [makeRect('boss', 20, 20, 30, 30, 'add')],
   )
-  const operation: Operation = {
-    ...pocketOperation({
-      id: 'sc1',
-      kind: 'surface_clean',
-      target: { source: 'features', featureIds: ['boss'] },
-      stepdown: 1,
-      carveDepth: 2,
-      maxCarveDepth: 2,
-      finishWalls: true,
-      finishFloor: true,
-    }),
-  }
-  const legacy = generateSurfaceCleanToolpath(project, operation)
-  const led = generateSurfaceCleanToolpath(project, { ...operation, xyLeadStrategy: 'arc' })
+  const wallPass = pocketOperation({
+    id: 'sc1', kind: 'surface_clean', target: { source: 'features', featureIds: ['boss'] },
+    pass: 'finish', finishWalls: true, finishFloor: false,
+    stepdown: 1, carveDepth: 2, maxCarveDepth: 2,
+  })
+
+  const legacy = generateSurfaceCleanToolpath(project, wallPass)
+  const led = generateSurfaceCleanToolpath(project, { ...wallPass, xyLeadStrategy: 'arc' })
   assert(countKind(led.moves, 'lead_in') > countKind(legacy.moves, 'lead_in'), 'entry leads were emitted')
   assert(countKind(led.moves, 'lead_out') > countKind(legacy.moves, 'lead_out'), 'exit leads were emitted')
-  assert(JSON.stringify(generateSurfaceCleanToolpath(project, { ...operation, xyLeadStrategy: 'none' }).moves)
+  assert(led.warnings.length === 0, 'without falling back')
+
+  // The wall pass's first cut is now reached along a tangent arc rather than
+  // by dropping onto it. Measuring "is this point on the wall contour" is
+  // unreliable at a mitered corner — the offset there is sqrt(2) x radius from
+  // the source corner, not radius — so read the handover, which is exact.
+  const firstCut = led.moves.findIndex((move) => move.kind === 'cut')
+  assert(firstCut > 0, 'the wall pass cuts something')
+  const handover = led.moves[firstCut - 1]
+  assert(handover.kind === 'lead_in', 'a lead hands over to the wall')
+  assert(Math.abs(handover.from.z - handover.to.z) < 1e-9, 'and it is planar at cut depth')
+  assert(angleBetween(unitDirection(handover), unitDirection(led.moves[firstCut])) < 0.12,
+    'joining the wall tangent-continuously')
+
+  // Without the lead the same first cut is reached by a plunge landing on it.
+  const legacyFirstCut = legacy.moves.findIndex((move) => move.kind === 'cut')
+  const legacyBefore = legacy.moves[legacyFirstCut - 1]
+  assert(legacyBefore.kind === 'plunge'
+    && Math.abs(legacyBefore.to.x - legacy.moves[legacyFirstCut].from.x) < 1e-9
+    && Math.abs(legacyBefore.to.y - legacy.moves[legacyFirstCut].from.y) < 1e-9,
+    'the legacy wall pass drops straight onto the point it starts cutting from')
+
+  assert(JSON.stringify(generateSurfaceCleanToolpath(project, { ...wallPass, xyLeadStrategy: 'none' }).moves)
     === JSON.stringify(legacy.moves), 'surface clean stays byte-identical when opted out')
-  console.log('surface clean: PASSED')
+  console.log('surface clean wall: PASSED')
 }
 
 function testRoughSurfaceCarriesTheLead() {
@@ -414,10 +498,20 @@ function testRoughSurfaceCarriesTheLead() {
   const legacy = generateRoughSurfaceToolpath(project, operation)
   const led = generateRoughSurfaceToolpath(project, { ...operation, xyLeadStrategy: 'arc' })
   assert(countKind(legacy.moves, 'cut') > 0, 'the 3D fixture cuts something')
+  // 3D roughing traverses OUTER-FIRST, so unlike pocket clearing its
+  // wall-adjacent ring is the one the descent lands on — which is exactly why
+  // it needs the lead.
   assert(countKind(led.moves, 'lead_in') > countKind(legacy.moves, 'lead_in'), 'entry leads were emitted')
-  assert(countKind(led.moves, 'lead_out') > countKind(legacy.moves, 'lead_out'), 'exit leads were emitted')
   assert(JSON.stringify(generateRoughSurfaceToolpath(project, { ...operation, xyLeadStrategy: 'none' }).moves)
     === JSON.stringify(legacy.moves), 'rough surface stays byte-identical when opted out')
+
+  // Stock left means a finish pass takes the mark away, so no lead.
+  const withStock = generateRoughSurfaceToolpath(project, {
+    ...operation, stockToLeaveRadial: 0.5, xyLeadStrategy: 'arc',
+  })
+  assert(countKind(withStock.moves, 'lead_in') === countKind(
+    generateRoughSurfaceToolpath(project, { ...operation, stockToLeaveRadial: 0.5 }).moves, 'lead_in'),
+    'radial stock gates the 3D roughing lead too')
   console.log('rough surface: PASSED')
 }
 
@@ -507,6 +601,8 @@ function testNormalizationKeepsAndStripsTheField() {
 }
 
 try {
+  testNoDescentLandsOnAFinishedWall()
+  testStockToLeaveGatesRoughingLeads()
   testComposesWithEveryZEntryStrategy()
   testEveryLeadSampleStaysInsideTheSafeDomain()
   testEmittedLeadsCarryOneConstantFeed()
@@ -515,7 +611,7 @@ try {
   testAbsentAndNoneAreByteIdentical()
   testRingToRingLinksAreUntouchedByTheLead()
   testMaskedAndUnsupportedFallBackWithAWarning()
-  testSurfaceCleanCarriesTheLead()
+  testSurfaceCleanLeadsOntoItsWall()
   testRoughSurfaceCarriesTheLead()
   testNormalizationKeepsAndStripsTheField()
   console.log('\nAll xyLead integration tests PASSED.')

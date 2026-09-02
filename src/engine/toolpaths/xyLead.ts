@@ -151,19 +151,30 @@ export interface XyLeadPlan {
   points: Point[]
   /** Where the descent lands (lead-in) or the retract happens (lead-out). */
   staging: Point
-  /** Ring vertex the lead joins; the ring re-seams there. Lead-in only. */
-  arrivalIndex: number
+  /**
+   * The contour re-seamed to begin (and so end) at the point the lead joins.
+   * Null for an exit, which leaves a contour already cut.
+   *
+   * A join is not restricted to an existing vertex. A four-vertex wall contour
+   * is all corners, and arriving AT a corner along the contour's own tangent
+   * means coming from before it — which is outside the domain, since the
+   * previous edge runs the other way. Landing mid-edge is what makes a lead
+   * possible there at all, so the seam is a point, not an index.
+   */
+  seam: Point[] | null
 }
 
 /**
- * One level's lead state. `entryPending` is the latch that makes the lead-in
- * happen on the level's FIRST clearing ring and nowhere else: the ring-to-ring
- * transitions inside a level keep their existing at-depth link rules, which the
- * lead has no business touching.
+ * One level's lead state.
+ *
+ * A context is handed only to contours that DEFINE A SURFACE THAT SURVIVES —
+ * wall contours, island wall contours, and the wall-adjacent ring of a roughing
+ * pass that leaves no radial stock. Interior clearing rings and floors never
+ * receive one, so the ring-to-ring transitions inside a level keep their
+ * existing at-depth link rules untouched.
  */
 export interface XyLeadContext {
   options: XyLeadOptions
-  entryPending: boolean
   /**
    * The last closed ring emitted at this level and where its cut ended. The
    * exit lead needs the ring, not just the endpoint, because it may depart from
@@ -204,17 +215,34 @@ export function xyLeadOptions(
 }
 
 /**
- * Does this operation's kind and pattern carry XY leads at all?
+ * Does this operation carry XY leads at all?
  *
- * A lead attaches to a closed clearing ring, so the ring patterns qualify and
- * the raster pattern does not — `usesTangentLinks` already draws exactly that
- * line for the S-link and there is no second answer to give here. Finish passes
- * are out of v1 scope: they are not clearing entries.
+ * Kind only. WHERE a lead is emitted is not a property of the operation, it is
+ * a property of the pass: a lead belongs wherever the cutter would otherwise
+ * reach a surface that survives into the finished part by plunging onto it.
+ * Each generator answers that for its own contours by passing a context, or
+ * not, so this predicate deliberately says nothing about pass or pattern.
  */
 export function supportsXyLead(operation: Operation): boolean {
-  if (!XY_LEAD_KINDS.includes(operation.kind)) return false
-  if (operation.pass !== 'rough') return false
-  return usesTangentLinks(operation.kind, operation.pocketPattern)
+  return XY_LEAD_KINDS.includes(operation.kind)
+}
+
+/**
+ * Does a ROUGHING ring leave the finished wall behind it?
+ *
+ * Radial stock left means a finish pass will come back and cut the wall again,
+ * so a mark the roughing ring leaves is machined away and the lead would be
+ * motion spent on nothing. No radial stock means this ring IS the wall, and it
+ * needs the approach exactly as a finish contour does.
+ *
+ * The engine cannot see whether a sibling finish operation exists, so this is
+ * deliberately conservative: an operation leaving no radial stock gets the lead
+ * even where the user means to finish it separately. That costs a little
+ * motion. The other way round costs a marked wall.
+ */
+export function roughingRingIsTheFinishedWall(operation: Operation): boolean {
+  return Math.max(0, operation.stockToLeaveRadial) <= LEAD_EPSILON
+    && usesTangentLinks(operation.kind, operation.pocketPattern)
 }
 
 /**
@@ -236,23 +264,25 @@ export function resolveXyLeadOptions(
   hasRegionMask: boolean,
   onWarning: (warning: ToolpathWarning) => void,
 ): XyLeadOptions | undefined {
-  if (warnXyLeadDeclined(operation, hasRegionMask, onWarning)) return undefined
+  if (warnXyLeadDeclined(operation, supportsXyLead(operation), hasRegionMask, onWarning)) return undefined
   return xyLeadOptions(operation, toolDiameter, domainRegions)
 }
 
 /**
  * Report a requested lead the caller will not honour, and say so: true means
- * declined. A generator that cannot carry leads at all — a raster clearing
- * branch — calls this on its own so the request is answered rather than
- * dropped. An operation that asked for nothing is not a refusal and is silent.
+ * declined. `carries` is the call site's own answer to "can leads happen here
+ * at all" — a raster clearing branch passes false, because its fill has no
+ * contour to join. An operation that asked for nothing is not a refusal and is
+ * silent.
  */
 export function warnXyLeadDeclined(
   operation: Operation,
+  carries: boolean,
   hasRegionMask: boolean,
   onWarning: (warning: ToolpathWarning) => void,
 ): boolean {
   if (operation.xyLeadStrategy !== 'arc') return true
-  if (!supportsXyLead(operation)) {
+  if (!carries) {
     onWarning({ code: 'xyLeadUnsupported' })
     return true
   }
@@ -264,15 +294,14 @@ export function warnXyLeadDeclined(
 }
 
 /**
- * Arm one level's lead state. The latch is per level because each level enters
- * the material afresh: the level's first ring takes the lead-in, and the level
- * ends with a lead-out before its retract.
+ * Arm one level's lead state. Per level because each level enters the material
+ * afresh and ends with its own retract.
  */
 export function beginXyLeadLevel(
   options: XyLeadOptions | undefined,
   onWarning: (warning: ToolpathWarning) => void,
 ): XyLeadContext | undefined {
-  return options ? { options, entryPending: true, exit: null, onWarning } : undefined
+  return options ? { options, exit: null, onWarning } : undefined
 }
 
 /**
@@ -341,70 +370,146 @@ function closedRingFromMoves(
 }
 
 /**
- * Consume the level's one lead-in attempt against `contour`, or null when the
- * context is spent, absent, or nothing valid fits. The latch is spent either
- * way: a level whose first ring cannot take a lead does not go hunting through
- * the rest of its rings for one, because that would move the descent to a ring
- * the schedule did not choose to start on.
+ * Plan the lead onto a wall-defining `contour`, or null when there is nothing
+ * to lead from or nothing fits.
+ *
+ * `isFullEntry` is the caller's answer to "is the cutter about to descend onto
+ * this contour". A contour reached by an at-depth link is already engaged and
+ * needs no lead — the link is the S-link's business, not this module's — so
+ * only a full entry is retargeted.
  */
-export function takeXyLeadIn(
+export function planWallLeadIn(
   context: XyLeadContext | undefined,
   contour: Point[],
+  isFullEntry: boolean,
 ): XyLeadPlan | null {
-  if (!context || !context.entryPending) return null
-  context.entryPending = false
+  if (!context || !isFullEntry) return null
   const plan = planXyLeadIn(contour, context.options)
   if (plan === null) context.onWarning({ code: 'xyLeadNoViablePath' })
   return plan
 }
 
 /**
- * Re-seam `ring` at the vertex a lead-in plans to arrive on. Returns the ring
- * unchanged when there is no plan, so a call site can apply it unconditionally.
+ * Plan the lead onto the start of an OPEN wall run — the acute-island corner
+ * cleanup segments, which are polylines rather than loops. There is no seam to
+ * slide, so the arrival is fixed at the run's own start and only the arc is
+ * searched.
  */
-export function rotateRingForLead(ring: Point[], plan: XyLeadPlan | null): Point[] {
-  if (plan === null || plan.arrivalIndex <= 0 || plan.arrivalIndex >= ring.length) return ring
-  return [...ring.slice(plan.arrivalIndex), ...ring.slice(0, plan.arrivalIndex)]
+export function planOpenWallLeadIn(
+  context: XyLeadContext | undefined,
+  segment: Point[],
+  isFullEntry: boolean,
+): XyLeadPlan | null {
+  if (!context || !isFullEntry || segment.length < 2) return null
+  const options = context.options
+  const start = segment[0]
+  const dx = segment[1].x - start.x
+  const dy = segment[1].y - start.y
+  const length = Math.hypot(dx, dy)
+  if (!(length > LEAD_EPSILON)) return null
+  const tangent = { x: dx / length, y: dy / length }
+  const reversed = { x: -tangent.x, y: -tangent.y }
+
+  for (const arc of leadArcs(options)) {
+    const chordBudget = domainChordBudget(arc.radius, options.arcStepRadians) * LEAD_SAMPLE_REFINEMENT
+    for (const side of orderedSides(start, tangent, options)) {
+      const departing = buildTangentLeadPath(start, reversed, arcShape(-side, arc), options.arcStepRadians)
+      if (validateLead(start, departing, arc.radius, chordBudget, options) === null) continue
+      const points = [...departing].reverse()
+      return { points, staging: points[0], seam: null }
+    }
+  }
+  context.onWarning({ code: 'xyLeadNoViablePath' })
+  return null
 }
+
+/**
+ * The contour as the lead wants it seamed, or unchanged when there is no plan,
+ * so a call site can apply it unconditionally.
+ */
+export function rotateRingForLead(contour: Point[], plan: XyLeadPlan | null): Point[] {
+  return plan?.seam ?? contour
+}
+
+/**
+ * Fractions along each edge at which a lead may join, in candidate order.
+ * Zero is the edge's own vertex; the rest let the join slide off a corner,
+ * which is the only way a sparse contour (a rectangle is four corners and
+ * nothing else) can take a lead at all.
+ */
+const LEAD_ARRIVAL_FRACTIONS = [0, 0.5, 0.25, 0.75] as const
 
 /**
  * Plan the arc that arrives on `contour` tangent-continuously.
  *
- * Candidate order is radius-major, sweep next, contour position last, and the
- * first fully valid candidate wins: the widest arc the domain accepts anywhere
- * on the contour beats a narrower one that happens to fit at a lower index.
- * A closed contour can be re-seamed at any vertex at no cost, so arc quality is
- * the thing worth ordering on — and the search never assumes the source
- * contour's first vertex, it only reaches it in the same fixed order as every
- * other one.
+ * Candidate order is radius-major, then sweep, then position along the
+ * contour, and the first fully valid candidate wins: the widest arc the domain
+ * accepts anywhere on the contour beats a narrower one that happens to fit
+ * sooner. A closed contour can be re-seamed at any point at no cost, so arc
+ * quality is the thing worth ordering on — and the search never assumes the
+ * source contour's first vertex, it only reaches it in the same fixed order as
+ * every other position.
  */
 export function planXyLeadIn(contour: Point[], options: XyLeadOptions): XyLeadPlan | null {
   if (contour.length < 3) return null
 
   for (const arc of leadArcs(options)) {
     const chordBudget = domainChordBudget(arc.radius, options.arcStepRadians) * LEAD_SAMPLE_REFINEMENT
-    for (let index = 0; index < contour.length; index += 1) {
-      const anchor = contour[index]
-      const forward = contourTangent(contour, index)
-      if (forward === null) continue
+    for (const arrival of contourArrivals(contour)) {
       // Built backwards from the contour and then reversed: the path that
-      // leaves along -t is exactly the path that arrives along +t. The sign
-      // flips with it, so the arc still curves to the free side.
-      const reversed = { x: -forward.x, y: -forward.y }
-      for (const side of orderedSides(anchor, forward, options)) {
+      // leaves along -t is exactly the path that arrives along +t. The turn
+      // sign flips with it, so the arc still curves to the free side.
+      const reversed = { x: -arrival.tangent.x, y: -arrival.tangent.y }
+      for (const side of orderedSides(arrival.point, arrival.tangent, options)) {
         const departing = buildTangentLeadPath(
-          anchor,
+          arrival.point,
           reversed,
           arcShape(-side, arc),
           options.arcStepRadians,
         )
-        if (validateLead(anchor, departing, arc.radius, chordBudget, options) === null) continue
+        if (validateLead(arrival.point, departing, arc.radius, chordBudget, options) === null) continue
         const points = [...departing].reverse()
-        return { points, staging: points[0], arrivalIndex: index }
+        return { points, staging: points[0], seam: arrival.seam }
       }
     }
   }
   return null
+}
+
+/**
+ * Every position a lead may join `contour` at, with its tangent and the
+ * contour re-seamed to start there. Vertices first, then along each edge.
+ */
+function* contourArrivals(
+  contour: Point[],
+): Generator<{ point: Point; tangent: Point; seam: Point[] }> {
+  for (const fraction of LEAD_ARRIVAL_FRACTIONS) {
+    for (let index = 0; index < contour.length; index += 1) {
+      const from = contour[index]
+      const to = contour[(index + 1) % contour.length]
+      const dx = to.x - from.x
+      const dy = to.y - from.y
+      const edge = Math.hypot(dx, dy)
+      if (!(edge > LEAD_EPSILON)) continue
+      const tangent = { x: dx / edge, y: dy / edge }
+      if (fraction === 0) {
+        yield {
+          point: from,
+          tangent,
+          seam: [...contour.slice(index), ...contour.slice(0, index)],
+        }
+        continue
+      }
+      const point = { x: from.x + dx * fraction, y: from.y + dy * fraction }
+      // Cut in at `point`, run the rest of the contour, and close over the
+      // remainder of this edge — the same material, seamed elsewhere.
+      yield {
+        point,
+        tangent,
+        seam: [point, ...contour.slice(index + 1), ...contour.slice(0, index + 1)],
+      }
+    }
+  }
 }
 
 /**
@@ -434,7 +539,7 @@ export function planXyLeadOut(contour: Point[], options: XyLeadOptions): XyLeadP
         )
         const points = [...departure.overlap, ...lead.slice(1)]
         if (validateLead(departure.point, points, arc.radius, chordBudget, options) === null) continue
-        return { points, staging: points[points.length - 1], arrivalIndex: 0 }
+        return { points, staging: points[points.length - 1], seam: null }
       }
     }
   }
@@ -485,17 +590,6 @@ function orderedSides(anchor: Point, tangent: Point, options: XyLeadOptions): re
   if (right && !left) return [-1]
   if (!left && !right) return []
   return [1, -1]
-}
-
-/** Contour travel tangent leaving vertex `index`, or null on a degenerate edge. */
-function contourTangent(contour: Point[], index: number): Point | null {
-  const from = contour[index]
-  const to = contour[(index + 1) % contour.length]
-  const dx = to.x - from.x
-  const dy = to.y - from.y
-  const length = Math.hypot(dx, dy)
-  if (!(length > LEAD_EPSILON)) return null
-  return { x: dx / length, y: dy / length }
 }
 
 /**

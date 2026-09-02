@@ -463,16 +463,23 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     // XY approach & exit (issue #695). Shown in the same group as the Z entry
     // but gated independently of it: the two compose, and hiding this row
     // behind a particular Z strategy would imply a dependency that does not
-    // exist. It needs a clearing ring to lead onto, which is the same question
-    // the S-link asks, so it asks it the same way.
+    // exist.
+    //
+    // Offered wherever the operation could reach a surface that survives into
+    // the part: a finish pass that cuts walls, or a roughing pass whose rings
+    // are contours rather than raster fill. Deliberately NOT gated on
+    // `stockToLeaveRadial`, even though the engine only emits roughing leads at
+    // zero: hiding a control because of another field's current value strands
+    // the user's choice the moment they change that value back.
     id: 'xyLeadStrategy',
     group: 'entry',
     paramRef: 'xyLeadStrategy',
-    appliesTo: (operation) => operation.pass === 'rough'
-      && (operation.kind === 'pocket'
-        || operation.kind === 'surface_clean'
-        || operation.kind === 'rough_surface')
-      && usesTangentLinks(operation.kind, operation.pocketPattern),
+    appliesTo: (operation) => (operation.kind === 'pocket'
+      || operation.kind === 'surface_clean'
+      || operation.kind === 'rough_surface')
+      && (operation.pass === 'finish'
+        ? operation.finishWalls
+        : usesTangentLinks(operation.kind, operation.pocketPattern)),
   },
   {
     id: 'retractHeight',

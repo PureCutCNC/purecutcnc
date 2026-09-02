@@ -74,7 +74,9 @@ import {
   recordXyLeadExit,
   resolveXyLeadOptions,
   rotateRingForLead,
-  takeXyLeadIn,
+  planOpenWallLeadIn,
+  planWallLeadIn,
+  roughingRingIsTheFinishedWall,
   warnXyLeadDeclined,
   type XyLeadContext,
 } from './xyLead'
@@ -1140,6 +1142,35 @@ export function applyLevelFeed(
   }
 }
 
+/**
+ * Will `transitionToCutEntry` link to `toXY` at depth, rather than descend onto
+ * it?
+ *
+ * An XY lead (issue #695) only has work to do when the cutter is about to
+ * ARRIVE on a contour from above: a contour reached by an at-depth link is
+ * already engaged, there is no plunge to move off the surface, and the link is
+ * the S-link's business. The predicate lives here, next to the branch it
+ * mirrors, because a copy of it elsewhere would drift — and it did: a first
+ * version that only asked "are we at safe Z" missed the retract-and-re-enter
+ * path and left the island wall being plunged onto.
+ */
+export function transitionLinksAtDepth(
+  from: ToolpathPoint | null,
+  toXY: ToolpathPoint,
+  safeZ: number,
+  maxLinkDistance: number,
+  safeLinkCheck?: SafeLinkCheck,
+): boolean {
+  if (!from) return false
+  const distance = Math.hypot(toXY.x - from.x, toXY.y - from.y)
+  if (distance <= XY_ALIGN_EPS) return false
+  const isStartingFromSafeZ = Math.abs(from.z - safeZ) <= XY_ALIGN_EPS
+  const isDescendingToCut = toXY.z < safeZ - XY_ALIGN_EPS
+  if (isStartingFromSafeZ && isDescendingToCut) return false
+  if (distance > maxLinkDistance) return false
+  return !safeLinkCheck || safeLinkCheck(from, toXY)
+}
+
 export function transitionToCutEntry(
   moves: ToolpathMove[],
   from: ToolpathPoint | null,
@@ -1917,11 +1948,20 @@ export function cutClosedContours(
 
   let nextPosition = currentPosition
   for (const contour of orderedContours) {
-    // XY lead-in (issue #695). The plan re-seams the ring at the vertex it can
-    // reach tangentially and moves the Z-entry target to its staging point, so
-    // the descent lands off the ring and the lead does the joining. Spent on
-    // the level's first ring only; every later ring keeps its ordinary link.
-    const leadPlan = takeXyLeadIn(xyLead, contour)
+    // XY lead-in (issue #695). A context arrives only for contours that define
+    // a surface which survives into the part, and only a FULL entry is
+    // retargeted: a contour reached by an at-depth link is already engaged, so
+    // there is no plunge to move and the link stays the S-link's business.
+    // The plan re-seams the contour at the vertex it can reach tangentially and
+    // sends the descent to the arc's far end instead of onto the surface.
+    const isFullEntry = !transitionLinksAtDepth(
+      nextPosition,
+      contourStartPoint(contour, z),
+      safeZ,
+      maxLinkDistance,
+      safeLinkCheck,
+    )
+    const leadPlan = planWallLeadIn(xyLead, contour, isFullEntry)
     const ring = rotateRingForLead(contour, leadPlan)
     const entryPoint = leadPlan
       ? { x: leadPlan.staging.x, y: leadPlan.staging.y, z }
@@ -2622,6 +2662,11 @@ export function cutOffsetNodeRings(
     parent,
     xyLead,
   } = options
+  // Only the ROOT node's own rings define a surface that survives: its outer
+  // ring is the wall, its island loops ride the island walls. Every deeper node
+  // sits further inside and is cleared away by nothing, so it takes no lead
+  // (issue #695).
+  const wallRings = depth === 0 ? xyLead : undefined
   const outer = prepareOffsetOuterContour(
     node, direction, smoothRadius, depth, wallCleanup, toolRadius, parent,
   )
@@ -2655,7 +2700,7 @@ export function cutOffsetNodeRings(
     entryPolicy,
     tangentLink,
     true,
-    xyLead,
+    wallRings,
   )
 }
 
@@ -3001,7 +3046,7 @@ function generateRoughBandMoves(
     )
     // Raster clearing has no ring for a lead to join, so a request here is
     // answered rather than dropped (issue #695).
-    warnXyLeadDeclined(operation, regionMasked, (warning) => appendUniqueWarning(warnings, warning))
+    warnXyLeadDeclined(operation, false, regionMasked, (warning) => appendUniqueWarning(warnings, warning))
 
     const boundaryContours = applyContourDirection(buildContourLoops(roughRegions), direction)
     const segments = buildPocketParallelSegments(roughRegions, effectiveStepover, operation.pocketAngle)
@@ -3170,10 +3215,15 @@ function generateRoughBandMoves(
     ),
     slotScale,
   )
-  // XY leads (issue #695) share the S-link's domain and budget: the tool-centre
-  // region roots the ring tree was built from. Resolved once per band because
-  // the predicate precomputes its loop bounds.
-  const xyLeadPassOptions = resolveXyLeadOptions(
+  // XY leads (issue #695) share the S-link's domain: the tool-centre region
+  // roots the ring tree was built from. Resolved once per band because the
+  // predicate precomputes its loop bounds. In a ROUGHING pass only the root
+  // node's own rings define a surface that survives — its outer ring is the
+  // wall, its island loops are the island walls — and only when no radial stock
+  // is left for a finish pass to take the mark away.
+  const xyLeadPassOptions = !roughingRingIsTheFinishedWall(operation)
+    ? undefined
+    : resolveXyLeadOptions(
     operation,
     toolRadius * 2,
     regionTrees.map((tree) => tree.region),
@@ -3219,26 +3269,21 @@ function generateRoughBandMoves(
       // later circles stay radially adjacent to their predecessor.
       let previousCircleEnd: ToolpathPoint | null = null
       for (const baseCircle of circles) {
-        const nearest = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
-        // A seed circle is a clearing ring like any other, so when the level
-        // opens on a seed stack the lead-in belongs to its first circle.
-        const leadPlan = takeXyLeadIn(levelXyLead, nearest)
-        const circle = rotateRingForLead(nearest, leadPlan)
+        // A seed circle clears open floor; nothing it cuts survives into the
+        // part, so it takes no lead (issue #695).
+        const circle = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
         const linkStartIndex = moves.length
         currentPosition = transitionToCutEntry(
           moves,
           currentPosition,
-          leadPlan ? { x: leadPlan.staging.x, y: leadPlan.staging.y, z } : contourStartPoint(circle, z),
+          contourStartPoint(circle, z),
           safeZ,
           maxLinkDistance,
           undefined,
           levelEntryPolicy,
         )
-        if (leadPlan && levelXyLead) {
-          currentPosition = emitXyLead(moves, currentPosition, leadPlan, z, levelXyLead.options, 'lead_in')
-        }
         let circleMoves = toClosedCutMoves(circle, z)
-        const tangentSplice = leadPlan ? null : spliceTangentSLink(
+        const tangentSplice = spliceTangentSLink(
           moves,
           linkStartIndex,
           circle,
@@ -3251,7 +3296,6 @@ function generateRoughBandMoves(
         }
         appendAll(moves, circleMoves)
         currentPosition = circleMoves.at(-1)?.to ?? currentPosition
-        recordXyLeadExit(levelXyLead, circleMoves)
         previousCircleEnd = currentPosition
       }
     }
@@ -3435,6 +3479,7 @@ function generateFinishBandMoves(
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
   telemetry: EngagementTelemetryAccumulator | null = null,
+  regionMasked = false,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -3472,6 +3517,20 @@ function generateFinishBandMoves(
     ),
     slotScale,
   )
+  // XY leads on the wall contours (issue #695). This is the pass the feature
+  // exists for: the wall contour IS the finished wall, and without a lead the
+  // cutter reaches it by dropping onto it and starting the cut from the plunge
+  // point, which rubs a witness line down the surface. The domain is the
+  // finish region — the arc sweeps into the pocket, which roughing has cleared.
+  const wallLeadOptions = operation.finishWalls
+    ? resolveXyLeadOptions(
+      operation,
+      toolRadius * 2,
+      finishRegions,
+      regionMasked,
+      (warning) => appendUniqueWarning(warnings, warning),
+    )
+    : undefined
   let wallContours: Point[][] = []
   let wallOuterContours: Point[][] = []
   let wallFinalContours: Point[][] = []
@@ -3808,6 +3867,10 @@ function generateFinishBandMoves(
   }
 
   for (const z of wallStepLevels) {
+    const levelWallLead = beginXyLeadLevel(
+      wallLeadOptions,
+      (warning) => appendUniqueWarning(warnings, warning),
+    )
     if (shouldRoundPocketWalls) {
       currentPosition = cutClosedContours(
         moves,
@@ -3822,22 +3885,35 @@ function generateFinishBandMoves(
         entryPolicy,
         undefined,
         wallCornerCleanupEnabled,
+        levelWallLead,
       )
       const orderedCleanupSegments = orderOpenSegmentsGreedy(
         wallCleanupSegments,
         currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
       )
       for (const segment of orderedCleanupSegments) {
-        const entryPoint = contourStartPoint(segment, z)
+        // The acute-island cleanup runs are open, so there is no seam to slide:
+        // the arc either reaches the run's own start tangentially or there is
+        // no lead (issue #695).
+        const isFullEntry = !transitionLinksAtDepth(
+          currentPosition,
+          contourStartPoint(segment, z),
+          safeZ,
+          maxLinkDistance,
+        )
+        const leadPlan = planOpenWallLeadIn(levelWallLead, segment, isFullEntry)
         currentPosition = transitionToCutEntry(
           moves,
           currentPosition,
-          entryPoint,
+          leadPlan ? { x: leadPlan.staging.x, y: leadPlan.staging.y, z } : contourStartPoint(segment, z),
           safeZ,
           maxLinkDistance,
           undefined,
           entryPolicy,
         )
+        if (leadPlan && levelWallLead) {
+          currentPosition = emitXyLead(moves, currentPosition, leadPlan, z, levelWallLead.options, 'lead_in')
+        }
         const cutMoves = toOpenCutMoves(segment, z)
         appendAll(moves, cutMoves)
         currentPosition = cutMoves.at(-1)?.to ?? currentPosition
@@ -3853,6 +3929,9 @@ function generateFinishBandMoves(
         direction,
         undefined,
         entryPolicy,
+        undefined,
+        false,
+        levelWallLead,
       )
     } else {
       currentPosition = cutClosedContours(
@@ -3866,9 +3945,16 @@ function generateFinishBandMoves(
         direction,
         undefined,
         entryPolicy,
+        undefined,
+        false,
+        levelWallLead,
       )
     }
 
+    // Leave the wall along an arc too, before the safe-Z transition: stopping
+    // and retracting on a finished wall dwells and rubs on the way up exactly
+    // as the plunge did on the way down (issue #695).
+    currentPosition = emitXyLeadOut(moves, currentPosition, z, levelWallLead)
     currentPosition = retractToSafe(moves, currentPosition, safeZ)
   }
 
@@ -4177,6 +4263,7 @@ function generatePocketToolpathSingle(
         maxLinkDistance,
         direction,
         telemetry,
+        regionMask !== null,
       )
       : generateRoughBandMoves(
         band,
