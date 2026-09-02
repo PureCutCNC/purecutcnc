@@ -57,6 +57,7 @@
 import type { Operation, OperationKind, Point } from '../../types/project'
 import { usesTangentLinks } from './pocketPatterns'
 import {
+  buildClearanceCheck,
   buildKeepOutCheck,
   buildOffsetDomainCheck,
   buildTangentLeadPath,
@@ -65,6 +66,7 @@ import {
   type TangentLeadShape,
   type TangentLinkDomainRegion,
 } from './tangentLink'
+import { entryBoundarySafety } from './entry'
 import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
 import type { ToolpathMove, ToolpathPoint } from './types'
 import type { ToolpathWarning } from './warningCodes'
@@ -149,6 +151,13 @@ export interface XyLeadOptions {
   plungeFeed: number
   /** True when a tool-centre position lies inside the safe domain. */
   isInsideDomain: (x: number, y: number) => boolean
+  /**
+   * The domain with the boundary-safety margin taken off — where the cutter may
+   * be without touching a surface that stays. Everything but the short stretch
+   * of lead nearest its join is held to this, so the arc cannot ride a SECOND
+   * wall on its way past the one it is joining.
+   */
+  isClearOfWalls: (x: number, y: number) => boolean
 }
 
 export interface XyLeadPlan {
@@ -211,6 +220,7 @@ export function xyLeadOptions(
     cutFeed: operation.feed,
     plungeFeed: operation.plungeFeed,
     isInsideDomain: buildOffsetDomainCheck(domainRegions),
+    isClearOfWalls: buildClearanceCheck(domainRegions, entryBoundarySafety(toolDiameter)),
   }
 }
 
@@ -231,7 +241,14 @@ export function withKeepOut(
   if (!options || keepOut.length === 0) return options
   const blocked = buildKeepOutCheck(keepOut)
   const inDomain = options.isInsideDomain
-  return { ...options, isInsideDomain: (x, y) => inDomain(x, y) && !blocked(x, y) }
+  const clearOfWalls = options.isClearOfWalls
+  // The same test feeds both: the loops arrive already grown by the cutter's own
+  // clearance, so riding their boundary is tangency rather than a collision.
+  return {
+    ...options,
+    isInsideDomain: (x, y) => inDomain(x, y) && !blocked(x, y),
+    isClearOfWalls: (x, y) => clearOfWalls(x, y) && !blocked(x, y),
+  }
 }
 
 /**
@@ -922,7 +939,30 @@ function validateLead(
   const far = path[path.length - 1]
   const offset = Math.hypot(far.x - anchor.x, far.y - anchor.y)
   if (!(offset > radius * MIN_LEAD_OFFSET_FRACTION)) return null
-  const length = domainSafePathLength(path, chordBudget, options.isInsideDomain)
+
+  // Two domains, switched by distance from the join.
+  //
+  // At the join the cutter is ON the wall — that is the tangency the lead is
+  // for — so the margin cannot apply there. It must apply everywhere else, or
+  // the arc is free to swing across a corridor and come to rest against the
+  // wall opposite, which is exactly the contact this feature exists to prevent:
+  // measured on a pocket whose island wall sits one tool diameter from the
+  // pocket wall, both the entry's staging point and the exit's far end landed
+  // on the opposite wall, arriving perpendicular to it.
+  //
+  // The switch distance is where the arc has curved clear of the wall it joins
+  // by the margin on its own: for a locally straight wall the gap at arc
+  // distance d is about d^2 / 2R, so `sqrt(2 * R * margin)` is the point past
+  // which the margin costs nothing. Chord rather than arc length, which is
+  // marginally the permissive way round and second-order at these angles.
+  const margin = entryBoundarySafety(options.toolDiameter)
+  const nearJoin = Math.sqrt(2 * radius * margin)
+  const inDomain = (x: number, y: number): boolean =>
+    (Math.hypot(x - anchor.x, y - anchor.y) <= nearJoin
+      ? options.isInsideDomain(x, y)
+      : options.isClearOfWalls(x, y))
+
+  const length = domainSafePathLength(path, chordBudget, inDomain)
   if (length === null || length > options.maxLength) return null
   return length
 }

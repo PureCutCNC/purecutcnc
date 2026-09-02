@@ -490,6 +490,70 @@ export function buildOffsetDomainCheck(
   }
 }
 
+/** Distance from a point to the nearest edge of a closed loop. */
+function distanceToLoop(x: number, y: number, loop: Point[]): number {
+  let best = Infinity
+  for (let index = 0; index < loop.length; index += 1) {
+    const a = loop[index]
+    const b = loop[(index + 1) % loop.length]
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const lengthSquared = dx * dx + dy * dy
+    const t = lengthSquared > 0
+      ? Math.min(1, Math.max(0, ((x - a.x) * dx + (y - a.y) * dy) / lengthSquared))
+      : 0
+    const distance = Math.hypot(x - (a.x + dx * t), y - (a.y + dy * t))
+    if (distance < best) best = distance
+  }
+  return best
+}
+
+/**
+ * "Is (x, y) inside the domain AND at least `clearance` from every wall of it?"
+ *
+ * `buildOffsetDomainCheck` deliberately admits boundary points, because the ring
+ * paths themselves ride the boundary — a link that could not touch the line it
+ * travels along would be useless. A LEAD wants the opposite nearly everywhere:
+ * it may touch only the one surface it joins, tangentially, and must stay off
+ * every other surface that survives into the part. Riding a second wall on the
+ * way past is the mark the lead exists to prevent, reintroduced.
+ *
+ * This is the same rule `entryBoundarySafety` states for ramps and helixes —
+ * "without it a ramp or helix runs right up to the wall and scores the surface
+ * the finish pass is meant to leave" — applied to the lead, and deliberately
+ * spelled with the same fraction.
+ *
+ * Exact, not probed: a four-way probe misses a spike of material between its
+ * arms, and the whole point here is the case where two walls sit a tool
+ * diameter apart.
+ */
+export function buildClearanceCheck(
+  regions: TangentLinkDomainRegion[],
+  clearance: number,
+): (x: number, y: number) => boolean {
+  const boxed = regions.map((region) => ({
+    outer: boxLoop(region.outer),
+    islands: region.islands.map(boxLoop),
+  }))
+  return (x: number, y: number): boolean => {
+    slinkDomainChecks += 1
+    return boxed.some((region) => {
+      if (outsideBox(region.outer, x, y)) return false
+      slinkDomainScans += 1
+      if (!pointInPolygon(x, y, region.outer.points)) return false
+      if (distanceToLoop(x, y, region.outer.points) < clearance) return false
+      return region.islands.every((island) => {
+        // Outside the island's box by more than the clearance already answers it.
+        if (x < island.minX - clearance || x > island.maxX + clearance
+          || y < island.minY - clearance || y > island.maxY + clearance) return true
+        slinkDomainScans += 1
+        if (pointInPolygon(x, y, island.points)) return false
+        return distanceToLoop(x, y, island.points) >= clearance
+      })
+    })
+  }
+}
+
 /**
  * "Is (x, y) inside anything the cutter must stay out of?" for a set of
  * already-grown keep-out loops — tab footprints, say, which an edge route's

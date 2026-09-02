@@ -257,6 +257,76 @@ function testEveryWallContourIsLedInAndOut() {
   console.log('every wall led in and out: PASSED')
 }
 
+/**
+ * A lead may touch exactly one surface — the one it joins, tangentially. Riding
+ * a SECOND wall on the way past is the mark this feature exists to prevent,
+ * reintroduced somewhere the user was not looking.
+ *
+ * Geometry taken from a real project (XY-entry-test.camj), scaled 24x so the
+ * cutter is the 6 mm this file uses elsewhere; every ratio is the user's. What
+ * makes it bite is that the pocket is CROWDED: two islands leave only narrow
+ * channels, so the arc has nowhere roomy to go and the ranking's best position
+ * is inside one. `buildOffsetDomainCheck` admits boundary points on purpose —
+ * the ring paths themselves ride them — so the arc was free to cross a channel
+ * and come to rest against the wall opposite, arriving PERPENDICULAR to it.
+ *
+ * Measured before the fix, in the user's own units: the entry onto the island
+ * wall staged at 0.0000 in from the pocket wall, and both exits ended at
+ * 0.0000 in from a wall they were not joining. For an entry that is the plunge
+ * landing on a finished surface, which is the whole defect.
+ */
+function testALeadTouchesOnlyTheWallItJoins() {
+  console.log('Testing a lead touches only the wall it joins...')
+  const tool = makeFlatEndmill('t1', 6)
+  const project = projectWithFeatures(
+    { ...newProject('xy-lead-crowded', 'mm'), tools: [tool] },
+    [
+      makeRect('p1', 12, 12, 72, 48),
+      makeRect('i1', 36, 24, 30, 24, 'add'),
+      makeCircleIsland('i2', 66, 36, 9.4868),
+    ],
+  )
+  const led = generatePocketToolpath(project, finishWallOperation({ xyLeadStrategy: 'arc' }))
+
+  const radius = tool.diameter / 2
+  /** Clearance from a tool CENTRE to the nearest retained surface. */
+  const clearance = (p: ToolpathPoint): number => {
+    const toPocket = Math.min(p.x - 12, 84 - p.x, p.y - 12, 60 - p.y)
+    const dx = Math.max(36 - p.x, 0, p.x - 66)
+    const dy = Math.max(24 - p.y, 0, p.y - 48)
+    const toRect = (dx === 0 && dy === 0)
+      ? -Math.min(p.x - 36, 66 - p.x, p.y - 24, 48 - p.y)
+      : Math.hypot(dx, dy)
+    const toCircle = Math.hypot(p.x - 66, p.y - 36) - 9.4868
+    return Math.min(toPocket, toRect, toCircle) - radius
+  }
+
+  let leads = 0
+  let index = 0
+  while (index < led.moves.length) {
+    if (!LEAD_KINDS.has(led.moves[index].kind)) { index += 1; continue }
+    const kind = led.moves[index].kind
+    const run: ToolpathMove[] = []
+    while (index < led.moves.length && led.moves[index].kind === kind) {
+      run.push(led.moves[index])
+      index += 1
+    }
+    leads += 1
+    const join = kind === 'lead_in' ? run[run.length - 1].to : run[0].from
+    for (const point of [run[0].from, ...run.map((move) => move.to)]) {
+      // Within reach of the join the cutter is meant to be on the wall; that is
+      // the tangency the lead exists for.
+      if (Math.hypot(point.x - join.x, point.y - join.y) <= tool.diameter) continue
+      assert(clearance(point) > 0,
+        `a ${kind} sample at (${point.x.toFixed(2)}, ${point.y.toFixed(2)}) clears every other wall`
+        + ` (${clearance(point).toFixed(4)} mm)`)
+    }
+  }
+  // Falling back everywhere would satisfy the loop above vacuously.
+  assert(leads > 0, 'and the pass still finds leads it can place')
+  console.log('a lead touches only its own wall: PASSED')
+}
+
 function testStockToLeaveGatesRoughingLeads() {
   console.log('Testing radial stock gates the roughing lead...')
   const { project, operation } = islandPocket()
@@ -646,6 +716,7 @@ function testNormalizationKeepsAndStripsTheField() {
 try {
   testNoDescentLandsOnAFinishedWall()
   testEveryWallContourIsLedInAndOut()
+  testALeadTouchesOnlyTheWallItJoins()
   testStockToLeaveGatesRoughingLeads()
   testComposesWithEveryZEntryStrategy()
   testEveryLeadSampleStaysInsideTheSafeDomain()

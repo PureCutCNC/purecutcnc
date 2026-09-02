@@ -37,7 +37,8 @@ import {
   xyLeadOptions,
   type XyLeadOptions,
 } from './xyLead'
-import { buildOffsetDomainCheck, domainSafePathLength } from './tangentLink'
+import { buildClearanceCheck, buildOffsetDomainCheck, domainSafePathLength } from './tangentLink'
+import { entryBoundarySafety } from './entry'
 import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
 import type { Operation, Point } from '../../types/project'
 import type { ToolpathMove, ToolpathPoint } from './types'
@@ -80,6 +81,19 @@ const DOMAIN_OUTER: Point[] = [
 
 const TOOL_DIAMETER = 6
 
+/**
+ * A test domain, as both predicates at once.
+ *
+ * `validateLead` reads `isInsideDomain` near the join and `isClearOfWalls`
+ * beyond it, so overriding one alone leaves the other answering for the default
+ * square — which is how a lead once sailed through a band the test had
+ * forbidden. Production cannot drift this way (`xyLeadOptions` builds both from
+ * one set of regions), so neither should a fixture.
+ */
+function domain(predicate: (x: number, y: number) => boolean): Partial<XyLeadOptions> {
+  return { isInsideDomain: predicate, isClearOfWalls: predicate }
+}
+
 function openOptions(overrides: Partial<XyLeadOptions> = {}): XyLeadOptions {
   return {
     toolDiameter: TOOL_DIAMETER,
@@ -88,6 +102,9 @@ function openOptions(overrides: Partial<XyLeadOptions> = {}): XyLeadOptions {
     cutFeed: 800,
     plungeFeed: 300,
     isInsideDomain: buildOffsetDomainCheck([{ outer: DOMAIN_OUTER, islands: [] }]),
+    isClearOfWalls: buildClearanceCheck(
+      [{ outer: DOMAIN_OUTER, islands: [] }], entryBoundarySafety(TOOL_DIAMETER),
+    ),
     ...overrides,
   }
 }
@@ -202,7 +219,7 @@ function testSweptSamplingSeesBetweenVertices() {
 
   // End to end: a domain that allows nothing off the contour admits no lead.
   const ring = squareRing(20, 80, 6)
-  assert(planXyLeadIn(ring, openOptions({ isInsideDomain: () => false })) === null,
+  assert(planXyLeadIn(ring, openOptions(domain(() => false))) === null,
     'no lead survives a domain that refuses everything')
   console.log('swept sampling: PASSED')
 }
@@ -220,7 +237,7 @@ function testDeterminismAndValidatedPlacement() {
   // below y = 45; the ring seams at (20,20) and its first nine vertices cannot
   // carry a lead, so a planner that took the seam on faith would return null
   // (or worse, a path through the forbidden band) instead of walking on.
-  const halfOpen = openOptions({ isInsideDomain: (x, y) => x > 0 && x < 100 && y >= 45 })
+  const halfOpen = openOptions(domain((x, y) => x > 0 && x < 100 && y >= 45))
   const walked = planXyLeadIn(ring, halfOpen)
   assert(walked !== null, 'a lead is still found when the seam cannot take one')
   assert(walked.seam !== null && walked.seam[0].y >= 45,
@@ -277,7 +294,7 @@ function testRadiusLadderTakesTheWidestArcThatFits() {
   // is R, and the strip is shallower than that. The ladder is radius-MAJOR, so
   // it shortens the sweep before it narrows the arc — the radius must hold
   // while the chord gets shorter.
-  const narrowed = planXyLeadIn(ring, openOptions({ isInsideDomain: strip(3.5) }))
+  const narrowed = planXyLeadIn(ring, openOptions(domain(strip(3.5))))
   assert(narrowed !== null, 'a shallower strip still plans a lead')
   assert(Math.abs(planRadius(narrowed.points) - TOOL_DIAMETER) < 0.05,
     'the radius is held and the sweep gives way first')
@@ -288,7 +305,7 @@ function testRadiusLadderTakesTheWidestArcThatFits() {
   assert(narrowedChord < chord, 'so the lead is shorter than the open-space one')
 
   // Shallow enough that only the bottom rung fits.
-  const tight = planXyLeadIn(ring, openOptions({ isInsideDomain: strip(0.5) }))
+  const tight = planXyLeadIn(ring, openOptions(domain(strip(0.5))))
   assert(tight !== null, 'a shallow strip still plans a lead rather than giving up')
   assert(Math.abs(planRadius(tight.points) - TOOL_DIAMETER * 0.25) < 0.05,
     `the ladder descended to its bottom rung (got ${planRadius(tight.points).toFixed(3)})`)
@@ -453,7 +470,7 @@ function testOnlyAFullEntryIsLed() {
   // was not honoured.
   const failed: ToolpathWarning[] = []
   const tight = beginXyLeadLevel(
-    openOptions({ isInsideDomain: () => false }),
+    openOptions(domain(() => false)),
     (warning) => failed.push(warning),
   )
   assert(tight !== undefined, 'the tight level is armed')
