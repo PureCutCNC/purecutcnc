@@ -27,6 +27,20 @@ import { validateMachineDefinition, type MachineDefinition } from '../gcode/type
 
 // Captured BEFORE #702's generator changes at c2354aa618a45d4eba147d2d33123a5147958de7.
 // Compared with the prior 31b36db capture, only #704's three flat-top waterline rows changed.
+//
+// One row has moved since, deliberately. #711 stopped the height-map strategies
+// machining a flat pass at the depth limit where there is no surface to cut, and
+// `model-in-pocket.camj` is exactly that shape: a flat-topped block inside a
+// pocket whose subtract floors the finish at Z 0.5. Its cutter-location surface
+// has only two levels — 0.750 on 16.3 % of cells (the model top) and 0.300 on
+// 83.7 % (its base) — and **zero cells between them**, so nothing on that model
+// is reachable between the floor and the top. The parallel row therefore drops
+// 4,852 -> 786 moves: 4,041 moves and 126.71 of 164.32 length were a flat pass
+// at Z 0.500 over ground the pocket had already cleared, and the rest were the
+// ramps into and out of it. The real Z 0.750 machining is untouched and in fact
+// grows slightly, 752 -> 777 moves and 23.50 -> 24.79 of length, because the
+// pass is now split at the boundary. The waterline row is byte-identical, since
+// waterline never takes this path.
 // Both the raw toolpath result and posted program must remain byte-identical.
 const baseline: Record<string, {moves: number; motion: string; gcode: string}> = {
   "3d-imported-block-test3.camj/op6792424/parallel": {
@@ -70,9 +84,9 @@ const baseline: Record<string, {moves: number; motion: string; gcode: string}> =
     "gcode": "877d04d11e8b6343e48ff06b4d10f11768c053ea513a2024094e55637518e7e0"
   },
   "model-in-pocket.camj/op6792442/parallel": {
-    "moves": 4852,
-    "motion": "51a62f12b731df863a4b88119ac7c445a665dc042f4a657b443be6d7f968c736",
-    "gcode": "5df9b0905683601f9e16dacdb780cef8f3f6c2f2e5f5e63117cf890c7af4e52d"
+    "moves": 786,
+    "motion": "b7172e3a6f328fd188198a366eaf384b4ff74a2b12c1f204d2a468e3a3c6d6fc",
+    "gcode": "97d9c2a6b3b1da8f5d6c5cafc270868eec5e7fbc9b2c02a1a4be861a606c98a9"
   },
   "model-in-pocket.camj/op6792442/waterline": {
     "moves": 3836,

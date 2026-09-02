@@ -257,6 +257,7 @@ function liftFragment(
   tool: NormalizedTool,
   axialLeave: number,
   minCutZAtPoint: (point: Point) => number,
+  hasMachinableSurface: (point: Point, liftedSurfaceZ: number) => boolean,
 ): LiftedContour[] {
   const lifted: LiftedContour[] = []
   let current: ToolpathPoint[] = []
@@ -269,6 +270,13 @@ function liftFragment(
   for (const point of fragment.points) {
     const surfaceZ = safeToolTipZAt(point.x, point.y, heightMap, tool)
     if (!Number.isFinite(surfaceZ)) {
+      flush()
+      continue
+    }
+    // Nothing to cut here — the surface is below a floor another operation
+    // owns (issue #711). Break the pass exactly as a missing sample does,
+    // rather than clamping up and cutting air along the limit.
+    if (!hasMachinableSurface(point, surfaceZ + axialLeave)) {
       flush()
       continue
     }
@@ -298,6 +306,7 @@ function emitContours(
   operation: Operation,
   safeZ: number,
   minCutZAtPoint: (point: Point) => number,
+  hasMachinableSurface: (point: Point, liftedSurfaceZ: number) => boolean,
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const moves: ToolpathMove[] = []
   const stepLevels = new Set<number>()
@@ -312,6 +321,7 @@ function emitContours(
         tool,
         Math.max(0, operation.stockToLeaveAxial),
         minCutZAtPoint,
+        hasMachinableSurface,
       )) {
         position = transitionToCutEntry(moves, position, lifted.points[0], safeZ, 0)
         appendAll(moves, toCutMoves(lifted))
@@ -364,6 +374,7 @@ export function generateFinishSurfaceConstantScallop(
   cacheHost: FinishSurfaceParallelCacheHost,
   safeZ: number,
   minCutZAtPoint: (point: Point) => number,
+  hasMachinableSurface: (point: Point, liftedSurfaceZ: number) => boolean,
   warnings: ToolpathWarning[],
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const stepoverRatio = operation.stepover ?? 0.5
@@ -397,5 +408,5 @@ export function generateFinishSurfaceConstantScallop(
     return { moves: [], stepLevels: new Set() }
   }
   const contours = planContours(domain, extractConstantDistanceContours(field, spacing))
-  return emitContours(contours, domain, heightMap, tool, operation, safeZ, minCutZAtPoint)
+  return emitContours(contours, domain, heightMap, tool, operation, safeZ, minCutZAtPoint, hasMachinableSurface)
 }
