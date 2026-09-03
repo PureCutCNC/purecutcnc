@@ -19,6 +19,7 @@ import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Point, Project } from '../../types/project'
 import {
   createEntryPolicy,
+  helixAngularDirection,
   isEntryHandoffMove,
   synthesizeEntry,
   withEntryHandoffFeedScale,
@@ -2675,7 +2676,6 @@ interface TrochoidalRingOptions {
   orbitRadius: number
   advance: number
   toolDiameter: number
-  angularDirection: 1 | -1
   budget: TrochoidalOperationBudget
   operation: Operation
   /**
@@ -2785,7 +2785,7 @@ function cutTrochoidalRingMoves(
   options: TrochoidalRingOptions & { direction: CutDirection; loops?: 'all' | 'outer' },
   warnings: ToolpathWarning[],
 ): ToolpathPoint | null {
-  const { direction, orbitRadius, advance, toolDiameter, angularDirection, budget, operation, loops = 'all' } = options
+  const { direction, orbitRadius, advance, toolDiameter, budget, operation, loops = 'all' } = options
   const pathStore = budget.paths
   // Never below safe Z's own guarantee, and never below the cut itself.
   const entryStartZ = Math.max(z, Math.min(safeZ, options.entryStartZ ?? safeZ))
@@ -2799,12 +2799,30 @@ function cutTrochoidalRingMoves(
       node.region.islands.filter((island) => island.length >= 3),
       direction,
     )
-  const contours: Point[][] = [...(outer ? [outer] : []), ...islandContours]
+  // A trochoid's engagement orientation comes from its guide winding and its
+  // orbit sense TOGETHER, so the orbit is resolved from the same direction that
+  // wound the guide, plus the side the retained material is on
+  // (planning/TROCHOIDAL_EDGE_DESIGN.md § Load-bearing constraints, #4).
+  //
+  // The two rings of a pocket sit on opposite sides of their material: the tool
+  // runs INSIDE an outer ring, with the wall outboard of it, and AROUND an
+  // island, with the island inboard. They therefore take opposite orbit senses
+  // from one cut direction. Deriving a single sense from `cutDirection` alone
+  // gives every outer ring the external mapping and silently reverses
+  // climb/conventional on the whole pocket — the failure edge.ts records at
+  // `insideOrbitDirection`, and the one this shipped with.
+  const contours: { points: Point[]; angularDirection: 1 | -1 }[] = [
+    ...(outer ? [{ points: outer, angularDirection: helixAngularDirection(direction, 'internal') }] : []),
+    ...islandContours.map((points) => ({
+      points,
+      angularDirection: helixAngularDirection(direction, 'external'),
+    })),
+  ]
 
-  const pathParams: TrochoidalPathParams = { orbitRadius, advance, toolDiameter, angularDirection }
   let nextPosition = fromPosition
 
-  for (const contour of contours) {
+  for (const { points: contour, angularDirection } of contours) {
+    const pathParams: TrochoidalPathParams = { orbitRadius, advance, toolDiameter, angularDirection }
     const entryMoves = trochoidalEntryMoveCount(entryStartZ, z, orbitRadius, operation)
     if (entryMoves > MAX_TROCHOIDAL_ENTRY_MOVES || entryMoves + 3 >= budget.remainingMoves) {
       warnings.push({ code: 'pocketTrochoidalEntryBudget', params: { x: contour[0]?.x ?? 0, y: contour[0]?.y ?? 0 } })
@@ -3515,7 +3533,6 @@ function generateRoughBandMoves(
         orbitRadius: trochoidalGeometry.orbitRadius,
         advance: trochoidalGeometry.advance,
         toolDiameter: toolRadius * 2,
-        angularDirection: (direction === 'climb' ? 1 : -1) as 1 | -1,
         budget: trochoidalBudget,
         operation,
       }
@@ -3903,7 +3920,6 @@ function generateFinishBandMoves(
         orbitRadius: floorTrochoidalGeometry.orbitRadius,
         advance: floorTrochoidalGeometry.advance,
         toolDiameter: toolRadius * 2,
-        angularDirection: (direction === 'climb' ? 1 : -1) as 1 | -1,
         budget: trochoidalBudget,
         operation,
       }

@@ -31,6 +31,7 @@ import type { Operation, Project, SketchFeature, Tool } from '../../types/projec
 import { defaultTool, isTrochoidalPocket, newProject, rectProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { SweptMaterialIndex } from './engagement'
+import { generateEdgeRouteToolpath } from './edge'
 import { generatePocketToolpath } from './pocket'
 import { TROCHOIDAL_RING_STEPOVER } from './pocketPatterns'
 import { buildSweptCoverage } from './sweptCoverage'
@@ -138,7 +139,7 @@ function buildPocket(overrides: Partial<Operation> = {}, half = 30, zBottom = 0)
   return { project, operation }
 }
 
-function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
+function cutMoves(moves: readonly ToolpathMove[]): ToolpathMove[] {
   return moves.filter((move) => move.kind === 'cut')
 }
 
@@ -464,6 +465,110 @@ test('#676 every non-trochoidal pattern is free of trochoidal warnings', () => {
     const leaked = warningCodes(result).filter((code) => code.startsWith('pocketTrochoidal'))
     assert(leaked.length === 0, `${pattern} emitted ${leaked.join(', ')}`)
   }
+})
+
+// ── Cut direction ────────────────────────────────────────────────────
+
+/**
+ * Net turning of a cut path. A trochoid's small loops dominate the sum, so the
+ * sign reports which way the orbit goes round — the quantity that, together
+ * with the guide winding, decides whether the cut is climb or conventional.
+ */
+function orbitTurning(moves: readonly ToolpathMove[]): number {
+  const cuts = cutMoves(moves)
+  let sum = 0
+  for (let index = 0; index + 1 < cuts.length; index += 1) {
+    const ax = cuts[index].to.x - cuts[index].from.x
+    const ay = cuts[index].to.y - cuts[index].from.y
+    const bx = cuts[index + 1].to.x - cuts[index + 1].from.x
+    const by = cuts[index + 1].to.y - cuts[index + 1].from.y
+    sum += ax * by - ay * bx
+  }
+  return sum
+}
+
+test('#676 the orbit turns the same way as a trochoidal inside edge route', () => {
+  // The contract in planning/TROCHOIDAL_EDGE_DESIGN.md § Load-bearing
+  // constraints #4, asserted against the shipped implementation of it rather
+  // than restated. A pocket's outer ring and an inside edge route are the same
+  // cut — tool within a closed guide, material outboard — so for one cut
+  // direction they must orbit the same way.
+  //
+  // This shipped reversed: a single sense derived from `cutDirection` alone
+  // gives every ring the EXTERNAL mapping, so climb cut conventional and
+  // conventional cut climb, on every trochoidal pocket.
+  for (const cutDirection of ['climb', 'conventional'] as const) {
+    const { project, operation } = buildPocket({ cutDirection, finishWalls: false })
+    const pocket = generatePocketToolpath(project, operation)
+    const edge = generateEdgeRouteToolpath(project, {
+      ...operation,
+      kind: 'edge_route_inside',
+      pocketPattern: 'offset',
+      stepover: 0.4,
+      edgeStrategy: 'trochoidal',
+    })
+    const pocketTurning = orbitTurning(pocket.moves)
+    const edgeTurning = orbitTurning(edge.moves)
+    assert(pocketTurning !== 0 && edgeTurning !== 0, `${cutDirection}: both paths must orbit`)
+    assert(
+      Math.sign(pocketTurning) === Math.sign(edgeTurning),
+      `${cutDirection}: pocket orbit turns ${pocketTurning > 0 ? 'CCW' : 'CW'} but the inside edge route turns ${edgeTurning > 0 ? 'CCW' : 'CW'}`,
+    )
+  }
+})
+
+test('#676 reversing the cut direction reverses the orbit', () => {
+  const climb = generatePocketToolpath(...(() => {
+    const { project, operation } = buildPocket({ cutDirection: 'climb', finishWalls: false })
+    return [project, operation] as const
+  })())
+  const conventional = generatePocketToolpath(...(() => {
+    const { project, operation } = buildPocket({ cutDirection: 'conventional', finishWalls: false })
+    return [project, operation] as const
+  })())
+  assert(
+    Math.sign(orbitTurning(climb.moves)) === -Math.sign(orbitTurning(conventional.moves)),
+    'climb and conventional must orbit in opposite senses',
+  )
+})
+
+test('#676 an island ring orbits opposite to the outer ring it sits inside', () => {
+  // The tool runs inside an outer ring and around an island, so one cut
+  // direction puts them on opposite orbit senses. Emitting both the same way
+  // is what a single per-operation sense does.
+  const zTop = 2
+  const project = projectWithFeatures(
+    { ...newProject('island', 'mm'), tools: [makeTool()] },
+    [
+      makeSquareFeature('pocket', 30, zTop, 0),
+      { ...makeSquareFeature('island', 8, zTop, 0), operation: 'add' as const },
+    ],
+  )
+  const { operation } = buildPocket({ finishWalls: false })
+  const result = generatePocketToolpath(project, {
+    ...operation,
+    target: { source: 'features', featureIds: ['pocket'] },
+  })
+  assert(result.moves.length > 0, 'the island pocket must generate')
+  assert(
+    warningCodes(result).length === 0,
+    `it must generate cleanly, got ${warningCodes(result).join(', ')}`,
+  )
+  // Each ring is entered by its own helix, so the transitions split the stream
+  // into per-ring runs. The island run must turn opposite to the outer run.
+  const senses = new Set<number>()
+  let run: ToolpathMove[] = []
+  for (const move of result.moves) {
+    if (move.kind === 'rapid' && move.source === 'trochoidal-transition') {
+      if (run.length > 0) senses.add(Math.sign(orbitTurning(run)))
+      run = []
+    } else {
+      run.push(move)
+    }
+  }
+  if (run.length > 0) senses.add(Math.sign(orbitTurning(run)))
+  senses.delete(0)
+  assert(senses.size === 2, `a pocket with an island must emit both orbit senses, got ${[...senses].join(', ')}`)
 })
 
 // ── The predicate covers every pass that orbits ──────────────────────
