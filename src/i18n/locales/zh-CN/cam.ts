@@ -159,6 +159,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.carveTrochoidalNeedsConstantDiameterTool': '摆线雕刻需要恒定直径的刀具；请使用立铣刀或切换到直接策略。',
   'cam.operation.contourSpacing': '轮廓间距',
   'cam.operation.stepoverRatio': '横向步距比',
+  'cam.operation.trochoidalRingPitch': '环间距 {pitch}，通道宽 {width}',
   'cam.operation.group.identity': '标识',
   'cam.operation.group.target': '加工对象',
   'cam.operation.group.tool': '刀具',

@@ -42,7 +42,7 @@ import type {
   ToolType,
   XyLeadStrategy,
 } from '../../types/project'
-import { defaultRetractOffset, isTrochoidalEdgeRoughing } from '../../types/project'
+import { defaultRetractOffset, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
 import { offeredPocketPatterns, TROCHOIDAL_RING_STEPOVER } from '../../engine/toolpaths/pocketPatterns'
@@ -1416,19 +1416,36 @@ export function CAMPanel({
         </>
       ),
       stepover: () => (
-        <label className="properties-field">
-          <span>
-            {operation.kind === 'v_carve'
-              ? camT('cam.operation.contourSpacing')
-              : camT('cam.operation.stepoverRatio')}
-          </span>
-          <DraftNumberInput
-            value={operation.stepover}
-            min={0.001}
-            onCommit={(value) => updateOperation(operation.id, { stepover: value })}
-          />
-          <OperationParameterReference kind="stepover" />
-        </label>
+        <>
+          <label className="properties-field">
+            <span>
+              {operation.kind === 'v_carve'
+                ? camT('cam.operation.contourSpacing')
+                : camT('cam.operation.stepoverRatio')}
+            </span>
+            <DraftNumberInput
+              value={operation.stepover}
+              min={0.001}
+              onCommit={(value) => updateOperation(operation.id, { stepover: value })}
+            />
+            <OperationParameterReference kind="stepover" />
+          </label>
+          {/* Trochoidal measures the stepover against the CHANNEL, not the
+              cutter, so the same number means a different distance than it does
+              on every other pattern. The resolved pitch says which, at the
+              field, rather than leaving it to be inferred. */}
+          {isTrochoidalPocket(operation) && trochoidalCutWidth > 0 ? (
+            <div className="properties-field">
+              <span />
+              <span className="cam-field-message">
+                {camT('cam.operation.trochoidalRingPitch', {
+                  pitch: formatLength(trochoidalCutWidth * operation.stepover, project.meta.units),
+                  width: formatLength(trochoidalCutWidth, project.meta.units),
+                })}
+              </span>
+            </div>
+          ) : null}
+        </>
       ),
       entryStrategy: () => (
         <label className="properties-field">

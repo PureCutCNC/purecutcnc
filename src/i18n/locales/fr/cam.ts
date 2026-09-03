@@ -133,6 +133,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.operation.carveTrochoidalNeedsConstantDiameterTool': 'La gravure trochoïdale nécessite une fraise à diamètre constant ; affectez une fraise cylindrique ou passez en Directe.',
   'cam.operation.contourSpacing': 'Espacement des contours',
   'cam.operation.stepoverRatio': 'Ratio de recouvrement',
+  'cam.operation.trochoidalRingPitch': 'Anneaux espacés de {pitch} dans un canal de {width}',
   'cam.operation.group.identity': 'Identité',
   'cam.operation.group.target': 'Ce qui est usiné',
   'cam.operation.group.tool': 'Outil',

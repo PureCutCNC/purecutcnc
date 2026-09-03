@@ -158,6 +158,7 @@ export const camEn = {
   'cam.operation.carveTrochoidalNeedsConstantDiameterTool': 'Trochoidal engraving needs a constant-diameter cutter; assign an end mill or switch to Direct.',
   'cam.operation.contourSpacing': 'Contour spacing',
   'cam.operation.stepoverRatio': 'Stepover ratio',
+  'cam.operation.trochoidalRingPitch': 'Rings {pitch} apart in a {width} channel',
   'cam.operation.group.identity': 'Identity',
   'cam.operation.group.target': 'What it cuts',
   'cam.operation.group.tool': 'Tool',

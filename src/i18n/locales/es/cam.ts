@@ -133,6 +133,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.operation.carveTrochoidalNeedsConstantDiameterTool': 'El grabado trocoidal necesita una fresa de diámetro constante; asigne una fresa plana o cambie a Directo.',
   'cam.operation.contourSpacing': 'Espaciado de contorno',
   'cam.operation.stepoverRatio': 'Relación de paso lateral',
+  'cam.operation.trochoidalRingPitch': 'Anillos separados {pitch} en un canal de {width}',
   'cam.operation.group.identity': 'Identidad',
   'cam.operation.group.target': 'Qué corta',
   'cam.operation.group.tool': 'Herramienta',

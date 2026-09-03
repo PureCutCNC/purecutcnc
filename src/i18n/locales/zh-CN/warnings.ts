@@ -101,6 +101,8 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketTrochoidalEntryBudget': '({x}, {y}) 附近的摆线型腔入口已超出该操作剩余的点数预算。请提高每圈推进量或减少 Z 层数。',
   'warnings.pocketTrochoidalWidthTooSmall': '摆线型腔切削宽度 {width} 低于最小值 {minimum}（刀具直径的 1.15 倍）。请加宽通道或改用更小的刀具。',
   'warnings.pocketTrochoidalWidthLeavesCore': '摆线型腔切削宽度 {width} 超过刀具直径的两倍，螺旋下刀不再覆盖自身中心，会留下未切除的芯料。请减小通道宽度。',
+  'warnings.pocketTrochoidalStepoverHigh': '步距 {stepover} 使摆线环在 {width} 的通道中相距 {pitch}，环之间可能残留未切除的材料。在直角型腔上实测，{limit} 是仍能完全清除的最大值；转角更尖锐时，低于该值也会残留。请减小步距或检查结果。',
+  'warnings.pocketTrochoidalCornerReliefUnsupported': '摆线型腔不应用清角（{style}）：轨迹从不经过清角道次所依赖的环形转角，因此不会切出清角。请清除该设置，或改用轮廓图案。',
   'warnings.pocketTrochoidalAdvanceDegenerate': '({x}, {y}) 附近的摆线型腔每圈推进量对该刀具过小：每圈前进不足刀具直径的 1%。请提高每圈推进量。',
   'warnings.edgeMixedDepthSpans': '选定的外侧沿边目标具有不同的有效深度范围。混合深度目标暂不支持组合外侧路径；分别生成轮廓可能会切到内部重叠区域。请按深度拆分加工操作，或对齐目标的顶部/底部。',
   'warnings.edgeNoCombinedContour': '无法为选定的外侧沿边目标生成有效的组合外轮廓',

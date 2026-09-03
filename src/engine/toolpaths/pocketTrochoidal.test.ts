@@ -33,7 +33,8 @@ import { projectWithFeatures } from '../../test/projectFixtures'
 import { SweptMaterialIndex } from './engagement'
 import { generateEdgeRouteToolpath } from './edge'
 import { generatePocketToolpath } from './pocket'
-import { TROCHOIDAL_RING_STEPOVER } from './pocketPatterns'
+import { TROCHOIDAL_RING_STEPOVER, usesTangentLinks } from './pocketPatterns'
+import { OPERATION_FIELDS } from '../../components/cam/operationFields'
 import { buildSweptCoverage } from './sweptCoverage'
 import type { ToolpathMove } from './types'
 
@@ -264,14 +265,32 @@ test('the coverage assertion bites: a channel too narrow for its ring spacing le
   assert(uncovered > 0, 'the grid must be able to detect uncut material at all')
 })
 
+/** Even-odd point-in-polygon, for bounding a sample grid to the real shape. */
+function insidePolygon(point: { x: number; y: number }, polygon: readonly { x: number; y: number }[]): boolean {
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const a = polygon[i]
+    const b = polygon[j]
+    if ((a.y > point.y) !== (b.y > point.y)
+      && point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
 /**
  * Uncut floor area at the deepest level, in mm^2, measured on the cutter body.
- * Samples the whole pocket interior rather than an inset window, because the
- * failure this exists to catch sits on the medial axis, in the middle.
+ *
+ * The sample domain is the pocket outline itself, eroded by the tool radius —
+ * NOT a bounding box. A box over-reports wildly on any non-rectangular pocket:
+ * it counts stock that was never inside the feature as "uncut". The erosion is
+ * what the rings are actually answerable for, since the tool centre cannot come
+ * closer than its own radius to the wall and the wall is finished by a contour.
  */
 function uncutFloorArea(
   result: { moves: readonly ToolpathMove[] },
-  half: number,
+  outline: readonly { x: number; y: number }[],
   sampleStep = TOOL_RADIUS / 8,
 ): number {
   const cuts = cutMoves(result.moves)
@@ -286,15 +305,24 @@ function uncutFloorArea(
     TOOL_RADIUS,
   )
   if (covered.segmentCount === 0) return Infinity
+  // Points within a tool radius of the outline are the wall's business.
+  const wallZone = buildSweptCoverage([[...outline]], TOOL_RADIUS)
+  const xs = outline.map((p) => p.x)
+  const ys = outline.map((p) => p.y)
   let area = 0
-  // The walls are finished by a contour pass, so the rings answer for the floor
-  // inside the tool radius.
-  for (let x = -half + TOOL_RADIUS; x <= half - TOOL_RADIUS; x += sampleStep) {
-    for (let y = -half + TOOL_RADIUS; y <= half - TOOL_RADIUS; y += sampleStep) {
+  for (let x = Math.min(...xs); x <= Math.max(...xs); x += sampleStep) {
+    for (let y = Math.min(...ys); y <= Math.max(...ys); y += sampleStep) {
+      if (!insidePolygon({ x, y }, outline)) continue
+      if (wallZone.covers(x, y)) continue
       if (!covered.covers(x, y)) area += sampleStep * sampleStep
     }
   }
   return area
+}
+
+/** The square outline `buildPocket` cuts, for the coverage domain. */
+function squareOutline(half: number): { x: number; y: number }[] {
+  return [{ x: -half, y: -half }, { x: half, y: -half }, { x: half, y: half }, { x: -half, y: half }]
 }
 
 test('acceptance: no pocket size leaves an uncut core, across a range of widths', () => {
@@ -314,7 +342,7 @@ test('acceptance: no pocket size leaves an uncut core, across a range of widths'
       failures.push(`${half * 2} mm: refused (${warningCodes(result).join(', ') || 'no warning'})`)
       continue
     }
-    const area = uncutFloorArea(result, half)
+    const area = uncutFloorArea(result, squareOutline(half))
     if (area > 0) failures.push(`${half * 2} mm square: ${area.toFixed(2)} mm² uncut`)
   }
   assert(failures.length === 0, `pockets left material uncut:\n    ${failures.join('\n    ')}`)
@@ -625,6 +653,62 @@ test('#676 an island ring orbits opposite to the outer ring it sits inside', () 
   if (run.length > 0) senses.add(Math.sign(orbitTurning(run)))
   senses.delete(0)
   assert(senses.size === 2, `a pocket with an island must emit both orbit senses, got ${[...senses].join(', ')}`)
+})
+
+// ── Panel controls that cannot change the program ────────────────────
+
+test('#676 a stepover above the measured limit advises, without refusing', () => {
+  const { project, operation } = buildPocket({ stepover: 0.95 })
+  const result = generatePocketToolpath(project, operation)
+  assert(
+    warningCodes(result).includes('pocketTrochoidalStepoverHigh'),
+    `expected the stepover advisory, got ${warningCodes(result).join(', ') || 'none'}`,
+  )
+  assert(result.moves.length > 0, 'the advisory must not refuse the operation')
+
+  const atLimit = generatePocketToolpath(project, { ...operation, stepover: TROCHOIDAL_RING_STEPOVER })
+  assert(
+    !warningCodes(atLimit).includes('pocketTrochoidalStepoverHigh'),
+    'the shipped default must not warn about itself',
+  )
+})
+
+test('#676 corner relief on a trochoidal pocket says so once, not once per corner', () => {
+  // It used to emit one `cornerReliefCornerNotCut` per corner and cut no
+  // relief: four warnings naming geometry the user cannot act on.
+  const { project, operation } = buildPocket({ cornerRelief: 'dogbone', roundOutsideCorners: true })
+  const result = generatePocketToolpath(project, operation)
+  const codes = warningCodes(result)
+  const unsupported = codes.filter((code) => code === 'pocketTrochoidalCornerReliefUnsupported')
+  assert(unsupported.length === 1, `expected exactly one advisory, got ${unsupported.length}`)
+  assert(
+    !codes.includes('cornerReliefCornerNotCut'),
+    'the per-corner warnings must not survive alongside it',
+  )
+  assert(result.moves.length > 0, 'the pocket must still cut')
+})
+
+test('#676 the panel withholds the controls a trochoidal orbit cannot use', () => {
+  const { operation } = buildPocket({ roundOutsideCorners: true })
+  const contour: Operation = { ...operation, pocketPattern: 'offset', stepover: 0.4 }
+
+  // Tangential S-links do not exist on an orbit, and this one predicate gates
+  // both the link-rounding row and the XY lead row.
+  assert(!usesTangentLinks(operation.kind, operation.pocketPattern), 'trochoidal splices no S-links')
+  assert(usesTangentLinks(contour.kind, contour.pocketPattern), 'a contour pocket still does')
+
+  const hidden = ['roundLinkCorners', 'xyLeadStrategy', 'cornerRelief', 'cleanWallCorners']
+  for (const id of hidden) {
+    const spec = OPERATION_FIELDS.find((field) => field.id === id)
+    assert(spec !== undefined, `${id} must exist`)
+    assert(!spec.appliesTo(operation), `${id} must be withheld from a trochoidal pocket`)
+    assert(spec.appliesTo(contour), `${id} must still be offered on a contour pocket`)
+  }
+
+  // Kept deliberately: it picks the island join type, which shapes the ring
+  // tree the guides are cut from, so it changes the program.
+  const rounding = OPERATION_FIELDS.find((field) => field.id === 'roundOutsideCorners')
+  assert(rounding !== undefined && rounding.appliesTo(operation), 'roundOutsideCorners stays offered')
 })
 
 // ── The predicate covers every pass that orbits ──────────────────────

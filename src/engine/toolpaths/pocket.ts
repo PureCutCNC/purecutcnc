@@ -16,6 +16,7 @@
 
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
+import { isTrochoidalPocket } from '../../types/project'
 import type { CutDirection, Operation, Point, Project } from '../../types/project'
 import {
   createEntryPolicy,
@@ -91,7 +92,7 @@ import {
   type SeedCirclePlan,
 } from './seedClearing'
 import { planSeedLeftovers, type SeedLeftoverExcursion } from './seedLeftover'
-import { areaCoverage, effectivePocketPattern } from './pocketPatterns'
+import { areaCoverage, effectivePocketPattern, TROCHOIDAL_RING_STEPOVER } from './pocketPatterns'
 import { clearingControlApplies } from './clearingControls'
 import {
   EngagementFeedQuantizer,
@@ -2821,6 +2822,43 @@ function checkTrochoidalCutWidth(
 }
 
 /**
+ * Advise when the ring pitch is wide enough to leave material between rings.
+ *
+ * Advisory, not a refusal, and deliberately a flat threshold rather than a
+ * derived one. What actually governs coverage is the sharpest corner in the
+ * region: two consecutive rings sit `pitch` apart on a straight run but diverge
+ * across a corner, so a sharp interior angle runs out of overlap at a lower
+ * stepover than a right angle does. A bound derived from the corner angle is the
+ * right answer and is not this: `pitch <= channel x sin(angle / 2)` predicts
+ * failure at 0.71 for the right-angled case that measures clean at 0.85, so
+ * shipping it would refuse ordinary work on arithmetic that is not calibrated.
+ *
+ * Measured on `work/trochoidal-pocket-test.camj`, a right-angled pocket:
+ * clean through 0.85, 0.276 mm2 uncut at 0.86, 4.6 at 0.90, 53.0 at 1.00. The
+ * threshold is that measurement, and the message says so rather than implying a
+ * guarantee.
+ *
+ * **Known limitation, stated in the message:** a pocket with corners sharper
+ * than a right angle leaves material *below* this threshold too — an arrowhead
+ * with a ~53-degree notch measured 27 mm2 uncut at 0.85, and a contour pocket at
+ * the same stepover measured 15 mm2, so this is ring clearing's behaviour rather
+ * than the orbit's. The flat threshold cannot see it. It warns where it can and
+ * names the case it cannot.
+ */
+function checkTrochoidalStepover(stepover: number, cutWidth: number, warnings: ToolpathWarning[]): void {
+  if (!(stepover > TROCHOIDAL_RING_STEPOVER)) return
+  appendUniqueWarning(warnings, {
+    code: 'pocketTrochoidalStepoverHigh',
+    params: {
+      stepover,
+      pitch: cutWidth * stepover,
+      width: cutWidth,
+      limit: TROCHOIDAL_RING_STEPOVER,
+    },
+  })
+}
+
+/**
  * Emit trochoidal orbits for each ring contour (outer + islands) of one
  * offset-tree node at one Z level. Returns the position after the last ring.
  *
@@ -3361,6 +3399,7 @@ function generateRoughBandMoves(
     if (!checkTrochoidalCutWidth(trochoidalGeometry.cutWidth, toolRadius * 2, warnings)) {
       return { moves, stepLevels: [], warnings }
     }
+    checkTrochoidalStepover(operation.stepover, trochoidalGeometry.cutWidth, warnings)
     effectiveStepover = Math.max(trochoidalGeometry.cutWidth * operation.stepover, minStepover)
     initialInset = trochoidalGeometry.cutWidth / 2 + toolRadius * 2 * TROCHOIDAL_GUIDE_SAFETY_FRACTION + radialLeave
   }
@@ -3972,6 +4011,7 @@ function generateFinishBandMoves(
   if (isTrochoidalFloor && !checkTrochoidalCutWidth(floorTrochoidalGeometry.cutWidth, toolRadius * 2, warnings)) {
     return { moves, stepLevels: [], warnings }
   }
+  if (isTrochoidalFloor) checkTrochoidalStepover(operation.stepover, floorTrochoidalGeometry.cutWidth, warnings)
   const floorTrochoidalRingOptions: TrochoidalRingOptions | undefined = isTrochoidalFloor && trochoidalBudget
     ? {
         orbitRadius: floorTrochoidalGeometry.orbitRadius,
@@ -4609,7 +4649,19 @@ function generatePocketToolpathSingle(
   // Skipped bands are left out so a band that produced no moves at all does not
   // also produce one "corner never cut" warning per corner.
   const reliefBands: Array<{ band: ResolvedPocketBand; effectiveBottom: number }> = []
-  const reliefStyle = operation.cornerRelief ?? 'none'
+  // Corner relief cannot run on a trochoidal pocket: the pass descends on the
+  // tool-centre path where it turns the corner, and an orbit never traces that
+  // corner. Left to run it finds no corner cut and emits one
+  // `cornerReliefCornerNotCut` per corner — four warnings naming geometry the
+  // user cannot act on, and no relief either way. The CAM panel withholds the
+  // row, so this only catches a project saved before that, and it says the one
+  // thing worth saying rather than repeating itself per corner.
+  const reliefRequested = (operation.cornerRelief ?? 'none') !== 'none'
+  const reliefUnsupported = reliefRequested && isTrochoidalPocket(operation)
+  if (reliefUnsupported) {
+    warnings.push({ code: 'pocketTrochoidalCornerReliefUnsupported', params: { style: operation.cornerRelief ?? 'none' } })
+  }
+  const reliefStyle = reliefUnsupported ? 'none' : operation.cornerRelief ?? 'none'
   const reliefStepdown = reliefStyle === 'none' ? null : resolveReliefStepdown(tool)
   if (reliefStyle !== 'none' && reliefStepdown === null) {
     warnings.push({ code: 'cornerReliefNoStepdown', params: { tool: tool.name } })

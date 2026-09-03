@@ -155,6 +155,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.carveTrochoidalNeedsConstantDiameterTool': 'Trochoidale Gravur benötigt einen Fräser mit konstantem Durchmesser; weisen Sie einen Schaftfräser zu oder wechseln Sie zu Direkt.',
   'cam.operation.contourSpacing': 'Konturabstand',
   'cam.operation.stepoverRatio': 'Bahnabstand-Verhältnis',
+  'cam.operation.trochoidalRingPitch': 'Ringe {pitch} auseinander in einem Kanal von {width}',
   'cam.operation.group.identity': 'Identität',
   'cam.operation.group.target': 'Was gefräst wird',
   'cam.operation.group.tool': 'Werkzeug',
