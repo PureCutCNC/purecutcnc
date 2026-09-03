@@ -109,8 +109,16 @@ import { appendAll } from './appendAll'
 import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET } from './trochoidalEdge'
 import type { TrochoidalContourError } from './trochoidalEdge'
 import { createTrochoidalPathStore } from './trochoidalLevelPaths'
-import type { TrochoidalPathParams, TrochoidalPathStore } from './trochoidalLevelPaths'
-import { appendTrochoidalEntry, trochoidalEntryMoveCount, MAX_TROCHOIDAL_ENTRY_MOVES } from './trochoidalPath'
+import type { TrochoidalPathParams } from './trochoidalLevelPaths'
+import {
+  appendTrochoidalEntry,
+  resolveTrochoidalGeometry,
+  trochoidalEntryMoveCount,
+  MAX_TROCHOIDAL_ENTRY_MOVES,
+  TROCHOIDAL_CORE_WIDTH_RATIO,
+  TROCHOIDAL_MIN_WIDTH_RATIO,
+} from './trochoidalPath'
+import type { TrochoidalOperationBudget } from './trochoidalPath'
 
 const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
 const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.01
@@ -2656,36 +2664,109 @@ export interface OffsetRingOptions {
   /** Level-scoped XY lead state (issue #695); absent = no leads. */
   xyLead?: XyLeadContext
   /** Trochoidal ring-orbit emission in place of direct contour tracing. */
-  trochoidal?: {
-    orbitRadius: number
-    advance: number
-    toolDiameter: number
-    angularDirection: 1 | -1
-    budget: PocketTrochoidalBudget
-    pathStore: TrochoidalPathStore
-    operation: Operation
-  }
+  trochoidal?: TrochoidalRingOptions
+}
+
+/**
+ * Everything the ring emitter needs to orbit a guide, resolved once per
+ * operation. `budget` is shared across every band and level of the operation.
+ */
+interface TrochoidalRingOptions {
+  orbitRadius: number
+  advance: number
+  toolDiameter: number
+  angularDirection: 1 | -1
+  budget: TrochoidalOperationBudget
+  operation: Operation
+  /**
+   * Height the helical entry starts its descent from, per level. XY travel
+   * still happens at safe Z; this is only how far down the bore has to cut.
+   * Defaults to safe Z, which is what a level with no cleared floor above it
+   * gets.
+   */
+  entryStartZ?: number
 }
 
 // ── Trochoidal ring emission ────────────────────────────────────────
 
 /**
- * Budget shared across all trochoidal rings at all levels in one rough pass.
- * Creation is charged once (when the generator runs), emission for every level.
- * Mirrors edge.ts's `TrochoidalOperationBudget` without the tab/obstacle fields.
+ * A fresh per-operation trochoidal budget at the shared ceiling.
+ *
+ * It is created in `generatePocketToolpath` and threaded down, never created by
+ * a band generator. The band loop runs it once per band and, under feature-first,
+ * once per target: a budget created any deeper would be claimed in full by each
+ * of them, which is the failure planning/TROCHOIDAL_EDGE_DESIGN.md § Machining
+ * order records for edge routes. `TrochoidalOperationBudget` carries the path
+ * store too, so levels whose guide is identical are charged for generation once.
  */
-interface PocketTrochoidalBudget {
-  remainingPoints: number
-  remainingMoves: number
+export function createPocketTrochoidalBudget(): TrochoidalOperationBudget {
+  return {
+    remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET,
+    remainingMoves: DEFAULT_TROCHOIDAL_POINT_BUDGET,
+    paths: createTrochoidalPathStore(),
+  }
 }
 
+/**
+ * Trochoidal pocket failures that must refuse the operation rather than trim it.
+ *
+ * A trochoidal ring that is skipped leaves its channel uncleared, and the next
+ * Z level's orbit then descends into stock no orbit has cleared. There is no
+ * safe partial answer, so every one of these is fatal — the same contract
+ * `hasFatalTrochoidalWarning` holds for edge routes.
+ */
+function hasFatalPocketTrochoidalWarning(warnings: readonly ToolpathWarning[]): boolean {
+  return warnings.some((warning) => (
+    warning.code === 'pocketTrochoidalInvalidGuide'
+    || warning.code === 'pocketTrochoidalMoveBudget'
+    || warning.code === 'pocketTrochoidalEntryBudget'
+    || warning.code === 'pocketTrochoidalWidthTooSmall'
+    || warning.code === 'pocketTrochoidalAdvanceDegenerate'
+  ))
+}
+
+/**
+ * A degenerate advance and an exhausted ceiling are different failures and get
+ * different warnings — that separation is the point of issue #662, and folding
+ * the advance case into the guide warning tells a user who typed a bad advance
+ * to go looking at their geometry.
+ */
 function pocketTrochoidalWarningCode(
   error: TrochoidalContourError | undefined,
   overBudget: boolean,
-): 'pocketTrochoidalInvalidGuide' | 'pocketTrochoidalMoveBudget' | 'pocketTrochoidalEntryBudget' {
-  if (error === 'degenerate-advance') return 'pocketTrochoidalInvalidGuide'
+): 'pocketTrochoidalInvalidGuide' | 'pocketTrochoidalMoveBudget' | 'pocketTrochoidalAdvanceDegenerate' {
+  if (error === 'degenerate-advance') return 'pocketTrochoidalAdvanceDegenerate'
   if (error === 'move-budget' || overBudget) return 'pocketTrochoidalMoveBudget'
   return 'pocketTrochoidalInvalidGuide'
+}
+
+/**
+ * Channel-width bounds, per operation. `W >= 1.15 x D` is the hard floor from
+ * planning/TROCHOIDAL_EDGE_DESIGN.md § Cut width bounds: below it the orbit
+ * degenerates toward a plain contour while still paying the full per-loop move
+ * count, and at `W <= D` the orbit radius is not positive at all.
+ *
+ * Above `2 x D` the orbit radius exceeds the tool radius, so the helical entry
+ * bore no longer overlaps its own centre and leaves a full-stepdown core for
+ * the first advancing loops to plough through side-on. The channel width is the
+ * user's call, so that one advises rather than refuses.
+ */
+function checkTrochoidalCutWidth(
+  cutWidth: number,
+  toolDiameter: number,
+  warnings: ToolpathWarning[],
+): boolean {
+  if (!(cutWidth >= toolDiameter * TROCHOIDAL_MIN_WIDTH_RATIO)) {
+    appendUniqueWarning(warnings, {
+      code: 'pocketTrochoidalWidthTooSmall',
+      params: { width: cutWidth, minimum: toolDiameter * TROCHOIDAL_MIN_WIDTH_RATIO },
+    })
+    return false
+  }
+  if (cutWidth > toolDiameter * TROCHOIDAL_CORE_WIDTH_RATIO) {
+    appendUniqueWarning(warnings, { code: 'pocketTrochoidalWidthLeavesCore', params: { width: cutWidth } })
+  }
+  return true
 }
 
 /**
@@ -2701,35 +2782,30 @@ function cutTrochoidalRingMoves(
   z: number,
   safeZ: number,
   fromPosition: ToolpathPoint | null,
-  options: {
-    direction: CutDirection
-    entryPolicy?: EntryPolicy
-    orbitRadius: number
-    advance: number
-    toolDiameter: number
-    angularDirection: 1 | -1
-    budget: PocketTrochoidalBudget
-    pathStore: TrochoidalPathStore
-    operation: Operation
-  },
+  options: TrochoidalRingOptions & { direction: CutDirection; loops?: 'all' | 'outer' },
   warnings: ToolpathWarning[],
 ): ToolpathPoint | null {
-  const { direction, orbitRadius, advance, toolDiameter, angularDirection, budget, pathStore, operation } = options
+  const { direction, orbitRadius, advance, toolDiameter, angularDirection, budget, operation, loops = 'all' } = options
+  const pathStore = budget.paths
+  // Never below safe Z's own guarantee, and never below the cut itself.
+  const entryStartZ = Math.max(z, Math.min(safeZ, options.entryStartZ ?? safeZ))
 
   const outer = node.region.outer.length >= 3
     ? applyContourDirection([node.region.outer], direction)[0]
     : null
-  const islandContours = applyContourDirection(
-    node.region.islands.filter((island) => island.length >= 3),
-    direction,
-  )
+  const islandContours = loops === 'outer'
+    ? []
+    : applyContourDirection(
+      node.region.islands.filter((island) => island.length >= 3),
+      direction,
+    )
   const contours: Point[][] = [...(outer ? [outer] : []), ...islandContours]
 
   const pathParams: TrochoidalPathParams = { orbitRadius, advance, toolDiameter, angularDirection }
   let nextPosition = fromPosition
 
   for (const contour of contours) {
-    const entryMoves = trochoidalEntryMoveCount(safeZ, z, orbitRadius, operation)
+    const entryMoves = trochoidalEntryMoveCount(entryStartZ, z, orbitRadius, operation)
     if (entryMoves > MAX_TROCHOIDAL_ENTRY_MOVES || entryMoves + 3 >= budget.remainingMoves) {
       warnings.push({ code: 'pocketTrochoidalEntryBudget', params: { x: contour[0]?.x ?? 0, y: contour[0]?.y ?? 0 } })
       return nextPosition
@@ -2773,9 +2849,17 @@ function cutTrochoidalRingMoves(
     if (nextPosition) {
       moves.push({ kind: 'rapid', from: nextPosition, to: rapidTo, source: 'trochoidal-transition' })
     }
+    // XY travel stays at safe Z; only the descent starts lower. The drop is
+    // through the footprint the level above already cleared, which is what
+    // lets the bore skip it.
+    let entryFrom = rapidTo
+    if (entryStartZ < safeZ) {
+      entryFrom = { x: rapidTo.x, y: rapidTo.y, z: entryStartZ }
+      moves.push({ kind: 'rapid', from: rapidTo, to: entryFrom, source: 'trochoidal-transition' })
+    }
     nextPosition = appendTrochoidalEntry(
       moves,
-      rapidTo,
+      entryFrom,
       built.points[0],
       built.entryCenter,
       z,
@@ -2828,19 +2912,12 @@ export function cutOffsetNodeRings(
   // no corner cleanup, no rotation toward the entry. The orbit closes on
   // itself and the entry is a helix at the guide start.
   if (trochoidal) {
+    // `loops === 'outer'` asks for the outer ring alone; the orbit emitter honours
+    // it the same way the contour path below does, so the two cannot diverge on a
+    // caller that wants island loops left to another pass.
     return cutTrochoidalRingMoves(
       moves, node, z, safeZ, fromPosition,
-      {
-        direction,
-        entryPolicy,
-        orbitRadius: trochoidal.orbitRadius,
-        advance: trochoidal.advance,
-        toolDiameter: trochoidal.toolDiameter,
-        angularDirection: trochoidal.angularDirection,
-        budget: trochoidal.budget,
-        pathStore: trochoidal.pathStore,
-        operation: trochoidal.operation,
-      },
+      { ...trochoidal, direction, loops },
       warnings ?? [],
     )
   }
@@ -3184,6 +3261,7 @@ function generateRoughBandMoves(
   direction: CutDirection = 'conventional',
   telemetry: EngagementTelemetryAccumulator | null = null,
   regionMasked = false,
+  trochoidalBudget: TrochoidalOperationBudget | null = null,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -3209,10 +3287,13 @@ function generateRoughBandMoves(
   // operation's stepover. The inset follows the same guide-offset formula as
   // edge routes (planning/TROCHOIDAL_EDGE_DESIGN.md).
   const isTrochoidal = roughCoverage.trochoidal
-  const trochoidalCutWidth = operation.trochoidalCutWidth ?? toolRadius * 3
+  const trochoidalGeometry = resolveTrochoidalGeometry(operation, toolRadius * 2)
   if (isTrochoidal) {
-    effectiveStepover = Math.max(trochoidalCutWidth * operation.stepover, minStepover)
-    initialInset = trochoidalCutWidth / 2 + toolRadius * 2 * TROCHOIDAL_GUIDE_SAFETY_FRACTION + radialLeave
+    if (!checkTrochoidalCutWidth(trochoidalGeometry.cutWidth, toolRadius * 2, warnings)) {
+      return { moves, stepLevels: [], warnings }
+    }
+    effectiveStepover = Math.max(trochoidalGeometry.cutWidth * operation.stepover, minStepover)
+    initialInset = trochoidalGeometry.cutWidth / 2 + toolRadius * 2 * TROCHOIDAL_GUIDE_SAFETY_FRACTION + radialLeave
   }
   const slotScale = resolveSlotFeedScale(operation)
   const slotDistance = Math.max(
@@ -3427,19 +3508,15 @@ function generateRoughBandMoves(
     (warning) => appendUniqueWarning(warnings, warning),
   )
 
-  // Trochoidal budget and path store: one per band, shared across levels.
-  const trochoidalBudget: PocketTrochoidalBudget | undefined = isTrochoidal
-    ? { remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET, remainingMoves: DEFAULT_TROCHOIDAL_POINT_BUDGET }
-    : undefined
-  const trochoidalPathStore = isTrochoidal ? createTrochoidalPathStore() : undefined
-  const trochoidalRingOptions = isTrochoidal
+  // The budget belongs to the operation, not to this band — it arrives already
+  // created and part-spent by earlier bands.
+  const trochoidalRingOptions: TrochoidalRingOptions | undefined = isTrochoidal && trochoidalBudget
     ? {
-        orbitRadius: (trochoidalCutWidth - toolRadius * 2) / 2,
-        advance: (operation.trochoidalAdvance ?? 0.1) * toolRadius * 2,
+        orbitRadius: trochoidalGeometry.orbitRadius,
+        advance: trochoidalGeometry.advance,
         toolDiameter: toolRadius * 2,
         angularDirection: (direction === 'climb' ? 1 : -1) as 1 | -1,
-        budget: trochoidalBudget!,
-        pathStore: trochoidalPathStore!,
+        budget: trochoidalBudget,
         operation,
       }
     : undefined
@@ -3452,10 +3529,18 @@ function generateRoughBandMoves(
   // first level of each band has no cleared floor yet and stays at safe Z.
   for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
     const z = stepLevels[levelIndex]
-    const levelEntryPolicy = withEntryStartZ(
-      entryPolicy,
-      levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
-    )
+    const levelEntryStartZ = levelIndex === 0
+      ? safeZ
+      : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance)
+    const levelEntryPolicy = withEntryStartZ(entryPolicy, levelEntryStartZ)
+    // The orbit entry takes the same start height as the contour entry above.
+    // Helixing from the global safe Z on every level bores the full depth of
+    // already-cleared air once per ring per level — on the 200 x 150 worked
+    // example in #676 that is most of the entry cost, and it is the very waste
+    // the comment above this loop exists to avoid.
+    const levelTrochoidal = trochoidalRingOptions
+      ? { ...trochoidalRingOptions, entryStartZ: levelEntryStartZ }
+      : undefined
     const levelXyLead = beginXyLeadLevel(
       xyLeadPassOptions,
       (warning) => appendUniqueWarning(warnings, warning),
@@ -3553,7 +3638,7 @@ function generateRoughBandMoves(
             wallCleanup,
             toolRadius,
             xyLead: levelXyLead,
-            trochoidal: trochoidalRingOptions,
+            trochoidal: levelTrochoidal,
           },
           warnings,
         )
@@ -3616,7 +3701,7 @@ function generateRoughBandMoves(
             toolRadius,
             parent: unit.parent ?? undefined,
             xyLead: levelXyLead,
-            trochoidal: trochoidalRingOptions,
+            trochoidal: levelTrochoidal,
           },
           warnings,
         )
@@ -3693,6 +3778,7 @@ function generateFinishBandMoves(
   direction: CutDirection = 'conventional',
   telemetry: EngagementTelemetryAccumulator | null = null,
   regionMasked = false,
+  trochoidalBudget: TrochoidalOperationBudget | null = null,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -3804,21 +3890,21 @@ function generateFinishBandMoves(
   }
   const finishCoverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
   const isParallelPocket = finishCoverage.rasterSegments
-  // Trochoidal floor: rings become orbit guides, same as the rough pass.
-  const isTrochoidalFloor = finishCoverage.trochoidal
-  const floorTrochoidalCutWidth = operation.trochoidalCutWidth ?? toolRadius * 3
-  const floorTrochoidalBudget: PocketTrochoidalBudget | undefined = isTrochoidalFloor
-    ? { remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET, remainingMoves: DEFAULT_TROCHOIDAL_POINT_BUDGET }
-    : undefined
-  const floorTrochoidalPathStore = isTrochoidalFloor ? createTrochoidalPathStore() : undefined
-  const floorTrochoidalRingOptions = isTrochoidalFloor
+  // Trochoidal floor: rings become orbit guides, same as the rough pass, and on
+  // the same operation-wide budget — a finish floor that claimed its own would
+  // double what one operation may emit.
+  const isTrochoidalFloor = finishCoverage.trochoidal && operation.finishFloor
+  const floorTrochoidalGeometry = resolveTrochoidalGeometry(operation, toolRadius * 2)
+  if (isTrochoidalFloor && !checkTrochoidalCutWidth(floorTrochoidalGeometry.cutWidth, toolRadius * 2, warnings)) {
+    return { moves, stepLevels: [], warnings }
+  }
+  const floorTrochoidalRingOptions: TrochoidalRingOptions | undefined = isTrochoidalFloor && trochoidalBudget
     ? {
-        orbitRadius: (floorTrochoidalCutWidth - toolRadius * 2) / 2,
-        advance: (operation.trochoidalAdvance ?? 0.1) * toolRadius * 2,
+        orbitRadius: floorTrochoidalGeometry.orbitRadius,
+        advance: floorTrochoidalGeometry.advance,
         toolDiameter: toolRadius * 2,
         angularDirection: (direction === 'climb' ? 1 : -1) as 1 | -1,
-        budget: floorTrochoidalBudget!,
-        pathStore: floorTrochoidalPathStore!,
+        budget: trochoidalBudget,
         operation,
       }
     : undefined
@@ -4313,11 +4399,30 @@ export function generatePocketToolpath(project: Project, operation: Operation): 
   if (isFeatureFirst(operation)) {
     const parts = perFeatureOperations(operation, project)
     const sharedTelemetry = createSharedEngagementTelemetry(project, operation)
-    const merged = mergePocketToolpathResults(
-      operation.id,
-      parts.map((subOp) => generatePocketToolpathSingle(project, subOp, sharedTelemetry)),
-      { orderBlocks: 'nearest' },
-    )
+    // The ceiling is what ONE operation may emit, so every per-feature target
+    // draws on the same budget. Created here rather than per target for the
+    // reason planning/TROCHOIDAL_EDGE_DESIGN.md § Machining order gives.
+    const isTrochoidal = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern)).trochoidal
+    const sharedTrochoidalBudget = isTrochoidal ? createPocketTrochoidalBudget() : null
+    const results = parts.map((subOp) =>
+      generatePocketToolpathSingle(project, subOp, sharedTelemetry, sharedTrochoidalBudget))
+    // `mergePocketToolpathResults` concatenates parts and flattens warnings with
+    // no failure check, so a target that failed closed would be silently skipped
+    // while its neighbours were cut. Multi-target trochoidal stays atomic.
+    if (isTrochoidal) {
+      const fatal = results.filter((part) => hasFatalPocketTrochoidalWarning(part.warnings))
+      if (fatal.length > 0) {
+        return {
+          operationId: operation.id,
+          moves: [],
+          warnings: results.flatMap((part) => part.warnings),
+          bounds: null,
+          stepLevels: [],
+          ...(sharedTelemetry ? { engagementTelemetry: sharedTelemetry.toTelemetry() } : {}),
+        }
+      }
+    }
+    const merged = mergePocketToolpathResults(operation.id, results, { orderBlocks: 'nearest' })
     return sharedTelemetry
       ? { ...merged, engagementTelemetry: sharedTelemetry.toTelemetry() }
       : merged
@@ -4350,6 +4455,7 @@ function generatePocketToolpathSingle(
   project: Project,
   operation: Operation,
   sharedTelemetry?: EngagementTelemetryAccumulator | null,
+  sharedTrochoidalBudget?: TrochoidalOperationBudget | null,
 ): PocketToolpathResult {
   const resolved = resolvePocketRegions(project, operation)
   const regionMask = operation.target.source === 'features'
@@ -4456,6 +4562,12 @@ function generatePocketToolpathSingle(
     return `${id} [missing]`
   }
 
+  // One budget for the whole operation. Feature-first hands the same object to
+  // every target, so N targets share one ceiling instead of claiming N of them.
+  const trochoidalBudget = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern)).trochoidal
+    ? sharedTrochoidalBudget ?? createPocketTrochoidalBudget()
+    : null
+
   if (operation.debugToolpath) {
     const resolvedBandSummary = resolved.bands
       .map((band) => `${formatZ(band.topZ)} -> ${formatZ(band.bottomZ)}`)
@@ -4496,6 +4608,7 @@ function generatePocketToolpathSingle(
         direction,
         telemetry,
         regionMask !== null,
+        trochoidalBudget,
       )
       : generateRoughBandMoves(
         band,
@@ -4509,11 +4622,22 @@ function generatePocketToolpathSingle(
         direction,
         telemetry,
         regionMask !== null,
+        trochoidalBudget,
       )
     const { moves, stepLevels, warnings: bandWarnings } = result
     moves.forEach((move) => allMoves.push(move))
     stepLevels.forEach((level) => allStepLevels.add(level))
     appendAll(warnings, bandWarnings)
+    if (trochoidalBudget && operation.debugToolpath) {
+      // The remaining ceiling after each band, so the operation-wide budget is
+      // observable: a band that started over at the full ceiling would report
+      // the same number twice.
+      warnings.push({ code: 'debug', params: { text: `Debug: band ${formatZ(band.topZ)} -> ${formatZ(band.bottomZ)} trochoidal budget left = ${trochoidalBudget.remainingMoves}` } })
+    }
+    // A trochoidal ring that could not be emitted leaves its channel uncleared,
+    // and every band below would descend into stock no orbit has cleared. Stop
+    // at the first one and refuse below rather than banking the bands that fit.
+    if (trochoidalBudget && hasFatalPocketTrochoidalWarning(bandWarnings)) break
     if (reliefStepdown !== null && moves.length > 0) {
       const reliefBottom = resolveBandBottomZ(band, operation)
       if (reliefBottom !== null) {
@@ -4543,6 +4667,21 @@ function generatePocketToolpathSingle(
       reliefStepdown,
       safeZ,
     )
+  }
+
+  // Fail closed. A trochoidal pocket that could not emit every ring has left
+  // channels uncleared, and the levels below them were generated as if it had
+  // not — so there is no safe subset of this path to hand the machine
+  // (planning/TROCHOIDAL_EDGE_DESIGN.md § Budgets).
+  if (trochoidalBudget && hasFatalPocketTrochoidalWarning(warnings)) {
+    return {
+      operationId: operation.id,
+      moves: [],
+      warnings,
+      bounds: null,
+      stepLevels: [],
+      ...(telemetry ? { engagementTelemetry: telemetry.toTelemetry() } : {}),
+    }
   }
 
   let bounds: ToolpathBounds | null = null

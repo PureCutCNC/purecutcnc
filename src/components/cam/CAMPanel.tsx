@@ -45,7 +45,7 @@ import type {
 import { defaultRetractOffset, isTrochoidalEdgeRoughing } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
-import { offeredPocketPatterns } from '../../engine/toolpaths/pocketPatterns'
+import { offeredPocketPatterns, TROCHOIDAL_RING_STEPOVER } from '../../engine/toolpaths/pocketPatterns'
 import { countersinkTipDepth } from '../../engine/toolpaths/drilling'
 import { createOperationBookletPdf } from '../../engine/operationBooklet'
 import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
@@ -1490,11 +1490,19 @@ export function CAMPanel({
               const waterlineSpacing = value === 'waterline'
                 ? defaultWaterlineAdaptiveSpacing(selectedOperationTool, project.meta.units)
                 : 0
+              // Trochoidal spaces its rings by the channel width, not the tool
+              // diameter, so the contour-tuned stepover means something different
+              // here. Retune it on the switch, where the user can see the new
+              // number in the field and edit it.
+              const trochoidalStepover = value === 'trochoidal' && operation.pocketPattern !== 'trochoidal'
+                ? TROCHOIDAL_RING_STEPOVER
+                : 0
               updateOperation(operation.id, {
                 pocketPattern: value,
                 ...(waterlineSpacing > 0 && !(operation.waterlineMicroStepover && operation.waterlineMicroStepover > 0)
                   ? { waterlineMicroStepover: waterlineSpacing }
                   : {}),
+                ...(trochoidalStepover > 0 ? { stepover: trochoidalStepover } : {}),
               })
             }}
           />

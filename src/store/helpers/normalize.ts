@@ -278,15 +278,6 @@ export function normalizeOperation(rawOperation: Operation, project: Project, in
       : undefined,
   }
 
-  // Trochoidal pocket clearing defaults to 15% ring overlap instead of the
-  // legacy 0.4 stepover (which is tuned for contour rings stepping by D).
-  // Backfill only when the user never explicitly set stepover — a saved
-  // operation with a deliberate stepover keeps it, even if the number happens
-  // to equal the tool default.
-  if (normalized.pocketPattern === 'trochoidal' && rawOperation.stepover === undefined) {
-    normalized.stepover = 0.85
-  }
-
   if (!isOperationTargetValid(project, normalized.kind, normalized.target)) {
     return {
       ...normalized,

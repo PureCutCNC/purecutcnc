@@ -480,7 +480,7 @@ test.describe('CAM operation browser smoke', () => {
 
     await pattern.locator('.ui-select__trigger').click()
     const options = pattern.locator('.ui-select__dropdown [role="option"]')
-    await expect(options).toHaveText(['Offset', 'Seeded circles', 'Parallel'])
+    await expect(options).toHaveText(['Offset', 'Seeded circles', 'Parallel', 'Trochoidal'])
     await options.filter({ hasText: 'Seeded circles' }).click()
 
     await expect(pattern.locator('.ui-select__label')).toHaveText('Seeded circles')

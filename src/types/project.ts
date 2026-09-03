@@ -675,18 +675,25 @@ export function isTrochoidalCarve(operation: Operation): boolean {
 }
 
 /**
- * True for a pocket clearing operation that generates trochoidal orbits on
- * its offset rings rather than tracing them as plain contours.
+ * True for a clearing operation that generates trochoidal orbits on its offset
+ * rings rather than tracing them as plain contours.
  *
- * This is the single definition. The predicate gates generation, the CAM panel's
- * field visibility, and the entry-strategy switch — and those must agree exactly,
- * so none of them may re-spell it. Note the `pass` term: a finish pass's walls
- * are always a contour, even when a finish floor is trochoidal.
+ * This is the single definition, and it decides the CAM panel's field visibility
+ * and the entry-strategy switch. It has to cover the finish pass too: a finish
+ * FLOOR is cleared trochoidally by the same ring emitter, so an operation that
+ * orbits needs its channel-width and advance fields whichever pass it is on.
+ * Gating this on `pass === 'rough'` hid those fields from an operation that was
+ * still emitting orbits, leaving a channel width the user could not set.
+ *
+ * A finish pass's WALLS are always a contour — but that is decided inside the
+ * generator, which asks `areaCoverage` per ring, not by this predicate.
  */
 export function isTrochoidalPocket(operation: Operation): boolean {
-  return operation.pass === 'rough'
-    && (operation.kind === 'pocket' || operation.kind === 'surface_clean' || operation.kind === 'rough_surface')
-    && operation.pocketPattern === 'trochoidal'
+  if (operation.pocketPattern !== 'trochoidal') return false
+  if (operation.kind !== 'pocket' && operation.kind !== 'surface_clean' && operation.kind !== 'rough_surface') {
+    return false
+  }
+  return operation.pass === 'rough' || operation.finishFloor
 }
 
 // ============================================================

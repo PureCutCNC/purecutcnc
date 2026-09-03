@@ -171,6 +171,21 @@ export function effectivePocketPattern(
   return OPERATION_PATTERN_SUPPORT[kind]?.effective[pattern] ?? 'none'
 }
 
+/**
+ * Ring spacing for a trochoidal pocket, as a fraction of the CHANNEL width —
+ * 0.85 leaves 15 % overlap between neighbouring channels, enough to swallow the
+ * orbit sagitta and Clipper's tessellation without re-cutting half of every pass.
+ *
+ * A contour pocket's stepover is a fraction of the tool DIAMETER and its shipped
+ * default is tuned for that, so carrying it across unchanged spaces trochoidal
+ * rings at roughly half this pitch: safe, but twice the rings, twice the time,
+ * and twice the emitted points charged against the operation's budget. The CAM
+ * panel therefore seeds this when the user picks the pattern, where the change
+ * is visible and editable — a load-time rewrite would silently retune a saved
+ * operation whose stepover the user had chosen deliberately.
+ */
+export const TROCHOIDAL_RING_STEPOVER = 0.85
+
 /** What a clearing generator builds for an effective pattern. */
 export interface AreaCoverage {
   /** Concentric offset rings cover the area. */

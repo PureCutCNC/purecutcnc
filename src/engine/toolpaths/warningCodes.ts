@@ -112,6 +112,7 @@ export type ToolpathWarningCode =
   | 'pocketTrochoidalMoveBudget'
   | 'pocketTrochoidalEntryBudget'
   | 'pocketTrochoidalWidthTooSmall'
+  | 'pocketTrochoidalWidthLeavesCore'
   | 'pocketTrochoidalAdvanceDegenerate'
   | 'carveTrochoidalEntryStrategyUnsupported'
   | 'carveTrochoidalInvalidGuide'
