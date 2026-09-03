@@ -33,6 +33,7 @@ import { projectWithFeatures } from '../../test/projectFixtures'
 import { SweptMaterialIndex } from './engagement'
 import { generateEdgeRouteToolpath } from './edge'
 import { generatePocketToolpath } from './pocket'
+import { generatePocketRestRegionDrafts } from './restRegions'
 import { TROCHOIDAL_MAX_COVERING_STEPOVER, TROCHOIDAL_RING_STEPOVER, usesTangentLinks } from './pocketPatterns'
 import { OPERATION_FIELDS } from '../../components/cam/operationFields'
 import { buildSweptCoverage } from './sweptCoverage'
@@ -697,6 +698,64 @@ test('#676 an ordinary pocket reports no tight spots', () => {
   assert(
     !warningCodes(result).includes('pocketTrochoidalTightSpot'),
     'a pocket the channel fits everywhere must not warn about tight spots',
+  )
+})
+
+// ── Rest machining ───────────────────────────────────────────────────
+
+/** Total area of a set of rest-region drafts. */
+function draftArea(drafts: readonly { profile: { start: { x: number; y: number }; segments: { to: { x: number; y: number } }[] } }[]): number {
+  let total = 0
+  for (const draft of drafts) {
+    const points = [draft.profile.start, ...draft.profile.segments.map((segment) => segment.to)]
+    let sum = 0
+    for (let index = 0; index < points.length; index += 1) {
+      const a = points[index]
+      const b = points[(index + 1) % points.length]
+      sum += a.x * b.y - b.x * a.y
+    }
+    total += Math.abs(sum) / 2
+  }
+  return total
+}
+
+test('#676 rest machining measures the leftover from the channel, not the cutter', () => {
+  // A trochoidal pass clears a channel wider than its cutter, so what it leaves
+  // is what a contour pocket with a cutter that wide leaves. Deriving the
+  // leftover from the operation's own (smaller) cutter says stock remains that
+  // has already been removed, and the rest pass then cuts air.
+  //
+  // Asserted on AREA, not region count: a wider effective tool reaches less far
+  // into corners and leaves more behind, but it can leave that extra in the same
+  // number of pieces, so counting them proves nothing — measured 4 regions
+  // either way on this fixture.
+  const { project, operation } = buildPocket({ trochoidalCutWidth: DEFAULT_CUT_WIDTH }, 26)
+  const virtualProject: Project = {
+    ...project,
+    tools: [...project.tools, { ...makeTool(), id: 'virtual', diameter: DEFAULT_CUT_WIDTH }],
+  }
+
+  const trochoidal = draftArea(generatePocketRestRegionDrafts(project, operation).drafts)
+  const channel = draftArea(generatePocketRestRegionDrafts(
+    virtualProject,
+    { ...operation, pocketPattern: 'offset', toolRef: 'virtual' },
+  ).drafts)
+  const cutter = draftArea(generatePocketRestRegionDrafts(
+    project,
+    { ...operation, pocketPattern: 'offset' },
+  ).drafts)
+
+  assert(channel > 0, 'the virtual tool must leave something to compare against')
+  assert(
+    Math.abs(trochoidal - channel) < Math.abs(trochoidal - cutter),
+    `leftover ${trochoidal.toFixed(2)} mm² must track the channel's ${channel.toFixed(2)}, not the cutter's ${cutter.toFixed(2)}`,
+  )
+  // Never less than the channel leaves: the guide sits a further 0.01 x D off
+  // the wall, so slightly more stock survives, and erring the other way would
+  // hand the rest pass less than is actually there.
+  assert(
+    trochoidal >= channel * 0.999,
+    `leftover ${trochoidal.toFixed(2)} mm² must not undercut the channel's ${channel.toFixed(2)}`,
   )
 })
 

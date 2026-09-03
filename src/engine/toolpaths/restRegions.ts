@@ -17,6 +17,7 @@
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import {
+  isTrochoidalPocket,
   polygonProfile,
   type Operation,
   type Point,
@@ -33,6 +34,7 @@ import {
   toClipperPath,
 } from './geometry'
 import { buildInsetRegions } from './pocket'
+import { resolveTrochoidalGeometry } from './trochoidalPath'
 import { differenceClipperPaths, intersectClipperPaths, unionClipperPaths, clipperPathsToPointContours } from './modelProtection'
 import { applyRegionMaskToPaths, buildRegionMask, type RegionMask, splitFeatureTargets } from './regions'
 import { resolveRegionDomainCentre } from './regionDomain'
@@ -588,7 +590,26 @@ export function generatePocketRestRegionDrafts(project: Project, operation: Oper
     return { drafts: [], warnings: [...resolved.warnings, { code: 'toolDiameterPositive' }] }
   }
 
-  const toolRadius = tool.radius
+  // What a rest pass has to know is how wide the previous operation actually
+  // cut, not which cutter it held. A trochoidal pass clears a CHANNEL wider than
+  // its cutter, and the ring layout it produces is the ring layout a plain
+  // contour pocket produces with a cutter the width of that channel — measured
+  // on work/trochoidal-pocket-test2.camj, the two paths agree to 0.007 in with
+  // nothing beyond one orbit diameter. So the leftover is the leftover of that
+  // virtual tool, and the rest computation is fed its radius.
+  //
+  // Plus the guide allowance, which is where the guide actually sits: the ring
+  // tree is inset `W / 2 + 0.01 x D`, so the channel reaches exactly as far as a
+  // cutter of that radius would and no further. Using the bare `W / 2` models a
+  // tool that reaches slightly deeper into every corner than the orbit does, and
+  // so reports less stock remaining than there is — the wrong direction to be
+  // wrong in, since the rest pass is what removes it.
+  const toolRadius = isTrochoidalPocket(operation)
+    ? Math.max(
+      tool.radius,
+      resolveTrochoidalGeometry(operation, tool.diameter).cutWidth / 2 + tool.diameter * 0.01,
+    )
+    : tool.radius
   const drafts = generateAreaRestRegionDrafts(resolved, operation, toolRadius)
 
   return {

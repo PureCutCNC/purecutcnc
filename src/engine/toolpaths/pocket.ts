@@ -1134,6 +1134,30 @@ function engagementChunkBoundaries(
   return boundaries
 }
 
+/**
+ * The radial depth of cut the operation's feed was chosen for — the quantity
+ * `nominalEngagement` has to be measured against.
+ *
+ * For every contour pattern that is `toolDiameter x stepover`, because the
+ * stepover IS the radial bite. A trochoidal pocket does not work that way: its
+ * stepover spaces the RINGS, as a fraction of the channel, and a ring is not a
+ * cut. The cut is the orbit, and its radial bite per loop is the ADVANCE.
+ *
+ * Using the contour formula here put nominal at 1.571 rad on a 1/4 in cutter at
+ * 0.5 stepover, where the orbit actually bites 0.644 rad — a bar above anything
+ * the strategy ever does. Measured on work/trochoidal-pocket-test2.camj the
+ * engagement control then reduced 0.7 % of moves, against 52.8 % for a contour
+ * pocket on the same part. The direction of that error is the unsafe one: a bar
+ * set too high runs full feed through exactly the heavy moves it exists to
+ * catch.
+ */
+function engagementRadialDepth(operation: Operation, toolDiameter: number): number {
+  if (isTrochoidalPocket(operation)) {
+    return resolveTrochoidalGeometry(operation, toolDiameter).advance
+  }
+  return toolDiameter * operation.stepover
+}
+
 /** Per-level feed application: the engagement path, or the shipped slot feed. */
 export function applyLevelFeed(
   moves: ToolpathMove[],
@@ -1143,7 +1167,9 @@ export function applyLevelFeed(
   slotDistance: number,
   ownTrailTolerance: number,
   toolDiameter: number,
-  stepoverDistance: number,
+  /** Kept for the shipped slot-feed path below; the engagement nominal derives
+   *  its own depth from the operation, which is not the same number. */
+  _stepoverDistance: number,
   telemetry: EngagementTelemetryAccumulator | null,
   cache: OffsetBandEngagementClassification | null = null,
 ): void {
@@ -1153,7 +1179,7 @@ export function applyLevelFeed(
       startIndex,
       slotScale,
       toolDiameter,
-      stepoverDistance,
+      engagementRadialDepth(operation, toolDiameter),
       slotDistance,
       ownTrailTolerance,
       telemetry,
@@ -4650,7 +4676,10 @@ export function createSharedEngagementTelemetry(
   if (!(tool.diameter > 0)) return null
   if (!(operation.stepover > 0 && operation.stepover <= 1)) return null
   return new EngagementTelemetryAccumulator(
-    nominalEngagement(Math.max(tool.diameter * operation.stepover, 1 / DEFAULT_CLIPPER_SCALE), tool.radius),
+    nominalEngagement(
+      Math.max(engagementRadialDepth(operation, tool.diameter), 1 / DEFAULT_CLIPPER_SCALE),
+      tool.radius,
+    ),
   )
 }
 
@@ -4716,7 +4745,10 @@ function generatePocketToolpathSingle(
   const engagementMode = operation.kind === 'pocket' && operation.pocketFeedReduction === 'engagement'
   const telemetry = sharedTelemetry ?? (engagementMode
     ? new EngagementTelemetryAccumulator(
-      nominalEngagement(Math.max(stepoverDistance, 1 / DEFAULT_CLIPPER_SCALE), tool.radius),
+      nominalEngagement(
+        Math.max(engagementRadialDepth(operation, tool.diameter), 1 / DEFAULT_CLIPPER_SCALE),
+        tool.radius,
+      ),
     )
     : null)
   const direction = operation.cutDirection ?? 'conventional'
