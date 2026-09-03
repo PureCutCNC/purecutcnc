@@ -399,6 +399,67 @@ function buildLinkCheck(
   }
 }
 
+/**
+ * Visit the lifted passes nearest-first (issue #716).
+ *
+ * `plannedSort` orders by (level, minY, minX). The level part is meaningful; the
+ * bounding-box part has no relation to where the cutter is, and on a model whose
+ * machinable area is several islands it scatters the path badly —
+ * `Oldman-splash-final.camj` opened with jumps of 1.60, 1.57, 1.61, 1.64 and
+ * 1.65 in across a 4 x 3 in part, crossing it and coming back.
+ *
+ * **This has to order the lifted pieces, not the planned contours**, which is
+ * the part that took a wrong turn twice. A single level set is split by the
+ * composed domain into however many fragments survive, and those were emitted in
+ * their order *along the contour*: ordering the contours left the cutter jumping
+ * between one contour's own fragments, so the opening was byte-identical to the
+ * static sort even with a greedy in place. Instrumenting it showed the greedy
+ * picking correctly at 0.013-0.025 in each time while the cutter position it was
+ * measuring from had already been thrown across the part.
+ *
+ * Two orderings that do not work here, both tried and measured:
+ *   - *Greedy within each level.* A no-op — most levels hold a single contour.
+ *   - *Waterline's bounding-box IoU column clustering.* Waterline's rings sit
+ *     above one another on a vertical wall so their boxes coincide; constant
+ *     scallop's are insets that shrink at every level, so IoU > 0.5 clusters 36
+ *     runs into 28 groups, mostly singletons.
+ *
+ * Level order is therefore not preserved, and for a finishing pass it need not
+ * be: every pass cuts the same geometry whatever the order, the engagement is a
+ * scallop ridge either way, and it is the link check rather than the ordering
+ * that keeps a move safe.
+ *
+ * Nearest *point*, not nearest endpoint, because `presentToCutter` may enter a
+ * closed loop anywhere. Deterministic: it starts from the first piece in the
+ * planned order and ties break on that same position.
+ */
+function orderForTravel(
+  pieces: LiftedContour[],
+  currentPosition: () => ToolpathPoint | null,
+): Iterable<LiftedContour> {
+  return {
+    *[Symbol.iterator](): Iterator<LiftedContour> {
+      const used = new Uint8Array(pieces.length)
+      for (let emitted = 0; emitted < pieces.length; emitted += 1) {
+        const from = currentPosition()
+        let best = -1
+        let bestDistance = Number.POSITIVE_INFINITY
+        for (let candidate = 0; candidate < pieces.length; candidate += 1) {
+          if (used[candidate] === 1) continue
+          if (from === null) { best = candidate; break }
+          for (const point of pieces[candidate].points) {
+            const distance = (point.x - from.x) ** 2 + (point.y - from.y) ** 2 + (point.z - from.z) ** 2
+            if (distance < bestDistance) { bestDistance = distance; best = candidate }
+          }
+        }
+        if (best < 0) break
+        used[best] = 1
+        yield pieces[best]
+      }
+    },
+  }
+}
+
 function emitContours(
   contours: PlannedContour[],
   domain: ClipperPath[],
@@ -416,38 +477,43 @@ function emitContours(
   const axialLeave = Math.max(0, operation.stockToLeaveAxial)
   const safeLinkCheck = buildLinkCheck(heightMap, tool, axialLeave, linkInside)
   const linkMaxDistance = spacing * LINK_REACH_IN_SPACINGS
-  let position: ToolpathPoint | null = null
+  // Every pass is lifted before any is emitted, because the travel order is
+  // over the lifted pieces and a contour does not know how many it will produce.
+  const pieces: LiftedContour[] = []
   for (const contour of applyDirection(contours, operation.cutDirection)) {
     const dense = { ...contour, points: densify(contour.points, contour.closed, heightMap.cellSize) }
     for (const fragment of splitByDomain(dense, linkInside)) {
-      for (const lifted of liftFragment(
+      appendAll(pieces, liftFragment(
         fragment,
         heightMap,
         tool,
         axialLeave,
         minCutZAtPoint,
         hasMachinableSurface,
-      )) {
-        const presented = presentToCutter(lifted, position)
-        const entry = presented.points[0]
-        // `transitionToCutEntry`'s same-XY shortcut bypasses its own link
-        // check, so an unsafe link from a position still down in the cut has to
-        // be retracted here first — the same guard the parallel strategy uses.
-        if (position && position.z < safeZ && !safeLinkCheck(position, entry)) {
-          position = retractToSafe(moves, position, safeZ)
-        }
-        position = transitionToCutEntry(moves, position, entry, safeZ, linkMaxDistance, safeLinkCheck)
-        appendAll(moves, toCutMoves(presented))
-        for (const point of presented.points) stepLevels.add(point.z)
-        // Deliberately no retract: the cutter stays down and the next
-        // transition decides. `generateFinishSurfaceToolpath` retracts once at
-        // the end of the operation. A closed loop ends where it started, so the
-        // position left behind is its entry point.
-        position = presented.closed
-          ? presented.points[0]
-          : presented.points[presented.points.length - 1]
-      }
+      ))
     }
+  }
+
+  let position: ToolpathPoint | null = null
+  for (const lifted of orderForTravel(pieces, () => position)) {
+    const presented = presentToCutter(lifted, position)
+    const entry = presented.points[0]
+    // `transitionToCutEntry`'s same-XY shortcut bypasses its own link
+    // check, so an unsafe link from a position still down in the cut has to
+    // be retracted here first — the same guard the parallel strategy uses.
+    if (position && position.z < safeZ && !safeLinkCheck(position, entry)) {
+      position = retractToSafe(moves, position, safeZ)
+    }
+    position = transitionToCutEntry(moves, position, entry, safeZ, linkMaxDistance, safeLinkCheck)
+    appendAll(moves, toCutMoves(presented))
+    for (const point of presented.points) stepLevels.add(point.z)
+    // Deliberately no retract: the cutter stays down and the next
+    // transition decides. `generateFinishSurfaceToolpath` retracts once at
+    // the end of the operation. A closed loop ends where it started, so the
+    // position left behind is its entry point.
+    position = presented.closed
+      ? presented.points[0]
+      : presented.points[presented.points.length - 1]
   }
   return { moves, stepLevels }
 }

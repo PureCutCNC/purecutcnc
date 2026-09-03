@@ -48,10 +48,12 @@
  * The keep-down linking of issue #716 is verified the same way:
  *   - `LINK_REACH_IN_SPACINGS` set to 0, which is the pre-#716 behaviour: the
  *     linking test fails with "only 0 at-depth links".
- *   - `presentToCutter` made to return every contour untouched: the linking
- *     test fails, because the domed fixture goes back to retracting after all
- *     21 of its passes. The budget alone changes nothing there — the loops
- *     simply begin on the far side from the cutter.
+ *   - `presentToCutter` made to return every contour untouched: the winding
+ *     test fails. It no longer trips the linking test, because on a fixture this
+ *     small the travel ordering compensates — but the rotation is still doing
+ *     most of the work on real geometry, and that is measured rather than
+ *     asserted: without it `Oldman-splash-final.camj` goes from 9.3 % of its run
+ *     not cutting to 27.1 %, and the guitar top from 0.1 % to 1.0 %.
  *   - `buildLinkCheck` made to approve everything: the domain test fails with
  *     "a cut move crosses the excluded band". **Both halves have to be disabled
  *     to see it** — the domain test and the Z test each independently refuse
@@ -271,11 +273,12 @@ test('an unusable stepover is rejected the way the other 3D strategies reject on
 test('contours are linked at depth instead of retracting, and no link cuts into the surface', () => {
   // Issue #716. Before it, `emitContours` passed `maxLinkDistance: 0` and
   // retracted to safe Z after every contour: this fixture emitted 21 passes and
-  // took 21 full retracts. The fix needs both halves — a link budget *and*
-  // turning each closed loop to start nearest the cutter, since a level set has
-  // no natural start and `joinSegments` had been leaving it wherever the first
-  // marching-squares segment fell. With the budget alone this fixture still
-  // retracted 21 times, because the loops began on the far side.
+  // took 21 full retracts. The fix needs all three parts — a link budget, then
+  // turning each closed loop to start nearest the cutter (a level set has no
+  // natural start, and `joinSegments` had been leaving it wherever the first
+  // marching-squares segment fell), and ordering the *lifted pieces* by travel.
+  // With the budget alone this fixture still retracted 21 times because the
+  // loops began on the far side; with the rotation as well it took 8.
   const { project, operation } = fixture(dome)
   const moves = generate(project, operation).moves
   const safeZ = getOperationSafeZ(project)
@@ -305,7 +308,7 @@ test('contours are linked at depth instead of retracting, and no link cuts into 
   }
 
   assert(links >= 10, `only ${links} at-depth links; the cutter is still lifting between contours`)
-  assert(retracts <= 12, `${retracts} retract cycles, against 8 measured and 21 before #716`)
+  assert(retracts <= 6, `${retracts} retract cycles, against 3 measured and 21 before #716`)
   // A tenth of the pass spacing, the same bound the surface test uses. Measured
   // 0.0274 mm here, which is grid discretisation and not a link cutting in.
   assert(worstDip <= SPACING * 0.1, `a cut move dips ${worstDip.toFixed(4)} into the surface`)
