@@ -92,7 +92,7 @@ import {
   type SeedCirclePlan,
 } from './seedClearing'
 import { planSeedLeftovers, type SeedLeftoverExcursion } from './seedLeftover'
-import { areaCoverage, effectivePocketPattern, TROCHOIDAL_RING_STEPOVER } from './pocketPatterns'
+import { areaCoverage, effectivePocketPattern, TROCHOIDAL_MAX_COVERING_STEPOVER } from './pocketPatterns'
 import { clearingControlApplies } from './clearingControls'
 import {
   EngagementFeedQuantizer,
@@ -2923,14 +2923,14 @@ function checkTrochoidalCutWidth(
  * names the case it cannot.
  */
 function checkTrochoidalStepover(stepover: number, cutWidth: number, warnings: ToolpathWarning[]): void {
-  if (!(stepover > TROCHOIDAL_RING_STEPOVER)) return
+  if (!(stepover > TROCHOIDAL_MAX_COVERING_STEPOVER)) return
   appendUniqueWarning(warnings, {
     code: 'pocketTrochoidalStepoverHigh',
     params: {
       stepover,
       pitch: cutWidth * stepover,
       width: cutWidth,
-      limit: TROCHOIDAL_RING_STEPOVER,
+      limit: TROCHOIDAL_MAX_COVERING_STEPOVER,
     },
   })
 }

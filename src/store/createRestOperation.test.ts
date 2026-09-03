@@ -226,7 +226,43 @@ function testTrochoidalEdgeRestIsRejectedWithoutMutation(): void {
   assert(useProjectStore.getState().history.past.length === 0, 'trochoidal edge rest rejection must not add history')
 }
 
+/**
+ * A trochoidal POCKET is refused for the same reason a trochoidal edge route is
+ * (issue #676). Rest machining derives the leftover from the previous
+ * operation's tool diameter, and a trochoidal pass removes a channel wider than
+ * its cutter — so the leftover it computes is stock that is no longer there and
+ * the rest operation cuts air. The guard used to cover only edge routes, so a
+ * pocket fell through into that wrong answer silently.
+ */
+function testTrochoidalPocketRestIsRejectedWithoutMutation(): void {
+  const { project, operation } = makeProject()
+  const pocketOperation: Operation = {
+    ...operation,
+    kind: 'pocket',
+    pass: 'rough',
+    pocketPattern: 'trochoidal',
+    edgeStrategy: undefined,
+  }
+  useProjectStore.setState({
+    project: { ...project, operations: [pocketOperation] },
+    history: { past: [], future: [], transactionStart: null },
+  })
+
+  const before = useProjectStore.getState().project
+  const result = useProjectStore.getState().createRestOperation(pocketOperation.id)
+
+  assert(result.operationId === null, 'trochoidal pocket rest creation should not create an operation')
+  assert(result.regionIds.length === 0, 'trochoidal pocket rest creation should not create regions')
+  assert(
+    result.warnings.length === 1 && result.warnings[0].code === 'restTrochoidalUnsupported',
+    'trochoidal pocket rest creation should explain why it is unavailable',
+  )
+  assert(useProjectStore.getState().project === before, 'trochoidal pocket rest rejection must not mutate the project')
+  assert(useProjectStore.getState().history.past.length === 0, 'trochoidal pocket rest rejection must not add history')
+}
+
 testEdgeRestCreatesGeneratedRegionFilters()
 testTrochoidalEdgeRestIsRejectedWithoutMutation()
+testTrochoidalPocketRestIsRejectedWithoutMutation()
 
 console.log('createRestOperation tests passed')

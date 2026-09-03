@@ -178,19 +178,38 @@ export function effectivePocketPattern(
 }
 
 /**
- * Ring spacing for a trochoidal pocket, as a fraction of the CHANNEL width —
- * 0.85 leaves 15 % overlap between neighbouring channels, enough to swallow the
- * orbit sagitta and Clipper's tessellation without re-cutting half of every pass.
+ * Ring spacing seeded when the user picks the trochoidal pattern, as a fraction
+ * of the CHANNEL width rather than the tool diameter.
  *
- * A contour pocket's stepover is a fraction of the tool DIAMETER and its shipped
- * default is tuned for that, so carrying it across unchanged spaces trochoidal
- * rings at roughly half this pitch: safe, but twice the rings, twice the time,
- * and twice the emitted points charged against the operation's budget. The CAM
- * panel therefore seeds this when the user picks the pattern, where the change
- * is visible and editable — a load-time rewrite would silently retune a saved
+ * Deliberately conservative, and lower than the widest spacing that still
+ * clears. 0.85 — the 15 % overlap the geometry alone suggests — measured clean
+ * only on a plain right-angled pocket, and left material on everything else
+ * tried: 27 mm2 on a pocket with a ~53-degree notch, and more again around
+ * islands, where rings diverge as they split and rejoin. A contour pocket shows
+ * the same behaviour at the same stepover, so this is ring clearing's nature
+ * rather than the orbit's, and the honest response is to seed a spacing that
+ * holds on ordinary geometry instead of the one that holds on the best case.
+ *
+ * 0.5 measured clean on every fixture tried, and still steps far wider than a
+ * contour pocket does — half a 9 mm channel against 0.4 of a 6 mm cutter.
+ *
+ * Seeded by the CAM panel when the pattern is picked, where the change is
+ * visible and editable. A load-time rewrite would silently retune a saved
  * operation whose stepover the user had chosen deliberately.
  */
-export const TROCHOIDAL_RING_STEPOVER = 0.85
+export const TROCHOIDAL_RING_STEPOVER = 0.5
+
+/**
+ * Above this, warn. Measured on `work/trochoidal-pocket-test.camj`, a
+ * right-angled pocket: clean through 0.85, then 0.276 mm2 uncut at 0.86, 4.6 at
+ * 0.90, 53.0 at 1.00.
+ *
+ * Kept separate from the seeded default above, because they answer different
+ * questions — one is the spacing to start from, the other the point past which
+ * even the best-case geometry stops clearing. Collapsing them would either warn
+ * about the default or let the measured limit drift with it.
+ */
+export const TROCHOIDAL_MAX_COVERING_STEPOVER = 0.85
 
 /** What a clearing generator builds for an effective pattern. */
 export interface AreaCoverage {

@@ -18,7 +18,7 @@ import type { StateCreator } from 'zustand'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../engine/toolpaths/restRegions'
 import { selectToolForOperation } from '../../engine/operations/toolSelection'
 import { uniqueName } from '../../import'
-import { defaultTool, inferFeatureKind } from '../../types/project'
+import { defaultTool, inferFeatureKind, isTrochoidalPocket } from '../../types/project'
 import type {
   FeatureFolder,
   Operation,
@@ -169,9 +169,18 @@ export function createOperationsSlice(
       if ((operation.kind !== 'pocket' && operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') || operation.target.source !== 'features') {
         return { operationId: null, regionIds: [], warnings: [{ code: 'restOnlyPocketEdgeTargets' as const }] }
       }
+      // Rest machining models the previous operation as a cut of the tool's own
+      // width. A trochoidal pass does not remove that: its channel is wider than
+      // the cutter, so the leftover it computes is material that is no longer
+      // there and the rest operation cuts air. Refused for the pocket pattern
+      // for the same reason it is already refused for a trochoidal edge route —
+      // and #676 lists rest machining against a trochoidal pocket as a non-goal.
+      // Doing it properly means driving the rest computation from the channel
+      // width instead of the tool diameter, which is its own piece of work.
       if (
-        (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside')
-        && operation.edgeStrategy === 'trochoidal'
+        ((operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside')
+          && operation.edgeStrategy === 'trochoidal')
+        || isTrochoidalPocket(operation)
       ) {
         return { operationId: null, regionIds: [], warnings: [{ code: 'restTrochoidalUnsupported' as const }] }
       }

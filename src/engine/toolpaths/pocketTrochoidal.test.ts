@@ -33,7 +33,7 @@ import { projectWithFeatures } from '../../test/projectFixtures'
 import { SweptMaterialIndex } from './engagement'
 import { generateEdgeRouteToolpath } from './edge'
 import { generatePocketToolpath } from './pocket'
-import { TROCHOIDAL_RING_STEPOVER, usesTangentLinks } from './pocketPatterns'
+import { TROCHOIDAL_MAX_COVERING_STEPOVER, TROCHOIDAL_RING_STEPOVER, usesTangentLinks } from './pocketPatterns'
 import { OPERATION_FIELDS } from '../../components/cam/operationFields'
 import { buildSweptCoverage } from './sweptCoverage'
 import type { ToolpathMove } from './types'
@@ -418,7 +418,12 @@ test('acceptance: the 200 x 150 / 9 mm channel case generates inside one operati
       },
     }],
   )
-  const { operation } = buildPocket()
+  // Pinned at 0.85, the spacing #676 computed the example for — NOT the shipped
+  // default. The default is now the more conservative 0.5, and at that spacing
+  // this case needs more rings than one operation's budget allows and refuses.
+  // That is a real consequence of the conservative default, recorded here rather
+  // than hidden by quietly relaxing the assertion.
+  const { operation } = buildPocket({ stepover: TROCHOIDAL_MAX_COVERING_STEPOVER })
   const result = generatePocketToolpath(project, { ...operation, target: { source: 'features', featureIds: ['pocket'] } })
   const levels = new Set(cutMoves(result.moves).map((move) => move.to.z)).size
   console.log(`      worked example: ${levels} levels, ${result.moves.length} moves against a 1,000,000 ceiling`)
