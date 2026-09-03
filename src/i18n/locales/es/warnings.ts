@@ -91,6 +91,12 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.carveTrochoidalMoveBudget': 'El grabado trocoidal cerca de ({x}, {y}) necesita más puntos de los que permite una operación. Aumente el avance por vuelta, aumente la profundidad de pasada para tener menos niveles en Z o use una fresa más grande.',
   'warnings.carveTrochoidalEntryBudget': 'La entrada del grabado trocoidal cerca de ({x}, {y}) no cabe en el presupuesto de puntos que le queda a la operación. Aumente el avance por vuelta, aumente la profundidad de pasada para tener menos niveles en Z o use una fresa más grande.',
   'warnings.carveTrochoidalNeedsConstantDiameterTool': 'El grabado trocoidal necesita una fresa de diámetro constante. Una fresa en V no tiene un diámetro de corte fijo, por lo que el ancho del canal sería incorrecto a cualquier profundidad. Use una fresa plana o cambie la estrategia a Directo.',
+  // pocket trochoidal clearing
+  'warnings.pocketTrochoidalInvalidGuide': 'El desbaste trocoidal de bolsillo necesita un anillo guía cerrado válido.',
+  'warnings.pocketTrochoidalMoveBudget': 'El desbaste trocoidal de bolsillo necesita más puntos de los que permite una operación. Aumente el avance por vuelta o la profundidad de pasada.',
+  'warnings.pocketTrochoidalEntryBudget': 'La entrada trocoidal del bolsillo cerca de ({x}, {y}) no cabe en el presupuesto de puntos restante.',
+  'warnings.pocketTrochoidalWidthTooSmall': 'El ancho de corte trocoidal del bolsillo debe ser al menos 1,15 veces el diámetro de la herramienta.',
+  'warnings.pocketTrochoidalAdvanceDegenerate': 'El avance trocoidal del bolsillo cerca de ({x}, {y}) es demasiado pequeño: la órbita avanza menos del 1% del diámetro de la herramienta por vuelta.',
   'warnings.edgeMixedDepthSpans': 'Los objetivos de borde exterior seleccionados tienen diferentes profundidades efectivas. El trazado exterior combinado aún no es compatible con objetivos de profundidad mixta; la generación de contornos separados puede cortar la superposición interna. Divida la operación por profundidad o alinee la parte superior e inferior de los objetivos.',
   'warnings.edgeNoCombinedContour': 'No se pudo generar un contorno exterior combinado válido para los objetivos de borde exterior seleccionados.',
   'warnings.edgeFeatureNoCutDepth': '{name} no deja profundidad de corte después de aplicar el material axial a dejar.',

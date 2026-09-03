@@ -92,6 +92,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.pocketPattern.constantScallop': '恒残留高度',
   'cam.pocketPattern.waterline': '水平线',
   'cam.pocketPattern.seededOffset': '同心圆起始',
+  'cam.pocketPattern.trochoidal': '摆线',
 
   // ── Pass labels ──
   'cam.pass.rough': '粗加工',

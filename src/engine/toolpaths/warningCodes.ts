@@ -107,6 +107,12 @@ export type ToolpathWarningCode =
   | 'carveTrochoidalWidthNarrow'
   | 'carveTrochoidalWidthLeavesCore'
   | 'carveTrochoidalAdvanceRange'
+  // pocket trochoidal clearing
+  | 'pocketTrochoidalInvalidGuide'
+  | 'pocketTrochoidalMoveBudget'
+  | 'pocketTrochoidalEntryBudget'
+  | 'pocketTrochoidalWidthTooSmall'
+  | 'pocketTrochoidalAdvanceDegenerate'
   | 'carveTrochoidalEntryStrategyUnsupported'
   | 'carveTrochoidalInvalidGuide'
   /** As `edgeTrochoidalAdvanceDegenerate`, for trochoidal Engrave. */

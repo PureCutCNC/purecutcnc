@@ -91,6 +91,12 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.carveTrochoidalMoveBudget': 'La gravure trochoïdale près de ({x}, {y}) nécessite plus de points qu’une opération n’en autorise. Augmentez l’avance par boucle, augmentez la profondeur de passe pour avoir moins de niveaux en Z ou utilisez une fraise plus grande.',
   'warnings.carveTrochoidalEntryBudget': 'L’entrée de la gravure trochoïdale près de ({x}, {y}) ne tient pas dans le budget de points restant de l’opération. Augmentez l’avance par boucle, augmentez la profondeur de passe pour avoir moins de niveaux en Z ou utilisez une fraise plus grande.',
   'warnings.carveTrochoidalNeedsConstantDiameterTool': 'La gravure trochoïdale nécessite une fraise à diamètre constant. Une fraise en V n’a pas de diamètre de coupe fixe, le canal serait donc incorrect à chaque profondeur. Utilisez une fraise cylindrique ou passez en stratégie Directe.',
+  // pocket trochoidal clearing
+  'warnings.pocketTrochoidalInvalidGuide': 'Le dégagement trochoïdal de poche nécessite un anneau guide fermé valide.',
+  'warnings.pocketTrochoidalMoveBudget': 'Le dégagement trochoïdal de poche nécessite plus de points qu’une opération ne le permet. Augmentez l’avance par boucle ou la profondeur de passe.',
+  'warnings.pocketTrochoidalEntryBudget': 'L’entrée trochoïdale de la poche près de ({x}, {y}) ne tient pas dans le budget de points restant.',
+  'warnings.pocketTrochoidalWidthTooSmall': 'La largeur de coupe trochoïdale de la poche doit être d’au moins 1,15 fois le diamètre de l’outil.',
+  'warnings.pocketTrochoidalAdvanceDegenerate': 'L’avance trochoïdale de la poche près de ({x}, {y}) est trop petite : l’orbite avance de moins de 1% du diamètre de l’outil par boucle.',
   'warnings.edgeMixedDepthSpans': 'Les cibles de contournage extérieur sélectionnées ont des plages de profondeur effectives différentes. Le contournage combiné n’est pas encore pris en charge pour des cibles de profondeurs mixtes ; générer des contours séparés peut couper les recouvrements internes. Séparez l’opération par profondeur ou alignez les hauts et bas des cibles.',
   'warnings.edgeNoCombinedContour': 'Aucun contour extérieur combiné valide n’a pu être généré pour les cibles de contournage extérieur sélectionnées',
   'warnings.edgeFeatureNoCutDepth': '{name} ne laisse aucune profondeur de coupe après surépaisseur axiale',

@@ -91,6 +91,7 @@ export const camEn = {
   'cam.pocketPattern.constantScallop': 'Constant scallop',
   'cam.pocketPattern.waterline': 'Waterline',
   'cam.pocketPattern.seededOffset': 'Seeded circles',
+  'cam.pocketPattern.trochoidal': 'Trochoidal',
 
   // ── Pass labels ──
   'cam.pass.rough': 'Rough',

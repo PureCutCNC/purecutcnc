@@ -101,6 +101,12 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.carveTrochoidalMoveBudget': 'Trochoidale Gravur nahe ({x}, {y}) benötigt mehr Punkte, als eine Operation zulässt. Erhöhen Sie den Vorschub pro Umlauf, erhöhen Sie die Zustellung für weniger Z-Ebenen oder verwenden Sie einen größeren Fräser.',
   'warnings.carveTrochoidalEntryBudget': 'Der trochoidale Gravur-Einstieg nahe ({x}, {y}) passt nicht mehr in das verbleibende Punktbudget der Operation. Erhöhen Sie den Vorschub pro Umlauf, erhöhen Sie die Zustellung für weniger Z-Ebenen oder verwenden Sie einen größeren Fräser.',
   'warnings.carveTrochoidalNeedsConstantDiameterTool': 'Trochoidale Gravur benötigt einen Fräser mit konstantem Durchmesser. Ein V-Nutfräser hat keinen festen Schneiddurchmesser, sodass die Kanalbreite in jeder Tiefe falsch wäre. Verwenden Sie einen Schaftfräser oder wechseln Sie zur Strategie Direkt.',
+  // pocket trochoidal clearing
+  'warnings.pocketTrochoidalInvalidGuide': 'Trochoidale Taschenräumung benötigt einen gültigen geschlossenen Führungsring.',
+  'warnings.pocketTrochoidalMoveBudget': 'Trochoidale Taschenräumung benötigt mehr Punkte als eine Operation erlaubt. Erhöhen Sie den Vorschub pro Umlauf oder die Zustellung für weniger Z-Ebenen.',
+  'warnings.pocketTrochoidalEntryBudget': 'Der trochoidale Taschen-Einstieg nahe ({x}, {y}) passt nicht mehr in das verbleibende Punktbudget.',
+  'warnings.pocketTrochoidalWidthTooSmall': 'Trochoidale Taschenbreite muss mindestens das 1,15-fache des Werkzeugdurchmessers betragen.',
+  'warnings.pocketTrochoidalAdvanceDegenerate': 'Der trochoidale Vorschub nahe ({x}, {y}) ist zu klein: die Bahn bewegt sich weniger als 1% des Werkzeugdurchmessers pro Umlauf.',
   'warnings.edgeMixedDepthSpans': 'Ausgewählte Außenkontur-Ziele haben unterschiedliche wirksame Tiefenspannen. Kombinierte Außenkontur wird für Ziele mit gemischter Tiefe noch nicht unterstützt; das Erzeugen separater Konturen kann innere Überlappungen schneiden. Teilen Sie die Operation nach Tiefe auf oder richten Sie Ober-/Unterseiten der Ziele aus.',
   'warnings.edgeNoCombinedContour': 'Für die ausgewählten Außenkontur-Ziele konnte keine gültige kombinierte Außenkontur erzeugt werden',
   'warnings.edgeFeatureNoCutDepth': '{name} lässt nach axialem Aufmaß keine Schnitttiefe',

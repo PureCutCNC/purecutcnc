@@ -395,6 +395,8 @@ function pocketPatternLabel(pattern: PocketPattern): string {
       return camT('cam.pocketPattern.constantScallop')
     case 'seeded_offset':
       return camT('cam.pocketPattern.seededOffset')
+    case 'trochoidal':
+      return camT('cam.pocketPattern.trochoidal')
   }
 }
 

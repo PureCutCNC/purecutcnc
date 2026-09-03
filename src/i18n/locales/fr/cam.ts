@@ -72,6 +72,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.pocketPattern.constantScallop': 'Crête constante',
   'cam.pocketPattern.waterline': 'Ligne d’eau',
   'cam.pocketPattern.seededOffset': 'Cercles d’amorce',
+  'cam.pocketPattern.trochoidal': 'Trochoïdal',
   'cam.pass.rough': 'Ébauche',
   'cam.pass.finish': 'Finition',
   'cam.panel.emptyOperation': 'Sélectionnez une opération pour modifier ses paramètres.',

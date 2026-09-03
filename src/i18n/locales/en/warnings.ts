@@ -101,6 +101,12 @@ export const warningsEn = {
   'warnings.carveTrochoidalMoveBudget': 'Trochoidal engraving near ({x}, {y}) needs more points than one operation allows. Raise the advance per loop, raise the stepdown so there are fewer Z levels, or use a larger cutter.',
   'warnings.carveTrochoidalEntryBudget': 'The trochoidal engraving entry near ({x}, {y}) does not fit in what is left of the operation point budget. Raise the advance per loop, raise the stepdown so there are fewer Z levels, or use a larger cutter.',
   'warnings.carveTrochoidalNeedsConstantDiameterTool': 'Trochoidal engraving needs a constant-diameter cutter. A V-bit has no fixed cutting diameter, so the channel width would be wrong at every depth. Use an end mill or switch the strategy to Direct.',
+  // pocket trochoidal clearing
+  'warnings.pocketTrochoidalInvalidGuide': 'Trochoidal pocket clearing requires a valid closed guide ring.',
+  'warnings.pocketTrochoidalMoveBudget': 'Trochoidal pocket clearing needs more points than one operation allows. Raise the advance per loop, raise the stepdown so there are fewer Z levels, or use a larger cutter.',
+  'warnings.pocketTrochoidalEntryBudget': 'The trochoidal pocket entry near ({x}, {y}) does not fit in what is left of the operation point budget. Raise the advance per loop or use fewer Z levels.',
+  'warnings.pocketTrochoidalWidthTooSmall': 'Trochoidal pocket cut width must be at least 1.15 times the tool diameter.',
+  'warnings.pocketTrochoidalAdvanceDegenerate': 'The trochoidal pocket advance near ({x}, {y}) is too small for this cutter: the orbit moves forward less than 1% of the tool diameter per loop. Raise the advance per loop.',
   'warnings.edgeMixedDepthSpans': 'Selected outside edge targets have different effective depth spans. Combined outside routing is not supported for mixed-depth targets yet; generating separate contours may cut internal overlap. Split the operation by depth or align target tops/bottoms.',
   'warnings.edgeNoCombinedContour': 'No valid combined outer contour could be generated for the selected outside edge targets',
   'warnings.edgeFeatureNoCutDepth': '{name} leaves no cut depth after axial stock-to-leave',

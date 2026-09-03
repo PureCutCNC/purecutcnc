@@ -485,7 +485,7 @@ export type CarveStrategy = 'direct' | 'trochoidal'
  * Every project saved before it has `offset`, so the value is new-only and
  * legacy output is untouched.
  */
-export type PocketPattern = 'offset' | 'parallel' | 'waterline' | 'constant_scallop' | 'seeded_offset'
+export type PocketPattern = 'offset' | 'parallel' | 'waterline' | 'constant_scallop' | 'seeded_offset' | 'trochoidal'
 export type CutDirection = 'conventional' | 'climb'
 /**
  * Drilling mode (issue #489 added `countersink`).
@@ -672,6 +672,21 @@ export function isTrochoidalEdgeRoughing(operation: Operation): boolean {
  */
 export function isTrochoidalCarve(operation: Operation): boolean {
   return operation.kind === 'follow_line' && operation.carveStrategy === 'trochoidal'
+}
+
+/**
+ * True for a pocket clearing operation that generates trochoidal orbits on
+ * its offset rings rather than tracing them as plain contours.
+ *
+ * This is the single definition. The predicate gates generation, the CAM panel's
+ * field visibility, and the entry-strategy switch — and those must agree exactly,
+ * so none of them may re-spell it. Note the `pass` term: a finish pass's walls
+ * are always a contour, even when a finish floor is trochoidal.
+ */
+export function isTrochoidalPocket(operation: Operation): boolean {
+  return operation.pass === 'rough'
+    && (operation.kind === 'pocket' || operation.kind === 'surface_clean' || operation.kind === 'rough_surface')
+    && operation.pocketPattern === 'trochoidal'
 }
 
 // ============================================================

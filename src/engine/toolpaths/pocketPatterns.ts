@@ -78,11 +78,12 @@ export interface OperationPatternSupport {
  * resolved to the rings.
  */
 const CLEARING_PATTERNS: OperationPatternSupport = {
-  offered: ['offset', 'seeded_offset', 'parallel'],
+  offered: ['offset', 'seeded_offset', 'parallel', 'trochoidal'],
   effective: {
     offset: 'offset',
     seeded_offset: 'seeded_offset',
     parallel: 'parallel',
+    trochoidal: 'trochoidal',
     waterline: 'offset',
     constant_scallop: 'none',
   },
@@ -100,6 +101,7 @@ export const OPERATION_PATTERN_SUPPORT: Readonly<Record<OperationKind, Operation
       offset: 'parallel',
       seeded_offset: 'parallel',
       parallel: 'parallel',
+      trochoidal: 'none',
       waterline: 'waterline',
       constant_scallop: 'constant_scallop',
     },
@@ -112,6 +114,7 @@ export const OPERATION_PATTERN_SUPPORT: Readonly<Record<OperationKind, Operation
       offset: 'offset',
       seeded_offset: 'seeded_offset',
       parallel: 'parallel',
+      trochoidal: 'none',
       waterline: 'none',
       constant_scallop: 'none',
     },
@@ -176,9 +179,11 @@ export interface AreaCoverage {
   readonly seedCircles: boolean
   /** A parallel raster covers the area. */
   readonly rasterSegments: boolean
+  /** Rings are cut as trochoidal orbits rather than direct contours. */
+  readonly trochoidal: boolean
 }
 
-const NO_COVERAGE: AreaCoverage = { rings: false, seedCircles: false, rasterSegments: false }
+const NO_COVERAGE: AreaCoverage = { rings: false, seedCircles: false, rasterSegments: false, trochoidal: false }
 
 /**
  * The area-clearing dispatch, exhaustive over `EffectivePocketPattern`.
@@ -192,11 +197,13 @@ const NO_COVERAGE: AreaCoverage = { rings: false, seedCircles: false, rasterSegm
 export function areaCoverage(pattern: EffectivePocketPattern): AreaCoverage {
   switch (pattern) {
     case 'offset':
-      return { rings: true, seedCircles: false, rasterSegments: false }
+      return { rings: true, seedCircles: false, rasterSegments: false, trochoidal: false }
     case 'seeded_offset':
-      return { rings: true, seedCircles: true, rasterSegments: false }
+      return { rings: true, seedCircles: true, rasterSegments: false, trochoidal: false }
     case 'parallel':
-      return { rings: false, seedCircles: false, rasterSegments: true }
+      return { rings: false, seedCircles: false, rasterSegments: true, trochoidal: false }
+    case 'trochoidal':
+      return { rings: true, seedCircles: false, rasterSegments: false, trochoidal: true }
     // Waterline is a 3D constant-Z finishing strategy, not area clearing;
     // `finish_surface` dispatches it before it ever reaches this function.
     case 'waterline':

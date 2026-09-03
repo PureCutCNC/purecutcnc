@@ -42,7 +42,7 @@
 
 import type { camEn } from '../../i18n/locales/en/cam'
 import type { EntryStrategy, Operation, OperationKind } from '../../types/project'
-import { isTrochoidalCarve, isTrochoidalEdgeRoughing } from '../../types/project'
+import { isTrochoidalCarve, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import { clearingControlApplies, type ClearingControl } from '../../engine/toolpaths/clearingControls'
 import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
 import type { OperationParamRefKind } from './operationParamRefData'
@@ -87,9 +87,9 @@ function isEdgeRouteKind(kind: OperationKind): boolean {
   return kind === 'edge_route_inside' || kind === 'edge_route_outside'
 }
 
-/** Either flavour of trochoidal motion: rough edge routing or engraving. */
+/** Either flavour of trochoidal motion: rough edge routing, engraving, or pocket clearing. */
 export function isTrochoidalOperation(operation: Operation): boolean {
-  return isTrochoidalEdgeRoughing(operation) || isTrochoidalCarve(operation)
+  return isTrochoidalEdgeRoughing(operation) || isTrochoidalCarve(operation) || isTrochoidalPocket(operation)
 }
 
 /** Operations that let the user choose how the cutter enters the material. */

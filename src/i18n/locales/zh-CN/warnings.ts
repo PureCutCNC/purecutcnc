@@ -95,6 +95,12 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.carveTrochoidalMoveBudget': '({x}, {y}) 附近的摆线雕刻所需的点数超出单个操作的上限。请提高每圈推进量、增大下刀步距以减少 Z 层数，或改用更大的刀具。',
   'warnings.carveTrochoidalEntryBudget': '({x}, {y}) 附近的摆线雕刻入口已超出该操作剩余的点数预算。请提高每圈推进量、增大下刀步距以减少 Z 层数，或改用更大的刀具。',
   'warnings.carveTrochoidalNeedsConstantDiameterTool': '摆线雕刻需要恒定直径的刀具。V型刀没有固定的切削直径，因此通道宽度在每个深度都会出错。请使用立铣刀或将策略切换为直接。',
+  // pocket trochoidal clearing
+  'warnings.pocketTrochoidalInvalidGuide': '摆线口袋清根需要有效的闭合引导环。',
+  'warnings.pocketTrochoidalMoveBudget': '摆线口袋清根所需点数超出单个操作的上限。请提高每圈推进量、增大下刀步距以减少 Z 层数，或改用更大的刀具。',
+  'warnings.pocketTrochoidalEntryBudget': '({x}, {y}) 附近的摆线口袋入口已超出该操作剩余的点数预算。请提高每圈推进量或减少 Z 层数。',
+  'warnings.pocketTrochoidalWidthTooSmall': '摆线口袋切削宽度必须至少为刀具直径的 1.15 倍。',
+  'warnings.pocketTrochoidalAdvanceDegenerate': '({x}, {y}) 附近的摆线口袋每圈推进量对该刀具过小：每圈前进不足刀具直径的 1%。请提高每圈推进量。',
   'warnings.edgeMixedDepthSpans': '选定的外侧沿边目标具有不同的有效深度范围。混合深度目标暂不支持组合外侧路径；分别生成轮廓可能会切到内部重叠区域。请按深度拆分加工操作，或对齐目标的顶部/底部。',
   'warnings.edgeNoCombinedContour': '无法为选定的外侧沿边目标生成有效的组合外轮廓',
   'warnings.edgeFeatureNoCutDepth': '{name} 在轴向留量后没有剩余切削深度',

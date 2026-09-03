@@ -88,6 +88,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.pocketPattern.constantScallop': 'Konstante Riefenhöhe',
   'cam.pocketPattern.waterline': 'Wasserlinie',
   'cam.pocketPattern.seededOffset': 'Startkreise',
+  'cam.pocketPattern.trochoidal': 'Trochoidal',
 
   // ── Pass labels ──
   'cam.pass.rough': 'Schruppen',

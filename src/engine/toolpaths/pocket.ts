@@ -106,9 +106,19 @@ import { resolveRegionDomainArea } from './regionDomain'
 import { unionClipperPaths } from './modelProtection'
 import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 import { appendAll } from './appendAll'
+import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET } from './trochoidalEdge'
+import type { TrochoidalContourError } from './trochoidalEdge'
+import { createTrochoidalPathStore } from './trochoidalLevelPaths'
+import type { TrochoidalPathParams, TrochoidalPathStore } from './trochoidalLevelPaths'
+import { appendTrochoidalEntry, trochoidalEntryMoveCount, MAX_TROCHOIDAL_ENTRY_MOVES } from './trochoidalPath'
 
 const MAX_ROUND_JOIN_ARC_TOLERANCE = DEFAULT_CLIPPER_SCALE * 0.01
 const ROUND_JOIN_ARC_TOLERANCE_RATIO = 0.01
+
+/** Guide offset safety allowance (1 % of D). Same contract as edge routes:
+ *  the orbit is emitted as a polyline and the allowance covers the sagitta
+ *  between chords. See planning/TROCHOIDAL_EDGE_DESIGN.md. */
+const TROCHOIDAL_GUIDE_SAFETY_FRACTION = 0.01
 
 interface PolyTreeNode {
   IsHole(): boolean
@@ -2645,6 +2655,147 @@ export interface OffsetRingOptions {
   parent?: OffsetRegionNode
   /** Level-scoped XY lead state (issue #695); absent = no leads. */
   xyLead?: XyLeadContext
+  /** Trochoidal ring-orbit emission in place of direct contour tracing. */
+  trochoidal?: {
+    orbitRadius: number
+    advance: number
+    toolDiameter: number
+    angularDirection: 1 | -1
+    budget: PocketTrochoidalBudget
+    pathStore: TrochoidalPathStore
+    operation: Operation
+  }
+}
+
+// ── Trochoidal ring emission ────────────────────────────────────────
+
+/**
+ * Budget shared across all trochoidal rings at all levels in one rough pass.
+ * Creation is charged once (when the generator runs), emission for every level.
+ * Mirrors edge.ts's `TrochoidalOperationBudget` without the tab/obstacle fields.
+ */
+interface PocketTrochoidalBudget {
+  remainingPoints: number
+  remainingMoves: number
+}
+
+function pocketTrochoidalWarningCode(
+  error: TrochoidalContourError | undefined,
+  overBudget: boolean,
+): 'pocketTrochoidalInvalidGuide' | 'pocketTrochoidalMoveBudget' | 'pocketTrochoidalEntryBudget' {
+  if (error === 'degenerate-advance') return 'pocketTrochoidalInvalidGuide'
+  if (error === 'move-budget' || overBudget) return 'pocketTrochoidalMoveBudget'
+  return 'pocketTrochoidalInvalidGuide'
+}
+
+/**
+ * Emit trochoidal orbits for each ring contour (outer + islands) of one
+ * offset-tree node at one Z level. Returns the position after the last ring.
+ *
+ * Between rings the tool retracts to safe Z and rapids — a trochoidal orbit
+ * closes on itself, so linking at depth has no natural handoff.
+ */
+function cutTrochoidalRingMoves(
+  moves: ToolpathMove[],
+  node: OffsetRegionNode,
+  z: number,
+  safeZ: number,
+  fromPosition: ToolpathPoint | null,
+  options: {
+    direction: CutDirection
+    entryPolicy?: EntryPolicy
+    orbitRadius: number
+    advance: number
+    toolDiameter: number
+    angularDirection: 1 | -1
+    budget: PocketTrochoidalBudget
+    pathStore: TrochoidalPathStore
+    operation: Operation
+  },
+  warnings: ToolpathWarning[],
+): ToolpathPoint | null {
+  const { direction, orbitRadius, advance, toolDiameter, angularDirection, budget, pathStore, operation } = options
+
+  const outer = node.region.outer.length >= 3
+    ? applyContourDirection([node.region.outer], direction)[0]
+    : null
+  const islandContours = applyContourDirection(
+    node.region.islands.filter((island) => island.length >= 3),
+    direction,
+  )
+  const contours: Point[][] = [...(outer ? [outer] : []), ...islandContours]
+
+  const pathParams: TrochoidalPathParams = { orbitRadius, advance, toolDiameter, angularDirection }
+  let nextPosition = fromPosition
+
+  for (const contour of contours) {
+    const entryMoves = trochoidalEntryMoveCount(safeZ, z, orbitRadius, operation)
+    if (entryMoves > MAX_TROCHOIDAL_ENTRY_MOVES || entryMoves + 3 >= budget.remainingMoves) {
+      warnings.push({ code: 'pocketTrochoidalEntryBudget', params: { x: contour[0]?.x ?? 0, y: contour[0]?.y ?? 0 } })
+      return nextPosition
+    }
+
+    const maxPoints = Math.min(budget.remainingPoints, budget.remainingMoves) - entryMoves - 3
+    const { built, generated } = pathStore.resolve(
+      contour,
+      true,
+      pathParams,
+      () => buildTrochoidalContour(contour, {
+        orbitRadius,
+        advance,
+        toolDiameter,
+        angularDirection,
+        closed: true,
+        maxPoints,
+      }),
+    )
+    const overBudget = built.points.length > maxPoints
+    if (built.error || overBudget || built.points.length < 2 || !built.entryCenter) {
+      warnings.push({
+        code: pocketTrochoidalWarningCode(built.error, overBudget),
+        params: { x: contour[0]?.x ?? 0, y: contour[0]?.y ?? 0 },
+      })
+      return nextPosition
+    }
+
+    const generatedPoints = entryMoves + 3 + (generated ? built.points.length : 0)
+    const emittedPoints = entryMoves + 3 + built.points.length
+    if (emittedPoints > budget.remainingMoves || generatedPoints > budget.remainingPoints) {
+      warnings.push({ code: 'pocketTrochoidalMoveBudget', params: { x: contour[0]?.x ?? 0, y: contour[0]?.y ?? 0 } })
+      return nextPosition
+    }
+    budget.remainingPoints -= generatedPoints
+    budget.remainingMoves -= emittedPoints
+
+    // Retract and rapid to the guide start — no at-depth linking between rings.
+    nextPosition = retractToSafe(moves, nextPosition, safeZ)
+    const rapidTo: ToolpathPoint = { x: built.points[0].x, y: built.points[0].y, z: safeZ }
+    if (nextPosition) {
+      moves.push({ kind: 'rapid', from: nextPosition, to: rapidTo, source: 'trochoidal-transition' })
+    }
+    nextPosition = appendTrochoidalEntry(
+      moves,
+      rapidTo,
+      built.points[0],
+      built.entryCenter,
+      z,
+      orbitRadius,
+      operation,
+      angularDirection,
+    )
+
+    // Emit orbit as cut moves.
+    for (let index = 0; index < built.points.length - 1; index += 1) {
+      moves.push({
+        kind: 'cut',
+        from: { x: built.points[index].x, y: built.points[index].y, z },
+        to: { x: built.points[index + 1].x, y: built.points[index + 1].y, z },
+      })
+    }
+    nextPosition = { x: built.points[built.points.length - 1].x, y: built.points[built.points.length - 1].y, z }
+  }
+
+  return nextPosition
 }
 
 export function cutOffsetNodeRings(
@@ -2656,6 +2807,7 @@ export function cutOffsetNodeRings(
   fromPosition: ToolpathPoint | null,
   childAnchors: Point[],
   options: OffsetRingOptions,
+  warnings?: ToolpathWarning[],
 ): ToolpathPoint | null {
   const {
     direction,
@@ -2669,7 +2821,30 @@ export function cutOffsetNodeRings(
     toolRadius,
     parent,
     xyLead,
+    trochoidal,
   } = options
+
+  // Trochoidal rings: orbit on the raw ring centrelines — no smoothing,
+  // no corner cleanup, no rotation toward the entry. The orbit closes on
+  // itself and the entry is a helix at the guide start.
+  if (trochoidal) {
+    return cutTrochoidalRingMoves(
+      moves, node, z, safeZ, fromPosition,
+      {
+        direction,
+        entryPolicy,
+        orbitRadius: trochoidal.orbitRadius,
+        advance: trochoidal.advance,
+        toolDiameter: trochoidal.toolDiameter,
+        angularDirection: trochoidal.angularDirection,
+        budget: trochoidal.budget,
+        pathStore: trochoidal.pathStore,
+        operation: trochoidal.operation,
+      },
+      warnings ?? [],
+    )
+  }
+
   // Only the ROOT node's own rings define a surface that survives: its outer
   // ring is the wall, its island loops ride the island walls. Every deeper node
   // sits further inside and is cleared away by nothing, so it takes no lead
@@ -2721,6 +2896,7 @@ export function cutOffsetRegionNode(
   currentPosition: ToolpathPoint | null,
   traversalMode: OffsetTraversalMode,
   options: OffsetRingOptions,
+  warnings?: ToolpathWarning[],
 ): ToolpathPoint | null {
   const { depth = 0 } = options
   let nextPosition = currentPosition
@@ -2738,6 +2914,7 @@ export function cutOffsetRegionNode(
       nextPosition,
       childAnchors,
       options,
+      warnings,
     )
   }
 
@@ -2756,6 +2933,7 @@ export function cutOffsetRegionNode(
       nextPosition,
       traversalMode,
       { ...options, depth: depth + 1, parent: node },
+      warnings,
     )
     remainingChildren.splice(remainingChildren.indexOf(childNode), 1)
   }
@@ -2770,6 +2948,7 @@ export function cutOffsetRegionNode(
       nextPosition,
       [],
       options,
+      warnings,
     )
   }
 
@@ -3018,14 +3197,23 @@ function generateRoughBandMoves(
   }
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
-  const initialInset = toolRadius + radialLeave
   // What the stored pattern actually clears with (issue #609): the declared
   // table decides, so the raster branch below and the seed gate further down
   // can no longer disagree about which patterns exist.
   const roughCoverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
   const stepLevels = generateStepLevels(band.topZ, effectiveBottom, stepdown)
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
-  const effectiveStepover = Math.max(stepoverDistance, minStepover)
+  let initialInset = toolRadius + radialLeave
+  let effectiveStepover = Math.max(stepoverDistance, minStepover)
+  // Trochoidal ring spacing: rings are one channel-width apart, scaled by the
+  // operation's stepover. The inset follows the same guide-offset formula as
+  // edge routes (planning/TROCHOIDAL_EDGE_DESIGN.md).
+  const isTrochoidal = roughCoverage.trochoidal
+  const trochoidalCutWidth = operation.trochoidalCutWidth ?? toolRadius * 3
+  if (isTrochoidal) {
+    effectiveStepover = Math.max(trochoidalCutWidth * operation.stepover, minStepover)
+    initialInset = trochoidalCutWidth / 2 + toolRadius * 2 * TROCHOIDAL_GUIDE_SAFETY_FRACTION + radialLeave
+  }
   const slotScale = resolveSlotFeedScale(operation)
   const slotDistance = Math.max(
     toolRadius * 2 * SLOT_FEED_ENGAGEMENT_FACTOR,
@@ -3239,6 +3427,23 @@ function generateRoughBandMoves(
     (warning) => appendUniqueWarning(warnings, warning),
   )
 
+  // Trochoidal budget and path store: one per band, shared across levels.
+  const trochoidalBudget: PocketTrochoidalBudget | undefined = isTrochoidal
+    ? { remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET, remainingMoves: DEFAULT_TROCHOIDAL_POINT_BUDGET }
+    : undefined
+  const trochoidalPathStore = isTrochoidal ? createTrochoidalPathStore() : undefined
+  const trochoidalRingOptions = isTrochoidal
+    ? {
+        orbitRadius: (trochoidalCutWidth - toolRadius * 2) / 2,
+        advance: (operation.trochoidalAdvance ?? 0.1) * toolRadius * 2,
+        toolDiameter: toolRadius * 2,
+        angularDirection: (direction === 'climb' ? 1 : -1) as 1 | -1,
+        budget: trochoidalBudget!,
+        pathStore: trochoidalPathStore!,
+        operation,
+      }
+    : undefined
+
   // Keep XY travel at the global safe Z, but start the entry just above the
   // previous level's floor instead of at safe Z — otherwise a deep pocket
   // spends most of its helix cutting air. Safe because the ring tree above is
@@ -3348,7 +3553,9 @@ function generateRoughBandMoves(
             wallCleanup,
             toolRadius,
             xyLead: levelXyLead,
+            trochoidal: trochoidalRingOptions,
           },
+          warnings,
         )
       }
     } else {
@@ -3409,7 +3616,9 @@ function generateRoughBandMoves(
             toolRadius,
             parent: unit.parent ?? undefined,
             xyLead: levelXyLead,
+            trochoidal: trochoidalRingOptions,
           },
+          warnings,
         )
         previousUnitRoot = unit.root
         const parentNode = unit.parent
@@ -3595,6 +3804,24 @@ function generateFinishBandMoves(
   }
   const finishCoverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
   const isParallelPocket = finishCoverage.rasterSegments
+  // Trochoidal floor: rings become orbit guides, same as the rough pass.
+  const isTrochoidalFloor = finishCoverage.trochoidal
+  const floorTrochoidalCutWidth = operation.trochoidalCutWidth ?? toolRadius * 3
+  const floorTrochoidalBudget: PocketTrochoidalBudget | undefined = isTrochoidalFloor
+    ? { remainingPoints: DEFAULT_TROCHOIDAL_POINT_BUDGET, remainingMoves: DEFAULT_TROCHOIDAL_POINT_BUDGET }
+    : undefined
+  const floorTrochoidalPathStore = isTrochoidalFloor ? createTrochoidalPathStore() : undefined
+  const floorTrochoidalRingOptions = isTrochoidalFloor
+    ? {
+        orbitRadius: (floorTrochoidalCutWidth - toolRadius * 2) / 2,
+        advance: (operation.trochoidalAdvance ?? 0.1) * toolRadius * 2,
+        toolDiameter: toolRadius * 2,
+        angularDirection: (direction === 'climb' ? 1 : -1) as 1 | -1,
+        budget: floorTrochoidalBudget!,
+        pathStore: floorTrochoidalPathStore!,
+        operation,
+      }
+    : undefined
   // Offset floors are cut through the same inner-first ring traversal as the
   // rough pass (each disjoint floor area starts at its innermost loop and
   // works outward). The tree roots replicate buildPocketFloorContours'
@@ -3727,7 +3954,9 @@ function generateFinishBandMoves(
             entryPolicy,
             tangentLink: floorTangentLink,
             toolRadius,
+            trochoidal: floorTrochoidalRingOptions,
           },
+          warnings,
         )
       }
     } else {
@@ -3819,7 +4048,9 @@ function generateFinishBandMoves(
             tangentLink: floorTangentLink,
             toolRadius,
             parent: unit.parent ?? undefined,
+            trochoidal: floorTrochoidalRingOptions,
           },
+          warnings,
         )
         previousUnitRoot = unit.root
         const parentNode = unit.parent
