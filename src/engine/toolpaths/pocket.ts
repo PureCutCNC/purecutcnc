@@ -19,6 +19,7 @@ import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Point, Project } from '../../types/project'
 import {
   createEntryPolicy,
+  findLargestClearanceCircle,
   helixAngularDirection,
   isEntryHandoffMove,
   synthesizeEntry,
@@ -107,7 +108,7 @@ import { resolveRegionDomainArea } from './regionDomain'
 import { unionClipperPaths } from './modelProtection'
 import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 import { appendAll } from './appendAll'
-import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET } from './trochoidalEdge'
+import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET, ORBIT_SAGITTA_FRACTION } from './trochoidalEdge'
 import type { TrochoidalContourError } from './trochoidalEdge'
 import { createTrochoidalPathStore } from './trochoidalLevelPaths'
 import type { TrochoidalPathParams } from './trochoidalLevelPaths'
@@ -2048,6 +2049,56 @@ export function buildOffsetRegionTree(
   }
 }
 
+/**
+ * Give any leaf ring whose channel stops short of the middle one more guide.
+ *
+ * A contour pocket never needs this: it steps by the same width it cuts, so a
+ * region too small for another step is already inside the last ring's sweep.
+ * Trochoidal breaks that coupling — it steps by `channelWidth x stepover` but
+ * each guide only sweeps `channelWidth / 2` either side. The tree stops when it
+ * cannot inset a whole pitch, so the innermost guide can sit up to a full pitch
+ * from the middle while reaching only half a channel in. Everything between is
+ * never cut, and it is worst in the middle of the pocket, on the medial axis.
+ *
+ * Measured on `work/trochoidal-pocket-test.camj` (1/4 in cutter, 0.375 in
+ * channel): at stepover 0.75 that left 2.6 % of the floor standing as a bar
+ * along the pocket's centreline. It is not monotonic in stepover — it depends
+ * on where the last ring happens to land — so a tighter stepover does not
+ * avoid it and 0.85 merely made it smaller.
+ *
+ * The residual is measured, not guessed: the largest circle that fits inside
+ * the leaf gives the deepest point the guide has to reach, and the extra guide
+ * is inset by exactly that shortfall. Its own leftover is then at most half a
+ * channel, so one guide always suffices and this never recurses.
+ *
+ * The half-channel is corrected by the orbit's sagitta bound, because the
+ * emitted polyline sits inside the true orbit by up to `0.0022 x D` — the same
+ * constant `trochoidalEdge.ts` holds its step count to. Sizing against the
+ * nominal channel would leave a hairline ridge exactly where this is trying to
+ * remove one.
+ */
+function appendResidualCoreGuides(
+  node: OffsetRegionNode,
+  channelWidth: number,
+  toolDiameter: number,
+  islandJoinType: number,
+): void {
+  if (node.children.length > 0) {
+    for (const child of node.children) {
+      appendResidualCoreGuides(child, channelWidth, toolDiameter, islandJoinType)
+    }
+    return
+  }
+  const sweptHalfWidth = channelWidth / 2 - toolDiameter * ORBIT_SAGITTA_FRACTION
+  if (!(sweptHalfWidth > 0)) return
+  const deepest = findLargestClearanceCircle([{ outer: node.region.outer, islands: node.region.islands }])
+  if (!deepest) return
+  const shortfall = deepest.radius - sweptHalfWidth
+  if (!(shortfall > 0)) return
+  const extra = buildInsetRegions(node.region, shortfall, ClipperLib.JoinType.jtMiter, islandJoinType)
+  node.children = extra.map((region) => ({ region, children: [] }))
+}
+
 type RingPerimeterIndex = ReadonlyMap<string, number>
 
 export interface WallCornerCleanupContext {
@@ -3440,7 +3491,13 @@ function generateRoughBandMoves(
     const plans = seedStart > 0
       ? planSeedCircles(region, seedStart, effectiveStepover, toolRadius * 2, radialLeave)
       : []
-    if (plans.length === 0) return buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
+    if (plans.length === 0) {
+      const tree = buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
+      if (isTrochoidal) {
+        appendResidualCoreGuides(tree, trochoidalGeometry.cutWidth, toolRadius * 2, islandJoinType)
+      }
+      return tree
+    }
 
     const seeded = buildOffsetRegionTree(
       { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
@@ -3959,7 +4016,13 @@ function generateFinishBandMoves(
         const plans = floorSeedStart > 0
           ? planSeedCircles(region, floorSeedStart, floorStepover, toolRadius * 2, radialLeave)
           : []
-        if (plans.length === 0) return [buildOffsetRegionTree(region, floorStepover, floorIslandJoin)]
+        if (plans.length === 0) {
+          const tree = buildOffsetRegionTree(region, floorStepover, floorIslandJoin)
+          if (isTrochoidalFloor) {
+            appendResidualCoreGuides(tree, floorTrochoidalGeometry.cutWidth, toolRadius * 2, floorIslandJoin)
+          }
+          return [tree]
+        }
         const seeded = buildOffsetRegionTree(
           { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
           floorStepover,

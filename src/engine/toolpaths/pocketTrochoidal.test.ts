@@ -264,6 +264,62 @@ test('the coverage assertion bites: a channel too narrow for its ring spacing le
   assert(uncovered > 0, 'the grid must be able to detect uncut material at all')
 })
 
+/**
+ * Uncut floor area at the deepest level, in mm^2, measured on the cutter body.
+ * Samples the whole pocket interior rather than an inset window, because the
+ * failure this exists to catch sits on the medial axis, in the middle.
+ */
+function uncutFloorArea(
+  result: { moves: readonly ToolpathMove[] },
+  half: number,
+  sampleStep = TOOL_RADIUS / 8,
+): number {
+  const cuts = cutMoves(result.moves)
+  if (cuts.length === 0) return Infinity
+  const deepest = Math.min(...cuts.map((move) => move.to.z))
+  const atDepth = cuts.filter((move) => move.from.z === deepest && move.to.z === deepest)
+  const covered = buildSweptCoverage(
+    atDepth.map((move) => [
+      { x: move.from.x, y: move.from.y },
+      { x: move.to.x, y: move.to.y },
+    ]),
+    TOOL_RADIUS,
+  )
+  if (covered.segmentCount === 0) return Infinity
+  let area = 0
+  // The walls are finished by a contour pass, so the rings answer for the floor
+  // inside the tool radius.
+  for (let x = -half + TOOL_RADIUS; x <= half - TOOL_RADIUS; x += sampleStep) {
+    for (let y = -half + TOOL_RADIUS; y <= half - TOOL_RADIUS; y += sampleStep) {
+      if (!covered.covers(x, y)) area += sampleStep * sampleStep
+    }
+  }
+  return area
+}
+
+test('acceptance: no pocket size leaves an uncut core, across a range of widths', () => {
+  // The original coverage test above used ONE pocket size and passed on it by
+  // luck: whether the innermost ring's channel reaches the middle depends on
+  // where that last ring happens to land, which is a function of the size. A
+  // single size therefore proves nothing, and this shipped with a 2.6 % uncut
+  // bar along the centreline of a real 2.74 x 1.74 in pocket.
+  //
+  // Sweeping the width is the actual guard: at least one of these lands badly
+  // for any given pitch rule, so no lucky fixture can hide the defect.
+  const failures: string[] = []
+  for (let half = 12; half <= 26; half += 1) {
+    const { project, operation } = buildPocket({}, half)
+    const result = generatePocketToolpath(project, operation)
+    if (result.moves.length === 0) {
+      failures.push(`${half * 2} mm: refused (${warningCodes(result).join(', ') || 'no warning'})`)
+      continue
+    }
+    const area = uncutFloorArea(result, half)
+    if (area > 0) failures.push(`${half * 2} mm square: ${area.toFixed(2)} mm² uncut`)
+  }
+  assert(failures.length === 0, `pockets left material uncut:\n    ${failures.join('\n    ')}`)
+})
+
 // ── Acceptance: engagement ───────────────────────────────────────────
 
 test('acceptance: peak radial engagement is below the equivalent contour pocket', () => {
