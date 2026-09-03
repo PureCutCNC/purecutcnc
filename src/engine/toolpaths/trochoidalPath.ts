@@ -23,6 +23,52 @@ export const TROCHOIDAL_ENTRY_STEPS_PER_REVOLUTION = 36
 export const MAX_TROCHOIDAL_ENTRY_MOVES = 20_000
 
 /**
+ * Channel-width bounds, as ratios of the cutter diameter
+ * (planning/TROCHOIDAL_EDGE_DESIGN.md § Cut width bounds).
+ *
+ * `MIN` is a hard floor: below it the orbit degenerates toward a plain contour
+ * while still paying the full per-loop move count, and at `W <= D` the orbit
+ * radius `(W - D) / 2` is not positive at all.
+ *
+ * `LEAVES_CORE` is where the orbit radius passes the tool radius, so a helical
+ * entry bore stops overlapping its own centre and leaves a full-stepdown core
+ * for the first advancing loops to plough through side-on. `entry.ts` caps
+ * pocket helixes at the tool radius for the same reason; here the channel width
+ * is the user's call, so crossing it advises rather than refuses.
+ *
+ * edge.ts and carving.ts still spell `1.15` inline; they predate this constant
+ * and changing them is not this module's to do.
+ */
+export const TROCHOIDAL_MIN_WIDTH_RATIO = 1.15
+export const TROCHOIDAL_CORE_WIDTH_RATIO = 2
+
+/** Channel width when the user has not pinned one: `1.5 x D`. */
+export const TROCHOIDAL_DEFAULT_WIDTH_RATIO = 1.5
+/** Advance per loop when the user has not pinned one: `0.1 x D`. */
+export const TROCHOIDAL_DEFAULT_ADVANCE_RATIO = 0.1
+
+/**
+ * The orbit geometry an operation asks for, resolved against its current tool.
+ *
+ * Both fields are `undefined` until the user edits them and resolve at every
+ * read, so assigning a different cutter re-derives the channel while an explicit
+ * edit survives the tool change (§ Data model). One spelling, so the CAM panel's
+ * readout and the generator cannot drift apart.
+ */
+export function resolveTrochoidalGeometry(
+  operation: Operation,
+  toolDiameter: number,
+): { cutWidth: number; advance: number; orbitRadius: number } {
+  const cutWidth = operation.trochoidalCutWidth ?? toolDiameter * TROCHOIDAL_DEFAULT_WIDTH_RATIO
+  const advanceRatio = operation.trochoidalAdvance ?? TROCHOIDAL_DEFAULT_ADVANCE_RATIO
+  return {
+    cutWidth,
+    advance: advanceRatio * toolDiameter,
+    orbitRadius: (cutWidth - toolDiameter) / 2,
+  }
+}
+
+/**
  * Two accounts, because #661 split one question into two.
  *
  * `remainingMoves` is what the operation **emits**: one array of cut moves per

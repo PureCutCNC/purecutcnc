@@ -42,7 +42,7 @@
 
 import type { camEn } from '../../i18n/locales/en/cam'
 import type { EntryStrategy, Operation, OperationKind } from '../../types/project'
-import { isTrochoidalCarve, isTrochoidalEdgeRoughing } from '../../types/project'
+import { isTrochoidalCarve, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import { clearingControlApplies, type ClearingControl } from '../../engine/toolpaths/clearingControls'
 import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
 import type { OperationParamRefKind } from './operationParamRefData'
@@ -87,9 +87,9 @@ function isEdgeRouteKind(kind: OperationKind): boolean {
   return kind === 'edge_route_inside' || kind === 'edge_route_outside'
 }
 
-/** Either flavour of trochoidal motion: rough edge routing or engraving. */
+/** Either flavour of trochoidal motion: rough edge routing, engraving, or pocket clearing. */
 export function isTrochoidalOperation(operation: Operation): boolean {
-  return isTrochoidalEdgeRoughing(operation) || isTrochoidalCarve(operation)
+  return isTrochoidalEdgeRoughing(operation) || isTrochoidalCarve(operation) || isTrochoidalPocket(operation)
 }
 
 /** Operations that let the user choose how the cutter enters the material. */
@@ -516,15 +516,33 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     // Only meaningful once the interior rings are already rounded. Which kinds
     // participate at all is CLEARING_CONTROL_SUPPORT's call (#616); the pattern
     // and rounding conditions stay local, exactly as at the generators.
+    //
+    // Withheld from a trochoidal ROUGH pass: the orbit emitter takes the raw
+    // ring centrelines and never receives the wall-cleanup context, so toggling
+    // this changes nothing (measured; a contour pocket on the same fixture does
+    // change).
+    //
+    // And withheld from any finish pass not cutting walls. Wall-corner cleanup
+    // acts on the wall contour; a finish pass with `finishWalls` off emits no
+    // wall at all, so there is nothing for it to clean — which a floor-only
+    // trochoidal finish made visible, but is just as true of a contour one.
     appliesTo: (operation) => clearingControlApplies(operation.kind, 'cleanWallCorners')
       && operation.pocketPattern !== 'parallel'
+      && (operation.pass === 'finish' ? operation.finishWalls : operation.pocketPattern !== 'trochoidal')
       && (operation.roundOutsideCorners ?? false),
   },
   {
     id: 'cornerRelief',
     group: 'corners',
     paramRef: 'cornerRelief',
-    appliesTo: (operation) => clearingControlApplies(operation.kind, 'cornerRelief')
+    // Not offered on a trochoidal pocket. The relief pass descends on the
+    // pass's own tool-centre path where it turns the corner, and an orbit never
+    // traces the ring corner a contour does — so the pass finds no corner cut,
+    // emits one `cornerReliefCornerNotCut` per corner, and adds no relief. The
+    // row would offer a setting that cannot change the program, the same reason
+    // `xyLeadStrategy` above is withheld from trochoidal edge roughing.
+    appliesTo: (operation) => (clearingControlApplies(operation.kind, 'cornerRelief')
+      && !isTrochoidalPocket(operation))
       || isEdgeRouteKind(operation.kind),
   },
   // ── Drilling — applies to one kind, so the group is absent everywhere else.

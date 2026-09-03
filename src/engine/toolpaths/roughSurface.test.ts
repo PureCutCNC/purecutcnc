@@ -1063,7 +1063,7 @@ function testRoughSurfaceGenerationMatrix(): void {
   console.log('Testing rough_surface generation matrix over the offered patterns...')
   const offered = offeredPocketPatterns('rough_surface')
   assert(
-    offered.join(',') === 'offset,seeded_offset,parallel',
+    offered.join(',') === 'offset,seeded_offset,parallel,trochoidal',
     `rough_surface must offer exactly the clearing set, got ${offered.join(',')}`,
   )
 

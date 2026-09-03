@@ -42,10 +42,10 @@ import type {
   ToolType,
   XyLeadStrategy,
 } from '../../types/project'
-import { defaultRetractOffset, isTrochoidalEdgeRoughing } from '../../types/project'
+import { defaultRetractOffset, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
-import { offeredPocketPatterns } from '../../engine/toolpaths/pocketPatterns'
+import { offeredPocketPatterns, TROCHOIDAL_RING_STEPOVER } from '../../engine/toolpaths/pocketPatterns'
 import { countersinkTipDepth } from '../../engine/toolpaths/drilling'
 import { createOperationBookletPdf } from '../../engine/operationBooklet'
 import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
@@ -395,6 +395,8 @@ function pocketPatternLabel(pattern: PocketPattern): string {
       return camT('cam.pocketPattern.constantScallop')
     case 'seeded_offset':
       return camT('cam.pocketPattern.seededOffset')
+    case 'trochoidal':
+      return camT('cam.pocketPattern.trochoidal')
   }
 }
 
@@ -1414,19 +1416,36 @@ export function CAMPanel({
         </>
       ),
       stepover: () => (
-        <label className="properties-field">
-          <span>
-            {operation.kind === 'v_carve'
-              ? camT('cam.operation.contourSpacing')
-              : camT('cam.operation.stepoverRatio')}
-          </span>
-          <DraftNumberInput
-            value={operation.stepover}
-            min={0.001}
-            onCommit={(value) => updateOperation(operation.id, { stepover: value })}
-          />
-          <OperationParameterReference kind="stepover" />
-        </label>
+        <>
+          <label className="properties-field">
+            <span>
+              {operation.kind === 'v_carve'
+                ? camT('cam.operation.contourSpacing')
+                : camT('cam.operation.stepoverRatio')}
+            </span>
+            <DraftNumberInput
+              value={operation.stepover}
+              min={0.001}
+              onCommit={(value) => updateOperation(operation.id, { stepover: value })}
+            />
+            <OperationParameterReference kind="stepover" />
+          </label>
+          {/* Trochoidal measures the stepover against the CHANNEL, not the
+              cutter, so the same number means a different distance than it does
+              on every other pattern. The resolved pitch says which, at the
+              field, rather than leaving it to be inferred. */}
+          {isTrochoidalPocket(operation) && trochoidalCutWidth > 0 ? (
+            <div className="properties-field">
+              <span />
+              <span className="cam-field-message">
+                {camT('cam.operation.trochoidalRingPitch', {
+                  pitch: formatLength(trochoidalCutWidth * operation.stepover, project.meta.units),
+                  width: formatLength(trochoidalCutWidth, project.meta.units),
+                })}
+              </span>
+            </div>
+          ) : null}
+        </>
       ),
       entryStrategy: () => (
         <label className="properties-field">
@@ -1488,11 +1507,19 @@ export function CAMPanel({
               const waterlineSpacing = value === 'waterline'
                 ? defaultWaterlineAdaptiveSpacing(selectedOperationTool, project.meta.units)
                 : 0
+              // Trochoidal spaces its rings by the channel width, not the tool
+              // diameter, so the contour-tuned stepover means something different
+              // here. Retune it on the switch, where the user can see the new
+              // number in the field and edit it.
+              const trochoidalStepover = value === 'trochoidal' && operation.pocketPattern !== 'trochoidal'
+                ? TROCHOIDAL_RING_STEPOVER
+                : 0
               updateOperation(operation.id, {
                 pocketPattern: value,
                 ...(waterlineSpacing > 0 && !(operation.waterlineMicroStepover && operation.waterlineMicroStepover > 0)
                   ? { waterlineMicroStepover: waterlineSpacing }
                   : {}),
+                ...(trochoidalStepover > 0 ? { stepover: trochoidalStepover } : {}),
               })
             }}
           />

@@ -485,7 +485,7 @@ export type CarveStrategy = 'direct' | 'trochoidal'
  * Every project saved before it has `offset`, so the value is new-only and
  * legacy output is untouched.
  */
-export type PocketPattern = 'offset' | 'parallel' | 'waterline' | 'constant_scallop' | 'seeded_offset'
+export type PocketPattern = 'offset' | 'parallel' | 'waterline' | 'constant_scallop' | 'seeded_offset' | 'trochoidal'
 export type CutDirection = 'conventional' | 'climb'
 /**
  * Drilling mode (issue #489 added `countersink`).
@@ -672,6 +672,28 @@ export function isTrochoidalEdgeRoughing(operation: Operation): boolean {
  */
 export function isTrochoidalCarve(operation: Operation): boolean {
   return operation.kind === 'follow_line' && operation.carveStrategy === 'trochoidal'
+}
+
+/**
+ * True for a clearing operation that generates trochoidal orbits on its offset
+ * rings rather than tracing them as plain contours.
+ *
+ * This is the single definition, and it decides the CAM panel's field visibility
+ * and the entry-strategy switch. It has to cover the finish pass too: a finish
+ * FLOOR is cleared trochoidally by the same ring emitter, so an operation that
+ * orbits needs its channel-width and advance fields whichever pass it is on.
+ * Gating this on `pass === 'rough'` hid those fields from an operation that was
+ * still emitting orbits, leaving a channel width the user could not set.
+ *
+ * A finish pass's WALLS are always a contour — but that is decided inside the
+ * generator, which asks `areaCoverage` per ring, not by this predicate.
+ */
+export function isTrochoidalPocket(operation: Operation): boolean {
+  if (operation.pocketPattern !== 'trochoidal') return false
+  if (operation.kind !== 'pocket' && operation.kind !== 'surface_clean' && operation.kind !== 'rough_surface') {
+    return false
+  }
+  return operation.pass === 'rough' || operation.finishFloor
 }
 
 // ============================================================

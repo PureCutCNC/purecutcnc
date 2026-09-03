@@ -78,11 +78,12 @@ export interface OperationPatternSupport {
  * resolved to the rings.
  */
 const CLEARING_PATTERNS: OperationPatternSupport = {
-  offered: ['offset', 'seeded_offset', 'parallel'],
+  offered: ['offset', 'seeded_offset', 'parallel', 'trochoidal'],
   effective: {
     offset: 'offset',
     seeded_offset: 'seeded_offset',
     parallel: 'parallel',
+    trochoidal: 'trochoidal',
     waterline: 'offset',
     constant_scallop: 'none',
   },
@@ -100,6 +101,7 @@ export const OPERATION_PATTERN_SUPPORT: Readonly<Record<OperationKind, Operation
       offset: 'parallel',
       seeded_offset: 'parallel',
       parallel: 'parallel',
+      trochoidal: 'none',
       waterline: 'waterline',
       constant_scallop: 'constant_scallop',
     },
@@ -112,6 +114,7 @@ export const OPERATION_PATTERN_SUPPORT: Readonly<Record<OperationKind, Operation
       offset: 'offset',
       seeded_offset: 'seeded_offset',
       parallel: 'parallel',
+      trochoidal: 'none',
       waterline: 'none',
       constant_scallop: 'none',
     },
@@ -142,7 +145,13 @@ export const OPERATION_PATTERN_SUPPORT: Readonly<Record<OperationKind, Operation
  * booklet, and the generators.
  */
 export function usesTangentLinks(kind: OperationKind, pattern: PocketPattern): boolean {
-  return CLEARING_CONTROL_SUPPORT[kind].clears && pattern !== 'parallel'
+  // Trochoidal joins nothing at depth: an orbit closes on itself, so the
+  // generator retracts to safe Z and rapids between rings rather than splicing
+  // a tangential S-link. It is excluded here rather than at each consumer
+  // because the CAM panel, the operation booklet and the generators all ask
+  // this one function — leaving it true offered `roundLinkCorners` and the XY
+  // lead row on an operation whose program neither can change.
+  return CLEARING_CONTROL_SUPPORT[kind].clears && pattern !== 'parallel' && pattern !== 'trochoidal'
 }
 
 /** The patterns `kind` offers, in dropdown order. Empty means no pattern row. */
@@ -168,6 +177,40 @@ export function effectivePocketPattern(
   return OPERATION_PATTERN_SUPPORT[kind]?.effective[pattern] ?? 'none'
 }
 
+/**
+ * Ring spacing seeded when the user picks the trochoidal pattern, as a fraction
+ * of the CHANNEL width rather than the tool diameter.
+ *
+ * Deliberately conservative, and lower than the widest spacing that still
+ * clears. 0.85 — the 15 % overlap the geometry alone suggests — measured clean
+ * only on a plain right-angled pocket, and left material on everything else
+ * tried: 27 mm2 on a pocket with a ~53-degree notch, and more again around
+ * islands, where rings diverge as they split and rejoin. A contour pocket shows
+ * the same behaviour at the same stepover, so this is ring clearing's nature
+ * rather than the orbit's, and the honest response is to seed a spacing that
+ * holds on ordinary geometry instead of the one that holds on the best case.
+ *
+ * 0.5 measured clean on every fixture tried, and still steps far wider than a
+ * contour pocket does — half a 9 mm channel against 0.4 of a 6 mm cutter.
+ *
+ * Seeded by the CAM panel when the pattern is picked, where the change is
+ * visible and editable. A load-time rewrite would silently retune a saved
+ * operation whose stepover the user had chosen deliberately.
+ */
+export const TROCHOIDAL_RING_STEPOVER = 0.5
+
+/**
+ * Above this, warn. Measured on `work/trochoidal-pocket-test.camj`, a
+ * right-angled pocket: clean through 0.85, then 0.276 mm2 uncut at 0.86, 4.6 at
+ * 0.90, 53.0 at 1.00.
+ *
+ * Kept separate from the seeded default above, because they answer different
+ * questions — one is the spacing to start from, the other the point past which
+ * even the best-case geometry stops clearing. Collapsing them would either warn
+ * about the default or let the measured limit drift with it.
+ */
+export const TROCHOIDAL_MAX_COVERING_STEPOVER = 0.85
+
 /** What a clearing generator builds for an effective pattern. */
 export interface AreaCoverage {
   /** Concentric offset rings cover the area. */
@@ -176,9 +219,11 @@ export interface AreaCoverage {
   readonly seedCircles: boolean
   /** A parallel raster covers the area. */
   readonly rasterSegments: boolean
+  /** Rings are cut as trochoidal orbits rather than direct contours. */
+  readonly trochoidal: boolean
 }
 
-const NO_COVERAGE: AreaCoverage = { rings: false, seedCircles: false, rasterSegments: false }
+const NO_COVERAGE: AreaCoverage = { rings: false, seedCircles: false, rasterSegments: false, trochoidal: false }
 
 /**
  * The area-clearing dispatch, exhaustive over `EffectivePocketPattern`.
@@ -192,11 +237,13 @@ const NO_COVERAGE: AreaCoverage = { rings: false, seedCircles: false, rasterSegm
 export function areaCoverage(pattern: EffectivePocketPattern): AreaCoverage {
   switch (pattern) {
     case 'offset':
-      return { rings: true, seedCircles: false, rasterSegments: false }
+      return { rings: true, seedCircles: false, rasterSegments: false, trochoidal: false }
     case 'seeded_offset':
-      return { rings: true, seedCircles: true, rasterSegments: false }
+      return { rings: true, seedCircles: true, rasterSegments: false, trochoidal: false }
     case 'parallel':
-      return { rings: false, seedCircles: false, rasterSegments: true }
+      return { rings: false, seedCircles: false, rasterSegments: true, trochoidal: false }
+    case 'trochoidal':
+      return { rings: true, seedCircles: false, rasterSegments: false, trochoidal: true }
     // Waterline is a 3D constant-Z finishing strategy, not area clearing;
     // `finish_surface` dispatches it before it ever reaches this function.
     case 'waterline':

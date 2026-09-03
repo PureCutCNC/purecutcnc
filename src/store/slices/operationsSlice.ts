@@ -169,6 +169,10 @@ export function createOperationsSlice(
       if ((operation.kind !== 'pocket' && operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') || operation.target.source !== 'features') {
         return { operationId: null, regionIds: [], warnings: [{ code: 'restOnlyPocketEdgeTargets' as const }] }
       }
+      // Still refused for a trochoidal EDGE route, which has no area to compute a
+      // leftover from. A trochoidal POCKET is supported: its channel is a virtual
+      // tool of known width, so `generatePocketRestRegionDrafts` derives the
+      // leftover from that width instead of the cutter's.
       if (
         (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside')
         && operation.edgeStrategy === 'trochoidal'

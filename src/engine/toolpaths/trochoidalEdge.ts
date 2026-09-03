@@ -30,7 +30,7 @@ import { XY_EPSILON, samePointXY } from './geometry'
  * it removes is small orbits being cut several times finer than the contract
  * asks for, at full cost in points.
  */
-const ORBIT_SAGITTA_FRACTION = 0.0022
+export const ORBIT_SAGITTA_FRACTION = 0.0022
 
 /**
  * Totality floor for a degenerate orbit radius, not an accuracy floor: it keeps
