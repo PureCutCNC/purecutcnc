@@ -1129,6 +1129,80 @@ function inconsistentRunForR(): { arcs: ArcMoveDescriptor[] } {
 
 // ── run all ─────────────────────────────────────────────────────
 
+// ── lead runs fit to arcs (issue #695) ─────────────────────────
+
+function testPlanarLeadRunFitsToAnArc(): void {
+  console.log('Testing a planar lead run fits to an arc...')
+
+  // A tangent-arc lead is emitted as a chord run of `lead_in` moves at one
+  // constant feed. Before #695 arc fitting refused every non-cut kind, so a
+  // lead shipped as a string of tiny G1 chords — and a faceted approach marks
+  // a finished surface much as the plunge it replaces would.
+  const r = 6
+  const leadPoints: ToolpathPoint[] = []
+  for (let i = 0; i <= 6; i++) {
+    const angle = Math.PI + (Math.PI / 2 * i) / 6
+    leadPoints.push(pt(r * Math.cos(angle), r * Math.sin(angle), -2))
+  }
+  const lead: ToolpathMove[] = []
+  for (let i = 0; i < leadPoints.length - 1; i++) {
+    lead.push({ kind: 'lead_in', from: leadPoints[i], to: leadPoints[i + 1], feedScale: 0.375 })
+  }
+
+  const result = fitArcsInMachineMoves(lead, TOL, MAX_DEG)
+  const arcs = result.filter(d => d.kind === 'arc')
+  assert(arcs.length === 1, `expected the lead to fit one arc, got ${arcs.length}`)
+  assert(result.filter(d => d.kind === 'linear').length === 0, 'no lead chord passed through as linear')
+}
+
+function testLeadWithVaryingFeedCannotFit(): void {
+  console.log('Testing a lead with a per-move feed ramp cannot fit...')
+
+  // This is why the lead carries ONE constant feed. A run is grouped by equal
+  // feedScale, so a ramp splits every chord into its own run and the arc is
+  // lost. Kept as a test so a ramp cannot creep back without this going red.
+  const r = 6
+  const points: ToolpathPoint[] = []
+  for (let i = 0; i <= 6; i++) {
+    const angle = Math.PI + (Math.PI / 2 * i) / 6
+    points.push(pt(r * Math.cos(angle), r * Math.sin(angle), -2))
+  }
+  const ramped: ToolpathMove[] = []
+  for (let i = 0; i < points.length - 1; i++) {
+    ramped.push({ kind: 'lead_in', from: points[i], to: points[i + 1], feedScale: 0.4 + i * 0.05 })
+  }
+
+  const result = fitArcsInMachineMoves(ramped, TOL, MAX_DEG)
+  assert(result.filter(d => d.kind === 'arc').length === 0, 'a ramped lead fits no arc')
+  assert(result.filter(d => d.kind === 'linear').length === ramped.length, 'every chord passes through')
+}
+
+function testLeadIsNeverFittedTogetherWithItsCut(): void {
+  console.log('Testing a lead is never fitted together with the cut it hands over to...')
+
+  // The lead arrives tangent to the contour, so lead and cut are geometrically
+  // one arc. Fitting them together would relabel the lead and lose the
+  // distinction the preview, the booklet and the feed table all read.
+  const r = 6
+  const all: ToolpathPoint[] = []
+  for (let i = 0; i <= 12; i++) {
+    const angle = Math.PI + (Math.PI * i) / 12
+    all.push(pt(r * Math.cos(angle), r * Math.sin(angle), -2))
+  }
+  const moves: ToolpathMove[] = []
+  for (let i = 0; i < 6; i++) {
+    moves.push({ kind: 'lead_in', from: all[i], to: all[i + 1], feedScale: 0.375 })
+  }
+  for (let i = 6; i < all.length - 1; i++) {
+    moves.push({ kind: 'cut', from: all[i], to: all[i + 1], feedScale: 0.375 })
+  }
+
+  const result = fitArcsInMachineMoves(moves, TOL, MAX_DEG)
+  const arcs = result.filter(d => d.kind === 'arc')
+  assert(arcs.length >= 2, `lead and cut fit separately, got ${arcs.length} arc(s)`)
+}
+
+
 testAcceptedCircularRun()
 testClockwiseAfterYInvert()
 testRejectsStraightRun()
@@ -1154,6 +1228,9 @@ testRejectsLongStraightWithCornerFragment()
 testAcceptsOrdinaryCircularArcAfterCollinearGate()
 testFullCircularChordLoop()
 testPartialArcWithStraightLeads()
+testPlanarLeadRunFitsToAnArc()
+testLeadWithVaryingFeedCannotFit()
+testLeadIsNeverFittedTogetherWithItsCut()
 
 testIssue447MinimalReproduction()
 testAdjacentRunsShareEndpointsExactly()

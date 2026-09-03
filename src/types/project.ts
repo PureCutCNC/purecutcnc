@@ -500,6 +500,19 @@ export type DrillType = 'simple' | 'peck' | 'dwell' | 'chip_breaking' | 'helical
 export type MachiningOrder = 'level_first' | 'feature_first'
 export type EntryStrategy = 'plunge' | 'helix' | 'ramp'
 /**
+ * XY lead-in / lead-out strategy (issue #695).
+ *
+ * Composes with `EntryStrategy` rather than replacing it: the Z-entry reaches a
+ * staging point at final depth and the XY lead carries the cutter from there
+ * onto the contour along a tangent arc, so the cutter never reaches a surface
+ * that survives into the part by plunging onto it. `'none'` is the
+ * load-bearing default — it must be what a saved operation without the field
+ * behaves as, or every already-saved operation would change its motion.
+ * `'arc'` applies BOTH the entry and the exit lead; a half-configured exit that
+ * silently left the surface engagement unchanged is not a state worth offering.
+ */
+export type XyLeadStrategy = 'none' | 'arc'
+/**
  * Corner-relief style for a clearing operation (issue #203).
  *
  * `'none'` is the load-bearing default: it must be what a saved operation
@@ -554,6 +567,12 @@ export interface Operation {
   entryStrategy?: EntryStrategy
   entryRampAngle?: number
   entryHelixDiameterPercent?: number
+  /** XY lead-in/lead-out (issue #695). Missing or `'none'` keeps today's
+   *  direct final-depth entry and retract; only `'arc'` stages the descent off
+   *  the contour and leads onto it along a tangent arc. Applies where a pass
+   *  leaves a surface that survives into the part; every other operation
+   *  ignores it and normalisation strips it there. */
+  xyLeadStrategy?: XyLeadStrategy
   /** Feed percentage (1-100) applied to fully engaged (slotting) pocket cuts:
    *  each section's innermost offset loop, ring segments crossing uncleared
    *  pinch corridors, the parallel boundary pass and first fill line, and the
