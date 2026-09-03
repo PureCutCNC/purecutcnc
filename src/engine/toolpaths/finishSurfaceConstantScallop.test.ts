@@ -45,13 +45,28 @@
  *   - `Math.max(surfaceZ + axialLeave, floor)` reduced to `Math.max(surfaceZ,
  *     floor)`: the stock-to-leave test fails.
  *
+ * The keep-down linking of issue #716 is verified the same way:
+ *   - `LINK_REACH_IN_SPACINGS` set to 0, which is the pre-#716 behaviour: the
+ *     linking test fails with "only 0 at-depth links".
+ *   - `presentToCutter` made to return every contour untouched: the winding
+ *     test fails. It no longer trips the linking test, because on a fixture this
+ *     small the travel ordering compensates — but the rotation is still doing
+ *     most of the work on real geometry, and that is measured rather than
+ *     asserted: without it `Oldman-splash-final.camj` goes from 9.3 % of its run
+ *     not cutting to 27.1 %, and the guitar top from 0.1 % to 1.0 %.
+ *   - `buildLinkCheck` made to approve everything: the domain test fails with
+ *     "a cut move crosses the excluded band". **Both halves have to be disabled
+ *     to see it** — the domain test and the Z test each independently refuse
+ *     that link, so mutating either one alone leaves the other holding.
+ *
  * Run with: npx tsx src/engine/toolpaths/finishSurfaceConstantScallop.test.ts
  */
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { generateFinishSurfaceToolpath } from './finishSurface'
-import { slopeTestMesh, surfaceTestProject } from '../../test/surfaceSlopeFixtures'
+import { mixedSlopeHeight, slopeTestMesh, surfaceTestProject } from '../../test/surfaceSlopeFixtures'
+import { getOperationSafeZ } from './geometry'
 import type { Operation, Project } from '../../types/project'
 import type { ToolpathMove } from './types'
 
@@ -182,13 +197,26 @@ test('flat, domed and mixed-slope surfaces all generate, and repeat exactly', ()
 
 test('climb and conventional wind the same contours in opposite directions', () => {
   const { project, operation } = fixture(dome)
+  // Contour edges only. Since #716 the cut stream also carries keep-down links
+  // between contours, and a link joins different endpoints under each direction
+  // so it contributes signed area that cannot cancel. Length separates the two
+  // cleanly and without a magic number: a contour edge is at most one densify
+  // step, which is the height-map cell size, which is at most the pass spacing —
+  // while a link may reach twelve spacings.
   const signedArea = (moves: ToolpathMove[]): number => cutMoves(moves)
+    .filter((move) => Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y) <= SPACING)
     .reduce((total, move) => total + (move.from.x * move.to.y - move.to.x * move.from.y) / 2, 0)
   const conventional = signedArea(generate(project, operation, { cutDirection: 'conventional' }).moves)
   const climb = signedArea(generate(project, operation, { cutDirection: 'climb' }).moves)
   assert(Math.abs(conventional) > 1, 'the fixture emits no enclosed contours to wind')
+  // Not an exact cancellation, and it should not be asserted as one: domain
+  // fragment splitting sees the points in the order the direction produced, so
+  // the two runs can differ by a fragment boundary. Measured residual is 0.04 %.
+  // The bound sits 2.5x above that and 200x below the failure it guards, since
+  // ignoring `cutDirection` makes the sums identical rather than opposite and
+  // misses by 200 %.
   assert(
-    Math.abs(conventional + climb) <= Math.abs(conventional) * 1e-6,
+    Math.abs(conventional + climb) <= Math.abs(conventional) * 1e-3,
     `winding did not reverse: ${conventional.toFixed(3)} against ${climb.toFixed(3)}`,
   )
 })
@@ -239,5 +267,83 @@ test('an unusable stepover is rejected the way the other 3D strategies reject on
       result.warnings.some((warning) => warning.code === 'stepoverRatioRange'),
       `stepover ${stepover} was not explained`,
     )
+  }
+})
+
+test('contours are linked at depth instead of retracting, and no link cuts into the surface', () => {
+  // Issue #716. Before it, `emitContours` passed `maxLinkDistance: 0` and
+  // retracted to safe Z after every contour: this fixture emitted 21 passes and
+  // took 21 full retracts. The fix needs all three parts — a link budget, then
+  // turning each closed loop to start nearest the cutter (a level set has no
+  // natural start, and `joinSegments` had been leaving it wherever the first
+  // marching-squares segment fell), and ordering the *lifted pieces* by travel.
+  // With the budget alone this fixture still retracted 21 times because the
+  // loops began on the far side; with the rotation as well it took 8.
+  const { project, operation } = fixture(dome)
+  const moves = generate(project, operation).moves
+  const safeZ = getOperationSafeZ(project)
+
+  let retracts = 0
+  let links = 0
+  let worstDip = 0
+  for (const move of moves) {
+    if (move.kind !== 'cut') {
+      if (move.to.z >= safeZ - 1e-9 && move.to.z > move.from.z) retracts += 1
+      continue
+    }
+    const length = Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y)
+    // A contour edge is at most one densify step, so anything longer is a link.
+    if (length > SPACING) links += 1
+    // Sample along the whole move — a link that cut into the dome shows up here
+    // and nowhere else, because it spans ground no contour passes over.
+    const steps = Math.max(1, Math.ceil(length / 0.2))
+    for (let step = 0; step <= steps; step += 1) {
+      const t = step / steps
+      const x = move.from.x + (move.to.x - move.from.x) * t
+      const y = move.from.y + (move.to.y - move.from.y) * t
+      const z = move.from.z + (move.to.z - move.from.z) * t
+      if (x < 6 || x > 54 || y < 6 || y > 34) continue
+      worstDip = Math.max(worstDip, dome(x, y) - z)
+    }
+  }
+
+  assert(links >= 10, `only ${links} at-depth links; the cutter is still lifting between contours`)
+  assert(retracts <= 6, `${retracts} retract cycles, against 3 measured and 21 before #716`)
+  // A tenth of the pass spacing, the same bound the surface test uses. Measured
+  // 0.0274 mm here, which is grid discretisation and not a link cutting in.
+  assert(worstDip <= SPACING * 0.1, `a cut move dips ${worstDip.toFixed(4)} into the surface`)
+})
+
+test('a link the budget would allow is still refused when it leaves the machinable domain', () => {
+  // The link budget alone is not a safety property, and the existing slope test
+  // does not prove the check works: there the two domain pieces are 19.5 mm
+  // apart while the budget is 12 spacings = 12 mm, so distance refuses first and
+  // `buildLinkCheck` is never consulted. Doubling the stepover puts the budget
+  // at 24 mm — wider than the gap — so the only thing that can stop the cutter
+  // driving straight across the excluded 45-degree band at depth is the domain
+  // half of the link check.
+  const { project, operation } = surfaceTestProject(slopeTestMesh(mixedSlopeHeight), TOOL_DIAMETER)
+  const filtered: Operation = {
+    ...operation,
+    pocketPattern: 'constant_scallop',
+    stepover: 0.5,
+    finishSlopeMin: 0,
+    finishSlopeMax: 30,
+  }
+  const result = generateFinishSurfaceToolpath({ ...project, operations: [filtered] }, filtered)
+  const safeZ = getOperationSafeZ(project)
+  // The budget is `spacing * LINK_REACH_IN_SPACINGS`, and at this stepover that
+  // is 0.5 * 4 * 12 = 24 mm against an excluded band 19.5 mm wide.
+  const linkBudget = 0.5 * TOOL_DIAMETER * 12
+  assert(linkBudget > 19.5, 'the budget must exceed the excluded band, or the test proves nothing')
+
+  const crossings = result.moves.filter(
+    (move) => Math.min(move.from.x, move.to.x) < 20 && Math.max(move.from.x, move.to.x) > 39.5,
+  )
+  assert(crossings.length > 0, 'the two shallow bands must require travel between them')
+  for (const move of crossings) {
+    assert.equal(move.kind, 'rapid', `a ${move.kind} move crosses the excluded band`)
+    assert.equal(move.from.z, safeZ)
+    assert.equal(move.to.z, safeZ)
   }
 })
