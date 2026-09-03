@@ -127,27 +127,139 @@ function buildS(
   arcStep: number,
 ): Point[] {
   const pts: Point[] = [exit]
-  const tess = (from: Point, tangent: Vec, turn: number, radius: number, to: Point): void => {
-    const centre: Point = { x: from.x - radius * tangent.y, y: from.y + radius * tangent.x }
-    const steps = Math.max(1, Math.ceil(Math.abs(turn) / arcStep))
-    for (let step = 1; step < steps; step += 1) {
-      const dir = rot(tangent, (turn * step) / steps)
-      pts.push({ x: centre.x + radius * dir.y, y: centre.y - radius * dir.x })
-    }
-    pts.push(to)
-  }
   if (Math.abs(phi1) > 1e-9) {
     const end1 = add(exit, mul(rot(t0, phi1 / 2), 2 * rho1 * Math.sin(phi1 / 2)))
-    tess(exit, t0, phi1, rho1, end1)
+    tessellateArc(pts, exit, t0, phi1, rho1, end1, arcStep)
   }
   if (s > 1e-9) {
     pts.push(add(pts[pts.length - 1], mul(m, s)))
   }
   if (Math.abs(phi2) > 1e-9) {
-    tess(pts[pts.length - 1], m, phi2, rho2, arrival)
+    tessellateArc(pts, pts[pts.length - 1], m, phi2, rho2, arrival, arcStep)
   }
   pts[pts.length - 1] = arrival
   return pts
+}
+
+/**
+ * Append one tessellated arc to `pts`: it leaves `from` along `tangent`, turns
+ * by the signed `turn` on the signed `radius`, and lands exactly on `to`.
+ *
+ * Shared by the ring-to-ring S (`buildS`, which knows both endpoints up front)
+ * and the XY lead builder below (which walks the shape forward and computes its
+ * endpoint). The arithmetic is the S-link's, unchanged, so extracting it cannot
+ * move a ring-to-ring link by a float.
+ */
+function tessellateArc(
+  pts: Point[],
+  from: Point,
+  tangent: Vec,
+  turn: number,
+  radius: number,
+  to: Point,
+  arcStep: number,
+): void {
+  const centre: Point = { x: from.x - radius * tangent.y, y: from.y + radius * tangent.x }
+  const steps = Math.max(1, Math.ceil(Math.abs(turn) / arcStep))
+  for (let step = 1; step < steps; step += 1) {
+    const dir = rot(tangent, (turn * step) / steps)
+    pts.push({ x: centre.x + radius * dir.y, y: centre.y - radius * dir.x })
+  }
+  pts.push(to)
+}
+
+/**
+ * One XY lead shape (issue #695): arc, straight run, arc — the same
+ * arc-line-arc family the ring-to-ring S solves for, but walked FORWARD from a
+ * known start because a lead has no second endpoint to close onto. `turn`s and
+ * `radius`es are signed and must agree in sign; the usual lead sets
+ * `turn2 = -turn1` so the path leaves parallel to the direction it started in.
+ */
+export interface TangentLeadShape {
+  turn1: number
+  radius1: number
+  straight: number
+  turn2: number
+  radius2: number
+}
+
+/**
+ * Tessellate a lead shape from `start`, leaving along `tangent`. The returned
+ * polyline begins at `start` and ends at the computed far end; reversing it
+ * gives a path that ARRIVES at `start` along `tangent` reversed, which is how
+ * the entry lead is built from the same construction as the exit lead.
+ */
+export function buildTangentLeadPath(
+  start: Point,
+  tangent: Point,
+  shape: TangentLeadShape,
+  arcStepRadians: number,
+): Point[] {
+  const arcStep = Math.max(arcStepRadians, 1e-3)
+  const pts: Point[] = [start]
+  let current: Point = start
+  let dir: Vec = norm(tangent)
+
+  const arc = (turn: number, radius: number): void => {
+    if (Math.abs(turn) <= 1e-9 || Math.abs(radius) <= 1e-12) return
+    const end = add(current, mul(rot(dir, turn / 2), 2 * radius * Math.sin(turn / 2)))
+    tessellateArc(pts, current, dir, turn, radius, end, arcStep)
+    current = end
+    dir = rot(dir, turn)
+  }
+
+  arc(shape.turn1, shape.radius1)
+  if (shape.straight > 1e-9) {
+    current = add(current, mul(dir, shape.straight))
+    pts.push(current)
+  }
+  arc(shape.turn2, shape.radius2)
+  return pts
+}
+
+/**
+ * Sample budget for the domain gate: the chord an arc of the floor radius
+ * spans in one tessellation step. The straight middle of an S — and of a lead —
+ * is a single segment up to the whole length budget, so it must be sampled at
+ * the same density or a concavity straddling it would go unseen. Absolute floor
+ * so a degenerate minRadius cannot explode the sample count.
+ */
+export function domainChordBudget(minRadius: number, arcStepRadians: number): number {
+  return Math.max(2 * minRadius * Math.sin(Math.max(arcStepRadians, 1e-3) / 2), 1e-6)
+}
+
+/**
+ * Total length of `path`, and whether every vertex AND every interpolated
+ * sample between vertices lies inside `isInsideDomain`. Returns null when any
+ * sample leaves the domain — the caller must then discard the candidate whole,
+ * never trim it.
+ *
+ * The domain is a TOOL-CENTRE domain (it is already eroded by the cutter
+ * radius), so a centre path proven inside it is a swept cutter proven inside
+ * the material boundary. Sampling between vertices is what makes that a claim
+ * about the swept disc rather than about the vertices alone.
+ */
+export function domainSafePathLength(
+  path: Point[],
+  chordBudget: number,
+  isInsideDomain: (x: number, y: number) => boolean,
+): number | null {
+  let length = 0
+  for (let index = 0; index + 1 < path.length; index += 1) {
+    const a = path[index]
+    const b = path[index + 1]
+    const segLen = Math.hypot(b.x - a.x, b.y - a.y)
+    length += segLen
+    if (!isInsideDomain(a.x, a.y)) return null
+    const samples = Math.max(1, Math.ceil(segLen / chordBudget))
+    for (let sample = 1; sample < samples; sample += 1) {
+      const t = sample / samples
+      if (!isInsideDomain(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)) return null
+    }
+  }
+  const last = path[path.length - 1]
+  if (last === undefined || !isInsideDomain(last.x, last.y)) return null
+  return length
 }
 
 /**
@@ -376,6 +488,87 @@ export function buildOffsetDomainCheck(
       && (slinkDomainScans += 1) > 0
       && pointInPolygon(x, y, island.points) && !pointOnPolygonEdge(x, y, island.points)))
   }
+}
+
+/** Distance from a point to the nearest edge of a closed loop. */
+function distanceToLoop(x: number, y: number, loop: Point[]): number {
+  let best = Infinity
+  for (let index = 0; index < loop.length; index += 1) {
+    const a = loop[index]
+    const b = loop[(index + 1) % loop.length]
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const lengthSquared = dx * dx + dy * dy
+    const t = lengthSquared > 0
+      ? Math.min(1, Math.max(0, ((x - a.x) * dx + (y - a.y) * dy) / lengthSquared))
+      : 0
+    const distance = Math.hypot(x - (a.x + dx * t), y - (a.y + dy * t))
+    if (distance < best) best = distance
+  }
+  return best
+}
+
+/**
+ * "Is (x, y) inside the domain AND at least `clearance` from every wall of it?"
+ *
+ * `buildOffsetDomainCheck` deliberately admits boundary points, because the ring
+ * paths themselves ride the boundary — a link that could not touch the line it
+ * travels along would be useless. A LEAD wants the opposite nearly everywhere:
+ * it may touch only the one surface it joins, tangentially, and must stay off
+ * every other surface that survives into the part. Riding a second wall on the
+ * way past is the mark the lead exists to prevent, reintroduced.
+ *
+ * This is the same rule `entryBoundarySafety` states for ramps and helixes —
+ * "without it a ramp or helix runs right up to the wall and scores the surface
+ * the finish pass is meant to leave" — applied to the lead, and deliberately
+ * spelled with the same fraction.
+ *
+ * Exact, not probed: a four-way probe misses a spike of material between its
+ * arms, and the whole point here is the case where two walls sit a tool
+ * diameter apart.
+ */
+export function buildClearanceCheck(
+  regions: TangentLinkDomainRegion[],
+  clearance: number,
+): (x: number, y: number) => boolean {
+  const boxed = regions.map((region) => ({
+    outer: boxLoop(region.outer),
+    islands: region.islands.map(boxLoop),
+  }))
+  return (x: number, y: number): boolean => {
+    slinkDomainChecks += 1
+    return boxed.some((region) => {
+      if (outsideBox(region.outer, x, y)) return false
+      slinkDomainScans += 1
+      if (!pointInPolygon(x, y, region.outer.points)) return false
+      if (distanceToLoop(x, y, region.outer.points) < clearance) return false
+      return region.islands.every((island) => {
+        // Outside the island's box by more than the clearance already answers it.
+        if (x < island.minX - clearance || x > island.maxX + clearance
+          || y < island.minY - clearance || y > island.maxY + clearance) return true
+        slinkDomainScans += 1
+        if (pointInPolygon(x, y, island.points)) return false
+        return distanceToLoop(x, y, island.points) >= clearance
+      })
+    })
+  }
+}
+
+/**
+ * "Is (x, y) inside anything the cutter must stay out of?" for a set of
+ * already-grown keep-out loops — tab footprints, say, which an edge route's
+ * lead has to miss but which are not part of the domain the route was offset
+ * from. Boundary points pass: the loops arrive grown by the cutter's own
+ * clearance, so riding the boundary is tangency, not a collision.
+ *
+ * Same bounding-box prefilter as `buildOffsetDomainCheck`, for the same
+ * reason: this is called once per sample of every lead candidate.
+ */
+export function buildKeepOutCheck(loops: Point[][]): (x: number, y: number) => boolean {
+  const boxed = loops.filter((loop) => loop.length >= 3).map(boxLoop)
+  if (boxed.length === 0) return () => false
+  return (x: number, y: number): boolean => boxed.some((loop) => !outsideBox(loop, x, y)
+    && pointInPolygon(x, y, loop.points) && !pointOnPolygonEdge(x, y, loop.points))
 }
 
 /**

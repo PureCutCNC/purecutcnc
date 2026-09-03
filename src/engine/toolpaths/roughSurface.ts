@@ -46,6 +46,12 @@ import { offsetClipperPaths, segmentInsideClipperPaths } from './modelProtection
 import { resolve3DSurfaceStepdown } from './surfaceStepdown3d'
 import { areaCoverage, effectivePocketPattern, usesTangentLinks } from './pocketPatterns'
 import { pocketTangentLinkOptions } from './tangentLink'
+import {
+  beginXyLeadLevel,
+  resolveXyLeadOptions,
+  roughingRingIsTheFinishedWall,
+  warnXyLeadDeclined,
+} from './xyLead'
 import { planSeedCircles, seedCircleContours, seedStartRadius } from './seedClearing'
 import { applyContourDirection } from './geometry'
 import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
@@ -217,6 +223,26 @@ function generateRoughSurfaceToolpathSingle(
       )
       : undefined
 
+    // Per level, not per band: 3D roughing recomputes its clearable region at
+    // every level, so the lead's domain is this level's own inset regions --
+    // the same boundary the level's safeLinkCheck enforces. Only when the pass
+    // leaves no radial stock, because only then is the ring it cuts the wall
+    // that survives (issue #695). This kind traverses OUTER-FIRST, so unlike
+    // pocket clearing its wall-adjacent ring really is the one the descent
+    // lands on.
+    const levelXyLead = !roughingRingIsTheFinishedWall(operation)
+      ? undefined
+      : beginXyLeadLevel(
+        resolveXyLeadOptions(
+          operation,
+          resolved.tool.diameter,
+          level.insetRegions,
+          resolved.regionMasked,
+          (warning) => appendUniqueWarning(warnings, warning),
+        ),
+        (warning) => appendUniqueWarning(warnings, warning),
+      )
+
     // No withEntryStartZ() here, unlike pocket and surface clearing. Those
     // reuse one XY footprint for every level, so the previous level's floor is
     // guaranteed cleared and the entry can start just above it. 3D roughing
@@ -257,6 +283,9 @@ function generateRoughSurfaceToolpathSingle(
         ),
         slotScale,
       )
+      // Raster clearing has no ring for a lead to join, so a request here is
+      // answered rather than dropped (issue #695).
+      warnXyLeadDeclined(operation, false, resolved.regionMasked, (warning) => appendUniqueWarning(warnings, warning))
 
       const orderedBoundaryContours = orderClosedContoursGreedy(
         boundaryContours,
@@ -331,6 +360,7 @@ function generateRoughSurfaceToolpathSingle(
           levelTangentLink,
           wallCleanup,
           wallCleanupToolRadius,
+          levelXyLead,
         )
 
       const plans = coverage.seedCircles && seedStart > 0
@@ -354,6 +384,8 @@ function generateRoughSurfaceToolpathSingle(
         )
         let previousCircleEnd: ToolpathPoint | null = null
         for (const baseCircle of circles) {
+          // A seed circle clears open floor; nothing it cuts survives into the
+          // part, so it takes no lead (issue #695).
           const circle = rotateContourToNearestEntry(baseCircle, previousCircleEnd ?? currentPosition)
           currentPosition = transitionToCutEntry(
             allMoves,
@@ -397,6 +429,7 @@ function generateRoughSurfaceToolpathSingle(
           tangentLink: levelTangentLink,
           wallCleanup,
           toolRadius: wallCleanupToolRadius,
+          xyLead: levelXyLead,
         },
       )
     }

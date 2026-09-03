@@ -263,6 +263,19 @@ export function normalizeOperation(rawOperation: Operation, project: Project, in
     carveStrategy: operation.kind === 'follow_line'
       ? operation.carveStrategy ?? 'direct'
       : operation.carveStrategy,
+    // XY leads (issue #695) are deliberately NOT backfilled: absent means the
+    // legacy direct entry, and a saved clearing operation must keep the motion
+    // it was saved with. The field is only kept where a generator reads it, so
+    // a hand-edited or kind-switched operation cannot carry a stale request
+    // into an operation that has no lead seam to honour it.
+    xyLeadStrategy: operation.xyLeadStrategy === 'arc'
+      && (operation.kind === 'pocket'
+        || operation.kind === 'surface_clean'
+        || operation.kind === 'rough_surface'
+        || operation.kind === 'edge_route_inside'
+        || operation.kind === 'edge_route_outside')
+      ? ('arc' as const)
+      : undefined,
   }
 
   if (!isOperationTargetValid(project, normalized.kind, normalized.target)) {

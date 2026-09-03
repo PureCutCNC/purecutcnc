@@ -247,6 +247,7 @@ export const OPERATION_FIELD_IDS = [
   'entryStrategy',
   'entryRampAngle',
   'entryHelixDiameter',
+  'xyLeadStrategy',
   'retractHeight',
   // Corners.
   'roundOutsideCorners',
@@ -459,6 +460,37 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     // Deliberately not offered for helical drilling: there the selected circle
     // defines the bore diameter, not this shared setting (issue #412).
     appliesTo: (operation) => supportsEntryStrategy(operation) && resolvedEntryStrategy(operation) === 'helix',
+  },
+  {
+    // XY approach & exit (issue #695). Shown in the same group as the Z entry
+    // but gated independently of it: the two compose, and hiding this row
+    // behind a particular Z strategy would imply a dependency that does not
+    // exist.
+    //
+    // Offered wherever the operation could reach a surface that survives into
+    // the part: a finish pass that cuts walls, or a roughing pass whose rings
+    // are contours rather than raster fill. Deliberately NOT gated on
+    // `stockToLeaveRadial`, even though the engine only emits roughing leads at
+    // zero: hiding a control because of another field's current value strands
+    // the user's choice the moment they change that value back.
+    //
+    // An edge route cuts nothing but wall contours, so it always qualifies —
+    // except as trochoidal roughing, which enters through its own helix away
+    // from the wall and reaches the wall by widening orbits. There is no
+    // descent onto the wall there for a lead to move, so the row would offer a
+    // setting that could not change the program.
+    id: 'xyLeadStrategy',
+    group: 'entry',
+    paramRef: 'xyLeadStrategy',
+    appliesTo: (operation) => {
+      if (isEdgeRouteKind(operation.kind)) return !isTrochoidalEdgeRoughing(operation)
+      return (operation.kind === 'pocket'
+        || operation.kind === 'surface_clean'
+        || operation.kind === 'rough_surface')
+        && (operation.pass === 'finish'
+          ? operation.finishWalls
+          : usesTangentLinks(operation.kind, operation.pocketPattern))
+    },
   },
   {
     id: 'retractHeight',

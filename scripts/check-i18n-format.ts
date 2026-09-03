@@ -309,6 +309,7 @@ const SENTENCE_CASE_TERMS = new Set([
   'G0', 'G1', 'G2', 'G3', 'G73', 'G81', 'G82', 'G83', 'M6',
   // Compound tool, fixture, and geometry terms whose capital is part of the name.
   'G-code', 'V-bit', 'V-carve', 'V-groove', 'T-bone', 'T-track', 'Dogbone', 'Voronoi',
+  'S-curve', 'S-link',
   'Z-up', 'Y-up',
   // Product, vendor, platform, and language names.
   'PureCutCNC', 'Tauri', 'GRBL', 'FluidNC', 'LinuxCNC', 'Marlin',

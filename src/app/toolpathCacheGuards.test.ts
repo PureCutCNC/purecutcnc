@@ -102,6 +102,7 @@ const OPERATION_FIELD_CLASSIFICATION: Record<keyof Operation, FieldClass> = {
   entryStrategy: 'compare',
   entryRampAngle: 'compare',
   entryHelixDiameterPercent: 'compare',
+  xyLeadStrategy: 'compare',
   pocketSlotFeedPercent: 'compare',
   pocketFeedReduction: 'compare',
   roundOutsideCorners: 'compare',

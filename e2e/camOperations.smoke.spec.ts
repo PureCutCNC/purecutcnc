@@ -36,6 +36,7 @@ interface OperationSnapshot {
   entryStrategy?: unknown
   entryRampAngle?: unknown
   entryHelixDiameterPercent?: unknown
+  xyLeadStrategy?: unknown
   countersinkDiameter?: unknown
   pocketPattern?: unknown
   target?: {
@@ -487,6 +488,52 @@ test.describe('CAM operation browser smoke', () => {
     const project = await getProject(app.page)
     const operations = project.operations as OperationSnapshot[]
     expect(operations[0].pocketPattern).toBe('seeded_offset')
+  })
+  test('the XY approach & exit selector is offered, persists, and follows the pattern (#695)', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
+    await ui.contextMenu.item(carveMenu, 'Create operation').hover()
+    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create pocket')
+    await expect(ui.operations.rows(app.page)).toHaveCount(1)
+
+    await ui.cam.operationGroup(app.page, 'Entry & retract').click()
+    const leadField = ui.cam.operationField(app.page, 'XY approach & exit')
+    await expect(leadField).toHaveCount(1)
+
+    // Direct is the shipped default and must stay unstored until the user
+    // picks something else: a saved pocket that never saw this control has to
+    // keep cutting exactly as it did.
+    await expect(leadField.locator('.ui-select__label')).toHaveText('Direct')
+    let project = await getProject(app.page)
+    let operations = project.operations as OperationSnapshot[]
+    expect(operations[0].xyLeadStrategy).toBeUndefined()
+
+    // It is independent of the Z entry: switching that must not hide it.
+    const entryField = ui.cam.operationField(app.page, 'Entry strategy')
+    await entryField.locator('.ui-select__trigger').click()
+    await app.page.getByRole('option', { name: 'Helix', exact: true }).click()
+    await expect(entryField.locator('.ui-select__label')).toHaveText('Helix')
+    await expect(leadField).toHaveCount(1)
+
+    await leadField.locator('.ui-select__trigger').click()
+    const options = leadField.locator('.ui-select__dropdown [role="option"]')
+    await expect(options).toHaveText(['Direct', 'Tangent arc'])
+    await options.filter({ hasText: 'Tangent arc' }).click()
+    await expect(leadField.locator('.ui-select__label')).toHaveText('Tangent arc')
+
+    project = await getProject(app.page)
+    operations = project.operations as OperationSnapshot[]
+    expect(operations[0].xyLeadStrategy).toBe('arc')
+
+    // A raster pattern has no clearing ring to lead onto, so the row goes away
+    // rather than offering a setting the generator would decline.
+    await ui.cam.operationGroup(app.page, 'Strategy').click()
+    const pattern = ui.cam.operationField(app.page, 'Pattern')
+    await pattern.locator('.ui-select__trigger').click()
+    await pattern.locator('.ui-select__dropdown [role="option"]').filter({ hasText: 'Parallel' }).click()
+    await expect(pattern.locator('.ui-select__label')).toHaveText('Parallel')
+    await expect(app.page.getByText('XY approach & exit', { exact: true })).toHaveCount(0)
   })
   test('actions, diagnostics and the dev toggle are not property rows (#559)', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)

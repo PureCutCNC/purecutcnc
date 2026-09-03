@@ -74,6 +74,10 @@ export interface Resolved3DSurfaceStepdown {
    * conservative.
    */
   decimationTolerance: number
+  /** True when a region mask narrowed the clearable domain. Consumers that
+   *  emit motion the mask's own clipping seam would discard — XY leads
+   *  (issue #695) — must stand down while it is set. */
+  regionMasked: boolean
   levels: Resolved3DSurfaceLevel[]
   warnings: ToolpathWarning[]
 }
@@ -726,6 +730,7 @@ export function resolve3DSurfaceStepdown(
       effectiveStepover,
       maxLinkDistance,
       decimationTolerance: appliedDecimation,
+      regionMasked: regionMask !== null,
       levels,
       warnings,
     },
