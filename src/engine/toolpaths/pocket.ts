@@ -4137,7 +4137,27 @@ function generateFinishBandMoves(
   // geometry: a zero-inset Clipper round-trip, then one extra stepover inset
   // so the floor pass doesn't double as a wall-finish contour.
   const minFloorStepover = 1 / DEFAULT_CLIPPER_SCALE
-  const floorStepover = Math.max(stepoverDistance, minFloorStepover)
+  // The floor spaces its rings the same way the rough pass does. A trochoidal
+  // floor steps by the CHANNEL, not the cutter: leaving this on
+  // `toolDiameter x stepover` spaced a 9 mm channel's rings 3 mm apart on a
+  // 6 mm cutter at 0.5 stepover — covered, but at three times the rings needed,
+  // and the CAM panel's pitch readout said 4.5 mm while the program cut 3 mm.
+  const floorStepover = Math.max(
+    isTrochoidalFloor ? floorTrochoidalGeometry.cutWidth * operation.stepover : stepoverDistance,
+    minFloorStepover,
+  )
+  // And the same tight-spot check: a floor-only finish operation never reaches
+  // the rough generator, so without this a passage too narrow for the channel
+  // is skipped with nothing said — the exact failure the warning exists for.
+  if (isTrochoidalFloor) {
+    warnTrochoidalTightSpots(
+      band.regions,
+      floorTrochoidalGeometry.cutWidth / 2 + toolRadius * 2 * TROCHOIDAL_GUIDE_SAFETY_FRACTION + radialLeave,
+      floorTrochoidalGeometry.cutWidth,
+      toolRadius + radialLeave,
+      warnings,
+    )
+  }
   const floorSmoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, floorStepover)
   // The island join mirrors the rough pass (issue #550): with rounding on,
   // island holes are grown with round joins so the island-side floor rings
@@ -4218,7 +4238,11 @@ function generateFinishBandMoves(
     return {
       moves,
       stepLevels: [],
-      warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
+      // Carrying the accumulated warnings, not replacing them. A trochoidal
+      // floor that found nothing to cut has usually already said something
+      // specific about why — a channel too wide for the passage, say — and
+      // discarding that leaves only "no contours", which explains nothing.
+      warnings: [...warnings, { code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
     }
   }
 

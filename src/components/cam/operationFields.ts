@@ -520,11 +520,15 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     // Withheld from a trochoidal ROUGH pass: the orbit emitter takes the raw
     // ring centrelines and never receives the wall-cleanup context, so toggling
     // this changes nothing (measured; a contour pocket on the same fixture does
-    // change). A finish pass still cuts its walls as a contour, so it keeps the
-    // row — which is why this asks the pass, not just the pattern.
+    // change).
+    //
+    // And withheld from any finish pass not cutting walls. Wall-corner cleanup
+    // acts on the wall contour; a finish pass with `finishWalls` off emits no
+    // wall at all, so there is nothing for it to clean — which a floor-only
+    // trochoidal finish made visible, but is just as true of a contour one.
     appliesTo: (operation) => clearingControlApplies(operation.kind, 'cleanWallCorners')
       && operation.pocketPattern !== 'parallel'
-      && !(operation.pocketPattern === 'trochoidal' && operation.pass === 'rough')
+      && (operation.pass === 'finish' ? operation.finishWalls : operation.pocketPattern !== 'trochoidal')
       && (operation.roundOutsideCorners ?? false),
   },
   {

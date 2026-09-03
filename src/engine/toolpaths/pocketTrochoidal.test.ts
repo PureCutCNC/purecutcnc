@@ -759,6 +759,72 @@ test('#676 rest machining measures the leftover from the channel, not the cutter
   )
 })
 
+// ── The finish floor is the same strategy, not a lesser one ──────────
+
+/** A floor-only finish pass: no walls, so the orbit is the whole program. */
+function floorOnly(overrides: Partial<Operation> = {}, half = 30): { project: Project; operation: Operation } {
+  const built = buildPocket({ pass: 'finish', finishWalls: false, finishFloor: true, ...overrides }, half)
+  return built
+}
+
+test('#676 the finish floor spaces its rings by the channel, like the rough pass', () => {
+  // The floor tree used `toolDiameter x stepover` while the rough pass used
+  // `channel x stepover`, so a 9 mm channel on a 6 mm cutter at 0.5 stepover
+  // laid rings 3 mm apart instead of 4.5 — covered, but three times the rings,
+  // and the panel's pitch readout disagreed with what was cut.
+  const { project, operation } = floorOnly()
+  const narrow = generatePocketToolpath(project, operation)
+  const wide = generatePocketToolpath(project, { ...operation, trochoidalCutWidth: DEFAULT_CUT_WIDTH * 2 })
+  assert(narrow.moves.length > 0 && wide.moves.length > 0, 'both floors must generate')
+
+  const rings = (moves: readonly ToolpathMove[]): number =>
+    moves.filter((move) => move.kind === 'rapid' && move.source === 'trochoidal-transition').length
+  assert(
+    rings(wide.moves) < rings(narrow.moves),
+    `a 2x channel must need fewer floor rings, got ${rings(wide.moves)} vs ${rings(narrow.moves)}`,
+  )
+})
+
+test('#676 a floor-only finish still reports a gap too narrow for the channel', () => {
+  // The tight-spot check ran only in the rough generator, so this operation —
+  // which never reaches it — skipped an unreachable passage silently.
+  const zTop = 2
+  const half = 30
+  const gap = DEFAULT_CUT_WIDTH - 1
+  const project = projectWithFeatures(
+    { ...newProject('tight-floor', 'mm'), tools: [makeTool()] },
+    [
+      makeSquareFeature('pocket', half, zTop, 0),
+      { ...makeSquareFeature('island', half - gap, zTop, 0), id: 'island', name: 'island', operation: 'add' as const },
+    ],
+  )
+  const { operation } = floorOnly()
+  const result = generatePocketToolpath(project, {
+    ...operation,
+    target: { source: 'features', featureIds: ['pocket'] },
+  })
+  assert(
+    warningCodes(result).includes('pocketTrochoidalTightSpot'),
+    `a floor-only finish must warn too, got ${warningCodes(result).join(', ') || 'none'}`,
+  )
+})
+
+test('#676 wall-corner cleanup is withheld from a finish pass that cuts no walls', () => {
+  const spec = OPERATION_FIELDS.find((field) => field.id === 'cleanWallCorners')
+  assert(spec !== undefined, 'cleanWallCorners must exist')
+  const { operation } = floorOnly({ roundOutsideCorners: true })
+  assert(!spec.appliesTo(operation), 'a floor-only finish emits no wall for it to clean')
+  assert(
+    spec.appliesTo({ ...operation, finishWalls: true }),
+    'a finish pass that does cut walls keeps the row',
+  )
+  // True of a contour finish too, not a trochoidal quirk.
+  assert(
+    !spec.appliesTo({ ...operation, pocketPattern: 'offset', stepover: 0.4 }),
+    'the same holds for a contour floor-only finish',
+  )
+})
+
 // ── Panel controls that cannot change the program ────────────────────
 
 test('#676 a stepover above the measured limit advises, without refusing', () => {
