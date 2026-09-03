@@ -655,6 +655,46 @@ test('#676 an island ring orbits opposite to the outer ring it sits inside', () 
   assert(senses.size === 2, `a pocket with an island must emit both orbit senses, got ${[...senses].join(', ')}`)
 })
 
+// ── Passages the channel cannot enter ────────────────────────────────
+
+test('#676 a gap too narrow for the channel is named, not silently skipped', () => {
+  // The channel is a virtual tool of width W, but its guide needs
+  // W/2 + allowance of clearance where a plain cutter needs only its radius. An
+  // island sited so the gap to the wall fits the CUTTER but not the CHANNEL
+  // therefore gets no pass at all — and said nothing, which is how it reached
+  // the running app: the program looked complete and stock was left standing.
+  const zTop = 2
+  const gap = DEFAULT_CUT_WIDTH - 1        // 8 mm: wider than the 6 mm cutter, under the 9 mm channel
+  const half = 30
+  const project = projectWithFeatures(
+    { ...newProject('tight', 'mm'), tools: [makeTool()] },
+    [
+      makeSquareFeature('pocket', half, zTop, 0),
+      { ...makeSquareFeature('island', half - gap, zTop, 0), id: 'island', name: 'island', operation: 'add' as const },
+    ],
+  )
+  const { operation } = buildPocket()
+  const result = generatePocketToolpath(project, {
+    ...operation,
+    target: { source: 'features', featureIds: ['pocket'] },
+  })
+  const tight = result.warnings.filter((warning) => warning.code === 'pocketTrochoidalTightSpot')
+  assert(tight.length > 0, `expected a tight-spot warning, got ${warningCodes(result).join(', ') || 'none'}`)
+  assert(
+    tight.every((warning) => Number.isFinite(warning.params?.x) && Number.isFinite(warning.params?.y)),
+    'each tight spot must carry the location the UI points at',
+  )
+})
+
+test('#676 an ordinary pocket reports no tight spots', () => {
+  const { project, operation } = buildPocket()
+  const result = generatePocketToolpath(project, operation)
+  assert(
+    !warningCodes(result).includes('pocketTrochoidalTightSpot'),
+    'a pocket the channel fits everywhere must not warn about tight spots',
+  )
+})
+
 // ── Panel controls that cannot change the program ────────────────────
 
 test('#676 a stepover above the measured limit advises, without refusing', () => {

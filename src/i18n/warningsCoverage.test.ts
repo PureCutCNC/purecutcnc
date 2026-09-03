@@ -88,7 +88,7 @@ const ALL_CODES = [
   'restOperationNotFound', 'restOnlyPocketEdgeTargets', 'restTrochoidalUnsupported',
   'pocketTrochoidalInvalidGuide', 'pocketTrochoidalMoveBudget', 'pocketTrochoidalEntryBudget',
   'pocketTrochoidalWidthTooSmall', 'pocketTrochoidalWidthLeavesCore', 'pocketTrochoidalAdvanceDegenerate',
-  'pocketTrochoidalStepoverHigh', 'pocketTrochoidalCornerReliefUnsupported',
+  'pocketTrochoidalStepoverHigh', 'pocketTrochoidalCornerReliefUnsupported', 'pocketTrochoidalTightSpot',
 ] as const satisfies readonly ToolpathWarningCode[]
 
 // Exhaustiveness both ways: the list is assignable to the union (satisfies

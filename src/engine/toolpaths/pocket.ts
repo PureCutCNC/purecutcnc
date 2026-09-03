@@ -2100,6 +2100,83 @@ function appendResidualCoreGuides(
   node.children = extra.map((region) => ({ region, children: [] }))
 }
 
+/**
+ * Warn about floor a trochoidal channel cannot enter.
+ *
+ * The channel is a virtual tool of width `W`, but its guide has to sit
+ * `W / 2 + allowance` from every wall so the orbit cannot nick one. A plain
+ * cutter needs only its own radius. So a passage between an island and a wall
+ * that comfortably fits the cutter — and that a contour pocket clears without
+ * comment — may be a hair too narrow to hold a guide, and no ring is generated
+ * in it at all.
+ *
+ * Nothing said so. Measured on work/trochoidal-pocket-test2.camj that was two
+ * spots and 66 mm2 of stock left standing with no warning, which is the worst
+ * way for this to fail: the program looks complete and the part is not.
+ *
+ * Detection compares two insets of the same region — where a guide can go,
+ * grown back out by the half-channel it sweeps, against where the cutter could
+ * reach at all. What is reachable but never swept is a tight spot, and each
+ * disjoint one is named by its own location.
+ *
+ * This warns rather than refusing, and rather than cutting the leftover some
+ * other way, because that is the rule this codebase already settled on for the
+ * same situation on edge routes: "tight spots interrupt, they do not fail the
+ * job" (planning/TROCHOIDAL_EDGE_DESIGN.md). Clearing a passage narrower than
+ * the channel needs a pass at tool width with its own entry and linking, which
+ * is a separate piece of work.
+ */
+function warnTrochoidalTightSpots(
+  regions: readonly ResolvedPocketRegion[],
+  guideInset: number,
+  channelWidth: number,
+  cutterInset: number,
+  warnings: ToolpathWarning[],
+): void {
+  const scale = DEFAULT_CLIPPER_SCALE
+  const sweptPaths: ClipperPath[] = []
+  for (const region of regions) {
+    for (const guide of buildInsetRegions(region, guideInset)) {
+      // The channel this guide sweeps: its own domain grown by the half-width.
+      appendAll(sweptPaths, offsetPaths(
+        [toClipperPath(normalizeWinding(guide.outer, false), scale)],
+        (channelWidth / 2) * scale,
+        ClipperLib.JoinType.jtRound,
+      ))
+    }
+  }
+  const reachablePaths: ClipperPath[] = []
+  for (const region of regions) {
+    for (const reachable of buildInsetRegions(region, cutterInset)) {
+      reachablePaths.push(toClipperPath(normalizeWinding(reachable.outer, false), scale))
+    }
+  }
+  if (reachablePaths.length === 0) return
+  const swept = sweptPaths.length > 0 ? unionClipperPaths(sweptPaths) : []
+  const leftover = polyTreeToRegions(executeDifference(reachablePaths, swept), [], [], scale)
+  for (const piece of leftover) {
+    if (piece.outer.length < 3) continue
+    // Ignore slivers thinner than the Clipper tolerance: an exact difference of
+    // two offsets always leaves hairlines along the shared boundary, and those
+    // are an artefact of the comparison rather than uncut stock.
+    if (buildInsetRegions(piece, MIN_TIGHT_SPOT_HALF_WIDTH).length === 0) continue
+    let x = 0
+    let y = 0
+    for (const point of piece.outer) { x += point.x; y += point.y }
+    appendUniqueWarning(warnings, {
+      code: 'pocketTrochoidalTightSpot',
+      params: { x: x / piece.outer.length, y: y / piece.outer.length, width: channelWidth },
+    })
+  }
+}
+
+/**
+ * Half-width below which a leftover piece is a comparison artefact rather than
+ * stock. Two offsets of the same boundary meet along hairlines; anything the
+ * cutter could not enter anyway is not worth naming.
+ */
+const MIN_TIGHT_SPOT_HALF_WIDTH = 0.05
+
 type RingPerimeterIndex = ReadonlyMap<string, number>
 
 export interface WallCornerCleanupContext {
@@ -3402,6 +3479,13 @@ function generateRoughBandMoves(
     checkTrochoidalStepover(operation.stepover, trochoidalGeometry.cutWidth, warnings)
     effectiveStepover = Math.max(trochoidalGeometry.cutWidth * operation.stepover, minStepover)
     initialInset = trochoidalGeometry.cutWidth / 2 + toolRadius * 2 * TROCHOIDAL_GUIDE_SAFETY_FRACTION + radialLeave
+    warnTrochoidalTightSpots(
+      band.regions,
+      initialInset,
+      trochoidalGeometry.cutWidth,
+      toolRadius + radialLeave,
+      warnings,
+    )
   }
   const slotScale = resolveSlotFeedScale(operation)
   const slotDistance = Math.max(

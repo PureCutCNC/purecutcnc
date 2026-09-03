@@ -115,6 +115,7 @@ export type ToolpathWarningCode =
   | 'pocketTrochoidalWidthLeavesCore'
   | 'pocketTrochoidalStepoverHigh'
   | 'pocketTrochoidalCornerReliefUnsupported'
+  | 'pocketTrochoidalTightSpot'
   | 'pocketTrochoidalAdvanceDegenerate'
   | 'carveTrochoidalEntryStrategyUnsupported'
   | 'carveTrochoidalInvalidGuide'
