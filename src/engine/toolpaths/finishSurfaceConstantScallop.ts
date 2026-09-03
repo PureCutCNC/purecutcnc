@@ -289,6 +289,40 @@ function liftFragment(
   return lifted
 }
 
+/**
+ * Turn a lifted contour so it begins nearest the cutter (issue #716).
+ *
+ * This is the lever that keep-down linking actually needs, and it is specific
+ * to this strategy: a **closed** level set has no natural start, so it may begin
+ * anywhere on the loop, and starting it next to where the previous pass ended
+ * turns a full retract into a link one spacing long. Without it the contour
+ * order alone decides nothing — measured on the domed test fixture, every one of
+ * 21 passes retracted despite all of them being nested rings a single spacing
+ * apart, because `joinSegments` had started each loop wherever its first
+ * marching-squares segment happened to fall.
+ *
+ * Open fragments keep their two ends and are merely reversed when the far end is
+ * nearer, which is what `finishSurfaceParallel.ts` does with its scanlines.
+ */
+function presentToCutter(contour: LiftedContour, position: ToolpathPoint | null): LiftedContour {
+  if (!position || contour.points.length < 2) return contour
+  const distanceTo = (point: ToolpathPoint): number =>
+    (point.x - position.x) ** 2 + (point.y - position.y) ** 2 + (point.z - position.z) ** 2
+  if (!contour.closed) {
+    const first = distanceTo(contour.points[0])
+    const last = distanceTo(contour.points[contour.points.length - 1])
+    return last < first ? { ...contour, points: [...contour.points].reverse() } : contour
+  }
+  let bestAt = 0
+  let best = Number.POSITIVE_INFINITY
+  for (let index = 0; index < contour.points.length; index += 1) {
+    const candidate = distanceTo(contour.points[index])
+    if (candidate < best) { best = candidate; bestAt = index }
+  }
+  if (bestAt === 0) return contour
+  return { ...contour, points: [...contour.points.slice(bestAt), ...contour.points.slice(0, bestAt)] }
+}
+
 function toCutMoves(contour: LiftedContour): ToolpathMove[] {
   const moves: ToolpathMove[] = []
   const edgeCount = contour.closed ? contour.points.length : contour.points.length - 1
@@ -298,6 +332,73 @@ function toCutMoves(contour: LiftedContour): ToolpathMove[] {
   return moves
 }
 
+/**
+ * How far a keep-down link may reach, in pass spacings (issue #716).
+ *
+ * Adjacent level sets are one spacing apart by construction, so the natural
+ * scale is a small multiple of it, and the safety of a link is decided by
+ * `buildLinkCheck` rather than by distance. Measured gaps between consecutive
+ * contours run to about 3x the spacing on `Oldman-splash-final.camj` and 1.5x
+ * on `Makera_Model.camj`, so a bound at the median leaves most retracts in
+ * place. Swept, as non-cutting share of the whole operation:
+ *
+ *   reach   guitar   Makera   Oldman
+ *   none      3.3 %   13.3 %   35.6 %
+ *      2x     1.9 %    3.6 %   27.3 %
+ *      6x     1.4 %    1.1 %   21.9 %
+ *     12x     1.0 %    0.7 %   19.4 %
+ *     24x     0.6 %    0.5 %   19.0 %
+ *     48x     0.4 %    0.5 %   18.6 %
+ *
+ * 12 is where it flattens. Past it Oldman gives up only 0.8 points across a
+ * fourfold reach, because its remaining retracts are refused by the link check
+ * and not by distance — 38.9 % of that model's surface sits below its pocket
+ * floor, so the machinable area is genuinely several islands.
+ *
+ * The bound also has to stay under the point where keeping down costs more than
+ * lifting: a link travels at cutting feed, so it is cheaper than a retract only
+ * while `length / feed` beats the climb and descent at plunge feed. That
+ * break-even is about 1.8 in on Oldman and 55 mm on the guitar, against links of
+ * 0.26 in and 8.3 mm at this reach — an order of magnitude of headroom.
+ */
+const LINK_REACH_IN_SPACINGS = 12
+
+/**
+ * May the cutter travel from `from` to `to` without lifting to safe Z?
+ *
+ * Unlike waterline, no constant-scallop contour is at constant Z, so a link
+ * between two of them descends or climbs along its length. The check therefore
+ * interpolates Z across the candidate link and requires it to stay above the
+ * cutter-location surface at every sample — the same test
+ * `finishSurfaceParallel.ts` applies to its own Z-varying scanline links — and
+ * additionally requires the link to stay inside the composed domain, so it can
+ * never cut across a region the slope filter, an ordered region or model
+ * protection removed.
+ */
+function buildLinkCheck(
+  heightMap: HeightMap,
+  tool: NormalizedTool,
+  axialLeave: number,
+  linkInside: (from: Point, to: Point) => boolean,
+): (from: ToolpathPoint, to: ToolpathPoint) => boolean {
+  const sampleSpacing = Math.max(heightMap.cellSize, tool.radius * 0.5)
+  const cushion = Math.max(heightMap.cellSize * 0.5, 1e-3)
+  return (from: ToolpathPoint, to: ToolpathPoint): boolean => {
+    if (!linkInside(from, to)) return false
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    const dz = to.z - from.z
+    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / sampleSpacing))
+    for (let step = 1; step < steps; step += 1) {
+      const t = step / steps
+      const required = safeToolTipZAt(from.x + dx * t, from.y + dy * t, heightMap, tool)
+      if (!Number.isFinite(required)) continue
+      if (from.z + dz * t + cushion < required + axialLeave) return false
+    }
+    return true
+  }
+}
+
 function emitContours(
   contours: PlannedContour[],
   domain: ClipperPath[],
@@ -305,12 +406,16 @@ function emitContours(
   tool: NormalizedTool,
   operation: Operation,
   safeZ: number,
+  spacing: number,
   minCutZAtPoint: (point: Point) => number,
   hasMachinableSurface: (point: Point, liftedSurfaceZ: number) => boolean,
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const moves: ToolpathMove[] = []
   const stepLevels = new Set<number>()
   const linkInside = createSurfaceDomainLinkCheck(domain)
+  const axialLeave = Math.max(0, operation.stockToLeaveAxial)
+  const safeLinkCheck = buildLinkCheck(heightMap, tool, axialLeave, linkInside)
+  const linkMaxDistance = spacing * LINK_REACH_IN_SPACINGS
   let position: ToolpathPoint | null = null
   for (const contour of applyDirection(contours, operation.cutDirection)) {
     const dense = { ...contour, points: densify(contour.points, contour.closed, heightMap.cellSize) }
@@ -319,14 +424,28 @@ function emitContours(
         fragment,
         heightMap,
         tool,
-        Math.max(0, operation.stockToLeaveAxial),
+        axialLeave,
         minCutZAtPoint,
         hasMachinableSurface,
       )) {
-        position = transitionToCutEntry(moves, position, lifted.points[0], safeZ, 0)
-        appendAll(moves, toCutMoves(lifted))
-        for (const point of lifted.points) stepLevels.add(point.z)
-        position = retractToSafe(moves, lifted.points[lifted.points.length - 1], safeZ)
+        const presented = presentToCutter(lifted, position)
+        const entry = presented.points[0]
+        // `transitionToCutEntry`'s same-XY shortcut bypasses its own link
+        // check, so an unsafe link from a position still down in the cut has to
+        // be retracted here first — the same guard the parallel strategy uses.
+        if (position && position.z < safeZ && !safeLinkCheck(position, entry)) {
+          position = retractToSafe(moves, position, safeZ)
+        }
+        position = transitionToCutEntry(moves, position, entry, safeZ, linkMaxDistance, safeLinkCheck)
+        appendAll(moves, toCutMoves(presented))
+        for (const point of presented.points) stepLevels.add(point.z)
+        // Deliberately no retract: the cutter stays down and the next
+        // transition decides. `generateFinishSurfaceToolpath` retracts once at
+        // the end of the operation. A closed loop ends where it started, so the
+        // position left behind is its entry point.
+        position = presented.closed
+          ? presented.points[0]
+          : presented.points[presented.points.length - 1]
       }
     }
   }
@@ -408,5 +527,5 @@ export function generateFinishSurfaceConstantScallop(
     return { moves: [], stepLevels: new Set() }
   }
   const contours = planContours(domain, extractConstantDistanceContours(field, spacing))
-  return emitContours(contours, domain, heightMap, tool, operation, safeZ, minCutZAtPoint, hasMachinableSurface)
+  return emitContours(contours, domain, heightMap, tool, operation, safeZ, spacing, minCutZAtPoint, hasMachinableSurface)
 }
