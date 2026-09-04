@@ -678,6 +678,64 @@ export function getTextFrameProfile(config: TextToolConfig, anchor: Point): Sket
   return rectProfile(anchor.x + template.bounds.minX, anchor.y + template.bounds.minY, template.bounds.width, template.bounds.height)
 }
 
+/**
+ * Re-fit a text frame after the run's own metrics changed.
+ *
+ * The frame is the only thing setting a run's proportions — `resolveTextFeatureShapes`
+ * maps the template's bbox onto it — so a frame left over from the previous string
+ * squeezes or smears the new glyphs (#722). Height is the invariant, because a text
+ * size *is* a height: the frame keeps its height and its width is solved from the
+ * new template's natural aspect.
+ *
+ * A frame someone deliberately stretched has to keep that stretch, so the factor is
+ * the ratio of the two *natural* aspects and nothing else. That leaves the frame's
+ * own aspect-to-natural ratio untouched: an untouched frame lands exactly on
+ * natural, and one stretched 1.3x wide stays 1.3x wide across the edit.
+ *
+ * The resize runs in the frame's own basis — the same `profileVertices()` corners
+ * `resolveTextFeatureShapes` maps the template through — anchored at the local
+ * origin, so the run grows to the right the way typing does and a linked instance's
+ * placement and rotation are untouched.
+ *
+ * Both configs are measured straight, since a stored frame is always the straight
+ * run's: a curved instance derives its frame from the bent template in
+ * `resolveFeatureRow` rather than reading this one.
+ */
+export function refitTextFrameProfile(
+  profile: SketchProfile,
+  before: TextToolConfig,
+  after: TextToolConfig,
+): SketchProfile {
+  const previous = getTextTemplate({ ...before, layout: null }).bounds
+  const next = getTextTemplate({ ...after, layout: null }).bounds
+  const scale = (next.width * previous.height) / (next.height * previous.width)
+  if (!Number.isFinite(scale) || Math.abs(scale - 1) < 1e-9) {
+    return profile
+  }
+
+  const vertices = profileVertices(profile)
+  if (vertices.length < 4) {
+    return profile
+  }
+  const origin = vertices[0]
+  const xAxis = { x: vertices[1].x - origin.x, y: vertices[1].y - origin.y }
+  const yAxis = { x: vertices[3].x - origin.x, y: vertices[3].y - origin.y }
+  const det = xAxis.x * yAxis.y - xAxis.y * yAxis.x
+  if (Math.abs(det) < 1e-12) {
+    return profile
+  }
+
+  // Scale the frame's own u coordinate and leave v alone, so a corner at
+  // `origin + u * xAxis + v * yAxis` lands at `origin + u * scale * xAxis + v * yAxis`.
+  return transformProfile(profile, (point) => {
+    const u = ((point.x - origin.x) * yAxis.y - (point.y - origin.y) * yAxis.x) / det
+    return {
+      x: point.x + xAxis.x * u * (scale - 1),
+      y: point.y + xAxis.y * u * (scale - 1),
+    }
+  })
+}
+
 export function generateTextShapes(config: TextToolConfig, anchor: Point): GeneratedTextShape[] {
   const template = getTextTemplate(config)
   return template.shapes.map((shape) => ({
