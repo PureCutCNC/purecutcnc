@@ -31,6 +31,22 @@ interface TextLayoutShape {
   path?: { segments: unknown[] }
 }
 
+/** Place a straight run and select it, without opening the layout panel. */
+async function placeAndSelectRun(page: Page, text = 'ARC'): Promise<void> {
+  await page.evaluate(async (value: string) => {
+    const w = window as unknown as {
+      __pcTest: {
+        startAddTextPlacement: (t: string) => Promise<void>
+        placePendingTextAt: (x: number, y: number) => Promise<string[]>
+        selectFeatures: (ids: string[]) => Promise<void>
+      }
+    }
+    await w.__pcTest.startAddTextPlacement(value)
+    const created = await w.__pcTest.placePendingTextAt(120, 120)
+    if (created.length > 0) await w.__pcTest.selectFeatures([created[created.length - 1]!])
+  }, text)
+}
+
 /**
  * Place a straight run, select it, and open the baseline edit on it — the
  * panel is an edit on existing text, not a step in creating it.
@@ -159,4 +175,52 @@ test('Fill states the height the run will actually cut', async ({ app }) => {
   await panel.getByLabel('Fit').selectOption('fill')
   // Filling rescales the run, so the resulting height is stated outright.
   await expect(panel.locator('.canvas-workflow-panel__hint')).toContainText('Cuts at')
+})
+
+/**
+ * Reaching the panel through the real toolbar, not the test bridge.
+ *
+ * Every other spec here drives the store directly, which is why they all stayed
+ * green while the menu entries existed in only one of the two places that render
+ * the arrange menu — the toolbar copy had no buttons at all and nothing noticed.
+ * A store-level test can never catch an unreachable command.
+ */
+test('The arrange menu offers the text baselines and opens the panel', async ({ app }) => {
+  await seedOverlapFeatureProject(app.page, 1)
+  await placeAndSelectRun(app.page)
+
+  const command = app.page.getByRole('button', { name: 'Distribute selected features', exact: true }).first()
+  await expect(command).toBeEnabled()
+  await command.click()
+
+  const menu = app.page.getByRole('menu')
+  await expect(menu.getByRole('button', { name: 'On a circle', exact: true })).toBeEnabled()
+  await expect(menu.getByRole('button', { name: 'Along a path', exact: true })).toBeEnabled()
+
+  await menu.getByRole('button', { name: 'On a circle', exact: true }).click()
+  const panel = app.page.locator(PANEL)
+  await expect(panel).toBeVisible()
+  await expect(panel.getByLabel('Layout')).toHaveValue('arc')
+})
+
+/** The baselines stay disabled unless the selection is a single text run. */
+test('The text baselines are disabled for a non-text selection', async ({ app }) => {
+  await seedOverlapFeatureProject(app.page, 2)
+  // Select whatever the seed actually created, so the command itself is
+  // enabled and the assertion is about the baselines, not about the menu.
+  await app.page.evaluate(async () => {
+    const w = window as unknown as {
+      __pcTest: {
+        getProject: () => Promise<{ features: Array<{ id: string }> }>
+        selectFeatures: (ids: string[]) => Promise<void>
+      }
+    }
+    const project = await w.__pcTest.getProject()
+    await w.__pcTest.selectFeatures(project.features.map((feature) => feature.id))
+  })
+
+  const command = app.page.getByRole('button', { name: 'Distribute selected features', exact: true }).first()
+  await command.click()
+  const menu = app.page.getByRole('menu')
+  await expect(menu.getByRole('button', { name: 'On a circle', exact: true })).toBeDisabled()
 })

@@ -162,6 +162,10 @@ if (import.meta.env.DEV) {
       useProjectStore.getState().selectFeatures([id])
       useProjectStore.getState().startTextLayout(kind)
     },
+    placePendingTextAt: async (x: number, y: number) => {
+      const { useProjectStore } = await _pcTestStore()
+      return useProjectStore.getState().placePendingTextAt({ x, y })
+    },
     setTextLayoutCenter: async (x: number, y: number) => {
       const { useProjectStore } = await _pcTestStore()
       useProjectStore.getState().setTextLayoutCenter({ x, y })
@@ -283,6 +287,7 @@ declare global {
       startAddRectPlacement: () => Promise<void>
       startAddTextPlacement: (text: string) => Promise<void>
       startTextLayout: (text: string, kind: 'arc' | 'path') => Promise<void>
+      placePendingTextAt: (x: number, y: number) => Promise<string[]>
       setTextLayoutCenter: (x: number, y: number) => Promise<void>
       setPendingAddAnchor: (x: number, y: number) => Promise<void>
       placePendingAddAt: (x: number, y: number) => Promise<void>

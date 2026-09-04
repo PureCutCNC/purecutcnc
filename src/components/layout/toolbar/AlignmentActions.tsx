@@ -29,7 +29,14 @@ interface DistributionMenuOption extends PopoverMenuOption<FeatureDistribution> 
   labelKey: MessageKey
 }
 
-type DistributionAction = FeatureDistribution | FeatureDistributionMode
+/**
+ * Laying text on a baseline shares this menu with distribution — it is the same
+ * "arrange what is already on the sketch" act — but it is a different command
+ * with a different predicate, so it gets its own prefixed values rather than
+ * widening `FeatureDistributionMode`.
+ */
+type TextLayoutAction = 'text-arc' | 'text-path'
+type DistributionAction = FeatureDistribution | FeatureDistributionMode | TextLayoutAction
 
 const ALIGNMENT_OPTIONS: AlignmentMenuOption[] = [
   { value: 'left', icon: 'align-left', label: '', labelKey: 'sketch.align.left' },
@@ -85,15 +92,19 @@ function DistributionActions({
   tooltipSide,
   canDistributeEvenly,
   canCreatePattern,
+  canLayOutText,
   onDistribute,
   onCreatePattern,
+  onLayOutText,
 }: {
   enabled: boolean
   tooltipSide?: 'bottom' | 'right'
   canDistributeEvenly: boolean
   canCreatePattern: boolean
+  canLayOutText: boolean
   onDistribute: (distribution: FeatureDistribution) => void
   onCreatePattern: (mode: FeatureDistributionMode) => void
+  onLayOutText: (kind: 'arc' | 'path') => void
 }) {
   const { t } = useI18n()
 
@@ -109,11 +120,17 @@ function DistributionActions({
     { value: 'grid', icon: 'grid', label: t('canvas.featureDistribution.grid'), enabled: canCreatePattern },
     { value: 'radial', icon: 'rotate', label: t('canvas.featureDistribution.radial'), enabled: canCreatePattern },
     { value: 'path', icon: 'spline', label: t('canvas.featureDistribution.path'), enabled: canCreatePattern },
+    { value: 'text-arc', icon: 'circle', label: t('canvas.textLayout.mode.arc'), enabled: canLayOutText },
+    { value: 'text-path', icon: 'text', label: t('canvas.textLayout.mode.path'), enabled: canLayOutText },
   ]
 
   function selectDistribution(action: DistributionAction) {
     if (DISTRIBUTION_OPTIONS.some((option) => option.value === action)) {
       onDistribute(action as FeatureDistribution)
+      return
+    }
+    if (action === 'text-arc' || action === 'text-path') {
+      onLayOutText(action === 'text-arc' ? 'arc' : 'path')
       return
     }
     onCreatePattern(action as FeatureDistributionMode)
