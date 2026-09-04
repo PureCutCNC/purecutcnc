@@ -120,6 +120,7 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.debugShowRejectedCorners === b.debugShowRejectedCorners
     && a.finishSlopeMin === b.finishSlopeMin
     && a.finishSlopeMax === b.finishSlopeMax
+    && a.finishScallopHeight === b.finishScallopHeight
     && a.waterlineAdaptiveRefinement === b.waterlineAdaptiveRefinement
     && a.waterlineMicroStepover === b.waterlineMicroStepover
     && a.waterlineRefinementThreshold === b.waterlineRefinementThreshold

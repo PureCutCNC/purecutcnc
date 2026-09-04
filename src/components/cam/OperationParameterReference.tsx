@@ -68,6 +68,16 @@ export function OperationParameterReference({
         </OpParamRefFrame>
       )
 
+    case 'scallopHeight':
+      return (
+        <OpParamRefFrame label={label}>
+          <path className="gear-reference__outline" d="M8 26H50M13 26a16 16 0 0 1 32 0" />
+          <path className="gear-reference__guide" d="M13 26a16 16 0 0 0 32 0" strokeDasharray="2 2" />
+          <path className="gear-reference__accent" d="M29 22v4" />
+          <path className="gear-reference__accent-fill" d="M29 20l-2.4 3.3h4.8zM29 28l-2.4-3.3h4.8z" />
+        </OpParamRefFrame>
+      )
+
     case 'stepover':
       return (
         <OpParamRefFrame label={label}>

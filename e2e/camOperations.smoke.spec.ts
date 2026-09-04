@@ -694,22 +694,23 @@ test('surface slope filter edits, validates, switches pattern and survives save/
 })
 
 
-test('the constant scallop pattern is selectable, shows Stepover, hides the waterline controls and survives save/reload', async ({ app, ui }) => {
-  // #705. The claim is about the *pattern-conditional* controls and not just
-  // the stored value: constant scallop spaces its passes by Stepover, so that
-  // field has to come back, and it has no adaptive refinement, so those three
-  // waterline-only rows have to go. Waterline is visited in between so each
-  // assertion is shown flipping rather than merely holding.
+test('ball-endmill finish uses scallop height with collapsed spacing overrides', async ({ app, ui }) => {
+  // #720. Scallop height is the primary finish parameter for a ball endmill;
+  // the old spacing controls remain available, but only in the collapsed
+  // Advanced overrides group and with their implied cusp visible.
   const project = JSON.parse(readFileSync(new URL('../src/engine/test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8'))
   project.operations = [project.operations.find((operation: {kind: string}) => operation.kind === 'finish_surface')]
   project.operations[0].name = 'Scallop finish'
+  project.tools[0].type = 'ball_endmill'
   await seedProject(app.page, JSON.stringify(project))
   await ui.operations.rowByName(app.page, 'Scallop finish').click()
   await ui.cam.operationGroup(app.page, 'Strategy').click()
 
   const pattern = ui.cam.operationField(app.page, 'Pattern')
+  const scallopHeight = ui.cam.operationField(app.page, 'Scallop height')
   const stepover = ui.cam.operationField(app.page, 'Stepover ratio')
   const adaptive = app.page.getByRole('checkbox', { name: /Adaptive refinement/ })
+  const advanced = ui.cam.operationGroup(app.page, 'Advanced overrides')
   const selectPattern = async (name: string): Promise<void> => {
     await pattern.locator('.ui-select__trigger').click()
     await app.page.getByRole('option', { name, exact: true }).click()
@@ -717,29 +718,61 @@ test('the constant scallop pattern is selectable, shows Stepover, hides the wate
   }
 
   await expect(pattern.locator('.ui-select__label')).toHaveText('Parallel')
-  await expect(stepover).toHaveCount(1)
+  await expect(scallopHeight).toHaveCount(1)
+  await expect(stepover).not.toBeVisible()
+  await expect(advanced).toHaveAttribute('aria-expanded', 'false')
   await expect(adaptive).toHaveCount(0)
 
   await selectPattern('Waterline')
-  await expect(stepover).toHaveCount(0)
   await expect(adaptive).toBeChecked()
-  await expect(ui.cam.operationField(app.page, 'Adaptive spacing')).toHaveCount(1)
-  await expect(ui.cam.operationField(app.page, 'Max rings / band')).toHaveCount(1)
+  await expect(app.page.getByText('Waterline uses the assumed 30° steep threshold.', { exact: true })).toBeVisible()
+  await expect(ui.cam.operationField(app.page, 'Adaptive spacing')).not.toBeVisible()
+  await advanced.click()
+  const adaptiveSpacing = ui.cam.operationField(app.page, 'Adaptive spacing')
+  await expect(adaptiveSpacing).toBeVisible()
+  await expect(ui.cam.operationField(app.page, 'Stepdown')).toBeVisible()
+  await expect(ui.cam.operationField(app.page, 'Max rings / band')).toBeVisible()
+  const cuspNotes = app.page.getByText(/^Implied cusp/)
+  await expect(cuspNotes).toHaveCount(2)
+  const before = await cuspNotes.last().textContent()
+  await adaptiveSpacing.locator('input').fill('0.02')
+  await adaptiveSpacing.locator('input').blur()
+  await expect(cuspNotes.last()).not.toHaveText(before ?? '')
 
   await selectPattern('Constant scallop')
-  await expect(stepover).toHaveCount(1)
+  await expect(stepover).toBeVisible()
   await expect(adaptive).toHaveCount(0)
   await expect(ui.cam.operationField(app.page, 'Adaptive spacing')).toHaveCount(0)
   await expect(ui.cam.operationField(app.page, 'Max rings / band')).toHaveCount(0)
+  await stepover.locator('input').fill('0.3')
+  await stepover.locator('input').blur()
+  await expect(app.page.getByText(/^Implied cusp:/)).toBeVisible()
+  await scallopHeight.locator('input').fill('0.001')
+  await scallopHeight.locator('input').blur()
   const stored = (await getProject(app.page)).operations as Array<Record<string, unknown>>
   expect(stored[0].pocketPattern).toBe('constant_scallop')
+  expect(stored[0].finishScallopHeight).toBe(0.001)
 
   const saved = await getProject(app.page)
   await app.page.reload()
   await seedProject(app.page, JSON.stringify(saved))
   await ui.operations.rowByName(app.page, 'Scallop finish').click()
-  if (!(await stepover.isVisible())) await ui.cam.operationGroup(app.page, 'Strategy').click()
+  if (!(await pattern.isVisible())) await ui.cam.operationGroup(app.page, 'Strategy').click()
   await expect(pattern.locator('.ui-select__label')).toHaveText('Constant scallop')
-  await expect(stepover).toHaveCount(1)
-  await expect(adaptive).toHaveCount(0)
+  await expect(scallopHeight.locator('input')).toHaveValue('0.001')
+})
+
+test('flat-endmill finish keeps legacy spacing controls', async ({ app, ui }) => {
+  const project = JSON.parse(readFileSync(new URL('../src/engine/test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8'))
+  project.operations = [project.operations.find((operation: {kind: string}) => operation.kind === 'finish_surface')]
+  project.operations[0].name = 'Flat finish'
+  await seedProject(app.page, JSON.stringify(project))
+  await ui.operations.rowByName(app.page, 'Flat finish').click()
+  await ui.cam.operationGroup(app.page, 'Strategy').click()
+
+  await expect(ui.cam.operationField(app.page, 'Scallop height')).toHaveCount(0)
+  const advanced = ui.cam.operationGroup(app.page, 'Advanced overrides')
+  await expect(advanced).toHaveAttribute('aria-expanded', 'false')
+  await advanced.click()
+  await expect(ui.cam.operationField(app.page, 'Stepover ratio')).toBeVisible()
 })

@@ -129,6 +129,7 @@ const OPERATION_FIELDS: Record<keyof Required<Operation>, FieldProbe> = {
   retractHeight: { role: 'computation', change: { retractHeight: 5 } },
   finishSlopeMin: { role: 'computation', change: { finishSlopeMin: 10 } },
   finishSlopeMax: { role: 'computation', change: { finishSlopeMax: 30 } },
+  finishScallopHeight: { role: 'computation', change: { finishScallopHeight: 0.02 } },
   waterlineAdaptiveRefinement: { role: 'computation', change: { waterlineAdaptiveRefinement: false } },
   waterlineMicroStepover: { role: 'computation', change: { waterlineMicroStepover: 0.1 } },
   waterlineRefinementThreshold: { role: 'computation', change: { waterlineRefinementThreshold: 1 } },

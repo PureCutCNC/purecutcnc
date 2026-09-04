@@ -47,6 +47,10 @@ import type { ToolpathResult } from '../../engine/toolpaths'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
 import { offeredPocketPatterns, TROCHOIDAL_RING_STEPOVER } from '../../engine/toolpaths/pocketPatterns'
 import { countersinkTipDepth } from '../../engine/toolpaths/drilling'
+import {
+  DEFAULT_WATERLINE_STEEP_SLOPE_DEGREES,
+  spacingToScallopHeight,
+} from '../../engine/toolpaths/scallopHeight'
 import { createOperationBookletPdf } from '../../engine/operationBooklet'
 import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
 import { platform } from '../../platform'
@@ -1067,6 +1071,20 @@ export function CAMPanel({
       return <div className="panel-empty">{camT('cam.panel.emptyOperation')}</div>
     }
     const operation = selectedOperation
+    const operationTool = selectedOperationTool
+      ? normalizeToolForProject(selectedOperationTool, project)
+      : null
+    const ballRadius = operationTool?.type === 'ball_endmill' ? operationTool.radius : null
+    const slopeThreshold = operation.finishSlopeMin ?? DEFAULT_WATERLINE_STEEP_SLOPE_DEGREES
+    const impliedScallop = (spacing: number): string | null => {
+      if (ballRadius === null) return null
+      const height = spacingToScallopHeight(ballRadius, spacing)
+      return height === null ? null : formatLength(height, project.meta.units)
+    }
+    const stepoverScallop = impliedScallop(operation.stepover * (operationTool?.diameter ?? 0))
+    const adaptiveScallop = impliedScallop(selectedOperationWaterlineSpacing)
+    const slopeSin = Math.sin(slopeThreshold * Math.PI / 180)
+    const stepdownScallop = slopeSin > 0 ? impliedScallop(operation.stepdown / slopeSin) : null
     // Shared predicates, not second spellings of them: generation, this panel's
     // field visibility, and the channel-width readout must agree exactly.
     const isTrochoidalRoughEdge = isTrochoidalEdgeRoughing(operation)
@@ -1091,8 +1109,8 @@ export function CAMPanel({
     // from the requested mouth diameter and the V-bit's included angle. Both the
     // normalization and the formula are the engine's own, so the number shown
     // here is the number that will be cut.
-    const countersinkTool = isCountersinkDrill(operation) && selectedOperationTool
-      ? normalizeToolForProject(selectedOperationTool, project)
+    const countersinkTool = isCountersinkDrill(operation) && operationTool
+      ? operationTool
       : null
     const countersinkDiameter = operation.countersinkDiameter ?? 0
     const countersinkAngle = countersinkTool?.type === 'v_bit' ? countersinkTool.vBitAngle : null
@@ -1298,16 +1316,26 @@ export function CAMPanel({
         </label>
       ),
       stepdown: () => (
-        <label className="properties-field">
-          <span>{camT('cam.operation.stepdown')}</span>
-          <DraftLengthInput
-            value={operation.stepdown}
-            units={project.meta.units}
-            min={0.0001}
-            onCommit={(value) => updateOperation(operation.id, { stepdown: value })}
-          />
-          <OperationParameterReference kind="stepdown" />
-        </label>
+        <>
+          <label className="properties-field">
+            <span>{camT('cam.operation.stepdown')}</span>
+            <DraftLengthInput
+              value={operation.stepdown}
+              units={project.meta.units}
+              min={0.0001}
+              onCommit={(value) => updateOperation(operation.id, {
+                stepdown: value,
+                ...(operation.kind === 'finish_surface' ? { finishScallopHeight: 0 } : {}),
+              })}
+            />
+            <OperationParameterReference kind="stepdown" />
+          </label>
+          {operation.kind === 'finish_surface' && stepdownScallop !== null ? (
+            <span className="properties-hint">
+              {camT('cam.operation.impliedScallopAtSlope', { value: stepdownScallop, angle: slopeThreshold })}
+            </span>
+          ) : null}
+        </>
       ),
       edgeStrategy: () => (
         <label className="properties-field">
@@ -1415,6 +1443,28 @@ export function CAMPanel({
           ) : null}
         </>
       ),
+      scallopHeight: () => (
+        <>
+          <label className="properties-field" title={camT('cam.operation.scallopHeightTooltip')}>
+            <span>{camT('cam.operation.scallopHeight')}</span>
+            <DraftLengthInput
+              value={operation.finishScallopHeight ?? 0}
+              units={project.meta.units}
+              min={0}
+              max={ballRadius ?? undefined}
+              onCommit={(value) => updateOperation(operation.id, { finishScallopHeight: value })}
+            />
+            <OperationParameterReference kind="scallopHeight" />
+          </label>
+          {operation.pocketPattern === 'waterline' && operation.finishSlopeMin === undefined ? (
+            <span className="properties-hint">
+              {camT('cam.operation.scallopWaterlineAssumption', {
+                angle: DEFAULT_WATERLINE_STEEP_SLOPE_DEGREES,
+              })}
+            </span>
+          ) : null}
+        </>
+      ),
       stepover: () => (
         <>
           <label className="properties-field">
@@ -1426,10 +1476,18 @@ export function CAMPanel({
             <DraftNumberInput
               value={operation.stepover}
               min={0.001}
-              onCommit={(value) => updateOperation(operation.id, { stepover: value })}
+              onCommit={(value) => updateOperation(operation.id, {
+                stepover: value,
+                ...(operation.kind === 'finish_surface' ? { finishScallopHeight: 0 } : {}),
+              })}
             />
             <OperationParameterReference kind="stepover" />
           </label>
+          {operation.kind === 'finish_surface' && stepoverScallop !== null ? (
+            <span className="properties-hint">
+              {camT('cam.operation.impliedScallop', { value: stepoverScallop })}
+            </span>
+          ) : null}
           {/* Trochoidal measures the stepover against the CHANNEL, not the
               cutter, so the same number means a different distance than it does
               on every other pattern. The resolved pitch says which, at the
@@ -1859,19 +1917,29 @@ export function CAMPanel({
         </label>
       ),
       adaptiveSpacing: () => (
-        <label
-          className="properties-field"
-          title={camT('cam.operation.adaptiveSpacingTooltip')}
-        >
-          <span>{camT('cam.operation.adaptiveSpacing')}</span>
-          <DraftLengthInput
-            value={selectedOperationWaterlineSpacing}
-            units={project.meta.units}
-            min={0.0001}
-            onCommit={(value) => updateOperation(operation.id, { waterlineMicroStepover: value })}
-          />
-          <OperationParameterReference kind="adaptiveSpacing" />
-        </label>
+        <>
+          <label
+            className="properties-field"
+            title={camT('cam.operation.adaptiveSpacingTooltip')}
+          >
+            <span>{camT('cam.operation.adaptiveSpacing')}</span>
+            <DraftLengthInput
+              value={selectedOperationWaterlineSpacing}
+              units={project.meta.units}
+              min={0.0001}
+              onCommit={(value) => updateOperation(operation.id, {
+                waterlineMicroStepover: value,
+                finishScallopHeight: 0,
+              })}
+            />
+            <OperationParameterReference kind="adaptiveSpacing" />
+          </label>
+          {adaptiveScallop !== null ? (
+            <span className="properties-hint">
+              {camT('cam.operation.impliedScallop', { value: adaptiveScallop })}
+            </span>
+          ) : null}
+        </>
       ),
       maxRings: () => (
         <label
@@ -1929,7 +1997,7 @@ export function CAMPanel({
         ) : null}
         <div className="properties-group">
           {OPERATION_FIELD_GROUPS.map((group) => {
-            const fields = operationFieldsForGroup(group.id, operation)
+            const fields = operationFieldsForGroup(group.id, operation, selectedOperationTool)
             // A group with nothing to show for this operation kind is not an
             // empty box — it does not render at all.
             if (fields.length === 0) return null
