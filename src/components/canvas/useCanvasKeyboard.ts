@@ -36,6 +36,7 @@ import type {
   SketchControlRef,
   SketchEditTool,
   TapeMeasureState,
+  PendingTextLayout,
 } from '../../store/types'
 import type { Point, Project } from '../../types/project'
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
@@ -80,7 +81,9 @@ export interface CanvasKeyboardCtx {
   pendingOffsetRef: MutableRefObject<PendingOffsetTool | null>
   pendingFeatureDistributionRef: MutableRefObject<PendingFeatureDistribution | null>
   setTextLayoutPickTarget: (target: TextLayoutPickTarget) => void
-  setPendingTextAnchor: (anchor: Point | null) => void
+  setTextLayoutCenter: (center: Point | null) => void
+  cancelTextLayout: () => void
+  pendingTextLayoutRef: MutableRefObject<PendingTextLayout | null>
   pendingShapeActionRef: MutableRefObject<PendingShapeActionTool | null>
   pendingSketchEditRef: MutableRefObject<PendingSketchEdit | null>
   viewStateRef: MutableRefObject<SketchViewState>
@@ -162,7 +165,9 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     pendingOffsetRef,
     pendingFeatureDistributionRef,
     setTextLayoutPickTarget,
-    setPendingTextAnchor,
+    setTextLayoutCenter,
+    cancelTextLayout,
+    pendingTextLayoutRef,
     pendingShapeActionRef,
     pendingSketchEditRef,
     viewStateRef,
@@ -695,17 +700,21 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
       }
     }
 
-    // Esc backs a text layout out one step at a time — guide picking first,
-    // then the arc centre — so a mis-click does not throw away the whole run.
-    if (event.key === 'Escape' && pendingAdd?.shape === 'text') {
-      if (pendingAdd.pickTarget) {
+    // Esc backs a text layout edit out one step at a time — guide picking
+    // first, then the arc centre — so a mis-click does not close the panel and
+    // throw away the settings with it.
+    if (event.key === 'Escape' && pendingTextLayoutRef.current) {
+      const pendingLayout = pendingTextLayoutRef.current
+      if (pendingLayout.pickTarget) {
         setTextLayoutPickTarget(null)
         return
       }
-      if (pendingAdd.anchor) {
-        setPendingTextAnchor(null)
+      if (pendingLayout.center) {
+        setTextLayoutCenter(null)
         return
       }
+      cancelTextLayout()
+      return
     }
 
     if (event.key === 'Escape' && pendingAdd) {

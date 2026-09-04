@@ -79,7 +79,13 @@ export function TextLayoutPanel({
 
   // Only a path layout commits from the panel; the others commit on the canvas
   // click that finishes their gesture.
-  const showConfirm = mode === 'path'
+  // Every mode applies from the panel: the run already exists, so there is no
+  // placement click to commit on. An arc still needs its centre picked and a
+  // path still needs its guide, so the button waits on whichever is missing.
+  // Horizontal needs nothing — it is how a curved run is straightened again.
+  const applyBlocked = picking
+    || (mode === 'path' && !guideName)
+    || (mode === 'arc' && !centerPicked)
   const warning = mode === 'path' && !guideName
     ? t('canvas.textLayout.error.guideRequired')
     : measure?.overflows
@@ -98,13 +104,11 @@ export function TextLayoutPanel({
       pageLevel
       actions={(
         <>
-          {showConfirm && (
-            <CanvasWorkflowConfirm
-              label={t('canvas.textLayout.create')}
-              onClick={onComplete}
-              disabled={!guideName || picking}
-            />
-          )}
+          <CanvasWorkflowConfirm
+            label={t('canvas.textLayout.create')}
+            onClick={onComplete}
+            disabled={applyBlocked}
+          />
           <CanvasWorkflowCancel label={t('canvas.common.cancel')} onClick={onCancel} />
         </>
       )}

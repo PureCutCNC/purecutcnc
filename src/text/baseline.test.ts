@@ -133,6 +133,11 @@ function testTheSameInputInvertsWhenTheDirectionFlips() {
   close(feetA, -100, 'cw feet on the circle at the top')
   close(feetB, -100, 'ccw feet on the circle at the top too')
   // Inverted: the cw body climbs away from the centre, the ccw body drops toward it.
+  // This is the raw operator's contract and it is why flipping the *control* has
+  // to move the run to the other half of the circle rather than only reversing
+  // travel — see `testFlippingDirectionMovesTheRunToTheBottom` in
+  // `src/store/textLayout.test.ts`. Reversing travel alone leaves the run at 12
+  // o'clock reading backwards, i.e. upside down.
   assert(getProfileBounds(a.shapes[1]!.profile).minY < -100, 'cw body is outside the circle')
   assert(getProfileBounds(b.shapes[1]!.profile).maxY > -100, 'ccw body is inside the circle')
   console.log('direction flips which side of the arc glyphs stand on: PASSED')

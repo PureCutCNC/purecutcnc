@@ -30,6 +30,7 @@ import type {
   SketchControlRef,
   SketchEditTool,
   TapeMeasureState,
+  PendingTextLayout,
 } from '../../store/types'
 import type { DimensionAnchor, DimensionAnnotation, Point, Project, SketchFeature } from '../../types/project'
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
@@ -230,6 +231,8 @@ export interface ClickPlacementCtx {
   setFeatureDistributionGuide: (featureId: string) => void
   setFeatureDistributionRadialCenter: (center: Point) => void
   setTextLayoutGuide: (featureId: string) => void
+  setTextLayoutCenter: (center: Point | null) => void
+  pendingTextLayoutRef: MutableRefObject<PendingTextLayout | null>
   beginHistoryTransaction: () => void
 }
 
@@ -335,6 +338,8 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     setFeatureDistributionGuide,
     setFeatureDistributionRadialCenter,
     setTextLayoutGuide,
+    setTextLayoutCenter,
+    pendingTextLayoutRef,
     beginHistoryTransaction,
   } = ctx
 
@@ -396,15 +401,23 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
       return
     }
 
-    // Picking a guide for text-on-path. The run itself is not on the sketch
-    // yet, so unlike the distribution pick there is nothing to exclude.
-    if (pendingAdd?.shape === 'text' && pendingAdd.pickTarget === 'guide') {
+    // Picking a guide for text-on-path, or the centre for text-on-arc. The run
+    // being laid out is itself a feature now, so it has to be excluded from the
+    // guide hit — text cannot follow its own outline.
+    const pendingTextLayout = pendingTextLayoutRef.current
+    if (pendingTextLayout?.pickTarget === 'guide') {
       const guideHit = resolveFeatureSelectionHit(world, resolvedProjectFeatures(project), vt)
-      if (guideHit.kind === 'direct') {
+      if (guideHit.kind === 'direct' && guideHit.featureId !== pendingTextLayout.featureId) {
         setTextLayoutGuide(guideHit.featureId)
-      } else if (guideHit.kind === 'ambiguous' && guideHit.candidateIds[0]) {
-        setTextLayoutGuide(guideHit.candidateIds[0])
+      } else if (guideHit.kind === 'ambiguous') {
+        const guideId = guideHit.candidateIds.find((id) => id !== pendingTextLayout.featureId)
+        if (guideId) setTextLayoutGuide(guideId)
       }
+      return
+    }
+
+    if (pendingTextLayout?.layout?.kind === 'arc') {
+      setTextLayoutCenter(pickedPoint ?? world)
       return
     }
 

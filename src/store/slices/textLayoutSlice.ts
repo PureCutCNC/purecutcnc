@@ -23,72 +23,137 @@
  */
 
 import type { StateCreator } from 'zustand'
-import type { TextLayout } from '../../types/project'
+import { getProfileBounds, type Point, type TextLayout } from '../../types/project'
 import { cloneProfile } from '../../geometry/profile'
 import { profilePathLength } from '../../sketch/featureDistribution'
+import {
+  createDefaultTextLayout,
+  mirrorAnchorAngleForDirection,
+  type TextLayoutKind,
+} from '../../sketch/textPlacement'
+import { getTextFrameProfile, straightTextRunWidth } from '../../text'
+import { cloneProject } from '../helpers/normalize'
+import { nextPlacementSession } from '../helpers/ids'
 import { resolveFeatureInstance } from '../helpers/resolveFeatures'
 import type { ProjectStore } from '../types'
+import type { TextToolConfig } from '../../text'
 
 export type TextLayoutSlice = Pick<
   ProjectStore,
+  | 'pendingTextLayout'
+  | 'startTextLayout'
+  | 'cancelTextLayout'
   | 'updateTextLayout'
   | 'setTextLayoutPickTarget'
-  | 'setPendingTextAnchor'
+  | 'setTextLayoutCenter'
   | 'setTextLayoutGuide'
   | 'completeTextLayout'
 >
+
+/** The text tool config a feature's own data describes, for measuring/rebuilding. */
+function configOf(
+  text: { text: string; style: TextToolConfig['style']; fontId: TextToolConfig['fontId']; size: number },
+  operation: TextToolConfig['operation'],
+  layout: TextLayout | null,
+): TextToolConfig {
+  return { text: text.text, style: text.style, fontId: text.fontId, size: text.size, operation, layout }
+}
 
 export function createTextLayoutSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
   get: Parameters<StateCreator<ProjectStore>>[1],
 ): TextLayoutSlice {
   return {
-    updateTextLayout: (layout: TextLayout | null) => set((s) => {
-      const pending = s.pendingAdd
-      if (pending?.shape !== 'text') return {}
+    pendingTextLayout: null,
 
-      const previous = pending.config.layout ?? null
+    startTextLayout: (kind: TextLayoutKind) => set((s) => {
+      const featureId = s.selection.selectedFeatureId
+      if (!featureId) return {}
+      const feature = resolveFeatureInstance(s.project, featureId)
+      if (!feature || !feature.text || feature.locked) return {}
+
+      // Reopening on a run that already curves keeps its current baseline, so
+      // the edit is repeatable rather than a one-shot that starts from scratch.
+      const existing = feature.text.layout ?? null
+      const layout = existing?.kind === kind
+        ? existing
+        : createDefaultTextLayout(kind, straightTextRunWidth(configOf(feature.text, feature.operation, null)))
+
+      return {
+        pendingAdd: null,
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        pendingShapeAction: null,
+        pendingFeatureDistribution: null,
+        sketchEditSession: null,
+        pendingTextLayout: {
+          featureId,
+          layout,
+          center: null,
+          guideId: null,
+          pickTarget: layout.kind === 'path' ? 'guide' : null,
+          directionPinned: existing?.kind === 'arc',
+          session: nextPlacementSession(),
+        },
+      }
+    }),
+
+    cancelTextLayout: () => set({ pendingTextLayout: null }),
+
+    updateTextLayout: (layout: TextLayout | null) => set((s) => {
+      const pending = s.pendingTextLayout
+      if (!pending) return {}
+
+      const previous = pending.layout
       const kindChanged = (previous?.kind ?? null) !== (layout?.kind ?? null)
 
       // Setting the direction by hand stops the drag inferring it from which
       // side of the centre the cursor is on. Switching modes hands control
       // back, since the new layout's direction was never chosen by anyone.
-      const directionPinned = kindChanged
-        ? false
-        : pending.directionPinned
-          || (previous?.kind === 'arc' && layout?.kind === 'arc' && previous.direction !== layout.direction)
+      const directionFlipped = previous?.kind === 'arc'
+        && layout?.kind === 'arc'
+        && previous.direction !== layout.direction
+
+      // Flipping the direction moves the run to the other half of the circle.
+      // `cw` writes across the top and `ccw` across the bottom, both reading
+      // left to right; reversing travel while leaving the run at 12 o'clock
+      // would just render it upside down there.
+      const nextLayout = directionFlipped && layout?.kind === 'arc'
+        ? { ...layout, angleDegrees: mirrorAnchorAngleForDirection(layout.angleDegrees) }
+        : layout
 
       return {
-        pendingAdd: {
+        pendingTextLayout: {
           ...pending,
-          config: { ...pending.config, layout },
+          layout: nextLayout,
           // A different baseline means the centre picked for the old one is
           // meaningless, so the gesture restarts.
-          anchor: kindChanged ? null : pending.anchor,
+          center: kindChanged ? null : pending.center,
           guideId: layout?.kind === 'path' ? pending.guideId : null,
           pickTarget: layout?.kind === 'path' ? pending.pickTarget : null,
-          directionPinned,
+          directionPinned: kindChanged ? false : pending.directionPinned || directionFlipped,
         },
       }
     }),
 
     setTextLayoutPickTarget: (pickTarget) => set((s) => {
-      const pending = s.pendingAdd
-      if (pending?.shape !== 'text') return {}
-      if (pickTarget === 'guide' && pending.config.layout?.kind !== 'path') return {}
-      return { pendingAdd: { ...pending, pickTarget } }
+      const pending = s.pendingTextLayout
+      if (!pending) return {}
+      if (pickTarget === 'guide' && pending.layout?.kind !== 'path') return {}
+      return { pendingTextLayout: { ...pending, pickTarget } }
     }),
 
-    setPendingTextAnchor: (anchor) => set((s) => {
-      const pending = s.pendingAdd
-      if (pending?.shape !== 'text') return {}
-      return { pendingAdd: { ...pending, anchor } }
+    setTextLayoutCenter: (center: Point | null) => set((s) => {
+      const pending = s.pendingTextLayout
+      if (!pending) return {}
+      return { pendingTextLayout: { ...pending, center } }
     }),
 
     setTextLayoutGuide: (featureId: string) => set((s) => {
-      const pending = s.pendingAdd
-      if (pending?.shape !== 'text') return {}
-      const layout = pending.config.layout
+      const pending = s.pendingTextLayout
+      if (!pending || pending.featureId === featureId) return {}
+      const layout = pending.layout
       if (layout?.kind !== 'path') return {}
 
       const guide = resolveFeatureInstance(s.project, featureId)
@@ -97,41 +162,70 @@ export function createTextLayoutSlice(
       if (guideLength <= 0) return {}
 
       return {
-        pendingAdd: {
+        pendingTextLayout: {
           ...pending,
           guideId: featureId,
           pickTarget: null,
-          config: {
-            ...pending.config,
-            layout: {
-              ...layout,
-              // The guide is *baked*, not linked: a definition cannot hold a
-              // world-space reference to another feature and still resolve
-              // under every instance's own transform. Moving the guide later
-              // does not reflow the text.
-              path: cloneProfile(guide.sketch.profile),
-              // A newly picked guide defaults to its whole length, so the first
-              // preview is usable without anyone touching the offsets.
-              startOffset: pending.guideId === featureId ? layout.startOffset : 0,
-              endOffset: pending.guideId === featureId ? layout.endOffset : guideLength,
-            },
+          layout: {
+            ...layout,
+            // The guide is *baked*, not linked: a definition cannot hold a
+            // world-space reference to another feature and still resolve
+            // under every instance's own transform. Moving the guide later
+            // does not reflow the text.
+            path: cloneProfile(guide.sketch.profile),
+            // A newly picked guide defaults to its whole length, so the first
+            // preview is usable without anyone touching the offsets.
+            startOffset: pending.guideId === featureId ? layout.startOffset : 0,
+            endOffset: pending.guideId === featureId ? layout.endOffset : guideLength,
           },
         },
       }
     }),
 
     completeTextLayout: () => {
-      const pending = get().pendingAdd
-      if (pending?.shape !== 'text') return []
-      const layout = pending.config.layout
-      if (layout?.kind !== 'path') return []
-      // No guide means no baseline, and the run would quietly commit as
-      // straight text instead of following anything. Refuse rather than
-      // create something the user did not ask for.
-      if (layout.path.segments.length === 0) return []
-      // The baked guide already carries the run's world position, so a path
-      // layout commits at the origin rather than at a placement click.
-      return get().placePendingTextAt({ x: 0, y: 0 })
+      const state = get()
+      const pending = state.pendingTextLayout
+      if (!pending) return []
+      const feature = resolveFeatureInstance(state.project, pending.featureId)
+      if (!feature || !feature.text) return []
+
+      const layout = pending.layout
+      // An arc needs its centre and a path needs its guide; without them the
+      // run would quietly commit as straight text, which reads as the button
+      // doing nothing.
+      if (layout?.kind === 'arc' && !pending.center) return []
+      if (layout?.kind === 'path' && layout.path.segments.length === 0) return []
+
+      const config = configOf(feature.text, feature.operation, layout)
+      // The arc lives at the origin of template space, so translating by the
+      // picked centre lands the circle where the user put it. A baked path
+      // already carries its own world position. Straightening has neither, and
+      // anchoring it at the origin would teleport the run across the sketch, so
+      // it keeps the corner the frame is already sitting on.
+      const currentBounds = getProfileBounds(feature.sketch.profile)
+      const anchor = layout?.kind === 'arc'
+        ? pending.center!
+        : layout?.kind === 'path'
+          ? { x: 0, y: 0 }
+          : { x: currentBounds.minX, y: currentBounds.minY }
+
+      set((s) => ({
+        history: {
+          past: [...s.history.past, cloneProject(s.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }))
+
+      // Resizing the frame to the bent template is not optional: the frame is
+      // the only thing setting the run's proportions, so leaving the straight
+      // run's rect in place would squeeze the curved run into it.
+      state.updateFeature(pending.featureId, {
+        text: { ...feature.text, layout },
+        sketch: { ...feature.sketch, profile: getTextFrameProfile(config, anchor) },
+      })
+      set({ pendingTextLayout: null })
+      return [pending.featureId]
     },
   }
 }

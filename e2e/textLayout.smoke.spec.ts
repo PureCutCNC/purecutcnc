@@ -31,11 +31,15 @@ interface TextLayoutShape {
   path?: { segments: unknown[] }
 }
 
-async function startText(page: Page, text = 'ARC'): Promise<void> {
-  await page.evaluate(async (value: string) => {
-    const w = window as unknown as { __pcTest: { startAddTextPlacement: (t: string) => Promise<void> } }
-    await w.__pcTest.startAddTextPlacement(value)
-  }, text)
+/**
+ * Place a straight run, select it, and open the baseline edit on it — the
+ * panel is an edit on existing text, not a step in creating it.
+ */
+async function startLayout(page: Page, kind: 'arc' | 'path' = 'arc', text = 'ARC'): Promise<void> {
+  await page.evaluate(async ([value, k]: [string, string]) => {
+    const w = window as unknown as { __pcTest: { startTextLayout: (t: string, k: 'arc' | 'path') => Promise<void> } }
+    await w.__pcTest.startTextLayout(value, k as 'arc' | 'path')
+  }, [text, kind] as [string, string])
   await expect(page.locator(PANEL)).toBeVisible()
 }
 
@@ -49,18 +53,15 @@ async function storedTextLayout(page: Page): Promise<TextLayoutShape | null> {
   return null
 }
 
-test('Text layout panel opens with the run straight and offers the curved modes', async ({ app }) => {
+test('Text layout panel opens on the selected run in the mode that was picked', async ({ app }) => {
   await seedOverlapFeatureProject(app.page, 1)
-  await startText(app.page)
+  await startLayout(app.page, 'arc')
   const panel = app.page.locator(PANEL)
 
   await expect(panel.locator('.canvas-workflow-panel__title')).toHaveText('Text layout')
-  await expect(panel.getByLabel('Layout')).toHaveValue('horizontal')
-  // Straight text still commits on a single canvas click, so the panel shows no
-  // Create button of its own.
-  await expect(panel.getByRole('button', { name: 'Create', exact: true })).toHaveCount(0)
-
-  await panel.getByLabel('Layout').selectOption('arc')
+  // The mode comes from the arrange button that opened it, so the panel is
+  // already on the arc rather than starting straight.
+  await expect(panel.getByLabel('Layout')).toHaveValue('arc')
   await expect(panel.getByLabel('Radius')).toBeVisible()
   await expect(panel.getByLabel('Sweep')).toBeVisible()
   await expect(panel.getByLabel('Direction')).toHaveValue('cw')
@@ -68,50 +69,63 @@ test('Text layout panel opens with the run straight and offers the curved modes'
   await expect(panel.getByLabel('Fit')).toHaveValue('natural')
 })
 
-test('Arc text places in two canvas clicks and stores its layout', async ({ app }) => {
+test('Arc applies to the selected run once a centre is picked', async ({ app }) => {
   await seedOverlapFeatureProject(app.page, 1)
-  const before = await getFeatureCount(app.page)
-  await startText(app.page)
+  await startLayout(app.page, 'arc')
   const panel = app.page.locator(PANEL)
-  await panel.getByLabel('Layout').selectOption('arc')
+  const countAfterRun = await getFeatureCount(app.page)
 
-  // Keep the gesture clear of the panel, which floats over the middle of the
-  // canvas and would otherwise swallow the clicks.
+  // The run already exists, so applying edits it rather than adding anything.
+  const apply = panel.getByRole('button', { name: 'Apply', exact: true })
+  await expect(apply).toBeDisabled()
+  expect(await storedTextLayout(app.page)).toBeNull()
+
   const canvas = app.page.locator('canvas').first()
-  // First click is the centre: nothing is created yet.
   await clickCanvasWorld(canvas, 20, 70)
-  expect(await getFeatureCount(app.page)).toBe(before)
-  await expect(panel).toBeVisible()
+  await expect(apply).toBeEnabled()
+  await apply.click()
 
-  // Second click sits above the centre, which is the text-over-the-top case.
-  await clickCanvasWorld(canvas, 20, 50)
-  expect(await getFeatureCount(app.page)).toBe(before + 1)
-
+  expect(await getFeatureCount(app.page)).toBe(countAfterRun)
   const layout = await storedTextLayout(app.page)
   expect(layout?.kind).toBe('arc')
   expect(layout?.radius ?? 0).toBeGreaterThan(0)
   expect(layout?.direction).toBe('cw')
 })
 
-test('Path text needs a guide, then commits from the panel', async ({ app }) => {
+test('Flipping to anticlockwise moves the run to the bottom of the circle', async ({ app }) => {
+  await seedOverlapFeatureProject(app.page, 1)
+  await startLayout(app.page, 'arc')
+  const panel = app.page.locator(PANEL)
+
+  // cw writes over the top (12 o'clock is 270 in this app's clockwise-positive,
+  // Y-down convention); ccw has to carry the run to 6 o'clock, not merely
+  // reverse travel and leave it upside down at the top.
+  await expect(panel.getByLabel('Angle')).toHaveValue('270')
+  await panel.getByLabel('Direction').selectOption('ccw')
+  await expect(panel.getByLabel('Angle')).toHaveValue('90')
+
+  await panel.getByLabel('Direction').selectOption('cw')
+  await expect(panel.getByLabel('Angle')).toHaveValue('270')
+})
+
+test('Path text needs a guide, then applies from the panel', async ({ app }) => {
   await seedOverlapFeatureProject(app.page, 1)
   const before = await getFeatureCount(app.page)
-  await startText(app.page, 'PATH')
+  await startLayout(app.page, 'path', 'PATH')
   const panel = app.page.locator(PANEL)
-  await panel.getByLabel('Layout').selectOption('path')
 
-  // Unlike the other modes, this one commits from the panel — and refuses
-  // until a guide is picked, because without one there is no baseline.
-  const create = panel.getByRole('button', { name: 'Create', exact: true })
+  // Opening in path mode goes straight into picking, since a path layout is
+  // meaningless without a guide — and it refuses to apply until it has one.
+  const create = panel.getByRole('button', { name: 'Apply', exact: true })
   await expect(create).toBeDisabled()
-  await expect(panel.getByRole('alert')).toContainText('guide')
+  await expect(panel.getByRole('button', { name: 'Cancel picking', exact: true })).toBeVisible()
 
-  await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
   const canvas = app.page.locator('canvas').first()
   await clickCanvasWorld(canvas, 0.4, 45)
 
   await expect(create).toBeEnabled()
   await create.click()
+  // The run already existed; applying a baseline must not add a second one.
   expect(await getFeatureCount(app.page)).toBe(before + 1)
 
   const layout = await storedTextLayout(app.page)
@@ -122,22 +136,22 @@ test('Path text needs a guide, then commits from the panel', async ({ app }) => 
 
 test('Escape backs out of guide picking without discarding the run', async ({ app }) => {
   await seedOverlapFeatureProject(app.page, 1)
-  await startText(app.page)
+  await startLayout(app.page, 'path')
   const panel = app.page.locator(PANEL)
-  await panel.getByLabel('Layout').selectOption('path')
-  await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
   await expect(panel.getByRole('button', { name: 'Cancel picking', exact: true })).toBeVisible()
 
+  // Esc leaves picking but keeps the edit open, so a mis-click does not throw
+  // away the settings along with it.
   await app.page.keyboard.press('Escape')
   await expect(panel).toBeVisible()
   await expect(panel.getByLabel('Layout')).toHaveValue('path')
+  await expect(panel.getByRole('button', { name: 'Pick guide', exact: true })).toBeVisible()
 })
 
 test('Fill states the height the run will actually cut', async ({ app }) => {
   await seedOverlapFeatureProject(app.page, 1)
-  await startText(app.page, 'FILL')
+  await startLayout(app.page, 'arc', 'FILL')
   const panel = app.page.locator(PANEL)
-  await panel.getByLabel('Layout').selectOption('arc')
 
   // Natural keeps the typed size, so there is nothing to warn about.
   await expect(panel.locator('.canvas-workflow-panel__hint')).toHaveCount(0)

@@ -42,6 +42,7 @@ import type {
   Tool,
 } from '../types/project'
 import type { TextToolConfig } from '../text'
+import type { TextLayoutKind } from '../sketch/textPlacement'
 import type { ToolLibraryEntry } from '../toolLibrary'
 import type { GearCreationParams } from '../sketch/gearProfile'
 import type { FeatureDistributionMode, FeatureDistributionSpec } from '../sketch/featureDistribution'
@@ -116,26 +117,7 @@ export type PendingAddTool =
   | { shape: 'ellipse'; anchor: Point | null; session: number }
   | { shape: 'tab'; anchor: Point | null; session: number }
   | { shape: 'clamp'; anchor: Point | null; session: number }
-  | {
-      shape: 'text'
-      config: TextToolConfig
-      /**
-       * Arc layouts place in two clicks — centre, then radius — so the first
-       * click parks here, mirroring `circle`/`gear`. Straight text ignores it
-       * and commits on the single click.
-       */
-      anchor: Point | null
-      /** Guide picked for a path layout. */
-      guideId: string | null
-      pickTarget: TextLayoutPickTarget
-      /**
-       * True once the user has set the arc direction themselves, after which
-       * the drag stops inferring it from which side of the centre the cursor
-       * is on. Transient: it describes the gesture, not the text.
-       */
-      directionPinned: boolean
-      session: number
-    }
+  | { shape: 'text'; config: TextToolConfig; session: number }
   | { shape: 'polygon'; points: Point[]; session: number }
   | { shape: 'spline'; points: Point[]; session: number }
   | {
@@ -217,6 +199,31 @@ export type FeatureDistributionPickTarget = 'guide' | 'radial-center' | null
 
 /** What a canvas click means while a text layout is being configured. */
 export type TextLayoutPickTarget = 'guide' | null
+
+/**
+ * An in-progress baseline edit on an existing text feature.
+ *
+ * Laying text on an arc or a guide is an *edit*, not part of creating the text
+ * — it lives with the distribution workflows rather than the text tool, and it
+ * can be reopened on a run that already curves. So it keys on a feature id
+ * rather than riding on `pendingAdd`.
+ */
+export interface PendingTextLayout {
+  featureId: string
+  layout: TextLayout | null
+  /** Arc centre, once picked; the radius drag runs from it. */
+  center: Point | null
+  /** Guide picked for a path layout. */
+  guideId: string | null
+  pickTarget: TextLayoutPickTarget
+  /**
+   * True once the user has set the arc direction themselves, after which the
+   * drag stops inferring it from which side of the centre the cursor is on.
+   * Transient: it describes the gesture, not the text.
+   */
+  directionPinned: boolean
+  session: number
+}
 
 export interface PendingFeatureDistribution {
   sourceIds: string[]
@@ -514,14 +521,20 @@ export interface ProjectStore {
   startAddSplinePlacement: () => void
   startAddCompositePlacement: () => void
   startAddTextPlacement: (config: TextToolConfig) => void
-  /** Replace the pending text run's baseline layout (null = straight). */
+  // Text baseline editing — an edit on an existing run, grouped with the
+  // distribution workflows rather than with text creation.
+  pendingTextLayout: PendingTextLayout | null
+  /** Begin laying the selected text feature on an arc or a guide. */
+  startTextLayout: (kind: TextLayoutKind) => void
+  cancelTextLayout: () => void
+  /** Replace the pending baseline (null = straight). */
   updateTextLayout: (layout: TextLayout | null) => void
   setTextLayoutPickTarget: (target: TextLayoutPickTarget) => void
-  /** Set or clear the arc centre picked by the first placement click. */
-  setPendingTextAnchor: (anchor: Point | null) => void
+  /** Set or clear the arc centre; the radius drag runs from it. */
+  setTextLayoutCenter: (center: Point | null) => void
   /** Bake a picked guide outline into the pending path layout. */
   setTextLayoutGuide: (featureId: string) => void
-  /** Commit a path layout, which has no free placement click of its own. */
+  /** Apply the pending baseline to the feature and resize its frame. */
   completeTextLayout: () => string[]
   startAddSlotPlacement: () => void
   startAddNgonPlacement: () => void

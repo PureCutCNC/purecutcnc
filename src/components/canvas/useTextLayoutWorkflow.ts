@@ -15,23 +15,20 @@
  */
 
 import type { RefObject } from 'react'
-import type { PendingAddTool, TextLayoutPickTarget } from '../../store/types'
+import type { PendingTextLayout, TextLayoutPickTarget } from '../../store/types'
 import type { TextLayout } from '../../types/project'
 import { createDefaultTextLayout, type TextLayoutKind } from '../../sketch/textPlacement'
-import { straightTextRunWidth } from '../../text'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
 
 type LayoutMode = 'horizontal' | TextLayoutKind
 
-/** The pending-add variant this workflow drives. */
-export type PendingTextAdd = Extract<PendingAddTool, { shape: 'text' }>
-
 interface TextLayoutWorkflowCtx {
-  pendingText: PendingTextAdd | null
+  pending: PendingTextLayout | null
+  runWidth: number
   updateTextLayout: (layout: TextLayout | null) => void
   setTextLayoutPickTarget: (target: TextLayoutPickTarget) => void
   completeTextLayout: () => string[]
-  cancelPendingAdd: () => void
+  cancelTextLayout: () => void
   containerRef: RefObject<HTMLDivElement | null>
   canvasRef: RefObject<HTMLCanvasElement | null>
   clearTransientCanvasState: () => void
@@ -48,19 +45,20 @@ export interface TextLayoutWorkflow {
 }
 
 export function useTextLayoutWorkflow({
-  pendingText,
+  pending,
+  runWidth,
   updateTextLayout,
   setTextLayoutPickTarget,
   completeTextLayout,
-  cancelPendingAdd,
+  cancelTextLayout,
   containerRef,
   canvasRef,
   clearTransientCanvasState,
 }: TextLayoutWorkflowCtx): TextLayoutWorkflow {
   const textLayoutWorkflowPanel = useCanvasWorkflowPanel({
-    open: pendingText !== null,
-    phaseKey: pendingText
-      ? `${pendingText.config.layout?.kind ?? 'horizontal'}:${pendingText.pickTarget ?? (pendingText.anchor ? 'radius' : 'place')}`
+    open: pending !== null,
+    phaseKey: pending
+      ? `${pending.layout?.kind ?? 'horizontal'}:${pending.pickTarget ?? (pending.center ? 'radius' : 'place')}`
       : null,
     containerRef,
     canvasRef,
@@ -69,13 +67,13 @@ export function useTextLayoutWorkflow({
   })
 
   function changeTextLayoutMode(mode: LayoutMode) {
-    if (!pendingText) return
+    if (!pending) return
     // A fresh layout is sized from the run's own width, so switching to `arc`
     // shows a text-sized arc rather than a hairline or a full ring.
     updateTextLayout(
       mode === 'horizontal'
         ? null
-        : createDefaultTextLayout(mode, straightTextRunWidth(pendingText.config)),
+        : createDefaultTextLayout(mode, runWidth),
     )
     textLayoutWorkflowPanel.focusCanvasAfterAction()
   }
@@ -100,7 +98,7 @@ export function useTextLayoutWorkflow({
   }
 
   function cancelTextLayoutFromPanel() {
-    cancelPendingAdd()
+    cancelTextLayout()
     textLayoutWorkflowPanel.focusCanvasAfterAction()
   }
 

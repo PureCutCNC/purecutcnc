@@ -103,6 +103,33 @@ const DEFAULT_ARC_SWEEP_DEGREES = 120
 /** 12 o'clock, in this app's clockwise-positive, Y-down angle convention. */
 const TOP_OF_CIRCLE_DEGREES = 270
 
+/** 6 o'clock, same convention. */
+const BOTTOM_OF_CIRCLE_DEGREES = 90
+
+/**
+ * Where a run sits by default for each direction: `cw` writes across the top of
+ * the circle, `ccw` across the bottom. Both read left to right — that is the
+ * whole point of the pair, and it is why direction cannot be a bare travel sign.
+ *
+ * Reversing travel *without* moving the run leaves it at 12 o'clock reading
+ * backwards, i.e. upside down, which is never what anyone wants from a control
+ * labelled "counter-clockwise".
+ */
+export function anchorAngleForDirection(direction: 'cw' | 'ccw'): number {
+  return direction === 'cw' ? TOP_OF_CIRCLE_DEGREES : BOTTOM_OF_CIRCLE_DEGREES
+}
+
+/**
+ * The anchor angle to use when the user flips the direction control.
+ *
+ * Mirroring about the horizontal axis moves the run to the other half of the
+ * circle — 270 (top) becomes 90 (bottom) — while keeping any left/right bias
+ * the user dialled in, so a run nudged off-centre stays nudged the same way.
+ */
+export function mirrorAnchorAngleForDirection(angleDegrees: number): number {
+  return normalizeAngleDegrees(-angleDegrees)
+}
+
 /**
  * Starting values for a layout the user just switched to.
  *
@@ -117,7 +144,7 @@ export function createDefaultTextLayout(kind: TextLayoutKind, runWidth: number):
     return {
       kind: 'arc',
       radius: Math.max(MIN_ARC_RADIUS, runWidth / sweepRadians),
-      angleDegrees: TOP_OF_CIRCLE_DEGREES,
+      angleDegrees: anchorAngleForDirection('cw'),
       sweepDegrees: DEFAULT_ARC_SWEEP_DEGREES,
       anchor: 'center',
       fit: 'natural',

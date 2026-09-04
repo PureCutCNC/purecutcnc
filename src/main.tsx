@@ -145,6 +145,27 @@ if (import.meta.env.DEV) {
       const units = useProjectStore.getState().project.meta.units
       useProjectStore.getState().startAddTextPlacement({ ...defaultTextToolConfig(units), text })
     },
+    /**
+     * Create a straight text run, select it, and open a baseline edit on it —
+     * the whole route a user takes to reach the text-layout panel, which is an
+     * edit on a placed run rather than part of creating one.
+     */
+    startTextLayout: async (text: string, kind: 'arc' | 'path') => {
+      const { useProjectStore } = await _pcTestStore()
+      const { defaultTextToolConfig } = await import('./text')
+      const store = useProjectStore.getState()
+      const units = store.project.meta.units
+      store.startAddTextPlacement({ ...defaultTextToolConfig(units), text })
+      const created = useProjectStore.getState().placePendingTextAt({ x: 120, y: 120 })
+      const id = created.at(-1)
+      if (!id) return
+      useProjectStore.getState().selectFeatures([id])
+      useProjectStore.getState().startTextLayout(kind)
+    },
+    setTextLayoutCenter: async (x: number, y: number) => {
+      const { useProjectStore } = await _pcTestStore()
+      useProjectStore.getState().setTextLayoutCenter({ x, y })
+    },
     setPendingAddAnchor: async (x: number, y: number) => {
       const { useProjectStore } = await _pcTestStore()
       useProjectStore.getState().setPendingAddAnchor({ x, y })
@@ -261,6 +282,8 @@ declare global {
       completePendingMove: (x: number, y: number) => Promise<void>
       startAddRectPlacement: () => Promise<void>
       startAddTextPlacement: (text: string) => Promise<void>
+      startTextLayout: (text: string, kind: 'arc' | 'path') => Promise<void>
+      setTextLayoutCenter: (x: number, y: number) => Promise<void>
       setPendingAddAnchor: (x: number, y: number) => Promise<void>
       placePendingAddAt: (x: number, y: number) => Promise<void>
       cancelPendingAdd: () => Promise<void>
