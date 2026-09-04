@@ -26,8 +26,10 @@
 import type { PendingTextLayout } from '../../store/types'
 import type { Point, Project } from '../../types/project'
 import { generateTextShapes } from '../../text'
-import { textArcDragPlacement } from '../../sketch/textPlacement'
-import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
+import { localTextLayout, textArcDragPlacement } from '../../sketch/textPlacement'
+import { applyMatrixToPoint, resolveFeatureInstance, type ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
+import { invertMatrix } from '../../store/helpers/instanceTransforms'
+import { transformProfile } from '../../geometry/profile'
 import { drawPendingPoint, drawPreviewProfile } from './previewPrimitives'
 import type { ViewTransform } from './viewTransform'
 
@@ -63,30 +65,51 @@ export function drawTextLayoutPreview(
     return
   }
 
-  const base = {
-    text: target.text.text,
-    style: target.text.style,
-    fontId: target.text.fontId,
-    size: target.text.size,
-    operation: target.operation,
+  // An arc mid-drag re-derives radius and angle from the cursor through the
+  // same helper the commit uses.
+  const dragged = pending.layout?.kind === 'arc' && pending.center && currentPreviewPoint
+    ? textArcDragPlacement(
+      { ...configOf(target), layout: pending.layout },
+      pending.center,
+      currentPreviewPoint,
+      pending.directionPinned,
+    ).config.layout ?? pending.layout
+    : pending.layout
+
+  // Then the *same* world-to-local conversion the commit does, so the preview
+  // cannot show one thing and Apply produce another. Doing this by hand here
+  // was the bug: preview drew the world centre against an origin-centred
+  // template, which matched only for an untransformed run.
+  const toLocal = invertMatrix(target.transform)
+  const localLayout = localTextLayout(
+    dragged,
+    pending.center,
+    (point) => applyMatrixToPoint(toLocal, point),
+  )
+  if (!localLayout) {
+    return
   }
-  const layout = pending.layout
-  const config = { ...base, layout }
 
-  const preview = layout?.kind === 'path'
-    ? { config, anchor: { x: 0, y: 0 } }
-    : layout?.kind === 'arc' && pending.center
-      ? currentPreviewPoint
-        ? textArcDragPlacement(config, pending.center, currentPreviewPoint, pending.directionPinned)
-        : { config, anchor: pending.center }
-      : null
-
-  if (preview) {
-    for (const shape of generateTextShapes(preview.config, preview.anchor)) {
-      drawPreviewProfile(ctx, shape.profile, vt, '')
-    }
+  // And resolved the way the canvas will resolve it once applied.
+  for (const shape of generateTextShapes({ ...configOf(target), layout: localLayout }, { x: 0, y: 0 })) {
+    drawPreviewProfile(
+      ctx,
+      transformProfile(shape.profile, (point) => applyMatrixToPoint(target.transform, point)),
+      vt,
+      '',
+    )
   }
   if (pending.center) {
     drawPendingPoint(ctx, pending.center, vt)
+  }
+}
+
+function configOf(target: ResolvedSketchFeature) {
+  return {
+    text: target.text!.text,
+    style: target.text!.style,
+    fontId: target.text!.fontId,
+    size: target.text!.size,
+    operation: target.operation,
   }
 }

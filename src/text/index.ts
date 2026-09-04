@@ -17,7 +17,6 @@
 import { parseFontJson } from './fontData'
 import { cleanOutlineContour } from './outlineContours'
 import { arcBaseline, bendShapesToBaseline, pathBaseline, type BendResult, type TextTemplateBounds } from './baseline'
-import { profilePathLength } from '../sketch/featureDistribution'
 import helvetikerRegular from 'three/examples/fonts/helvetiker_regular.typeface.json'
 import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
 import optimerRegular from 'three/examples/fonts/optimer_regular.typeface.json'
@@ -614,11 +613,31 @@ function getTextTemplate(config: TextToolConfig): TextTemplate {
  * summarised by its measurable shape rather than every control point, which is
  * enough to separate distinct guides without building a huge key.
  */
+/**
+ * Cache key for a laid-out template.
+ *
+ * Every value the bend actually reads has to appear here. The arc's `center`
+ * was missing, and because a template is built in the layout's own space rather
+ * than normalised to the origin, two arcs differing only in centre collided:
+ * the second run silently reused the first one's geometry and then got shifted
+ * again by its frame, so applying an arc landed the text somewhere else
+ * entirely. The path's geometry is fingerprinted point by point for the same
+ * reason — a length-and-count summary let two different guides collide.
+ */
 function layoutCacheKey(layout: TextLayout | null | undefined): string {
   if (!layout) return 'straight'
   const shared = `${layout.anchor}|${layout.fit}|${layout.orientation}`
   if (layout.kind === 'arc') {
-    return `arc|${layout.radius}|${layout.angleDegrees}|${layout.sweepDegrees}|${layout.direction}|${shared}`
+    return [
+      'arc',
+      layout.center.x,
+      layout.center.y,
+      layout.radius,
+      layout.angleDegrees,
+      layout.sweepDegrees,
+      layout.direction,
+      shared,
+    ].join('|')
   }
   const { start, segments, closed } = layout.path
   return [
@@ -630,8 +649,13 @@ function layoutCacheKey(layout: TextLayout | null | undefined): string {
     closed,
     start.x,
     start.y,
-    segments.length,
-    profilePathLength(layout.path).toFixed(6),
+    ...segments.flatMap((segment) => (
+      segment.type === 'line'
+        ? ['l', segment.to.x, segment.to.y]
+        : segment.type === 'bezier'
+          ? ['b', segment.to.x, segment.to.y, segment.control1.x, segment.control1.y, segment.control2.x, segment.control2.y]
+          : ['a', segment.to.x, segment.to.y, segment.center.x, segment.center.y, segment.clockwise]
+    )),
   ].join('|')
 }
 

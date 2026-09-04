@@ -331,7 +331,7 @@ export const canvasEs: Record<keyof typeof canvasEn, string> = {
   'canvas.textLayout.title': 'Diseño de texto',
   'canvas.textLayout.step.needGuide': 'Elija un contorno guía para el recorrido del texto',
   'canvas.textLayout.step.configure': 'Ajuste el recorrido y aplique',
-  'canvas.textLayout.step.pickGuide': 'Haga clic en un contorno guía del croquis — Esc cancela',
+  'canvas.textLayout.step.pickGuide': 'Haga clic directamente sobre el contorno guía — una curva abierta no tiene interior — Esc cancela',
   'canvas.textLayout.center': 'Centro',
   'canvas.textLayout.centerPicked': 'Punto seleccionado',
   'canvas.textLayout.pickCenter': 'Elegir centro',

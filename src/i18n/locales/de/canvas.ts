@@ -382,7 +382,7 @@ export const canvasDe: Record<keyof typeof canvasEn, string> = {
   'canvas.textLayout.title': 'Textlayout',
   'canvas.textLayout.step.needGuide': 'Wählen Sie eine Führungskontur für den Textverlauf',
   'canvas.textLayout.step.configure': 'Verlauf anpassen, dann übernehmen',
-  'canvas.textLayout.step.pickGuide': 'Klicken Sie eine Führungskontur in der Skizze an — Esc bricht ab',
+  'canvas.textLayout.step.pickGuide': 'Direkt auf die Führungskontur klicken — eine offene Kurve hat kein Inneres — Esc bricht ab',
   'canvas.textLayout.center': 'Mittelpunkt',
   'canvas.textLayout.centerPicked': 'Punkt ausgewählt',
   'canvas.textLayout.pickCenter': 'Mittelpunkt wählen',

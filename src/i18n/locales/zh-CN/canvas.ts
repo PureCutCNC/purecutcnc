@@ -337,7 +337,7 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.textLayout.title': '文字排布',
   'canvas.textLayout.step.needGuide': '选择一条引导轮廓作为文字走向',
   'canvas.textLayout.step.configure': '调整排布后应用',
-  'canvas.textLayout.step.pickGuide': '在草图中点击引导轮廓 — Esc 取消',
+  'canvas.textLayout.step.pickGuide': '请直接点击引导轮廓线 — 开放曲线没有内部 — Esc 取消',
   'canvas.textLayout.center': '中心',
   'canvas.textLayout.centerPicked': '已选择点',
   'canvas.textLayout.pickCenter': '选择中心',

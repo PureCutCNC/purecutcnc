@@ -389,7 +389,7 @@ export const canvasEn = {
   'canvas.textLayout.title': 'Text layout',
   'canvas.textLayout.step.needGuide': 'Pick a guide outline to run the text along',
   'canvas.textLayout.step.configure': 'Adjust the run, then apply',
-  'canvas.textLayout.step.pickGuide': 'Click a guide outline on the sketch — Esc cancels',
+  'canvas.textLayout.step.pickGuide': 'Click directly on a guide outline — an open curve has no inside — Esc cancels',
   'canvas.textLayout.center': 'Center',
   'canvas.textLayout.centerPicked': 'Point selected',
   'canvas.textLayout.pickCenter': 'Pick center',

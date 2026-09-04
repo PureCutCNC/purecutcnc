@@ -104,7 +104,7 @@ test('Arc applies to the selected run once a centre is picked', async ({ app }) 
   // The centre is an explicit pick with its own button, the same interaction
   // the radial distribution panel uses.
   await panel.getByRole('button', { name: 'Pick center', exact: true }).click()
-  const canvas = app.page.locator('canvas').first()
+  const canvas = app.page.locator('canvas.sketch-canvas')
   await clickCanvasWorld(canvas, 20, 70)
   await expect(panel.getByRole('button', { name: 'Change center', exact: true })).toBeVisible()
 
@@ -145,9 +145,10 @@ test('Path text needs a guide, then applies from the panel', async ({ app }) => 
   await expect(create).toBeDisabled()
 
   await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
-  const canvas = app.page.locator('canvas').first()
+  const canvas = app.page.locator('canvas.sketch-canvas')
   await clickCanvasWorld(canvas, 0.4, 45)
 
+  await expect(panel.getByRole('button', { name: 'Change guide', exact: true })).toBeVisible()
   await expect(create).toBeEnabled()
   await create.click()
   // The run already existed; applying a baseline must not add a second one.
@@ -234,4 +235,58 @@ test('The text baselines are disabled for a non-text selection', async ({ app })
   await command.click()
   const menu = app.page.getByRole('menu')
   await expect(menu.getByRole('button', { name: 'Text layout', exact: true })).toBeDisabled()
+})
+
+/**
+ * The guide in the reported case was an open construction spline, not the
+ * closed rect the other path test uses. Open profiles and construction-role
+ * features take different branches in hit testing and in the guide guard, so
+ * they get their own pass.
+ */
+test('An open construction spline works as a guide', async ({ app }) => {
+  await seedOverlapFeatureProject(app.page, 1)
+  await app.page.evaluate(async () => {
+    const w = window as unknown as {
+      __pcTest: {
+        getProject: () => Promise<Record<string, unknown>>
+        loadProject: (json: string) => Promise<void>
+      }
+    }
+    const project = await w.__pcTest.getProject() as {
+      features: unknown[]
+      featureDefinitions: Record<string, unknown>
+      featureTree: unknown[]
+    }
+    project.featureDefinitions.dSpline = {
+      id: 'dSpline',
+      kind: 'spline',
+      operation: 'construction',
+      profile: {
+        start: { x: 0, y: 60 },
+        segments: [{ type: 'bezier', control1: { x: 15, y: 20 }, control2: { x: 45, y: 100 }, to: { x: 60, y: 60 } }],
+        closed: false,
+      },
+      dimensions: [],
+      text: null,
+      stl: null,
+    }
+    project.features.push({
+      id: 'fSpline', name: 'Construction 1', definitionId: 'dSpline',
+      transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+      constraints: [], z_top: 5, z_bottom: 0, folderId: null, visible: true, locked: false,
+    })
+    project.featureTree.push({ type: 'feature', featureId: 'fSpline' })
+    await w.__pcTest.loadProject(JSON.stringify(project))
+  })
+
+  await startLayout(app.page, 'path', 'PATH')
+  const panel = app.page.locator(PANEL)
+  await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
+
+  // Click the spline's own curve, not the middle of its bounding box: an open
+  // profile has no interior to hit.
+  await clickCanvasWorld(app.page.locator('canvas.sketch-canvas'), 30, 60)
+
+  await expect(panel.getByRole('button', { name: 'Change guide', exact: true })).toBeVisible()
+  await expect(panel.getByRole('button', { name: 'Apply', exact: true })).toBeEnabled()
 })

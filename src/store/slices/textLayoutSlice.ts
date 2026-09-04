@@ -28,6 +28,7 @@ import { cloneProfile } from '../../geometry/profile'
 import { profilePathLength } from '../../sketch/featureDistribution'
 import {
   createDefaultTextLayout,
+  localTextLayout,
   mirrorAnchorAngleForDirection,
   type TextLayoutKind,
 } from '../../sketch/textPlacement'
@@ -35,7 +36,6 @@ import { straightTextRunWidth } from '../../text'
 import { cloneProject, syncFeatureTreeProject } from '../helpers/normalize'
 import { applyMatrixToPoint } from '../helpers/resolveFeatures'
 import { invertMatrix } from '../helpers/instanceTransforms'
-import { transformProfile } from '../../geometry/profile'
 import { nextPlacementSession } from '../helpers/ids'
 import { resolveFeatureInstance } from '../helpers/resolveFeatures'
 import type { ProjectStore } from '../types'
@@ -205,18 +205,12 @@ export function createTextLayoutSlice(
       if (layout?.kind === 'arc' && !pending.center) return []
       if (layout?.kind === 'path' && layout.path.segments.length === 0) return []
 
-      // Everything picked on the canvas is world-space; the layout is stored
-      // definition-local so the instance transform still places it. Inverting
-      // here is what lets one copy curve while its siblings do not.
       const toLocal = invertMatrix(feature.transform)
-      const localLayout: TextLayout | null = layout === null
-        ? null
-        : layout.kind === 'arc'
-          ? { ...layout, center: applyMatrixToPoint(toLocal, pending.center!) }
-          : {
-            ...layout,
-            path: transformProfile(layout.path, (point) => applyMatrixToPoint(toLocal, point)),
-          }
+      const localLayout = localTextLayout(
+        layout,
+        pending.center,
+        (point) => applyMatrixToPoint(toLocal, point),
+      )
 
       set((s) => ({
         project: syncFeatureTreeProject({

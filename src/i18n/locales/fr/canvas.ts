@@ -331,7 +331,7 @@ export const canvasFr: Record<keyof typeof canvasEn, string> = {
   'canvas.textLayout.title': 'Disposition du texte',
   'canvas.textLayout.step.needGuide': 'Choisissez un contour guide à suivre',
   'canvas.textLayout.step.configure': 'Ajustez le tracé, puis appliquez',
-  'canvas.textLayout.step.pickGuide': 'Cliquez un contour guide sur l’esquisse — Échap annule',
+  'canvas.textLayout.step.pickGuide': 'Cliquez directement sur le contour guide — une courbe ouverte n’a pas d’intérieur — Échap annule',
   'canvas.textLayout.center': 'Centre',
   'canvas.textLayout.centerPicked': 'Point sélectionné',
   'canvas.textLayout.pickCenter': 'Choisir le centre',

@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-import { getProfileBounds, newProject, rectProfile, type Project, type TextLayout } from '../types/project'
+import { IDENTITY_MATRIX, getProfileBounds, newProject, rectProfile, type Project, type TextLayout } from '../types/project'
 import { projectWithFeatures } from '../test/projectFixtures'
 import { normalizeProject } from './helpers/projectFormat'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
+import { getFeatureGeometryBounds } from '../text'
 import { useProjectStore } from './projectStore'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -211,6 +212,52 @@ function testStraighteningRestoresTheOriginalPosition() {
   console.log('straightening restores the original position: PASSED')
 }
 
+/**
+ * The run must land where the preview drew it, including on a run whose
+ * instance transform is not identity.
+ *
+ * Preview and commit each did their own world-to-local conversion for a while,
+ * which agreed only for an untransformed run — so applying an arc to a moved
+ * copy threw the text across the sketch. Both now go through
+ * `localTextLayout`, and this pins the property that made the divergence
+ * visible: the committed glyphs stay centred on the world point that was
+ * picked.
+ */
+function testTheAppliedRunLandsOnThePickedCentre() {
+  for (const transform of [
+    IDENTITY_MATRIX,
+    { ...IDENTITY_MATRIX, e: 120, f: -45 },
+  ]) {
+    resetStore()
+    useProjectStore.setState((s) => ({
+      project: {
+        ...s.project,
+        features: s.project.features.map((row) => (row.id === 'run' ? { ...row, transform } : row)),
+      },
+    }))
+
+    const center = { x: 100, y: 100 }
+    startLayout('arc')
+    useProjectStore.getState().updateTextLayout({ ...arcLayout, radius: 40, sweepDegrees: 90 })
+    useProjectStore.getState().setTextLayoutCenter(center)
+    useProjectStore.getState().completeTextLayout()
+
+    const run = resolveFeatureInstance(useProjectStore.getState().project, 'run')!
+    const bounds = getFeatureGeometryBounds(run)
+    const midX = (bounds.minX + bounds.maxX) / 2
+    assert(
+      Math.abs(midX - center.x) < 6,
+      `run should stay centred on the picked point, got ${midX} for e=${transform.e}`,
+    )
+    // cw sits the run on top of the circle, so it is a radius above the centre.
+    assert(
+      Math.abs(bounds.maxY - (center.y - 40)) < 6,
+      `run should sit on the circle, got ${bounds.maxY} for e=${transform.e}`,
+    )
+  }
+  console.log('the applied run lands on the picked centre: PASSED')
+}
+
 function testPathModeNeedsAGuideAndCommitsFromThePanel() {
   resetStore()
   startLayout()
@@ -330,6 +377,7 @@ testArcAppliesToTheSelectedRunOnceItsCentreIsPicked()
 testApplyingResizesTheFrameToTheBentRun()
 testReopeningKeepsTheRunsCurrentBaseline()
 testStraighteningRestoresTheOriginalPosition()
+testTheAppliedRunLandsOnThePickedCentre()
 testPathModeNeedsAGuideAndCommitsFromThePanel()
 testTheBakedGuideDoesNotAliasTheGuideFeature()
 testSwitchingModesRestartsTheGesture()

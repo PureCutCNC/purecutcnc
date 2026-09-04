@@ -24,6 +24,7 @@
  */
 
 import type { Point, TextLayout } from '../types/project'
+import { transformProfile } from '../geometry/profile'
 import { normalizeAngleDegrees } from '../store/helpers/normalize'
 import type { TextToolConfig } from '../text'
 
@@ -167,5 +168,29 @@ export function createDefaultTextLayout(kind: TextLayoutKind, runWidth: number):
     fit: 'natural',
     reversed: false,
     orientation: 'follow',
+  }
+}
+
+/**
+ * The layout to store for a run, given what the user picked on the canvas.
+ *
+ * Everything picked on the canvas is world-space; the layout is stored
+ * definition-local so the instance transform still places it. Preview and
+ * commit both go through here, because when they each did their own version of
+ * this conversion they agreed only for an untransformed run and the text jumped
+ * on apply.
+ */
+export function localTextLayout(
+  layout: TextLayout | null,
+  worldCenter: Point | null,
+  toLocal: (point: Point) => Point,
+): TextLayout | null {
+  if (!layout) return null
+  if (layout.kind === 'arc') {
+    return worldCenter ? { ...layout, center: toLocal(worldCenter) } : layout
+  }
+  return {
+    ...layout,
+    path: transformProfile(layout.path, toLocal),
   }
 }
