@@ -65,6 +65,13 @@ export function drawTextLayoutPreview(
     return
   }
 
+  // Nothing to preview until an arc has its centre: without one the run would
+  // be drawn around the origin, which reads as the text flying off somewhere
+  // random the moment the panel opens.
+  if (pending.layout?.kind === 'arc' && !pending.center) {
+    return
+  }
+
   // An arc mid-drag re-derives radius and angle from the cursor through the
   // same helper the commit uses.
   const dragged = pending.layout?.kind === 'arc' && pending.center && currentPreviewPoint

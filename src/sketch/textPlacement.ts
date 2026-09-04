@@ -194,3 +194,24 @@ export function localTextLayout(
     path: transformProfile(layout.path, toLocal),
   }
 }
+
+/**
+ * The arc radius a picked centre implies for a run.
+ *
+ * Measured to the edge of the run that will actually land on the circle — its
+ * bottom going clockwise, its top going anticlockwise — not to the run's middle.
+ * The bend puts that edge on the curve, so measuring to the middle pushed the
+ * text half its own height away from the circle and the gap changed with the
+ * font size.
+ */
+export function arcRadiusForCenter(
+  bounds: { minX: number; maxX: number; minY: number; maxY: number },
+  direction: 'cw' | 'ccw',
+  center: Point,
+): number {
+  const attachPoint = {
+    x: (bounds.minX + bounds.maxX) / 2,
+    y: direction === 'cw' ? bounds.maxY : bounds.minY,
+  }
+  return Math.hypot(attachPoint.x - center.x, attachPoint.y - center.y)
+}

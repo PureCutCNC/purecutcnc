@@ -173,13 +173,14 @@ function testReopeningKeepsTheRunsCurrentBaseline() {
   resetStore()
   startLayout('arc')
   useProjectStore.getState().updateTextLayout(arcLayout)
-  // The pivot of rectProfile(200, 200, 30, 10) is (215, 205), so this derives 100.
+  // rectProfile(200, 200, 30, 10) attaches at its bottom edge (215, 210) going
+  // clockwise, so this derives 95 — not 100 to the box centre.
   useProjectStore.getState().setTextLayoutCenter({ x: 215, y: 305 })
   useProjectStore.getState().completeTextLayout()
 
   startLayout('arc')
   const reopened = pendingLayout().layout
-  assert(reopened?.kind === 'arc' && Math.abs(reopened.radius - 100) < 1e-6, "reopening loads the run's own arc")
+  assert(reopened?.kind === 'arc' && Math.abs(reopened.radius - 95) < 1e-6, "reopening loads the run's own arc")
   console.log('reopening keeps the current baseline: PASSED')
 }
 
@@ -241,8 +242,9 @@ function testTheAppliedRunLandsOnThePickedCentre() {
     // Radius is derived from the run's pivot, which moves with the instance
     // transform — so the expectation is derived the same way.
     const before = getProfileBounds(resolveFeatureInstance(useProjectStore.getState().project, 'run')!.sketch.profile)
-    const pivot = { x: (before.minX + before.maxX) / 2, y: (before.minY + before.maxY) / 2 }
-    const radius = Math.hypot(pivot.x - center.x, pivot.y - center.y)
+    // cw attaches by the run's bottom edge, which is what lands on the circle.
+    const attach = { x: (before.minX + before.maxX) / 2, y: before.maxY }
+    const radius = Math.hypot(attach.x - center.x, attach.y - center.y)
     startLayout('arc')
     useProjectStore.getState().updateTextLayout({ ...arcLayout, sweepDegrees: 90 })
     useProjectStore.getState().setTextLayoutCenter(center)
@@ -275,16 +277,25 @@ function testPickingTheCentreDerivesTheRadius() {
   startLayout('arc')
   useProjectStore.getState().updateTextLayout({ ...arcLayout, radius: 999 })
 
-  // The run's frame is rectProfile(200, 200, 30, 10), so its pivot is (215, 205).
+  // rectProfile(200, 200, 30, 10): the run attaches by the edge that lands on
+  // the circle, so clockwise measures to its bottom (215, 210) — 95, not the
+  // 100 you would get to the box centre. That half-height is what made the gap
+  // between text and circle change with the font size.
   useProjectStore.getState().setTextLayoutCenter({ x: 215, y: 305 })
   const layout = pendingLayout().layout
   assert(layout?.kind === 'arc', 'still an arc')
-  assert(Math.abs(layout.radius - 100) < 1e-6, `radius should be the pivot distance, got ${layout.radius}`)
+  assert(Math.abs(layout.radius - 95) < 1e-6, `radius should reach the attach edge, got ${layout.radius}`)
 
   // Moving the centre re-derives it rather than keeping the first pick.
   useProjectStore.getState().setTextLayoutCenter({ x: 215, y: 245 })
   const moved = pendingLayout().layout
-  assert(moved?.kind === 'arc' && Math.abs(moved.radius - 40) < 1e-6, `re-derived, got ${moved?.kind === 'arc' ? moved.radius : 'n/a'}`)
+  assert(moved?.kind === 'arc' && Math.abs(moved.radius - 35) < 1e-6, `re-derived, got ${moved?.kind === 'arc' ? moved.radius : 'n/a'}`)
+
+  // Anticlockwise attaches by the top edge instead, so the same centre implies
+  // a different radius — otherwise flipping direction lifts the run off the circle.
+  useProjectStore.getState().updateTextLayout({ ...moved, direction: 'ccw' })
+  const flipped = pendingLayout().layout
+  assert(flipped?.kind === 'arc' && Math.abs(flipped.radius - 45) < 1e-6, `ccw measures to the top edge, got ${flipped?.kind === 'arc' ? flipped.radius : 'n/a'}`)
   console.log('picking the centre derives the radius: PASSED')
 }
 

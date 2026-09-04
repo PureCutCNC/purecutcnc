@@ -29,6 +29,7 @@ import type {
   SketchControlRef,
   SketchEditTool,
   TapeMeasureState,
+  PendingTextLayout,
 } from '../../store/types'
 import type { Point, Project, SketchFeature } from '../../types/project'
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
@@ -122,6 +123,7 @@ export interface PointerGesturesCtx {
   pendingTransformRef: MutableRefObject<PendingTransformTool | null>
   pendingOffsetRef: MutableRefObject<PendingOffsetTool | null>
   pendingFeatureDistributionRef: MutableRefObject<PendingFeatureDistribution | null>
+  pendingTextLayoutRef: MutableRefObject<PendingTextLayout | null>
   pendingShapeActionRef: MutableRefObject<PendingShapeActionTool | null>
   pendingConstraintRef: MutableRefObject<PendingConstraint | null>
   pendingDimensionRef: MutableRefObject<PendingDimensionTool | null>
@@ -273,6 +275,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     pendingTransformRef,
     pendingOffsetRef,
     pendingFeatureDistributionRef,
+    pendingTextLayoutRef,
     pendingShapeActionRef,
     pendingConstraintRef,
     pendingDimensionRef,
@@ -615,6 +618,9 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const constraintRefPicking = !!pendingConstraintLive && !!pendingConstraintLive.anchor && !pendingConstraintLive.reference
     const constraintPicking = constraintAnchorPicking || constraintRefPicking
     const radialCenterPicking = pendingFeatureDistributionRef.current?.pickTarget === 'radial-center'
+    // Picking the arc centre for text-on-a-circle is the same act as picking a
+    // radial distribution's centre, so it gets the same snap preview.
+    const textCenterPicking = pendingTextLayoutRef.current?.pickTarget === 'center'
     const shouldPreviewSnap =
       !zoomWindowActive && (
         !!pendingAdd
@@ -628,6 +634,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
         || isDraggingNodeRef.current
         || constraintPicking
         || radialCenterPicking
+        || textCenterPicking
       )
     const resolvedSnap = shouldPreviewSnap
       ? snap.resolveCurrentSketchSnap(world, vt, {

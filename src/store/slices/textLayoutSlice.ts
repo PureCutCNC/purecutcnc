@@ -23,11 +23,12 @@
  */
 
 import type { StateCreator } from 'zustand'
-import type { Point, TextLayout } from '../../types/project'
+import { getProfileBounds, type Point, type Project, type TextLayout } from '../../types/project'
 import { cloneProfile } from '../../geometry/profile'
-import { featureDistributionPivot, profilePathLength } from '../../sketch/featureDistribution'
+import { profilePathLength } from '../../sketch/featureDistribution'
 import {
   createDefaultTextLayout,
+  arcRadiusForCenter,
   localTextLayout,
   mirrorAnchorAngleForDirection,
   type TextLayoutKind,
@@ -60,6 +61,24 @@ function configOf(
   layout: TextLayout | null,
 ): TextToolConfig {
   return { text: text.text, style: text.style, fontId: text.fontId, size: text.size, operation, layout }
+}
+
+/**
+ * Re-derive an arc's radius from a picked centre, the way
+ * `planFeatureDistribution` derives a radial distribution's radius from where
+ * its source already sits.
+ */
+function arcLayoutForCenter(
+  project: Project,
+  featureId: string,
+  layout: TextLayout | null,
+  center: Point,
+): TextLayout | null {
+  if (layout?.kind !== 'arc') return layout
+  const feature = resolveFeatureInstance(project, featureId)
+  if (!feature) return layout
+  const radius = arcRadiusForCenter(getProfileBounds(feature.sketch.profile), layout.direction, center)
+  return radius > 1e-9 ? { ...layout, radius } : layout
 }
 
 export function createTextLayoutSlice(
@@ -125,9 +144,14 @@ export function createTextLayoutSlice(
       // `cw` writes across the top and `ccw` across the bottom, both reading
       // left to right; reversing travel while leaving the run at 12 o'clock
       // would just render it upside down there.
-      const nextLayout = directionFlipped && layout?.kind === 'arc'
+      const flipped = directionFlipped && layout?.kind === 'arc'
         ? { ...layout, angleDegrees: mirrorAnchorAngleForDirection(layout.angleDegrees) }
         : layout
+      // The attach edge changes with the direction, so a picked centre implies a
+      // different radius — otherwise flipping moves the run off the circle.
+      const nextLayout = directionFlipped && pending.center
+        ? arcLayoutForCenter(s.project, pending.featureId, flipped, pending.center)
+        : flipped
 
       return {
         pendingTextLayout: {
@@ -159,15 +183,9 @@ export function createTextLayoutSlice(
       // pivot to the picked centre, which is exactly how `planFeatureDistribution`
       // derives the radius of a radial distribution from its source. Picking the
       // centre is therefore the whole gesture.
-      const feature = resolveFeatureInstance(s.project, pending.featureId)
-      const layout = pending.layout
-      const nextLayout = center && layout?.kind === 'arc' && feature
-        ? (() => {
-          const pivot = featureDistributionPivot([feature.sketch.profile])
-          const radius = Math.hypot(pivot.x - center.x, pivot.y - center.y)
-          return radius > 1e-9 ? { ...layout, radius } : layout
-        })()
-        : layout
+      const nextLayout = center
+        ? arcLayoutForCenter(s.project, pending.featureId, pending.layout, center)
+        : pending.layout
 
       // Picking ends when the centre lands, the same way the distribution
       // radial pick does — the panel comes straight back.
