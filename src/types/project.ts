@@ -294,6 +294,8 @@ export type TextBaselineAttach = 'bottom' | 'top'
 export type TextLayout =
   | {
       kind: 'arc'
+      /** Circle centre, in definition-local space. */
+      center: Point
       radius: number
       /** Anchor position on the circle. 0 = 3 o'clock, positive = clockwise on screen. */
       angleDegrees: number
@@ -301,9 +303,11 @@ export type TextLayout =
       anchor: TextBaselineAnchor
       fit: TextBaselineFit
       /**
-       * Travel direction. Also selects which side of the arc glyphs stand on,
-       * because a glyph's "up" is always 90 degrees left of travel: `cw` puts
-       * text outside the arc (upright at 12 o'clock), `ccw` inside it (upright
+       * Travel direction, and with it which half of the circle the run
+       * occupies and which edge of the run lands on the curve: `cw` writes
+       * across the top with the run sitting on the circle, `ccw` across the
+       * bottom with the run hanging below it. Both read left to right and
+       * neither ends up inside the ring. (Upright at 12 o'clock and
        * at 6 o'clock). That is the top-arc / bottom-arc choice.
        */
       direction: 'cw' | 'ccw'
@@ -327,7 +331,6 @@ export interface TextFeatureData {
   style: TextFontStyle
   fontId: TextFontId
   size: number
-  layout?: TextLayout | null
 }
 
 /**
@@ -341,7 +344,7 @@ export interface TextFeatureData {
  */
 export function cloneTextLayout(layout: TextLayout | null | undefined): TextLayout | null {
   if (!layout) return null
-  if (layout.kind === 'arc') return { ...layout }
+  if (layout.kind === 'arc') return { ...layout, center: { ...layout.center } }
   return {
     ...layout,
     path: {
@@ -358,9 +361,9 @@ export function cloneTextLayout(layout: TextLayout | null | undefined): TextLayo
   }
 }
 
-/** Deep-copy text feature data, including its layout. */
+/** Deep-copy text feature data. */
 export function cloneTextFeatureData(text: TextFeatureData | null | undefined): TextFeatureData | null {
-  return text ? { ...text, layout: cloneTextLayout(text.layout) } : null
+  return text ? { ...text } : null
 }
 
 export type ImportedModelSourceFormat = 'stl' | 'obj'
@@ -433,6 +436,8 @@ export interface SketchFeature {
   name: string
   kind: FeatureKind
   text?: TextFeatureData | null
+  /** Curved baseline, in the same space as `sketch.profile`. See {@link FeatureInstance.textLayout}. */
+  textLayout?: TextLayout | null
   stl?: STLFeatureData | null
   folderId: string | null
   sketch: Sketch
@@ -491,6 +496,16 @@ export interface FeatureInstance {
   name: string
   definitionId: string
   transform: Matrix2D
+  /**
+   * Curved baseline for a text run, in definition-local space. Absent/null is
+   * the straight horizontal run.
+   *
+   * This lives on the **instance**, not the shared definition, because laying a
+   * run on a circle is a placement act like `transform` rather than a change to
+   * the shared shape: two copies of the same text must be able to wrap two
+   * different circles, and curving one copy must not curve the others.
+   */
+  textLayout?: TextLayout | null
   constraints: LocalConstraint[]
   z_top: DimensionRef
   z_bottom: DimensionRef

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { cloneTextFeatureData, getProfileBounds, newProject, rectProfile, type Project, type TextLayout } from '../types/project'
+import { getProfileBounds, newProject, rectProfile, type Project, type TextLayout } from '../types/project'
 import { projectWithFeatures } from '../test/projectFixtures'
 import { normalizeProject } from './helpers/projectFormat'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
@@ -34,7 +34,7 @@ function makeProject(): Project {
     {
       id: 'run', name: 'ABC', kind: 'text', operation: 'subtract', visible: true, locked: false,
       z_top: 5, z_bottom: 0, folderId: null, stl: null,
-      text: { text: 'ABC', style: 'skeleton', fontId: 'simple_stroke', size: 10, layout: null },
+      text: { text: 'ABC', style: 'skeleton', fontId: 'simple_stroke', size: 10 },
       sketch: { origin: { x: 0, y: 0 }, orientationAngle: 90, dimensions: [], constraints: [], profile: rectProfile(200, 200, 30, 10) },
     },
   ])
@@ -64,11 +64,11 @@ function pendingLayout() {
 }
 
 function runLayout() {
-  return resolveFeatureInstance(useProjectStore.getState().project, 'run')?.text?.layout ?? null
+  return resolveFeatureInstance(useProjectStore.getState().project, 'run')?.textLayout ?? null
 }
 
 const arcLayout: Extract<TextLayout, { kind: 'arc' }> = {
-  kind: 'arc', radius: 30, angleDegrees: 270, sweepDegrees: 120,
+  kind: 'arc', center: { x: 0, y: 0 }, radius: 30, angleDegrees: 270, sweepDegrees: 120,
   anchor: 'center', fit: 'natural', direction: 'cw', orientation: 'follow',
 }
 
@@ -87,7 +87,7 @@ function testFlippingDirectionMovesTheRunToTheBottom() {
   resetStore()
   startLayout()
   const top: TextLayout = {
-    kind: 'arc', radius: 40, angleDegrees: 270, sweepDegrees: 120,
+    kind: 'arc', center: { x: 0, y: 0 }, radius: 40, angleDegrees: 270, sweepDegrees: 120,
     anchor: 'center', fit: 'natural', direction: 'cw', orientation: 'follow',
   }
   useProjectStore.getState().updateTextLayout(top)
@@ -113,7 +113,7 @@ function testFlippingDirectionKeepsSidewaysBias() {
   resetStore()
   startLayout()
   const biased: TextLayout = {
-    kind: 'arc', radius: 40, angleDegrees: 300, sweepDegrees: 120,
+    kind: 'arc', center: { x: 0, y: 0 }, radius: 40, angleDegrees: 300, sweepDegrees: 120,
     anchor: 'center', fit: 'natural', direction: 'cw', orientation: 'follow',
   }
   useProjectStore.getState().updateTextLayout(biased)
@@ -182,29 +182,33 @@ function testReopeningKeepsTheRunsCurrentBaseline() {
 }
 
 /**
- * Straightening a curved run must leave it where it is. The straight template
- * sits at the origin of template space, so anchoring the rebuilt frame there
- * would teleport the run across the sketch.
+ * Curving and straightening round-trips to the original position. The frame of
+ * a curved run is derived from its bent template, so dropping the layout hands
+ * the run back its untouched definition frame rather than stranding it wherever
+ * the arc happened to put it.
  */
-function testStraighteningKeepsTheRunWhereItIs() {
+function testStraighteningRestoresTheOriginalPosition() {
   resetStore()
+  const before = getProfileBounds(resolveFeatureInstance(useProjectStore.getState().project, 'run')!.sketch.profile)
+
   startLayout('arc')
   useProjectStore.getState().updateTextLayout(arcLayout)
   useProjectStore.getState().setTextLayoutCenter({ x: 300, y: 300 })
   useProjectStore.getState().completeTextLayout()
   const curved = getProfileBounds(resolveFeatureInstance(useProjectStore.getState().project, 'run')!.sketch.profile)
+  assert(Math.abs(curved.minX - before.minX) > 1, 'the run actually moved onto the arc')
 
   startLayout('arc')
   useProjectStore.getState().updateTextLayout(null)
   assert(useProjectStore.getState().completeTextLayout().length === 1, 'straightening applies')
 
-  const straight = getProfileBounds(resolveFeatureInstance(useProjectStore.getState().project, 'run')!.sketch.profile)
+  const after = getProfileBounds(resolveFeatureInstance(useProjectStore.getState().project, 'run')!.sketch.profile)
   assert(runLayout() === null, 'the run is straight again')
   assert(
-    Math.abs(straight.minX - curved.minX) < 1e-6 && Math.abs(straight.minY - curved.minY) < 1e-6,
-    `it stays put, ${curved.minX},${curved.minY} -> ${straight.minX},${straight.minY}`,
+    Math.abs(after.minX - before.minX) < 1e-6 && Math.abs(after.minY - before.minY) < 1e-6,
+    `it returns to where it started, ${before.minX},${before.minY} -> ${after.minX},${after.minY}`,
   )
-  console.log('straightening keeps the run where it is: PASSED')
+  console.log('straightening restores the original position: PASSED')
 }
 
 function testPathModeNeedsAGuideAndCommitsFromThePanel() {
@@ -269,55 +273,55 @@ function testLayoutSurvivesAProjectRoundTripWithoutAliasing() {
 
   const saved = JSON.parse(JSON.stringify(useProjectStore.getState().project)) as Project
   const reloaded = normalizeProject(saved)
-  const text = reloaded.features
-    .map((feature) => resolveFeatureInstance(reloaded, feature.id))
-    .find((feature) => feature?.text?.layout)
-  assert(text?.text?.layout?.kind === 'path', 'the layout survives a save and load')
-  assert(text.text.layout.path.segments.length > 0, 'the baked guide survives too')
+  const layout = resolveFeatureInstance(reloaded, 'run')?.textLayout
+  assert(layout?.kind === 'path', 'the layout survives a save and load')
+  assert(layout.path.segments.length > 0, 'the baked guide survives too')
 
-  // The definition and the resolved instance must not share one layout object,
-  // or editing either would silently rewrite the other.
-  const definition = reloaded.featureDefinitions[
-    reloaded.features.find((feature) => feature.id === text.id)!.definitionId
-  ]
-  assert(definition?.text?.layout, 'the definition carries the layout')
-  assert(definition.text.layout !== text.text.layout, 'definition and instance hold separate layout objects')
+  // The stored row and the resolved copy must not share one layout object, or
+  // editing either would silently rewrite the other.
+  const row = reloaded.features.find((feature) => feature.id === 'run')!
+  assert(row.textLayout, 'the instance row carries the layout')
+  assert(row.textLayout !== layout, 'row and resolved copy hold separate layout objects')
   console.log('layout survives a round trip without aliasing: PASSED')
 }
 
-function testCloneTextFeatureDataDeepCopiesAPathLayout() {
-  const source = {
-    text: 'A', style: 'skeleton' as const, fontId: 'simple_stroke' as const, size: 10,
-    layout: {
-      kind: 'path' as const,
-      path: {
-        start: { x: 0, y: 0 },
-        segments: [
-          { type: 'line' as const, to: { x: 1, y: 1 } },
-          { type: 'bezier' as const, to: { x: 2, y: 2 }, control1: { x: 3, y: 3 }, control2: { x: 4, y: 4 } },
-          { type: 'arc' as const, to: { x: 5, y: 5 }, center: { x: 6, y: 6 }, clockwise: true },
-        ],
-        closed: false,
+/**
+ * The reason the baseline lives on the instance: two copies share one text
+ * definition, so curving one must leave its siblings straight.
+ */
+function testCurvingOneCopyLeavesTheOtherStraight() {
+  resetStore()
+  // A second instance of the *same* definition — the default copy mode.
+  useProjectStore.setState((s) => {
+    const source = s.project.features.find((feature) => feature.id === 'run')!
+    return {
+      project: {
+        ...s.project,
+        features: [...s.project.features, { ...source, id: 'run2', name: 'ABC copy' }],
+        featureTree: [...s.project.featureTree, { type: 'feature' as const, featureId: 'run2' }],
       },
-      startOffset: 0, endOffset: 5, anchor: 'center' as const, fit: 'natural' as const,
-      reversed: false, orientation: 'follow' as const,
-    },
-  }
-  const copy = cloneTextFeatureData(source)
-  assert(copy?.layout?.kind === 'path', 'clone keeps the layout')
-  assert(copy.layout !== source.layout, 'layout object is copied')
-  assert(copy.layout.path !== source.layout.path, 'profile is copied')
-  assert(copy.layout.path.segments[0] !== source.layout.path.segments[0], 'segments are copied')
+    }
+  })
+  const project = useProjectStore.getState().project
+  const a = project.features.find((feature) => feature.id === 'run')!
+  const b = project.features.find((feature) => feature.id === 'run2')!
+  assert(a.definitionId === b.definitionId, 'the copies share one definition')
 
-  // Every point-bearing field of every segment kind, since a missed one aliases
-  // silently and only shows up as a phantom edit much later.
-  const bezier = copy.layout.path.segments[1]!
-  const arc = copy.layout.path.segments[2]!
-  assert(bezier.type === 'bezier' && arc.type === 'arc', 'segment kinds preserved')
-  assert(bezier.control1 !== (source.layout.path.segments[1] as typeof bezier).control1, 'bezier control1 copied')
-  assert(bezier.control2 !== (source.layout.path.segments[1] as typeof bezier).control2, 'bezier control2 copied')
-  assert(arc.center !== (source.layout.path.segments[2] as typeof arc).center, 'arc centre copied')
-  console.log('cloneTextFeatureData deep-copies a path layout: PASSED')
+  startLayout('arc')
+  useProjectStore.getState().updateTextLayout(arcLayout)
+  useProjectStore.getState().setTextLayoutCenter({ x: 100, y: 100 })
+  useProjectStore.getState().completeTextLayout()
+
+  const after = useProjectStore.getState().project
+  assert(resolveFeatureInstance(after, 'run')?.textLayout?.kind === 'arc', 'the edited copy curves')
+  assert(resolveFeatureInstance(after, 'run2')?.textLayout == null, 'its sibling stays straight')
+  // And they still share the shape, so editing the text still propagates.
+  assert(
+    after.features.find((f) => f.id === 'run')!.definitionId
+      === after.features.find((f) => f.id === 'run2')!.definitionId,
+    'curving one copy does not detach it from the shared definition',
+  )
+  console.log('curving one copy leaves the other straight: PASSED')
 }
 
 testFlippingDirectionMovesTheRunToTheBottom()
@@ -325,9 +329,9 @@ testFlippingDirectionKeepsSidewaysBias()
 testArcAppliesToTheSelectedRunOnceItsCentreIsPicked()
 testApplyingResizesTheFrameToTheBentRun()
 testReopeningKeepsTheRunsCurrentBaseline()
-testStraighteningKeepsTheRunWhereItIs()
+testStraighteningRestoresTheOriginalPosition()
 testPathModeNeedsAGuideAndCommitsFromThePanel()
 testTheBakedGuideDoesNotAliasTheGuideFeature()
 testSwitchingModesRestartsTheGesture()
 testLayoutSurvivesAProjectRoundTripWithoutAliasing()
-testCloneTextFeatureDataDeepCopiesAPathLayout()
+testCurvingOneCopyLeavesTheOtherStraight()

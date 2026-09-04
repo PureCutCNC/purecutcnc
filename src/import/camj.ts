@@ -28,7 +28,7 @@ import {
   type Project,
   type ConstraintSegmentReference,
   type Stock,
-  type Tool,
+  type Tool, cloneTextLayout,
 } from '../types/project'
 import { cloneTextFeatureData } from '../types/project'
 import type { Units } from '../utils/units'
@@ -378,6 +378,7 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
       name: featureName,
       definitionId: newDefinitionId,
       transform: { ...feature.transform },
+      textLayout: cloneTextLayout(feature.textLayout),
       constraints,
       folderId: sourceFolderId ? folderIdMap.get(sourceFolderId) ?? null : null,
       z_top: typeof feature.z_top === 'string' ? (dimensionIdMap.get(feature.z_top) ?? feature.z_top) : feature.z_top,
@@ -463,6 +464,7 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
         id: newStockFeatureId,
         definitionId: newDefinitionId,
         transform: { ...srcStock.sourceFeature.transform },
+        textLayout: cloneTextLayout(srcStock.sourceFeature.textLayout),
         constraints: srcStock.sourceFeature.constraints.flatMap((constraint) => {
           const remapped = remapConstraint(constraint, featureIdMap)
           return remapped ? [remapped] : []

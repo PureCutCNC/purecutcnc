@@ -565,7 +565,7 @@ function bendToLayout(
   if (!layout) return null
 
   const baseline = layout.kind === 'arc'
-    ? arcBaseline(layout.radius, layout.angleDegrees, layout.sweepDegrees, layout.direction)
+    ? arcBaseline(layout.center, layout.radius, layout.angleDegrees, layout.sweepDegrees, layout.direction)
     : pathBaseline(layout.path, layout.startOffset, layout.endOffset, layout.anchor, layout.reversed)
   if (!baseline) return null
 
@@ -682,7 +682,7 @@ export function resolveTextFeatureShapes(feature: SketchFeature): GeneratedTextS
     fontId: feature.text.fontId,
     size: feature.text.size,
     operation: feature.operation,
-    layout: feature.text.layout ?? null,
+    layout: feature.textLayout ?? null,
   }
   const template = getTextTemplate(config)
   const origin = frameVertices[0]

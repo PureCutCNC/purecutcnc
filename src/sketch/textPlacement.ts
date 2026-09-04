@@ -143,6 +143,9 @@ export function createDefaultTextLayout(kind: TextLayoutKind, runWidth: number):
     const sweepRadians = (DEFAULT_ARC_SWEEP_DEGREES * Math.PI) / 180
     return {
       kind: 'arc',
+      // Placeholder until the centre is picked; the panel refuses to apply
+      // without one, so this never reaches geometry.
+      center: { x: 0, y: 0 },
       radius: Math.max(MIN_ARC_RADIUS, runWidth / sweepRadians),
       angleDegrees: anchorAngleForDirection('cw'),
       sweepDegrees: DEFAULT_ARC_SWEEP_DEGREES,

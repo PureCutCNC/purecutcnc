@@ -23,7 +23,7 @@ import {
   defaultOrigin,
   getStockBounds,
   IDENTITY_MATRIX,
-  LATEST_PROJECT_VERSION,
+  LATEST_PROJECT_VERSION, cloneTextLayout,
 } from '../../types/project'
 import type {
   FeatureDefinition,
@@ -302,6 +302,9 @@ function normalizeInstance(feature: FeatureInstance, definitions: Record<string,
     name: feature.name,
     definitionId: feature.definitionId,
     transform: { ...feature.transform },
+    // Deep-copied, not spread: a shared nested layout object (and, for a path
+    // layout, a shared SketchProfile) would let one row's edit rewrite another.
+    textLayout: cloneTextLayout(feature.textLayout),
     constraints: feature.constraints.map((constraint) => ({ ...constraint })),
     z_top: feature.z_top,
     z_bottom: feature.z_bottom,

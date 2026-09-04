@@ -92,6 +92,7 @@ export function degreesToRadians(value: number): number {
  * exists.
  */
 export function arcBaseline(
+  center: Point,
   radius: number,
   angleDegrees: number,
   sweepDegrees: number,
@@ -110,7 +111,7 @@ export function arcBaseline(
       // Tangent points the way travel goes, so the glyph's local +x follows it.
       const tangent = { x: -Math.sin(angle) * sign, y: Math.cos(angle) * sign }
       return {
-        point: { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius },
+        point: { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius },
         tangent,
       }
     },

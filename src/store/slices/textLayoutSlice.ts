@@ -23,7 +23,7 @@
  */
 
 import type { StateCreator } from 'zustand'
-import { getProfileBounds, type Point, type TextLayout } from '../../types/project'
+import type { Point, TextLayout } from '../../types/project'
 import { cloneProfile } from '../../geometry/profile'
 import { profilePathLength } from '../../sketch/featureDistribution'
 import {
@@ -31,8 +31,11 @@ import {
   mirrorAnchorAngleForDirection,
   type TextLayoutKind,
 } from '../../sketch/textPlacement'
-import { getTextFrameProfile, straightTextRunWidth } from '../../text'
-import { cloneProject } from '../helpers/normalize'
+import { straightTextRunWidth } from '../../text'
+import { cloneProject, syncFeatureTreeProject } from '../helpers/normalize'
+import { applyMatrixToPoint } from '../helpers/resolveFeatures'
+import { invertMatrix } from '../helpers/instanceTransforms'
+import { transformProfile } from '../../geometry/profile'
 import { nextPlacementSession } from '../helpers/ids'
 import { resolveFeatureInstance } from '../helpers/resolveFeatures'
 import type { ProjectStore } from '../types'
@@ -76,7 +79,7 @@ export function createTextLayoutSlice(
       // the edit is repeatable rather than a one-shot that starts from scratch.
       // One menu entry opens the panel, so the mode comes from the run itself:
       // whatever baseline it already has, or an arc to start from.
-      const existing = feature.text.layout ?? null
+      const existing = feature.textLayout ?? null
       const wanted = kind ?? existing?.kind ?? 'arc'
       const layout = existing?.kind === wanted
         ? existing
@@ -197,40 +200,43 @@ export function createTextLayoutSlice(
 
       const layout = pending.layout
       // An arc needs its centre and a path needs its guide; without them the
-      // run would quietly commit as straight text, which reads as the button
-      // doing nothing.
+      // run would quietly stay straight, which reads as the button doing
+      // nothing at all.
       if (layout?.kind === 'arc' && !pending.center) return []
       if (layout?.kind === 'path' && layout.path.segments.length === 0) return []
 
-      const config = configOf(feature.text, feature.operation, layout)
-      // The arc lives at the origin of template space, so translating by the
-      // picked centre lands the circle where the user put it. A baked path
-      // already carries its own world position. Straightening has neither, and
-      // anchoring it at the origin would teleport the run across the sketch, so
-      // it keeps the corner the frame is already sitting on.
-      const currentBounds = getProfileBounds(feature.sketch.profile)
-      const anchor = layout?.kind === 'arc'
-        ? pending.center!
-        : layout?.kind === 'path'
-          ? { x: 0, y: 0 }
-          : { x: currentBounds.minX, y: currentBounds.minY }
+      // Everything picked on the canvas is world-space; the layout is stored
+      // definition-local so the instance transform still places it. Inverting
+      // here is what lets one copy curve while its siblings do not.
+      const toLocal = invertMatrix(feature.transform)
+      const localLayout: TextLayout | null = layout === null
+        ? null
+        : layout.kind === 'arc'
+          ? { ...layout, center: applyMatrixToPoint(toLocal, pending.center!) }
+          : {
+            ...layout,
+            path: transformProfile(layout.path, (point) => applyMatrixToPoint(toLocal, point)),
+          }
 
       set((s) => ({
+        project: syncFeatureTreeProject({
+          ...s.project,
+          // The baseline lands on the instance row, never on the shared
+          // definition — that is the whole point of the per-copy behaviour.
+          features: s.project.features.map((row) => (
+            row.id === pending.featureId
+              ? { ...row, textLayout: localLayout }
+              : row
+          )),
+          meta: { ...s.project.meta, modified: new Date().toISOString() },
+        }),
+        pendingTextLayout: null,
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),
           future: [],
           transactionStart: null,
         },
       }))
-
-      // Resizing the frame to the bent template is not optional: the frame is
-      // the only thing setting the run's proportions, so leaving the straight
-      // run's rect in place would squeeze the curved run into it.
-      state.updateFeature(pending.featureId, {
-        text: { ...feature.text, layout },
-        sketch: { ...feature.sketch, profile: getTextFrameProfile(config, anchor) },
-      })
-      set({ pendingTextLayout: null })
       return [pending.featureId]
     },
   }

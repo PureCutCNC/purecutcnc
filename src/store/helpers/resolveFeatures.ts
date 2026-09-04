@@ -35,7 +35,9 @@ import type {
   SketchProfile,
   STLFeatureData,
 } from '../../types/project'
-import { cloneTextFeatureData } from '../../types/project'
+import { cloneTextFeatureData, cloneTextLayout } from '../../types/project'
+import { transformProfile as transformProfileAffine } from '../../geometry/profile'
+import { getTextFrameProfile } from '../../text'
 import { multiplyMatrix, translateMatrix } from './instanceTransforms'
 
 // ============================================================================
@@ -58,6 +60,8 @@ export interface ResolvedSketchFeature {
   transform: Matrix2D
   kind: FeatureDefinition['kind']
   text: FeatureDefinition['text']
+  /** Per-instance curved baseline, resolved into world space alongside `sketch`. */
+  textLayout: FeatureInstance['textLayout']
   stl: FeatureDefinition['stl']
   folderId: FeatureInstance['folderId']
   /** World-space sketch — profile is the resolved definition profile. */
@@ -423,6 +427,26 @@ export function resolveFeatureRow(
 
   const { definition, transform } = resolved
   const sketch = resolveSketch(definition, transform)
+
+  // A curved run's frame is *derived*, not stored. The frame is the only thing
+  // setting a run's proportions, so the definition's straight rect would squeeze
+  // the bent template into the wrong aspect. Deriving it from the bent template
+  // in definition-local space and letting the instance transform carry it into
+  // the world makes the template-bounds-to-frame mapping exactly that transform
+  // — and keeps the baseline per-instance, since the frame is per-instance too.
+  if (definition.text && feature.textLayout) {
+    sketch.profile = transformProfileAffine(
+      getTextFrameProfile({
+        text: definition.text.text,
+        style: definition.text.style,
+        fontId: definition.text.fontId,
+        size: definition.text.size,
+        operation: definition.operation,
+        layout: feature.textLayout,
+      }, { x: 0, y: 0 }),
+      (point) => applyMatrixToPoint(transform, point),
+    )
+  }
   // Layer per-instance constraints onto the resolved sketch.
   sketch.constraints = feature.constraints.map((c) => ({ ...c }))
 
@@ -436,6 +460,9 @@ export function resolveFeatureRow(
     transform,
     kind: definition.kind,
     text: cloneTextFeatureData(definition.text),
+    // The baseline is the instance's, not the definition's, so two copies of
+    // one text run can wrap two different circles.
+    textLayout: cloneTextLayout(feature.textLayout),
     stl: resolveStlData(definition.stl, transformPoint),
     folderId: feature.folderId,
     sketch,

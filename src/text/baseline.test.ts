@@ -18,6 +18,7 @@ import { arcBaseline, bendShapesToBaseline, pathBaseline, type BendableShape, ty
 import { getProfileBounds, type Point, type SketchProfile } from '../types/project'
 
 const epsilon = 1e-6
+const ORIGIN = { x: 0, y: 0 }
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -70,13 +71,13 @@ function lineProfile(points: Point[]): SketchProfile {
 function testPositiveAnglesRunClockwiseOnScreen() {
   // Sketch space is Y-down and the exact-rotate field already treats positive
   // degrees as clockwise, so 90 must land at 6 o'clock, not 12.
-  const baseline = arcBaseline(10, 90, 90, 'cw')
+  const baseline = arcBaseline(ORIGIN, 10, 90, 90, 'cw')
   assert(baseline, 'arc baseline should build')
   const anchorPoint = baseline.at(0).point
   close(anchorPoint.x, 0, 'anchor x at 90 degrees')
   close(anchorPoint.y, 10, 'anchor y at 90 degrees is below centre (6 oclock)')
 
-  const top = arcBaseline(10, 270, 90, 'cw')
+  const top = arcBaseline(ORIGIN, 10, 270, 90, 'cw')
   assert(top, 'top baseline should build')
   close(top.at(0).point.y, -10, '270 degrees is 12 oclock')
   console.log('clockwise-positive angle convention: PASSED')
@@ -85,7 +86,7 @@ function testPositiveAnglesRunClockwiseOnScreen() {
 function testClockwiseStandsTextOutsideAndUprightAtTheTop() {
   // The classic top-of-badge case: text over the top of a circle, reading
   // normally, letters standing away from the centre.
-  const baseline = arcBaseline(100, 270, 60, 'cw')
+  const baseline = arcBaseline(ORIGIN, 100, 270, 60, 'cw')
   assert(baseline, 'baseline should build')
   const bent = bendShapesToBaseline(threeGlyphRun(), runBounds, baseline, 'center', 'natural', 'follow')
 
@@ -111,7 +112,7 @@ function testCounterClockwiseHangsTextBelowTheArcUprightAtTheBottom() {
   // the letters hang *below* the curve rather than sitting inside the ring —
   // symmetric with `cw` sitting on top of it. That is what attaching the run's
   // top edge buys, and it is why `attach` is derived from direction.
-  const baseline = arcBaseline(100, 90, 60, 'ccw')
+  const baseline = arcBaseline(ORIGIN, 100, 90, 60, 'ccw')
   assert(baseline, 'baseline should build')
   const bent = bendShapesToBaseline(threeGlyphRun(), runBounds, baseline, 'center', 'natural', 'follow', 'top')
 
@@ -128,8 +129,8 @@ function testCounterClockwiseHangsTextBelowTheArcUprightAtTheBottom() {
  * below it, and neither ends up inside the ring.
  */
 function testDirectionsSitOnOppositeSidesOfTheSameCircle() {
-  const top = arcBaseline(100, 270, 60, 'cw')
-  const bottom = arcBaseline(100, 90, 60, 'ccw')
+  const top = arcBaseline(ORIGIN, 100, 270, 60, 'cw')
+  const bottom = arcBaseline(ORIGIN, 100, 90, 60, 'ccw')
   assert(top && bottom, 'both baselines should build')
   const above = bendShapesToBaseline(threeGlyphRun(), runBounds, top, 'center', 'natural', 'follow', 'bottom')
   const below = bendShapesToBaseline(threeGlyphRun(), runBounds, bottom, 'center', 'natural', 'follow', 'top')
@@ -143,8 +144,8 @@ function testDirectionsSitOnOppositeSidesOfTheSameCircle() {
 }
 
 function testTheSameInputInvertsWhenTheDirectionFlips() {
-  const clockwise = arcBaseline(100, 270, 60, 'cw')
-  const counter = arcBaseline(100, 270, 60, 'ccw')
+  const clockwise = arcBaseline(ORIGIN, 100, 270, 60, 'cw')
+  const counter = arcBaseline(ORIGIN, 100, 270, 60, 'ccw')
   assert(clockwise && counter, 'both baselines should build')
   const a = bendShapesToBaseline(threeGlyphRun(), runBounds, clockwise, 'center', 'natural', 'follow')
   const b = bendShapesToBaseline(threeGlyphRun(), runBounds, counter, 'center', 'natural', 'follow')
@@ -165,7 +166,7 @@ function testTheSameInputInvertsWhenTheDirectionFlips() {
 }
 
 function testAnchorPlacesTheRunRelativeToTheAngle() {
-  const baseline = arcBaseline(100, 270, 60, 'cw')
+  const baseline = arcBaseline(ORIGIN, 100, 270, 60, 'cw')
   assert(baseline, 'baseline should build')
   const at = (anchor: 'start' | 'center' | 'end') =>
     bendShapesToBaseline(threeGlyphRun(), runBounds, baseline, anchor, 'natural', 'follow').shapes
@@ -185,7 +186,7 @@ function testAnchorPlacesTheRunRelativeToTheAngle() {
 }
 
 function testNaturalFitKeepsGlyphSizeAndFillScalesItUniformly() {
-  const wide = arcBaseline(100, 270, 120, 'cw')
+  const wide = arcBaseline(ORIGIN, 100, 270, 120, 'cw')
   assert(wide, 'baseline should build')
 
   const natural = bendShapesToBaseline(threeGlyphRun(), runBounds, wide, 'center', 'natural', 'follow')
@@ -205,7 +206,7 @@ function testFillNeverDistortsLetterformsAtAnySpan() {
   // The anti-distortion guarantee, the one that matters for a CNC app: a glyph
   // must keep its aspect ratio whether it is crammed or stretched.
   for (const sweep of [10, 45, 180, 359]) {
-    const baseline = arcBaseline(50, 270, sweep, 'cw')
+    const baseline = arcBaseline(ORIGIN, 50, 270, sweep, 'cw')
     assert(baseline, `baseline for sweep ${sweep}`)
     const bent = bendShapesToBaseline(threeGlyphRun(), runBounds, baseline, 'center', 'fill', 'follow')
     const bounds = getProfileBounds(bent.shapes[1]!.profile)
@@ -218,7 +219,7 @@ function testFillNeverDistortsLetterformsAtAnySpan() {
 }
 
 function testOverflowIsReportedRatherThanCrammed() {
-  const tight = arcBaseline(1, 270, 10, 'cw')
+  const tight = arcBaseline(ORIGIN, 1, 270, 10, 'cw')
   assert(tight, 'baseline should build')
   const natural = bendShapesToBaseline(threeGlyphRun(), runBounds, tight, 'center', 'natural', 'follow')
   assert(natural.overflows, 'a natural run longer than the span reports overflow')
@@ -233,7 +234,7 @@ function testFixedOrientationMovesGlyphsWithoutRotatingThem() {
   // A tight radius, so the 3-unit run really does wrap (~57 degrees) and the
   // outer glyphs are rotated enough to tell the two modes apart. On a large
   // circle a short run is nearly straight and this would measure nothing.
-  const baseline = arcBaseline(3, 270, 120, 'cw')
+  const baseline = arcBaseline(ORIGIN, 3, 270, 120, 'cw')
   assert(baseline, 'baseline should build')
   const fixed = bendShapesToBaseline(threeGlyphRun(), runBounds, baseline, 'center', 'natural', 'fixed')
   const follow = bendShapesToBaseline(threeGlyphRun(), runBounds, baseline, 'center', 'natural', 'follow')
@@ -294,10 +295,10 @@ function testReversedWalksTheGuideBackwardsAndFlipsTheTangent() {
 }
 
 function testDegenerateLayoutsReturnNullRatherThanNaNGeometry() {
-  assert(arcBaseline(0, 0, 90, 'cw') === null, 'zero radius has no baseline')
-  assert(arcBaseline(-5, 0, 90, 'cw') === null, 'negative radius has no baseline')
-  assert(arcBaseline(Number.NaN, 0, 90, 'cw') === null, 'NaN radius has no baseline')
-  assert(arcBaseline(10, Number.NaN, 90, 'cw') === null, 'NaN angle has no baseline')
+  assert(arcBaseline(ORIGIN, 0, 0, 90, 'cw') === null, 'zero radius has no baseline')
+  assert(arcBaseline(ORIGIN, -5, 0, 90, 'cw') === null, 'negative radius has no baseline')
+  assert(arcBaseline(ORIGIN, Number.NaN, 0, 90, 'cw') === null, 'NaN radius has no baseline')
+  assert(arcBaseline(ORIGIN, 10, Number.NaN, 90, 'cw') === null, 'NaN angle has no baseline')
 
   const empty: SketchProfile = { start: { x: 0, y: 0 }, segments: [], closed: false }
   assert(pathBaseline(empty, 0, 0, 'start', false) === null, 'an empty guide has no baseline')
@@ -309,7 +310,7 @@ function testDegenerateLayoutsReturnNullRatherThanNaNGeometry() {
 }
 
 function testAnEmptyRunIsLeftAlone() {
-  const baseline = arcBaseline(10, 0, 90, 'cw')
+  const baseline = arcBaseline(ORIGIN, 10, 0, 90, 'cw')
   assert(baseline, 'baseline should build')
   const bent = bendShapesToBaseline([], runBounds, baseline, 'center', 'fill', 'follow')
   assert(bent.shapes.length === 0, 'no shapes in, no shapes out')

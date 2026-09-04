@@ -59,12 +59,17 @@ async function startLayout(page: Page, kind: 'arc' | 'path' = 'arc', text = 'ARC
   await expect(page.locator(PANEL)).toBeVisible()
 }
 
-/** The layout stored on the one text feature in the project, if any. */
+/**
+ * The layout stored on the one text feature in the project, if any.
+ *
+ * It lives on the **instance row**, not the shared definition — that is what
+ * lets one copy curve while its siblings stay straight.
+ */
 async function storedTextLayout(page: Page): Promise<TextLayoutShape | null> {
   const project = await getProject(page)
-  const definitions = (project.featureDefinitions ?? {}) as Record<string, { text?: { layout?: TextLayoutShape | null } | null }>
-  for (const definition of Object.values(definitions)) {
-    if (definition.text?.layout) return definition.text.layout
+  const features = (project.features ?? []) as Array<{ textLayout?: TextLayoutShape | null }>
+  for (const feature of features) {
+    if (feature.textLayout) return feature.textLayout
   }
   return null
 }
