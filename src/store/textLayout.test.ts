@@ -242,9 +242,10 @@ function testTheAppliedRunLandsOnThePickedCentre() {
     // Radius is derived from the run's pivot, which moves with the instance
     // transform — so the expectation is derived the same way.
     const before = getProfileBounds(resolveFeatureInstance(useProjectStore.getState().project, 'run')!.sketch.profile)
-    // cw attaches by the run's bottom edge, which is what lands on the circle.
-    const attach = { x: (before.minX + before.maxX) / 2, y: before.maxY }
-    const radius = Math.hypot(attach.x - center.x, attach.y - center.y)
+    // The radius reaches the run's edge facing the centre — here the centre is
+    // above the run, so that is its top.
+    const nearEdge = { x: (before.minX + before.maxX) / 2, y: center.y < before.minY ? before.minY : before.maxY }
+    const radius = Math.hypot(nearEdge.x - center.x, nearEdge.y - center.y)
     startLayout('arc')
     useProjectStore.getState().updateTextLayout({ ...arcLayout, sweepDegrees: 90 })
     useProjectStore.getState().setTextLayoutCenter(center)
@@ -277,10 +278,10 @@ function testPickingTheCentreDerivesTheRadius() {
   startLayout('arc')
   useProjectStore.getState().updateTextLayout({ ...arcLayout, radius: 999 })
 
-  // rectProfile(200, 200, 30, 10): the run attaches by the edge that lands on
-  // the circle, so clockwise measures to its bottom (215, 210) — 95, not the
-  // 100 you would get to the box centre. That half-height is what made the gap
-  // between text and circle change with the font size.
+  // rectProfile(200, 200, 30, 10): the centre is below the run, so the radius
+  // reaches the run's bottom edge (215, 210) — 95, not the 100 you would get to
+  // the box centre. That half-height is what made the gap between text and
+  // circle change with the font size.
   useProjectStore.getState().setTextLayoutCenter({ x: 215, y: 305 })
   const layout = pendingLayout().layout
   assert(layout?.kind === 'arc', 'still an arc')
@@ -291,12 +292,53 @@ function testPickingTheCentreDerivesTheRadius() {
   const moved = pendingLayout().layout
   assert(moved?.kind === 'arc' && Math.abs(moved.radius - 35) < 1e-6, `re-derived, got ${moved?.kind === 'arc' ? moved.radius : 'n/a'}`)
 
-  // Anticlockwise attaches by the top edge instead, so the same centre implies
-  // a different radius — otherwise flipping direction lifts the run off the circle.
+  // The radius is the gap to the run's near edge, so it does not move when the
+  // direction flips — both halves of the circle sit the same distance away.
   useProjectStore.getState().updateTextLayout({ ...moved, direction: 'ccw' })
   const flipped = pendingLayout().layout
-  assert(flipped?.kind === 'arc' && Math.abs(flipped.radius - 45) < 1e-6, `ccw measures to the top edge, got ${flipped?.kind === 'arc' ? flipped.radius : 'n/a'}`)
+  assert(flipped?.kind === 'arc' && Math.abs(flipped.radius - 35) < 1e-6, `ccw keeps the same radius, got ${flipped?.kind === 'arc' ? flipped.radius : 'n/a'}`)
   console.log('picking the centre derives the radius: PASSED')
+}
+
+/**
+ * Both directions sit the same distance from the picked centre.
+ *
+ * The radius used to be measured to whichever edge would end up on the curve,
+ * which for `ccw` was the run's *top* — but a run sitting above the circle has
+ * its top on the far side, so the measurement came out a full text-height too
+ * long and the text hung well below the circle instead of hugging it.
+ */
+function testBothDirectionsKeepTheSameGap() {
+  const center = { x: 215, y: 305 }
+  const reach: Record<string, number> = {}
+
+  for (const direction of ['cw', 'ccw'] as const) {
+    resetStore()
+    startLayout('arc')
+    useProjectStore.getState().updateTextLayout({ ...arcLayout, direction, sweepDegrees: 60 })
+    useProjectStore.getState().setTextLayoutCenter(center)
+    const layout = pendingLayout().layout
+    assert(layout?.kind === 'arc', 'arc layout')
+    assert(Math.abs(layout.radius - 95) < 1e-6, `radius should not depend on direction, got ${layout.radius}`)
+    useProjectStore.getState().completeTextLayout()
+
+    const bounds = getFeatureGeometryBounds(resolveFeatureInstance(useProjectStore.getState().project, 'run')!)
+    // cw sits above the centre with its bottom on the circle; ccw sits below it
+    // with its top on the circle. Either way that edge is `radius` away.
+    reach[direction] = direction === 'cw' ? center.y - bounds.maxY : bounds.minY - center.y
+  }
+
+  for (const direction of ['cw', 'ccw'] as const) {
+    assert(
+      Math.abs(reach[direction]! - 95) < 6,
+      `${direction} should sit a radius from the centre, got ${reach[direction]}`,
+    )
+  }
+  assert(
+    Math.abs(reach.cw! - reach.ccw!) < 6,
+    `both directions should keep the same gap, cw ${reach.cw} vs ccw ${reach.ccw}`,
+  )
+  console.log('both directions keep the same gap: PASSED')
 }
 
 function testPathModeNeedsAGuideAndCommitsFromThePanel() {
@@ -420,6 +462,7 @@ testReopeningKeepsTheRunsCurrentBaseline()
 testStraighteningRestoresTheOriginalPosition()
 testTheAppliedRunLandsOnThePickedCentre()
 testPickingTheCentreDerivesTheRadius()
+testBothDirectionsKeepTheSameGap()
 testPathModeNeedsAGuideAndCommitsFromThePanel()
 testTheBakedGuideDoesNotAliasTheGuideFeature()
 testSwitchingModesRestartsTheGesture()

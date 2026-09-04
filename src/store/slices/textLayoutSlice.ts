@@ -77,7 +77,7 @@ function arcLayoutForCenter(
   if (layout?.kind !== 'arc') return layout
   const feature = resolveFeatureInstance(project, featureId)
   if (!feature) return layout
-  const radius = arcRadiusForCenter(getProfileBounds(feature.sketch.profile), layout.direction, center)
+  const radius = arcRadiusForCenter(getProfileBounds(feature.sketch.profile), center)
   return radius > 1e-9 ? { ...layout, radius } : layout
 }
 
@@ -144,14 +144,11 @@ export function createTextLayoutSlice(
       // `cw` writes across the top and `ccw` across the bottom, both reading
       // left to right; reversing travel while leaving the run at 12 o'clock
       // would just render it upside down there.
-      const flipped = directionFlipped && layout?.kind === 'arc'
+      // The radius is measured to the run's near edge, which does not depend on
+      // the direction, so a flip only moves the run to the other half.
+      const nextLayout = directionFlipped && layout?.kind === 'arc'
         ? { ...layout, angleDegrees: mirrorAnchorAngleForDirection(layout.angleDegrees) }
         : layout
-      // The attach edge changes with the direction, so a picked centre implies a
-      // different radius — otherwise flipping moves the run off the circle.
-      const nextLayout = directionFlipped && pending.center
-        ? arcLayoutForCenter(s.project, pending.featureId, flipped, pending.center)
-        : flipped
 
       return {
         pendingTextLayout: {

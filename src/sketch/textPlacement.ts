@@ -198,20 +198,26 @@ export function localTextLayout(
 /**
  * The arc radius a picked centre implies for a run.
  *
- * Measured to the edge of the run that will actually land on the circle — its
- * bottom going clockwise, its top going anticlockwise — not to the run's middle.
- * The bend puts that edge on the curve, so measuring to the middle pushed the
- * text half its own height away from the circle and the gap changed with the
- * font size.
+ * Measured to the edge of the run **facing the centre** — its bottom when the
+ * centre is below it, its top when the centre is above — so the radius is the
+ * gap the user can already see between the run and whatever it is sitting next
+ * to, and the run keeps that gap once it is bent.
+ *
+ * Deliberately independent of the direction. Measuring to the edge that ends up
+ * on the curve seems right and is not: going anticlockwise the run attaches by
+ * its top, but a run sitting *above* the circle has its top on the far side, so
+ * that measured a full text-height too far and the text hung well below the
+ * circle. The near edge is the one that defines the gap, whichever way the run
+ * is later wrapped.
  */
 export function arcRadiusForCenter(
   bounds: { minX: number; maxX: number; minY: number; maxY: number },
-  direction: 'cw' | 'ccw',
   center: Point,
 ): number {
-  const attachPoint = {
-    x: (bounds.minX + bounds.maxX) / 2,
-    y: direction === 'cw' ? bounds.maxY : bounds.minY,
-  }
-  return Math.hypot(attachPoint.x - center.x, attachPoint.y - center.y)
+  const nearEdgeY = center.y > bounds.maxY
+    ? bounds.maxY
+    : center.y < bounds.minY
+      ? bounds.minY
+      : (bounds.minY + bounds.maxY) / 2
+  return Math.hypot((bounds.minX + bounds.maxX) / 2 - center.x, nearEdgeY - center.y)
 }
