@@ -106,19 +106,40 @@ function testClockwiseStandsTextOutsideAndUprightAtTheTop() {
   console.log('cw stands text outside the arc, upright at the top: PASSED')
 }
 
-function testCounterClockwiseStandsTextInsideAndUprightAtTheBottom() {
-  // The bottom-of-badge case. Same anchor angle family, opposite direction:
-  // letters stand toward the centre and still read left to right.
+function testCounterClockwiseHangsTextBelowTheArcUprightAtTheBottom() {
+  // The bottom-of-badge case: `ccw` writes under the bottom of the circle, and
+  // the letters hang *below* the curve rather than sitting inside the ring —
+  // symmetric with `cw` sitting on top of it. That is what attaching the run's
+  // top edge buys, and it is why `attach` is derived from direction.
   const baseline = arcBaseline(100, 90, 60, 'ccw')
   assert(baseline, 'baseline should build')
-  const bent = bendShapesToBaseline(threeGlyphRun(), runBounds, baseline, 'center', 'natural', 'follow')
+  const bent = bendShapesToBaseline(threeGlyphRun(), runBounds, baseline, 'center', 'natural', 'follow', 'top')
 
   const middle = bent.shapes[1]!
   const bounds = getProfileBounds(middle.profile)
-  close(bounds.maxY, 100, 'feet land on the circle at 6 oclock', 1e-3)
-  assert(bounds.minY < bounds.maxY, 'body extends toward the centre, so the text reads upright')
+  close(bounds.minY, 100, 'the run\'s top edge lands on the circle at 6 oclock', 1e-3)
+  assert(bounds.maxY > 100, 'and the body hangs below it, outside the circle')
   assert(centerOf(bent.shapes[0]!).x < centerOf(bent.shapes[2]!).x, 'still reads left to right')
-  console.log('ccw stands text inside the arc, upright at the bottom: PASSED')
+  console.log('ccw hangs text below the arc, upright at the bottom: PASSED')
+}
+
+/**
+ * The pair is symmetric about the circle: `cw` sits on top of it, `ccw` hangs
+ * below it, and neither ends up inside the ring.
+ */
+function testDirectionsSitOnOppositeSidesOfTheSameCircle() {
+  const top = arcBaseline(100, 270, 60, 'cw')
+  const bottom = arcBaseline(100, 90, 60, 'ccw')
+  assert(top && bottom, 'both baselines should build')
+  const above = bendShapesToBaseline(threeGlyphRun(), runBounds, top, 'center', 'natural', 'follow', 'bottom')
+  const below = bendShapesToBaseline(threeGlyphRun(), runBounds, bottom, 'center', 'natural', 'follow', 'top')
+
+  // Distance from the centre, which is the origin in template space.
+  const aboveBounds = getProfileBounds(above.shapes[1]!.profile)
+  const belowBounds = getProfileBounds(below.shapes[1]!.profile)
+  assert(Math.abs(aboveBounds.minY) > 100, 'cw body sits outside the circle at the top')
+  assert(belowBounds.maxY > 100, 'ccw body sits outside the circle at the bottom')
+  console.log('cw and ccw sit on opposite sides of the same circle: PASSED')
 }
 
 function testTheSameInputInvertsWhenTheDirectionFlips() {
@@ -299,7 +320,8 @@ function testAnEmptyRunIsLeftAlone() {
 
 testPositiveAnglesRunClockwiseOnScreen()
 testClockwiseStandsTextOutsideAndUprightAtTheTop()
-testCounterClockwiseStandsTextInsideAndUprightAtTheBottom()
+testCounterClockwiseHangsTextBelowTheArcUprightAtTheBottom()
+testDirectionsSitOnOppositeSidesOfTheSameCircle()
 testTheSameInputInvertsWhenTheDirectionFlips()
 testAnchorPlacesTheRunRelativeToTheAngle()
 testNaturalFitKeepsGlyphSizeAndFillScalesItUniformly()

@@ -29,7 +29,7 @@ interface TextLayoutPanelProps {
   /** Set once an arc's centre click has landed, so the panel can say what's next. */
   centerPicked: boolean
   guideName: string | null
-  picking: boolean
+  pickTarget: 'guide' | 'center' | null
   measure: TextLayoutMeasure | null
   /** Effective glyph height after a `fill` layout rescales the run. */
   effectiveSize: number
@@ -37,6 +37,7 @@ interface TextLayoutPanelProps {
   onChangeMode: (mode: LayoutMode) => void
   onUpdate: (layout: TextLayout) => void
   onPickGuide: () => void
+  onPickCenter: () => void
   onCancelPick: () => void
   onComplete: () => void
   onCancel: () => void
@@ -51,13 +52,14 @@ export function TextLayoutPanel({
   layout,
   centerPicked,
   guideName,
-  picking,
+  pickTarget,
   measure,
   effectiveSize,
   panel,
   onChangeMode,
   onUpdate,
   onPickGuide,
+  onPickCenter,
   onCancelPick,
   onComplete,
   onCancel,
@@ -65,29 +67,28 @@ export function TextLayoutPanel({
   const { t } = useI18n()
   const mode: LayoutMode = layout?.kind ?? 'horizontal'
 
-  const step = picking
-    ? t('canvas.textLayout.step.pickGuide')
-    : mode === 'arc'
-      ? centerPicked
-        ? t('canvas.textLayout.step.setRadius')
-        : t('canvas.textLayout.step.pickCenter')
-      : mode === 'path'
-        ? guideName
-          ? t('canvas.textLayout.step.configure')
-          : t('canvas.textLayout.step.needGuide')
-        : t('canvas.textLayout.step.placeText')
+  const step = pickTarget === 'center'
+    ? t('canvas.textLayout.step.pickCenter')
+    : pickTarget === 'guide'
+      ? t('canvas.textLayout.step.pickGuide')
+      : mode === 'arc' && !centerPicked
+        ? t('canvas.textLayout.step.needCenter')
+        : mode === 'path' && !guideName
+          ? t('canvas.textLayout.step.needGuide')
+          : t('canvas.textLayout.step.configure')
 
-  // Only a path layout commits from the panel; the others commit on the canvas
-  // click that finishes their gesture.
   // Every mode applies from the panel: the run already exists, so there is no
   // placement click to commit on. An arc still needs its centre picked and a
   // path still needs its guide, so the button waits on whichever is missing.
   // Horizontal needs nothing — it is how a curved run is straightened again.
+  const picking = pickTarget !== null
   const applyBlocked = picking
     || (mode === 'path' && !guideName)
     || (mode === 'arc' && !centerPicked)
-  const warning = mode === 'path' && !guideName
-    ? t('canvas.textLayout.error.guideRequired')
+  const warning = mode === 'arc' && !centerPicked
+    ? t('canvas.textLayout.error.centerRequired')
+    : mode === 'path' && !guideName
+      ? t('canvas.textLayout.error.guideRequired')
     : measure?.overflows
       ? t('canvas.textLayout.error.overflow')
       : null
@@ -132,6 +133,16 @@ export function TextLayoutPanel({
 
           {layout?.kind === 'arc' && (
             <div className="canvas-workflow-panel__grid">
+              <div className="canvas-workflow-panel__field">
+                <span>{t('canvas.textLayout.center')}</span>
+                <span className="canvas-workflow-panel__picker-selection">
+                  {centerPicked && <strong>{t('canvas.textLayout.centerPicked')}</strong>}
+                  <CanvasWorkflowAction
+                    label={centerPicked ? t('canvas.textLayout.changeCenter') : t('canvas.textLayout.pickCenter')}
+                    onClick={onPickCenter}
+                  />
+                </span>
+              </div>
               <NumberField label={t('canvas.textLayout.radius')} value={layout.radius} onChange={(event) => onUpdate({ ...layout, radius: inputNumber(event) })} />
               <NumberField label={t('canvas.textLayout.angle')} value={layout.angleDegrees} onChange={(event) => onUpdate({ ...layout, angleDegrees: inputNumber(event) })} />
               <NumberField label={t('canvas.textLayout.sweep')} value={layout.sweepDegrees} onChange={(event) => onUpdate({ ...layout, sweepDegrees: inputNumber(event) })} />

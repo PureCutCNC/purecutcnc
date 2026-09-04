@@ -96,8 +96,13 @@ test('Arc applies to the selected run once a centre is picked', async ({ app }) 
   await expect(apply).toBeDisabled()
   expect(await storedTextLayout(app.page)).toBeNull()
 
+  // The centre is an explicit pick with its own button, the same interaction
+  // the radial distribution panel uses.
+  await panel.getByRole('button', { name: 'Pick center', exact: true }).click()
   const canvas = app.page.locator('canvas').first()
   await clickCanvasWorld(canvas, 20, 70)
+  await expect(panel.getByRole('button', { name: 'Change center', exact: true })).toBeVisible()
+
   await expect(apply).toBeEnabled()
   await apply.click()
 
@@ -130,12 +135,11 @@ test('Path text needs a guide, then applies from the panel', async ({ app }) => 
   await startLayout(app.page, 'path', 'PATH')
   const panel = app.page.locator(PANEL)
 
-  // Opening in path mode goes straight into picking, since a path layout is
-  // meaningless without a guide — and it refuses to apply until it has one.
+  // Refuses until a guide is picked, because without one there is no baseline.
   const create = panel.getByRole('button', { name: 'Apply', exact: true })
   await expect(create).toBeDisabled()
-  await expect(panel.getByRole('button', { name: 'Cancel picking', exact: true })).toBeVisible()
 
+  await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
   const canvas = app.page.locator('canvas').first()
   await clickCanvasWorld(canvas, 0.4, 45)
 
@@ -154,6 +158,7 @@ test('Escape backs out of guide picking without discarding the run', async ({ ap
   await seedOverlapFeatureProject(app.page, 1)
   await startLayout(app.page, 'path')
   const panel = app.page.locator(PANEL)
+  await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
   await expect(panel.getByRole('button', { name: 'Cancel picking', exact: true })).toBeVisible()
 
   // Esc leaves picking but keeps the edit open, so a mis-click does not throw
@@ -194,10 +199,11 @@ test('The arrange menu offers the text baselines and opens the panel', async ({ 
   await command.click()
 
   const menu = app.page.getByRole('menu')
-  await expect(menu.getByRole('button', { name: 'On a circle', exact: true })).toBeEnabled()
-  await expect(menu.getByRole('button', { name: 'Along a path', exact: true })).toBeEnabled()
+  // One entry, not one per baseline — the panel's mode selector picks the mode.
+  await expect(menu.getByRole('button', { name: 'Text layout', exact: true })).toBeEnabled()
+  await expect(menu.getByRole('button', { name: 'On a circle', exact: true })).toHaveCount(0)
 
-  await menu.getByRole('button', { name: 'On a circle', exact: true }).click()
+  await menu.getByRole('button', { name: 'Text layout', exact: true }).click()
   const panel = app.page.locator(PANEL)
   await expect(panel).toBeVisible()
   await expect(panel.getByLabel('Layout')).toHaveValue('arc')
@@ -222,5 +228,5 @@ test('The text baselines are disabled for a non-text selection', async ({ app })
   const command = app.page.getByRole('button', { name: 'Distribute selected features', exact: true }).first()
   await command.click()
   const menu = app.page.getByRole('menu')
-  await expect(menu.getByRole('button', { name: 'On a circle', exact: true })).toBeDisabled()
+  await expect(menu.getByRole('button', { name: 'Text layout', exact: true })).toBeDisabled()
 })

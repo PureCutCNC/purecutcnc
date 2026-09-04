@@ -39,6 +39,7 @@ export interface TextLayoutWorkflow {
   changeTextLayoutMode: (mode: LayoutMode) => void
   updateTextLayoutFromPanel: (layout: TextLayout) => void
   pickTextGuideFromPanel: () => void
+  pickTextCenterFromPanel: () => void
   cancelTextPickFromPanel: () => void
   completeTextLayoutFromPanel: () => void
   cancelTextLayoutFromPanel: () => void
@@ -87,6 +88,11 @@ export function useTextLayoutWorkflow({
     textLayoutWorkflowPanel.focusCanvasAfterAction()
   }
 
+  function pickTextCenterFromPanel() {
+    setTextLayoutPickTarget('center')
+    textLayoutWorkflowPanel.focusCanvasAfterAction()
+  }
+
   function cancelTextPickFromPanel() {
     setTextLayoutPickTarget(null)
     textLayoutWorkflowPanel.focusCanvasAfterAction()
@@ -107,6 +113,7 @@ export function useTextLayoutWorkflow({
     changeTextLayoutMode,
     updateTextLayoutFromPanel,
     pickTextGuideFromPanel,
+    pickTextCenterFromPanel,
     cancelTextPickFromPanel,
     completeTextLayoutFromPanel,
     cancelTextLayoutFromPanel,

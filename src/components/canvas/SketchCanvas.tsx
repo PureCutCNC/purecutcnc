@@ -3067,13 +3067,14 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           layout={pendingTextLayout.layout}
           centerPicked={pendingTextLayout.center !== null}
           guideName={textGuideName}
-          picking={pendingTextLayout.pickTarget !== null}
+          pickTarget={pendingTextLayout.pickTarget}
           measure={textLayoutMeasure}
           effectiveSize={textLayoutConfig.size * (textLayoutMeasure?.scale ?? 1)}
           panel={textLayout.textLayoutWorkflowPanel}
           onChangeMode={textLayout.changeTextLayoutMode}
           onUpdate={textLayout.updateTextLayoutFromPanel}
           onPickGuide={textLayout.pickTextGuideFromPanel}
+          onPickCenter={textLayout.pickTextCenterFromPanel}
           onCancelPick={textLayout.cancelTextPickFromPanel}
           onComplete={textLayout.completeTextLayoutFromPanel}
           onCancel={textLayout.cancelTextLayoutFromPanel}

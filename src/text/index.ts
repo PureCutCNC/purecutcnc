@@ -569,7 +569,15 @@ function bendToLayout(
     : pathBaseline(layout.path, layout.startOffset, layout.endOffset, layout.anchor, layout.reversed)
   if (!baseline) return null
 
-  const bent = bendShapesToBaseline(shapes, bounds, baseline, layout.anchor, layout.fit, layout.orientation)
+  // The run always sits on the outside of the curve. Which edge that is flips
+  // with the direction of travel, so `cw` lands the run's bottom on the arc
+  // (text over the top of a circle) and `ccw` lands its top (text under the
+  // bottom, hanging below the curve rather than sitting inside the ring).
+  const attach = (layout.kind === 'arc' ? layout.direction === 'ccw' : layout.reversed)
+    ? 'top'
+    : 'bottom'
+
+  const bent = bendShapesToBaseline(shapes, bounds, baseline, layout.anchor, layout.fit, layout.orientation, attach)
   return { ...bent, span: baseline.span }
 }
 

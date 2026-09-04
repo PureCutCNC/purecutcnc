@@ -273,6 +273,15 @@ export type TextBaselineAnchor = 'start' | 'center' | 'end'
 export type TextBaselineFit = 'natural' | 'fill'
 
 /**
+ * Which edge of the run lands on the curve.
+ *
+ * Derived from the travel direction rather than stored: the run always wants
+ * its body on the outside of the curve, and which edge that is flips when the
+ * direction does.
+ */
+export type TextBaselineAttach = 'bottom' | 'top'
+
+/**
  * A curved baseline for a text feature. Absent/null is the historical straight
  * horizontal run, so every project saved before this existed loads unchanged
  * and no format version bump is needed.

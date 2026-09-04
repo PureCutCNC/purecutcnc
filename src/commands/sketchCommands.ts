@@ -304,7 +304,7 @@ export function useSketchCommands(): SketchCommandState & {
     alignFeature: (alignment: FeatureAlignment) => void
     distributeFeatures: (distribution: FeatureDistribution) => void
     startFeatureDistribution: (mode: FeatureDistributionMode) => void
-    startTextLayout: (kind: TextLayoutKind) => void
+    startTextLayout: (kind?: TextLayoutKind) => void
   }
   sketchEdit: Record<SketchEditTool, CommandDescriptor>
   constraint: CommandDescriptor
@@ -364,7 +364,7 @@ export function useSketchCommands(): SketchCommandState & {
     store.startFeatureDistribution(mode)
   }
 
-  function startTextLayout(kind: TextLayoutKind) {
+  function startTextLayout(kind?: TextLayoutKind) {
     if (!state.predicates.canLayOutText) {
       return
     }

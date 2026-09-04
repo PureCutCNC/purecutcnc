@@ -35,7 +35,7 @@ interface DistributionMenuOption extends PopoverMenuOption<FeatureDistribution> 
  * with a different predicate, so it gets its own prefixed values rather than
  * widening `FeatureDistributionMode`.
  */
-type TextLayoutAction = 'text-arc' | 'text-path'
+type TextLayoutAction = 'text-layout'
 type DistributionAction = FeatureDistribution | FeatureDistributionMode | TextLayoutAction
 
 const ALIGNMENT_OPTIONS: AlignmentMenuOption[] = [
@@ -104,7 +104,7 @@ function DistributionActions({
   canLayOutText: boolean
   onDistribute: (distribution: FeatureDistribution) => void
   onCreatePattern: (mode: FeatureDistributionMode) => void
-  onLayOutText: (kind: 'arc' | 'path') => void
+  onLayOutText: () => void
 }) {
   const { t } = useI18n()
 
@@ -120,8 +120,9 @@ function DistributionActions({
     { value: 'grid', icon: 'grid', label: t('canvas.featureDistribution.grid'), enabled: canCreatePattern },
     { value: 'radial', icon: 'rotate', label: t('canvas.featureDistribution.radial'), enabled: canCreatePattern },
     { value: 'path', icon: 'spline', label: t('canvas.featureDistribution.path'), enabled: canCreatePattern },
-    { value: 'text-arc', icon: 'circle', label: t('canvas.textLayout.mode.arc'), enabled: canLayOutText },
-    { value: 'text-path', icon: 'text', label: t('canvas.textLayout.mode.path'), enabled: canLayOutText },
+    // One entry, not one per baseline: the panel already has a mode selector,
+    // so a button per mode was two doors into the same room.
+    { value: 'text-layout', icon: 'text', label: t('canvas.textLayout.title'), enabled: canLayOutText },
   ]
 
   function selectDistribution(action: DistributionAction) {
@@ -129,8 +130,8 @@ function DistributionActions({
       onDistribute(action as FeatureDistribution)
       return
     }
-    if (action === 'text-arc' || action === 'text-path') {
-      onLayOutText(action === 'text-arc' ? 'arc' : 'path')
+    if (action === 'text-layout') {
+      onLayOutText()
       return
     }
     onCreatePattern(action as FeatureDistributionMode)

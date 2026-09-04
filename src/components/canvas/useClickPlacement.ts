@@ -416,7 +416,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
       return
     }
 
-    if (pendingTextLayout?.layout?.kind === 'arc') {
+    if (pendingTextLayout?.pickTarget === 'center') {
       setTextLayoutCenter(pickedPoint ?? world)
       return
     }

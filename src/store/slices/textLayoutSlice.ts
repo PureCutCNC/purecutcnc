@@ -66,7 +66,7 @@ export function createTextLayoutSlice(
   return {
     pendingTextLayout: null,
 
-    startTextLayout: (kind: TextLayoutKind) => set((s) => {
+    startTextLayout: (kind?: TextLayoutKind) => set((s) => {
       const featureId = s.selection.selectedFeatureId
       if (!featureId) return {}
       const feature = resolveFeatureInstance(s.project, featureId)
@@ -74,10 +74,13 @@ export function createTextLayoutSlice(
 
       // Reopening on a run that already curves keeps its current baseline, so
       // the edit is repeatable rather than a one-shot that starts from scratch.
+      // One menu entry opens the panel, so the mode comes from the run itself:
+      // whatever baseline it already has, or an arc to start from.
       const existing = feature.text.layout ?? null
-      const layout = existing?.kind === kind
+      const wanted = kind ?? existing?.kind ?? 'arc'
+      const layout = existing?.kind === wanted
         ? existing
-        : createDefaultTextLayout(kind, straightTextRunWidth(configOf(feature.text, feature.operation, null)))
+        : createDefaultTextLayout(wanted, straightTextRunWidth(configOf(feature.text, feature.operation, null)))
 
       return {
         pendingAdd: null,
@@ -92,7 +95,7 @@ export function createTextLayoutSlice(
           layout,
           center: null,
           guideId: null,
-          pickTarget: layout.kind === 'path' ? 'guide' : null,
+          pickTarget: null,
           directionPinned: existing?.kind === 'arc',
           session: nextPlacementSession(),
         },
@@ -141,13 +144,16 @@ export function createTextLayoutSlice(
       const pending = s.pendingTextLayout
       if (!pending) return {}
       if (pickTarget === 'guide' && pending.layout?.kind !== 'path') return {}
+      if (pickTarget === 'center' && pending.layout?.kind !== 'arc') return {}
       return { pendingTextLayout: { ...pending, pickTarget } }
     }),
 
     setTextLayoutCenter: (center: Point | null) => set((s) => {
       const pending = s.pendingTextLayout
       if (!pending) return {}
-      return { pendingTextLayout: { ...pending, center } }
+      // Picking ends when the centre lands, the same way the distribution
+      // radial pick does — the panel comes straight back.
+      return { pendingTextLayout: { ...pending, center, pickTarget: center ? null : pending.pickTarget } }
     }),
 
     setTextLayoutGuide: (featureId: string) => set((s) => {

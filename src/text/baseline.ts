@@ -30,7 +30,8 @@
 
 import { measureProfilePath, normalizedPathRange } from '../sketch/featureDistribution'
 import { getProfileBounds, type Point, type SketchProfile } from '../types/project'
-import type { TextBaselineAnchor, TextBaselineFit, TextBaselineOrientation } from '../types/project'
+import type { TextBaselineAnchor, TextBaselineFit,
+  TextBaselineAttach, TextBaselineOrientation } from '../types/project'
 import { transformProfile } from '../geometry/profile'
 
 const EPSILON = 1e-9
@@ -197,6 +198,7 @@ export function bendShapesToBaseline<T extends BendableShape>(
   anchor: TextBaselineAnchor,
   fit: TextBaselineFit,
   orientation: TextBaselineOrientation,
+  attach: TextBaselineAttach = 'bottom',
 ): BendResult<T> {
   const naturalWidth = bounds.width
   if (shapes.length === 0 || naturalWidth <= EPSILON) {
@@ -207,10 +209,16 @@ export function bendShapesToBaseline<T extends BendableShape>(
   const runLength = naturalWidth * scale
   const anchorOffset = anchor === 'start' ? 0 : anchor === 'center' ? -runLength / 2 : -runLength
 
-  // The bottom of the straight run is the line that lands on the curve. It is
-  // `maxY` in both font styles: skeleton glyph data is y-down with the feet at
-  // y = 1, and outline profiles are flipped then normalised to minY = 0.
-  const baselineY = bounds.maxY
+  // Which edge of the straight run lands on the curve. In both font styles the
+  // run is y-down — skeleton glyph data has the feet at y = 1, outline profiles
+  // are flipped then normalised to minY = 0 — so `maxY` is its bottom.
+  //
+  // Attaching the bottom puts the letter bodies on the far side of the curve
+  // from the direction of travel's right hand; going the other way round a
+  // circle that lands them *inside* it. Attaching the top instead keeps the
+  // bodies outside, so text under the bottom of a circle hangs below the curve
+  // rather than sitting inside the ring, and reads upright either way.
+  const baselineY = attach === 'bottom' ? bounds.maxY : bounds.minY
 
   const groups = new Map<number, T[]>()
   shapes.forEach((shape, index) => {

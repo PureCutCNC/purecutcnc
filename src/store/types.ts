@@ -198,7 +198,7 @@ export interface PendingOffsetTool {
 export type FeatureDistributionPickTarget = 'guide' | 'radial-center' | null
 
 /** What a canvas click means while a text layout is being configured. */
-export type TextLayoutPickTarget = 'guide' | null
+export type TextLayoutPickTarget = 'guide' | 'center' | null
 
 /**
  * An in-progress baseline edit on an existing text feature.
@@ -525,7 +525,7 @@ export interface ProjectStore {
   // distribution workflows rather than with text creation.
   pendingTextLayout: PendingTextLayout | null
   /** Begin laying the selected text feature on an arc or a guide. */
-  startTextLayout: (kind: TextLayoutKind) => void
+  startTextLayout: (kind?: TextLayoutKind) => void
   cancelTextLayout: () => void
   /** Replace the pending baseline (null = straight). */
   updateTextLayout: (layout: TextLayout | null) => void
