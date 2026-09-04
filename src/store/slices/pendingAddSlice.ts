@@ -22,6 +22,7 @@ import { nextPlacementSession, nextUniqueGeneratedId } from '../helpers/ids'
 import { createDefinitionForFeature, createFeatureInstance } from '../helpers/featureDefinitions'
 import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createTextFeatureAt } from '../helpers/naming'
+import { textArcDragPlacement } from '../../sketch/textPlacement'
 import { isConstruction } from '../helpers/featureRoles'
 import { inferLineTopZFromEnclosingFeature } from '../helpers/manualFeatureOperation'
 import { resolvedProjectFeatures } from '../helpers/resolveFeatures'
@@ -114,7 +115,10 @@ function rearmPendingAdd(current: PendingAddTool): PendingAddTool {
     case 'composite':
       return { shape: 'composite', start: null, lastPoint: null, segments: [], currentMode: current.currentMode, pendingArcEnd: null, closed: false, session }
     case 'text':
-      return { shape: 'text', config: current.config, session }
+      // Re-arming keeps the run's content and layout settings but drops what
+      // was picked on the canvas: the next placement gets its own centre and
+      // its own guide.
+      return { shape: 'text', config: current.config, anchor: null, guideId: null, pickTarget: null, directionPinned: current.directionPinned, session }
     case 'origin':
       return { shape: 'origin', session }
   }
@@ -232,7 +236,7 @@ export function createPendingAddSlice(
 
     startAddTextPlacement: (config) =>
       set((s) => ({
-        pendingAdd: { shape: 'text', config, session: nextPlacementSession() },
+        pendingAdd: { shape: 'text', config, anchor: null, guideId: null, pickTarget: null, directionPinned: false, session: nextPlacementSession() },
         pendingMove: null,
         pendingTransform: null,
         pendingOffset: null,
@@ -437,7 +441,20 @@ export function createPendingAddSlice(
         return []
       }
 
-      const baseFeature = createTextFeatureAt(state.project, state.pendingAdd.config, point)
+      const layout = state.pendingAdd.config.layout ?? null
+
+      // An arc places like a circle — first click is the centre, the cursor
+      // then sets radius and angle, second click commits.
+      if (layout?.kind === 'arc' && !state.pendingAdd.anchor) {
+        set({ pendingAdd: { ...state.pendingAdd, anchor: point } })
+        return []
+      }
+
+      const placement = layout?.kind === 'arc' && state.pendingAdd.anchor
+        ? textArcDragPlacement(state.pendingAdd.config, state.pendingAdd.anchor, point, state.pendingAdd.directionPinned)
+        : { config: state.pendingAdd.config, anchor: point }
+
+      const baseFeature = createTextFeatureAt(state.project, placement.config, placement.anchor)
       if (!baseFeature) {
         return []
       }

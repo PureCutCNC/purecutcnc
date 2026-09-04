@@ -24,6 +24,7 @@ import type {
   FeatureInstance,
   SketchProfile,
 } from '../types/project'
+import { cloneTextFeatureData } from '../types/project'
 import type { ProfileBreakResult } from './helpers/profileEdit'
 import {
   clearStaleConstraints,
@@ -48,6 +49,7 @@ import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
 import { createFeatureDistributionSlice } from './slices/featureDistributionSlice'
+import { createTextLayoutSlice } from './slices/textLayoutSlice'
 import { createSelectionSlice, sanitizeSelection } from './slices/selectionSlice'
 import { createDimensionsSlice } from './slices/dimensionsSlice'
 import { createDimensionToolSlice } from './slices/dimensionToolSlice'
@@ -152,7 +154,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
       kind: editedFeatureKind,
       profile: result.profile,
       dimensions: feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
-      text: feature.text ? { ...feature.text } : null,
+      text: cloneTextFeatureData(feature.text),
       stl: feature.stl ? { ...feature.stl } : null,
       operation: feature.operation,
     }
@@ -244,6 +246,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     createDerivedFeature,
   }),
   ...createFeatureDistributionSlice(set, get),
+  ...createTextLayoutSlice(set, get),
   ...createPendingAddSlice(set, get),
   ...createDimensionsSlice(set, get),
   ...createDimensionToolSlice(set, get),

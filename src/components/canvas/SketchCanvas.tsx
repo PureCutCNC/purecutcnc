@@ -58,6 +58,8 @@ import { useOffsetWorkflow } from './useOffsetWorkflow'
 import { useTransformExactWorkflow } from './useTransformExactWorkflow'
 import { useFeatureDistributionWorkflow } from './useFeatureDistributionWorkflow'
 import { FeatureDistributionPanel } from './FeatureDistributionPanel'
+import { TextLayoutPanel } from './TextLayoutPanel'
+import { useTextLayoutWorkflow } from './useTextLayoutWorkflow'
 import { useCreationWorkflow } from './useCreationWorkflow'
 import { useCanvasKeyboard } from './useCanvasKeyboard'
 import { useClickPlacement } from './useClickPlacement'
@@ -130,7 +132,8 @@ import {
   type StockLabelRect,
 } from './scenePrimitives'
 import { setCanvasPalette, canvasRgba, canvasColors } from './canvasPalette'
-import { generateTextShapes } from '../../text'
+import { generateTextShapes, measureTextLayout } from '../../text'
+import { textArcDragPlacement } from '../../sketch/textPlacement'
 import { transformProfile } from '../../geometry/profile'
 import { applyFeatureDistributionTransform, featureDistributionPivot, planFeatureDistribution } from '../../sketch/featureDistribution'
 import {
@@ -346,6 +349,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setFeatureDistributionRadialCenter,
     cancelFeatureDistribution,
     completeFeatureDistribution,
+    updateTextLayout,
+    setTextLayoutPickTarget,
+    setPendingTextAnchor,
+    setTextLayoutGuide,
+    completeTextLayout,
     completePendingShapeAction,
     cancelPendingShapeAction, confirmCutCutters,
     setPendingShapeActionKeepOriginals,
@@ -754,6 +762,18 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     setFeatureDistributionPickTarget,
     cancelFeatureDistribution,
     completeFeatureDistribution,
+    containerRef,
+    canvasRef,
+    clearTransientCanvasState,
+  })
+
+  const pendingText = pendingAdd?.shape === 'text' ? pendingAdd : null
+  const textLayout = useTextLayoutWorkflow({
+    pendingText,
+    updateTextLayout,
+    setTextLayoutPickTarget,
+    completeTextLayout,
+    cancelPendingAdd,
     containerRef,
     canvasRef,
     clearTransientCanvasState,
@@ -1364,12 +1384,32 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       } else if (currentPreviewPoint) {
         drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
       }
-    } else if (pendingAdd?.shape === 'text' && currentPreviewPoint) {
-      const previewShapes = generateTextShapes(pendingAdd.config, currentPreviewPoint)
-      for (const shape of previewShapes) {
-        drawPreviewProfile(ctx, shape.profile, vt, '')
+    } else if (pendingAdd?.shape === 'text') {
+      const layout = pendingAdd.config.layout ?? null
+      // A path layout is already positioned by its baked guide, so it previews
+      // at the origin and needs no cursor at all. The other modes follow the
+      // pointer, and an arc mid-drag re-derives radius and angle from it
+      // through the same helper the commit uses, so the preview cannot drift
+      // from what the click will produce.
+      const preview = layout?.kind === 'path'
+        ? { config: pendingAdd.config, anchor: { x: 0, y: 0 } }
+        : layout?.kind === 'arc' && pendingAdd.anchor && currentPreviewPoint
+          ? textArcDragPlacement(pendingAdd.config, pendingAdd.anchor, currentPreviewPoint, pendingAdd.directionPinned)
+          : currentPreviewPoint
+            ? { config: pendingAdd.config, anchor: currentPreviewPoint }
+            : null
+
+      if (preview) {
+        for (const shape of generateTextShapes(preview.config, preview.anchor)) {
+          drawPreviewProfile(ctx, shape.profile, vt, '')
+        }
       }
-      drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      if (pendingAdd.anchor) {
+        drawPendingPoint(ctx, pendingAdd.anchor, vt)
+      }
+      if (currentPreviewPoint && layout?.kind !== 'path') {
+        drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
+      }
     } else if (pendingAdd && currentPreviewPoint) {
       drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
     }
@@ -2693,6 +2733,8 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     cancelPendingOffset,
     cancelFeatureDistribution,
     setFeatureDistributionPickTarget,
+    setTextLayoutPickTarget,
+    setPendingTextAnchor,
     confirmCutCutters,
     cancelPendingShapeAction,
     setSketchEditTool,
@@ -2891,6 +2933,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     completePendingOffset,
     cancelPendingOffset,
     setFeatureDistributionGuide,
+    setTextLayoutGuide,
     setFeatureDistributionRadialCenter,
     beginHistoryTransaction,
   })
@@ -2936,6 +2979,11 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     pendingDraftProfile ? profileHasSelfIntersection(pendingDraftProfile) : false
   const pendingDraftExceedsStock =
     pendingDraftProfile ? profileExceedsStock(pendingDraftProfile, project.stock) : false
+  const textGuideName = pendingText?.guideId
+    ? resolveFeatureInstance(project, pendingText.guideId)?.name ?? null
+    : null
+  const textLayoutMeasure = pendingText ? measureTextLayout(pendingText.config) : null
+
   const featureDistributionPanelState = pendingFeatureDistribution
     ? (() => {
         const sources = resolveFeatureInstances(project, pendingFeatureDistribution.sourceIds)
@@ -3016,6 +3064,23 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           onCancelPick={featureDistribution.cancelFeatureDistributionPickFromPanel}
           onComplete={featureDistribution.completeFeatureDistributionFromPanel}
           onCancel={featureDistribution.cancelFeatureDistributionFromPanel}
+        />
+      )}
+      {pendingText && (
+        <TextLayoutPanel
+          layout={pendingText.config.layout ?? null}
+          centerPicked={pendingText.anchor !== null}
+          guideName={textGuideName}
+          picking={pendingText.pickTarget !== null}
+          measure={textLayoutMeasure}
+          effectiveSize={pendingText.config.size * (textLayoutMeasure?.scale ?? 1)}
+          panel={textLayout.textLayoutWorkflowPanel}
+          onChangeMode={textLayout.changeTextLayoutMode}
+          onUpdate={textLayout.updateTextLayoutFromPanel}
+          onPickGuide={textLayout.pickTextGuideFromPanel}
+          onCancelPick={textLayout.cancelTextPickFromPanel}
+          onComplete={textLayout.completeTextLayoutFromPanel}
+          onCancel={textLayout.cancelTextLayoutFromPanel}
         />
       )}
       {pendingOffset && (

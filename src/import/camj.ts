@@ -30,6 +30,7 @@ import {
   type Stock,
   type Tool,
 } from '../types/project'
+import { cloneTextFeatureData } from '../types/project'
 import type { Units } from '../utils/units'
 import { convertProjectUnits, convertToolUnits } from '../utils/units'
 import { uniqueName } from './normalize'
@@ -347,7 +348,7 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
         closed: sourceDef.profile.closed,
       },
       dimensions: sourceDef.dimensions.map((dimension) => ({ ...dimension })),
-      text: sourceDef.text ? { ...sourceDef.text } : null,
+      text: cloneTextFeatureData(sourceDef.text),
       stl: sourceDef.stl
         ? {
             ...sourceDef.stl,

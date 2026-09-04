@@ -20,7 +20,7 @@ import {
   getTextFrameProfile,
   type TextToolConfig,
 } from '../../text'
-import type { TextFeatureData } from '../../types/project'
+import { cloneTextLayout, type TextFeatureData } from '../../types/project'
 import type { Point, Project, SketchFeature, Clamp, Tab, FeatureFolder, FeatureOperation } from '../../types/project'
 import { nextUniqueGeneratedId } from './ids'
 import { isMachinable } from './featureRoles'
@@ -65,6 +65,7 @@ export function createTextFeatureAt(project: Project, config: TextToolConfig, an
     style: config.style,
     fontId: config.fontId,
     size: config.size,
+    layout: cloneTextLayout(config.layout ?? null),
   }
 
   const op: FeatureOperation = isFirstMachiningFeature ? 'add' : config.operation

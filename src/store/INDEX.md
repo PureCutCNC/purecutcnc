@@ -14,6 +14,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `pendingAddSlice.ts` — in-progress feature being drawn but not yet committed, including multi-step gear placement; re-arms a fresh draft of the same shape on completion (sticky drawing, issue #415)
   - `pendingCompletionSlice.ts` — partially-completed sketches awaiting closure
   - `featureDistributionSlice.ts` — transient one-shot grid/radial/path copy distribution; commits reference or independent instances as one undoable action (issue #205)
+  - `textLayoutSlice.ts` — transient text-on-arc/path workflow: edits the pending run's baseline, bakes a picked guide outline into it, and commits a path layout that has no placement click of its own (issue #671)
   - `dimensionsSlice.ts` — persistent dimension annotations (`project.annotations`): add/update/delete + selection (history-tracked)
   - `dimensionToolSlice.ts` — transient measure tools: tape measure + in-progress permanent-dimension placement (not persisted, not in history)
   - `featureSlice.ts` — feature CRUD, tree/folder management, primitive constructors including gear+bore grouping, arrange (align/distribute), and boolean ops (merge/cut/offset)

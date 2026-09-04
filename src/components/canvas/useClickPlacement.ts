@@ -229,6 +229,7 @@ export interface ClickPlacementCtx {
   cancelPendingOffset: () => void
   setFeatureDistributionGuide: (featureId: string) => void
   setFeatureDistributionRadialCenter: (center: Point) => void
+  setTextLayoutGuide: (featureId: string) => void
   beginHistoryTransaction: () => void
 }
 
@@ -333,6 +334,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     cancelPendingOffset,
     setFeatureDistributionGuide,
     setFeatureDistributionRadialCenter,
+    setTextLayoutGuide,
     beginHistoryTransaction,
   } = ctx
 
@@ -390,6 +392,18 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
       } else if (guideHit.kind === 'ambiguous') {
         const guideId = guideHit.candidateIds.find((id) => !pendingFeatureDistribution.sourceIds.includes(id))
         if (guideId) setFeatureDistributionGuide(guideId)
+      }
+      return
+    }
+
+    // Picking a guide for text-on-path. The run itself is not on the sketch
+    // yet, so unlike the distribution pick there is nothing to exclude.
+    if (pendingAdd?.shape === 'text' && pendingAdd.pickTarget === 'guide') {
+      const guideHit = resolveFeatureSelectionHit(world, resolvedProjectFeatures(project), vt)
+      if (guideHit.kind === 'direct') {
+        setTextLayoutGuide(guideHit.featureId)
+      } else if (guideHit.kind === 'ambiguous' && guideHit.candidateIds[0]) {
+        setTextLayoutGuide(guideHit.candidateIds[0])
       }
       return
     }
@@ -828,8 +842,12 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
           setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
         }
       } else if (pendingAdd.shape === 'text') {
-        placePendingTextAt(snapped)
-        setPendingPreviewPointRef(null)
+        // A path layout is positioned by its baked guide, so a canvas click has
+        // nothing to say about it — that one commits from the panel instead.
+        if (pendingAdd.config.layout?.kind !== 'path') {
+          placePendingTextAt(snapped)
+          setPendingPreviewPointRef(null)
+        }
       } else if (pendingAdd.shape === 'composite') {
         const draftPoints = compositeDraftPoints(pendingAdd)
         const closeCandidate =

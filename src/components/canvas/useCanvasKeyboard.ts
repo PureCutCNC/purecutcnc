@@ -28,6 +28,7 @@ import type {
   PendingFeatureDistribution,
   PendingMoveTool,
   PendingOffsetTool,
+  TextLayoutPickTarget,
   PendingShapeActionTool,
   PendingSketchEdit,
   PendingTransformTool,
@@ -78,6 +79,8 @@ export interface CanvasKeyboardCtx {
   pendingTransformRef: MutableRefObject<PendingTransformTool | null>
   pendingOffsetRef: MutableRefObject<PendingOffsetTool | null>
   pendingFeatureDistributionRef: MutableRefObject<PendingFeatureDistribution | null>
+  setTextLayoutPickTarget: (target: TextLayoutPickTarget) => void
+  setPendingTextAnchor: (anchor: Point | null) => void
   pendingShapeActionRef: MutableRefObject<PendingShapeActionTool | null>
   pendingSketchEditRef: MutableRefObject<PendingSketchEdit | null>
   viewStateRef: MutableRefObject<SketchViewState>
@@ -158,6 +161,8 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     pendingTransformRef,
     pendingOffsetRef,
     pendingFeatureDistributionRef,
+    setTextLayoutPickTarget,
+    setPendingTextAnchor,
     pendingShapeActionRef,
     pendingSketchEditRef,
     viewStateRef,
@@ -686,6 +691,19 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
         }
         completePendingOpenComposite()
         setPendingPreviewPointRef(null)
+        return
+      }
+    }
+
+    // Esc backs a text layout out one step at a time — guide picking first,
+    // then the arc centre — so a mis-click does not throw away the whole run.
+    if (event.key === 'Escape' && pendingAdd?.shape === 'text') {
+      if (pendingAdd.pickTarget) {
+        setTextLayoutPickTarget(null)
+        return
+      }
+      if (pendingAdd.anchor) {
+        setPendingTextAnchor(null)
         return
       }
     }

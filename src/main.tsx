@@ -138,6 +138,13 @@ if (import.meta.env.DEV) {
       const { useProjectStore } = await _pcTestStore()
       useProjectStore.getState().startAddRectPlacement()
     },
+    /** Opens the text placement workflow past the modal, so e2e can drive the layout panel. */
+    startAddTextPlacement: async (text: string) => {
+      const { useProjectStore } = await _pcTestStore()
+      const { defaultTextToolConfig } = await import('./text')
+      const units = useProjectStore.getState().project.meta.units
+      useProjectStore.getState().startAddTextPlacement({ ...defaultTextToolConfig(units), text })
+    },
     setPendingAddAnchor: async (x: number, y: number) => {
       const { useProjectStore } = await _pcTestStore()
       useProjectStore.getState().setPendingAddAnchor({ x, y })
@@ -253,6 +260,7 @@ declare global {
       getPendingMove: () => Promise<{ mode: string; entityType: string; entityIds: string[] } | null>
       completePendingMove: (x: number, y: number) => Promise<void>
       startAddRectPlacement: () => Promise<void>
+      startAddTextPlacement: (text: string) => Promise<void>
       setPendingAddAnchor: (x: number, y: number) => Promise<void>
       placePendingAddAt: (x: number, y: number) => Promise<void>
       cancelPendingAdd: () => Promise<void>

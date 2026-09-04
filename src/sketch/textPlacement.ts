@@ -1,0 +1,141 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Arc-text placement gesture.
+ *
+ * An arc layout is placed the way a circle or a gear is: first click sets the
+ * centre, the cursor sets the rest, second click commits. The preview and the
+ * commit must agree exactly or the text jumps at the moment of the click, so
+ * both call the one function here rather than each doing its own trigonometry.
+ */
+
+import type { Point, TextLayout } from '../types/project'
+import { normalizeAngleDegrees } from '../store/helpers/normalize'
+import type { TextToolConfig } from '../text'
+
+export type TextLayoutKind = TextLayout['kind']
+
+/** Below this the arc degenerates and the run would wrap onto itself. */
+export const MIN_ARC_RADIUS = 1e-3
+
+export interface TextArcDrag {
+  /** Centre of the circle — where the first click landed. */
+  center: Point
+  radius: number
+  angleDegrees: number
+  direction: 'cw' | 'ccw'
+}
+
+/**
+ * Resolve the live drag state for an arc layout.
+ *
+ * The cursor sets the radius *and* the angle, so you drag to where the text
+ * should sit rather than typing coordinates. Direction follows which side of
+ * the centre the cursor is on — above gives `cw` (text over the top, upright),
+ * below gives `ccw` (text under the bottom, still upright) — unless the user
+ * has touched the panel's direction control, at which point their choice wins
+ * and the cursor stops overriding it.
+ */
+export function resolveTextArcDrag(
+  layout: Extract<TextLayout, { kind: 'arc' }>,
+  center: Point,
+  cursor: Point,
+  directionPinned: boolean,
+): TextArcDrag {
+  const dx = cursor.x - center.x
+  const dy = cursor.y - center.y
+  const radius = Math.max(MIN_ARC_RADIUS, Math.hypot(dx, dy))
+  const angleDegrees = normalizeAngleDegrees((Math.atan2(dy, dx) * 180) / Math.PI)
+  const direction = directionPinned ? layout.direction : dy < 0 ? 'cw' : 'ccw'
+  return { center, radius, angleDegrees, direction }
+}
+
+/**
+ * The config and anchor to render (or commit) for an in-progress arc drag.
+ *
+ * The anchor is the circle's centre: template space puts the arc on the origin,
+ * so translating the template by the centre lands the circle exactly where the
+ * first click went.
+ */
+export function textArcDragPlacement(
+  config: TextToolConfig,
+  center: Point,
+  cursor: Point,
+  directionPinned: boolean,
+): { config: TextToolConfig; anchor: Point } {
+  const layout = config.layout
+  if (layout?.kind !== 'arc') {
+    return { config, anchor: center }
+  }
+
+  const drag = resolveTextArcDrag(layout, center, cursor, directionPinned)
+  return {
+    config: {
+      ...config,
+      layout: {
+        ...layout,
+        radius: drag.radius,
+        angleDegrees: drag.angleDegrees,
+        direction: drag.direction,
+      },
+    },
+    anchor: drag.center,
+  }
+}
+
+/** Sweep a fresh arc layout aims for, so the first preview reads as an arc. */
+const DEFAULT_ARC_SWEEP_DEGREES = 120
+
+/** 12 o'clock, in this app's clockwise-positive, Y-down angle convention. */
+const TOP_OF_CIRCLE_DEGREES = 270
+
+/**
+ * Starting values for a layout the user just switched to.
+ *
+ * The arc radius is solved backwards from the run's own width so the initial
+ * sweep is `DEFAULT_ARC_SWEEP_DEGREES` — a text-sized arc, not a hairline for
+ * short text or a full ring for long text. The drag replaces it immediately;
+ * this only has to look sane for the instant before the first click.
+ */
+export function createDefaultTextLayout(kind: TextLayoutKind, runWidth: number): TextLayout {
+  if (kind === 'arc') {
+    const sweepRadians = (DEFAULT_ARC_SWEEP_DEGREES * Math.PI) / 180
+    return {
+      kind: 'arc',
+      radius: Math.max(MIN_ARC_RADIUS, runWidth / sweepRadians),
+      angleDegrees: TOP_OF_CIRCLE_DEGREES,
+      sweepDegrees: DEFAULT_ARC_SWEEP_DEGREES,
+      anchor: 'center',
+      fit: 'natural',
+      direction: 'cw',
+      orientation: 'follow',
+    }
+  }
+
+  return {
+    kind: 'path',
+    // No guide yet. An empty profile measures to nothing, so the preview shows
+    // the straight run until one is picked, rather than failing.
+    path: { start: { x: 0, y: 0 }, segments: [], closed: false },
+    startOffset: 0,
+    endOffset: 0,
+    anchor: 'center',
+    fit: 'natural',
+    reversed: false,
+    orientation: 'follow',
+  }
+}

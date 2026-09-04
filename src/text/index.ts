@@ -16,6 +16,8 @@
 
 import { parseFontJson } from './fontData'
 import { cleanOutlineContour } from './outlineContours'
+import { arcBaseline, bendShapesToBaseline, pathBaseline, type BendResult, type TextTemplateBounds } from './baseline'
+import { profilePathLength } from '../sketch/featureDistribution'
 import helvetikerRegular from 'three/examples/fonts/helvetiker_regular.typeface.json'
 import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
 import optimerRegular from 'three/examples/fonts/optimer_regular.typeface.json'
@@ -37,6 +39,7 @@ import {
   type SketchProfile,
   type TextFontId,
   type TextFontStyle,
+  type TextLayout,
 } from '../types/project'
 import { clonePoint, cloneProfile, transformProfile, translateProfile } from '../geometry/profile'
 
@@ -46,6 +49,19 @@ export interface TextToolConfig {
   fontId: TextFontId
   size: number
   operation: FeatureOperation
+  /** Curved baseline. Absent/null is the straight horizontal run. */
+  layout?: TextLayout | null
+}
+
+/**
+ * What a layout did to the run, for the workflow panel to report: the uniform
+ * scale `fit: 'fill'` applied, and whether a `natural` run outgrew its span.
+ */
+export interface TextLayoutMeasure {
+  scale: number
+  runLength: number
+  span: number
+  overflows: boolean
 }
 
 export interface GeneratedTextShape {
@@ -74,14 +90,8 @@ interface TextFontDefinition {
 
 interface TextTemplate {
   shapes: GeneratedTextShape[]
-  bounds: {
-    minX: number
-    maxX: number
-    minY: number
-    maxY: number
-    width: number
-    height: number
-  }
+  bounds: TextTemplateBounds
+  layoutMeasure: TextLayoutMeasure | null
 }
 
 const DEFAULT_TEXT = 'TEXT'
@@ -211,6 +221,7 @@ export function defaultTextToolConfig(units: 'mm' | 'inch'): TextToolConfig {
     fontId: 'simple_stroke',
     size: units === 'inch' ? 0.4 : 10,
     operation: 'subtract',
+    layout: null,
   }
 }
 
@@ -509,39 +520,74 @@ function buildTextTemplate(config: TextToolConfig): TextTemplate {
           })
         })()
 
-  const profiles = shapes.map((shape) => shape.profile)
-  const bounds =
-    profiles.length > 0
-      ? profiles
-        .map((profile) => getProfileBounds(profile))
-        .reduce(
-          (acc, next) => ({
-            minX: Math.min(acc.minX, next.minX),
-            maxX: Math.max(acc.maxX, next.maxX),
-            minY: Math.min(acc.minY, next.minY),
-            maxY: Math.max(acc.maxY, next.maxY),
-          }),
-          { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity },
-        )
-      : { minX: 0, maxX: config.size, minY: 0, maxY: config.size }
+  const straightBounds = templateBounds(shapes, config.size)
+  const bent = bendToLayout(shapes, straightBounds, config.layout)
 
   return {
-    shapes: shapes.map((shape) => ({ ...shape, profile: cloneProfile(shape.profile) })),
-    bounds: {
-      ...bounds,
-      width: Math.max(bounds.maxX - bounds.minX, config.size * 0.1),
-      height: Math.max(bounds.maxY - bounds.minY, config.size * 0.1),
-    },
+    shapes: (bent?.shapes ?? shapes).map((shape) => ({ ...shape, profile: cloneProfile(shape.profile) })),
+    bounds: bent ? templateBounds(bent.shapes, config.size) : straightBounds,
+    layoutMeasure: bent
+      ? { scale: bent.scale, runLength: bent.runLength, span: bent.span, overflows: bent.overflows }
+      : null,
   }
 }
 
+function templateBounds(shapes: GeneratedTextShape[], size: number): TextTemplateBounds {
+  const bounds = shapes.length > 0
+    ? shapes
+      .map((shape) => getProfileBounds(shape.profile))
+      .reduce((acc, next) => ({
+        minX: Math.min(acc.minX, next.minX),
+        maxX: Math.max(acc.maxX, next.maxX),
+        minY: Math.min(acc.minY, next.minY),
+        maxY: Math.max(acc.maxY, next.maxY),
+      }))
+    : { minX: 0, maxX: size, minY: 0, maxY: size }
+
+  return {
+    ...bounds,
+    width: Math.max(bounds.maxX - bounds.minX, size * 0.1),
+    height: Math.max(bounds.maxY - bounds.minY, size * 0.1),
+  }
+}
+
+/**
+ * Bend a straight run onto the configured baseline. Returns null for the
+ * straight case and for a layout that cannot produce a usable curve (zero
+ * radius, an empty guide, crossed offsets) — the caller then keeps the straight
+ * run rather than emitting NaN geometry.
+ */
+function bendToLayout(
+  shapes: GeneratedTextShape[],
+  bounds: TextTemplateBounds,
+  layout: TextLayout | null | undefined,
+): (BendResult<GeneratedTextShape> & { span: number }) | null {
+  if (!layout) return null
+
+  const baseline = layout.kind === 'arc'
+    ? arcBaseline(layout.radius, layout.angleDegrees, layout.sweepDegrees, layout.direction)
+    : pathBaseline(layout.path, layout.startOffset, layout.endOffset, layout.anchor, layout.reversed)
+  if (!baseline) return null
+
+  const bent = bendShapesToBaseline(shapes, bounds, baseline, layout.anchor, layout.fit, layout.orientation)
+  return { ...bent, span: baseline.span }
+}
+
 function getTextTemplate(config: TextToolConfig): TextTemplate {
-  const cacheKey = `${config.style}|${config.fontId}|${config.operation}|${config.size}|${normalizeText(config.text)}`
+  const cacheKey = [
+    config.style,
+    config.fontId,
+    config.operation,
+    config.size,
+    layoutCacheKey(config.layout),
+    normalizeText(config.text),
+  ].join('|')
   const cached = textShapeCache.get(cacheKey)
   if (cached) {
     return {
       shapes: cached.shapes.map((shape) => ({ ...shape, profile: cloneProfile(shape.profile) })),
       bounds: { ...cached.bounds },
+      layoutMeasure: cached.layoutMeasure ? { ...cached.layoutMeasure } : null,
     }
   }
 
@@ -550,7 +596,49 @@ function getTextTemplate(config: TextToolConfig): TextTemplate {
   return {
     shapes: template.shapes.map((shape) => ({ ...shape, profile: cloneProfile(shape.profile) })),
     bounds: { ...template.bounds },
+    layoutMeasure: template.layoutMeasure ? { ...template.layoutMeasure } : null,
   }
+}
+
+/**
+ * A layout has to take part in the cache key, or two runs that differ only in
+ * their curve would collide and render each other's geometry. A baked path is
+ * summarised by its measurable shape rather than every control point, which is
+ * enough to separate distinct guides without building a huge key.
+ */
+function layoutCacheKey(layout: TextLayout | null | undefined): string {
+  if (!layout) return 'straight'
+  const shared = `${layout.anchor}|${layout.fit}|${layout.orientation}`
+  if (layout.kind === 'arc') {
+    return `arc|${layout.radius}|${layout.angleDegrees}|${layout.sweepDegrees}|${layout.direction}|${shared}`
+  }
+  const { start, segments, closed } = layout.path
+  return [
+    'path',
+    layout.startOffset,
+    layout.endOffset,
+    layout.reversed,
+    shared,
+    closed,
+    start.x,
+    start.y,
+    segments.length,
+    profilePathLength(layout.path).toFixed(6),
+  ].join('|')
+}
+
+/**
+ * Width of the run laid out straight, before any baseline bends it. The
+ * workflow panel needs it to propose a radius and a sweep that make the first
+ * preview look like an arc rather than a hairline or a full ring.
+ */
+export function straightTextRunWidth(config: TextToolConfig): number {
+  return getTextTemplate({ ...config, layout: null }).bounds.width
+}
+
+/** What the configured layout did to the run — for the workflow panel to report. */
+export function measureTextLayout(config: TextToolConfig): TextLayoutMeasure | null {
+  return getTextTemplate(config).layoutMeasure
 }
 
 export function getTextFrameProfile(config: TextToolConfig, anchor: Point): SketchProfile {
@@ -586,6 +674,7 @@ export function resolveTextFeatureShapes(feature: SketchFeature): GeneratedTextS
     fontId: feature.text.fontId,
     size: feature.text.size,
     operation: feature.operation,
+    layout: feature.text.layout ?? null,
   }
   const template = getTextTemplate(config)
   const origin = frameVertices[0]

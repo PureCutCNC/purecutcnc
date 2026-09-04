@@ -14,9 +14,9 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [components/](components/INDEX.md) — React UI (canvas, viewport3d, simulation, panels)
 - [import/](import/) — DXF / SVG / STL / OBJ parsers that normalize into `.camj`; `camj.ts` adds partial-import (merge selected folders from another `.camj` into the current project)
 - [postProcessorConverter/](postProcessorConverter/INDEX.md) — standalone CLI that converts external CAM post-processor files into a `MachineDefinition` JSON plus a conversion report
-- [text/](text/) — text-to-geometry (font → machinable paths); `index.ts` is the public API, `fontData.ts` the typed font-parse seam, and `outlineContours.ts` removes self-intersection slivers before profiles reach downstream consumers
+- [text/](text/) — text-to-geometry (font → machinable paths); `index.ts` is the public API, `fontData.ts` the typed font-parse seam, and `outlineContours.ts` removes self-intersection slivers before profiles reach downstream consumers. `baseline.ts` bends a straight run onto an arc or a guide path (issue #671) — one similarity transform per glyph, so letterforms are never sheared
 - [geometry/](geometry/INDEX.md) — layer-neutral pure profile primitives (`clonePoint`, `translatePoint`, `transformProfile`, `translateProfile`, `cloneProfile`) shared by the store and `text/` so neither depends on the other
-- [sketch/](sketch/) — sketch geometry helpers (segment math, profile ops, visible-scene bounds in `sceneBounds.ts`, gear profile generation)
+- [sketch/](sketch/) — sketch geometry helpers (segment math, profile ops, visible-scene bounds in `sceneBounds.ts`, gear profile generation, arc-text placement gesture in `textPlacement.ts`)
 - [hooks/](hooks/INDEX.md) — shared cross-cutting React hooks (`useStableEvent`, `useWindowEvent`/`useEventListener`)
 - [i18n/](i18n/INDEX.md) — typed localization layer: English-fallback catalogs (en, zh-CN), custom language packs, locale persistence/detection, and the `useI18n()` React binding
 - [theme/](theme/INDEX.md) — app-local Dark/Light/System appearance state plus typed canvas and Three.js palettes

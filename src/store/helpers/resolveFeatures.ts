@@ -35,6 +35,7 @@ import type {
   SketchProfile,
   STLFeatureData,
 } from '../../types/project'
+import { cloneTextFeatureData } from '../../types/project'
 import { multiplyMatrix, translateMatrix } from './instanceTransforms'
 
 // ============================================================================
@@ -434,7 +435,7 @@ export function resolveFeatureRow(
     instanceId: feature.id,
     transform,
     kind: definition.kind,
-    text: definition.text ? { ...definition.text } : null,
+    text: cloneTextFeatureData(definition.text),
     stl: resolveStlData(definition.stl, transformPoint),
     folderId: feature.folderId,
     sketch,

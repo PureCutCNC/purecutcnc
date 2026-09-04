@@ -288,6 +288,15 @@
   line-height: 1.35;
 }
 
+/* Neutral sibling of the warning, for a readout rather than a problem — e.g.
+   the height a fitted text run will actually cut. */
+.canvas-workflow-panel__hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 @media (max-width: 520px) {
   .canvas-workflow-panel__grid {
     grid-template-columns: 1fr;

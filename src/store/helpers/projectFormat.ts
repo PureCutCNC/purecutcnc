@@ -35,6 +35,7 @@ import type {
   SketchFeature,
 } from '../../types/project'
 import { parseProjectVersion } from '../../types/project'
+import { cloneTextFeatureData } from '../../types/project'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { syncIdCounter } from './ids'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
@@ -473,7 +474,7 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
           kind: canonicalized.feature.kind,
           profile: canonicalized.feature.sketch.profile,
           dimensions: canonicalized.feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
-          text: canonicalized.feature.text ? { ...canonicalized.feature.text } : null,
+          text: cloneTextFeatureData(canonicalized.feature.text),
           stl: canonicalized.feature.stl ? { ...canonicalized.feature.stl } : null,
           operation: canonicalized.feature.operation,
           regionMaskMode: canonicalized.feature.regionMaskMode,
@@ -506,7 +507,7 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
             kind: canonicalized.feature.kind,
             profile: canonicalized.feature.sketch.profile,
             dimensions: canonicalized.feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
-            text: canonicalized.feature.text ? { ...canonicalized.feature.text } : null,
+            text: cloneTextFeatureData(canonicalized.feature.text),
             stl: canonicalized.feature.stl ? { ...canonicalized.feature.stl } : null,
             operation: canonicalized.feature.operation,
             regionMaskMode: canonicalized.feature.regionMaskMode,
