@@ -25,7 +25,7 @@
 import type { StateCreator } from 'zustand'
 import type { Point, TextLayout } from '../../types/project'
 import { cloneProfile } from '../../geometry/profile'
-import { profilePathLength } from '../../sketch/featureDistribution'
+import { featureDistributionPivot, profilePathLength } from '../../sketch/featureDistribution'
 import {
   createDefaultTextLayout,
   localTextLayout,
@@ -154,9 +154,31 @@ export function createTextLayoutSlice(
     setTextLayoutCenter: (center: Point | null) => set((s) => {
       const pending = s.pendingTextLayout
       if (!pending) return {}
+
+      // Radius is derived, not typed: it is the distance from the run's own
+      // pivot to the picked centre, which is exactly how `planFeatureDistribution`
+      // derives the radius of a radial distribution from its source. Picking the
+      // centre is therefore the whole gesture.
+      const feature = resolveFeatureInstance(s.project, pending.featureId)
+      const layout = pending.layout
+      const nextLayout = center && layout?.kind === 'arc' && feature
+        ? (() => {
+          const pivot = featureDistributionPivot([feature.sketch.profile])
+          const radius = Math.hypot(pivot.x - center.x, pivot.y - center.y)
+          return radius > 1e-9 ? { ...layout, radius } : layout
+        })()
+        : layout
+
       // Picking ends when the centre lands, the same way the distribution
       // radial pick does — the panel comes straight back.
-      return { pendingTextLayout: { ...pending, center, pickTarget: center ? null : pending.pickTarget } }
+      return {
+        pendingTextLayout: {
+          ...pending,
+          center,
+          layout: nextLayout,
+          pickTarget: center ? null : pending.pickTarget,
+        },
+      }
     }),
 
     setTextLayoutGuide: (featureId: string) => set((s) => {

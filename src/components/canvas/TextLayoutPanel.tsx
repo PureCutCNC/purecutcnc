@@ -143,7 +143,9 @@ export function TextLayoutPanel({
                   />
                 </span>
               </div>
-              <NumberField label={t('canvas.textLayout.radius')} value={layout.radius} onChange={(event) => onUpdate({ ...layout, radius: inputNumber(event) })} />
+              {/* Derived from the pivot-to-centre distance the way a radial
+                  distribution derives its radius, so it reads rather than edits. */}
+              <NumberField label={t('canvas.textLayout.radius')} value={layout.radius} readOnly />
               <NumberField label={t('canvas.textLayout.angle')} value={layout.angleDegrees} onChange={(event) => onUpdate({ ...layout, angleDegrees: inputNumber(event) })} />
               <NumberField label={t('canvas.textLayout.sweep')} value={layout.sweepDegrees} onChange={(event) => onUpdate({ ...layout, sweepDegrees: inputNumber(event) })} />
               <label className="canvas-workflow-panel__field">
@@ -225,11 +227,14 @@ export function TextLayoutPanel({
 function NumberField({
   label,
   value,
+  readOnly = false,
   onChange,
 }: {
   label: string
   value: number
-  onChange: (event: React.ChangeEvent<HTMLInputElement>) => void
+  /** A derived value the panel reports rather than accepts. */
+  readOnly?: boolean
+  onChange?: (event: React.ChangeEvent<HTMLInputElement>) => void
 }) {
   return (
     <label className="canvas-workflow-panel__field">
@@ -239,7 +244,8 @@ function NumberField({
         type="number"
         inputMode="decimal"
         step="any"
-        value={value}
+        value={readOnly ? Number(value.toFixed(3)) : value}
+        readOnly={readOnly}
         onChange={onChange}
       />
     </label>

@@ -172,13 +172,14 @@ function testApplyingResizesTheFrameToTheBentRun() {
 function testReopeningKeepsTheRunsCurrentBaseline() {
   resetStore()
   startLayout('arc')
-  useProjectStore.getState().updateTextLayout({ ...arcLayout, radius: 77 })
-  useProjectStore.getState().setTextLayoutCenter({ x: 100, y: 100 })
+  useProjectStore.getState().updateTextLayout(arcLayout)
+  // The pivot of rectProfile(200, 200, 30, 10) is (215, 205), so this derives 100.
+  useProjectStore.getState().setTextLayoutCenter({ x: 215, y: 305 })
   useProjectStore.getState().completeTextLayout()
 
   startLayout('arc')
   const reopened = pendingLayout().layout
-  assert(reopened?.kind === 'arc' && Math.abs(reopened.radius - 77) < 1e-6, "reopening loads the run's own arc")
+  assert(reopened?.kind === 'arc' && Math.abs(reopened.radius - 100) < 1e-6, "reopening loads the run's own arc")
   console.log('reopening keeps the current baseline: PASSED')
 }
 
@@ -237,8 +238,13 @@ function testTheAppliedRunLandsOnThePickedCentre() {
     }))
 
     const center = { x: 100, y: 100 }
+    // Radius is derived from the run's pivot, which moves with the instance
+    // transform — so the expectation is derived the same way.
+    const before = getProfileBounds(resolveFeatureInstance(useProjectStore.getState().project, 'run')!.sketch.profile)
+    const pivot = { x: (before.minX + before.maxX) / 2, y: (before.minY + before.maxY) / 2 }
+    const radius = Math.hypot(pivot.x - center.x, pivot.y - center.y)
     startLayout('arc')
-    useProjectStore.getState().updateTextLayout({ ...arcLayout, radius: 40, sweepDegrees: 90 })
+    useProjectStore.getState().updateTextLayout({ ...arcLayout, sweepDegrees: 90 })
     useProjectStore.getState().setTextLayoutCenter(center)
     useProjectStore.getState().completeTextLayout()
 
@@ -251,11 +257,35 @@ function testTheAppliedRunLandsOnThePickedCentre() {
     )
     // cw sits the run on top of the circle, so it is a radius above the centre.
     assert(
-      Math.abs(bounds.maxY - (center.y - 40)) < 6,
+      Math.abs(bounds.maxY - (center.y - radius)) < 6,
       `run should sit on the circle, got ${bounds.maxY} for e=${transform.e}`,
     )
   }
   console.log('the applied run lands on the picked centre: PASSED')
+}
+
+/**
+ * Radius is derived from the pivot-to-centre distance, the way
+ * `planFeatureDistribution` derives a radial distribution's radius from where
+ * its source already sits. Picking the centre is the whole gesture; there is no
+ * radius to type.
+ */
+function testPickingTheCentreDerivesTheRadius() {
+  resetStore()
+  startLayout('arc')
+  useProjectStore.getState().updateTextLayout({ ...arcLayout, radius: 999 })
+
+  // The run's frame is rectProfile(200, 200, 30, 10), so its pivot is (215, 205).
+  useProjectStore.getState().setTextLayoutCenter({ x: 215, y: 305 })
+  const layout = pendingLayout().layout
+  assert(layout?.kind === 'arc', 'still an arc')
+  assert(Math.abs(layout.radius - 100) < 1e-6, `radius should be the pivot distance, got ${layout.radius}`)
+
+  // Moving the centre re-derives it rather than keeping the first pick.
+  useProjectStore.getState().setTextLayoutCenter({ x: 215, y: 245 })
+  const moved = pendingLayout().layout
+  assert(moved?.kind === 'arc' && Math.abs(moved.radius - 40) < 1e-6, `re-derived, got ${moved?.kind === 'arc' ? moved.radius : 'n/a'}`)
+  console.log('picking the centre derives the radius: PASSED')
 }
 
 function testPathModeNeedsAGuideAndCommitsFromThePanel() {
@@ -378,6 +408,7 @@ testApplyingResizesTheFrameToTheBentRun()
 testReopeningKeepsTheRunsCurrentBaseline()
 testStraighteningRestoresTheOriginalPosition()
 testTheAppliedRunLandsOnThePickedCentre()
+testPickingTheCentreDerivesTheRadius()
 testPathModeNeedsAGuideAndCommitsFromThePanel()
 testTheBakedGuideDoesNotAliasTheGuideFeature()
 testSwitchingModesRestartsTheGesture()

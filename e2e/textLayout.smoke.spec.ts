@@ -108,6 +108,12 @@ test('Arc applies to the selected run once a centre is picked', async ({ app }) 
   await clickCanvasWorld(canvas, 20, 70)
   await expect(panel.getByRole('button', { name: 'Change center', exact: true })).toBeVisible()
 
+  // Radius is derived from the pivot-to-centre distance, so picking the centre
+  // is the whole gesture — the field reports it rather than accepting it.
+  const radiusField = panel.getByLabel('Radius')
+  await expect(radiusField).toHaveAttribute('readonly', '')
+  expect(Number(await radiusField.inputValue())).toBeGreaterThan(0)
+
   await expect(apply).toBeEnabled()
   await apply.click()
 

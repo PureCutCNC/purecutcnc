@@ -866,7 +866,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     scheduleDraw()
-  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, pendingClipboardPlacement, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, operationHighlightKind, canvasPalette])
+  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, pendingClipboardPlacement, pendingTextLayout, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, operationHighlightKind, canvasPalette])
 
   useEffect(() => {
     sketchEditPreviewRef.current = null
