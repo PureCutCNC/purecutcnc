@@ -106,6 +106,10 @@ export function featureInstanceComputationEquals(a: FeatureInstance, b: FeatureI
     && a.name === b.name
     && transformEqual
     && (a.constraints === b.constraints || projectsEqual(a.constraints, b.constraints))
+    // The baseline bends the run's geometry, so a changed layout has to
+    // regenerate its toolpaths — otherwise curving text leaves the straight
+    // run's cut behind.
+    && (a.textLayout === b.textLayout || projectsEqual(a.textLayout ?? null, b.textLayout ?? null))
     && a.z_top === b.z_top
     && a.z_bottom === b.z_bottom
   )

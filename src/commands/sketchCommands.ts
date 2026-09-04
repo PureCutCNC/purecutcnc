@@ -31,6 +31,7 @@ import type {
   TapeMeasureState,
 } from '../store/types'
 import type { FeatureDistributionMode } from '../sketch/featureDistribution'
+import type { TextLayoutKind } from '../sketch/textPlacement'
 import { featureHasClosedGeometry } from '../text'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../store/helpers/resolveFeatures'
 
@@ -61,6 +62,7 @@ export interface SketchCommandPredicates {
   canAlignSelectedFeatures: boolean
   canDistributeSelectedFeatures: boolean
   canCreateFeatureDistribution: boolean
+  canLayOutText: boolean
   featureSketchEditActive: boolean
   sketchEditFeatureOpen: boolean
   selectedConstraintFeatureId: string | null
@@ -153,6 +155,12 @@ export function deriveSketchCommandPredicates({
     canCreateFeatureDistribution: hasSelectedFeatures
       && !hasLockedSelectedFeatures
       && selectedFeatures.every((feature) => feature.kind !== 'stl'),
+    // Laying text on a baseline edits one run, so unlike distribution it needs
+    // exactly one selected feature and that feature has to be text.
+    canLayOutText: selectedFeatures.length === 1
+      && !hasLockedSelectedFeatures
+      && selectedFeatures[0]?.kind === 'text'
+      && !!selectedFeatures[0]?.text,
     featureSketchEditActive,
     sketchEditFeatureOpen,
     selectedConstraintFeatureId,
@@ -296,6 +304,7 @@ export function useSketchCommands(): SketchCommandState & {
     alignFeature: (alignment: FeatureAlignment) => void
     distributeFeatures: (distribution: FeatureDistribution) => void
     startFeatureDistribution: (mode: FeatureDistributionMode) => void
+    startTextLayout: (kind?: TextLayoutKind) => void
   }
   sketchEdit: Record<SketchEditTool, CommandDescriptor>
   constraint: CommandDescriptor
@@ -353,6 +362,13 @@ export function useSketchCommands(): SketchCommandState & {
       return
     }
     store.startFeatureDistribution(mode)
+  }
+
+  function startTextLayout(kind?: TextLayoutKind) {
+    if (!state.predicates.canLayOutText) {
+      return
+    }
+    store.startTextLayout(kind)
   }
 
   function toggleSketchEditTool(tool: SketchEditTool) {
@@ -471,6 +487,7 @@ export function useSketchCommands(): SketchCommandState & {
       alignFeature,
       distributeFeatures,
       startFeatureDistribution,
+      startTextLayout,
     },
     sketchEdit: {
       add_point: command('add_point', 'point-add', state.sketchEdit.add_point.active ? t('sketch.edit.cancelAddPoint') : t('sketch.edit.addPoint'), state.sketchEdit.add_point, () => toggleSketchEditTool('add_point')),

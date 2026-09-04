@@ -23,7 +23,7 @@ import {
   defaultOrigin,
   getStockBounds,
   IDENTITY_MATRIX,
-  LATEST_PROJECT_VERSION,
+  LATEST_PROJECT_VERSION, cloneTextLayout,
 } from '../../types/project'
 import type {
   FeatureDefinition,
@@ -35,6 +35,7 @@ import type {
   SketchFeature,
 } from '../../types/project'
 import { parseProjectVersion } from '../../types/project'
+import { cloneTextFeatureData } from '../../types/project'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { syncIdCounter } from './ids'
 import { normalizeImportedModelStorage, pruneUnusedModelAssets } from './modelAssets'
@@ -301,6 +302,9 @@ function normalizeInstance(feature: FeatureInstance, definitions: Record<string,
     name: feature.name,
     definitionId: feature.definitionId,
     transform: { ...feature.transform },
+    // Deep-copied, not spread: a shared nested layout object (and, for a path
+    // layout, a shared SketchProfile) would let one row's edit rewrite another.
+    textLayout: cloneTextLayout(feature.textLayout),
     constraints: feature.constraints.map((constraint) => ({ ...constraint })),
     z_top: feature.z_top,
     z_bottom: feature.z_bottom,
@@ -473,7 +477,7 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
           kind: canonicalized.feature.kind,
           profile: canonicalized.feature.sketch.profile,
           dimensions: canonicalized.feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
-          text: canonicalized.feature.text ? { ...canonicalized.feature.text } : null,
+          text: cloneTextFeatureData(canonicalized.feature.text),
           stl: canonicalized.feature.stl ? { ...canonicalized.feature.stl } : null,
           operation: canonicalized.feature.operation,
           regionMaskMode: canonicalized.feature.regionMaskMode,
@@ -506,7 +510,7 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
             kind: canonicalized.feature.kind,
             profile: canonicalized.feature.sketch.profile,
             dimensions: canonicalized.feature.sketch.dimensions.map((dimension) => ({ ...dimension })),
-            text: canonicalized.feature.text ? { ...canonicalized.feature.text } : null,
+            text: cloneTextFeatureData(canonicalized.feature.text),
             stl: canonicalized.feature.stl ? { ...canonicalized.feature.stl } : null,
             operation: canonicalized.feature.operation,
             regionMaskMode: canonicalized.feature.regionMaskMode,

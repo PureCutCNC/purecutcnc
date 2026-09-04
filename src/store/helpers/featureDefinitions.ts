@@ -37,6 +37,7 @@ import type {
   SketchProfile,
 } from '../../types/project'
 import { IDENTITY_MATRIX } from '../../types/project'
+import { cloneTextFeatureData } from '../../types/project'
 import { nextUniqueGeneratedId } from './ids'
 
 // ============================================================================
@@ -198,7 +199,7 @@ export function createDefinitionForFeatureWithId(
     kind: feature.kind,
     profile: cloneProfile(feature.sketch.profile),
     dimensions: cloneDimensions(feature.sketch.dimensions),
-    text: feature.text ? { ...feature.text } : null,
+    text: cloneTextFeatureData(feature.text),
     stl: feature.stl ? { ...feature.stl } : null,
     operation: feature.operation,
     regionMaskMode: definitionRegionMaskMode(feature.operation, feature.regionMaskMode),
@@ -295,7 +296,7 @@ function cloneDefinition(
     id: newId,
     profile: cloneProfile(definition.profile),
     dimensions: definition.dimensions.map((d) => ({ ...d })),
-    text: definition.text ? { ...definition.text } : null,
+    text: cloneTextFeatureData(definition.text),
     stl: definition.stl ? { ...definition.stl } : null,
   }
 }

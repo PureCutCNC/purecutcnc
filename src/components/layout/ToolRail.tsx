@@ -180,6 +180,11 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
     setShowDistributePopover(false)
   }
 
+  function startTextLayout() {
+    sketchCommands.arrange.startTextLayout()
+    setShowDistributePopover(false)
+  }
+
   function startFeatureDistribution(mode: Parameters<typeof sketchCommands.arrange.startFeatureDistribution>[0]) {
     sketchCommands.arrange.startFeatureDistribution(mode)
     setShowDistributePopover(false)
@@ -315,6 +320,7 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
               <button type="button" aria-label={t('canvas.featureDistribution.grid')} disabled={!sketchCommands.predicates.canCreateFeatureDistribution} onClick={() => startFeatureDistribution('grid')}><Icon id="grid" /></button>
               <button type="button" aria-label={t('canvas.featureDistribution.radial')} disabled={!sketchCommands.predicates.canCreateFeatureDistribution} onClick={() => startFeatureDistribution('radial')}><Icon id="rotate" /></button>
               <button type="button" aria-label={t('canvas.featureDistribution.path')} disabled={!sketchCommands.predicates.canCreateFeatureDistribution} onClick={() => startFeatureDistribution('path')}><Icon id="spline" /></button>
+              <button type="button" aria-label={t('canvas.textLayout.title')} disabled={!sketchCommands.predicates.canLayOutText} onClick={() => startTextLayout()}><Icon id="text" /></button>
             </RailFlyout>
           </div>
         )}

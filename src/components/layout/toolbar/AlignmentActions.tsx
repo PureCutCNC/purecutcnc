@@ -29,7 +29,14 @@ interface DistributionMenuOption extends PopoverMenuOption<FeatureDistribution> 
   labelKey: MessageKey
 }
 
-type DistributionAction = FeatureDistribution | FeatureDistributionMode
+/**
+ * Laying text on a baseline shares this menu with distribution — it is the same
+ * "arrange what is already on the sketch" act — but it is a different command
+ * with a different predicate, so it gets its own prefixed values rather than
+ * widening `FeatureDistributionMode`.
+ */
+type TextLayoutAction = 'text-layout'
+type DistributionAction = FeatureDistribution | FeatureDistributionMode | TextLayoutAction
 
 const ALIGNMENT_OPTIONS: AlignmentMenuOption[] = [
   { value: 'left', icon: 'align-left', label: '', labelKey: 'sketch.align.left' },
@@ -85,15 +92,19 @@ function DistributionActions({
   tooltipSide,
   canDistributeEvenly,
   canCreatePattern,
+  canLayOutText,
   onDistribute,
   onCreatePattern,
+  onLayOutText,
 }: {
   enabled: boolean
   tooltipSide?: 'bottom' | 'right'
   canDistributeEvenly: boolean
   canCreatePattern: boolean
+  canLayOutText: boolean
   onDistribute: (distribution: FeatureDistribution) => void
   onCreatePattern: (mode: FeatureDistributionMode) => void
+  onLayOutText: () => void
 }) {
   const { t } = useI18n()
 
@@ -109,11 +120,18 @@ function DistributionActions({
     { value: 'grid', icon: 'grid', label: t('canvas.featureDistribution.grid'), enabled: canCreatePattern },
     { value: 'radial', icon: 'rotate', label: t('canvas.featureDistribution.radial'), enabled: canCreatePattern },
     { value: 'path', icon: 'spline', label: t('canvas.featureDistribution.path'), enabled: canCreatePattern },
+    // One entry, not one per baseline: the panel already has a mode selector,
+    // so a button per mode was two doors into the same room.
+    { value: 'text-layout', icon: 'text', label: t('canvas.textLayout.title'), enabled: canLayOutText },
   ]
 
   function selectDistribution(action: DistributionAction) {
     if (DISTRIBUTION_OPTIONS.some((option) => option.value === action)) {
       onDistribute(action as FeatureDistribution)
+      return
+    }
+    if (action === 'text-layout') {
+      onLayOutText()
       return
     }
     onCreatePattern(action as FeatureDistributionMode)

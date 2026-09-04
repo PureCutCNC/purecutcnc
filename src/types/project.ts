@@ -252,11 +252,118 @@ export type TextFontId =
   | 'droid_serif_bold_italic'
 export type FeatureKind = 'rect' | 'circle' | 'ellipse' | 'polygon' | 'spline' | 'composite' | 'text' | 'stl'
 
+/** Whether glyphs rotate with the baseline tangent or keep world orientation. */
+export type TextBaselineOrientation = 'fixed' | 'follow'
+
+/** Which point of the text run sits at the layout's anchor position. */
+export type TextBaselineAnchor = 'start' | 'center' | 'end'
+
+/**
+ * How the run's natural width, the baseline span, and the glyph size resolve
+ * against each other. They are one equation (`width = radius * sweep` on an
+ * arc), so exactly one of them has to give way.
+ *
+ * - `natural` keeps the size the user typed and lets the span follow.
+ * - `fill`    keeps the span and scales the whole run *uniformly* to fit it.
+ *
+ * Uniform is load-bearing, not a detail: a horizontal-only stretch would cut
+ * visibly distorted letterforms, and unlike a screen mock-up that cannot be
+ * undone in the material.
+ */
+export type TextBaselineFit = 'natural' | 'fill'
+
+/**
+ * Which edge of the run lands on the curve.
+ *
+ * Derived from the travel direction rather than stored: the run always wants
+ * its body on the outside of the curve, and which edge that is flips when the
+ * direction does.
+ */
+export type TextBaselineAttach = 'bottom' | 'top'
+
+/**
+ * A curved baseline for a text feature. Absent/null is the historical straight
+ * horizontal run, so every project saved before this existed loads unchanged
+ * and no format version bump is needed.
+ *
+ * Geometry here is **template-local**: the arc is centred on the template
+ * origin, and a path snapshot is stored in the same space. The template is
+ * mapped onto the feature's frame at resolve time, so a `FeatureDefinition`
+ * stays self-contained and every instance re-resolves under its own transform.
+ */
+export type TextLayout =
+  | {
+      kind: 'arc'
+      /** Circle centre, in definition-local space. */
+      center: Point
+      radius: number
+      /** Anchor position on the circle. 0 = 3 o'clock, positive = clockwise on screen. */
+      angleDegrees: number
+      sweepDegrees: number
+      anchor: TextBaselineAnchor
+      fit: TextBaselineFit
+      /**
+       * Travel direction, and with it which half of the circle the run
+       * occupies and which edge of the run lands on the curve: `cw` writes
+       * across the top with the run sitting on the circle, `ccw` across the
+       * bottom with the run hanging below it. Both read left to right and
+       * neither ends up inside the ring. (Upright at 12 o'clock and
+       * at 6 o'clock). That is the top-arc / bottom-arc choice.
+       */
+      direction: 'cw' | 'ccw'
+      orientation: TextBaselineOrientation
+    }
+  | {
+      kind: 'path'
+      /** Snapshot of the guide outline, baked at commit so the definition stays self-contained. */
+      path: SketchProfile
+      startOffset: number
+      endOffset: number
+      anchor: TextBaselineAnchor
+      fit: TextBaselineFit
+      /** Walk the guide backwards. The path analogue of `direction` above. */
+      reversed: boolean
+      orientation: TextBaselineOrientation
+    }
+
 export interface TextFeatureData {
   text: string
   style: TextFontStyle
   fontId: TextFontId
   size: number
+}
+
+/**
+ * Deep-copy a text layout.
+ *
+ * Text data is copied with a shallow `{ ...text }` in several places (the
+ * project normaliser, the `.camj` importer, definition edits). A shallow copy
+ * would leave a definition and its source sharing one nested layout object —
+ * and for a path layout, one `SketchProfile` — so every one of those sites has
+ * to route through this instead.
+ */
+export function cloneTextLayout(layout: TextLayout | null | undefined): TextLayout | null {
+  if (!layout) return null
+  if (layout.kind === 'arc') return { ...layout, center: { ...layout.center } }
+  return {
+    ...layout,
+    path: {
+      start: { ...layout.path.start },
+      segments: layout.path.segments.map((segment) => (
+        segment.type === 'arc' || segment.type === 'circle'
+          ? { ...segment, to: { ...segment.to }, center: { ...segment.center } }
+          : segment.type === 'bezier'
+            ? { ...segment, to: { ...segment.to }, control1: { ...segment.control1 }, control2: { ...segment.control2 } }
+            : { ...segment, to: { ...segment.to } }
+      )),
+      closed: layout.path.closed,
+    },
+  }
+}
+
+/** Deep-copy text feature data. */
+export function cloneTextFeatureData(text: TextFeatureData | null | undefined): TextFeatureData | null {
+  return text ? { ...text } : null
 }
 
 export type ImportedModelSourceFormat = 'stl' | 'obj'
@@ -329,6 +436,8 @@ export interface SketchFeature {
   name: string
   kind: FeatureKind
   text?: TextFeatureData | null
+  /** Curved baseline, in the same space as `sketch.profile`. See {@link FeatureInstance.textLayout}. */
+  textLayout?: TextLayout | null
   stl?: STLFeatureData | null
   folderId: string | null
   sketch: Sketch
@@ -387,6 +496,16 @@ export interface FeatureInstance {
   name: string
   definitionId: string
   transform: Matrix2D
+  /**
+   * Curved baseline for a text run, in definition-local space. Absent/null is
+   * the straight horizontal run.
+   *
+   * This lives on the **instance**, not the shared definition, because laying a
+   * run on a circle is a placement act like `transform` rather than a change to
+   * the shared shape: two copies of the same text must be able to wrap two
+   * different circles, and curving one copy must not curve the others.
+   */
+  textLayout?: TextLayout | null
   constraints: LocalConstraint[]
   z_top: DimensionRef
   z_bottom: DimensionRef

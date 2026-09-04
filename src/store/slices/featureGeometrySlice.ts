@@ -30,6 +30,7 @@ import {
   type SketchFeature,
   type SketchProfile,
 } from '../../types/project'
+import { cloneTextFeatureData } from '../../types/project'
 import type { OpenProfileEndpoint } from '../types'
 import type { ProjectStore } from '../types'
 import { lerpPoint, normalizePoint, pointLength, scalePoint, subtractPoint } from '../helpers/geometry'
@@ -189,7 +190,7 @@ export function createFeatureGeometrySlice(
       kind: editedFeature.kind,
       profile: localProfile,
       dimensions: editedFeature.sketch.dimensions.map((dimension) => ({ ...dimension })),
-      text: editedFeature.text ? { ...editedFeature.text } : null,
+      text: cloneTextFeatureData(editedFeature.text),
       stl: editedFeature.stl ? { ...editedFeature.stl } : null,
       operation: editedFeature.operation,
     }

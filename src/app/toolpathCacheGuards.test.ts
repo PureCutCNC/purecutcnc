@@ -140,6 +140,7 @@ const FEATURE_FIELD_CLASSIFICATION: Record<keyof FeatureInstance, FieldClass> = 
   locked: 'ignore',
   name: 'compare', // deliberately compared today — flipping this is a design change
   definitionId: 'compare',
+  textLayout: 'compare', // bends the run's geometry, so it must invalidate
   transform: 'compare',
   constraints: 'compare',
   z_top: 'compare',

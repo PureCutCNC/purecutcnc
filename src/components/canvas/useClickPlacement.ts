@@ -30,6 +30,7 @@ import type {
   SketchControlRef,
   SketchEditTool,
   TapeMeasureState,
+  PendingTextLayout,
 } from '../../store/types'
 import type { DimensionAnchor, DimensionAnnotation, Point, Project, SketchFeature } from '../../types/project'
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
@@ -229,6 +230,9 @@ export interface ClickPlacementCtx {
   cancelPendingOffset: () => void
   setFeatureDistributionGuide: (featureId: string) => void
   setFeatureDistributionRadialCenter: (center: Point) => void
+  setTextLayoutGuide: (featureId: string) => void
+  setTextLayoutCenter: (center: Point | null) => void
+  pendingTextLayoutRef: MutableRefObject<PendingTextLayout | null>
   beginHistoryTransaction: () => void
 }
 
@@ -333,6 +337,9 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     cancelPendingOffset,
     setFeatureDistributionGuide,
     setFeatureDistributionRadialCenter,
+    setTextLayoutGuide,
+    setTextLayoutCenter,
+    pendingTextLayoutRef,
     beginHistoryTransaction,
   } = ctx
 
@@ -391,6 +398,26 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
         const guideId = guideHit.candidateIds.find((id) => !pendingFeatureDistribution.sourceIds.includes(id))
         if (guideId) setFeatureDistributionGuide(guideId)
       }
+      return
+    }
+
+    // Picking a guide for text-on-path, or the centre for text-on-arc. The run
+    // being laid out is itself a feature now, so it has to be excluded from the
+    // guide hit — text cannot follow its own outline.
+    const pendingTextLayout = pendingTextLayoutRef.current
+    if (pendingTextLayout?.pickTarget === 'guide') {
+      const guideHit = resolveFeatureSelectionHit(world, resolvedProjectFeatures(project), vt)
+      if (guideHit.kind === 'direct' && guideHit.featureId !== pendingTextLayout.featureId) {
+        setTextLayoutGuide(guideHit.featureId)
+      } else if (guideHit.kind === 'ambiguous') {
+        const guideId = guideHit.candidateIds.find((id) => id !== pendingTextLayout.featureId)
+        if (guideId) setTextLayoutGuide(guideId)
+      }
+      return
+    }
+
+    if (pendingTextLayout?.pickTarget === 'center') {
+      setTextLayoutCenter(pickedPoint ?? world)
       return
     }
 
@@ -828,8 +855,12 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
           setPendingPreviewPointRef({ point: snapped, session: pendingAdd.session })
         }
       } else if (pendingAdd.shape === 'text') {
-        placePendingTextAt(snapped)
-        setPendingPreviewPointRef(null)
+        // A path layout is positioned by its baked guide, so a canvas click has
+        // nothing to say about it — that one commits from the panel instead.
+        if (pendingAdd.config.layout?.kind !== 'path') {
+          placePendingTextAt(snapped)
+          setPendingPreviewPointRef(null)
+        }
       } else if (pendingAdd.shape === 'composite') {
         const draftPoints = compositeDraftPoints(pendingAdd)
         const closeCandidate =

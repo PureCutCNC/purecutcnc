@@ -88,6 +88,8 @@ export function CreationToolbar({
           canCreatePattern={toolbar.sketchCommands.predicates.canCreateFeatureDistribution}
           onDistribute={toolbar.sketchCommands.arrange.distributeFeatures}
           onCreatePattern={toolbar.sketchCommands.arrange.startFeatureDistribution}
+          canLayOutText={toolbar.sketchCommands.predicates.canLayOutText}
+          onLayOutText={toolbar.sketchCommands.arrange.startTextLayout}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}

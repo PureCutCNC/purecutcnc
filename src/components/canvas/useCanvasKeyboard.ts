@@ -28,6 +28,7 @@ import type {
   PendingFeatureDistribution,
   PendingMoveTool,
   PendingOffsetTool,
+  TextLayoutPickTarget,
   PendingShapeActionTool,
   PendingSketchEdit,
   PendingTransformTool,
@@ -35,6 +36,7 @@ import type {
   SketchControlRef,
   SketchEditTool,
   TapeMeasureState,
+  PendingTextLayout,
 } from '../../store/types'
 import type { Point, Project } from '../../types/project'
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
@@ -78,6 +80,10 @@ export interface CanvasKeyboardCtx {
   pendingTransformRef: MutableRefObject<PendingTransformTool | null>
   pendingOffsetRef: MutableRefObject<PendingOffsetTool | null>
   pendingFeatureDistributionRef: MutableRefObject<PendingFeatureDistribution | null>
+  setTextLayoutPickTarget: (target: TextLayoutPickTarget) => void
+  setTextLayoutCenter: (center: Point | null) => void
+  cancelTextLayout: () => void
+  pendingTextLayoutRef: MutableRefObject<PendingTextLayout | null>
   pendingShapeActionRef: MutableRefObject<PendingShapeActionTool | null>
   pendingSketchEditRef: MutableRefObject<PendingSketchEdit | null>
   viewStateRef: MutableRefObject<SketchViewState>
@@ -158,6 +164,10 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
     pendingTransformRef,
     pendingOffsetRef,
     pendingFeatureDistributionRef,
+    setTextLayoutPickTarget,
+    setTextLayoutCenter,
+    cancelTextLayout,
+    pendingTextLayoutRef,
     pendingShapeActionRef,
     pendingSketchEditRef,
     viewStateRef,
@@ -688,6 +698,23 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
         setPendingPreviewPointRef(null)
         return
       }
+    }
+
+    // Esc backs a text layout edit out one step at a time — guide picking
+    // first, then the arc centre — so a mis-click does not close the panel and
+    // throw away the settings with it.
+    if (event.key === 'Escape' && pendingTextLayoutRef.current) {
+      const pendingLayout = pendingTextLayoutRef.current
+      if (pendingLayout.pickTarget) {
+        setTextLayoutPickTarget(null)
+        return
+      }
+      if (pendingLayout.center) {
+        setTextLayoutCenter(null)
+        return
+      }
+      cancelTextLayout()
+      return
     }
 
     if (event.key === 'Escape' && pendingAdd) {

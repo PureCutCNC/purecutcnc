@@ -92,7 +92,7 @@ export interface FeatureDistributionPlannerInput {
   guideProfile?: SketchProfile | null
 }
 
-interface PathPoint {
+export interface PathPoint {
   point: Point
   tangent: Point
 }
@@ -424,7 +424,12 @@ function bezierPiece(start: Point, control1: Point, control2: Point, end: Point)
   }
 }
 
-function normalizedPathRange(path: ProfilePathMeasure, startOffset: number, endOffset: number): { start: number; span: number } | null {
+/**
+ * Clamp a start/end offset pair onto a measured path, wrapping across the seam
+ * on a closed one. Exported for `src/text/baseline.ts`, which places glyphs
+ * along the same span a distribution would place copies along.
+ */
+export function normalizedPathRange(path: ProfilePathMeasure, startOffset: number, endOffset: number): { start: number; span: number } | null {
   if (!Number.isFinite(startOffset) || !Number.isFinite(endOffset)
     || startOffset < 0 || endOffset < 0 || startOffset > path.length || endOffset > path.length) {
     return null
