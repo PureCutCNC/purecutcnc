@@ -317,7 +317,25 @@ function testXyLeadIsOfferedOnEdgeRoutesButNotTrochoidalOnes() {
       `a contour-roughing ${kind} offers it too`)
     assert(!field.appliesTo(makeOperation({ kind, pass: 'rough', edgeStrategy: 'trochoidal' })),
       `a trochoidal ${kind} does not`)
+
+    // Stock left on a ROUGHING pass means a finish pass comes back and machines
+    // the mark away, so the generator emits no lead — and the row goes with it
+    // rather than offering a setting that cannot change the program (#708).
+    assert(!field.appliesTo(makeOperation({
+      kind, pass: 'rough', edgeStrategy: 'contour', stockToLeaveRadial: 0.5,
+    })), `a ${kind} roughing pass leaving stock does not offer it`)
+    // A FINISH pass cuts the wall it leaves whatever the stock field says.
+    assert(field.appliesTo(makeOperation({ kind, pass: 'finish', stockToLeaveRadial: 0.5 })),
+      `but a finish ${kind} still does`)
   }
+
+  // The same rule, same predicate, on the clearing kinds — a rough pocket that
+  // leaves stock was offering it too.
+  assert(field.appliesTo(makeOperation({ kind: 'pocket', pass: 'rough', pocketPattern: 'offset' })),
+    'a rough pocket at zero stock offers the XY approach')
+  assert(!field.appliesTo(makeOperation({
+    kind: 'pocket', pass: 'rough', pocketPattern: 'offset', stockToLeaveRadial: 0.5,
+  })), 'and stops offering it once stock is left')
 }
 
 function testTrochoidalPredicatesMatchTheEnginesOwn() {

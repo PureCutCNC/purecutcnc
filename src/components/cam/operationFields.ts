@@ -45,6 +45,7 @@ import type { Operation, OperationKind, Tool } from '../../types/project'
 import { isTrochoidalCarve, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import { clearingControlApplies, type ClearingControl } from '../../engine/toolpaths/clearingControls'
 import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
+import { roughingRingIsTheFinishedWall } from '../../engine/toolpaths/xyLead'
 import {
   isTrochoidalOperation,
   resolvedEntryStrategy,
@@ -472,27 +473,36 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     //
     // Offered wherever the operation could reach a surface that survives into
     // the part: a finish pass that cuts walls, or a roughing pass whose rings
-    // are contours rather than raster fill. Deliberately NOT gated on
-    // `stockToLeaveRadial`, even though the engine only emits roughing leads at
-    // zero: hiding a control because of another field's current value strands
-    // the user's choice the moment they change that value back.
+    // ARE the finished wall.
     //
-    // An edge route cuts nothing but wall contours, so it always qualifies —
-    // except as trochoidal roughing, which enters through its own helix away
-    // from the wall and reaches the wall by widening orbits. There is no
-    // descent onto the wall there for a lead to move, so the row would offer a
-    // setting that could not change the program.
+    // The roughing half asks the generator's own predicate rather than
+    // restating half of it. It was previously the pattern term alone,
+    // deliberately ungated on `stockToLeaveRadial` so that changing the stock
+    // could not make the row vanish — but the result was a control the user
+    // could pick while the generator quietly ignored it, because stock left
+    // means a finish pass comes back and machines the mark away. Offering a
+    // setting that cannot change the program is the worse of the two, and the
+    // stored value survives the row disappearing, so a choice made at zero
+    // stock is still there when the stock goes back to zero.
+    //
+    // An edge route cuts nothing but wall contours, so a finish one always
+    // qualifies — except as trochoidal roughing, which enters through its own
+    // helix away from the wall and reaches the wall by widening orbits. There
+    // is no descent onto the wall there for a lead to move.
     id: 'xyLeadStrategy',
     group: 'entry',
     paramRef: 'xyLeadStrategy',
     appliesTo: (operation) => {
-      if (isEdgeRouteKind(operation.kind)) return !isTrochoidalEdgeRoughing(operation)
-      return (operation.kind === 'pocket'
+      if (isTrochoidalEdgeRoughing(operation)) return false
+      const carries = isEdgeRouteKind(operation.kind)
+        || operation.kind === 'pocket'
         || operation.kind === 'surface_clean'
-        || operation.kind === 'rough_surface')
-        && (operation.pass === 'finish'
-          ? operation.finishWalls
-          : usesTangentLinks(operation.kind, operation.pocketPattern))
+        || operation.kind === 'rough_surface'
+      if (!carries) return false
+      if (operation.pass === 'finish') {
+        return isEdgeRouteKind(operation.kind) || operation.finishWalls
+      }
+      return roughingRingIsTheFinishedWall(operation)
     },
   },
   {

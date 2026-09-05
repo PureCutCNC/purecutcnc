@@ -586,6 +586,27 @@ test.describe('CAM operation browser smoke', () => {
     operations = project.operations as OperationSnapshot[]
     expect(operations[0].xyLeadStrategy).toBe('arc')
 
+    // Radial stock on a ROUGHING pass means a finish pass comes back and
+    // machines the mark away, so the generator emits no lead — and the row goes
+    // with it rather than offering a setting that cannot change the program
+    // (#708). The stored choice survives, so it is still there when the stock
+    // goes back to zero.
+    const stockField = ui.cam.operationField(app.page, 'Stock to leave radial')
+    await stockField.locator('input').fill('0.5')
+    await stockField.locator('input').blur()
+    await expect(app.page.getByText('XY approach & exit', { exact: true })).toHaveCount(0)
+
+    project = await getProject(app.page)
+    operations = project.operations as OperationSnapshot[]
+    expect(operations[0].xyLeadStrategy).toBe('arc')
+
+    await stockField.locator('input').fill('0')
+    await stockField.locator('input').blur()
+    await expect(ui.cam.operationField(app.page, 'XY approach & exit')).toHaveCount(1)
+    await expect(
+      ui.cam.operationField(app.page, 'XY approach & exit').locator('.ui-select__label'),
+    ).toHaveText('Tangent arc')
+
     // A raster pattern has no clearing ring to lead onto, so the row goes away
     // rather than offering a setting the generator would decline.
     await ui.cam.operationGroup(app.page, 'Strategy').click()
