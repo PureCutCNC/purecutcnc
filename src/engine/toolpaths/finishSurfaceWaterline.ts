@@ -60,6 +60,7 @@ import { resolveRegionDomainCentre } from './regionDomain'
 import { buildRegionMask } from './regions'
 import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 import { appendAll } from './appendAll'
+import { finishScallopSpacing, finishScallopWaterlineStepdown } from './scallopHeight'
 
 const WATERLINE_LENGTH_EPSILON_MM = 0.01
 
@@ -1575,10 +1576,12 @@ export function generateFinishSurfaceWaterline(
   const stepoverRatio = operation.stepover ?? 0.5
   const waterlineLengthEpsilon = convertLength(WATERLINE_LENGTH_EPSILON_MM, 'mm', project.meta.units)
   const autoStepoverDistance = stepoverRatio * tool.diameter
+  const scallopSpacing = finishScallopSpacing(operation, tool)
   const stepoverDistance = Math.max(
-    operation.waterlineMicroStepover && operation.waterlineMicroStepover > 0
+    scallopSpacing
+      ?? (operation.waterlineMicroStepover && operation.waterlineMicroStepover > 0
       ? operation.waterlineMicroStepover
-      : autoStepoverDistance,
+      : autoStepoverDistance),
     waterlineLengthEpsilon,
   )
   const refinementGapThreshold = Math.max(
@@ -1601,7 +1604,7 @@ export function generateFinishSurfaceWaterline(
   const tipStepdownDistance = Math.max(
     operation.waterlineTipStepdown && operation.waterlineTipStepdown > 0
       ? operation.waterlineTipStepdown
-      : operation.stepdown / 2,
+      : (finishScallopWaterlineStepdown(operation, tool) ?? operation.stepdown) / 2,
     waterlineLengthEpsilon,
   )
   const adaptiveRefinementEnabled = operation.waterlineAdaptiveRefinement ?? true

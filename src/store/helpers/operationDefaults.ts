@@ -16,6 +16,7 @@
 
 import { featureHasClosedGeometry } from '../../text'
 import { convertLength } from '../../utils/units'
+import { spacingToScallopHeight } from '../../engine/toolpaths/scallopHeight'
 import { defaultRetractOffset, defaultTool } from '../../types/project'
 import { isConstruction, isMachinable, isRegion, sectionForOperation } from './featureRoles'
 import { isVCarveCompatibleFeature } from './vcarveTargets'
@@ -348,6 +349,9 @@ export function defaultOperationForTarget(
     maxCarveDepth: isVCarve ? vCarveMaxDepth : convertLength(1, 'mm', project.meta.units),
     cutDirection: 'conventional',
     machiningOrder: 'feature_first',
+    finishScallopHeight: kind === 'finish_surface' && tool.type === 'ball_endmill'
+      ? spacingToScallopHeight(tool.diameter / 2, tool.defaultStepover * tool.diameter) ?? 0
+      : 0,
     waterlineAdaptiveRefinement: true,
     waterlineMicroStepover: defaultWaterlineMicroStepover(tool),
     waterlineRefinementThreshold: 0,

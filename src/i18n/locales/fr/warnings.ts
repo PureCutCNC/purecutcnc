@@ -19,6 +19,7 @@ import type { warningsEn } from '../en/warnings'
 /** French structured toolpath and postprocessor warnings. */
 export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.finishSlopeInvalid': 'Les limites de pente doivent être des angles finis entre 0 et 90°, avec un minimum inférieur ou égal au maximum. Aucun parcours généré.',
+  'warnings.finishScallopHeightOutOfRange': 'La hauteur de crête doit être supérieure à zéro et inférieure au rayon de la fraise boule. Aucun parcours généré.',
   'warnings.finishSlopeEmpty': 'Aucune surface accessible ne correspond à la plage de pente choisie.',
   'warnings.finishSlopeTooComplex': 'La limite de pente est trop complexe pour être résolue en sécurité. Aucun parcours généré.',
   'warnings.debug': '{text}',

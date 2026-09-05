@@ -156,12 +156,20 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.contourSpacing': 'Konturabstand',
   'cam.operation.stepoverRatio': 'Bahnabstand-Verhältnis',
   'cam.operation.trochoidalRingPitch': 'Ringe {pitch} auseinander in einem Kanal von {width}',
+  'cam.operation.scallopHeight': 'Riefenhöhe',
+  'cam.operation.scallopHeightTooltip': 'Angestrebte Riefenhöhe zwischen benachbarten Schlichtbahnen eines Kugelfräsers.',
+  'cam.operation.scallopHeightHint': 'Höhe der Riefen zwischen den Bahnen. Kleinere Werte ergeben eine feinere Oberfläche und längere Bearbeitungszeit.',
+  'cam.operation.scallopHeightInvalid': 'Geben Sie eine Höhe größer als null und kleiner als den Kugelradius ein ({radius} {units}).',
+  'cam.operation.scallopWaterlineAssumption': 'Waterline verwendet den angenommenen Steilheitsschwellenwert von {angle}°.',
+  'cam.operation.impliedScallop': 'Abgeleitete Riefe: {value}',
+  'cam.operation.impliedScallopAtSlope': 'Abgeleitete Riefe bei {angle}°: {value}',
   'cam.operation.group.identity': 'Identität',
   'cam.operation.group.target': 'Was gefräst wird',
   'cam.operation.group.tool': 'Werkzeug',
   'cam.operation.group.depth': 'Tiefe',
   'cam.operation.group.feeds': 'Vorschub & Drehzahl',
   'cam.operation.group.strategy': 'Strategie',
+  'cam.operation.group.advanced': 'Erweiterte Überschreibungen',
   'cam.operation.group.entry': 'Eintauchen & Rückzug',
   'cam.operation.group.corners': 'Ecken',
   'cam.operation.group.drilling': 'Bohren',
@@ -362,6 +370,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // ── Parameter reference diagram labels ──
   'cam.paramRef.stepdown': 'Referenz für Zustellung',
+  'cam.paramRef.scallopHeight': 'Referenz für Riefenhöhe',
   'cam.paramRef.edgeStrategy': 'Strategie',
   'cam.paramRef.trochoidalCutWidth': 'Trochoidale Schnittbreite',
   'cam.paramRef.trochoidalAdvance': 'Vorschub pro Schleife',
@@ -480,7 +489,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // 3D Surface finish
   'cam.opDesc.finishSurface.title': '3D-Oberfläche schlichten',
-  'cam.opDesc.finishSurface.fullDescription': 'Oberflächenschlichten erzeugt die endgültige Oberfläche eines importierten 3D-Modells. Wählen Sie Parallel (Scanlinien in einstellbarem Winkel) für flachere Geometrie, Konstante Riefenhöhe (Bahnen mit gleichmäßigem Abstand entlang der Oberfläche) für gewölbte und geschnitzte Decken oder Wasserlinie (Konturen bei konstantem Z) für steilere Wände. Verwenden Sie einen kleinen Bahnabstand für Parallel und Konstante Riefenhöhe oder eine kleine Zustellung für Wasserlinie.',
+  'cam.opDesc.finishSurface.fullDescription': 'Oberflächenschlichten erzeugt die endgültige Oberfläche eines importierten 3D-Modells. Wählen Sie Parallel (Scanlinien in einstellbarem Winkel) für flachere Geometrie, Konstante Riefenhöhe (Bahnen mit gleichmäßigem Abstand entlang der Oberfläche) für gewölbte und geschnitzte Decken oder Wasserlinie (Konturen bei konstantem Z) für steilere Wände. Stellen Sie für Konstante Riefenhöhe mit einem Kugelfräser die Riefenhöhe ein: Kleinere Werte ergeben eine feinere Oberfläche und längere Bearbeitungszeit.',
   'cam.opDesc.finishSurface.keyPoint.0': 'Erfordert ein importiertes 3D-Modell',
   'cam.opDesc.finishSurface.keyPoint.1': 'Parallel- (Scanlinie) oder Wasserlinien-Muster (konstantes Z)',
   'cam.opDesc.finishSurface.keyPoint.2': 'Einzeldurchgang-Operation (keine Schrupp-/Schlicht-Aufteilung – diese Operation ist das Schlichten)',

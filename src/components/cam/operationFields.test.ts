@@ -35,6 +35,7 @@ import {
   type OperationFieldId,
 } from './operationFields'
 import {
+  defaultTool,
   type DrillType,
   type EntryStrategy,
   type Operation,
@@ -157,7 +158,13 @@ function testEveryDeclaredIdHasExactlyOneRow() {
 function testEveryFieldNamesADeclaredGroup() {
   const groupIds = new Set<string>(OPERATION_FIELD_GROUP_IDS)
   for (const field of OPERATION_FIELDS) {
-    assert(groupIds.has(field.group), `field '${field.id}' names unknown group '${field.group}'`)
+    const group = field.group
+    const groups = typeof group === 'function'
+      ? ALL_KINDS.map((kind) => group(makeOperation({ kind })))
+      : [group]
+    for (const group of groups) {
+      assert(groupIds.has(group), `field '${field.id}' names unknown group '${group}'`)
+    }
   }
   const specIds = OPERATION_FIELD_GROUPS.map((group) => group.id)
   assert(
@@ -169,11 +176,37 @@ function testEveryFieldNamesADeclaredGroup() {
   }
 }
 
+function testScallopHeightIsOnlyOfferedForBallEndmillSurfaceFinishing() {
+  const operation = makeOperation({ kind: 'finish_surface' })
+  const flatTool = defaultTool('mm', 1)
+  const ballTool = { ...flatTool, type: 'ball_endmill' as const }
+  const visible = (tool: typeof flatTool) => OPERATION_FIELD_GROUPS
+    .flatMap((group) => operationFieldsForGroup(group.id, operation, tool))
+    .map((field) => field.id)
+
+  assert(!visible(flatTool).includes('scallopHeight'), 'a flat endmill must not offer scallop height')
+  assert(visible(ballTool).includes('scallopHeight'), 'a ball endmill must offer scallop height')
+  assert(
+    operationFieldsForGroup('advanced', operation, ballTool).some((field) => field.id === 'stepdown'),
+    'finish-surface stepdown must live in Advanced overrides',
+  )
+  assert(
+    operationFieldsForGroup('advanced', operation, ballTool).some((field) => field.id === 'stepover'),
+    'finish-surface stepover must live in Advanced overrides',
+  )
+  operation.pocketPattern = 'constant_scallop'
+  assert(visible(ballTool).includes('scallopHeight'), 'constant scallop must expose its height')
+  assert(!visible(ballTool).includes('stepdown'), 'constant scallop must not expose unused stepdown')
+  assert(!visible(ballTool).includes('stepover'), 'constant scallop must not expose competing stepover')
+  assert(operationFieldsForGroup('advanced', operation, ballTool).length === 0, 'constant scallop must have no advanced overrides')
+}
+
 function testEveryFieldIsReachable() {
   const shapes = everyOperationShape()
+  const ballTool = { ...defaultTool('mm', 1), type: 'ball_endmill' as const }
   for (const field of OPERATION_FIELDS) {
     assert(
-      shapes.some((operation) => field.appliesTo(operation)),
+      shapes.some((operation) => field.appliesTo(operation, ballTool)),
       `field '${field.id}' applies to no operation shape — it can never render`,
     )
   }
@@ -445,6 +478,7 @@ testEveryDeclaredIdHasExactlyOneRow()
 testEveryFieldNamesADeclaredGroup()
 testEveryFieldIsReachable()
 testEveryKindRendersAtLeastOneGroup()
+testScallopHeightIsOnlyOfferedForBallEndmillSurfaceFinishing()
 testGoldenRenderOrder()
 testSpeedsAndFeedsSitAboveTheFold()
 testGroupsWithNothingToShowDoNotRender()

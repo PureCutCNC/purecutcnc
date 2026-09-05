@@ -69,6 +69,7 @@ import { mixedSlopeHeight, slopeTestMesh, surfaceTestProject } from '../../test/
 import { getOperationSafeZ } from './geometry'
 import type { Operation, Project } from '../../types/project'
 import type { ToolpathMove } from './types'
+import { spacingToScallopHeight } from './scallopHeight'
 
 const DEG = Math.PI / 180
 const TOOL_DIAMETER = 4
@@ -141,6 +142,75 @@ test('pass separation follows the surface, where parallel spacing stretches with
     // the first assertion above proves nothing about the fixture.
     if (degrees === 45) assert(parallel >= SPACING * 1.3, 'the 45-degree fixture no longer discriminates')
   }
+})
+
+test('scallop height drives emitted parallel and constant-scallop pass spacing', () => {
+  const { project, operation } = fixture(ramp(0))
+  const scallopHeight = spacingToScallopHeight(TOOL_RADIUS, SPACING)
+  assert.notEqual(scallopHeight, null)
+  for (const pocketPattern of ['parallel', 'constant_scallop'] as const) {
+    const result = generate(project, operation, {
+      pocketPattern,
+      finishScallopHeight: scallopHeight as number,
+      stepover: 0.45,
+    })
+    const separation = passSeparation3D(result.moves, 0, 25, 35)
+    assert(
+      Math.abs(separation - SPACING) <= SPACING * 0.05,
+      `${pocketPattern} separated passes by ${separation.toFixed(4)}, not ${SPACING}`,
+    )
+  }
+})
+
+test('constant scallop preserves legacy motion and ignores unused stepdown', () => {
+  const { project, operation } = fixture(ramp(30), 20, 15)
+  const original = structuredClone(operation)
+  const legacy = generate(project, operation, { finishScallopHeight: undefined })
+  assert(legacy.moves.length > 0)
+  assert.deepEqual(generate(project, operation, { finishScallopHeight: 0 }), legacy)
+  assert.deepEqual(operation, original, 'generating a legacy operation must not persist a derived height')
+  for (const finishScallopHeight of [undefined, 0.02]) {
+    const baseline = generate(project, operation, { finishScallopHeight })
+    for (const stepdown of [0, -1, Number.NaN, 100]) {
+      assert.deepEqual(generate(project, operation, { finishScallopHeight, stepdown }), baseline)
+    }
+  }
+})
+
+test('a scallop height at the ball radius refuses without emitting non-finite motion', () => {
+  const { project, operation } = fixture(ramp(0))
+  const result = generate(project, operation, { finishScallopHeight: TOOL_RADIUS })
+  assert.equal(result.moves.length, 0)
+  assert(result.warnings.some((warning) => warning.code === 'finishScallopHeightOutOfRange'))
+  assert(result.moves.every((move) => [move.from.x, move.from.y, move.from.z, move.to.x, move.to.y, move.to.z].every(Number.isFinite)))
+})
+
+test('waterline coarse levels use scallop spacing projected through the steep threshold', () => {
+  const { project, operation } = fixture(ramp(30))
+  const scallopHeight = spacingToScallopHeight(TOOL_RADIUS, SPACING)
+  assert.notEqual(scallopHeight, null)
+  const result = generate(project, operation, {
+    pocketPattern: 'waterline',
+    finishScallopHeight: scallopHeight as number,
+    finishSlopeMin: 30,
+    finishSlopeMax: 90,
+    stepdown: 1.3,
+    waterlineAdaptiveRefinement: false,
+    waterlineMicroStepover: 0.2,
+  })
+  const levels = [...new Set(result.stepLevels.map((level) => Math.round(level * 1e6) / 1e6))]
+    .sort((left, right) => right - left)
+  const gaps = levels.slice(1)
+    .map((level, index) => levels[index] - level)
+    .filter((gap) => gap > 0.1)
+    .sort((left, right) => left - right)
+  assert(gaps.length > 10, 'the waterline fixture must emit enough coarse levels to measure')
+  const medianGap = gaps[Math.floor(gaps.length / 2)]
+  const expectedGap = SPACING * Math.sin(30 * DEG)
+  assert(
+    Math.abs(medianGap - expectedGap) <= 0.05,
+    `waterline coarse levels are ${medianGap.toFixed(4)} apart, not ${expectedGap.toFixed(4)}`,
+  )
 })
 
 test('the cutter stays on the cutter-location surface it is lifted onto', () => {

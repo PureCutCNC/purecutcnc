@@ -45,6 +45,11 @@ import {
 import { generateFinishSurfaceWaterline } from './finishSurfaceWaterline'
 import { generateFinishSurfaceConstantScallop } from './finishSurfaceConstantScallop'
 import { effectivePocketPattern } from './pocketPatterns'
+import {
+  finishScallopHeightIsValid,
+  finishScallopWaterlineStepdown,
+  hasConfiguredFinishScallopHeight,
+} from './scallopHeight'
 
 export { maxContourGap } from './finishSurfaceWaterline'
 
@@ -221,7 +226,19 @@ export function generateFinishSurfaceToolpath(
       stepLevels: [],
     }
   }
-  if (!(operation.stepdown > 0)) {
+  if (hasConfiguredFinishScallopHeight(operation) && !finishScallopHeightIsValid(operation, tool)) {
+    return {
+      operationId: operation.id,
+      moves: [],
+      warnings: [{ code: 'finishScallopHeightOutOfRange' }],
+      bounds: null,
+      stepLevels: [],
+    }
+  }
+  const waterlineStepdown = isWaterline
+    ? finishScallopWaterlineStepdown(operation, tool) ?? operation.stepdown
+    : operation.stepdown
+  if (!isConstantScallop && (!(waterlineStepdown > 0) || !Number.isFinite(waterlineStepdown))) {
     return {
       operationId: operation.id,
       moves: [],
@@ -321,7 +338,8 @@ export function generateFinishSurfaceToolpath(
   const stepLevelTopZ = isWaterline
     ? Math.max(modelTopZ, intersectingAddTopMax)
     : modelTopZ
-  let stepLevels = generateStepLevels(stepLevelTopZ, effectiveBottom, operation.stepdown)
+  // Constant scallop follows the surface directly and never consumes Z levels.
+  let stepLevels = isConstantScallop ? [] : generateStepLevels(stepLevelTopZ, effectiveBottom, waterlineStepdown)
   if (isWaterline) {
     // Insert stepLevelTopZ, modelTopZ, and horizontal floor Zs within the
     // effective range as additional waterline rings. The floor levels are
@@ -341,7 +359,7 @@ export function generateFinishSurfaceToolpath(
     stepLevels = [...merged].sort((a, b) => b - a)
   }
 
-  if (stepLevels.length === 0) {
+  if (!isConstantScallop && stepLevels.length === 0) {
     return {
       operationId: operation.id,
       moves: [],

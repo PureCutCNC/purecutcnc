@@ -251,6 +251,7 @@ export function normalizeOperation(rawOperation: Operation, project: Project, in
     roundLinkCorners: operation.roundLinkCorners ?? true,
     cornerRelief: operation.cornerRelief ?? 'none',
     machiningOrder: operation.machiningOrder ?? 'level_first',
+    finishScallopHeight: operation.finishScallopHeight ?? 0,
     waterlineAdaptiveRefinement: operation.waterlineAdaptiveRefinement ?? true,
     waterlineMicroStepover: operation.waterlineMicroStepover ?? 0,
     waterlineRefinementThreshold: operation.waterlineRefinementThreshold ?? 0,

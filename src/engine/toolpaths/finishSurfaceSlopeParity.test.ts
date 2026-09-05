@@ -24,6 +24,7 @@ import { optimizeLinearMoves } from './linearMoveOptimization'
 import { normalizeToolForProject } from './geometry'
 import { runPostProcessor } from '../gcode/postprocessor'
 import { validateMachineDefinition, type MachineDefinition } from '../gcode/types'
+import type { Project } from '../../types/project'
 
 // Captured BEFORE #702's generator changes at c2354aa618a45d4eba147d2d33123a5147958de7.
 // Compared with the prior 31b36db capture, only #704's three flat-top waterline rows changed.
@@ -150,8 +151,13 @@ function testMachineDefinition(): MachineDefinition {
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
 for (const name of ['3d-imported-block-test3.camj', 'issue-401-cone-finish.camj', 'model-in-pocket.camj']) {
-  test(`${name}: omitted slope settings preserve pre-change moves and G-code`, () => {
-    const project = normalizeProject(JSON.parse(readFileSync(new URL(`../test-fixtures/${name}`, import.meta.url), 'utf8')))
+  test(`${name}: omitted slope and scallop settings preserve pre-change moves and G-code`, () => {
+    const serialized = readFileSync(new URL(`../test-fixtures/${name}`, import.meta.url), 'utf8')
+    const rawProject = JSON.parse(serialized) as Project
+    for (const operation of rawProject.operations) {
+      assert(!('finishScallopHeight' in operation), `${name}/${operation.id} unexpectedly stores the new field`)
+    }
+    const project = normalizeProject(rawProject)
     const candidates = project.operations.filter(o => o.kind === 'finish_surface' || o.kind === 'finish_surface_cleanup')
     for (const original of candidates) for (const pocketPattern of ['parallel', 'waterline'] as const) {
       const operation = { ...original, kind: 'finish_surface' as const, pocketPattern }

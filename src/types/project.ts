@@ -753,6 +753,8 @@ export interface Operation {
   /** Optional CL-surface slope bounds in degrees from horizontal (finish_surface only). */
   finishSlopeMin?: number
   finishSlopeMax?: number
+  /** Desired cusp height for ball-endmill finish_surface passes, in project units. */
+  finishScallopHeight?: number
   waterlineAdaptiveRefinement?: boolean
   waterlineMicroStepover?: number
   waterlineRefinementThreshold?: number

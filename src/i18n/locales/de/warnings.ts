@@ -24,6 +24,7 @@ import type { warningsEn } from '../en/warnings'
  */
 export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.finishSlopeInvalid': 'Neigungsgrenzen müssen endliche Winkel von 0 bis 90° sein; das Minimum darf das Maximum nicht überschreiten. Kein Werkzeugweg erzeugt.',
+  'warnings.finishScallopHeightOutOfRange': 'Die Riefenhöhe muss größer als null und kleiner als der Radius des Kugelfräsers sein. Kein Werkzeugweg erzeugt.',
   'warnings.finishSlopeEmpty': 'Keine erreichbare Oberfläche entspricht dem gewählten Neigungsbereich.',
   'warnings.finishSlopeTooComplex': 'Die Neigungsgrenze ist zu komplex, um sie sicher aufzulösen. Kein Werkzeugweg erzeugt.',
   'warnings.debug': '{text}',

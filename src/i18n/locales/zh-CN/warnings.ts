@@ -23,6 +23,7 @@ import type { warningsEn } from '../en/warnings'
  */
 export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.finishSlopeInvalid': '曲面坡度限值必须为 0 至 90° 的有限角度，且最小值不得大于最大值。未生成刀具路径。',
+  'warnings.finishScallopHeightOutOfRange': '残脊高度必须大于零且小于球头铣刀半径。未生成刀具路径。',
   'warnings.finishSlopeEmpty': '没有可达曲面符合所选坡度范围。',
   'warnings.finishSlopeTooComplex': '曲面坡度边界过于复杂，无法安全解析。未生成刀具路径。',
   'warnings.debug': '{text}',
