@@ -34,6 +34,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `onboarding/` — first-run / empty-state UI (`EmptyStateOverlay` shown over the center viewport when the project has no features)
 
 ## Conventions
+- `cam/ScallopHeightField.tsx` — Constant scallop's single finish-quality input, with units, strict positive-height validation, and a display-only legacy stepover conversion that preserves saved output until edited.
 - Opt-in GPU sketch renderer (#683): `canvas/gpuToolpathRenderer.ts` retains full XY buffers and composites per-layer coverage masks; `gpuToolpathShaders.ts` owns screen-space shaders. `gpuToolpathAnnotations.ts` reuses Canvas arrow/debug rules in an operation-ordered texture. `useSketchToolpathRenderer.ts` owns lazy loading, cancellation, disposal and fallback/retry; `toolpathRendererPreference.ts` owns the application-local codec and non-persisting DEV comparison override (covered by its test). `renderSketchToolpaths.ts` selects GPU or Canvas fallback without changing navigation ownership. `toolpathStyles.ts` shares styles with Canvas/booklet output. Canvas remains default and always renders booklet snapshots. See [`tools/gpu-toolpath-poc/`](../../tools/gpu-toolpath-poc/INDEX.md) for the comparison harness and remaining device gates.
 - Heavy compute (CSG, toolpath gen, sim) is debounced. See `Viewport3D` (150–300ms typical).
 - Mutations go through `projectStore` actions only — never mutate Zustand state directly from components.
