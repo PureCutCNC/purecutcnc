@@ -6,6 +6,14 @@ coding rules, and verification. Read `ARCHITECTURE.md` only for technical
 contracts and the one matching `planning/*.md` document for a durable design
 reference.
 
+**Critical Path — read this first, then the full AGENTS.md:**
+- **Issue first.** Open a GitHub issue (#NN) before any code. Fast lane skips Plan/Approve **only** if `npm run check:fast-lane` is green.
+- **Branch, never `main`.** Work on a feature branch; the `main-requires-pr` ruleset blocks merge without a PR.
+- **Build green.** `npm run build` (lint + tsc + tests + icons) must pass before committing.
+- **Worktrees only.** Never edit the primary checkout's working tree — use `git worktree add` outside the repo.
+- **Protected paths → full lane.** `AGENTS.md` and engine/gcode/machine/format code — plan + approve required.
+- **Close with a PR.** End with a PR containing `Closes #NN`; rebase onto `main` first.
+
 Every task gets a GitHub issue; its plan and acceptance criteria live there and
 need approval before implementation. Small changes that pass the `AGENTS.md`
 fast-lane check skip the plan and approval, nothing else.
