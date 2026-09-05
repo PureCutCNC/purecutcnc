@@ -30,7 +30,7 @@ import {
   type SketchFeature,
   type SketchProfile,
 } from '../../types/project'
-import { cloneTextFeatureData } from '../../types/project'
+import { cloneTextFeatureData, cloneTextLayout } from '../../types/project'
 import type { OpenProfileEndpoint } from '../types'
 import type { ProjectStore } from '../types'
 import { lerpPoint, normalizePoint, pointLength, scalePoint, subtractPoint } from '../helpers/geometry'
@@ -114,6 +114,10 @@ export function createFeatureGeometrySlice(
       name: feature.name,
       definitionId: feature.definitionId,
       transform: { ...feature.transform },
+      // The baseline is the instance's own (#671). Every geometry action rebuilds
+      // *all* rows through here, so omitting it straightened every curved run in
+      // the project whenever any feature was edited (#726).
+      textLayout: cloneTextLayout(feature.textLayout),
       constraints: feature.sketch.constraints.map((constraint) => ({ ...constraint })),
       z_top: feature.z_top,
       z_bottom: feature.z_bottom,

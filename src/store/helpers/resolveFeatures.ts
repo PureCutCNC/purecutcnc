@@ -530,6 +530,7 @@ export function featureInstanceFromResolved(
     name: feature.name,
     definitionId: feature.definitionId,
     transform: { ...feature.transform },
+    textLayout: cloneTextLayout(feature.textLayout),
     constraints: feature.sketch.constraints.map((constraint) => ({ ...constraint })),
     z_top: feature.z_top,
     z_bottom: feature.z_bottom,
