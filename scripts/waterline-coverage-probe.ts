@@ -98,6 +98,7 @@ function parseArgs(argv: string[]): {
   project?: string
   operation?: string
   spacings: number[]
+  scallopHeight?: number
   stepdown?: number
   cellDivisor: number
   tolerance?: number
@@ -107,6 +108,7 @@ function parseArgs(argv: string[]): {
   const spacings: number[] = []
   let project: string | undefined
   let operation: string | undefined
+  let scallopHeight: number | undefined
   let stepdown: number | undefined
   let cellDivisor: number | undefined
   let tolerance: number | undefined
@@ -118,6 +120,7 @@ function parseArgs(argv: string[]): {
       case '--project': project = value; i += 1; break
       case '--operation': operation = value; i += 1; break
       case '--spacing': spacings.push(Number(value)); i += 1; break
+      case '--scallop-height': scallopHeight = Number(value); i += 1; break
       case '--stepdown': stepdown = Number(value); i += 1; break
       case '--cell-divisor': cellDivisor = Number(value); i += 1; break
       case '--tolerance': tolerance = Number(value); i += 1; break
@@ -142,6 +145,7 @@ function parseArgs(argv: string[]): {
     project,
     operation,
     spacings,
+    scallopHeight,
     stepdown,
     cellDivisor: cellDivisor ?? defaultDivisor,
     tolerance,
@@ -155,11 +159,13 @@ function operationAtSpacing(
   pattern: PocketPattern | undefined,
   spacing: number,
   toolDiameter: number,
+  scallopHeight?: number,
 ): Operation {
   const selected = pattern ?? operation.pocketPattern
   return {
     ...operation,
     debugToolpath: true,
+    ...(scallopHeight !== undefined ? { finishScallopHeight: scallopHeight } : {}),
     ...(pattern ? { pocketPattern: pattern } : {}),
     ...(selected === 'parallel' || selected === 'constant_scallop'
       ? { stepover: spacing / toolDiameter }
@@ -421,7 +427,7 @@ function main(): void {
       const tool = project.tools.find((candidate) => candidate.id === base.toolRef)
       if (!tool) throw new Error(`operation ${base.id} has no tool`)
       const operation: Operation = {
-        ...operationAtSpacing(base, args.pattern, spacing, tool.diameter),
+        ...operationAtSpacing(base, args.pattern, spacing, tool.diameter, args.scallopHeight),
         ...(args.stepdown ? { stepdown: args.stepdown } : {}),
       }
       console.log(`\n=== ${base.id} spacing ${spacing === 0 ? 'auto' : spacing} ===`)
@@ -435,7 +441,7 @@ function main(): void {
     const cuspSpacing = 2 * Math.sqrt(2 * 3 * 0.02 - 0.02 ** 2)
     const runs = args.spacings.length > 0 ? args.spacings : [cuspSpacing]
     for (const spacing of runs) {
-      const patched = operationAtSpacing(operation, args.pattern ?? 'constant_scallop', spacing, 6)
+      const patched = operationAtSpacing(operation, args.pattern ?? 'constant_scallop', spacing, 6, args.scallopHeight)
       project.operations = [patched]
       console.log(`\n=== guitar, ${patched.pocketPattern} spacing ${spacing} mm ===`)
       probe(project, patched, args)
@@ -449,7 +455,7 @@ function main(): void {
       microStepover: spacing,
       ...(args.stepdown ? { stepdown: args.stepdown } : {}),
     })
-    const patched = operationAtSpacing(operation, args.pattern, spacing, project.tools[0].diameter)
+    const patched = operationAtSpacing(operation, args.pattern, spacing, project.tools[0].diameter, args.scallopHeight)
     project.operations = [patched]
     console.log(`\n=== hills, Adaptive spacing ${spacing} mm ===`)
     probe(project, patched, args)

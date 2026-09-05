@@ -159,12 +159,20 @@ export const camEn = {
   'cam.operation.contourSpacing': 'Contour spacing',
   'cam.operation.stepoverRatio': 'Stepover ratio',
   'cam.operation.trochoidalRingPitch': 'Rings {pitch} apart in a {width} channel',
+  'cam.operation.scallopHeight': 'Scallop height',
+  'cam.operation.scallopHeightTooltip': 'Target ridge height between adjacent ball-endmill finish passes.',
+  'cam.operation.scallopHeightHint': 'Height of the ridges between passes. Smaller values give a finer finish and longer machining time.',
+  'cam.operation.scallopHeightInvalid': 'Enter a height greater than zero and smaller than the ball radius ({radius} {units}).',
+  'cam.operation.scallopWaterlineAssumption': 'Waterline uses the assumed {angle}° steep threshold.',
+  'cam.operation.impliedScallop': 'Implied cusp: {value}',
+  'cam.operation.impliedScallopAtSlope': 'Implied cusp at {angle}°: {value}',
   'cam.operation.group.identity': 'Identity',
   'cam.operation.group.target': 'What it cuts',
   'cam.operation.group.tool': 'Tool',
   'cam.operation.group.depth': 'Depth',
   'cam.operation.group.feeds': 'Speeds & feeds',
   'cam.operation.group.strategy': 'Strategy',
+  'cam.operation.group.advanced': 'Advanced overrides',
   'cam.operation.group.entry': 'Entry & retract',
   'cam.operation.group.corners': 'Corners',
   'cam.operation.group.drilling': 'Drilling',
@@ -365,6 +373,7 @@ export const camEn = {
 
   // ── Parameter reference diagram labels ──
   'cam.paramRef.stepdown': 'Stepdown reference',
+  'cam.paramRef.scallopHeight': 'Scallop height reference',
   'cam.paramRef.edgeStrategy': 'Strategy',
   'cam.paramRef.trochoidalCutWidth': 'Trochoidal cut width',
   'cam.paramRef.trochoidalAdvance': 'Advance per loop',
@@ -483,7 +492,7 @@ export const camEn = {
 
   // 3D Surface finish
   'cam.opDesc.finishSurface.title': '3D surface finish',
-  'cam.opDesc.finishSurface.fullDescription': 'The finish surface operation produces the final surface on an imported 3D model. Choose parallel (scanlines at a configurable angle) for shallower geometry, constant scallop (passes spaced evenly along the surface itself) for sculpted and carved tops, or waterline (constant-Z contours) for steeper walls. Use a small stepover for parallel and constant scallop, or a small stepdown for waterline.',
+  'cam.opDesc.finishSurface.fullDescription': 'The finish surface operation produces the final surface on an imported 3D model. Choose parallel (scanlines at a configurable angle) for shallower geometry, constant scallop (passes spaced evenly along the surface itself) for sculpted and carved tops, or waterline (constant-Z contours) for steeper walls. For constant scallop with a ball endmill, set scallop height: smaller values give a finer finish and longer machining time.',
   'cam.opDesc.finishSurface.keyPoint.0': 'Requires an imported 3D model',
   'cam.opDesc.finishSurface.keyPoint.1': 'Parallel (scanline) or waterline (constant-Z) pattern',
   'cam.opDesc.finishSurface.keyPoint.2': 'Single-pass operation (no rough/finish split — this op is the finish)',

@@ -41,7 +41,7 @@
  */
 
 import type { camEn } from '../../i18n/locales/en/cam'
-import type { EntryStrategy, Operation, OperationKind } from '../../types/project'
+import type { EntryStrategy, Operation, OperationKind, Tool } from '../../types/project'
 import { isTrochoidalCarve, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import { clearingControlApplies, type ClearingControl } from '../../engine/toolpaths/clearingControls'
 import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
@@ -61,6 +61,7 @@ export function showStepdown(operation: Operation): boolean {
     || operation.kind === 'v_carve_medial'
     || operation.kind === 'drilling'
     || operation.kind === 'finish_surface_cleanup'
+    || (operation.kind === 'finish_surface' && operation.pocketPattern === 'constant_scallop')
   ) {
     return false
   }
@@ -155,6 +156,7 @@ export const OPERATION_FIELD_GROUP_IDS = [
   'depth',
   'feeds',
   'strategy',
+  'advanced',
   'entry',
   'corners',
   'drilling',
@@ -190,6 +192,7 @@ export const OPERATION_FIELD_GROUPS: readonly OperationFieldGroup[] = [
   { id: 'depth', titleKey: 'cam.operation.group.depth', storageKey: 'cam-op-depth', defaultOpen: true },
   { id: 'feeds', titleKey: 'cam.operation.group.feeds', storageKey: 'cam-op-feeds', defaultOpen: true },
   { id: 'strategy', titleKey: 'cam.operation.group.strategy', storageKey: 'cam-op-strategy', defaultOpen: false },
+  { id: 'advanced', titleKey: 'cam.operation.group.advanced', storageKey: 'cam-op-advanced', defaultOpen: false },
   { id: 'entry', titleKey: 'cam.operation.group.entry', storageKey: 'cam-op-entry', defaultOpen: false },
   { id: 'corners', titleKey: 'cam.operation.group.corners', storageKey: 'cam-op-corners', defaultOpen: false },
   // Drilling applies to one kind, so when it renders at all it is the point of
@@ -238,6 +241,7 @@ export const OPERATION_FIELD_IDS = [
   'trochoidalCutWidth',
   'trochoidalAdvance',
   'trochoidalCarveChannel',
+  'scallopHeight',
   'stepover',
   'slopeFilter',
   'adaptiveRefinement',
@@ -268,11 +272,11 @@ export type OperationFieldId = typeof OPERATION_FIELD_IDS[number]
 
 export interface OperationFieldSpec {
   id: OperationFieldId
-  group: OperationFieldGroupId
+  group: OperationFieldGroupId | ((operation: Operation) => OperationFieldGroupId)
   /** Reference-diagram kind rendered in the row's icon rail, when it has one. */
   paramRef?: OperationParamRefKind
   /** Whether the field is offered for this operation. Pure. */
-  appliesTo: (operation: Operation) => boolean
+  appliesTo: (operation: Operation, tool?: Tool | null) => boolean
 }
 
 const always = () => true
@@ -331,7 +335,12 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     paramRef: 'maxDepth',
     appliesTo: (operation) => operation.kind === 'v_carve' || operation.kind === 'v_carve_medial',
   },
-  { id: 'stepdown', group: 'depth', paramRef: 'stepdown', appliesTo: showStepdown },
+  {
+    id: 'stepdown',
+    group: (operation) => operation.kind === 'finish_surface' ? 'advanced' : 'depth',
+    paramRef: 'stepdown',
+    appliesTo: showStepdown,
+  },
   { id: 'finishWalls', group: 'depth', paramRef: 'finishWalls', appliesTo: offersFinishSurfaces },
   { id: 'finishFloor', group: 'depth', paramRef: 'finishFloor', appliesTo: offersFinishSurfaces },
   {
@@ -410,16 +419,23 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   },
   { id: 'trochoidalCarveChannel', group: 'strategy', appliesTo: isTrochoidalCarve },
   {
-    id: 'stepover',
+    id: 'scallopHeight',
     group: 'strategy',
+    paramRef: 'scallopHeight',
+    appliesTo: (operation, tool) => operation.kind === 'finish_surface' && tool?.type === 'ball_endmill',
+  },
+  {
+    id: 'stepover',
+    group: (operation) => operation.kind === 'finish_surface' ? 'advanced' : 'strategy',
     paramRef: 'stepover',
     // Waterline finishing spaces its rings adaptively, so a ratio means nothing.
-    appliesTo: (operation) => operation.kind !== 'follow_line'
+    appliesTo: (operation, tool) => operation.kind !== 'follow_line'
       && operation.kind !== 'drilling'
       && operation.kind !== 'v_carve_medial'
       && operation.kind !== 'edge_route_inside'
       && operation.kind !== 'edge_route_outside'
-      && !isWaterlineFinish(operation),
+      && !isWaterlineFinish(operation)
+      && !(operation.kind === 'finish_surface' && operation.pocketPattern === 'constant_scallop' && tool?.type === 'ball_endmill'),
   },
   { id: 'slopeFilter', group: 'strategy', appliesTo: (operation) => operation.kind === 'finish_surface' },
   {
@@ -430,13 +446,13 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
   },
   {
     id: 'adaptiveSpacing',
-    group: 'strategy',
+    group: 'advanced',
     paramRef: 'adaptiveSpacing',
     appliesTo: (operation) => isWaterlineFinish(operation) && (operation.waterlineAdaptiveRefinement ?? true),
   },
   {
     id: 'maxRings',
-    group: 'strategy',
+    group: 'advanced',
     paramRef: 'maxRings',
     appliesTo: (operation) => isWaterlineFinish(operation) && (operation.waterlineAdaptiveRefinement ?? true),
   },
@@ -583,6 +599,10 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
 export function operationFieldsForGroup(
   group: OperationFieldGroupId,
   operation: Operation,
+  tool?: Tool | null,
 ): OperationFieldSpec[] {
-  return OPERATION_FIELDS.filter((field) => field.group === group && field.appliesTo(operation))
+  return OPERATION_FIELDS.filter((field) => {
+    const fieldGroup = typeof field.group === 'function' ? field.group(operation) : field.group
+    return fieldGroup === group && field.appliesTo(operation, tool)
+  })
 }

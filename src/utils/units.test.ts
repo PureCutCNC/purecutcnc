@@ -181,6 +181,7 @@ const anchoredAngleDim: DimensionAnnotation = {
     peckDepth: 12.7,
     countersinkDiameter: 6.35,
     retractHeight: 76.2,
+    finishScallopHeight: 0.254,
     waterlineMicroStepover: 2.54,
     waterlineRefinementThreshold: 5.08,
     waterlineTipStepdown: 7.62,
@@ -344,6 +345,7 @@ const anchoredAngleDim: DimensionAnnotation = {
   assert(approx(inch.operations[0].peckDepth ?? 0, 0.5), 'operation peck depth converts')
   assert(approx(inch.operations[0].retractHeight ?? 0, 3), 'operation retract height converts')
   assert(approx(inch.operations[0].countersinkDiameter ?? 0, 0.25), 'operation countersink diameter converts')
+  assert(approx(inch.operations[0].finishScallopHeight ?? 0, 0.01), 'operation scallop height converts')
   assert(approx(inch.tabs[0].x, 1) && approx(inch.tabs[0].w, 0.5), 'tab lengths convert')
   assert(approx(inch.clamps[0].x, 1) && approx(inch.clamps[0].height, 0.5), 'clamp lengths convert')
   assert(inch.tools[0].units === 'mm' && inch.tools[0].diameter === tool.diameter, 'tool records retain independent units')
@@ -354,6 +356,7 @@ const anchoredAngleDim: DimensionAnnotation = {
   assert(approx(round.featureDefinitions['def-text'].dimensions[0].value, 25.4, 1e-7), 'definition dimension round-trips')
   assert(round.featureDefinitions['def-text'].dimensions[0].segment_ids[0] === 'edge-a', 'dimension anchor round-trips')
   assert(approx(roundText.transform.e, 25.4, 1e-7), 'instance translation round-trips')
+  assert(approx(round.operations[0].finishScallopHeight ?? 0, 0.254, 1e-7), 'scallop height round-trips')
   console.log('complete project unit conversion PASS')
 }
 

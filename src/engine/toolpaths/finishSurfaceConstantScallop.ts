@@ -41,6 +41,7 @@ import {
   type HeightMap,
 } from './finishSurfaceParallel'
 import { retractToSafe, transitionToCutEntry } from './pocket'
+import { finishScallopSpacing } from './scallopHeight'
 import {
   buildGeodesicDistanceField,
   extractConstantDistanceContours,
@@ -563,7 +564,7 @@ export function generateFinishSurfaceConstantScallop(
   warnings: ToolpathWarning[],
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const stepoverRatio = operation.stepover ?? 0.5
-  const spacing = stepoverRatio * tool.diameter
+  const spacing = finishScallopSpacing(operation, tool) ?? stepoverRatio * tool.diameter
   if (!(spacing > 0) || !Number.isFinite(spacing)) {
     warnings.push({ code: 'stepoverRatioRange' })
     return { moves: [], stepLevels: new Set() }

@@ -24,6 +24,7 @@
  */
 export const warningsEn = {
   'warnings.finishSlopeInvalid': 'Surface slope bounds must be finite angles from 0 to 90°, with minimum no greater than maximum. No toolpath generated.',
+  'warnings.finishScallopHeightOutOfRange': 'Scallop height must be greater than zero and smaller than the ball-endmill radius. No toolpath generated.',
   'warnings.finishSlopeEmpty': 'No reachable surface matches the selected slope range.',
   'warnings.finishSlopeTooComplex': 'The surface slope boundary is too complex to resolve safely. No toolpath generated.',
   'warnings.debug': '{text}',

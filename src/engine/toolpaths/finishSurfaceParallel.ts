@@ -25,6 +25,7 @@ import { resolveRegionDomainCentre } from './regionDomain'
 import { significantSilhouettePaths } from './silhouette'
 import { buildProtectedFootprintPaths, clipperPathsToTupleContours, differenceClipperPaths, unionClipperPaths } from './modelProtection'
 import { appendAll } from './appendAll'
+import { finishScallopSpacing } from './scallopHeight'
 
 function computeContourBounds(
   contours: Iterable<Array<Array<[number, number]>>>,
@@ -623,7 +624,10 @@ export function generateFinishSurfaceParallel(
   warnings: ToolpathWarning[],
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const stepoverRatio = operation.stepover ?? 0.5
-  const stepoverDistance = Math.max(stepoverRatio * tool.diameter, 1e-3)
+  const stepoverDistance = Math.max(
+    finishScallopSpacing(operation, tool) ?? stepoverRatio * tool.diameter,
+    1e-3,
+  )
   const angleDeg = operation.pocketAngle ?? 0
   // Issue #712: this strategy never read the field, so the value was stored,
   // shown in the panel, and silently dropped.

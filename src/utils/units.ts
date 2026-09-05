@@ -337,6 +337,9 @@ function convertOperation(operation: Operation, from: Units, to: Units): Operati
     retractHeight: operation.retractHeight === undefined
       ? undefined
       : convertLength(operation.retractHeight, from, to),
+    finishScallopHeight: operation.finishScallopHeight === undefined
+      ? undefined
+      : convertLength(operation.finishScallopHeight, from, to),
     waterlineMicroStepover: operation.waterlineMicroStepover === undefined
       ? undefined
       : convertLength(operation.waterlineMicroStepover, from, to),
