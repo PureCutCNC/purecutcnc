@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-import type { CutDirection, EntryStrategy, Operation, Point } from '../../types/project'
+import type { CutDirection, EntryStrategy, Operation, OperationKind, Point } from '../../types/project'
+import { isTrochoidalCarve, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import type { ToolpathMove, ToolpathPoint } from './types'
 import type { ToolpathWarning } from './warningCodes'
 
@@ -121,6 +122,44 @@ interface RampPlacement {
   start: Point
   end: Point
   region: EntryClearanceRegion
+}
+
+/** Either flavour of trochoidal motion: rough edge routing, engraving, or pocket clearing. */
+export function isTrochoidalOperation(operation: Operation): boolean {
+  return isTrochoidalEdgeRoughing(operation) || isTrochoidalCarve(operation) || isTrochoidalPocket(operation)
+}
+
+/**
+ * Operations that let the user choose how the cutter enters the material.
+ *
+ * Lives here, next to the policy it gates, because three separate surfaces ask
+ * the question — the CAM panel's rows, the operation booklet printed at the
+ * machine, and the generators — and a copy per surface is how a panel ends up
+ * offering a setting the generator ignores. Edge routes joined the list in #708
+ * when `edge.ts` stopped carrying its own copy of pocket's motion layer.
+ */
+export function supportsEntryStrategy(operation: Operation): boolean {
+  return operation.kind === 'pocket'
+    || operation.kind === 'surface_clean'
+    || operation.kind === 'rough_surface'
+    || isEdgeRouteKind(operation.kind)
+    || isTrochoidalOperation(operation)
+}
+
+function isEdgeRouteKind(kind: OperationKind): boolean {
+  return kind === 'edge_route_inside' || kind === 'edge_route_outside'
+}
+
+/**
+ * The entry strategy actually in force. Trochoidal motion has no ramp, so a
+ * stale `'ramp'` on the operation reads back as a helix rather than as a mode
+ * the generator does not implement.
+ */
+export function resolvedEntryStrategy(operation: Operation): EntryStrategy {
+  if (isTrochoidalOperation(operation)) {
+    return operation.entryStrategy === 'plunge' ? 'plunge' : 'helix'
+  }
+  return operation.entryStrategy ?? 'plunge'
 }
 
 export function createEntryPolicy(

@@ -148,6 +148,52 @@ function testReportContent(): void {
   assert(report.toolpathStats.some((row) => row.label === translate('booklet.label.bottomZ') && row.value === '0 mm'), 'bottom Z should be included')
 }
 
+/**
+ * The Z entry row (issue #708). It says how the cutter gets to depth, which is
+ * what the operator hears and what the job does to the cutter, so it belongs on
+ * the sheet read at the machine — and it is gated on the ENGINE's predicates,
+ * so the sheet can never claim an entry the generator would not synthesize.
+ */
+function testReportIncludesTheEntryStrategyRow(): void {
+  console.log('Testing operation booklet reports a ramped Z entry...')
+  const { project, operation, toolpath } = fixture()
+  const report = (extra: Partial<typeof operation>) => buildOperationBookletReport({
+    project,
+    operation: { ...operation, ...extra },
+    tool: normalizeToolForProject(project.tools[0], project),
+    toolpath,
+    generatedAt: new Date('2026-06-04T12:00:00Z'),
+  })
+  const entryRow = (rows: { label: string; value: string }[]) =>
+    rows.find((row) => row.label === translate('booklet.label.entryStrategy'))
+
+  // Edge routes are the kind #708 added, and a finish route is the case that
+  // used to reach full depth in one plunge.
+  const edgeHelix = report({ kind: 'edge_route_outside', pass: 'finish', entryStrategy: 'helix' })
+  assert(
+    entryRow(edgeHelix.settingRows)?.value === translate('booklet.entryStrategy.helix'),
+    'a helical edge route prints its entry',
+  )
+
+  const pocketRamp = report({ kind: 'pocket', entryStrategy: 'ramp' })
+  assert(
+    entryRow(pocketRamp.settingRows)?.value === translate('booklet.entryStrategy.ramp'),
+    'and so does a ramping pocket',
+  )
+
+  // The legacy descent prints nothing, so a sheet for an operation that never
+  // chose an entry is unchanged.
+  assert(entryRow(report({ kind: 'pocket', entryStrategy: 'plunge' }).settingRows) === undefined,
+    'an explicit plunge adds no row')
+  assert(entryRow(report({ kind: 'pocket', entryStrategy: undefined }).settingRows) === undefined,
+    'and neither does never having chosen')
+
+  // A kind with no entry policy at all must not print one even with a stale
+  // value stored on the operation.
+  assert(entryRow(report({ kind: 'v_carve', entryStrategy: 'helix' }).settingRows) === undefined,
+    'a kind that offers no entry strategy prints no row')
+}
+
 function testReportIncludesEnabledRoundOutsideCorners(): void {
   console.log('Testing operation booklet reports enabled round outside corners...')
   const { project, operation, toolpath } = fixture()
@@ -836,6 +882,7 @@ testReportIncludesSurfaceCleanFeedReductionRows()
 testReportCleanWallCornersFollowsTheDeclaration()
 testReportPatternRowFollowsTakesPocketPattern()
 testReportIncludesEnabledRoundOutsideCorners()
+testReportIncludesTheEntryStrategyRow()
 testReportIncludesEnabledRoundLinkCorners()
 testReportIncludesRoundLinkCornersForSeededCleanup()
 testReportOmitsRoundLinkCornersWhenInapplicable()

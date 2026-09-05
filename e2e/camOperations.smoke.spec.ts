@@ -140,6 +140,66 @@ test.describe('CAM operation browser smoke', () => {
     expect(operations[0].target?.featureIds).toEqual(['f-machinable-add'])
   })
 
+  test('a contour edge route offers the Z entry strategy and its settings (#708)', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
+    await ui.contextMenu.item(menu, 'Create operation').hover()
+    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create outside route')
+    await expect(ui.operations.rows(app.page)).toHaveCount(1)
+
+    await ui.cam.operationGroup(app.page, 'Entry & retract').click()
+    const entryField = ui.cam.operationField(app.page, 'Entry strategy')
+    await expect(entryField).toHaveCount(1)
+
+    // A rough edge route is created with 'helix' already stored — the value was
+    // seeded for trochoidal roughing long before #708 and simply had no row to
+    // show it and no generator reading it. Now it has both.
+    await expect(entryField.locator('.ui-select__label')).toHaveText('Helix')
+    let project = await getProject(app.page)
+    let operations = project.operations as OperationSnapshot[]
+    expect(operations[0].kind).toBe('edge_route_outside')
+    expect(operations[0].pass).toBe('rough')
+    expect(operations[0].entryStrategy).toBe('helix')
+
+    const rampAngleField = ui.cam.operationField(app.page, 'Ramp angle (°)')
+    const helixDiameterField = ui.cam.operationField(app.page, 'Helix diameter (%)')
+    await expect(rampAngleField.locator('input')).toHaveValue('5')
+    await expect(helixDiameterField.locator('input')).toHaveValue('80')
+
+    // Unlike trochoidal roughing, a contour route offers Ramp as well.
+    await entryField.locator('.ui-select__trigger').click()
+    const options = entryField.locator('.ui-select__dropdown [role="option"]')
+    await expect(options).toHaveText(['Plunge', 'Helix', 'Ramp'])
+    await options.filter({ hasText: 'Ramp' }).click()
+    await expect(entryField.locator('.ui-select__label')).toHaveText('Ramp')
+    // A ramp has a run, not a bore, so the helix diameter goes away with it.
+    await expect(rampAngleField).toHaveCount(1)
+    await expect(app.page.getByText('Helix diameter (%)', { exact: true })).toHaveCount(0)
+    await rampAngleField.locator('input').fill('7')
+    await rampAngleField.locator('input').blur()
+
+    project = await getProject(app.page)
+    operations = project.operations as OperationSnapshot[]
+    expect(operations[0].entryStrategy).toBe('ramp')
+    expect(operations[0].entryRampAngle).toBe(7)
+
+    // Plunge is the legacy descent and keeps both settings hidden.
+    await entryField.locator('.ui-select__trigger').click()
+    await entryField.locator('.ui-select__dropdown [role="option"]').filter({ hasText: 'Plunge' }).click()
+    await expect(entryField.locator('.ui-select__label')).toHaveText('Plunge')
+    await expect(app.page.getByText('Ramp angle (°)', { exact: true })).toHaveCount(0)
+    await expect(app.page.getByText('Helix diameter (%)', { exact: true })).toHaveCount(0)
+
+    project = await getProject(app.page)
+    operations = project.operations as OperationSnapshot[]
+    expect(operations[0].entryStrategy).toBe('plunge')
+
+    // The XY approach composes with the Z entry rather than hiding behind it,
+    // and is the half of #695 that #708 unlocks on an edge route.
+    await expect(ui.cam.operationField(app.page, 'XY approach & exit')).toHaveCount(1)
+  })
+
   test('Engrave strategy dropdown switches between Direct and Trochoidal', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)
 
@@ -525,6 +585,27 @@ test.describe('CAM operation browser smoke', () => {
     project = await getProject(app.page)
     operations = project.operations as OperationSnapshot[]
     expect(operations[0].xyLeadStrategy).toBe('arc')
+
+    // Radial stock on a ROUGHING pass means a finish pass comes back and
+    // machines the mark away, so the generator emits no lead — and the row goes
+    // with it rather than offering a setting that cannot change the program
+    // (#708). The stored choice survives, so it is still there when the stock
+    // goes back to zero.
+    const stockField = ui.cam.operationField(app.page, 'Stock to leave radial')
+    await stockField.locator('input').fill('0.5')
+    await stockField.locator('input').blur()
+    await expect(app.page.getByText('XY approach & exit', { exact: true })).toHaveCount(0)
+
+    project = await getProject(app.page)
+    operations = project.operations as OperationSnapshot[]
+    expect(operations[0].xyLeadStrategy).toBe('arc')
+
+    await stockField.locator('input').fill('0')
+    await stockField.locator('input').blur()
+    await expect(ui.cam.operationField(app.page, 'XY approach & exit')).toHaveCount(1)
+    await expect(
+      ui.cam.operationField(app.page, 'XY approach & exit').locator('.ui-select__label'),
+    ).toHaveText('Tangent arc')
 
     // A raster pattern has no clearing ring to lead onto, so the row goes away
     // rather than offering a setting the generator would decline.

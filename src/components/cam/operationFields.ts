@@ -41,10 +41,16 @@
  */
 
 import type { camEn } from '../../i18n/locales/en/cam'
-import type { EntryStrategy, Operation, OperationKind, Tool } from '../../types/project'
+import type { Operation, OperationKind, Tool } from '../../types/project'
 import { isTrochoidalCarve, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import { clearingControlApplies, type ClearingControl } from '../../engine/toolpaths/clearingControls'
 import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
+import { roughingRingIsTheFinishedWall } from '../../engine/toolpaths/xyLead'
+import {
+  isTrochoidalOperation,
+  resolvedEntryStrategy,
+  supportsEntryStrategy,
+} from '../../engine/toolpaths/entry'
 import type { OperationParamRefKind } from './operationParamRefData'
 
 // ── Shared operation predicates ────────────────────────────────────
@@ -88,30 +94,12 @@ function isEdgeRouteKind(kind: OperationKind): boolean {
   return kind === 'edge_route_inside' || kind === 'edge_route_outside'
 }
 
-/** Either flavour of trochoidal motion: rough edge routing, engraving, or pocket clearing. */
-export function isTrochoidalOperation(operation: Operation): boolean {
-  return isTrochoidalEdgeRoughing(operation) || isTrochoidalCarve(operation) || isTrochoidalPocket(operation)
-}
-
-/** Operations that let the user choose how the cutter enters the material. */
-export function supportsEntryStrategy(operation: Operation): boolean {
-  return operation.kind === 'pocket'
-    || operation.kind === 'surface_clean'
-    || operation.kind === 'rough_surface'
-    || isTrochoidalOperation(operation)
-}
-
-/**
- * The entry strategy actually in force. Trochoidal motion has no ramp, so a
- * stale `'ramp'` on the operation reads back as a helix rather than as a mode
- * the generator does not implement.
- */
-export function resolvedEntryStrategy(operation: Operation): EntryStrategy {
-  if (isTrochoidalOperation(operation)) {
-    return operation.entryStrategy === 'plunge' ? 'plunge' : 'helix'
-  }
-  return operation.entryStrategy ?? 'plunge'
-}
+// Which operations offer a Z entry strategy, and what it resolves to, live in
+// `entry.ts` beside the policy they gate: the panel, the operation booklet and
+// the generators all ask, and a copy per surface is how a panel ends up
+// offering a setting the generator ignores. Edge routes joined the list in
+// #708, when `edge.ts` stopped carrying its own copy of pocket's motion layer.
+export { isTrochoidalOperation, resolvedEntryStrategy, supportsEntryStrategy }
 
 /** Countersink drilling derives its depth from a mouth diameter and a V-bit. */
 export function isCountersinkDrill(operation: Operation): boolean {
@@ -485,27 +473,36 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     //
     // Offered wherever the operation could reach a surface that survives into
     // the part: a finish pass that cuts walls, or a roughing pass whose rings
-    // are contours rather than raster fill. Deliberately NOT gated on
-    // `stockToLeaveRadial`, even though the engine only emits roughing leads at
-    // zero: hiding a control because of another field's current value strands
-    // the user's choice the moment they change that value back.
+    // ARE the finished wall.
     //
-    // An edge route cuts nothing but wall contours, so it always qualifies —
-    // except as trochoidal roughing, which enters through its own helix away
-    // from the wall and reaches the wall by widening orbits. There is no
-    // descent onto the wall there for a lead to move, so the row would offer a
-    // setting that could not change the program.
+    // The roughing half asks the generator's own predicate rather than
+    // restating half of it. It was previously the pattern term alone,
+    // deliberately ungated on `stockToLeaveRadial` so that changing the stock
+    // could not make the row vanish — but the result was a control the user
+    // could pick while the generator quietly ignored it, because stock left
+    // means a finish pass comes back and machines the mark away. Offering a
+    // setting that cannot change the program is the worse of the two, and the
+    // stored value survives the row disappearing, so a choice made at zero
+    // stock is still there when the stock goes back to zero.
+    //
+    // An edge route cuts nothing but wall contours, so a finish one always
+    // qualifies — except as trochoidal roughing, which enters through its own
+    // helix away from the wall and reaches the wall by widening orbits. There
+    // is no descent onto the wall there for a lead to move.
     id: 'xyLeadStrategy',
     group: 'entry',
     paramRef: 'xyLeadStrategy',
     appliesTo: (operation) => {
-      if (isEdgeRouteKind(operation.kind)) return !isTrochoidalEdgeRoughing(operation)
-      return (operation.kind === 'pocket'
+      if (isTrochoidalEdgeRoughing(operation)) return false
+      const carries = isEdgeRouteKind(operation.kind)
+        || operation.kind === 'pocket'
         || operation.kind === 'surface_clean'
-        || operation.kind === 'rough_surface')
-        && (operation.pass === 'finish'
-          ? operation.finishWalls
-          : usesTangentLinks(operation.kind, operation.pocketPattern))
+        || operation.kind === 'rough_surface'
+      if (!carries) return false
+      if (operation.pass === 'finish') {
+        return isEdgeRouteKind(operation.kind) || operation.finishWalls
+      }
+      return roughingRingIsTheFinishedWall(operation)
     },
   },
   {

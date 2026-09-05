@@ -27,6 +27,7 @@ import { effectiveFeed } from '../toolpaths/feed'
 import { countersinkTipDepth } from '../toolpaths/drilling'
 import { takesPocketPattern, usesTangentLinks } from '../toolpaths/pocketPatterns'
 import { clearingControlApplies } from '../toolpaths/clearingControls'
+import { resolvedEntryStrategy, supportsEntryStrategy } from '../toolpaths/entry'
 import { supportsXyLead } from '../toolpaths/xyLead'
 import type { OperationBookletInput, OperationBookletReport, OperationBookletRow } from './types'
 
@@ -56,6 +57,12 @@ function cutDirectionLabel(direction: NonNullable<Operation['cutDirection']>): s
 
 function machiningOrderLabel(order: NonNullable<Operation['machiningOrder']>): string {
   return order === 'feature_first' ? translate('booklet.machiningOrder.featureFirst') : translate('booklet.machiningOrder.levelFirst')
+}
+
+function entryStrategyLabel(strategy: 'helix' | 'ramp'): string {
+  return strategy === 'helix'
+    ? translate('booklet.entryStrategy.helix')
+    : translate('booklet.entryStrategy.ramp')
 }
 
 function edgeStrategyLabel(strategy: NonNullable<Operation['edgeStrategy']>): string {
@@ -313,6 +320,19 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
       { label: translate('booklet.label.trochoidalCutWidth'), value: lengthWithUnits(operation.trochoidalCutWidth ?? (tool ? tool.diameter * 1.5 : 0), units) },
       { label: translate('booklet.label.trochoidalAdvance'), value: `${formatNumber(operation.trochoidalAdvance ?? 0.1, 3)} × D` },
     )
+  }
+
+  // How the cutter gets to depth changes what the operator hears and what the
+  // job does to the cutter, so a helix or a ramp belongs on the sheet read at
+  // the machine. Gated on the engine's own predicates rather than a copy, and
+  // printed only when it is NOT the legacy straight plunge — so every sheet for
+  // an operation that never chose is unchanged.
+  const entryStrategy = supportsEntryStrategy(operation) ? resolvedEntryStrategy(operation) : 'plunge'
+  if (entryStrategy !== 'plunge') {
+    rows.push({
+      label: translate('booklet.label.entryStrategy'),
+      value: entryStrategyLabel(entryStrategy),
+    })
   }
 
   // The XY lead changes where the cutter reaches depth and how it meets the
