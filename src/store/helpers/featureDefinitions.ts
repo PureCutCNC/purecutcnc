@@ -37,7 +37,7 @@ import type {
   SketchProfile,
 } from '../../types/project'
 import { IDENTITY_MATRIX } from '../../types/project'
-import { cloneTextFeatureData } from '../../types/project'
+import { cloneTextFeatureData, cloneTextLayout } from '../../types/project'
 import { nextUniqueGeneratedId } from './ids'
 
 // ============================================================================
@@ -221,6 +221,8 @@ export function createFeatureInstance(
     name: feature.name,
     definitionId,
     transform: { ...transform },
+    // Per-instance, like the transform: a copy of a wrapped run stays wrapped (#726).
+    textLayout: cloneTextLayout(feature.textLayout),
     constraints: feature.sketch.constraints.map((constraint) => ({ ...constraint })),
     z_top: feature.z_top,
     z_bottom: feature.z_bottom,
