@@ -42,12 +42,30 @@ import {
 } from './cornerRelief'
 import { unionClipperPaths } from './modelProtection'
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
-import { buildInsetRegions, buildOuterContours, cutClosedContours, resolveBandBottomZ } from './pocket'
+import {
+  buildInsetRegions,
+  buildOuterContours,
+  contourStartPoint,
+  cutClosedContours,
+  generateStepLevels,
+  pushRapidAndPlunge,
+  resolveBandBottomZ,
+  retractToSafe,
+  toClosedCutMoves,
+  toOpenCutMoves,
+  transitionLinksAtDepth,
+  transitionToCutEntry,
+} from './pocket'
 import { buildMaskFromClipperPaths, buildRegionMask, type RegionMask, splitFeatureTargets } from './regions'
 import { resolveInsideEdgeRegions } from './resolver'
 import { significantSilhouettePaths } from './silhouette'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
-import { helixAngularDirection } from './entry'
+import {
+  createEntryPolicy,
+  type EntryClearanceRegion,
+  type EntryPolicy,
+  helixAngularDirection,
+} from './entry'
 import {
   appendTrochoidalEntry,
   MAX_TROCHOIDAL_ENTRY_MOVES,
@@ -94,164 +112,48 @@ interface PreparedSafetyRegion {
 const offsetPaths = offsetKeepOutPaths
 const unionPaths = unionClipperPaths
 
-function contourStartPoint(points: Point[], z: number): ToolpathPoint {
-  const first = points[0] ?? { x: 0, y: 0 }
-  return { x: first.x, y: first.y, z }
-}
-
-function toClosedCutMoves(points: Point[], z: number): ToolpathMove[] {
-  if (points.length < 2) {
-    return []
-  }
-
-  const moves: ToolpathMove[] = []
-  for (let index = 0; index < points.length - 1; index += 1) {
-    moves.push({
-      kind: 'cut',
-      from: { x: points[index].x, y: points[index].y, z },
-      to: { x: points[index + 1].x, y: points[index + 1].y, z },
-    })
-  }
-
-  const first = points[0]
-  const last = points[points.length - 1]
-  if (first.x !== last.x || first.y !== last.y) {
-    moves.push({
-      kind: 'cut',
-      from: { x: last.x, y: last.y, z },
-      to: { x: first.x, y: first.y, z },
-    })
-  }
-
-  return moves
-}
-
-function toOpenCutMoves(points: Point[], z: number): ToolpathMove[] {
-  if (points.length < 2) return []
-  return points.slice(1).map((point, index) => ({
-    kind: 'cut' as const,
-    from: { x: points[index].x, y: points[index].y, z },
-    to: { x: point.x, y: point.y, z },
-  }))
-}
-
-function pushRapidAndPlunge(
-  moves: ToolpathMove[],
-  from: ToolpathPoint | null,
-  toXY: ToolpathPoint,
-  safeZ: number,
-): ToolpathPoint {
-  const start = from ?? { x: toXY.x, y: toXY.y, z: safeZ }
-
-  if (!from || from.x !== toXY.x || from.y !== toXY.y || from.z !== safeZ) {
-    moves.push({
-      kind: 'rapid',
-      from: start,
-      to: { x: toXY.x, y: toXY.y, z: safeZ },
-    })
-  }
-
-  moves.push({
-    kind: 'plunge',
-    from: { x: toXY.x, y: toXY.y, z: safeZ },
-    to: toXY,
-  })
-
-  return toXY
-}
-
-function retractToSafe(moves: ToolpathMove[], from: ToolpathPoint | null, safeZ: number): ToolpathPoint | null {
-  if (!from) {
-    return null
-  }
-
-  const safePoint = { x: from.x, y: from.y, z: safeZ }
-  if (from.z !== safeZ) {
-    moves.push({
-      kind: 'rapid',
-      from,
-      to: safePoint,
-    })
-  }
-  return safePoint
-}
-
-function transitionToCutEntry(
-  moves: ToolpathMove[],
-  from: ToolpathPoint | null,
-  toXY: ToolpathPoint,
-  safeZ: number,
-  maxLinkDistance: number,
-): ToolpathPoint {
-  // Vertical-only move at same XY — no retraction needed
-  if (from && from.x === toXY.x && from.y === toXY.y) {
-    if (from.z === toXY.z) {
-      return toXY
-    }
-    moves.push({
-      kind: toXY.z < from.z ? 'plunge' : 'rapid',
-      from,
-      to: toXY,
-    })
-    return toXY
-  }
-
-  if (from) {
-    const dx = toXY.x - from.x
-    const dy = toXY.y - from.y
-    const distance = Math.hypot(dx, dy)
-
-    if (distance === 0) {
-      return toXY
-    }
-
-    if (distance <= maxLinkDistance) {
-      // Direct cut link — works across Z levels for 3D ramping
-      moves.push({
-        kind: 'cut',
-        from,
-        to: toXY,
-      })
-      return toXY
-    }
-  }
-
-  const safePosition = retractToSafe(moves, from, safeZ)
-  return pushRapidAndPlunge(moves, safePosition, toXY, safeZ)
-}
-
 /**
- * Will `transitionToCutEntry` above reach `toXY` already engaged at cut depth?
+ * How far past the retained loops an outside route's tool-centre domain runs,
+ * in tool diameters.
  *
- * An XY lead (issue #695) has work to do only where the cutter ARRIVES on a
- * wall from off it. This mirrors the link branch directly above rather than
- * reusing pocket's `transitionLinksAtDepth`: the two transitions differ, and
- * the difference is the one that matters here. Edge's link is a `cut` move
- * that may also change Z — a descent from safe Z lands on the wall and turns
- * to follow it, which marks the surface exactly as a plunge does. Only a link
- * that stays at one depth arrives already engaged.
+ * One constant for both consumers, because both reason about the same open air
+ * and two separately tuned numbers would drift into disagreeing about what
+ * fits: the XY lead's own length budget is 2.5 x D (`xyLeadOptions`), and a
+ * ramp entry's run is capped at 3 x D (`MAX_RAMP_RUN_DIAMETERS`). The boundary
+ * exists only to bound the containment test, so it is deliberately generous —
+ * far enough that neither can be rejected by the box rather than by the part.
  */
-function edgeLinksAtDepth(
-  from: ToolpathPoint | null,
-  toXY: ToolpathPoint,
-  maxLinkDistance: number,
-): boolean {
-  if (!from) return false
-  if (Math.abs(from.z - toXY.z) > 1e-9) return false
-  const distance = Math.hypot(toXY.x - from.x, toXY.y - from.y)
-  return distance > 0 && distance <= maxLinkDistance
-}
+const OUTSIDE_DOMAIN_REACH_DIAMETERS = 3.5
 
 /**
- * Can this route reach a lead's staging point without paying more than the
- * lead saves?
+ * How much the wall the route follows is held back from the outside domain's
+ * keep-out, in project units.
  *
- * Always false today, and the reason is measured rather than cautious. A rough
- * edge route clears a channel of exactly `2r` — the finish tool's own diameter
- * — so there is NO radial room for the finish tool to step sideways and stay
- * in cut air. Staging a lead off the wall therefore moves the descent out of
- * that channel and into virgin stock. On a 6 mm cutter round a 15 mm boss,
- * after a rough pass leaving 0.5 mm:
+ * The tool centre is MEANT to sit on the wall path — that is where the cut is —
+ * so a point exactly on it is legal, and this expresses that in floating point.
+ * Without it an entry target can be refused by a rounding error: the wall path
+ * and the keep-out are the same curve produced by two Clipper calls, and a
+ * region-clip intersection landed 29 nm on the wrong side of it, which was
+ * enough for `pointInRegion` to declare the entry unplaceable and drop the
+ * whole route back to a full-depth plunge with only a fallback warning.
+ *
+ * At 1 micron it is ten Clipper quanta (`DEFAULT_CLIPPER_SCALE` is 10 000 per
+ * unit) and four orders of magnitude below `entryBoundarySafety`, which is what
+ * actually keeps the cutter off the finished wall. It applies ONLY to the wall
+ * the route follows: retained obstacles are things to stay away from entirely,
+ * no entry target lies on one, and they keep the full clearance.
+ */
+const WALL_PATH_TOUCH_TOLERANCE = 0.001
+
+/**
+ * Can this route afford to stage a lead off the wall?
+ *
+ * Only where the descent at the staging point is ramped, and the reason is
+ * measured rather than cautious. A rough edge route clears a channel of exactly
+ * `2r` — the finish tool's own diameter — so there is NO radial room for the
+ * finish tool to step sideways and stay in cut air. Staging a lead off the wall
+ * therefore moves the descent out of that channel and into virgin stock. On a
+ * 6 mm cutter round a 15 mm boss, after a rough pass leaving 0.5 mm:
  *
  *   direct    tool centre 3.00 mm from the part, 0.50 mm of the plunge engaged (8%)
  *   arc lead  tool centre 9.93 mm from the part, 6.00 mm of the plunge engaged (100%)
@@ -261,36 +163,53 @@ function edgeLinksAtDepth(
  * staging point sits at perpendicular distance about R from the wall path, so
  * the widest rung is worst and the narrowest still lands near 17%.
  *
- * The escape is the entry policy `edge.ts` never picked up from #412: a helix
- * or ramp makes the axial bite per revolution small, at which point full radial
- * engagement is ordinary slotting rather than a plunge. The lead and the entry
- * want the same thing — the lead already stages the cutter in open,
- * domain-validated space clear of the finished wall, which is exactly the
- * clearance a helix needs — so neither is safe alone here. #708 supplies it,
- * and this becomes the policy check rather than a constant.
+ * A helix or ramp makes the axial bite per revolution small, at which point
+ * full radial engagement is ordinary slotting rather than a plunge. So the lead
+ * and the entry want the same thing — the lead already stages the cutter in
+ * open, domain-validated space clear of the finished wall, which is exactly the
+ * clearance a helix needs — and neither is safe alone here (issues #695, #708).
+ *
+ * The REQUEST is what gates this, not the placement: an entry that cannot be
+ * placed falls back through `synthesizeEntry` and says so with
+ * `entryStrategyFallback`, rather than silently withdrawing the lead as well.
  */
-function descentCanAffordALead(): boolean {
-  return false
+function descentCanAffordALead(operation: Operation): boolean {
+  return wantsRampedEntry(operation)
 }
 
-function generateStepLevels(topZ: number, bottomZ: number, stepdown: number): number[] {
-  if (!(stepdown > 0)) {
-    return [bottomZ]
-  }
+/** Has this operation asked for anything other than the legacy straight plunge? */
+function wantsRampedEntry(operation: Operation): boolean {
+  return (operation.entryStrategy ?? 'plunge') !== 'plunge'
+}
 
-  const descending = bottomZ < topZ
-  if (!descending) {
-    return [bottomZ]
+/**
+ * The same entry policy with `keepOut` also forbidden.
+ *
+ * A helix or ramp is emitted as `lead_in` moves, and the tab pass that runs
+ * after generation only lifts PURE VERTICAL moves and splits planar `cut`
+ * moves — it never sees a `lead_in`. An entry placed over a tab would therefore
+ * drive straight into it with nothing downstream to correct that, exactly as an
+ * XY lead would (which is why `withKeepOut` exists for the lead). Tabs stand
+ * only below their own tops, so callers compose this per level.
+ *
+ * Keep-out loops arrive already grown by the cutter's own clearance, so they go
+ * in as islands: `pointInRegion` counts a point strictly inside an island as
+ * outside the region, and riding the boundary is tangency rather than a hit.
+ */
+function withEntryKeepOut(
+  policy: EntryPolicy | undefined,
+  keepOut: Point[][],
+): EntryPolicy | undefined {
+  if (!policy || keepOut.length === 0) return policy
+  const loops = keepOut.filter((loop) => loop.length >= 3)
+  if (loops.length === 0) return policy
+  return {
+    ...policy,
+    clearanceRegions: policy.clearanceRegions.map((region) => ({
+      ...region,
+      islands: [...region.islands, ...loops],
+    })),
   }
-
-  const levels: number[] = []
-  let current = topZ
-  while (current - stepdown > bottomZ) {
-    current -= stepdown
-    levels.push(current)
-  }
-  levels.push(bottomZ)
-  return levels
 }
 
 function updateBounds(bounds: ToolpathBounds | null, point: ToolpathPoint): ToolpathBounds {
@@ -713,6 +632,7 @@ function appendFragmentedContoursAtLevels(
   regionMask: RegionMask | null,
   obstacleMaskForZ: (z: number) => RegionMask | null,
   leadForLevel?: (z: number) => XyLeadContext | undefined,
+  entryForLevel?: (z: number) => EntryPolicy | undefined,
 ): ToolpathPoint | null {
   // Fragment by region mask once — region is Z-independent.
   const regionFragments = contours.flatMap((c) =>
@@ -723,9 +643,11 @@ function appendFragmentedContoursAtLevels(
   let nextPosition = currentPosition
   for (const z of levels) {
     const obsMask = obstacleMaskForZ(z)
-    // XY leads (issue #695). Per level, because the tab footprints the lead has
-    // to stay out of stand only below their own tops.
+    // XY leads (issue #695) and the Z entry (issue #708). Both are resolved per
+    // level, because the tab footprints they have to stay out of stand only
+    // below their own tops.
     const levelLead = leadForLevel?.(z)
+    const levelEntry = entryForLevel?.(z)
 
     for (const frag of regionFragments) {
       let finalFragments: ClosedGuideFragment[]
@@ -759,15 +681,17 @@ function appendFragmentedContoursAtLevels(
           // the point it can reach tangentially and moves the descent to the
           // far end of the arc; without it the cutter lands on the wall and
           // starts cutting from a standstill.
-          const isFullEntry = !edgeLinksAtDepth(
-            nextPosition, contourStartPoint(ff.points, z), maxLinkDistance,
+          const isFullEntry = !transitionLinksAtDepth(
+            nextPosition, contourStartPoint(ff.points, z), safeZ, maxLinkDistance,
           )
           const leadPlan = planWallLeadIn(levelLead, ff.points, isFullEntry, nextPosition)
           const points = rotateRingForLead(ff.points, leadPlan)
           const entry = leadPlan
             ? { x: leadPlan.staging.x, y: leadPlan.staging.y, z }
             : contourStartPoint(points, z)
-          nextPosition = transitionToCutEntry(moves, nextPosition, entry, safeZ, maxLinkDistance)
+          nextPosition = transitionToCutEntry(
+            moves, nextPosition, entry, safeZ, maxLinkDistance, undefined, levelEntry,
+          )
           if (leadPlan && levelLead) {
             nextPosition = emitXyLead(moves, nextPosition, leadPlan, z, levelLead.options, 'lead_in')
           }
@@ -784,7 +708,7 @@ function appendFragmentedContoursAtLevels(
           const head = openLead ? openLead.staging : ff.points[0]
           const entry = { x: head.x, y: head.y, z }
           nextPosition = retractToSafe(moves, nextPosition, safeZ)
-          nextPosition = pushRapidAndPlunge(moves, nextPosition, entry, safeZ)
+          nextPosition = pushRapidAndPlunge(moves, nextPosition, entry, safeZ, levelEntry)
           if (openLead && levelLead) {
             nextPosition = emitXyLead(moves, nextPosition, openLead, z, levelLead.options, 'lead_in')
           }
@@ -1322,7 +1246,7 @@ function generateEdgeRouteToolpathSingle(
   // as a trochoidal one. There is no mark here for a lead to prevent.
   const wallQualifiesForLead = !isTrochoidal
     && (operation.pass === 'finish' || roughingRingIsTheFinishedWall(operation))
-  const carriesWallLead = wallQualifiesForLead && descentCanAffordALead()
+  const carriesWallLead = wallQualifiesForLead && descentCanAffordALead(operation)
   if (wallQualifiesForLead && !carriesWallLead && operation.xyLeadStrategy === 'arc') {
     appendUniqueWarning(warnings, { code: 'xyLeadNeedsRampedEntry' })
   }
@@ -1437,6 +1361,26 @@ function generateEdgeRouteToolpathSingle(
         withKeepOut(bandLeadOptions, tabKeepOutAtZ(z)),
         (warning) => appendUniqueWarning(warnings, warning),
       )
+      // The Z entry (issue #708) takes the SAME domain as the lead, for the
+      // same reason: the cavity is where the cutter may be without touching a
+      // surface that stays. `cutSide: 'internal'` matches the pocket's, so a
+      // climb helix turns the same way it does there.
+      //
+      // Trochoidal roughing is excluded because it already has an entry: it
+      // helixes in away from the wall and reaches the wall by widening orbits.
+      // Its inset here is the guide offset, not the tool-centre path, so this
+      // domain would not describe its cutter anyway.
+      const bandEntryPolicy = isTrochoidal
+        ? undefined
+        : createEntryPolicy(
+          operation,
+          tool.diameter,
+          insetRegions,
+          (warning) => appendUniqueWarning(warnings, warning),
+          'internal',
+        )
+      const insideEntryForLevel = (z: number): EntryPolicy | undefined =>
+        withEntryKeepOut(bandEntryPolicy, tabKeepOutAtZ(z))
       const rawContours = buildOuterContours(insetRegions)
       if (rawContours.length === 0) {
         warnings.push({ code: 'edgeNoInsideContour', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
@@ -1518,15 +1462,16 @@ function generateEdgeRouteToolpathSingle(
 
         for (const z of levels) {
           const levelLead = insideLeadForLevel(z)
+          const levelEntry = insideEntryForLevel(z)
           if (closedFrags.length > 0) {
             // Every contour an inside route cuts is a wall of the cavity, so
             // the lead context goes straight in — the same call the pocket's
             // own wall block makes, through the same function. Every argument
-            // between the position and the lead is the default this call
-            // already relied on, spelled out only to reach the last one.
+            // between the position and the entry policy is the default this
+            // call already relied on, spelled out only to reach the later ones.
             currentPosition = cutClosedContours(
               moves, closedFrags, z, safeZ, maxLinkDistance, currentPosition,
-              false, 'conventional', undefined, undefined, undefined, false, levelLead,
+              false, 'conventional', undefined, levelEntry, undefined, false, levelLead,
             )
           }
           for (const frag of openFrags) {
@@ -1534,7 +1479,7 @@ function generateEdgeRouteToolpathSingle(
             const head = openLead ? openLead.staging : frag.points[0]
             const entry = { x: head.x, y: head.y, z }
             currentPosition = retractToSafe(moves, currentPosition, safeZ)
-            currentPosition = pushRapidAndPlunge(moves, currentPosition, entry, safeZ)
+            currentPosition = pushRapidAndPlunge(moves, currentPosition, entry, safeZ, levelEntry)
             if (openLead && levelLead) {
               currentPosition = emitXyLead(moves, currentPosition, openLead, z, levelLead.options, 'lead_in')
             }
@@ -1667,37 +1612,80 @@ function generateEdgeRouteToolpathSingle(
   }
 
   /**
-   * Lead options for an OUTSIDE route around `targetPaths`, or undefined when
-   * this pass carries no lead.
+   * Everything an OUTSIDE route's cutter centre must stay out of around
+   * `targetPaths`: the wall it follows and every other retained feature
+   * standing in this Z span, each grown to tool-centre distance.
    *
-   * An outside route has no cavity to sweep into: the safe side is open air,
-   * bounded only by what must survive. So the domain is built the other way up
-   * — everything outside the target grown to tool-centre distance, and outside
-   * every other retained feature standing in this Z span, grown the same way.
-   * `jtRound` on purpose: the arc has to clear a convex corner of the part on
-   * the diagonal, which a mitre would let it cut.
+   * `jtRound` on purpose: an arc or a helix has to clear a convex corner of the
+   * part on the diagonal, which a mitre would let it cut.
    */
-  function outsideLeadOptions(
+  function outsideKeepOutLoops(
     targetPaths: ClipperPath[],
     topZ: number,
     bottomZ: number,
-  ): XyLeadOptions | undefined {
-    if (!carriesWallLead) return undefined
+  ): Point[][] {
     const retained = unionPaths(offsetPaths(
       targetPaths,
-      (tool.radius + radialLeave) * DEFAULT_CLIPPER_SCALE,
+      Math.max(0, tool.radius + radialLeave - WALL_PATH_TOUCH_TOLERANCE) * DEFAULT_CLIPPER_SCALE,
       ClipperLib.JoinType.jtRound,
     ))
-    const keepOut = [...retained, ...retainedObstaclePathsForSpan(topZ, bottomZ, tool.radius + radialLeave)]
+    return [...retained, ...retainedObstaclePathsForSpan(topZ, bottomZ, tool.radius + radialLeave)]
       .map((path) => fromClipperPath(path))
+  }
+
+  /**
+   * The tool-centre-safe domain outside `targetPaths`, built at most ONCE and
+   * only if something asks for it.
+   *
+   * An outside route has no cavity to sweep into: the safe side is open air,
+   * bounded only by what must survive. So the domain is built the other way up
+   * — the complement of the keep-out loops, inside a box that exists only to
+   * bound the containment test. The XY lead and the Z entry share it because
+   * they are asking the same question of the same space; each also has its own
+   * reason to decline first, and a plunging route with no lead must not pay a
+   * Clipper offset and union for an answer nobody reads.
+   */
+  function outsideDomain(
+    targetPaths: ClipperPath[],
+    topZ: number,
+    bottomZ: number,
+  ): () => EntryClearanceRegion[] {
+    let cached: EntryClearanceRegion[] | null = null
+    return () => (cached ??= domainOutsideLoops(
+      outsideKeepOutLoops(targetPaths, topZ, bottomZ),
+      tool.diameter * OUTSIDE_DOMAIN_REACH_DIAMETERS,
+    ))
+  }
+
+  /** Lead options for an outside route, or undefined when this pass carries no lead. */
+  function outsideLeadOptions(domain: () => EntryClearanceRegion[]): XyLeadOptions | undefined {
+    if (!carriesWallLead) return undefined
     return resolveXyLeadOptions(
       operation,
       tool.diameter,
-      // The reach is the lead's own length budget with a tool diameter of
-      // slack, so the boundary can never be what rejects a lead that fits.
-      domainOutsideLoops(keepOut, tool.diameter * 3.5),
+      domain(),
       regionMask !== null,
       (warning) => appendUniqueWarning(warnings, warning),
+    )
+  }
+
+  /**
+   * The Z entry policy for an outside route (issue #708).
+   *
+   * `cutSide: 'external'` is the case `entry.ts` already models — the helix
+   * turns the other way round a boss than it does inside a pocket, which is
+   * what keeps a climb cut climbing. Trochoidal roughing is excluded: it has
+   * its own helical entry, and its guide is offset differently from the
+   * tool-centre path this domain is built for.
+   */
+  function outsideEntryPolicy(domain: () => EntryClearanceRegion[]): EntryPolicy | undefined {
+    if (isTrochoidal || !wantsRampedEntry(operation)) return undefined
+    return createEntryPolicy(
+      operation,
+      tool.diameter,
+      domain(),
+      (warning) => appendUniqueWarning(warnings, warning),
+      'external',
     )
   }
 
@@ -1706,6 +1694,9 @@ function generateEdgeRouteToolpathSingle(
       withKeepOut(options, tabKeepOutAtZ(z)),
       (warning) => appendUniqueWarning(warnings, warning),
     )
+
+  const outsideEntryForLevel = (policy: EntryPolicy | undefined) => (z: number): EntryPolicy | undefined =>
+    withEntryKeepOut(policy, tabKeepOutAtZ(z))
 
   const shouldAttemptCombinedOutside = operation.kind === 'edge_route_outside' && routableTargets.length > 1
   if (shouldAttemptCombinedOutside) {
@@ -1785,12 +1776,14 @@ function generateEdgeRouteToolpathSingle(
             ),
           )
         } else {
+          const combinedDomain = outsideDomain(
+            combinedPaths, referenceTarget.topZ, referenceTarget.bottomZ,
+          )
           currentPosition = appendFragmentedContoursAtLevels(
             moves, currentPosition, contours, levels, safeZ, maxLinkDistance,
             regionMask, obstacleMaskForZ,
-            outsideLeadForLevel(outsideLeadOptions(
-              combinedPaths, referenceTarget.topZ, referenceTarget.bottomZ,
-            )),
+            outsideLeadForLevel(outsideLeadOptions(combinedDomain)),
+            outsideEntryForLevel(outsideEntryPolicy(combinedDomain)),
           )
         }
       }
@@ -1877,10 +1870,12 @@ function generateEdgeRouteToolpathSingle(
         )
         if (hasFatalTrochoidalWarning(warnings)) break
       } else {
+        const targetDomain = outsideDomain(target.contourPaths, target.topZ, target.bottomZ)
         currentPosition = appendFragmentedContoursAtLevels(
           moves, currentPosition, contours, levels, safeZ, maxLinkDistance,
           regionMask, obstacleMaskForZ,
-          outsideLeadForLevel(outsideLeadOptions(target.contourPaths, target.topZ, target.bottomZ)),
+          outsideLeadForLevel(outsideLeadOptions(targetDomain)),
+          outsideEntryForLevel(outsideEntryPolicy(targetDomain)),
         )
       }
     }

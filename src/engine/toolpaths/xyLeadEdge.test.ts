@@ -15,23 +15,30 @@
  */
 
 /**
- * Tangent-arc leads on EDGE ROUTES (issue #695): why they are declined, and
- * proof that the geometry behind them is sound for when #708 turns them on.
+ * Tangent-arc leads on EDGE ROUTES (issue #695): when they are declined, and
+ * the geometry behind them.
  *
  * An edge route looks like the case that needs this feature most — a finish
  * route cuts the whole depth in one pass, so a witness line runs the full
- * height of the wall. It is instead the case that cannot afford it yet. A
+ * height of the wall. It is instead the case that cannot afford it ALONE. A
  * rough edge route clears a channel of exactly `2r`, the finish tool's own
  * diameter, so there is no radial room for the finish tool to step sideways
  * and stay in cut air: staging a lead off the wall moves the descent into
  * virgin stock and turns a sliver-engagement plunge into a full-width one.
- * `descentCanAffordALead` in `edge.ts` carries the measurement.
+ * `descentCanAffordALead` in `edge.ts` carries the measurement, and since #708
+ * it answers by asking whether the descent at the staging point is RAMPED — a
+ * helix or ramp makes the axial bite per revolution small, at which point full
+ * radial engagement is ordinary slotting rather than a plunge.
  *
- * So these tests come in two halves. The first asserts the decline is clean —
- * warned, not silent, and byte-identical to not asking. The second exercises
- * the planner directly against the same domains the generator would build, so
- * the outside/inside containment proofs stay live rather than being deleted
- * and rewritten when #708 lands.
+ * So these tests come in two halves. The first asserts the decline is clean
+ * where it still applies — a plunging entry — warned rather than silent and
+ * byte-identical to not asking. The second exercises the planner directly
+ * against the same domains the generator builds, which keeps the
+ * outside/inside containment proofs stated at the level of the geometry rather
+ * than of one emitted program.
+ *
+ * The other half of the pairing — the entry itself, and the leads that arrive
+ * with it — lives in `edgeEntryPolicy.test.ts`.
  *
  * Run with: npx tsx src/engine/toolpaths/xyLeadEdge.test.ts
  */
@@ -166,8 +173,10 @@ const insideWallDistance = (point: Point): number => Math.min(
 // ── Tests: the decline ───────────────────────────────────────────────
 
 function testEdgeRoutesDeclineUntilTheDescentIsRamped() {
-  console.log('Testing edge routes decline the lead, and say why...')
+  console.log('Testing a plunging edge route declines the lead, and says why...')
   const project = edgeProject()
+  // Every operation here leaves `entryStrategy` unset, i.e. a plunge. Ask for a
+  // helix instead and the lead arrives; `edgeEntryPolicy.test.ts` pins that.
 
   for (const [label, operation, distance] of [
     ['outside finish', outsideOperation(), outsideWallDistance],
@@ -183,10 +192,12 @@ function testEdgeRoutesDeclineUntilTheDescentIsRamped() {
       `${label}: and the request is declined out loud, not dropped`)
     assert(JSON.stringify(asked.moves) === JSON.stringify(legacy.moves),
       `${label}: the program is byte-identical to not asking`)
-    // The defect #695 exists for is still present here. Stating it keeps the
-    // decline honest: this is a deferral, not a fix.
+    // The defect #695 exists for is still present on a PLUNGING route, and
+    // saying so keeps the decline honest: a lead here would trade a witness
+    // line for a full-width full-depth plunge, so the route keeps the line
+    // until the entry can carry it.
     assert(descentsOntoWalls(asked.moves, distance).onWall > 0,
-      `${label}: the descent still lands on the wall, which is what #708 unblocks`)
+      `${label}: a plunging descent still lands on the wall`)
   }
   console.log('edge routes decline with a warning: PASSED')
 }
@@ -257,7 +268,7 @@ function testNormalizationKeepsTheFieldOnEdgeRoutes() {
   console.log('normalization keeps the field: PASSED')
 }
 
-// ── Tests: the geometry, held live for #708 ──────────────────────────
+// ── Tests: the geometry the generator builds on ──────────────────────
 
 /** The tool-centre wall contour an outside route follows around the boss. */
 function outsideWallContour(): Point[] {
@@ -311,7 +322,8 @@ function testTheDeclineIsMeasuredNotAssumed() {
   // This is the arithmetic behind `descentCanAffordALead`. A rough edge route
   // sweeps a channel exactly `2r` wide, so a staging point more than a tool
   // DIAMETER outboard of the wall path cannot sit inside it at any sane stock
-  // allowance — the plunge there is into virgin stock, full width, full depth.
+  // allowance — the plunge there is into virgin stock, full width, full depth,
+  // which is why the lead needs a ramped entry under it rather than a plunge.
   const offset = outsideWallDistance(plan.staging)
   assert(offset > TOOL_DIAMETER,
     `the staging point is ${offset.toFixed(2)} mm outboard of the wall path, beyond a ${TOOL_DIAMETER} mm channel`)
@@ -346,7 +358,7 @@ function testInsideDomainKeepsTheArcInTheCavity() {
   console.log('inside domain containment: PASSED')
 }
 
-// ── Tests: the tab pass, which #708 will rely on ─────────────────────
+// ── Tests: the tab pass, which the entry policy relies on ────────────
 
 function testTabPassLeavesLeadMovesAlone() {
   console.log('Testing the tab pass does not mangle a lead...')
@@ -357,11 +369,12 @@ function testTabPassLeavesLeadMovesAlone() {
   const operation = outsideOperation()
   const routed = generateEdgeRouteToolpath(project, operation)
 
-  // The generator emits no leads today, so splice a pair in over the tab and
-  // run the tab pass on that. This is the property #708 depends on: the pass
-  // only lifts vertical moves and splits `cut` moves, so a lead planned through
-  // a tab is driven into with nothing downstream to correct it — which is why
-  // the lead's own domain has to subtract tab footprints.
+  // A plunging route emits no leads, so splice a pair in over the tab and run
+  // the tab pass on that. This is the property both the lead and the entry
+  // policy depend on: the pass only lifts vertical moves and splits `cut`
+  // moves, so anything planned through a tab is driven into with nothing
+  // downstream to correct it — which is why both domains subtract tab
+  // footprints per level.
   const overTab = { x: tab.x + tab.w / 2, y: tab.y + tab.h / 2, z: -6 }
   const seeded = {
     ...routed,

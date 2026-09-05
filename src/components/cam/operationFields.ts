@@ -41,10 +41,15 @@
  */
 
 import type { camEn } from '../../i18n/locales/en/cam'
-import type { EntryStrategy, Operation, OperationKind, Tool } from '../../types/project'
+import type { Operation, OperationKind, Tool } from '../../types/project'
 import { isTrochoidalCarve, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import { clearingControlApplies, type ClearingControl } from '../../engine/toolpaths/clearingControls'
 import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
+import {
+  isTrochoidalOperation,
+  resolvedEntryStrategy,
+  supportsEntryStrategy,
+} from '../../engine/toolpaths/entry'
 import type { OperationParamRefKind } from './operationParamRefData'
 
 // ── Shared operation predicates ────────────────────────────────────
@@ -88,30 +93,12 @@ function isEdgeRouteKind(kind: OperationKind): boolean {
   return kind === 'edge_route_inside' || kind === 'edge_route_outside'
 }
 
-/** Either flavour of trochoidal motion: rough edge routing, engraving, or pocket clearing. */
-export function isTrochoidalOperation(operation: Operation): boolean {
-  return isTrochoidalEdgeRoughing(operation) || isTrochoidalCarve(operation) || isTrochoidalPocket(operation)
-}
-
-/** Operations that let the user choose how the cutter enters the material. */
-export function supportsEntryStrategy(operation: Operation): boolean {
-  return operation.kind === 'pocket'
-    || operation.kind === 'surface_clean'
-    || operation.kind === 'rough_surface'
-    || isTrochoidalOperation(operation)
-}
-
-/**
- * The entry strategy actually in force. Trochoidal motion has no ramp, so a
- * stale `'ramp'` on the operation reads back as a helix rather than as a mode
- * the generator does not implement.
- */
-export function resolvedEntryStrategy(operation: Operation): EntryStrategy {
-  if (isTrochoidalOperation(operation)) {
-    return operation.entryStrategy === 'plunge' ? 'plunge' : 'helix'
-  }
-  return operation.entryStrategy ?? 'plunge'
-}
+// Which operations offer a Z entry strategy, and what it resolves to, live in
+// `entry.ts` beside the policy they gate: the panel, the operation booklet and
+// the generators all ask, and a copy per surface is how a panel ends up
+// offering a setting the generator ignores. Edge routes joined the list in
+// #708, when `edge.ts` stopped carrying its own copy of pocket's motion layer.
+export { isTrochoidalOperation, resolvedEntryStrategy, supportsEntryStrategy }
 
 /** Countersink drilling derives its depth from a mouth diameter and a V-bit. */
 export function isCountersinkDrill(operation: Operation): boolean {
