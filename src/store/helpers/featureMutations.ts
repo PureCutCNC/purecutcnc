@@ -20,6 +20,8 @@ import type {
   FeatureOperation,
   Project,
   SketchFeature,
+  SketchProfile,
+  TextFeatureData,
 } from '../../types/project'
 import {
   propagateConstraintsOnTranslate,
@@ -27,23 +29,62 @@ import {
   type FeatureOffset,
 } from '../../sketch/constraintSolver'
 import { transformProfile } from '../../geometry/profile'
+import { refitTextFrameProfile } from '../../text'
 import { moveDelta, multiplyMatrix } from './instanceTransforms'
 import { isImportedModelFeature } from './modelAssets'
 import { folderIdForOperation } from './operationDefaults'
 import { isSolid } from './featureRoles'
 import { resolvedProjectFeatures } from './resolveFeatures'
 
+/**
+ * A text run's frame sets its proportions, so a metric change — the string, the
+ * style, the font, the size — has to resize the frame or the new glyphs are
+ * squeezed into the old one's aspect (#722).
+ *
+ * The definition's profile is the straight run's frame in definition-local
+ * space, so resizing it here leaves every instance's placement and rotation
+ * alone and every linked copy re-resolves. A curved instance is unaffected
+ * either way: `resolveFeatureRow` derives its frame from the bent template
+ * rather than reading this profile.
+ */
+function refitTextFrame(
+  definition: FeatureDefinition,
+  text: TextFeatureData | null | undefined,
+  operation: FeatureOperation,
+): SketchProfile {
+  const previous = definition.text
+  if (definition.kind !== 'text' || !previous || !text) {
+    return definition.profile
+  }
+  // Most patches (visibility, Z, a rename) leave the metrics alone, and
+  // rebuilding two templates to discover that is not free.
+  if (
+    previous.text === text.text
+    && previous.style === text.style
+    && previous.fontId === text.fontId
+    && previous.size === text.size
+  ) {
+    return definition.profile
+  }
+  return refitTextFrameProfile(
+    definition.profile,
+    { ...previous, operation: definition.operation, layout: null },
+    { ...text, operation, layout: null },
+  )
+}
+
 function updateDefinitionFromFeaturePatch(
   definition: FeatureDefinition,
   patch: Partial<SketchFeature>,
 ): FeatureDefinition {
   const operation = patch.operation ?? definition.operation
+  const text = patch.text !== undefined ? patch.text : definition.text
   return {
     ...definition,
     kind: patch.kind ?? definition.kind,
-    profile: patch.sketch?.profile ?? definition.profile,
+    profile: patch.sketch?.profile ?? refitTextFrame(definition, text, operation),
     dimensions: patch.sketch?.dimensions ?? definition.dimensions,
-    text: patch.text !== undefined ? patch.text : definition.text,
+    text,
     stl: patch.stl !== undefined ? patch.stl : definition.stl,
     operation,
     regionMaskMode: operation === 'region'
