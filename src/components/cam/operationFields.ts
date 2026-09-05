@@ -61,6 +61,7 @@ export function showStepdown(operation: Operation): boolean {
     || operation.kind === 'v_carve_medial'
     || operation.kind === 'drilling'
     || operation.kind === 'finish_surface_cleanup'
+    || (operation.kind === 'finish_surface' && operation.pocketPattern === 'constant_scallop')
   ) {
     return false
   }
@@ -428,12 +429,13 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     group: (operation) => operation.kind === 'finish_surface' ? 'advanced' : 'strategy',
     paramRef: 'stepover',
     // Waterline finishing spaces its rings adaptively, so a ratio means nothing.
-    appliesTo: (operation) => operation.kind !== 'follow_line'
+    appliesTo: (operation, tool) => operation.kind !== 'follow_line'
       && operation.kind !== 'drilling'
       && operation.kind !== 'v_carve_medial'
       && operation.kind !== 'edge_route_inside'
       && operation.kind !== 'edge_route_outside'
-      && !isWaterlineFinish(operation),
+      && !isWaterlineFinish(operation)
+      && !(operation.kind === 'finish_surface' && operation.pocketPattern === 'constant_scallop' && tool?.type === 'ball_endmill'),
   },
   { id: 'slopeFilter', group: 'strategy', appliesTo: (operation) => operation.kind === 'finish_surface' },
   {

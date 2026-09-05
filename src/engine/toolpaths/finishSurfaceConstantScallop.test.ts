@@ -162,6 +162,21 @@ test('scallop height drives emitted parallel and constant-scallop pass spacing',
   }
 })
 
+test('constant scallop preserves legacy motion and ignores unused stepdown', () => {
+  const { project, operation } = fixture(ramp(30), 20, 15)
+  const original = structuredClone(operation)
+  const legacy = generate(project, operation, { finishScallopHeight: undefined })
+  assert(legacy.moves.length > 0)
+  assert.deepEqual(generate(project, operation, { finishScallopHeight: 0 }), legacy)
+  assert.deepEqual(operation, original, 'generating a legacy operation must not persist a derived height')
+  for (const finishScallopHeight of [undefined, 0.02]) {
+    const baseline = generate(project, operation, { finishScallopHeight })
+    for (const stepdown of [0, -1, Number.NaN, 100]) {
+      assert.deepEqual(generate(project, operation, { finishScallopHeight, stepdown }), baseline)
+    }
+  }
+})
+
 test('a scallop height at the ball radius refuses without emitting non-finite motion', () => {
   const { project, operation } = fixture(ramp(0))
   const result = generate(project, operation, { finishScallopHeight: TOOL_RADIUS })

@@ -52,6 +52,7 @@ import {
   spacingToScallopHeight,
 } from '../../engine/toolpaths/scallopHeight'
 import { createOperationBookletPdf } from '../../engine/operationBooklet'
+import { ScallopHeightField } from './ScallopHeightField'
 import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
 import { platform } from '../../platform'
 import { isConstruction, isMachinable, isRegion } from '../../store/helpers/featureRoles'
@@ -1443,7 +1444,16 @@ export function CAMPanel({
           ) : null}
         </>
       ),
-      scallopHeight: () => (
+      scallopHeight: () => operation.pocketPattern === 'constant_scallop' && ballRadius !== null ? (
+        <ScallopHeightField
+          key={`${operation.id}:${ballRadius}:${operation.finishScallopHeight}:${operation.stepover}:${project.meta.units}`}
+          height={operation.finishScallopHeight}
+          radius={ballRadius}
+          legacySpacing={operation.stepover * ballRadius * 2}
+          units={project.meta.units}
+          onCommit={(value) => updateOperation(operation.id, { finishScallopHeight: value })}
+        />
+      ) : (
         <>
           <label className="properties-field" title={camT('cam.operation.scallopHeightTooltip')}>
             <span>{camT('cam.operation.scallopHeight')}</span>

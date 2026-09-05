@@ -707,7 +707,8 @@ test('ball-endmill finish uses scallop height with collapsed spacing overrides',
   await ui.cam.operationGroup(app.page, 'Strategy').click()
 
   const pattern = ui.cam.operationField(app.page, 'Pattern')
-  const scallopHeight = ui.cam.operationField(app.page, 'Scallop height')
+  const scallopHeight = app.page.locator('.cam-operation-properties .properties-field')
+    .filter({ has: app.page.getByText(/^Scallop height(?: \((?:in|mm)\))?$/) })
   const stepover = ui.cam.operationField(app.page, 'Stepover ratio')
   const adaptive = app.page.getByRole('checkbox', { name: /Adaptive refinement/ })
   const advanced = ui.cam.operationGroup(app.page, 'Advanced overrides')
@@ -740,13 +741,13 @@ test('ball-endmill finish uses scallop height with collapsed spacing overrides',
   await expect(cuspNotes.last()).not.toHaveText(before ?? '')
 
   await selectPattern('Constant scallop')
-  await expect(stepover).toBeVisible()
+  await expect(stepover).toHaveCount(0)
+  await expect(advanced).toHaveCount(0)
+  await expect(ui.cam.operationField(app.page, 'Stepdown')).toHaveCount(0)
   await expect(adaptive).toHaveCount(0)
   await expect(ui.cam.operationField(app.page, 'Adaptive spacing')).toHaveCount(0)
   await expect(ui.cam.operationField(app.page, 'Max rings / band')).toHaveCount(0)
-  await stepover.locator('input').fill('0.3')
-  await stepover.locator('input').blur()
-  await expect(app.page.getByText(/^Implied cusp:/)).toBeVisible()
+  await expect(app.page.getByText(/^Implied cusp/)).toHaveCount(0)
   await scallopHeight.locator('input').fill('0.001')
   await scallopHeight.locator('input').blur()
   const stored = (await getProject(app.page)).operations as Array<Record<string, unknown>>
@@ -775,4 +776,79 @@ test('flat-endmill finish keeps legacy spacing controls', async ({ app, ui }) =>
   await expect(advanced).toHaveAttribute('aria-expanded', 'false')
   await advanced.click()
   await expect(ui.cam.operationField(app.page, 'Stepover ratio')).toBeVisible()
+})
+
+test.describe('Constant scallop single quality control on tablet', () => {
+  test.use({ viewport: { width: 1180, height: 820 }, hasTouch: true })
+
+  for (const units of ['mm', 'inch'] as const) {
+    for (const legacyHeight of [undefined, 0]) {
+      test(`preserves legacy ${String(legacyHeight)} height in ${units} until a valid edit`, async ({ app, ui }) => {
+        const project = JSON.parse(readFileSync(new URL('../src/engine/test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8'))
+        project.meta.units = units
+        project.operations = [project.operations.find((operation: { kind: string }) => operation.kind === 'finish_surface')]
+        Object.assign(project.operations[0], {
+          name: 'Legacy scallop', pocketPattern: 'constant_scallop', stepover: 0.1,
+          finishScallopHeight: legacyHeight,
+        })
+        Object.assign(project.tools[0], { type: 'ball_endmill', units, diameter: 4 })
+        await seedProject(app.page, JSON.stringify(project))
+        const before = await getProject(app.page)
+        await app.page.getByRole('button', { name: 'Open operations panel' }).click()
+        await ui.operations.rowByName(app.page, 'Legacy scallop').click()
+        await app.page.getByRole('button', { name: 'Expand operation properties' }).click()
+        const dialog = app.page.locator('.dialog--panel-expand')
+        const field = dialog.locator('.properties-field').filter({
+          has: app.page.getByText(`Scallop height (${units === 'inch' ? 'in' : 'mm'})`, { exact: true }),
+        })
+        if (!(await field.isVisible())) await dialog.getByRole('button', { name: 'Strategy', exact: true }).click()
+        const input = field.locator('input')
+        const expectedHeight = 2 - Math.sqrt(4 - 0.4 ** 2 / 4)
+        expect(Number(await input.inputValue())).toBeCloseTo(expectedHeight, 8)
+        await expect(dialog.getByText('Height of the ridges between passes. Smaller values give a finer finish and longer machining time.', { exact: true })).toBeVisible()
+        await expect(ui.cam.operationGroup(app.page, 'Advanced overrides')).toHaveCount(0)
+        await expect(ui.cam.operationField(app.page, 'Stepdown')).toHaveCount(0)
+        await expect(ui.cam.operationField(app.page, 'Stepover ratio')).toHaveCount(0)
+        await app.page.screenshot({ path: test.info().outputPath('constant-scallop.png') })
+        await input.focus()
+        await input.blur()
+        expect((await getProject(app.page)).operations).toEqual(before.operations)
+
+        for (const value of ['0', '-0.1', '', '2', 'abc']) {
+          await input.fill(value)
+          await input.blur()
+          await expect(input).toHaveAttribute('aria-invalid', 'true')
+          await expect(app.page.getByRole('alert')).toContainText('Enter a height greater than zero')
+          expect((await getProject(app.page)).operations).toEqual(before.operations)
+        }
+        await input.focus()
+        await input.press('Escape')
+        // Escape also closes the expanded dialog; reopening must not commit
+        // either an invalid draft or the rounded legacy display value.
+        if (!(await dialog.isVisible())) {
+          await app.page.getByRole('button', { name: 'Expand operation properties' }).click()
+        }
+        await expect(input).toHaveAttribute('aria-invalid', 'false')
+        expect((await getProject(app.page)).operations).toEqual(before.operations)
+
+        await input.fill('0.00001234')
+        await input.press('Enter')
+        const edited = await getProject(app.page)
+        const operation = (edited.operations as Array<Record<string, unknown>>)[0]
+        expect(operation.finishScallopHeight).toBe(0.00001234)
+        expect(operation.stepover).toBe(0.1)
+        await expect(input).toHaveValue('0.00001234')
+        await app.page.reload()
+        await seedProject(app.page, JSON.stringify(edited))
+        await app.page.getByRole('button', { name: 'Open operations panel' }).click()
+        await ui.operations.rowByName(app.page, 'Legacy scallop').click()
+        await app.page.getByRole('button', { name: 'Expand operation properties' }).click()
+        if (!(await field.isVisible())) await dialog.getByRole('button', { name: 'Strategy', exact: true }).click()
+        await expect(input).toHaveValue('0.00001234')
+        await input.focus()
+        await input.blur()
+        expect((await getProject(app.page)).operations).toEqual(edited.operations)
+      })
+    }
+  }
 })

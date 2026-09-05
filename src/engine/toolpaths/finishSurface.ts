@@ -238,7 +238,7 @@ export function generateFinishSurfaceToolpath(
   const waterlineStepdown = isWaterline
     ? finishScallopWaterlineStepdown(operation, tool) ?? operation.stepdown
     : operation.stepdown
-  if (!(waterlineStepdown > 0) || !Number.isFinite(waterlineStepdown)) {
+  if (!isConstantScallop && (!(waterlineStepdown > 0) || !Number.isFinite(waterlineStepdown))) {
     return {
       operationId: operation.id,
       moves: [],
@@ -338,7 +338,8 @@ export function generateFinishSurfaceToolpath(
   const stepLevelTopZ = isWaterline
     ? Math.max(modelTopZ, intersectingAddTopMax)
     : modelTopZ
-  let stepLevels = generateStepLevels(stepLevelTopZ, effectiveBottom, waterlineStepdown)
+  // Constant scallop follows the surface directly and never consumes Z levels.
+  let stepLevels = isConstantScallop ? [] : generateStepLevels(stepLevelTopZ, effectiveBottom, waterlineStepdown)
   if (isWaterline) {
     // Insert stepLevelTopZ, modelTopZ, and horizontal floor Zs within the
     // effective range as additional waterline rings. The floor levels are
@@ -358,7 +359,7 @@ export function generateFinishSurfaceToolpath(
     stepLevels = [...merged].sort((a, b) => b - a)
   }
 
-  if (stepLevels.length === 0) {
+  if (!isConstantScallop && stepLevels.length === 0) {
     return {
       operationId: operation.id,
       moves: [],

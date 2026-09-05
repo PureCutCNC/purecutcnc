@@ -194,6 +194,11 @@ function testScallopHeightIsOnlyOfferedForBallEndmillSurfaceFinishing() {
     operationFieldsForGroup('advanced', operation, ballTool).some((field) => field.id === 'stepover'),
     'finish-surface stepover must live in Advanced overrides',
   )
+  operation.pocketPattern = 'constant_scallop'
+  assert(visible(ballTool).includes('scallopHeight'), 'constant scallop must expose its height')
+  assert(!visible(ballTool).includes('stepdown'), 'constant scallop must not expose unused stepdown')
+  assert(!visible(ballTool).includes('stepover'), 'constant scallop must not expose competing stepover')
+  assert(operationFieldsForGroup('advanced', operation, ballTool).length === 0, 'constant scallop must have no advanced overrides')
 }
 
 function testEveryFieldIsReachable() {
