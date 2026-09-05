@@ -213,6 +213,20 @@ function cutSamples(moves: ToolpathMove[], perMove = 4): Point[] {
  */
 const GEOMETRIC_TOLERANCE = 1e-3
 
+/**
+ * Planar `lead_in` moves at a cut level — the arrival arc, as distinct from the
+ * helix that put the cutter there.
+ *
+ * `lead_in` alone cannot tell them apart: `emitHelix` uses the same kind, and
+ * its final flattening revolution is planar too. So this is only ever compared
+ * BETWEEN two runs of the same operation, one with the lead and one without;
+ * the helix contributes the same count to both.
+ */
+function arrivalArcMoves(moves: ToolpathMove[]): number {
+  return moves.filter((move) => move.kind === 'lead_in'
+    && Math.abs(move.from.z - move.to.z) < 1e-9).length
+}
+
 /** The entry moves that live at or below `z`, i.e. the ones actually in stock. */
 function entryMovesBelow(moves: ToolpathMove[], z: number): ToolpathMove[] {
   return moves.filter((move) => move.kind === 'lead_in'
@@ -738,22 +752,64 @@ function testTheLeadArrivesWithTheRampedEntry() {
     ['inside finish', holeProject(), insideOperation()],
     ['outside rough', bossProject(), outsideOperation({ pass: 'rough' })],
   ] as const) {
-    const withPlunge = generateEdgeRouteToolpath(project, { ...operation, xyLeadStrategy: 'arc' })
-    assert(countKind(withPlunge.moves, 'lead_out') === 0,
-      `${label}: a plunging route still declines the lead`)
-    assert(warned(withPlunge, 'xyLeadNeedsRampedEntry'),
-      `${label}: and still says why`)
+    const helical = { ...operation, entryStrategy: 'helix' as const }
 
-    const withHelix = generateEdgeRouteToolpath(
-      project,
-      { ...operation, entryStrategy: 'helix', xyLeadStrategy: 'arc' },
-    )
-    assert(countKind(withHelix.moves, 'lead_out') > 0,
-      `${label}: a helical entry earns the lead`)
-    assert(!warned(withHelix, 'xyLeadNeedsRampedEntry'),
-      `${label}: and the deferral warning is gone`)
+    const withPlunge = generateEdgeRouteToolpath(project, { ...operation, xyLeadStrategy: 'arc' })
+    assert(arrivalArcMoves(withPlunge.moves) === arrivalArcMoves(
+      generateEdgeRouteToolpath(project, operation).moves),
+      `${label}: a plunging route still declines the lead`)
+    assert(warned(withPlunge, 'xyLeadNeedsRampedEntry'), `${label}: and still says why`)
+
+    // Counting `lead_in` outright would prove nothing — the helix is emitted as
+    // `lead_in` too. The arrival arc is what the LEAD adds on top of the same
+    // entry, so the comparison is against the same operation without one.
+    const entryOnly = generateEdgeRouteToolpath(project, helical)
+    const led = generateEdgeRouteToolpath(project, { ...helical, xyLeadStrategy: 'arc' })
+    assert(arrivalArcMoves(led.moves) > arrivalArcMoves(entryOnly.moves),
+      `${label}: a helical entry earns the arrival arc`)
+    assert(!warned(led, 'xyLeadNeedsRampedEntry'), `${label}: and the deferral warning is gone`)
   }
   console.log('the lead arrives with the ramped entry: PASSED')
+}
+
+/**
+ * A finish edge route arrives along an arc and leaves without one.
+ *
+ * The two are not symmetric. The arrival has a helix under it — `synthesizeEntry`
+ * bores the staging point full-diameter before the arc ever reaches it. The
+ * departure has nothing: it drives out of the finished slot into whatever
+ * stands beside it and then retracts vertically out of the blind pocket it just
+ * cut. One stepdown deep that is ordinary slotting; on a finish pass, which
+ * cuts the whole depth in one go, it is not.
+ */
+function testAFinishRouteArrivesOnAnArcAndLeavesWithoutOne() {
+  console.log('Testing a finish edge route does not depart along an arc...')
+  for (const [label, project, operation] of [
+    ['outside', bossProject(), outsideOperation()],
+    ['inside', holeProject(), insideOperation()],
+  ] as const) {
+    const led = { ...operation, entryStrategy: 'helix' as const, xyLeadStrategy: 'arc' as const }
+
+    const finish = generateEdgeRouteToolpath(project, led)
+    assert(countKind(finish.moves, 'lead_out') === 0,
+      `${label} finish: no exit arc`)
+    // Not simply "no lead at all": the arrival is still there, which is the
+    // half a helix makes safe.
+    assert(arrivalArcMoves(finish.moves)
+      > arrivalArcMoves(generateEdgeRouteToolpath(project, { ...operation, entryStrategy: 'helix' }).moves),
+      `${label} finish: but it still arrives on one`)
+    // And it leaves the way it always did — straight up off the wall.
+    const last = finish.moves.at(-1)
+    assert(last?.kind === 'rapid' && last.from.x === last.to.x && last.from.y === last.to.y,
+      `${label} finish: the departure is the ordinary vertical retract`)
+
+    // A roughing pass keeps its exit arc: its bite is one stepdown deep, not
+    // the whole part.
+    const rough = generateEdgeRouteToolpath(project, { ...led, pass: 'rough' })
+    assert(countKind(rough.moves, 'lead_out') > 0,
+      `${label} rough: still departs along an arc`)
+  }
+  console.log('finish departs without an arc: PASSED')
 }
 
 try {
@@ -770,6 +826,7 @@ try {
   testTrochoidalRoughingNeverBuildsTheEntryPolicy()
   testPlungeAndAbsentAreUnchangedAndIdentical()
   testTheLeadArrivesWithTheRampedEntry()
+  testAFinishRouteArrivesOnAnArcAndLeavesWithoutOne()
   console.log('\nAll edge-route entry-policy tests PASSED.')
 } catch (e) {
   console.error(e)

@@ -1247,6 +1247,19 @@ function generateEdgeRouteToolpathSingle(
   const wallQualifiesForLead = !isTrochoidal
     && (operation.pass === 'finish' || roughingRingIsTheFinishedWall(operation))
   const carriesWallLead = wallQualifiesForLead && descentCanAffordALead(operation)
+  // The ARRIVAL is safe because a helix bores its staging point before the arc
+  // reaches it. The DEPARTURE has no such thing: it drives out of the finished
+  // slot into whatever stands beside it and then retracts vertically out of the
+  // blind pocket it just cut. One stepdown deep that is ordinary slotting; on a
+  // finish pass, which cuts the whole depth in one go, it is not.
+  //
+  // Measured on `work/edge-in-test-exit-cut.camj` (1/4" cutter, 0.75" stock,
+  // roughing leaving 0.040"): the cleared band runs 0.040" to 0.290" out from
+  // the wall, and the finish exit arc drove to 0.500" — 0.21" into untouched
+  // slug at full depth. A narrower arc does not rescue it either: the room a
+  // finish pass has is exactly the radial stock roughing left, and the narrowest
+  // rung of the ladder (0.25 x D = 0.0625") is already wider than that 0.040".
+  const wallLeadDepartsAlongAnArc = operation.pass !== 'finish'
   if (wallQualifiesForLead && !carriesWallLead && operation.xyLeadStrategy === 'arc') {
     appendUniqueWarning(warnings, { code: 'xyLeadNeedsRampedEntry' })
   }
@@ -1360,6 +1373,7 @@ function generateEdgeRouteToolpathSingle(
       const insideLeadForLevel = (z: number): XyLeadContext | undefined => beginXyLeadLevel(
         withKeepOut(bandLeadOptions, tabKeepOutAtZ(z)),
         (warning) => appendUniqueWarning(warnings, warning),
+        wallLeadDepartsAlongAnArc,
       )
       // The Z entry (issue #708) takes the SAME domain as the lead, for the
       // same reason: the cavity is where the cutter may be without touching a
@@ -1693,6 +1707,7 @@ function generateEdgeRouteToolpathSingle(
     beginXyLeadLevel(
       withKeepOut(options, tabKeepOutAtZ(z)),
       (warning) => appendUniqueWarning(warnings, warning),
+      wallLeadDepartsAlongAnArc,
     )
 
   const outsideEntryForLevel = (policy: EntryPolicy | undefined) => (z: number): EntryPolicy | undefined =>

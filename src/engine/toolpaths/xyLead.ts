@@ -193,6 +193,29 @@ export interface XyLeadPlan {
 export interface XyLeadContext {
   options: XyLeadOptions
   onWarning: (warning: ToolpathWarning) => void
+  /**
+   * May this pass LEAVE the wall along an arc?
+   *
+   * An arrival and a departure look symmetric but are not, because the entry
+   * has a helix under it and the exit has nothing. The entry's staging point is
+   * bored full-diameter by `synthesizeEntry` before the arc traverses it; the
+   * exit simply drives out of the finished slot into whatever is beside it and
+   * then retracts vertically out of the blind pocket it just made.
+   *
+   * That is survivable where the bite is one stepdown deep. It is not on a pass
+   * that cuts full depth in one go — measured on a 1/4" cutter in 0.75" stock
+   * (`work/edge-in-test-exit-cut.camj`): roughing left a cleared band 0.040" to
+   * 0.290" out from the wall, and the finish exit arc drove to 0.500", 0.21"
+   * into the untouched slug at the full 0.75" depth.
+   *
+   * Nor can a smaller arc rescue it: the room a finish pass has is exactly the
+   * radial stock roughing left — 0.040" there — and the narrowest rung of the
+   * ladder is 0.25 x D = 0.0625", already wider than that.
+   *
+   * A clearing pass is unaffected: its exit sweeps into the pocket its own
+   * rings have emptied, which is what the arc was designed around.
+   */
+  exitArc: boolean
 }
 
 /**
@@ -380,8 +403,9 @@ export function warnXyLeadDeclined(
 export function beginXyLeadLevel(
   options: XyLeadOptions | undefined,
   onWarning: (warning: ToolpathWarning) => void,
+  exitArc = true,
 ): XyLeadContext | undefined {
-  return options ? { options, onWarning } : undefined
+  return options ? { options, onWarning, exitArc } : undefined
 }
 
 /**
@@ -402,7 +426,7 @@ export function emitXyLeadOut(
   z: number,
   context: XyLeadContext | undefined,
 ): ToolpathPoint | null {
-  if (!context || from === null || contour.length < 3) return from
+  if (!context || !context.exitArc || from === null || contour.length < 3) return from
   // The cut ends where the contour began; anything else means the caller is
   // not standing on the contour it just cut.
   if (Math.abs(contour[0].x - from.x) > LEAD_EPSILON
@@ -446,7 +470,7 @@ export function emitOpenWallLeadOut(
   z: number,
   context: XyLeadContext | undefined,
 ): ToolpathPoint | null {
-  if (!context || from === null || segment.length < 2) return from
+  if (!context || !context.exitArc || from === null || segment.length < 2) return from
   const options = context.options
   const end = segment[segment.length - 1]
   const previous = segment[segment.length - 2]
