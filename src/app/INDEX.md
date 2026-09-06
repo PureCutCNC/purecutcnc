@@ -3,7 +3,8 @@
 App-level orchestration hooks that keep `App.tsx` as the composition root without owning subsystem machinery.
 
 ## Files
-- `useToolpathGeneration.ts` — toolpath generation, cache invalidation, one-per-frame scheduling, and derived visible/colliding toolpath state
+- [`toolpathGeneration/`](toolpathGeneration/INDEX.md) — worker-backed generation (issue #675): the queue, authoritative cache, main↔worker protocol, and the inline and worker execution backends. Slices 1–2 only — no consumer uses it yet, so the worker is not in the app's module graph
+- `useToolpathGeneration.ts` — toolpath generation, cache invalidation, one-per-frame scheduling, and derived visible/colliding toolpath state. Generation itself now lives in `src/engine/toolpaths/generateOperation.ts` and the cache rules in `toolpathGeneration/cacheInputs.ts`; `isCacheHit` and `buildToolpathCacheEntry` remain here as thin wrappers so the existing suites are unchanged
 - `useToolpathGeneration.test.ts` — React-free tests for cache invalidation and the one-per-frame scheduling core
 - `useToolpathGenerationScheduling.test.ts` — React-free tests for the issue #518 scheduling behaviour: stale results stay in the map while a recompute is pending, the map is rebuilt from `neededOperationIds`, and `deferGeneration` coalesces a drag gesture into one regeneration
 - `useToolpathGenerationToolNarrowing.test.ts` — React-free tests that an unrelated tool import/edit/delete leaves an operation's cache valid, while a change to the operation's own tool invalidates it (issue #518)

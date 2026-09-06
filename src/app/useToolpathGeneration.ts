@@ -16,48 +16,24 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  applyClampWarnings,
-  applyEdgeRouteTabs,
-  applyTabsToEdgeRoute,
-  applyTabWarnings,
-  diffToolpathInputs,
-  generateDrillingToolpath,
-  generateEdgeRouteToolpath,
-  generateFinishSurfaceCleanupToolpath,
-  generateFinishSurfaceToolpath,
-  generateFollowLineToolpath,
-  generatePocketToolpath,
-  generateRoughSurfaceToolpath,
-  generateSurfaceCleanToolpath,
-  generateVCarveMedialToolpath,
-  generateVCarveToolpath,
-  operationAffectedByChange,
-  operationFootprint,
-  optimizeLinearMoves,
-  type OperationFootprint,
+  computeOperationToolpath,
   type ToolpathResult,
   type ToolpathGenerationTrace,
 } from '../engine/toolpaths'
-import type { Clamp, Operation, Project, Stock, Tab, Tool } from '../types/project'
-import { projectsEqual } from '../store/helpers/normalize'
+import {
+  captureCacheInputs,
+  cacheInputsValid,
+  operationComputationEquals,
+  type ToolpathCacheEntry,
+} from './toolpathGeneration/cacheInputs'
+import type { Operation, Project } from '../types/project'
 
-export interface ToolpathCacheEntry {
-  result: ToolpathResult
-  operation: Operation
-  stock: Stock
-  /** The project snapshot this result was generated from (issue #518). */
-  project: Project
-  /**
-   * The world-XY region a feature change must reach to invalidate this entry
-   * (issue #518, S3b). Computed from the same `project` snapshot at the point
-   * the entry is written, so it can never disagree with the inputs the result
-   * was generated from.
-   */
-  footprint: OperationFootprint
-  tools: Tool[]
-  tabs: Tab[]
-  clamps: Clamp[]
-}
+// Re-exported so the cache suites keep testing the production rules through the
+// names they were written against; the rules themselves live in
+// `toolpathGeneration/cacheInputs.ts` now that pending jobs must be validated
+// too (issue #675).
+export { operationComputationEquals }
+export type { ToolpathCacheEntry }
 
 type ToolpathMapUpdater = Map<string, ToolpathResult> | ((prev: Map<string, ToolpathResult>) => Map<string, ToolpathResult>)
 type ToolpathMapSetter = (value: ToolpathMapUpdater) => void
@@ -72,115 +48,8 @@ interface StartToolpathGenerationPipelineOptions {
   scheduleAfterPaintFn?: (fn: () => void) => void
 }
 
-// Compare only fields that affect toolpath geometry. Excluded (display-only):
-//   name, enabled, showToolpath
-// Any new computation-relevant field added to Operation must be listed here.
-export function operationComputationEquals(a: Operation, b: Operation): boolean {
-  if (a === b) return true
-  return (
-    a.kind === b.kind
-    && a.pass === b.pass
-    && a.target === b.target
-    && a.toolRef === b.toolRef
-    && a.stepdown === b.stepdown
-    && a.stepover === b.stepover
-    && a.feed === b.feed
-    && a.plungeFeed === b.plungeFeed
-    && a.rpm === b.rpm
-    && a.pocketPattern === b.pocketPattern
-    && a.pocketAngle === b.pocketAngle
-    && a.edgeStrategy === b.edgeStrategy
-    && a.carveStrategy === b.carveStrategy
-    && a.trochoidalCutWidth === b.trochoidalCutWidth
-    && a.trochoidalAdvance === b.trochoidalAdvance
-    && a.entryStrategy === b.entryStrategy
-    && a.entryRampAngle === b.entryRampAngle
-    && a.entryHelixDiameterPercent === b.entryHelixDiameterPercent
-    && a.xyLeadStrategy === b.xyLeadStrategy
-    && a.pocketSlotFeedPercent === b.pocketSlotFeedPercent
-    && a.pocketFeedReduction === b.pocketFeedReduction
-    && a.roundOutsideCorners === b.roundOutsideCorners
-    && a.roundLinkCorners === b.roundLinkCorners
-    && a.cleanWallCorners === b.cleanWallCorners
-    && a.cornerRelief === b.cornerRelief
-    && a.stockToLeaveRadial === b.stockToLeaveRadial
-    && a.stockToLeaveAxial === b.stockToLeaveAxial
-    && a.finishWalls === b.finishWalls
-    && a.finishFloor === b.finishFloor
-    && a.carveDepth === b.carveDepth
-    && a.maxCarveDepth === b.maxCarveDepth
-    && a.cutDirection === b.cutDirection
-    && a.machiningOrder === b.machiningOrder
-    && a.drillType === b.drillType
-    && a.peckDepth === b.peckDepth
-    && a.dwellTime === b.dwellTime
-    && a.countersinkDiameter === b.countersinkDiameter
-    && a.retractHeight === b.retractHeight
-    && a.debugToolpath === b.debugToolpath
-    && a.debugShowRejectedCorners === b.debugShowRejectedCorners
-    && a.finishSlopeMin === b.finishSlopeMin
-    && a.finishSlopeMax === b.finishSlopeMax
-    && a.finishScallopHeight === b.finishScallopHeight
-    && a.waterlineAdaptiveRefinement === b.waterlineAdaptiveRefinement
-    && a.waterlineMicroStepover === b.waterlineMicroStepover
-    && a.waterlineRefinementThreshold === b.waterlineRefinementThreshold
-    && a.waterlineMaxRingsPerBand === b.waterlineMaxRingsPerBand
-    && a.waterlineTipStepdown === b.waterlineTipStepdown
-  )
-}
-
 export function isCacheHit(entry: ToolpathCacheEntry, operation: Operation, project: Project): boolean {
-  if (
-    !operationComputationEquals(entry.operation, operation)
-    || entry.stock !== project.stock
-    || entry.tabs !== project.tabs
-    || entry.clamps !== project.clamps
-  ) {
-    return false
-  }
-
-  // Tools are narrowed to the operation's own tool (issue #518, S5): every
-  // engine read is `project.tools.find(t => t.id === operation.toolRef)` —
-  // clamps.ts, carving.ts, drilling.ts, edge.ts, pocket.ts, geometry.ts, and
-  // four more — and no call site reads any other tool, so importing, editing,
-  // or deleting an unrelated tool cannot change this operation's output.
-  // Keep the whole-array identity fast path; a changed array compares only
-  // the operation's tool row, identity-first with a deep-equal fallback.
-  // Missing on either side counts as changed: unknown means invalidate.
-  //
-  // `tabs` and `clamps` deliberately stay whole-array identity: tab reads are
-  // not all spatially filtered (modelProtection.ts iterates every tab;
-  // edge.ts passes `project.tabs` wholesale for trochoidal), so narrowing
-  // them needs its own footprint argument and is out of scope here.
-  if (entry.tools !== project.tools) {
-    const before = entry.tools.find((tool) => tool.id === operation.toolRef) ?? null
-    const after = project.tools.find((tool) => tool.id === operation.toolRef) ?? null
-    if (before !== after && (!before || !after || !projectsEqual(before, after))) return false
-  }
-
-  // The entry holds the full project snapshot it was generated from
-  // (`entry.project`). Holding one `Project` reference per entry is bounded —
-  // at most one per operation — and immutable updates share structure, so
-  // this is not a leak. When the snapshot's identity still matches, skip the
-  // O(n) diff below.
-  if (entry.project === project) return true
-
-  // Each entry diffs against its **own** snapshot, not a single global
-  // "changed since last render" set: operations are generated at different
-  // times, so one entry may be several edits older than another and a shared
-  // set would be wrong for the stale one. Display-only instance changes
-  // (visible, locked, folderId) produce an empty diff and stop invalidating.
-  // Whether a geometry change invalidates is decided by the footprint
-  // consult below.
-  const diff = diffToolpathInputs(entry.project, project)
-  if (diff.invalidatesEveryOperation) return false
-  if (diff.changedFeatureIds.size === 0) return true
-  // Spatial narrowing (issue #518, S3b): a changed feature invalidates this
-  // entry only when the change reaches the footprint recorded on it. The
-  // footprint was computed from `entry.project` — the same snapshot the
-  // result was generated from — so the two can never disagree, and an
-  // unknown footprint invalidates by construction (`bounds === null`).
-  return !operationAffectedByChange(entry.footprint, entry.project, project, diff.changedFeatureIds)
+  return cacheInputsValid(entry, operation, project)
 }
 
 /**
@@ -198,16 +67,7 @@ export function buildToolpathCacheEntry(
   operation: Operation,
   result: ToolpathResult,
 ): ToolpathCacheEntry {
-  return {
-    result,
-    operation,
-    stock: project.stock,
-    project,
-    footprint: operationFootprint(project, operation),
-    tools: project.tools,
-    tabs: project.tabs,
-    clamps: project.clamps,
-  }
+  return { ...captureCacheInputs(project, operation), result }
 }
 
 // Double-rAF: the first rAF fires before the current paint, the second
@@ -337,10 +197,6 @@ export function useToolpathGeneration(
   collidingClampIds: string[]
 } {
   const toolpathCacheRef = useRef<Map<string, ToolpathCacheEntry>>(new Map())
-  // Ephemeral, debug-only (issue #356): the pre-optimization toolpath per
-  // operation, captured at the optimization seam. Never serialised; used only
-  // by the exported-motion debug view's "Generated" layer.
-  const rawToolpathRef = useRef<Map<string, ToolpathResult>>(new Map())
   const [toolpathMap, setToolpathMap] = useState<Map<string, ToolpathResult>>(new Map())
 
   const generateToolpathForOperation = useMemo(
@@ -354,72 +210,34 @@ export function useToolpathGeneration(
         return cached.result
       }
 
-      // Capture the pre-optimization toolpath into the ephemeral raw trace
-      // (issue #356), then run the always-on linear-move merge. `runOptimize`
-      // is aliased so the call sites below can be redirected wholesale to
-      // `optimizeAndCapture` without recursing back into this definition.
-      const runOptimize = optimizeLinearMoves
-      const optimizeAndCapture = (raw: ToolpathResult): ToolpathResult => {
-        rawToolpathRef.current.set(raw.operationId, raw)
-        return runOptimize(raw)
+      // Generation itself lives in the engine (issue #675): one synchronous,
+      // DOM-free entry point that the inline and worker backends both call, so
+      // the two can never drift apart. What stays here is what cannot cross a
+      // thread boundary — the cache keyed on main-thread object identity.
+      const envelope = computeOperationToolpath(project, operation)
+      if (!envelope) {
+        return null
       }
 
-      let result: ToolpathResult | null = null
-
-      if (operation.kind === 'pocket') {
-        result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, generatePocketToolpath(project, operation))), operation)
-      } else if (operation.kind === 'v_carve') {
-        result = applyClampWarnings(project, optimizeAndCapture(generateVCarveToolpath(project, operation)), operation)
-      } else if (operation.kind === 'v_carve_medial') {
-        result = applyClampWarnings(project, optimizeAndCapture(generateVCarveMedialToolpath(project, operation)), operation)
-      } else if (operation.kind === 'edge_route_inside' || operation.kind === 'edge_route_outside') {
-        // Warnings first: applyTabWarnings judges each tab against the cut Z range, and
-        // applyTabsToEdgeRoute raises that range to the tab tops. Run it on the adjusted
-        // moves and every applied tab reports as lying outside the range it just created.
-        const warned = applyTabWarnings(project, operation, generateEdgeRouteToolpath(project, operation))
-        // applyEdgeRouteTabs, not applyTabsToEdgeRoute: trochoidal roughing owns
-        // its own tab motion and must not be tabbed twice. See its docstring.
-        result = applyClampWarnings(project, optimizeAndCapture(applyEdgeRouteTabs(project, operation, warned)), operation)
-      } else if (operation.kind === 'surface_clean') {
-        result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, generateSurfaceCleanToolpath(project, operation))), operation)
-      } else if (operation.kind === 'rough_surface') {
-        result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, generateRoughSurfaceToolpath(project, operation))), operation)
-      } else if (operation.kind === 'finish_surface') {
-        const warned = applyTabWarnings(project, operation, generateFinishSurfaceToolpath(project, operation))
-        result = applyClampWarnings(project, optimizeAndCapture(applyTabsToEdgeRoute(project, operation, warned)), operation)
-      } else if (operation.kind === 'finish_surface_cleanup') {
-        const warned = applyTabWarnings(project, operation, generateFinishSurfaceCleanupToolpath(project, operation))
-        result = applyClampWarnings(project, optimizeAndCapture(applyTabsToEdgeRoute(project, operation, warned)), operation)
-      } else if (operation.kind === 'follow_line') {
-        result = applyClampWarnings(project, optimizeAndCapture(generateFollowLineToolpath(project, operation)), operation)
-      } else if (operation.kind === 'drilling') {
-        result = applyClampWarnings(project, optimizeAndCapture(generateDrillingToolpath(project, operation)), operation)
-      }
-
-      if (result) {
-        toolpathCacheRef.current.set(operation.id, buildToolpathCacheEntry(project, operation, result))
-      }
-
-      return result
+      toolpathCacheRef.current.set(operation.id, buildToolpathCacheEntry(project, operation, envelope.result))
+      return envelope.result
     },
     [project]
   )
 
   // Debug-only (issue #356): produce a {raw, optimized} trace for one operation.
-  // Forces a fresh compute (deleting the cache entry bypasses the cache-hit
-  // path, which skips raw capture) so the ephemeral raw trace is guaranteed
-  // fresh for the debug view. Generation is deterministic, so the recompute
-  // recaches the same optimized result preview/simulation already use.
+  // Always a fresh compute — the raw path is not retained by ordinary
+  // generation, so it can only come from a run that asked for it. Generation is
+  // deterministic, so the recompute yields the same optimized result preview and
+  // simulation already hold, and the cache is refreshed rather than evicted.
   const getGenerationTrace = useCallback((operation: Operation): ToolpathGenerationTrace | null => {
-    rawToolpathRef.current.delete(operation.id)
-    toolpathCacheRef.current.delete(operation.id)
-    const optimized = generateToolpathForOperation(operation)
-    const raw = rawToolpathRef.current.get(operation.id)
-    if (!optimized || !raw) {
+    const envelope = computeOperationToolpath(project, operation, { trace: true })
+    if (!envelope || !envelope.raw) {
       return null
     }
-    return { operationId: operation.id, raw, optimized }
-  }, [generateToolpathForOperation])
+    toolpathCacheRef.current.set(operation.id, buildToolpathCacheEntry(project, operation, envelope.result))
+    return { operationId: operation.id, raw: envelope.raw, optimized: envelope.result }
+  }, [project])
 
   // Operations that need toolpath computation (selected first for priority)
   const neededOperationIds = useMemo(() => {
