@@ -97,6 +97,7 @@ export interface CanvasThemePalette {
   clampCollidingStroke: string
   clampCollidingSelectedFill: string
   clampCollidingSelectedStroke: string
+  clampClearanceStroke: string
 
   // Tab footprints.
   tabFill: string
@@ -169,6 +170,7 @@ export interface ThreeThemePalette {
   clampColliding: number
   /** Clamp fixture — colliding + selected. */
   clampCollidingSelected: number
+  clampClearance: number
   /** Tab fixture — default state. */
   tabDefault: number
   /** Tab fixture — selected. */
@@ -260,6 +262,7 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       clampCollidingStroke: 'rgba(235, 122, 122, 0.92)',
       clampCollidingSelectedFill: 'rgba(209, 118, 118, 0.28)',
       clampCollidingSelectedStroke: '#ffb0b0',
+      clampClearanceStroke: 'rgba(122, 151, 224, 0.42)',
 
       tabFill: 'rgba(128, 175, 82, 0.14)',
       tabStroke: 'rgba(156, 205, 103, 0.88)',
@@ -309,6 +312,7 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       clampSelected: 0x9db9ff,
       clampColliding: 0xd46b6b,
       clampCollidingSelected: 0xff9c9c,
+      clampClearance: 0x7a97e0,
       tabDefault: 0x9ccd67,
       tabSelected: 0xc7ef94,
       originAxisX: 0xe35b5b,
@@ -383,6 +387,7 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       clampCollidingStroke: 'rgba(190, 70, 70, 0.9)',
       clampCollidingSelectedFill: 'rgba(190, 70, 70, 0.24)',
       clampCollidingSelectedStroke: '#c04040',
+      clampClearanceStroke: 'rgba(56, 84, 150, 0.42)',
 
       tabFill: 'rgba(90, 140, 50, 0.14)',
       tabStroke: 'rgba(100, 150, 60, 0.88)',
@@ -432,6 +437,7 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       clampSelected: 0x5a7dd4,
       clampColliding: 0xb05050,
       clampCollidingSelected: 0xd47070,
+      clampClearance: 0x5a7ac0,
       tabDefault: 0x6fa33f,
       tabSelected: 0x8cc44a,
       originAxisX: 0xc53030,

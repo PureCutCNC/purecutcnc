@@ -36,7 +36,7 @@ import type {
 } from '../types'
 import { checkMaxCutDepthWarning, DEFAULT_CLIPPER_SCALE, getOperationSafeZ, greedyNearestNeighbor, normalizeToolForProject, normalizeWinding, toClipperPath } from '../geometry'
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from '../multiFeature'
-import { unionClipperPaths } from '../modelProtection'
+import { appendClampBlockedWarnings, clampKeepOutPaths, clampsBlockingArea, differenceClipperPaths, unionClipperPaths } from '../modelProtection'
 import { executeDifference, polyTreeToRegions, updateBounds } from '../pocket'
 import { resolveRegionDomainArea } from '../regionDomain'
 import { buildRegionMask, splitFeatureTargets } from '../regions'
@@ -170,13 +170,36 @@ function generateVCarveMedialToolpathSingle(project: Project, operation: Operati
     }
 
     // Apply the region mask to this band's domain.
-    if (regionMask) {
+    // `expansion: tool.radius`, not `0` as the pocket uses: a V-carve's erosion
+    // is the carved half-width at depth (`currentDepth * slope`), not the tool
+    // radius, so it cannot be relied on to carry the radius the way the pocket's
+    // `centreInset` does. `clamps.ts` judges the finished path against the full
+    // tool radius — a V-bit's body is its nominal diameter well before it
+    // reaches a clamp's height — so that is the clearance generation has to
+    // provide. The carve erosion then rides on top, which leaves a little more
+    // room than strictly required next to a clamp and none anywhere else.
+    const clampKeepOut = clampKeepOutPaths(project, { z: band.bottomZ, expansion: tool.radius })
+    if (regionMask || clampKeepOut.length > 0) {
       const scale = DEFAULT_CLIPPER_SCALE
       const outerPaths = band.regions.map((r) => toClipperPath(normalizeWinding(r.outer, false), scale))
       const bandDomain = unionClipperPaths(outerPaths)
       if (bandDomain.length === 0) continue
 
-      const maskedDomain = resolveRegionDomainArea(bandDomain, regionMask, centreInset)
+      // Clamps constrain the domain the same way an exclude region does, but they
+      // are not user-orderable geometry: they are subtracted last, after the mask
+      // has composed, so no ordering of regions can put material back under a
+      // clamp. The clamps that actually removed area are named in a warning:
+      // the cut silently stopping short is the failure #458 replaced, and an
+      // unexplained gap in a pocket floor is not much better than a gouge.
+      const regionDomain = resolveRegionDomainArea(bandDomain, regionMask, centreInset)
+      let maskedDomain = regionDomain
+      if (clampKeepOut.length > 0) {
+        appendClampBlockedWarnings(
+          warnings,
+          clampsBlockingArea(project, regionDomain, { z: band.bottomZ, expansion: tool.radius }),
+        )
+        maskedDomain = differenceClipperPaths(regionDomain, clampKeepOut)
+      }
       if (maskedDomain.length === 0) continue
 
       const islandPaths = band.regions.flatMap((r) =>

@@ -28,8 +28,9 @@ import {
   resolveFeatureZSpan,
 } from './geometry'
 import { pushRapidAndPlunge, retractToSafe } from './pocket'
-import { resolveRegionDomainCurve } from './regionDomain'
+import { guideFragmentsBlockedBy, resolveRegionDomainCurve, splitGuideFragmentsOutside } from './regionDomain'
 import { buildRegionMask, splitFeatureTargets } from './regions'
+import { appendClampBlockedWarnings, clampKeepOutPaths, clampKeepOuts } from './modelProtection'
 import { helixAngularDirection } from './entry'
 import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET, type TrochoidalContourError } from './trochoidalEdge'
 import { createTrochoidalPathStore } from './trochoidalLevelPaths'
@@ -350,7 +351,7 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
     }
 
     // Fragment the guide polyline by the region mask before generation.
-    const fragments = resolveRegionDomainCurve(flattened.points, flattened.closed, regionMask, regionGuideClearance)
+    let fragments = resolveRegionDomainCurve(flattened.points, flattened.closed, regionMask, regionGuideClearance)
     if (fragments.length === 0) continue
 
     const topZ = resolveDimensionRef(project, feature.z_top)
@@ -359,6 +360,24 @@ export function generateFollowLineToolpath(project: Project, operation: Operatio
       warnings.push({ code: 'carveDepthClamped', params: { name: feature.name } })
       carveZ = 0
     }
+
+    // A clamp is not a region: it is judged against the deepest level this
+    // feature reaches, and it is subtracted after the mask so no ordering of
+    // regions can put the guide back under it. The clearance is the distance
+    // from the guide to the far edge of the cutter — a tool radius direct, half
+    // a cut width trochoidal, which is the very asymmetry that makes a
+    // hand-drawn exclude region an unsafe keep-out (issue #458).
+    const clampExpansion = Math.max(tool.radius, cutWidth / 2)
+    appendClampBlockedWarnings(
+      warnings,
+      clampKeepOuts(project, { z: carveZ, expansion: clampExpansion })
+        .filter((keepOut) => guideFragmentsBlockedBy(fragments, keepOut.paths)),
+    )
+    fragments = splitGuideFragmentsOutside(fragments, clampKeepOutPaths(project, {
+      z: carveZ,
+      expansion: clampExpansion,
+    }))
+    if (fragments.length === 0) continue
 
     const cutLevels = buildCarveLevels(topZ, carveZ, operation.stepdown, operation.pass === 'finish')
 

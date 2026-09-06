@@ -25,7 +25,8 @@ import {
   normalizeToolForProject,
   resolveFeatureZSpan,
 } from './geometry'
-import { buildRegionMask, splitFeatureTargets } from './regions'
+import { buildMaskFromClipperPaths, buildRegionMask, splitFeatureTargets } from './regions'
+import { clampKeepOuts } from './modelProtection'
 import {
   DEFAULT_ENTRY_RAMP_ANGLE,
   emitCenterLockedCircularBore,
@@ -45,6 +46,7 @@ function precomputeDrillTargets(
   targetFeatures: SketchFeature[],
   project: Project,
   regionMask: ReturnType<typeof buildRegionMask> | null,
+  toolRadius: number,
 ): { targets: DrillTarget[]; warnings: ToolpathWarning[] } {
   const targets: DrillTarget[] = []
   const warnings: ToolpathWarning[] = []
@@ -66,6 +68,24 @@ function precomputeDrillTargets(
 
     if (bottomZ >= topZ) {
       warnings.push({ code: 'drillBottomAboveTop', params: { name: feature.name } })
+      continue
+    }
+
+    // A hole under a clamp is skipped, not warned about after the fact. Every
+    // move drilling emits is a rapid, a plunge or a retract, and `clamps.ts`
+    // can only lift a rapid — so a plunge into a clamp reaches the post-pass as
+    // an unfixable warning on motion that is already in the G-code (issue #458).
+    // The keep-out grows by the larger of the tool radius and the hole radius:
+    // a helical drill orbits out to the hole wall, so the emitted points reach
+    // further from the centre than the tool radius alone.
+    const holeReach = Math.max(toolRadius, getCircleRadius(feature.sketch.profile) ?? 0)
+    const blockingClamp = clampKeepOuts(project, { z: bottomZ, expansion: holeReach })
+      .find((keepOut) => buildMaskFromClipperPaths(keepOut.paths)?.containsPoint(center) === true)
+    if (blockingClamp) {
+      warnings.push({
+        code: 'drillSkippedUnderClamp',
+        params: { name: feature.name, clamp: blockingClamp.clampName },
+      })
       continue
     }
 
@@ -509,7 +529,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
   }
 
   // Precompute and sort targets by nearest-neighbor travel
-  const { targets: drillTargets, warnings: precomputeWarnings } = precomputeDrillTargets(targetFeatures, project, regionMask)
+  const { targets: drillTargets, warnings: precomputeWarnings } = precomputeDrillTargets(targetFeatures, project, regionMask, tool.radius)
   appendAll(warnings, precomputeWarnings)
 
   if (drillTargets.length === 0) {

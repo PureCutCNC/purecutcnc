@@ -20,22 +20,55 @@ import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from
 import { normalizeToolForProject } from './geometry'
 import { appendAll } from './appendAll'
 
-interface ExpandedClampBounds {
+/**
+ * The footprint a clamp is actually judged against: its rectangle grown by the
+ * project's XY clearance **and the tool's radius**, because what must clear the
+ * clamp is the cutter body, not the tool-centre point the toolpath stores.
+ *
+ * Exported because the gap between this and the raw box drawn in the viewport is
+ * how issue #458 was first mis-diagnosed — "nothing is anywhere near the clamp"
+ * was visibly true and wrong at the same time. The renderer draws *this*, so the
+ * picture and the check cannot disagree.
+ */
+export interface ExpandedClampBounds {
   clamp: Clamp
   minX: number
   maxX: number
   minY: number
   maxY: number
+  /** A move at or above this Z clears the clamp; below it the footprint is forbidden. */
   requiredZ: number
 }
 
-function buildExpandedClampBounds(project: Project, operation?: Operation | null): ExpandedClampBounds[] {
-  const clearanceXY = Math.max(0, project.meta.clampClearanceXY)
-  const clearanceZ = Math.max(0, project.meta.clampClearanceZ)
+/** The tool radius `operation` is checked with; `0` when it has no usable tool. */
+export function clampCheckToolRadius(project: Project, operation?: Operation | null): number {
   const toolRecord = operation?.toolRef
     ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
     : null
-  const toolRadius = toolRecord ? normalizeToolForProject(toolRecord, project).radius : 0
+  return toolRecord ? Math.max(0, normalizeToolForProject(toolRecord, project).radius) : 0
+}
+
+/**
+ * The largest radius any enabled operation will be checked with.
+ *
+ * A clamp's checked footprint is per operation, but a viewport is not: it has to
+ * draw one shape. The widest tool in play is the honest one to draw — it is the
+ * footprint the user must keep clear for *every* operation to pass, and it does
+ * not move as the selection changes.
+ */
+export function worstCaseClampCheckToolRadius(project: Project): number {
+  return project.operations.reduce(
+    (widest, operation) => (operation.enabled
+      ? Math.max(widest, clampCheckToolRadius(project, operation))
+      : widest),
+    0,
+  )
+}
+
+/** {@link ExpandedClampBounds} for every visible clamp, at a given tool radius. */
+export function expandedClampBounds(project: Project, toolRadius: number): ExpandedClampBounds[] {
+  const clearanceXY = Math.max(0, project.meta.clampClearanceXY)
+  const clearanceZ = Math.max(0, project.meta.clampClearanceZ)
   const expandedXY = clearanceXY + Math.max(0, toolRadius)
 
   return project.clamps
@@ -48,6 +81,10 @@ function buildExpandedClampBounds(project: Project, operation?: Operation | null
       maxY: clamp.y + clamp.h + expandedXY,
       requiredZ: clamp.height + clearanceZ,
     }))
+}
+
+function buildExpandedClampBounds(project: Project, operation?: Operation | null): ExpandedClampBounds[] {
+  return expandedClampBounds(project, clampCheckToolRadius(project, operation))
 }
 
 function pointInRect(x: number, y: number, rect: ExpandedClampBounds): boolean {

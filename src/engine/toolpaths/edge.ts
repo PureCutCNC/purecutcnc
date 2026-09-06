@@ -40,7 +40,7 @@ import {
   resolveReliefStepdown,
   type ReliefLoop,
 } from './cornerRelief'
-import { unionClipperPaths } from './modelProtection'
+import { appendClampBlockedWarnings, clampKeepOuts, unionClipperPaths } from './modelProtection'
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import {
   buildInsetRegions,
@@ -75,7 +75,7 @@ import {
   trochoidalEntryStrategy,
 } from './trochoidalPath'
 import { splitClosedGuideByForbiddenPaths, type ClosedGuideFragment } from './guideFragments'
-import { resolveRegionDomainCurve } from './regionDomain'
+import { guideFragmentsBlockedBy, resolveRegionDomainCurve, splitGuideFragmentsOutside } from './regionDomain'
 import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET, type TrochoidalContourError } from './trochoidalEdge'
 import { createTrochoidalPathStore } from './trochoidalLevelPaths'
 import type { TrochoidalPathParams } from './trochoidalLevelPaths'
@@ -650,28 +650,8 @@ function appendFragmentedContoursAtLevels(
     const levelEntry = entryForLevel?.(z)
 
     for (const frag of regionFragments) {
-      let finalFragments: ClosedGuideFragment[]
-
-      if (!obsMask) {
-        finalFragments = [frag]
-      } else if (frag.closed) {
-        finalFragments = splitClosedGuideByForbiddenPaths(frag.points, obsMask.paths, 'outside')
-        if (finalFragments.length === 0) continue
-      } else {
-        // Open fragment + obstacles: build an exclude mask and re-use
-        // resolveRegionDomainCurve to split the open guide against it.
-        const excludeMask: RegionMask = {
-          paths: obsMask.paths,
-          hasIncludeRegions: false,
-          excludePaths: obsMask.paths,
-          boundaryPaths: obsMask.paths,
-          baseIncludesSubject: true,
-          entries: [{ mode: 'exclude', paths: obsMask.paths }],
-          containsPoint: () => false,
-        }
-        finalFragments = resolveRegionDomainCurve(frag.points, false, excludeMask, 0)
-        if (finalFragments.length === 0) continue
-      }
+      const finalFragments = splitGuideFragmentsOutside([frag], obsMask?.paths ?? [])
+      if (finalFragments.length === 0) continue
 
       for (const ff of finalFragments) {
         if (ff.points.length < 2) continue
@@ -1345,6 +1325,125 @@ function generateEdgeRouteToolpathSingle(
   // and relief has to descend on the wall path, not on the orbit centre line.
   const reliefWallOffset = tool.radius + radialLeave
 
+  const targetFeatureIdSet = new Set(closedTargetFeatures.map((feature) => feature.id))
+  /**
+   * Something the cutter must stay off, in RAW space: every consumer below
+   * offsets it by the clearance its own geometry needs, so nothing here carries
+   * a tool radius.
+   */
+  interface RouteObstacle {
+    paths: ClipperPath[]
+    minZ: number
+    maxZ: number
+  }
+  const allAdditiveObstacles: RouteObstacle[] = resolvedProjectFeatures(project)
+    .flatMap((feature) => (feature.operation === 'model' ? [feature] : expandFeatureGeometry(feature)))
+    .filter((feature) => (feature.operation === 'add' || feature.operation === 'model') && featureHasClosedGeometry(feature))
+    .filter((feature) => !targetFeatureIdSet.has(feature.id))
+    .map((feature) => {
+      const span = resolveFeatureZSpan(project, feature)
+      return { paths: featureToClipperPaths(feature), minZ: span.min, maxZ: span.max }
+    })
+
+  /**
+   * Clamps are obstacles in the same sense the retained features are, and they
+   * join the same set so every clearance already derived here applies to them
+   * unchanged — `tool.radius` for the contour guide, `trochoidalGuideOffset` for
+   * an orbit guide, `tool.radius + radialLeave` for the lead and entry domain.
+   * Deriving a separate clamp clearance is exactly the mistake #458 is about: a
+   * keep-out sized for one strategy silently becomes wrong under another.
+   *
+   * A clamp stands on the table, so it blocks every level below its required
+   * clearance and none above it.
+   */
+  const clampObstacles: RouteObstacle[] = clampKeepOuts(project, { expansion: 0 })
+    .map((keepOut) => ({
+      paths: keepOut.paths,
+      minZ: Number.NEGATIVE_INFINITY,
+      maxZ: keepOut.requiredZ,
+    }))
+  const allObstacles: RouteObstacle[] = [...allAdditiveObstacles, ...clampObstacles]
+
+  function maskForZ(
+    cache: Map<string, ReturnType<typeof buildMaskFromClipperPaths>>,
+    obstacles: RouteObstacle[],
+    z: number,
+  ) {
+    const key = z.toFixed(9)
+    const cached = cache.get(key)
+    if (cached !== undefined) return cached
+    const activePaths = obstacles
+      .filter((obstacle) => z <= obstacle.maxZ && z >= obstacle.minZ)
+      .flatMap(({ paths }) => paths)
+    let mask: ReturnType<typeof buildMaskFromClipperPaths> = null
+    if (activePaths.length > 0) {
+      mask = buildMaskFromClipperPaths(offsetPaths(activePaths, tool.radius * DEFAULT_CLIPPER_SCALE))
+    }
+    cache.set(key, mask)
+    return mask
+  }
+
+  const obstacleMaskCache = new Map<string, ReturnType<typeof buildMaskFromClipperPaths>>()
+  const obstacleMaskForZ = (z: number) => maskForZ(obstacleMaskCache, allObstacles, z)
+
+  /**
+   * Clamps only. An INSIDE route has no obstacle set — the retained features an
+   * outside route steers around are the cavity walls it is cutting — so it takes
+   * this rather than `obstacleMaskForZ`, which would newly steer it around
+   * geometry it is meant to reach.
+   */
+  const clampMaskCache = new Map<string, ReturnType<typeof buildMaskFromClipperPaths>>()
+  const clampMaskForZ = (z: number) => maskForZ(clampMaskCache, clampObstacles, z)
+
+  /**
+   * Other retained features standing anywhere in this Z span, grown by
+   * `clearance`. Serves both the trochoidal guide, which must keep a whole
+   * orbit off them, and the XY lead's outside domain, which must keep the arc
+   * off them — hence the caller-supplied clearance rather than a fixed one.
+   */
+  function obstaclePathsForSpan(
+    obstacles: RouteObstacle[],
+    topZ: number,
+    bottomZ: number,
+    clearance: number,
+  ): ClipperPath[] {
+    const minZ = Math.min(topZ, bottomZ)
+    const maxZ = Math.max(topZ, bottomZ)
+    const activePaths = obstacles
+      .filter((obstacle) => obstacle.maxZ >= minZ && obstacle.minZ <= maxZ)
+      .flatMap(({ paths }) => paths)
+    return unionPaths(offsetPaths(
+      activePaths,
+      clearance * DEFAULT_CLIPPER_SCALE,
+      ClipperLib.JoinType.jtRound,
+    ))
+  }
+
+  const retainedObstaclePathsForSpan = (topZ: number, bottomZ: number, clearance: number) =>
+    obstaclePathsForSpan(allObstacles, topZ, bottomZ, clearance)
+
+  /**
+   * Name each clamp that actually shortens this route's guide.
+   *
+   * `clearance` is the distance from the guide to the far edge of the cutter —
+   * `tool.radius` for a contour, `trochoidalGuideOffset` for an orbit — so the
+   * warning is decided against the same footprint the fragmentation used, and
+   * a clamp that merely stands nearby stays quiet.
+   */
+  function warnClampsBlockingGuide(contours: Point[][], bottomZ: number, clearance: number): void {
+    if (clampObstacles.length === 0) return
+    const fragments: ClosedGuideFragment[] = contours.map((points) => ({ points, closed: true }))
+    appendClampBlockedWarnings(
+      warnings,
+      clampKeepOuts(project, { z: bottomZ, expansion: clearance })
+        .filter((keepOut) => guideFragmentsBlockedBy(fragments, keepOut.paths)),
+    )
+  }
+
+  /** Clamps only, for the inside route — see {@link clampMaskForZ}. */
+  const clampPathsForSpan = (topZ: number, bottomZ: number, clearance: number) =>
+    obstaclePathsForSpan(clampObstacles, topZ, bottomZ, clearance)
+
   if (operation.kind === 'edge_route_inside') {
     const resolved = resolveInsideEdgeRegions(project, operation)
     appendAll(warnings, resolved.warnings)
@@ -1402,6 +1501,7 @@ function generateEdgeRouteToolpathSingle(
       }
 
       const contours = applyContourDirection(rawContours, direction)
+      warnClampsBlockingGuide(contours, effectiveBottom, isTrochoidal ? trochoidalGuideOffset : tool.radius)
       const levels =
         operation.pass === 'finish'
           ? [effectiveBottom]
@@ -1433,6 +1533,11 @@ function generateEdgeRouteToolpathSingle(
           region,
           tool.radius + radialLeave,
         )))
+        // The orbit centre has to keep a whole cut width off a clamp, and the
+        // link moves between orbits have to keep the cutter off it. Same two
+        // clearances the outside route already uses for a retained wall.
+        const clampGuidePaths = clampPathsForSpan(band.topZ, effectiveBottom, trochoidalGuideOffset)
+        const clampCutterPaths = clampPathsForSpan(band.topZ, effectiveBottom, tool.radius + radialLeave)
         currentPosition = appendTrochoidalContoursAtLevels(
           moves,
           currentPosition,
@@ -1445,6 +1550,7 @@ function generateEdgeRouteToolpathSingle(
           insideOrbitDirection,
           warnings,
           (from, to, z) => segmentInsideSafeRegions(from, to, safeRegions)
+            && segmentOutsideForbiddenPaths(from, to, clampCutterPaths)
             && segmentOutsideForbiddenPaths(
               from,
               to,
@@ -1453,7 +1559,7 @@ function generateEdgeRouteToolpathSingle(
           trochoidalBudget,
           createTrochoidalFragmentPlanner(
             trochoidalTabs,
-            [],
+            clampGuidePaths,
             trochoidalTabGuideClearance,
             tool.diameter,
             operation,
@@ -1471,12 +1577,16 @@ function generateEdgeRouteToolpathSingle(
         // does. Offsetting either polarity would break include/exclude tiling.
         const regionFragments = contours.flatMap((c) =>
           resolveRegionDomainCurve(c, true, regionMask, 0))
-        const closedFrags = regionFragments.filter((f) => f.closed).map((f) => f.points)
-        const openFrags = regionFragments.filter((f) => !f.closed)
 
         for (const z of levels) {
           const levelLead = insideLeadForLevel(z)
           const levelEntry = insideEntryForLevel(z)
+          // Clamps are the one obstacle an inside route has: everything else it
+          // could hit is the cavity wall it is cutting. Resolved per level
+          // because a clamp stops constraining a level once the cut is above it.
+          const levelFragments = splitGuideFragmentsOutside(regionFragments, clampMaskForZ(z)?.paths ?? [])
+          const closedFrags = levelFragments.filter((f) => f.closed).map((f) => f.points)
+          const openFrags = levelFragments.filter((f) => !f.closed)
           if (closedFrags.length > 0) {
             // Every contour an inside route cuts is a wall of the cavity, so
             // the lead context goes straight in — the same call the pocket's
@@ -1565,55 +1675,6 @@ function generateEdgeRouteToolpathSingle(
       warnings: [...warnings, { code: 'edgeRouteNoValidTargets' }],
       bounds: null,
     }
-  }
-
-  const targetFeatureIdSet = new Set(closedTargetFeatures.map((feature) => feature.id))
-  const allAdditiveObstacles = resolvedProjectFeatures(project)
-    .flatMap((feature) => (feature.operation === 'model' ? [feature] : expandFeatureGeometry(feature)))
-    .filter((feature) => (feature.operation === 'add' || feature.operation === 'model') && featureHasClosedGeometry(feature))
-    .filter((feature) => !targetFeatureIdSet.has(feature.id))
-    .map((feature) => ({
-      paths: featureToClipperPaths(feature),
-      span: resolveFeatureZSpan(project, feature),
-    }))
-
-  const obstacleMaskCache = new Map<string, ReturnType<typeof buildMaskFromClipperPaths>>()
-  function obstacleMaskForZ(z: number) {
-    const key = z.toFixed(9)
-    const cached = obstacleMaskCache.get(key)
-    if (cached !== undefined) return cached
-    const activePaths = allAdditiveObstacles
-      .filter(({ span }) => z <= span.max && z >= span.min)
-      .flatMap(({ paths }) => paths)
-    let mask: ReturnType<typeof buildMaskFromClipperPaths> = null
-    if (activePaths.length > 0) {
-      mask = buildMaskFromClipperPaths(offsetPaths(activePaths, tool.radius * DEFAULT_CLIPPER_SCALE))
-    }
-    obstacleMaskCache.set(key, mask)
-    return mask
-  }
-
-  /**
-   * Other retained features standing anywhere in this Z span, grown by
-   * `clearance`. Serves both the trochoidal guide, which must keep a whole
-   * orbit off them, and the XY lead's outside domain, which must keep the arc
-   * off them — hence the caller-supplied clearance rather than a fixed one.
-   */
-  function retainedObstaclePathsForSpan(
-    topZ: number,
-    bottomZ: number,
-    clearance: number,
-  ): ClipperPath[] {
-    const minZ = Math.min(topZ, bottomZ)
-    const maxZ = Math.max(topZ, bottomZ)
-    const activePaths = allAdditiveObstacles
-      .filter(({ span }) => span.max >= minZ && span.min <= maxZ)
-      .flatMap(({ paths }) => paths)
-    return unionPaths(offsetPaths(
-      activePaths,
-      clearance * DEFAULT_CLIPPER_SCALE,
-      ClipperLib.JoinType.jtRound,
-    ))
   }
 
   const outsideJoinType = operation.roundOutsideCorners
@@ -1729,6 +1790,9 @@ function generateEdgeRouteToolpathSingle(
         warnings.push({ code: 'edgeNoCombinedContour' })
       } else {
         const contours = applyContourDirection(rawContours, outsideDirection)
+        warnClampsBlockingGuide(
+          contours, referenceTarget.bottomZ, isTrochoidal ? trochoidalGuideOffset : tool.radius,
+        )
         const levels =
           operation.pass === 'finish'
             ? [referenceTarget.bottomZ]
@@ -1822,6 +1886,7 @@ function generateEdgeRouteToolpathSingle(
       }
 
       const contours = applyContourDirection(rawContours, outsideDirection)
+      warnClampsBlockingGuide(contours, target.bottomZ, isTrochoidal ? trochoidalGuideOffset : tool.radius)
       const levels =
         operation.pass === 'finish'
           ? [target.bottomZ]

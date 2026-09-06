@@ -39,8 +39,10 @@ import { buildRegionMask, splitFeatureTargets } from './regions'
 import { resolveRegionDomainArea } from './regionDomain'
 import { significantSilhouettePaths } from './silhouette'
 import {
+  appendClampBlockedWarnings,
   buildProtectedFootprintPaths,
   calculateClipperArea,
+  clampsBlockingArea,
   differenceClipperPaths,
   intersectClipperPaths,
   offsetClipperPaths,
@@ -605,6 +607,13 @@ export function resolve3DSurfaceStepdown(
       continue
     }
 
+    // Name the clamps that actually ate into this level, the same way the 2D
+    // generators do. Avoiding a clamp without saying so leaves an unexplained
+    // bare patch on the finished surface (issue #458).
+    appendClampBlockedWarnings(
+      warnings,
+      clampsBlockingArea(project, levelOutlinePaths, { z, expansion: initialInset }),
+    )
     const surroundingProtectedPaths = buildProtectedFootprintPaths(project, {
       targetFeatureIds: new Set(target.featureIds),
       z,

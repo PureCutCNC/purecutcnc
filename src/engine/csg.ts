@@ -32,6 +32,7 @@ import {
   transformImportedModelPoint,
 } from './importedModelTransform'
 import type { MeshSliceIndex } from './toolpaths/meshSlicing'
+import { expandedClampBounds, worstCaseClampCheckToolRadius, type ExpandedClampBounds } from './toolpaths/clamps'
 import { buildBatchedLines, type BatchLineMeta } from './lineBatcher'
 import type { ThreeThemePalette } from '../theme/palette'
 import { profileToPolygon } from './profilePolyline'
@@ -595,6 +596,43 @@ export function buildClampMesh(clamp: Clamp, selected = false, colliding = false
   return mesh
 }
 
+
+/**
+ * The volume a clamp is actually checked against, drawn as a wireframe box: the
+ * clamp grown by `clampClearanceXY + tool radius` in XY, and standing to the Z a
+ * move has to reach to clear it.
+ *
+ * A wireframe rather than a solid on purpose — this is the constraint, not an
+ * object, and it must not hide the part it surrounds. It is visibly larger than
+ * the clamp beside it, which is the whole point: the gap between the two is
+ * exactly what made issue #458 look like a false alarm.
+ */
+export function buildClampClearanceBox(
+  bounds: ExpandedClampBounds,
+  threePalette: ThreeThemePalette,
+): THREE.Object3D {
+  const width = Math.max(bounds.maxX - bounds.minX, 0.1)
+  const depth = Math.max(bounds.maxY - bounds.minY, 0.1)
+  const height = Math.max(bounds.requiredZ, 0.1)
+  const geometry = new THREE.BoxGeometry(width, height, depth)
+  const box = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geometry),
+    new THREE.LineBasicMaterial({
+      color: threePalette.clampClearance,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false,
+    }),
+  )
+  geometry.dispose()
+  // Three's Y is the project's Z, and the viewport mirrors Z to put the
+  // project's +Y away from the camera — the same `scale.z = -1` every fixture
+  // mesh carries.
+  box.position.set((bounds.minX + bounds.maxX) / 2, height / 2, (bounds.minY + bounds.maxY) / 2)
+  box.scale.z = -1
+  return box
+}
+
 export function buildTabMesh(tab: Tab, selected = false, threePalette?: ThreeThemePalette): THREE.Mesh {
   const shape = profileToShape(rectProfile(tab.x, tab.y, tab.w, tab.h))
   const zStart = Math.min(tab.z_top, tab.z_bottom)
@@ -900,6 +938,12 @@ export interface SceneObjects {
   batchedLinesMeta: BatchLineMeta
   tabMeshes: Map<string, THREE.Mesh>
   clampMeshes: Map<string, THREE.Mesh>
+  /**
+   * The keep-out each clamp is actually checked against, one wireframe box per
+   * visible clamp. Static: it carries no selection or collision state, so
+   * Viewport3D adds and disposes it but never recolors it.
+   */
+  clampClearanceBoxes: THREE.Object3D[]
 }
 
 export async function buildScene(project: Project, threePalette: ThreeThemePalette): Promise<SceneObjects> {
@@ -920,6 +964,7 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
   let batchedLinesMeta: BatchLineMeta = { objectCount: 0, vertexCount: 0, segmentCount: 0 }
   const tabMeshes = new Map<string, THREE.Mesh>()
   const clampMeshes = new Map<string, THREE.Mesh>()
+  const clampClearanceBoxes: THREE.Object3D[] = []
   let modelMesh: THREE.Mesh | null = null
 
   if (visibleFeatures.length > 0) {
@@ -977,5 +1022,9 @@ export async function buildScene(project: Project, threePalette: ThreeThemePalet
     clampMeshes.set(clamp.id, buildClampMesh(clamp, false, false, threePalette))
   }
 
-  return { stockMesh, stockWireframe, modelMesh, featureMeshes, batchedLines: batchedLineObjects, batchedLinesMeta, tabMeshes, clampMeshes }
+  for (const bounds of expandedClampBounds(project, worstCaseClampCheckToolRadius(project))) {
+    clampClearanceBoxes.push(buildClampClearanceBox(bounds, threePalette))
+  }
+
+  return { stockMesh, stockWireframe, modelMesh, featureMeshes, batchedLines: batchedLineObjects, batchedLinesMeta, tabMeshes, clampMeshes, clampClearanceBoxes }
 }

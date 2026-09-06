@@ -106,7 +106,7 @@ import {
   splitFeatureTargets,
 } from './regions'
 import { resolveRegionDomainArea } from './regionDomain'
-import { unionClipperPaths } from './modelProtection'
+import { appendClampBlockedWarnings, clampKeepOutPaths, clampsBlockingArea, differenceClipperPaths, unionClipperPaths } from './modelProtection'
 import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 import { appendAll } from './appendAll'
 import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET, ORBIT_SAGITTA_FRACTION } from './trochoidalEdge'
@@ -4850,13 +4850,28 @@ function generatePocketToolpathSingle(
   }
 
   for (const band of resolved.bands) {
-    if (regionMask) {
+    const clampKeepOut = clampKeepOutPaths(project, { z: band.bottomZ, expansion: 0 })
+    if (regionMask || clampKeepOut.length > 0) {
       const scale = DEFAULT_CLIPPER_SCALE
       const outerPaths = band.regions.map((r) => toClipperPath(normalizeWinding(r.outer, false), scale))
       const bandDomain = unionClipperPaths(outerPaths)
       if (bandDomain.length === 0) continue
 
-      const maskedDomain = resolveRegionDomainArea(bandDomain, regionMask, centreInset)
+      // Clamps constrain the domain the same way an exclude region does, but they
+      // are not user-orderable geometry: they are subtracted last, after the mask
+      // has composed, so no ordering of regions can put material back under a
+      // clamp. `expansion: 0` because `resolveRegionDomainArea`'s contract holds
+      // here — the generator erodes the whole domain by `centreInset` next, and
+      // that erosion is what carries the tool radius.
+      const regionDomain = resolveRegionDomainArea(bandDomain, regionMask, centreInset)
+      let maskedDomain = regionDomain
+      if (clampKeepOut.length > 0) {
+        appendClampBlockedWarnings(
+          warnings,
+          clampsBlockingArea(project, regionDomain, { z: band.bottomZ, expansion: 0 }),
+        )
+        maskedDomain = differenceClipperPaths(regionDomain, clampKeepOut)
+      }
       if (maskedDomain.length === 0) continue
 
       const islandPaths = band.regions.flatMap((r) =>

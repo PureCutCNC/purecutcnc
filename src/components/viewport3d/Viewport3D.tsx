@@ -700,6 +700,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
             clampMesh.geometry.dispose()
             disposeObjectMaterial(clampMesh.material)
           }
+          for (const clearanceBox of nextSceneObjects.clampClearanceBoxes) {
+            disposeObject3D(clearanceBox)
+          }
           for (const line of nextSceneObjects.batchedLines) {
             disposeObject3D(line)
           }
@@ -735,6 +738,13 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
         for (const clampMesh of nextSceneObjects.clampMeshes.values()) {
           scene.add(clampMesh)
           objectsRef.current.push(clampMesh)
+        }
+
+        // The keep-out the collision test uses, not the clamp box. It carries no
+        // selection state, so it is added and disposed but never recolored.
+        for (const clearanceBox of nextSceneObjects.clampClearanceBoxes) {
+          scene.add(clearanceBox)
+          objectsRef.current.push(clearanceBox)
         }
 
         // Track the freshly-built fixtures and immediately tint them to the

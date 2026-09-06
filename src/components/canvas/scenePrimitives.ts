@@ -16,7 +16,7 @@
 
 import type { SketchControlRef } from '../../store/types'
 import { getProfileBounds, getStockBounds, profileVertices, rectProfile } from '../../types/project'
-import type { BackdropImage, Bounds2D, Clamp, GridSettings, Point, SketchProfile, Stock, Tab } from '../../types/project'
+import type { BackdropImage, Bounds2D, Clamp, GridSettings, Point, Project, SketchProfile, Stock, Tab } from '../../types/project'
 import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import type { Units } from '../../utils/units'
 import { formatLength } from '../../utils/units'
@@ -26,6 +26,7 @@ import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 import type { CanvasThemePalette } from '../../theme/palette'
 import { canvasColors } from './canvasPalette'
+import { expandedClampBounds, worstCaseClampCheckToolRadius } from '../../engine/toolpaths/clamps'
 
 const NODE_RADIUS = 5
 const HANDLE_RADIUS = 4
@@ -423,6 +424,34 @@ export function drawStockOutline(
       halfH: 9,
     })
   }
+}
+
+/**
+ * The outlines of what the clamp collision test actually checks: each clamp
+ * grown by `clampClearanceXY` **and the tool radius**, which is why they sit so
+ * much wider than the clamp boxes inside them. Drawing only the boxes is what
+ * let issue #458 be mis-diagnosed as "nothing is anywhere near the clamp".
+ *
+ * The radius is the widest enabled operation's — a viewport has to draw one
+ * shape, and that is the footprint every operation has to clear.
+ */
+export function drawClampClearanceOutlines(
+  ctx: CanvasRenderingContext2D,
+  project: Project,
+  vt: ViewTransform,
+): void {
+  ctx.strokeStyle = canvasColors().clampClearanceStroke
+  ctx.lineWidth = 1
+  ctx.setLineDash([2, 5])
+  for (const bounds of expandedClampBounds(project, worstCaseClampCheckToolRadius(project))) {
+    traceProfilePath(
+      ctx,
+      rectProfile(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY),
+      vt,
+    )
+    ctx.stroke()
+  }
+  ctx.setLineDash([])
 }
 
 export function drawClampFootprint(

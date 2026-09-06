@@ -104,7 +104,7 @@ import {
   splitFeatureTargets,
 } from './regions'
 import { resolveRegionDomainCentre } from './regionDomain'
-import { unionClipperPaths } from './modelProtection'
+import { appendClampBlockedWarnings, clampKeepOutPaths, clampsBlockingArea, unionClipperPaths } from './modelProtection'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { isFeatureFirst, perFeatureOperations, mergePocketToolpathResults } from './multiFeature'
@@ -317,7 +317,18 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     // the expanded subject of a lower target can sweep through a taller target.
     const activeTargetIdSet = new Set(activeTargets.map(({ feature }) => feature.id))
     const protectedFeatures = allAddFeatures.filter(({ top, feature }) => top > bottomZ && !activeTargetIdSet.has(feature.id))
-    const protectedPaths = protectedFeatures.map(({ feature }) => flattenProfileToClipperPath(feature.sketch.profile))
+    // A clamp standing over this band is protected exactly like a taller add
+    // feature: `buildSurfaceCoverageRegions` grows every protected path by the
+    // tool radius before subtracting it, which is why the keep-out is requested
+    // with `expansion: 0` — asking for the radius here would apply it twice.
+    appendClampBlockedWarnings(
+      warnings,
+      clampsBlockingArea(project, subjectPaths, { z: bottomZ, expansion: 0 }),
+    )
+    const protectedPaths = [
+      ...protectedFeatures.map(({ feature }) => flattenProfileToClipperPath(feature.sketch.profile)),
+      ...clampKeepOutPaths(project, { z: bottomZ, expansion: 0 }),
+    ]
     subjectPaths = executeClipPaths(subjectPaths, protectedPaths, ClipperLib.ClipType.ctDifference)
     const polyTree = executeClip(subjectPaths, [], ClipperLib.ClipType.ctUnion)
     const regions = polyTreeToRegions(

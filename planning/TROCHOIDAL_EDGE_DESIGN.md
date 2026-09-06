@@ -114,8 +114,9 @@ clamps.
 
 Interruptions are planned **in the guide domain, before any orbit exists**. The
 forbidden set for a level is the union of tab footprints active below their
-`z_top`, the retained wall, and protected Add/Model obstacles overlapping the
-level's Z span — each expanded by the clearance the orbit centre needs. The
+`z_top`, the retained wall, protected Add/Model obstacles overlapping the
+level's Z span, and **clamp footprints standing below the level's required
+clearance** — each expanded by the clearance the orbit centre needs. The
 closed guide is split against that union into ordered open spans, and each span
 is generated as an independently entered fragment:
 
@@ -133,7 +134,12 @@ strategy cannot reuse the shared clippers.
 ### The verification backstop
 
 After generation, every emitted segment is re-checked against the retained wall
-and the protected obstacles. If the guide-domain maths ever misses a case the
+and the protected obstacles. Clamps join `allAdditiveObstacles` rather than
+carrying a clearance of their own, and that is deliberate: the distance from the
+guide to the far edge of the cutter is half a cut width here and a tool radius
+under contour, so any separately-derived clamp margin would be correct for one
+strategy and wrong for the other — the failure issue #458 documents for a
+hand-drawn exclude region. If the guide-domain maths ever misses a case the
 operation fails closed rather than emitting the path. The backstop is a
 safety net, not the mechanism — a trip is a bug, not an expected outcome.
 
