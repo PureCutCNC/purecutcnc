@@ -45,7 +45,9 @@ import {
   type HeightMap,
 } from './finishSurfaceParallel'
 import {
+  appendClampBlockedWarnings,
   buildProtectedFootprintPaths,
+  clampsBlockingArea,
   differenceClipperPaths,
   intersectClipperPaths,
   offsetClipperPaths,
@@ -2071,6 +2073,14 @@ export function generateFinishSurfaceWaterline(
         )
       : waterlineLevels.flatMap((level) => level.contourPaths),
   )
+  // Name the clamps that actually ate into this operation, the same way the 2D
+  // generators do. Judged at the deepest level the rings reach, against the
+  // silhouette they are cut from: a clamp above every ring blocks nothing.
+  appendClampBlockedWarnings(
+    warnings,
+    clampsBlockingArea(project, modelSilhouettePaths, { z: effectiveBottom, expansion: toolOffset }),
+  )
+
   const protectedPathsByZ = new Map<string, ClipperPath[]>()
   const protectedPathsAtZ = (z: number): ClipperPath[] => {
     const key = z.toFixed(6)

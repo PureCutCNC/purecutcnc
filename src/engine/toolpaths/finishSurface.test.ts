@@ -2080,7 +2080,14 @@ function testWaterlineRespectsClampFootprint(): void {
     segmentIntersectsRect2D(move.from, move.to, clampRect)
   ))
 
-  assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
+  // Respecting the clamp is half of it; saying so is the other half. Avoiding it
+  // silently leaves an unexplained bare patch on the finished surface (#458).
+  assert(
+    result.warnings.length === 1
+      && result.warnings[0].code === 'clampBlockedCut'
+      && result.warnings[0].params?.name === 'Corner clamp',
+    `expected exactly one clampBlockedCut naming the clamp, got ${JSON.stringify(result.warnings)}`,
+  )
   assert(cutsInClamp.length === 0, `expected no cuts in clamp footprint, got ${cutsInClamp.length}`)
 }
 

@@ -165,6 +165,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.surfaceNoBands': 'Oberfläche-säubern-Resolver erzeugte keine Tiefenbänder',
   // drilling
   'warnings.drillBottomAboveTop': '{name} unteres Z liegt nicht unter dem oberen Z; wird übersprungen',
+  'warnings.drillSkippedUnderClamp': '{name} liegt unter Spannzwinge „{clamp}“; wird übersprungen — ein Eintauchen kann nicht über eine Spannzwinge angehoben werden',
   'warnings.drillNoCenter': '{name} ist als Kreis markiert, hat aber kein auflösbares Zentrum',
   'warnings.drillNoTargets': 'Bohroperation hat keine Feature-Ziele',
   'warnings.drillWrongKind': 'Nur Bohroperationen können vom Bohr-Generator aufgelöst werden',
@@ -195,6 +196,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.restOnlyPocket': 'Restbereiche können nur für Tasche-Operationen erzeugt werden',
   'warnings.restNoValidOutsideTargets': 'Keine gültigen Hinzufügen-/Modell-Features für diese Außenkontur-Operation gefunden',
   // clamps / regions
+  'warnings.clampBlockedCut': 'Werkzeugweg wurde von Spannzwinge „{name}“ freigehalten — Material darunter und innerhalb ihres Freiraums bleibt unbearbeitet.',
   'warnings.clampCrossedOne': 'Spannzwinge „{name}" wird von {count} Bewegung des Typs {moveKind} unterhalb der erforderlichen Freiraumhöhe gekreuzt (min. Z {minZ}, erforderliches Z {requiredZ}).',
   'warnings.clampCrossedMany': 'Spannzwinge „{name}" wird von {count} Bewegungen des Typs {moveKind} unterhalb der erforderlichen Freiraumhöhe gekreuzt (min. Z {minZ}, erforderliches Z {requiredZ}).',
   'warnings.clampTravelLimitExceeded': 'Spannzwinge „{name}" erfordert Freiraum-Z {requiredZ}, was das maximale Verfahr-Z {maxZ} des Projekts überschreitet.',

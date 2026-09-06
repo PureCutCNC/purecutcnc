@@ -168,6 +168,32 @@ and correct at every depth. See `planning/REGION_DOMAIN_HANDOFF.md`.
   silently become machinable targets.
 - No-mask parity is byte-identical for every operation.
 
+## A clamp keep-out is not a region
+
+Clamps constrain the same domains regions do, and they are deliberately **not**
+modelled as regions.
+
+- A region bounds the **tool centre**; the cutter then sweeps past the region
+  line by a distance that depends on the strategy — `tool.radius` under contour,
+  `cutWidth / 2` under trochoidal. A clamp keep-out must bound the **cutter
+  body**, so it is expanded by that distance at each seam rather than drawn by
+  hand at one of them. Asking a user to size an exclude region against a derived
+  number that moves when an unrelated setting changes is not a safe contract —
+  this is issue #458.
+- Clamps are subtracted **after** mask composition, so no ordering of regions can
+  put material back under a clamp. Region order stays the user's; the clamp is
+  not part of that order.
+- A clamp is Z-dependent: it constrains a level only while the cut sits below
+  `clamp.height + clampClearanceZ`. A region is not.
+
+`clampKeepOutPaths` / `clampKeepOuts` in `src/engine/toolpaths/modelProtection.ts`
+are the single definition of that footprint, and `expandedClampBounds` in
+`clamps.ts` is the same footprint as the post-generation backstop checks it and
+as the viewport draws it. The generation-time keep-out is deliberately larger by
+`CLAMP_KEEPOUT_EPSILON`: the backstop's rectangle test is inclusive on the
+boundary, so a path that stopped exactly on the keep-out would still be reported
+as crossing it.
+
 ## Implementation and verification
 
 The shared domain resolvers live in `src/engine/toolpaths/regionDomain.ts`, mask

@@ -22,7 +22,9 @@ import { DEFAULT_CLIPPER_SCALE, applyContourDirectionBySide } from './geometry'
 import { buildRegionMask } from './regions'
 import { resolveRegionDomainCentre } from './regionDomain'
 import {
+  appendClampBlockedWarnings,
   buildProtectedFootprintPaths,
+  clampsBlockingArea,
   clipperPathsToTupleContours,
   differenceClipperPaths,
 } from './modelProtection'
@@ -539,6 +541,13 @@ function resolveDomain(
     warnings,
   )
   if (slope !== null) domain = intersectSurfaceSlopeDomain(domain, slope)
+  // Name the clamps that actually ate into this operation, the same way the 2D
+  // generators do. Avoiding a clamp without saying so leaves an unexplained bare
+  // patch on the finished surface (issue #458).
+  appendClampBlockedWarnings(
+    warnings,
+    clampsBlockingArea(project, domain, { expansion: tool.radius }),
+  )
   const protectedPaths = buildProtectedFootprintPaths(project, {
     targetFeatureIds: new Set(operation.target.source === 'features' ? operation.target.featureIds : []),
     featureExpansion: centreInset,

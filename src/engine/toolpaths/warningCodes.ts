@@ -207,6 +207,7 @@ export type ToolpathWarningCode =
   | 'surfaceNoFinishContours'
   // drilling
   | 'drillBottomAboveTop'
+  | 'drillSkippedUnderClamp'
   | 'drillNoCenter'
   | 'cutDepthExceedsToolMaxForFeature'
   | 'drillNoTargets'
@@ -240,6 +241,7 @@ export type ToolpathWarningCode =
   | 'restOnlyPocket'
   | 'restNoValidOutsideTargets'
   // clamps / regions
+  | 'clampBlockedCut'
   | 'clampCrossedOne'
   | 'clampCrossedMany'
   // surface-clean resolver

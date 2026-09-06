@@ -165,6 +165,7 @@ export const warningsEn = {
   'warnings.surfaceNoBands': 'Surface-clean resolver produced no depth bands',
   // drilling
   'warnings.drillBottomAboveTop': '{name} bottom Z is not below top Z; skipping',
+  'warnings.drillSkippedUnderClamp': '{name} sits under clamp “{clamp}”; skipping — a plunge cannot be lifted over a clamp',
   'warnings.drillNoCenter': '{name} is marked as a circle but has no resolvable center',
   'warnings.drillNoTargets': 'Drilling operation has no feature targets',
   'warnings.drillWrongKind': 'Only drilling operations can be resolved by the drilling generator',
@@ -195,6 +196,7 @@ export const warningsEn = {
   'warnings.restOnlyPocket': 'Rest regions can only be generated for pocket operations',
   'warnings.restNoValidOutsideTargets': 'No valid add/model features were found for this outside edge-route operation',
   // clamps / regions
+  'warnings.clampBlockedCut': 'Toolpath was kept clear of clamp “{name}” — material under it and inside its clearance is left uncut.',
   'warnings.clampCrossedOne': 'Clamp "{name}" is crossed by {count} {moveKind} move below required clearance (min Z {minZ}, required Z {requiredZ}).',
   'warnings.clampCrossedMany': 'Clamp "{name}" is crossed by {count} {moveKind} moves below required clearance (min Z {minZ}, required Z {requiredZ}).',
   'warnings.clampTravelLimitExceeded': 'Clamp "{name}" requires clearance Z {requiredZ}, which exceeds project max travel Z {maxZ}.',

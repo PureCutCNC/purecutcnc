@@ -122,6 +122,7 @@ import { segmentIntersections, type ResolvedSeg } from '../../store/helpers/segm
 import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
 import {
   drawBackdropImage,
+  drawClampClearanceOutlines,
   drawClampFootprint,
   drawGrid,
   drawOriginMarker,
@@ -1221,6 +1222,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         ctx.restore()
       }
     }
+
+    // Underneath the clamps, so each box reads as the object and not the keep-out.
+    drawClampClearanceOutlines(ctx, project, vt)
 
     for (const clamp of project.clamps) {
       if (!clamp.visible) continue

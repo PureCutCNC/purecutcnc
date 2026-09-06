@@ -237,6 +237,89 @@ export function resolveRegionDomainCurve(
 }
 
 /**
+ * Split guide fragments so only the spans **outside** `forbiddenPaths` survive.
+ * Returns `fragments` by reference when there is nothing to avoid.
+ *
+ * Closed and open fragments need different splitters — the closed-guide splitter
+ * wraps around, which would invent fragments across an open guide's ends — and
+ * getting that wrong is silent: it yields a plausible-looking path that crosses
+ * the keep-out anyway. One helper so every caller avoiding a keep-out with a
+ * guide gets the same answer.
+ *
+ * `forbiddenPaths` are taken as-is: whatever clearance the guide needs is
+ * already baked into them by the caller, because the distance from a guide to
+ * the cutter's far edge is a property of the strategy (a tool radius for a
+ * tool-centre path, half a cut width for a trochoidal orbit), not of the
+ * keep-out.
+ */
+export function splitGuideFragmentsOutside(
+  fragments: ClosedGuideFragment[],
+  forbiddenPaths: ClipperPath[],
+): ClosedGuideFragment[] {
+  if (forbiddenPaths.length === 0) return fragments
+  const excludeMask: RegionMask = {
+    paths: forbiddenPaths,
+    hasIncludeRegions: false,
+    excludePaths: forbiddenPaths,
+    boundaryPaths: forbiddenPaths,
+    baseIncludesSubject: true,
+    entries: [{ mode: 'exclude', paths: forbiddenPaths }],
+    containsPoint: () => false,
+  }
+  return fragments.flatMap((fragment) => (fragment.closed
+    ? splitClosedGuideByForbiddenPaths(fragment.points, forbiddenPaths, 'outside')
+    : resolveRegionDomainCurve(fragment.points, false, excludeMask, 0)))
+}
+
+/**
+ * Total length of a fragment set, for measuring what a keep-out removed.
+ *
+ * A closed fragment's final vertex is not a repeat of its first, so its closing
+ * segment has to be added explicitly. Leaving it out makes splitting a ring
+ * *increase* the measured length — the removed span is smaller than the closing
+ * segment the split turns into ordinary polyline — and a keep-out that clearly
+ * clipped the guide reads as having done nothing.
+ */
+function guideFragmentsLength(fragments: ClosedGuideFragment[]): number {
+  let total = 0
+  for (const fragment of fragments) {
+    const { points } = fragment
+    for (let i = 1; i < points.length; i += 1) {
+      total += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
+    }
+    if (fragment.closed && points.length > 2) {
+      const first = points[0]
+      const last = points[points.length - 1]
+      total += Math.hypot(first.x - last.x, first.y - last.y)
+    }
+  }
+  return total
+}
+
+/**
+ * Whether `forbiddenPaths` actually shortens `fragments` — the guide-side
+ * counterpart of `clampsBlockingArea`, for a generator whose domain is a curve
+ * rather than an area.
+ *
+ * Answered by running the real splitter and measuring, not by a cheaper
+ * proximity test, so "we warned" and "we clipped" are decided by the same code
+ * and cannot disagree.
+ */
+export function guideFragmentsBlockedBy(
+  fragments: ClosedGuideFragment[],
+  forbiddenPaths: ClipperPath[],
+): boolean {
+  if (forbiddenPaths.length === 0) return false
+  const before = guideFragmentsLength(fragments)
+  if (!(before > 0)) return false
+  const after = guideFragmentsLength(splitGuideFragmentsOutside(fragments, forbiddenPaths))
+  return before - after > GUIDE_BLOCKED_EPSILON
+}
+
+/** A fragment set is rebuilt vertex by vertex, so its length wobbles in the last bits. */
+const GUIDE_BLOCKED_EPSILON = 1 / DEFAULT_CLIPPER_SCALE
+
+/**
  * Split an open polyline, keeping only the spans that lie inside `allowed`.
  * Every returned fragment is open (`closed: false`).
  */

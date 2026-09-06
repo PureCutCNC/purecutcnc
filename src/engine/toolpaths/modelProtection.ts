@@ -17,6 +17,7 @@
 import ClipperLib from 'clipper-lib'
 import { rectProfile, type Point, type Project, type SketchFeature } from '../../types/project'
 import type { ClipperPath } from './types'
+import type { ToolpathWarning } from './warningCodes'
 import {
   DEFAULT_CLIPPER_SCALE,
   flattenProfile,
@@ -438,6 +439,132 @@ export function tabTopZAtPoint(
   return highest
 }
 
+/**
+ * The margin by which a generation-time clamp keep-out overshoots the footprint
+ * `applyClampWarnings` checks against.
+ *
+ * `segmentIntersectsRect2D` in `clamps.ts` is inclusive on the boundary, so a
+ * path that correctly stops *at* the keep-out edge still counts as crossing it.
+ * Measured on `main` @ 055c1b4: a waterline finish whose deepest penetration into
+ * the checked footprint is 0.0000 raised 840 `clampCrossed*` warnings purely from
+ * that tangency. Four Clipper units of overshoot puts the path outside the test
+ * without moving the cut anywhere a user would see.
+ */
+export const CLAMP_KEEPOUT_EPSILON = 4 / DEFAULT_CLIPPER_SCALE
+
+export interface ClampKeepOutOptions {
+  /**
+   * The level being cut. A clamp constrains it only while the cut sits below
+   * the clamp's required clearance; omit to constrain every level, which is the
+   * conservative answer for a caller with no single Z.
+   */
+  z?: number
+  /**
+   * Distance from the tool centre to the far side of whatever the caller is
+   * keeping out — `tool.radius` for a tool-centre path, the trochoidal guide
+   * offset for an orbit guide, `0` for a caller that offsets the result itself.
+   */
+  expansion: number
+}
+
+/**
+ * Clamp footprints grown to a keep-out the tool centre must stay out of:
+ * `clamp ⊕ (clampClearanceXY + expansion + CLAMP_KEEPOUT_EPSILON)`.
+ *
+ * The single source of truth for "where a clamp forbids cutting". It matches
+ * `buildExpandedClampBounds` in `clamps.ts` — the backstop that judges the
+ * finished toolpath — because a generator that avoids a *different* footprint
+ * from the one being checked is worse than one that avoids nothing: it would
+ * lose cut without silencing the warning.
+ *
+ * **Returns `[]` when the project has no visible clamp**, so every caller can
+ * short-circuit and a project without clamps runs not one Clipper operation more
+ * than it did before. That is what keeps no-clamp output byte-identical.
+ */
+export function clampKeepOutPaths(project: Project, options: ClampKeepOutOptions): ClipperPath[] {
+  const keepOuts = clampKeepOuts(project, options)
+  if (keepOuts.length === 0) return []
+  return unionClipperPaths(keepOuts.flatMap((keepOut) => keepOut.paths))
+}
+
+/**
+ * Report each clamp that took material out of an operation, once per operation.
+ *
+ * Deduped by name because a clamp typically blocks several bands or levels of
+ * the same operation, and six identical lines in the panel say no more than one.
+ */
+export function appendClampBlockedWarnings(
+  warnings: ToolpathWarning[],
+  blocking: ClampKeepOut[],
+): void {
+  for (const keepOut of blocking) {
+    const already = warnings.some(
+      (warning) => warning.code === 'clampBlockedCut' && warning.params?.name === keepOut.clampName,
+    )
+    if (already) continue
+    warnings.push({ code: 'clampBlockedCut', params: { name: keepOut.clampName } })
+  }
+}
+
+/**
+ * The clamps whose keep-out actually removes part of `domain` — the ones worth
+ * naming to the user, as opposed to the ones that merely exist.
+ *
+ * Reported rather than inferred: a clamp sitting harmlessly beside the work must
+ * not raise "material was left uncut", and a clamp that really did eat into a
+ * pocket must not stay silent. Only an intersection with the domain about to be
+ * cut tells those apart.
+ */
+export function clampsBlockingArea(
+  project: Project,
+  domain: ClipperPath[],
+  options: ClampKeepOutOptions,
+): ClampKeepOut[] {
+  if (domain.length === 0) return []
+  return clampKeepOuts(project, options)
+    .filter((keepOut) => intersectClipperPaths(keepOut.paths, domain).length > 0)
+}
+
+export interface ClampKeepOut {
+  clampId: string
+  clampName: string
+  paths: ClipperPath[]
+  /** Cutting at or above this Z clears the clamp; below it the footprint is forbidden. */
+  requiredZ: number
+}
+
+/**
+ * {@link clampKeepOutPaths} split per clamp, for callers that carry a Z span
+ * rather than a single level — an obstacle set filtered per cut level, say —
+ * and so need each clamp's own `requiredZ` instead of one merged polygon.
+ */
+export function clampKeepOuts(project: Project, options: ClampKeepOutOptions): ClampKeepOut[] {
+  const clearanceXY = Math.max(0, project.meta.clampClearanceXY)
+  const clearanceZ = Math.max(0, project.meta.clampClearanceZ)
+  const expansion = Math.max(0, options.expansion)
+  const keepOuts: ClampKeepOut[] = []
+
+  for (const clamp of project.clamps) {
+    if (!clamp.visible) continue
+    const requiredZ = clamp.height + clearanceZ
+    // A clamp is a solid standing on the table, so it blocks every level below
+    // its required clearance and none above it. `undefined` means the caller has
+    // no single level to judge and takes the whole clamp.
+    if (options.z !== undefined && options.z >= requiredZ) continue
+    const profile = rectProfile(clamp.x, clamp.y, clamp.w, clamp.h)
+    const paths: ClipperPath[] = []
+    appendExpanded(
+      paths,
+      [toClipperPath(normalizeWinding(flattenProfile(profile).points, false), DEFAULT_CLIPPER_SCALE)],
+      clearanceXY + expansion + CLAMP_KEEPOUT_EPSILON,
+    )
+    if (paths.length === 0) continue
+    keepOuts.push({ clampId: clamp.id, clampName: clamp.name, paths, requiredZ })
+  }
+
+  return keepOuts
+}
+
 export function buildProtectedFootprintPaths(
   project: Project,
   options: ProtectedFootprintOptions,
@@ -474,16 +601,7 @@ export function buildProtectedFootprintPaths(
     }
   }
 
-  const clampBaseExpansion = Math.max(0, project.meta.clampClearanceXY)
-  for (const clamp of project.clamps) {
-    if (!clamp.visible) continue
-    const profile = rectProfile(clamp.x, clamp.y, clamp.w, clamp.h)
-    appendExpanded(
-      protectedPaths,
-      [toClipperPath(normalizeWinding(flattenProfile(profile).points, false), DEFAULT_CLIPPER_SCALE)],
-      clampBaseExpansion + clampExpansion,
-    )
-  }
+  appendAll(protectedPaths, clampKeepOutPaths(project, { z: options.z, expansion: clampExpansion }))
 
   return unionClipperPaths(protectedPaths)
 }

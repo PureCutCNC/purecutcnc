@@ -23,7 +23,7 @@ import { retractToSafe, transitionToCutEntry } from './pocket'
 import { buildRegionMask } from './regions'
 import { resolveRegionDomainCentre } from './regionDomain'
 import { significantSilhouettePaths } from './silhouette'
-import { buildProtectedFootprintPaths, clipperPathsToTupleContours, differenceClipperPaths, unionClipperPaths } from './modelProtection'
+import { appendClampBlockedWarnings, buildProtectedFootprintPaths, clampsBlockingArea, clipperPathsToTupleContours, differenceClipperPaths, unionClipperPaths } from './modelProtection'
 import { appendAll } from './appendAll'
 import { finishScallopSpacing } from './scallopHeight'
 
@@ -805,6 +805,13 @@ export function generateFinishSurfaceParallel(
   // below the cut surface the tab actually sat. Tab preservation is instead
   // handled per-point via minCutZAtPoint, which clamps cut Z up to tab.z_top
   // only where the surface would otherwise dip into a tab.
+  // Name the clamps that actually ate into this operation, the same way the 2D
+  // generators do. Avoiding a clamp without saying so leaves an unexplained bare
+  // patch on the finished surface (issue #458).
+  appendClampBlockedWarnings(
+    warnings,
+    clampsBlockingArea(project, baseCoveragePaths, { expansion: tool.radius }),
+  )
   const protectedPaths = buildProtectedFootprintPaths(project, {
     targetFeatureIds: new Set(operation.target.source === 'features' ? operation.target.featureIds : []),
     featureExpansion: tool.radius + Math.max(0, operation.stockToLeaveRadial),
