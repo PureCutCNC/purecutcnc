@@ -32,7 +32,6 @@
 
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
 import { buildParityCorpus, postParityCase } from '../../engine/toolpaths/parityCorpus'
 import { canonicalize, type ParityRecord } from '../../engine/toolpaths/parityRecord'
@@ -47,7 +46,32 @@ const baseline = JSON.parse(
   readFileSync(new URL('../../engine/toolpaths/__baseline__/issue-675-parity.json', import.meta.url), 'utf8'),
 ) as Baseline
 
-const ADAPTER = fileURLToPath(new URL('./workerThreadAdapter.ts', import.meta.url))
+const ADAPTER_URL = new URL('./workerThreadAdapter.ts', import.meta.url).href
+
+/**
+ * A plain-JavaScript bootstrap, evaluated as the worker's entry.
+ *
+ * Pointing `new Worker()` straight at the TypeScript adapter works on Node 26
+ * but fails on Node 20 — which is what CI runs — with
+ * `ERR_UNKNOWN_FILE_EXTENSION`: the worker's *entry* is resolved before the
+ * TypeScript hooks that `--import tsx` registers are in effect, so the loader
+ * never gets a chance at it. A dynamic `import()` from an already-running
+ * plain-JS entry happens after registration, so it does.
+ *
+ * The catch matters: an unhandled rejection here would surface as a worker that
+ * simply never sends `ready`, and the suite would fail on a timeout that says
+ * nothing about the cause.
+ */
+const BOOTSTRAP = `
+  import('tsx/esm/api')
+    .then((tsx) => tsx.tsImport(${JSON.stringify(ADAPTER_URL)}, ${JSON.stringify(import.meta.url)}))
+    .catch((error) => {
+      require('node:worker_threads').parentPort.postMessage({
+        kind: 'bootstrapFailed',
+        message: String(error && error.stack ? error.stack : error),
+      })
+    })
+`
 
 let passed = 0
 let failed = 0
@@ -68,7 +92,14 @@ function createDriver(): {
   await: (predicate: (message: WorkerToMain) => boolean) => Promise<WorkerToMain>
   close: () => Promise<void>
 } {
-  const worker = new Worker(ADAPTER, { execArgv: ['--import', 'tsx'] })
+  const worker = new Worker(BOOTSTRAP, { eval: true })
+  worker.on('message', (data: unknown) => {
+    const message = data as { kind?: string; message?: string }
+    if (message?.kind === 'bootstrapFailed') {
+      console.log(`   ✗ worker bootstrap failed: ${message.message ?? 'unknown'}`)
+      process.exit(1)
+    }
+  })
   const waiting: { predicate: (message: WorkerToMain) => boolean; resolve: (message: WorkerToMain) => void }[] = []
   const buffered: WorkerToMain[] = []
 
