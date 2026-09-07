@@ -165,6 +165,28 @@ test.describe('Generation execution backend smoke', () => {
     expect(stored).toBe('worker')
   })
 
+  test('Resume brings the preview back after Stop', async ({ app }) => {
+    // Asserted on the per-operation badges, not the status line: the summary
+    // reads from the queue and says "up to date" whenever the queue is empty —
+    // including when it is empty because nothing was ever re-queued.
+    await generation.backendTrigger(app.page).click()
+    await generation.backendOption(app.page, WORKER_OPTION).click()
+
+    const heavy = readFileSync(new URL('../src/engine/test-fixtures/trochoidal-249k.camj', import.meta.url), 'utf8')
+    void seedProject(app.page, heavy).catch(() => {})
+
+    await expect(generation.summary(app.page)).toHaveText(/Generating/, { timeout: 20_000 })
+    await generation.stopButton(app.page).click()
+    await expect(generation.summary(app.page)).toHaveText(/paused/, { timeout: 20_000 })
+
+    await generation.resumeButton(app.page).click()
+    await expect(generation.resumeButton(app.page)).toHaveCount(0)
+
+    // The real check: the work Stop cancelled actually gets done again.
+    await expect(generation.pendingOperationBadges(app.page)).toHaveCount(0, { timeout: 60_000 })
+    await expect(generation.summary(app.page)).toHaveText(/up to date/, { timeout: 60_000 })
+  })
+
   test('Stop interrupts a running worker generation', async ({ app }) => {
     // The claim this pins is the one the whole issue exists for, and the one
     // the main-thread backend cannot make at all: work already in flight can be

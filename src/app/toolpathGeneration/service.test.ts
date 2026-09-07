@@ -314,6 +314,51 @@ async function main(): Promise<void> {
     assert(h.service.peekCurrent(h.context(), 'a') === null, 'the cache is cleared for a clean baseline')
   })
 
+  await test('Resume re-queues the work Stop cancelled', async () => {
+    // Stop cancels outstanding preview work; Resume has to put it back. Without
+    // that, Resume flips a flag and nothing else — the preview's demand effect
+    // only re-runs on a project or selection change, so the operations sit on
+    // spinners forever.
+    const h = harness(base)
+    h.service.setAutomaticDemand(h.context(), ['a', 'b'], false)
+    await flush()
+
+    h.service.stopAutomaticGeneration()
+    await flush()
+    assert(h.service.getSnapshot().automaticPaused, 'Stop pauses')
+    assert(h.service.getSnapshot().queuedCount === 0, 'Stop clears the queue')
+
+    h.service.resumeAutomaticGeneration()
+    await flush()
+    assert(!h.service.getSnapshot().automaticPaused, 'Resume unpauses')
+    assert(
+      h.executor().inFlight.length > 0 || h.service.getSnapshot().queuedCount > 0,
+      'Resume must re-queue the work the preview still wants',
+    )
+
+    h.executor().release({ status: 'completed', result: makeResult('a', 3), raw: null })
+    await flush()
+    assert(h.service.peekCurrent(h.context(), 'a') !== null, 'generation completes after Resume')
+  })
+
+  await test('Retry re-queues after an infrastructure failure', async () => {
+    const h = harness(base)
+    h.service.setAutomaticDemand(h.context(), ['a'], false)
+    await flush()
+    h.executor().release({ status: 'failed', failure: { category: 'worker-crash', message: 'boom' } })
+    await flush()
+    assert(h.service.getSnapshot().executorFailure !== null, 'the failure is surfaced')
+    assert(h.service.getSnapshot().queuedCount === 0, 'a failure does not auto-retry')
+
+    h.service.retryAfterFailure()
+    await flush()
+    assert(h.service.getSnapshot().executorFailure === null, 'Retry clears the failure')
+    assert(
+      h.executor().inFlight.length > 0 || h.service.getSnapshot().queuedCount > 0,
+      'Retry must actually re-queue the failed work',
+    )
+  })
+
   await test('switching backend re-queues the work the preview still wants', async () => {
     // The bug this pins: switching cleared the result cache *and* the automatic
     // demand, but nothing restated the demand — the preview's effect only re-runs

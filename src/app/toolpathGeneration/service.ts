@@ -445,6 +445,24 @@ export function createToolpathGenerationService(options: ServiceOptions): Toolpa
     pump()
   }
 
+  /**
+   * Re-queue whatever the preview still wants but no longer has.
+   *
+   * Every command that *resumes* preview work goes through this: Resume, Retry,
+   * and a backend switch. Each one previously changed a flag and stopped there,
+   * which left the operations on spinners that never resolved — the preview's
+   * demand effect only re-runs when the project or selection changes, and none
+   * of these three change either.
+   *
+   * Reads the live context rather than a captured one: the document may have
+   * moved on while generation was stopped or failed, and the work to redo is
+   * the work the *current* project needs.
+   */
+  function restateAutomaticDemand(): void {
+    if (automaticPaused || automaticDemand.size === 0) return
+    applyAutomaticDemand(options.getCurrentContext(), [...automaticDemand], false)
+  }
+
   function submit(
     context: GenerationContext,
     operation: Operation,
@@ -535,7 +553,9 @@ export function createToolpathGenerationService(options: ServiceOptions): Toolpa
 
     stopAutomaticGeneration(): void {
       automaticPaused = true
-      automaticDemand.clear()
+      // The demand is deliberately *kept*: `automaticPaused` is what stops it
+      // being acted on, and Resume needs to know what to put back. Clearing it
+      // here is what made Resume a no-op.
       for (let index = queue.length - 1; index >= 0; index -= 1) {
         const job = queue[index]
         if (job.priority !== 'automatic') continue
@@ -561,6 +581,7 @@ export function createToolpathGenerationService(options: ServiceOptions): Toolpa
 
     resumeAutomaticGeneration(): void {
       automaticPaused = false
+      restateAutomaticDemand()
       emit()
     },
 
@@ -569,6 +590,7 @@ export function createToolpathGenerationService(options: ServiceOptions): Toolpa
       for (const [operationId, status] of statuses) {
         if (status === 'failed' || status === 'cancelled') statuses.set(operationId, 'stale')
       }
+      restateAutomaticDemand()
       emit()
     },
 
@@ -591,15 +613,10 @@ export function createToolpathGenerationService(options: ServiceOptions): Toolpa
       statuses.clear()
       executorFailure = null
 
-      // Re-state the preview's demand on the new backend. The cache was just
-      // cleared, so without this the preview shows a spinner for every
-      // operation and nothing ever queues — the demand effect above only re-runs
-      // when the project or selection changes, and a backend switch changes
-      // neither. A paused service still queues nothing; `applyAutomaticDemand`
-      // returns early for that.
-      if (stillWanted.length > 0) {
-        applyAutomaticDemand(options.getCurrentContext(), stillWanted, false)
-      }
+      // The cache was just cleared, so the demand has to be acted on again or
+      // the preview shows a spinner for every operation and nothing queues.
+      for (const operationId of stillWanted) automaticDemand.add(operationId)
+      restateAutomaticDemand()
       emit()
     },
 
