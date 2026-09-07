@@ -30,6 +30,30 @@
 
 import { computeOperationToolpath } from '../../engine/toolpaths'
 import { resolveOperation } from './protocol'
+
+/**
+ * Wait for a real paint before blocking the thread.
+ *
+ * Double rAF: the first callback fires before the current paint, the second in
+ * the next frame — so the browser is guaranteed one paint in between. This is
+ * the shipped behaviour the rAF pipeline provided and it is load-bearing twice
+ * over. It is what lets the spinner appear before computation blocks, and it is
+ * what lets anything else already queued on the main thread run to completion
+ * first: yielding only a microtask hands control back inside the same task, so
+ * a caller still waiting on its own promise never gets to observe it.
+ *
+ * Falls back to a macrotask where there is no rAF — Node tests, and any worker
+ * that ends up constructing this backend.
+ */
+function afterNextPaint(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => { requestAnimationFrame(() => { resolve() }) })
+      return
+    }
+    setTimeout(resolve, 0)
+  })
+}
 import type { ExecutorRequest, GenerationExecutor } from './executor'
 import type { GenerationOutcome, GenerationStage } from './types'
 
@@ -63,10 +87,7 @@ export function createInlineExecutor(epoch: number): GenerationExecutor {
         }
       }
 
-      // Yield once before blocking so a spinner painted by the caller is on
-      // screen before the thread is taken. This is the same acknowledgement the
-      // shipped double-rAF made, kept honest rather than dressed up as async.
-      await Promise.resolve()
+      await afterNextPaint()
       if (terminated) return { status: 'cancelled' }
 
       onStage?.('generating')

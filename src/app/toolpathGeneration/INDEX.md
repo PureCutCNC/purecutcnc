@@ -10,12 +10,16 @@ Neither half knows about React. The worker knows about neither.
 
 ## Slice status
 
-Slices 1 and 2 of the plan in issue #675 are implemented: the extracted
-pipeline, the service, both executors, and the harness. **No application
-consumer uses this yet** — preview, export, simulation, booklet and the debug
-dialog still call `useToolpathGeneration`'s synchronous path, and migrating them
-is slice 3. Consequently the worker is not in the app's module graph, so `vite
-build` does not yet emit a worker chunk and browser worker startup is unverified;
+Slices 1-3 of the plan in issue #675 are implemented: the extracted pipeline,
+the service, both executors, the harness, and every application consumer.
+`noSyncCallers.test.ts` enforces that nothing outside the two executors
+generates directly.
+
+The worker is now in the app's module graph, so `vite build` emits a
+`toolpath.worker-*.js` chunk — fetched only when a worker is actually
+constructed, which the default inline backend never does. **The worker is not
+yet selectable**: there is no UI or preference to switch backends, which is
+slice 4. Browser worker *startup* therefore remains unverified;
 `workerRuntime.test.ts` covers real cross-thread execution in Node instead.
 
 ## Files
@@ -27,6 +31,9 @@ build` does not yet emit a worker chunk and browser worker startup is unverified
 - `workerExecutor.ts` — the worker's main-thread half: one worker, one installed snapshot, one in-flight request, re-sending the snapshot only when a different one is named. Cancellation is `Worker.terminate()`, never a message: a worker inside synchronous Clipper code cannot reach its own event loop, so a `cancel` would be read only after the work it meant to stop had finished. A startup-only handshake timeout; computation has no elapsed-time kill, because slow is not broken. Never falls back to inline on failure
 - `toolpath.worker.ts` — the worker. Holds one snapshot, computes one operation, keeps no result history (the authoritative cache is main-thread, and a second copy here would leak in a realm the main thread cannot clear). Clears `clearImportedModelCaches()` on snapshot replacement for the same reason. Declares its own three-member worker scope locally rather than adding `"WebWorker"` to `lib`, which would collide with `DOM` across every browser source
 - `workerThreadAdapter.ts` — node-only test support: shims `self` onto `parentPort` so `workerRuntime.test.ts` can run the shipped worker module unmodified on a real `worker_threads` thread
+- `useGenerationService.ts` — React's binding: one service per application, subscribed through `useSyncExternalStore`. Returns both a render-safe `context` and a ref of the same value for callbacks and async continuations. The ref is written in a **layout** effect, not during render: a render React discards must not move what a completion is judged against, and layout narrows the stale window to the gap between commit and that line. A completion landing inside it returns `superseded` — one wasted regeneration, never a result attached to the wrong project
+- `exportPreparation.ts` — the rules that decide whether a G-code program may be written. **A program is all of its operations or it is nothing**: a member that failed, was cancelled, superseded, or has no tool blocks the export and names itself, and nothing is filtered out to make the remainder postable. The token binds a prepared program to the inputs it came from — project identity, document key, selection *and its order*, machine, and every postprocessor option — so a preview whose inputs moved is immediately not exportable rather than merely stale-looking
+- `useExportPreparation.ts` — drives those rules from the dialog's state, keeping the 300 ms debounce the synchronous version had. Invalidates the previous preparation *before* starting a new one, so there is no window where a stale program still reads as ready, and copies the bytes out at Save time so the file is the program the user approved
 - `service.ts` — the queue, the one authoritative cache, and the commit rules. A returned result is attached to the inputs captured at *submission*, never to whatever project is current when it arrives, and is installed only if its identity still matches the active job, its document key is still current, it has not been cancelled or superseded, and the captured inputs still validate against the live project. Foreground beats queued automatic work, FIFO within a class. `automaticDemand` is what makes preview jobs live: they carry no consumer, so without it they are indistinguishable from abandoned work
 - `testSupport.ts` — minimal operation/project/result fixtures for the service suites, which are about scheduling rather than geometry
 
@@ -35,4 +42,7 @@ build` does not yet emit a worker chunk and browser worker startup is unverified
 - `transport.test.ts` — protocol validation plus real `structuredClone` fidelity: every corpus project clones (including the million-move and imported-mesh ones), and for one case per operation kind, generating from a *cloned* project yields identical results, raw traces and G-code bytes. Also deep-freezes the project and generates, so mutation throws at the offending write rather than being inferred afterwards
 - `workerGraph.test.ts` — walks the worker's transitive imports and fails on React, the store, components or unguarded browser globals, naming the chain. Verified by mutation: importing `projectStore` reaches React in five hops via `machine/store.ts` → `useLocalStorageState.ts`, and drags in `import/svg.ts`'s unguarded globals
 - `workerRuntime.test.ts` — the shipped worker on a real thread, its results compared against the pre-extraction baseline: byte-identical toolpaths, raw traces and G-code for all 11 operation kinds, plus A/B/A order independence across snapshot replacement and rejection of a generate naming an uninstalled snapshot. Covers structured-clone transport and separate-realm module state; **not** bundling or `new URL` asset resolution, which need a browser
+- `inlineExecutor.test.ts` — the inline backend yields the thread before it takes it. Pins a regression the unit suites structurally could not see: every other test here injects a fake executor, so when the real one yielded only a **microtask** before running a generator, control never left the caller's task and whatever was waiting on the main thread stayed blocked. The browser found it immediately (a `page.evaluate` that had just loaded a project never returned); this makes it fail in Node instead
+- `exportPreparation.test.ts` — export completeness and token invalidation, driven through the real service with a hand-released executor so the failure and cancellation paths are exercised rather than simulated. Verified by mutation: dropping a failed member instead of blocking turns the export `ready`, and the suite fails
+- `noSyncCallers.test.ts` — the slice-3 acceptance condition as a check: no application module outside the two executors calls `computeOperationToolpath` or a per-kind generator. Scans `src/*.tsx` as well as the subdirectories, because the composition root is `src/App.tsx` and an earlier version of this check silently skipped it
 - `executorParity.test.ts` — the service seam preserves output: results reaching a caller through the queue, cache and commit rules still hash to the baseline, a cache hit returns the same object rather than a copy, and `peekCurrent` agrees with what was installed

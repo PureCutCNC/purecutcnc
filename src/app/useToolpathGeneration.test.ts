@@ -26,12 +26,16 @@ import type { LegacyFeatureRow } from '../store/helpers/projectFormat'
 import { createDefinitionForFeatureWithId, createFeatureInstance } from '../store/helpers/featureDefinitions'
 import { projectWithFeatures } from '../test/projectFixtures'
 import {
+  buildDisplayToolpathMap,
   buildToolpathCacheEntry,
   isCacheHit,
   operationComputationEquals,
-  startToolpathGenerationPipeline,
-  type ToolpathCacheEntry,
 } from './useToolpathGeneration'
+import { createToolpathGenerationService } from './toolpathGeneration/service'
+import type { GenerationContext } from './toolpathGeneration/service'
+import type { ExecutorRequest, GenerationExecutor } from './toolpathGeneration/executor'
+import type { GenerationOutcome } from './toolpathGeneration/types'
+import { makeCountingService } from './toolpathGeneration/testSupport'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -201,22 +205,6 @@ function makeResult(operationId: string): ToolpathResult {
   }
 }
 
-/** Minimal deterministic rAF: queues callbacks; `flush()` runs and clears them. */
-function makeFakeRaf() {
-  const pending = new Map<number, FrameRequestCallback>()
-  let nextHandle = 1
-  const raf = (cb: FrameRequestCallback): number => {
-    const handle = nextHandle++
-    pending.set(handle, cb)
-    return handle
-  }
-  const flush = (): void => {
-    const callbacks = [...pending.values()]
-    pending.clear()
-    for (const cb of callbacks) cb(performance.now())
-  }
-  return { raf, flush, pendingCount: () => pending.size }
-}
 
 function testOperationComputationEquals() {
   console.log('Testing operationComputationEquals field allowlist...')
@@ -545,162 +533,147 @@ function testBuildToolpathCacheEntry() {
   console.log('buildToolpathCacheEntry write path: PASSED')
 }
 
-function testPipelineRegeneration() {
+async function testPipelineRegeneration() {
   console.log('Testing pipeline regeneration: display-only change does not regenerate, transform change does...')
 
   const project = makeFootprintProject()
-  // The pipeline looks operations up from `project.operations`; prime the
-  // cache with that same object, exactly as generation does. (Project
-  // normalization rebuilds operation objects, so the pre-normalization draft
-  // above is a different object and must not be the one cached.)
   const normalizedOperation = footprintOperation(project)
+  const harness = makeCountingService({ project, documentKey: 1 }, (id) => makeResult(id))
 
-  const fake = makeFakeRaf()
-  let generatedCalls = 0
-  const generateToolpathForOperation = (op: Operation | null): ToolpathResult | null => {
-    if (!op) return null
-    generatedCalls += 1
-    return makeResult(op.id)
-  }
-  const cache = new Map<string, ToolpathCacheEntry>()
-  const primedResult = makeResult(normalizedOperation.id)
-  cache.set(normalizedOperation.id, buildToolpathCacheEntry(project, normalizedOperation, primedResult))
-  let currentMap = new Map<string, ToolpathResult>()
-  const setToolpathMap = (
-    value: Map<string, ToolpathResult> | ((prev: Map<string, ToolpathResult>) => Map<string, ToolpathResult>),
-  ): void => {
-    currentMap = typeof value === 'function' ? value(currentMap) : value
-  }
-  const scheduleAfterPaint = (fn: () => void): void => {
-    fake.raf(() => fake.raf(fn))
+  // Edits are chained onto the running project rather than each being applied
+  // to the original. The service updates its cache as results arrive, so the
+  // entry each step is judged against is the one the previous step produced —
+  // which is also how a user actually edits: successively, not by rewinding.
+  let running = project
+  const edit = async (patch: (input: Project) => Project): Promise<void> => {
+    running = patch(running)
+    harness.setContext({ project: running, documentKey: 1 })
+    harness.service.setAutomaticDemand(harness.context(), [normalizedOperation.id], false)
+    await harness.settle()
   }
 
-  const runPipeline = (nextProject: Project): void => {
-    startToolpathGenerationPipeline({
-      neededOperationIds: [normalizedOperation.id],
-      project: nextProject,
-      toolpathCache: cache,
-      generateToolpathForOperation,
-      setToolpathMap,
-      requestAnimationFrameFn: fake.raf,
-      scheduleAfterPaintFn: scheduleAfterPaint,
-    })
-    fake.flush()
-    fake.flush()
-  }
+  await edit((input) => input)
+  assert(harness.service.peekCurrent(harness.context(), normalizedOperation.id) !== null, 'the first pass should produce a result')
+  const callsAfterPrime = harness.calls()
+  assert(callsAfterPrime === 1, 'priming should generate exactly once')
 
   // A visibility-toggle-shaped change must not regenerate: the cache entry
-  // hits, so the generator spy is never called and the primed result stays.
-  runPipeline(patchFeatureRow(project, 'f1', { visible: false }))
-  // Snapshot the counter into a fresh const: asserting on the mutable
-  // variable directly would literal-narrow it and break the `=== 1` assert
-  // below (`asserts condition` narrowing).
-  const callsAfterVisibility = generatedCalls
-  assert(callsAfterVisibility === 0, 'visibility toggle must not regenerate the toolpath')
-  assert(currentMap.has(normalizedOperation.id), 'cached result must stay in the map')
+  // hits, so the executor is never called again and the primed result stays.
+  await edit((input) => patchFeatureRow(input, 'f1', { visible: false }))
+  const callsAfterVisibility = harness.calls()
+  assert(callsAfterVisibility === 1, 'visibility toggle must not regenerate the toolpath')
+  assert(
+    buildDisplayToolpathMap(harness.service, harness.context(), [normalizedOperation.id]).has(normalizedOperation.id),
+    'cached result must stay in the map',
+  )
 
   // A transform-shaped change on the direct target must regenerate exactly once.
   const row = project.features.find((feature) => feature.id === 'f1')
   assert(row !== undefined, 'f1 row should exist')
-  runPipeline(patchFeatureRow(project, 'f1', { transform: { ...row.transform, e: 1 } }))
-  const callsAfterTransform = generatedCalls
-  assert(callsAfterTransform === 1, 'transform change must regenerate the toolpath once')
+  await edit((input) => patchFeatureRow(input, 'f1', { transform: { ...row.transform, e: 1 } }))
+  const callsAfterTransform = harness.calls()
+  assert(callsAfterTransform === 2, 'transform change must regenerate the toolpath once')
 
   // S3b headline: a feature edited far outside the operation's footprint must
-  // not regenerate either — the spy stays quiet and the previous result stays
-  // in the map (which is exactly what stops the visible blanking during
-  // editing).
-  runPipeline(patchFeatureRow(project, 'f3', { z_top: 9 }))
-  const callsAfterFarAway = generatedCalls
-  assert(callsAfterFarAway === 1, 'a far-away feature edit must not regenerate the toolpath')
-  assert(currentMap.get(normalizedOperation.id) === primedResult, 'previous result must stay in the map after a far-away edit')
+  // not regenerate either — the executor stays quiet and the previous result
+  // stays in the map, which is what stops the visible blanking during editing.
+  const beforeFarAway = harness.service.peekCurrent(harness.context(), normalizedOperation.id)
+  assert(beforeFarAway !== null, 'the transform change should have produced a result')
+  await edit((input) => patchFeatureRow(input, 'f3', { z_top: 9 }))
+  const callsAfterFarAway = harness.calls()
+  assert(callsAfterFarAway === 2, 'a far-away feature edit must not regenerate the toolpath')
+  assert(
+    buildDisplayToolpathMap(harness.service, harness.context(), [normalizedOperation.id]).get(normalizedOperation.id) === beforeFarAway,
+    'previous result must stay in the map after a far-away edit',
+  )
 
   // An edit inside the footprint must regenerate exactly once.
-  runPipeline(patchFeatureRow(project, 'f2', { z_top: 9 }))
-  const callsAfterOverlapping = generatedCalls
-  assert(callsAfterOverlapping === 2, 'an overlapping feature edit must regenerate the toolpath once')
+  await edit((input) => patchFeatureRow(input, 'f2', { z_top: 9 }))
+  const callsAfterOverlapping = harness.calls()
+  assert(callsAfterOverlapping === 3, 'an overlapping feature edit must regenerate the toolpath once')
 
+  harness.service.dispose()
   console.log('pipeline regeneration on display-only vs transform vs footprint-relevant changes: PASSED')
 }
 
-function testOnePerFrameScheduler() {
-  console.log('Testing toolpath pipeline computes uncached operations one per frame...')
+async function testOneOperationAtATime() {
+  console.log('Testing uncached operations are computed one at a time, in demanded order...')
 
+  // The double-rAF frame budget this replaced is gone with the rAF pipeline
+  // (issue #675). What survives it is the guarantee that actually mattered: the
+  // service never has two operations in flight, and it takes them in the order
+  // demand named — selected first, so the operation the user is looking at is
+  // not stuck behind the others.
   const operations = [
     makeOperation({ id: 'op-1' }),
     makeOperation({ id: 'op-2' }),
     makeOperation({ id: 'op-3' }),
   ]
-  const project = {
-    ...makeProject(operations[0]),
-    operations,
-  }
-  const cache = new Map<string, ToolpathCacheEntry>()
-  const fake = makeFakeRaf()
-  const computed: string[] = []
-  let currentMap = new Map<string, ToolpathResult>()
-  const setToolpathMap = (
-    value: Map<string, ToolpathResult> | ((prev: Map<string, ToolpathResult>) => Map<string, ToolpathResult>),
-  ): void => {
-    currentMap = typeof value === 'function' ? value(currentMap) : value
-  }
-  const scheduleAfterPaint = (fn: () => void): void => {
-    fake.raf(() => fake.raf(fn))
-  }
+  const project = { ...newProject('toolpath-generation-test', 'mm'), operations }
 
-  startToolpathGenerationPipeline({
-    neededOperationIds: operations.map((operation) => operation.id),
-    project,
-    toolpathCache: cache,
-    generateToolpathForOperation: (operation) => {
-      if (!operation) return null
-      computed.push(operation.id)
-      const result = makeResult(operation.id)
-      cache.set(operation.id, buildToolpathCacheEntry(project, operation, result))
-      return result
-    },
-    setToolpathMap,
-    requestAnimationFrameFn: fake.raf,
-    scheduleAfterPaintFn: scheduleAfterPaint,
+  let inFlight = 0
+  let maxInFlight = 0
+  const order: string[] = []
+  const current: GenerationContext = { project, documentKey: 1 }
+  const releases: (() => void)[] = []
+  const service = createToolpathGenerationService({
+    getCurrentContext: () => current,
+    createExecutor: (_kind, epoch): GenerationExecutor => ({
+      kind: 'inline',
+      epoch,
+      supportsHardCancellation: false,
+      run: (request: ExecutorRequest): Promise<GenerationOutcome> => {
+        order.push(request.identity.operationId)
+        inFlight += 1
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        return new Promise<GenerationOutcome>((resolve) => {
+          releases.push(() => {
+            inFlight -= 1
+            resolve({ status: 'completed', result: makeResult(request.identity.operationId), raw: null })
+          })
+        })
+      },
+      terminate: () => {},
+      dispose: () => {},
+    }),
   })
 
-  assert(currentMap.size === 0, 'initial map is set before async computation')
-  assert(fake.pendingCount() === 1, 'initial double-rAF starts with one pending frame')
-  assert(computed.length === 0, 'no operations computed before frames flush')
+  // Demand names op-2 first, as a selected-first order would.
+  service.setAutomaticDemand(current, ['op-2', 'op-1', 'op-3'], false)
+  const settle = async (): Promise<void> => { for (let i = 0; i < 8; i += 1) await Promise.resolve() }
+  await settle()
 
-  fake.flush()
-  assert(computed.length === 0, 'first frame only queues the compute frame')
-  fake.flush()
-  assert(computed.join(',') === 'op-1', 'second frame computes first operation')
-  assert(currentMap.has('op-1'), 'first operation is added to the map')
+  assert(order.join(',') === 'op-2', 'only the first demanded operation starts')
+  for (let index = 0; index < 3; index += 1) {
+    releases.shift()?.()
+    await settle()
+  }
 
-  fake.flush()
-  assert(computed.join(',') === 'op-1', 'paint gap frame does not compute a second operation')
-  fake.flush()
-  assert(computed.join(',') === 'op-1,op-2', 'next frame computes second operation')
-  assert(currentMap.has('op-2'), 'second operation is added to the map')
+  assert(maxInFlight === 1, `never more than one operation in flight, saw ${maxInFlight}`)
+  assert(order.join(',') === 'op-2,op-1,op-3', `demanded order must be followed, got ${order.join(',')}`)
+  const map = buildDisplayToolpathMap(service, current, ['op-2', 'op-1', 'op-3'])
+  assert(map.size === 3, 'every demanded operation ends up in the map')
 
-  fake.flush()
-  assert(computed.join(',') === 'op-1,op-2', 'second paint gap frame does not compute third operation')
-  fake.flush()
-  assert(computed.join(',') === 'op-1,op-2,op-3', 'final compute frame computes third operation')
-  assert(currentMap.has('op-3'), 'third operation is added to the map')
-
-  console.log('toolpath pipeline computes uncached operations one per frame: PASSED')
+  service.dispose()
+  console.log('one operation at a time, in demanded order: PASSED')
 }
 
-try {
-  testOperationComputationEquals()
-  testIsCacheHit()
-  testIsCacheHitFeatureDiff()
-  testIsCacheHitFootprint()
-  testIsCacheHitStockTargeted()
-  testIsCacheHitUnknownFootprint()
-  testBuildToolpathCacheEntry()
-  testPipelineRegeneration()
-  testOnePerFrameScheduler()
-  console.log('\nAll useToolpathGeneration tests PASSED.')
-} catch (e) {
-  console.error(e)
-  throw e
+async function main(): Promise<void> {
+  try {
+    testOperationComputationEquals()
+    testIsCacheHit()
+    testIsCacheHitFeatureDiff()
+    testIsCacheHitFootprint()
+    testIsCacheHitStockTargeted()
+    testIsCacheHitUnknownFootprint()
+    testBuildToolpathCacheEntry()
+    await testPipelineRegeneration()
+    await testOneOperationAtATime()
+    console.log('\nAll useToolpathGeneration tests PASSED.')
+  } catch (e) {
+    console.error(e)
+    process.exit(1)
+  }
 }
+
+void main()

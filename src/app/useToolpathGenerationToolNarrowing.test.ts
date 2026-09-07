@@ -28,11 +28,13 @@ import type { Operation, Project, SketchFeature, Tool } from '../types/project'
 import { defaultTool, newProject, rectProfile } from '../types/project'
 import { projectWithFeatures } from '../test/projectFixtures'
 import {
+  buildDisplayToolpathMap,
   buildToolpathCacheEntry,
   isCacheHit,
-  startToolpathGenerationPipeline,
-  type ToolpathCacheEntry,
 } from './useToolpathGeneration'
+import { createToolpathGenerationService } from './toolpathGeneration/service'
+import type { GenerationExecutor } from './toolpathGeneration/executor'
+import type { GenerationOutcome } from './toolpathGeneration/types'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -139,22 +141,6 @@ function makeResult(operationId: string): ToolpathResult {
   }
 }
 
-/** Minimal deterministic rAF: queues callbacks; `flush()` runs and clears them. */
-function makeFakeRaf() {
-  const pending = new Map<number, FrameRequestCallback>()
-  let nextHandle = 1
-  const raf = (cb: FrameRequestCallback): number => {
-    const handle = nextHandle++
-    pending.set(handle, cb)
-    return handle
-  }
-  const flush = (): void => {
-    const callbacks = [...pending.values()]
-    pending.clear()
-    for (const cb of callbacks) cb(performance.now())
-  }
-  return { raf, flush }
-}
 
 function testIsCacheHitToolNarrowing() {
   console.log('Testing isCacheHit tool narrowing (S5 Part B)...')
@@ -188,61 +174,70 @@ function testIsCacheHitToolNarrowing() {
   console.log('isCacheHit tool narrowing: PASSED')
 }
 
-function testPipelineUnrelatedToolImport() {
+async function testPipelineUnrelatedToolImport() {
   console.log('Testing pipeline: importing an unrelated tool must not regenerate (S5 Part B)...')
 
   const project = makeToolProject()
   const operation = footprintOperation(project)
-  const cache = new Map<string, ToolpathCacheEntry>()
-  const primedResult = makeResult(operation.id)
-  cache.set(operation.id, buildToolpathCacheEntry(project, operation, primedResult))
 
+  // Driven through the real service rather than the retired rAF pipeline
+  // (issue #675). The claim under test is unchanged and still the user-visible
+  // one: an unrelated tool import must neither recompute the operation nor
+  // disturb what the viewport is drawing.
   let generatedCalls = 0
-  const generateToolpathForOperation = (op: Operation | null): ToolpathResult | null => {
-    if (!op) return null
-    generatedCalls += 1
-    return makeResult(op.id)
-  }
-  const fake = makeFakeRaf()
-  let currentMap = new Map<string, ToolpathResult>()
-  const setToolpathMap = (
-    value: Map<string, ToolpathResult> | ((prev: Map<string, ToolpathResult>) => Map<string, ToolpathResult>),
-  ): void => {
-    currentMap = typeof value === 'function' ? value(currentMap) : value
-  }
-  const scheduleAfterPaint = (fn: () => void): void => {
-    fake.raf(() => fake.raf(fn))
-  }
+  const primedResult = makeResult(operation.id)
+  const executor = (epoch: number): GenerationExecutor => ({
+    kind: 'inline',
+    epoch,
+    supportsHardCancellation: false,
+    run: (): Promise<GenerationOutcome> => {
+      generatedCalls += 1
+      return Promise.resolve({ status: 'completed', result: primedResult, raw: null })
+    },
+    terminate: () => {},
+    dispose: () => {},
+  })
+
+  let context = { project, documentKey: 1 }
+  const service = createToolpathGenerationService({
+    getCurrentContext: () => context,
+    createExecutor: (_kind, epoch) => executor(epoch),
+  })
+
+  // Prime the cache the way the preview does.
+  service.setAutomaticDemand(context, [operation.id], false)
+  for (let index = 0; index < 8; index += 1) await Promise.resolve()
+  assert(generatedCalls === 1, 'the first demand should generate exactly once')
+  assert(service.peekCurrent(context, operation.id) === primedResult, 'the result should be cached')
 
   // 10. The user-visible behaviour: with the cache primed, importing an
   // unrelated tool must leave the generator untouched and the cached result
   // on the map.
   const unrelatedTool: Tool = { ...defaultTool('mm'), id: 't2' }
-  const nextProject: Project = { ...project, tools: [...project.tools, unrelatedTool] }
-  startToolpathGenerationPipeline({
-    neededOperationIds: [operation.id],
-    project: nextProject,
-    toolpathCache: cache,
-    generateToolpathForOperation,
-    setToolpathMap,
-    requestAnimationFrameFn: fake.raf,
-    scheduleAfterPaintFn: scheduleAfterPaint,
-  })
-  fake.flush()
-  fake.flush()
+  context = { project: { ...project, tools: [...project.tools, unrelatedTool] }, documentKey: 1 }
+  service.setAutomaticDemand(context, [operation.id], false)
+  for (let index = 0; index < 8; index += 1) await Promise.resolve()
 
-  const callsAfterImport = generatedCalls
-  assert(callsAfterImport === 0, 'importing an unrelated tool must not regenerate the toolpath')
-  assert(currentMap.get(operation.id) === primedResult, 'the cached result must stay in the map')
+  assert(generatedCalls === 1, 'importing an unrelated tool must not regenerate the toolpath')
+  const map = buildDisplayToolpathMap(service, context, [operation.id])
+  assert(map.get(operation.id) === primedResult, 'the cached result must stay in the map')
 
+  service.dispose()
   console.log('pipeline unrelated-tool import: PASSED')
 }
 
-try {
-  testIsCacheHitToolNarrowing()
-  testPipelineUnrelatedToolImport()
-  console.log('\nAll useToolpathGeneration S5 tool-narrowing tests PASSED.')
-} catch (e) {
-  console.error(e)
-  throw e
+async function main(): Promise<void> {
+  // Awaited, not fired and forgotten: the pipeline case became async when it
+  // moved onto the service, and an unawaited rejection would leave this file
+  // exiting 0 on a real failure.
+  try {
+    testIsCacheHitToolNarrowing()
+    await testPipelineUnrelatedToolImport()
+    console.log('\nAll useToolpathGeneration S5 tool-narrowing tests PASSED.')
+  } catch (e) {
+    console.error(e)
+    process.exit(1)
+  }
 }
+
+void main()

@@ -32,7 +32,6 @@ import { DisclosureSection } from '../common/DisclosureSection'
 import type {
   DrillType,
   EntryStrategy,
-  Operation,
   OperationKind,
   OperationPass,
   PocketPattern,
@@ -81,7 +80,13 @@ interface CAMPanelProps {
   onExport: () => void
   /** Open the Export G-code dialog scoped to a single operation. */
   onExportOperation: (operationId: string) => void
-  generateToolpath: (operation: Operation) => ToolpathResult | null
+  /**
+   * Asynchronous acquisition (issue #675). The booklet awaits one operation's
+   * path from the snapshot captured when the action started.
+   */
+  requestToolpath: (operationId: string, purpose: 'booklet', signal?: AbortSignal) => Promise<ToolpathResult | null>
+  /** The document session the panel is looking at, so a booklet cannot span two. */
+  documentKey: number
   toolpathWarnings?: ToolpathWarning[] | null
   generatingOperationIds?: Set<string>
   /** A1.3: arm an operation kind (on hover in the Add menu) for the canvas highlight. */
@@ -580,7 +585,8 @@ export function CAMPanel({
   onSelectedOperationIdChange,
   onExport,
   onExportOperation,
-  generateToolpath,
+  requestToolpath,
+  documentKey,
   toolpathWarnings,
   generatingOperationIds,
   onOperationHighlightChange,
@@ -1038,22 +1044,31 @@ export function CAMPanel({
     setExportingBookletOperationId(selectedOperation.id)
     setBookletExportMessage({ operationId: selectedOperation.id, text: camT('cam.booklet.building') })
 
+    // Captured together, before the first await: the picture, the parameter
+    // rows and the moves in the finished booklet must all describe one
+    // revision, and every step below is asynchronous (issue #675).
+    const captured = { project, operation: selectedOperation, documentKey }
+
     try {
-      const toolpath = generateToolpath(selectedOperation)
-      const toolRecord = selectedOperation.toolRef
-        ? project.tools.find((tool) => tool.id === selectedOperation.toolRef) ?? null
+      const toolpath = await requestToolpath(captured.operation.id, 'booklet')
+      if (!toolpath) {
+        setBookletExportMessage({ operationId: captured.operation.id, text: camT('cam.booklet.failed') })
+        return
+      }
+      const toolRecord = captured.operation.toolRef
+        ? captured.project.tools.find((tool) => tool.id === captured.operation.toolRef) ?? null
         : null
-      const tool = toolRecord ? normalizeToolForProject(toolRecord, project) : null
-      const snapshotPng = await renderOperationSnapshotPng(project, selectedOperation, toolpath)
+      const tool = toolRecord ? normalizeToolForProject(toolRecord, captured.project) : null
+      const snapshotPng = await renderOperationSnapshotPng(captured.project, captured.operation, toolpath)
       const pdfBytes = await createOperationBookletPdf({
-        project,
-        operation: selectedOperation,
+        project: captured.project,
+        operation: captured.operation,
         tool,
         toolpath,
         snapshotPng,
       })
-      const safeProjectName = project.meta.name.trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'project'
-      const safeOperationName = selectedOperation.name.trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'operation'
+      const safeProjectName = captured.project.meta.name.trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'project'
+      const safeOperationName = captured.operation.name.trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'operation'
       const exportedPath = await platform.saveBinaryFile(
         `${safeProjectName}_${safeOperationName}_booklet`,
         pdfBytes,

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { SimulationPlaybackInput } from '../components/simulation/SimulationViewport'
 import {
   createSimulationGrid,
@@ -27,6 +27,9 @@ import {
 import type { ToolpathResult } from '../engine/toolpaths'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
 import type { Operation, Project } from '../types/project'
+
+/** Stable empty set, so "nothing to acquire" does not churn the memos below. */
+const NO_PATHS: ReadonlyMap<string, ToolpathResult> = new Map()
 
 /** Defer a computation to first call and cache the result for later calls. */
 function lazyOnce<T>(compute: () => T): () => T {
@@ -46,7 +49,12 @@ interface UseSimulationModelArgs {
   simulationDetailCells: number
   selectedOperation: Operation | null
   selectedToolpath: ToolpathResult | null
-  generateToolpathForOperation: (op: Operation | null) => ToolpathResult | null
+  /** Async acquisition (issue #675). Resolves null when the path cannot be produced. */
+  requestToolpath: (
+    operationId: string,
+    purpose: 'simulation',
+    signal?: AbortSignal,
+  ) => Promise<ToolpathResult | null>
 }
 
 export function useSimulationModel({
@@ -56,12 +64,83 @@ export function useSimulationModel({
   simulationDetailCells,
   selectedOperation,
   selectedToolpath,
-  generateToolpathForOperation,
+  requestToolpath,
 }: UseSimulationModelArgs): {
   simulationResult: SimulationResult | null
   simulationOperationCount: number
   simulationPlaybackInput: SimulationPlaybackInput | null
+  /** True while the paths simulation needs are still being produced. */
+  simulationInputPending: boolean
 } {
+  /**
+   * The toolpaths simulation needs, acquired in an effect (issue #675).
+   *
+   * Simulation used to generate during render, which is exactly what a worker
+   * boundary makes impossible: the answer no longer arrives in the same tick as
+   * the question. Acquiring here keeps generation out of render *and* out of the
+   * playback callback — the base-grid supplier below closes over what has
+   * already been resolved and can never start work of its own.
+   *
+   * `resolvedFor` stamps which project the paths belong to, so a set acquired
+   * for an older revision is never mixed into a simulation of the current one.
+   */
+  const [acquired, setAcquired] = useState<{ project: Project; paths: Map<string, ToolpathResult> } | null>(null)
+
+  // Every operation simulation may need: the visible set for 'visible' mode,
+  // and the prior operations for 'selected' playback's starting stock.
+  const requiredOperationIds = useMemo(() => {
+    if (centerTab !== 'simulation') return []
+    const eligible = (operation: Operation): boolean =>
+      operation.enabled && operation.showToolpath && operation.toolRef !== null
+    if (simulationMode === 'visible') {
+      return project.operations.filter(eligible).map((operation) => operation.id)
+    }
+    if (!selectedOperation) return []
+    const selectedIndex = project.operations.findIndex((operation) => operation.id === selectedOperation.id)
+    const prior = selectedIndex >= 0 ? project.operations.slice(0, selectedIndex) : []
+    return prior.filter(eligible).map((operation) => operation.id)
+  }, [centerTab, project.operations, selectedOperation, simulationMode])
+
+  const requiredKey = requiredOperationIds.join(',')
+
+  useEffect(() => {
+    if (centerTab !== 'simulation') {
+      setAcquired(null)
+      return
+    }
+    const controller = new AbortController()
+    let cancelled = false
+    void (async () => {
+      const entries = await Promise.all(requiredOperationIds.map(async (operationId) => ({
+        operationId,
+        toolpath: await requestToolpath(operationId, 'simulation', controller.signal),
+      })))
+      if (cancelled) return
+      const paths = new Map<string, ToolpathResult>()
+      for (const { operationId, toolpath } of entries) {
+        if (toolpath) paths.set(operationId, toolpath)
+      }
+      setAcquired({ project, paths })
+    })()
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- requiredKey stands in for the id list; `project` identity is what a re-acquire keys on
+  }, [centerTab, requiredKey, project, requestToolpath])
+
+  // Only paths acquired for *this* project revision may be used. A pending or
+  // superseded acquisition leaves this null, which is what stops a playback
+  // starting on a mixed input set.
+  //
+  // An empty requirement is already satisfied: a selected operation with no
+  // prior operations has nothing to wait for, and making it wait for an effect
+  // would delay playback for the commonest case in the name of a dependency
+  // that does not exist.
+  const paths: ReadonlyMap<string, ToolpathResult> | null = requiredOperationIds.length === 0
+    ? NO_PATHS
+    : acquired && acquired.project === project ? acquired.paths : null
+  const simulationInputPending = centerTab === 'simulation' && paths === null
   const simulationResult = useMemo(() => {
     if (centerTab !== 'simulation') {
       return null
@@ -93,7 +172,7 @@ export function useSimulationModel({
     const replayItems = project.operations
       .filter((operation) => operation.enabled && operation.showToolpath && operation.toolRef)
       .map((operation) => {
-        const toolpath = generateToolpathForOperation(operation)
+        const toolpath = paths?.get(operation.id) ?? null
         const toolRecord = operation.toolRef
           ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
           : null
@@ -122,7 +201,7 @@ export function useSimulationModel({
     return simulateReplayItemsHeightfield(project, replayItems, {
       targetLongAxisCells: simulationDetailCells,
     })
-  }, [centerTab, generateToolpathForOperation, project, selectedOperation, selectedToolpath, simulationDetailCells, simulationMode])
+  }, [centerTab, paths, project, selectedOperation, selectedToolpath, simulationDetailCells, simulationMode])
 
   const simulationOperationCount = useMemo(() => {
     if (simulationMode === 'selected') {
@@ -146,6 +225,14 @@ export function useSimulationModel({
       return null
     }
 
+    // No playback until every prior operation's path is in hand. Handing the
+    // viewport a supplier that would have to generate is what put generation on
+    // the playback path in the first place.
+    if (paths === null) {
+      return null
+    }
+    const resolvedPaths = paths
+
     const normalizedSelectedTool = normalizeToolForProject(toolRecord, project)
 
     // Starting stock state for playback: all operations BEFORE the selected one
@@ -166,7 +253,10 @@ export function useSimulationModel({
           && operation.toolRef,
         )
         .map((operation): SimulationReplayItem | null => {
-          const toolpath = generateToolpathForOperation(operation)
+          // Read, never generate: this runs inside the playback supplier, and a
+          // supplier that could start work would be generation on the playback
+          // path — the thing acquiring these up front exists to prevent.
+          const toolpath = resolvedPaths.get(operation.id) ?? null
           const operationTool = operation.toolRef
             ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
             : null
@@ -230,11 +320,12 @@ export function useSimulationModel({
       feedPerSecond,
       plungeFeedPerSecond,
     }
-  }, [centerTab, generateToolpathForOperation, project, selectedOperation, selectedToolpath, simulationDetailCells, simulationMode])
+  }, [centerTab, paths, project, selectedOperation, selectedToolpath, simulationDetailCells, simulationMode])
 
   return {
     simulationResult,
     simulationOperationCount,
     simulationPlaybackInput,
+    simulationInputPending,
   }
 }

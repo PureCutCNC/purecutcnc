@@ -14,19 +14,19 @@
  * limitations under the License.
  */
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { platform } from '../../platform'
 import {
   getActiveMachineDefinition,
-  runPostProcessor,
   getExportedMotionEligibility,
-  type PostProcessorResult,
 } from '../../engine/gcode'
-import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
 import type { ToolpathResult, ToolpathGenerationTrace, NormalizedTool } from '../../engine/toolpaths/types'
 import type { Operation } from '../../types/project'
+import type { GenerationContext, ToolpathGenerationService } from '../../app/toolpathGeneration/service'
+import type { ExportPostOptions } from '../../app/toolpathGeneration/exportPreparation'
+import { useExportPreparation } from '../../app/toolpathGeneration/useExportPreparation'
 import {
   listExportOperationOptions,
   suggestGcodeFileName,
@@ -39,14 +39,16 @@ import { toolpathWarningTexts } from '../../i18n/warningText'
 
 interface ExportDialogProps {
   onClose: () => void
-  generateToolpath: (operation: Operation) => ToolpathResult | null
+  /** The generation service and the live context to submit against (issue #675). */
+  service: ToolpathGenerationService
+  contextRef: React.RefObject<GenerationContext>
   /** Debug-only (issue #356): produces a {raw, optimized} trace for one operation. */
-  getGenerationTrace: (operation: Operation) => ToolpathGenerationTrace | null
+  requestGenerationTrace: (operationId: string, signal?: AbortSignal) => Promise<ToolpathGenerationTrace | null>
   /** Pre-check only these operations (per-operation export); defaults to the visible set. */
   initialOperationIds?: string[]
 }
 
-export function ExportDialog({ onClose, generateToolpath, getGenerationTrace, initialOperationIds }: ExportDialogProps) {
+export function ExportDialog({ onClose, service, contextRef, requestGenerationTrace, initialOperationIds }: ExportDialogProps) {
   useRestoreCanvasFocus()
   const { project, selectProject, lastExportPath, markExported } = useProjectStore()
   const { t, languageTag } = useI18n()
@@ -57,7 +59,6 @@ export function ExportDialog({ onClose, generateToolpath, getGenerationTrace, in
 
   const [emitToolChanges, setEmitToolChanges] = useState(true)
   const [emitCoolant, setEmitCoolant] = useState(false)
-  const [previewResult, setPreviewResult] = useState<PostProcessorResult | null>(null)
   const [selectedOperationIds, setSelectedOperationIds] = useState<ReadonlySet<string>>(() => {
     const options = listExportOperationOptions(project)
     const selected = initialOperationIds
@@ -68,38 +69,41 @@ export function ExportDialog({ onClose, generateToolpath, getGenerationTrace, in
 
   const activeDefinition = useMemo(() => getActiveMachineDefinition(project), [project])
 
-  // Clear a stale preview the moment the active definition goes away — adjusting
-  // state during render instead of a synchronous setState-in-effect. When a
-  // definition is (re)selected, the debounced effect below recomputes the preview.
-  const hasDefinition = Boolean(activeDefinition)
-  const [hadDefinition, setHadDefinition] = useState(hasDefinition)
-  if (hadDefinition !== hasDefinition) {
-    setHadDefinition(hasDefinition)
-    if (!hasDefinition && previewResult !== null) {
-      setPreviewResult(null)
-    }
-  }
-
   const operationOptions = useMemo(() => listExportOperationOptions(project), [project])
 
-  const activeOperations = useMemo(() => (
+  // Selected operations in project order — the order they will be cut in, and
+  // the order the program must list them in.
+  const selectedInProjectOrder = useMemo(() => (
     operationOptions
       .filter((option) => option.exportable && selectedOperationIds.has(option.operation.id))
-      .map(({ operation }) => {
-        const toolpath = generateToolpath(operation)
-        const toolRecord = project.tools.find((tool) => tool.id === operation.toolRef)
-        if (!toolpath || !toolRecord) {
-          return null
-        }
+      .map((option) => option.operation.id)
+  ), [operationOptions, selectedOperationIds])
 
-        return {
-          operation,
-          tool: normalizeToolForProject(toolRecord, project),
-          toolpath,
-        }
-      })
-      .filter((item): item is NonNullable<typeof item> => item !== null)
-  ), [generateToolpath, operationOptions, project, selectedOperationIds])
+  const postOptions = useMemo<ExportPostOptions>(() => ({
+    emitToolChanges,
+    emitCoolant,
+    programName: project.meta.name,
+    captureMotionTrace: selectedInProjectOrder.length === 1,
+  }), [emitToolChanges, emitCoolant, project.meta.name, selectedInProjectOrder.length])
+
+  // Generation is asynchronous now (issue #675), so the program is *prepared*
+  // rather than derived during render. The preparation either produces a
+  // complete program for every selected operation or refuses and says which one
+  // stopped it — it never posts the subset that happened to succeed.
+  const { preparation, takeExportable } = useExportPreparation({
+    service,
+    contextRef,
+    operationIds: selectedInProjectOrder,
+    definition: activeDefinition,
+    options: postOptions,
+    revision: project,
+  })
+
+  const previewResult = preparation?.status === 'ready' ? preparation.result : null
+  const activeOperations = useMemo(
+    () => (preparation?.status === 'ready' ? preparation.operations : []),
+    [preparation],
+  )
 
   type ActiveOperation = { operation: Operation; tool: NormalizedTool; toolpath: ToolpathResult }
   const [debugOperation, setDebugOperation] = useState<ActiveOperation | null>(null)
@@ -148,42 +152,31 @@ export function ExportDialog({ onClose, generateToolpath, getGenerationTrace, in
     setSelectedOperationIds(allExportableSelected ? new Set() : new Set(exportableOperationIds))
   }
 
-  useEffect(() => {
-    if (!activeDefinition) {
+  async function handleExport() {
+    if (!activeDefinition) return
+
+    // Revalidated at the moment Save is pressed, not when the preview last
+    // rendered: an edit between the two would otherwise write a file describing
+    // a project that no longer exists.
+    const exportable = takeExportable()
+    if (!exportable) return
+
+    const suggestedName = suggestGcodeFileName(project.meta.name, exportable.operationNames)
+    const ext = activeDefinition.fileExtension
+    // `exportable.gcode` was copied out above and is not re-read from state; the
+    // bytes are frozen for this file action even if the preview moves on.
+    const exportedPath = await platform.saveTextFile(suggestedName, exportable.gcode, ext, lastExportPath)
+    if (!exportedPath) return
+
+    // The platform dialog is asynchronous, and another document can be opened
+    // while it is up. Marking *that* document exported would attribute this
+    // file to a project it did not come from.
+    if (contextRef.current.documentKey !== exportable.documentKey) {
+      onClose()
       return
     }
-
-    const timer = setTimeout(() => {
-      const result = runPostProcessor({
-        project,
-        operations: activeOperations,
-        definition: activeDefinition,
-        options: {
-          emitToolChanges,
-          emitCoolant,
-          programName: project.meta.name,
-          captureMotionTrace: activeOperations.length === 1,
-        },
-      })
-      setPreviewResult(result)
-    }, 300)
-
-    return () => clearTimeout(timer)
-  }, [activeDefinition, activeOperations, emitCoolant, emitToolChanges, project])
-
-  async function handleExport() {
-    if (!previewResult || !activeDefinition || activeOperations.length === 0) return
-
-    const suggestedName = suggestGcodeFileName(
-      project.meta.name,
-      activeOperations.map(({ operation }) => operation.name),
-    )
-    const ext = activeDefinition.fileExtension
-    const exportedPath = await platform.saveTextFile(suggestedName, previewResult.gcode, ext, lastExportPath)
-    if (exportedPath) {
-      markExported(exportedPath)
-      onClose()
-    }
+    markExported(exportedPath)
+    onClose()
   }
 
   function handleChangeMachine() {
@@ -349,7 +342,7 @@ export function ExportDialog({ onClose, generateToolpath, getGenerationTrace, in
       {debugOperation && activeDefinition && previewResult && (
         <ExportedMotionDebugDialog
           operation={debugOperation.operation}
-          getGenerationTrace={getGenerationTrace}
+          requestGenerationTrace={requestGenerationTrace}
           project={project}
           definition={activeDefinition}
           previewResult={previewResult}

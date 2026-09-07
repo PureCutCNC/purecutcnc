@@ -117,7 +117,7 @@ function makeArgs(overrides: Partial<UseSimulationModelArgs> = {}): UseSimulatio
     simulationDetailCells: 280,
     selectedOperation,
     selectedToolpath: makeToolpath(selectedOperation.id),
-    generateToolpathForOperation: () => null,
+    requestToolpath: () => Promise.resolve(null),
     ...overrides,
   }
 }

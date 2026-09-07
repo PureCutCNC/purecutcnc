@@ -18,6 +18,9 @@
 
 import { newProject, type Operation, type Project } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
+import { createToolpathGenerationService, type GenerationContext, type ToolpathGenerationService } from './service'
+import type { ExecutorRequest, GenerationExecutor } from './executor'
+import type { GenerationOutcome } from './types'
 
 export type { GenerationOutcome } from './types'
 export type { ToolpathResult }
@@ -72,5 +75,57 @@ export function makeResult(operationId: string, moveCount: number): ToolpathResu
     })),
     warnings: [],
     bounds: null,
+  }
+}
+
+export interface CountingServiceHarness {
+  service: ToolpathGenerationService
+  setContext: (context: GenerationContext) => void
+  context: () => GenerationContext
+  /** Operation ids in the order the executor was asked for them. */
+  order: string[]
+  calls: () => number
+  /** Run the microtask queue so service continuations land before assertions. */
+  settle: () => Promise<void>
+}
+
+/**
+ * A service whose executor counts its calls and answers immediately.
+ *
+ * Shared by the cache-invalidation and scheduling suites, which both need "how
+ * many times was this actually computed" and would otherwise keep two copies of
+ * the same harness in step by hand.
+ */
+export function makeCountingService(
+  initial: GenerationContext,
+  resultFor: (operationId: string) => ToolpathResult = (id) => makeResult(id, 1),
+): CountingServiceHarness {
+  let current = initial
+  const order: string[] = []
+  const service = createToolpathGenerationService({
+    getCurrentContext: () => current,
+    createExecutor: (_kind, epoch): GenerationExecutor => ({
+      kind: 'inline',
+      epoch,
+      supportsHardCancellation: false,
+      run: (request: ExecutorRequest): Promise<GenerationOutcome> => {
+        order.push(request.identity.operationId)
+        return Promise.resolve({
+          status: 'completed',
+          result: resultFor(request.identity.operationId),
+          raw: null,
+        })
+      },
+      terminate: () => {},
+      dispose: () => {},
+    }),
+  })
+  return {
+    service,
+    setContext: (context) => { current = context },
+    context: () => current,
+    order,
+    calls: () => order.length,
+    settle: async () => { for (let index = 0; index < 8; index += 1) await Promise.resolve() },
   }
 }

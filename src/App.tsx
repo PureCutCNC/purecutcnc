@@ -225,12 +225,14 @@ function App() {
 
   const {
     toolpathMap,
-    generateToolpathForOperation,
-    getGenerationTrace,
+    requestToolpath,
+    requestGenerationTrace,
     generatingOperationIds,
     selectedToolpath,
     visibleToolpaths,
     collidingClampIds,
+    service: generationService,
+    contextRef: generationContextRef,
   } = useToolpathGeneration(
     project,
     selectedOperation,
@@ -238,6 +240,9 @@ function App() {
     // for the duration of a drag, so one gesture produces one regeneration
     // instead of one per pointermove.
     history.transactionStart !== null,
+    // The document session (issue #675). A result produced before a new or
+    // opened file must never land on the one that replaced it.
+    projectKey,
   )
   void toolpathMap
 
@@ -248,7 +253,7 @@ function App() {
     simulationDetailCells,
     selectedOperation,
     selectedToolpath,
-    generateToolpathForOperation,
+    requestToolpath,
   })
 
   // Surface a one-time warning when a loaded file is newer than this build supports.
@@ -476,7 +481,8 @@ function App() {
             onSelectedOperationIdChange={handleSelectedOperationIdChange}
             onExport={() => setExportDialogRequest({})}
             onExportOperation={(operationId) => setExportDialogRequest({ operationIds: [operationId] })}
-            generateToolpath={generateToolpathForOperation}
+            requestToolpath={requestToolpath}
+            documentKey={projectKey}
             toolpathWarnings={selectedToolpath?.warnings ?? null}
             generatingOperationIds={generatingOperationIds}
             onOperationHighlightChange={setOperationHighlightKind}
@@ -525,8 +531,9 @@ function App() {
       {exportDialogRequest && (
         <ExportDialog
           onClose={() => setExportDialogRequest(null)}
-          generateToolpath={generateToolpathForOperation}
-          getGenerationTrace={getGenerationTrace}
+          service={generationService}
+          contextRef={generationContextRef}
+          requestGenerationTrace={requestGenerationTrace}
           initialOperationIds={exportDialogRequest.operationIds}
         />
       )}
