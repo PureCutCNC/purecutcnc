@@ -493,6 +493,37 @@
   backdrop-filter: blur(18px);
 }
 
+/*
+ * Portalled to the body and positioned inline (see GenerationStatusControl):
+ * the status bar is at the bottom of the window and below the centre stage in
+ * stacking order, so an in-flow menu either fell off the fold or rendered
+ * underneath the viewport overlay. Only the visual styling is inherited from
+ * `.appearance-menu`; placement comes from `usePortalPosition`.
+ */
+.generation-status__menu {
+  right: auto;
+  width: 300px;
+}
+
+/*
+ * These options have no colour swatch — the shared three-column grid
+ * (swatch / copy / check) would give the label a 38px column to wrap in. Two
+ * columns instead, so the copy gets the width.
+ */
+.generation-status__menu .appearance-menu__option {
+  grid-template-columns: 1fr 20px;
+}
+
+.generation-status {
+  gap: 6px;
+}
+
+.generation-status__summary {
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .appearance-menu__heading {
   padding: 4px 6px 9px;
   color: var(--text-dim);

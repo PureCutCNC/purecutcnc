@@ -524,6 +524,8 @@ export const generation = {
   backendTrigger: (page: Page) => page.locator('.generation-status__trigger'),
   backendOption: (page: Page, name: string | RegExp) =>
     page.getByRole('menuitemradio', { name }),
+  /** The backend menu. Portalled to the body, so it is not inside `.generation-status`. */
+  backendMenu: (page: Page) => page.locator('.generation-status__menu'),
 }
 
 // ── Exported-motion debug view (issue #356) ────────────────────────

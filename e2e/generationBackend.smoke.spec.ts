@@ -77,6 +77,27 @@ test.describe('Generation execution backend smoke', () => {
     )
   })
 
+  test('the backend menu opens on screen', async ({ app }) => {
+    // The control sits in the status bar at the bottom of the window, and the
+    // shared menu styling drops downward — which put the whole menu below the
+    // fold, so the trigger looked dead. Asserting *visibility* is not enough to
+    // catch that: Playwright scrolls a target into view before acting, so an
+    // off-screen menu still passes a click. Only the geometry catches it.
+    const viewport = app.page.viewportSize()
+    expect(viewport).not.toBeNull()
+
+    await generation.backendTrigger(app.page).click()
+    const menu = app.page.locator('.generation-status__menu')
+    await expect(menu).toBeVisible()
+
+    const box = await menu.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.y).toBeGreaterThanOrEqual(0)
+    expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height)
+    expect(box!.x).toBeGreaterThanOrEqual(0)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width)
+  })
+
   test('choosing the background thread starts a real worker and persists', async ({ app }) => {
     const workerUrls: string[] = []
     app.page.on('worker', (worker) => workerUrls.push(worker.url()))

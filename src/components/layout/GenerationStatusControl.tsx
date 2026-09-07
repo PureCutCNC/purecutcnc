@@ -31,7 +31,9 @@
  */
 
 import { useId, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useOutsideDismiss } from '../../hooks/useOutsideDismiss'
+import { usePortalPosition } from '../../hooks/usePortalPosition'
 import { useI18n } from '../../i18n/i18nContext'
 import type { ExecutorKind, GenerationStatusSnapshot } from '../../app/toolpathGeneration/types'
 
@@ -62,9 +64,35 @@ export function GenerationStatusControl({
   const [open, setOpen] = useState(false)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
   const menuId = useId()
 
-  useOutsideDismiss({ open, refs: hostRef, onDismiss: () => setOpen(false) })
+  /**
+   * Portalled to `document.body` and positioned as `fixed`, following the
+   * `ToolRail` pattern.
+   *
+   * An in-flow menu does not work here. This control lives in the status bar at
+   * the *bottom* of the window: the shared menu styling drops downward, which
+   * put it entirely below the fold, and anchoring it upward instead only moved
+   * the problem — it then rendered underneath `.empty-state-overlay`, because
+   * the status bar's stacking context sits below the centre stage. A portal
+   * escapes both, and the measure below clamps to the viewport so the menu
+   * cannot land off-screen at any window size.
+   */
+  const coords = usePortalPosition(triggerRef, menuRef, open, (anchor, floating) => {
+    const margin = 8
+    const left = Math.max(
+      margin,
+      Math.min(anchor.right - floating.width, window.innerWidth - floating.width - margin),
+    )
+    const top = Math.max(
+      margin,
+      Math.min(anchor.top - floating.height - 6, window.innerHeight - floating.height - margin),
+    )
+    return { top, left }
+  })
+
+  useOutsideDismiss({ open, refs: [hostRef, menuRef], onDismiss: () => setOpen(false) })
 
   const busy = status.activeOperationId !== null || status.queuedCount > 0
   const failed = status.executorFailure !== null
@@ -132,8 +160,20 @@ export function GenerationStatusControl({
           >
             {t('appShell.generation.backend')}
           </button>
-          {open && (
-            <div className="appearance-menu" id={menuId} role="menu" aria-label={t('appShell.generation.menuAria')}>
+          {open && createPortal(
+            <div
+              ref={menuRef}
+              className="appearance-menu generation-status__menu"
+              id={menuId}
+              role="menu"
+              aria-label={t('appShell.generation.menuAria')}
+              style={{
+                position: 'fixed',
+                top: coords?.top ?? -9999,
+                left: coords?.left ?? -9999,
+                visibility: coords ? 'visible' : 'hidden',
+              }}
+            >
               <div className="appearance-menu__heading">{t('appShell.generation.backend')}</div>
               <div className="appearance-menu__options">
                 {(['inline', 'worker'] as const).map((kind) => (
@@ -145,20 +185,26 @@ export function GenerationStatusControl({
                     aria-checked={executor === kind}
                     onClick={() => chooseBackend(kind)}
                   >
-                    <span className="appearance-menu__option-label">
-                      {kind === 'inline'
-                        ? t('appShell.generation.backendInline')
-                        : t('appShell.generation.backendWorker')}
+                    <span className="appearance-menu__copy">
+                      <span className="appearance-menu__label">
+                        {kind === 'inline'
+                          ? t('appShell.generation.backendInline')
+                          : t('appShell.generation.backendWorker')}
+                      </span>
+                      <span className="appearance-menu__detail">
+                        {kind === 'inline'
+                          ? t('appShell.generation.backendInlineDetail')
+                          : t('appShell.generation.backendWorkerDetail')}
+                      </span>
                     </span>
-                    <span className="appearance-menu__option-detail">
-                      {kind === 'inline'
-                        ? t('appShell.generation.backendInlineDetail')
-                        : t('appShell.generation.backendWorkerDetail')}
+                    <span className="appearance-menu__check" aria-hidden="true">
+                      {executor === kind ? '✓' : ''}
                     </span>
                   </button>
                 ))}
               </div>
-            </div>
+            </div>,
+            document.body,
           )}
         </div>
       )}
