@@ -397,6 +397,54 @@ export function createToolpathGenerationService(options: ServiceOptions): Toolpa
     job.consumers.add(consumer)
   }
 
+  /**
+   * State what the preview wants, and queue whatever is missing.
+   *
+   * Shared with the backend switch, which has to restate demand rather than
+   * merely drop it: switching clears the result cache by design, and if nothing
+   * re-queues the work the preview sits on spinners that never resolve.
+   */
+  function applyAutomaticDemand(
+    context: GenerationContext,
+    orderedOperationIds: readonly string[],
+    deferred: boolean,
+  ): void {
+    // While a gesture is open the store rewrites `project` on every pointer
+    // move. Queueing per frame would restart generation mid-drag, so demand
+    // is simply not accepted until the gesture commits — one regeneration for
+    // one gesture, which is what the shipped deferral did.
+    if (deferred || automaticPaused) return
+
+    const wanted = new Set(orderedOperationIds)
+    automaticDemand.clear()
+    for (const operationId of orderedOperationIds) automaticDemand.add(operationId)
+    // Obsolete automatic work is removed rather than left to run: it is no
+    // longer demanded by anything.
+    for (let index = queue.length - 1; index >= 0; index -= 1) {
+      const job = queue[index]
+      if (job.priority === 'automatic' && !wanted.has(job.operationId)) {
+        queue.splice(index, 1)
+        settleJob(job, { status: 'superseded' })
+      }
+    }
+
+    for (const operationId of orderedOperationIds) {
+      const operation = context.project.operations.find((candidate) => candidate.id === operationId)
+      if (!operation) continue
+
+      const entry = cache.get(operationId)
+      if (entry && cacheInputsValid(entry, operation, context.project)) {
+        setStatus(operationId, 'ready')
+        continue
+      }
+      if (findCoalescible(operationId, false, context)) continue
+      setStatus(operationId, entry ? 'stale' : 'queued')
+      submit(context, operation, 'automatic', false)
+    }
+    emit()
+    pump()
+  }
+
   function submit(
     context: GenerationContext,
     operation: Operation,
@@ -431,41 +479,7 @@ export function createToolpathGenerationService(options: ServiceOptions): Toolpa
   return {
     setAutomaticDemand(context, orderedOperationIds, deferred): void {
       if (disposed) return
-
-      // While a gesture is open the store rewrites `project` on every pointer
-      // move. Queueing per frame would restart generation mid-drag, so demand
-      // is simply not accepted until the gesture commits — one regeneration for
-      // one gesture, which is what the shipped deferral did.
-      if (deferred || automaticPaused) return
-
-      const wanted = new Set(orderedOperationIds)
-      automaticDemand.clear()
-      for (const operationId of orderedOperationIds) automaticDemand.add(operationId)
-      // Obsolete automatic work is removed rather than left to run: it is no
-      // longer demanded by anything.
-      for (let index = queue.length - 1; index >= 0; index -= 1) {
-        const job = queue[index]
-        if (job.priority === 'automatic' && !wanted.has(job.operationId)) {
-          queue.splice(index, 1)
-          settleJob(job, { status: 'superseded' })
-        }
-      }
-
-      for (const operationId of orderedOperationIds) {
-        const operation = context.project.operations.find((candidate) => candidate.id === operationId)
-        if (!operation) continue
-
-        const entry = cache.get(operationId)
-        if (entry && cacheInputsValid(entry, operation, context.project)) {
-          setStatus(operationId, 'ready')
-          continue
-        }
-        if (findCoalescible(operationId, false, context)) continue
-        setStatus(operationId, entry ? 'stale' : 'queued')
-        submit(context, operation, 'automatic', false)
-      }
-      emit()
-      pump()
+      applyAutomaticDemand(context, orderedOperationIds, deferred)
     },
 
     request(context, operationId, requestOptions): Promise<GenerationOutcome> {
@@ -570,11 +584,22 @@ export function createToolpathGenerationService(options: ServiceOptions): Toolpa
         settleJob(job, { status: 'cancelled' })
       }
       for (const job of queue.splice(0)) settleJob(job, { status: 'cancelled' })
+      const stillWanted = [...automaticDemand]
       automaticDemand.clear()
       replaceExecutor()
       cache.clear()
       statuses.clear()
       executorFailure = null
+
+      // Re-state the preview's demand on the new backend. The cache was just
+      // cleared, so without this the preview shows a spinner for every
+      // operation and nothing ever queues — the demand effect above only re-runs
+      // when the project or selection changes, and a backend switch changes
+      // neither. A paused service still queues nothing; `applyAutomaticDemand`
+      // returns early for that.
+      if (stillWanted.length > 0) {
+        applyAutomaticDemand(options.getCurrentContext(), stillWanted, false)
+      }
       emit()
     },
 

@@ -526,6 +526,14 @@ export const generation = {
     page.getByRole('menuitemradio', { name }),
   /** The backend menu. Portalled to the body, so it is not inside `.generation-status`. */
   backendMenu: (page: Page) => page.locator('.generation-status__menu'),
+  /**
+   * Per-operation "still generating" badges in the CAM panel.
+   *
+   * These are driven by cache validity, not by the queue, so they are the
+   * honest signal for whether preview work is outstanding — the status-bar
+   * summary reads from the queue and can say "up to date" while these spin.
+   */
+  pendingOperationBadges: (page: Page) => page.locator('.cam-operation-badge--generating'),
 }
 
 // ── Exported-motion debug view (issue #356) ────────────────────────

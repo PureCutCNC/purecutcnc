@@ -314,6 +314,52 @@ async function main(): Promise<void> {
     assert(h.service.peekCurrent(h.context(), 'a') === null, 'the cache is cleared for a clean baseline')
   })
 
+  await test('switching backend re-queues the work the preview still wants', async () => {
+    // The bug this pins: switching cleared the result cache *and* the automatic
+    // demand, but nothing restated the demand — the preview's effect only re-runs
+    // when the project or selection changes, and a backend switch changes
+    // neither. The toolpaths vanished, every operation showed a spinner, and no
+    // job was ever queued again. On both backends, because any switch did it.
+    const h = harness(base)
+    h.service.setAutomaticDemand(h.context(), ['a', 'b'], false)
+    await flush()
+    h.executor().release({ status: 'completed', result: makeResult('a', 3), raw: null })
+    await flush()
+    h.executor().release({ status: 'completed', result: makeResult('b', 4), raw: null })
+    await flush()
+    assert(h.service.peekCurrent(h.context(), 'a') !== null, 'both operations should be cached first')
+
+    h.service.setExecutorKind('worker')
+    await flush()
+
+    // The cache is cleared on purpose — a switch starts from an unambiguous
+    // baseline — so the work has to be queued again, not merely forgotten.
+    assert(h.service.peekCurrent(h.context(), 'a') === null, 'the switch clears the cache')
+    assert(
+      h.executor().inFlight.length > 0 || h.service.getSnapshot().queuedCount > 0,
+      'after switching, the still-demanded operations must be re-queued',
+    )
+
+    h.executor().release({ status: 'completed', result: makeResult('a', 3), raw: null })
+    await flush()
+    assert(
+      h.service.peekCurrent(h.context(), 'a') !== null,
+      'generation must actually complete on the new backend',
+    )
+  })
+
+  await test('switching backend while paused does not silently resume', async () => {
+    const h = harness(base)
+    h.service.setAutomaticDemand(h.context(), ['a'], false)
+    await flush()
+    h.service.stopAutomaticGeneration()
+    await flush()
+    h.service.setExecutorKind('worker')
+    await flush()
+    assert(h.service.getSnapshot().automaticPaused, 'the pause survives a backend switch')
+    assert(h.service.getSnapshot().queuedCount === 0, 'a paused service must not queue on switch')
+  })
+
   await test('disposal settles everything and starts nothing new', async () => {
     const h = harness(base)
     const pending = h.service.request(h.context(), 'a', { purpose: 'preview' })

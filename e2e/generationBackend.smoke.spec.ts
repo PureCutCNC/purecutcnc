@@ -132,17 +132,37 @@ test.describe('Generation execution backend smoke', () => {
     expect(inline.preview.length).toBeGreaterThan(0)
   })
 
-  test('switching back to the main thread keeps generating', async ({ app }) => {
-    await chooseBackend(app.page, WORKER_OPTION)
+  test('switching backends leaves real toolpaths, in both directions', async ({ app, ui }) => {
+    // Asserted on the **exported program**, not on the status line. The status
+    // line is what let an earlier version of this test pass while the feature
+    // was broken: a backend switch cleared the cache and the demand, nothing
+    // re-queued, so the queue was empty and the summary happily read "up to
+    // date" while every operation still showed a spinner. A program can only be
+    // produced from toolpaths that actually exist.
     await seedGcodeExportProject(app.page)
     await expect(generation.summary(app.page)).toHaveText(/up to date/, { timeout: 30_000 })
+    const before = await readExportedProgram(app.page, ui)
+    expect(before.preview.length).toBeGreaterThan(0)
 
-    // A backend switch clears the cache, so this is a fresh generation, not a
-    // cached result being re-read.
-    await chooseBackend(app.page, MAIN_THREAD_OPTION)
-    await expect(generation.summary(app.page)).toHaveText(/up to date/, { timeout: 30_000 })
+    for (const option of [WORKER_OPTION, MAIN_THREAD_OPTION, WORKER_OPTION]) {
+      await generation.backendTrigger(app.page).click()
+      await generation.backendOption(app.page, option).click()
+      await expect(generation.summary(app.page)).toHaveText(/up to date/, { timeout: 30_000 })
+
+      // The load-bearing assertion. Opening the export dialog issues an
+      // *explicit* request, which bypasses automatic demand entirely — so an
+      // export can succeed while preview generation is dead, which is precisely
+      // the state the bug produced. These badges come from cache validity, so
+      // they only clear when the preview really regenerated.
+      await expect(generation.pendingOperationBadges(app.page)).toHaveCount(0, { timeout: 30_000 })
+
+      const after = await readExportedProgram(app.page, ui)
+      expect(after.preview).toBe(before.preview)
+      expect(after.summary).toBe(before.summary)
+    }
+
     const stored = await app.page.evaluate(() => localStorage.getItem('purecut.generation.executor'))
-    expect(stored).toBe('inline')
+    expect(stored).toBe('worker')
   })
 
   test('Stop interrupts a running worker generation', async ({ app }) => {
