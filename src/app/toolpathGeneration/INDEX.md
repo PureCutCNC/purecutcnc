@@ -10,7 +10,8 @@ Neither half knows about React. The worker knows about neither.
 
 ## Slice status
 
-Slices 1-4 of the plan in issue #675 are implemented: the extracted pipeline,
+Slices 1-4 plus the slice-6 transport amendment of the plan in issue #675 are
+implemented: the extracted pipeline,
 the service, both executors, the harness, every application consumer, and the
 opt-in rollout. `noSyncCallers.test.ts` enforces that nothing outside the two
 executors generates directly.
@@ -23,11 +24,19 @@ is identical to the main thread's, and `npm run check:worker-production` proves
 the built chunk starts and completes its handshake when served from a nested
 static path.
 
+**Slice 6 (transport)** was an amendment, not part of the original plan, which
+excluded a packed move format and required one to be proposed on evidence. The
+evidence was that structured-cloning a large result cost more on the main thread
+than generating it there did, which made the worker backend *worse* on exactly
+the jobs it was built for. Moves now travel packed and transferred; see
+`moveTransport.ts`.
+
 Slice 5 — turning the worker on by default — is a maintainer decision and has
 not been taken.
 
 ## Files
 - `types.ts` — the shared vocabulary: `RequestIdentity` (document key, worker epoch, request/snapshot ids, operation, trace mode), terminal `GenerationOutcome`s, failure categories, per-operation status, and the immutable status snapshot React subscribes to. A completed empty path with warnings is a *successful* result; infrastructure failure is never encoded that way and never joins the CAM warning codes
+- `moveTransport.ts` — packs a result's moves into transferable typed arrays and rebuilds them on the other side. The cost being removed is not bytes but objects: 249k moves are ~750k small objects, and structured clone walks and rebuilds every one (measured 821 ms, about half of it on the main thread). Packed, the same data is 13 MB of buffers handed over by pointer — 13 ms to pack, 30 ms to unpack. Coordinates are `Float64Array` and never `Float32Array`: measured over ~1.5M coordinates, Float64 round-trips exactly and Float32 would silently move the toolpath. `source` and `feedScale` are sparse (about 1 move in 150), so they travel as index/value pairs rather than full-length arrays
 - `protocol.ts` — the main↔worker message contract and its validators. Payloads cross by structured clone, not JSON: JSON drops `undefined` keys and flattens `NaN`/`Infinity` to `null`, all of which occur in real toolpath metadata. Nothing here repairs a message — a mismatch settles the request as a `protocol` failure. The operation is resolved from the installed snapshot rather than sent alongside it, so two copies can never disagree
 - `cacheInputs.ts` — the cache's input stamp and validity predicate, extracted mechanically from `useToolpathGeneration` (which now re-exports `isCacheHit`/`ToolpathCacheEntry` as thin wrappers, so the existing cache suites keep testing the production rules). Split from the entry because an in-flight job has inputs but no result and still has to be checkable. Stays main-thread: validity is decided by *reference identity*, which a structured clone destroys
 - `executor.ts` — the backend seam. `supportsHardCancellation` is the honest difference between the two: only the worker can stop work already running
@@ -47,6 +56,7 @@ not been taken.
 - `service.test.ts` — the races, every one driven by a **fake executor released by hand**. Late results for edited operations, a document replaced mid-flight, coalescing, trace-vs-preview separation, one consumer abandoning a job another needs, Stop leaving explicit work running, drag deferral, promotion, failure without auto-retry, backend switch, disposal. Sleeping and hoping is how these bugs ship; nothing here is timing-based. It is also what caught automatic preview demand never running at all
 - `transport.test.ts` — protocol validation plus real `structuredClone` fidelity: every corpus project clones (including the million-move and imported-mesh ones), and for one case per operation kind, generating from a *cloned* project yields identical results, raw traces and G-code bytes. Also deep-freezes the project and generates, so mutation throws at the offending write rather than being inferred afterwards
 - `workerGraph.test.ts` — walks the worker's transitive imports and fails on React, the store, components or unguarded browser globals, naming the chain. Verified by mutation: importing `projectStore` reaches React in five hops via `machine/store.ts` → `useLocalStorageState.ts`, and drags in `import/svg.ts`'s unguarded globals
+- `moveTransport.test.ts` — the packed format loses nothing. Runs the **whole** parity corpus (1.35M moves, including 19,565 source tags and 27,459 feed scales) through pack → `structuredClone` → unpack and compares canonicalised values, rather than a hand-written fixture that would only describe the fields I remembered. Asserts the corpus actually contains both sparse fields, so those checks cannot be vacuous, and covers negative zero, full-mantissa doubles, and an unencodable move kind being refused rather than remapped
 - `workerRuntime.test.ts` — the shipped worker on a real thread, its results compared against the pre-extraction baseline: byte-identical toolpaths, raw traces and G-code for all 11 operation kinds, plus A/B/A order independence across snapshot replacement and rejection of a generate naming an uninstalled snapshot. Covers structured-clone transport and separate-realm module state; **not** bundling or `new URL` asset resolution, which need a browser
 - `inlineExecutor.test.ts` — the inline backend yields the thread before it takes it. Pins a regression the unit suites structurally could not see: every other test here injects a fake executor, so when the real one yielded only a **microtask** before running a generator, control never left the caller's task and whatever was waiting on the main thread stayed blocked. The browser found it immediately (a `page.evaluate` that had just loaded a project never returned); this makes it fail in Node instead
 - `exportPreparation.test.ts` — export completeness and token invalidation, driven through the real service with a hand-released executor so the failure and cancellation paths are exercised rather than simulated. Verified by mutation: dropping a failed member instead of blocking turns the export `ready`, and the suite fails

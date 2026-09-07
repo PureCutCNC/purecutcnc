@@ -37,6 +37,7 @@ import { Worker } from 'node:worker_threads'
 import { buildParityCorpus, postParityCase } from '../../engine/toolpaths/parityCorpus'
 import { canonicalize, type ParityRecord } from '../../engine/toolpaths/parityRecord'
 import { TOOLPATH_PROTOCOL_VERSION, isWorkerToMain, resolveOperation } from './protocol'
+import { unpackResult } from './moveTransport'
 import type { WorkerToMain } from './protocol'
 import type { RequestIdentity } from './types'
 
@@ -138,19 +139,26 @@ async function main(): Promise<void> {
       continue
     }
 
+    // Unpacked here rather than compared packed: since slice 6 the moves cross
+    // as transferred buffers, so these assertions now cover the whole trip —
+    // generation, packing, transfer, unpacking — against values captured before
+    // any of it existed.
+    const result = unpackResult(answer.result)
+    const raw = answer.raw ? unpackResult(answer.raw) : null
+
     check(
       `${kind}: worker result equals the pre-extraction baseline`,
-      sha256(canonicalize(answer.result)) === expected.resultHash,
+      sha256(canonicalize(result)) === expected.resultHash,
       'the worker computed a different toolpath',
     )
     check(
       `${kind}: worker raw trace equals the baseline`,
-      answer.raw !== null && sha256(canonicalize(answer.raw)) === expected.rawHash,
+      raw !== null && sha256(canonicalize(raw)) === expected.rawHash,
       'the worker produced a different raw trace',
     )
     check(
       `${kind}: G-code posted from the worker result is byte-identical`,
-      sha256(postParityCase(parityCase.project, operation, answer.result)) === expected.gcodeHash,
+      sha256(postParityCase(parityCase.project, operation, result)) === expected.gcodeHash,
       'the posted program differs',
     )
   }
@@ -180,7 +188,7 @@ async function main(): Promise<void> {
         check(
           `A/B/A: ${firstKind} is unchanged after another snapshot was installed`,
           answer.kind === 'completed'
-            && sha256(canonicalize(answer.result)) === baseline.cases[first.id].resultHash,
+            && sha256(canonicalize(unpackResult(answer.result))) === baseline.cases[first.id].resultHash,
           'a re-run after a snapshot swap produced a different result',
         )
       }

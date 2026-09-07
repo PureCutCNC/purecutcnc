@@ -38,6 +38,7 @@ import {
   type LoadSnapshotMessage,
   type GenerateMessage,
 } from './protocol'
+import { unpackResult } from './moveTransport'
 import type { ExecutorRequest, GenerationExecutor } from './executor'
 import type { GenerationFailure, GenerationOutcome, GenerationStage } from './types'
 
@@ -140,7 +141,14 @@ export function createWorkerExecutor(epoch: number, factory: WorkerFactory = cre
         })
         return
       }
-      settlePending({ status: 'completed', result: message.result, raw: message.raw })
+      // Unpacked on arrival so nothing above this layer knows moves ever
+      // travelled packed; the service and every consumer still see a plain
+      // ToolpathResult.
+      settlePending({
+        status: 'completed',
+        result: unpackResult(message.result),
+        raw: message.raw ? unpackResult(message.raw) : null,
+      })
     }
   }
 

@@ -37,6 +37,7 @@ import { Worker } from 'node:worker_threads'
 import { buildParityCorpus } from '../../src/engine/toolpaths/parityCorpus'
 import { computeOperationToolpath } from '../../src/engine/toolpaths'
 import { resolveOperation } from '../../src/app/toolpathGeneration/protocol'
+import { packResult, unpackResult } from '../../src/app/toolpathGeneration/moveTransport'
 import type { WorkerToMain } from '../../src/app/toolpathGeneration/protocol'
 import type { RequestIdentity } from '../../src/app/toolpathGeneration/types'
 
@@ -66,7 +67,7 @@ async function main(): Promise<void> {
   console.log(
     `${'fixture'.padEnd(28)}${'moves'.padStart(9)}`
     + `${'inline gen'.padStart(12)}${'worker gen'.padStart(12)}`
-    + `${'in-clone'.padStart(10)}${'out-clone'.padStart(11)}`
+    + `${'in-clone'.padStart(10)}${'pack'.padStart(7)}${'unpack'.padStart(8)}${'(was clone)'.padStart(12)}`
     + `${'project'.padStart(11)}${'result'.padStart(11)}`,
   )
 
@@ -91,10 +92,23 @@ async function main(): Promise<void> {
     const moves = envelope.result.moves.length
 
     // ── transport costs, measured on their own ─────────────────────
+    // The input still crosses by structured clone; only the result is packed.
     const cloneInStart = performance.now()
     const clonedProject = structuredClone(parityCase.project)
     const cloneIn = performance.now() - cloneInStart
     void clonedProject
+
+    // What the worker path actually does now: pack on the worker side, unpack
+    // on the main thread. The old `structuredClone(result)` figure is kept
+    // alongside because it is what those two replaced, and the comparison is
+    // the justification for having replaced it.
+    const packStart = performance.now()
+    const packed = packResult(envelope.result)
+    const packMs = performance.now() - packStart
+
+    const unpackStart = performance.now()
+    void unpackResult(packed)
+    const unpackMs = performance.now() - unpackStart
 
     const cloneOutStart = performance.now()
     const clonedResult = structuredClone(envelope.result)
@@ -129,7 +143,7 @@ async function main(): Promise<void> {
     rows.push(
       `${label.padEnd(28)}${String(moves).padStart(9)}`
       + `${ms(inlineGen).padStart(11)}m${ms(workerGen).padStart(11)}m`
-      + `${ms(cloneIn).padStart(9)}m${ms(cloneOut).padStart(10)}m`
+      + `${ms(cloneIn).padStart(9)}m${ms(packMs).padStart(6)}m${ms(unpackMs).padStart(7)}m${ms(cloneOut).padStart(11)}m`
       + `${mb(payloadBytes(parityCase.project)).padStart(9)}MB${mb(payloadBytes(envelope.result)).padStart(9)}MB`,
     )
     console.log(rows[rows.length - 1])
@@ -140,9 +154,11 @@ async function main(): Promise<void> {
     + '\n  · "worker gen" is measured from snapshot-installed to completed on the main'
     + '\n    thread, so it includes posting the request and cloning the result back —'
     + '\n    it is the cost of using the worker, not the cost of the geometry.'
-    + '\n  · "project" and "result" are transported payload sizes — what a structured'
-    + '\n    clone carries each way. They explain the clone columns; they are not'
-    + '\n    memory figures.'
+    + '\n  · "pack" is paid on the worker thread and "unpack" on the main thread —'
+    + '\n    only the second one can block the UI. "(was clone)" is the structured'
+    + '\n    clone those two replaced in slice 6, shown for comparison.'
+    + '\n  · "project" and "result" are payload sizes as JSON. They indicate scale;'
+    + '\n    they are not memory figures, and the packed form is smaller.'
     + '\n  · Peak memory and UI responsiveness need a browser profile. Neither is'
     + '\n    measured here and neither should be inferred from these numbers.',
   )

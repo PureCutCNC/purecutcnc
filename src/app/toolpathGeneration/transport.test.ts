@@ -46,6 +46,10 @@ import {
 import type { CompletedMessage } from './protocol'
 import type { RequestIdentity } from './types'
 import type { Project } from '../../types/project'
+import { packResult } from './moveTransport'
+
+/** A minimal well-formed transported result, for the protocol shape checks. */
+const emptyTransported = packResult({ operationId: 'a', moves: [], warnings: [], bounds: null })
 
 let passed = 0
 let failed = 0
@@ -113,17 +117,23 @@ test('unknown message kinds are rejected at both ends', () => {
 test('a completed message without a valid result shape is rejected', () => {
   assert(!isWorkerToMain({ kind: 'completed', identity, result: {}, raw: null }), 'an empty result is rejected')
   assert(
-    !isWorkerToMain({ kind: 'completed', identity, result: { operationId: 'a', moves: [], warnings: [], bounds: null }, raw: 'x' }),
+    !isWorkerToMain({ kind: 'completed', identity, result: emptyTransported, raw: 'x' }),
     'a non-object raw is rejected',
   )
   assert(
-    isWorkerToMain({ kind: 'completed', identity, result: { operationId: 'a', moves: [], warnings: [], bounds: null }, raw: null }),
+    // An unpacked result on the wire is now a protocol violation, not a
+    // tolerated older shape: v2 carries packed moves.
+    !isWorkerToMain({ kind: 'completed', identity, result: { operationId: 'a', moves: [], warnings: [], bounds: null }, raw: null }),
+    'an unpacked result is rejected under protocol v2',
+  )
+  assert(
+    isWorkerToMain({ kind: 'completed', identity, result: emptyTransported, raw: null }),
     'a well-formed completed message validates',
   )
 })
 
 test('a result whose trace flag disagrees with its payload is rejected', () => {
-  const result = { operationId: 'a', moves: [], warnings: [], bounds: null }
+  const result = emptyTransported
   const traced: CompletedMessage = { kind: 'completed', identity: { ...identity, traceMode: true }, result, raw: null }
   assert(!completedMatchesTraceMode(traced), 'a trace request answered without a raw path is a mismatch')
   const untraced: CompletedMessage = { kind: 'completed', identity, result, raw: result }

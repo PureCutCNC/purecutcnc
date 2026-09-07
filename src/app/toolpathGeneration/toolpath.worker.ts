@@ -44,6 +44,7 @@
 
 import { computeOperationToolpath } from '../../engine/toolpaths/generateOperation'
 import { clearImportedModelCaches } from '../../engine/importedMesh'
+import { packResult, transferablesOf } from './moveTransport'
 import type { Project } from '../../types/project'
 import type {
   CompletedMessage,
@@ -66,7 +67,8 @@ import type { GenerationFailure, RequestIdentity } from './types'
  * declares it — and only the three members it actually uses.
  */
 interface ToolpathWorkerScope {
-  postMessage(message: unknown): void
+  /** `transfer` hands buffer ownership to the main thread instead of copying it. */
+  postMessage(message: unknown, transfer?: ArrayBuffer[]): void
   onmessage: ((event: MessageEvent<unknown>) => void) | null
   onmessageerror: ((event: MessageEvent<unknown>) => void) | null
 }
@@ -81,8 +83,11 @@ interface InstalledSnapshot {
 
 let installed: InstalledSnapshot | null = null
 
-function post(message: ReadyMessage | SnapshotReadyMessage | ProgressMessage | CompletedMessage | FailedMessage): void {
-  self.postMessage(message)
+function post(
+  message: ReadyMessage | SnapshotReadyMessage | ProgressMessage | CompletedMessage | FailedMessage,
+  transfer?: ArrayBuffer[],
+): void {
+  self.postMessage(message, transfer)
 }
 
 function fail(identity: RequestIdentity, failure: GenerationFailure): void {
@@ -157,7 +162,15 @@ function handleGenerate(identity: RequestIdentity): void {
 
   post({ kind: 'progress', identity, stage: 'installing' })
   try {
-    post({ kind: 'completed', identity, result: envelope.result, raw: envelope.raw })
+    // Packed here rather than on the main thread: this is the thread that can
+    // afford the walk, and what crosses is then buffers rather than ~3 objects
+    // per move.
+    const result = packResult(envelope.result)
+    const raw = envelope.raw ? packResult(envelope.raw) : null
+    const transfer = [...transferablesOf(result), ...(raw ? transferablesOf(raw) : [])]
+    // Transferring neuters these buffers here. Nothing reads the result after
+    // this point, which is what makes that safe.
+    post({ kind: 'completed', identity, result, raw }, transfer)
   } catch (error: unknown) {
     // The result computed but could not be cloned back. Reporting it as a
     // failure is the only honest option: the main thread has nothing to install

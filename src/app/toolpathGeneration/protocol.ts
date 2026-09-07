@@ -32,14 +32,19 @@
 
 import type { Operation, Project } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
+import { isPackedMoves, type TransportedResult } from './moveTransport'
 import type { GenerationFailure, GenerationStage, RequestIdentity } from './types'
 
 /**
  * Bumped whenever a message shape changes. The handshake compares it, so a
  * stale worker chunk left in a browser cache after a deploy is rejected at
  * startup rather than misread halfway through a job.
+ *
+ * v2 (issue #675, slice 6): `completed` carries packed, transferable moves
+ * instead of a cloned move array. The move-kind table in `moveTransport.ts` is
+ * part of this version — reordering it changes what an index means.
  */
-export const TOOLPATH_PROTOCOL_VERSION = 1
+export const TOOLPATH_PROTOCOL_VERSION = 2
 
 // ── Worker → main ────────────────────────────────────────────────────
 
@@ -64,8 +69,13 @@ export interface ProgressMessage {
 export interface CompletedMessage {
   kind: 'completed'
   identity: RequestIdentity
-  result: ToolpathResult
-  raw: ToolpathResult | null
+  /**
+   * Moves travel packed and transferred; everything else in the envelope still
+   * clones. Deep-cloning a large move array cost more on the main thread than
+   * generating it there did — see `moveTransport.ts`.
+   */
+  result: TransportedResult
+  raw: TransportedResult | null
 }
 
 export interface FailedMessage {
@@ -160,6 +170,15 @@ export function isToolpathResultShape(value: unknown): value is ToolpathResult {
     && (value.bounds === null || isRecord(value.bounds))
 }
 
+/** The same check for a transported result, whose moves arrive packed. */
+export function isTransportedResultShape(value: unknown): value is TransportedResult {
+  if (!isRecord(value)) return false
+  return typeof value.operationId === 'string'
+    && isPackedMoves(value.packedMoves)
+    && Array.isArray(value.warnings)
+    && (value.bounds === null || isRecord(value.bounds))
+}
+
 export function isWorkerToMain(value: unknown): value is WorkerToMain {
   if (!isRecord(value)) return false
   switch (value.kind) {
@@ -171,8 +190,8 @@ export function isWorkerToMain(value: unknown): value is WorkerToMain {
       return isRequestIdentity(value.identity) && typeof value.stage === 'string'
     case 'completed':
       return isRequestIdentity(value.identity)
-        && isToolpathResultShape(value.result)
-        && (value.raw === null || isToolpathResultShape(value.raw))
+        && isTransportedResultShape(value.result)
+        && (value.raw === null || isTransportedResultShape(value.raw))
     case 'failed':
       return isRequestIdentity(value.identity)
         && isRecord(value.failure)

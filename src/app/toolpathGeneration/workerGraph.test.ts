@@ -67,6 +67,7 @@ const ALLOWED_EXCEPTIONS = new Map<string, string>([
   ['app/toolpathGeneration/toolpath.worker.ts', 'the entry point itself'],
   ['app/toolpathGeneration/protocol.ts', 'type-only at runtime; its helpers are pure predicates'],
   ['app/toolpathGeneration/types.ts', 'types only'],
+  ['app/toolpathGeneration/moveTransport.ts', 'pure move packing, shared by both ends of the wire; no DOM, no framework'],
 ])
 
 /** Bare package specifiers a worker must never pull in. */
