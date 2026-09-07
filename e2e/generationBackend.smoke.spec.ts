@@ -29,8 +29,10 @@
  * is the one worth comparing.
  */
 
+import { readFileSync } from 'node:fs'
 import { test, expect } from './fixtures'
 import { seedGcodeExportProject } from './gcodeExport.helpers'
+import { seedProject } from './helpers'
 import { exportDialog, exportPreview, generation } from './selectors'
 
 const WORKER_OPTION = /Background thread/
@@ -120,5 +122,40 @@ test.describe('Generation execution backend smoke', () => {
     await expect(generation.summary(app.page)).toHaveText(/up to date/, { timeout: 30_000 })
     const stored = await app.page.evaluate(() => localStorage.getItem('purecut.generation.executor'))
     expect(stored).toBe('inline')
+  })
+
+  test('Stop interrupts a running worker generation', async ({ app }) => {
+    // The claim this pins is the one the whole issue exists for, and the one
+    // the main-thread backend cannot make at all: work already in flight can be
+    // abandoned. Asserted by **event ordering** — reach "Generating", press
+    // Stop, leave "Generating" — rather than a time budget, because a budget
+    // would be measuring this machine rather than the behaviour.
+    await generation.backendTrigger(app.page).click()
+    await generation.backendOption(app.page, WORKER_OPTION).click()
+
+    const workerEvents: string[] = []
+    app.page.on('worker', (worker) => {
+      workerEvents.push('created')
+      worker.on('close', () => workerEvents.push('closed'))
+    })
+
+    // A deliberately heavy fixture, so generation is still running when Stop is
+    // pressed. Seeding is not awaited: under the worker backend the seed call
+    // returns while generation continues, which is the point.
+    const heavy = readFileSync(new URL('../src/engine/test-fixtures/trochoidal-249k.camj', import.meta.url), 'utf8')
+    void seedProject(app.page, heavy).catch(() => {})
+
+    await expect(generation.summary(app.page)).toHaveText(/Generating/, { timeout: 20_000 })
+    await generation.stopButton(app.page).click()
+    await expect(generation.summary(app.page)).toHaveText(/paused/, { timeout: 20_000 })
+
+    // Stop is a real termination, not a flag that lets the work finish quietly.
+    // Polled rather than read once: the close notification is delivered out of
+    // band and can land just after the status has already flipped.
+    await expect.poll(() => workerEvents, { timeout: 20_000 }).toContain('closed')
+
+    // And it is recoverable: Resume puts automatic generation back.
+    await generation.resumeButton(app.page).click()
+    await expect(generation.resumeButton(app.page)).toHaveCount(0)
   })
 })
