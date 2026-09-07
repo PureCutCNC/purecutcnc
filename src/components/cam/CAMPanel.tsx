@@ -751,6 +751,13 @@ export function CAMPanel({
     ? getOperationAddHint(project, selection, selectedNewOperationKind)
     : null
 
+  // #732: with nothing selected every kind is invalid for the same reason, so
+  // the Add menu states that precondition once instead of drawing eleven
+  // per-kind `cam.hint.empty.*` rows.
+  const emptySelectionHint = selection.selectedFeatureIds.length === 0
+    ? camT('cam.addMenu.selectFirst')
+    : null
+
   useEffect(() => {
     if (!showAddOperationMenu) {
       return
@@ -2236,6 +2243,7 @@ export function CAMPanel({
                         operationButtons={operationButtons}
                         selectedNewOperationKind={selectedNewOperationKind}
                         selectedNewOperationHint={selectedNewOperationHint}
+                        emptySelectionHint={emptySelectionHint}
                         operationSupportsPass={operationSupportsPassSelection}
                         onChooseOperation={handleChooseOperationForAdd}
                         onAddOperation={handleAddOperation}

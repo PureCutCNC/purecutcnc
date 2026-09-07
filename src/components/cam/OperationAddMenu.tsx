@@ -21,6 +21,7 @@ import { OPERATION_DESCRIPTION_SEGMENT, operationDescriptions } from '../../type
 import type { camEn } from '../../i18n/locales/en/cam'
 import { camT } from './camI18n'
 import { Icon } from '../Icon'
+import { DisclosureSection } from '../common/DisclosureSection'
 
 /** camelCase segment used in cam.opDesc.<segment>.* catalog keys. */
 const OP_DESC_SEG = OPERATION_DESCRIPTION_SEGMENT
@@ -37,6 +38,12 @@ interface OperationAddMenuProps {
   operationButtons: OperationButton[]
   selectedNewOperationKind: OperationKind | null
   selectedNewOperationHint: string | null
+  /**
+   * #732: the one precondition an empty selection fails, rendered once above
+   * the list. Every kind is invalid in that state, so its eleven per-kind
+   * `cam.hint.empty.*` strings would otherwise be drawn eleven at a time.
+   */
+  emptySelectionHint?: string | null
   operationSupportsPass: (kind: OperationKind) => boolean
   onChooseOperation: (kind: OperationKind) => void
   onAddOperation: (kind: OperationKind, mode: 'rough' | 'finish' | 'pair') => void
@@ -50,6 +57,7 @@ export function OperationAddMenu({
   operationButtons,
   selectedNewOperationKind,
   selectedNewOperationHint,
+  emptySelectionHint,
   operationSupportsPass,
   onChooseOperation,
   onAddOperation,
@@ -86,165 +94,196 @@ export function OperationAddMenu({
     return `cam.opDesc.${OP_DESC_SEG[kind]}.${slot}` as keyof typeof camEn
   }
 
+  // #732: `hint` is the validity signal — undefined means the current
+  // selection can take this kind. Partition on it so usable operations come
+  // first and the rest collapse into one labelled section instead of eleven
+  // inline rejections. Order inside each partition is the untouched array
+  // order, which carries the 2D-then-3D arrangement #398 relies on.
+  const availableButtons = operationButtons.filter((button) => !button.hint)
+  const unavailableButtons = operationButtons.filter((button) => button.hint)
+
+  function renderOperationItem(button: OperationButton) {
+    const isExpanded = expandedOperationKind === button.kind
+    const description = operationDescriptions[button.kind]
+
+    return (
+      <div
+        key={button.kind}
+        className={`cam-operation-item ${isExpanded ? 'cam-operation-item--expanded' : ''}`}
+        onMouseEnter={() => {
+          setHoveredOperationKind(button.kind)
+          onHighlightOperation?.(button.kind)
+        }}
+        onMouseLeave={() => {
+          setHoveredOperationKind(null)
+          onHighlightOperation?.(null)
+        }}
+      >
+        {/* Operation row */}
+        <div className="cam-operation-row">
+          <button
+            className={`cam-operation-label-btn ${isExpanded ? 'cam-operation-label-btn--expanded' : ''}`}
+            type="button"
+            title={button.hint ?? (isExpanded
+              ? camT('cam.addMenu.collapseInfo', { label: button.label })
+              : camT('cam.addMenu.expandInfo', { label: button.label }))}
+            onClick={() => {
+              // A1.5: arm the highlight on tap too, so touch users (no
+              // hover) get the same compatible-feature highlight. Kept
+              // armed on collapse — it matches hover (the pointer is
+              // still on the row) and clears when the menu closes.
+              setExpandedOperationKind(isExpanded ? null : button.kind)
+              setHoveredOperationKind(button.kind)
+              onHighlightOperation?.(button.kind)
+            }}
+          >
+            <span className="cam-operation-label">{button.label}</span>
+            <Icon id="chevron-down" size={12} />
+          </button>
+
+          {operationSupportsPass(button.kind) ? (
+            <div className="cam-operation-pass-buttons">
+              <button
+                className="cam-subtab cam-subtab--compact"
+                type="button"
+                title={button.hint
+                  ? camT('cam.addMenu.roughPassHint', { hint: button.hint })
+                  : camT('cam.addMenu.roughPassTitle')}
+                disabled={!!button.hint}
+                onClick={() => onAddOperation(button.kind, 'rough')}
+              >
+                {camT('cam.addMenu.roughPass')}
+              </button>
+              <button
+                className="cam-subtab cam-subtab--compact"
+                type="button"
+                title={button.hint
+                  ? camT('cam.addMenu.finishPassHint', { hint: button.hint })
+                  : camT('cam.addMenu.finishPassTitle')}
+                disabled={!!button.hint}
+                onClick={() => onAddOperation(button.kind, 'finish')}
+              >
+                {camT('cam.addMenu.finishPass')}
+              </button>
+              <button
+                className="cam-subtab cam-subtab--compact"
+                type="button"
+                title={button.hint
+                  ? camT('cam.addMenu.bothPassesHint', { hint: button.hint })
+                  : camT('cam.addMenu.bothPassesTitle')}
+                disabled={!!button.hint}
+                onClick={() => onAddOperation(button.kind, 'pair')}
+              >
+                {camT('cam.addMenu.bothPasses')}
+              </button>
+            </div>
+          ) : (
+            <button
+              className={`feat-btn ${selectedNewOperationKind === button.kind ? 'feat-btn--active' : ''}`}
+              type="button"
+              title={button.hint
+                ? camT('cam.addMenu.addHint', { label: button.label, hint: button.hint })
+                : camT('cam.addMenu.addLabel', { label: button.label })}
+              disabled={!!button.hint}
+              onClick={() => handleOperationClick(button.kind)}
+            >
+              {camT('cam.addMenu.add')}
+            </button>
+          )}
+        </div>
+
+        {/* A1.3: always-visible inline reason why this operation is
+            unavailable, promoted from the button tooltip. */}
+        {button.hint ? (
+          <div className="cam-operation-hint" role="note">
+            <span className="cam-operation-hint__text">{button.hint}</span>
+            {hoveredOperationKind === button.kind
+              && onSelectFeatures
+              && (button.selectAllFeatureIds?.length ?? 0) > 0 ? (
+              <button
+                className="cam-subtab cam-subtab--compact cam-operation-hint__select-all"
+                type="button"
+                title={camT('cam.addMenu.selectAllHint', { label: button.label })}
+                onClick={() => onSelectFeatures(button.selectAllFeatureIds ?? [])}
+              >
+                {camT('cam.addMenu.selectAll')}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Expanded card */}
+        {isExpanded && description && (
+          <div className="cam-operation-details" ref={expandedRef}>
+            <div className="cam-operation-details__image-container">
+              {imageErrors.has(button.kind) ? (
+                <div className="cam-operation-details__image-fallback">
+                  {camT('cam.addMenu.missingImage')}<br />
+                  <code>public/operation-examples/{description.exampleImageName}</code>
+                </div>
+              ) : (
+                <img
+                  src={`${import.meta.env.BASE_URL}operation-examples/${description.exampleImageName}`}
+                  alt={camT('cam.addMenu.exampleImage', { title: camT(opDescKey(button.kind, 'title')) })}
+                  className="cam-operation-details__image"
+                  onError={() => setImageErrors((prev) => new Set(prev).add(button.kind))}
+                />
+              )}
+            </div>
+
+            <p className="cam-operation-details__description">
+              {camT(opDescKey(button.kind, 'fullDescription'))}
+            </p>
+
+            {description.keyPoints.length > 0 && (
+              <div className="cam-operation-details__keypoints">
+                <span className="cam-operation-details__keypoints-label">
+                  {camT('cam.addMenu.keyPoints')}
+                </span>
+                <ul className="cam-operation-details__keypoints-list">
+                  {description.keyPoints.map((_point, index) => (
+                    <li key={index} className="cam-operation-details__keypoint">
+                      {camT(opDescKey(button.kind, `keyPoint.${index}`))}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="cam-add-menu cam-add-menu--vertical">
       <div className="cam-add-menu__section">
         <span className="cam-add-menu__label">{camT('cam.addMenu.operation')}</span>
 
-        <div className="cam-operations-list">
-          {operationButtons.map((button) => {
-            const isExpanded = expandedOperationKind === button.kind
-            const description = operationDescriptions[button.kind]
+        {/* #732: an empty selection is one precondition, not eleven separate
+            failures — say it once, above the (then fully collapsed) list. */}
+        {emptySelectionHint ? (
+          <div className="cam-operation-hint cam-operation-hint--precondition" role="note">
+            <span className="cam-operation-hint__text">{emptySelectionHint}</span>
+          </div>
+        ) : null}
 
-            return (
-              <div
-                key={button.kind}
-                className={`cam-operation-item ${isExpanded ? 'cam-operation-item--expanded' : ''}`}
-                onMouseEnter={() => {
-                  setHoveredOperationKind(button.kind)
-                  onHighlightOperation?.(button.kind)
-                }}
-                onMouseLeave={() => {
-                  setHoveredOperationKind(null)
-                  onHighlightOperation?.(null)
-                }}
-              >
-                {/* Operation row */}
-                <div className="cam-operation-row">
-                  <button
-                    className={`cam-operation-label-btn ${isExpanded ? 'cam-operation-label-btn--expanded' : ''}`}
-                    type="button"
-                    title={button.hint ?? (isExpanded
-                      ? camT('cam.addMenu.collapseInfo', { label: button.label })
-                      : camT('cam.addMenu.expandInfo', { label: button.label }))}
-                    onClick={() => {
-                      // A1.5: arm the highlight on tap too, so touch users (no
-                      // hover) get the same compatible-feature highlight. Kept
-                      // armed on collapse — it matches hover (the pointer is
-                      // still on the row) and clears when the menu closes.
-                      setExpandedOperationKind(isExpanded ? null : button.kind)
-                      setHoveredOperationKind(button.kind)
-                      onHighlightOperation?.(button.kind)
-                    }}
-                  >
-                    <span className="cam-operation-label">{button.label}</span>
-                    <Icon id="chevron-down" size={12} />
-                  </button>
+        {availableButtons.length > 0 ? (
+          <div className="cam-operations-list">
+            {availableButtons.map((button) => renderOperationItem(button))}
+          </div>
+        ) : null}
 
-                  {operationSupportsPass(button.kind) ? (
-                    <div className="cam-operation-pass-buttons">
-                      <button
-                        className="cam-subtab cam-subtab--compact"
-                        type="button"
-                        title={button.hint
-                          ? camT('cam.addMenu.roughPassHint', { hint: button.hint })
-                          : camT('cam.addMenu.roughPassTitle')}
-                        disabled={!!button.hint}
-                        onClick={() => onAddOperation(button.kind, 'rough')}
-                      >
-                        {camT('cam.addMenu.roughPass')}
-                      </button>
-                      <button
-                        className="cam-subtab cam-subtab--compact"
-                        type="button"
-                        title={button.hint
-                          ? camT('cam.addMenu.finishPassHint', { hint: button.hint })
-                          : camT('cam.addMenu.finishPassTitle')}
-                        disabled={!!button.hint}
-                        onClick={() => onAddOperation(button.kind, 'finish')}
-                      >
-                        {camT('cam.addMenu.finishPass')}
-                      </button>
-                      <button
-                        className="cam-subtab cam-subtab--compact"
-                        type="button"
-                        title={button.hint
-                          ? camT('cam.addMenu.bothPassesHint', { hint: button.hint })
-                          : camT('cam.addMenu.bothPassesTitle')}
-                        disabled={!!button.hint}
-                        onClick={() => onAddOperation(button.kind, 'pair')}
-                      >
-                        {camT('cam.addMenu.bothPasses')}
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      className={`feat-btn ${selectedNewOperationKind === button.kind ? 'feat-btn--active' : ''}`}
-                      type="button"
-                      title={button.hint
-                        ? camT('cam.addMenu.addHint', { label: button.label, hint: button.hint })
-                        : camT('cam.addMenu.addLabel', { label: button.label })}
-                      disabled={!!button.hint}
-                      onClick={() => handleOperationClick(button.kind)}
-                    >
-                      {camT('cam.addMenu.add')}
-                    </button>
-                  )}
-                </div>
-
-                {/* A1.3: always-visible inline reason why this operation is
-                    unavailable, promoted from the button tooltip. */}
-                {button.hint ? (
-                  <div className="cam-operation-hint" role="note">
-                    <span className="cam-operation-hint__text">{button.hint}</span>
-                    {hoveredOperationKind === button.kind
-                      && onSelectFeatures
-                      && (button.selectAllFeatureIds?.length ?? 0) > 0 ? (
-                      <button
-                        className="cam-subtab cam-subtab--compact cam-operation-hint__select-all"
-                        type="button"
-                        title={camT('cam.addMenu.selectAllHint', { label: button.label })}
-                        onClick={() => onSelectFeatures(button.selectAllFeatureIds ?? [])}
-                      >
-                        {camT('cam.addMenu.selectAll')}
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {/* Expanded card */}
-                {isExpanded && description && (
-                  <div className="cam-operation-details" ref={expandedRef}>
-                    <div className="cam-operation-details__image-container">
-                      {imageErrors.has(button.kind) ? (
-                        <div className="cam-operation-details__image-fallback">
-                          {camT('cam.addMenu.missingImage')}<br />
-                          <code>public/operation-examples/{description.exampleImageName}</code>
-                        </div>
-                      ) : (
-                        <img
-                          src={`${import.meta.env.BASE_URL}operation-examples/${description.exampleImageName}`}
-                          alt={camT('cam.addMenu.exampleImage', { title: camT(opDescKey(button.kind, 'title')) })}
-                          className="cam-operation-details__image"
-                          onError={() => setImageErrors((prev) => new Set(prev).add(button.kind))}
-                        />
-                      )}
-                    </div>
-
-                    <p className="cam-operation-details__description">
-                      {camT(opDescKey(button.kind, 'fullDescription'))}
-                    </p>
-
-                    {description.keyPoints.length > 0 && (
-                      <div className="cam-operation-details__keypoints">
-                        <span className="cam-operation-details__keypoints-label">
-                          {camT('cam.addMenu.keyPoints')}
-                        </span>
-                        <ul className="cam-operation-details__keypoints-list">
-                          {description.keyPoints.map((_point, index) => (
-                            <li key={index} className="cam-operation-details__keypoint">
-                              {camT(opDescKey(button.kind, `keyPoint.${index}`))}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
+        {unavailableButtons.length > 0 ? (
+          <DisclosureSection
+            className="cam-add-menu__unavailable"
+            title={camT('cam.addMenu.unavailable', { count: unavailableButtons.length })}
+          >
+            <div className="cam-operations-list">
+              {unavailableButtons.map((button) => renderOperationItem(button))}
+            </div>
+          </DisclosureSection>
+        ) : null}
       </div>
 
       {selectedNewOperationHint ? (

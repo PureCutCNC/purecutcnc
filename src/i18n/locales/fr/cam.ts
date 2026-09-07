@@ -271,6 +271,8 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.addMenu.missingImage': 'Image manquante :',
   'cam.addMenu.keyPoints': 'Points clés :',
   'cam.addMenu.exampleImage': 'Exemple {title}',
+  'cam.addMenu.unavailable': 'Non disponible pour cette sélection ({count})',
+  'cam.addMenu.selectFirst': 'Sélectionnez une géométrie dans l’arborescence ou l’esquisse, puis choisissez une opération',
   'cam.hint.empty.drilling': 'Sélectionnez d’abord une ou plusieurs entités circulaires',
   'cam.hint.empty.followLine': 'Sélectionnez d’abord une ou plusieurs entités ouvertes ou fermées ; les régions fermées sont des filtres facultatifs',
   'cam.hint.empty.surfaceClean': 'Sélectionnez d’abord une ou plusieurs entités ajout/modèle ; les régions fermées sont des filtres facultatifs',

@@ -448,6 +448,21 @@ export const operations = {
   addMenu: (page: Page) => page.locator('.cam-add-menu--vertical'),
   addMenuHint: (page: Page) => page.locator('.cam-add-menu--vertical .cam-operation-hint').first(),
 
+  /** #732: rows in the Add menu's available partition (above the disclosure). */
+  addMenuAvailableRows: (page: Page) =>
+    page.locator('.cam-add-menu__section > .cam-operations-list .cam-operation-item'),
+
+  /** #732: the "Not available for this selection (N)" disclosure. */
+  addMenuUnavailableToggle: (page: Page) =>
+    page.locator('.cam-add-menu__unavailable .disclosure-section__header'),
+
+  /** #732: rows inside that disclosure (present only while it is expanded). */
+  addMenuUnavailableRows: (page: Page) =>
+    page.locator('.cam-add-menu__unavailable .cam-operation-item'),
+
+  /** Operation labels within an Add-menu row locator. */
+  addMenuRowLabels: (rows: Locator) => rows.locator('.cam-operation-label'),
+
   /** The Properties-header "Export G-code" action for the selected operation. */
   propertiesExportButton: (page: Page, name: string) =>
     page

@@ -271,6 +271,8 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.addMenu.missingImage': 'Imagen faltante:',
   'cam.addMenu.keyPoints': 'Puntos clave:',
   'cam.addMenu.exampleImage': 'Ejemplo de {title}',
+  'cam.addMenu.unavailable': 'No disponible para esta selección ({count})',
+  'cam.addMenu.selectFirst': 'Seleccione geometría en el croquis o en el árbol y luego elija una operación.',
   'cam.hint.empty.drilling': 'Seleccione primero uno o más elementos de círculo',
   'cam.hint.empty.followLine': 'Seleccione primero uno o más elementos abiertos o cerrados; las regiones cerradas son filtros opcionales',
   'cam.hint.empty.surfaceClean': 'Seleccione primero uno o más elementos de adición/modelo; las regiones cerradas son filtros opcionales.',

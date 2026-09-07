@@ -23,6 +23,7 @@ import {
   seedProject,
   openRowContextMenu,
   rowByName,
+  selectFeatures,
 } from './helpers'
 
 interface OperationSnapshot {
@@ -731,6 +732,83 @@ test.describe('CAM operation browser smoke', () => {
     const project = await getProject(app.page)
     const operations = project.operations as OperationSnapshot[]
     expect((operations[0] as Record<string, unknown>).pocketFeedReduction).toBe('engagement')
+  })
+
+  test('Add menu lists what the selection can take and collapses the rest (#732)', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+    await selectFeatures(app.page, ['f-imported-model'])
+
+    await ui.operations.headerAddButton(app.page).click()
+    await expect(ui.operations.addMenu(app.page)).toBeVisible()
+
+    // The kinds an imported model accepts come first, in the catalogue's own
+    // order, with no dead row to scan past.
+    const available = ui.operations.addMenuAvailableRows(app.page)
+    await expect(ui.operations.addMenuRowLabels(available)).toHaveText([
+      'Edge out',
+      'Surface',
+      'Engrave',
+      '3D surface rough',
+      '3D surface cleanup',
+      '3D surface finish',
+    ])
+    await expect(available.locator('.cam-operation-hint')).toHaveCount(0)
+
+    // The rest sit behind one labelled disclosure, collapsed until asked for.
+    const unavailableToggle = ui.operations.addMenuUnavailableToggle(app.page)
+    await expect(unavailableToggle).toHaveText('Not available for this selection (5)')
+    await expect(unavailableToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(ui.operations.addMenuUnavailableRows(app.page)).toHaveCount(0)
+
+    await unavailableToggle.click()
+    const unavailable = ui.operations.addMenuUnavailableRows(app.page)
+    await expect(ui.operations.addMenuRowLabels(unavailable)).toHaveText([
+      'Pocket',
+      'V-carve offset',
+      'V-carve medial',
+      'Edge in',
+      'Drill',
+    ])
+    // Expanding shows today's rows unchanged: an inline reason each, and the
+    // add control still disabled.
+    await expect(unavailable.locator('.cam-operation-hint')).toHaveCount(5)
+    const drillRow = unavailable.filter({
+      has: app.page.locator('.cam-operation-label', { hasText: 'Drill' }),
+    })
+    await expect(drillRow.getByRole('button', { name: 'Add', exact: true })).toBeDisabled()
+  })
+
+  test('Add menu states the empty-selection precondition once (#732)', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    await ui.operations.headerAddButton(app.page).click()
+    await expect(ui.operations.addMenu(app.page)).toBeVisible()
+
+    // One precondition message, not eleven variants of it, and no operation
+    // row until the user asks for one.
+    const hints = ui.operations.addMenu(app.page).locator('.cam-operation-hint')
+    await expect(hints).toHaveCount(1)
+    await expect(hints).toHaveText('Select geometry in the sketch or feature tree, then choose an operation')
+    await expect(ui.operations.addMenuAvailableRows(app.page)).toHaveCount(0)
+    await expect(ui.operations.addMenuUnavailableRows(app.page)).toHaveCount(0)
+
+    const unavailableToggle = ui.operations.addMenuUnavailableToggle(app.page)
+    await expect(unavailableToggle).toHaveText('Not available for this selection (11)')
+    await unavailableToggle.click()
+    await expect(ui.operations.addMenuUnavailableRows(app.page)).toHaveCount(11)
+
+    // "Select all" is the recovery path out of a wrong selection, so it has to
+    // survive inside the collapsed section: it fixes the selection, and the
+    // kind it fixed moves up into the available list.
+    const drillRow = ui.operations.addMenuUnavailableRows(app.page).filter({
+      has: app.page.locator('.cam-operation-label', { hasText: 'Drill' }),
+    })
+    await drillRow.hover()
+    await drillRow.getByRole('button', { name: 'Select all', exact: true }).click()
+
+    await expect(
+      ui.operations.addMenuRowLabels(ui.operations.addMenuAvailableRows(app.page)),
+    ).toContainText(['Drill'])
   })
 })
 
