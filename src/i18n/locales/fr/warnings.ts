@@ -28,6 +28,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.bandEmptySubject': 'La bande {topZ} -> {bottomZ} ne contient aucune géométrie sujet',
   'warnings.bandNoRegions': 'La bande {topZ} -> {bottomZ} ne contient aucune région usinable',
   'warnings.resolverNoBands': 'Le résolveur {operation} n’a produit aucune bande de profondeur',
+  'warnings.regionExtendedBySubtractDepth': "{features} coupe sous la cible {operation}, l'opération a donc été étendue jusqu'à Z {bottomZ}",
   'warnings.resolverOnlyInsideEdge': 'Seules les opérations de contournage intérieur peuvent être résolues par ce résolveur de région',
   'warnings.resolverOnlyPocketVcarve': 'Seules les opérations de poche et de gravure en V peuvent être résolues par ce résolveur de région',
   'warnings.resolverNoValidKindTargets': 'Aucune entité {kind} valide n’a été trouvée pour cette opération {operation}',

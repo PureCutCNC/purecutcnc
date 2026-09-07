@@ -34,6 +34,7 @@ export const warningsEn = {
   'warnings.bandEmptySubject': 'Band {topZ} -> {bottomZ} resolved to empty subject geometry',
   'warnings.bandNoRegions': 'Band {topZ} -> {bottomZ} resolved to no machinable regions',
   'warnings.resolverNoBands': '{operation} resolver produced no depth bands',
+  'warnings.regionExtendedBySubtractDepth': '{features} cuts below the {operation} target, so the operation was extended down to Z {bottomZ}',
   'warnings.resolverOnlyInsideEdge': 'Only inside edge-route operations can be resolved by this region resolver',
   'warnings.resolverOnlyPocketVcarve': 'Only pocket and V-carve operations can be resolved by this region resolver',
   'warnings.resolverNoValidKindTargets': 'No valid {kind} features were found for this {operation} operation',

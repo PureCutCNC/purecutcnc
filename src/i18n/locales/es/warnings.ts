@@ -28,6 +28,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.bandEmptySubject': 'Banda {topZ} -> {bottomZ} resuelta a geometría de sujeto vacía',
   'warnings.bandNoRegions': 'Banda {topZ} -> {bottomZ} resuelta a regiones sin mecanizar',
   'warnings.resolverNoBands': 'El resolutor de {operation} no produjo bandas de profundidad',
+  'warnings.regionExtendedBySubtractDepth': '{features} corta por debajo del objetivo de {operation}, por lo que la operación se extendió hasta Z {bottomZ}',
   'warnings.resolverOnlyInsideEdge': 'Solo las operaciones de fresado de borde interior pueden resolverse con este resolutor de regiones.',
   'warnings.resolverOnlyPocketVcarve': 'Este resolutor de regiones solo puede resolver operaciones de cajera y V-carve.',
   'warnings.resolverNoValidKindTargets': 'No se encontraron elementos {kind} válidos para la operación de {operation}.',

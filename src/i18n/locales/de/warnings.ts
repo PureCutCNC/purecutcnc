@@ -34,6 +34,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.bandEmptySubject': 'Band {topZ} -> {bottomZ} ergab leere Subjektgeometrie',
   'warnings.bandNoRegions': 'Band {topZ} -> {bottomZ} ergab keine bearbeitbaren Bereiche',
   'warnings.resolverNoBands': '{operation}-Resolver erzeugte keine Tiefenbänder',
+  'warnings.regionExtendedBySubtractDepth': '{features} schneidet unter das {operation}-Ziel, daher wurde der Vorgang bis Z {bottomZ} erweitert',
   'warnings.resolverOnlyInsideEdge': 'Nur Innenkontur-Operationen können von diesem Bereichs-Resolver aufgelöst werden',
   'warnings.resolverOnlyPocketVcarve': 'Nur Tasche- und V-Gravur-Operationen können von diesem Bereichs-Resolver aufgelöst werden',
   'warnings.resolverNoValidKindTargets': 'Keine gültigen {kind}-Features für diese {operation}-Operation gefunden',

@@ -30,6 +30,11 @@ export type ToolpathWarningCode =
   | 'bandEmptySubject'
   | 'bandNoRegions'
   | 'resolverNoBands'
+  /** Non-target subtract features carved below the deepest target, so the
+   *  operation resolved bands past its target's bottom Z (issue #526). Eating
+   *  an island or widening the boundary stays quiet — only the depth the user
+   *  cannot predict from the target is worth saying. */
+  | 'regionExtendedBySubtractDepth'
   // shared helpers
   | 'cutDepthExceedsToolMax'
   // clearing-operation entry strategies

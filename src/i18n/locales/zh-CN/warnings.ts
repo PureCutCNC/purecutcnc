@@ -32,6 +32,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.bandEmptySubject': '深度带 {topZ} -> {bottomZ} 解析结果为空几何',
   'warnings.bandNoRegions': '深度带 {topZ} -> {bottomZ} 未解析出可加工区域',
   'warnings.resolverNoBands': '{operation}解析器未生成任何深度带',
+  'warnings.regionExtendedBySubtractDepth': '{features} 切削深度低于{operation}目标，因此该工序已延伸至 Z {bottomZ}',
   'warnings.resolverOnlyInsideEdge': '此区域解析器仅支持内侧沿边加工操作',
   'warnings.resolverOnlyPocketVcarve': '此区域解析器仅支持挖槽和V雕加工操作',
   'warnings.resolverNoValidKindTargets': '未找到适用于此{operation}加工操作的有效{kind}特征',
