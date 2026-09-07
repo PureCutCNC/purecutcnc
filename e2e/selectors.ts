@@ -505,6 +505,27 @@ export const exportDialog = {
     exportDialog.root(page).locator('.dialog-footer button', { hasText: 'Inspect exported motion' }),
 }
 
+/** The G-code preview body and its move/line summary. */
+export const exportPreview = {
+  body: (page: Page) => exportDialog.root(page).locator('.dialog-preview'),
+  summary: (page: Page) => exportDialog.root(page).locator('.export-preview-summary'),
+}
+
+// ── Generation status and execution backend (issue #675) ───────────
+
+export const generation = {
+  /** The status-bar control host. */
+  root: (page: Page) => page.locator('.generation-status'),
+  /** The live status line: "Toolpaths up to date", "Generating (n)", … */
+  summary: (page: Page) => page.locator('.generation-status__summary'),
+  stopButton: (page: Page) => page.locator('.generation-status button', { hasText: 'Stop' }),
+  resumeButton: (page: Page) => page.locator('.generation-status button', { hasText: 'Resume' }),
+  /** Opens the backend menu. */
+  backendTrigger: (page: Page) => page.locator('.generation-status__trigger'),
+  backendOption: (page: Page, name: string | RegExp) =>
+    page.getByRole('menuitemradio', { name }),
+}
+
 // ── Exported-motion debug view (issue #356) ────────────────────────
 
 export const motionDebug = {

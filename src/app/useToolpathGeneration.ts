@@ -23,6 +23,7 @@ import {
   type ToolpathCacheEntry,
 } from './toolpathGeneration/cacheInputs'
 import { useGenerationService } from './toolpathGeneration/useGenerationService'
+import { DEFAULT_EXECUTOR_KIND } from './toolpathGeneration/executorPreference'
 import type { GenerationContext, ToolpathGenerationService } from './toolpathGeneration/service'
 import type {
   ExecutorKind,
@@ -167,7 +168,7 @@ export function useToolpathGeneration(
   selectedOperation: Operation | null,
   deferGeneration = false,
   documentKey = 0,
-  executor: ExecutorKind = 'inline',
+  executor: ExecutorKind = DEFAULT_EXECUTOR_KIND,
 ): ToolpathGenerationBinding {
   const { service, status, context, contextRef } = useGenerationService(project, documentKey, executor)
 

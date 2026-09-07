@@ -84,6 +84,15 @@ export function useGenerationService(
     executor,
   }))
 
+  // Switching backends ends the executor epoch, cancels outstanding consumers
+  // and clears the result cache, so recovery starts from an unambiguous
+  // baseline. Done in an effect because it is a side effect with visible
+  // consequences, not a derivation — and `setExecutorKind` is a no-op when the
+  // kind is unchanged, so this costs nothing on an ordinary render.
+  useEffect(() => {
+    service.setExecutorKind(executor)
+  }, [service, executor])
+
   // Disposal covers unmount and HMR alike: a replaced module leaves a service
   // holding a worker and a cache that nothing will ever read again.
   useEffect(() => {

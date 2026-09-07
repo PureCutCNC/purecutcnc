@@ -10,17 +10,21 @@ Neither half knows about React. The worker knows about neither.
 
 ## Slice status
 
-Slices 1-3 of the plan in issue #675 are implemented: the extracted pipeline,
-the service, both executors, the harness, and every application consumer.
-`noSyncCallers.test.ts` enforces that nothing outside the two executors
-generates directly.
+Slices 1-4 of the plan in issue #675 are implemented: the extracted pipeline,
+the service, both executors, the harness, every application consumer, and the
+opt-in rollout. `noSyncCallers.test.ts` enforces that nothing outside the two
+executors generates directly.
 
-The worker is now in the app's module graph, so `vite build` emits a
-`toolpath.worker-*.js` chunk — fetched only when a worker is actually
-constructed, which the default inline backend never does. **The worker is not
-yet selectable**: there is no UI or preference to switch backends, which is
-slice 4. Browser worker *startup* therefore remains unverified;
-`workerRuntime.test.ts` covers real cross-thread execution in Node instead.
+**The worker is opt-in and the default is still the main thread.** The backend
+is chosen from the status bar, stored per machine (never in `.camj`), and the
+worker really runs: `generationBackend.smoke.spec.ts` proves in Chromium *and*
+WebKit that choosing it starts a real `Worker` and that the G-code it produces
+is identical to the main thread's, and `npm run check:worker-production` proves
+the built chunk starts and completes its handshake when served from a nested
+static path.
+
+Slice 5 — turning the worker on by default — is a maintainer decision and has
+not been taken.
 
 ## Files
 - `types.ts` — the shared vocabulary: `RequestIdentity` (document key, worker epoch, request/snapshot ids, operation, trace mode), terminal `GenerationOutcome`s, failure categories, per-operation status, and the immutable status snapshot React subscribes to. A completed empty path with warnings is a *successful* result; infrastructure failure is never encoded that way and never joins the CAM warning codes
@@ -31,6 +35,8 @@ slice 4. Browser worker *startup* therefore remains unverified;
 - `workerExecutor.ts` — the worker's main-thread half: one worker, one installed snapshot, one in-flight request, re-sending the snapshot only when a different one is named. Cancellation is `Worker.terminate()`, never a message: a worker inside synchronous Clipper code cannot reach its own event loop, so a `cancel` would be read only after the work it meant to stop had finished. A startup-only handshake timeout; computation has no elapsed-time kill, because slow is not broken. Never falls back to inline on failure
 - `toolpath.worker.ts` — the worker. Holds one snapshot, computes one operation, keeps no result history (the authoritative cache is main-thread, and a second copy here would leak in a realm the main thread cannot clear). Clears `clearImportedModelCaches()` on snapshot replacement for the same reason. Declares its own three-member worker scope locally rather than adding `"WebWorker"` to `lib`, which would collide with `DOM` across every browser source
 - `workerThreadAdapter.ts` — node-only test support: shims `self` onto `parentPort` so `workerRuntime.test.ts` can run the shipped worker module unmodified on a real `worker_threads` thread
+- `executorPreference.ts` — the storage key, parsing and runtime resolution for the backend choice. Machine-local by construction: not in `.camj`, not in undo history, because where a toolpath was computed cannot change what it is — and a project carrying the choice would carry it to a machine where the worker is not fine. An unrecognised stored value falls back to the default rather than throwing, so a stale entry costs a setting and not a working application
+- `useExecutorPreference.ts` — keeps `preference` (what the user chose, what the menu shows) distinct from `resolved` (what generation will use). They differ where the runtime has no `Worker`: the choice is remembered for when it can be honoured while generation quietly falls back. `canStop` is derived from `resolved`, so a fallback cannot leave the UI offering a Stop that does nothing
 - `useGenerationService.ts` — React's binding: one service per application, subscribed through `useSyncExternalStore`. Returns both a render-safe `context` and a ref of the same value for callbacks and async continuations. The ref is written in a **layout** effect, not during render: a render React discards must not move what a completion is judged against, and layout narrows the stale window to the gap between commit and that line. A completion landing inside it returns `superseded` — one wasted regeneration, never a result attached to the wrong project
 - `exportPreparation.ts` — the rules that decide whether a G-code program may be written. **A program is all of its operations or it is nothing**: a member that failed, was cancelled, superseded, or has no tool blocks the export and names itself, and nothing is filtered out to make the remainder postable. The token binds a prepared program to the inputs it came from — project identity, document key, selection *and its order*, machine, and every postprocessor option — so a preview whose inputs moved is immediately not exportable rather than merely stale-looking
 - `useExportPreparation.ts` — drives those rules from the dialog's state, keeping the 300 ms debounce the synchronous version had. Invalidates the previous preparation *before* starting a new one, so there is no window where a stale program still reads as ready, and copies the bytes out at Save time so the file is the program the user approved

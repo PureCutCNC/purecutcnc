@@ -310,7 +310,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
               {previewResult && previewResult.gcode.split('\n').length > 30 && `\n${td('dialogs.export.previewTruncated')}`}
             </div>
             {previewResult && (
-              <div style={{ fontSize: '11px', color: 'var(--text-dim)', textAlign: 'right' }}>
+              <div className="export-preview-summary" style={{ fontSize: '11px', color: 'var(--text-dim)', textAlign: 'right' }}>
                 {td('dialogs.export.movesLines', { moves: previewResult.stats.moveCount, lines: previewResult.stats.lineCount })}
               </div>
             )}

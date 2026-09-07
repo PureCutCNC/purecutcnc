@@ -39,6 +39,8 @@ import { useProjectStore } from './store/projectStore'
 import { useDesktopIntegration } from './platform/useDesktopIntegration'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useToolpathGeneration } from './app/useToolpathGeneration'
+import { StatusBarExtras } from './components/layout/StatusBarExtras'
+import { useExecutorPreference } from './app/toolpathGeneration/useExecutorPreference'
 import { useSimulationModel } from './app/useSimulationModel'
 import { useTreeContextMenu } from './app/useTreeContextMenu'
 import { useFeatureTreeActions } from './app/useFeatureTreeActions'
@@ -223,6 +225,10 @@ function App() {
     hasAutoFramed3DRef,
   })
 
+  // Machine-local, deliberately outside the project and undo history: where a
+  // toolpath was computed cannot change what it is (issue #675).
+  const generationBackend = useExecutorPreference()
+
   const {
     toolpathMap,
     requestToolpath,
@@ -231,6 +237,10 @@ function App() {
     selectedToolpath,
     visibleToolpaths,
     collidingClampIds,
+    generationStatus,
+    stopGeneration,
+    resumeGeneration,
+    retryGeneration,
     service: generationService,
     contextRef: generationContextRef,
   } = useToolpathGeneration(
@@ -243,6 +253,7 @@ function App() {
     // The document session (issue #675). A result produced before a new or
     // opened file must never land on the one that replaced it.
     projectKey,
+    generationBackend.resolved,
   )
   void toolpathMap
 
@@ -357,25 +368,6 @@ function App() {
     })
   }
 
-  const collapsedDepthLegend = centerTab === 'sketch' && depthLegendCollapsed ? (
-    <button
-      className="statusbar-depth-legend"
-      type="button"
-      onClick={() => setDepthLegendCollapsed(false)}
-      title="Expand feature color legend"
-      aria-label="Expand feature color legend"
-    >
-      <span className="statusbar-depth-legend__label">Feature Colors</span>
-      <span className="statusbar-depth-legend__swatches" aria-hidden="true">
-        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-shallow" />
-        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-deep" />
-        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--add" />
-        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--region" />
-        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--imported-model" />
-        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--selected" />
-      </span>
-    </button>
-  ) : null
 
   return (
     <>
@@ -492,7 +484,22 @@ function App() {
         onCenterTabChange={handleCenterTabChange}
         rightTab={rightTab}
         onRightTabChange={setRightTab}
-        statusBarExtras={collapsedDepthLegend}
+        statusBarExtras={(
+          <StatusBarExtras
+            showDepthLegend={centerTab === 'sketch' && depthLegendCollapsed}
+            onExpandDepthLegend={() => setDepthLegendCollapsed(false)}
+            generation={{
+              status: generationStatus,
+              executor: generationBackend.preference,
+              onExecutorChange: generationBackend.setPreference,
+              workerAvailable: generationBackend.workerAvailable,
+              canStop: generationBackend.canStop,
+              onStop: stopGeneration,
+              onResume: resumeGeneration,
+              onRetry: retryGeneration,
+            }}
+          />
+        )}
         onZoomToModel={handleZoomToModel}
         onZoomWindow={onZoomWindow}
         zoomWindowActive={zoomWindowActive}

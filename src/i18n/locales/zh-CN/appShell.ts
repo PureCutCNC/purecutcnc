@@ -125,6 +125,21 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
   'appShell.status.hideClamps': '隐藏夹具',
 
   // ── Status bar — about ──
+  // 生成状态与执行后端（issue #675）。
+  'appShell.generation.ready': '刀具路径已是最新',
+  'appShell.generation.working': '正在生成（{count}）',
+  'appShell.generation.paused': '生成已暂停',
+  'appShell.generation.failed': '生成失败',
+  'appShell.generation.stop': '停止',
+  'appShell.generation.stopUnavailable': '“停止”无法中断已在主线程上运行的操作。',
+  'appShell.generation.resume': '继续',
+  'appShell.generation.retry': '重试',
+  'appShell.generation.backend': '计算',
+  'appShell.generation.menuAria': '刀具路径生成设置',
+  'appShell.generation.backendInline': '主线程',
+  'appShell.generation.backendInlineDetail': '生成期间窗口无法响应，“停止”必须等待该操作结束。',
+  'appShell.generation.backendWorker': '后台线程（实验性）',
+  'appShell.generation.backendWorkerDetail': '生成期间保持窗口可操作，并使“停止”立即生效。',
   'appShell.status.about': '关于 PureCutCNC',
   'appShell.status.shellMode': 'Shell 模式（仅开发环境）',
 
