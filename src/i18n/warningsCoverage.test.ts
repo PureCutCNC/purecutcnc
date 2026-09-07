@@ -30,6 +30,7 @@ function assert(condition: boolean, message: string): void {
 const ALL_CODES = [
   'finishScallopHeightOutOfRange', 'finishSlopeInvalid', 'finishSlopeEmpty', 'finishSlopeTooComplex',
   'targetsMissingOrWrongRole', 'closedProfilesOnly', 'bandEmptySubject', 'bandNoRegions', 'resolverNoBands',
+  'regionExtendedBySubtractDepth',
   'resolverOnlyInsideEdge', 'resolverOnlyPocketVcarve', 'resolverNoValidKindTargets', 'resolverNoValidSubtracts', 'resolverNoTargets',
   'cutDepthExceedsToolMax', 'cutDepthExceedsToolMaxForFeature',
   'entryStrategyFallback', 'entryHelixDiameterClamped', 'debug',

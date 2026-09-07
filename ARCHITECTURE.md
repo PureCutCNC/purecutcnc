@@ -175,7 +175,10 @@ area `INDEX.md` files rather than being restated here.
    1. `resolveFeatureInstance` (`src/store/helpers/resolveFeatures.ts`) —
       definition + transform into world geometry (§4 resolver boundary).
    2. `resolvePocketRegions` / `resolveInsideEdgeRegions` (`resolver.ts`) —
-      features and operation into Clipper input regions.
+      features and operation into Clipper input regions. The fold they
+      apply — feature order, parent material, non-target subtracts, and the
+      material silhouette — is owned by
+      [`planning/BAND_RESOLVER_SEMANTICS.md`](planning/BAND_RESOLVER_SEMANTICS.md).
    3. `buildRegionMask` (`regions.ts`) — compose the region mask.
    4. `resolveRegionDomainArea` / `…Centre` / `…Curve` (`regionDomain.ts`) —
       mask into a typed operation domain. Which resolver a kind uses is owned

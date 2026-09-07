@@ -29,6 +29,7 @@ architecture contracts.
 - [DESKTOP_DESIGN.md](DESKTOP_DESIGN.md) — desktop shell and platform-adapter boundaries.
 - [TABLET_UX_DESIGN.md](TABLET_UX_DESIGN.md) — tablet interaction, command-surface, layout, and focus contracts.
 - [REGION_FEATURE_SEMANTICS.md](REGION_FEATURE_SEMANTICS.md) — regions as machining filters rather than material or standalone targets.
+- [BAND_RESOLVER_SEMANTICS.md](BAND_RESOLVER_SEMANTICS.md) — the depth-band void fold: feature order, parent material, non-target subtracts, and the material silhouette.
 - [TROCHOIDAL_EDGE_DESIGN.md](TROCHOIDAL_EDGE_DESIGN.md) — trochoidal Edge Route roughing: guide-domain fragmentation, the clearance budget, and the pipeline stages it must bypass.
 - [INTEGRATION_HANDOFF_TEMPLATE.md](INTEGRATION_HANDOFF_TEMPLATE.md) — optional execution-ledger template for explicitly delegated, multi-slice work.
 - [ISSUE_633_INTEGRATION_HANDOFF.md](ISSUE_633_INTEGRATION_HANDOFF.md) — active execution ledger for issue #633 (wall-corner cleanup on `rough_surface`) on `feat/issue-633-wall-cleanup`.

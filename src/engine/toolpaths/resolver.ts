@@ -17,9 +17,9 @@
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import type { Operation, Project, SketchFeature } from '../../types/project'
-import { rectProfile } from '../../types/project'
+import { getEffectiveStockProfile, rectProfile } from '../../types/project'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
-import { resolveProject } from '../../store/helpers/resolveFeatures'
+import { resolveProject, type ResolvedProject } from '../../store/helpers/resolveFeatures'
 import type {
   ClipperPath,
   ResolvedFeatureZSpan,
@@ -191,6 +191,164 @@ function pathsIntersect(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): 
   return executeClipPaths(subjectPaths, clipPaths, ClipperLib.ClipType.ctIntersection).length > 0
 }
 
+function intersectPaths(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): ClipperPath[] {
+  if (subjectPaths.length === 0 || clipPaths.length === 0) {
+    return []
+  }
+
+  return executeClipPaths(subjectPaths, clipPaths, ClipperLib.ClipType.ctIntersection)
+}
+
+/**
+ * Subtract features the operation does not target but which carve into the
+ * region it does (issue #526).
+ *
+ * The boolean model folds every add and subtract in feature order, so a
+ * subtract that eats part of an island — or opens the region's wall, or
+ * reaches below the target's bottom Z — leaves a void the 3D model shows.
+ * Before #526 the band loop applied a subtract only when it was a *target*, so
+ * the operation machined around those voids and left material that is not
+ * there.
+ *
+ * Discovery mirrors island discovery and is deliberately one hop: a subtract
+ * qualifies by overlapping the *target* union, not by overlapping another
+ * qualifying subtract. The void is connected, so a transitive closure would be
+ * defensible, but one overlap could then walk the whole project and make the
+ * area an operation clears unpredictable from the target the user picked.
+ *
+ * Unlike `relatedSubtractFeatures` (`modelProtection.ts`), a subtract that
+ * lives entirely inside an add is NOT excluded here. That rule exists for 3D
+ * operations, where such a subtract would drag the whole operation's Z range
+ * deeper; here the effect is scoped to one band and one footprint, and a
+ * pocket cut into an island is a real void inside the region.
+ */
+function discoverNonTargetSubtracts(
+  project: ResolvedProject,
+  targetUnionPaths: ClipperPath[],
+  targetIdSet: Set<string>,
+): FeatureWithSpan[] {
+  return project.features
+    .flatMap((feature) => expandFeatureGeometry(feature))
+    .filter((feature) => feature.operation === 'subtract' && !targetIdSet.has(feature.id))
+    .filter((feature) => featureHasClosedGeometry(feature))
+    .filter((feature) => pathsIntersect(targetUnionPaths, [flattenFeatureToClipperPath(feature)]))
+    .map((feature) => ({
+      feature,
+      span: resolveFeatureZSpan(project, feature),
+    }))
+}
+
+/**
+ * The union a band's islands and tabs are discovered against: the target union
+ * widened by the qualifying non-target subtracts, which can open the region
+ * past its target boundary.
+ *
+ * Unclipped by the material silhouette on purpose — discovery is conservative
+ * across every band, and an add that turns out not to overlap the resolved
+ * void differences nothing.
+ */
+function reachableUnionForDiscovery(
+  targetUnionPaths: ClipperPath[],
+  nonTargetSubtracts: FeatureWithSpan[],
+): ClipperPath[] {
+  if (nonTargetSubtracts.length === 0) {
+    return targetUnionPaths
+  }
+
+  return unionPaths([
+    ...targetUnionPaths,
+    ...nonTargetSubtracts.map(({ feature }) => flattenFeatureToClipperPath(feature)),
+  ])
+}
+
+function closedAddFeaturesWithSpans(project: ResolvedProject): FeatureWithSpan[] {
+  return project.features
+    .flatMap((feature) => expandFeatureGeometry(feature))
+    .filter((feature) => feature.operation === 'add' && featureHasClosedGeometry(feature))
+    .map((feature) => ({
+      feature,
+      span: resolveFeatureZSpan(project, feature),
+    }))
+}
+
+function stockFootprintPaths(project: ResolvedProject): ClipperPath[] {
+  const flattened = flattenProfile(getEffectiveStockProfile(project.stock))
+  if (flattened.points.length === 0) {
+    return []
+  }
+
+  return [toClipperPath(normalizeWinding(flattened.points, false), DEFAULT_CLIPPER_SCALE)]
+}
+
+/**
+ * The material a non-target subtract is allowed to carve in this band.
+ *
+ * Outside the model there is nothing the model says must be gone — that
+ * material belongs to an outside profile operation — so a non-target
+ * subtract's contribution is clipped to the adds standing in the band rather
+ * than followed out into waste stock.
+ *
+ * `buildBooleanModel` (`csg.ts`) does not include the stock: only the first
+ * `add` seeds the solid, so a project of stock plus subtracts has no model
+ * silhouette at all. Clipping to an empty silhouette there would silently drop
+ * every non-target subtract, so a band with no active add falls back to the
+ * stock footprint.
+ */
+function bandMaterialSilhouette(
+  addFeatures: FeatureWithSpan[],
+  stockPaths: ClipperPath[],
+  topZ: number,
+  bottomZ: number,
+): ClipperPath[] {
+  const activeAdds = activeForBand(addFeatures, topZ, bottomZ)
+  if (activeAdds.length === 0) {
+    return stockPaths
+  }
+
+  return unionPaths(activeAdds.map(({ feature }) => flattenFeatureToClipperPath(feature)))
+}
+
+/**
+ * Raised when qualifying non-target subtracts pulled the resolved bands below
+ * the deepest target — the one consequence of #526 a user cannot predict from
+ * the operation's own target. Eating an island or widening the boundary is the
+ * operation simply being correct and stays quiet, or every project with an
+ * overlapping subtract would carry a permanent warning.
+ */
+function appendDepthExtensionWarning(
+  warnings: ToolpathWarning[],
+  operationLabel: string,
+  closedTargetFeatures: FeatureWithSpan[],
+  nonTargetSubtracts: FeatureWithSpan[],
+  bands: ResolvedPocketBand[],
+): void {
+  if (closedTargetFeatures.length === 0 || bands.length === 0) {
+    return
+  }
+
+  const targetBottomZ = Math.min(...closedTargetFeatures.map(({ span }) => span.min))
+  const deepestBandBottomZ = Math.min(...bands.map((band) => band.bottomZ))
+  if (deepestBandBottomZ >= targetBottomZ) {
+    return
+  }
+
+  const deepeningNames = nonTargetSubtracts
+    .filter(({ span }) => span.min < targetBottomZ)
+    .map(({ feature }) => feature.name)
+  if (deepeningNames.length === 0) {
+    return
+  }
+
+  warnings.push({
+    code: 'regionExtendedBySubtractDepth',
+    params: {
+      operation: operationLabel,
+      features: deepeningNames.join(', '),
+      bottomZ: deepestBandBottomZ,
+    },
+  })
+}
+
 function polyTreeToRegions(
   node: PolyTreeNode,
   targetFeatureIds: string[],
@@ -322,10 +480,17 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
   ]
   const targetUnionPaths = unionPaths(allTargetPathsForDiscovery)
 
+  const targetIdSet = new Set(closedSubtractFeatures.map(({ feature }) => feature.id))
+  const nonTargetSubtracts = discoverNonTargetSubtracts(project, targetUnionPaths, targetIdSet)
+  const nonTargetSubtractIdSet = new Set(nonTargetSubtracts.map(({ feature }) => feature.id))
+  const reachableUnionPaths = reachableUnionForDiscovery(targetUnionPaths, nonTargetSubtracts)
+  const closedAddFeatures = nonTargetSubtracts.length > 0 ? closedAddFeaturesWithSpans(project) : []
+  const stockPaths = nonTargetSubtracts.length > 0 ? stockFootprintPaths(project) : []
+
   const candidateIslands = project.features
     .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'add' && featureHasClosedGeometry(feature))
-    .filter((feature) => pathsIntersect(targetUnionPaths, [flattenFeatureToClipperPath(feature)]))
+    .filter((feature) => pathsIntersect(reachableUnionPaths, [flattenFeatureToClipperPath(feature)]))
     .map((feature) => ({
       feature,
       span: resolveFeatureZSpan(project, feature),
@@ -339,15 +504,15 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
         max: Math.max(tab.z_bottom, tab.z_top),
       },
     }))
-    .filter((tab) => pathsIntersect(targetUnionPaths, [tab.path]))
+    .filter((tab) => pathsIntersect(reachableUnionPaths, [tab.path]))
 
   const depths = uniqueSortedDepthsFromSpans([
     ...closedTargetFeatures.map(({ span }) => span),
+    ...nonTargetSubtracts.map(({ span }) => span),
     ...candidateIslands.map(({ span }) => span),
     ...candidateTabIslands.map(({ span }) => span),
   ])
   const bands: ResolvedPocketBand[] = []
-  const targetIdSet = new Set(closedSubtractFeatures.map(({ feature }) => feature.id))
   const lineIdSet = new Set(closedLineFeatures.map(({ feature }) => feature.id))
   const expandedFeaturesInOrder = project.features.flatMap((feature) => expandFeatureGeometry(feature))
 
@@ -359,7 +524,8 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
     }
 
     const activeTargets = activeForBand(closedTargetFeatures, topZ, bottomZ)
-    if (activeTargets.length === 0) {
+    const activeNonTargetSubtracts = activeForBand(nonTargetSubtracts, topZ, bottomZ)
+    if (activeTargets.length === 0 && activeNonTargetSubtracts.length === 0) {
       continue
     }
 
@@ -367,8 +533,12 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
     const activeTabIslands = activeObstaclesForBand(candidateTabIslands, topZ, bottomZ)
     const activeBandFeatureIds = new Set([
       ...activeTargets.map(({ feature }) => feature.id),
+      ...activeNonTargetSubtracts.map(({ feature }) => feature.id),
       ...activeIslands.map(({ feature }) => feature.id),
     ])
+    const bandSilhouettePaths = activeNonTargetSubtracts.length > 0
+      ? bandMaterialSilhouette(closedAddFeatures, stockPaths, topZ, bottomZ)
+      : []
     let resolvedPaths: ClipperPath[] = []
 
     for (const feature of expandedFeaturesInOrder) {
@@ -383,8 +553,21 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
       }
 
       const featurePath = flattenFeatureToClipperPath(feature)
-      if (feature.operation === 'subtract' && targetIdSet.has(feature.id)) {
-        resolvedPaths = unionPaths([...resolvedPaths, featurePath])
+      if (feature.operation === 'subtract') {
+        if (targetIdSet.has(feature.id)) {
+          resolvedPaths = unionPaths([...resolvedPaths, featurePath])
+          continue
+        }
+
+        // A non-target subtract carves only where there is material to carve,
+        // so its contribution is clipped to the band's material silhouette
+        // rather than followed out into waste stock (issue #526).
+        if (nonTargetSubtractIdSet.has(feature.id)) {
+          const carvedPaths = intersectPaths([featurePath], bandSilhouettePaths)
+          if (carvedPaths.length > 0) {
+            resolvedPaths = unionPaths([...resolvedPaths, ...carvedPaths])
+          }
+        }
         continue
       }
 
@@ -445,9 +628,13 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
 
     const polyTree = executeClip(resolvedPaths, [], ClipperLib.ClipType.ctUnion)
 
+    const bandTargetFeatureIds = [
+      ...activeTargets.map(({ feature }) => feature.id),
+      ...activeNonTargetSubtracts.map(({ feature }) => feature.id),
+    ]
     const regions = polyTreeToRegions(
       polyTree,
-      activeTargets.map(({ feature }) => feature.id),
+      bandTargetFeatureIds,
       [
         ...activeIslands.map(({ feature }) => feature.id),
         ...activeTabIslands.map((tab) => tab.id),
@@ -462,7 +649,7 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
     bands.push({
       topZ,
       bottomZ,
-      targetFeatureIds: activeTargets.map(({ feature }) => feature.id),
+      targetFeatureIds: bandTargetFeatureIds,
       islandFeatureIds: [
         ...activeIslands.map(({ feature }) => feature.id),
         ...activeTabIslands.map((tab) => tab.id),
@@ -474,6 +661,8 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
   if (bands.length === 0) {
     warnings.push({ code: 'resolverNoBands', params: { operation: operationLabel } })
   }
+
+  appendDepthExtensionWarning(warnings, operationLabel, closedTargetFeatures, nonTargetSubtracts, bands)
 
   return {
     operationId: operation.id,
@@ -542,6 +731,13 @@ export function resolveInsideEdgeRegions(authoritativeProject: Project, operatio
 
   const targetUnionPaths = unionPaths(closedTargetFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature)))
 
+  const targetIdSet = new Set(closedTargetFeatures.map(({ feature }) => feature.id))
+  const nonTargetSubtracts = discoverNonTargetSubtracts(project, targetUnionPaths, targetIdSet)
+  const nonTargetSubtractIdSet = new Set(nonTargetSubtracts.map(({ feature }) => feature.id))
+  const reachableUnionPaths = reachableUnionForDiscovery(targetUnionPaths, nonTargetSubtracts)
+  const closedAddFeatures = nonTargetSubtracts.length > 0 ? closedAddFeaturesWithSpans(project) : []
+  const stockPaths = nonTargetSubtracts.length > 0 ? stockFootprintPaths(project) : []
+
   const candidateIslands = project.features
     .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'add' && featureHasClosedGeometry(feature))
@@ -549,8 +745,8 @@ export function resolveInsideEdgeRegions(authoritativeProject: Project, operatio
       feature,
       path: flattenFeatureToClipperPath(feature),
     }))
-    .filter(({ path }) => pathsIntersect(targetUnionPaths, [path]))
-    .filter(({ path }) => differencePaths([path], targetUnionPaths).length > 0)
+    .filter(({ path }) => pathsIntersect(reachableUnionPaths, [path]))
+    .filter(({ path }) => differencePaths([path], reachableUnionPaths).length > 0)
     .map(({ feature }) => ({
       feature,
       span: resolveFeatureZSpan(project, feature),
@@ -558,10 +754,10 @@ export function resolveInsideEdgeRegions(authoritativeProject: Project, operatio
 
   const depths = uniqueSortedDepthsFromSpans([
     ...closedTargetFeatures.map(({ span }) => span),
+    ...nonTargetSubtracts.map(({ span }) => span),
     ...candidateIslands.map(({ span }) => span),
   ])
   const bands: ResolvedPocketBand[] = []
-  const targetIdSet = new Set(closedTargetFeatures.map(({ feature }) => feature.id))
   const expandedFeaturesInOrder = project.features.flatMap((feature) => expandFeatureGeometry(feature))
 
   for (let index = 0; index < depths.length - 1; index += 1) {
@@ -572,15 +768,20 @@ export function resolveInsideEdgeRegions(authoritativeProject: Project, operatio
     }
 
     const activeTargets = activeForBand(closedTargetFeatures, topZ, bottomZ)
-    if (activeTargets.length === 0) {
+    const activeNonTargetSubtracts = activeForBand(nonTargetSubtracts, topZ, bottomZ)
+    if (activeTargets.length === 0 && activeNonTargetSubtracts.length === 0) {
       continue
     }
 
     const activeIslands = activeForBand(candidateIslands, topZ, bottomZ)
     const activeBandFeatureIds = new Set([
       ...activeTargets.map(({ feature }) => feature.id),
+      ...activeNonTargetSubtracts.map(({ feature }) => feature.id),
       ...activeIslands.map(({ feature }) => feature.id),
     ])
+    const bandSilhouettePaths = activeNonTargetSubtracts.length > 0
+      ? bandMaterialSilhouette(closedAddFeatures, stockPaths, topZ, bottomZ)
+      : []
     let resolvedPaths: ClipperPath[] = []
 
     for (const feature of expandedFeaturesInOrder) {
@@ -589,8 +790,21 @@ export function resolveInsideEdgeRegions(authoritativeProject: Project, operatio
       }
 
       const featurePath = flattenFeatureToClipperPath(feature)
-      if (feature.operation === 'subtract' && targetIdSet.has(feature.id)) {
-        resolvedPaths = unionPaths([...resolvedPaths, featurePath])
+      if (feature.operation === 'subtract') {
+        if (targetIdSet.has(feature.id)) {
+          resolvedPaths = unionPaths([...resolvedPaths, featurePath])
+          continue
+        }
+
+        // A non-target subtract carves only where there is material to carve,
+        // so its contribution is clipped to the band's material silhouette
+        // rather than followed out into waste stock (issue #526).
+        if (nonTargetSubtractIdSet.has(feature.id)) {
+          const carvedPaths = intersectPaths([featurePath], bandSilhouettePaths)
+          if (carvedPaths.length > 0) {
+            resolvedPaths = unionPaths([...resolvedPaths, ...carvedPaths])
+          }
+        }
         continue
       }
 
@@ -606,9 +820,13 @@ export function resolveInsideEdgeRegions(authoritativeProject: Project, operatio
 
     const polyTree = executeClip(resolvedPaths, [], ClipperLib.ClipType.ctUnion)
 
+    const bandTargetFeatureIds = [
+      ...activeTargets.map(({ feature }) => feature.id),
+      ...activeNonTargetSubtracts.map(({ feature }) => feature.id),
+    ]
     const regions = polyTreeToRegions(
       polyTree,
-      activeTargets.map(({ feature }) => feature.id),
+      bandTargetFeatureIds,
       activeIslands.map(({ feature }) => feature.id),
     )
 
@@ -620,7 +838,7 @@ export function resolveInsideEdgeRegions(authoritativeProject: Project, operatio
     bands.push({
       topZ,
       bottomZ,
-      targetFeatureIds: activeTargets.map(({ feature }) => feature.id),
+      targetFeatureIds: bandTargetFeatureIds,
       islandFeatureIds: activeIslands.map(({ feature }) => feature.id),
       regions,
     })
@@ -629,6 +847,8 @@ export function resolveInsideEdgeRegions(authoritativeProject: Project, operatio
   if (bands.length === 0) {
     warnings.push({ code: 'resolverNoBands', params: { operation: operationLabel } })
   }
+
+  appendDepthExtensionWarning(warnings, operationLabel, closedTargetFeatures, nonTargetSubtracts, bands)
 
   return {
     operationId: operation.id,
