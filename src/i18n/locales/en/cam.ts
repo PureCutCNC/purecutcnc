@@ -308,6 +308,8 @@ export const camEn = {
   'cam.addMenu.missingImage': 'Missing image:',
   'cam.addMenu.keyPoints': 'Key points:',
   'cam.addMenu.exampleImage': '{title} example',
+  'cam.addMenu.unavailable': 'Not available for this selection ({count})',
+  'cam.addMenu.selectFirst': 'Select geometry in the sketch or feature tree, then choose an operation',
 
   // ── Validation hints: empty selection ──
   'cam.hint.empty.drilling': 'Select one or more circle features first',

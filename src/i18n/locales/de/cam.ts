@@ -305,6 +305,8 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.addMenu.missingImage': 'Fehlendes Bild:',
   'cam.addMenu.keyPoints': 'Kernpunkte:',
   'cam.addMenu.exampleImage': 'Beispiel für {title}',
+  'cam.addMenu.unavailable': 'Für diese Auswahl nicht verfügbar ({count})',
+  'cam.addMenu.selectFirst': 'Geometrie im Baum oder in der Skizze auswählen, dann eine Operation wählen',
 
   // ── Validation hints: empty selection ──
   'cam.hint.empty.drilling': 'Zuerst ein oder mehrere Kreis-Features auswählen',

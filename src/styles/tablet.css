@@ -235,6 +235,15 @@
   }
 }
 
+/* ── Touch target: Add-menu "not available" disclosure (#732) ── */
+
+@media (pointer: coarse) {
+  .cam-add-menu__unavailable .disclosure-section__header {
+    min-height: var(--touch-target, 44px);
+    font-size: 12px;
+  }
+}
+
 /* ── Touch targets: tree context menu + quick-op submenu ── */
 
 @media (pointer: coarse) {

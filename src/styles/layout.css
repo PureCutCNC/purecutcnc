@@ -4695,6 +4695,32 @@
   white-space: nowrap;
 }
 
+/* #732: the one precondition message shown when nothing is selected. It sits
+   directly under the menu label rather than under a row, so it carries its own
+   top margin; the warning tone is inherited from .cam-operation-hint. */
+.cam-operation-hint--precondition {
+  margin: 2px 10px 6px;
+}
+
+/* #732: operations the current selection cannot take collapse into one
+   labelled section instead of eleven inline rejections. The shared disclosure
+   is re-spaced to sit flush in the menu: full-bleed header, row-aligned
+   padding, and no gap grid around the list it wraps. */
+.cam-add-menu__unavailable {
+  margin-top: 0;
+}
+
+.cam-add-menu__unavailable .disclosure-section__header {
+  padding: 8px 10px;
+}
+
+.cam-add-menu__unavailable .disclosure-section__body {
+  display: block;
+  gap: 0;
+  padding-bottom: 0;
+  border-top: 1px solid var(--line);
+}
+
 .cam-operation-label-btn {
   background: none;
   border: none;

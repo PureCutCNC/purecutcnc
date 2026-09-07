@@ -309,6 +309,8 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.addMenu.missingImage': '缺少图片：',
   'cam.addMenu.keyPoints': '要点：',
   'cam.addMenu.exampleImage': '{title} 示例',
+  'cam.addMenu.unavailable': '不适用于当前选择（{count}）',
+  'cam.addMenu.selectFirst': '请在特征树或草图中选择几何图形，然后选择一项操作',
 
   // ── Validation hints: empty selection ──
   'cam.hint.empty.drilling': '请先选择一个或多个圆形特征',
