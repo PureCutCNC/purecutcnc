@@ -277,6 +277,8 @@ export const camEn = {
   'cam.tools.deleteTool': 'Delete tool',
 
   // ── Operation tree row actions ──
+  'cam.treeRow.generating': 'Generating toolpath',
+  'cam.treeRow.generationPaused': 'Generation paused',
   'cam.treeRow.hideToolpath': 'Hide toolpath',
   'cam.treeRow.showToolpath': 'Show toolpath',
   'cam.treeRow.hide': 'Hide',

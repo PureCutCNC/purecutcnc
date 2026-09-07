@@ -475,6 +475,7 @@ function App() {
             onExportOperation={(operationId) => setExportDialogRequest({ operationIds: [operationId] })}
             requestToolpath={requestToolpath}
             documentKey={projectKey}
+            generationPaused={generationStatus.automaticPaused}
             toolpathWarnings={selectedToolpath?.warnings ?? null}
             generatingOperationIds={generatingOperationIds}
             onOperationHighlightChange={setOperationHighlightKind}

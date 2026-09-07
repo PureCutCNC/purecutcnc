@@ -534,6 +534,10 @@ export const generation = {
    * summary reads from the queue and can say "up to date" while these spin.
    */
   pendingOperationBadges: (page: Page) => page.locator('.cam-operation-badge--generating'),
+  /** Outstanding operations while generation is paused — a still pause mark, not a spinner. */
+  pausedOperationBadges: (page: Page) => page.locator('.cam-operation-badge--paused'),
+  /** The animated spinner itself, so "nothing is spinning" is directly assertable. */
+  operationSpinners: (page: Page) => page.locator('.cam-generating-spinner'),
 }
 
 // ── Exported-motion debug view (issue #356) ────────────────────────

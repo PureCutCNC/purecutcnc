@@ -3605,6 +3605,20 @@
   min-height: 18px;
 }
 
+/* Paused: still outstanding, but nothing is working on it, so the badge holds
+   still rather than animating. */
+.cam-operation-badge--paused {
+  padding: 0 4px;
+  min-height: 18px;
+  border-color: var(--line-strong);
+}
+
+.cam-operation-badge--paused svg {
+  display: block;
+  width: 10px;
+  height: 10px;
+}
+
 .cam-generating-spinner {
   display: block;
   width: 10px;
@@ -3622,6 +3636,11 @@
 .tree-branch--generating {
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   animation: cam-pulse 1.2s ease-in-out infinite;
+}
+
+/* Marked as outstanding, but not animated: nothing is running. */
+.tree-branch--paused {
+  border-color: var(--line-strong);
 }
 
 @keyframes cam-pulse {

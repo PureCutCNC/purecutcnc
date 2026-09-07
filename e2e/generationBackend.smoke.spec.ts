@@ -179,8 +179,14 @@ test.describe('Generation execution backend smoke', () => {
     await generation.stopButton(app.page).click()
     await expect(generation.summary(app.page)).toHaveText(/paused/, { timeout: 20_000 })
 
+    // Paused work is still outstanding, but nothing is working on it — a
+    // spinner there claims progress that is not happening.
+    await expect(generation.operationSpinners(app.page)).toHaveCount(0)
+    await expect(generation.pausedOperationBadges(app.page)).not.toHaveCount(0)
+
     await generation.resumeButton(app.page).click()
     await expect(generation.resumeButton(app.page)).toHaveCount(0)
+    await expect(generation.pausedOperationBadges(app.page)).toHaveCount(0)
 
     // The real check: the work Stop cancelled actually gets done again.
     await expect(generation.pendingOperationBadges(app.page)).toHaveCount(0, { timeout: 60_000 })

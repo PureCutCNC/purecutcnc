@@ -89,6 +89,13 @@ interface CAMPanelProps {
   documentKey: number
   toolpathWarnings?: ToolpathWarning[] | null
   generatingOperationIds?: Set<string>
+  /**
+   * True while the user has stopped automatic generation. The operations in
+   * `generatingOperationIds` still need generating — that is why they are
+   * listed — but nothing is working on them, so a spinner would be claiming
+   * progress that is not happening (issue #675).
+   */
+  generationPaused?: boolean
   /** A1.3: arm an operation kind (on hover in the Add menu) for the canvas highlight. */
   onOperationHighlightChange?: (kind: OperationKind | null) => void
 }
@@ -589,6 +596,7 @@ export function CAMPanel({
   documentKey,
   toolpathWarnings,
   generatingOperationIds,
+  generationPaused = false,
   onOperationHighlightChange,
 }: CAMPanelProps) {
   // Subscribe to locale changes: camT() reads the i18n store without
@@ -2301,7 +2309,14 @@ export function CAMPanel({
                           onDragOver={(event) => handleOperationDragOver(event, operation.id)}
                           onDrop={handleOperationDrop}
                         >
-                          <span className={generatingOperationIds?.has(operation.id) ? 'tree-branch tree-branch--generating' : 'tree-branch'} aria-hidden="true" />
+                          <span
+                            className={
+                              generatingOperationIds?.has(operation.id)
+                                ? `tree-branch ${generationPaused ? 'tree-branch--paused' : 'tree-branch--generating'}`
+                                : 'tree-branch'
+                            }
+                            aria-hidden="true"
+                          />
                           {tabletShell && project.operations.length > 1 ? (
                             <button
                               className="tree-action-btn tree-drag-grip"
@@ -2354,8 +2369,13 @@ export function CAMPanel({
                           </span>
                           <span className="tree-row-actions">
                             {generatingOperationIds?.has(operation.id) ? (
-                              <span className="cam-operation-badge cam-operation-badge--generating">
-                                <span className="cam-generating-spinner" />
+                              <span
+                                className={`cam-operation-badge ${generationPaused ? 'cam-operation-badge--paused' : 'cam-operation-badge--generating'}`}
+                                title={generationPaused ? camT('cam.treeRow.generationPaused') : camT('cam.treeRow.generating')}
+                              >
+                                {generationPaused
+                                  ? <Icon id="pause" />
+                                  : <span className="cam-generating-spinner" />}
                               </span>
                             ) : null}
                             <button
