@@ -519,6 +519,12 @@
   font-size: 11px;
 }
 
+.cam-generation-menu__failure {
+  display: block;
+  margin-top: 3px;
+  color: var(--danger, var(--text-dim));
+}
+
 .cam-generation-menu__actions {
   display: flex;
   gap: 6px;

@@ -98,8 +98,12 @@ export function GenerationSettingsMenu({
     triggerRef.current?.focus({ preventScroll: true })
   }
 
+  // The reason rides along with the label so it reaches the tooltip and the
+  // accessible name, not just the opened menu: a failure the user has to go
+  // looking for is a failure they will read as the app being broken.
+  const failureDetail = status.executorFailure?.message
   const statusLabel = failed
-    ? t('appShell.generation.failed')
+    ? (failureDetail ? `${t('appShell.generation.failed')}: ${failureDetail}` : t('appShell.generation.failed'))
     : paused
       ? t('appShell.generation.paused')
       : busy
@@ -142,6 +146,16 @@ export function GenerationSettingsMenu({
           */}
           <div className="cam-generation-menu__status" role="status" aria-live="polite">
             {statusLabel}
+            {/*
+              A failure with no stated reason leaves the user with nothing to
+              act on — and no way to tell "this operation's geometry is bad"
+              from "the worker could not start".
+            */}
+            {status.executorFailure && (
+              <span className="cam-generation-menu__failure">
+                {status.executorFailure.message}
+              </span>
+            )}
           </div>
 
           <div className="cam-generation-menu__actions">
