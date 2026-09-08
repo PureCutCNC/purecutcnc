@@ -986,7 +986,10 @@ function TreeRow({
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      onContextMenu={onContextMenu}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        onContextMenu?.(event)
+      }}
       style={{ paddingLeft: `${depth * 8}px` }}
     >
       <span className={`tree-branch tree-branch--${kind}`}>
