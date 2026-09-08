@@ -278,6 +278,8 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.tools.deleteTool': '删除刀具',
 
   // ── Operation tree row actions ──
+  'cam.treeRow.generating': '正在生成刀具路径',
+  'cam.treeRow.generationPaused': '生成已暂停',
   'cam.treeRow.hideToolpath': '隐藏刀路',
   'cam.treeRow.showToolpath': '显示刀路',
   'cam.treeRow.hide': '隐藏',

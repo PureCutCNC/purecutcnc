@@ -242,6 +242,8 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.tools.duplicateTool': 'Duplicar herramienta',
   'cam.tools.toolUsedByOperation': 'La herramienta se utiliza en una operación',
   'cam.tools.deleteTool': 'Eliminar herramienta',
+  'cam.treeRow.generating': 'Generando trayectoria',
+  'cam.treeRow.generationPaused': 'Generación en pausa',
   'cam.treeRow.hideToolpath': 'Ocultar trayectoria de herramienta',
   'cam.treeRow.showToolpath': 'Mostrar trayectoria de herramienta',
   'cam.treeRow.hide': 'Ocultar',

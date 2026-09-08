@@ -26,12 +26,8 @@ import { type ToolpathResult } from '../engine/toolpaths'
 import type { FeatureInstance, Operation, Project, SketchFeature, Tool } from '../types/project'
 import { defaultTool, newProject, rectProfile } from '../types/project'
 import { projectWithFeatures } from '../test/projectFixtures'
-import {
-  buildToolpathCacheEntry,
-  runToolpathGenerationEffect,
-  startToolpathGenerationPipeline,
-  type ToolpathCacheEntry,
-} from './useToolpathGeneration'
+import { buildDisplayToolpathMap } from './useToolpathGeneration'
+import { makeCountingService } from './toolpathGeneration/testSupport'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -167,218 +163,143 @@ function makeResult(operationId: string): ToolpathResult {
   }
 }
 
-/** Minimal deterministic rAF: queues callbacks; `flush()` runs and clears them. */
-function makeFakeRaf() {
-  const pending = new Map<number, FrameRequestCallback>()
-  let nextHandle = 1
-  const raf = (cb: FrameRequestCallback): number => {
-    const handle = nextHandle++
-    pending.set(handle, cb)
-    return handle
-  }
-  const flush = (): void => {
-    const callbacks = [...pending.values()]
-    pending.clear()
-    for (const cb of callbacks) cb(performance.now())
-  }
-  return { raf, flush }
-}
 
 /**
  * S4 harness: fake rAF, a synchronous map setter (so the pipeline's initial
  * map rebuild is observable before any frame flushes), and a write counter.
  */
-function makePipelineHarness(initialMap: Map<string, ToolpathResult> = new Map()) {
-  const fake = makeFakeRaf()
-  let currentMap = initialMap
-  let mapWrites = 0
-  const setToolpathMap = (
-    value: Map<string, ToolpathResult> | ((prev: Map<string, ToolpathResult>) => Map<string, ToolpathResult>),
-  ): void => {
-    mapWrites += 1
-    currentMap = typeof value === 'function' ? value(currentMap) : value
-  }
-  const scheduleAfterPaint = (fn: () => void): void => {
-    fake.raf(() => fake.raf(fn))
-  }
-  return {
-    fake,
-    scheduleAfterPaint,
-    setToolpathMap,
-    getMap: (): Map<string, ToolpathResult> => currentMap,
-    getMapWrites: (): number => mapWrites,
-  }
-}
-
-function testStaleRetentionDuringRecompute() {
+async function testStaleRetentionDuringRecompute() {
   console.log('Testing a pending recompute keeps the previous result in the map (S4)...')
 
   const project = makeFootprintProject()
   const operation = footprintOperation(project)
-  let generatedCalls = 0
-  const generateToolpathForOperation = (op: Operation | null): ToolpathResult | null => {
-    if (!op) return null
-    generatedCalls += 1
-    return makeResult(op.id)
-  }
-  const cache = new Map<string, ToolpathCacheEntry>()
-  const oldResult = makeResult(operation.id)
-  cache.set(operation.id, buildToolpathCacheEntry(project, operation, oldResult))
-  const harness = makePipelineHarness(new Map([[operation.id, oldResult]]))
+  const harness = makeCountingService({ project, documentKey: 1 }, (id) => makeResult(id))
+
+  harness.service.setAutomaticDemand(harness.context(), [operation.id], false)
+  await harness.settle()
+  const oldResult = harness.service.peekCurrent(harness.context(), operation.id)
+  assert(oldResult !== null, 'the first pass should produce a result')
+  assert(harness.calls() === 1, 'the first pass should generate once')
 
   // Editing the direct target invalidates the cached entry: the operation is
   // queued for recompute, not a cache hit.
   const row = project.features.find((feature) => feature.id === 'f1')
   assert(row !== undefined, 'f1 row should exist')
   const changed = patchFeatureRow(project, 'f1', { transform: { ...row.transform, e: 1 } })
+  harness.setContext({ project: changed, documentKey: 1 })
 
-  startToolpathGenerationPipeline({
-    neededOperationIds: [operation.id],
-    project: changed,
-    toolpathCache: cache,
-    generateToolpathForOperation,
-    setToolpathMap: harness.setToolpathMap,
-    requestAnimationFrameFn: harness.fake.raf,
-    scheduleAfterPaintFn: harness.scheduleAfterPaint,
-  })
+  // Before the recompute settles, the previous result must still be what the
+  // viewport draws — this is what stops visible toolpaths blanking out mid-edit.
+  assert(
+    harness.service.peekCurrent(harness.context(), operation.id) === null,
+    'the edited operation must no longer be cache-valid',
+  )
+  assert(
+    buildDisplayToolpathMap(harness.service, harness.context(), [operation.id]).get(operation.id) === oldResult,
+    'the previous result must stay in the map while the recompute is pending',
+  )
 
-  // Before any frame flushes the recompute, the previous result must still be
-  // in the map — this is what stops visible toolpaths blanking out mid-edit.
-  assert(harness.getMap().get(operation.id) === oldResult, 'the previous result must stay in the map while the recompute is pending')
+  harness.service.setAutomaticDemand(harness.context(), [operation.id], false)
+  await harness.settle()
 
-  harness.fake.flush()
-  harness.fake.flush()
+  assert(harness.calls() === 2, 'the invalidated operation must regenerate exactly once')
+  assert(
+    buildDisplayToolpathMap(harness.service, harness.context(), [operation.id]).get(operation.id) !== oldResult,
+    'the recomputed result must replace the stale placeholder',
+  )
 
-  const callsAfterFlush = generatedCalls
-  assert(callsAfterFlush === 1, 'the invalidated operation must regenerate exactly once')
-  assert(harness.getMap().get(operation.id) !== oldResult, 'the recomputed result must replace the stale placeholder')
-
+  harness.service.dispose()
   console.log('stale-result retention during a recompute: PASSED')
 }
 
-function testMapRebuiltFromNeededOperationIds() {
+async function testMapRebuiltFromNeededOperationIds() {
   console.log('Testing the map is rebuilt from neededOperationIds, dropping removed operations (S4)...')
 
   const operations = [makeOperation({ id: 'op-1' }), makeOperation({ id: 'op-2' })]
   const project = { ...newProject('toolpath-generation-test', 'mm'), operations }
-  const cache = new Map<string, ToolpathCacheEntry>()
-  for (const operation of operations) {
-    cache.set(operation.id, buildToolpathCacheEntry(project, operation, makeResult(operation.id)))
-  }
-  let generatedCalls = 0
-  const generateToolpathForOperation = (op: Operation | null): ToolpathResult | null => {
-    if (!op) return null
-    generatedCalls += 1
-    return makeResult(op.id)
-  }
-  const harness = makePipelineHarness(
-    new Map(operations.map((operation) => [operation.id, makeResult(operation.id)])),
-  )
+  const harness = makeCountingService({ project, documentKey: 1 }, (id) => makeResult(id))
 
-  // Only op-1 is needed this run; the previous map held results for both.
-  startToolpathGenerationPipeline({
-    neededOperationIds: ['op-1'],
-    project,
-    toolpathCache: cache,
-    generateToolpathForOperation,
-    setToolpathMap: harness.setToolpathMap,
-    requestAnimationFrameFn: harness.fake.raf,
-    scheduleAfterPaintFn: harness.scheduleAfterPaint,
-  })
+  harness.service.setAutomaticDemand(harness.context(), ['op-1', 'op-2'], false)
+  await harness.settle()
+  assert(harness.calls() === 2, 'both operations should generate')
 
-  assert(harness.getMap().has('op-1'), 'the needed operation must stay in the map')
-  assert(!harness.getMap().has('op-2'), 'an operation removed from neededOperationIds must be dropped from the map')
-  assert(harness.getMap().size === 1, 'nothing beyond the needed list may be carried over')
+  // Only op-1 is needed now; the service still holds a result for op-2.
+  const map = buildDisplayToolpathMap(harness.service, harness.context(), ['op-1'])
+  assert(map.has('op-1'), 'the needed operation must stay in the map')
+  assert(!map.has('op-2'), 'an operation removed from neededOperationIds must be dropped from the map')
+  assert(map.size === 1, 'nothing beyond the needed list may be carried over')
 
-  harness.fake.flush()
-  harness.fake.flush()
-  const callsAfterFlush = generatedCalls
-  assert(callsAfterFlush === 0, 'a cache hit must not regenerate')
+  harness.service.setAutomaticDemand(harness.context(), ['op-1'], false)
+  await harness.settle()
+  assert(harness.calls() === 2, 'a cache hit must not regenerate')
 
+  harness.service.dispose()
   console.log('map rebuilt from neededOperationIds: PASSED')
 }
 
-function testDeferredGeneration() {
+async function testDeferredGeneration() {
   console.log('Testing deferGeneration coalesces generation until it flips back (S4)...')
 
   const project = makeFootprintProject()
   const operation = footprintOperation(project)
-  let generatedCalls = 0
-  const generateToolpathForOperation = (op: Operation | null): ToolpathResult | null => {
-    if (!op) return null
-    generatedCalls += 1
-    return makeResult(op.id)
-  }
-  const cache = new Map<string, ToolpathCacheEntry>()
-  const oldResult = makeResult(operation.id)
-  cache.set(operation.id, buildToolpathCacheEntry(project, operation, oldResult))
-  const harness = makePipelineHarness(new Map([[operation.id, oldResult]]))
+  const harness = makeCountingService({ project, documentKey: 1 }, (id) => makeResult(id))
+
+  harness.service.setAutomaticDemand(harness.context(), [operation.id], false)
+  await harness.settle()
+  const oldResult = harness.service.peekCurrent(harness.context(), operation.id)
+  assert(oldResult !== null, 'the first pass should produce a result')
+  const callsBefore = harness.calls()
 
   // The edit invalidates the cached entry (direct target transform change).
   const row = project.features.find((feature) => feature.id === 'f1')
   assert(row !== undefined, 'f1 row should exist')
   const changed = patchFeatureRow(project, 'f1', { transform: { ...row.transform, e: 1 } })
+  harness.setContext({ project: changed, documentKey: 1 })
 
-  const options = {
-    neededOperationIds: [operation.id],
-    project: changed,
-    toolpathCache: cache,
-    generateToolpathForOperation,
-    setToolpathMap: harness.setToolpathMap,
-    requestAnimationFrameFn: harness.fake.raf,
-    scheduleAfterPaintFn: harness.scheduleAfterPaint,
+  // Deferred: no work is accepted at all, and the previous result keeps being
+  // what the viewport draws.
+  harness.service.setAutomaticDemand(harness.context(), [operation.id], true)
+  await harness.settle()
+  assert(harness.calls() === callsBefore, 'deferred: the generator must not be called for an invalidated operation')
+  assert(harness.service.getSnapshot().queuedCount === 0, 'deferred: nothing may be queued')
+  assert(
+    buildDisplayToolpathMap(harness.service, harness.context(), [operation.id]).get(operation.id) === oldResult,
+    'deferred: the previous result must stay in the map',
+  )
+
+  // Repeated deferred demand — a drag rewrites the project every pointermove —
+  // still accumulates nothing.
+  for (let index = 0; index < 5; index += 1) {
+    const dragged = patchFeatureRow(project, 'f1', { transform: { ...row.transform, e: 1 + index } })
+    harness.setContext({ project: dragged, documentKey: 1 })
+    harness.service.setAutomaticDemand(harness.context(), [operation.id], true)
   }
+  await harness.settle()
+  assert(harness.calls() === callsBefore, 'deferred: a gesture must not accumulate jobs')
 
-  // Deferred: the pipeline must not start at all — no generation, and the map
-  // (and its setter) untouched.
-  runToolpathGenerationEffect(options, true)
-  harness.fake.flush()
-  harness.fake.flush()
-  const callsWhileDeferred = generatedCalls
-  const writesWhileDeferred = harness.getMapWrites()
-  assert(callsWhileDeferred === 0, 'deferred: the generator must not be called for an invalidated operation')
-  assert(writesWhileDeferred === 0, 'deferred: the toolpath map must be untouched')
-  assert(harness.getMap().get(operation.id) === oldResult, 'deferred: the previous result must stay in the map')
+  // Flipping back to false runs generation exactly once for the whole gesture.
+  harness.service.setAutomaticDemand(harness.context(), [operation.id], false)
+  await harness.settle()
+  assert(harness.calls() === callsBefore + 1, 'resuming must regenerate exactly once')
+  assert(
+    buildDisplayToolpathMap(harness.service, harness.context(), [operation.id]).get(operation.id) !== oldResult,
+    'the resumed regeneration must replace the stale result',
+  )
 
-  // Flipping back to false runs generation exactly once.
-  runToolpathGenerationEffect(options, false)
-  harness.fake.flush()
-  harness.fake.flush()
-  const callsAfterResume = generatedCalls
-  assert(callsAfterResume === 1, 'resuming must regenerate exactly once')
-  assert(harness.getMap().get(operation.id) !== oldResult, 'the resumed regeneration must replace the stale result')
-
-  // Omitting the parameter defaults to false — the undecorated pipeline.
-  let defaultCalls = 0
-  const defaultGenerate = (op: Operation | null): ToolpathResult | null => {
-    if (!op) return null
-    defaultCalls += 1
-    return makeResult(op.id)
-  }
-  const defaultHarness = makePipelineHarness()
-  runToolpathGenerationEffect({
-    neededOperationIds: [operation.id],
-    project: changed,
-    toolpathCache: new Map(),
-    generateToolpathForOperation: defaultGenerate,
-    setToolpathMap: defaultHarness.setToolpathMap,
-    requestAnimationFrameFn: defaultHarness.fake.raf,
-    scheduleAfterPaintFn: defaultHarness.scheduleAfterPaint,
-  })
-  defaultHarness.fake.flush()
-  defaultHarness.fake.flush()
-  const callsWithDefault = defaultCalls
-  assert(callsWithDefault === 1, 'omitting deferGeneration must start the pipeline immediately')
-
+  harness.service.dispose()
   console.log('deferGeneration coalescing: PASSED')
 }
 
-try {
-  testStaleRetentionDuringRecompute()
-  testMapRebuiltFromNeededOperationIds()
-  testDeferredGeneration()
-  console.log('\nAll useToolpathGeneration S4 scheduling tests PASSED.')
-} catch (e) {
-  console.error(e)
-  throw e
+async function main(): Promise<void> {
+  try {
+    await testStaleRetentionDuringRecompute()
+    await testMapRebuiltFromNeededOperationIds()
+    await testDeferredGeneration()
+    console.log('\nAll useToolpathGeneration S4 scheduling tests PASSED.')
+  } catch (e) {
+    console.error(e)
+    process.exit(1)
+  }
 }
+
+void main()

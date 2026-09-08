@@ -39,6 +39,8 @@ import { useProjectStore } from './store/projectStore'
 import { useDesktopIntegration } from './platform/useDesktopIntegration'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useToolpathGeneration } from './app/useToolpathGeneration'
+import { StatusBarExtras } from './components/layout/StatusBarExtras'
+import { useExecutorPreference } from './app/toolpathGeneration/useExecutorPreference'
 import { useSimulationModel } from './app/useSimulationModel'
 import { useTreeContextMenu } from './app/useTreeContextMenu'
 import { useFeatureTreeActions } from './app/useFeatureTreeActions'
@@ -223,14 +225,24 @@ function App() {
     hasAutoFramed3DRef,
   })
 
+  // Machine-local, deliberately outside the project and undo history: where a
+  // toolpath was computed cannot change what it is (issue #675).
+  const generationBackend = useExecutorPreference()
+
   const {
     toolpathMap,
-    generateToolpathForOperation,
-    getGenerationTrace,
+    requestToolpath,
+    requestGenerationTrace,
     generatingOperationIds,
     selectedToolpath,
     visibleToolpaths,
     collidingClampIds,
+    generationStatus,
+    stopGeneration,
+    resumeGeneration,
+    retryGeneration,
+    service: generationService,
+    contextRef: generationContextRef,
   } = useToolpathGeneration(
     project,
     selectedOperation,
@@ -238,6 +250,10 @@ function App() {
     // for the duration of a drag, so one gesture produces one regeneration
     // instead of one per pointermove.
     history.transactionStart !== null,
+    // The document session (issue #675). A result produced before a new or
+    // opened file must never land on the one that replaced it.
+    projectKey,
+    generationBackend.resolved,
   )
   void toolpathMap
 
@@ -248,7 +264,7 @@ function App() {
     simulationDetailCells,
     selectedOperation,
     selectedToolpath,
-    generateToolpathForOperation,
+    requestToolpath,
   })
 
   // Surface a one-time warning when a loaded file is newer than this build supports.
@@ -352,25 +368,6 @@ function App() {
     })
   }
 
-  const collapsedDepthLegend = centerTab === 'sketch' && depthLegendCollapsed ? (
-    <button
-      className="statusbar-depth-legend"
-      type="button"
-      onClick={() => setDepthLegendCollapsed(false)}
-      title="Expand feature color legend"
-      aria-label="Expand feature color legend"
-    >
-      <span className="statusbar-depth-legend__label">Feature Colors</span>
-      <span className="statusbar-depth-legend__swatches" aria-hidden="true">
-        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-shallow" />
-        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--subtract-deep" />
-        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--add" />
-        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--region" />
-        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--imported-model" />
-        <span className="sketch-depth-legend__swatch sketch-depth-legend__swatch--selected" />
-      </span>
-    </button>
-  ) : null
 
   return (
     <>
@@ -476,7 +473,19 @@ function App() {
             onSelectedOperationIdChange={handleSelectedOperationIdChange}
             onExport={() => setExportDialogRequest({})}
             onExportOperation={(operationId) => setExportDialogRequest({ operationIds: [operationId] })}
-            generateToolpath={generateToolpathForOperation}
+            requestToolpath={requestToolpath}
+            documentKey={projectKey}
+            generationPaused={generationStatus.automaticPaused}
+            generationSettings={{
+              status: generationStatus,
+              executor: generationBackend.preference,
+              onExecutorChange: generationBackend.setPreference,
+              workerAvailable: generationBackend.workerAvailable,
+              canStop: generationBackend.canStop,
+              onStop: stopGeneration,
+              onResume: resumeGeneration,
+              onRetry: retryGeneration,
+            }}
             toolpathWarnings={selectedToolpath?.warnings ?? null}
             generatingOperationIds={generatingOperationIds}
             onOperationHighlightChange={setOperationHighlightKind}
@@ -486,7 +495,12 @@ function App() {
         onCenterTabChange={handleCenterTabChange}
         rightTab={rightTab}
         onRightTabChange={setRightTab}
-        statusBarExtras={collapsedDepthLegend}
+        statusBarExtras={(
+          <StatusBarExtras
+            showDepthLegend={centerTab === 'sketch' && depthLegendCollapsed}
+            onExpandDepthLegend={() => setDepthLegendCollapsed(false)}
+          />
+        )}
         onZoomToModel={handleZoomToModel}
         onZoomWindow={onZoomWindow}
         zoomWindowActive={zoomWindowActive}
@@ -525,8 +539,9 @@ function App() {
       {exportDialogRequest && (
         <ExportDialog
           onClose={() => setExportDialogRequest(null)}
-          generateToolpath={generateToolpathForOperation}
-          getGenerationTrace={getGenerationTrace}
+          service={generationService}
+          contextRef={generationContextRef}
+          requestGenerationTrace={requestGenerationTrace}
           initialOperationIds={exportDialogRequest.operationIds}
         />
       )}

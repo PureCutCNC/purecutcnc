@@ -32,7 +32,6 @@ import { DisclosureSection } from '../common/DisclosureSection'
 import type {
   DrillType,
   EntryStrategy,
-  Operation,
   OperationKind,
   OperationPass,
   PocketPattern,
@@ -61,6 +60,7 @@ import { featureHasClosedGeometry } from '../../text'
 import { getOperationAddHint, operationKindLabel, operationRequiresClosedProfiles, operationTargetsRegion, selectAllCompatibleFeatureIds } from './operationValidity'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
 import { Icon } from '../Icon'
+import { GenerationSettingsMenu, type GenerationSettingsMenuProps } from './GenerationSettingsMenu'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { PanelSplit } from './PanelSplit'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
@@ -81,9 +81,24 @@ interface CAMPanelProps {
   onExport: () => void
   /** Open the Export G-code dialog scoped to a single operation. */
   onExportOperation: (operationId: string) => void
-  generateToolpath: (operation: Operation) => ToolpathResult | null
+  /**
+   * Asynchronous acquisition (issue #675). The booklet awaits one operation's
+   * path from the snapshot captured when the action started.
+   */
+  requestToolpath: (operationId: string, purpose: 'booklet', signal?: AbortSignal) => Promise<ToolpathResult | null>
+  /** The document session the panel is looking at, so a booklet cannot span two. */
+  documentKey: number
   toolpathWarnings?: ToolpathWarning[] | null
   generatingOperationIds?: Set<string>
+  /**
+   * True while the user has stopped automatic generation. The operations in
+   * `generatingOperationIds` still need generating — that is why they are
+   * listed — but nothing is working on them, so a spinner would be claiming
+   * progress that is not happening (issue #675).
+   */
+  generationPaused?: boolean
+  /** Generation status and controls, shown behind the header gear (issue #675). */
+  generationSettings?: GenerationSettingsMenuProps
   /** A1.3: arm an operation kind (on hover in the Add menu) for the canvas highlight. */
   onOperationHighlightChange?: (kind: OperationKind | null) => void
 }
@@ -580,9 +595,12 @@ export function CAMPanel({
   onSelectedOperationIdChange,
   onExport,
   onExportOperation,
-  generateToolpath,
+  requestToolpath,
+  documentKey,
   toolpathWarnings,
   generatingOperationIds,
+  generationPaused = false,
+  generationSettings,
   onOperationHighlightChange,
 }: CAMPanelProps) {
   // Subscribe to locale changes: camT() reads the i18n store without
@@ -1038,22 +1056,31 @@ export function CAMPanel({
     setExportingBookletOperationId(selectedOperation.id)
     setBookletExportMessage({ operationId: selectedOperation.id, text: camT('cam.booklet.building') })
 
+    // Captured together, before the first await: the picture, the parameter
+    // rows and the moves in the finished booklet must all describe one
+    // revision, and every step below is asynchronous (issue #675).
+    const captured = { project, operation: selectedOperation, documentKey }
+
     try {
-      const toolpath = generateToolpath(selectedOperation)
-      const toolRecord = selectedOperation.toolRef
-        ? project.tools.find((tool) => tool.id === selectedOperation.toolRef) ?? null
+      const toolpath = await requestToolpath(captured.operation.id, 'booklet')
+      if (!toolpath) {
+        setBookletExportMessage({ operationId: captured.operation.id, text: camT('cam.booklet.failed') })
+        return
+      }
+      const toolRecord = captured.operation.toolRef
+        ? captured.project.tools.find((tool) => tool.id === captured.operation.toolRef) ?? null
         : null
-      const tool = toolRecord ? normalizeToolForProject(toolRecord, project) : null
-      const snapshotPng = await renderOperationSnapshotPng(project, selectedOperation, toolpath)
+      const tool = toolRecord ? normalizeToolForProject(toolRecord, captured.project) : null
+      const snapshotPng = await renderOperationSnapshotPng(captured.project, captured.operation, toolpath)
       const pdfBytes = await createOperationBookletPdf({
-        project,
-        operation: selectedOperation,
+        project: captured.project,
+        operation: captured.operation,
         tool,
         toolpath,
         snapshotPng,
       })
-      const safeProjectName = project.meta.name.trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'project'
-      const safeOperationName = selectedOperation.name.trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'operation'
+      const safeProjectName = captured.project.meta.name.trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'project'
+      const safeOperationName = captured.operation.name.trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'operation'
       const exportedPath = await platform.saveBinaryFile(
         `${safeProjectName}_${safeOperationName}_booklet`,
         pdfBytes,
@@ -2198,6 +2225,7 @@ export function CAMPanel({
               <div className="cam-section-content cam-section-content--stack">
                 <div className="cam-section-toolbar cam-section-toolbar--end">
                   <div className="cam-section-header-actions" ref={addOperationMenuRef}>
+                  {generationSettings && <GenerationSettingsMenu {...generationSettings} />}
                   <button
                     className="tree-action-btn tree-action-btn--visibility"
                     type="button"
@@ -2286,7 +2314,14 @@ export function CAMPanel({
                           onDragOver={(event) => handleOperationDragOver(event, operation.id)}
                           onDrop={handleOperationDrop}
                         >
-                          <span className={generatingOperationIds?.has(operation.id) ? 'tree-branch tree-branch--generating' : 'tree-branch'} aria-hidden="true" />
+                          <span
+                            className={
+                              generatingOperationIds?.has(operation.id)
+                                ? `tree-branch ${generationPaused ? 'tree-branch--paused' : 'tree-branch--generating'}`
+                                : 'tree-branch'
+                            }
+                            aria-hidden="true"
+                          />
                           {tabletShell && project.operations.length > 1 ? (
                             <button
                               className="tree-action-btn tree-drag-grip"
@@ -2339,8 +2374,13 @@ export function CAMPanel({
                           </span>
                           <span className="tree-row-actions">
                             {generatingOperationIds?.has(operation.id) ? (
-                              <span className="cam-operation-badge cam-operation-badge--generating">
-                                <span className="cam-generating-spinner" />
+                              <span
+                                className={`cam-operation-badge ${generationPaused ? 'cam-operation-badge--paused' : 'cam-operation-badge--generating'}`}
+                                title={generationPaused ? camT('cam.treeRow.generationPaused') : camT('cam.treeRow.generating')}
+                              >
+                                {generationPaused
+                                  ? <Icon id="pause" />
+                                  : <span className="cam-generating-spinner" />}
                               </span>
                             ) : null}
                             <button

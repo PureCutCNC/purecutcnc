@@ -242,6 +242,8 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.tools.duplicateTool': 'Dupliquer l’outil',
   'cam.tools.toolUsedByOperation': 'L’outil est utilisé par une opération',
   'cam.tools.deleteTool': 'Supprimer l’outil',
+  'cam.treeRow.generating': 'Génération du parcours',
+  'cam.treeRow.generationPaused': 'Génération en pause',
   'cam.treeRow.hideToolpath': 'Masquer le parcours d’outil',
   'cam.treeRow.showToolpath': 'Afficher le parcours d’outil',
   'cam.treeRow.hide': 'Masquer',

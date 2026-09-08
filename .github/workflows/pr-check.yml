@@ -38,6 +38,13 @@ jobs:
             command: test:e2e:project-input
           - lane: Workflow UI
             command: test:e2e:workflow-ui
+          # Split out on runtime grounds: Workflow UI is already the longest
+          # lane (8m10s against ~4m for the others), and these tests construct
+          # real Workers, so each pulls a multi-megabyte chunk from the dev
+          # server on top of that. The lanes exist as a parallel matrix, so a
+          # small fourth lane costs less wall-clock than growing the longest.
+          - lane: Generation backend
+            command: test:e2e:generation
 
     steps:
       - name: Checkout

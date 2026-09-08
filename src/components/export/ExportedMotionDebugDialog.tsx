@@ -32,7 +32,12 @@ import { buildMotionLayerPathD } from './motionDebugSvg'
 
 interface ExportedMotionDebugDialogProps {
   operation: Operation
-  getGenerationTrace: (operation: Operation) => ToolpathGenerationTrace | null
+  /**
+   * Asynchronous trace acquisition (issue #675). Requested against the same
+   * snapshot that produced the displayed G-code, so the "Generated",
+   * "Optimized" and "Exported" layers all describe one revision.
+   */
+  requestGenerationTrace: (operationId: string, signal?: AbortSignal) => Promise<ToolpathGenerationTrace | null>
   project: Project
   definition: MachineDefinition
   /** The already-computed postprocessor result from the Export dialog. */
@@ -73,7 +78,7 @@ function fitBounds(
 
 export function ExportedMotionDebugDialog({
   operation,
-  getGenerationTrace,
+  requestGenerationTrace,
   project,
   definition,
   previewResult,
@@ -82,9 +87,10 @@ export function ExportedMotionDebugDialog({
   useRestoreCanvasFocus()
   const { t } = useI18n()
 
-  // Build the debug model once on open. Done in an effect (not useMemo) because
-  // getGenerationTrace forces a fresh toolpath compute (cache delete + recapture)
-  // — a side effect that belongs outside render. The compute is fast (one op).
+  // Built once on open, in an effect rather than a memo: acquiring the trace is
+  // a request, not a derivation, and since #675 its answer arrives in a later
+  // tick. A completion that lands after the dialog closes — or after the
+  // preparation it belongs to has changed — is dropped rather than rendered.
   const [model, setModel] = useState<ReturnType<typeof buildExportedMotionDebugModel> | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -98,45 +104,55 @@ export function ExportedMotionDebugDialog({
   const inputs = `${operation.id}|${project.meta.units}|${definition.id}`
   useEffect(() => {
     let cancelled = false
-    try {
-      const trace = getGenerationTrace(operation)
-      if (!trace) {
-        throw new Error('no-trace')
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        const trace = await requestGenerationTrace(operation.id, controller.signal)
+        if (cancelled) return
+        if (!trace) {
+          throw new Error('no-trace')
+        }
+        const eligibility = getExportedMotionEligibility(trace.optimized.moves)
+        if (!eligibility.eligible) {
+          throw new Error(`ineligible:${eligibility.reason ?? ''}`)
+        }
+        const tolerance = exportGeometryTolerance(project.meta.units)
+        const postprocessorTrace = previewResult.motionTraces?.[0]
+        if (!postprocessorTrace) {
+          throw new Error('no-motion-trace')
+        }
+        const parsed = parseGcodeMotion(
+          previewResult.gcode,
+          definition.motion.arcFormat,
+          definition.program.commentPrefix,
+          definition.program.commentSuffix,
+        )
+        const built = buildExportedMotionDebugModel({
+          trace,
+          parsed,
+          postprocessorTrace,
+          origin: project.origin,
+          definition,
+          tolerance,
+        })
+        if (!cancelled) {
+          setModel(built)
+          setError(null)
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : String(e))
+          setModel(null)
+        }
       }
-      const eligibility = getExportedMotionEligibility(trace.optimized.moves)
-      if (!eligibility.eligible) {
-        throw new Error(`ineligible:${eligibility.reason ?? ''}`)
-      }
-      const tolerance = exportGeometryTolerance(project.meta.units)
-      const postprocessorTrace = previewResult.motionTraces?.[0]
-      if (!postprocessorTrace) {
-        throw new Error('no-motion-trace')
-      }
-      const parsed = parseGcodeMotion(
-        previewResult.gcode,
-        definition.motion.arcFormat,
-        definition.program.commentPrefix,
-        definition.program.commentSuffix,
-      )
-      const built = buildExportedMotionDebugModel({
-        trace,
-        parsed,
-        postprocessorTrace,
-        origin: project.origin,
-        definition,
-        tolerance,
-      })
-      if (!cancelled) {
-        setModel(built)
-        setError(null)
-      }
-    } catch (e) {
-      if (!cancelled) {
-        setError(e instanceof Error ? e.message : String(e))
-        setModel(null)
-      }
+    })()
+    // Releases the raw path with the request: the debug layer is the only
+    // consumer that asks for one, and nothing should keep a second full copy of
+    // the moves alive after the dialog is gone.
+    return () => {
+      cancelled = true
+      controller.abort()
     }
-    return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inputs])
 

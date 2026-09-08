@@ -493,6 +493,62 @@
   backdrop-filter: blur(18px);
 }
 
+/*
+ * Portalled to the body and positioned inline (see GenerationSettingsMenu): the
+ * CAM panel scrolls and carries its own stacking context, so an in-flow menu
+ * would be clipped by the panel it hangs off. Only the visual styling comes
+ * from `.appearance-menu`; placement comes from `usePortalPosition`.
+ */
+.cam-generation-menu {
+  right: auto;
+  width: 300px;
+}
+
+/*
+ * These options have no colour swatch — the shared three-column grid
+ * (swatch / copy / check) would give the label a 38px column to wrap in. Two
+ * columns instead, so the copy gets the width.
+ */
+.cam-generation-menu .appearance-menu__option {
+  grid-template-columns: 1fr 20px;
+}
+
+.cam-generation-menu__status {
+  padding: 2px 8px 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.cam-generation-menu__failure {
+  display: block;
+  margin-top: 3px;
+  color: var(--danger, var(--text-dim));
+}
+
+.cam-generation-menu__actions {
+  display: flex;
+  gap: 6px;
+  padding: 0 4px 8px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 8px;
+}
+
+.cam-generation-menu__actions .cam-header-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cam-generation-menu__actions svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* A menu hides its contents, so a stopped or failed pipeline marks the gear. */
+.cam-generation-gear--flagged {
+  color: var(--accent-strong);
+}
+
 .appearance-menu__heading {
   padding: 4px 6px 9px;
   color: var(--text-dim);
@@ -3574,6 +3630,20 @@
   min-height: 18px;
 }
 
+/* Paused: still outstanding, but nothing is working on it, so the badge holds
+   still rather than animating. */
+.cam-operation-badge--paused {
+  padding: 0 4px;
+  min-height: 18px;
+  border-color: var(--line-strong);
+}
+
+.cam-operation-badge--paused svg {
+  display: block;
+  width: 10px;
+  height: 10px;
+}
+
 .cam-generating-spinner {
   display: block;
   width: 10px;
@@ -3591,6 +3661,11 @@
 .tree-branch--generating {
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   animation: cam-pulse 1.2s ease-in-out infinite;
+}
+
+/* Marked as outstanding, but not animated: nothing is running. */
+.tree-branch--paused {
+  border-color: var(--line-strong);
 }
 
 @keyframes cam-pulse {

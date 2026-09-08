@@ -274,6 +274,8 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.tools.deleteTool': 'Werkzeug löschen',
 
   // ── Operation tree row actions ──
+  'cam.treeRow.generating': 'Werkzeugweg wird berechnet',
+  'cam.treeRow.generationPaused': 'Berechnung pausiert',
   'cam.treeRow.hideToolpath': 'Werkzeugweg ausblenden',
   'cam.treeRow.showToolpath': 'Werkzeugweg anzeigen',
   'cam.treeRow.hide': 'Ausblenden',
