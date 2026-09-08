@@ -60,7 +60,9 @@ async function readExportedProgram(
 
 test.describe('Generation execution backend smoke', () => {
   test('defaults to the main thread and says Stop cannot interrupt it', async ({ app }) => {
-    await expect(generation.summary(app.page)).toBeVisible()
+    // The gear is always present; the status it carries is readable without
+    // opening it.
+    await expect(generation.root(app.page)).toBeVisible()
     // The shipped default, and what a user who never opens the menu gets.
     const stored = await app.page.evaluate(() => localStorage.getItem('purecut.generation.executor'))
     expect(stored === null || stored === 'inline').toBe(true)
@@ -71,10 +73,12 @@ test.describe('Generation execution backend smoke', () => {
     await app.page.keyboard.press('Escape')
 
     // Offered but honest: it is disabled here rather than quietly ineffective.
+    await generation.backendTrigger(app.page).click()
     await expect(generation.stopButton(app.page)).toHaveAttribute(
       'title',
       /cannot interrupt an operation already running on the main thread/,
     )
+    await expect(generation.stopButton(app.page)).toBeDisabled()
   })
 
   test('the backend menu opens on screen', async ({ app }) => {
@@ -87,7 +91,7 @@ test.describe('Generation execution backend smoke', () => {
     expect(viewport).not.toBeNull()
 
     await generation.backendTrigger(app.page).click()
-    const menu = app.page.locator('.generation-status__menu')
+    const menu = generation.backendMenu(app.page)
     await expect(menu).toBeVisible()
 
     const box = await menu.boundingBox()
@@ -106,7 +110,7 @@ test.describe('Generation execution backend smoke', () => {
 
     await chooseBackend(app.page, WORKER_OPTION)
     await seedGcodeExportProject(app.page)
-    await expect(generation.summary(app.page)).toHaveText(/up to date/, { timeout: 30_000 })
+    await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
 
     // The bundler-resolved worker asset actually loaded and ran.
     expect(workerUrls.some((url) => /toolpath\.worker/.test(url))).toBe(true)
@@ -118,11 +122,11 @@ test.describe('Generation execution backend smoke', () => {
 
   test('the program a worker produces is the program the main thread produces', async ({ app, ui }) => {
     await seedGcodeExportProject(app.page)
-    await expect(generation.summary(app.page)).toHaveText(/up to date/, { timeout: 30_000 })
+    await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
     const inline = await readExportedProgram(app.page, ui)
 
     await chooseBackend(app.page, WORKER_OPTION)
-    await expect(generation.summary(app.page)).toHaveText(/up to date/, { timeout: 30_000 })
+    await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
     const worker = await readExportedProgram(app.page, ui)
 
     // Byte-for-byte on what the dialog shows, and identical move and line
@@ -140,14 +144,14 @@ test.describe('Generation execution backend smoke', () => {
     // date" while every operation still showed a spinner. A program can only be
     // produced from toolpaths that actually exist.
     await seedGcodeExportProject(app.page)
-    await expect(generation.summary(app.page)).toHaveText(/up to date/, { timeout: 30_000 })
+    await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
     const before = await readExportedProgram(app.page, ui)
     expect(before.preview.length).toBeGreaterThan(0)
 
     for (const option of [WORKER_OPTION, MAIN_THREAD_OPTION, WORKER_OPTION]) {
       await generation.backendTrigger(app.page).click()
       await generation.backendOption(app.page, option).click()
-      await expect(generation.summary(app.page)).toHaveText(/up to date/, { timeout: 30_000 })
+      await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 30_000 })
 
       // The load-bearing assertion. Opening the export dialog issues an
       // *explicit* request, which bypasses automatic demand entirely — so an
@@ -175,22 +179,24 @@ test.describe('Generation execution backend smoke', () => {
     const heavy = readFileSync(new URL('../src/engine/test-fixtures/trochoidal-249k.camj', import.meta.url), 'utf8')
     void seedProject(app.page, heavy).catch(() => {})
 
-    await expect(generation.summary(app.page)).toHaveText(/Generating/, { timeout: 20_000 })
+    await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /Generating/, { timeout: 20_000 })
+    await generation.backendTrigger(app.page).click()
     await generation.stopButton(app.page).click()
-    await expect(generation.summary(app.page)).toHaveText(/paused/, { timeout: 20_000 })
+    await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /paused/, { timeout: 20_000 })
 
     // Paused work is still outstanding, but nothing is working on it — a
     // spinner there claims progress that is not happening.
     await expect(generation.operationSpinners(app.page)).toHaveCount(0)
     await expect(generation.pausedOperationBadges(app.page)).not.toHaveCount(0)
 
+    await generation.backendTrigger(app.page).click()
     await generation.resumeButton(app.page).click()
     await expect(generation.resumeButton(app.page)).toHaveCount(0)
     await expect(generation.pausedOperationBadges(app.page)).toHaveCount(0)
 
     // The real check: the work Stop cancelled actually gets done again.
     await expect(generation.pendingOperationBadges(app.page)).toHaveCount(0, { timeout: 60_000 })
-    await expect(generation.summary(app.page)).toHaveText(/up to date/, { timeout: 60_000 })
+    await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /up to date/, { timeout: 60_000 })
   })
 
   test('Stop interrupts a running worker generation', async ({ app }) => {
@@ -214,9 +220,10 @@ test.describe('Generation execution backend smoke', () => {
     const heavy = readFileSync(new URL('../src/engine/test-fixtures/trochoidal-249k.camj', import.meta.url), 'utf8')
     void seedProject(app.page, heavy).catch(() => {})
 
-    await expect(generation.summary(app.page)).toHaveText(/Generating/, { timeout: 20_000 })
+    await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /Generating/, { timeout: 20_000 })
+    await generation.backendTrigger(app.page).click()
     await generation.stopButton(app.page).click()
-    await expect(generation.summary(app.page)).toHaveText(/paused/, { timeout: 20_000 })
+    await expect(generation.gearStatus(app.page)).toHaveAttribute('aria-label', /paused/, { timeout: 20_000 })
 
     // Stop is a real termination, not a flag that lets the work finish quietly.
     // Polled rather than read once: the close notification is delivered out of
@@ -224,6 +231,7 @@ test.describe('Generation execution backend smoke', () => {
     await expect.poll(() => workerEvents, { timeout: 20_000 }).toContain('closed')
 
     // And it is recoverable: Resume puts automatic generation back.
+    await generation.backendTrigger(app.page).click()
     await generation.resumeButton(app.page).click()
     await expect(generation.resumeButton(app.page)).toHaveCount(0)
   })

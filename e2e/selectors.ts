@@ -514,18 +514,26 @@ export const exportPreview = {
 // ── Generation status and execution backend (issue #675) ───────────
 
 export const generation = {
-  /** The status-bar control host. */
-  root: (page: Page) => page.locator('.generation-status'),
-  /** The live status line: "Toolpaths up to date", "Generating (n)", … */
-  summary: (page: Page) => page.locator('.generation-status__summary'),
-  stopButton: (page: Page) => page.locator('.generation-status button', { hasText: 'Stop' }),
-  resumeButton: (page: Page) => page.locator('.generation-status button', { hasText: 'Resume' }),
-  /** Opens the backend menu. */
-  backendTrigger: (page: Page) => page.locator('.generation-status__trigger'),
+  /** The gear in the CAM panel header that opens generation settings. */
+  root: (page: Page) => page.locator('.cam-generation-gear'),
+  /**
+   * The live status line, inside the menu — only readable while it is open.
+   *
+   * For assertions made with the menu closed use {@link gearStatus}: the gear
+   * carries the same text in its accessible name, so status is available to a
+   * screen reader (and to a test) without opening anything.
+   */
+  summary: (page: Page) => page.locator('.cam-generation-menu__status'),
+  /** The status as exposed on the gear's accessible name. */
+  gearStatus: (page: Page) => page.locator('.cam-generation-gear'),
+  stopButton: (page: Page) => page.locator('.cam-generation-menu__actions button', { hasText: 'Stop' }),
+  resumeButton: (page: Page) => page.locator('.cam-generation-menu__actions button', { hasText: 'Resume' }),
+  /** Opens the generation menu. */
+  backendTrigger: (page: Page) => page.locator('.cam-generation-gear'),
   backendOption: (page: Page, name: string | RegExp) =>
     page.getByRole('menuitemradio', { name }),
   /** The backend menu. Portalled to the body, so it is not inside `.generation-status`. */
-  backendMenu: (page: Page) => page.locator('.generation-status__menu'),
+  backendMenu: (page: Page) => page.locator('.cam-generation-menu'),
   /**
    * Per-operation "still generating" badges in the CAM panel.
    *

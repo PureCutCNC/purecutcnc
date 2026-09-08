@@ -476,6 +476,16 @@ function App() {
             requestToolpath={requestToolpath}
             documentKey={projectKey}
             generationPaused={generationStatus.automaticPaused}
+            generationSettings={{
+              status: generationStatus,
+              executor: generationBackend.preference,
+              onExecutorChange: generationBackend.setPreference,
+              workerAvailable: generationBackend.workerAvailable,
+              canStop: generationBackend.canStop,
+              onStop: stopGeneration,
+              onResume: resumeGeneration,
+              onRetry: retryGeneration,
+            }}
             toolpathWarnings={selectedToolpath?.warnings ?? null}
             generatingOperationIds={generatingOperationIds}
             onOperationHighlightChange={setOperationHighlightKind}
@@ -489,16 +499,6 @@ function App() {
           <StatusBarExtras
             showDepthLegend={centerTab === 'sketch' && depthLegendCollapsed}
             onExpandDepthLegend={() => setDepthLegendCollapsed(false)}
-            generation={{
-              status: generationStatus,
-              executor: generationBackend.preference,
-              onExecutorChange: generationBackend.setPreference,
-              workerAvailable: generationBackend.workerAvailable,
-              canStop: generationBackend.canStop,
-              onStop: stopGeneration,
-              onResume: resumeGeneration,
-              onRetry: retryGeneration,
-            }}
           />
         )}
         onZoomToModel={handleZoomToModel}

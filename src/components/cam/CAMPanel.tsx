@@ -60,6 +60,7 @@ import { featureHasClosedGeometry } from '../../text'
 import { getOperationAddHint, operationKindLabel, operationRequiresClosedProfiles, operationTargetsRegion, selectAllCompatibleFeatureIds } from './operationValidity'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
 import { Icon } from '../Icon'
+import { GenerationSettingsMenu, type GenerationSettingsMenuProps } from './GenerationSettingsMenu'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { PanelSplit } from './PanelSplit'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
@@ -96,6 +97,8 @@ interface CAMPanelProps {
    * progress that is not happening (issue #675).
    */
   generationPaused?: boolean
+  /** Generation status and controls, shown behind the header gear (issue #675). */
+  generationSettings?: GenerationSettingsMenuProps
   /** A1.3: arm an operation kind (on hover in the Add menu) for the canvas highlight. */
   onOperationHighlightChange?: (kind: OperationKind | null) => void
 }
@@ -597,6 +600,7 @@ export function CAMPanel({
   toolpathWarnings,
   generatingOperationIds,
   generationPaused = false,
+  generationSettings,
   onOperationHighlightChange,
 }: CAMPanelProps) {
   // Subscribe to locale changes: camT() reads the i18n store without
@@ -2221,6 +2225,7 @@ export function CAMPanel({
               <div className="cam-section-content cam-section-content--stack">
                 <div className="cam-section-toolbar cam-section-toolbar--end">
                   <div className="cam-section-header-actions" ref={addOperationMenuRef}>
+                  {generationSettings && <GenerationSettingsMenu {...generationSettings} />}
                   <button
                     className="tree-action-btn tree-action-btn--visibility"
                     type="button"

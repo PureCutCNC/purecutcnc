@@ -15,22 +15,19 @@
  */
 
 /**
- * What the status bar shows beyond its own visibility toggles: the collapsed
- * feature-colour legend, and generation status (issue #675).
+ * What the status bar shows beyond its own visibility toggles.
  *
- * Extracted from `App.tsx` when generation status made this a composite rather
- * than a single node. The composition root stays a composition root.
+ * Generation status and controls used to live here too; they moved into the CAM
+ * panel's header gear (issue #675), where the operations they describe are
+ * actually visible.
  */
-
-import { GenerationStatusControl, type GenerationStatusControlProps } from './GenerationStatusControl'
 
 export interface StatusBarExtrasProps {
   showDepthLegend: boolean
   onExpandDepthLegend: () => void
-  generation: GenerationStatusControlProps
 }
 
-export function StatusBarExtras({ showDepthLegend, onExpandDepthLegend, generation }: StatusBarExtrasProps) {
+export function StatusBarExtras({ showDepthLegend, onExpandDepthLegend }: StatusBarExtrasProps) {
   return (
     <>
       {showDepthLegend && (
@@ -52,7 +49,6 @@ export function StatusBarExtras({ showDepthLegend, onExpandDepthLegend, generati
       </span>
     </button>
       )}
-      <GenerationStatusControl {...generation} />
     </>
   )
 }
