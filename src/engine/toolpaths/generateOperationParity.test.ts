@@ -68,6 +68,31 @@ const baseline = JSON.parse(
   readFileSync(new URL('./__baseline__/issue-675-parity.json', import.meta.url), 'utf8'),
 ) as Baseline
 
+/**
+ * Cases whose *warnings* legitimately changed after the baseline was captured,
+ * with the reason. Geometry may not move: the G-code hash and every summary
+ * counter must still match, so this permits an advisory and nothing else.
+ *
+ * This exists so a real behaviour change is recorded rather than laundered
+ * through a recapture. Regenerating the baseline would have made these two
+ * cases green while also erasing the evidence that the extraction preserved
+ * output — which is the only thing this file is for.
+ */
+const DELIBERATE_WARNING_DIVERGENCE = new Map<string, string>([
+  [
+    'example/t-style-body/op0160',
+    'issue #526 added `regionExtendedBySubtractDepth` where a non-target subtract '
+    + 'carves below the target. Nothing here machines that subtract, so the fold is '
+    + 'correct and the advisory is intended. The six `surfaceNoOffsetContours` it '
+    + 'drags along are empty-band noise, tracked in #739.',
+  ],
+  [
+    'example/t-style-body/op0161',
+    'Same subtract, finish pass: `regionExtendedBySubtractDepth` plus one '
+    + '`surfaceNoFinishContours`. Move counts and emitted G-code are unchanged.',
+  ],
+])
+
 let passed = 0
 let failed = 0
 
@@ -140,6 +165,23 @@ for (const parityCase of corpus) {
     drift.push(`collidingMoveIndices ${expected.collidingMoveIndices}→${actual.collidingMoveIndices}`)
   }
   const context = drift.length > 0 ? ` (${drift.join('; ')})` : ' (summary fields all match — a value moved below the summary)'
+
+  const warningsOnly = DELIBERATE_WARNING_DIVERGENCE.get(parityCase.id)
+  if (warningsOnly) {
+    // Permitted to differ, but only in warnings — everything that reaches the
+    // machine must still be identical.
+    check(
+      `${parityCase.id} geometry unchanged despite a recorded advisory change`,
+      actual.gcodeHash === expected.gcodeHash
+        && actual.moves === expected.moves
+        && actual.rawMoves === expected.rawMoves
+        && actual.bounds === expected.bounds
+        && actual.drillCycles === expected.drillCycles
+        && actual.collidingMoveIndices === expected.collidingMoveIndices,
+      `only warnings may differ here (${warningsOnly})${context}`,
+    )
+    continue
+  }
 
   check(`${parityCase.id} result`, actual.resultHash === expected.resultHash, `full result differs${context}`)
   check(`${parityCase.id} raw`, actual.rawHash === expected.rawHash, `pre-optimization result differs${context}`)

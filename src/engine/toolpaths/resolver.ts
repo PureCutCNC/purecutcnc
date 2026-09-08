@@ -16,7 +16,7 @@
 
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
-import type { Operation, Project, SketchFeature } from '../../types/project'
+import type { Operation, OperationKind, Project, SketchFeature } from '../../types/project'
 import { getEffectiveStockProfile, rectProfile } from '../../types/project'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import { resolveProject, type ResolvedProject } from '../../store/helpers/resolveFeatures'
@@ -222,12 +222,84 @@ function intersectPaths(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): 
  * deeper; here the effect is scoped to one band and one footprint, and a
  * pocket cut into an island is a real void inside the region.
  */
+/**
+ * Whether an operation kind folds non-target subtracts into the region it
+ * resolves (issues #526, #739).
+ *
+ * #526 introduced the fold so a *clearing* pass would stop machining around
+ * material the solid model says is gone. That reasoning does not carry to every
+ * kind, because the fold does not merely clip the target — it **widens** the
+ * region by the subtract's own outline (see `reachableUnionForDiscovery`). For a
+ * kind that clears an area, a wider region means clearing more of what is
+ * genuinely void. For a kind that carves *along* boundaries, it means carving
+ * boundaries the user never selected.
+ *
+ * That is what #739 reported: a V-carve targeting text inside a pocket folded
+ * in the pocket rectangle — because the pocket overlaps the text — and carved
+ * the pocket wall and the island edge. On the shipped `purecutcnc.camj` example
+ * that tripled the operation, 4 279 cut moves to 12 879.
+ *
+ * A `Record<OperationKind, …>` on purpose: a new kind does not compile until it
+ * states which side it is on, the same ratchet `pocketPatterns.ts` and
+ * `clearingControls.ts` use. Every cell carries its reason, because "false"
+ * with no explanation is indistinguishable from an oversight.
+ */
+const FOLDS_NON_TARGET_SUBTRACTS: Record<OperationKind, boolean> = {
+  // Clearing kinds: the fold is the point. A subtract that opens the wall or
+  // eats an island leaves void this pass should not machine around.
+  pocket: true,
+  surface_clean: true,
+  rough_surface: true,
+  finish_surface: true,
+  finish_surface_cleanup: true,
+  edge_route_inside: true,
+  // Boundary-carving kinds: the carve follows its target's own outline, so a
+  // widened region becomes carved geometry the user did not ask for (#739).
+  v_carve: false,
+  v_carve_medial: false,
+  // Kinds that never reach a band resolver. Declared rather than omitted so the
+  // table stays a complete statement of the policy.
+  edge_route_outside: false,
+  follow_line: false,
+  drilling: false,
+}
+
+/** Does this operation fold non-target subtracts into its resolved region? */
+export function foldsNonTargetSubtracts(operation: Operation): boolean {
+  return FOLDS_NON_TARGET_SUBTRACTS[operation.kind]
+}
+
 function discoverNonTargetSubtracts(
   project: ResolvedProject,
+  operation: Operation,
   targetUnionPaths: ClipperPath[],
   targetIdSet: Set<string>,
 ): FeatureWithSpan[] {
+  if (!foldsNonTargetSubtracts(operation)) {
+    return []
+  }
+
+  // A subtract another operation machines is not this operation's business
+  // (#739). #526's case is a subtract that "changes the model but not the
+  // toolpath" — one nothing cuts, so its void is permanent and machining
+  // around it leaves material that is not there. A subtract that *is* someone's
+  // target is cut by that operation, in program order, and folding it here
+  // makes this pass act on a void that does not exist yet: on the shipped
+  // example the pocket finish ran contours around the counters of glyphs the
+  // V-carves had not carved yet, cutting grooves into solid material.
+  const machinedElsewhere = new Set(
+    project.operations
+      .filter((candidate) => candidate.id !== operation.id && candidate.enabled)
+      .flatMap((candidate) => (
+        candidate.target.source === 'features' ? candidate.target.featureIds : []
+      )),
+  )
+
   return project.features
+    // Filtered before expansion on purpose: an operation targets a *feature*,
+    // while `expandFeatureGeometry` hands back its parts — a text feature
+    // becomes one entry per glyph, with derived ids that match no target.
+    .filter((feature) => !machinedElsewhere.has(feature.id))
     .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'subtract' && !targetIdSet.has(feature.id))
     .filter((feature) => featureHasClosedGeometry(feature))
@@ -481,7 +553,7 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
   const targetUnionPaths = unionPaths(allTargetPathsForDiscovery)
 
   const targetIdSet = new Set(closedSubtractFeatures.map(({ feature }) => feature.id))
-  const nonTargetSubtracts = discoverNonTargetSubtracts(project, targetUnionPaths, targetIdSet)
+  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetUnionPaths, targetIdSet)
   const nonTargetSubtractIdSet = new Set(nonTargetSubtracts.map(({ feature }) => feature.id))
   const reachableUnionPaths = reachableUnionForDiscovery(targetUnionPaths, nonTargetSubtracts)
   const closedAddFeatures = nonTargetSubtracts.length > 0 ? closedAddFeaturesWithSpans(project) : []
@@ -732,7 +804,7 @@ export function resolveInsideEdgeRegions(authoritativeProject: Project, operatio
   const targetUnionPaths = unionPaths(closedTargetFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature)))
 
   const targetIdSet = new Set(closedTargetFeatures.map(({ feature }) => feature.id))
-  const nonTargetSubtracts = discoverNonTargetSubtracts(project, targetUnionPaths, targetIdSet)
+  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetUnionPaths, targetIdSet)
   const nonTargetSubtractIdSet = new Set(nonTargetSubtracts.map(({ feature }) => feature.id))
   const reachableUnionPaths = reachableUnionForDiscovery(targetUnionPaths, nonTargetSubtracts)
   const closedAddFeatures = nonTargetSubtracts.length > 0 ? closedAddFeaturesWithSpans(project) : []
