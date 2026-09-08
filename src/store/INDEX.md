@@ -21,10 +21,10 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `featureGeometrySlice.ts` — feature sketch/profile geometry edits: moving controls, inserting/deleting/disconnecting points/segments, joining open endpoints, and corner fillets
   - `toolsSlice.ts` — tool CRUD: add/import/update/delete/duplicate tool definitions
   - `clampsSlice.ts` — clamp CRUD: add/update/delete/duplicate clamp, set visibility, move control point
-  - `tabsSlice.ts` — tab CRUD: update/delete tab, set visibility, move control point, auto-place for operation
+  - `tabsSlice.ts` — tab CRUD: update/delete tab, set visibility, move control point, and manual auto-placement through the pure `engine/operations/autoTabs.ts` builder
   - `backdropSlice.ts` — backdrop CRUD: load/set/update/delete backdrop image
   - `machineDefsSlice.ts` — the project's machine snapshot: one `setProjectMachine` action that atomically embeds or clears the single selected definition (history-tracked). The machine *library* lives in [`src/machine/`](../machine/INDEX.md) as an application preference and never touches the project.
-  - `operationsSlice.ts` — operation CRUD, rest-operation creation, toolpath visibility, duplication, and ordering
+  - `operationsSlice.ts` — operation CRUD, rest-operation creation, toolpath visibility, duplication, ordering, and the single-history-transition `applyCamPlan` action
   - `projectLifecycleSlice.ts` — project lifecycle and persistence actions: create/load/open/save, metadata display settings, and export path markers
   - `historySlice.ts` — undo/redo and history transaction lifecycle
   - `workpieceSlice.ts` — stock, stock-source sketch editing, grid/units, origin placement, and creation target actions
@@ -46,6 +46,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `modelAssets.ts` — imported model (STL) asset normalization, storage deduplication, and feature classification
   - `naming.ts` — unique-name generation for features, clamps, tabs, folders, and text features; text-feature creation
   - `operationDefaults.ts` — operation defaults: target validation, tool matching, kind labels, fallback targets, and default operation construction
+  - `camPlanApply.ts` — stale-safe pure CAM-plan materialization: deduplicate/import tools, create rest regions and shared tabs, validate and append operations, and return one complete project for the store's atomic history transition
   - `copyFeatures.ts` — build rotated, mirrored, linear, and arbitrary-affine copies of features, clamps, and tabs; reference-vs-independent duplicate semantics with extractClonedDefinitions
   - `instanceTransforms.ts` — affine matrix builders and transform-delta composition for feature instances
   - `resolveFeatures.ts` — strict definition+instance resolver, ephemeral world-space read model, and commit boundary back to lightweight instances
@@ -59,6 +60,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 
 ## Tests
 - `constructionWorkflows.test.ts` — construction geometry (issue #199): creation target, conversions construction↔feature↔region, folder/section integrity, deferred constraints, 3.0 save stamping, open-profile round trip
+- `camPlanApply.test.ts` — CAM Plan atomic store apply, one shared tab layout, excluded-edge tab omission, and exact one-step undo
 - `createRestOperation.test.ts` — rest-machining operation creation
 - `creationDefinitions.test.ts` — definition minting across all creation paths (addFeature, imports, .camj merge); idempotency
 - `definitionEditing.test.ts` — shared-definition edit propagation and make-unique behavior

@@ -15,6 +15,7 @@
  */
 
 import type { ToolpathWarning } from '../engine/toolpaths/warningCodes'
+import type { ApplyCamPlanResult, CamPlanDraft } from '../engine/operations/camPlan/types'
 import type { ClassifiedShape, ImportedShape, ImportSourceType } from '../import'
 import type { MachineDefinition } from '../engine/gcode/types'
 import type { SnapMode } from '../sketch/snapping'
@@ -463,6 +464,7 @@ export interface ProjectStore {
   ) => string | null
   updateOperation: (id: string, patch: Partial<Operation>) => void
   createRestOperation: (operationId: string) => { operationId: string | null; regionIds: string[]; warnings: ToolpathWarning[] }
+  applyCamPlan: (plan: CamPlanDraft) => ApplyCamPlanResult
   setAllOperationToolpathVisibility: (visible: boolean) => void
   deleteOperation: (id: string) => void
   duplicateOperation: (id: string) => string | null

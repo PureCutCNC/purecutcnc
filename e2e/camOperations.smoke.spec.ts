@@ -46,6 +46,8 @@ interface OperationSnapshot {
   }
 }
 
+const modKey = process.platform === 'darwin' ? 'Meta' : 'Control'
+
 test.describe('CAM operation browser smoke', () => {
   test('HTML5 drag reorders CAM operations', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)
@@ -72,6 +74,86 @@ test.describe('CAM operation browser smoke', () => {
       'V-carve medial',
       'Edge route outside Rough',
     ])
+  })
+
+  test('CAM Plan preview reviews operation-specific settings, shared tabs, atomic create and undo (#735)', async ({ app }) => {
+    await seedCamQuickOperationProject(app.page)
+    const seeded = await getProject(app.page)
+    seeded.tools = [
+      {
+        id: 'plan-quarter', name: 'Plan quarter inch', units: 'inch', type: 'flat_endmill', diameter: 0.25,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 40,
+        defaultPlungeFeed: 12, defaultStepdown: 0.1, defaultStepover: 0.4, maxCutDepth: 5,
+      },
+      {
+        id: 'plan-eighth', name: 'Plan eighth inch', units: 'inch', type: 'flat_endmill', diameter: 0.125,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 30,
+        defaultPlungeFeed: 10, defaultStepdown: 0.08, defaultStepover: 0.4, maxCutDepth: 5,
+      },
+    ]
+    await seedProject(app.page, JSON.stringify(seeded))
+
+    await app.page.getByRole('button', { name: 'CAM Plan (Preview)', exact: true }).click()
+    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan (Preview)' })
+    await expect(dialog).toBeVisible()
+    await dialog.screenshot({ path: test.info().outputPath('cam-plan-preview.png') })
+
+    // The initially selected drilling row owns its method; clearing controls
+    // do not leak into it.
+    await expect(dialog.getByText('Drill type', { exact: true })).toBeVisible()
+    await expect(dialog.getByText('Pattern', { exact: true })).toHaveCount(0)
+
+    const pocketRough = dialog.locator('.cam-plan-row').filter({ hasText: 'Pocket · Rough' }).first()
+    await pocketRough.click()
+    await expect(dialog.getByText('Pattern', { exact: true })).toBeVisible()
+    await expect(dialog.getByText('Entry strategy', { exact: true })).toBeVisible()
+    await expect(dialog.getByText('Drill type', { exact: true })).toHaveCount(0)
+
+    // An edit that changes residual geometry marks the dependent rest proposal
+    // stale until recommendations are recalculated.
+    const patternField = dialog.locator('.cam-plan-field').filter({ hasText: 'Pattern' })
+    await patternField.locator('.ui-select__trigger').click()
+    await app.page.getByRole('option', { name: 'Offset', exact: true }).click()
+    await dialog.locator('.cam-plan-row').filter({ hasText: 'REST' }).first().click()
+    await expect(dialog.getByText('The source operation changed. Reset recommendations to recalculate this rest operation.', { exact: true })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: /Create \d+ operations/ })).toBeDisabled()
+    await dialog.getByRole('button', { name: 'Reset recommendations', exact: true }).click()
+    await expect(dialog.getByText('The source operation changed. Reset recommendations to recalculate this rest operation.', { exact: true })).toHaveCount(0)
+
+    // Exclude one recommendation, then edit the one shared tab layout rather
+    // than seeing tab controls duplicated on each edge row.
+    const pocketFinish = dialog.locator('.cam-plan-row').filter({ hasText: 'Pocket · Finish' }).first()
+    await pocketFinish.locator('input[type="checkbox"]').uncheck()
+    await dialog.locator('.cam-plan-row--shared').first().click()
+    await expect(dialog.getByRole('paragraph').filter({ hasText: /Shared by \d+ operations/ })).toBeVisible()
+    await expect(dialog.getByText('Width', { exact: true })).toHaveCount(1)
+    const sharedTabsToggle = dialog.locator('.cam-plan-detail .cam-plan-check--card input[type="checkbox"]')
+    await sharedTabsToggle.uncheck()
+    await expect(dialog.getByText('Tabs are disabled for this separating edge cut. Confirm another workholding method before machining.', { exact: true })).toBeVisible()
+    await sharedTabsToggle.check()
+    const widthInput = dialog.locator('.cam-plan-field').filter({ hasText: 'Width' }).locator('input')
+    await widthInput.fill('0.4')
+    await widthInput.blur()
+
+    // The imported model is intentionally outside the POC, so creation stays
+    // gated until the user explicitly acknowledges that visible coverage gap.
+    const acknowledge = dialog.getByRole('checkbox', { name: /I understand these features will not be covered/ })
+    await expect(acknowledge).toBeVisible()
+    await acknowledge.check()
+    const create = dialog.getByRole('button', { name: /Create \d+ operations/ })
+    await expect(create).toBeEnabled()
+    await create.click()
+    await expect(dialog).toHaveCount(0)
+
+    const created = await getProject(app.page)
+    expect((created.operations as unknown[]).length).toBeGreaterThan(1)
+    expect((created.tabs as unknown[]).length).toBeGreaterThan(0)
+
+    await app.page.keyboard.press(`${modKey}+z`)
+    const restored = await getProject(app.page)
+    expect(restored.operations).toEqual([])
+    expect(restored.tabs).toEqual([])
+    expect(restored.tools).toEqual(seeded.tools)
   })
 
   test('feature-row quick operation creates a CAM operation', async ({ app, ui }) => {

@@ -19,6 +19,7 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
 
 ## Subfolders
 - [toolpaths/](toolpaths/INDEX.md) — toolpath generation (pocket, profile, v-carve, surface rough/finish, drill, edge…). **The heart of CAM.**
+- [operations/camPlan/](operations/camPlan/INDEX.md) — deterministic CAM Plan (Preview) POC: semantic feature/depth recognition, explainable tool planning, residual-backed rest proposals, dependency ordering, coverage, and shared edge-tab drafts. `operations/autoTabs.ts` is the pure tab-placement builder shared with the manual store action.
 - `test-fixtures/` — committed engine-test assets such as `.camj` regression files shared by engine tests, including the issue #401 real cone finish project
 - `gcode/` — G-code post-processors and emission
   - `index.ts` — public API

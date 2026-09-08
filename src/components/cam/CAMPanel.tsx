@@ -25,6 +25,8 @@ import type { SelectionState } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import { loadBundledToolLibrary, type ToolLibraryEntry } from '../../toolLibrary'
 import { ToolLibraryDialog } from './ToolLibraryDialog'
+import { CAMPlanDialog } from './CAMPlanDialog'
+import { createCamPlan, type CamPlanDraft } from '../../engine/operations/camPlan'
 import { Select } from '../Select'
 import { OperationAddMenu } from './OperationAddMenu'
 import { OperationParameterReference } from './OperationParameterReference'
@@ -613,6 +615,8 @@ export function CAMPanel({
   const [libraryError, setLibraryError] = useState<string | null>(null)
   const [showLibraryDialog, setShowLibraryDialog] = useState(false)
   const [showAddOperationMenu, setShowAddOperationMenu] = useState(false)
+  const [showCamPlan, setShowCamPlan] = useState(false)
+  const [camPlan, setCamPlan] = useState<CamPlanDraft | null>(null)
   const [selectedNewOperationKind, setSelectedNewOperationKind] = useState<OperationKind | null>(null)
   const [targetUpdateMessage, setTargetUpdateMessage] = useState<{
     operationId: string
@@ -631,6 +635,7 @@ export function CAMPanel({
   const [exportingBookletOperationId, setExportingBookletOperationId] = useState<string | null>(null)
   const [expandedCamSection, setExpandedCamSection] = useState<null | 'operation' | 'tool'>(null)
   const importLibraryButtonRef = useRef<HTMLButtonElement>(null)
+  const camPlanButtonRef = useRef<HTMLButtonElement>(null)
   const shellMode = useShellMode()
   const tabletShell = isTabletMode(shellMode)
   const [dragOperationId, setDragOperationId] = useState<string | null>(null)
@@ -847,6 +852,17 @@ export function CAMPanel({
   function handleOpenLibraryDialog() {
     setShowLibraryDialog(true)
     void ensureBundledLibraryLoaded()
+  }
+
+  async function calculateCamPlan(): Promise<CamPlanDraft> {
+    const availableTools = await ensureBundledLibraryLoaded()
+    return createCamPlan(useProjectStore.getState().project, availableTools)
+  }
+
+  async function handleOpenCamPlan() {
+    const next = await calculateCamPlan()
+    setCamPlan(next)
+    setShowCamPlan(true)
   }
 
   function handleLibraryDialogClose() {
@@ -2247,6 +2263,15 @@ export function CAMPanel({
                     <Icon id="eye-off" />
                   </button>
                   <button
+                    ref={camPlanButtonRef}
+                    className="cam-header-action cam-header-action--plan"
+                    type="button"
+                    disabled={project.features.length === 0}
+                    onClick={() => void handleOpenCamPlan()}
+                  >
+                    {camT('cam.plan.launch')}
+                  </button>
+                  <button
                     className="cam-header-action"
                     type="button"
                     onClick={onExport}
@@ -2634,6 +2659,19 @@ export function CAMPanel({
           triggerRef={importLibraryButtonRef}
         />
       )}
+
+      {showCamPlan && camPlan ? (
+        <CAMPlanDialog
+          initialPlan={camPlan}
+          onRecalculate={calculateCamPlan}
+          onClose={() => setShowCamPlan(false)}
+          onCreated={(operationIds) => {
+            setShowCamPlan(false)
+            onSelectedOperationIdChange(operationIds.at(-1) ?? null)
+          }}
+          triggerRef={camPlanButtonRef}
+        />
+      ) : null}
 
     </div>
   )

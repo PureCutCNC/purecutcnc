@@ -17,6 +17,7 @@
 import type { StateCreator } from 'zustand'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../engine/toolpaths/restRegions'
 import { selectToolForOperation } from '../../engine/operations/toolSelection'
+import { materializeCamPlan } from '../helpers/camPlanApply'
 import { uniqueName } from '../../import'
 import { defaultTool, inferFeatureKind } from '../../types/project'
 import type {
@@ -40,6 +41,7 @@ export type OperationsSlice = Pick<
   | 'addOperation'
   | 'updateOperation'
   | 'createRestOperation'
+  | 'applyCamPlan'
   | 'setAllOperationToolpathVisibility'
   | 'deleteOperation'
   | 'duplicateOperation'
@@ -65,6 +67,21 @@ export function createOperationsSlice(
 ): OperationsSlice {
 
   return {
+    applyCamPlan: (plan) => {
+      const state = get()
+      const result = materializeCamPlan(state.project, plan)
+      if (!result.ok) return result
+      set((current) => ({
+        project: result.project,
+        history: {
+          past: [...current.history.past, cloneProject(current.project)].slice(-100),
+          future: [],
+          transactionStart: null,
+        },
+      }))
+      return { ok: true, operationIds: result.operationIds }
+    },
+
     addOperation: (kind, pass, target, libraryTools) => {
       const state = get()
       if (!isOperationTargetValid(state.project, kind, target)) {
