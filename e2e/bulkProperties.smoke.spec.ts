@@ -788,6 +788,19 @@ test.describe('Bulk properties browser smoke', () => {
   // ====================================================================
 
   test.describe('Context-menu routing and bulk delete with Undo', () => {
+    test('every rendered project-tree row prevents the native browser menu', async ({ app }) => {
+      await seedProject(app.page, BULK_FIXTURE_JSON)
+
+      const prevented = await app.page.locator('.tree-row').evaluateAll((rows) => rows.map((row) => {
+        const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+        row.dispatchEvent(event)
+        return event.defaultPrevented
+      }))
+
+      expect(prevented.length).toBeGreaterThan(0)
+      expect(prevented).not.toContain(false)
+    })
+
     test('desktop tab context-menu: multi-select hides singleton actions, Delete Selected + Undo restores', async ({ app, ui }) => {
       await seedProject(app.page, BULK_FIXTURE_JSON)
 
