@@ -281,6 +281,13 @@ export type ToolpathWarningCode =
    * normal (every reflex corner does) and stays quiet; this fires only when the
    * whole ring came back with nothing cleaned. */
   | 'pocketWallCornerCleanupFallback'
+  /** The cutter does not fit between an island and the pocket wall, so the
+   * island finish pass was trimmed back to where it does fit. The rounded
+   * finish offsets its island rings straight off the island, a construction
+   * that cannot see the wall — untrimmed it ran the cutter outside the pocket
+   * and gouged it (issue #746). Trimming is silent stock left behind unless it
+   * is said out loud, hence the warning rather than a quiet clip. */
+  | 'pocketFinishIslandWallTooTight'
   // clamps travel / postprocessor
   | 'clampTravelLimitExceeded'
   | 'postWcsNullSelect'

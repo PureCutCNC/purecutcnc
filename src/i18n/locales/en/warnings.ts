@@ -222,6 +222,7 @@ export const warningsEn = {
   'warnings.pocketNoFloorRegion': 'No machinable parallel floor region for band {topZ} -> {bottomZ}',
   'warnings.pocketNoFloorSegments': 'No machinable parallel floor segments for band {topZ} -> {bottomZ}',
   'warnings.pocketWallCornerCleanupFallback': 'A rounded pocket wall corner could not be cleaned safely; the sharp wall path was kept for that ring',
+  'warnings.pocketFinishIslandWallTooTight': 'The cutter does not fit between an island and the pocket wall; the island finish pass was trimmed to where it fits, so stock is left in that gap',
   // postprocessor
   'warnings.postWcsNullSelect': 'Machine definition requests {wcsCommand} in header but selectCommand is null.',
   'warnings.postToolChangesDisabled': 'Operation "{operation}" uses a different tool ("{tool}") than previous, but tool changes are disabled.',

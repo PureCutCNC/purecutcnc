@@ -203,6 +203,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketNoFloorRegion': 'Aucune région de fond parallèle usinable pour la bande {topZ} -> {bottomZ}',
   'warnings.pocketNoFloorSegments': 'Aucun segment de fond parallèle usinable pour la bande {topZ} -> {bottomZ}',
   'warnings.pocketWallCornerCleanupFallback': 'Un angle arrondi de paroi de poche n’a pas pu être nettoyé en toute sécurité ; la trajectoire de paroi vive a été conservée pour cet anneau',
+  'warnings.pocketFinishIslandWallTooTight': 'La fraise ne passe pas entre un îlot et la paroi de la poche ; la passe de finition de l’îlot a été rognée là où elle passe, il reste donc de la matière dans cet intervalle',
   'warnings.postWcsNullSelect': 'La définition de machine demande {wcsCommand} dans l’en-tête, mais selectCommand est nul.',
   'warnings.postToolChangesDisabled': 'L’opération « {operation} » utilise un outil (« {tool} ») différent du précédent, mais les changements d’outil sont désactivés.',
   'warnings.postNoCoolantCommands': 'L’émission de liquide de refroidissement est demandée, mais la définition de machine ne contient aucune commande correspondante.',
