@@ -21,6 +21,7 @@ import { resolveDimensionRef } from '../../toolpaths/geometry'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../toolpaths/restRegions'
 import { resolveInsideEdgeRegions, resolvePocketRegions } from '../../toolpaths/resolver'
 import { isConstruction, isRegion } from '../../../store/helpers/featureRoles'
+import { featuresOverlap } from '../../../store/helpers/clipping'
 import { defaultOperationForTarget, isOperationTargetValid } from '../../../store/helpers/operationDefaults'
 import { resolveFeatureInstances, type ResolvedSketchFeature } from '../../../store/helpers/resolveFeatures'
 import { buildAutoTabsForFeature } from '../autoTabs'
@@ -72,6 +73,20 @@ function groupByDepth(project: Project, features: ResolvedSketchFeature[]): Reso
     groups.set(key, [...(groups.get(key) ?? []), feature])
   }
   return [...groups.values()]
+}
+
+function overlappingFeatureIds(features: ResolvedSketchFeature[]): Set<string> {
+  const ids = new Set<string>()
+  for (let index = 0; index < features.length; index += 1) {
+    const feature = features[index]
+    if (!feature) continue
+    for (const candidate of features.slice(index + 1)) {
+      if (!featuresOverlap(feature, candidate)) continue
+      ids.add(feature.id)
+      ids.add(candidate.id)
+    }
+  }
+  return ids
 }
 
 function operationAlreadyCovers(project: Project, kind: OperationKind, pass: OperationPass, featureId: string): boolean {
@@ -449,8 +464,17 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
 
   const blind = ordinarySubtracts.filter((feature) => resolveDimensionRef(project, feature.z_bottom) > Z_EPSILON)
   const through = ordinarySubtracts.filter((feature) => resolveDimensionRef(project, feature.z_bottom) <= Z_EPSILON)
-  for (const group of groupByDepth(project, blind)) {
+  const overlappingBlindIds = overlappingFeatureIds(blind)
+  for (const group of groupByDepth(project, blind.filter((feature) => !overlappingBlindIds.has(feature.id)))) {
     addRoughFinishPair(builder, 'pocket', group, 'This closed subtract stops above the stock bottom, so it is a blind pocket.')
+  }
+  for (const feature of blind.filter((candidate) => overlappingBlindIds.has(candidate.id))) {
+    addRoughFinishPair(
+      builder,
+      'pocket',
+      [feature],
+      'This blind subtract overlaps another subtract, so it is kept as a separate pocket operation.',
+    )
   }
   for (const group of groupByDepth(project, through)) {
     addRoughFinishPair(builder, 'edge_route_inside', group, 'This closed subtract reaches the stock bottom, so the removable slug is routed on its inside edge.')

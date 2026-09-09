@@ -166,6 +166,45 @@ function testRetainedIslandsDoNotNeedCoverageAcknowledgement(): void {
   assert(islandCoverage.detail.includes('island'), 'coverage explains that the retained island informs the cut')
 }
 
+function testOverlappingBlindSubtractsKeepSeparatePocketPairs(): void {
+  const base = newProject('CAM plan overlapping pockets', 'inch')
+  base.stock.thickness = 1
+  const project = projectWithFeatures({
+    ...base,
+    tools: [tool('quarter', 'flat_endmill', 0.25), tool('eighth', 'flat_endmill', 0.125)],
+  }, [
+    feature('outer', 'add', rectProfile(0, 0, 4.5, 2), 1, 0),
+    feature('outer-pocket', 'subtract', rectProfile(0.25, 0.25, 1.75, 1.25), 1, 0.5),
+    feature('overlap-pocket', 'subtract', rectProfile(1.5, 0.75, 1, 0.75), 1, 0.5),
+    feature('disjoint-a', 'subtract', rectProfile(2.6, 0.25, 0.65, 0.75), 1, 0.5),
+    feature('disjoint-b', 'subtract', rectProfile(3.5, 0.25, 0.65, 0.75), 1, 0.5),
+  ])
+  const plan = createCamPlan(project, [])
+  const roughPockets = plan.operations.filter((draft) =>
+    draft.operation.kind === 'pocket' && draft.operation.pass === 'rough' && !draft.rest,
+  )
+  assert(roughPockets.length === 3, 'overlapping blind subtracts receive separate pocket roughing operations')
+  assert(
+    roughPockets.some((draft) => draft.operation.target.source === 'features' && draft.operation.target.featureIds.join() === 'outer-pocket'),
+    'outer blind subtract remains a direct pocket target',
+  )
+  assert(
+    roughPockets.some((draft) => draft.operation.target.source === 'features' && draft.operation.target.featureIds.join() === 'overlap-pocket'),
+    'overlapping blind subtract receives its own direct pocket target',
+  )
+  assert(
+    roughPockets.some((draft) => (
+      draft.operation.target.source === 'features'
+      && draft.operation.target.featureIds.join() === 'disjoint-a,disjoint-b'
+    )),
+    'disjoint blind subtracts at the same depth remain batched together',
+  )
+  assert(
+    plan.coverage.filter((entry) => entry.featureId === 'outer-pocket' || entry.featureId === 'overlap-pocket').every((entry) => entry.status === 'planned'),
+    'both overlapping subtract features remain visibly planned',
+  )
+}
+
 function testFixtureScaleAndFinishAllowances(): void {
   const base = newProject('CAM plan fixture scale', 'inch')
   base.stock.thickness = 0.75
@@ -434,6 +473,7 @@ testRepresentativePlan()
 testDeterministicAndAtomicApply()
 testDepthRolesAndUnsupportedCoverage()
 testRetainedIslandsDoNotNeedCoverageAcknowledgement()
+testOverlappingBlindSubtractsKeepSeparatePocketPairs()
 testFixtureScaleAndFinishAllowances()
 testBundledToolUnitPreference()
 testFallbackNoToolAndUnits()
