@@ -277,8 +277,19 @@ export function diffToolpathInputs(previous: Project, next: Project): ToolpathIn
  *   can raise a retract;
  * - protected-footprint paths only subtract where they intersect the
  *   operation's own coverage;
- * - rest machining is materialized as region features at creation time, so
- *   there is no live operation-to-operation dependency.
+ * - rest machining is materialized as region features at creation time, so it
+ *   adds no live operation-to-operation dependency.
+ *
+ * There *is* one such dependency, and this footprint does not carry it: #739
+ * made `discoverNonTargetSubtracts` (`resolver.ts`) read every other
+ * operation's target list and enabled flag, so which subtracts fold into a
+ * region depends on what else the project machines. That is captured outside
+ * this model, by the `machinedElsewhere` stamp on `ToolpathCacheInputs`
+ * (issue #749), which feeds the changed ids back through
+ * `operationAffectedByChange` below — the footprint answers "does this feature
+ * reach me", which is the right question for an ownership change too. Stated
+ * here because this comment previously claimed no such dependency existed, and
+ * that claim is what let the fold ship with a cache that ignored it.
  */
 export interface OperationFootprint {
   /** World XY region in which a feature change can affect this operation. `null` = unknown. */
