@@ -478,6 +478,63 @@ function bandHasThickness(topZ: number, bottomZ: number): boolean {
   return Math.abs(topZ - bottomZ) > Number.EPSILON
 }
 
+/**
+ * Do two resolved band subjects cover the same area?
+ *
+ * Compared by symmetric difference rather than by the active feature ids
+ * (#751 §5). Adjacent bands always differ in some feature's activity — that is
+ * why the boundary exists — so an id comparison merges nothing. The case worth
+ * merging is precisely the one where the activity differs and the area does
+ * not: lift a restricted subtract's bite out of the main subject and the bands
+ * either side of its floor become the same shape. Clipper works in scaled
+ * integers, and both sides come from the same construction, so identical
+ * subjects difference to nothing exactly.
+ */
+function bandSubjectsEquivalent(left: ClipperPath[], right: ClipperPath[]): boolean {
+  return differencePaths(left, right).length === 0
+    && differencePaths(right, left).length === 0
+}
+
+/**
+ * Merge adjacent entries that cover the same area into one taller band.
+ *
+ * A band boundary exists to mark where the outline changes. Once a restricted
+ * subtract no longer contributes to the main subject, the boundary at its floor
+ * marks nothing, and leaving it splits the pocket into two passes where one
+ * would do — on `complex-pocket-test.camj` that is the difference between
+ * cutting 5.5 in² twice and cutting it once.
+ */
+function mergeEquivalentBands(entries: BandDraft[]): BandDraft[] {
+  const merged: BandDraft[] = []
+  for (const entry of entries) {
+    const previous = merged[merged.length - 1]
+    if (
+      previous
+      && Math.abs(previous.bottomZ - entry.topZ) <= Number.EPSILON
+      && bandSubjectsEquivalent(previous.subject, entry.subject)
+    ) {
+      merged[merged.length - 1] = {
+        ...previous,
+        bottomZ: entry.bottomZ,
+        targetFeatureIds: [...new Set([...previous.targetFeatureIds, ...entry.targetFeatureIds])],
+        islandFeatureIds: [...new Set([...previous.islandFeatureIds, ...entry.islandFeatureIds])],
+      }
+      continue
+    }
+    merged.push(entry)
+  }
+  return merged
+}
+
+/** A band before its subject is turned into regions, so subjects stay comparable. */
+interface BandDraft {
+  topZ: number
+  bottomZ: number
+  subject: ClipperPath[]
+  targetFeatureIds: string[]
+  islandFeatureIds: string[]
+}
+
 export function resolvePocketRegions(authoritativeProject: Project, operation: Operation): ResolvedPocketResult {
   const project = resolveProject(authoritativeProject)
   const warnings: ToolpathWarning[] = []
@@ -578,6 +635,26 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
   const targetIdSet = new Set(closedSubtractFeatures.map(({ feature }) => feature.id))
   const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetUnionPaths, targetIdSet)
   const nonTargetSubtractIdSet = new Set(nonTargetSubtracts.map(({ feature }) => feature.id))
+  // A folded subtract that bottoms out at or above the target's own floor gets
+  // its own band over its own footprint, instead of splitting the whole pocket
+  // at its floor (#751 §5). Measured on `complex-pocket-test.camj`: a 0.098 in²
+  // circle inside an island was forcing a third full-region pass over 5.6 in²,
+  // and holding the rough to 0.05/0.05/0.06 bands against a 0.125 stepdown.
+  //
+  // One deeper than the target floor is excluded: whether the pocket should
+  // follow it down at all is #751 §6, undecided, and restricting it here would
+  // answer that question by accident.
+  const targetFloorZ = Math.min(...closedTargetFeatures.map(({ span }) => span.min))
+  //
+  // Strictly above, and by a real amount: one bottoming out *at* the target's
+  // own floor needs no terminating pass, because the main band already ends
+  // there. Restricting it would split the region for nothing — caught by
+  // #526's own suite, which asserts a bite at pocket depth adds no band.
+  const restrictedSubtractIdSet = new Set(
+    nonTargetSubtracts
+      .filter(({ span }) => span.min > targetFloorZ && bandHasThickness(span.min, targetFloorZ))
+      .map(({ feature }) => feature.id),
+  )
   const reachableUnionPaths = reachableUnionForDiscovery(targetUnionPaths, nonTargetSubtracts)
   const closedAddFeatures = nonTargetSubtracts.length > 0 ? closedAddFeaturesWithSpans(project) : []
   const stockPaths = nonTargetSubtracts.length > 0 ? stockFootprintPaths(project) : []
@@ -608,6 +685,9 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
     ...candidateTabIslands.map(({ span }) => span),
   ])
   const bands: ResolvedPocketBand[] = []
+  const mainDrafts: BandDraft[] = []
+  /** Keyed by subtract id: each restricted subtract's bite gets its own band run. */
+  const restrictedDrafts = new Map<string, BandDraft[]>()
   const lineIdSet = new Set(closedLineFeatures.map(({ feature }) => feature.id))
   const expandedFeaturesInOrder = project.features.flatMap((feature) => expandFeatureGeometry(feature))
 
@@ -623,6 +703,10 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
     if (activeTargets.length === 0 && activeNonTargetSubtracts.length === 0) {
       continue
     }
+    const activeRestrictedSubtracts = activeNonTargetSubtracts
+      .filter(({ feature }) => restrictedSubtractIdSet.has(feature.id))
+    const activeFoldedSubtracts = activeNonTargetSubtracts
+      .filter(({ feature }) => !restrictedSubtractIdSet.has(feature.id))
 
     const activeIslands = activeForBand(candidateIslands, topZ, bottomZ)
     const activeTabIslands = activeObstaclesForBand(candidateTabIslands, topZ, bottomZ)
@@ -657,7 +741,7 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
         // A non-target subtract carves only where there is material to carve,
         // so its contribution is clipped to the band's material silhouette
         // rather than followed out into waste stock (issue #526).
-        if (nonTargetSubtractIdSet.has(feature.id)) {
+        if (nonTargetSubtractIdSet.has(feature.id) && !restrictedSubtractIdSet.has(feature.id)) {
           const carvedPaths = intersectPaths([featurePath], bandSilhouettePaths)
           if (carvedPaths.length > 0) {
             resolvedPaths = unionPaths([...resolvedPaths, ...carvedPaths])
@@ -716,39 +800,74 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
       )
     }
 
+    const bandIslandFeatureIds = [
+      ...activeIslands.map(({ feature }) => feature.id),
+      ...activeTabIslands.map((tab) => tab.id),
+    ]
+
+    // Each restricted subtract's bite: the part of it standing in material the
+    // main subject has not already voided (#751 §5). Differenced against the
+    // main subject on purpose — the two must not overlap, or the pocket cuts
+    // the same area twice at two depths.
+    for (const { feature } of activeRestrictedSubtracts) {
+      const carved = intersectPaths([flattenFeatureToClipperPath(feature)], bandSilhouettePaths)
+      if (carved.length === 0) {
+        continue
+      }
+      let bite = differencePaths(carved, resolvedPaths)
+      if (bite.length > 0 && activeTabIslands.length > 0) {
+        bite = differencePaths(bite, activeTabIslands.map((tab) => tab.path))
+      }
+      if (bite.length === 0) {
+        continue
+      }
+      const drafts = restrictedDrafts.get(feature.id) ?? []
+      drafts.push({
+        topZ,
+        bottomZ,
+        subject: bite,
+        targetFeatureIds: [feature.id],
+        islandFeatureIds: [],
+      })
+      restrictedDrafts.set(feature.id, drafts)
+    }
+
     if (resolvedPaths.length === 0) {
       warnings.push({ code: 'bandEmptySubject', params: { topZ, bottomZ } })
       continue
     }
 
-    const polyTree = executeClip(resolvedPaths, [], ClipperLib.ClipType.ctUnion)
-
-    const bandTargetFeatureIds = [
-      ...activeTargets.map(({ feature }) => feature.id),
-      ...activeNonTargetSubtracts.map(({ feature }) => feature.id),
-    ]
-    const regions = polyTreeToRegions(
-      polyTree,
-      bandTargetFeatureIds,
-      [
-        ...activeIslands.map(({ feature }) => feature.id),
-        ...activeTabIslands.map((tab) => tab.id),
-      ],
-    )
-
-    if (regions.length === 0) {
-      warnings.push({ code: 'bandNoRegions', params: { topZ, bottomZ } })
-      continue
-    }
-
-    bands.push({
+    mainDrafts.push({
       topZ,
       bottomZ,
-      targetFeatureIds: bandTargetFeatureIds,
-      islandFeatureIds: [
-        ...activeIslands.map(({ feature }) => feature.id),
-        ...activeTabIslands.map((tab) => tab.id),
+      subject: resolvedPaths,
+      targetFeatureIds: [
+        ...activeTargets.map(({ feature }) => feature.id),
+        ...activeFoldedSubtracts.map(({ feature }) => feature.id),
       ],
+      islandFeatureIds: bandIslandFeatureIds,
+    })
+  }
+
+  // Deepest-topped first, and where two share a top the shallower floor first,
+  // so a bite is cut before the main band that reaches past it.
+  const orderedDrafts = [
+    ...mergeEquivalentBands(mainDrafts),
+    ...[...restrictedDrafts.values()].flatMap((drafts) => mergeEquivalentBands(drafts)),
+  ].sort((left, right) => (right.topZ - left.topZ) || (right.bottomZ - left.bottomZ))
+
+  for (const draft of orderedDrafts) {
+    const polyTree = executeClip(draft.subject, [], ClipperLib.ClipType.ctUnion)
+    const regions = polyTreeToRegions(polyTree, draft.targetFeatureIds, draft.islandFeatureIds)
+    if (regions.length === 0) {
+      warnings.push({ code: 'bandNoRegions', params: { topZ: draft.topZ, bottomZ: draft.bottomZ } })
+      continue
+    }
+    bands.push({
+      topZ: draft.topZ,
+      bottomZ: draft.bottomZ,
+      targetFeatureIds: draft.targetFeatureIds,
+      islandFeatureIds: draft.islandFeatureIds,
       regions,
     })
   }
