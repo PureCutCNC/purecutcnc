@@ -68,6 +68,7 @@ export interface ParityCase {
 }
 
 const FIXTURE_DIR = new URL('../test-fixtures/', import.meta.url)
+const EXAMPLE_DIR = new URL('../../../public/examples/', import.meta.url)
 
 /**
  * A frozen, self-contained machine definition. Deliberately not a builtin from
@@ -356,6 +357,31 @@ function tabbedFinishCases(): ParityCase[] {
 }
 
 /**
+ * The example projects shipped in the app.
+ *
+ * Added after #739, where a resolver change put extra toolpath on
+ * `purecutcnc.camj` and nothing caught it. Both that change's own verification
+ * and this corpus drew from `test-fixtures/`, where every fixture happened to
+ * short-circuit the new code path — so the files a user is most likely to open
+ * were the only ones not regression-tested. These are shipped assets: if their
+ * output moves, someone's first experience of the app moves with it.
+ */
+function exampleCases(): ParityCase[] {
+  const cases: ParityCase[] = []
+  const files = readdirSync(EXAMPLE_DIR).filter((name) => name.endsWith('.camj')).sort()
+  for (const file of files) {
+    const project = normalizeProject(
+      JSON.parse(readFileSync(new URL(file, EXAMPLE_DIR), 'utf8')) as Project,
+    )
+    const stem = file.replace(/\.camj$/, '')
+    for (const op of project.operations) {
+      cases.push({ id: `example/${stem}/${op.id}`, project, operationId: op.id })
+    }
+  }
+  return cases
+}
+
+/**
  * Hand-built cases for the operation kinds no `.camj` fixture exercises —
  * `v_carve`, `surface_clean`, `edge_route_inside`, and all five drill types —
  * plus an inch project, a tabbed pocket, and a clamped pocket so the tab and
@@ -539,5 +565,5 @@ function syntheticCases(): ParityCase[] {
 
 /** The full corpus, in a stable order. */
 export function buildParityCorpus(): ParityCase[] {
-  return [...fixtureCases(), ...tabbedFinishCases(), ...syntheticCases()]
+  return [...fixtureCases(), ...exampleCases(), ...tabbedFinishCases(), ...syntheticCases()]
 }
