@@ -29,6 +29,7 @@ export interface CamPlanCoverage {
 export interface CamPlanTool {
   id: string
   source: 'existing' | 'library'
+  nativeUnits: Tool['units']
   libraryKey?: string
   tool: Tool
 }

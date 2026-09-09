@@ -15,7 +15,7 @@
  */
 
 import type { ToolLibraryEntry } from '../../../toolLibrary'
-import { defaultTool, type OperationKind, type OperationPass, type OperationTarget, type Project, type Tab } from '../../../types/project'
+import { defaultTool, type Operation, type OperationKind, type OperationPass, type OperationTarget, type Project, type Tab } from '../../../types/project'
 import { getFeatureGeometryBounds } from '../../../text'
 import { resolveDimensionRef } from '../../toolpaths/geometry'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../toolpaths/restRegions'
@@ -26,7 +26,9 @@ import { resolveFeatureInstances, type ResolvedSketchFeature } from '../../../st
 import { buildAutoTabsForFeature } from '../autoTabs'
 import {
   camPlanToolPool,
+  camPlanRoughStockToLeave,
   chooseDrillingTool,
+  materiallySmallerCamPlanTools,
   rankCamPlanTools,
   toolChoiceReason,
 } from './toolPlanning'
@@ -122,6 +124,26 @@ interface PlanBuilder {
   sequence: number
 }
 
+function applyRoughStockToLeave(project: Project, operation: { kind: OperationKind; pass: OperationPass; stockToLeaveRadial: number; stockToLeaveAxial: number }): void {
+  if (operation.pass !== 'rough') return
+  if (
+    operation.kind !== 'pocket'
+    && operation.kind !== 'edge_route_inside'
+    && operation.kind !== 'edge_route_outside'
+  ) return
+  const allowance = camPlanRoughStockToLeave(project.meta.units)
+  operation.stockToLeaveRadial = allowance
+  operation.stockToLeaveAxial = allowance
+}
+
+function restAnalysisOperation(operation: Operation): Operation {
+  return {
+    ...operation,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+  }
+}
+
 function addPlannedOperation(
   builder: PlanBuilder,
   kind: OperationKind,
@@ -167,6 +189,7 @@ function addPlannedOperation(
   )
   operation.id = key
   operation.target = target
+  applyRoughStockToLeave(builder.project, operation)
   if (selected) builder.reusedToolIds.add(selected.id)
 
   const draft: CamPlanOperationDraft = {
@@ -192,7 +215,11 @@ function addPlannedOperation(
   return draft
 }
 
-function addRestOperation(builder: PlanBuilder, source: CamPlanOperationDraft | null): CamPlanOperationDraft | null {
+function addFinishRestOperation(
+  builder: PlanBuilder,
+  source: CamPlanOperationDraft | null,
+  finish: CamPlanOperationDraft | null,
+): CamPlanOperationDraft | null {
   if (!source || source.hardError || source.operation.target.source !== 'features') return null
   if (
     source.operation.kind !== 'pocket'
@@ -211,25 +238,25 @@ function addRestOperation(builder: PlanBuilder, source: CamPlanOperationDraft | 
     requiredDepth,
     builder.reusedToolIds,
   )
-  const smaller = ranked.tools.find((candidate) => candidate.tool.diameter < sourceTool.tool.diameter - 1e-9)
+  const smaller = materiallySmallerCamPlanTools(sourceTool, ranked.tools)[0]
   if (!smaller) return null
 
   const result = source.operation.kind === 'pocket'
-    ? generatePocketRestRegionDrafts(builder.analysisProject, source.operation)
-    : generateEdgeRestRegionDrafts(builder.analysisProject, source.operation)
+    ? generatePocketRestRegionDrafts(builder.analysisProject, restAnalysisOperation(source.operation))
+    : generateEdgeRestRegionDrafts(builder.analysisProject, restAnalysisOperation(source.operation))
   if (result.drafts.length === 0) return null
 
   const rest = addPlannedOperation(
     builder,
     source.operation.kind,
-    'rough',
+    'finish',
     sourceFeatures,
-    `A smaller cutter can remove ${result.drafts.length} residual area${result.drafts.length === 1 ? '' : 's'} left by ${source.operation.name}.`,
-    [source.key],
+    `A smaller finish cutter can clean ${result.drafts.length} residual area${result.drafts.length === 1 ? '' : 's'} that ${source.operation.name} cannot reach.`,
+    [finish?.key ?? source.key],
     smaller,
   )
   if (!rest) return null
-  rest.operation.name = `${source.operation.name} Rest`
+  rest.operation.name = `${finish?.operation.name ?? source.operation.name.replace('Rough', 'Finish')} Rest`
   rest.rest = {
     sourceOperationKey: source.key,
     sourceFeatureIds: [...source.operation.target.featureIds],
@@ -245,10 +272,18 @@ function addRoughFinishPair(
   rationale: string,
 ): CamPlanOperationDraft[] {
   const rough = addPlannedOperation(builder, kind, 'rough', features, `${rationale} Start with a roughing pass.`)
-  const rest = addRestOperation(builder, rough)
-  const finishDependencies = rest ? [rest.key] : rough ? [rough.key] : []
-  const finish = addPlannedOperation(builder, kind, 'finish', features, `${rationale} Finish the walls and floor after roughing.`, finishDependencies)
-  return [rough, rest, finish].filter((draft): draft is CamPlanOperationDraft => draft !== null)
+  const finishTool = rough ? planToolById(builder.tools, rough.operation.toolRef) ?? undefined : undefined
+  const finish = addPlannedOperation(
+    builder,
+    kind,
+    'finish',
+    features,
+    `${rationale} Finish the walls and floor after roughing.`,
+    rough ? [rough.key] : [],
+    finishTool,
+  )
+  const rest = addFinishRestOperation(builder, rough, finish)
+  return [rough, finish, rest].filter((draft): draft is CamPlanOperationDraft => draft !== null)
 }
 
 function buildSharedTabs(builder: PlanBuilder): CamPlanSharedTabsDraft[] {

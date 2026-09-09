@@ -16,27 +16,34 @@
 
 import type { ToolLibraryEntry } from '../../../toolLibrary'
 import type { OperationKind, OperationTarget, Project, Tool } from '../../../types/project'
-import { convertToolUnits } from '../../../utils/units'
+import { convertLength, convertToolUnits } from '../../../utils/units'
 import { preferredToolTypes, targetFeatureSize } from '../toolSelection'
 import type { CamPlanTool } from './types'
 
 /**
- * Outside profiles have no geometric clearance constraint, so the ordinary
- * half-span selector can choose a cutter that is visually and practically out
- * of scale with the part. The preview deliberately starts more conservatively:
- * at most one quarter of the part's smaller span. This is isolated and fixture-
- * backed because POC feedback may change it.
+ * The preview deliberately keeps primary cutters comfortably below the
+ * narrowest target span. A purely clearance-based limit can otherwise pick a
+ * half- or three-quarter-inch tool for a small 2.5D part and hide its details.
+ * The POC starts conservatively; rest machining can still clear broad areas
+ * efficiently with a suitable first cutter.
  */
-export const CAM_PLAN_OUTSIDE_TOOL_FRACTION = 0.25
-export const CAM_PLAN_INTERIOR_TOOL_FRACTION = 0.5
+export const CAM_PLAN_OUTSIDE_TOOL_FRACTION = 0.15
+export const CAM_PLAN_INTERIOR_TOOL_FRACTION = 0.2
+export const CAM_PLAN_FINISH_REST_TOOL_FRACTION = 0.5
+export const CAM_PLAN_ROUGH_STOCK_TO_LEAVE_INCH = 0.005
 export const CAM_PLAN_HELICAL_BORE_FRACTION = 0.8
 export const CAM_PLAN_DRILL_DIAMETER_TOLERANCE = 0.02
+
+export function camPlanRoughStockToLeave(units: Tool['units']): number {
+  return convertLength(CAM_PLAN_ROUGH_STOCK_TO_LEAVE_INCH, 'inch', units)
+}
 
 function libraryTool(entry: ToolLibraryEntry, units: Tool['units']): CamPlanTool {
   const converted = convertToolUnits({ ...entry, id: `cam-plan-tool:${entry.key}` }, units)
   return {
     id: converted.id,
     source: 'library',
+    nativeUnits: entry.units,
     libraryKey: entry.key,
     tool: converted,
   }
@@ -46,6 +53,7 @@ export function camPlanToolPool(project: Project, libraryTools: ToolLibraryEntry
   const existing = project.tools.map((tool) => ({
     id: tool.id,
     source: 'existing' as const,
+    nativeUnits: tool.units,
     tool: tool.units === project.meta.units ? tool : convertToolUnits(tool, project.meta.units),
   }))
   const imported = libraryTools.map((entry) => libraryTool(entry, project.meta.units))
@@ -72,12 +80,14 @@ function toolTypeRank(kind: OperationKind, tool: Tool): number {
   return index < 0 ? Number.POSITIVE_INFINITY : index
 }
 
-function compareTools(kind: OperationKind, reusedToolIds: ReadonlySet<string>) {
+function compareTools(kind: OperationKind, projectUnits: Tool['units'], reusedToolIds: ReadonlySet<string>) {
   return (a: CamPlanTool, b: CamPlanTool): number => {
     const typeDelta = toolTypeRank(kind, a.tool) - toolTypeRank(kind, b.tool)
     if (typeDelta !== 0) return typeDelta
     const existingDelta = Number(b.source === 'existing') - Number(a.source === 'existing')
     if (existingDelta !== 0) return existingDelta
+    const nativeUnitsDelta = Number(b.nativeUnits === projectUnits) - Number(a.nativeUnits === projectUnits)
+    if (nativeUnitsDelta !== 0) return nativeUnitsDelta
     const reusedDelta = Number(reusedToolIds.has(b.id)) - Number(reusedToolIds.has(a.id))
     if (reusedDelta !== 0) return reusedDelta
     const diameterDelta = b.tool.diameter - a.tool.diameter
@@ -89,6 +99,21 @@ function compareTools(kind: OperationKind, reusedToolIds: ReadonlySet<string>) {
 export interface RankedCamPlanTools {
   tools: CamPlanTool[]
   maximumDiameter: number | null
+}
+
+/**
+ * A finish-rest cutter must reach substantially tighter geometry than the
+ * primary cutter. Limiting it to half the primary diameter avoids a nearly
+ * duplicate pass that cannot clear the corners or narrow channels the first
+ * cutter left behind.
+ */
+export function materiallySmallerCamPlanTools(
+  source: CamPlanTool,
+  candidates: CamPlanTool[],
+): CamPlanTool[] {
+  return candidates.filter((candidate) =>
+    candidate.tool.diameter <= source.tool.diameter * CAM_PLAN_FINISH_REST_TOOL_FRACTION + 1e-9,
+  )
 }
 
 export function rankCamPlanTools(
@@ -105,7 +130,7 @@ export function rankCamPlanTools(
     .filter((candidate) => candidate.tool.diameter > 0)
     .filter((candidate) => diameterLimit == null || candidate.tool.diameter <= diameterLimit + 1e-9)
     .filter((candidate) => toolCanReach(candidate.tool, requiredDepth))
-    .sort(compareTools(kind, reusedToolIds))
+    .sort(compareTools(kind, project.meta.units, reusedToolIds))
 
   return { tools, maximumDiameter: diameterLimit }
 }

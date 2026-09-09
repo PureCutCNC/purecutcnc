@@ -19,10 +19,8 @@ import { defaultOperationForTarget } from '../../../store/helpers/operationDefau
 import { resolveFeatureInstances } from '../../../store/helpers/resolveFeatures'
 import { resolveDimensionRef } from '../../toolpaths/geometry'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../toolpaths/restRegions'
-import { rankCamPlanTools, toolChoiceReason } from './toolPlanning'
+import { materiallySmallerCamPlanTools, rankCamPlanTools, toolChoiceReason } from './toolPlanning'
 import type { CamPlanDraft, CamPlanOperationDraft, CamPlanOperationField, CamPlanTool } from './types'
-
-const TOOL_EPSILON = 1e-9
 
 function analysisProject(project: Project, plan: CamPlanDraft): Project {
   const tools = new Map(project.tools.map((tool) => [tool.id, tool]))
@@ -58,8 +56,17 @@ function operationWithSuggestedTool(
   }
 }
 
+function restAnalysisOperation(operation: Operation): Operation {
+  return {
+    ...operation,
+    stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0,
+  }
+}
+
 function sameFamily(a: CamPlanOperationDraft, b: CamPlanOperationDraft): boolean {
-  return a.operation.kind === b.operation.kind
+  return !a.rest
+    && a.operation.kind === b.operation.kind
     && a.operation.pass === 'finish'
     && a.coveredFeatureIds.length === b.coveredFeatureIds.length
     && a.coveredFeatureIds.every((id) => b.coveredFeatureIds.includes(id))
@@ -92,6 +99,7 @@ function createRestOperation(
   project: Project,
   plan: CamPlanDraft,
   source: CamPlanOperationDraft,
+  finish: CamPlanOperationDraft | null,
   key: string,
   selected: CamPlanTool | null,
 ): Operation {
@@ -99,7 +107,7 @@ function createRestOperation(
   const operation = defaultOperationForTarget(
     { ...context, operations: [...project.operations, ...plan.operations.map((draft) => draft.operation)] },
     source.operation.kind,
-    'rough',
+    'finish',
     source.operation.target,
     project.operations.length + plan.operations.length,
     {
@@ -108,7 +116,7 @@ function createRestOperation(
     },
   )
   operation.id = key
-  operation.name = `${source.operation.name} Rest`
+  operation.name = `${finish?.operation.name ?? source.operation.name.replace('Rough', 'Finish')} Rest`
   operation.target = source.operation.target
   return operation
 }
@@ -127,6 +135,19 @@ function selectedRestTool(
   }
 }
 
+function updateFinishFromSource(
+  draft: CamPlanOperationDraft,
+  source: CamPlanOperationDraft,
+  sourceTool: CamPlanTool | null,
+): CamPlanOperationDraft {
+  if (!sameFamily(draft, source)) return draft
+  if (!sourceTool || draft.userOverrides.includes('toolRef')) return draft
+  return {
+    ...draft,
+    operation: operationWithSuggestedTool(draft.operation, sourceTool, new Set(draft.userOverrides)),
+  }
+}
+
 /**
  * Recomputes only rest proposals derived from one edited operation. Explicit
  * values on the rest proposal survive; suggested tool/default values may move
@@ -135,6 +156,7 @@ function selectedRestTool(
 export function reconcileCamPlanRest(project: Project, plan: CamPlanDraft, sourceKey: string): CamPlanDraft {
   const source = plan.operations.find((draft) => draft.key === sourceKey) ?? null
   if (!source) return plan
+  if (source.operation.pass !== 'rough') return plan
   if (
     source.operation.kind !== 'pocket'
     && source.operation.kind !== 'edge_route_inside'
@@ -143,15 +165,22 @@ export function reconcileCamPlanRest(project: Project, plan: CamPlanDraft, sourc
 
   const dependents = plan.operations.filter((draft) => draft.rest?.sourceOperationKey === sourceKey)
   const existing = dependents[0] ?? null
+  const sourceTool = candidateById(plan, source.operation.toolRef)
   const context = analysisProject(project, plan)
   const result = source.operation.kind === 'pocket'
-    ? generatePocketRestRegionDrafts(context, source.operation)
-    : generateEdgeRestRegionDrafts(context, source.operation)
+    ? generatePocketRestRegionDrafts(context, restAnalysisOperation(source.operation))
+    : generateEdgeRestRegionDrafts(context, restAnalysisOperation(source.operation))
+  const withoutRest = removeRestOperations(plan.operations, source, dependents).map((draft) =>
+    updateFinishFromSource(draft, source, sourceTool),
+  )
+  const finish = withoutRest.find((draft) => sameFamily(draft, source)) ?? null
   if (result.drafts.length === 0) {
-    return { ...plan, operations: removeRestOperations(plan.operations, source, dependents) }
+    return {
+      ...plan,
+      operations: withoutRest,
+    }
   }
 
-  const sourceTool = candidateById(plan, source.operation.toolRef)
   const reusedToolIds = new Set(plan.operations.flatMap((draft) => draft.operation.toolRef ? [draft.operation.toolRef] : []))
   const ranked = rankCamPlanTools(
     project,
@@ -162,14 +191,22 @@ export function reconcileCamPlanRest(project: Project, plan: CamPlanDraft, sourc
     reusedToolIds,
   )
   const candidates = sourceTool
-    ? ranked.tools.filter((candidate) => candidate.tool.diameter < sourceTool.tool.diameter - TOOL_EPSILON)
+    ? materiallySmallerCamPlanTools(sourceTool, ranked.tools)
     : []
   const { selected, preservedConflict } = selectedRestTool(plan, existing, candidates)
   const key = existing?.key ?? `${source.key}:rest`
   const overrides = new Set(existing?.userOverrides ?? [])
+  const restName = `${finish?.operation.name ?? source.operation.name.replace('Rough', 'Finish')} Rest`
   let operation = existing?.operation
-    ? { ...existing.operation, target: source.operation.target }
-    : createRestOperation(project, plan, source, key, selected)
+    ? {
+      ...existing.operation,
+      pass: 'finish' as const,
+      target: source.operation.target,
+      ...(!overrides.has('name') ? { name: restName } : {}),
+      ...(!overrides.has('stockToLeaveRadial') ? { stockToLeaveRadial: 0 } : {}),
+      ...(!overrides.has('stockToLeaveAxial') ? { stockToLeaveAxial: 0 } : {}),
+    }
+    : createRestOperation(project, plan, source, finish, key, selected)
   if (selected && !overrides.has('toolRef')) {
     operation = operationWithSuggestedTool(operation, selected, overrides)
   } else if (!selected && !overrides.has('toolRef')) {
@@ -184,7 +221,7 @@ export function reconcileCamPlanRest(project: Project, plan: CamPlanDraft, sourc
     enabled: existing?.enabled ?? source.enabled,
     operation,
     targetLabel: source.targetLabel,
-    rationale: `A smaller cutter can remove ${result.drafts.length} residual area${result.drafts.length === 1 ? '' : 's'} left by ${source.operation.name}.`,
+    rationale: `A smaller finish cutter can clean ${result.drafts.length} residual area${result.drafts.length === 1 ? '' : 's'} that ${source.operation.name} cannot reach.`,
     toolReason: existing?.userOverrides.includes('toolRef')
       ? existing.toolReason
       : (selected
@@ -192,7 +229,7 @@ export function reconcileCamPlanRest(project: Project, plan: CamPlanDraft, sourc
         : 'No available smaller tool satisfies this rest operation\'s type, scale, and reach constraints.'),
     toolOptions: [...new Set([...currentUserTool, ...candidates.map((candidate) => candidate.id)])],
     coveredFeatureIds: [...source.coveredFeatureIds],
-    dependencies: [source.key],
+    dependencies: [finish?.key ?? source.key],
     hardError: preservedConflict
       ? 'Your selected rest tool is no longer compatible with the corrected source operation.'
       : (!selected ? 'Residual material remains, but no smaller compatible tool is available.' : null),
@@ -207,29 +244,16 @@ export function reconcileCamPlanRest(project: Project, plan: CamPlanDraft, sourc
     },
   }
 
-  let inserted = false
-  const oldKeys = new Set(dependents.map((draft) => draft.key))
-  const operations: CamPlanOperationDraft[] = []
-  for (const draft of plan.operations) {
-    if (oldKeys.has(draft.key)) {
-      if (!inserted) operations.push(rest)
-      inserted = true
-      continue
-    }
-    operations.push(draft)
-    if (!existing && draft.key === source.key) {
-      operations.push(rest)
-      inserted = true
-    }
-  }
-
-  const dependenciesToReplace = new Set([...oldKeys, source.key])
+  const anchorKey = finish?.key ?? source.key
+  const anchorIndex = withoutRest.findIndex((draft) => draft.key === anchorKey)
+  const insertionIndex = anchorIndex >= 0 ? anchorIndex : withoutRest.length - 1
+  const operations = [
+    ...withoutRest.slice(0, insertionIndex + 1),
+    rest,
+    ...withoutRest.slice(insertionIndex + 1),
+  ]
   return {
     ...plan,
-    operations: operations.map((draft) => (
-      draft.key !== rest.key && sameFamily(draft, source)
-        ? replaceDependencies(draft, dependenciesToReplace, rest.key)
-        : draft
-    )),
+    operations,
   }
 }

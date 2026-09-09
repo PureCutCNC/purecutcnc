@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ToolLibraryEntry } from '../../../toolLibrary'
 import { circleProfile, newProject, rectProfile, type Project, type SketchFeature, type SketchProfile, type Tool } from '../../../types/project'
 import { projectWithFeatures } from '../../../test/projectFixtures'
 import { materializeCamPlan } from '../../../store/helpers/camPlanApply'
@@ -43,6 +44,11 @@ function tool(id: string, type: Tool['type'], diameter: number): Tool {
     defaultStepover: 0.4,
     maxCutDepth: 1,
   }
+}
+
+function libraryTool(key: string, source: Tool): ToolLibraryEntry {
+  const { id: _id, ...entry } = source
+  return { ...entry, key }
 }
 
 function feature(
@@ -76,6 +82,7 @@ function exampleProject(): Project {
       tool('three-quarter', 'flat_endmill', 0.75),
       tool('quarter', 'flat_endmill', 0.25),
       tool('eighth', 'flat_endmill', 0.125),
+      tool('sixteenth', 'flat_endmill', 0.0625),
       tool('quarter-drill', 'drill', 0.25),
     ],
   }, [
@@ -159,6 +166,76 @@ function testRetainedIslandsDoNotNeedCoverageAcknowledgement(): void {
   assert(islandCoverage.detail.includes('island'), 'coverage explains that the retained island informs the cut')
 }
 
+function testFixtureScaleAndFinishAllowances(): void {
+  const base = newProject('CAM plan fixture scale', 'inch')
+  base.stock.thickness = 0.75
+  const project = projectWithFeatures({
+    ...base,
+    tools: [
+      tool('three-quarter', 'flat_endmill', 0.75),
+      tool('half', 'flat_endmill', 0.5),
+      tool('three-eighth', 'flat_endmill', 0.375),
+      tool('quarter', 'flat_endmill', 0.25),
+      tool('eighth', 'flat_endmill', 0.125),
+    ],
+  }, [
+    feature('outer', 'add', rectProfile(0.25, 0.25, 3.5, 2.5), 0.75, 0),
+    feature('pocket', 'subtract', rectProfile(0.5, 0.5, 3, 2), 0.75, 0.55),
+    feature('island-top', 'add', circleProfile(2, 1.625, 0.4506939094329985), 0.75, 0, 'circle'),
+    feature('island-right', 'add', circleProfile(2.375, 1.375, 0.3535533905932738), 0.75, 0, 'circle'),
+    feature('island-left', 'add', circleProfile(1.625, 1.375, 0.3952847075210474), 0.75, 0, 'circle'),
+  ])
+  const plan = createCamPlan(project, [])
+  const pocket = plan.operations.filter((draft) =>
+    draft.operation.kind === 'pocket' && draft.coveredFeatureIds.includes('pocket'),
+  )
+  const outside = plan.operations.filter((draft) =>
+    draft.operation.kind === 'edge_route_outside' && draft.coveredFeatureIds.includes('outer'),
+  )
+  const pocketRough = pocket.find((draft) => draft.operation.pass === 'rough' && !draft.rest)
+  const pocketRest = pocket.find((draft) => draft.rest)
+  const pocketFinish = pocket.find((draft) => draft.operation.pass === 'finish' && !draft.rest)
+  const outsideRough = outside.find((draft) => draft.operation.pass === 'rough')
+  const outsideFinish = outside.find((draft) => draft.operation.pass === 'finish')
+  assert(pocketRough?.operation.toolRef === 'three-eighth', 'fixture pocket starts with a conservative 3/8 inch cutter')
+  assert(pocketRest?.operation.pass === 'finish', 'fixture rest proposal is a finish-rest pass')
+  assert(pocketRest?.operation.toolRef === 'eighth', 'fixture finish rest uses a half-diameter-or-smaller detail cutter')
+  assert(pocketFinish?.operation.toolRef === 'three-eighth', 'fixture primary finish follows the primary roughing cutter')
+  assert(pocketRest?.dependencies.includes(pocketFinish?.key ?? ''), 'fixture finish rest runs after the primary finish')
+  assert(outsideRough?.operation.toolRef === 'three-eighth', 'fixture outside route is not oversized for the part')
+  assert(
+    ![...pocket, ...outside].some((draft) => draft.operation.toolRef === 'three-quarter' || draft.operation.toolRef === 'half'),
+    'fixture recommendations exclude the 3/4 and 1/2 inch cutters',
+  )
+  assert(pocketRough?.operation.stockToLeaveRadial === 0.005, 'pocket rough leaves radial finishing stock')
+  assert(pocketRough?.operation.stockToLeaveAxial === 0.005, 'pocket rough leaves axial finishing stock')
+  assert(outsideRough?.operation.stockToLeaveRadial === 0.005, 'outside rough leaves radial finishing stock')
+  assert(outsideRough?.operation.stockToLeaveAxial === 0.005, 'outside rough leaves axial finishing stock')
+  assert(pocketFinish?.operation.stockToLeaveRadial === 0, 'pocket finish removes radial finishing stock')
+  assert(pocketFinish?.operation.stockToLeaveAxial === 0, 'pocket finish removes axial finishing stock')
+  assert(pocketRest?.operation.stockToLeaveRadial === 0, 'pocket finish rest does not leave another radial allowance')
+  assert(pocketRest?.operation.stockToLeaveAxial === 0, 'pocket finish rest does not leave another axial allowance')
+  assert(outsideFinish?.operation.stockToLeaveRadial === 0, 'outside finish removes radial finishing stock')
+  assert(outsideFinish?.operation.stockToLeaveAxial === 0, 'outside finish removes axial finishing stock')
+}
+
+function testBundledToolUnitPreference(): void {
+  const base = newProject('CAM plan library units', 'inch')
+  base.stock.thickness = 0.75
+  const project = projectWithFeatures({ ...base, tools: [] }, [
+    feature('pocket', 'subtract', rectProfile(0.5, 0.5, 2, 2), 0.75, 0.5),
+  ])
+  const metric = { ...tool('ten-mm', 'flat_endmill', 10), units: 'mm' as const, maxCutDepth: 25.4 }
+  const library = [
+    libraryTool('inch-three-eighth', tool('three-eighth', 'flat_endmill', 0.375)),
+    libraryTool('metric-ten', metric),
+    libraryTool('inch-quarter', tool('quarter', 'flat_endmill', 0.25)),
+  ]
+  const plan = createCamPlan(project, library)
+  const rough = plan.operations.find((draft) => draft.operation.kind === 'pocket' && draft.operation.pass === 'rough')
+  assert(rough?.operation.toolRef === 'cam-plan-tool:inch-three-eighth', 'inch projects prefer an equally suitable inch library tool')
+}
+
 function testFallbackNoToolAndUnits(): void {
   const base = newProject('CAM plan no tool', 'inch')
   base.stock.thickness = 1
@@ -200,16 +277,37 @@ function testResolvedWorldTransformAndOrdering(): void {
 }
 
 function testReactiveRestReconciliation(): void {
-  const project = exampleProject()
-  project.tools.push(tool('sixteenth', 'flat_endmill', 0.0625))
-  project.tools.push(tool('thirty-second', 'flat_endmill', 0.03125))
+  const base = newProject('CAM plan reactive rest', 'inch')
+  base.stock.thickness = 1
+  const project = projectWithFeatures({
+    ...base,
+    tools: [
+      tool('half', 'flat_endmill', 0.5),
+      tool('quarter', 'flat_endmill', 0.25),
+      tool('eighth', 'flat_endmill', 0.125),
+      tool('sixteenth', 'flat_endmill', 0.0625),
+      tool('thirty-second', 'flat_endmill', 0.03125),
+    ],
+  }, [
+    feature('outer', 'add', rectProfile(0, 0, 2, 2), 1, 0),
+    feature('pocket', 'subtract', rectProfile(0.25, 0.25, 1.5, 1.5), 1, 0.5),
+  ])
   const plan = createCamPlan(project, [])
   const existingRest = plan.operations.find((draft) => draft.rest)
-  assert(existingRest?.rest, 'roughing source has a rest proposal')
+  assert(existingRest?.rest, 'roughing source has a finish-rest proposal')
   const source = plan.operations.find((draft) => draft.key === existingRest.rest?.sourceOperationKey)
   assert(source, 'rest proposal resolves its roughing source')
-  assert(source.operation.toolRef === 'eighth', 'initial roughing source uses the larger cutter')
-  assert(existingRest.operation.toolRef === 'sixteenth', 'initial rest proposal uses the next smaller cutter')
+  assert(source.operation.toolRef === 'quarter', 'initial roughing source uses the larger cutter')
+  assert(existingRest.operation.pass === 'finish', 'initial rest proposal is a finish pass')
+  assert(existingRest.operation.toolRef === 'eighth', 'initial finish rest uses a meaningfully smaller cutter')
+  const initialFinish = plan.operations.find((draft) =>
+    draft.operation.kind === source.operation.kind && draft.operation.pass === 'finish' && !draft.rest,
+  )
+  assert(
+    initialFinish?.operation.toolRef === 'quarter',
+    'initial primary finish follows the roughing cutter',
+  )
+  assert(existingRest.dependencies.includes(initialFinish?.key ?? ''), 'initial finish rest follows the primary finish')
 
   const withoutRest = {
     ...plan,
@@ -221,19 +319,24 @@ function testReactiveRestReconciliation(): void {
   }
   const restored = reconcileCamPlanRest(project, withoutRest, source.key)
   const restoredRest = restored.operations.find((draft) => draft.rest?.sourceOperationKey === source.key)
-  assert(restoredRest?.operation.toolRef === 'sixteenth', 'missing dependent rest proposal is recreated from the source operation')
-  const restoredFinish = restored.operations.find((draft) => draft.operation.kind === source.operation.kind && draft.operation.pass === 'finish')
-  assert(restoredFinish?.dependencies.includes(restoredRest.key), 'recreated rest proposal becomes the finish dependency')
+  assert(restoredRest?.operation.toolRef === 'eighth', 'missing dependent rest proposal is recreated from the source operation')
+  const restoredFinish = restored.operations.find((draft) =>
+    draft.operation.kind === source.operation.kind && draft.operation.pass === 'finish' && !draft.rest,
+  )
+  assert(restoredRest?.dependencies.includes(restoredFinish?.key ?? ''), 'recreated finish rest follows the primary finish')
+  assert(restoredFinish?.operation.toolRef === 'quarter', 'recreated primary finish keeps the primary cutter')
 
-  const unrelated = plan.operations.find((draft) => draft.operation.kind === 'pocket' && draft.operation.pass === 'finish')
-  assert(unrelated, 'unrelated finish proposal exists')
+  const unrelated = plan.operations.find((draft) =>
+    draft.operation.kind === 'pocket' && draft.operation.pass === 'finish' && !draft.rest,
+  )
+  assert(unrelated, 'primary finish proposal exists')
   const corrected = {
     ...plan,
     operations: plan.operations.map((draft) => {
       if (draft.key === source.key) {
         return {
           ...draft,
-          operation: { ...draft.operation, toolRef: 'sixteenth' },
+          operation: { ...draft.operation, toolRef: 'eighth' },
           userOverrides: ['toolRef'] satisfies Array<keyof typeof draft.operation>,
         }
       }
@@ -251,12 +354,18 @@ function testReactiveRestReconciliation(): void {
   const revised = reconcileCamPlanRest(project, corrected, source.key)
   const revisedRest = revised.operations.find((draft) => draft.rest?.sourceOperationKey === source.key)
   assert(revisedRest, 'rest proposal remains when corrected source still leaves residual stock')
-  assert(revisedRest.operation.toolRef === 'thirty-second', 'suggested rest tool moves below the corrected source tool')
+  assert(revisedRest.operation.toolRef === 'sixteenth', 'suggested rest tool moves below the corrected source tool')
   assert(revisedRest.operation.stockToLeaveRadial === 0.007, 'explicit rest setting survives reactive regeneration')
   assert(revisedRest.staleReason === null, 'reactive regeneration produces a ready rest proposal')
   assert(
     JSON.stringify(revisedRest.rest?.regions) !== JSON.stringify(existingRest.rest?.regions),
     'residual regions are regenerated from the corrected source cutter',
+  )
+  assert(
+    revised.operations.find((draft) =>
+      draft.operation.kind === source.operation.kind && draft.operation.pass === 'finish' && !draft.rest,
+    )?.operation.toolRef === 'eighth',
+    'automatic primary finish follows the corrected source cutter',
   )
   assert(revised.operations.find((draft) => draft.key === unrelated.key)?.enabled === false, 'unrelated include choice survives reactive regeneration')
 
@@ -292,7 +401,15 @@ function testReactiveRestRemoval(): void {
   const fakeRest = {
     ...source,
     key: 'cam-plan-test-rest',
-    operation: { ...source.operation, id: 'cam-plan-test-rest', name: `${source.operation.name} Rest`, toolRef: 'eighth' },
+    operation: {
+      ...source.operation,
+      id: 'cam-plan-test-rest',
+      name: `${source.operation.name} Finish Rest`,
+      pass: 'finish' as const,
+      toolRef: 'eighth',
+      stockToLeaveRadial: 0,
+      stockToLeaveAxial: 0,
+    },
     dependencies: [source.key],
     userOverrides: [],
     rest: { sourceOperationKey: source.key, sourceFeatureIds: ['round-pocket'], regions: [] },
@@ -317,6 +434,8 @@ testRepresentativePlan()
 testDeterministicAndAtomicApply()
 testDepthRolesAndUnsupportedCoverage()
 testRetainedIslandsDoNotNeedCoverageAcknowledgement()
+testFixtureScaleAndFinishAllowances()
+testBundledToolUnitPreference()
 testFallbackNoToolAndUnits()
 testResolvedWorldTransformAndOrdering()
 testReactiveRestReconciliation()
