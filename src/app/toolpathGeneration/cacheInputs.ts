@@ -38,8 +38,10 @@
 
 import {
   diffToolpathInputs,
+  foldsNonTargetSubtracts,
   operationAffectedByChange,
   operationFootprint,
+  subtractsMachinedElsewhere,
   type OperationFootprint,
 } from '../../engine/toolpaths'
 import type { ToolpathResult } from '../../engine/toolpaths'
@@ -64,6 +66,17 @@ export interface ToolpathCacheInputs {
   tools: Tool[]
   tabs: Tab[]
   clamps: Clamp[]
+  /**
+   * Feature ids machined by *other* enabled operations (issue #749).
+   *
+   * `discoverNonTargetSubtracts` folds a non-target subtract into the region
+   * only when nothing else machines it, so another operation's target list and
+   * enabled flag are inputs to this operation's geometry. Nothing else in this
+   * stamp captures them: `diffToolpathInputs` diffs features and never reads
+   * `project.operations`, and the checks above compare only this operation's
+   * own row.
+   */
+  machinedElsewhere: ReadonlySet<string>
 }
 
 /** Captured inputs plus the result they produced. */
@@ -144,7 +157,19 @@ export function captureCacheInputs(project: Project, operation: Operation): Tool
     tools: project.tools,
     tabs: project.tabs,
     clamps: project.clamps,
+    machinedElsewhere: subtractsMachinedElsewhere(project, operation),
   }
+}
+
+/** Ids in exactly one of the two sets — the ownership that gained or lost an owner. */
+function symmetricDifference(
+  before: ReadonlySet<string>,
+  after: ReadonlySet<string>,
+): Set<string> {
+  const changed = new Set<string>()
+  for (const id of before) if (!after.has(id)) changed.add(id)
+  for (const id of after) if (!before.has(id)) changed.add(id)
+  return changed
 }
 
 /**
@@ -188,8 +213,35 @@ export function cacheInputsValid(
   // The stamp holds the full project snapshot it was captured from. Holding one
   // `Project` reference per entry is bounded — at most one per operation — and
   // immutable updates share structure, so this is not a leak. When the
-  // snapshot's identity still matches, skip the O(n) diff below.
+  // snapshot's identity still matches, skip the O(n) diff below. Operations
+  // live on the project, so an identical snapshot also means identical
+  // ownership and the check below cannot have anything to say.
   if (inputs.project === project) return true
+
+  // Ownership: which subtracts *other* operations machine (issue #749).
+  //
+  // Placed ahead of the feature diff because an ownership change moves no
+  // feature — adding an operation leaves `features` untouched — so
+  // `changedFeatureIds` is empty and the `size === 0` early return below would
+  // pass a now-stale entry.
+  //
+  // Narrowed twice, or a target edit anywhere would regenerate everything.
+  // By kind: `foldsNonTargetSubtracts` is the same policy table the resolver
+  // gates on, so an operation that never reads ownership never invalidates on
+  // it. Spatially: the ids whose ownership changed are fed to the #518 bbox
+  // narrowing, which asks whether they reach this operation's footprint. The
+  // feature itself is unmoved, so both snapshots resolve the same bounds and
+  // the test reduces to reachability.
+  if (foldsNonTargetSubtracts(operation)) {
+    const current = subtractsMachinedElsewhere(project, operation)
+    const changedOwnership = symmetricDifference(inputs.machinedElsewhere, current)
+    if (
+      changedOwnership.size > 0
+      && operationAffectedByChange(inputs.footprint, inputs.project, project, changedOwnership)
+    ) {
+      return false
+    }
+  }
 
   // Each entry diffs against its **own** snapshot, not a single global
   // "changed since last render" set: operations are generated at different

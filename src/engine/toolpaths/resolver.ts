@@ -269,6 +269,43 @@ export function foldsNonTargetSubtracts(operation: Operation): boolean {
   return FOLDS_NON_TARGET_SUBTRACTS[operation.kind]
 }
 
+/**
+ * Feature ids machined by some *other* enabled operation — the subtracts this
+ * operation must leave alone.
+ *
+ * A subtract another operation machines is not this operation's business
+ * (#739). #526's case is a subtract that "changes the model but not the
+ * toolpath" — one nothing cuts, so its void is permanent and machining around
+ * it leaves material that is not there. A subtract that *is* someone's target
+ * is cut by that operation, in program order, and folding it here makes this
+ * pass act on a void that does not exist yet: on the shipped example the
+ * pocket finish ran contours around the counters of glyphs the V-carves had
+ * not carved yet, cutting grooves into solid material.
+ *
+ * Exported because the toolpath cache has to invalidate on exactly this set
+ * (#749). It was inline, and the cache modelled the reads separately and got
+ * them wrong — `toolpathDependencies.ts` still asserted there was no live
+ * operation-to-operation dependency at all, so adding an operation that
+ * claimed a folded subtract left every other operation's path stale. One
+ * definition, two callers, no room for the two to drift again.
+ *
+ * `Pick<Project, 'operations'>` on purpose: the parameter type states that
+ * nothing else on the project is read, and it accepts both `Project` (the
+ * cache's view) and `ResolvedProject` (the resolver's).
+ */
+export function subtractsMachinedElsewhere(
+  project: Pick<Project, 'operations'>,
+  operation: Operation,
+): Set<string> {
+  return new Set(
+    project.operations
+      .filter((candidate) => candidate.id !== operation.id && candidate.enabled)
+      .flatMap((candidate) => (
+        candidate.target.source === 'features' ? candidate.target.featureIds : []
+      )),
+  )
+}
+
 function discoverNonTargetSubtracts(
   project: ResolvedProject,
   operation: Operation,
@@ -279,21 +316,7 @@ function discoverNonTargetSubtracts(
     return []
   }
 
-  // A subtract another operation machines is not this operation's business
-  // (#739). #526's case is a subtract that "changes the model but not the
-  // toolpath" — one nothing cuts, so its void is permanent and machining
-  // around it leaves material that is not there. A subtract that *is* someone's
-  // target is cut by that operation, in program order, and folding it here
-  // makes this pass act on a void that does not exist yet: on the shipped
-  // example the pocket finish ran contours around the counters of glyphs the
-  // V-carves had not carved yet, cutting grooves into solid material.
-  const machinedElsewhere = new Set(
-    project.operations
-      .filter((candidate) => candidate.id !== operation.id && candidate.enabled)
-      .flatMap((candidate) => (
-        candidate.target.source === 'features' ? candidate.target.featureIds : []
-      )),
-  )
+  const machinedElsewhere = subtractsMachinedElsewhere(project, operation)
 
   return project.features
     // Filtered before expansion on purpose: an operation targets a *feature*,
