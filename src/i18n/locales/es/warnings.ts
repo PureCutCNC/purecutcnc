@@ -203,6 +203,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketNoFloorRegion': 'No hay región de piso paralela mecanizable para la banda {topZ} -> {bottomZ}.',
   'warnings.pocketNoFloorSegments': 'No hay segmentos de piso paralelos mecanizables para la banda {topZ} -> {bottomZ}.',
   'warnings.pocketWallCornerCleanupFallback': 'No se pudo limpiar de forma segura una esquina redondeada de la pared del vaciado; se mantuvo la trayectoria de pared afilada para ese anillo.',
+  'warnings.pocketFinishIslandWallTooTight': 'La fresa no cabe entre una isla y la pared del vaciado; la pasada de acabado de la isla se recortó hasta donde sí cabe, por lo que queda material en ese hueco.',
   'warnings.postWcsNullSelect': 'La definición de máquina solicita {wcsCommand} en el encabezado, pero selectCommand es nulo.',
   'warnings.postToolChangesDisabled': 'La operación "{operation}" utiliza una herramienta diferente ("{tool}") a la anterior, pero los cambios de herramienta están deshabilitados.',
   'warnings.postNoCoolantCommands': 'Se solicitó la emisión de refrigerante, pero la definición de la máquina no tiene comandos de refrigerante.',

@@ -16,6 +16,7 @@
 
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
+import { addOpenSubject, openPathsFromPolyTree } from '../clipperOpenPaths'
 import { isTrochoidalPocket } from '../../types/project'
 import type { CutDirection, Operation, Point, Project } from '../../types/project'
 import {
@@ -1390,6 +1391,85 @@ function buildExpandedIslandContours(
       .map((path) => fromClipperPath(path, scale))
       .filter((island) => island.length >= 3)
   })
+}
+
+/**
+ * The tool-centre domain of a finish wall pass: each region's outer boundary
+ * eroded by the wall delta. A cut whose centre leaves this is a cut into the
+ * pocket wall.
+ *
+ * Islands are deliberately *not* subtracted. What this domain exists to clip
+ * are the island rings, which lie exactly on the boundary of the
+ * island-expanded region -- subtracting it would decide every ring on a
+ * tangency instead of on whether the cutter fits.
+ */
+function buildWallCentreDomain(
+  regions: ResolvedPocketRegion[],
+  delta: number,
+  joinType: number,
+): ClipperPath[] {
+  const scale = DEFAULT_CLIPPER_SCALE
+  return regions.flatMap((region) => offsetPaths(
+    [toClipperPath(normalizeWinding(region.outer, false), scale)],
+    -delta * scale,
+    joinType,
+  ))
+}
+
+function polylineLeavesDomain(points: Point[], domain: ClipperPath[]): boolean {
+  if (domain.length === 0) return true
+  const clipper = new ClipperLib.Clipper()
+  addOpenSubject(clipper, toClipperPath(points, DEFAULT_CLIPPER_SCALE))
+  clipper.AddPaths(domain, ClipperLib.PolyType.ptClip, true)
+  const tree = new ClipperLib.PolyTree()
+  clipper.Execute(
+    ClipperLib.ClipType.ctDifference,
+    tree,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  return openPathsFromPolyTree(tree).length > 0
+}
+
+interface WallDomainResult {
+  kept: Point[][]
+  /** A pass was dropped, so the island wall is not finished everywhere. */
+  dropped: boolean
+}
+
+/**
+ * Keep only the island passes the cutter can follow without leaving the pocket
+ * (issue #746).
+ *
+ * The rounded finish builds its island passes by offsetting the raw island
+ * outward -- the ring at the finish delta, the acute-corner cleanups one
+ * stepover further out. Neither construction can see the pocket wall, so when
+ * the stock between island and wall is narrower than the cutter the pass runs
+ * outside the pocket and gouges the wall. The direct offset is still the right
+ * construction: it is what guarantees the island gets its own full finished
+ * ring, which taking the ring out of the clipped region tree loses whenever the
+ * difference merges the island hole into the outer boundary (issue #550). What
+ * it was missing is that a pass is only valid where the cutter fits.
+ *
+ * Dropped whole rather than trimmed to the surviving spans, for two reasons.
+ * For the ring it costs nothing: a ring can only leave the domain by crossing
+ * it, and where it crosses, the expanded island stops being a hole in the
+ * rounded wall regions and folds into their OUTER contour, which this same pass
+ * already cuts -- so the spans would retrace a just-finished wall vertex for
+ * vertex. For a cleanup run it is the safe choice: trimming an arc that pokes
+ * out through its middle leaves two fragments either side of the island tip,
+ * and the emission links consecutive runs at depth, so the link between them
+ * cuts straight across the island the arc was cleaning around.
+ */
+function passesInsideWallDomain(passes: Point[][], domain: ClipperPath[], closed: boolean): WallDomainResult {
+  const result: WallDomainResult = { kept: [], dropped: false }
+  for (const pass of passes) {
+    if (pass.length < (closed ? 3 : 2)) continue
+    // A closed pass is walked with its seam segment included.
+    if (polylineLeavesDomain(closed ? [...pass, pass[0]] : pass, domain)) result.dropped = true
+    else result.kept.push(pass)
+  }
+  return result
 }
 
 function withoutDuplicateClosingPoint(points: Point[]): Point[] {
@@ -4067,8 +4147,28 @@ function generateFinishBandMoves(
       ))
       const islandCleanupDelta = finishDelta + stepoverDistance
       wallOuterContours = buildOuterContours(roundedWallRegions)
-      wallFinalContours = buildExpandedIslandContours(band.regions, finishDelta, ClipperLib.JoinType.jtRound)
-      wallCleanupSegments = buildAcuteIslandCornerCleanupSegments(band.regions, islandCleanupDelta)
+      // Both island passes below are offset straight off the raw island, so
+      // neither construction knows where the pocket wall is: where the cutter
+      // does not fit between the two, the pass runs outside the pocket and
+      // gouges the wall. Keep only what stays inside the wall's own tool-centre
+      // domain, and say so rather than quietly leave the island wall
+      // unfinished (issue #746).
+      const wallCentreDomain = buildWallCentreDomain(band.regions, finishDelta, ClipperLib.JoinType.jtMiter)
+      const islandRings = passesInsideWallDomain(
+        buildExpandedIslandContours(band.regions, finishDelta, ClipperLib.JoinType.jtRound),
+        wallCentreDomain,
+        true,
+      )
+      const acuteCornerCleanup = passesInsideWallDomain(
+        buildAcuteIslandCornerCleanupSegments(band.regions, islandCleanupDelta),
+        wallCentreDomain,
+        false,
+      )
+      wallFinalContours = islandRings.kept
+      wallCleanupSegments = acuteCornerCleanup.kept
+      if (islandRings.dropped || acuteCornerCleanup.dropped) {
+        appendUniqueWarning(warnings, { code: 'pocketFinishIslandWallTooTight' })
+      }
     } else {
       wallContours = buildContourLoops(finishRegions)
     }

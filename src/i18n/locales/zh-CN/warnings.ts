@@ -207,6 +207,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketNoFloorRegion': '深度带 {topZ} -> {bottomZ} 没有可加工的平行底面区域',
   'warnings.pocketNoFloorSegments': '深度带 {topZ} -> {bottomZ} 没有可加工的平行底面段',
   'warnings.pocketWallCornerCleanupFallback': '无法安全清理圆滑的型腔壁转角；该环保留了原有的尖角壁路径',
+  'warnings.pocketFinishIslandWallTooTight': '刀具无法通过岛屿与型腔壁之间的间隙；岛屿精加工路径已裁剪至刀具可达的范围，因此该处会残留材料',
   'warnings.postWcsNullSelect': '机床定义在程序头中请求 {wcsCommand}，但 selectCommand 为 null。',
   'warnings.postToolChangesDisabled': '加工操作“{operation}”使用了与之前不同的刀具（“{tool}”），但换刀已禁用。',
   'warnings.postNoCoolantCommands': '已请求冷却液输出，但机床定义没有冷却液指令。',

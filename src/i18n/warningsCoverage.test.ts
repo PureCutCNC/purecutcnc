@@ -83,6 +83,7 @@ const ALL_CODES = [
   'surfaceHeightMapReduced', 'surfaceSilhouetteDegenerate', 'constantScallopResolutionTooCoarse', 'constantScallopEmpty',
   'cleanupStockToLeaveOffsets', 'cleanupNoContours',
   'pocketNoFloorRegion', 'pocketNoFloorSegments', 'pocketWallCornerCleanupFallback',
+  'pocketFinishIslandWallTooTight',
   'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
   'postArcNoCapability', 'postArcFallbackLinear',
   'replayNoTool', 'bookletNoTool', 'bookletNoToolpath',
