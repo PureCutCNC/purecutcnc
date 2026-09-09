@@ -90,6 +90,11 @@ test.describe('CAM operation browser smoke', () => {
         vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 30,
         defaultPlungeFeed: 10, defaultStepdown: 0.08, defaultStepover: 0.4, maxCutDepth: 5,
       },
+      {
+        id: 'plan-sixteenth', name: 'Plan sixteenth inch', units: 'inch', type: 'flat_endmill', diameter: 0.0625,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 20,
+        defaultPlungeFeed: 6, defaultStepdown: 0.04, defaultStepover: 0.35, maxCutDepth: 5,
+      },
     ]
     await seedProject(app.page, JSON.stringify(seeded))
 
@@ -109,16 +114,20 @@ test.describe('CAM operation browser smoke', () => {
     await expect(dialog.getByText('Entry strategy', { exact: true })).toBeVisible()
     await expect(dialog.getByText('Drill type', { exact: true })).toHaveCount(0)
 
-    // An edit that changes residual geometry marks the dependent rest proposal
-    // stale until recommendations are recalculated.
+    // Residual-affecting corrections reactively rebuild only the dependent
+    // REST proposal; the user's source-operation edits remain in place.
     const patternField = dialog.locator('.cam-plan-field').filter({ hasText: 'Pattern' })
     await patternField.locator('.ui-select__trigger').click()
     await app.page.getByRole('option', { name: 'Offset', exact: true }).click()
-    await dialog.locator('.cam-plan-row').filter({ hasText: 'REST' }).first().click()
-    await expect(dialog.getByText('The source operation changed. Reset recommendations to recalculate this rest operation.', { exact: true })).toBeVisible()
-    await expect(dialog.getByRole('button', { name: /Create \d+ operations/ })).toBeDisabled()
-    await dialog.getByRole('button', { name: 'Reset recommendations', exact: true }).click()
+    const toolField = dialog.locator('.cam-plan-field').filter({ hasText: 'Tool' }).first()
+    await toolField.locator('.ui-select__trigger').click()
+    await app.page.getByRole('option', { name: /Plan eighth inch/ }).click()
+    const pocketRest = dialog.locator('.cam-plan-row').filter({ hasText: 'REST' }).first()
+    await expect(pocketRest).toContainText('Plan sixteenth inch')
+    await pocketRest.click()
     await expect(dialog.getByText('The source operation changed. Reset recommendations to recalculate this rest operation.', { exact: true })).toHaveCount(0)
+    await pocketRough.click()
+    await expect(patternField.locator('.ui-select__trigger')).toContainText('Offset')
 
     // Exclude one recommendation, then edit the one shared tab layout rather
     // than seeing tab controls duplicated on each edge row.

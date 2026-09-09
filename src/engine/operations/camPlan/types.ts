@@ -39,6 +39,8 @@ export interface CamPlanRestDraft {
   regions: RestRegionDraft[]
 }
 
+export type CamPlanOperationField = keyof Operation
+
 export interface CamPlanOperationDraft {
   key: string
   enabled: boolean
@@ -51,6 +53,7 @@ export interface CamPlanOperationDraft {
   dependencies: string[]
   hardError: string | null
   staleReason: string | null
+  userOverrides: CamPlanOperationField[]
   rest?: CamPlanRestDraft
 }
 

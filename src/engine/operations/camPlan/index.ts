@@ -15,11 +15,13 @@
  */
 
 export { createCamPlan, camPlanProjectFingerprint } from './createCamPlan'
+export { reconcileCamPlanRest } from './reconcileRest'
 export type {
   ApplyCamPlanResult,
   CamPlanCoverage,
   CamPlanDraft,
   CamPlanOperationDraft,
+  CamPlanOperationField,
   CamPlanSharedTabsDraft,
   CamPlanTool,
 } from './types'

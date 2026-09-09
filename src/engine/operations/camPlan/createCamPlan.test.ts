@@ -19,6 +19,7 @@ import { projectWithFeatures } from '../../../test/projectFixtures'
 import { materializeCamPlan } from '../../../store/helpers/camPlanApply'
 import { convertProjectUnits } from '../../../utils/units'
 import { createCamPlan } from './createCamPlan'
+import { reconcileCamPlanRest } from './reconcileRest'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -179,9 +180,125 @@ function testResolvedWorldTransformAndOrdering(): void {
   assert(firstOutside > lastInternal, 'internal work is ordered before outside separation')
 }
 
+function testReactiveRestReconciliation(): void {
+  const project = exampleProject()
+  project.tools.push(tool('sixteenth', 'flat_endmill', 0.0625))
+  project.tools.push(tool('thirty-second', 'flat_endmill', 0.03125))
+  const plan = createCamPlan(project, [])
+  const existingRest = plan.operations.find((draft) => draft.rest)
+  assert(existingRest?.rest, 'roughing source has a rest proposal')
+  const source = plan.operations.find((draft) => draft.key === existingRest.rest?.sourceOperationKey)
+  assert(source, 'rest proposal resolves its roughing source')
+  assert(source.operation.toolRef === 'eighth', 'initial roughing source uses the larger cutter')
+  assert(existingRest.operation.toolRef === 'sixteenth', 'initial rest proposal uses the next smaller cutter')
+
+  const withoutRest = {
+    ...plan,
+    operations: plan.operations
+      .filter((draft) => draft.key !== existingRest.key)
+      .map((draft) => draft.dependencies.includes(existingRest.key)
+        ? { ...draft, dependencies: draft.dependencies.map((key) => key === existingRest.key ? source.key : key) }
+        : draft),
+  }
+  const restored = reconcileCamPlanRest(project, withoutRest, source.key)
+  const restoredRest = restored.operations.find((draft) => draft.rest?.sourceOperationKey === source.key)
+  assert(restoredRest?.operation.toolRef === 'sixteenth', 'missing dependent rest proposal is recreated from the source operation')
+  const restoredFinish = restored.operations.find((draft) => draft.operation.kind === source.operation.kind && draft.operation.pass === 'finish')
+  assert(restoredFinish?.dependencies.includes(restoredRest.key), 'recreated rest proposal becomes the finish dependency')
+
+  const unrelated = plan.operations.find((draft) => draft.operation.kind === 'pocket' && draft.operation.pass === 'finish')
+  assert(unrelated, 'unrelated finish proposal exists')
+  const corrected = {
+    ...plan,
+    operations: plan.operations.map((draft) => {
+      if (draft.key === source.key) {
+        return {
+          ...draft,
+          operation: { ...draft.operation, toolRef: 'sixteenth' },
+          userOverrides: ['toolRef'] satisfies Array<keyof typeof draft.operation>,
+        }
+      }
+      if (draft.key === existingRest.key) {
+        return {
+          ...draft,
+          operation: { ...draft.operation, stockToLeaveRadial: 0.007 },
+          userOverrides: ['stockToLeaveRadial'] satisfies Array<keyof typeof draft.operation>,
+        }
+      }
+      if (draft.key === unrelated.key) return { ...draft, enabled: false }
+      return draft
+    }),
+  }
+  const revised = reconcileCamPlanRest(project, corrected, source.key)
+  const revisedRest = revised.operations.find((draft) => draft.rest?.sourceOperationKey === source.key)
+  assert(revisedRest, 'rest proposal remains when corrected source still leaves residual stock')
+  assert(revisedRest.operation.toolRef === 'thirty-second', 'suggested rest tool moves below the corrected source tool')
+  assert(revisedRest.operation.stockToLeaveRadial === 0.007, 'explicit rest setting survives reactive regeneration')
+  assert(revisedRest.staleReason === null, 'reactive regeneration produces a ready rest proposal')
+  assert(
+    JSON.stringify(revisedRest.rest?.regions) !== JSON.stringify(existingRest.rest?.regions),
+    'residual regions are regenerated from the corrected source cutter',
+  )
+  assert(revised.operations.find((draft) => draft.key === unrelated.key)?.enabled === false, 'unrelated include choice survives reactive regeneration')
+
+  const conflicting = {
+    ...revised,
+    operations: revised.operations.map((draft) => draft.key === revisedRest.key
+      ? {
+        ...draft,
+        operation: { ...draft.operation, toolRef: 'quarter' },
+        userOverrides: [...new Set([...draft.userOverrides, 'toolRef' as const])],
+      }
+      : draft),
+  }
+  const preserved = reconcileCamPlanRest(project, conflicting, source.key)
+  const preservedRest = preserved.operations.find((draft) => draft.key === revisedRest.key)
+  assert(preservedRest?.operation.toolRef === 'quarter', 'incompatible explicit rest tool is not silently replaced')
+  assert(Boolean(preservedRest?.hardError), 'incompatible explicit rest tool becomes a focused blocking conflict')
+}
+
+function testReactiveRestRemoval(): void {
+  const base = newProject('CAM plan reactive removal', 'inch')
+  base.stock.thickness = 1
+  const project = projectWithFeatures({
+    ...base,
+    tools: [tool('quarter', 'flat_endmill', 0.25), tool('eighth', 'flat_endmill', 0.125)],
+  }, [
+    feature('round-pocket', 'subtract', circleProfile(0.5, 0.5, 0.5), 1, 0.5),
+  ])
+  const plan = createCamPlan(project, [])
+  const source = plan.operations.find((draft) => draft.operation.kind === 'pocket' && draft.operation.pass === 'rough')
+  assert(source, 'round pocket roughing source exists')
+  assert(!plan.operations.some((draft) => draft.rest?.sourceOperationKey === source.key), 'round pocket initially needs no rest proposal')
+  const fakeRest = {
+    ...source,
+    key: 'cam-plan-test-rest',
+    operation: { ...source.operation, id: 'cam-plan-test-rest', name: `${source.operation.name} Rest`, toolRef: 'eighth' },
+    dependencies: [source.key],
+    userOverrides: [],
+    rest: { sourceOperationKey: source.key, sourceFeatureIds: ['round-pocket'], regions: [] },
+  }
+  const withObsoleteRest = {
+    ...plan,
+    operations: plan.operations.flatMap((draft) => {
+      if (draft.key === source.key) return [draft, fakeRest]
+      if (draft.operation.kind === 'pocket' && draft.operation.pass === 'finish') {
+        return [{ ...draft, dependencies: [fakeRest.key] }]
+      }
+      return [draft]
+    }),
+  }
+  const revised = reconcileCamPlanRest(project, withObsoleteRest, source.key)
+  assert(!revised.operations.some((draft) => draft.key === fakeRest.key), 'obsolete rest proposal is removed when no residual remains')
+  const finish = revised.operations.find((draft) => draft.operation.kind === 'pocket' && draft.operation.pass === 'finish')
+  assert(finish?.dependencies.includes(source.key), 'finish dependency returns to the source after rest removal')
+}
+
 testRepresentativePlan()
 testDeterministicAndAtomicApply()
 testDepthRolesAndUnsupportedCoverage()
 testFallbackNoToolAndUnits()
 testResolvedWorldTransformAndOrdering()
+testReactiveRestReconciliation()
+testReactiveRestRemoval()
 console.log('CAM plan POC tests passed')

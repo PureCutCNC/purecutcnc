@@ -3,6 +3,7 @@
 Deterministic, transient CAM Plan (Preview) POC. These modules analyze the current project and bundled tool library without mutating project state; only an accepted plan crosses the store apply boundary.
 
 - `createCamPlan.ts` — feature-role/depth recognition, operation grouping, rough/rest/finish dependencies, coverage, and one shared tab proposal per routed edge target.
+- `reconcileRest.ts` — scoped reactive rest-plan regeneration after a user corrects a source operation.
 - `toolPlanning.ts` — project/library tool normalization, feasibility filters, named part-scale limits, drilling compatibility, stable ranking, and user-facing choice reasons.
 - `types.ts` — ephemeral plan, operation, coverage, tool, rest-region, and shared-tab draft contracts.
 - `index.ts` — public planner exports.

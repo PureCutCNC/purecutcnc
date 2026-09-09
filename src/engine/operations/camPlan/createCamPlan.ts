@@ -184,6 +184,7 @@ function addPlannedOperation(
       ? 'Choose or add a tool that fits this operation before creating it.'
       : (!isOperationTargetValid(builder.project, kind, target) ? 'The proposed target is not valid for this operation.' : null),
     staleReason: null,
+    userOverrides: [],
   }
   builder.operations.push(draft)
   featureIds.forEach((id) => builder.covered.add(id))

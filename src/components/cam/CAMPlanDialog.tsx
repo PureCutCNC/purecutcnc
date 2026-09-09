@@ -16,7 +16,13 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { CamPlanDraft, CamPlanOperationDraft, CamPlanSharedTabsDraft } from '../../engine/operations/camPlan'
+import {
+  reconcileCamPlanRest,
+  type CamPlanDraft,
+  type CamPlanOperationDraft,
+  type CamPlanOperationField,
+  type CamPlanSharedTabsDraft,
+} from '../../engine/operations/camPlan'
 import { useI18n } from '../../i18n/i18nContext'
 import { useProjectStore } from '../../store/projectStore'
 import type { Operation } from '../../types/project'
@@ -210,34 +216,37 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
       const selectedTool = patch.toolRef
         ? current.tools.find((candidate) => candidate.id === patch.toolRef)?.tool ?? null
         : null
-      return {
+      const overrideFields = Object.keys(patch) as CamPlanOperationField[]
+      const revised = {
         ...current,
         operations: current.operations.map((draft) => {
           if (draft.key === key) {
+            const userOverrides = [...new Set([...draft.userOverrides, ...overrideFields])]
             const operation = {
               ...draft.operation,
               ...patch,
               ...(selectedTool ? {
-                feed: selectedTool.defaultFeed,
-                plungeFeed: selectedTool.defaultPlungeFeed,
-                stepdown: selectedTool.defaultStepdown,
-                stepover: selectedTool.defaultStepover,
-                rpm: selectedTool.defaultRpm,
+                ...(!userOverrides.includes('feed') ? { feed: selectedTool.defaultFeed } : {}),
+                ...(!userOverrides.includes('plungeFeed') ? { plungeFeed: selectedTool.defaultPlungeFeed } : {}),
+                ...(!userOverrides.includes('stepdown') ? { stepdown: selectedTool.defaultStepdown } : {}),
+                ...(!userOverrides.includes('stepover') ? { stepover: selectedTool.defaultStepover } : {}),
+                ...(!userOverrides.includes('rpm') ? { rpm: selectedTool.defaultRpm } : {}),
               } : {}),
             }
             return {
               ...draft,
               operation,
+              userOverrides,
               toolReason: patch.toolRef ? camT('cam.plan.userSelectedTool') : draft.toolReason,
               hardError: operation.toolRef ? null : camT('cam.plan.missingTool'),
             }
           }
-          if (invalidatesRest && draft.rest?.sourceOperationKey === key) {
-            return { ...draft, staleReason: camT('cam.plan.restStale') }
-          }
           return draft
         }),
       }
+      if (!invalidatesRest) return revised
+      const revisedDraft = revised.operations.find((draft) => draft.key === key)
+      return reconcileCamPlanRest(project, revised, revisedDraft?.rest?.sourceOperationKey ?? key)
     })
   }
 
