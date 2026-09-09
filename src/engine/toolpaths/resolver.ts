@@ -191,6 +191,68 @@ function pathsIntersect(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): 
   return executeClipPaths(subjectPaths, clipPaths, ClipperLib.ClipType.ctIntersection).length > 0
 }
 
+/**
+ * How many separate pieces does this union describe?
+ *
+ * Outer contours only, so the count does not depend on how Clipper chose to
+ * represent a hole.
+ *
+ * Measured on this clipper-lib: a union that encloses a void comes back as a
+ * *single* self-touching contour carrying the net area — both a C-shape closed
+ * by a fourth rect and a four-rect ring returned one path of area 1000, not an
+ * outer of 1200 plus a hole of 200. So today a raw `paths.length` would give the
+ * same answer, and no fixture here can tell the two apart.
+ *
+ * Filtering anyway, because the two are not equally correct. Were a hole ever
+ * returned as its own reversed path, `paths.length` would count it as a second
+ * piece and report two shapes that *do* touch as apart — a silent under-fold,
+ * the exact bug #751 §2 is about. `Area > 0` is right under either
+ * representation, so it does not rest on a library detail that a version bump
+ * could change.
+ *
+ * `Area(path) > 0` rather than `Clipper.Orientation`, which is defined as
+ * `Area(path) >= 0` in clipper-lib: identical for real contours, and it drops a
+ * degenerate zero-area sliver instead of counting it as a piece.
+ */
+function connectedComponentCount(paths: ClipperPath[]): number {
+  return paths.filter((path) => ClipperLib.Clipper.Area(path) > 0).length
+}
+
+/**
+ * Does `candidatePaths` touch or overlap `subjectPaths` — a shared boundary
+ * counting as contact (#751 §2)?
+ *
+ * `pathsIntersect` cannot answer this: the intersection of two polygons sharing
+ * only an edge has zero area, so a subtract sitting exactly against the pocket
+ * wall read as unrelated and was silently dropped from the fold.
+ *
+ * Connectivity is decided by the union itself — if the two together describe
+ * fewer pieces than they do apart, they are joined. That is deliberately the
+ * **same** operation the sketch's Join command uses (`mergeSelectedFeatures` →
+ * `unionClipperPaths`, both a bare `ctUnion` at `DEFAULT_CLIPPER_SCALE` with no
+ * offset or epsilon anywhere). So two shapes this treats as touching are exactly
+ * the two shapes Join would merge into one feature, and there is no tolerance
+ * constant that can drift from the one the user draws against.
+ *
+ * The effective floor is therefore the clipper grid, 1/10 000 of a project unit,
+ * and a gap of even one unit reads as apart — the same answer Join gives.
+ *
+ * Contact at a single corner point does **not** count: it shares no boundary
+ * length, so folding through it would extend the region across a zero-width
+ * join. Clipper leaves such shapes as two pieces under non-zero fill, so this
+ * falls out rather than needing a special case.
+ */
+function pathsTouchOrOverlap(subjectPaths: ClipperPath[], candidatePaths: ClipperPath[]): boolean {
+  if (subjectPaths.length === 0 || candidatePaths.length === 0) {
+    return false
+  }
+
+  const apart = connectedComponentCount(unionPaths(subjectPaths))
+    + connectedComponentCount(unionPaths(candidatePaths))
+  const together = connectedComponentCount(unionPaths([...subjectPaths, ...candidatePaths]))
+  return together < apart
+}
+
 function intersectPaths(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): ClipperPath[] {
   if (subjectPaths.length === 0 || clipPaths.length === 0) {
     return []
@@ -326,7 +388,9 @@ function discoverNonTargetSubtracts(
     .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'subtract' && !targetIdSet.has(feature.id))
     .filter((feature) => featureHasClosedGeometry(feature))
-    .filter((feature) => pathsIntersect(targetUnionPaths, [flattenFeatureToClipperPath(feature)]))
+    // Touching counts, not just overlapping (#751 §2): a subtract sitting
+    // exactly against the target's wall shares a boundary but no area.
+    .filter((feature) => pathsTouchOrOverlap(targetUnionPaths, [flattenFeatureToClipperPath(feature)]))
     .map((feature) => ({
       feature,
       span: resolveFeatureZSpan(project, feature),
