@@ -48,8 +48,10 @@ export interface DisplayViewport {
 export interface DisplaySegment {
   fromX: number
   fromY: number
+  fromZ: number
   toX: number
   toY: number
+  toZ: number
   feedScale: number | undefined
   source: string | undefined
 }
@@ -124,8 +126,10 @@ function makeSegment(move: ToolpathMove, scale: number): DisplaySegment {
   return {
     fromX: move.from.x * scale,
     fromY: move.from.y * scale,
+    fromZ: move.from.z,
     toX: move.to.x * scale,
     toY: move.to.y * scale,
+    toZ: move.to.z,
     feedScale: move.feedScale,
     source: move.source,
   }
@@ -160,11 +164,12 @@ function displaySegments(moves: readonly ToolpathMove[], scale: number, simplify
       continue
     }
 
-    const isConnected = pending.toX === next.fromX && pending.toY === next.fromY
+    const isConnected = pending.toX === next.fromX && pending.toY === next.fromY && pending.toZ === next.fromZ
     const hasSameFeed = pending.feedScale === next.feedScale
     if (isConnected && hasSameFeed && pendingLength + length <= DISPLAY_PATH_LENGTH) {
       pending.toX = next.toX
       pending.toY = next.toY
+      pending.toZ = next.toZ
       pendingLength += length
       continue
     }
@@ -362,8 +367,10 @@ function packedSegments(packed: Float32Array): DisplaySegment[] {
     out.push({
       fromX: packed[offset],
       fromY: packed[offset + 1],
+      fromZ: 0,
       toX: packed[offset + 2],
       toY: packed[offset + 3],
+      toZ: 0,
       feedScale: undefined,
       source: undefined,
     })

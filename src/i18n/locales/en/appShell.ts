@@ -158,6 +158,8 @@ export const appShellEn = {
   'appShell.toolpath.directions': 'Directions',
   'appShell.toolpath.feedColours': 'Feed colours',
   'appShell.toolpath.feedLegend': 'Feed percentage',
+  'appShell.toolpath.level': 'Toolpath level',
+  'appShell.toolpath.levelAll': 'All',
 
   // ── ToolRail ──
   'appShell.toolRail.shapes': 'Shapes',

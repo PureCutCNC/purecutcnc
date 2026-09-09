@@ -39,7 +39,7 @@ export class GpuToolpathAnnotations {
 
   render(renderer: WebGLRenderer, camera: Camera, toolpath: ToolpathResult, emphasized: boolean,
     vt: ViewTransform, width: number, height: number, visibility: ToolpathVisibility,
-    palette: CanvasThemePalette, deferArrows: boolean): void {
+    palette: CanvasThemePalette, deferArrows: boolean, selectedLevel: number | null = null): void {
     if (!emphasized || !toolpath.bounds || !visibility.directions) return
     if (deferArrows && !toolpath.debugToolpath) return
     if (!this.canvas) {
@@ -60,7 +60,7 @@ export class GpuToolpathAnnotations {
       this.geometry = new PlaneGeometry(2, 2)
       this.scene.add(new Mesh(this.geometry, this.material))
     }
-    const key = JSON.stringify([vt.scale, vt.offsetX, vt.offsetY, width, height, visibility, palette, deferArrows])
+    const key = JSON.stringify([vt.scale, vt.offsetX, vt.offsetY, width, height, visibility, palette, deferArrows, selectedLevel])
     if (this.toolpath !== toolpath || this.key !== key) {
       if (this.canvas.width !== width || this.canvas.height !== height) {
         // Texture storage dimensions are immutable after the first upload.
@@ -76,7 +76,7 @@ export class GpuToolpathAnnotations {
       this.canvas.height = height
       const ctx = this.canvas.getContext('2d')
       if (!ctx) throw new Error('Toolpath annotation canvas is unavailable')
-      drawToolpathAnnotations(ctx, toolpath, vt, true, visibility, { deferArrows })
+      drawToolpathAnnotations(ctx, toolpath, vt, true, visibility, { deferArrows, selectedLevel })
       this.texture!.needsUpdate = true
       this.toolpath = toolpath
       this.key = key

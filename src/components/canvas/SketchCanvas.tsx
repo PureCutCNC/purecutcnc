@@ -15,11 +15,9 @@
  */
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
+import { SketchToolpathControls } from './SketchToolpathControls'
 import { useSketchToolpathRenderer } from './useSketchToolpathRenderer'
 import { renderSketchToolpaths } from './renderSketchToolpaths'
-import { pocketSlotFeedPercent } from '../../theme/palette'
-import { toolpathHasEngagementTelemetry, feedColourLegendSteps as getFeedColourLegendSteps } from '../toolpathVisibility'
 import type { OpenProfileEndpoint, SketchControlRef } from '../../store/types'
 import { useProjectStore } from '../../store/projectStore'
 import { previewOffsetFeatures } from '../../store/helpers/derivedFeatures'
@@ -190,6 +188,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     toolpathVisibility,
     onToolpathVisibilityChange,
     toolpathPanelExpanded, onToolpathPanelExpandedChange,
+    toolpathLevel = null, toolpathLevelValues = [], onToolpathLevelChange,
     operationHighlightKind = null,
   },
   ref
@@ -867,7 +866,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     scheduleDraw()
-  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, pendingClipboardPlacement, pendingTextLayout, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, operationHighlightKind, canvasPalette])
+  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, pendingClipboardPlacement, pendingTextLayout, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, toolpathLevel, operationHighlightKind, canvasPalette])
 
   useEffect(() => {
     sketchEditPreviewRef.current = null
@@ -1244,7 +1243,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     }
 
-    ctx = renderSketchToolpaths(toolpathRenderer.surface.current, ctx, project, toolpaths, selectedOperationId, vt, toolpathVisibility, navigation.active, toolpathRenderer.observeCanvasDraw)
+    ctx = renderSketchToolpaths(toolpathRenderer.surface.current, ctx, project, toolpaths, selectedOperationId, toolpathLevel, vt, toolpathVisibility, navigation.active, toolpathRenderer.observeCanvasDraw)
 
     if (marqueeStartRef.current && marqueeCurrentRef.current) {
       const x = Math.min(marqueeStartRef.current.cx, marqueeCurrentRef.current.cx)
@@ -3007,18 +3006,6 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       })()
     : null
 
-  // Feed-colour legend steps for the selected operation's toolpath (issue #622).
-  // One ladder per selection — no union across operations, so duplicate labels
-  // and non-monotonic ramps are unreachable. The per-toolpath scan is cached by
-  // toolpath identity, so no move scan runs on this render path.
-  const selectedToolpathForLegend = toolpaths?.find((tp) => tp.operationId === selectedOperationId) ?? null
-  const feedColourLegendSteps = selectedToolpathForLegend !== null
-    ? getFeedColourLegendSteps(selectedToolpathForLegend, (() => {
-        const percent = pocketSlotFeedPercent(project.operations.find((op) => op.id === selectedOperationId))
-        return percent === null ? 1 : percent / 100
-      })())
-    : []
-
   return (
     <div ref={containerRef} className="sketch-canvas-container">
       <canvas
@@ -3037,20 +3024,19 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       <OverlapFeaturePicker picker={overlapFeaturePicker} />
       <CreationTargetBadge />
       {!depthLegendCollapsed ? <DepthLegend onToggleDepthLegend={onToggleDepthLegend} /> : null}
-      {(toolpaths && toolpaths.some((tp) => tp.moves.length > 0)) && toolpathVisibility && onToolpathVisibilityChange && toolpathPanelExpanded !== undefined && onToolpathPanelExpandedChange && (
-        <ToolpathVisibilityPanel
-          visibility={toolpathVisibility}
-          onChange={onToolpathVisibilityChange}
-          className="sketch-toolpath-vis"
-          expanded={toolpathPanelExpanded}
-          onExpandedChange={onToolpathPanelExpandedChange}
-          feedColoursDefault={
-            toolpaths.some((toolpath) => toolpath.operationId === selectedOperationId && toolpathHasEngagementTelemetry(toolpath))
-          }
-          legendSteps={feedColourLegendSteps}
-          renderer={toolpathRenderer.control}
-        />
-      )}
+      <SketchToolpathControls
+        project={project}
+        toolpaths={toolpaths}
+        selectedOperationId={selectedOperationId}
+        visibility={toolpathVisibility}
+        onVisibilityChange={onToolpathVisibilityChange}
+        expanded={toolpathPanelExpanded}
+        onExpandedChange={onToolpathPanelExpandedChange}
+        renderer={toolpathRenderer.control}
+        level={toolpathLevel}
+        levelValues={toolpathLevelValues}
+        onLevelChange={onToolpathLevelChange}
+      />
       <ConstraintEditPanel constraint={constraint} />
       <DrivingDimensionPanel driving={drivingWf} />
       {pendingFeatureDistribution && featureDistributionPanelState && (

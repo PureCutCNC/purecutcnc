@@ -159,6 +159,8 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
   'appShell.toolpath.directions': '方向',
   'appShell.toolpath.feedColours': '进给颜色',
   'appShell.toolpath.feedLegend': '进给百分比',
+  'appShell.toolpath.level': '刀路层级',
+  'appShell.toolpath.levelAll': '全部',
 
   // ── ToolRail ──
   'appShell.toolRail.shapes': '形状',

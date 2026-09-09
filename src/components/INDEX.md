@@ -9,6 +9,7 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - `IconGallery.tsx` — dev/debug grid of all available icons
 - `Select.tsx` — shared styled `<select>` wrapper
 - `ToolpathVisibilityPanel.tsx` — toggles for showing/hiding toolpath layers
+- `ToolpathLevelRail.tsx` / `toolpathLevels.ts` / `useToolpathLevelSelection.ts` — transient, display-only level selection for planar multi-level operations; shared by the 2D and 3D previews while surface and waterline paths fail closed to the complete view
 - `ToolpathRendererControl.tsx` — first inline GPU toggle (off selects Canvas) and visible fallback/retry status
 - `ToolpathGpuSuggestion.tsx` — non-blocking GPU opt-in tip, outside the toggle row; `canvas/toolpathGpuSuggestion.ts` detects repeated slow navigation draws, and `canvas/useToolpathGpuSuggestion.ts` owns browser-local dismissal and result-scoped suggestion state.
 - `toolpathVisibility.ts` — `ToolpathVisibility` type, default visibility constants, and the cached feed-colour legend steps (issue #535) (kept out of the panel component for fast refresh)

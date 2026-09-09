@@ -2736,6 +2736,102 @@
   z-index: 10;
 }
 
+/* Display-only stepped Z selector (issue #752). The real range input handles
+ * keyboard, drag, and touch; the tick rail makes its discrete stops legible. */
+.toolpath-level-rail {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: -1px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
+  column-gap: 6px;
+  width: 102px;
+  padding: 7px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-translucent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: var(--text);
+  font-size: 11px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.toolpath-level-rail__all {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  min-height: 24px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  line-height: 24px;
+  text-transform: uppercase;
+}
+
+.toolpath-level-rail__slider {
+  position: relative;
+  grid-column: 1;
+  grid-row: 1 / span 3;
+  width: 36px;
+}
+
+.toolpath-level-rail__marks {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 10px;
+  pointer-events: none;
+}
+
+.toolpath-level-rail__marks span {
+  width: 5px;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+.toolpath-level-rail__marks .toolpath-level-rail__mark--selected {
+  width: 9px;
+  height: 2px;
+  background: var(--accent);
+}
+
+.toolpath-level-rail__input {
+  position: absolute;
+  inset: 0;
+  width: 36px;
+  height: 100%;
+  margin: 0;
+  appearance: slider-vertical;
+  -webkit-appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.toolpath-level-rail__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.toolpath-level-rail__value {
+  grid-column: 2;
+  grid-row: 2 / span 2;
+  align-self: end;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .viewport-toolpath-renderer__status {
   display: inline-flex;
   align-items: center;
@@ -2837,6 +2933,15 @@
   .app-shell .viewport-toolpath-vis__item.viewport-toolpath-vis__gpu,
   .viewport-toolpath-renderer__status button {
     min-height: 44px;
+  }
+
+  .toolpath-level-rail__slider,
+  .toolpath-level-rail__input {
+    width: 44px;
+  }
+
+  .toolpath-level-rail {
+    grid-template-columns: 44px minmax(0, 1fr);
   }
 }
 
