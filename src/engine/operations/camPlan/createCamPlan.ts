@@ -19,6 +19,7 @@ import { defaultTool, type OperationKind, type OperationPass, type OperationTarg
 import { getFeatureGeometryBounds } from '../../../text'
 import { resolveDimensionRef } from '../../toolpaths/geometry'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../toolpaths/restRegions'
+import { resolveInsideEdgeRegions, resolvePocketRegions } from '../../toolpaths/resolver'
 import { isConstruction, isRegion } from '../../../store/helpers/featureRoles'
 import { defaultOperationForTarget, isOperationTargetValid } from '../../../store/helpers/operationDefaults'
 import { resolveFeatureInstances, type ResolvedSketchFeature } from '../../../store/helpers/resolveFeatures'
@@ -302,11 +303,28 @@ function buildSharedTabs(builder: PlanBuilder): CamPlanSharedTabsDraft[] {
   })
 }
 
+function resolvedIslandFeatureIds(builder: PlanBuilder): Set<string> {
+  const islandIds = new Set<string>()
+  for (const draft of builder.operations) {
+    if (draft.rest) continue
+    const resolved = draft.operation.kind === 'pocket'
+      ? resolvePocketRegions(builder.analysisProject, draft.operation)
+      : draft.operation.kind === 'edge_route_inside'
+        ? resolveInsideEdgeRegions(builder.analysisProject, draft.operation)
+        : null
+    for (const band of resolved?.bands ?? []) {
+      for (const featureId of band.islandFeatureIds) islandIds.add(featureId)
+    }
+  }
+  return islandIds
+}
+
 function coverageFor(
   features: ResolvedSketchFeature[],
   builder: PlanBuilder,
 ): CamPlanCoverage[] {
   const hasSurfacePlan = builder.operations.some((draft) => draft.operation.kind === 'surface_clean')
+  const resolvedIslandIds = resolvedIslandFeatureIds(builder)
   return features.flatMap<CamPlanCoverage>((feature) => {
     if (isRegion(feature) || isConstruction(feature)) return []
     if (builder.covered.has(feature.id)) {
@@ -314,6 +332,9 @@ function coverageFor(
     }
     if (builder.existing.has(feature.id)) {
       return [{ featureId: feature.id, featureName: feature.name, status: 'existing', detail: 'Covered by an enabled operation already in the project.' }]
+    }
+    if (resolvedIslandIds.has(feature.id)) {
+      return [{ featureId: feature.id, featureName: feature.name, status: 'not_needed', detail: 'Retained island geometry is included in the surrounding pocket or inside-edge operation.' }]
     }
     if ((feature.operation === 'add' || feature.operation === 'model') && feature.kind !== 'stl' && hasSurfacePlan) {
       return [{ featureId: feature.id, featureName: feature.name, status: 'not_needed', detail: 'Retained model geometry informs the surrounding surface-clean operation.' }]

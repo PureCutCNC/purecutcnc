@@ -165,6 +165,57 @@ test.describe('CAM operation browser smoke', () => {
     expect(restored.tools).toEqual(seeded.tools)
   })
 
+  test('CAM Plan preview treats resolver-accounted islands as retained material, not uncovered work (#735)', async ({ app }) => {
+    await seedCamQuickOperationProject(app.page)
+    const seeded = await getProject(app.page)
+    delete seeded.featureDefinitions['def-imported-model']
+    seeded.features = seeded.features.filter((feature) => feature.id !== 'f-imported-model')
+    seeded.featureDefinitions['def-retained-island'] = {
+      id: 'def-retained-island',
+      kind: 'circle',
+      profile: {
+        start: { x: 2, y: 0 },
+        segments: [{ type: 'circle', center: { x: 0, y: 0 }, to: { x: 2, y: 0 }, clockwise: true }],
+        closed: true,
+      },
+      dimensions: [],
+      text: null,
+      stl: null,
+      operation: 'add',
+    }
+    seeded.features.push({
+      id: 'f-retained-island',
+      name: 'Retained Island',
+      definitionId: 'def-retained-island',
+      transform: { a: 1, b: 0, c: 0, d: 1, e: 120, f: 34 },
+      constraints: [],
+      folderId: null,
+      z_top: 2,
+      z_bottom: 1.5,
+      visible: true,
+      locked: false,
+    })
+    seeded.tools = [
+      {
+        id: 'plan-quarter', name: 'Plan quarter inch', units: 'inch', type: 'flat_endmill', diameter: 0.25,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 40,
+        defaultPlungeFeed: 12, defaultStepdown: 0.1, defaultStepover: 0.4, maxCutDepth: 5,
+      },
+      {
+        id: 'plan-eighth', name: 'Plan eighth inch', units: 'inch', type: 'flat_endmill', diameter: 0.125,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 30,
+        defaultPlungeFeed: 10, defaultStepdown: 0.08, defaultStepover: 0.4, maxCutDepth: 5,
+      },
+    ]
+    await seedProject(app.page, JSON.stringify(seeded))
+
+    await app.page.getByRole('button', { name: 'CAM Plan (Preview)', exact: true }).click()
+    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan (Preview)' })
+    await expect(dialog.getByText('Retained Island', { exact: true })).toHaveCount(0)
+    await expect(dialog.getByRole('checkbox', { name: /I understand these features will not be covered/ })).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: /Create \d+ operations/ })).toBeEnabled()
+  })
+
   test('feature-row quick operation creates a CAM operation', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)
 

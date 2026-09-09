@@ -18,6 +18,7 @@ import { circleProfile, newProject, rectProfile, type Project, type SketchFeatur
 import { projectWithFeatures } from '../../../test/projectFixtures'
 import { materializeCamPlan } from '../../../store/helpers/camPlanApply'
 import { convertProjectUnits } from '../../../utils/units'
+import { resolvePocketRegions } from '../../toolpaths/resolver'
 import { createCamPlan } from './createCamPlan'
 import { reconcileCamPlanRest } from './reconcileRest'
 
@@ -138,6 +139,24 @@ function testDepthRolesAndUnsupportedCoverage(): void {
   assert(!plan.operations.some((draft) => draft.operation.kind === 'surface_clean'), 'add at stock top does not produce redundant surface cleaning')
   assert(!plan.operations.some((draft) => draft.coveredFeatureIds.some((id) => id === 'region' || id === 'construction')), 'regions and construction are never standalone targets')
   assert(plan.coverage.some((entry) => entry.featureId === 'line' && entry.status === 'unsupported'), 'deferred line intent stays visibly unsupported')
+}
+
+function testRetainedIslandsDoNotNeedCoverageAcknowledgement(): void {
+  const base = newProject('CAM plan retained island', 'inch')
+  base.stock.thickness = 1
+  const project = projectWithFeatures({ ...base, tools: [tool('quarter', 'flat_endmill', 0.25), tool('eighth', 'flat_endmill', 0.125)] }, [
+    feature('outer', 'add', rectProfile(0, 0, 2, 2), 1, 0),
+    feature('pocket', 'subtract', rectProfile(0.25, 0.25, 1.5, 1.5), 1, 0.5),
+    feature('island', 'add', circleProfile(1, 1, 0.2), 1, 0.5, 'circle'),
+  ])
+  const plan = createCamPlan(project, [])
+  const pocket = plan.operations.find((draft) => draft.operation.kind === 'pocket' && draft.operation.pass === 'rough')
+  assert(pocket, 'pocket roughing operation exists')
+  const resolved = resolvePocketRegions(project, pocket.operation)
+  assert(resolved.bands.some((band) => band.islandFeatureIds.includes('island')), 'pocket resolver includes the retained circle as an island')
+  const islandCoverage = plan.coverage.find((entry) => entry.featureId === 'island')
+  assert(islandCoverage?.status === 'not_needed', 'resolver-accounted island is not reported as uncovered work')
+  assert(islandCoverage.detail.includes('island'), 'coverage explains that the retained island informs the cut')
 }
 
 function testFallbackNoToolAndUnits(): void {
@@ -297,6 +316,7 @@ function testReactiveRestRemoval(): void {
 testRepresentativePlan()
 testDeterministicAndAtomicApply()
 testDepthRolesAndUnsupportedCoverage()
+testRetainedIslandsDoNotNeedCoverageAcknowledgement()
 testFallbackNoToolAndUnits()
 testResolvedWorldTransformAndOrdering()
 testReactiveRestReconciliation()
