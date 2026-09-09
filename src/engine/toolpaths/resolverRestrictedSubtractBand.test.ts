@@ -203,7 +203,42 @@ const withBite = resolve([body(), pocket(), island(), bite()])
   )
 }
 
-// ── 4. A bite ending AT the pocket floor still adds no band ─────────
+// ── 4. A bite stopping short at the TOP is restricted too ──────────
+{
+  // Same defect mirrored: a subtract reaching the pocket floor but starting
+  // below the pocket's top was splitting the whole region at its top edge —
+  // measured, a 200 mm² bite cut the 2000 mm² main region into 20..17 and
+  // 17..14. Either end being strictly inside the target's span qualifies.
+  //
+  // Asserted structurally rather than by naming bands: this fixture's island
+  // has a `z_top` of 17, so the main region is already split there by the
+  // island — legitimately, and that is #751 §5's island half, still open. What
+  // the bite must not do is split it any *further*. So: the main bands come
+  // back untouched and exactly one band is added, the bite's own.
+  const shortTop = feature('bite', 'subtract', 35, 33, 10, 8, 14, 17)
+  const result = resolve([body(), pocket(), island(), shortTop])
+  const shape = (results: ResolvedPocketResult) => results.bands
+    .map((band) => `${band.topZ}..${band.bottomZ}=${bandArea(band).toFixed(0)}`)
+    .sort()
+  const added = shape(result).filter((row) => !shape(withoutBite).includes(row))
+  check(
+    'a bite starting below the target top leaves the main bands untouched',
+    shape(withoutBite).every((row) => shape(result).includes(row)),
+    `main bands changed: ${shape(withoutBite).join(' ')} -> ${shape(result).join(' ')}`,
+  )
+  check(
+    'it adds exactly one band, carrying only the bite',
+    added.length === 1 && added[0] === '17..14=80',
+    `expected one added band '17..14=80', got [${added.join(', ')}]`,
+  )
+  check(
+    'swept volume is conserved across the top-restricted case too',
+    Math.abs(sweptVolume(result) - (sweptVolume(withoutBite) + 80 * 3)) < 1e-6,
+    `expected ${sweptVolume(withoutBite) + 80 * 3}, got ${sweptVolume(result)}`,
+  )
+}
+
+// ── 5. A bite ending AT the pocket floor still adds no band ─────────
 {
   // #526's own case. The main band already terminates there, so a restricted
   // band would split the region for nothing.

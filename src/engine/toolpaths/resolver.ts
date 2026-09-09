@@ -710,13 +710,23 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
   // answer that question by accident.
   const targetFloorZ = Math.min(...closedTargetFeatures.map(({ span }) => span.min))
   //
-  // Strictly above, and by a real amount: one bottoming out *at* the target's
-  // own floor needs no terminating pass, because the main band already ends
-  // there. Restricting it would split the region for nothing — caught by
-  // #526's own suite, which asserts a bite at pocket depth adds no band.
+  // Either end counts. A subtract whose span stops short of the target's at the
+  // top splits the whole region just as surely as one that stops short at the
+  // bottom: measured, a bite spanning 14..17 inside a 14..20 target cut the main
+  // 2000 region into 20..17 and 17..14 to accommodate a 200 bite.
+  //
+  // Strictly inside, and by a real amount, at whichever end: one whose span
+  // covers the target's needs no band of its own, because the main band already
+  // starts and ends where it does. Restricting that would split the region for
+  // nothing — caught by #526's own suite, which asserts a bite at pocket depth
+  // adds no band.
+  const targetTopZ = Math.max(...closedTargetFeatures.map(({ span }) => span.max))
   const restrictedSubtractIdSet = new Set(
     nonTargetSubtracts
-      .filter(({ span }) => span.min > targetFloorZ && bandHasThickness(span.min, targetFloorZ))
+      .filter(({ span }) => (
+        (span.min > targetFloorZ && bandHasThickness(span.min, targetFloorZ))
+        || (span.max < targetTopZ && bandHasThickness(span.max, targetTopZ))
+      ))
       .map(({ feature }) => feature.id),
   )
   const reachableUnionPaths = reachableUnionForDiscovery(targetUnionPaths, nonTargetSubtracts)
