@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-import { useId } from 'react'
 import { useI18n } from '../i18n/i18nContext'
 import { formatLength, type Units } from '../utils/units'
 
@@ -31,17 +30,17 @@ interface ToolpathLevelRailProps {
  */
 export function ToolpathLevelRail({ levels, selectedLevel, onChange, units }: ToolpathLevelRailProps) {
   const { t } = useI18n()
-  const labelId = useId()
   const selectedIndex = selectedLevel === null ? 0 : Math.max(0, levels.indexOf(selectedLevel) + 1)
-  const selectedLabel = selectedLevel === null
+  const sliderValue = levels.length - selectedIndex
+  const selectedValue = selectedLevel === null
     ? t('appShell.toolpath.levelAll')
-    : `Z ${formatLength(selectedLevel, units)}`
+    : formatLength(selectedLevel, units)
+  const selectedLabel = selectedLevel === null ? selectedValue : `Z ${selectedValue}`
   const height = Math.min(Math.max((levels.length + 1) * 32, 112), 260)
 
   return (
-    <div className="toolpath-level-rail" aria-labelledby={labelId}>
-      <span id={labelId} className="sr-only">{t('appShell.toolpath.level')}</span>
-      <span className="toolpath-level-rail__all" aria-hidden="true">{t('appShell.toolpath.levelAll')}</span>
+    <div className="toolpath-level-rail">
+      <span className="toolpath-level-rail__axis" aria-hidden="true">Z</span>
       <div className="toolpath-level-rail__slider" style={{ height }}>
         <div className="toolpath-level-rail__marks" aria-hidden="true">
           {Array.from({ length: levels.length + 1 }, (_, index) => (
@@ -54,16 +53,25 @@ export function ToolpathLevelRail({ levels, selectedLevel, onChange, units }: To
           min={0}
           max={levels.length}
           step={1}
-          value={selectedIndex}
+          value={sliderValue}
           aria-label={t('appShell.toolpath.level')}
           aria-valuetext={selectedLabel}
+          onKeyDown={(event) => {
+            if (event.key === 'Home') {
+              event.preventDefault()
+              onChange(null)
+            } else if (event.key === 'End') {
+              event.preventDefault()
+              onChange(levels.at(-1) ?? null)
+            }
+          }}
           onChange={(event) => {
-            const next = Number(event.currentTarget.value)
-            onChange(next === 0 ? null : levels[next - 1] ?? null)
+            const nextIndex = levels.length - Number(event.currentTarget.value)
+            onChange(nextIndex === 0 ? null : levels[nextIndex - 1] ?? null)
           }}
         />
       </div>
-      <output className="toolpath-level-rail__value" aria-live="polite">{selectedLabel}</output>
+      <output className="toolpath-level-rail__value" aria-live="polite">{selectedValue}</output>
     </div>
   )
 }

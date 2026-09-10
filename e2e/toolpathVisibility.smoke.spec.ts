@@ -776,13 +776,22 @@ test.describe('Toolpath visibility panel smoke', () => {
       await expect(sketchSlider).toHaveAttribute('min', '0')
       await expect(sketchSlider).toHaveAttribute('max', /[1-9]\d*/)
       await expect(sketchRail.locator('.toolpath-level-rail__marks span')).toHaveCount(Number(await sketchSlider.getAttribute('max')) + 1)
+      await expect(sketchRail.locator('.toolpath-level-rail__all')).toHaveCount(0)
+      await expect(sketchRail.locator('.toolpath-level-rail__axis')).toHaveText('Z')
+      await expect(sketchRail.locator('.toolpath-level-rail__value')).toHaveText('All')
       const sketchBox = (await sketchSlider.boundingBox())!
+      const railBox = (await sketchRail.boundingBox())!
       expect(sketchBox.width).toBeGreaterThanOrEqual(44)
       expect(sketchBox.height).toBeGreaterThan(sketchBox.width)
+      expect(railBox.width).toBeLessThanOrEqual(46)
+      expect(await sketchSlider.inputValue()).toBe(await sketchSlider.getAttribute('max'))
+      expect(await sketchSlider.evaluate((element) => getComputedStyle(element).direction)).toBe('rtl')
 
       await sketchSlider.tap({ position: { x: sketchBox.width / 2, y: sketchBox.height / 2 } })
-      await sketchSlider.press('ArrowRight')
+      await sketchSlider.press('ArrowDown')
       await expect(sketchSlider).toHaveAttribute('aria-valuetext', /^Z /)
+      await expect(sketchRail.locator('.toolpath-level-rail__value')).toHaveText(/^-?\d/)
+      await expect(sketchSlider).toHaveCSS('outline-style', 'none')
       expect(await snapshot()).toEqual(before)
 
       await page.getByRole('button', { name: '3D', exact: true }).click()
