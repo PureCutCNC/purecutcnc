@@ -74,6 +74,17 @@ function groupByDepth(project: Project, features: ResolvedSketchFeature[]): Reso
   return [...groups.values()]
 }
 
+function groupDrillingCandidates(project: Project, features: ResolvedSketchFeature[]): ResolvedSketchFeature[][] {
+  const groups = new Map<string, ResolvedSketchFeature[]>()
+  for (const feature of features) {
+    const bounds = getFeatureGeometryBounds(feature)
+    const diameter = Math.min(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY)
+    const key = `${depthKey(project, feature)}:${diameter.toFixed(7)}`
+    groups.set(key, [...(groups.get(key) ?? []), feature])
+  }
+  return [...groups.values()]
+}
+
 function operationAlreadyCovers(project: Project, kind: OperationKind, pass: OperationPass, featureId: string): boolean {
   return project.operations.some((operation) =>
     operation.enabled
@@ -448,22 +459,22 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
     && feature.sketch.profile.closed,
   )
   const ordinarySubtracts: ResolvedSketchFeature[] = []
-  for (const feature of subtracts.filter((candidate) => candidate.kind === 'circle')) {
-    const target: OperationTarget = { source: 'features', featureIds: [feature.id] }
-    const requiredDepth = featureDepth(project, feature)
+  for (const group of groupDrillingCandidates(project, subtracts.filter((candidate) => candidate.kind === 'circle'))) {
+    const target: OperationTarget = { source: 'features', featureIds: group.map((feature) => feature.id) }
+    const requiredDepth = Math.max(...group.map((feature) => featureDepth(project, feature)))
     const drillability = chooseDrillingTool(project, target, tools, requiredDepth, builder.reusedToolIds)
     if (!drillability) {
-      ordinarySubtracts.push(feature)
+      ordinarySubtracts.push(...group)
       continue
     }
     const drill = addPlannedOperation(
       builder,
       'drilling',
       'rough',
-      [feature],
+      group,
       drillability.drillType === 'simple'
-        ? 'The circular subtract matches an available drill.'
-        : 'The circular subtract can be helical-bored with a smaller flat end mill.',
+        ? 'The matching circular subtracts share an available drill.'
+        : 'The matching circular subtracts can be helical-bored with a smaller flat end mill.',
       [],
       drillability.tool,
     )

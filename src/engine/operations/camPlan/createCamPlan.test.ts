@@ -115,6 +115,33 @@ function testRepresentativePlan(): void {
   assert(plan.coverage.every((coverage) => coverage.status !== 'unsupported'), 'representative features are all explained')
 }
 
+function testMatchingHolesShareOneDrillingOperation(): void {
+  const base = newProject('CAM plan drill grouping', 'inch')
+  base.stock.thickness = 1
+  const project = projectWithFeatures({
+    ...base,
+    tools: [
+      tool('quarter-drill', 'drill', 0.25),
+      tool('eighth-drill', 'drill', 0.125),
+    ],
+  }, [
+    feature('quarter-one', 'subtract', circleProfile(0.5, 0.5, 0.125), 1, 0, 'circle'),
+    feature('quarter-two', 'subtract', circleProfile(1.5, 0.5, 0.125), 1, 0, 'circle'),
+    feature('quarter-shallow', 'subtract', circleProfile(2.5, 0.5, 0.125), 1, 0.5, 'circle'),
+    feature('eighth', 'subtract', circleProfile(3.5, 0.5, 0.0625), 1, 0, 'circle'),
+  ])
+  const drills = createCamPlan(project, []).operations.filter((draft) => draft.operation.kind === 'drilling')
+  assert(drills.length === 3, 'different hole diameters or Z spans remain separate drilling operations')
+  assert(
+    drills.some((draft) => draft.operation.target.source === 'features' && draft.operation.target.featureIds.join() === 'quarter-one,quarter-two'),
+    'same-diameter holes with the same Z span share one drilling operation',
+  )
+  assert(
+    drills.some((draft) => draft.operation.target.source === 'features' && draft.operation.target.featureIds.join() === 'quarter-shallow'),
+    'a same-diameter hole at a different depth remains independent',
+  )
+}
+
 function testDeterministicAndAtomicApply(): void {
   const project = exampleProject()
   const first = createCamPlan(project, [])
@@ -500,6 +527,7 @@ function testReactiveRestRemoval(): void {
 }
 
 testRepresentativePlan()
+testMatchingHolesShareOneDrillingOperation()
 testDeterministicAndAtomicApply()
 testDepthRolesAndUnsupportedCoverage()
 testRetainedIslandsDoNotNeedCoverageAcknowledgement()
