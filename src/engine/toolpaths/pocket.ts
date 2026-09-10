@@ -4115,43 +4115,6 @@ function wallContinuesBelow(contour: Point[], continuing: ClipperPath[]): boolea
   ))
 }
 
-/**
- * The part of a band that actually has a floor at its bottom Z (#751 §5).
- *
- * A band's floor is only where material stops. Where the band below covers the
- * same ground, the pocket carries on down and there is no floor here at all —
- * the finish was running a full floor pass over it anyway. Measured on a pocket
- * with an island whose `z_top` sits below the pocket top: 59 cut moves at the
- * island's Z spread over the whole 2 400 mm² pocket, when only the island's
- * 400 mm² top face has anything to skim. The rest was cutting air.
- *
- * Returns `regions` unchanged for the deepest band, which has nothing below it
- * and is a floor throughout.
- */
-function regionsWithFloorAt(
-  regions: ResolvedPocketRegion[],
-  nextBandRegions: ResolvedPocketRegion[] | null,
-): ResolvedPocketRegion[] {
-  if (!nextBandRegions || nextBandRegions.length === 0) {
-    return regions
-  }
-  const scale = DEFAULT_CLIPPER_SCALE
-  const toPaths = (rows: ResolvedPocketRegion[]): ClipperPath[] => rows.flatMap((region) => [
-    toClipperPath(normalizeWinding(region.outer, false), scale),
-    ...region.islands.map((island) => toClipperPath(normalizeWinding(island, true), scale)),
-  ])
-  const below = toPaths(nextBandRegions)
-  return regions.flatMap((region) => {
-    const own = [
-      toClipperPath(normalizeWinding(region.outer, false), scale),
-      ...region.islands.map((island) => toClipperPath(normalizeWinding(island, true), scale)),
-    ]
-    const floorOnly = executeDifference(own, below)
-    return polyTreeToRegions(floorOnly, region.targetFeatureIds, region.islandFeatureIds, scale)
-      .filter((row) => row.outer.length >= 3)
-  })
-}
-
 function generateFinishBandMoves(
   band: ResolvedPocketBand,
   operation: Operation,
@@ -4373,13 +4336,8 @@ function generateFinishBandMoves(
     ? seedStartRadius(operation, toolRadius)
     : 0
   const floorSeedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
-  // Only the ground that actually ends here gets a floor pass (#751 §5).
-  const floorFinishRegions = operation.finishFloor
-    ? regionsWithFloorAt(band.regions, nextBandRegions)
-      .flatMap((region) => buildInsetRegions(region, finishDelta))
-    : []
   const floorTrees = operation.finishFloor && !isParallelPocket
-    ? floorFinishRegions
+    ? finishRegions
       .flatMap((region) => buildInsetRegions(region, 0))
       .flatMap((region) => buildInsetRegions(region, floorStepover, ClipperLib.JoinType.jtMiter, floorIslandJoin))
       .flatMap((region) => {
@@ -4425,7 +4383,7 @@ function generateFinishBandMoves(
     )
     : undefined
   const floorSegments = operation.finishFloor && isParallelPocket
-    ? buildPocketParallelSegments(floorFinishRegions, stepoverDistance, operation.pocketAngle)
+    ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
     : []
   if (
     wallContours.length === 0
@@ -5082,9 +5040,18 @@ function generatePocketToolpathSingle(
       if (band.regions.length === 0) continue
     }
 
-    const nextBandRegions = resolved.bands.find((candidate) => (
+    // Every band starting at this one's floor, not just the first. A restricted
+    // subtract's band overlaps the main bands in Z (#751 §5), so more than one
+    // can begin here — and taking only the first picked the small restricted
+    // band over the pocket itself, which made the floor below look empty and
+    // put a full-pocket air pass at the island's Z while the island top went
+    // unmachined.
+    const bandsBelow = resolved.bands.filter((candidate) => (
       candidate !== band && Math.abs(candidate.topZ - band.bottomZ) < 1e-9
-    ))?.regions ?? null
+    ))
+    const nextBandRegions = bandsBelow.length > 0
+      ? bandsBelow.flatMap((candidate) => candidate.regions)
+      : null
     const result = operation.pass === 'finish'
       ? generateFinishBandMoves(
         band,

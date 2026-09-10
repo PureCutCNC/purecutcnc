@@ -24,14 +24,13 @@
  * feature, and the floor pass at the island's Z swept the whole pocket when only
  * the island's top face has anything to skim.
  *
- * Measured on a 60 x 40 pocket with a 20 x 20 island, tool ⌀3:
- *
- *     no island                      Z14:63                  total  65
- *     island z_top 17, before        Z17:63  Z14:54          total 125
- *     island z_top 17, after         Z17:24  Z14:54          total  85
- *
- * The Z17 remainder is the island's top face — the surface-clearing pass that
- * genuinely belongs there.
+ * **Walls only.** The floor half of this was reverted: restricting the floor pass
+ * to material-bearing ground treats the *voids* below as obstacles to inset away
+ * from, when at this Z they are free space the cutter may fly over. On the
+ * maintainer's `complex-pocket-test.camj` that left the island top unmachined —
+ * the expanded holes met and nothing survived the inset — where the unrestricted
+ * pass reached it fine. The floor needs a domain-versus-coverage split that the
+ * offset-ring construction does not currently express; see #751.
  *
  * **The parity corpus does not cover this.** It stayed 169/169 byte-identical
  * across the change, because no corpus project has a multi-band finish. These
@@ -85,7 +84,7 @@ function feature(
 
 const tool = { ...defaultTool('mm', 1), id: 't1', diameter: 3 }
 
-function operation(pattern: PocketPattern): Operation {
+function operation(pattern: PocketPattern, floors = true): Operation {
   return {
     id: 'op1',
     name: 'Finish',
@@ -106,7 +105,7 @@ function operation(pattern: PocketPattern): Operation {
     stockToLeaveRadial: 0,
     stockToLeaveAxial: 0,
     finishWalls: true,
-    finishFloor: true,
+    finishFloor: floors,
     carveDepth: 0,
     maxCarveDepth: 0,
   }
@@ -120,8 +119,8 @@ const pocket = () => feature('pocket', 'subtract', 20, 20, 60, 40, 14)
 interface LevelStats { count: number, minX: number, maxX: number }
 
 /** Cut moves per Z, with the X extent each level actually reaches. */
-function movesByZ(features: SketchFeature[], pattern: PocketPattern): Map<number, LevelStats> {
-  const op = operation(pattern)
+function movesByZ(features: SketchFeature[], pattern: PocketPattern, floors = true): Map<number, LevelStats> {
+  const op = operation(pattern, floors)
   const base = projectWithFeatures(
     newProject('finish-band-walls', 'mm'),
     features.map((row) => ({ ...row, definitionId: row.id })),
@@ -148,7 +147,6 @@ for (const pattern of ['offset', 'parallel'] as const) {
 
   const plain = movesByZ([body(), pocket()], pattern)
   const deep = plain.get(14)?.count ?? 0
-  const fullWallSpan = (plain.get(14)?.maxX ?? 0) - (plain.get(14)?.minX ?? 0)
 
   // ── 1. Baseline: no island, one band, one pass ────────────────────
   check(
@@ -164,25 +162,33 @@ for (const pattern of ['offset', 'parallel'] as const) {
     const withIsland = movesByZ([body(), pocket(), feature('isl', 'add', 35, 30, 20, 20, 0, 17)], pattern)
     const atIslandTop = withIsland.get(17)?.count ?? 0
     const atFloor = withIsland.get(14)?.count ?? 0
-    const islandTopSpan = (withIsland.get(17)?.maxX ?? 0) - (withIsland.get(17)?.minX ?? 0)
     check(
       `${pattern}: the island's Z is still machined`,
       atIslandTop > 0,
       'the island top face got no pass at all — it needs skimming',
     )
     check(
-      `${pattern}: but it carries far less than a full-pocket pass`,
-      atIslandTop < deep / 2,
-      `Z17 has ${atIslandTop} moves against a full pass of ${deep} — the wall or floor is still being repeated`,
+      `${pattern}: the wall contour is not repeated there`,
+      atIslandTop < deep,
+      `Z17 has ${atIslandTop} moves against a full pass of ${deep} — nothing was dropped`,
     )
-    // The decisive wall test: a repeated pocket-wall contour reaches the full
-    // pocket width. The island's own top face is barely a third of it. Move
-    // counts cannot tell these apart — a rectangular wall contour is only four
-    // moves — so the extent is what pins the wall dedup.
+    // The decisive wall test runs with **floors off**, so the only thing that can
+    // appear at the island's Z is a wall contour. With floors on, the floor pass
+    // still sweeps the whole pocket there — see the header — and its extent
+    // masks whatever the wall did, which is how an earlier version of this case
+    // passed while the dedup was disabled.
+    const wallsOnly = movesByZ([body(), pocket(), feature('isl', 'add', 35, 30, 20, 20, 0, 17)], pattern, false)
     check(
-      `${pattern}: the island's Z does not reach across the pocket wall`,
-      islandTopSpan < fullWallSpan / 2,
-      `Z17 spans ${islandTopSpan.toFixed(1)} against the pocket wall's ${fullWallSpan.toFixed(1)} — the wall contour is being cut again`,
+      `${pattern}: no wall contour is emitted where the wall carries on below`,
+      (wallsOnly.get(17)?.count ?? 0) === 0,
+      `Z17 emitted ${wallsOnly.get(17)?.count ?? 0} wall moves spanning `
+        + `${((wallsOnly.get(17)?.maxX ?? 0) - (wallsOnly.get(17)?.minX ?? 0)).toFixed(1)}`
+        + ' — the pocket wall is being finished twice',
+    )
+    check(
+      `${pattern}: the wall is still finished once, at its true bottom`,
+      (wallsOnly.get(14)?.count ?? 0) > 0,
+      'the wall was dropped from both bands and never finished at all',
     )
     check(
       `${pattern}: the deepest pass still finishes the whole region`,
