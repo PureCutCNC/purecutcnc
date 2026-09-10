@@ -28,15 +28,21 @@ import { toolpathLayerStyles, toolpathStrokeWidth } from './toolpathStyles'
 import type { ViewTransform } from './viewTransform'
 import { maskVertexShader, maskFragmentShader, compositeVertexShader, compositeFragmentShader } from './gpuToolpathShaders'
 import { GpuToolpathAnnotations } from './gpuToolpathAnnotations'
+import { movesAtToolpathLevel } from '../toolpathLevels'
 
 interface LayerBatch { scene: Scene; geometries: InstancedBufferGeometry[] }
-interface PreparedToolpath {
-  slotScale: number
+interface PreparedLayers {
   layers: Record<ToolpathOverlayLayerKey, LayerBatch>
   feeds: Map<number, LayerBatch>
-  collisions: LayerBatch
 }
-export interface GpuToolpathEntry { toolpath: ToolpathResult; emphasized: boolean; slotScale: number }
+interface PreparedToolpath extends PreparedLayers {
+  slotScale: number
+  collisions: LayerBatch
+  levels: Map<number, PreparedLayers>
+}
+export interface GpuToolpathEntry { toolpath: ToolpathResult; emphasized: boolean; selectedLevel?: number | null; slotScale: number }
+
+const MAX_CACHED_LEVELS_PER_TOOLPATH = 2
 
 /** Retained, full-resolution XY buffers. Pan/zoom only change uniforms.
  * Opaque MSAA coverage is resolved before applying layer alpha exactly once.
@@ -141,6 +147,7 @@ export class GpuToolpathRenderer {
       },
       feeds: new Map([...feeds].map(([step, moves]) => [step, this.batch(moves)])),
       collisions: this.batch((toolpath.collidingMoveIndices ?? []).map(i => toolpath.moves[i]).filter(Boolean)),
+      levels: new Map(),
     }
     this.cache.set(toolpath, prepared)
     if (import.meta.env.DEV) {
@@ -148,6 +155,48 @@ export class GpuToolpathRenderer {
       this.stats.preparationMs += performance.now() - start
     }
     return prepared
+  }
+
+  /** Keep full retained buffers intact; selected Z levels get a small LRU beside them. */
+  private prepareLevel(toolpath: ToolpathResult, prepared: PreparedToolpath, level: number): PreparedLayers {
+    const cached = prepared.levels.get(level)
+    if (cached) {
+      prepared.levels.delete(level)
+      prepared.levels.set(level, cached)
+      return cached
+    }
+    const buckets = toolpathLayerBuckets(toolpath)
+    const levelMoves = {
+      cuts: movesAtToolpathLevel(buckets.cuts, level),
+      leadIns: movesAtToolpathLevel(buckets.leadIns, level),
+      rapids: movesAtToolpathLevel(buckets.rapids, level),
+      plunges: movesAtToolpathLevel(buckets.plunges, level),
+      retractions: movesAtToolpathLevel(buckets.retractions, level),
+    }
+    const feeds = new Map<number, ToolpathMove[]>()
+    for (const move of levelMoves.cuts) {
+      const step = feedColourStep(move.feedScale, prepared.slotScale)
+      const group = feeds.get(step)
+      if (group) group.push(move)
+      else feeds.set(step, [move])
+    }
+    const selected: PreparedLayers = {
+      layers: {
+        cuts: this.batch(levelMoves.cuts), leadIns: this.batch(levelMoves.leadIns),
+        rapids: this.batch(levelMoves.rapids), plunges: this.batch(levelMoves.plunges),
+        retractions: this.batch(levelMoves.retractions),
+      },
+      feeds: new Map([...feeds].map(([step, moves]) => [step, this.batch(moves)])),
+    }
+    if (prepared.levels.size >= MAX_CACHED_LEVELS_PER_TOOLPATH) {
+      const oldest = prepared.levels.entries().next().value
+      if (oldest) {
+        this.releaseLayers(oldest[1])
+        prepared.levels.delete(oldest[0])
+      }
+    }
+    prepared.levels.set(level, selected)
+    return selected
   }
 
   private paint(batch: LayerBatch, stroke: string, width: number, alpha: number, dashed = false): void {
@@ -181,8 +230,11 @@ export class GpuToolpathRenderer {
     this.renderer.setRenderTarget(null)
     this.renderer.clear()
     const styles = toolpathLayerStyles(palette)
-    for (const { toolpath, emphasized, slotScale } of entries) {
+    for (const { toolpath, emphasized, selectedLevel = null, slotScale } of entries) {
       const prepared = this.prepare(toolpath, slotScale)
+      const layers = emphasized && selectedLevel !== null
+        ? this.prepareLevel(toolpath, prepared, selectedLevel)
+        : prepared
       const feedOn = visibility.feedColours ?? (emphasized && toolpathHasEngagementTelemetry(toolpath))
       for (const layer of buildToolpathOverlayLayers(visibility)) {
         if (!layer.visible) continue
@@ -190,16 +242,16 @@ export class GpuToolpathRenderer {
         const width = toolpathStrokeWidth(style.lineWidth, emphasized)
         const alpha = emphasized ? 1 : .34
         if (layer.key === 'cuts' && feedOn) {
-          for (const [step, batch] of prepared.feeds) this.paint(batch, canvasFeedColour(step, palette), width, alpha)
+          for (const [step, batch] of layers.feeds) this.paint(batch, canvasFeedColour(step, palette), width, alpha)
         } else {
-          this.paint(prepared.layers[layer.key], style.stroke, width, alpha, style.dash.length > 0)
+          this.paint(layers.layers[layer.key], style.stroke, width, alpha, style.dash.length > 0)
         }
       }
       this.paint(prepared.collisions, palette.toolpathCollision, emphasized ? 3 : 2.2, emphasized ? 1 : .55)
       // Canvas owns the annotation rules for both backends. Composite the
       // selected operation's cached raster here, before the next operation.
       this.annotations.render(this.renderer, this.camera, toolpath, emphasized,
-        vt, width, height, visibility, palette, deferArrows)
+        vt, width, height, visibility, palette, deferArrows, selectedLevel)
     }
     if (import.meta.env.DEV) {
       this.stats.submissions++
@@ -219,11 +271,18 @@ export class GpuToolpathRenderer {
     this.annotations.retain(active)
   }
 
-  private release(prepared: PreparedToolpath): void {
-    for (const batch of [...Object.values(prepared.layers), ...prepared.feeds.values(), prepared.collisions]) {
+  private releaseLayers(prepared: PreparedLayers): void {
+    for (const batch of [...Object.values(prepared.layers), ...prepared.feeds.values()]) {
       for (const geometry of batch.geometries) geometry.dispose()
       batch.scene.clear()
     }
+  }
+
+  private release(prepared: PreparedToolpath): void {
+    this.releaseLayers(prepared)
+    for (const selected of prepared.levels.values()) this.releaseLayers(selected)
+    for (const geometry of prepared.collisions.geometries) geometry.dispose()
+    prepared.collisions.scene.clear()
   }
 
   dispose(): void {

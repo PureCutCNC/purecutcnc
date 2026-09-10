@@ -50,6 +50,7 @@ import { worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 import { canvasColors, canvasRgba, parseRgb } from './canvasPalette'
 import { canvasFeedColour, feedColourStep } from '../../theme/palette'
+import { zMatchesToolpathLevel } from '../toolpathLevels'
 
 export function featureUsesSketchFill(operation: SketchFeature['operation']): boolean {
   return operation !== 'line' && operation !== 'construction'
@@ -595,6 +596,8 @@ export interface ToolpathDisplayRenderOptions {
   deferArrows?: boolean
   /** Static exports retain every move instead of using the interactive merge. */
   simplifyForDisplay?: boolean
+  /** Selected planar Z level, or All when null. Display-only (issue #752). */
+  selectedLevel?: number | null
 }
 
 export function drawToolpath(
@@ -607,7 +610,7 @@ export function drawToolpath(
   // operation (issue #498 S5). Optional for un-threaded callers, which keep
   // the pre-S5 40% ladder; the renderers pass the operation's real slot feed.
   slotScale = 0.4,
-  { deferArrows = false, simplifyForDisplay = true }: ToolpathDisplayRenderOptions = {},
+  { deferArrows = false, simplifyForDisplay = true, selectedLevel = null }: ToolpathDisplayRenderOptions = {},
 ): void {
   // Layer membership comes from the shared declaration both renderers use; only
   // the styling below is 2D's own. This file used to re-declare the five layers
@@ -632,7 +635,10 @@ export function drawToolpath(
     if (!schemaLayer.visible) continue
 
     const layer = styleFor[schemaLayer.key]
-    const moves = visibleDisplaySegments(display.layers[schemaLayer.key], viewport)
+    const visibleMoves = visibleDisplaySegments(display.layers[schemaLayer.key], viewport)
+    const moves = emphasized && selectedLevel !== null
+      ? visibleMoves.filter((move) => zMatchesToolpathLevel(move.fromZ, move.toZ, selectedLevel))
+      : visibleMoves
 
     if (moves.length === 0) {
       continue
@@ -692,7 +698,7 @@ export function drawToolpath(
     ctx.globalAlpha = 1
   }
 
-  drawToolpathAnnotations(ctx, toolpath, vt, emphasized, visibility, { deferArrows, simplifyForDisplay })
+  drawToolpathAnnotations(ctx, toolpath, vt, emphasized, visibility, { deferArrows, simplifyForDisplay, selectedLevel })
 }
 
 /** Shared annotation rules: direct Canvas output or an ordered GPU texture. */
@@ -702,7 +708,7 @@ export function drawToolpathAnnotations(
   vt: ViewTransform,
   emphasized: boolean,
   visibility: ToolpathVisibility,
-  { deferArrows = false, simplifyForDisplay = true }: ToolpathDisplayRenderOptions = {},
+  { deferArrows = false, simplifyForDisplay = true, selectedLevel = null }: ToolpathDisplayRenderOptions = {},
 ): void {
   const viewport = expandDisplayViewport(canvasDisplayViewport(ctx.canvas, vt), 12)
   if (!emphasized || !toolpath.bounds || !visibility.directions) {
@@ -722,7 +728,7 @@ export function drawToolpathAnnotations(
     // 26.7 ms to draw the arrows it chose (issue #664). Placements come back in
     // scaled-world space, so panning only shifts them by the view offset and the
     // cache still hits.
-    const placements = toolpathArrowPlacements(toolpath, vt.scale, visibility)
+    const placements = toolpathArrowPlacements(toolpath, vt.scale, visibility, selectedLevel)
 
     const drawArrowSet = (packed: Float32Array, offsets: readonly number[] | null, color: string): void => {
       if (packed.length === 0 || (offsets !== null && offsets.length === 0)) return
@@ -795,6 +801,7 @@ export function drawToolpathAnnotations(
     const display = toolpathDisplayGeometry(toolpath, vt.scale, simplifyForDisplay)
     const markerR = Math.max(3.5, Math.min(9, span * vt.scale * 0.025))
     for (const move of visibleDisplaySegments(display.debug, viewport)) {
+      if (!zMatchesToolpathLevel(move.fromZ, move.toZ, selectedLevel)) continue
       if (!move.source) continue
       const mx = (move.fromX + move.toX) / 2 + vt.offsetX
       const my = (move.fromY + move.toY) / 2 + vt.offsetY

@@ -21,6 +21,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { ToolpathVisibilityPanel } from '../ToolpathVisibilityPanel'
 import { toolpathHasEngagementTelemetry, feedColourLegendSteps as getFeedColourLegendSteps, type ToolpathVisibility } from '../toolpathVisibility'
+import { moveMatchesToolpathLevel, movesAtToolpathLevel } from '../toolpathLevels'
 import type { ToolpathResult } from '../../engine/toolpaths/types'
 import { useProjectStore } from '../../store/projectStore'
 import { modelFeatures } from '../../store/helpers/featureRoles'
@@ -74,6 +75,9 @@ interface Viewport3DProps {
   onToolpathVisibilityChange: (visibility: ToolpathVisibility) => void
   toolpathPanelExpanded: boolean
   onToolpathPanelExpandedChange: (expanded: boolean) => void
+  toolpathLevel?: number | null
+  toolpathLevelValues?: readonly number[]
+  onToolpathLevelChange?: (level: number | null) => void
 }
 
 function disposeObject3D(object: THREE.Object3D) {
@@ -97,13 +101,14 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
-function buildToolpathEndpointMarkers(toolpath: ToolpathResult, emphasized: boolean, palette: ThreeThemePalette): THREE.Object3D[] {
-  if (toolpath.moves.length === 0) {
+function buildToolpathEndpointMarkers(toolpath: ToolpathResult, emphasized: boolean, palette: ThreeThemePalette, selectedLevel: number | null): THREE.Object3D[] {
+  const moves = movesAtToolpathLevel(toolpath.moves, selectedLevel)
+  if (moves.length === 0) {
     return []
   }
 
-  const firstPoint = toolpathPointToWorld(toolpath.moves[0].from)
-  const lastPoint = toolpathPointToWorld(toolpath.moves[toolpath.moves.length - 1].to)
+  const firstPoint = toolpathPointToWorld(moves[0].from)
+  const lastPoint = toolpathPointToWorld(moves[moves.length - 1].to)
   const bounds = toolpath.bounds
   const span = bounds
     ? Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, bounds.maxZ - bounds.minZ)
@@ -153,6 +158,7 @@ function buildToolpathDirectionMarkers(
   emphasized: boolean,
   visibility: ToolpathVisibility,
   palette: ThreeThemePalette,
+  selectedLevel: number | null,
 ): THREE.Object3D[] {
   if (!emphasized || toolpath.moves.length === 0) {
     return []
@@ -173,7 +179,7 @@ function buildToolpathDirectionMarkers(
   const placements: Record<'cut' | 'rapid', ArrowPlacement[]> = { cut: [], rapid: [] }
 
   function getHorizontalDirection(move: ToolpathResult['moves'][number] | undefined): THREE.Vector3 | null {
-    if (!move || (move.kind !== 'cut' && move.kind !== 'rapid')) {
+    if (!move || (move.kind !== 'cut' && move.kind !== 'rapid') || !moveMatchesToolpathLevel(move, selectedLevel)) {
       return null
     }
 
@@ -192,6 +198,7 @@ function buildToolpathDirectionMarkers(
     if (move.kind !== 'cut' && move.kind !== 'rapid') {
       continue
     }
+    if (!moveMatchesToolpathLevel(move, selectedLevel)) continue
 
     // Respect visibility toggles
     if (move.kind === 'cut' && !visibility.cuts) continue
@@ -272,6 +279,7 @@ function buildToolpathOverlay(
   palette: ThreeThemePalette,
   resolution: THREE.Vector2,
   slotScale: number,
+  selectedLevel: number | null,
 ): THREE.Object3D[] {
   const schemaLayers = buildToolpathOverlayLayers(visibility)
   const layers: Array<{
@@ -311,13 +319,13 @@ function buildToolpathOverlay(
   for (const layer of layers) {
     if (!layer.visible) continue
 
-    const moves = buckets[layer.key]
+    const moves = movesAtToolpathLevel(buckets[layer.key], emphasized ? selectedLevel : null)
 
     if (moves.length === 0) {
       continue
     }
 
-    const pushLines = (layerMoves: ToolpathResult['moves'], color: number): void => {
+    const pushLines = (layerMoves: readonly ToolpathResult['moves'][number][], color: number): void => {
       const material = new LineMaterial({
         color,
         linewidth: layer.linewidth,
@@ -359,8 +367,8 @@ function buildToolpathOverlay(
   }
 
   if (emphasized && visibility.directions) {
-    objects.push(...buildToolpathDirectionMarkers(toolpath, emphasized, visibility, palette))
-    objects.push(...buildToolpathEndpointMarkers(toolpath, emphasized, palette))
+    objects.push(...buildToolpathDirectionMarkers(toolpath, emphasized, visibility, palette, selectedLevel))
+    objects.push(...buildToolpathEndpointMarkers(toolpath, emphasized, palette, selectedLevel))
   }
 
   return objects
@@ -378,6 +386,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   onToolpathVisibilityChange,
   toolpathPanelExpanded,
   onToolpathPanelExpandedChange,
+  toolpathLevel = null,
+  toolpathLevelValues = [],
+  onToolpathLevelChange,
 }, ref) {
   const { palette } = useTheme()
   const threePalette = palette.three
@@ -849,6 +860,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
         threePalette,
         resolution,
         slotFeedPercent === null ? 1 : slotFeedPercent / 100,
+        toolpathLevel,
       )
     })
     if (nextObjects.length === 0) {
@@ -863,7 +875,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       clearToolpathObjects(scene)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is stable per theme; adding would recreate overlay on theme toggle
-  }, [clearToolpathObjects, selectedOperationId, toolpaths, toolpathVisibility])
+  }, [clearToolpathObjects, selectedOperationId, toolpaths, toolpathVisibility, toolpathLevel])
 
   useEffect(() => {
     const scene = sceneRef.current
@@ -1003,6 +1015,10 @@ useImperativeHandle(ref, () => ({
           onExpandedChange={onToolpathPanelExpandedChange}
           feedColoursDefault={feedColoursDefault}
           legendSteps={feedColourLegendSteps}
+          levelValues={toolpathLevelValues}
+          selectedLevel={toolpathLevel}
+          onLevelChange={onToolpathLevelChange}
+          units={project.meta.units}
         />
       )}
       <div className="viewport-presets">

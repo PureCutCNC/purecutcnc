@@ -27,6 +27,7 @@ import { CreationToolbar, GlobalToolbar } from './components/layout/Toolbar'
 import { SimulationViewport, type SimulationViewportHandle } from './components/simulation/SimulationViewport'
 import { Viewport3D, type Viewport3DHandle } from './components/viewport3d/Viewport3D'
 import { type ToolpathVisibility, DEFAULT_TOOLPATH_VISIBILITY, ALL_TOOLPATH_HIDDEN } from './components/toolpathVisibility'
+import { useToolpathLevelSelection } from './components/useToolpathLevelSelection'
 import { ExportDialog } from './components/export/ExportDialog'
 import { ModelExportDialog } from './components/export/ModelExportDialog'
 import { PrintDesignDialog } from './components/export/PrintDesignDialog'
@@ -170,36 +171,27 @@ function App() {
     [project.clamps]
   )
 
-  const selectedClampId =
-    selection.selectedNode?.type === 'clamp'
-      ? selection.selectedNode.clampId
-      : null
+  const selectedClampId = selection.selectedNode?.type === 'clamp' ? selection.selectedNode.clampId : null
 
-  const handleCenterTabChange = useCallback(
-    (tab: 'sketch' | 'preview3d' | 'simulation') => {
-      if (tab === 'simulation') {
-        startSimulationTransition(() => setCenterTab(tab))
-      } else {
-        setCenterTab(tab)
-      }
-    },
-    [startSimulationTransition]
-  )
+  const handleCenterTabChange = useCallback((tab: 'sketch' | 'preview3d' | 'simulation') => {
+    if (tab === 'simulation') {
+      startSimulationTransition(() => setCenterTab(tab))
+      return
+    }
+    setCenterTab(tab)
+  }, [startSimulationTransition])
 
   // Selecting a different operation while the simulation tab is active drives
   // the heavy simulationResult/playbackInput recompute. Wrapping in a
   // transition shows the existing isComputing spinner; in other views the
   // selection is cheap so we don't pay the transition overhead.
-  const handleSelectedOperationIdChange = useCallback(
-    (id: string | null) => {
-      if (centerTab === 'simulation') {
-        startSimulationTransition(() => setSelectedOperationId(id))
-      } else {
-        setSelectedOperationId(id)
-      }
-    },
-    [centerTab, startSimulationTransition],
-  )
+  const handleSelectedOperationIdChange = useCallback((id: string | null) => {
+    if (centerTab === 'simulation') {
+      startSimulationTransition(() => setSelectedOperationId(id))
+      return
+    }
+    setSelectedOperationId(id)
+  }, [centerTab, startSimulationTransition])
 
   const featureActions = useFeatureTreeActions({
     setCenterTab,
@@ -256,6 +248,8 @@ function App() {
     generationBackend.resolved,
   )
   void toolpathMap
+
+  const toolpathLevelSelection = useToolpathLevelSelection(selectedOperation, selectedToolpath)
 
   const { simulationResult, simulationOperationCount, simulationPlaybackInput } = useSimulationModel({
     project,
@@ -412,6 +406,9 @@ function App() {
               onToolpathVisibilityChange={setToolpathVisibility}
               toolpathPanelExpanded={toolpathPanelExpanded}
               onToolpathPanelExpandedChange={setToolpathPanelExpanded}
+              toolpathLevel={toolpathLevelSelection.level}
+              toolpathLevelValues={toolpathLevelSelection.levels}
+              onToolpathLevelChange={toolpathLevelSelection.setLevel}
               operationHighlightKind={operationHighlightKind}
             />
             {project.features.length === 0 && !pendingAdd && !emptyStateEngaged ? (
@@ -438,6 +435,9 @@ function App() {
             onToolpathVisibilityChange={setToolpathVisibility}
             toolpathPanelExpanded={toolpathPanelExpanded}
             onToolpathPanelExpandedChange={setToolpathPanelExpanded}
+            toolpathLevel={toolpathLevelSelection.level}
+            toolpathLevelValues={toolpathLevelSelection.levels}
+            onToolpathLevelChange={toolpathLevelSelection.setLevel}
           />
         }
         simulationViewport={

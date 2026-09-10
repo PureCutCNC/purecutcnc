@@ -24,6 +24,8 @@ import { Icon } from './Icon'
 import { ToolpathRendererControl } from './ToolpathRendererControl'
 import { ToolpathGpuSuggestion } from './ToolpathGpuSuggestion'
 import type { ToolpathRendererControl as RendererControl } from './canvas/toolpathRendererPreference'
+import { ToolpathLevelRail } from './ToolpathLevelRail'
+import type { Units } from '../utils/units'
 
 interface ToolpathVisibilityPanelProps {
   visibility: ToolpathVisibility
@@ -47,6 +49,11 @@ interface ToolpathVisibilityPanelProps {
   legendSteps?: ReadonlyArray<FeedColourLegendStep>
   /** Present only in the sketch; the 3D renderer has no backend selector. */
   renderer?: RendererControl
+  /** Eligible planar cut depths, high to low. Empty leaves the rail hidden. */
+  levelValues?: readonly number[]
+  selectedLevel?: number | null
+  onLevelChange?: (level: number | null) => void
+  units?: Units
 }
 
 const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch: string }> = [
@@ -60,7 +67,7 @@ const ITEMS: Array<{ key: keyof ToolpathVisibility; labelKey: MessageKey; swatch
   { key: 'feedColours', labelKey: 'appShell.toolpath.feedColours', swatch: 'viewport-toolpath-vis__swatch--cuts' },
 ]
 
-export function ToolpathVisibilityPanel({ visibility, onChange, className, expanded, onExpandedChange, feedColoursDefault, legendSteps, renderer }: ToolpathVisibilityPanelProps) {
+export function ToolpathVisibilityPanel({ visibility, onChange, className, expanded, onExpandedChange, feedColoursDefault, legendSteps, renderer, levelValues = [], selectedLevel = null, onLevelChange, units }: ToolpathVisibilityPanelProps) {
   const { t } = useI18n()
   const { palette } = useTheme()
 
@@ -90,6 +97,14 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
       </button>
       {expanded && renderer ? <ToolpathRendererControl renderer={renderer} /> : null}
       {renderer?.suggestion && <ToolpathGpuSuggestion {...renderer.suggestion} />}
+      {expanded && levelValues.length > 0 && onLevelChange && units && (
+        <ToolpathLevelRail
+          levels={levelValues}
+          selectedLevel={selectedLevel}
+          onChange={onLevelChange}
+          units={units}
+        />
+      )}
       {expanded ? (
         ITEMS.map(({ key, labelKey, swatch }) => {
           const selected = key === 'feedColours'
