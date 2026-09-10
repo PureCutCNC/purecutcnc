@@ -208,6 +208,7 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
   ), [plan])
   const hardError = plan.operations.some((draft) => draft.enabled && (draft.hardError || draft.staleReason || !draft.operation.toolRef))
   const enabledCount = plan.operations.filter((draft) => draft.enabled).length
+  const existingOperationCount = project.operations.filter((operation) => operation.enabled).length
   const canCreate = enabledCount > 0 && !hardError && (uncovered.length === 0 || acknowledgeCoverage)
 
   function patchOperation(key: string, patch: Partial<Operation>, invalidatesRest = false) {
@@ -312,6 +313,7 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
         <div className="cam-plan-summary" aria-label={camT('cam.plan.summary')}>
           <span><strong>{enabledCount}</strong> {camT('cam.plan.operations')}</span>
           <span><strong>{new Set(plan.operations.flatMap((draft) => draft.enabled && draft.operation.toolRef ? [draft.operation.toolRef] : [])).size}</strong> {camT('cam.plan.tools')}</span>
+          <span><strong>{existingOperationCount}</strong> {camT('cam.plan.existingOperations')}</span>
           <span className={uncovered.length > 0 ? 'cam-plan-summary__warning' : ''}><strong>{uncovered.length}</strong> {camT('cam.plan.needsReview')}</span>
         </div>
 

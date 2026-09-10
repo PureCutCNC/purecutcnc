@@ -320,6 +320,7 @@
   max-width: 1120px;
   height: min(780px, calc(100vh - 32px));
   max-height: 94vh;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
 .cam-plan-header {

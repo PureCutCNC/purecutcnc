@@ -101,6 +101,11 @@ test.describe('CAM operation browser smoke', () => {
     await app.page.getByRole('button', { name: 'CAM Plan (Preview)', exact: true }).click()
     const dialog = app.page.getByRole('dialog', { name: 'CAM Plan (Preview)' })
     await expect(dialog).toBeVisible()
+    await expect.poll(async () => dialog.evaluate((element) => {
+      const summary = element.querySelector('.cam-plan-summary')?.getBoundingClientRect()
+      const body = element.querySelector('.cam-plan-body')?.getBoundingClientRect()
+      return summary != null && body != null && Math.abs(summary.bottom - body.top) < 1
+    })).toBe(true)
     await dialog.screenshot({ path: test.info().outputPath('cam-plan-preview.png') })
 
     // The initially selected drilling row owns its method; clearing controls
@@ -125,7 +130,7 @@ test.describe('CAM operation browser smoke', () => {
     const pocketRest = dialog.locator('.cam-plan-row').filter({ hasText: 'REST' }).first()
     await expect(pocketRest).toContainText('Plan sixteenth inch')
     await pocketRest.click()
-    await expect(dialog.getByText('The source operation changed. Reset recommendations to recalculate this rest operation.', { exact: true })).toHaveCount(0)
+    await expect(dialog.getByText('The source operation changed. Refresh recommendations to recalculate this rest operation.', { exact: true })).toHaveCount(0)
     await pocketRough.click()
     await expect(patternField.locator('.ui-select__trigger')).toContainText('Offset')
 

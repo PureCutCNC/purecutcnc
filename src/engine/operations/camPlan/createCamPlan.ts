@@ -95,14 +95,6 @@ function operationAlreadyCovers(project: Project, kind: OperationKind, pass: Ope
   )
 }
 
-function featuresCoveredByExistingOperations(project: Project): Set<string> {
-  return new Set(project.operations.flatMap((operation) => (
-    operation.enabled && operation.target.source === 'features'
-      ? operation.target.featureIds
-      : []
-  )))
-}
-
 function boundsContain(outer: ResolvedSketchFeature, inner: ResolvedSketchFeature): boolean {
   const a = getFeatureGeometryBounds(outer)
   const b = getFeatureGeometryBounds(inner)
@@ -115,9 +107,11 @@ function boundsContain(outer: ResolvedSketchFeature, inner: ResolvedSketchFeatur
     && a.maxY >= b.maxY - 1e-9
 }
 
-function targetLabel(features: ResolvedSketchFeature[]): string {
+function targetLabel(project: Project, features: ResolvedSketchFeature[]): string {
   if (features.length === 1) return features[0]?.name ?? 'Feature'
-  return `${features.length} features at the same depth`
+  const firstDepth = depthKey(project, features[0]!)
+  const hasMixedDepths = features.some((feature) => depthKey(project, feature) !== firstDepth)
+  return hasMixedDepths ? `${features.length} features across multiple depths` : `${features.length} features at the same depth`
 }
 
 function planToolById(tools: CamPlanTool[], id: string | null): CamPlanTool | null {
@@ -208,7 +202,7 @@ function addPlannedOperation(
     key,
     enabled: true,
     operation,
-    targetLabel: targetLabel(plannedFeatures),
+    targetLabel: targetLabel(builder.project, plannedFeatures),
     rationale,
     toolReason: selected
       ? toolChoiceReason(selected, kind, ranked.maximumDiameter, wasReused)
@@ -282,8 +276,9 @@ function addRoughFinishPair(
   kind: OperationKind,
   features: ResolvedSketchFeature[],
   rationale: string,
+  forcedRoughTool?: CamPlanTool,
 ): CamPlanOperationDraft[] {
-  const rough = addPlannedOperation(builder, kind, 'rough', features, `${rationale} Start with a roughing pass.`)
+  const rough = addPlannedOperation(builder, kind, 'rough', features, `${rationale} Start with a roughing pass.`, [], forcedRoughTool)
   const finishTool = rough ? planToolById(builder.tools, rough.operation.toolRef) ?? undefined : undefined
   const finish = addPlannedOperation(
     builder,
@@ -340,7 +335,7 @@ function buildSharedTabs(builder: PlanBuilder): CamPlanSharedTabsDraft[] {
       enabled: true,
       targetFeatureIds: targetIds,
       operationKeys: operations.map((operation) => operation.key),
-      targetLabel: targetLabel(features),
+      targetLabel: targetLabel(builder.project, features),
       reusedExistingTabs,
       tabs: stableTabs,
       warning: reusedExistingTabs
@@ -366,23 +361,104 @@ function resolvedIslandFeatureIds(builder: PlanBuilder): Set<string> {
   return islandIds
 }
 
-function resolvedNonTargetSubtractFeatureIds(builder: PlanBuilder): Set<string> {
+function resolvedNonTargetSubtractFeatureIdsForOperation(project: Project, operation: Operation): Set<string> {
+  if (operation.target.source !== 'features') return new Set()
+  const resolved = operation.kind === 'pocket'
+    ? resolvePocketRegions(project, operation)
+    : operation.kind === 'edge_route_inside'
+      ? resolveInsideEdgeRegions(project, operation)
+      : null
+  const directTargetIds = new Set(operation.target.featureIds)
   const subtractIds = new Set<string>()
-  for (const draft of builder.operations) {
-    if (draft.rest || draft.operation.target.source !== 'features') continue
-    const resolved = draft.operation.kind === 'pocket'
-      ? resolvePocketRegions(builder.analysisProject, draft.operation)
-      : draft.operation.kind === 'edge_route_inside'
-        ? resolveInsideEdgeRegions(builder.analysisProject, draft.operation)
-        : null
-    const directTargetIds = new Set(draft.operation.target.featureIds)
-    for (const band of resolved?.bands ?? []) {
-      for (const featureId of band.targetFeatureIds) {
-        if (!directTargetIds.has(featureId)) subtractIds.add(featureId)
-      }
+  for (const band of resolved?.bands ?? []) {
+    for (const featureId of band.targetFeatureIds) {
+      if (!directTargetIds.has(featureId)) subtractIds.add(featureId)
     }
   }
   return subtractIds
+}
+
+function resolvedNonTargetSubtractFeatureIds(builder: PlanBuilder): Set<string> {
+  const subtractIds = new Set<string>()
+  for (const draft of builder.operations) {
+    if (draft.rest) continue
+    for (const featureId of resolvedNonTargetSubtractFeatureIdsForOperation(builder.analysisProject, draft.operation)) {
+      subtractIds.add(featureId)
+    }
+  }
+  return subtractIds
+}
+
+interface PocketToolGroup {
+  features: ResolvedSketchFeature[]
+  tool: CamPlanTool | null
+}
+
+function pocketToolForFeature(builder: PlanBuilder, feature: ResolvedSketchFeature): CamPlanTool | null {
+  const target: OperationTarget = { source: 'features', featureIds: [feature.id] }
+  const ranked = rankCamPlanTools(
+    builder.project,
+    'pocket',
+    target,
+    builder.tools,
+    featureDepth(builder.project, feature),
+    builder.reusedToolIds,
+  )
+  return ranked.tools[0] ?? null
+}
+
+function pocketAnalysisOperation(builder: PlanBuilder, features: ResolvedSketchFeature[]): Operation {
+  const target: OperationTarget = { source: 'features', featureIds: features.map((feature) => feature.id) }
+  const operation = defaultOperationForTarget(
+    builder.analysisProject,
+    'pocket',
+    'rough',
+    target,
+    builder.project.operations.length,
+    { tool: defaultTool(builder.project.meta.units, 1), toolRef: null },
+  )
+  operation.target = target
+  return operation
+}
+
+function pocketWouldFoldFeature(builder: PlanBuilder, features: ResolvedSketchFeature[], featureId: string): boolean {
+  return resolvedNonTargetSubtractFeatureIdsForOperation(
+    builder.analysisProject,
+    pocketAnalysisOperation(builder, features),
+  ).has(featureId)
+}
+
+/**
+ * Group disjoint blind pockets when they choose the same primary cutter. Each
+ * target keeps its own span in the resolver, so depth is not a grouping key.
+ * A subtract already folded into a surrounding pocket stays out of the direct
+ * target list, preserving the #526/#751 parent-pocket ownership rule.
+ */
+function nextBlindPocketToolGroup(
+  builder: PlanBuilder,
+  remaining: ResolvedSketchFeature[],
+): PocketToolGroup | null {
+  while (remaining.length > 0) {
+    const root = remaining.shift()
+    if (!root || resolvedNonTargetSubtractFeatureIds(builder).has(root.id)) continue
+
+    const tool = pocketToolForFeature(builder, root)
+    const grouped = [root]
+    if (tool) {
+      for (let index = 0; index < remaining.length;) {
+        const candidate = remaining[index]!
+        const candidateTool = pocketToolForFeature(builder, candidate)
+        if (candidateTool?.id !== tool.id || pocketWouldFoldFeature(builder, grouped, candidate.id)) {
+          index += 1
+          continue
+        }
+        grouped.push(candidate)
+        remaining.splice(index, 1)
+      }
+    }
+    return { features: grouped, tool }
+  }
+  return null
 }
 
 function coverageFor(
@@ -433,7 +509,7 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
     operations: [],
     reusedToolIds: new Set(),
     covered: new Set(),
-    existing: featuresCoveredByExistingOperations(project),
+    existing: new Set(),
     sequence: 0,
   }
 
@@ -442,7 +518,7 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
     && feature.kind !== 'stl'
     && feature.sketch.profile.closed,
   )
-  const closedAdds = closedAddBoundaries.filter((feature) => !builder.existing.has(feature.id))
+  const closedAdds = closedAddBoundaries
   const outerClosedAdds = closedAdds.filter((feature) =>
     !closedAddBoundaries.some((candidate) => candidate.id !== feature.id && boundsContain(candidate, feature)),
   )
@@ -454,8 +530,7 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
   }
 
   const subtracts = features.filter((feature) =>
-    !builder.existing.has(feature.id)
-    && feature.operation === 'subtract'
+    feature.operation === 'subtract'
     && feature.sketch.profile.closed,
   )
   const ordinarySubtracts: ResolvedSketchFeature[] = []
@@ -487,10 +562,15 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
 
   const blind = ordinarySubtracts.filter((feature) => resolveDimensionRef(project, feature.z_bottom) > Z_EPSILON)
   const through = ordinarySubtracts.filter((feature) => resolveDimensionRef(project, feature.z_bottom) <= Z_EPSILON)
-  for (const group of groupByDepth(project, blind)) {
-    const directTargets = group.filter((feature) => !resolvedNonTargetSubtractFeatureIds(builder).has(feature.id))
-    if (directTargets.length === 0) continue
-    addRoughFinishPair(builder, 'pocket', directTargets, 'This closed subtract stops above the stock bottom, so it is a blind pocket.')
+  const remainingBlind = [...blind]
+  for (let group = nextBlindPocketToolGroup(builder, remainingBlind); group; group = nextBlindPocketToolGroup(builder, remainingBlind)) {
+    addRoughFinishPair(
+      builder,
+      'pocket',
+      group.features,
+      'This closed subtract stops above the stock bottom, so it is a blind pocket.',
+      group.tool ?? undefined,
+    )
   }
   for (const group of groupByDepth(project, through)) {
     addRoughFinishPair(builder, 'edge_route_inside', group, 'This closed subtract reaches the stock bottom, so the removable slug is routed on its inside edge.')

@@ -142,6 +142,56 @@ function testMatchingHolesShareOneDrillingOperation(): void {
   )
 }
 
+function testCompatiblePocketsShareOneOperationAcrossDepths(): void {
+  const base = newProject('CAM plan pocket grouping', 'inch')
+  base.stock.thickness = 1
+  const project = projectWithFeatures({
+    ...base,
+    tools: [tool('three-eighth', 'flat_endmill', 0.375), tool('eighth', 'flat_endmill', 0.125)],
+  }, [
+    feature('deep-pocket', 'subtract', rectProfile(0, 0, 2, 2), 1, 0.25),
+    feature('shallow-pocket', 'subtract', rectProfile(3, 0, 2, 2), 1, 0.5),
+  ])
+  const pockets = createCamPlan(project, []).operations.filter((draft) =>
+    draft.operation.kind === 'pocket' && !draft.rest,
+  )
+  const rough = pockets.find((draft) => draft.operation.pass === 'rough')
+  const finish = pockets.find((draft) => draft.operation.pass === 'finish')
+  assert(pockets.length === 2, 'compatible blind pockets share one rough/finish pair despite different depths')
+  assert(rough?.operation.toolRef === 'three-eighth', 'the grouped rough pocket keeps its common selected tool')
+  assert(
+    rough?.operation.target.source === 'features' && rough.operation.target.featureIds.join() === 'deep-pocket,shallow-pocket',
+    'one rough pocket operation carries both direct targets',
+  )
+  assert(
+    finish?.operation.target.source === 'features' && finish.operation.target.featureIds.join() === 'deep-pocket,shallow-pocket',
+    'one finish pocket operation carries both direct targets',
+  )
+  assert(rough?.targetLabel.includes('multiple depths'), 'the grouped target label does not falsely claim one shared depth')
+}
+
+function testExistingOperationsOnlySuppressExactRecommendations(): void {
+  const base = newProject('CAM plan existing operations', 'inch')
+  base.stock.thickness = 1
+  const project = projectWithFeatures({
+    ...base,
+    tools: [tool('quarter', 'flat_endmill', 0.25), tool('eighth', 'flat_endmill', 0.125)],
+  }, [feature('pocket', 'subtract', rectProfile(0, 0, 2, 2), 1, 0.5)])
+  const initial = createCamPlan(project, [])
+  const rough = initial.operations.find((draft) => draft.operation.kind === 'pocket' && draft.operation.pass === 'rough' && !draft.rest)
+  assert(rough, 'initial plan includes a pocket roughing operation')
+  const withExistingRough = { ...project, operations: [rough.operation] }
+  const replanned = createCamPlan(withExistingRough, [])
+  assert(
+    !replanned.operations.some((draft) => draft.operation.kind === 'pocket' && draft.operation.pass === 'rough' && !draft.rest),
+    'an existing matching rough operation is not proposed again',
+  )
+  assert(
+    replanned.operations.some((draft) => draft.operation.kind === 'pocket' && draft.operation.pass === 'finish' && !draft.rest),
+    'an existing rough operation does not suppress the missing finish recommendation',
+  )
+}
+
 function testDeterministicAndAtomicApply(): void {
   const project = exampleProject()
   const first = createCamPlan(project, [])
@@ -528,6 +578,8 @@ function testReactiveRestRemoval(): void {
 
 testRepresentativePlan()
 testMatchingHolesShareOneDrillingOperation()
+testCompatiblePocketsShareOneOperationAcrossDepths()
+testExistingOperationsOnlySuppressExactRecommendations()
 testDeterministicAndAtomicApply()
 testDepthRolesAndUnsupportedCoverage()
 testRetainedIslandsDoNotNeedCoverageAcknowledgement()
