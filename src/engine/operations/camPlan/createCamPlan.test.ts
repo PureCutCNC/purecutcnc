@@ -166,7 +166,7 @@ function testRetainedIslandsDoNotNeedCoverageAcknowledgement(): void {
   assert(islandCoverage.detail.includes('island'), 'coverage explains that the retained island informs the cut')
 }
 
-function testOverlappingBlindSubtractsKeepSeparatePocketPairs(): void {
+function testNestedSubtractsStayWithTheirParentPocket(): void {
   const base = newProject('CAM plan overlapping pockets', 'inch')
   base.stock.thickness = 1
   const project = projectWithFeatures({
@@ -174,34 +174,37 @@ function testOverlappingBlindSubtractsKeepSeparatePocketPairs(): void {
     tools: [tool('quarter', 'flat_endmill', 0.25), tool('eighth', 'flat_endmill', 0.125)],
   }, [
     feature('outer', 'add', rectProfile(0, 0, 4.5, 2), 1, 0),
-    feature('outer-pocket', 'subtract', rectProfile(0.25, 0.25, 1.75, 1.25), 1, 0.5),
-    feature('overlap-pocket', 'subtract', rectProfile(1.5, 0.75, 1, 0.75), 1, 0.5),
-    feature('disjoint-a', 'subtract', rectProfile(2.6, 0.25, 0.65, 0.75), 1, 0.5),
-    feature('disjoint-b', 'subtract', rectProfile(3.5, 0.25, 0.65, 0.75), 1, 0.5),
+    feature('parent-pocket', 'subtract', rectProfile(0.25, 0.25, 3.75, 1.5), 1, 0.5),
+    feature('nested-pocket', 'subtract', rectProfile(1.5, 0.75, 1, 0.75), 1, 0.25),
+    feature('through-cutout', 'subtract', rectProfile(3.25, 0.75, 0.5, 0.5), 1, 0),
   ])
   const plan = createCamPlan(project, [])
   const roughPockets = plan.operations.filter((draft) =>
     draft.operation.kind === 'pocket' && draft.operation.pass === 'rough' && !draft.rest,
   )
-  assert(roughPockets.length === 3, 'overlapping blind subtracts receive separate pocket roughing operations')
+  assert(roughPockets.length === 1, 'the surrounding blind pocket owns its nested subtract without a duplicate pocket operation')
   assert(
-    roughPockets.some((draft) => draft.operation.target.source === 'features' && draft.operation.target.featureIds.join() === 'outer-pocket'),
-    'outer blind subtract remains a direct pocket target',
+    roughPockets[0]?.operation.target.source === 'features' && roughPockets[0].operation.target.featureIds.join() === 'parent-pocket',
+    'only the parent pocket is a direct target',
+  )
+  const parentPocket = roughPockets[0]
+  assert(
+    parentPocket && resolvePocketRegions(project, parentPocket.operation).bands.some((band) => band.targetFeatureIds.includes('nested-pocket')),
+    'the parent resolver includes the nested blind subtract at its deeper level',
+  )
+  const nestedCoverage = plan.coverage.find((entry) => entry.featureId === 'nested-pocket')
+  assert(
+    nestedCoverage?.status === 'not_needed' && nestedCoverage.detail.includes('surrounding pocket'),
+    'nested blind subtract coverage explains that the parent pocket machines it',
   )
   assert(
-    roughPockets.some((draft) => draft.operation.target.source === 'features' && draft.operation.target.featureIds.join() === 'overlap-pocket'),
-    'overlapping blind subtract receives its own direct pocket target',
-  )
-  assert(
-    roughPockets.some((draft) => (
-      draft.operation.target.source === 'features'
-      && draft.operation.target.featureIds.join() === 'disjoint-a,disjoint-b'
+    plan.operations.some((draft) => (
+      draft.operation.kind === 'edge_route_inside'
+      && draft.operation.pass === 'rough'
+      && draft.operation.target.source === 'features'
+      && draft.operation.target.featureIds.join() === 'through-cutout'
     )),
-    'disjoint blind subtracts at the same depth remain batched together',
-  )
-  assert(
-    plan.coverage.filter((entry) => entry.featureId === 'outer-pocket' || entry.featureId === 'overlap-pocket').every((entry) => entry.status === 'planned'),
-    'both overlapping subtract features remain visibly planned',
+    'a nested through subtract remains a direct inside-edge cutout target',
   )
 }
 
@@ -473,7 +476,7 @@ testRepresentativePlan()
 testDeterministicAndAtomicApply()
 testDepthRolesAndUnsupportedCoverage()
 testRetainedIslandsDoNotNeedCoverageAcknowledgement()
-testOverlappingBlindSubtractsKeepSeparatePocketPairs()
+testNestedSubtractsStayWithTheirParentPocket()
 testFixtureScaleAndFinishAllowances()
 testBundledToolUnitPreference()
 testFallbackNoToolAndUnits()

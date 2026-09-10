@@ -21,7 +21,6 @@ import { resolveDimensionRef } from '../../toolpaths/geometry'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../toolpaths/restRegions'
 import { resolveInsideEdgeRegions, resolvePocketRegions } from '../../toolpaths/resolver'
 import { isConstruction, isRegion } from '../../../store/helpers/featureRoles'
-import { featuresOverlap } from '../../../store/helpers/clipping'
 import { defaultOperationForTarget, isOperationTargetValid } from '../../../store/helpers/operationDefaults'
 import { resolveFeatureInstances, type ResolvedSketchFeature } from '../../../store/helpers/resolveFeatures'
 import { buildAutoTabsForFeature } from '../autoTabs'
@@ -73,20 +72,6 @@ function groupByDepth(project: Project, features: ResolvedSketchFeature[]): Reso
     groups.set(key, [...(groups.get(key) ?? []), feature])
   }
   return [...groups.values()]
-}
-
-function overlappingFeatureIds(features: ResolvedSketchFeature[]): Set<string> {
-  const ids = new Set<string>()
-  for (let index = 0; index < features.length; index += 1) {
-    const feature = features[index]
-    if (!feature) continue
-    for (const candidate of features.slice(index + 1)) {
-      if (!featuresOverlap(feature, candidate)) continue
-      ids.add(feature.id)
-      ids.add(candidate.id)
-    }
-  }
-  return ids
 }
 
 function operationAlreadyCovers(project: Project, kind: OperationKind, pass: OperationPass, featureId: string): boolean {
@@ -369,12 +354,32 @@ function resolvedIslandFeatureIds(builder: PlanBuilder): Set<string> {
   return islandIds
 }
 
+function resolvedNonTargetSubtractFeatureIds(builder: PlanBuilder): Set<string> {
+  const subtractIds = new Set<string>()
+  for (const draft of builder.operations) {
+    if (draft.rest || draft.operation.target.source !== 'features') continue
+    const resolved = draft.operation.kind === 'pocket'
+      ? resolvePocketRegions(builder.analysisProject, draft.operation)
+      : draft.operation.kind === 'edge_route_inside'
+        ? resolveInsideEdgeRegions(builder.analysisProject, draft.operation)
+        : null
+    const directTargetIds = new Set(draft.operation.target.featureIds)
+    for (const band of resolved?.bands ?? []) {
+      for (const featureId of band.targetFeatureIds) {
+        if (!directTargetIds.has(featureId)) subtractIds.add(featureId)
+      }
+    }
+  }
+  return subtractIds
+}
+
 function coverageFor(
   features: ResolvedSketchFeature[],
   builder: PlanBuilder,
 ): CamPlanCoverage[] {
   const hasSurfacePlan = builder.operations.some((draft) => draft.operation.kind === 'surface_clean')
   const resolvedIslandIds = resolvedIslandFeatureIds(builder)
+  const resolvedNonTargetSubtractIds = resolvedNonTargetSubtractFeatureIds(builder)
   return features.flatMap<CamPlanCoverage>((feature) => {
     if (isRegion(feature) || isConstruction(feature)) return []
     if (builder.covered.has(feature.id)) {
@@ -385,6 +390,9 @@ function coverageFor(
     }
     if (resolvedIslandIds.has(feature.id)) {
       return [{ featureId: feature.id, featureName: feature.name, status: 'not_needed', detail: 'Retained island geometry is included in the surrounding pocket or inside-edge operation.' }]
+    }
+    if (resolvedNonTargetSubtractIds.has(feature.id)) {
+      return [{ featureId: feature.id, featureName: feature.name, status: 'not_needed', detail: 'This subtract is machined by the surrounding pocket operation that resolves it.' }]
     }
     if ((feature.operation === 'add' || feature.operation === 'model') && feature.kind !== 'stl' && hasSurfacePlan) {
       return [{ featureId: feature.id, featureName: feature.name, status: 'not_needed', detail: 'Retained model geometry informs the surrounding surface-clean operation.' }]
@@ -464,17 +472,10 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
 
   const blind = ordinarySubtracts.filter((feature) => resolveDimensionRef(project, feature.z_bottom) > Z_EPSILON)
   const through = ordinarySubtracts.filter((feature) => resolveDimensionRef(project, feature.z_bottom) <= Z_EPSILON)
-  const overlappingBlindIds = overlappingFeatureIds(blind)
-  for (const group of groupByDepth(project, blind.filter((feature) => !overlappingBlindIds.has(feature.id)))) {
-    addRoughFinishPair(builder, 'pocket', group, 'This closed subtract stops above the stock bottom, so it is a blind pocket.')
-  }
-  for (const feature of blind.filter((candidate) => overlappingBlindIds.has(candidate.id))) {
-    addRoughFinishPair(
-      builder,
-      'pocket',
-      [feature],
-      'This blind subtract overlaps another subtract, so it is kept as a separate pocket operation.',
-    )
+  for (const group of groupByDepth(project, blind)) {
+    const directTargets = group.filter((feature) => !resolvedNonTargetSubtractFeatureIds(builder).has(feature.id))
+    if (directTargets.length === 0) continue
+    addRoughFinishPair(builder, 'pocket', directTargets, 'This closed subtract stops above the stock bottom, so it is a blind pocket.')
   }
   for (const group of groupByDepth(project, through)) {
     addRoughFinishPair(builder, 'edge_route_inside', group, 'This closed subtract reaches the stock bottom, so the removable slug is routed on its inside edge.')
