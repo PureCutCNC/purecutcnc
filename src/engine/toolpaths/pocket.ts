@@ -4091,16 +4091,25 @@ function generateRoughBandMoves(
 function continuingWallContours(
   nextBandRegions: ResolvedPocketRegion[] | null,
   finishDelta: number,
-  joinType: number,
+  rounded: boolean,
 ): ClipperPath[] {
   if (!nextBandRegions || nextBandRegions.length === 0) {
     return []
   }
   const scale = DEFAULT_CLIPPER_SCALE
-  return nextBandRegions
-    .flatMap((region) => buildInsetRegions(region, finishDelta, joinType, joinType))
-    .flatMap((region) => buildContourLoops([region]))
-    .map((contour) => toClipperPath(normalizeWinding(contour, false), scale))
+  // Built by the *same* construction the band in use builds its own with, or the
+  // comparison is between two different shapes and matches nothing it should.
+  // The rounded branch mitres the outer and rounds the islands, and reads the
+  // outer contours only; the plain branch mitres both and takes every loop.
+  const contours = rounded
+    ? buildOuterContours(nextBandRegions.flatMap((region) => buildInsetRegions(
+      region,
+      finishDelta,
+      ClipperLib.JoinType.jtMiter,
+      ClipperLib.JoinType.jtRound,
+    )))
+    : buildContourLoops(nextBandRegions.flatMap((region) => buildInsetRegions(region, finishDelta)))
+  return contours.map((contour) => toClipperPath(normalizeWinding(contour, false), scale))
 }
 
 /** Does this contour describe the same area as one that continues below? */
@@ -4220,15 +4229,14 @@ function generateFinishBandMoves(
     }
     // Drop the walls that carry on into the band below — they are finished
     // there, at their true bottom, in one pass (#751 §5).
-    const continuing = continuingWallContours(
-      nextBandRegions,
-      finishDelta,
-      shouldRoundPocketWalls ? ClipperLib.JoinType.jtRound : ClipperLib.JoinType.jtMiter,
-    )
+    const continuing = continuingWallContours(nextBandRegions, finishDelta, shouldRoundPocketWalls === true)
     if (continuing.length > 0) {
+      // Outer wall contours only. An island ring (`wallFinalContours`) is built
+      // by `buildExpandedIslandContours`, a different construction again, and
+      // comparing it against these would be the same mismatch one level down.
+      // Islands are left alone until that is measured rather than assumed.
       wallContours = wallContours.filter((contour) => !wallContinuesBelow(contour, continuing))
       wallOuterContours = wallOuterContours.filter((contour) => !wallContinuesBelow(contour, continuing))
-      wallFinalContours = wallFinalContours.filter((contour) => !wallContinuesBelow(contour, continuing))
     }
   }
   // "Round wall corners" acts on the ring that defines the wall (issue #622).
