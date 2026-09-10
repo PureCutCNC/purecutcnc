@@ -750,6 +750,63 @@ test.describe('Toolpath visibility panel smoke', () => {
     await expect(ui.toolpathVis.view3dItems(app.page).first()).toBeAttached()
   })
 
+  test.describe('planar Z-level rail', () => {
+    test.use({ hasTouch: true, viewport: { width: 1024, height: 768 } })
+
+    test('shares a touch-sized stepped selection between sketch and 3D without saving it', async ({ app }) => {
+      const page = app.page
+      await seedToolpathVisProject(page)
+      // Tablet layout keeps the operations rail in its drawer, but this test
+      // needs only to establish the selected toolpath before exercising the
+      // preview-local touch control.
+      await page.getByText('Route A', { exact: true }).evaluate((element) => element.dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      ))
+
+      const snapshot = () => page.evaluate(async () => {
+        const url = '/src/store/projectStore.ts'
+        const { useProjectStore } = await import(url) as typeof import('../src/store/projectStore')
+        const state = useProjectStore.getState()
+        return { project: JSON.stringify(state.project), history: JSON.stringify(state.history), dirty: state.dirty }
+      })
+      const before = await snapshot()
+      const sketchRail = page.locator('#workspace-panel-sketch .toolpath-level-rail')
+      const sketchSlider = sketchRail.getByRole('slider', { name: 'Toolpath level' })
+      await expect(sketchRail).toBeVisible({ timeout: 15000 })
+      await expect(sketchSlider).toHaveAttribute('min', '0')
+      await expect(sketchSlider).toHaveAttribute('max', /[1-9]\d*/)
+      await expect(sketchRail.locator('.toolpath-level-rail__marks span')).toHaveCount(Number(await sketchSlider.getAttribute('max')) + 1)
+      await expect(sketchRail.locator('.toolpath-level-rail__all')).toHaveCount(0)
+      await expect(sketchRail.locator('.toolpath-level-rail__axis')).toHaveText('Z')
+      await expect(sketchRail.locator('.toolpath-level-rail__value')).toHaveText('All')
+      const sketchBox = (await sketchSlider.boundingBox())!
+      const railBox = (await sketchRail.boundingBox())!
+      expect(sketchBox.width).toBeGreaterThanOrEqual(44)
+      expect(sketchBox.height).toBeGreaterThan(sketchBox.width)
+      expect(railBox.width).toBeLessThanOrEqual(46)
+      expect(await sketchSlider.inputValue()).toBe(await sketchSlider.getAttribute('max'))
+      expect(await sketchSlider.evaluate((element) => getComputedStyle(element).direction)).toBe('rtl')
+
+      await sketchSlider.tap({ position: { x: sketchBox.width / 2, y: sketchBox.height / 2 } })
+      await sketchSlider.press('ArrowDown')
+      await expect(sketchSlider).toHaveAttribute('aria-valuetext', /^Z /)
+      await expect(sketchRail.locator('.toolpath-level-rail__value')).toHaveText(/^-?\d/)
+      await expect(sketchSlider).toHaveCSS('outline-style', 'none')
+      expect(await snapshot()).toEqual(before)
+
+      await page.getByRole('button', { name: '3D', exact: true }).click()
+      const view3dSlider = page.locator('#workspace-panel-preview3d .toolpath-level-rail').getByRole('slider', { name: 'Toolpath level' })
+      await expect(view3dSlider).toBeVisible({ timeout: 15000 })
+      await expect(view3dSlider).toHaveAttribute('aria-valuetext', /^Z /)
+      await view3dSlider.press('Home')
+      await expect(view3dSlider).toHaveAttribute('aria-valuetext', 'All')
+
+      await page.getByRole('button', { name: 'Sketch', exact: true }).click()
+      await expect(sketchSlider).toHaveAttribute('aria-valuetext', 'All')
+      expect(await snapshot()).toEqual(before)
+    })
+  })
+
   test('navigation defers arrow rendering and restores the user setting', async ({ app, ui }) => {
     const page = app.page
     await seedToolpathVisProject(page)

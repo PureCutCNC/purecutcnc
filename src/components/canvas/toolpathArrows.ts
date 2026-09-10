@@ -40,6 +40,7 @@
 import type { ToolpathMove, ToolpathResult } from '../../engine/toolpaths/types'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import { moveMatchesZFilter } from '../viewport3d/toolpathOverlay'
+import { moveMatchesToolpathLevel } from '../toolpathLevels'
 
 /** Kinds that can carry a direction arrow. */
 export type ArrowKind = 'cut' | 'rapid'
@@ -58,6 +59,7 @@ interface CachedPlacements extends ToolpathArrowPlacements {
   cuts: boolean
   rapids: boolean
   retractions: boolean
+  level: number | null
 }
 
 /**
@@ -80,6 +82,7 @@ export function computeToolpathArrowPlacements(
   toolpath: ToolpathResult,
   scale: number,
   visibility: ToolpathVisibility,
+  level: number | null = null,
 ): ToolpathArrowPlacements {
   const bounds = toolpath.bounds
   if (!bounds) {
@@ -101,7 +104,7 @@ export function computeToolpathArrowPlacements(
   let neighbourX = 0
   let neighbourY = 0
   function loadNeighbourDirection(move: ToolpathMove | undefined): boolean {
-    if (!move || (move.kind !== 'cut' && move.kind !== 'rapid')) return false
+    if (!move || (move.kind !== 'cut' && move.kind !== 'rapid') || !moveMatchesToolpathLevel(move, level)) return false
     const dx = (move.to.x - move.from.x) * scale
     const dy = (move.to.y - move.from.y) * scale
     const length = distance(dx, dy)
@@ -115,6 +118,7 @@ export function computeToolpathArrowPlacements(
   for (let moveIndex = 0; moveIndex < moves.length; moveIndex += 1) {
     const move = moves[moveIndex]
     if (move.kind !== 'cut' && move.kind !== 'rapid') continue
+    if (!moveMatchesToolpathLevel(move, level)) continue
 
     if (move.kind === 'cut' && !visibility.cuts) continue
     if (move.kind === 'rapid') {
@@ -193,6 +197,7 @@ export function toolpathArrowPlacements(
   toolpath: ToolpathResult,
   scale: number,
   visibility: ToolpathVisibility,
+  level: number | null = null,
 ): ToolpathArrowPlacements {
   const cached = placementCache.get(toolpath)
   if (
@@ -201,11 +206,12 @@ export function toolpathArrowPlacements(
     && cached.cuts === visibility.cuts
     && cached.rapids === visibility.rapids
     && cached.retractions === visibility.retractions
+    && cached.level === level
   ) {
     return cached
   }
 
-  const placements = computeToolpathArrowPlacements(toolpath, scale, visibility)
+  const placements = computeToolpathArrowPlacements(toolpath, scale, visibility, level)
   // Store and return the same object, so a cache hit is observably a hit.
   const entry: CachedPlacements = {
     cut: placements.cut,
@@ -214,6 +220,7 @@ export function toolpathArrowPlacements(
     cuts: visibility.cuts,
     rapids: visibility.rapids,
     retractions: visibility.retractions,
+    level,
   }
   placementCache.set(toolpath, entry)
   return entry

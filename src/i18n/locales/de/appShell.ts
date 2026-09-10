@@ -153,6 +153,8 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   'appShell.toolpath.directions': 'Richtungen',
   'appShell.toolpath.feedColours': 'Vorschubfarben',
   'appShell.toolpath.feedLegend': 'Vorschubprozentsatz',
+  'appShell.toolpath.level': 'Werkzeugwegsebene',
+  'appShell.toolpath.levelAll': 'Alle',
 
   // ── ToolRail ──
   'appShell.toolRail.shapes': 'Formen',

@@ -114,6 +114,8 @@ export const appShellFr: Record<keyof typeof appShellEn, string> = {
   'appShell.toolpath.directions': 'Sens',
   'appShell.toolpath.feedColours': "Couleurs d'avance",
   'appShell.toolpath.feedLegend': "Pourcentage d'avance",
+  'appShell.toolpath.level': 'Niveau de parcours',
+  'appShell.toolpath.levelAll': 'Tous',
   'appShell.toolRail.shapes': 'Formes',
   'appShell.toolRail.align': 'Aligner',
   'appShell.toolRail.distribute': 'Répartir',

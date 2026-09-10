@@ -26,14 +26,15 @@ import type { CanvasDrawSample } from './toolpathGpuSuggestion'
 
 export function renderSketchToolpaths(
   surface: SketchToolpathSurface | null, ctx: CanvasRenderingContext2D,
-  project: Project, toolpaths: readonly ToolpathResult[], selectedId: string | null,
+  project: Project, toolpaths: readonly ToolpathResult[], selectedId: string | null, selectedLevel: number | null,
   vt: ViewTransform, visibility: ToolpathVisibility | undefined, deferArrows: boolean,
   observeCanvasDraw?: (sample: CanvasDrawSample) => void,
 ): CanvasRenderingContext2D {
   const visible = visibility ?? { cuts: true, leadIns: true, rapids: true, plunges: true, retractions: true, directions: true }
   const entries = toolpaths.filter(tp => tp.moves.length > 0).map(toolpath => {
     const percent = pocketSlotFeedPercent(project.operations.find(op => op.id === toolpath.operationId))
-    return { toolpath, emphasized: toolpath.operationId === selectedId, slotScale: percent === null ? 1 : percent / 100 }
+    const emphasized = toolpath.operationId === selectedId
+    return { toolpath, emphasized, selectedLevel: emphasized ? selectedLevel : null, slotScale: percent === null ? 1 : percent / 100 }
   })
   let gpuActive = false
   if (surface) {
@@ -53,8 +54,8 @@ export function renderSketchToolpaths(
   }
   if (!gpuActive) {
     const start = observeCanvasDraw && entries.length > 0 ? performance.now() : null
-    for (const { toolpath, emphasized, slotScale } of entries) {
-      drawToolpath(ctx, toolpath, vt, emphasized, visible, slotScale, { deferArrows })
+    for (const { toolpath, emphasized, selectedLevel: entryLevel, slotScale } of entries) {
+      drawToolpath(ctx, toolpath, vt, emphasized, visible, slotScale, { deferArrows, selectedLevel: entryLevel })
     }
     if (start !== null) {
       const now = performance.now()

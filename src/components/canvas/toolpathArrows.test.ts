@@ -137,6 +137,18 @@ test('each visibility flag the pass reads rebuilds the cache', () => {
   )
 })
 
+test('a selected Z level filters arrows and is part of the cache key', () => {
+  const toolpath = toolpathOf([
+    { kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 100, y: 0, z: 0 } },
+    { kind: 'cut', from: { x: 200, y: 0, z: -1 }, to: { x: 300, y: 0, z: -1 } },
+  ])
+  const all = toolpathArrowPlacements(toolpath, 1, ALL_ON)
+  const atMinusOne = toolpathArrowPlacements(toolpath, 1, ALL_ON, -1)
+  assert(atMinusOne !== all, 'a selected level must not reuse the All placement cache entry')
+  assert(atMinusOne.cut.length === 4, 'only the selected level should place one long-cut arrow')
+  assert(atMinusOne.cut[0] === 200 && atMinusOne.cut[2] === 300, 'arrow endpoints belong to the selected level')
+})
+
 test('positions are pan-independent: scaled world, no offset', () => {
   const toolpath = straightRun(10)
   const scale = 3

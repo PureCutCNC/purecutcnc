@@ -2736,6 +2736,99 @@
   z-index: 10;
 }
 
+/* Display-only stepped Z selector (issue #752). The real range input handles
+ * keyboard, drag, and touch; the tick rail makes its discrete stops legible. */
+.toolpath-level-rail {
+  --toolpath-level-active: var(--accent-strong);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: -1px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: max-content;
+  min-width: 46px;
+  box-sizing: border-box;
+  padding: 5px 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-translucent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: var(--text);
+  font-size: 11px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+:root[data-theme='light'] .toolpath-level-rail {
+  --toolpath-level-active: color-mix(in srgb, var(--accent) 72%, var(--surface-panel));
+}
+
+.toolpath-level-rail__slider {
+  position: relative;
+  width: 32px;
+}
+
+.toolpath-level-rail__axis {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.toolpath-level-rail__marks {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: calc(50% + 2px);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 10px;
+  pointer-events: none;
+}
+
+.toolpath-level-rail__marks span {
+  width: 5px;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+.toolpath-level-rail__marks .toolpath-level-rail__mark--selected {
+  width: 9px;
+  height: 2px;
+  background: var(--toolpath-level-active);
+}
+
+.toolpath-level-rail__input {
+  position: absolute;
+  inset: 0;
+  width: 32px;
+  min-width: 0;
+  min-inline-size: 0;
+  height: 100%;
+  margin: 0;
+  appearance: slider-vertical;
+  -webkit-appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  outline: none;
+  direction: rtl;
+  accent-color: var(--toolpath-level-active);
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.toolpath-level-rail__value {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .viewport-toolpath-renderer__status {
   display: inline-flex;
   align-items: center;
@@ -2837,6 +2930,11 @@
   .app-shell .viewport-toolpath-vis__item.viewport-toolpath-vis__gpu,
   .viewport-toolpath-renderer__status button {
     min-height: 44px;
+  }
+
+  .toolpath-level-rail__slider,
+  .toolpath-level-rail__input {
+    width: 44px;
   }
 }
 

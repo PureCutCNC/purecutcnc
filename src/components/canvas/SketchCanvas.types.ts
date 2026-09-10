@@ -79,6 +79,10 @@ export interface SketchCanvasProps {
   onToolpathVisibilityChange?: (visibility: ToolpathVisibility) => void
   toolpathPanelExpanded?: boolean
   onToolpathPanelExpandedChange?: (expanded: boolean) => void
+  /** Transient display filter for the selected planar, multi-level toolpath. */
+  toolpathLevel?: number | null
+  toolpathLevelValues?: readonly number[]
+  onToolpathLevelChange?: (level: number | null) => void
   /**
    * A1.3: when an operation kind is armed/hovered in the CAM "Add operation"
    * menu, the canvas highlights features that operation could act on and dims
