@@ -83,8 +83,10 @@ const DELIBERATE_WARNING_DIVERGENCE = new Map<string, string>([
     'example/t-style-body/op0160',
     'issue #526 added `regionExtendedBySubtractDepth` where a non-target subtract '
     + 'carves below the target. Nothing here machines that subtract, so the fold is '
-    + 'correct and the advisory is intended. The six `surfaceNoOffsetContours` it '
-    + 'drags along are empty-band noise, tracked in #739.',
+    + 'correct and the advisory is intended. The `surfaceNoOffsetContours` it '
+    + 'drags along is empty-band noise: two 3/32" holes no 1/4" tool can enter. '
+    + 'Issue #754 collapsed its repetition per level and per band, and moved no '
+    + 'geometry — which is what the hashes below still assert.',
   ],
   [
     'example/t-style-body/op0161',

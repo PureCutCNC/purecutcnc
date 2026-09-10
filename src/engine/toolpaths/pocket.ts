@@ -329,6 +329,21 @@ function appendUniqueWarning(warnings: ToolpathWarning[], warning: ToolpathWarni
   }
 }
 
+/**
+ * Merge one band's warnings into the operation's own list, uniquely.
+ *
+ * Each band builds a warning list of its own, so the same advisory reaches the
+ * operation once per band as well as once per step level within one — the
+ * shipped t-style example carried the identical sentence twelve times (issue
+ * #754). Keyed exactly as `appendUniqueWarning` is, so an advisory naming a
+ * different band Z still gets its own line.
+ */
+function appendUniqueWarnings(warnings: ToolpathWarning[], incoming: readonly ToolpathWarning[]): void {
+  for (const warning of incoming) {
+    appendUniqueWarning(warnings, warning)
+  }
+}
+
 const XY_ALIGN_EPS = 1e-6
 
 /**
@@ -5152,7 +5167,7 @@ function generatePocketToolpathSingle(
     const { moves, stepLevels, warnings: bandWarnings } = result
     moves.forEach((move) => allMoves.push(move))
     stepLevels.forEach((level) => allStepLevels.add(level))
-    appendAll(warnings, bandWarnings)
+    appendUniqueWarnings(warnings, bandWarnings)
     if (trochoidalBudget && operation.debugToolpath) {
       // The remaining ceiling after each band, so the operation-wide budget is
       // observable: a band that started over at the full ceiling would report
