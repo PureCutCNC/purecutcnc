@@ -238,7 +238,39 @@ const withBite = resolve([body(), pocket(), island(), bite()])
   )
 }
 
-// ── 5. A bite ending AT the pocket floor still adds no band ─────────
+// ── 5. A bite sharing the main void is NOT given its own band ──────
+{
+  // Reported from a real file: a shallower pocket adjacent to the target got its
+  // own band, and the two were machined as separate closed pockets. Neither cut
+  // up to the edge they share — which is not a wall — so a ridge was left
+  // standing along the seam, visible in the 3D preview.
+  //
+  // Such a bite must fold into the main subject and split the band at its floor.
+  // The band count therefore *rises* relative to the enclosed case, and that is
+  // the point: above and below that Z are genuinely different shapes.
+  const adjacent = feature('adjacent', 'subtract', 80, 30, 10, 10, 16)
+  const result = resolve([body(), pocket(), island(), adjacent])
+  const seam = result.bands.find((band) => (
+    Math.abs(band.topZ - 20) < 1e-9 && Math.abs(band.bottomZ - 16) < 1e-9
+  ))
+  check(
+    'a bite sharing the pocket void gets no band of its own',
+    seam === undefined || bandArea(seam) > 200,
+    `a small restricted band at 20..16 means the seam is still split off: ${result.bands.map((b) => `${b.topZ}..${b.bottomZ}=${bandArea(b).toFixed(0)}`).join(' ')}`,
+  )
+  check(
+    'it is unioned into the main region, which grows by its area',
+    result.bands.some((band) => bandArea(band) > bandArea(resolve([body(), pocket(), island()]).bands[0])),
+    `no band grew, so the adjacent bite was not folded in: ${result.bands.map((b) => `${b.topZ}..${b.bottomZ}=${bandArea(b).toFixed(0)}`).join(' ')}`,
+  )
+  check(
+    'swept volume still accounts for the bite exactly once',
+    Math.abs(sweptVolume(result) - (sweptVolume(withoutBite) + 100 * 4)) < 1e-6,
+    `expected ${sweptVolume(withoutBite) + 100 * 4}, got ${sweptVolume(result)} — folded twice or not at all`,
+  )
+}
+
+// ── 6. A bite ending AT the pocket floor still adds no band ─────────
 {
   // #526's own case. The main band already terminates there, so a restricted
   // band would split the region for nothing.

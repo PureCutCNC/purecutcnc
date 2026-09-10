@@ -955,6 +955,30 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
       if (bite.length === 0) {
         continue
       }
+
+      // A bite sharing the main void is not a pocket of its own (#751 §5).
+      //
+      // Restricting it hands the generator two closed regions that meet along an
+      // edge which is not a wall. Each is inset by the tool radius from its own
+      // boundary, including that edge, so material is left standing along the
+      // seam — visible in the 3D preview as a thin wall between two pockets, and
+      // reported from a real file where a shallower adjacent pocket ridged
+      // against its neighbour.
+      //
+      // So it folds into the main subject instead, and the band splits at its
+      // floor as it did before #751 §5. That split is not waste: above and below
+      // that Z really are different shapes. What stays restricted is the bite
+      // enclosed by material — a pocket inside an island, walls all round — which
+      // is where the saving was measured and is unaffected by this.
+      //
+      // Contact is the #751 §2 test, so this asks the same question of the seam
+      // that discovery asks of the target. Tabs are already out of `bite`, so
+      // folding it back cannot reintroduce them.
+      if (pathsTouchOrOverlap(resolvedPaths, bite)) {
+        resolvedPaths = unionPaths([...resolvedPaths, ...bite])
+        continue
+      }
+
       const drafts = restrictedDrafts.get(feature.id) ?? []
       drafts.push({
         topZ,
