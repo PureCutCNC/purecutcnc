@@ -25,6 +25,11 @@ Once a plan is approved, implement it: raise a problem in a sentence and wait,
 rather than re-analysing it, redesigning it, or abandoning it. Do not present
 numbers you did not measure. `AGENTS.md` § Scope Discipline is the full rule.
 
+Replies are short by default: under 200 words, no headers or tables. That covers
+an answer, a review or a status readout as much as finished work — offer the
+detail in one line instead of appending it. `AGENTS.md` § Communication Style is
+the full rule.
+
 Delegation to Codex or a project worker is optional, not the default. Use it
 only when the user authorizes delegation and the approved work divides into
 bounded slices. Never have multiple agents edit the same files concurrently;
