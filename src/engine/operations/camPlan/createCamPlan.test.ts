@@ -166,6 +166,33 @@ function testRetainedIslandsDoNotNeedCoverageAcknowledgement(): void {
   assert(islandCoverage.detail.includes('island'), 'coverage explains that the retained island informs the cut')
 }
 
+function testSurfaceCleanOnlyTargetsLoweredOuterMaterial(): void {
+  const base = newProject('CAM plan lowered outer material', 'inch')
+  base.stock.thickness = 1
+  const project = projectWithFeatures({ ...base, tools: [tool('quarter', 'flat_endmill', 0.25), tool('eighth', 'flat_endmill', 0.125)] }, [
+    feature('outer', 'add', rectProfile(0, 0, 4, 3), 0.75, 0),
+    feature('pocket', 'subtract', rectProfile(0.25, 0.25, 3.5, 2.5), 0.75, 0.5),
+    feature('island', 'add', rectProfile(1.25, 1, 1, 0.75), 0.75, 0.5),
+  ])
+  const plan = createCamPlan(project, [])
+  const surfaceRough = plan.operations.find((draft) =>
+    draft.operation.kind === 'surface_clean' && draft.operation.pass === 'rough',
+  )
+  const surfaceFinish = plan.operations.find((draft) =>
+    draft.operation.kind === 'surface_clean' && draft.operation.pass === 'finish',
+  )
+  assert(surfaceRough?.operation.target.source === 'features' && surfaceRough.operation.target.featureIds.join() === 'outer', 'only the lowered outer Add receives surface cleaning')
+  assert(surfaceRough.operation.stockToLeaveRadial === 0.005, 'surface-clean rough leaves radial finishing stock')
+  assert(surfaceRough.operation.stockToLeaveAxial === 0.005, 'surface-clean rough leaves axial finishing stock')
+  assert(surfaceFinish?.operation.target.source === 'features' && surfaceFinish.operation.target.featureIds.join() === 'outer', 'surface-clean finish shares the outer target')
+  assert(surfaceFinish.operation.stockToLeaveRadial === 0, 'surface-clean finish removes radial finishing stock')
+  assert(surfaceFinish.operation.stockToLeaveAxial === 0, 'surface-clean finish removes axial finishing stock')
+  assert(!plan.operations.some((draft) => draft.operation.kind === 'surface_clean' && draft.coveredFeatureIds.includes('island')), 'the retained pocket island does not receive a separate surface-clean operation')
+  const pocket = plan.operations.find((draft) => draft.operation.kind === 'pocket' && draft.operation.pass === 'rough')
+  assert(pocket && resolvePocketRegions(project, pocket.operation).bands.some((band) => band.islandFeatureIds.includes('island')), 'the pocket resolver owns the lowered island')
+  assert(plan.coverage.find((entry) => entry.featureId === 'island')?.status === 'not_needed', 'the island remains visibly accounted for by the pocket')
+}
+
 function testNestedSubtractsStayWithTheirParentPocket(): void {
   const base = newProject('CAM plan overlapping pockets', 'inch')
   base.stock.thickness = 1
@@ -476,6 +503,7 @@ testRepresentativePlan()
 testDeterministicAndAtomicApply()
 testDepthRolesAndUnsupportedCoverage()
 testRetainedIslandsDoNotNeedCoverageAcknowledgement()
+testSurfaceCleanOnlyTargetsLoweredOuterMaterial()
 testNestedSubtractsStayWithTheirParentPocket()
 testFixtureScaleAndFinishAllowances()
 testBundledToolUnitPreference()

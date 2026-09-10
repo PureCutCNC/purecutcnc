@@ -127,7 +127,8 @@ interface PlanBuilder {
 function applyRoughStockToLeave(project: Project, operation: { kind: OperationKind; pass: OperationPass; stockToLeaveRadial: number; stockToLeaveAxial: number }): void {
   if (operation.pass !== 'rough') return
   if (
-    operation.kind !== 'pocket'
+    operation.kind !== 'surface_clean'
+    && operation.kind !== 'pocket'
     && operation.kind !== 'edge_route_inside'
     && operation.kind !== 'edge_route_outside'
   ) return
@@ -425,16 +426,19 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
     sequence: 0,
   }
 
-  const closedAdds = features.filter((feature) =>
-    !builder.existing.has(feature.id)
-    && (feature.operation === 'add' || feature.operation === 'model')
+  const closedAddBoundaries = features.filter((feature) =>
+    (feature.operation === 'add' || feature.operation === 'model')
     && feature.kind !== 'stl'
     && feature.sketch.profile.closed,
   )
-  const loweredAdds = closedAdds.filter((feature) =>
+  const closedAdds = closedAddBoundaries.filter((feature) => !builder.existing.has(feature.id))
+  const outerClosedAdds = closedAdds.filter((feature) =>
+    !closedAddBoundaries.some((candidate) => candidate.id !== feature.id && boundsContain(candidate, feature)),
+  )
+  const loweredOuterAdds = outerClosedAdds.filter((feature) =>
     resolveDimensionRef(project, feature.z_top) < project.stock.thickness - Z_EPSILON,
   )
-  for (const group of groupByDepth(project, loweredAdds)) {
+  for (const group of groupByDepth(project, loweredOuterAdds)) {
     addRoughFinishPair(builder, 'surface_clean', group, 'This retained surface sits below the stock top and needs cleanup.')
   }
 
@@ -481,9 +485,8 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
     addRoughFinishPair(builder, 'edge_route_inside', group, 'This closed subtract reaches the stock bottom, so the removable slug is routed on its inside edge.')
   }
 
-  const outerAdds = closedAdds.filter((feature) =>
+  const outerAdds = outerClosedAdds.filter((feature) =>
     resolveDimensionRef(project, feature.z_bottom) <= Z_EPSILON
-    && !closedAdds.some((candidate) => candidate.id !== feature.id && boundsContain(candidate, feature)),
   )
   const outsideOperations: CamPlanOperationDraft[] = []
   for (const feature of outerAdds) {
