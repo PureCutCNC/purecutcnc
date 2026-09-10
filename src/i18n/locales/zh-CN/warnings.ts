@@ -114,6 +114,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeNoContourForFeature': '无法为 {name} 生成有效轮廓',
   'warnings.edgeNoInsideContour': '无法为深度带 {topZ} -> {bottomZ} 生成有效的内侧轮廓',
   'warnings.edgeClosedProfilesOnly': '沿边加工操作仅支持封闭的目标轮廓',
+  'warnings.subtractChainLimitReached': '链式减运算达到 {operation} 的 {limit} 个特征上限，因此该区域未延伸至链上更远的几何体',
   'warnings.surface3dNeedsModel': '{operation}需要选择一个模型特征',
   'warnings.surface3dNotMesh': '模型特征必须是导入的网格模型',
   'warnings.surface3dLoadFailed': '加载模型几何失败',

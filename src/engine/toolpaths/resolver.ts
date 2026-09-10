@@ -191,6 +191,68 @@ function pathsIntersect(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): 
   return executeClipPaths(subjectPaths, clipPaths, ClipperLib.ClipType.ctIntersection).length > 0
 }
 
+/**
+ * How many separate pieces does this union describe?
+ *
+ * Outer contours only, so the count does not depend on how Clipper chose to
+ * represent a hole.
+ *
+ * Measured on this clipper-lib: a union that encloses a void comes back as a
+ * *single* self-touching contour carrying the net area — both a C-shape closed
+ * by a fourth rect and a four-rect ring returned one path of area 1000, not an
+ * outer of 1200 plus a hole of 200. So today a raw `paths.length` would give the
+ * same answer, and no fixture here can tell the two apart.
+ *
+ * Filtering anyway, because the two are not equally correct. Were a hole ever
+ * returned as its own reversed path, `paths.length` would count it as a second
+ * piece and report two shapes that *do* touch as apart — a silent under-fold,
+ * the exact bug #751 §2 is about. `Area > 0` is right under either
+ * representation, so it does not rest on a library detail that a version bump
+ * could change.
+ *
+ * `Area(path) > 0` rather than `Clipper.Orientation`, which is defined as
+ * `Area(path) >= 0` in clipper-lib: identical for real contours, and it drops a
+ * degenerate zero-area sliver instead of counting it as a piece.
+ */
+function connectedComponentCount(paths: ClipperPath[]): number {
+  return paths.filter((path) => ClipperLib.Clipper.Area(path) > 0).length
+}
+
+/**
+ * Does `candidatePaths` touch or overlap `subjectPaths` — a shared boundary
+ * counting as contact (#751 §2)?
+ *
+ * `pathsIntersect` cannot answer this: the intersection of two polygons sharing
+ * only an edge has zero area, so a subtract sitting exactly against the pocket
+ * wall read as unrelated and was silently dropped from the fold.
+ *
+ * Connectivity is decided by the union itself — if the two together describe
+ * fewer pieces than they do apart, they are joined. That is deliberately the
+ * **same** operation the sketch's Join command uses (`mergeSelectedFeatures` →
+ * `unionClipperPaths`, both a bare `ctUnion` at `DEFAULT_CLIPPER_SCALE` with no
+ * offset or epsilon anywhere). So two shapes this treats as touching are exactly
+ * the two shapes Join would merge into one feature, and there is no tolerance
+ * constant that can drift from the one the user draws against.
+ *
+ * The effective floor is therefore the clipper grid, 1/10 000 of a project unit,
+ * and a gap of even one unit reads as apart — the same answer Join gives.
+ *
+ * Contact at a single corner point does **not** count: it shares no boundary
+ * length, so folding through it would extend the region across a zero-width
+ * join. Clipper leaves such shapes as two pieces under non-zero fill, so this
+ * falls out rather than needing a special case.
+ */
+function pathsTouchOrOverlap(subjectPaths: ClipperPath[], candidatePaths: ClipperPath[]): boolean {
+  if (subjectPaths.length === 0 || candidatePaths.length === 0) {
+    return false
+  }
+
+  const apart = connectedComponentCount(unionPaths(subjectPaths))
+    + connectedComponentCount(unionPaths(candidatePaths))
+  const together = connectedComponentCount(unionPaths([...subjectPaths, ...candidatePaths]))
+  return together < apart
+}
+
 function intersectPaths(subjectPaths: ClipperPath[], clipPaths: ClipperPath[]): ClipperPath[] {
   if (subjectPaths.length === 0 || clipPaths.length === 0) {
     return []
@@ -264,6 +326,23 @@ const FOLDS_NON_TARGET_SUBTRACTS: Record<OperationKind, boolean> = {
   drilling: false,
 }
 
+/**
+ * How many chained non-target subtracts one operation will follow (#751 §3).
+ *
+ * Not a performance limit. Measured on synthetic chains, resolve time is 0.5 ms
+ * with no chain, 11.5 ms at 50 links and 40.7 ms at 100 — every one of those is
+ * comfortably inside a frame, and part of the growth is the region genuinely
+ * getting bigger rather than discovery working harder.
+ *
+ * It is a rail against runaway scope. Transitive qualification means an
+ * operation's extent is no longer readable from its target: a subtract added on
+ * the far side of a part can enlarge a pocket if a chain of touching subtracts
+ * happens to connect it. 64 is far past anything real geometry produces, so
+ * reaching it says the project is pathological, and `subtractChainLimitReached`
+ * says so rather than quietly serving a short region.
+ */
+const MAX_CHAINED_NON_TARGET_SUBTRACTS = 64
+
 /** Does this operation fold non-target subtracts into its resolved region? */
 export function foldsNonTargetSubtracts(operation: Operation): boolean {
   return FOLDS_NON_TARGET_SUBTRACTS[operation.kind]
@@ -311,6 +390,8 @@ function discoverNonTargetSubtracts(
   operation: Operation,
   targetUnionPaths: ClipperPath[],
   targetIdSet: Set<string>,
+  warnings: ToolpathWarning[],
+  operationLabel: string,
 ): FeatureWithSpan[] {
   if (!foldsNonTargetSubtracts(operation)) {
     return []
@@ -318,7 +399,7 @@ function discoverNonTargetSubtracts(
 
   const machinedElsewhere = subtractsMachinedElsewhere(project, operation)
 
-  return project.features
+  const candidates = project.features
     // Filtered before expansion on purpose: an operation targets a *feature*,
     // while `expandFeatureGeometry` hands back its parts — a text feature
     // becomes one entry per glyph, with derived ids that match no target.
@@ -326,11 +407,54 @@ function discoverNonTargetSubtracts(
     .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'subtract' && !targetIdSet.has(feature.id))
     .filter((feature) => featureHasClosedGeometry(feature))
-    .filter((feature) => pathsIntersect(targetUnionPaths, [flattenFeatureToClipperPath(feature)]))
-    .map((feature) => ({
-      feature,
-      span: resolveFeatureZSpan(project, feature),
-    }))
+    .map((feature) => ({ feature, path: flattenFeatureToClipperPath(feature) }))
+
+  // Qualification is transitive (#751 §3). A subtract reaching the target only
+  // through another subtract is still opening material this operation will
+  // machine — the model is folded in feature order, so a subtract of a subtract
+  // is void just the same. Testing against the raw target union missed those
+  // entirely: measured, a subtract touching only its parent was ignored while
+  // the parent folded.
+  //
+  // Grown to a fixed point rather than one extra level, because the chain has no
+  // natural depth limit. Termination is structural, not a guard: `pending` only
+  // ever shrinks, a pass that accepts nothing ends the loop, and an accepted
+  // subtract is never reconsidered — so this is bounded by the candidate count
+  // with no cycle to detect.
+  //
+  // Contact is the #751 §2 test throughout, so a second-level subtract that
+  // merely *touches* its parent qualifies exactly as one touching the target
+  // does.
+  const accepted: typeof candidates = []
+  let pending = candidates
+  let reach = targetUnionPaths
+  let truncated = false
+  for (;;) {
+    const joined = pending.filter((candidate) => pathsTouchOrOverlap(reach, [candidate.path]))
+    if (joined.length === 0) {
+      break
+    }
+    if (accepted.length + joined.length > MAX_CHAINED_NON_TARGET_SUBTRACTS) {
+      truncated = true
+      break
+    }
+    appendAll(accepted, joined)
+    const joinedIds = new Set(joined.map(({ feature }) => feature.id))
+    pending = pending.filter(({ feature }) => !joinedIds.has(feature.id))
+    reach = unionPaths([...reach, ...joined.map(({ path }) => path)])
+  }
+
+  if (truncated) {
+    warnings.push({
+      code: 'subtractChainLimitReached',
+      params: { limit: MAX_CHAINED_NON_TARGET_SUBTRACTS, operation: operationLabel },
+    })
+  }
+
+  return accepted.map(({ feature }) => ({
+    feature,
+    span: resolveFeatureZSpan(project, feature),
+  }))
 }
 
 /**
@@ -478,6 +602,63 @@ function bandHasThickness(topZ: number, bottomZ: number): boolean {
   return Math.abs(topZ - bottomZ) > Number.EPSILON
 }
 
+/**
+ * Do two resolved band subjects cover the same area?
+ *
+ * Compared by symmetric difference rather than by the active feature ids
+ * (#751 §5). Adjacent bands always differ in some feature's activity — that is
+ * why the boundary exists — so an id comparison merges nothing. The case worth
+ * merging is precisely the one where the activity differs and the area does
+ * not: lift a restricted subtract's bite out of the main subject and the bands
+ * either side of its floor become the same shape. Clipper works in scaled
+ * integers, and both sides come from the same construction, so identical
+ * subjects difference to nothing exactly.
+ */
+function bandSubjectsEquivalent(left: ClipperPath[], right: ClipperPath[]): boolean {
+  return differencePaths(left, right).length === 0
+    && differencePaths(right, left).length === 0
+}
+
+/**
+ * Merge adjacent entries that cover the same area into one taller band.
+ *
+ * A band boundary exists to mark where the outline changes. Once a restricted
+ * subtract no longer contributes to the main subject, the boundary at its floor
+ * marks nothing, and leaving it splits the pocket into two passes where one
+ * would do — on `complex-pocket-test.camj` that is the difference between
+ * cutting 5.5 in² twice and cutting it once.
+ */
+function mergeEquivalentBands(entries: BandDraft[]): BandDraft[] {
+  const merged: BandDraft[] = []
+  for (const entry of entries) {
+    const previous = merged[merged.length - 1]
+    if (
+      previous
+      && Math.abs(previous.bottomZ - entry.topZ) <= Number.EPSILON
+      && bandSubjectsEquivalent(previous.subject, entry.subject)
+    ) {
+      merged[merged.length - 1] = {
+        ...previous,
+        bottomZ: entry.bottomZ,
+        targetFeatureIds: [...new Set([...previous.targetFeatureIds, ...entry.targetFeatureIds])],
+        islandFeatureIds: [...new Set([...previous.islandFeatureIds, ...entry.islandFeatureIds])],
+      }
+      continue
+    }
+    merged.push(entry)
+  }
+  return merged
+}
+
+/** A band before its subject is turned into regions, so subjects stay comparable. */
+interface BandDraft {
+  topZ: number
+  bottomZ: number
+  subject: ClipperPath[]
+  targetFeatureIds: string[]
+  islandFeatureIds: string[]
+}
+
 export function resolvePocketRegions(authoritativeProject: Project, operation: Operation): ResolvedPocketResult {
   const project = resolveProject(authoritativeProject)
   const warnings: ToolpathWarning[] = []
@@ -576,8 +757,38 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
   const targetUnionPaths = unionPaths(allTargetPathsForDiscovery)
 
   const targetIdSet = new Set(closedSubtractFeatures.map(({ feature }) => feature.id))
-  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetUnionPaths, targetIdSet)
+  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetUnionPaths, targetIdSet, warnings, operationLabel)
   const nonTargetSubtractIdSet = new Set(nonTargetSubtracts.map(({ feature }) => feature.id))
+  // A folded subtract that bottoms out at or above the target's own floor gets
+  // its own band over its own footprint, instead of splitting the whole pocket
+  // at its floor (#751 §5). Measured on `complex-pocket-test.camj`: a 0.098 in²
+  // circle inside an island was forcing a third full-region pass over 5.6 in²,
+  // and holding the rough to 0.05/0.05/0.06 bands against a 0.125 stepdown.
+  //
+  // One deeper than the target floor is excluded: whether the pocket should
+  // follow it down at all is #751 §6, undecided, and restricting it here would
+  // answer that question by accident.
+  const targetFloorZ = Math.min(...closedTargetFeatures.map(({ span }) => span.min))
+  //
+  // Either end counts. A subtract whose span stops short of the target's at the
+  // top splits the whole region just as surely as one that stops short at the
+  // bottom: measured, a bite spanning 14..17 inside a 14..20 target cut the main
+  // 2000 region into 20..17 and 17..14 to accommodate a 200 bite.
+  //
+  // Strictly inside, and by a real amount, at whichever end: one whose span
+  // covers the target's needs no band of its own, because the main band already
+  // starts and ends where it does. Restricting that would split the region for
+  // nothing — caught by #526's own suite, which asserts a bite at pocket depth
+  // adds no band.
+  const targetTopZ = Math.max(...closedTargetFeatures.map(({ span }) => span.max))
+  const restrictedSubtractIdSet = new Set(
+    nonTargetSubtracts
+      .filter(({ span }) => (
+        (span.min > targetFloorZ && bandHasThickness(span.min, targetFloorZ))
+        || (span.max < targetTopZ && bandHasThickness(span.max, targetTopZ))
+      ))
+      .map(({ feature }) => feature.id),
+  )
   const reachableUnionPaths = reachableUnionForDiscovery(targetUnionPaths, nonTargetSubtracts)
   const closedAddFeatures = nonTargetSubtracts.length > 0 ? closedAddFeaturesWithSpans(project) : []
   const stockPaths = nonTargetSubtracts.length > 0 ? stockFootprintPaths(project) : []
@@ -608,6 +819,9 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
     ...candidateTabIslands.map(({ span }) => span),
   ])
   const bands: ResolvedPocketBand[] = []
+  const mainDrafts: BandDraft[] = []
+  /** Keyed by subtract id: each restricted subtract's bite gets its own band run. */
+  const restrictedDrafts = new Map<string, BandDraft[]>()
   const lineIdSet = new Set(closedLineFeatures.map(({ feature }) => feature.id))
   const expandedFeaturesInOrder = project.features.flatMap((feature) => expandFeatureGeometry(feature))
 
@@ -623,6 +837,10 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
     if (activeTargets.length === 0 && activeNonTargetSubtracts.length === 0) {
       continue
     }
+    const activeRestrictedSubtracts = activeNonTargetSubtracts
+      .filter(({ feature }) => restrictedSubtractIdSet.has(feature.id))
+    const activeFoldedSubtracts = activeNonTargetSubtracts
+      .filter(({ feature }) => !restrictedSubtractIdSet.has(feature.id))
 
     const activeIslands = activeForBand(candidateIslands, topZ, bottomZ)
     const activeTabIslands = activeObstaclesForBand(candidateTabIslands, topZ, bottomZ)
@@ -657,7 +875,7 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
         // A non-target subtract carves only where there is material to carve,
         // so its contribution is clipped to the band's material silhouette
         // rather than followed out into waste stock (issue #526).
-        if (nonTargetSubtractIdSet.has(feature.id)) {
+        if (nonTargetSubtractIdSet.has(feature.id) && !restrictedSubtractIdSet.has(feature.id)) {
           const carvedPaths = intersectPaths([featurePath], bandSilhouettePaths)
           if (carvedPaths.length > 0) {
             resolvedPaths = unionPaths([...resolvedPaths, ...carvedPaths])
@@ -716,39 +934,98 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
       )
     }
 
+    const bandIslandFeatureIds = [
+      ...activeIslands.map(({ feature }) => feature.id),
+      ...activeTabIslands.map((tab) => tab.id),
+    ]
+
+    // Each restricted subtract's bite: the part of it standing in material the
+    // main subject has not already voided (#751 §5). Differenced against the
+    // main subject on purpose — the two must not overlap, or the pocket cuts
+    // the same area twice at two depths.
+    for (const { feature } of activeRestrictedSubtracts) {
+      const carved = intersectPaths([flattenFeatureToClipperPath(feature)], bandSilhouettePaths)
+      if (carved.length === 0) {
+        continue
+      }
+      let bite = differencePaths(carved, resolvedPaths)
+      if (bite.length > 0 && activeTabIslands.length > 0) {
+        bite = differencePaths(bite, activeTabIslands.map((tab) => tab.path))
+      }
+      if (bite.length === 0) {
+        continue
+      }
+
+      // A bite sharing the main void is not a pocket of its own (#751 §5).
+      //
+      // Restricting it hands the generator two closed regions that meet along an
+      // edge which is not a wall. Each is inset by the tool radius from its own
+      // boundary, including that edge, so material is left standing along the
+      // seam — visible in the 3D preview as a thin wall between two pockets, and
+      // reported from a real file where a shallower adjacent pocket ridged
+      // against its neighbour.
+      //
+      // So it folds into the main subject instead, and the band splits at its
+      // floor as it did before #751 §5. That split is not waste: above and below
+      // that Z really are different shapes. What stays restricted is the bite
+      // enclosed by material — a pocket inside an island, walls all round — which
+      // is where the saving was measured and is unaffected by this.
+      //
+      // Contact is the #751 §2 test, so this asks the same question of the seam
+      // that discovery asks of the target. Tabs are already out of `bite`, so
+      // folding it back cannot reintroduce them.
+      if (pathsTouchOrOverlap(resolvedPaths, bite)) {
+        resolvedPaths = unionPaths([...resolvedPaths, ...bite])
+        continue
+      }
+
+      const drafts = restrictedDrafts.get(feature.id) ?? []
+      drafts.push({
+        topZ,
+        bottomZ,
+        subject: bite,
+        targetFeatureIds: [feature.id],
+        islandFeatureIds: [],
+      })
+      restrictedDrafts.set(feature.id, drafts)
+    }
+
     if (resolvedPaths.length === 0) {
       warnings.push({ code: 'bandEmptySubject', params: { topZ, bottomZ } })
       continue
     }
 
-    const polyTree = executeClip(resolvedPaths, [], ClipperLib.ClipType.ctUnion)
-
-    const bandTargetFeatureIds = [
-      ...activeTargets.map(({ feature }) => feature.id),
-      ...activeNonTargetSubtracts.map(({ feature }) => feature.id),
-    ]
-    const regions = polyTreeToRegions(
-      polyTree,
-      bandTargetFeatureIds,
-      [
-        ...activeIslands.map(({ feature }) => feature.id),
-        ...activeTabIslands.map((tab) => tab.id),
-      ],
-    )
-
-    if (regions.length === 0) {
-      warnings.push({ code: 'bandNoRegions', params: { topZ, bottomZ } })
-      continue
-    }
-
-    bands.push({
+    mainDrafts.push({
       topZ,
       bottomZ,
-      targetFeatureIds: bandTargetFeatureIds,
-      islandFeatureIds: [
-        ...activeIslands.map(({ feature }) => feature.id),
-        ...activeTabIslands.map((tab) => tab.id),
+      subject: resolvedPaths,
+      targetFeatureIds: [
+        ...activeTargets.map(({ feature }) => feature.id),
+        ...activeFoldedSubtracts.map(({ feature }) => feature.id),
       ],
+      islandFeatureIds: bandIslandFeatureIds,
+    })
+  }
+
+  // Deepest-topped first, and where two share a top the shallower floor first,
+  // so a bite is cut before the main band that reaches past it.
+  const orderedDrafts = [
+    ...mergeEquivalentBands(mainDrafts),
+    ...[...restrictedDrafts.values()].flatMap((drafts) => mergeEquivalentBands(drafts)),
+  ].sort((left, right) => (right.topZ - left.topZ) || (right.bottomZ - left.bottomZ))
+
+  for (const draft of orderedDrafts) {
+    const polyTree = executeClip(draft.subject, [], ClipperLib.ClipType.ctUnion)
+    const regions = polyTreeToRegions(polyTree, draft.targetFeatureIds, draft.islandFeatureIds)
+    if (regions.length === 0) {
+      warnings.push({ code: 'bandNoRegions', params: { topZ: draft.topZ, bottomZ: draft.bottomZ } })
+      continue
+    }
+    bands.push({
+      topZ: draft.topZ,
+      bottomZ: draft.bottomZ,
+      targetFeatureIds: draft.targetFeatureIds,
+      islandFeatureIds: draft.islandFeatureIds,
       regions,
     })
   }
@@ -827,7 +1104,7 @@ export function resolveInsideEdgeRegions(authoritativeProject: Project, operatio
   const targetUnionPaths = unionPaths(closedTargetFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature)))
 
   const targetIdSet = new Set(closedTargetFeatures.map(({ feature }) => feature.id))
-  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetUnionPaths, targetIdSet)
+  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetUnionPaths, targetIdSet, warnings, operationLabel)
   const nonTargetSubtractIdSet = new Set(nonTargetSubtracts.map(({ feature }) => feature.id))
   const reachableUnionPaths = reachableUnionForDiscovery(targetUnionPaths, nonTargetSubtracts)
   const closedAddFeatures = nonTargetSubtracts.length > 0 ? closedAddFeaturesWithSpans(project) : []

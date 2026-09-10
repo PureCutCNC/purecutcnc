@@ -52,6 +52,7 @@ import { isConstruction, isRegion } from '../../store/helpers/featureRoles'
 import { resolveFeatureInstances, resolveFeatureRow } from '../../store/helpers/resolveFeatures'
 import { getFeatureGeometryProfiles } from '../../text'
 import { normalizeToolForProject } from './geometry'
+import { foldsNonTargetSubtracts } from './resolver'
 
 /**
  * The `ProjectMeta` fields read during toolpath generation.
@@ -352,6 +353,29 @@ export function operationFootprint(project: Project, operation: Operation): Oper
     return { bounds: null, targetFeatureIds, readsWholeModel: false }
   }
 
+  // Reach through chained non-target subtracts (#751 §3).
+  //
+  // Discovery is transitive: a subtract touching a subtract touching the target
+  // joins the region. So the operation reads geometry the target's own bbox does
+  // not cover, and this narrowing would dismiss a change to it — measured, moving
+  // a subtract four hops out changed the resolved region from 1800 to 1600 while
+  // the cache still reported valid, serving a stale path. That is the same class
+  // of drift as #749: what the resolver reads, and what this claims it reads,
+  // going out of step.
+  //
+  // Grown by *bounding box* rather than by running discovery. Cheap — no Clipper,
+  // no resolver setup to duplicate and let rot — and sound in the direction that
+  // matters: real contact implies bbox contact, so this is a superset of the true
+  // reach. It over-includes subtracts that are merely bbox-near, which costs a
+  // little extra invalidation and never a stale path.
+  //
+  // It also covers the harder half, a *new* subtract joining the chain: to join,
+  // it must touch the reach, so its bbox must contact this one, so it lands
+  // inside these bounds and invalidates.
+  const reach = foldsNonTargetSubtracts(operation)
+    ? growBoundsThroughTouchingSubtracts(project, targetUnion, targetFeatureIds)
+    : targetUnion
+
   const tool = operation.toolRef
     ? project.tools.find((candidate) => candidate.id === operation.toolRef) ?? null
     : null
@@ -392,10 +416,10 @@ export function operationFootprint(project: Project, operation: Operation): Oper
 
   return {
     bounds: {
-      minX: targetUnion.minX - grow,
-      maxX: targetUnion.maxX + grow,
-      minY: targetUnion.minY - grow,
-      maxY: targetUnion.maxY + grow,
+      minX: reach.minX - grow,
+      maxX: reach.maxX + grow,
+      minY: reach.minY - grow,
+      maxY: reach.maxY + grow,
     },
     targetFeatureIds,
     readsWholeModel: false,
@@ -503,6 +527,57 @@ export function operationAffectedByChange(
     if (nextBounds !== null && boundsIntersect(nextBounds, bounds)) return true
   }
   return false
+}
+
+/** Do two boxes overlap or touch? Touching counts: contact is what chains a subtract on. */
+function boundsTouch(left: Bounds2D, right: Bounds2D): boolean {
+  return left.minX <= right.maxX && right.minX <= left.maxX
+    && left.minY <= right.maxY && right.minY <= left.maxY
+}
+
+/**
+ * Grow `seed` to cover every non-target subtract reachable through a chain of
+ * touching subtracts (#751 §3).
+ *
+ * Bounding boxes only, deliberately. The resolver decides contact exactly, with
+ * Clipper, against resolved geometry; repeating that here would mean duplicating
+ * its setup and letting the copy drift — the #749 failure. A bbox test is a
+ * superset of real contact (two shapes cannot touch unless their boxes do), so
+ * this can over-reach but never under-reach, and over-reaching only costs an
+ * extra regeneration.
+ *
+ * Terminates for the same reason the resolver's own loop does: `remaining` only
+ * shrinks and a pass that adds nothing ends it.
+ */
+function growBoundsThroughTouchingSubtracts(
+  project: Project,
+  seed: Bounds2D,
+  targetFeatureIds: Set<string>,
+): Bounds2D {
+  let remaining = project.features
+    .filter((feature) => !targetFeatureIds.has(feature.id))
+    .filter((feature) => {
+      const definition = project.featureDefinitions[feature.definitionId]
+      return definition !== undefined && definition.operation === 'subtract'
+    })
+    .map((feature) => ({ id: feature.id, bounds: featureWorldBounds(project, feature.id) }))
+    .filter((entry): entry is { id: string, bounds: Bounds2D } => entry.bounds !== null && entry.bounds !== undefined)
+
+  const grown = { ...seed }
+  for (;;) {
+    const joined = remaining.filter((entry) => boundsTouch(grown, entry.bounds))
+    if (joined.length === 0) {
+      return grown
+    }
+    for (const entry of joined) {
+      grown.minX = Math.min(grown.minX, entry.bounds.minX)
+      grown.maxX = Math.max(grown.maxX, entry.bounds.maxX)
+      grown.minY = Math.min(grown.minY, entry.bounds.minY)
+      grown.maxY = Math.max(grown.maxY, entry.bounds.maxY)
+    }
+    const joinedIds = new Set(joined.map((entry) => entry.id))
+    remaining = remaining.filter((entry) => !joinedIds.has(entry.id))
+  }
 }
 
 /** Union of profile bounds; `null` when `profiles` is empty. */

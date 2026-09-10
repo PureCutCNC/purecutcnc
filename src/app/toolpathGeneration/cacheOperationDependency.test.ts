@@ -237,5 +237,57 @@ console.log('\nToolpath cache: another operation claiming a folded subtract')
   )
 }
 
+// ── 8. Chained subtracts reach past the target's own bbox (#751 §3) ─
+{
+  // Transitive discovery means the operation reads geometry the target bbox does
+  // not cover. Measured before the footprint was widened: moving a subtract four
+  // hops out changed the resolved region from 1800 to 1600 while the cache still
+  // reported valid — a stale path served. The footprint now grows through
+  // bbox-touching subtracts, which is a superset of real contact.
+  const chainBase = withOperations([pocketOp])
+  const chainFeatures = [
+    feature('body', 'add', 0, 0, 100, 80, 0),
+    feature('pocket', 'subtract', 20, 20, 20, 40, 14),
+    ...[40, 50, 60, 70, 80].map((x, index) => feature(`c${index}`, 'subtract', x, 30, 10, 20, 14)),
+  ]
+  const chained = projectWithFeatures(
+    newProject('chain', 'mm'),
+    chainFeatures.map((row) => ({ ...row, definitionId: row.id })),
+  )
+  const chainProject: Project = { ...chainBase, ...chained, tools: [tool], operations: [pocketOp] }
+  const chainInputs = captureCacheInputs(chainProject, pocketOp)
+
+  const swap = (rows: SketchFeature[]): Project => {
+    const next = projectWithFeatures(
+      newProject('chain', 'mm'),
+      rows.map((row) => ({ ...row, definitionId: row.id })),
+    )
+    return { ...chainProject, features: next.features, featureDefinitions: next.featureDefinitions }
+  }
+
+  const movedFar = swap(chainFeatures.map((row) => (
+    row.id === 'c4' ? feature('c4', 'subtract', 80, 10, 10, 20, 14) : row
+  )))
+  check(
+    'moving a subtract four hops along the chain invalidates',
+    !cacheInputsValid(chainInputs, pocketOp, movedFar),
+    'the chained subtract is outside the target bbox and was dismissed — a stale path',
+  )
+
+  const extended = swap([...chainFeatures, feature('c5', 'subtract', 90, 30, 8, 20, 14)])
+  check(
+    'adding a subtract that extends the chain invalidates',
+    !cacheInputsValid(chainInputs, pocketOp, extended),
+    'a new link joins the chain and grows the region, so the entry cannot stand',
+  )
+
+  const unconnected = swap([...chainFeatures, feature('stray', 'subtract', 5, 70, 6, 6, 14)])
+  check(
+    'a subtract touching nothing still does NOT invalidate',
+    cacheInputsValid(chainInputs, pocketOp, unconnected),
+    'the #518 narrowing has been lost — every distant edit now regenerates',
+  )
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

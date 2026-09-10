@@ -4070,6 +4070,60 @@ function generateRoughBandMoves(
   return { moves, stepLevels, warnings }
 }
 
+/**
+ * Wall contours this band shares with the band directly below it (#751 §5).
+ *
+ * A pocket wall runs from the stock top to the pocket floor. Where an island's
+ * `z_top` sits below the pocket top, the resolver splits the pocket at that Z —
+ * correctly, because the *outline* changes there — and the finish then ran a
+ * full wall contour in each band. Measured: the pocket wall was traced twice,
+ * once at the island top and once at the floor, 65 moves becoming 125, with a
+ * witness line left at a height where the wall has no feature at all.
+ *
+ * A wall that continues into the band below is not finished by this band. Its
+ * contour reappears there, identically, because both are `buildInsetRegions` of
+ * the same shared boundary — so contour equality is the test, and it needs no
+ * tolerance of its own: the two are the same construction over the same points.
+ *
+ * Compared as polygons rather than as point lists, so a loop that starts at a
+ * different vertex still matches.
+ */
+function continuingWallContours(
+  nextBandRegions: ResolvedPocketRegion[] | null,
+  finishDelta: number,
+  rounded: boolean,
+): ClipperPath[] {
+  if (!nextBandRegions || nextBandRegions.length === 0) {
+    return []
+  }
+  const scale = DEFAULT_CLIPPER_SCALE
+  // Built by the *same* construction the band in use builds its own with, or the
+  // comparison is between two different shapes and matches nothing it should.
+  // The rounded branch mitres the outer and rounds the islands, and reads the
+  // outer contours only; the plain branch mitres both and takes every loop.
+  const contours = rounded
+    ? buildOuterContours(nextBandRegions.flatMap((region) => buildInsetRegions(
+      region,
+      finishDelta,
+      ClipperLib.JoinType.jtMiter,
+      ClipperLib.JoinType.jtRound,
+    )))
+    : buildContourLoops(nextBandRegions.flatMap((region) => buildInsetRegions(region, finishDelta)))
+  return contours.map((contour) => toClipperPath(normalizeWinding(contour, false), scale))
+}
+
+/** Does this contour describe the same area as one that continues below? */
+function wallContinuesBelow(contour: Point[], continuing: ClipperPath[]): boolean {
+  if (continuing.length === 0) {
+    return false
+  }
+  const path = toClipperPath(normalizeWinding(contour, false), DEFAULT_CLIPPER_SCALE)
+  return continuing.some((other) => (
+    differenceClipperPaths([path], [other]).length === 0
+    && differenceClipperPaths([other], [path]).length === 0
+  ))
+}
+
 function generateFinishBandMoves(
   band: ResolvedPocketBand,
   operation: Operation,
@@ -4078,6 +4132,7 @@ function generateFinishBandMoves(
   toolRadius: number,
   stepoverDistance: number,
   maxLinkDistance: number,
+  nextBandRegions: ResolvedPocketRegion[] | null,
   direction: CutDirection = 'conventional',
   telemetry: EngagementTelemetryAccumulator | null = null,
   regionMasked = false,
@@ -4171,6 +4226,17 @@ function generateFinishBandMoves(
       }
     } else {
       wallContours = buildContourLoops(finishRegions)
+    }
+    // Drop the walls that carry on into the band below — they are finished
+    // there, at their true bottom, in one pass (#751 §5).
+    const continuing = continuingWallContours(nextBandRegions, finishDelta, shouldRoundPocketWalls === true)
+    if (continuing.length > 0) {
+      // Outer wall contours only. An island ring (`wallFinalContours`) is built
+      // by `buildExpandedIslandContours`, a different construction again, and
+      // comparing it against these would be the same mismatch one level down.
+      // Islands are left alone until that is measured rather than assumed.
+      wallContours = wallContours.filter((contour) => !wallContinuesBelow(contour, continuing))
+      wallOuterContours = wallOuterContours.filter((contour) => !wallContinuesBelow(contour, continuing))
     }
   }
   // "Round wall corners" acts on the ring that defines the wall (issue #622).
@@ -4982,6 +5048,18 @@ function generatePocketToolpathSingle(
       if (band.regions.length === 0) continue
     }
 
+    // Every band starting at this one's floor, not just the first. A restricted
+    // subtract's band overlaps the main bands in Z (#751 §5), so more than one
+    // can begin here — and taking only the first picked the small restricted
+    // band over the pocket itself, which made the floor below look empty and
+    // put a full-pocket air pass at the island's Z while the island top went
+    // unmachined.
+    const bandsBelow = resolved.bands.filter((candidate) => (
+      candidate !== band && Math.abs(candidate.topZ - band.bottomZ) < 1e-9
+    ))
+    const nextBandRegions = bandsBelow.length > 0
+      ? bandsBelow.flatMap((candidate) => candidate.regions)
+      : null
     const result = operation.pass === 'finish'
       ? generateFinishBandMoves(
         band,
@@ -4991,6 +5069,7 @@ function generatePocketToolpathSingle(
         tool.radius,
         stepoverDistance,
         maxLinkDistance,
+        nextBandRegions,
         direction,
         telemetry,
         regionMask !== null,

@@ -305,10 +305,20 @@ function hasDepthWarning(result: ResolvedPocketResult): boolean {
   console.log(`   ✓ lower band starts at the plug's edge, ${boundsText(lower)}`)
 }
 
-// Qualification is one hop from the target: a subtract reachable only through
-// another non-target subtract does not join the region.
+// SUPERSEDED by #751 §3: qualification now chains through touching subtracts.
+//
+// This case asserted the opposite — that a subtract reachable only through
+// another non-target subtract does not join the region — and it was a
+// deliberate choice, not an oversight. #751 §3 reverses it on the maintainer's
+// call: such a subtract is still unowned void the model says is gone, so a
+// clearing pass machining around it leaves material that is not there, which is
+// this very issue's complaint one hop further out.
+//
+// The assertion is inverted rather than deleted, so the reversal stays visible
+// here instead of looking like coverage that quietly went missing.
+// `resolverSubtractChain.test.ts` owns the new behaviour, its limit and its cost.
 {
-  console.log('8. Qualification does not chain through another subtract...')
+  console.log('8. Qualification chains through another subtract (#751 §3)...')
 
   const channel = feature('channel', 'subtract', 45, 0, 10, 25, 10)
   // x 30..70, y 0..6 — crosses the channel, never the pocket.
@@ -316,10 +326,10 @@ function hasDepthWarning(result: ResolvedPocketResult): boolean {
   const withoutDistant = resolvePocket([body(), pocket(), island(), channel])
   const withDistant = resolvePocket([body(), pocket(), island(), channel, distant])
 
-  assert(serialize(withoutDistant) === serialize(withDistant),
-    'a subtract that only touches another subtract must not change the region')
+  assert(serialize(withoutDistant) !== serialize(withDistant),
+    'a subtract touching another folded subtract must now join the region (#751 §3)')
 
-  console.log('   ✓ one hop only')
+  console.log('   ✓ chains through')
 }
 
 // The guarantee for every existing project: a non-target subtract that misses

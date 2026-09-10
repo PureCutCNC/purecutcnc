@@ -110,6 +110,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeNoContourForFeature': 'No se pudo generar un contorno válido para {name}.',
   'warnings.edgeNoInsideContour': 'No se pudo generar un contorno interior válido para la banda {topZ} -> {bottomZ}.',
   'warnings.edgeClosedProfilesOnly': 'Las operaciones de fresado de borde solo admiten perfiles objetivo cerrados.',
+  'warnings.subtractChainLimitReached': 'Las sustracciones encadenadas alcanzaron el límite de {limit} elementos para {operation}, por lo que la región se detiene antes de la geometría más lejana de la cadena',
   'warnings.surface3dNeedsModel': '{operation} requiere seleccionar un elemento de modelo.',
   'warnings.surface3dNotMesh': 'El elemento de modelo debe ser una malla importada.',
   'warnings.surface3dLoadFailed': 'Error al cargar la geometría del modelo.',

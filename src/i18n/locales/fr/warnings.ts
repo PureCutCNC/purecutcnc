@@ -110,6 +110,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeNoContourForFeature': 'Aucun contour valide n’a pu être généré pour {name}',
   'warnings.edgeNoInsideContour': 'Aucun contour intérieur valide n’a pu être généré pour la bande {topZ} -> {bottomZ}',
   'warnings.edgeClosedProfilesOnly': 'Les opérations de contournage ne prennent en charge que des profils cibles fermés',
+  'warnings.subtractChainLimitReached': "Les soustractions chaînées ont atteint la limite de {limit} entités pour {operation}, la région s'arrête donc avant la géométrie plus loin dans la chaîne",
   'warnings.surface3dNeedsModel': '{operation} exige qu’une entité de modèle soit sélectionnée',
   'warnings.surface3dNotMesh': 'L’entité de modèle doit être un modèle maillé importé',
   'warnings.surface3dLoadFailed': 'Impossible de charger la géométrie du modèle',

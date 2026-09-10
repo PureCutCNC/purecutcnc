@@ -35,6 +35,13 @@ export type ToolpathWarningCode =
    *  an island or widening the boundary stays quiet — only the depth the user
    *  cannot predict from the target is worth saying. */
   | 'regionExtendedBySubtractDepth'
+  /** A chain of touching non-target subtracts ran past the hop limit, so the
+   *  region stops short of geometry the model says is void (issue #751 §3).
+   *  Measured cost is not the reason for the limit — a 50-link chain resolves
+   *  in 11.5 ms — it is a rail against a pocket silently growing across a part.
+   *  Said aloud because truncating quietly is the same silent under-fold the
+   *  transitive discovery was added to remove. */
+  | 'subtractChainLimitReached'
   // shared helpers
   | 'cutDepthExceedsToolMax'
   // clearing-operation entry strategies
