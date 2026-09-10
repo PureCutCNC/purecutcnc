@@ -31,6 +31,7 @@ const ALL_CODES = [
   'finishScallopHeightOutOfRange', 'finishSlopeInvalid', 'finishSlopeEmpty', 'finishSlopeTooComplex',
   'targetsMissingOrWrongRole', 'closedProfilesOnly', 'bandEmptySubject', 'bandNoRegions', 'resolverNoBands',
   'regionExtendedBySubtractDepth',
+  'subtractChainLimitReached',
   'resolverOnlyInsideEdge', 'resolverOnlyPocketVcarve', 'resolverNoValidKindTargets', 'resolverNoValidSubtracts', 'resolverNoTargets',
   'cutDepthExceedsToolMax', 'cutDepthExceedsToolMaxForFeature',
   'entryStrategyFallback', 'entryHelixDiameterClamped', 'debug',

@@ -121,6 +121,7 @@ export const warningsEn = {
   'warnings.edgeNoInsideContour': 'No valid inside contour could be generated for band {topZ} -> {bottomZ}',
   'warnings.edgeClosedProfilesOnly': 'Edge-route operations only support closed target profiles',
   // 3D surface roughing (stepdown)
+  'warnings.subtractChainLimitReached': 'Chained subtracts reached the {limit}-feature limit for {operation}, so the region stops short of geometry further along the chain',
   'warnings.surface3dNeedsModel': '{operation} requires a model feature to be selected',
   'warnings.surface3dNotMesh': 'Model feature must be an imported mesh model',
   'warnings.surface3dLoadFailed': 'Failed to load model geometry',

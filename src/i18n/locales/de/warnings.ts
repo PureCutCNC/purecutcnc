@@ -121,6 +121,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeNoInsideContour': 'Für Band {topZ} -> {bottomZ} konnte keine gültige Innenkontur erzeugt werden',
   'warnings.edgeClosedProfilesOnly': 'Kontur-Operationen unterstützen nur geschlossene Ziel-Profile',
   // 3D surface roughing (stepdown)
+  'warnings.subtractChainLimitReached': 'Verkettete Abzüge haben das Limit von {limit} Elementen für {operation} erreicht, daher endet der Bereich vor weiter entfernter Geometrie der Kette',
   'warnings.surface3dNeedsModel': '{operation} erfordert die Auswahl eines Modell-Features',
   'warnings.surface3dNotMesh': 'Modell-Feature muss ein importiertes Netzmodell sein',
   'warnings.surface3dLoadFailed': 'Modellgeometrie konnte nicht geladen werden',

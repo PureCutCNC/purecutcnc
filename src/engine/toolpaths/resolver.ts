@@ -326,6 +326,23 @@ const FOLDS_NON_TARGET_SUBTRACTS: Record<OperationKind, boolean> = {
   drilling: false,
 }
 
+/**
+ * How many chained non-target subtracts one operation will follow (#751 §3).
+ *
+ * Not a performance limit. Measured on synthetic chains, resolve time is 0.5 ms
+ * with no chain, 11.5 ms at 50 links and 40.7 ms at 100 — every one of those is
+ * comfortably inside a frame, and part of the growth is the region genuinely
+ * getting bigger rather than discovery working harder.
+ *
+ * It is a rail against runaway scope. Transitive qualification means an
+ * operation's extent is no longer readable from its target: a subtract added on
+ * the far side of a part can enlarge a pocket if a chain of touching subtracts
+ * happens to connect it. 64 is far past anything real geometry produces, so
+ * reaching it says the project is pathological, and `subtractChainLimitReached`
+ * says so rather than quietly serving a short region.
+ */
+const MAX_CHAINED_NON_TARGET_SUBTRACTS = 64
+
 /** Does this operation fold non-target subtracts into its resolved region? */
 export function foldsNonTargetSubtracts(operation: Operation): boolean {
   return FOLDS_NON_TARGET_SUBTRACTS[operation.kind]
@@ -373,6 +390,8 @@ function discoverNonTargetSubtracts(
   operation: Operation,
   targetUnionPaths: ClipperPath[],
   targetIdSet: Set<string>,
+  warnings: ToolpathWarning[],
+  operationLabel: string,
 ): FeatureWithSpan[] {
   if (!foldsNonTargetSubtracts(operation)) {
     return []
@@ -380,7 +399,7 @@ function discoverNonTargetSubtracts(
 
   const machinedElsewhere = subtractsMachinedElsewhere(project, operation)
 
-  return project.features
+  const candidates = project.features
     // Filtered before expansion on purpose: an operation targets a *feature*,
     // while `expandFeatureGeometry` hands back its parts — a text feature
     // becomes one entry per glyph, with derived ids that match no target.
@@ -388,13 +407,54 @@ function discoverNonTargetSubtracts(
     .flatMap((feature) => expandFeatureGeometry(feature))
     .filter((feature) => feature.operation === 'subtract' && !targetIdSet.has(feature.id))
     .filter((feature) => featureHasClosedGeometry(feature))
-    // Touching counts, not just overlapping (#751 §2): a subtract sitting
-    // exactly against the target's wall shares a boundary but no area.
-    .filter((feature) => pathsTouchOrOverlap(targetUnionPaths, [flattenFeatureToClipperPath(feature)]))
-    .map((feature) => ({
-      feature,
-      span: resolveFeatureZSpan(project, feature),
-    }))
+    .map((feature) => ({ feature, path: flattenFeatureToClipperPath(feature) }))
+
+  // Qualification is transitive (#751 §3). A subtract reaching the target only
+  // through another subtract is still opening material this operation will
+  // machine — the model is folded in feature order, so a subtract of a subtract
+  // is void just the same. Testing against the raw target union missed those
+  // entirely: measured, a subtract touching only its parent was ignored while
+  // the parent folded.
+  //
+  // Grown to a fixed point rather than one extra level, because the chain has no
+  // natural depth limit. Termination is structural, not a guard: `pending` only
+  // ever shrinks, a pass that accepts nothing ends the loop, and an accepted
+  // subtract is never reconsidered — so this is bounded by the candidate count
+  // with no cycle to detect.
+  //
+  // Contact is the #751 §2 test throughout, so a second-level subtract that
+  // merely *touches* its parent qualifies exactly as one touching the target
+  // does.
+  const accepted: typeof candidates = []
+  let pending = candidates
+  let reach = targetUnionPaths
+  let truncated = false
+  for (;;) {
+    const joined = pending.filter((candidate) => pathsTouchOrOverlap(reach, [candidate.path]))
+    if (joined.length === 0) {
+      break
+    }
+    if (accepted.length + joined.length > MAX_CHAINED_NON_TARGET_SUBTRACTS) {
+      truncated = true
+      break
+    }
+    appendAll(accepted, joined)
+    const joinedIds = new Set(joined.map(({ feature }) => feature.id))
+    pending = pending.filter(({ feature }) => !joinedIds.has(feature.id))
+    reach = unionPaths([...reach, ...joined.map(({ path }) => path)])
+  }
+
+  if (truncated) {
+    warnings.push({
+      code: 'subtractChainLimitReached',
+      params: { limit: MAX_CHAINED_NON_TARGET_SUBTRACTS, operation: operationLabel },
+    })
+  }
+
+  return accepted.map(({ feature }) => ({
+    feature,
+    span: resolveFeatureZSpan(project, feature),
+  }))
 }
 
 /**
@@ -697,7 +757,7 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
   const targetUnionPaths = unionPaths(allTargetPathsForDiscovery)
 
   const targetIdSet = new Set(closedSubtractFeatures.map(({ feature }) => feature.id))
-  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetUnionPaths, targetIdSet)
+  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetUnionPaths, targetIdSet, warnings, operationLabel)
   const nonTargetSubtractIdSet = new Set(nonTargetSubtracts.map(({ feature }) => feature.id))
   // A folded subtract that bottoms out at or above the target's own floor gets
   // its own band over its own footprint, instead of splitting the whole pocket
@@ -1020,7 +1080,7 @@ export function resolveInsideEdgeRegions(authoritativeProject: Project, operatio
   const targetUnionPaths = unionPaths(closedTargetFeatures.map(({ feature }) => flattenFeatureToClipperPath(feature)))
 
   const targetIdSet = new Set(closedTargetFeatures.map(({ feature }) => feature.id))
-  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetUnionPaths, targetIdSet)
+  const nonTargetSubtracts = discoverNonTargetSubtracts(project, operation, targetUnionPaths, targetIdSet, warnings, operationLabel)
   const nonTargetSubtractIdSet = new Set(nonTargetSubtracts.map(({ feature }) => feature.id))
   const reachableUnionPaths = reachableUnionForDiscovery(targetUnionPaths, nonTargetSubtracts)
   const closedAddFeatures = nonTargetSubtracts.length > 0 ? closedAddFeaturesWithSpans(project) : []
