@@ -15,11 +15,14 @@
  */
 
 /**
- * Export G-code dialog smoke: the operation checklist (issue #274).
+ * Export G-code dialog smoke: the operation checklist (issue #274) and the
+ * error tier (issue #755).
  *
  * Covers the per-operation entry point (the Properties-header action
  * pre-checks only the selected operation), the default set from the header
- * Export button, and the disabled state when nothing is checked.
+ * Export button, the disabled state when nothing is checked, and a program
+ * that changes tool with M6 off — reported as an error that blocks the export,
+ * where a program whose operations share one tool is not.
  */
 
 import { test, expect } from './fixtures'
@@ -45,7 +48,7 @@ test.describe('Export G-code operation checklist smoke', () => {
     // Unchecking the last operation disables Export and explains why.
     await ui.exportDialog.operationCheckbox(app.page, 'Route B').uncheck()
     await expect(ui.exportDialog.exportButton(app.page)).toBeDisabled()
-    await expect(ui.exportDialog.warnings(app.page).filter({
+    await expect(ui.exportDialog.errors(app.page).filter({
       hasText: 'No operations selected',
     })).toBeVisible()
 
@@ -76,5 +79,57 @@ test.describe('Export G-code operation checklist smoke', () => {
     await expect(ui.exportDialog.operationCheckbox(app.page, 'Route A')).toBeChecked()
     await expect(ui.exportDialog.operationCheckbox(app.page, 'Route B')).toBeChecked()
     await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+  })
+
+  test('one tool across the program with tool changes off stays clean', async ({ app, ui }) => {
+    await seedGcodeExportProject(app.page)
+    await ui.operations.headerExportButton(app.page).click()
+
+    // A ready program reports its total line count; the dialog shows nothing
+    // while a preparation is in flight, which reads as 0 here.
+    const reportedLines = async (): Promise<number> => {
+      const summary = ui.exportPreview.summary(app.page)
+      if (await summary.count() === 0) return 0
+      const match = /(\d+) lines total/.exec((await summary.textContent()) ?? '')
+      return match ? Number(match[1]) : 0
+    }
+
+    await expect.poll(reportedLines).toBeGreaterThan(0)
+    const withToolChanges = await reportedLines()
+
+    await ui.exportDialog.emitToolChanges(app.page).uncheck()
+
+    // Rebuilding the program takes a debounce, and the change commands it drops
+    // (with the spindle restart for the next operation) sit past the 30-line
+    // preview, so the reported line count falling is the only whole-program
+    // signal available. It has to fall *to a ready program*: the dialog reports
+    // no count at all while a preparation is in flight, and "0 < before" would
+    // otherwise let the assertions below describe that empty state rather than
+    // the rebuilt program. Both routes share a tool, so nothing was left
+    // unexecuted and there is no error.
+    await expect.poll(async () => {
+      const lines = await reportedLines()
+      return lines > 0 && lines < withToolChanges
+    }).toBe(true)
+    await expect(ui.exportDialog.errors(app.page)).toHaveCount(0)
+    await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+  })
+
+  test('a real tool change with tool changes off blocks the export', async ({ app, ui }) => {
+    await seedGcodeExportProject(app.page, { routeBOnSecondTool: true })
+    await ui.operations.headerExportButton(app.page).click()
+
+    await ui.exportDialog.emitToolChanges(app.page).uncheck()
+
+    // Route B would run with Route A's tool and nothing in the program pauses
+    // the machine for a change, so this blocks the export rather than noting it.
+    await expect(ui.exportDialog.errors(app.page).filter({ hasText: 'Route B' })).toBeVisible()
+    await expect(ui.exportDialog.exportButton(app.page)).toBeDisabled()
+
+    // Emitting the change is the fix the message asks for, and it clears the
+    // error once the rebuilt program lands.
+    await ui.exportDialog.emitToolChanges(app.page).check()
+    await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+    await expect(ui.exportDialog.errors(app.page)).toHaveCount(0)
   })
 })

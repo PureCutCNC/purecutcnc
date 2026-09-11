@@ -226,7 +226,7 @@ export const warningsEn = {
   'warnings.pocketFinishIslandWallTooTight': 'The cutter does not fit between an island and the pocket wall; the island finish pass was trimmed to where it fits, so stock is left in that gap',
   // postprocessor
   'warnings.postWcsNullSelect': 'Machine definition requests {wcsCommand} in header but selectCommand is null.',
-  'warnings.postToolChangesDisabled': 'Operation "{operation}" uses a different tool ("{tool}") than previous, but tool changes are disabled.',
+  'warnings.postToolChangesDisabled': 'Operation "{operation}" needs tool "{tool}", but tool changes are disabled: the program keeps cutting with the previous tool. Turn tool changes on, or export one tool at a time.',
   'warnings.postNoCoolantCommands': 'Coolant emission requested but machine definition has no coolant commands.',
   'warnings.postCannedCycleUnsupported': 'Operation "{operation}": {drillType} canned cycle not supported by machine "{machine}"; emitting expanded moves.',
   'warnings.postArcNoCapability': 'Operation "{operation}" contains linear moves that could be fitted as arcs, but the selected machine does not support arc interpolation (G2/G3). Emitting linear moves instead.',

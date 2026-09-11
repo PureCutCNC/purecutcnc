@@ -1045,6 +1045,17 @@
   line-height: 1.45;
 }
 
+/* Errors block the export, so they read as the stronger tier (issue #755). */
+.export-error {
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--danger-text) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger-text) 40%, transparent);
+  border-radius: 8px;
+  color: var(--danger-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .project-template-list {
   display: grid;
   gap: 10px;

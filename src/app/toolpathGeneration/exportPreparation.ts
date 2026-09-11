@@ -46,6 +46,7 @@ import { runPostProcessor } from '../../engine/gcode/postprocessor'
 import type { MachineDefinition, PostProcessorResult } from '../../engine/gcode/types'
 import { normalizeToolForProject, type NormalizedTool } from '../../engine/toolpaths'
 import type { ToolpathResult } from '../../engine/toolpaths'
+import { warningSeverity, type ToolpathWarning } from '../../engine/toolpaths/warningCodes'
 import type { Operation, Project } from '../../types/project'
 import type { GenerationContext, ToolpathGenerationService } from './service'
 
@@ -91,6 +92,19 @@ export type ExportPreparation =
   | { status: 'preparing'; token: ExportPreparationToken }
   | { status: 'ready'; token: ExportPreparationToken; result: PostProcessorResult; operations: PreparedOperation[] }
   | { status: 'blocked'; token: ExportPreparationToken; reason: ExportBlockReason }
+
+/**
+ * Does this program carry a code that makes it unsafe to save?
+ *
+ * The export dialog and the save path share this one predicate so the button
+ * and the bytes cannot disagree: a warning annotates a program the operator can
+ * still cut, an error is a program that would machine the wrong thing. The
+ * severity of a code is the engine's call (`warningSeverity`), not the
+ * dialog's — this only asks whether any of them is an error (issue #755).
+ */
+export function programHasError(warnings: readonly ToolpathWarning[]): boolean {
+  return warnings.some((warning) => warningSeverity(warning.code) === 'error')
+}
 
 /** Stable key for the postprocessor options, so an option change invalidates a token. */
 export function exportOptionsKey(options: ExportPostOptions): string {

@@ -30,7 +30,7 @@ function resolvedRectProfile(cx: number, cy: number, w: number, h: number) {
   }
 }
 
-function outsideRouteOperation(id: string, name: string) {
+function outsideRouteOperation(id: string, name: string, toolRef: string) {
   return {
     id,
     name,
@@ -40,7 +40,7 @@ function outsideRouteOperation(id: string, name: string) {
     showToolpath: true,
     debugToolpath: false,
     target: { source: 'features', featureIds: ['f-machinable-add'] },
-    toolRef: 'tool-1',
+    toolRef,
     stepdown: 0.1,
     stepover: 0.125,
     feed: 60,
@@ -58,13 +58,22 @@ function outsideRouteOperation(id: string, name: string) {
   }
 }
 
+export interface GcodeExportSeedOptions {
+  /**
+   * Put Route B on a second tool. The default fixture has both routes on one
+   * tool — the same-tool case the false warning was reported for; this is the
+   * other case, a program that really does change tool (issue #755).
+   */
+  routeBOnSecondTool?: boolean
+}
+
 /**
- * Project with one machinable add feature, one tool, two toolpath-producing
- * outside-route operations ("Route A", "Route B"), and the bundled GRBL
+ * Project with one machinable add feature, two toolpath-producing outside-route
+ * operations ("Route A", "Route B") on one tool or two, and the bundled GRBL
  * machine selected (legacy `machineId` meta — load-time normalization seeds
  * the bundled definitions and keeps the selection).
  */
-function buildGcodeExportProjectJson(): string {
+function buildGcodeExportProjectJson(options: GcodeExportSeedOptions): string {
   const now = '2026-01-01T00:00:00.000Z'
   const stockW = 180
   const stockH = 120
@@ -151,10 +160,28 @@ function buildGcodeExportProjectJson(): string {
         defaultStepover: 0.125,
         maxCutDepth: 1,
       },
+      ...(options.routeBOnSecondTool
+        ? [{
+          id: 'tool-2',
+          name: 'Eighth Inch Endmill',
+          units: 'inch',
+          type: 'flat_endmill',
+          diameter: 0.125,
+          vBitAngle: null,
+          flutes: 2,
+          material: 'carbide',
+          defaultRpm: 24000,
+          defaultFeed: 40,
+          defaultPlungeFeed: 20,
+          defaultStepdown: 0.05,
+          defaultStepover: 0.0625,
+          maxCutDepth: 0.5,
+        }]
+        : []),
     ],
     operations: [
-      outsideRouteOperation('op-route-a', 'Route A'),
-      outsideRouteOperation('op-route-b', 'Route B'),
+      outsideRouteOperation('op-route-a', 'Route A', 'tool-1'),
+      outsideRouteOperation('op-route-b', 'Route B', options.routeBOnSecondTool ? 'tool-2' : 'tool-1'),
     ],
     tabs: [],
     clamps: [],
@@ -162,8 +189,9 @@ function buildGcodeExportProjectJson(): string {
   })
 }
 
-const GCODE_EXPORT_FIXTURE_JSON = buildGcodeExportProjectJson()
-
-export async function seedGcodeExportProject(page: Page): Promise<void> {
-  await seedProject(page, GCODE_EXPORT_FIXTURE_JSON)
+export async function seedGcodeExportProject(
+  page: Page,
+  options: GcodeExportSeedOptions = {},
+): Promise<void> {
+  await seedProject(page, buildGcodeExportProjectJson(options))
 }

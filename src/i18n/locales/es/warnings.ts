@@ -206,7 +206,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketWallCornerCleanupFallback': 'No se pudo limpiar de forma segura una esquina redondeada de la pared del vaciado; se mantuvo la trayectoria de pared afilada para ese anillo.',
   'warnings.pocketFinishIslandWallTooTight': 'La fresa no cabe entre una isla y la pared del vaciado; la pasada de acabado de la isla se recortó hasta donde sí cabe, por lo que queda material en ese hueco.',
   'warnings.postWcsNullSelect': 'La definición de máquina solicita {wcsCommand} en el encabezado, pero selectCommand es nulo.',
-  'warnings.postToolChangesDisabled': 'La operación "{operation}" utiliza una herramienta diferente ("{tool}") a la anterior, pero los cambios de herramienta están deshabilitados.',
+  'warnings.postToolChangesDisabled': 'La operación "{operation}" necesita la herramienta "{tool}", pero los cambios de herramienta están deshabilitados: el programa sigue cortando con la herramienta anterior. Active los cambios de herramienta o exporte una herramienta a la vez.',
   'warnings.postNoCoolantCommands': 'Se solicitó la emisión de refrigerante, pero la definición de la máquina no tiene comandos de refrigerante.',
   'warnings.postCannedCycleUnsupported': 'Operación "{operation}": el ciclo encapsulado {drillType} no es compatible con la máquina "{machine}"; se emiten movimientos expandidos.',
   'warnings.postArcNoCapability': 'La operación "{operation}" contiene movimientos lineales que podrían ajustarse como arcos, pero la máquina seleccionada no admite interpolación circular (G2/G3). Se emiten movimientos lineales en su lugar.',

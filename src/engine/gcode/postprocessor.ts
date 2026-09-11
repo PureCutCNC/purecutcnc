@@ -268,11 +268,16 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
       if (definition.toolChange.pauseAfterChange) {
         emitLine(definition.toolChange.pauseCommand)
       }
-
-      state.currentToolId = tool.id
     } else if (toolChanged && !options.emitToolChanges && opIndex > 0) {
       warnings.push({ code: 'postToolChangesDisabled', params: { operation: operation.name, tool: tool.name } })
     }
+    // Tracked whether or not the change was emitted (issue #755). Emitting on
+    // demand and tracking are different questions: with M6 off this variable
+    // still has to say which tool the machine is actually holding, or every
+    // later operation reads as a change and the same tool is reported as a
+    // different one. The warning above is what reports the real, unexecuted
+    // change; this keeps that report honest.
+    state.currentToolId = tool.id
 
     // Spindle On
     if (!state.spindleOn || state.spindleSpeed !== rpm) {
