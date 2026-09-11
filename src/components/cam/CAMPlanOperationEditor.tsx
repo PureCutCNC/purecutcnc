@@ -105,12 +105,19 @@ export interface CAMPlanOperationEditorProps {
   tools: CamPlanTool[]
   units: Tool['units']
   onPatch: (patch: Partial<Operation>, invalidatesRest?: boolean) => void
+  onUseRecommendedRestTool?: () => void
 }
 
-export function CAMPlanOperationEditor({ draft, tools, units, onPatch }: CAMPlanOperationEditorProps) {
+export function CAMPlanOperationEditor({ draft, tools, units, onPatch, onUseRecommendedRestTool }: CAMPlanOperationEditorProps) {
   const operation = draft.operation
   const selectedTool = tools.find((candidate) => candidate.id === operation.toolRef)?.tool ?? null
   const isVCarve = operation.kind === 'v_carve' || operation.kind === 'v_carve_medial'
+  const error = draft.hardError ?? draft.staleReason
+  const canUseRecommendedRestTool = Boolean(
+    draft.rest
+    && draft.hardError
+    && draft.toolOptions.some((toolRef) => toolRef !== operation.toolRef),
+  )
   // The plan can introduce a bundled tool when applied, so a user never has
   // to preload a tool merely to choose it here. Match the ordinary operation
   // editor by reserving the V-carve list for V-bits.
@@ -234,8 +241,13 @@ export function CAMPlanOperationEditor({ draft, tools, units, onPatch }: CAMPlan
         ) : null}
       </section>
 
-      {draft.hardError || draft.staleReason ? (
-        <div className="cam-plan-alert" role="alert">{draft.hardError ?? draft.staleReason}</div>
+      {error ? (
+        <div className="cam-plan-alert" role="alert">
+          <span>{error}</span>
+          {canUseRecommendedRestTool && onUseRecommendedRestTool ? (
+            <button type="button" onClick={onUseRecommendedRestTool}>{camT('cam.plan.useRecommendedRestTool')}</button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   )

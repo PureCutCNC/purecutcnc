@@ -206,7 +206,15 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
     coverage.status === 'unsupported'
     || (coverage.status === 'planned' && !enabledCoverage(plan, coverage.featureId)),
   ), [plan])
-  const hardError = plan.operations.some((draft) => draft.enabled && (draft.hardError || draft.staleReason || !draft.operation.toolRef))
+  const blockingErrors = plan.operations.flatMap((draft) => {
+    const message = draft.hardError ?? draft.staleReason ?? (!draft.operation.toolRef ? camT('cam.plan.missingTool') : null)
+    return draft.enabled && message ? [{
+      key: draft.key,
+      label: `${operationKindLabel(draft.operation)} · ${camT(`cam.pass.${draft.operation.pass}`)}`,
+      message,
+    }] : []
+  })
+  const hardError = blockingErrors.length > 0
   const enabledCount = plan.operations.filter((draft) => draft.enabled).length
   const existingOperationCount = project.operations.filter((operation) => operation.enabled).length
   const canCreate = enabledCount > 0 && !hardError && (uncovered.length === 0 || acknowledgeCoverage)
@@ -263,6 +271,22 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
     setAcknowledgeCoverage(false)
   }
 
+  function applyRecommendedRestTool(key: string) {
+    setMessage(null)
+    setPlan((current) => {
+      const rest = current.operations.find((draft) => draft.key === key)
+      if (!rest?.rest) return current
+      const revised = {
+        ...current,
+        operations: current.operations.map((draft) => draft.key === key
+          ? { ...draft, userOverrides: draft.userOverrides.filter((field) => field !== 'toolRef') }
+          : draft,
+        ),
+      }
+      return reconcileCamPlanRest(project, revised, rest.rest.sourceOperationKey)
+    })
+  }
+
   function handleMove(key: string, delta: -1 | 1) {
     setPlan((current) => {
       const operations = moveOperation(current.operations, key, delta)
@@ -310,11 +334,30 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
           <button className="dialog-close" type="button" aria-label={camT('cam.panel.close')} onClick={onClose}><Icon id="close" /></button>
         </header>
 
-        <div className="cam-plan-summary" aria-label={camT('cam.plan.summary')}>
-          <span><strong>{enabledCount}</strong> {camT('cam.plan.operations')}</span>
-          <span><strong>{new Set(plan.operations.flatMap((draft) => draft.enabled && draft.operation.toolRef ? [draft.operation.toolRef] : [])).size}</strong> {camT('cam.plan.tools')}</span>
-          <span><strong>{existingOperationCount}</strong> {camT('cam.plan.existingOperations')}</span>
-          <span className={uncovered.length > 0 ? 'cam-plan-summary__warning' : ''}><strong>{uncovered.length}</strong> {camT('cam.plan.needsReview')}</span>
+        <div className="cam-plan-overview">
+          <div className="cam-plan-summary" aria-label={camT('cam.plan.summary')}>
+            <span><strong>{enabledCount}</strong> {camT('cam.plan.operations')}</span>
+            <span><strong>{new Set(plan.operations.flatMap((draft) => draft.enabled && draft.operation.toolRef ? [draft.operation.toolRef] : [])).size}</strong> {camT('cam.plan.tools')}</span>
+            <span><strong>{existingOperationCount}</strong> {camT('cam.plan.existingOperations')}</span>
+            <span className={uncovered.length > 0 ? 'cam-plan-summary__warning' : ''}><strong>{uncovered.length}</strong> {camT('cam.plan.needsReview')}</span>
+          </div>
+
+          {blockingErrors.length > 0 ? (
+            <section className="cam-plan-errors" aria-label={camT('cam.plan.blockingErrors')} role="alert">
+              <strong className="cam-plan-errors__heading">{camT('cam.plan.blockingErrors')}</strong>
+              <div className="cam-plan-errors__items">
+                {blockingErrors.map((error) => (
+                  <button key={error.key} type="button" className="cam-plan-errors__item" onClick={() => setSelected(operationSelection(error.key))}>
+                    <span>
+                      <strong>{error.label}</strong>
+                      <span>{error.message}</span>
+                    </span>
+                    <span className="cam-plan-errors__review">{camT('cam.plan.reviewError')} <span aria-hidden="true">→</span></span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </div>
 
         <div className="dialog-body cam-plan-body">
@@ -378,7 +421,13 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
 
           <main className="cam-plan-detail">
             {selectedOperation ? (
-              <CAMPlanOperationEditor draft={selectedOperation} tools={plan.tools} units={project.meta.units} onPatch={(patch, invalidatesRest) => patchOperation(selectedOperation.key, patch, invalidatesRest)} />
+              <CAMPlanOperationEditor
+                draft={selectedOperation}
+                tools={plan.tools}
+                units={project.meta.units}
+                onPatch={(patch, invalidatesRest) => patchOperation(selectedOperation.key, patch, invalidatesRest)}
+                onUseRecommendedRestTool={selectedOperation.rest ? () => applyRecommendedRestTool(selectedOperation.key) : undefined}
+              />
             ) : selectedTabs ? (
               <SharedTabsEditor draft={selectedTabs} units={project.meta.units} onChange={(next) => setPlan((current) => ({ ...current, sharedTabs: current.sharedTabs.map((draft) => draft.key === next.key ? next : draft) }))} />
             ) : (

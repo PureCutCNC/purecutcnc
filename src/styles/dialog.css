@@ -373,6 +373,84 @@
   color: var(--warning-text);
 }
 
+.cam-plan-errors {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  padding: 9px 22px;
+  border-bottom: 1px solid color-mix(in srgb, var(--danger-text) 30%, var(--line));
+  background: color-mix(in srgb, var(--danger-text) 8%, var(--surface-subtle));
+}
+
+.cam-plan-errors__heading {
+  padding-top: 4px;
+  color: var(--danger-text);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cam-plan-errors__items {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 6px;
+}
+
+.cam-plan-errors__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--danger-text) 32%, var(--line));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--danger-text) 7%, var(--surface-translucent));
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.cam-plan-errors__item:hover,
+.cam-plan-errors__item:focus-visible {
+  border-color: var(--danger-text);
+  background: color-mix(in srgb, var(--danger-text) 13%, var(--surface-raised));
+  outline: none;
+}
+
+.cam-plan-errors__item > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.cam-plan-errors__item > span:first-child strong,
+.cam-plan-errors__item > span:first-child span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cam-plan-errors__item > span:first-child strong {
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.cam-plan-errors__item > span:first-child span {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.cam-plan-errors__review {
+  color: var(--danger-text);
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
 .dialog-body.cam-plan-body {
   min-height: 0;
   padding: 0;
@@ -706,6 +784,10 @@
 }
 
 .cam-plan-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--danger-text) 45%, transparent);
   border-radius: 8px;
@@ -713,6 +795,26 @@
   color: var(--danger-text);
   font-size: 11px;
   line-height: 1.4;
+}
+
+.cam-plan-alert button {
+  flex: 0 0 auto;
+  min-height: 27px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--danger-text) 55%, var(--line));
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.cam-plan-alert button:hover,
+.cam-plan-alert button:focus-visible {
+  background: color-mix(in srgb, var(--danger-text) 16%, transparent);
+  outline: none;
 }
 
 .cam-plan-alert--warning {
@@ -752,6 +854,11 @@
   .cam-plan-summary {
     gap: 12px;
     overflow-x: auto;
+  }
+
+  .cam-plan-errors {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 }
 
