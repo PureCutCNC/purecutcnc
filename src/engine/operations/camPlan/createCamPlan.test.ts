@@ -312,6 +312,45 @@ function testNestedSubtractsStayWithTheirParentPocket(): void {
   )
 }
 
+function testEdgeSharingSubtractChainsStayWithTheirParentPocket(): void {
+  const base = newProject('CAM plan edge-sharing pocket chain', 'inch')
+  base.stock.thickness = 1
+  const project = projectWithFeatures({
+    ...base,
+    tools: [tool('quarter', 'flat_endmill', 0.25), tool('eighth', 'flat_endmill', 0.125)],
+  }, [
+    feature('outer', 'add', rectProfile(0, 0, 5, 2.5), 1, 0),
+    feature('parent-pocket', 'subtract', rectProfile(0.25, 0.25, 2, 1.5), 1, 0.5),
+    feature('edge-linked-pocket', 'subtract', rectProfile(2.25, 0.75, 1, 0.75), 1, 0.35),
+    feature('chain-linked-pocket', 'subtract', rectProfile(3.25, 1, 0.75, 0.5), 1, 0.2),
+  ])
+  const plan = createCamPlan(project, [])
+  const roughPockets = plan.operations.filter((draft) => (
+    draft.operation.kind === 'pocket' && draft.operation.pass === 'rough' && !draft.rest
+  ))
+
+  assert(roughPockets.length === 1, 'edge-sharing subtracts stay with the parent instead of receiving pocket operations')
+  assert(
+    roughPockets[0]?.operation.target.source === 'features' && roughPockets[0].operation.target.featureIds.join() === 'parent-pocket',
+    'only the parent pocket remains a direct target when subtracts share its edge or its chain',
+  )
+
+  const parentPocket = roughPockets[0]
+  const resolvedIds = parentPocket
+    ? new Set(resolvePocketRegions(project, parentPocket.operation).bands.flatMap((band) => band.targetFeatureIds))
+    : new Set<string>()
+  assert(resolvedIds.has('edge-linked-pocket'), 'the resolver folds the partial shared-edge subtract into the parent pocket')
+  assert(resolvedIds.has('chain-linked-pocket'), 'the resolver follows the shared-edge subtract chain into the parent pocket')
+
+  for (const featureId of ['edge-linked-pocket', 'chain-linked-pocket']) {
+    const coverage = plan.coverage.find((entry) => entry.featureId === featureId)
+    assert(
+      coverage?.status === 'not_needed' && coverage.detail.includes('surrounding pocket'),
+      `${featureId} coverage explains that the parent pocket machines it`,
+    )
+  }
+}
+
 function testFixtureScaleAndFinishAllowances(): void {
   const base = newProject('CAM plan fixture scale', 'inch')
   base.stock.thickness = 0.75
@@ -585,6 +624,7 @@ testDepthRolesAndUnsupportedCoverage()
 testRetainedIslandsDoNotNeedCoverageAcknowledgement()
 testSurfaceCleanOnlyTargetsLoweredOuterMaterial()
 testNestedSubtractsStayWithTheirParentPocket()
+testEdgeSharingSubtractChainsStayWithTheirParentPocket()
 testFixtureScaleAndFinishAllowances()
 testBundledToolUnitPreference()
 testFallbackNoToolAndUnits()
