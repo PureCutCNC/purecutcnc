@@ -15,7 +15,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -159,8 +159,42 @@ function testEveryAgentEntrypointExists(): void {
   }
 }
 
+// The protected-path list lives in dependency-free bash so CI can run it
+// without `npm ci`, which means it cannot import AGENT_ENTRYPOINTS — and the
+// two lists drifted apart once already (#761). Read the real `case` patterns
+// out of the script and match them here, rather than spawning bash: the Windows
+// desktop build runs this file through `npm run build` (tauri's
+// beforeBuildCommand), where `bash` is not guaranteed to resolve.
+function protectedPathPatterns(scriptText: string): RegExp[] {
+  const body = /^protected_bucket\(\) \{\n([\s\S]*?)\n\}/m.exec(scriptText)?.[1]
+  assert.ok(body, 'protected_bucket() not found in scripts/check-fast-lane.sh')
+  return body
+    .split('\n')
+    .map((line) => /^\s*([^\s#()][^()]*)\)\s*$/.exec(line)?.[1])
+    .filter((clause): clause is string => clause !== undefined)
+    .flatMap((clause) => clause.split('|'))
+    .map((glob) => new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`))
+}
+
+function testEveryAgentEntrypointIsFastLaneProtected(): void {
+  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+  const patterns = protectedPathPatterns(
+    readFileSync(join(repositoryRoot, 'scripts/check-fast-lane.sh'), 'utf8'),
+  )
+  // Guard the parser itself: an unmatched glob would make every assertion vacuous.
+  assert.ok(patterns.some((pattern) => pattern.test('src/engine/toolpaths/pocket.ts')))
+  assert.ok(!patterns.some((pattern) => pattern.test('src/app/App.tsx')))
+  for (const file of AGENT_ENTRYPOINTS) {
+    assert.ok(
+      patterns.some((pattern) => pattern.test(file)),
+      `${file} is an agent entrypoint but scripts/check-fast-lane.sh does not protect it`,
+    )
+  }
+}
+
 testUnreadableReadBecomesProblem()
 testEveryAgentEntrypointExists()
+testEveryAgentEntrypointIsFastLaneProtected()
 testFrontmatterParsing()
 testPlanningMetadataValidation()
 testMarkdownLinkExtractionAndNormalization()

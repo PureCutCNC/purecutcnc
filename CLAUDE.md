@@ -11,7 +11,7 @@ reference.
 - **Branch, never `main`.** Work on a feature branch; the `main-requires-pr` ruleset blocks merge without a PR.
 - **Build green.** `npm run build` (lint + tsc + tests + icons) must pass before committing.
 - **Worktrees only.** Never edit the primary checkout's working tree — use `git worktree add` outside the repo.
-- **Protected paths → full lane.** `AGENTS.md` and engine/gcode/machine/format code — plan + approve required.
+- **Protected paths → full lane.** `AGENTS.md`, the agent entrypoints (this file included), and engine/gcode/machine/format code — plan + approve required.
 - **Close with a PR.** End with a PR containing `Closes #NN`; rebase onto `main` first.
 
 Every task gets a GitHub issue; its plan and acceptance criteria live there and

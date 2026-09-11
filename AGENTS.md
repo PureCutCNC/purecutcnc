@@ -6,7 +6,7 @@
 - **Branch, never `main`.** Work on a feature branch; the `main-requires-pr` ruleset blocks merge without a PR.
 - **Build green.** `npm run build` (lint + tsc + tests + icons) must pass before committing.
 - **Worktrees only.** Never edit the primary checkout's working tree — use `git worktree add` outside the repo.
-- **Protected paths → full lane.** `AGENTS.md`, `src/engine/toolpaths/**`, `src/engine/gcode/**`, `src/machine/**`, `.camj` format, `store/types.ts`, gates — plan + approve required.
+- **Protected paths → full lane.** `AGENTS.md`, `src/engine/toolpaths/**`, `src/engine/gcode/**`, `src/machine/**`, `.camj` format, `store/types.ts`, gates, agent entrypoints — plan + approve required.
 - **Close with a PR.** End with a PR containing `Closes #NN`; rebase onto `main` first.
 - **Replies are short by default.** Under 200 words, no headers or tables — for an answer, a review or a status readout as much as for finished work. Offer the detail in one line instead of appending it.
 
@@ -49,7 +49,7 @@ A change that provably cannot affect machine output, saved projects, or the gate
 
 Eligibility is mechanical, never a judgment call. The two halves are answerable at different times.
 
-**Before you write anything — protected paths.** You already know which files you will edit. If any is protected, it is the full lane; decided, no script needed. However small the diff: machine output and safety (`src/engine/toolpaths/**`, `src/engine/gcode/**`, `src/machine/**`, `src/utils/units.ts`), the `.camj` format and its migrations (`src/types/project.ts`, `src/store/helpers/projectFormat.ts`, `src/import/camj.ts`), the frozen `ProjectStore` contract (`src/store/types.ts`), and the process/gate machinery itself (`AGENTS.md`, `PROJECT.md`, `ARCHITECTURE.md`, `.github/**`, `.claude/**`, the gate scripts under `scripts/`, `package.json`, `tsconfig*.json`, `eslint.config.js`). [`scripts/check-fast-lane.sh`](scripts/check-fast-lane.sh) owns the authoritative list — add to it whenever a new gate lands.
+**Before you write anything — protected paths.** You already know which files you will edit. If any is protected, it is the full lane; decided, no script needed. However small the diff: machine output and safety (`src/engine/toolpaths/**`, `src/engine/gcode/**`, `src/machine/**`, `src/utils/units.ts`), the `.camj` format and its migrations (`src/types/project.ts`, `src/store/helpers/projectFormat.ts`, `src/import/camj.ts`), the frozen `ProjectStore` contract (`src/store/types.ts`), and the process/gate machinery itself (`AGENTS.md`, `PROJECT.md`, `ARCHITECTURE.md`, `.github/**`, `.claude/**`, the agent entrypoints (`CLAUDE.md`, `GEMINI.md`, `CONVENTIONS.md` and the `.*rules` files), the gate scripts under `scripts/`, `package.json`, `tsconfig*.json`, `eslint.config.js`). [`scripts/check-fast-lane.sh`](scripts/check-fast-lane.sh) owns the authoritative list — add to it whenever a new gate lands.
 
 **After implementing, before you commit — size.** This needs a real diff, so it cannot be answered earlier. The script re-checks the paths too, so a file set that grew mid-implementation is still caught here:
 
