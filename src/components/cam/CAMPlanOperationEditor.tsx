@@ -110,9 +110,13 @@ export interface CAMPlanOperationEditorProps {
 export function CAMPlanOperationEditor({ draft, tools, units, onPatch }: CAMPlanOperationEditorProps) {
   const operation = draft.operation
   const selectedTool = tools.find((candidate) => candidate.id === operation.toolRef)?.tool ?? null
-  const toolOptions = draft.toolOptions
-    .map((id) => tools.find((candidate) => candidate.id === id) ?? null)
-    .filter((candidate): candidate is CamPlanTool => candidate !== null)
+  const isVCarve = operation.kind === 'v_carve' || operation.kind === 'v_carve_medial'
+  // The plan can introduce a bundled tool when applied, so a user never has
+  // to preload a tool merely to choose it here. Match the ordinary operation
+  // editor by reserving the V-carve list for V-bits.
+  const toolOptions = tools.filter((candidate) =>
+    candidate.id === operation.toolRef || !isVCarve || candidate.tool.type === 'v_bit',
+  )
 
   return (
     <div className="cam-plan-editor">

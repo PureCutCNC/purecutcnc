@@ -351,6 +351,40 @@ function testEdgeSharingSubtractChainsStayWithTheirParentPocket(): void {
   }
 }
 
+function testConnectedPocketsShareOneOperationWhenTheResolverOwnershipIsDirectional(): void {
+  const base = newProject('CAM plan connected pockets', 'inch')
+  base.stock.thickness = 0.75
+  const project = projectWithFeatures({
+    ...base,
+    tools: [tool('three-quarter', 'flat_endmill', 0.75), tool('quarter', 'flat_endmill', 0.25)],
+  }, [
+    feature('outer', 'add', rectProfile(0.25, 0.25, 3.5, 2.5), 0.75, 0),
+    feature('parent-pocket', 'subtract', rectProfile(0.5, 0.5, 2, 2), 0.75, 0.42),
+    feature('edge-pocket', 'subtract', rectProfile(2.5, 2, 0.75, 0.5), 0.75, 0.55),
+    feature('overlap-pocket', 'subtract', rectProfile(1.875, 1, 1.125, 0.75), 0.75, 0.36),
+  ])
+  const plan = createCamPlan(project, [])
+  const roughPockets = plan.operations.filter((draft) => (
+    draft.operation.kind === 'pocket' && draft.operation.pass === 'rough' && !draft.rest
+  ))
+
+  assert(roughPockets.length === 1, 'a partial shared-edge pocket does not create a second rough/finish pair')
+  assert(
+    roughPockets[0]?.operation.target.source === 'features'
+      && roughPockets[0].operation.target.featureIds.join() === 'parent-pocket,edge-pocket',
+    'the connected pocket is attached to the parent operation target when resolver ownership is directional',
+  )
+  assert(roughPockets[0]?.operation.toolRef === 'quarter', 'the shared operation keeps the parent cutter that physically fits both pockets')
+  assert(
+    plan.coverage.find((entry) => entry.featureId === 'edge-pocket')?.status === 'planned',
+    'the edge-connected pocket is visibly covered by the shared recommendation',
+  )
+  assert(
+    plan.coverage.find((entry) => entry.featureId === 'overlap-pocket')?.status === 'not_needed',
+    'the overlapping subtract remains resolver-owned rather than becoming another direct target',
+  )
+}
+
 function testFixtureScaleAndFinishAllowances(): void {
   const base = newProject('CAM plan fixture scale', 'inch')
   base.stock.thickness = 0.75
@@ -419,6 +453,15 @@ function testBundledToolUnitPreference(): void {
   const plan = createCamPlan(project, library)
   const rough = plan.operations.find((draft) => draft.operation.kind === 'pocket' && draft.operation.pass === 'rough')
   assert(rough?.operation.toolRef === 'cam-plan-tool:inch-three-eighth', 'inch projects prefer an equally suitable inch library tool')
+  const materialized = materializeCamPlan(project, plan)
+  assert(materialized.ok, 'a plan can create its selected bundled tool without preloading it')
+  if (!materialized.ok) return
+  assert(
+    materialized.project.tools.length === 1
+      && materialized.project.tools[0]?.name === 'three-eighth'
+      && materialized.project.tools[0]?.diameter === 0.375,
+    'materializing the plan imports only the selected bundled tool into the project',
+  )
 }
 
 function testFallbackNoToolAndUnits(): void {
@@ -625,6 +668,7 @@ testRetainedIslandsDoNotNeedCoverageAcknowledgement()
 testSurfaceCleanOnlyTargetsLoweredOuterMaterial()
 testNestedSubtractsStayWithTheirParentPocket()
 testEdgeSharingSubtractChainsStayWithTheirParentPocket()
+testConnectedPocketsShareOneOperationWhenTheResolverOwnershipIsDirectional()
 testFixtureScaleAndFinishAllowances()
 testBundledToolUnitPreference()
 testFallbackNoToolAndUnits()

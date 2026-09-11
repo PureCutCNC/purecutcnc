@@ -104,7 +104,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.panel.properties': 'Eigenschaften',
   'cam.panel.export': 'Exportieren',
   'cam.panel.add': 'Hinzufügen',
-  'cam.plan.launch': 'Plan (Vorschau)',
+  'cam.plan.launch': 'Plan',
   'cam.plan.preview': 'Machbarkeitsnachweis',
   'cam.plan.title': 'CAM-Plan (Vorschau)',
   'cam.plan.subtitle': 'Prüfen Sie die hinzuzufügenden Operationen, Werkzeuge und gemeinsamen Einstellungen. Bestehende Operationen bleiben unverändert.',

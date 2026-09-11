@@ -21,6 +21,7 @@ import { resolveDimensionRef } from '../../toolpaths/geometry'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../toolpaths/restRegions'
 import { resolveInsideEdgeRegions, resolvePocketRegions } from '../../toolpaths/resolver'
 import { isConstruction, isRegion } from '../../../store/helpers/featureRoles'
+import { featuresOverlap } from '../../../store/helpers/clipping'
 import { defaultOperationForTarget, isOperationTargetValid } from '../../../store/helpers/operationDefaults'
 import { resolveFeatureInstances, type ResolvedSketchFeature } from '../../../store/helpers/resolveFeatures'
 import { buildAutoTabsForFeature } from '../autoTabs'
@@ -428,6 +429,24 @@ function pocketWouldFoldFeature(builder: PlanBuilder, features: ResolvedSketchFe
   ).has(featureId)
 }
 
+function toolCanMachineConnectedPocketFeature(
+  builder: PlanBuilder,
+  tool: CamPlanTool,
+  feature: ResolvedSketchFeature,
+): boolean {
+  const bounds = getFeatureGeometryBounds(feature)
+  const narrowestSpan = Math.min(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY)
+  const reachesDepth = tool.tool.maxCutDepth <= 0 || tool.tool.maxCutDepth + Z_EPSILON >= featureDepth(builder.project, feature)
+  return tool.tool.diameter <= narrowestSpan + Z_EPSILON && reachesDepth
+}
+
+function touchesDirectPocketTarget(
+  directTargets: ResolvedSketchFeature[],
+  candidate: ResolvedSketchFeature,
+): boolean {
+  return directTargets.some((target) => featuresOverlap(target, candidate))
+}
+
 /**
  * Group disjoint blind pockets when they choose the same primary cutter. Each
  * target keeps its own span in the resolver, so depth is not a grouping key.
@@ -448,12 +467,20 @@ function nextBlindPocketToolGroup(
       for (let index = 0; index < remaining.length;) {
         const candidate = remaining[index]!
         const candidateTool = pocketToolForFeature(builder, candidate)
-        if (candidateTool?.id !== tool.id || pocketWouldFoldFeature(builder, grouped, candidate.id)) {
+        if (pocketWouldFoldFeature(builder, grouped, candidate.id)) {
           index += 1
           continue
         }
-        grouped.push(candidate)
-        remaining.splice(index, 1)
+        const sharesTargetBoundary = touchesDirectPocketTarget(grouped, candidate)
+        const sharesSelectedTool = candidateTool?.id === tool.id
+        const selectedToolFitsConnectedFeature = sharesTargetBoundary
+          && toolCanMachineConnectedPocketFeature(builder, tool, candidate)
+        if (sharesSelectedTool || selectedToolFitsConnectedFeature) {
+          grouped.push(candidate)
+          remaining.splice(index, 1)
+          continue
+        }
+        index += 1
       }
     }
     return { features: grouped, tool }

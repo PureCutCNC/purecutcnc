@@ -107,7 +107,7 @@ export const camEn = {
   'cam.panel.properties': 'Properties',
   'cam.panel.export': 'Export',
   'cam.panel.add': 'Add',
-  'cam.plan.launch': 'CAM Plan (Preview)',
+  'cam.plan.launch': 'Plan',
   'cam.plan.preview': 'Proof of concept',
   'cam.plan.title': 'CAM Plan (Preview)',
   'cam.plan.subtitle': 'Review the operations to add, tools, and shared setup. Existing operations stay unchanged.',

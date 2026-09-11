@@ -95,10 +95,15 @@ test.describe('CAM operation browser smoke', () => {
         vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 20,
         defaultPlungeFeed: 6, defaultStepdown: 0.04, defaultStepover: 0.35, maxCutDepth: 5,
       },
+      {
+        id: 'plan-two-inch', name: 'Plan two inch', units: 'inch', type: 'flat_endmill', diameter: 2,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 90,
+        defaultPlungeFeed: 20, defaultStepdown: 0.25, defaultStepover: 0.4, maxCutDepth: 5,
+      },
     ]
     await seedProject(app.page, JSON.stringify(seeded))
 
-    await app.page.getByRole('button', { name: 'CAM Plan (Preview)', exact: true }).click()
+    await app.page.getByRole('button', { name: 'Plan', exact: true }).click()
     const dialog = app.page.getByRole('dialog', { name: 'CAM Plan (Preview)' })
     await expect(dialog).toBeVisible()
     await expect.poll(async () => dialog.evaluate((element) => {
@@ -126,6 +131,9 @@ test.describe('CAM operation browser smoke', () => {
     await app.page.getByRole('option', { name: 'Offset', exact: true }).click()
     const toolField = dialog.locator('.cam-plan-field').filter({ hasText: 'Tool' }).first()
     await toolField.locator('.ui-select__trigger').click()
+    await expect(app.page.getByRole('option', { name: /Plan two inch/ })).toBeVisible()
+    await expect(app.page.getByRole('option', { name: /3\/8" Endmill/ })).toBeVisible()
+    await expect(toolField.locator('.ui-select__dropdown')).not.toContainText('cam-plan-tool')
     await app.page.getByRole('option', { name: /Plan eighth inch/ }).click()
     const pocketRest = dialog.locator('.cam-plan-row').filter({ hasText: 'REST' }).first()
     await expect(pocketRest).toContainText('Plan sixteenth inch')
@@ -214,7 +222,7 @@ test.describe('CAM operation browser smoke', () => {
     ]
     await seedProject(app.page, JSON.stringify(seeded))
 
-    await app.page.getByRole('button', { name: 'CAM Plan (Preview)', exact: true }).click()
+    await app.page.getByRole('button', { name: 'Plan', exact: true }).click()
     const dialog = app.page.getByRole('dialog', { name: 'CAM Plan (Preview)' })
     await expect(dialog.getByText('Retained Island', { exact: true })).toHaveCount(0)
     await expect(dialog.getByRole('checkbox', { name: /I understand these features will not be covered/ })).toHaveCount(0)

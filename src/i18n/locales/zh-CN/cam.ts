@@ -108,7 +108,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.panel.properties': '属性',
   'cam.panel.export': '导出',
   'cam.panel.add': '添加',
-  'cam.plan.launch': '方案（预览）',
+  'cam.plan.launch': '方案',
   'cam.plan.preview': '概念验证',
   'cam.plan.title': 'CAM 方案（预览）',
   'cam.plan.subtitle': '检查将添加的操作、刀具和共享设置。现有操作保持不变。',
