@@ -15,7 +15,7 @@
  */
 
 export { createCamPlan, camPlanProjectFingerprint } from './createCamPlan'
-export { reconcileCamPlanRest } from './reconcileRest'
+export { reconcileCamPlanDownstream, reconcileCamPlanRest } from './reconcileRest'
 export type {
   ApplyCamPlanResult,
   CamPlanCoverage,

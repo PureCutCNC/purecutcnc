@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  reconcileCamPlanDownstream,
   reconcileCamPlanRest,
   type CamPlanDraft,
   type CamPlanOperationDraft,
@@ -255,7 +256,10 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
       }
       if (!invalidatesRest) return revised
       const revisedDraft = revised.operations.find((draft) => draft.key === key)
-      return reconcileCamPlanRest(project, revised, revisedDraft?.rest?.sourceOperationKey ?? key)
+      const sourceKey = revisedDraft?.rest?.sourceOperationKey ?? key
+      return patch.toolRef && revisedDraft?.operation.pass === 'rough' && !revisedDraft.rest
+        ? reconcileCamPlanDownstream(project, revised, sourceKey)
+        : reconcileCamPlanRest(project, revised, sourceKey)
     })
   }
 

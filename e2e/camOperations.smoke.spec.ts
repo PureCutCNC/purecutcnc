@@ -124,8 +124,8 @@ test.describe('CAM operation browser smoke', () => {
     await expect(dialog.getByText('Entry strategy', { exact: true })).toBeVisible()
     await expect(dialog.getByText('Drill type', { exact: true })).toHaveCount(0)
 
-    // Residual-affecting corrections reactively rebuild only the dependent
-    // REST proposal; the user's source-operation edits remain in place.
+    // A roughing correction replans only the automatic suffix: the paired
+    // primary finish follows the selected cutter and its REST pass is rebuilt.
     const patternField = dialog.locator('.cam-plan-field').filter({ hasText: 'Pattern' })
     await patternField.locator('.ui-select__trigger').click()
     await app.page.getByRole('option', { name: 'Offset', exact: true }).click()
@@ -135,6 +135,11 @@ test.describe('CAM operation browser smoke', () => {
     await expect(app.page.getByRole('option', { name: /3\/8" Endmill/ })).toBeVisible()
     await expect(toolField.locator('.ui-select__dropdown')).not.toContainText('cam-plan-tool')
     await app.page.getByRole('option', { name: /Plan eighth inch/ }).click()
+    const primaryPocketFinish = dialog.locator('.cam-plan-row')
+      .filter({ hasText: 'Pocket · Finish' })
+      .filter({ hasNot: dialog.locator('.cam-plan-tag') })
+      .first()
+    await expect(primaryPocketFinish).toContainText('Plan eighth inch')
     const pocketRest = dialog.locator('.cam-plan-row').filter({ hasText: 'REST' }).first()
     await expect(pocketRest).toContainText('Plan sixteenth inch')
     await pocketRest.click()

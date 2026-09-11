@@ -72,6 +72,31 @@ function sameFamily(a: CamPlanOperationDraft, b: CamPlanOperationDraft): boolean
     && a.coveredFeatureIds.every((id) => b.coveredFeatureIds.includes(id))
 }
 
+function supportsRestOperation(draft: CamPlanOperationDraft): boolean {
+  return draft.operation.pass === 'rough'
+    && (
+      draft.operation.kind === 'pocket'
+      || draft.operation.kind === 'edge_route_inside'
+      || draft.operation.kind === 'edge_route_outside'
+    )
+}
+
+function primaryRoughForFinish(
+  draft: CamPlanOperationDraft,
+  operationByKey: ReadonlyMap<string, CamPlanOperationDraft>,
+): CamPlanOperationDraft | null {
+  if (draft.rest || draft.operation.pass !== 'finish') return null
+  for (const dependency of draft.dependencies) {
+    const source = operationByKey.get(dependency)
+    if (source && source.operation.pass === 'rough' && sameFamily(draft, source)) return source
+  }
+  return null
+}
+
+function sourceToolIds(operations: CamPlanOperationDraft[]): Set<string> {
+  return new Set(operations.flatMap((draft) => draft.operation.toolRef ? [draft.operation.toolRef] : []))
+}
+
 function replaceDependencies(
   draft: CamPlanOperationDraft,
   oldKeys: ReadonlySet<string>,
@@ -153,15 +178,15 @@ function updateFinishFromSource(
  * values on the rest proposal survive; suggested tool/default values may move
  * to a newly compatible cutter.
  */
-export function reconcileCamPlanRest(project: Project, plan: CamPlanDraft, sourceKey: string): CamPlanDraft {
+export function reconcileCamPlanRest(
+  project: Project,
+  plan: CamPlanDraft,
+  sourceKey: string,
+  reusedToolIdsOverride?: ReadonlySet<string>,
+): CamPlanDraft {
   const source = plan.operations.find((draft) => draft.key === sourceKey) ?? null
   if (!source) return plan
-  if (source.operation.pass !== 'rough') return plan
-  if (
-    source.operation.kind !== 'pocket'
-    && source.operation.kind !== 'edge_route_inside'
-    && source.operation.kind !== 'edge_route_outside'
-  ) return plan
+  if (!supportsRestOperation(source)) return plan
 
   const dependents = plan.operations.filter((draft) => draft.rest?.sourceOperationKey === sourceKey)
   const existing = dependents[0] ?? null
@@ -181,7 +206,7 @@ export function reconcileCamPlanRest(project: Project, plan: CamPlanDraft, sourc
     }
   }
 
-  const reusedToolIds = new Set(plan.operations.flatMap((draft) => draft.operation.toolRef ? [draft.operation.toolRef] : []))
+  const reusedToolIds = reusedToolIdsOverride ?? sourceToolIds(plan.operations)
   const ranked = rankCamPlanTools(
     project,
     source.operation.kind,
@@ -256,4 +281,66 @@ export function reconcileCamPlanRest(project: Project, plan: CamPlanDraft, sourc
     ...plan,
     operations,
   }
+}
+
+/**
+ * Replans automatic choices from one user correction forward. Operations
+ * before the correction are intentionally frozen, while explicit choices in
+ * the suffix still win over the refreshed recommendation.
+ */
+export function reconcileCamPlanDownstream(project: Project, plan: CamPlanDraft, sourceKey: string): CamPlanDraft {
+  const sourceIndex = plan.operations.findIndex((draft) => draft.key === sourceKey)
+  if (sourceIndex < 0) return plan
+
+  const operations = [...plan.operations]
+  const reusedToolIds = sourceToolIds(operations.slice(0, sourceIndex))
+  const restSourceKeys: string[] = []
+
+  for (let index = sourceIndex; index < operations.length; index += 1) {
+    const draft = operations[index]!
+    if (draft.rest) continue
+    if (supportsRestOperation(draft)) restSourceKeys.push(draft.key)
+
+    const selected = candidateById(plan, draft.operation.toolRef)
+    const isCorrection = index === sourceIndex
+    if (isCorrection || draft.userOverrides.includes('toolRef')) {
+      if (selected) reusedToolIds.add(selected.id)
+      continue
+    }
+
+    const pairedRough = primaryRoughForFinish(draft, new Map(operations.map((candidate) => [candidate.key, candidate])))
+    const forcedTool = pairedRough ? candidateById(plan, pairedRough.operation.toolRef) : null
+    const ranked = rankCamPlanTools(
+      project,
+      draft.operation.kind,
+      draft.operation.target,
+      plan.tools,
+      requiredCutDepth(project, draft.operation),
+      reusedToolIds,
+    )
+    const suggested = forcedTool ?? ranked?.tools[0] ?? null
+    const wasReused = suggested ? reusedToolIds.has(suggested.id) : false
+    const overrides = new Set(draft.userOverrides)
+    operations[index] = {
+      ...draft,
+      operation: suggested
+        ? operationWithSuggestedTool(draft.operation, suggested, overrides)
+        : { ...draft.operation, toolRef: null },
+      toolReason: suggested
+        ? toolChoiceReason(suggested, draft.operation.kind, ranked.maximumDiameter, wasReused)
+        : 'No available tool satisfies this operation\'s type, scale, and reach constraints.',
+      toolOptions: [...new Set([...(forcedTool ? [forcedTool.id] : []), ...ranked.tools.map((candidate) => candidate.id)])],
+      hardError: suggested ? null : 'Choose or add a tool that fits this operation before creating it.',
+    }
+    if (suggested) reusedToolIds.add(suggested.id)
+  }
+
+  let reconciled: CamPlanDraft = { ...plan, operations }
+  for (const key of restSourceKeys) {
+    const roughIndex = reconciled.operations.findIndex((draft) => draft.key === key)
+    if (roughIndex < 0) continue
+    const prefixToolIds = sourceToolIds(reconciled.operations.slice(0, roughIndex + 1))
+    reconciled = reconcileCamPlanRest(project, reconciled, key, prefixToolIds)
+  }
+  return reconciled
 }

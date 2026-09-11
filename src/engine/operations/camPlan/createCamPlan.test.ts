@@ -21,7 +21,7 @@ import { materializeCamPlan } from '../../../store/helpers/camPlanApply'
 import { convertProjectUnits } from '../../../utils/units'
 import { resolvePocketRegions } from '../../toolpaths/resolver'
 import { createCamPlan } from './createCamPlan'
-import { reconcileCamPlanRest } from './reconcileRest'
+import { reconcileCamPlanDownstream, reconcileCamPlanRest } from './reconcileRest'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -511,28 +511,29 @@ function testReactiveRestReconciliation(): void {
     ...base,
     tools: [
       tool('half', 'flat_endmill', 0.5),
+      tool('three-eighth', 'flat_endmill', 0.375),
       tool('quarter', 'flat_endmill', 0.25),
       tool('eighth', 'flat_endmill', 0.125),
       tool('sixteenth', 'flat_endmill', 0.0625),
       tool('thirty-second', 'flat_endmill', 0.03125),
     ],
   }, [
-    feature('outer', 'add', rectProfile(0, 0, 2, 2), 1, 0),
-    feature('pocket', 'subtract', rectProfile(0.25, 0.25, 1.5, 1.5), 1, 0.5),
+    feature('outer', 'add', rectProfile(0, 0, 2.5, 2.5), 1, 0),
+    feature('pocket', 'subtract', rectProfile(0.25, 0.25, 2, 2), 1, 0.5),
   ])
   const plan = createCamPlan(project, [])
   const existingRest = plan.operations.find((draft) => draft.rest)
   assert(existingRest?.rest, 'roughing source has a finish-rest proposal')
   const source = plan.operations.find((draft) => draft.key === existingRest.rest?.sourceOperationKey)
   assert(source, 'rest proposal resolves its roughing source')
-  assert(source.operation.toolRef === 'quarter', 'initial roughing source uses the larger cutter')
+  assert(source.operation.toolRef === 'three-eighth', 'initial roughing source uses the larger cutter')
   assert(existingRest.operation.pass === 'finish', 'initial rest proposal is a finish pass')
   assert(existingRest.operation.toolRef === 'eighth', 'initial finish rest uses a meaningfully smaller cutter')
   const initialFinish = plan.operations.find((draft) =>
     draft.operation.kind === source.operation.kind && draft.operation.pass === 'finish' && !draft.rest,
   )
   assert(
-    initialFinish?.operation.toolRef === 'quarter',
+    initialFinish?.operation.toolRef === 'three-eighth',
     'initial primary finish follows the roughing cutter',
   )
   assert(existingRest.dependencies.includes(initialFinish?.key ?? ''), 'initial finish rest follows the primary finish')
@@ -552,19 +553,34 @@ function testReactiveRestReconciliation(): void {
     draft.operation.kind === source.operation.kind && draft.operation.pass === 'finish' && !draft.rest,
   )
   assert(restoredRest?.dependencies.includes(restoredFinish?.key ?? ''), 'recreated finish rest follows the primary finish')
-  assert(restoredFinish?.operation.toolRef === 'quarter', 'recreated primary finish keeps the primary cutter')
+  assert(restoredFinish?.operation.toolRef === 'three-eighth', 'recreated primary finish keeps the primary cutter')
 
   const unrelated = plan.operations.find((draft) =>
     draft.operation.kind === 'pocket' && draft.operation.pass === 'finish' && !draft.rest,
   )
   assert(unrelated, 'primary finish proposal exists')
-  const corrected = {
+  const frozenPrefix = {
+    ...source,
+    key: 'cam-plan-frozen-prefix',
+    operation: {
+      ...source.operation,
+      id: 'cam-plan-frozen-prefix',
+      name: 'Earlier Pocket Rough',
+      toolRef: 'half',
+    },
+    userOverrides: [],
+  }
+  const planWithPrefix = {
     ...plan,
-    operations: plan.operations.map((draft) => {
+    operations: [frozenPrefix, ...plan.operations],
+  }
+  const corrected = {
+    ...planWithPrefix,
+    operations: planWithPrefix.operations.map((draft) => {
       if (draft.key === source.key) {
         return {
           ...draft,
-          operation: { ...draft.operation, toolRef: 'eighth' },
+          operation: { ...draft.operation, toolRef: 'quarter' },
           userOverrides: ['toolRef'] satisfies Array<keyof typeof draft.operation>,
         }
       }
@@ -579,10 +595,14 @@ function testReactiveRestReconciliation(): void {
       return draft
     }),
   }
-  const revised = reconcileCamPlanRest(project, corrected, source.key)
+  const revised = reconcileCamPlanDownstream(project, corrected, source.key)
+  assert(
+    revised.operations.find((draft) => draft.key === frozenPrefix.key)?.operation.toolRef === 'half',
+    'operations before the corrected row stay frozen during a forward replan',
+  )
   const revisedRest = revised.operations.find((draft) => draft.rest?.sourceOperationKey === source.key)
   assert(revisedRest, 'rest proposal remains when corrected source still leaves residual stock')
-  assert(revisedRest.operation.toolRef === 'sixteenth', 'suggested rest tool moves below the corrected source tool')
+  assert(revisedRest.operation.toolRef === 'eighth', 'suggested rest tool moves below the corrected source tool')
   assert(revisedRest.operation.stockToLeaveRadial === 0.007, 'explicit rest setting survives reactive regeneration')
   assert(revisedRest.staleReason === null, 'reactive regeneration produces a ready rest proposal')
   assert(
@@ -592,8 +612,8 @@ function testReactiveRestReconciliation(): void {
   assert(
     revised.operations.find((draft) =>
       draft.operation.kind === source.operation.kind && draft.operation.pass === 'finish' && !draft.rest,
-    )?.operation.toolRef === 'eighth',
-    'automatic primary finish follows the corrected source cutter',
+    )?.operation.toolRef === 'quarter',
+    'automatic primary finish follows the corrected source cutter during a forward replan',
   )
   assert(revised.operations.find((draft) => draft.key === unrelated.key)?.enabled === false, 'unrelated include choice survives reactive regeneration')
 
