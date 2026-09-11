@@ -6,8 +6,9 @@
 - **Branch, never `main`.** Work on a feature branch; the `main-requires-pr` ruleset blocks merge without a PR.
 - **Build green.** `npm run build` (lint + tsc + tests + icons) must pass before committing.
 - **Worktrees only.** Never edit the primary checkout's working tree — use `git worktree add` outside the repo.
-- **Protected paths → full lane.** `AGENTS.md`, `src/engine/toolpaths/**`, `src/engine/gcode/**`, `src/machine/**`, `.camj` format, `store/types.ts`, gates — plan + approve required.
+- **Protected paths → full lane.** `AGENTS.md`, `src/engine/toolpaths/**`, `src/engine/gcode/**`, `src/machine/**`, `.camj` format, `store/types.ts`, gates, agent entrypoints — plan + approve required.
 - **Close with a PR.** End with a PR containing `Closes #NN`; rebase onto `main` first.
+- **Replies are short by default.** Under 200 words, no headers or tables — for an answer, a review or a status readout as much as for finished work. Offer the detail in one line instead of appending it.
 
 *See below for full detail — these rules are enforced by CI, hooks, and the GitHub ruleset; skipping one because it felt optional is how drift starts.*
 
@@ -48,7 +49,7 @@ A change that provably cannot affect machine output, saved projects, or the gate
 
 Eligibility is mechanical, never a judgment call. The two halves are answerable at different times.
 
-**Before you write anything — protected paths.** You already know which files you will edit. If any is protected, it is the full lane; decided, no script needed. However small the diff: machine output and safety (`src/engine/toolpaths/**`, `src/engine/gcode/**`, `src/machine/**`, `src/utils/units.ts`), the `.camj` format and its migrations (`src/types/project.ts`, `src/store/helpers/projectFormat.ts`, `src/import/camj.ts`), the frozen `ProjectStore` contract (`src/store/types.ts`), and the process/gate machinery itself (`AGENTS.md`, `PROJECT.md`, `ARCHITECTURE.md`, `.github/**`, `.claude/**`, the gate scripts under `scripts/`, `package.json`, `tsconfig*.json`, `eslint.config.js`). [`scripts/check-fast-lane.sh`](scripts/check-fast-lane.sh) owns the authoritative list — add to it whenever a new gate lands.
+**Before you write anything — protected paths.** You already know which files you will edit. If any is protected, it is the full lane; decided, no script needed. However small the diff: machine output and safety (`src/engine/toolpaths/**`, `src/engine/gcode/**`, `src/machine/**`, `src/utils/units.ts`), the `.camj` format and its migrations (`src/types/project.ts`, `src/store/helpers/projectFormat.ts`, `src/import/camj.ts`), the frozen `ProjectStore` contract (`src/store/types.ts`), and the process/gate machinery itself (`AGENTS.md`, `PROJECT.md`, `ARCHITECTURE.md`, `.github/**`, `.claude/**`, the agent entrypoints (`CLAUDE.md`, `GEMINI.md`, `CONVENTIONS.md` and the `.*rules` files), the gate scripts under `scripts/`, `package.json`, `tsconfig*.json`, `eslint.config.js`). [`scripts/check-fast-lane.sh`](scripts/check-fast-lane.sh) owns the authoritative list — add to it whenever a new gate lands.
 
 **After implementing, before you commit — size.** This needs a real diff, so it cannot be answered earlier. The script re-checks the paths too, so a file set that grew mid-implementation is still caught here:
 
@@ -216,7 +217,8 @@ decay in 74 days without anyone lifting a finger.
   acted on: **when a finding cites code, cite symbol names plus the commit SHA
   it was verified against, and treat line numbers as a hint.** Every single
   `file:line` reference in that audit had gone stale, and two files had moved
-  directory.
+  directory. This governs a finding you write down — an issue, a PR, a review
+  comment — not the length of a chat reply.
 
 ## Build & Verify
 
@@ -262,23 +264,33 @@ it before writing a timing assertion.
 Applies to every agent in this repo — the main session, in-process subagents,
 and delegated workers (Codex, opencode, the DeepSeek worker, etc.) alike.
 
-- **Human-facing replies are a conversation, not a handoff.** Lead with the
-  outcome in natural language. For a completed task, default to one or two
-  short paragraphs: what changed, then only the check or caveat that matters.
-  Do not repeat progress narration, tool output, or internal process details.
-- **Make a needed decision easy to see.** Ask for it in the first sentence in
-  ordinary language, with the smallest useful amount of context. Do not bury a
-  question in a recap, and do not end a completed task with an implied wait.
-- **Challenge constructively.** When a concern matters, state the evidence,
-  offer a practical alternative, and explain the trade-off briefly. Once the
-  user chooses a reasonable direction, implement it rather than reopening the
-  debate. Raise a true safety, authority, or scope blocker plainly and ask for
-  the specific decision needed.
-- **Be terse.** Skip preamble, restating the request, and narrating what
-  you're about to do. State results and decisions directly.
-- **Stay on the task at hand.** Don't expand scope or chase tangential
-  findings mid-task. Flag out-of-scope issues briefly at the end (or as a
-  follow-up issue) instead of interrupting the current work.
+**Replies are short by default: under 200 words, no headers and no tables.**
+This binds every kind of reply, not only a finished task. An answer to a
+question, a review, an investigation and a status readout are the ones that
+actually run long, and they are covered here. Go longer when the user asks for
+depth, or asks for a list they want enumerated — not because the work was big.
+
+- **Length scales with the work.** A one-line fix gets a one-line summary, not a
+  paragraph. Twenty measurements do not entitle a reply to twenty lines.
+- **Offer the detail, never append it.** When there is more, say so in one
+  sentence and stop: "there are four more findings — want them?" beats four
+  more findings.
+- **Lead with the outcome in natural language.** What is true now, then only the
+  check or caveat that matters. No preamble, no restating the request, no
+  narrating progress, tool output, or internal process.
+- **Evidence you must hold is not evidence you must print.** The Task Router's
+  "Required evidence" column and the citation rule in **Operating notes** say
+  what you must have verified before speaking, not what the reply must carry.
+  Give the conclusion; produce the workings when asked.
+- **Make a needed decision easy to see.** Ask in the first sentence, in ordinary
+  language. Do not bury a question in a recap, and do not end a completed task
+  with an implied wait.
+- **Challenge constructively.** State the concern, offer an alternative, give the
+  trade-off in a sentence. Once the user picks a reasonable direction, implement
+  it rather than reopening the debate. Raise a true safety, authority, or scope
+  blocker plainly and ask for the specific decision needed.
+- **Stay on the task at hand.** Don't chase tangential findings mid-task. Flag
+  an out-of-scope issue in one line at the end, or as a follow-up issue.
 - **Keep structured reports internal.** The
   `STATUS/COMMIT/CHANGED_FILES/CHECKS/RISKS` block is for delegated workers and
   managers, not for user-facing replies. It carries implementation metadata;
@@ -365,6 +377,9 @@ Before editing:
 | CAM, geometry, simulation, or G-code | Engine area index and relevant current design | Focused engine fixtures plus `npm run build`; safety-sensitive assertions |
 | Desktop/platform integration | [`planning/DESKTOP_DESIGN.md`](planning/DESKTOP_DESIGN.md) and `src/platform/` | Browser fallback plus affected native check |
 | Agent harness or delegated execution | This file, [`scripts/INDEX.md`](scripts/INDEX.md), and the named skill | Actual diff, independent verification, and explicit dispatch approval |
+
+**Required evidence** is what you must verify before you speak — not what the
+reply must contain. See **Communication Style** above.
 
 ## Key Architecture
 

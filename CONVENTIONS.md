@@ -9,3 +9,8 @@ Every task gets a GitHub issue; its plan and acceptance criteria live there and
 need approval before implementation. Small changes that pass the `AGENTS.md`
 fast-lane check skip the plan and approval, nothing else.
 `planning/` contains durable design references, not implementation plans.
+
+Replies are short by default: under 200 words, no headers or tables. That covers
+an answer, a review or a status readout as much as finished work — offer the
+detail in one line instead of appending it. `AGENTS.md` § Communication Style is
+the full rule.

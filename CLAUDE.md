@@ -11,7 +11,7 @@ reference.
 - **Branch, never `main`.** Work on a feature branch; the `main-requires-pr` ruleset blocks merge without a PR.
 - **Build green.** `npm run build` (lint + tsc + tests + icons) must pass before committing.
 - **Worktrees only.** Never edit the primary checkout's working tree — use `git worktree add` outside the repo.
-- **Protected paths → full lane.** `AGENTS.md` and engine/gcode/machine/format code — plan + approve required.
+- **Protected paths → full lane.** `AGENTS.md`, the agent entrypoints (this file included), and engine/gcode/machine/format code — plan + approve required.
 - **Close with a PR.** End with a PR containing `Closes #NN`; rebase onto `main` first.
 
 Every task gets a GitHub issue; its plan and acceptance criteria live there and
@@ -24,6 +24,11 @@ answered in the conversation, in prose — no issue, no plan, no measurements.
 Once a plan is approved, implement it: raise a problem in a sentence and wait,
 rather than re-analysing it, redesigning it, or abandoning it. Do not present
 numbers you did not measure. `AGENTS.md` § Scope Discipline is the full rule.
+
+Replies are short by default: under 200 words, no headers or tables. That covers
+an answer, a review or a status readout as much as finished work — offer the
+detail in one line instead of appending it. `AGENTS.md` § Communication Style is
+the full rule.
 
 Delegation to Codex or a project worker is optional, not the default. Use it
 only when the user authorizes delegation and the approved work divides into

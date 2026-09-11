@@ -38,12 +38,18 @@ export const AGENT_ENTRYPOINTS = [
   '.windsurfrules',
 ] as const
 
+// Every normalized entrypoint must carry the same load-bearing rules, so an
+// agent driven by its own native file (Codex, Gemini, Cursor, Cline, Roo,
+// Windsurf, Copilot, Claude) gets them without opening AGENTS.md first.
+// 'Replies are short by default' is here because the reply-length rule lived
+// only in AGENTS.md and never reached any of them (#761).
 const REQUIRED_AGENT_MARKERS = [
   'INDEX.md',
   'PROJECT.md',
   'AGENTS.md',
   'GitHub issue',
   'durable design',
+  'Replies are short by default',
 ] as const
 
 const ALLOWED_PLANNING_STATUSES = new Set(['current', 'proposed'])

@@ -65,6 +65,12 @@ protected_bucket() {
       echo 'frozen ProjectStore contract' ;;
     AGENTS.md|PROJECT.md|ARCHITECTURE.md|.github/*|.claude/*|package.json|tsconfig*.json|eslint.config.js)
       echo 'process & gate machinery' ;;
+    # Every normalized agent entrypoint (AGENT_ENTRYPOINTS in
+    # scripts/docs-check-core.ts) carries the same load-bearing rules, so it is
+    # process machinery too; .github/copilot-instructions.md is covered above.
+    # scripts/check-docs.test.ts fails the build if one is missing here (#761).
+    CLAUDE.md|GEMINI.md|CONVENTIONS.md|.cursorrules|.clinerules|.clauderules|.roorules|.windsurfrules)
+      echo 'agent entrypoints' ;;
     # Gate logic under scripts/. Anything whose corruption would silently weaken
     # a gate belongs here — not just check-*. Add to this list when a new gate
     # lands; scripts/backlog-hygiene.ts arrived after the first draft and was
