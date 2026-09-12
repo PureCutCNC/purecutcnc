@@ -337,6 +337,8 @@ const SENTENCE_CASE_LOCALE = 'en'
  */
 const SENTENCE_CASE_EXEMPT_KEYS = new Map<string, string>([
   ['viewport.error.body', 'names the Edge browser; "edge" elsewhere means an edge route'],
+  ['cam.plan.launch', 'CAM Plan (Preview) is the POC feature name'],
+  ['cam.plan.title', 'CAM Plan (Preview) is the POC feature name'],
 ])
 
 /**

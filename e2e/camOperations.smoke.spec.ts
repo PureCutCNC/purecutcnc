@@ -46,6 +46,8 @@ interface OperationSnapshot {
   }
 }
 
+const modKey = process.platform === 'darwin' ? 'Meta' : 'Control'
+
 test.describe('CAM operation browser smoke', () => {
   test('HTML5 drag reorders CAM operations', async ({ app, ui }) => {
     await seedCamQuickOperationProject(app.page)
@@ -72,6 +74,178 @@ test.describe('CAM operation browser smoke', () => {
       'V-carve medial',
       'Edge route outside Rough',
     ])
+  })
+
+  test('CAM Plan preview reviews operation-specific settings, shared tabs, atomic create and undo (#735)', async ({ app }) => {
+    await seedCamQuickOperationProject(app.page)
+    const seeded = await getProject(app.page)
+    seeded.tools = [
+      {
+        id: 'plan-quarter', name: 'Plan quarter inch', units: 'inch', type: 'flat_endmill', diameter: 0.25,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 40,
+        defaultPlungeFeed: 12, defaultStepdown: 0.1, defaultStepover: 0.4, maxCutDepth: 5,
+      },
+      {
+        id: 'plan-eighth', name: 'Plan eighth inch', units: 'inch', type: 'flat_endmill', diameter: 0.125,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 30,
+        defaultPlungeFeed: 10, defaultStepdown: 0.08, defaultStepover: 0.4, maxCutDepth: 5,
+      },
+      {
+        id: 'plan-sixteenth', name: 'Plan sixteenth inch', units: 'inch', type: 'flat_endmill', diameter: 0.0625,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 20,
+        defaultPlungeFeed: 6, defaultStepdown: 0.04, defaultStepover: 0.35, maxCutDepth: 5,
+      },
+      {
+        id: 'plan-two-inch', name: 'Plan two inch', units: 'inch', type: 'flat_endmill', diameter: 2,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 90,
+        defaultPlungeFeed: 20, defaultStepdown: 0.25, defaultStepover: 0.4, maxCutDepth: 5,
+      },
+    ]
+    await seedProject(app.page, JSON.stringify(seeded))
+
+    await app.page.getByRole('button', { name: 'Plan', exact: true }).click()
+    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan (Preview)' })
+    await expect(dialog).toBeVisible()
+    await expect.poll(async () => dialog.evaluate((element) => {
+      const summary = element.querySelector('.cam-plan-summary')?.getBoundingClientRect()
+      const body = element.querySelector('.cam-plan-body')?.getBoundingClientRect()
+      return summary != null && body != null && Math.abs(summary.bottom - body.top) < 1
+    })).toBe(true)
+    await dialog.screenshot({ path: test.info().outputPath('cam-plan-preview.png') })
+
+    // The initially selected drilling row owns its method; clearing controls
+    // do not leak into it.
+    await expect(dialog.getByText('Drill type', { exact: true })).toBeVisible()
+    await expect(dialog.getByText('Pattern', { exact: true })).toHaveCount(0)
+
+    const pocketRough = dialog.locator('.cam-plan-row').filter({ hasText: 'Pocket · Rough' }).first()
+    await pocketRough.click()
+    await expect(dialog.getByText('Pattern', { exact: true })).toBeVisible()
+    await expect(dialog.getByText('Entry strategy', { exact: true })).toBeVisible()
+    await expect(dialog.getByText('Drill type', { exact: true })).toHaveCount(0)
+
+    // A roughing correction replans only the automatic suffix: the paired
+    // primary finish follows the selected cutter and its REST pass is rebuilt.
+    const patternField = dialog.locator('.cam-plan-field').filter({ hasText: 'Pattern' })
+    await patternField.locator('.ui-select__trigger').click()
+    await app.page.getByRole('option', { name: 'Offset', exact: true }).click()
+    const toolField = dialog.locator('.cam-plan-field').filter({ hasText: 'Tool' }).first()
+    await toolField.locator('.ui-select__trigger').click()
+    await expect(app.page.getByRole('option', { name: /Plan two inch/ })).toBeVisible()
+    await expect(app.page.getByRole('option', { name: /3\/8" Endmill/ })).toBeVisible()
+    await expect(toolField.locator('.ui-select__dropdown')).not.toContainText('cam-plan-tool')
+    await app.page.getByRole('option', { name: /Plan eighth inch/ }).click()
+    const primaryPocketFinish = dialog.locator('.cam-plan-row')
+      .filter({ hasText: 'Pocket · Finish' })
+      .filter({ hasNot: dialog.locator('.cam-plan-tag') })
+      .first()
+    await expect(primaryPocketFinish).toContainText('Plan eighth inch')
+    const pocketRest = dialog.locator('.cam-plan-row').filter({ hasText: 'REST' }).first()
+    await expect(pocketRest).toContainText('Plan sixteenth inch')
+    await pocketRest.click()
+    await expect(dialog.getByText('The source operation changed. Refresh recommendations to recalculate this rest operation.', { exact: true })).toHaveCount(0)
+    const restToolField = dialog.locator('.cam-plan-field').filter({ hasText: 'Tool' }).first()
+    await restToolField.locator('.ui-select__trigger').click()
+    await app.page.getByRole('option', { name: /Plan eighth inch/ }).click()
+    await expect(dialog.locator('.cam-plan-errors')).toContainText('Fix these before creating operations')
+    const restError = dialog.locator('.cam-plan-errors__item')
+    await expect(restError).toContainText('Your selected rest tool is no longer compatible with the corrected source operation.')
+    await pocketRough.click()
+    await restError.focus()
+    await expect(restError).toBeFocused()
+    await app.page.keyboard.press('Enter')
+    const useRecommendedRestTool = dialog.getByRole('button', { name: 'Use recommended rest tool' })
+    await expect(useRecommendedRestTool).toBeVisible()
+    await useRecommendedRestTool.click()
+    await expect(dialog.locator('.cam-plan-errors')).toHaveCount(0)
+    await pocketRough.click()
+    await expect(patternField.locator('.ui-select__trigger')).toContainText('Offset')
+
+    // Exclude one recommendation, then edit the one shared tab layout rather
+    // than seeing tab controls duplicated on each edge row.
+    const pocketFinish = dialog.locator('.cam-plan-row').filter({ hasText: 'Pocket · Finish' }).first()
+    await pocketFinish.locator('input[type="checkbox"]').uncheck()
+    await dialog.locator('.cam-plan-row--shared').first().click()
+    await expect(dialog.getByRole('paragraph').filter({ hasText: /Shared by \d+ operations/ })).toBeVisible()
+    await expect(dialog.getByText('Width', { exact: true })).toHaveCount(1)
+    const sharedTabsToggle = dialog.locator('.cam-plan-detail .cam-plan-check--card input[type="checkbox"]')
+    await sharedTabsToggle.uncheck()
+    await expect(dialog.getByText('Tabs are disabled for this separating edge cut. Confirm another workholding method before machining.', { exact: true })).toBeVisible()
+    await sharedTabsToggle.check()
+    const widthInput = dialog.locator('.cam-plan-field').filter({ hasText: 'Width' }).locator('input')
+    await widthInput.fill('0.4')
+    await widthInput.blur()
+
+    // The imported model is intentionally outside the POC, so creation stays
+    // gated until the user explicitly acknowledges that visible coverage gap.
+    const acknowledge = dialog.getByRole('checkbox', { name: /I understand these features will not be covered/ })
+    await expect(acknowledge).toBeVisible()
+    await acknowledge.check()
+    const create = dialog.getByRole('button', { name: /Create \d+ operations/ })
+    await expect(create).toBeEnabled()
+    await create.click()
+    await expect(dialog).toHaveCount(0)
+
+    const created = await getProject(app.page)
+    expect((created.operations as unknown[]).length).toBeGreaterThan(1)
+    expect((created.tabs as unknown[]).length).toBeGreaterThan(0)
+
+    await app.page.keyboard.press(`${modKey}+z`)
+    const restored = await getProject(app.page)
+    expect(restored.operations).toEqual([])
+    expect(restored.tabs).toEqual([])
+    expect(restored.tools).toEqual(seeded.tools)
+  })
+
+  test('CAM Plan preview treats resolver-accounted islands as retained material, not uncovered work (#735)', async ({ app }) => {
+    await seedCamQuickOperationProject(app.page)
+    const seeded = await getProject(app.page)
+    delete seeded.featureDefinitions['def-imported-model']
+    seeded.features = seeded.features.filter((feature) => feature.id !== 'f-imported-model')
+    seeded.featureDefinitions['def-retained-island'] = {
+      id: 'def-retained-island',
+      kind: 'circle',
+      profile: {
+        start: { x: 2, y: 0 },
+        segments: [{ type: 'circle', center: { x: 0, y: 0 }, to: { x: 2, y: 0 }, clockwise: true }],
+        closed: true,
+      },
+      dimensions: [],
+      text: null,
+      stl: null,
+      operation: 'add',
+    }
+    seeded.features.push({
+      id: 'f-retained-island',
+      name: 'Retained Island',
+      definitionId: 'def-retained-island',
+      transform: { a: 1, b: 0, c: 0, d: 1, e: 120, f: 34 },
+      constraints: [],
+      folderId: null,
+      z_top: 2,
+      z_bottom: 1.5,
+      visible: true,
+      locked: false,
+    })
+    seeded.tools = [
+      {
+        id: 'plan-quarter', name: 'Plan quarter inch', units: 'inch', type: 'flat_endmill', diameter: 0.25,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 40,
+        defaultPlungeFeed: 12, defaultStepdown: 0.1, defaultStepover: 0.4, maxCutDepth: 5,
+      },
+      {
+        id: 'plan-eighth', name: 'Plan eighth inch', units: 'inch', type: 'flat_endmill', diameter: 0.125,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 30,
+        defaultPlungeFeed: 10, defaultStepdown: 0.08, defaultStepover: 0.4, maxCutDepth: 5,
+      },
+    ]
+    await seedProject(app.page, JSON.stringify(seeded))
+
+    await app.page.getByRole('button', { name: 'Plan', exact: true }).click()
+    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan (Preview)' })
+    await expect(dialog.getByText('Retained Island', { exact: true })).toHaveCount(0)
+    await expect(dialog.getByRole('checkbox', { name: /I understand these features will not be covered/ })).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: /Create \d+ operations/ })).toBeEnabled()
   })
 
   test('feature-row quick operation creates a CAM operation', async ({ app, ui }) => {
