@@ -170,6 +170,73 @@ function testCompatiblePocketsShareOneOperationAcrossDepths(): void {
   assert(rough?.targetLabel.includes('multiple depths'), 'the grouped target label does not falsely claim one shared depth')
 }
 
+function testCompatibleOutsideProfilesShareOneOperation(): void {
+  const base = newProject('CAM plan outside grouping', 'inch')
+  base.stock.thickness = 1
+  const project = projectWithFeatures({
+    ...base,
+    tools: [tool('quarter', 'flat_endmill', 0.25), tool('eighth', 'flat_endmill', 0.125)],
+  }, [
+    feature('outer-left', 'add', rectProfile(0, 0, 2, 2), 1, 0),
+    feature('left-pocket', 'subtract', rectProfile(0.5, 0.5, 1, 1), 1, 0.5),
+    feature('outer-right', 'add', rectProfile(3, 0, 2, 2), 1, 0),
+  ])
+  const plan = createCamPlan(project, [])
+  const outside = plan.operations.filter((draft) => draft.operation.kind === 'edge_route_outside' && !draft.rest)
+  const rough = outside.find((draft) => draft.operation.pass === 'rough')
+  const finish = outside.find((draft) => draft.operation.pass === 'finish')
+  const outsideTargets = 'outer-left,outer-right'
+
+  assert(outside.length === 2, 'compatible outside profiles share one rough/finish pair')
+  assert(
+    rough?.operation.target.source === 'features' && rough.operation.target.featureIds.join() === outsideTargets,
+    'the grouped outside rough operation carries both outer targets',
+  )
+  assert(
+    finish?.operation.target.source === 'features' && finish.operation.target.featureIds.join() === outsideTargets,
+    'the grouped outside finish operation carries both outer targets',
+  )
+  assert(
+    rough?.operation.toolRef !== null && rough?.operation.toolRef === finish?.operation.toolRef,
+    'the pair keeps the common selected cutter',
+  )
+  assert(
+    rough && plan.operations.findIndex((draft) => draft.key === rough.key) > plan.operations.findLastIndex((draft) => draft.operation.kind !== 'edge_route_outside'),
+    'internal work remains ordered before the grouped outside rough pass',
+  )
+  assert(plan.sharedTabs.length === 1, 'the grouped outside pair receives one shared tab proposal')
+  assert(plan.sharedTabs[0]?.targetFeatureIds.join() === outsideTargets, 'shared tabs span both outside targets')
+  assert(
+    plan.sharedTabs[0]?.operationKeys.join() === `${rough?.key},${finish?.key}`,
+    'the shared tab proposal is referenced by the grouped rough and finish operations',
+  )
+}
+
+function testOutsideProfilesWithDifferentToolsStaySeparate(): void {
+  const base = newProject('CAM plan outside tool grouping', 'inch')
+  base.stock.thickness = 1
+  const project = projectWithFeatures({
+    ...base,
+    tools: [tool('three-eighth', 'flat_endmill', 0.375), tool('eighth', 'flat_endmill', 0.125)],
+  }, [
+    feature('large-outer', 'add', rectProfile(0, 0, 4, 4), 1, 0),
+    feature('small-outer', 'add', rectProfile(5, 0, 1, 1), 1, 0),
+  ])
+  const rough = createCamPlan(project, []).operations.filter((draft) =>
+    draft.operation.kind === 'edge_route_outside' && draft.operation.pass === 'rough' && !draft.rest,
+  )
+
+  assert(rough.length === 2, 'outside profiles that select different cutters remain separate rough operations')
+  assert(
+    rough.some((draft) => draft.operation.toolRef === 'three-eighth' && draft.coveredFeatureIds.join() === 'large-outer'),
+    'the large outside profile keeps its larger selected cutter',
+  )
+  assert(
+    rough.some((draft) => draft.operation.toolRef === 'eighth' && draft.coveredFeatureIds.join() === 'small-outer'),
+    'the smaller outside profile stays with its smaller selected cutter',
+  )
+}
+
 function testExistingOperationsOnlySuppressExactRecommendations(): void {
   const base = newProject('CAM plan existing operations', 'inch')
   base.stock.thickness = 1
@@ -681,6 +748,8 @@ function testReactiveRestRemoval(): void {
 testRepresentativePlan()
 testMatchingHolesShareOneDrillingOperation()
 testCompatiblePocketsShareOneOperationAcrossDepths()
+testCompatibleOutsideProfilesShareOneOperation()
+testOutsideProfilesWithDifferentToolsStaySeparate()
 testExistingOperationsOnlySuppressExactRecommendations()
 testDeterministicAndAtomicApply()
 testDepthRolesAndUnsupportedCoverage()

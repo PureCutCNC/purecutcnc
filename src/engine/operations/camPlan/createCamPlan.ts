@@ -395,11 +395,29 @@ interface PocketToolGroup {
   tool: CamPlanTool | null
 }
 
+interface OutsideEdgeToolGroup {
+  features: ResolvedSketchFeature[]
+  tool: CamPlanTool | null
+}
+
 function pocketToolForFeature(builder: PlanBuilder, feature: ResolvedSketchFeature): CamPlanTool | null {
   const target: OperationTarget = { source: 'features', featureIds: [feature.id] }
   const ranked = rankCamPlanTools(
     builder.project,
     'pocket',
+    target,
+    builder.tools,
+    featureDepth(builder.project, feature),
+    builder.reusedToolIds,
+  )
+  return ranked.tools[0] ?? null
+}
+
+function outsideEdgeToolForFeature(builder: PlanBuilder, feature: ResolvedSketchFeature): CamPlanTool | null {
+  const target: OperationTarget = { source: 'features', featureIds: [feature.id] }
+  const ranked = rankCamPlanTools(
+    builder.project,
+    'edge_route_outside',
     target,
     builder.tools,
     featureDepth(builder.project, feature),
@@ -486,6 +504,34 @@ function nextBlindPocketToolGroup(
     return { features: grouped, tool }
   }
   return null
+}
+
+/**
+ * Group disjoint outer profiles only when their individually selected rough
+ * cutter is identical. Feature-first edge routing and shared tab placement
+ * already preserve per-profile geometry, so depth is not a grouping key.
+ */
+function nextOutsideEdgeToolGroup(
+  builder: PlanBuilder,
+  remaining: ResolvedSketchFeature[],
+): OutsideEdgeToolGroup | null {
+  const root = remaining.shift()
+  if (!root) return null
+
+  const tool = outsideEdgeToolForFeature(builder, root)
+  const grouped = [root]
+  if (tool) {
+    for (let index = 0; index < remaining.length;) {
+      const candidate = remaining[index]!
+      if (outsideEdgeToolForFeature(builder, candidate)?.id === tool.id) {
+        grouped.push(candidate)
+        remaining.splice(index, 1)
+        continue
+      }
+      index += 1
+    }
+  }
+  return { features: grouped, tool }
 }
 
 function coverageFor(
@@ -607,12 +653,14 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
     resolveDimensionRef(project, feature.z_bottom) <= Z_EPSILON
   )
   const outsideOperations: CamPlanOperationDraft[] = []
-  for (const feature of outerAdds) {
+  const remainingOuterAdds = [...outerAdds]
+  for (let group = nextOutsideEdgeToolGroup(builder, remainingOuterAdds); group; group = nextOutsideEdgeToolGroup(builder, remainingOuterAdds)) {
     outsideOperations.push(...addRoughFinishPair(
       builder,
       'edge_route_outside',
-      [feature],
+      group.features,
       'This is an outer retained perimeter, so it is routed from the surrounding stock.',
+      group.tool ?? undefined,
     ))
   }
 
