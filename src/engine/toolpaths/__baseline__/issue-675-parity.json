@@ -189,9 +189,9 @@
       "collidingMoveIndices": 0
     },
     "fixture/pocket-finish-island-leftover/op0011": {
-      "resultHash": "ff042b7ec1b71552719d4937fb11c4582e3b7dbacdc9f7483ea0adbb0365dc2c",
-      "rawHash": "9ab4635b1662083547550fae266ac8281d4ad158281ade3af9c51c6a827f6ada",
-      "gcodeHash": "88c2bc84f7aef6811ded9bdf69aa149a6541984a8145277b1c14c54cb0a09f0d",
+      "resultHash": "b5c970cea2cff4f01ea9a980041848d22d8c889ab8f3219585e4f2c1094d4a8a",
+      "rawHash": "9b3cfbb060c62f1d17db0f67db9357481d66123b44b22fb59e12d31835de5443",
+      "gcodeHash": "fcdd944290920cba3520247734e98aaa990378c37a402aaa42ce4672acd3bdde",
       "moves": 4003,
       "rawMoves": 4004,
       "gcodeLines": 4011,
@@ -334,9 +334,9 @@
       "collidingMoveIndices": 0
     },
     "example/purecutcnc/op0017": {
-      "resultHash": "16da807a3ba7fe0457e42f8f8d9c05bf0a5bd7b7c128a505b0cb79073602bafe",
-      "rawHash": "2077674315e9037c8d4963d8df70c0107a1989fd736d5ed169cb1d0840d1b3ca",
-      "gcodeHash": "b38f9c8c54ebb33852deb2a9039ccb55ec0de9882d3beb3b6e0a41bb9cfd0a1a",
+      "resultHash": "26e9f55fa99dc50004923e91b9c74a01b0b86ebdc36a8f1bf645ee71a1b12c2f",
+      "rawHash": "6201c519b99510c366b715db65232997164f50ea31d4bfab273d206305c6adb6",
+      "gcodeHash": "aa360a9a58d55489a9ef73860dc0384c87705171373ad5aaa5feca5967f67120",
       "moves": 2938,
       "rawMoves": 2946,
       "gcodeLines": 2946,

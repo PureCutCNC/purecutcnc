@@ -41,10 +41,12 @@ import type {
 import {
   DEFAULT_CLIPPER_SCALE,
   applyContourDirection,
+  applyContourDirectionBySide,
   checkMaxCutDepthWarning,
   fromClipperPath,
   getOperationClearance,
   getOperationSafeZ,
+  isClockwise,
   normalizeWinding,
   normalizeToolForProject,
   resolveFeatureZSpan,
@@ -1388,9 +1390,61 @@ function buildExpandedIslandContours(
   return regions.flatMap((region) => {
     const islandPaths = region.islands.map((island) => toClipperPath(normalizeWinding(island, false), scale))
     return offsetPaths(islandPaths, delta * scale, joinType)
-      .map((path) => fromClipperPath(path, scale))
+      .map((path) => restoreHoleWinding(fromClipperPath(path, scale)))
       .filter((island) => island.length >= 3)
   })
+}
+
+/**
+ * Put an island ring back into hole winding after an outward offset (issue
+ * #706).
+ *
+ * The offset above normalizes every island to outer (CCW) winding first,
+ * because a hole-wound path would shrink instead of expanding. Nothing
+ * converted it back, so the rings came out wound like outer contours and the
+ * downstream direction pass read them as pocket wall: `applyContourDirection`
+ * assumes every contour it is handed shares one role, and by winding these
+ * looked like they did. The island was then cut in the same rotational sense as
+ * the wall — climb-milled when conventional was asked for, and the reverse, on
+ * every rounded pocket finish with an island.
+ *
+ * Reversing here rather than classifying at the call site keeps that assumption
+ * true of the input: what this construction returns is a hole ring, so it says
+ * so, and the unrounded branch's rings — which come out of `buildInsetRegions`
+ * already wound as holes — keep arriving the same way.
+ *
+ * The point list is reversed as-is, with no closing point appended, so the
+ * emitted geometry is what this function returned before and only the traversal
+ * sense changes.
+ */
+function restoreHoleWinding(points: Point[]): Point[] {
+  if (points.length < 3) return points
+  return isClockwise(points) ? points : [...points].reverse()
+}
+
+/**
+ * Orient the open island-cleanup runs to the requested cut direction (issue
+ * #706).
+ *
+ * These runs follow island geometry, so the tool rides outside the ring they
+ * clean — the mirror of the wall's role. They are open polylines, so the
+ * closed-contour direction pass in `cutClosedContours` never sees them, and a
+ * run's own signed area cannot say what role it plays:
+ * `applyContourDirectionBySide` takes both from the caller, which is what its
+ * per-contour role and open-polyline branch exist for.
+ *
+ * Applied *after* `orderOpenSegmentsGreedy`, not before. That ordering picks
+ * each run's start by proximity to the current position, so it re-reverses
+ * whatever winding arrives and a direction set first is discarded — measured:
+ * reversing at the assignment changed nothing. Ordering first keeps the
+ * nearest-first sequence; the run is then traversed the way the setting asks,
+ * which can put its start at the far end. Honoring the direction is worth the
+ * longer approach.
+ */
+function applyIslandCleanupRunDirection(runs: Point[][], direction: CutDirection): Point[][] {
+  if (runs.length === 0) return runs
+  const roles = runs.map(() => false)
+  return applyContourDirectionBySide(runs, direction, 'tool-inside', roles, undefined, roles)
 }
 
 /**
@@ -4627,9 +4681,15 @@ function generateFinishBandMoves(
         wallCornerCleanupEnabled,
         levelWallLead,
       )
-      const orderedCleanupSegments = orderOpenSegmentsGreedy(
-        wallCleanupSegments,
-        currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+      // The cleanup runs are open, so the closed-contour direction pass below
+      // never reaches them; orient them here, after the greedy ordering has
+      // chosen their sequence (issue #706).
+      const orderedCleanupSegments = applyIslandCleanupRunDirection(
+        orderOpenSegmentsGreedy(
+          wallCleanupSegments,
+          currentPosition ? { x: currentPosition.x, y: currentPosition.y } : null,
+        ),
+        direction,
       )
       for (const segment of orderedCleanupSegments) {
         // The acute-island cleanup runs are open, so there is no seam to slide:

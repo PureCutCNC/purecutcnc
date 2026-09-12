@@ -57,7 +57,7 @@
  * Run with: npx tsx src/engine/toolpaths/pocketIslandWallClearance.test.ts
  */
 
-import type { Operation, Point, Project, SketchFeature, Tool } from '../../types/project'
+import type { CutDirection, Operation, Point, Project, SketchFeature, Tool } from '../../types/project'
 import { defaultTool, newProject, polygonProfile, rectProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { generatePocketToolpath } from './pocket'
@@ -134,7 +134,7 @@ function makeFlatEndmill(id: string, diameter: number): Tool {
   }
 }
 
-function finishOp(toolRef: string, roundOutsideCorners: boolean): Operation {
+function finishOp(toolRef: string, roundOutsideCorners: boolean, cutDirection: CutDirection): Operation {
   return {
     id: 'op1',
     name: 'finish',
@@ -159,7 +159,7 @@ function finishOp(toolRef: string, roundOutsideCorners: boolean): Operation {
     finishFloor: false,
     carveDepth: 1,
     maxCarveDepth: 1,
-    cutDirection: 'conventional',
+    cutDirection,
     machiningOrder: 'level_first',
   }
 }
@@ -272,25 +272,25 @@ const hasWarning = (warnings: Array<{ code: string }>, code: string): boolean =>
  * to the top and bottom, cut with a ⌀8 endmill: the cutter fits above and below
  * the island and nowhere near the sides.
  */
-function testRectIslandTooCloseToWall(): void {
-  console.log('Testing the finish does not cut past the wall to clean a wall-hugging island...')
+function testRectIslandTooCloseToWall(direction: CutDirection): void {
+  console.log(`Testing the finish does not cut past the wall to clean a wall-hugging island (${direction})...`)
   const island = rectFeature('i1', 5, 15, 40, 10, 'add')
   const project = projectWith(island, 8)
   const radius = 4
 
   for (const round of [false, true]) {
-    const result = generatePocketToolpath(project, finishOp('t1', round))
+    const result = generatePocketToolpath(project, finishOp('t1', round, direction))
     const worst = worstWallOvercut(result.moves, radius)
     assert(
       worst.depth <= ARC_TOLERANCE,
-      `round=${round}: no finish cut may reach past the pocket wall, got ${worst.depth.toFixed(4)} mm `
+      `${direction} round=${round}: no finish cut may reach past the pocket wall, got ${worst.depth.toFixed(4)} mm `
       + `at (${worst.at.x.toFixed(2)}, ${worst.at.y.toFixed(2)})`,
     )
   }
 
   // The trim has to be announced. Silently leaving the island wall unfinished
   // is the same surprise as gouging it, one pass later.
-  const rounded = generatePocketToolpath(project, finishOp('t1', true))
+  const rounded = generatePocketToolpath(project, finishOp('t1', true, direction))
   assert(
     hasWarning(rounded.warnings, 'pocketFinishIslandWallTooTight'),
     'the trimmed island pass must raise pocketFinishIslandWallTooTight',
@@ -340,23 +340,23 @@ function testRectIslandTooCloseToWall(): void {
  * x = 47 — while the cleanup run reaches for x = 48.4, a millimetre and a half
  * of wall.
  */
-function testAcuteIslandCleanupPastTheWall(): void {
-  console.log('Testing the acute-island corner cleanup does not cut past the wall...')
+function testAcuteIslandCleanupPastTheWall(direction: CutDirection): void {
+  console.log(`Testing the acute-island corner cleanup does not cut past the wall (${direction})...`)
   const spikeEdges: Point[] = [{ x: 10, y: 10 }, { x: 43, y: 20 }, { x: 10, y: 30 }]
   const project = projectWith(polygonIsland('i1', spikeEdges), 6)
   const radius = 3
 
   for (const round of [false, true]) {
-    const result = generatePocketToolpath(project, finishOp('t1', round))
+    const result = generatePocketToolpath(project, finishOp('t1', round, direction))
     const worst = worstWallOvercut(result.moves, radius)
     assert(
       worst.depth <= ARC_TOLERANCE,
-      `round=${round}: no finish cut may reach past the pocket wall, got ${worst.depth.toFixed(4)} mm `
+      `${direction} round=${round}: no finish cut may reach past the pocket wall, got ${worst.depth.toFixed(4)} mm `
       + `at (${worst.at.x.toFixed(2)}, ${worst.at.y.toFixed(2)})`,
     )
   }
 
-  const rounded = generatePocketToolpath(project, finishOp('t1', true))
+  const rounded = generatePocketToolpath(project, finishOp('t1', true, direction))
   assert(
     hasWarning(rounded.warnings, 'pocketFinishIslandWallTooTight'),
     'a cleanup run trimmed at the wall must raise pocketFinishIslandWallTooTight',
@@ -377,7 +377,7 @@ function testAcuteIslandCleanupPastTheWall(): void {
   // Pull the island back and the same geometry needs no trim at all.
   const clear = generatePocketToolpath(
     projectWith(polygonIsland('i1', [{ x: 10, y: 10 }, { x: 40, y: 20 }, { x: 10, y: 30 }]), 6),
-    finishOp('t1', true),
+    finishOp('t1', true, direction),
   )
   assert(
     !hasWarning(clear.warnings, 'pocketFinishIslandWallTooTight'),
@@ -390,12 +390,12 @@ function testAcuteIslandCleanupPastTheWall(): void {
  * The control. An island the cutter clears on every side must be untouched by
  * any of this: a whole closed ring, and no warning.
  */
-function testIslandWithRoomIsUnchanged(): void {
-  console.log('Testing an island with room for the cutter keeps its whole closed ring...')
+function testIslandWithRoomIsUnchanged(direction: CutDirection): void {
+  console.log(`Testing an island with room for the cutter keeps its whole closed ring (${direction})...`)
   const island = rectFeature('i1', 20, 15, 10, 10, 'add')
   const project = projectWith(island, 4)
   const radius = 2
-  const result = generatePocketToolpath(project, finishOp('t1', true))
+  const result = generatePocketToolpath(project, finishOp('t1', true, direction))
 
   assert(
     !hasWarning(result.warnings, 'pocketFinishIslandWallTooTight'),
@@ -418,7 +418,12 @@ function testIslandWithRoomIsUnchanged(): void {
   console.log('island with room keeps its whole ring: PASSED')
 }
 
-testRectIslandTooCloseToWall()
-testAcuteIslandCleanupPastTheWall()
-testIslandWithRoomIsUnchanged()
+// Both directions (issue #706): the cleanup runs are open and reach the wall
+// one stepover further out than the ring, so reorienting them has to be checked
+// against the reach guard, not assumed safe.
+for (const direction of ['conventional', 'climb'] as const) {
+  testRectIslandTooCloseToWall(direction)
+  testAcuteIslandCleanupPastTheWall(direction)
+  testIslandWithRoomIsUnchanged(direction)
+}
 console.log('\nAll pocketIslandWallClearance tests PASSED.')
