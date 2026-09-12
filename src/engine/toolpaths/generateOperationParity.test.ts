@@ -92,6 +92,56 @@ const DELIBERATE_WARNING_DIVERGENCE = new Map<string, string>([
     + '`surfaceNoFinishContours`. Move counts and emitted G-code are unchanged.',
   ],
 ])
+/**
+ * Cases whose *output* was re-recorded after the baseline was captured, with
+ * the reason and the hashes it replaced (issue #706).
+ *
+ * This grants nothing. The baseline still holds the expected values, so these
+ * cases detect drift exactly as tightly as every other one — that is the
+ * difference between re-recording and exempting them. The record exists so a
+ * re-record shows up in review as a named decision rather than two silent
+ * string edits in a JSON file, and so reverting the change it describes is
+ * visible here as the record going stale.
+ *
+ * #706 is a rounded pocket finish whose island rings were cut in the pocket
+ * wall's rotational sense: `buildExpandedIslandContours` offset every island
+ * from an outer-wound copy — a hole-wound path would shrink instead of
+ * expanding — and never restored hole winding afterwards, so the direction
+ * pass read the rings as wall. Measured against the unpatched tree before
+ * re-recording: on `fixture/pocket-finish-island-leftover/op0011` 40 of 3844
+ * cut segments moved, and every one of them sits 0.062–0.075 units from the
+ * island wall (island bbox [1.25, 0.875]–[2.625, 2.0]); on
+ * `example/purecutcnc/op0017` no cut segment moved at all, only their order.
+ * Every summary counter is unchanged in both. The behavioural guard is
+ * `pocketFinishIslandDirection.test.ts`.
+ */
+const RECORDED_AFTER_BASELINE: ReadonlyMap<
+  string,
+  { issue: number; replaced: { resultHash: string; rawHash: string; gcodeHash: string } }
+> = new Map([
+  [
+    'fixture/pocket-finish-island-leftover/op0011',
+    {
+      issue: 706,
+      replaced: {
+        resultHash: 'ff042b7ec1b71552719d4937fb11c4582e3b7dbacdc9f7483ea0adbb0365dc2c',
+        rawHash: '9ab4635b1662083547550fae266ac8281d4ad158281ade3af9c51c6a827f6ada',
+        gcodeHash: '88c2bc84f7aef6811ded9bdf69aa149a6541984a8145277b1c14c54cb0a09f0d',
+      },
+    },
+  ],
+  [
+    'example/purecutcnc/op0017',
+    {
+      issue: 706,
+      replaced: {
+        resultHash: '16da807a3ba7fe0457e42f8f8d9c05bf0a5bd7b7c128a505b0cb79073602bafe',
+        rawHash: '2077674315e9037c8d4963d8df70c0107a1989fd736d5ed169cb1d0840d1b3ca',
+        gcodeHash: 'b38f9c8c54ebb33852deb2a9039ccb55ec0de9882d3beb3b6e0a41bb9cfd0a1a',
+      },
+    },
+  ],
+])
 
 let passed = 0
 let failed = 0
@@ -119,6 +169,21 @@ check(
   corpus.length === Object.keys(baseline.cases).length,
   `corpus has ${corpus.length} cases, baseline has ${Object.keys(baseline.cases).length}`,
 )
+// A record that has stopped matching the baseline is stale: either the case
+// moved a second time and needs its own reason, or the change it recorded was
+// reverted.
+for (const [id, record] of RECORDED_AFTER_BASELINE) {
+  const current = baseline.cases[id]
+  check(
+    id + ' re-record is current',
+    current !== undefined
+      && current.resultHash !== record.replaced.resultHash
+      && current.rawHash !== record.replaced.rawHash
+      && current.gcodeHash !== record.replaced.gcodeHash,
+    'the baseline still holds the hashes this record replaced for #' + record.issue
+    + ' — was it reverted, or has the case moved again?',
+  )
+}
 
 for (const parityCase of corpus) {
   const expected = baseline.cases[parityCase.id]
