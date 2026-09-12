@@ -31,20 +31,45 @@ export type ReferencedSketchFeature = SketchFeature & {
   transform: Matrix2D
 }
 
+/** The project's features in authored order — the name-uniqueness and ordering source for copies. */
+type ExistingFeatures = Array<{ id: string; name: string }>
+
+/**
+ * Copies are built in authored project order, never in selection order. The
+ * geometry resolver applies adds and subtracts in `project.features` order, so
+ * a copy assembled in click order can describe different parent/island
+ * relationships than the group it was copied from (#764).
+ */
+function sourcesInAuthoredOrder<T extends { id: string }>(
+  sourceFeatures: T[],
+  existingFeatures: ExistingFeatures,
+): T[] {
+  const authoredIndex = new Map(existingFeatures.map((feature, index) => [feature.id, index]))
+  if (sourceFeatures.some((feature) => !authoredIndex.has(feature.id))) {
+    // Pasting a clipboard from another project, or from a cut that already
+    // removed the rows: it carries its own authored order, so leave it alone.
+    return sourceFeatures
+  }
+  return [...sourceFeatures].sort(
+    (a, b) => (authoredIndex.get(a.id) ?? 0) - (authoredIndex.get(b.id) ?? 0),
+  )
+}
+
 export function buildRotatedCopies(
   sourceFeatures: ReferencedSketchFeature[],
-  existingFeatures: Array<{ name: string }>,
+  existingFeatures: ExistingFeatures,
   pivot: Point,
   angle: number,
   count: number,
 ): ReferencedSketchFeature[] {
   const created: ReferencedSketchFeature[] = []
   const projectLike = newProject()
+  const orderedSources = sourcesInAuthoredOrder(sourceFeatures, existingFeatures)
 
   for (let step = 1; step <= count; step += 1) {
     const stepAngle = angle * step
     const rotatePoint = (point: Point) => rotatePointAround(point, pivot, stepAngle)
-    for (const sourceFeature of sourceFeatures) {
+    for (const sourceFeature of orderedSources) {
       const nextId = nextUniqueGeneratedId(
         projectLike,
         'f',
@@ -75,14 +100,15 @@ export function buildRotatedCopies(
 
 export function buildMirroredCopies(
   sourceFeatures: ReferencedSketchFeature[],
-  existingFeatures: Array<{ name: string }>,
+  existingFeatures: ExistingFeatures,
   lineStart: Point,
   lineEnd: Point,
 ): ReferencedSketchFeature[] {
   const created: ReferencedSketchFeature[] = []
   const projectLike = newProject()
+  const orderedSources = sourcesInAuthoredOrder(sourceFeatures, existingFeatures)
 
-  for (const sourceFeature of sourceFeatures) {
+  for (const sourceFeature of orderedSources) {
     const nextId = nextUniqueGeneratedId(
       projectLike,
       'f',
@@ -107,7 +133,7 @@ export function buildMirroredCopies(
 
 export function buildCopiedFeatures(
   sourceFeatures: ReferencedSketchFeature[],
-  existingFeatures: Array<{ name: string }>,
+  existingFeatures: ExistingFeatures,
   dx: number,
   dy: number,
   count: number,
@@ -116,11 +142,12 @@ export function buildCopiedFeatures(
 ): Array<ReferencedSketchFeature & { _clonedDefinition?: FeatureDefinition }> {
   const created: Array<ReferencedSketchFeature & { _clonedDefinition?: FeatureDefinition }> = []
   const projectLike = newProject()
+  const orderedSources = sourcesInAuthoredOrder(sourceFeatures, existingFeatures)
   const effectiveCopyMode = copyMode
   const definitions = projectDefinitions
 
   for (let step = 1; step <= count; step += 1) {
-    for (const sourceFeature of sourceFeatures) {
+    for (const sourceFeature of orderedSources) {
       const nextId = nextUniqueGeneratedId(
         projectLike,
         'f',
@@ -207,16 +234,17 @@ export function buildCopiedFeatures(
  */
 export function buildTransformedCopiedFeatures(
   sourceFeatures: ReferencedSketchFeature[],
-  existingFeatures: Array<{ name: string }>,
+  existingFeatures: ExistingFeatures,
   placementTransforms: Matrix2D[],
   projectDefinitions: Record<string, FeatureDefinition>,
   copyMode: 'reference' | 'independent',
 ): Array<ReferencedSketchFeature & { _clonedDefinition?: FeatureDefinition }> {
   const created: Array<ReferencedSketchFeature & { _clonedDefinition?: FeatureDefinition }> = []
   const projectLike = newProject()
+  const orderedSources = sourcesInAuthoredOrder(sourceFeatures, existingFeatures)
 
   for (const [placementIndex, placementTransform] of placementTransforms.entries()) {
-    for (const sourceFeature of sourceFeatures) {
+    for (const sourceFeature of orderedSources) {
       const nextId = nextUniqueGeneratedId(projectLike, 'f')
       const newTransform = multiplyMatrix(placementTransform, sourceFeature.transform)
       const definition = projectDefinitions[sourceFeature.definitionId]
