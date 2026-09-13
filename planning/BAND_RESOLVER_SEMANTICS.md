@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: how the depth-band resolvers turn features into the region an operation clears
-last-verified: 2026-09-07
+last-verified: 2026-09-13
 ---
 
 # Band Resolver Semantics
@@ -103,6 +103,26 @@ add falls back to the stock footprint**.
 target. That is the one consequence a user cannot predict from the operation's own target.
 Eating an island or widening the boundary is the operation simply being correct; warning on
 those would leave a permanent warning on every project that has an overlapping subtract.
+
+## Surface clean: the material above the floor (issue #759)
+
+`resolveSurfaceCleanRegions` ([`src/engine/toolpaths/surface.ts`](../src/engine/toolpaths/surface.ts))
+asks the opposite question — where, above a band's floor, is material the cutter must stay
+clear of — and answers it in the same order. Between consecutive feature span ends the
+model's section is constant, so each such slab above the floor folds its active adds and
+subtracts in project order: an add unions, a subtract differences, and a subtract reached
+with nothing to carve does nothing, as in `buildBooleanModel`. What stands above the floor
+is the union of the slabs.
+
+Before #759 every add standing above the floor was protected by its whole footprint and
+subtracts were never consulted, so a full-thickness body blanked the band of an island
+lowered inside a pocket cut into that body. The error ran the other way from #526's: no cut
+at all where the model is open.
+
+Two limits keep the change to that. A subtract joins only where it overlaps a protected add
+in XY and in Z above the floor; with none, the add footprints are used exactly as before.
+An STL subtract never joins: CSG cuts its mesh, not its silhouette prism, so its footprint
+does not prove the material under it is gone.
 
 ## Guarantee for existing projects
 

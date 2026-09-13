@@ -104,7 +104,14 @@ import {
   splitFeatureTargets,
 } from './regions'
 import { resolveRegionDomainCentre } from './regionDomain'
-import { appendClampBlockedWarnings, clampKeepOutPaths, clampsBlockingArea, unionClipperPaths } from './modelProtection'
+import {
+  appendClampBlockedWarnings,
+  clampKeepOutPaths,
+  clampsBlockingArea,
+  differenceClipperPaths,
+  intersectClipperPaths,
+  unionClipperPaths,
+} from './modelProtection'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { isFeatureFirst, perFeatureOperations, mergePocketToolpathResults } from './multiFeature'
@@ -246,6 +253,128 @@ function buildSurfaceCoverageRegions(
     .filter((region) => region.outer.length >= 3)
 }
 
+/** An add or subtract with its Z span and its place in project feature order. */
+interface SurfaceSolidFeature {
+  feature: SketchFeature
+  top: number
+  span: { min: number; max: number }
+  /** Index in project order — the order `buildBooleanModel` (`csg.ts`) folds features in. */
+  order: number
+}
+
+interface SolidFootprint {
+  solid: SurfaceSolidFeature
+  path: ClipperPath
+  bounds: { minX: number; minY: number; maxX: number; maxY: number }
+}
+
+function solidFootprint(solid: SurfaceSolidFeature): SolidFootprint {
+  const path = flattenProfileToClipperPath(solid.feature.sketch.profile)
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const point of path) {
+    minX = Math.min(minX, point.X)
+    minY = Math.min(minY, point.Y)
+    maxX = Math.max(maxX, point.X)
+    maxY = Math.max(maxY, point.Y)
+  }
+  return { solid, path, bounds: { minX, minY, maxX, maxY } }
+}
+
+/**
+ * Whether a subtract removes any protected material above `floorZ`: it must
+ * share Z above the floor and area with at least one of the adds. The box test
+ * only spares Clipper the pairs that cannot overlap.
+ */
+function subtractCarvesProtectedMaterial(
+  subtract: SolidFootprint,
+  adds: readonly SolidFootprint[],
+  floorZ: number,
+): boolean {
+  const candidates = adds.filter((add) => (
+    Math.min(subtract.solid.span.max, add.solid.span.max)
+      > Math.max(subtract.solid.span.min, add.solid.span.min, floorZ)
+    && subtract.bounds.minX < add.bounds.maxX && add.bounds.minX < subtract.bounds.maxX
+    && subtract.bounds.minY < add.bounds.maxY && add.bounds.minY < subtract.bounds.maxY
+  ))
+  return candidates.length > 0
+    && intersectClipperPaths(candidates.map(({ path }) => path), [subtract.path]).length > 0
+}
+
+/**
+ * One slab's section: the features active across `topZ..bottomZ` folded in
+ * project order, one run of a role at a time. A subtract reached before any add
+ * has nothing to carve, exactly as in `buildBooleanModel`.
+ */
+function foldSlabSection(ordered: readonly SolidFootprint[], topZ: number, bottomZ: number): ClipperPath[] {
+  let section: ClipperPath[] = []
+  let run: ClipperPath[] = []
+  let runIsAdd = true
+  const flushRun = () => {
+    if (run.length === 0) return
+    section = runIsAdd ? unionClipperPaths([...section, ...run]) : differenceClipperPaths(section, run)
+    run = []
+  }
+
+  for (const { solid, path } of ordered) {
+    if (solid.span.max < topZ || solid.span.min > bottomZ) continue
+    const isAdd = solid.feature.operation === 'add'
+    if (isAdd !== runIsAdd) {
+      flushRun()
+      runIsAdd = isAdd
+    }
+    run.push(path)
+  }
+  flushRun()
+  return section
+}
+
+/**
+ * The footprint of the material the model still has above a band floor (issue
+ * #759).
+ *
+ * Every add standing above the floor used to be protected by its whole
+ * footprint with subtracts never consulted, so a full-thickness body blanked the
+ * band of an island lowered inside a pocket cut into that body. Features are
+ * prisms, so between consecutive span ends the model's section is constant:
+ * each slab above the floor is folded in project order, and what stands above
+ * the floor is the union of the slabs. Order is load-bearing — an add after a
+ * subtract fills back in what it carved (`planning/BAND_RESOLVER_SEMANTICS.md`).
+ *
+ * A subtract joins only where it overlaps a protected add in XY and in Z above
+ * the floor. With none the fold could only reproduce the add footprints, so
+ * they are returned exactly as before and such projects stay byte-identical.
+ */
+function protectedMaterialPaths(
+  protectedAdds: readonly SurfaceSolidFeature[],
+  subtracts: readonly SolidFootprint[],
+  floorZ: number,
+): ClipperPath[] {
+  const standingSubtracts = subtracts.filter(({ solid }) => solid.span.max > floorZ)
+  if (protectedAdds.length === 0 || standingSubtracts.length === 0) {
+    return protectedAdds.map(({ feature }) => flattenProfileToClipperPath(feature.sketch.profile))
+  }
+
+  const adds = protectedAdds.map((solid) => solidFootprint(solid))
+  const carvingSubtracts = standingSubtracts
+    .filter((subtract) => subtractCarvesProtectedMaterial(subtract, adds, floorZ))
+  if (carvingSubtracts.length === 0) {
+    return adds.map(({ path }) => path)
+  }
+
+  const ordered = [...adds, ...carvingSubtracts].sort((left, right) => left.solid.order - right.solid.order)
+  const breakpoints = [...new Set([floorZ, ...ordered.flatMap(({ solid }) => [solid.span.min, solid.span.max])])]
+    .filter((z) => z >= floorZ)
+    .sort((a, b) => b - a)
+  const sections: ClipperPath[] = []
+  for (let index = 0; index < breakpoints.length - 1; index += 1) {
+    appendAll(sections, foldSlabSection(ordered, breakpoints[index], breakpoints[index + 1]))
+  }
+  return unionClipperPaths(sections)
+}
+
 function resolveSurfaceCleanRegions(project: Project, operation: Operation): SurfaceCleanResult {
   const warnings: ToolpathWarning[] = []
 
@@ -302,13 +431,24 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     }
   }
 
-  const allAddFeatures = resolvedProjectFeatures(project)
+  // Adds and subtracts in project feature order, so band protection can tell
+  // material a later subtract removed from material still standing (#759).
+  const solidFeatures: SurfaceSolidFeature[] = resolvedProjectFeatures(project)
     .flatMap((feature) => expandFeatureGeometry(feature))
-    .filter((feature) => feature.operation === 'add' && featureHasClosedGeometry(feature))
-    .map((feature) => {
+    .filter((feature) => (
+      (feature.operation === 'add' || feature.operation === 'subtract') && featureHasClosedGeometry(feature)
+    ))
+    .map((feature, order) => {
       const span = resolveFeatureZSpan(project, feature)
-      return { feature, top: span.max }
+      return { feature, top: span.max, span, order }
     })
+  const allAddFeatures = solidFeatures.filter(({ feature }) => feature.operation === 'add')
+  // An STL subtract is cut from its mesh, not its silhouette prism
+  // (`buildFeatureSolid`), so its footprint never proves the material under it
+  // is gone: it must not uncover protected material.
+  const subtractFootprints = solidFeatures
+    .filter(({ feature }) => feature.operation === 'subtract' && feature.kind !== 'stl')
+    .map((solid) => solidFootprint(solid))
 
   const depthLevels = [...new Set([project.stock.thickness, ...closedTargetFeatures.map(({ top }) => top)])]
     .sort((a, b) => b - a)
@@ -330,6 +470,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     // Protect any add feature whose top is above this band's floor — including
     // target features at higher levels that haven't been reached yet. Otherwise
     // the expanded subject of a lower target can sweep through a taller target.
+    // Only what the model still has above the floor is protected (#759).
     const activeTargetIdSet = new Set(activeTargets.map(({ feature }) => feature.id))
     const protectedFeatures = allAddFeatures.filter(({ top, feature }) => top > bottomZ && !activeTargetIdSet.has(feature.id))
     // A clamp standing over this band is protected exactly like a taller add
@@ -341,7 +482,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       clampsBlockingArea(project, subjectPaths, { z: bottomZ, expansion: 0 }),
     )
     const protectedPaths = [
-      ...protectedFeatures.map(({ feature }) => flattenProfileToClipperPath(feature.sketch.profile)),
+      ...protectedMaterialPaths(protectedFeatures, subtractFootprints, bottomZ),
       ...clampKeepOutPaths(project, { z: bottomZ, expansion: 0 }),
     ]
     subjectPaths = executeClipPaths(subjectPaths, protectedPaths, ClipperLib.ClipType.ctDifference)
