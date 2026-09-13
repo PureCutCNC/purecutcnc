@@ -554,6 +554,119 @@ function testMachiningOrderTelemetrySurvives() {
   console.log('   PASSED')
 }
 
+// ── 10–13. Protection follows subtracts in feature order (#759) ──────
+
+/** A rect spanning `zBottom..zTop` in the given boolean role. */
+function makeSolidRect(
+  id: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  zBottom: number,
+  zTop: number,
+  operation: 'add' | 'subtract',
+): SketchFeature {
+  return { ...makeBoss(id, x, y, w, h, zTop), operation, z_bottom: zBottom }
+}
+
+// The #759 project in mm: a full-thickness body, a pocket 6 deep into it, and
+// an island inside the pocket whose top sits 2 below the 20 mm stock top.
+const STOCK_TOP = 20
+const ISLAND_TOP = 18
+const TOOL_RADIUS = 2
+const body759 = () => makeSolidRect('body', 0, 0, 60, 40, 0, STOCK_TOP, 'add')
+const pocket759 = (zBottom = 14) => makeSolidRect('pocket', 10, 10, 40, 20, zBottom, STOCK_TOP, 'subtract')
+const island759 = () => makeSolidRect('island', 18, 16, 24, 8, 0, ISLAND_TOP, 'add')
+
+function surfaceCleanWithFeatures(features: SketchFeature[], targetId: string): PocketToolpathResult {
+  const project = baseProject([makeEndmill()], features)
+  project.stock = { ...project.stock, thickness: STOCK_TOP }
+  assert(project.features.map((feature) => feature.id).join() === features.map((feature) => feature.id).join(),
+    'the fixture must keep the feature order it was given')
+  return generateSurfaceCleanToolpath(project, makeSurfaceOp({ featureIds: [targetId], id: `sc-759-${targetId}` }))
+}
+
+function distanceToMove(point: { x: number; y: number }, move: ToolpathMove): number {
+  const dx = move.to.x - move.from.x
+  const dy = move.to.y - move.from.y
+  const lengthSq = dx * dx + dy * dy
+  const t = lengthSq === 0
+    ? 0
+    : Math.max(0, Math.min(1, ((point.x - move.from.x) * dx + (point.y - move.from.y) * dy) / lengthSq))
+  return Math.hypot(point.x - (move.from.x + t * dx), point.y - (move.from.y + t * dy))
+}
+
+function testLoweredIslandInPocketIsCleaned() {
+  console.log('10. a lowered island inside a pocket is faced (issue #759)...')
+  const result = surfaceCleanWithFeatures([body759(), pocket759(), island759()], 'island')
+  const bandWarnings = result.warnings
+    .filter((warning) => warning.code === 'bandNoRegions' || warning.code === 'surfaceNoBands')
+  assert(bandWarnings.length === 0, `the island band must resolve, got ${JSON.stringify(bandWarnings)}`)
+
+  const floorCuts = result.moves.filter((move) => move.kind === 'cut'
+    && Math.abs(move.from.z - ISLAND_TOP) < 1e-9 && Math.abs(move.to.z - ISLAND_TOP) < 1e-9)
+  assert(floorCuts.length > 0, `expected cuts at the island top z=${ISLAND_TOP}`)
+
+  // The cutter body, not the tool centre, has to reach every point of the top.
+  let unswept = 0
+  for (let x = 18; x <= 42 + 1e-9; x += 0.5) {
+    for (let y = 16; y <= 24 + 1e-9; y += 0.5) {
+      if (!floorCuts.some((move) => distanceToMove({ x, y }, move) <= TOOL_RADIUS + 1e-6)) unswept += 1
+    }
+  }
+  assert(unswept === 0, `every island-top sample must be swept at z=${ISLAND_TOP}; ${unswept} were not`)
+
+  // Outside the pocket the body stands to the stock top, so below it the cutter
+  // body must stay inside the pocket: its centre inside the pocket inset by r.
+  // The pocket is convex, so checking each move's endpoints covers the move.
+  const intrusions = result.moves.filter((move) => Math.min(move.from.z, move.to.z) < STOCK_TOP - 1e-9
+    && [move.from, move.to].some((point) => (
+      point.x < 10 + TOOL_RADIUS - 1e-6 || point.x > 50 - TOOL_RADIUS + 1e-6
+      || point.y < 10 + TOOL_RADIUS - 1e-6 || point.y > 30 - TOOL_RADIUS + 1e-6
+    )))
+  assert(intrusions.length === 0,
+    `no move below the stock top may put the cutter into the retained body, got ${JSON.stringify(intrusions[0])}`)
+  console.log('   PASSED')
+}
+
+function testSubtractBeforeBodyIsFilledBack() {
+  console.log('11. a subtract ahead of the body in feature order carves nothing (issue #759)...')
+  const result = surfaceCleanWithFeatures([pocket759(), body759(), island759()], 'island')
+  assert(!result.moves.some((move) => move.kind === 'cut'),
+    'the body fills the earlier subtract back in, so the island stays buried and nothing is cut')
+  assert(result.warnings.some((warning) => warning.code === 'surfaceNoBands'), 'the buried island must still report no bands')
+  console.log('   PASSED')
+}
+
+function testShallowSubtractLeavesIslandBuried() {
+  console.log('12. a subtract stopping above the island top leaves it buried (issue #759)...')
+  const result = surfaceCleanWithFeatures([body759(), pocket759(19), island759()], 'island')
+  assert(!result.moves.some((move) => move.kind === 'cut'),
+    'the body between the pocket floor and the island top must stay protected')
+  assert(result.warnings.some((warning) => warning.code === 'surfaceNoBands'), 'the buried island must still report no bands')
+  console.log('   PASSED')
+}
+
+function testSubtractsCarvingNoProtectedMaterialAreByteIdentical() {
+  console.log('13. subtracts that carve no protected material change nothing (issue #759)...')
+  const boss = makeSolidRect('boss', 0, 0, 20, 20, 0, ISLAND_TOP, 'add')
+  // Taller than the boss and within a tool diameter of it, so it shapes the band.
+  const wall = makeSolidRect('wall', 21, 0, 10, 20, 0, STOCK_TOP, 'add')
+  // One beside the wall, one inside it but wholly below the band floor.
+  const slot = makeSolidRect('slot', 40, 0, 10, 20, 15, STOCK_TOP, 'subtract')
+  const sump = makeSolidRect('sump', 21, 0, 10, 20, 0, 5, 'subtract')
+
+  const baseline = surfaceCleanWithFeatures([boss, wall], 'boss')
+  const withSubtracts = surfaceCleanWithFeatures([boss, slot, wall, sump], 'boss')
+  assert(baseline.moves.some((move) => move.kind === 'cut'), 'the baseline must cut')
+  assert(serializeMoves(withSubtracts.moves) === serializeMoves(baseline.moves),
+    'subtracts carving no protected material must leave the moves byte-identical')
+  assert(JSON.stringify(withSubtracts.warnings) === JSON.stringify(baseline.warnings),
+    'subtracts carving no protected material must leave the warnings identical')
+  console.log('   PASSED')
+}
+
 // ── Runner ───────────────────────────────────────────────────────────
 
 try {
@@ -566,6 +679,10 @@ try {
   testMachiningOrderLevelFirst()
   testMachiningOrderSingleFeatureIdentical()
   testMachiningOrderTelemetrySurvives()
+  testLoweredIslandInPocketIsCleaned()
+  testSubtractBeforeBodyIsFilledBack()
+  testShallowSubtractLeavesIslandBuried()
+  testSubtractsCarvingNoProtectedMaterialAreByteIdentical()
   console.log('\nAll surface.test.ts tests PASSED.')
 } catch (e) {
   console.error(e)
