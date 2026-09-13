@@ -34,8 +34,7 @@
  * The per-kind chains below were moved here verbatim from
  * `useToolpathGeneration`. Their differences are deliberate and load-bearing;
  * each one carries the comment that explains it. Do not "tidy" them into a
- * shared sequence — `generateOperationParity.test.ts` asserts the exact
- * pre-extraction output of all of them.
+ * shared sequence — focused engine suites own the behaviour of each one.
  */
 
 import { applyClampWarnings } from './clamps'

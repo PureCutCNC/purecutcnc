@@ -39,9 +39,9 @@
  *  - **Coordinates are `Float64Array`, never `Float32Array`.** Measured across
  *    every coordinate of that fixture, Float64 round-trips exactly (0 of ~1.5M
  *    values drift). Float32 would quietly move the toolpath.
- *  - The parity corpus is the backstop. `workerRuntime.test.ts` compares worker
- *    results against pre-extraction hashes, so a dropped field fails there
- *    immediately rather than reaching a machine.
+ *  - The parity corpus is the backstop. `workerRuntime.test.ts` compares the
+ *    transported worker result with a direct engine call, so a dropped field
+ *    fails there immediately rather than reaching a machine.
  *
  * `source` and `feedScale` are **sparse** — on that fixture 1,622 and 1,620 of
  * 249,663 moves — so they are carried as index/value pairs rather than

@@ -23,8 +23,8 @@
  * consumer abandoning work another still needs — are the ones that never
  * reproduce on a timer. Sleeping and hoping is how these bugs ship.
  *
- * No real worker and no real generation runs here; `generateOperationParity`
- * owns whether the output is right, this owns whether the right output is
+ * No real worker and no real generation runs here; the executor parity suites
+ * own whether a direct engine result arrives intact, this owns whether it is
  * installed.
  */
 

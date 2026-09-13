@@ -17,28 +17,20 @@
 /**
  * Generation parity corpus (issue #675, slice 1).
  *
- * One list of (project, operation) inputs, shared by two consumers that must
- * never disagree about what they ran:
- *
- * - `scripts/issue-675/capture-baseline.ts` renders the **pre-extraction**
- *   `useToolpathGeneration` hook over this corpus and writes the golden file.
- * - `generateOperationParity.test.ts` runs `computeOperationToolpath` over the
- *   same corpus and asserts it reproduces those goldens byte for byte.
+ * One list of (project, operation) inputs, shared by executor and worker seam
+ * tests. Each compares its transported result to a direct
+ * `computeOperationToolpath` call for the same input.
  *
  * The corpus is deliberately node-only test support: it reads `.camj` fixtures
  * from disk and is never imported by application code or re-exported from
  * `index.ts`, so it is not part of the browser bundle.
  *
- * Two properties are load-bearing and must survive any edit here:
+ * One property is load-bearing and must survive any edit here:
  *
  * 1. **Determinism.** Every case must produce identical output on every run,
  *    on any machine. `newProject` stamps `meta.created`/`meta.modified` with
  *    the wall clock, so synthetic cases are date-frozen below. A case that
  *    varies run to run cannot be a parity oracle.
- * 2. **Stability.** Changing a case changes the inputs the goldens describe,
- *    which silently invalidates them. Add cases; do not edit existing ones.
- *    If a case must change, recapture the baseline from a pre-extraction
- *    checkout — never from the extracted implementation.
  */
 
 import { readFileSync, readdirSync } from 'node:fs'
@@ -61,7 +53,7 @@ import type { ToolpathResult } from './types'
 
 /** One generation input: a project plus the id of the operation to generate. */
 export interface ParityCase {
-  /** Stable identity, used as the golden-file key. Never renamed. */
+  /** Stable identity for diagnostics. */
   id: string
   project: Project
   operationId: string
@@ -320,7 +312,7 @@ function fixtureCases(): ParityCase[] {
  *
  * The positions are fixed values, not derived at runtime: a tab whose placement
  * is recomputed from the path it is meant to constrain would move whenever the
- * path moves, which is the one thing a baseline must not do.
+ * path moves, which keeps the transport comparison deterministic.
  */
 function tabbedFinishCases(): ParityCase[] {
   const cleanup = loadFixture('model-in-pocket')
