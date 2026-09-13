@@ -17,31 +17,21 @@
 /**
  * The service seam preserves output (issue #675).
  *
- * `generateOperationParity` proves the extracted engine function matches the
- * pre-extraction pipeline. This proves the layers *above* it — executor, queue,
+ * This compares a direct engine call to the layers *above* it — executor, queue,
  * cache, commit rules — hand back exactly what that function produced, so a
  * result cannot be altered on its way through the machinery that schedules it.
  *
- * Run through the real service against the same goldens, one operation per
+ * Run through the real service against a live engine result, one operation per
  * kind: the heavy fixtures add minutes and nothing this suite is asking about,
  * since the corpus test already replays all of them.
  */
 
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { computeOperationToolpath } from '../../engine/toolpaths/generateOperation'
 import { buildParityCorpus, postParityCase } from '../../engine/toolpaths/parityCorpus'
-import { canonicalize, type ParityRecord } from '../../engine/toolpaths/parityRecord'
+import { canonicalize } from '../../engine/toolpaths/parityRecord'
 import { createToolpathGenerationService } from './service'
 import { resolveOperation } from './protocol'
-
-interface Baseline {
-  baseSha: string
-  cases: Record<string, ParityRecord>
-}
-
-const baseline = JSON.parse(
-  readFileSync(new URL('../../engine/toolpaths/__baseline__/issue-675-parity.json', import.meta.url), 'utf8'),
-) as Baseline
 
 let passed = 0
 let failed = 0
@@ -55,7 +45,7 @@ function check(name: string, condition: boolean, detail: string): void {
 const sha256 = (value: string): string => createHash('sha256').update(value, 'utf8').digest('hex')
 
 async function main(): Promise<void> {
-  console.log(`\nInline executor parity through the service (baseline ${baseline.baseSha})`)
+  console.log('\nInline executor parity through the service (live engine result)')
 
   const corpus = buildParityCorpus()
   const byKind = new Map<string, typeof corpus[number]>()
@@ -65,8 +55,12 @@ async function main(): Promise<void> {
   }
 
   for (const [kind, parityCase] of byKind) {
-    const expected = baseline.cases[parityCase.id]
     const operation = resolveOperation(parityCase.project, parityCase.operationId)!
+    const expected = computeOperationToolpath(parityCase.project, operation, { trace: true })
+    if (!expected || !expected.raw) {
+      check(`${kind} direct engine`, false, 'expected a traced engine result')
+      continue
+    }
     const context = { project: parityCase.project, documentKey: 1 }
     const service = createToolpathGenerationService({ getCurrentContext: () => context, executor: 'inline' })
 
@@ -79,18 +73,19 @@ async function main(): Promise<void> {
 
     check(
       `${kind} result`,
-      sha256(canonicalize(outcome.result)) === expected.resultHash,
-      'the service returned a different result from the baseline',
+      sha256(canonicalize(outcome.result)) === sha256(canonicalize(expected.result)),
+      'the service altered the engine result',
     )
     check(
       `${kind} raw`,
-      outcome.raw !== null && sha256(canonicalize(outcome.raw)) === expected.rawHash,
-      'the service returned a different raw trace from the baseline',
+      outcome.raw !== null && sha256(canonicalize(outcome.raw)) === sha256(canonicalize(expected.raw)),
+      'the service altered the engine raw trace',
     )
     check(
       `${kind} gcode`,
-      sha256(postParityCase(parityCase.project, operation, outcome.result)) === expected.gcodeHash,
-      'the posted G-code differs from the baseline',
+      sha256(postParityCase(parityCase.project, operation, outcome.result))
+        === sha256(postParityCase(parityCase.project, operation, expected.result)),
+      'the service result posts differently from the engine result',
     )
 
     // A second request must come back from the cache and be the same object —
