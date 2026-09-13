@@ -162,14 +162,13 @@ area `INDEX.md` files rather than being restated here.
    (`src/store/projectStore.ts`, slices under `src/store/slices/`). Operation
    target selection filters with `isMachinable` in `operationsSlice.ts` — this
    is where construction geometry stops being eligible for CAM (§3).
-2. **Generation is driven from the app layer, not the engine.**
-   `useToolpathGeneration` (`src/app/useToolpathGeneration.ts`) owns
-   `generateToolpathForOperation`, which dispatches on `operation.kind` to
-   exactly one generator. There is no single engine-level `generateToolpath()`:
-   the engine exports one `generate*Toolpath` per strategy and the hook chooses
-   between them. Results are cached per operation id and revalidated by
-   `isCacheHit`, so a cache miss — not a store subscription — is what triggers
-   recomputation.
+2. **Generation dispatch is engine-level.**
+   `computeOperationToolpath` (`src/engine/toolpaths/generateOperation.ts`) is
+   the single entry point and dispatches on `operation.kind` to exactly one
+   generator. The app still decides *when* it runs: the service in
+   `src/app/toolpathGeneration/` owns the queue and cache and runs through the
+   inline or worker backend. Cache validity lives in
+   `toolpathGeneration/cacheInputs.ts`; `isCacheHit` remains a wrapper.
 3. **Inside a generator**, using `generatePocketToolpath` (`pocket.ts`) as the
    reference shape:
    1. `resolveFeatureInstance` (`src/store/helpers/resolveFeatures.ts`) —
@@ -187,19 +186,22 @@ area `INDEX.md` files rather than being restated here.
    5. The pattern branch, dispatched through `OPERATION_PATTERN_SUPPORT`
       (`pocketPatterns.ts`) — kind → generator is step 2's job; pattern *within*
       a kind is this table's.
-4. **Post-generation, back in the hook**, in this order: tab warnings → tab
-   motion → `optimizeLinearMoves` → clamp warnings. The order is load-bearing —
+4. **Post-generation, inside `computeOperationToolpath`**, runs in this order:
+   tab warnings → tab motion → `optimizeLinearMoves` → clamp warnings. The
+   order is load-bearing —
    `applyTabWarnings` judges each tab against the cut Z range and the tab
    appliers raise that range, so warning after applying would report every
    applied tab as lying outside the range it just created.
-5. **Emission.** `ExportDialog` resolves the machine through
-   `getActiveMachineDefinition(project)` — the export boundary (§3) — then calls
-   `runPostProcessor` (`src/engine/gcode/postprocessor.ts`), which owns arc
+5. **Emission.** `ExportDialog` drives `useExportPreparation`, which uses
+   `toolpathGeneration/exportPreparation.ts` to resolve the machine through
+   `getActiveMachineDefinition(project)` — the export boundary (§3) — and call
+   `runPostProcessor` (`src/engine/gcode/postprocessor.ts`). A program contains
+   all of its operations or it is not written; the postprocessor owns arc
    fitting, modal tracking, and canned cycles.
-6. **Parallel consumers.** The same `ToolpathResult` also feeds simulation
+6. **Parallel consumers.** Simulation
    (`simulateOperationHeightfield`, `src/engine/simulation/replay.ts`), the
-   operation booklet, and model export. They consume generator output; they are
-   not stages on the export path.
+   operation booklet, and exported-motion debug all request their paths through
+   `service.request`. They are not stages on the export path.
 
 ### Three crossings worth knowing
 

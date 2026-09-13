@@ -272,8 +272,9 @@ Each has a comment at its site pointing here.
    `−orbitRadius` in `resolveRegionDomainCurve`). A generated orbit must never be
    clipped, and every fragment is independently helix-entered. Region masks no
    longer refuse; they participate in guide-domain fragmentation.
-2. **Trochoidal must bypass the shared tab pass.** `useToolpathGeneration` calls
-   `applyEdgeRouteTabs`, which returns trochoidal results untouched. The shared
+2. **Trochoidal must bypass the shared tab pass.**
+   `computeOperationToolpath` calls `applyEdgeRouteTabs`, which returns
+   trochoidal results untouched. The shared
    pass expands tab footprints by `toolRadius + stockToLeaveRadial` while the
    generator uses orbit-derived clearances, so once stock-to-leave is set the
    shared pass finds "unprotected" cut moves the generator placed deliberately
