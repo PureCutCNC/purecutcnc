@@ -15,35 +15,11 @@
  */
 
 /**
- * Shape of one golden record in the issue #675 parity baseline, plus the
- * canonicalisation both the capture script and the parity test must use.
+ * Canonicalisation for the issue #675 executor seam tests.
  *
- * Split out from `parityCorpus.ts` so the test and the capture script agree on
- * the encoding by construction: a hash is only a parity proof if both sides
- * serialise identically.
+ * The direct engine call and the executor result are independently constructed
+ * object graphs, so they need one stable value encoding before comparison.
  */
-
-import type { ToolpathResult } from './types'
-
-export interface ParityRecord {
-  /** sha256 of the canonicalised final `ToolpathResult`. The real gate. */
-  resultHash: string
-  /** sha256 of the canonicalised pre-optimization raw result. */
-  rawHash: string
-  /** sha256 of the posted G-code, with the corpus's frozen machine and options. */
-  gcodeHash: string
-  // Everything below is diagnostic only: a hash mismatch says *that* something
-  // moved, these say *what*, without needing the baseline recaptured to debug.
-  moves: number
-  rawMoves: number
-  gcodeLines: number
-  /** Warning codes in emitted order — order is part of the contract. */
-  warnings: string[]
-  bounds: string
-  drillCycles: number
-  collidingClampIds: string[]
-  collidingMoveIndices: number
-}
 
 /**
  * Deterministic JSON with recursively sorted object keys.
@@ -69,25 +45,4 @@ function sortKeys(value: unknown): unknown {
     if (source[key] !== undefined) sorted[key] = sortKeys(source[key])
   }
   return sorted
-}
-
-/** The diagnostic half of a record — derived, never the assertion itself. */
-export function summarize(
-  result: ToolpathResult,
-  raw: ToolpathResult,
-  gcode: string,
-): Omit<ParityRecord, 'resultHash' | 'rawHash' | 'gcodeHash'> {
-  return {
-    moves: result.moves.length,
-    rawMoves: raw.moves.length,
-    gcodeLines: gcode.split('\n').length,
-    warnings: result.warnings.map((warning) => warning.code),
-    bounds: result.bounds
-      ? `${result.bounds.minX},${result.bounds.minY},${result.bounds.minZ}`
-        + `:${result.bounds.maxX},${result.bounds.maxY},${result.bounds.maxZ}`
-      : 'null',
-    drillCycles: result.drillCycles?.length ?? 0,
-    collidingClampIds: [...(result.collidingClampIds ?? [])].sort(),
-    collidingMoveIndices: result.collidingMoveIndices?.length ?? 0,
-  }
 }

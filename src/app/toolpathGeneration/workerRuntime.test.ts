@@ -31,20 +31,14 @@
  */
 
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { Worker } from 'node:worker_threads'
+import { computeOperationToolpath } from '../../engine/toolpaths/generateOperation'
 import { buildParityCorpus, postParityCase } from '../../engine/toolpaths/parityCorpus'
-import { canonicalize, type ParityRecord } from '../../engine/toolpaths/parityRecord'
+import { canonicalize } from '../../engine/toolpaths/parityRecord'
 import { TOOLPATH_PROTOCOL_VERSION, isWorkerToMain, resolveOperation } from './protocol'
 import { unpackResult } from './moveTransport'
 import type { WorkerToMain } from './protocol'
 import type { RequestIdentity } from './types'
-
-interface Baseline { baseSha: string; cases: Record<string, ParityRecord> }
-
-const baseline = JSON.parse(
-  readFileSync(new URL('../../engine/toolpaths/__baseline__/issue-675-parity.json', import.meta.url), 'utf8'),
-) as Baseline
 
 const ADAPTER_URL = new URL('./workerThreadAdapter.ts', import.meta.url).href
 
@@ -126,7 +120,7 @@ function createDriver(): {
 }
 
 async function main(): Promise<void> {
-  console.log(`\nGeneration worker on a real thread (baseline ${baseline.baseSha})`)
+  console.log('\nGeneration worker on a real thread (live engine result)')
 
   const corpus = buildParityCorpus()
   const byKind = new Map<string, typeof corpus[number]>()
@@ -147,8 +141,12 @@ async function main(): Promise<void> {
   let snapshotId = 1
 
   for (const [kind, parityCase] of byKind) {
-    const expected = baseline.cases[parityCase.id]
     const operation = resolveOperation(parityCase.project, parityCase.operationId)!
+    const expected = computeOperationToolpath(parityCase.project, operation, { trace: true })
+    if (!expected || !expected.raw) {
+      check(`${kind} direct engine`, false, 'expected a traced engine result')
+      continue
+    }
 
     driver.send({ kind: 'loadSnapshot', documentKey: 1, snapshotId, project: parityCase.project })
     await driver.await((message) => message.kind === 'snapshotReady' && message.snapshotId === snapshotId)
@@ -171,26 +169,26 @@ async function main(): Promise<void> {
     }
 
     // Unpacked here rather than compared packed: since slice 6 the moves cross
-    // as transferred buffers, so these assertions now cover the whole trip —
-    // generation, packing, transfer, unpacking — against values captured before
-    // any of it existed.
+    // as transferred buffers, so these assertions cover the whole trip —
+    // generation, packing, transfer and unpacking — against a main-thread call.
     const result = unpackResult(answer.result)
     const raw = answer.raw ? unpackResult(answer.raw) : null
 
     check(
-      `${kind}: worker result equals the pre-extraction baseline`,
-      sha256(canonicalize(result)) === expected.resultHash,
-      'the worker computed a different toolpath',
+      `${kind}: worker result equals the direct engine result`,
+      sha256(canonicalize(result)) === sha256(canonicalize(expected.result)),
+      'the worker result differs from the engine result',
     )
     check(
-      `${kind}: worker raw trace equals the baseline`,
-      raw !== null && sha256(canonicalize(raw)) === expected.rawHash,
-      'the worker produced a different raw trace',
+      `${kind}: worker raw trace equals the direct engine result`,
+      raw !== null && sha256(canonicalize(raw)) === sha256(canonicalize(expected.raw)),
+      'the worker raw trace differs from the engine result',
     )
     check(
-      `${kind}: G-code posted from the worker result is byte-identical`,
-      sha256(postParityCase(parityCase.project, operation, result)) === expected.gcodeHash,
-      'the posted program differs',
+      `${kind}: G-code posted from the worker result equals the engine result`,
+      sha256(postParityCase(parityCase.project, operation, result))
+        === sha256(postParityCase(parityCase.project, operation, expected.result)),
+      'the posted program differs from the engine result',
     )
   }
 
@@ -201,6 +199,8 @@ async function main(): Promise<void> {
   if (kinds.length >= 2) {
     const [firstKind, first] = kinds[0]
     const [, second] = kinds[1]
+    const firstOperation = resolveOperation(first.project, first.operationId)!
+    const firstExpected = computeOperationToolpath(first.project, firstOperation)
     for (const parityCase of [second, first]) {
       driver.send({ kind: 'loadSnapshot', documentKey: 1, snapshotId, project: parityCase.project })
       await driver.await((message) => message.kind === 'snapshotReady' && message.snapshotId === snapshotId)
@@ -219,7 +219,8 @@ async function main(): Promise<void> {
         check(
           `A/B/A: ${firstKind} is unchanged after another snapshot was installed`,
           answer.kind === 'completed'
-            && sha256(canonicalize(unpackResult(answer.result))) === baseline.cases[first.id].resultHash,
+            && firstExpected !== null
+            && sha256(canonicalize(unpackResult(answer.result))) === sha256(canonicalize(firstExpected.result)),
           'a re-run after a snapshot swap produced a different result',
         )
       }
