@@ -176,8 +176,9 @@ test.describe('CAM operation browser smoke', () => {
     await widthInput.fill('0.4')
     await widthInput.blur()
 
-    // The imported model is intentionally outside the POC, so creation stays
-    // gated until the user explicitly acknowledges that visible coverage gap.
+    // The imported model has no retained mesh asset in this quick fixture, so
+    // creation stays gated until the user explicitly acknowledges that visible
+    // unresolved coverage.
     const acknowledge = dialog.getByRole('checkbox', { name: /I understand these features will not be covered/ })
     await expect(acknowledge).toBeVisible()
     await acknowledge.check()
@@ -195,6 +196,66 @@ test.describe('CAM operation browser smoke', () => {
     expect(restored.operations).toEqual([])
     expect(restored.tabs).toEqual([])
     expect(restored.tools).toEqual(seeded.tools)
+  })
+
+  test('CAM Plan recommends transformed imported-model rough and finish stages (#765)', async ({ app }) => {
+    const project = JSON.parse(readFileSync(new URL('../src/engine/test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8'))
+    project.operations = []
+    project.tools.push(
+      {
+        id: 'plan-ball-finish', name: 'Plan ball finish', units: 'inch', type: 'ball_endmill', diameter: 0.0625,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 30,
+        defaultPlungeFeed: 10, defaultStepdown: 0.08, defaultStepover: 0.4, maxCutDepth: 1,
+      },
+      {
+        id: 'plan-oversized', name: 'Plan oversized endmill', units: 'inch', type: 'flat_endmill', diameter: 1,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 30,
+        defaultPlungeFeed: 10, defaultStepdown: 0.08, defaultStepover: 0.4, maxCutDepth: 1,
+      },
+    )
+    await seedProject(app.page, JSON.stringify(project))
+
+    await app.page.getByRole('button', { name: 'Plan', exact: true }).click()
+    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan (Preview)' })
+    const rough = dialog.locator('.cam-plan-row').filter({ hasText: '3D surface rough · Rough' }).first()
+    const finish = dialog.locator('.cam-plan-row').filter({ hasText: '3D surface finish · Finish' }).first()
+    await expect(rough).toContainText(project.tools[0].name)
+    await expect(finish).toContainText('Plan ball finish')
+
+    await rough.click()
+    await expect(dialog.getByText('Stock to leave radial', { exact: true })).toBeVisible()
+    await expect(dialog.getByText('Stock to leave axial', { exact: true })).toBeVisible()
+    const roughToolField = dialog.locator('.cam-plan-field').filter({ hasText: 'Tool' }).first()
+    await roughToolField.locator('.ui-select__trigger').click()
+    await expect(app.page.getByRole('option', { name: /Plan oversized endmill/ })).toHaveCount(0)
+    await app.page.getByRole('option', { name: /Plan ball finish/ }).click()
+
+    await rough.focus()
+    await app.page.keyboard.press('ArrowDown')
+    await expect(finish).toBeFocused()
+    await app.page.keyboard.press('Enter')
+    await expect(dialog.getByText('Pattern', { exact: true })).toBeVisible()
+    await expect(dialog.getByText(/^Scallop height/)).toBeVisible()
+    await expect(dialog.getByRole('checkbox', { name: 'Filter by surface slope', exact: true })).toBeVisible()
+  })
+
+  test('CAM Plan keeps an imported model with no compatible tool as a visible blocking row (#765)', async ({ app }) => {
+    const project = JSON.parse(readFileSync(new URL('../src/engine/test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8'))
+    project.operations = []
+    project.tools = []
+    const modelFeature = project.features.find((feature: { kind?: string; operation?: string }) =>
+      feature.kind === 'stl' && feature.operation === 'model',
+    ) as { stl: { scale: number } }
+    modelFeature.stl.scale = 0.005
+    await seedProject(app.page, JSON.stringify(project))
+
+    await app.page.getByRole('button', { name: 'Plan', exact: true }).click()
+    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan (Preview)' })
+    const rough = dialog.locator('.cam-plan-row').filter({ hasText: '3D surface rough · Rough' }).first()
+    await expect(rough).toBeVisible()
+    await expect(rough.locator('.cam-plan-row__warning')).toBeVisible()
+    await expect(dialog.locator('.cam-plan-errors')).toContainText('No compatible surface tool satisfies this model')
+    await expect(dialog.getByRole('button', { name: /Create \d+ operations/ })).toBeDisabled()
   })
 
   test('CAM Plan preview treats resolver-accounted islands as retained material, not uncovered work (#735)', async ({ app }) => {

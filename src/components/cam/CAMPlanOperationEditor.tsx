@@ -21,6 +21,8 @@ import { formatLength, parseLengthInput } from '../../utils/units'
 import { Select } from '../Select'
 import { camT } from './camI18n'
 import { OPERATION_FIELDS, resolvedEntryStrategy, type OperationFieldId } from './operationFields'
+import { ScallopHeightField } from './ScallopHeightField'
+import { SurfaceSlopeFields } from './SurfaceSlopeFields'
 
 function operationLabel(kind: OperationKind): string {
   switch (kind) {
@@ -111,18 +113,20 @@ export interface CAMPlanOperationEditorProps {
 export function CAMPlanOperationEditor({ draft, tools, units, onPatch, onUseRecommendedRestTool }: CAMPlanOperationEditorProps) {
   const operation = draft.operation
   const selectedTool = tools.find((candidate) => candidate.id === operation.toolRef)?.tool ?? null
+  const ballRadius = selectedTool?.type === 'ball_endmill' ? selectedTool.diameter / 2 : null
   const isVCarve = operation.kind === 'v_carve' || operation.kind === 'v_carve_medial'
+  const restrictToRecommendedTools = operation.kind === 'rough_surface' || operation.kind === 'finish_surface'
   const error = draft.hardError ?? draft.staleReason
   const canUseRecommendedRestTool = Boolean(
     draft.rest
     && draft.hardError
     && draft.toolOptions.some((toolRef) => toolRef !== operation.toolRef),
   )
-  // The plan can introduce a bundled tool when applied, so a user never has
-  // to preload a tool merely to choose it here. Match the ordinary operation
-  // editor by reserving the V-carve list for V-bits.
+  // Imported-surface rows use transformed geometry to establish their safe
+  // cutter set, so only the compatible planned choices are offered there.
   const toolOptions = tools.filter((candidate) =>
-    candidate.id === operation.toolRef || !isVCarve || candidate.tool.type === 'v_bit',
+    (!restrictToRecommendedTools || candidate.id === operation.toolRef || draft.toolOptions.includes(candidate.id))
+    && (!isVCarve || candidate.tool.type === 'v_bit'),
   )
 
   return (
@@ -182,6 +186,18 @@ export function CAMPlanOperationEditor({ draft, tools, units, onPatch, onUseReco
               onChange={(pattern) => onPatch({ pocketPattern: pattern as PocketPattern }, true)}
             />
           </label>
+        ) : null}
+        {fieldApplies('scallopHeight', operation, selectedTool) && ballRadius !== null ? (
+          <ScallopHeightField
+            height={operation.finishScallopHeight}
+            radius={ballRadius}
+            legacySpacing={operation.stepover * ballRadius * 2}
+            units={units}
+            onCommit={(finishScallopHeight) => onPatch({ finishScallopHeight }, true)}
+          />
+        ) : null}
+        {fieldApplies('slopeFilter', operation, selectedTool) ? (
+          <SurfaceSlopeFields operation={operation} onPatch={(patch) => onPatch(patch, true)} />
         ) : null}
         {fieldApplies('edgeStrategy', operation, selectedTool) ? (
           <label className="cam-plan-field">

@@ -1950,7 +1950,7 @@ export function CAMPanel({
           <OperationParameterReference kind="stockRadial" />
         </label>
       ),
-      slopeFilter: () => <SurfaceSlopeFields operation={operation} updateOperation={updateOperation} />,
+      slopeFilter: () => <SurfaceSlopeFields operation={operation} onPatch={(patch) => updateOperation(operation.id, patch)} />,
       adaptiveRefinement: () => (
         <label
           className="properties-check"

@@ -17,7 +17,7 @@
 import type { RestRegionDraft } from '../../toolpaths/restRegions'
 import type { Operation, Tab, Tool } from '../../../types/project'
 
-export type CamPlanCoverageStatus = 'existing' | 'planned' | 'not_needed' | 'unsupported'
+export type CamPlanCoverageStatus = 'existing' | 'planned' | 'not_needed' | 'unresolved' | 'unsupported'
 
 export interface CamPlanCoverage {
   featureId: string
@@ -50,6 +50,12 @@ export interface CamPlanOperationDraft {
   rationale: string
   toolReason: string
   toolOptions: string[]
+  /** Transient planner limit; never stored in a project operation. */
+  maximumToolDiameter?: number | null
+  /** Why this draft uses its transient cutter limit. */
+  toolLimitSource?: 'feature-span' | 'model-footprint'
+  /** Reach requirement derived by the planner, in project units. */
+  requiredCutDepth?: number
   coveredFeatureIds: string[]
   dependencies: string[]
   hardError: string | null

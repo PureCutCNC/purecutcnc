@@ -17,7 +17,7 @@
 import * as THREE from 'three'
 import ManifoldModule, { type Manifold as ManifoldSolid, type ManifoldToplevel } from 'manifold-3d'
 import { rectProfile } from '../types/project'
-import type { Clamp, DimensionRef, MachineOrigin, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
+import type { Clamp, DimensionRef, MachineOrigin, Matrix2D, Project, SketchFeature, SketchProfile, Segment, Stock, Tab } from '../types/project'
 import { expandFeatureGeometry } from '../text'
 import { modelFeatures } from '../store/helpers/featureRoles'
 import { resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
@@ -212,17 +212,26 @@ interface STLTransformedCacheEntry {
 
 const stlTransformedGeometryCache = new Map<string, STLTransformedCacheEntry>()
 
+/**
+ * The transformed-mesh path only needs the model identity, its resolved
+ * placement and its Z range.  Keeping that boundary structural lets CAM read
+ * a resolved feature instance without falling back to definition-local data.
+ */
+type STLTransformFeature = Pick<SketchFeature, 'id' | 'kind' | 'stl' | 'z_top' | 'z_bottom'> & {
+  transform?: Matrix2D
+}
+
 export function clearSTLTransformedGeometryCache(): void {
   stlTransformedGeometryCache.clear()
 }
 
-function featureModelAsset(project: Project, feature: SketchFeature) {
+function featureModelAsset(project: Project, feature: STLTransformFeature) {
   const assetId = feature.stl?.meshAssetId
   return assetId ? project.modelAssets?.[assetId] ?? null : null
 }
 
 function stlTransformedGeometryCacheKey(
-  feature: SketchFeature,
+  feature: STLTransformFeature,
   project: Project,
 ): string {
   const stl = feature.stl
@@ -292,7 +301,7 @@ function setCachedSTLTransformedGeometry(
  * preview matches the toolpath geometry.
  */
 export function loadSTLTransformedGeometry(
-  feature: SketchFeature,
+  feature: STLTransformFeature,
   project: Project
 ): STLTransformedData | null {
   const asset = feature.kind === 'stl' ? featureModelAsset(project, feature) : null

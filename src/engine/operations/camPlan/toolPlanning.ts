@@ -123,8 +123,9 @@ export function rankCamPlanTools(
   pool: CamPlanTool[],
   requiredDepth: number,
   reusedToolIds: ReadonlySet<string>,
+  maximumDiameterOverride?: number | null,
 ): RankedCamPlanTools {
-  const diameterLimit = maximumDiameter(project, kind, target)
+  const diameterLimit = maximumDiameterOverride ?? maximumDiameter(project, kind, target)
   const tools = pool
     .filter((candidate) => Number.isFinite(toolTypeRank(kind, candidate.tool)))
     .filter((candidate) => candidate.tool.diameter > 0)
@@ -167,11 +168,12 @@ export function toolChoiceReason(
   kind: OperationKind,
   maximum: number | null,
   reused: boolean,
+  limitSource: 'feature-span' | 'model-footprint' = 'feature-span',
 ): string {
   const origin = candidate.source === 'existing' ? 'already in this project' : 'from the bundled library'
   const scale = maximum == null
     ? 'selected because no reliable target span was available'
-    : `fits the operation's ${maximum.toFixed(3)} ${candidate.tool.units} cutter limit`
+    : `fits the ${limitSource === 'model-footprint' ? 'transformed model footprint' : 'operation'} ${maximum.toFixed(3)} ${candidate.tool.units} cutter limit`
   const reuse = reused ? ' and is reused by another planned operation' : ''
   return `${candidate.tool.name} is ${origin}, ${scale}${reuse}; preferred for ${kind.replaceAll('_', ' ')}.`
 }
