@@ -206,7 +206,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketWallCornerCleanupFallback': 'Un angle arrondi de paroi de poche n’a pas pu être nettoyé en toute sécurité ; la trajectoire de paroi vive a été conservée pour cet anneau',
   'warnings.pocketFinishIslandWallTooTight': 'La fraise ne passe pas entre un îlot et la paroi de la poche ; la passe de finition de l’îlot a été rognée là où elle passe, il reste donc de la matière dans cet intervalle',
   'warnings.postWcsNullSelect': 'La définition de machine demande {wcsCommand} dans l’en-tête, mais selectCommand est nul.',
-  'warnings.postToolChangesDisabled': 'L’opération « {operation} » nécessite l’outil « {tool} », mais les changements d’outil sont désactivés : le programme continue de couper avec l’outil précédent. Activez les changements d’outil, ou exportez un outil à la fois.',
+  'warnings.postToolChangesDisabled': 'L’opération « {operation} » nécessite l’outil « {tool} », mais les changements d’outil sont désactivés : le programme continue de couper avec l’outil précédent. Activez les changements d’outil, ou exportez une opération à la fois.',
   'warnings.postNoCoolantCommands': 'L’émission de liquide de refroidissement est demandée, mais la définition de machine ne contient aucune commande correspondante.',
   'warnings.postCannedCycleUnsupported': 'Opération « {operation} » : cycle fixe {drillType} non pris en charge par la machine « {machine} » ; émission des mouvements développés.',
   'warnings.postArcNoCapability': "L'opération « {operation} » contient des mouvements linéaires qui pourraient être ajustés en arcs, mais la machine sélectionnée ne prend pas en charge l'interpolation circulaire (G2/G3). Émission de mouvements linéaires à la place.",
