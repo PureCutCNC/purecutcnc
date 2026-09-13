@@ -104,8 +104,9 @@ test.describe('CAM operation browser smoke', () => {
     await seedProject(app.page, JSON.stringify(seeded))
 
     await app.page.getByRole('button', { name: 'Plan', exact: true }).click()
-    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan (Preview)' })
+    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan' })
     await expect(dialog).toBeVisible()
+    await expect(dialog.locator('.cam-plan-header > div > .cam-plan-eyebrow')).toHaveCount(0)
     await expect.poll(async () => dialog.evaluate((element) => {
       const summary = element.querySelector('.cam-plan-summary')?.getBoundingClientRect()
       const body = element.querySelector('.cam-plan-body')?.getBoundingClientRect()
@@ -216,7 +217,7 @@ test.describe('CAM operation browser smoke', () => {
     await seedProject(app.page, JSON.stringify(project))
 
     await app.page.getByRole('button', { name: 'Plan', exact: true }).click()
-    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan (Preview)' })
+    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan' })
     const rough = dialog.locator('.cam-plan-row').filter({ hasText: '3D surface rough · Rough' }).first()
     const finish = dialog.locator('.cam-plan-row').filter({ hasText: '3D surface finish · Finish' }).first()
     await expect(rough).toContainText(project.tools[0].name)
@@ -257,7 +258,7 @@ test.describe('CAM operation browser smoke', () => {
     await seedProject(app.page, JSON.stringify(project))
 
     await app.page.getByRole('button', { name: 'Plan', exact: true }).click()
-    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan (Preview)' })
+    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan' })
     const rough = dialog.locator('.cam-plan-row').filter({ hasText: '3D surface rough · Rough' }).first()
     await expect(rough).toBeVisible()
     await expect(rough.locator('.cam-plan-row__warning')).toBeVisible()
@@ -310,7 +311,7 @@ test.describe('CAM operation browser smoke', () => {
     await seedProject(app.page, JSON.stringify(seeded))
 
     await app.page.getByRole('button', { name: 'Plan', exact: true }).click()
-    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan (Preview)' })
+    const dialog = app.page.getByRole('dialog', { name: 'CAM Plan' })
     await expect(dialog.getByText('Retained Island', { exact: true })).toHaveCount(0)
     await expect(dialog.getByRole('checkbox', { name: /I understand these features will not be covered/ })).toHaveCount(0)
     await expect(dialog.getByRole('button', { name: /Create \d+ operations/ })).toBeEnabled()

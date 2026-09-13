@@ -352,7 +352,6 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
       <div className="dialog dialog--cam-plan" role="dialog" aria-modal="true" aria-labelledby="cam-plan-title" ref={dialogRef} tabIndex={-1}>
         <header className="dialog-header cam-plan-header">
           <div>
-            <span className="cam-plan-eyebrow">{camT('cam.plan.preview')}</span>
             <h2 id="cam-plan-title">{camT('cam.plan.title')}</h2>
             <p>{camT('cam.plan.subtitle')}</p>
           </div>
