@@ -69,32 +69,6 @@ const baseline = JSON.parse(
 ) as Baseline
 
 /**
- * Cases whose *warnings* legitimately changed after the baseline was captured,
- * with the reason. Geometry may not move: the G-code hash and every summary
- * counter must still match, so this permits an advisory and nothing else.
- *
- * This exists so a real behaviour change is recorded rather than laundered
- * through a recapture. Regenerating the baseline would have made these two
- * cases green while also erasing the evidence that the extraction preserved
- * output — which is the only thing this file is for.
- */
-const DELIBERATE_WARNING_DIVERGENCE = new Map<string, string>([
-  [
-    'example/t-style-body/op0160',
-    'issue #526 added `regionExtendedBySubtractDepth` where a non-target subtract '
-    + 'carves below the target. Nothing here machines that subtract, so the fold is '
-    + 'correct and the advisory is intended. The `surfaceNoOffsetContours` it '
-    + 'drags along is empty-band noise: two 3/32" holes no 1/4" tool can enter. '
-    + 'Issue #754 collapsed its repetition per level and per band, and moved no '
-    + 'geometry — which is what the hashes below still assert.',
-  ],
-  [
-    'example/t-style-body/op0161',
-    'Same subtract, finish pass: `regionExtendedBySubtractDepth` plus one '
-    + '`surfaceNoFinishContours`. Move counts and emitted G-code are unchanged.',
-  ],
-])
-/**
  * Cases whose *output* was re-recorded after the baseline was captured, with
  * the reason and the hashes it replaced (issue #706).
  *
@@ -116,6 +90,15 @@ const DELIBERATE_WARNING_DIVERGENCE = new Map<string, string>([
  * `example/purecutcnc/op0017` no cut segment moved at all, only their order.
  * Every summary counter is unchanged in both. The behavioural guard is
  * `pocketFinishIslandDirection.test.ts`.
+ *
+ * The two `example/t-style-body` pocket cases are #754. The example dropped
+ * `Circle 2` and `Circle 3` — two 3/32" subtract holes no operation machined,
+ * and the only non-target subtracts reaching below a pocket floor — so the fold
+ * #526 added, and the band it created, are gone. Measured against the pre-#754
+ * engine at 46f232d over the same edited example: 21968 and 366 moves with
+ * byte-identical counters and no warnings, so the engine change, which only
+ * collapses duplicated advisories, contributed nothing to the move. The other
+ * five t-style cases and every other case in the corpus are untouched.
  */
 const RECORDED_AFTER_BASELINE: ReadonlyMap<
   string,
@@ -140,6 +123,28 @@ const RECORDED_AFTER_BASELINE: ReadonlyMap<
         resultHash: '16da807a3ba7fe0457e42f8f8d9c05bf0a5bd7b7c128a505b0cb79073602bafe',
         rawHash: '2077674315e9037c8d4963d8df70c0107a1989fd736d5ed169cb1d0840d1b3ca',
         gcodeHash: 'b38f9c8c54ebb33852deb2a9039ccb55ec0de9882d3beb3b6e0a41bb9cfd0a1a',
+      },
+    },
+  ],
+  [
+    'example/t-style-body/op0160',
+    {
+      issue: 754,
+      replaced: {
+        resultHash: 'd33413ae3a097387550d952326a5607fbec7c7f3c06e1d2cd9e8480673141fc9',
+        rawHash: 'ea50016e7c88a0b66e0da60671623d3029d016d45bb2ab56a9048794650a0df9',
+        gcodeHash: 'f79311f27e8bbd85406942abcdcc057ad4af51d2115deb83098a7c957c43523d',
+      },
+    },
+  ],
+  [
+    'example/t-style-body/op0161',
+    {
+      issue: 754,
+      replaced: {
+        resultHash: '81bcd1d8afdf0f3165cba7dfe2fb088fb6c3ff62cb26c36a11b8bf4136343da5',
+        rawHash: '81bcd1d8afdf0f3165cba7dfe2fb088fb6c3ff62cb26c36a11b8bf4136343da5',
+        gcodeHash: 'd0b15fb707ad906d80bd2d589df2260262ade765a1a3e6fd34af4aa67654dbc0',
       },
     },
   ],
@@ -232,23 +237,6 @@ for (const parityCase of corpus) {
     drift.push(`collidingMoveIndices ${expected.collidingMoveIndices}→${actual.collidingMoveIndices}`)
   }
   const context = drift.length > 0 ? ` (${drift.join('; ')})` : ' (summary fields all match — a value moved below the summary)'
-
-  const warningsOnly = DELIBERATE_WARNING_DIVERGENCE.get(parityCase.id)
-  if (warningsOnly) {
-    // Permitted to differ, but only in warnings — everything that reaches the
-    // machine must still be identical.
-    check(
-      `${parityCase.id} geometry unchanged despite a recorded advisory change`,
-      actual.gcodeHash === expected.gcodeHash
-        && actual.moves === expected.moves
-        && actual.rawMoves === expected.rawMoves
-        && actual.bounds === expected.bounds
-        && actual.drillCycles === expected.drillCycles
-        && actual.collidingMoveIndices === expected.collidingMoveIndices,
-      `only warnings may differ here (${warningsOnly})${context}`,
-    )
-    continue
-  }
 
   check(`${parityCase.id} result`, actual.resultHash === expected.resultHash, `full result differs${context}`)
   check(`${parityCase.id} raw`, actual.rawHash === expected.rawHash, `pre-optimization result differs${context}`)
