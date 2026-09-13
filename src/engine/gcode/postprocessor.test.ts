@@ -1583,6 +1583,109 @@ function testOperationEntryRapidsSurviveOptimization(): void {
   )
 }
 
+// ── Tool tracking with tool changes off (#755) ───────────────────────
+
+/**
+ * Post a program of one operation per tool id and return its warnings.
+ *
+ * The reported defect needed nothing more than two operations sharing a tool
+ * with M6 off: the second was reported as a *different* tool, because the modal
+ * tool id was only advanced inside the emit branch. Tool identity is the only
+ * thing these operations differ by, so this is the thinnest fixture that can
+ * tell the cases apart.
+ */
+function runToolSequence(toolIds: readonly string[], emitToolChanges: boolean): {
+  warnings: ToolpathWarning[]
+  gcode: string
+} {
+  const project = newProject('Tool Tracking', 'mm')
+  project.tools = [
+    { ...defaultTool('mm', 1), id: 't1', name: 'Six Mill' },
+    { ...defaultTool('mm', 1), id: 't2', name: 'Three Mill' },
+  ]
+
+  const operations = toolIds.map((toolId, index) => {
+    const operation: Operation = {
+      id: `op${index + 1}`,
+      name: `Route ${index + 1}`,
+      kind: 'pocket',
+      pass: 'rough',
+      enabled: true,
+      showToolpath: true,
+      debugToolpath: false,
+      target: { source: 'stock' },
+      toolRef: toolId,
+      stepdown: 1,
+      stepover: 0.4,
+      feed: 600,
+      plungeFeed: 180,
+      rpm: 12000,
+      pocketPattern: 'offset',
+      pocketAngle: 0,
+      stockToLeaveRadial: 0,
+      stockToLeaveAxial: 0,
+      finishWalls: true,
+      finishFloor: true,
+      carveDepth: 1,
+      maxCarveDepth: 1,
+    }
+    const toolpath: ToolpathResult = {
+      operationId: operation.id,
+      warnings: [],
+      bounds: null,
+      moves: [
+        { kind: 'rapid', from: { x: 0, y: 0, z: 5 }, to: { x: index, y: 0, z: 5 } },
+        { kind: 'cut', from: { x: index, y: 0, z: 5 }, to: { x: index, y: 1, z: 0 } },
+      ],
+    }
+    const toolRecord = project.tools.find((candidate) => candidate.id === toolId)!
+    return { operation, tool: normalizeToolForProject(toolRecord, project), toolpath }
+  })
+
+  const result = runPostProcessor({
+    project,
+    definition: testDefinition(['; Operation {operationIndex}: {operationName}']),
+    operations,
+    options: { emitToolChanges, emitCoolant: false, programName: project.meta.name },
+  })
+  return { warnings: result.warnings, gcode: result.gcode }
+}
+
+function testToolChangesOffSameToolStaysQuiet(): void {
+  console.log('Testing one tool across operations with tool changes off warns nothing (#755)...')
+  const { warnings, gcode } = runToolSequence(['t1', 't1'], false)
+  assert(
+    !warnings.some((warning) => warning.code === 'postToolChangesDisabled'),
+    'the same tool must not be reported as a different one',
+  )
+  assert(gcode.includes('; Operation 2: Route 2'), 'both operations are still posted')
+}
+
+function testToolChangesOffRealChangeWarnsOnce(): void {
+  console.log('Testing a real tool change with tool changes off warns once per change (#755)...')
+
+  const oneChange = runToolSequence(['t1', 't2', 't2'], false)
+  const reported = oneChange.warnings.filter((warning) => warning.code === 'postToolChangesDisabled')
+  assert(reported.length === 1, `A to B to B is one real change, got ${reported.length}`)
+  assert(reported[0].params?.tool === 'Three Mill', 'the report names the tool that is not loaded')
+
+  const twoChanges = runToolSequence(['t1', 't2', 't1'], false)
+  assert(
+    twoChanges.warnings.filter((warning) => warning.code === 'postToolChangesDisabled').length === 2,
+    'A to B to A is two real changes',
+  )
+
+  const emitted = runToolSequence(['t1', 't2'], true)
+  assert(
+    !emitted.warnings.some((warning) => warning.code === 'postToolChangesDisabled'),
+    'a change that is emitted is not a warning',
+  )
+  assert(emitted.gcode.includes('M0 ; Tool change: Three Mill'), 'the change is actually emitted')
+}
+
+testToolChangesOffSameToolStaysQuiet()
+testToolChangesOffRealChangeWarnsOnce()
+
 testArcOutputIJ()
 testArcOutputR()
 testArcDisabledLinearFallback()

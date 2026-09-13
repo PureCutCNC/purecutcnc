@@ -496,6 +496,15 @@ export const exportDialog = {
   /** Warning entries shown in the dialog. */
   warnings: (page: Page) => exportDialog.root(page).locator('.export-warning'),
 
+  /** Error entries shown in the dialog — the tier that blocks Export (issue #755). */
+  errors: (page: Page) => exportDialog.root(page).locator('.export-error'),
+
+  /** The "Emit tool changes (M6)" checkbox in the options group. */
+  emitToolChanges: (page: Page) =>
+    exportDialog.root(page)
+      .locator('.export-option', { hasText: 'Emit tool changes' })
+      .locator('input[type="checkbox"]'),
+
   /** The primary footer button that performs the export. */
   exportButton: (page: Page) => exportDialog.root(page).locator('.dialog-footer .btn-primary'),
 

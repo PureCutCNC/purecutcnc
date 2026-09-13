@@ -316,3 +316,29 @@ export interface ToolpathWarning {
   code: ToolpathWarningCode
   params?: Record<string, string | number>
 }
+
+export type ToolpathWarningSeverity = 'warning' | 'error'
+
+/**
+ * Codes that do not merely annotate a program but make it unsafe to save.
+ *
+ * The default is a warning, and a new code belongs here only when the program
+ * is wrong rather than merely imperfect: promoting a code can block an export
+ * that works for someone today, so each promotion is its own decision (issue
+ * #755).
+ *
+ * - `postToolChangesDisabled` — the G-code cuts the second operation's paths
+ *   with the first operation's tool. Nothing in the program pauses the machine
+ *   for a change, so the part is machined with the wrong cutter.
+ */
+const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
+  'postToolChangesDisabled',
+])
+
+/**
+ * How a code should be presented, and whether it blocks an export. One lookup
+ * so a code carries the same severity everywhere it is shown.
+ */
+export function warningSeverity(code: ToolpathWarningCode): ToolpathWarningSeverity {
+  return ERROR_CODES.has(code) ? 'error' : 'warning'
+}

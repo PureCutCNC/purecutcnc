@@ -25,7 +25,7 @@ import {
 import type { ToolpathResult, ToolpathGenerationTrace, NormalizedTool } from '../../engine/toolpaths/types'
 import type { Operation } from '../../types/project'
 import type { GenerationContext, ToolpathGenerationService } from '../../app/toolpathGeneration/service'
-import type { ExportPostOptions } from '../../app/toolpathGeneration/exportPreparation'
+import { programHasError, type ExportPostOptions } from '../../app/toolpathGeneration/exportPreparation'
 import { useExportPreparation } from '../../app/toolpathGeneration/useExportPreparation'
 import {
   listExportOperationOptions,
@@ -35,7 +35,9 @@ import { ExportedMotionDebugDialog } from './ExportedMotionDebugDialog'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
-import { toolpathWarningTexts } from '../../i18n/warningText'
+import { toolpathWarningText } from '../../i18n/warningText'
+import { warningSeverity } from '../../engine/toolpaths/warningCodes'
+import { exportBlockReasonMessage } from './exportBlockReason'
 
 interface ExportDialogProps {
   onClose: () => void
@@ -115,17 +117,44 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     return getExportedMotionEligibility(activeOperations[0].toolpath).eligible
   }, [activeOperations])
 
-  const previewWarnings = useMemo(() => {
-    const warnings = toolpathWarningTexts(previewResult?.warnings ?? [])
-    if (operationOptions.length > 0 && selectedOperationIds.size === 0) {
-      warnings.unshift(td('dialogs.export.warning.noOperations'))
+  // The engine's codes carry their own severity, so one code lands in the same
+  // tier everywhere it is shown; the dialog only decides what to put beside
+  // them from live state (issue #755).
+  const previewMessages = useMemo(() => {
+    const errors: string[] = []
+    const warnings: string[] = []
+
+    for (const warning of previewResult?.warnings ?? []) {
+      const text = toolpathWarningText(warning)
+      if (warningSeverity(warning.code) === 'error') errors.push(text)
+      else warnings.push(text)
     }
+
+    // A blocked preparation used to just disable Export. The reason is the only
+    // thing that says what to change, and no machine or no selection are
+    // reported below from live state instead — saying those twice is noise.
+    if (preparation?.status === 'blocked') {
+      const blocked = exportBlockReasonMessage(
+        preparation.reason,
+        (operationId) => project.operations.find((operation) => operation.id === operationId)?.name ?? null,
+      )
+      if (blocked) errors.push(td(blocked.key, blocked.params))
+    }
+
     if (!activeDefinition) {
-      warnings.unshift(td('dialogs.export.warning.noMachine'))
+      errors.push(td('dialogs.export.warning.noMachine'))
     }
-    return warnings
+    if (operationOptions.length > 0 && selectedOperationIds.size === 0) {
+      errors.push(td('dialogs.export.warning.noOperations'))
+    }
+
+    return { errors, warnings }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
-  }, [activeDefinition, operationOptions, previewResult, selectedOperationIds, languageTag])
+  }, [activeDefinition, operationOptions, preparation, previewResult, project, selectedOperationIds, languageTag])
+
+  // The same predicate the save path re-checks, so the button and the bytes
+  // cannot disagree about whether this program may be written.
+  const hasProgramError = previewResult !== null && programHasError(previewResult.warnings)
 
   function toggleOperationSelected(operationId: string, selected: boolean) {
     setSelectedOperationIds((current) => {
@@ -294,11 +323,21 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
           </div>
 
           <div className="dialog-preview-container">
-            {previewWarnings.length > 0 && (
+            {previewMessages.errors.length > 0 && (
+              <div className="dialog-section-group">
+                <label className="dialog-section-title">{td('dialogs.export.errors')}</label>
+                <div className="export-warning-list">
+                  {previewMessages.errors.map((error, index) => (
+                    <div key={index} className="export-error">{error}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {previewMessages.warnings.length > 0 && (
               <div className="dialog-section-group">
                 <label className="dialog-section-title">{td('dialogs.export.warnings')}</label>
                 <div className="export-warning-list">
-                  {previewWarnings.map((warning, index) => (
+                  {previewMessages.warnings.map((warning, index) => (
                     <div key={index} className="export-warning">{warning}</div>
                   ))}
                 </div>
@@ -332,7 +371,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
           <button
             className="btn-primary"
             onClick={handleExport}
-            disabled={!previewResult || !activeDefinition || activeOperations.length === 0}
+            disabled={!previewResult || !activeDefinition || activeOperations.length === 0 || hasProgramError}
             type="button"
           >
             {td('dialogs.export.export', { ext: activeDefinition ? `.${activeDefinition.fileExtension}` : '' })}

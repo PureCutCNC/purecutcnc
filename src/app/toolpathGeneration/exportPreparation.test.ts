@@ -36,6 +36,7 @@ import {
   createExportToken,
   exportOptionsKey,
   prepareExport,
+  programHasError,
   tokenMatchesContext,
   type ExportPostOptions,
 } from './exportPreparation'
@@ -216,6 +217,22 @@ async function main(): Promise<void> {
       preparation.status === 'ready'
         && preparation.operations.map((row) => row.operation.id).join(',') === 'a,b',
       'the posted order must follow the token',
+    )
+  })
+
+  await test('an error code blocks the export and a warning does not', () => {
+    assert(
+      programHasError([{ code: 'postToolChangesDisabled' }]),
+      'a program that changes tool without emitting the change must not be saveable',
+    )
+    assert(
+      programHasError([{ code: 'tabNoIntersect' }, { code: 'postToolChangesDisabled' }]),
+      'one error among warnings is enough to block',
+    )
+    assert(!programHasError([]), 'a program with nothing to say is exportable')
+    assert(
+      !programHasError([{ code: 'postNoCoolantCommands' }, { code: 'postWcsNullSelect' }]),
+      'warnings annotate a program rather than blocking it',
     )
   })
 

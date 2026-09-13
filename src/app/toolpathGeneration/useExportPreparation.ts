@@ -32,6 +32,7 @@ import type { MachineDefinition } from '../../engine/gcode/types'
 import {
   createExportToken,
   prepareExport,
+  programHasError,
   tokenMatchesContext,
   type ExportPostOptions,
   type ExportPreparation,
@@ -129,6 +130,12 @@ export function useExportPreparation({
     if (!tokenMatchesContext(preparation.token, context, operationIds, definition, options)) {
       return null
     }
+    // A ready program is not automatically a saveable one: a preparation can
+    // succeed and still carry an error, and the same rule that disables the
+    // Export button has to hold when the button is stale or bypassed. This is
+    // the only G-code save path, so the re-check belongs here as much as the
+    // token re-check above (issue #755).
+    if (programHasError(preparation.result.warnings)) return null
     // The bytes are copied out here and never read again from state: once the
     // platform dialog is open the preview may be replaced underneath it, and
     // the file must be the program the user approved.
