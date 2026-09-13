@@ -3,7 +3,7 @@
   "meta": {
     "name": "t-style-body",
     "created": "2026-05-27T23:07:37.953Z",
-    "modified": "2026-07-27T14:52:10.939Z",
+    "modified": "2026-09-13T01:17:40.099Z",
     "units": "inch",
     "showFeatureInfo": false,
     "maxTravelZ": 2,
@@ -93,6 +93,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 0,
@@ -112,6 +113,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 0.25,
@@ -131,6 +133,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.5,
@@ -150,47 +153,10 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1,
-      "folderId": "fd0154",
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "f0081",
-      "name": "Circle 2",
-      "definitionId": "f0081",
-      "transform": {
-        "a": 1,
-        "b": 0,
-        "c": 0,
-        "d": 1,
-        "e": 0,
-        "f": 0
-      },
-      "constraints": [],
-      "z_top": 0.75,
-      "z_bottom": 0,
-      "folderId": "fd0154",
-      "visible": true,
-      "locked": false
-    },
-    {
-      "id": "f0082",
-      "name": "Circle 3",
-      "definitionId": "f0082",
-      "transform": {
-        "a": 1,
-        "b": 0,
-        "c": 0,
-        "d": 1,
-        "e": 0,
-        "f": 0
-      },
-      "constraints": [],
-      "z_top": 0.75,
-      "z_bottom": 0,
       "folderId": "fd0154",
       "visible": true,
       "locked": false
@@ -207,6 +173,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
@@ -226,6 +193,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
@@ -245,6 +213,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
@@ -264,6 +233,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
@@ -283,6 +253,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
@@ -302,6 +273,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
@@ -321,6 +293,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
@@ -340,6 +313,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
@@ -359,6 +333,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
@@ -378,6 +353,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.7,
@@ -397,6 +373,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 0.9,
@@ -416,6 +393,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 1.125,
@@ -435,6 +413,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0,
@@ -454,6 +433,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0,
@@ -473,6 +453,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0,
@@ -492,6 +473,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 0.75,
       "z_bottom": 0,
@@ -511,6 +493,7 @@
         "e": 0,
         "f": 0
       },
+      "textLayout": null,
       "constraints": [],
       "z_top": 1.75,
       "z_bottom": 0,
@@ -523,7 +506,7 @@
     {
       "id": "fd0154",
       "name": "Neck pickup",
-      "collapsed": true,
+      "collapsed": false,
       "section": "features",
       "grouped": false
     },
@@ -633,7 +616,8 @@
           "f0079",
           "f0136",
           "f0080",
-          "f0153"
+          "f0153",
+          "f0139"
         ]
       },
       "toolRef": "t0159",
@@ -657,6 +641,7 @@
       "maxCarveDepth": 0.03937007874015748,
       "cutDirection": "conventional",
       "machiningOrder": "feature_first",
+      "finishScallopHeight": 0,
       "waterlineAdaptiveRefinement": true,
       "waterlineMicroStepover": 0.08,
       "waterlineRefinementThreshold": 0,
@@ -679,7 +664,8 @@
           "f0079",
           "f0136",
           "f0080",
-          "f0153"
+          "f0153",
+          "f0139"
         ]
       },
       "toolRef": "t0159",
@@ -703,6 +689,7 @@
       "maxCarveDepth": 0.03937007874015748,
       "cutDirection": "conventional",
       "machiningOrder": "feature_first",
+      "finishScallopHeight": 0,
       "waterlineAdaptiveRefinement": true,
       "waterlineMicroStepover": 0.08,
       "waterlineRefinementThreshold": 0,
@@ -749,6 +736,7 @@
       "maxCarveDepth": 0.03937007874015748,
       "cutDirection": "conventional",
       "machiningOrder": "feature_first",
+      "finishScallopHeight": 0,
       "waterlineAdaptiveRefinement": true,
       "waterlineMicroStepover": 0.08,
       "waterlineRefinementThreshold": 0,
@@ -806,6 +794,7 @@
       "maxCarveDepth": 0.03937007874015748,
       "cutDirection": "conventional",
       "machiningOrder": "feature_first",
+      "finishScallopHeight": 0,
       "waterlineAdaptiveRefinement": true,
       "waterlineMicroStepover": 0.08,
       "waterlineRefinementThreshold": 0,
@@ -857,6 +846,7 @@
       "maxCarveDepth": 0.03937007874015748,
       "cutDirection": "conventional",
       "machiningOrder": "feature_first",
+      "finishScallopHeight": 0,
       "waterlineAdaptiveRefinement": true,
       "waterlineMicroStepover": 0.08,
       "waterlineRefinementThreshold": 0,
@@ -903,6 +893,7 @@
       "maxCarveDepth": 0.03937007874015748,
       "cutDirection": "conventional",
       "machiningOrder": "feature_first",
+      "finishScallopHeight": 0,
       "waterlineAdaptiveRefinement": true,
       "waterlineMicroStepover": 0.08,
       "waterlineRefinementThreshold": 0,
@@ -1939,64 +1930,6 @@
               "x": 13.583585996803803,
               "y": 7.222006256008402
             }
-          }
-        ],
-        "closed": true
-      },
-      "dimensions": [],
-      "text": null,
-      "stl": null,
-      "operation": "subtract"
-    },
-    "f0081": {
-      "id": "f0081",
-      "kind": "circle",
-      "profile": {
-        "start": {
-          "x": 13.240586030257012,
-          "y": 9.018756054020724
-        },
-        "segments": [
-          {
-            "type": "circle",
-            "center": {
-              "x": 13.240586030257012,
-              "y": 8.925006054020724
-            },
-            "to": {
-              "x": 28.754664030257008,
-              "y": 9.018756054020724
-            },
-            "clockwise": true
-          }
-        ],
-        "closed": true
-      },
-      "dimensions": [],
-      "text": null,
-      "stl": null,
-      "operation": "subtract"
-    },
-    "f0082": {
-      "id": "f0082",
-      "kind": "circle",
-      "profile": {
-        "start": {
-          "x": 13.240586030257012,
-          "y": 6.168756054020722
-        },
-        "segments": [
-          {
-            "type": "circle",
-            "center": {
-              "x": 13.240586030257012,
-              "y": 6.075006054020722
-            },
-            "to": {
-              "x": 28.754664030257008,
-              "y": 6.168756054020722
-            },
-            "clockwise": true
           }
         ],
         "closed": true
