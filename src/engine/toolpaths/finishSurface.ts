@@ -44,6 +44,7 @@ import {
 } from './finishSurfaceParallel'
 import { generateFinishSurfaceWaterline } from './finishSurfaceWaterline'
 import { generateFinishSurfaceConstantScallop } from './finishSurfaceConstantScallop'
+import { buildRetainedMaterial, buildRetainedMaterialCheck, containingAddFeatures } from './retainedMaterial'
 import { effectivePocketPattern } from './pocketPatterns'
 import {
   finishScallopHeightIsValid,
@@ -415,6 +416,28 @@ export function generateFinishSurfaceToolpath(
     tabTopZAtPoint(tabFootprints, point) !== null
     || liftedSurfaceZ >= subtractFloorAtPoint(point) - UNMACHINABLE_SURFACE_EPSILON
 
+  // The adds each strategy's own containment test drops as base geometry — a
+  // plate under the model, or the plate a pocket is sunk into — were ignored
+  // outright, so the finish cut through the plate and gouged the pocket walls
+  // wherever the silhouette crossed them (issue #773). The expansion is the one
+  // that strategy's test uses: parallel and constant scallop grow the add by the
+  // centre inset before asking, waterline's `excludeContainingAddFeatures` does
+  // not. Every emitted pass and every keep-down link is then held clear of what
+  // is left standing, and a pass breaks where it is not — the #711 rule, applied
+  // to the cutter body rather than to the tool centre.
+  const retainedTargetIds = new Set(target.featureIds)
+  const retainedMaterial = buildRetainedMaterial(
+    project,
+    retainedTargetIds,
+    containingAddFeatures(
+      project,
+      retainedTargetIds,
+      modelSilhouettePaths,
+      isWaterline ? 0 : tool.radius + Math.max(0, operation.stockToLeaveRadial),
+    ),
+  )
+  const retainedCheck = retainedMaterial ? buildRetainedMaterialCheck(retainedMaterial, tool, axialLeave) : null
+
   const strategyResult = isWaterline
     ? generateFinishSurfaceWaterline(
       project,
@@ -431,6 +454,7 @@ export function generateFinishSurfaceToolpath(
       modelSilhouettePaths,
       relatedSubtracts,
       horizontalFloorZs,
+      retainedCheck,
     )
     : isConstantScallop
       ? generateFinishSurfaceConstantScallop(
@@ -446,6 +470,7 @@ export function generateFinishSurfaceToolpath(
         minCutZAtPoint,
         hasMachinableSurface,
         warnings,
+        retainedCheck,
       )
       : generateFinishSurfaceParallel(
         project,
@@ -460,6 +485,7 @@ export function generateFinishSurfaceToolpath(
         minCutZAtPoint,
         hasMachinableSurface,
         warnings,
+        retainedCheck,
       )
 
   const finalMoves = strategyResult.moves

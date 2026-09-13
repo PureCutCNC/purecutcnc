@@ -26,6 +26,7 @@ import { significantSilhouettePaths } from './silhouette'
 import { appendClampBlockedWarnings, buildProtectedFootprintPaths, clampsBlockingArea, clipperPathsToTupleContours, differenceClipperPaths, unionClipperPaths } from './modelProtection'
 import { appendAll } from './appendAll'
 import { finishScallopSpacing } from './scallopHeight'
+import type { RetainedMaterialCheck } from './retainedMaterial'
 
 function computeContourBounds(
   contours: Iterable<Array<Array<[number, number]>>>,
@@ -622,6 +623,7 @@ export function generateFinishSurfaceParallel(
   minCutZAtPoint: (point: Point) => number,
   hasMachinableSurface: (point: Point, liftedSurfaceZ: number) => boolean,
   warnings: ToolpathWarning[],
+  retainedCheck: RetainedMaterialCheck | null = null,
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const stepoverRatio = operation.stepover ?? 0.5
   const stepoverDistance = Math.max(
@@ -665,6 +667,9 @@ export function generateFinishSurfaceParallel(
   const linkCushion = Math.max(heightMapCellSize * 0.5, 1e-3)
   const safeLinkCheck = (from: ToolpathPoint, to: ToolpathPoint): boolean => {
     if (slopeDomain !== null && (!linkInSlopeDomain || !linkInSlopeDomain(from, to))) return false
+    // Exact and without `linkCushion`: a link that dips half a height-map cell
+    // into a pocket wall or a plate is a gouge, not sampling noise (issue #773).
+    if (retainedCheck !== null && !retainedCheck.segmentIsClear(from, to)) return false
     const dx = to.x - from.x
     const dy = to.y - from.y
     const dz = to.z - from.z
@@ -769,25 +774,38 @@ export function generateFinishSurfaceParallel(
         // so what used to be one emission is a run per machinable stretch.
         for (const machinable of splitSegmentAtUnmachinableSurface(segment, hasMachinableSurface)) {
           const clampedSegment = clampSurfaceSegmentToMinZ(machinable, minCutZAtPoint)
-
-          for (const sp of clampedSegment) {
-            outStepLevels.add(sp.z)
-          }
-
-          const cutPoints3D: ToolpathPoint[] = clampedSegment.map((sp) => ({
+          const clampedPoints: ToolpathPoint[] = clampedSegment.map((sp) => ({
             x: sp.x,
             y: sp.y,
             z: sp.z,
           }))
-          const entryPoint = cutPoints3D[0]
+          // The mesh height map knows nothing of retained 2.5D material, so a
+          // scanline runs straight over a plate or into a pocket wall; break it
+          // where the cutter body would enter one (issue #773). The whole
+          // segment is its own only run when nothing is violated.
+          const runs = retainedCheck === null
+            ? [clampedPoints]
+            : retainedCheck
+              .splitPolyline(clampedPoints, false, (point) => point.z, (x, y, z) => ({ x, y, z }))
+              .map((run) => run.points)
 
-          // The transition helper's same-XY shortcut bypasses its link check.
-          if (slopeDomain !== null && pos && pos.z < safeZ && !safeLinkCheck(pos, entryPoint)) {
-            pos = retractToSafe(moves, pos, safeZ)
+          for (const cutPoints3D of runs) {
+            for (const sp of cutPoints3D) {
+              outStepLevels.add(sp.z)
+            }
+            const entryPoint = cutPoints3D[0]
+
+            // The transition helper's same-XY shortcut bypasses its link check.
+            if (pos && pos.z < safeZ && (
+              (slopeDomain !== null && !safeLinkCheck(pos, entryPoint))
+              || (retainedCheck !== null && !retainedCheck.segmentIsClear(pos, entryPoint))
+            )) {
+              pos = retractToSafe(moves, pos, safeZ)
+            }
+            pos = transitionToCutEntry(moves, pos, entryPoint, safeZ, linkMaxDistance, safeLinkCheck)
+            appendAll(moves, toOpenCutMoves3D(cutPoints3D))
+            pos = cutPoints3D[cutPoints3D.length - 1]
           }
-          pos = transitionToCutEntry(moves, pos, entryPoint, safeZ, linkMaxDistance, safeLinkCheck)
-          appendAll(moves, toOpenCutMoves3D(cutPoints3D))
-          pos = cutPoints3D[cutPoints3D.length - 1]
         }
       }
     }
