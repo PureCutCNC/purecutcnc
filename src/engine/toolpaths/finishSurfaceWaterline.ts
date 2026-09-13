@@ -63,6 +63,7 @@ import { buildRegionMask } from './regions'
 import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from './types'
 import { appendAll } from './appendAll'
 import { finishScallopSpacing, finishScallopWaterlineStepdown } from './scallopHeight'
+import type { RetainedMaterialCheck } from './retainedMaterial'
 
 const WATERLINE_LENGTH_EPSILON_MM = 0.01
 
@@ -1571,6 +1572,7 @@ export function generateFinishSurfaceWaterline(
   modelSilhouettePaths: ClipperPath[] = [],
   relatedSubtracts: RelatedSubtractFeature[] = [],
   criticalFloorZs: Set<number> = new Set(),
+  retainedCheck: RetainedMaterialCheck | null = null,
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
   const toolOffset = tool.radius + radialLeave
@@ -2406,9 +2408,26 @@ export function generateFinishSurfaceWaterline(
               meshBoundaryTolerance,
             )
           : [{ contour, closed: isClosed }]
+        // Nothing upstream of here knows about retained 2.5D material: a
+        // containing add is excluded from `intersectingAdds` and skipped by the
+        // protected-footprint builder, so a ring runs straight through a plate
+        // or into a pocket wall. Break each run wherever the cutter body, at the
+        // Z actually emitted, would enter retained material (issue #773) — the
+        // projected Z, since a projected ring runs up to a tool radius below its
+        // slice. A clear run is passed through as is.
+        const emitsProjectedZ = shouldProjectToTargetContact
+          || intersectingAdds.length > 0
+          || Boolean(ringEntry.projectZAtPoint)
+        const emittedZAtPoint = emitsProjectedZ ? liftedZAtPoint : (): number => ringEntry.z
+        const check = retainedCheck
+        const clearRuns = check === null
+          ? safeRuns
+          : safeRuns.flatMap((run) => check
+            .splitPolyline(run.contour, run.closed, emittedZAtPoint, (x, y) => ({ x, y }), emittedZAtPoint)
+            .map((piece) => ({ contour: piece.points, closed: piece.closed })))
 
         let canLinkFromPreviousRing = previousRingHadCut && protectedAtLevel.length === 0
-        for (const safeRun of safeRuns) {
+        for (const safeRun of clearRuns) {
           if (safeRun.contour.length < 2) continue
           if (!safeRun.closed && contourPolylineLength(safeRun.contour, false) <= Math.max(toolOffset * 0.5, stepoverDistance)) {
             continue
@@ -2439,6 +2458,17 @@ export function generateFinishSurfaceWaterline(
             currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
           }
           if (currentPosition && slopeSafeLink && currentPosition.z < safeZ && !slopeSafeLink(currentPosition, entry)) {
+            currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
+          }
+          // A column link stays down and is otherwise only checked on a slope
+          // mask, so a link between two runs broken around a pocket wall would
+          // cut straight back through it (issue #773).
+          if (
+            check !== null
+            && currentPosition
+            && currentPosition.z < safeZ - 1e-9
+            && !check.segmentIsClear(currentPosition, entry)
+          ) {
             currentPosition = retractToSafe(allMoves, currentPosition, safeZ)
           }
           const moveCountBeforeTransition = allMoves.length
