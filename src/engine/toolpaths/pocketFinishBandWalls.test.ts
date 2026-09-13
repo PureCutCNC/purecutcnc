@@ -24,13 +24,9 @@
  * feature, and the floor pass at the island's Z swept the whole pocket when only
  * the island's top face has anything to skim.
  *
- * **Walls only.** The floor half of this was reverted: restricting the floor pass
- * to material-bearing ground treats the *voids* below as obstacles to inset away
- * from, when at this Z they are free space the cutter may fly over. On the
- * maintainer's `complex-pocket-test.camj` that left the island top unmachined —
- * the expanded holes met and nothing survived the inset — where the unrestricted
- * pass reached it fine. The floor needs a domain-versus-coverage split that the
- * offset-ring construction does not currently express; see #751.
+ * **Walls only.** The floor half is #757's, guarded by
+ * `pocketFinishBandFloors.test.ts`, which measures swept area — a move count
+ * cannot tell an air pass from a face.
  *
  * **The parity corpus does not cover this.** It stayed 169/169 byte-identical
  * across the change, because no corpus project has a multi-band finish. These
@@ -173,10 +169,9 @@ for (const pattern of ['offset', 'parallel'] as const) {
       `Z17 has ${atIslandTop} moves against a full pass of ${deep} — nothing was dropped`,
     )
     // The decisive wall test runs with **floors off**, so the only thing that can
-    // appear at the island's Z is a wall contour. With floors on, the floor pass
-    // still sweeps the whole pocket there — see the header — and its extent
-    // masks whatever the wall did, which is how an earlier version of this case
-    // passed while the dedup was disabled.
+    // appear at the island's Z is a wall contour. With floors on, the island
+    // face's rings share that Z and mask whatever the wall did, which is how an
+    // earlier version of this case passed while the dedup was disabled.
     const wallsOnly = movesByZ([body(), pocket(), feature('isl', 'add', 35, 30, 20, 20, 0, 17)], pattern, false)
     check(
       `${pattern}: no wall contour is emitted where the wall carries on below`,

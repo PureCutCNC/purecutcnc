@@ -65,6 +65,7 @@ import {
   planContourSmoothing,
   type ContourTurnTransition,
 } from './offsetSmoothing'
+import { coverageReachLoops, floorCoverage, regionAreaPaths, restrictFloorRoot } from './finishFloorCoverage'
 import { buildSweptCoverage, sweptRegionIsCovered } from './sweptCoverage'
 import {
   buildOffsetDomainCheck,
@@ -1681,8 +1682,7 @@ function polygonYBounds(points: Point[]): { minY: number; maxY: number } | null 
   return Number.isFinite(minY) && Number.isFinite(maxY) ? { minY, maxY } : null
 }
 
-function scanlineIntervals(points: Point[], y: number): Array<[number, number]> {
-  const intersections: number[] = []
+function scanlineCrossings(points: Point[], y: number, intersections: number[]): void {
   const closed =
     points.length > 0 && pointEpsilonEqual(points[0], points[points.length - 1])
       ? points
@@ -1707,7 +1707,9 @@ function scanlineIntervals(points: Point[], y: number): Array<[number, number]> 
     const t = (y - a.y) / (b.y - a.y)
     intersections.push(a.x + (b.x - a.x) * t)
   }
+}
 
+function pairScanlineCrossings(intersections: number[]): Array<[number, number]> {
   intersections.sort((left, right) => left - right)
 
   const intervals: Array<[number, number]> = []
@@ -1720,6 +1722,21 @@ function scanlineIntervals(points: Point[], y: number): Array<[number, number]> 
   }
 
   return intervals
+}
+
+function scanlineIntervals(points: Point[], y: number): Array<[number, number]> {
+  const intersections: number[] = []
+  scanlineCrossings(points, y, intersections)
+  return pairScanlineCrossings(intersections)
+}
+
+/** Even-odd inside intervals of a loop set whose holes are loops of their own. */
+function evenOddScanlineIntervals(loops: Point[][], y: number): Array<[number, number]> {
+  const intersections: number[] = []
+  for (const loop of loops) {
+    scanlineCrossings(loop, y, intersections)
+  }
+  return pairScanlineCrossings(intersections)
 }
 
 function subtractIntervals(
@@ -1747,6 +1764,24 @@ function subtractIntervals(
   }
 
   return remaining.filter(([start, end]) => end - start > 1e-9)
+}
+
+/** Both lists ascending and disjoint; the result is too. */
+function intersectIntervals(
+  baseIntervals: Array<[number, number]>,
+  clipIntervals: Array<[number, number]>,
+): Array<[number, number]> {
+  const kept: Array<[number, number]> = []
+  for (const [start, end] of baseIntervals) {
+    for (const [clipStart, clipEnd] of clipIntervals) {
+      const from = Math.max(start, clipStart)
+      const to = Math.min(end, clipEnd)
+      if (to - from > 1e-9) {
+        kept.push([from, to])
+      }
+    }
+  }
+  return kept
 }
 
 function rotatePoint(point: Point, cosTheta: number, sinTheta: number): Point {
@@ -1980,10 +2015,17 @@ export function orderOpenSegmentsGreedy(segments: Point[][], start: Point | null
   return ordered
 }
 
+/**
+ * Raster scan lines over `regions`. With `reach` — even-odd loops — each span is
+ * clipped to it, keeping the lines where the unclipped raster puts them: a
+ * raster rebuilt over a smaller area shifts its phase with that area's bounds
+ * and can leave a strip along an edge running parallel to the lines.
+ */
 export function buildPocketParallelSegments(
   regions: ResolvedPocketRegion[],
   stepoverDistance: number,
   angleDeg: number,
+  reach?: Point[][],
 ): Point[][] {
   const segments: Point[][] = []
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
@@ -1993,6 +2035,7 @@ export function buildPocketParallelSegments(
   const sinForward = Math.sin(angleRad)
   const cosInverse = Math.cos(-angleRad)
   const sinInverse = Math.sin(-angleRad)
+  const rotatedReach = reach?.map((loop) => loop.map((point) => rotatePoint(point, cosInverse, sinInverse)))
 
   regions.forEach((region, regionIndex) => {
     const rotatedOuter = region.outer.map((point) => rotatePoint(point, cosInverse, sinInverse))
@@ -2012,8 +2055,11 @@ export function buildPocketParallelSegments(
 
       const islandIntervals = rotatedIslands.flatMap((island) => scanlineIntervals(island, y))
       const fillIntervals = subtractIntervals(outerIntervals, islandIntervals)
+      const cutIntervals = rotatedReach
+        ? intersectIntervals(fillIntervals, evenOddScanlineIntervals(rotatedReach, y))
+        : fillIntervals
 
-      for (const [startX, endX] of fillIntervals) {
+      for (const [startX, endX] of cutIntervals) {
         const left = rotatePoint({ x: startX, y }, cosForward, sinForward)
         const right = rotatePoint({ x: endX, y }, cosForward, sinForward)
         const reverse = (regionIndex + scanIndex) % 2 === 1
@@ -4193,6 +4239,29 @@ function wallContinuesBelow(contour: Point[], continuing: ClipperPath[]): boolea
   ))
 }
 
+/**
+ * Floor roots restricted to the material they have to cut (issue #757). With no
+ * coverage — a band with nothing below it — the roots come back untouched, so a
+ * single-band pocket runs exactly what it ran before.
+ */
+function restrictFloorRoots(
+  roots: ResolvedPocketRegion[],
+  coverage: ClipperPath[] | null,
+  reach: number,
+): ResolvedPocketRegion[] {
+  if (coverage === null) {
+    return roots
+  }
+  return roots.flatMap((root) => {
+    const restriction = restrictFloorRoot(regionAreaPaths([root]), coverage, reach)
+    if (restriction.kind === 'unchanged') {
+      return [root]
+    }
+    return polyTreeToRegions(executeDifference(restriction.paths, []), root.targetFeatureIds, root.islandFeatureIds)
+      .filter((region) => region.outer.length >= 3)
+  })
+}
+
 function generateFinishBandMoves(
   band: ResolvedPocketBand,
   operation: Operation,
@@ -4206,6 +4275,7 @@ function generateFinishBandMoves(
   telemetry: EngagementTelemetryAccumulator | null = null,
   regionMasked = false,
   trochoidalBudget: TrochoidalOperationBudget | null = null,
+  floorVoidBelow: ClipperPath[] | null = null,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -4412,32 +4482,44 @@ function generateFinishBandMoves(
   const floorSeedStart = finishCoverage.seedCircles
     ? seedStartRadius(operation, toolRadius)
     : 0
+  // The floor cuts the ground that bears material, not the whole band (issue
+  // #757). Where this band sits on another, the band below carries on through
+  // part of it, and that part is open space at this Z: an island top below the
+  // pocket top put a full floor pass across the pocket to skim one face. Each
+  // root is restricted to that ground, so a ring meeting a void rides the
+  // drop-off edge rather than insetting from it, and a root the restriction
+  // would leave short of material its full pass reaches keeps the full pass.
+  // Entries, links and the walls still use the whole band, voids included.
+  const floorCoverageArea = operation.finishFloor && floorVoidBelow !== null && floorVoidBelow.length > 0
+    ? floorCoverage(band.regions, floorVoidBelow)
+    : null
   const floorSeedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
-  const floorTrees = operation.finishFloor && !isParallelPocket
+  const floorRoots = operation.finishFloor && !isParallelPocket
     ? finishRegions
       .flatMap((region) => buildInsetRegions(region, 0))
       .flatMap((region) => buildInsetRegions(region, floorStepover, ClipperLib.JoinType.jtMiter, floorIslandJoin))
-      .flatMap((region) => {
-        const plans = floorSeedStart > 0
-          ? planSeedCircles(region, floorSeedStart, floorStepover, toolRadius * 2, radialLeave)
-          : []
-        if (plans.length === 0) {
-          const tree = buildOffsetRegionTree(region, floorStepover, floorIslandJoin)
-          if (isTrochoidalFloor) {
-            appendResidualCoreGuides(tree, floorTrochoidalGeometry.cutWidth, toolRadius * 2, floorIslandJoin)
-          }
-          return [tree]
-        }
-        const seeded = buildOffsetRegionTree(
-          { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
-          floorStepover,
-          floorIslandJoin,
-        )
-        const tree: OffsetRegionNode = { region, children: seeded.children }
-        floorSeedPlans.set(tree, plans)
-        return [tree]
-      })
     : []
+  const floorReach = isTrochoidalFloor ? floorTrochoidalGeometry.cutWidth / 2 : toolRadius
+  const floorTrees = restrictFloorRoots(floorRoots, floorCoverageArea, floorReach).flatMap((region) => {
+    const plans = floorSeedStart > 0
+      ? planSeedCircles(region, floorSeedStart, floorStepover, toolRadius * 2, radialLeave)
+      : []
+    if (plans.length === 0) {
+      const tree = buildOffsetRegionTree(region, floorStepover, floorIslandJoin)
+      if (isTrochoidalFloor) {
+        appendResidualCoreGuides(tree, floorTrochoidalGeometry.cutWidth, toolRadius * 2, floorIslandJoin)
+      }
+      return [tree]
+    }
+    const seeded = buildOffsetRegionTree(
+      { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
+      floorStepover,
+      floorIslandJoin,
+    )
+    const tree: OffsetRegionNode = { region, children: seeded.children }
+    floorSeedPlans.set(tree, plans)
+    return [tree]
+  })
   // Leftover excursions on the floor tree (issue #576), same construction as
   // the rough band's.
   const floorSeedLeftovers = floorTrees.flatMap((tree) => planRegionSeedLeftovers(
@@ -4460,7 +4542,12 @@ function generateFinishBandMoves(
     )
     : undefined
   const floorSegments = operation.finishFloor && isParallelPocket
-    ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle)
+    ? buildPocketParallelSegments(
+      finishRegions,
+      stepoverDistance,
+      operation.pocketAngle,
+      floorCoverageArea ? coverageReachLoops(floorCoverageArea, toolRadius) : undefined,
+    )
     : []
   if (
     wallContours.length === 0
@@ -4470,6 +4557,14 @@ function generateFinishBandMoves(
     && floorTrees.length === 0
     && floorSegments.length === 0
   ) {
+    // A floor restricted to nothing met no material, and a band with nothing to
+    // finish is not a band whose contours could not be built (issue #757).
+    const floorMetNoMaterial = floorCoverageArea !== null && (isParallelPocket
+      ? buildPocketParallelSegments(finishRegions, stepoverDistance, operation.pocketAngle).length > 0
+      : floorRoots.length > 0)
+    if (floorMetNoMaterial) {
+      return { moves, stepLevels: [], warnings }
+    }
     return {
       moves,
       stepLevels: [],
@@ -5135,6 +5230,12 @@ function generatePocketToolpathSingle(
     const nextBandRegions = bandsBelow.length > 0
       ? bandsBelow.flatMap((candidate) => candidate.regions)
       : null
+    // What the floor may fly over but has nothing to cut (issue #757). A clamp
+    // footprint never counts as void: the rough kept out from under it, so what
+    // stands there is still material at this floor.
+    const floorVoidBelow = operation.pass === 'finish' && operation.finishFloor && nextBandRegions !== null
+      ? differenceClipperPaths(regionAreaPaths(nextBandRegions), clampKeepOutPaths(project, { expansion: 0 }))
+      : null
     const result = operation.pass === 'finish'
       ? generateFinishBandMoves(
         band,
@@ -5149,6 +5250,7 @@ function generatePocketToolpathSingle(
         telemetry,
         regionMask !== null,
         trochoidalBudget,
+        floorVoidBelow,
       )
       : generateRoughBandMoves(
         band,
