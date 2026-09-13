@@ -35,6 +35,14 @@ const POLY_FILL_EVEN_ODD = 0
 export interface ProtectedFootprintOptions {
   targetFeatureIds: Set<string>
   z?: number
+  /**
+   * When set, an add or model feature stands in the way only where it rises
+   * *above* this Z: a cutter tip on its top face is touching it, not cutting it.
+   * 3D rough passes its level less stock to leave, so a level on a plate top is
+   * cleared and a level between the top and the top plus stock to leave is not
+   * (issue #773). Unset keeps the inclusive test every other caller relies on.
+   */
+  featureClearanceZ?: number
   featureExpansion?: number
   clampExpansion?: number
   tabExpansion?: number
@@ -577,7 +585,13 @@ export function buildProtectedFootprintPaths(
   for (const feature of resolvedProjectFeatures(project)) {
     if (options.targetFeatureIds.has(feature.id)) continue
     if (feature.operation !== 'add' && feature.operation !== 'model') continue
-    if (!isActiveAtZ(project, feature, options.z)) continue
+    if (options.featureClearanceZ !== undefined) {
+      // Touching a top face is not cutting it; see `featureClearanceZ`.
+      const span = resolveFeatureZSpan(project, feature)
+      if (options.featureClearanceZ >= span.max - 1e-9 || options.featureClearanceZ < span.min - 1e-9) continue
+    } else if (!isActiveAtZ(project, feature, options.z)) {
+      continue
+    }
 
     const expandedFootprints = offsetClipperPaths(featureFootprintPaths(feature), featureExpansion)
     if (pathsContainEnvelope(expandedFootprints, options.machiningEnvelopePaths)) continue

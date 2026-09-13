@@ -241,7 +241,10 @@ for (const [shape, build] of SHAPES) {
     const result = generateFinishSurfaceCleanupToolpath(built.project, {
       ...built.operation, kind: 'finish_surface_cleanup', pass: 'rough', pocketPattern: 'offset', stepover: 0.4,
     })
-    assertClear(result.moves, built, false)
+    // Cleanup cuts each wall column once, at its deepest level, and on a plate
+    // that is the plate top — so it is not expected to machine the dome above
+    // it, only to cut something and stay out of the material.
+    assertClear(result.moves, { ...built, surfaceAbove: -Infinity }, false)
   })
 }
 
@@ -255,6 +258,51 @@ test('finish parallel at 45 degrees: a keep-down link does not cut across a stan
   const result = generateFinishSurfaceToolpath(built.project, { ...built.operation, pocketPattern: 'parallel', pocketAngle: 45 })
   assertClear(result.moves, built, true)
 })
+
+// ── Rough and cleanup reach a plate top ─────────────────────────────────────
+
+/** Cut length machined flat at exactly `z`. */
+function cutLengthAtZ(moves: ToolpathMove[], z: number): number {
+  return moves
+    .filter((move) => move.kind === 'cut' && Math.abs(move.from.z - z) < 1e-6 && Math.abs(move.to.z - z) < 1e-6)
+    .reduce((total, move) => total + Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y), 0)
+}
+
+// The rough's level outline grows the 0..40 x 0..24 silhouette by about two tool
+// radii plus a stepover, so a plate 2 mm past the silhouette contains the model
+// but not the outline: it goes through `buildProtectedFootprintPaths` rather than
+// the retained-material path, whose inclusive Z test used to block the level
+// sitting on the plate top. A top of 2 lands on a 1 mm stepdown from the 6 mm
+// stock top; 2.5 lands on none, and needs the top to be a level of its own.
+const PLATES: Array<[string, { x0: number; y0: number; x1: number; y1: number }]> = [
+  ['a plate containing the rough outline', BLOCK],
+  ['a plate containing only the silhouette', { x0: -2, y0: -2, x1: 42, y1: 26 }],
+]
+
+for (const [plate, extent] of PLATES) {
+  for (const top of [2, 2.5]) {
+    for (const kind of ['rough_surface', 'finish_surface_cleanup'] as const) {
+      const label = kind === 'rough_surface' ? 'rough' : 'cleanup'
+      test(`${label} reaches the top of ${plate} at Z ${top}, and no further`, () => {
+        const built = fixture(
+          [prism('plate', 'add', extent.x0, extent.y0, extent.x1, extent.y1, -4, top)],
+          [{ ...extent, top }],
+          top + 0.5,
+          'flat_endmill',
+        )
+        const operation: Operation = { ...built.operation, kind, pass: 'rough', pocketPattern: 'offset', stepover: 0.4 }
+        const result = kind === 'rough_surface'
+          ? generateRoughSurfaceToolpath(built.project, operation)
+          : generateFinishSurfaceCleanupToolpath(built.project, operation)
+        // Cleanup finishes each wall once, at its deepest level — here the plate
+        // top — so only rough is expected to machine the dome above it.
+        assertClear(result.moves, kind === 'rough_surface' ? built : { ...built, surfaceAbove: -Infinity }, false)
+        const atTop = cutLengthAtZ(result.moves, top)
+        assert(atTop > 20, `only ${atTop.toFixed(1)} mm cut at the plate top, Z ${top}`)
+      })
+    }
+  }
+}
 
 // ── The model itself ────────────────────────────────────────────────────────
 

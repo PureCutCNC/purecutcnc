@@ -50,7 +50,7 @@ import {
   unionClipperPaths,
   unionClipperPathsEvenOdd,
 } from './modelProtection'
-import { buildRetainedMaterial, containingAddFeatures, type RetainedMaterial } from './retainedMaterial'
+import { addFeatureTopZs, buildRetainedMaterial, containingAddFeatures, type RetainedMaterial } from './retainedMaterial'
 
 export interface Resolved3DSurfaceLevel {
   z: number
@@ -532,9 +532,17 @@ export function resolve3DSurfaceStepdown(
   const floorAreaThreshold = minMachinableFloorArea(initialInset)
   const mergedFloorAreas = dedupeFloorAreasDescending(floorAreaByZ)
   const machinableFloorLevels = mergedFloorAreas.filter((entry) => entry.area >= floorAreaThreshold)
+  // A plate top is a machining floor just as a subtract's bottom is (issue #773):
+  // a stepdown that does not land on it leaves up to a whole stepdown standing on
+  // the plate. Exempt from the area bound for the same reason as those floors. A
+  // top at the stock top would be a level that cuts nothing.
+  const addTopLevels = addFeatureTopZs(project, new Set(target.featureIds), outlineForShift(0))
+    .map((top) => top + axialLeave)
+    .filter((z) => z < stockTop - Z_TOLERANCE)
   const criticalLevels = dedupeZLevelsDescending([
     ...machinableFloorLevels.map((entry) => entry.z + axialLeave),
     ...subtractFloorLevels,
+    ...addTopLevels,
   ])
   const roughLevels = dedupeZLevelsDescending([...stepLevels, ...criticalLevels])
     .filter((z) => z <= stockTop + 1e-9 && z >= effectiveBottom - 1e-9)
@@ -640,6 +648,9 @@ export function resolve3DSurfaceStepdown(
     const surroundingProtectedPaths = buildProtectedFootprintPaths(project, {
       targetFeatureIds: new Set(target.featureIds),
       z,
+      // A tip on a plate top is touching it, not cutting it, and stock to leave
+      // holds the tip that far above (issue #773).
+      featureClearanceZ: protectionZ,
       featureExpansion: 0,
       tabExpansion: 0,
       clampExpansion: 0,

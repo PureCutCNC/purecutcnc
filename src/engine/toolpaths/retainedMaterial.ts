@@ -116,6 +116,28 @@ export function containingAddFeatures(
   return adds
 }
 
+/**
+ * Tops of the non-target adds whose footprint reaches `envelopePaths`, contained
+ * or not: floors a 3D rough has to reach, as it reaches a subtract's bottom
+ * (issue #773). Without them as levels, a stepdown that does not land on a
+ * plate top leaves up to a whole stepdown standing on it.
+ */
+export function addFeatureTopZs(
+  project: Project,
+  targetFeatureIds: Set<string>,
+  envelopePaths: ClipperPath[],
+): number[] {
+  if (envelopePaths.length === 0) return []
+  const tops: number[] = []
+  for (const feature of resolvedProjectFeatures(project)) {
+    if (targetFeatureIds.has(feature.id) || feature.operation !== 'add') continue
+    const footprint = featureFootprintPaths(feature)
+    if (footprint.length === 0 || intersectClipperPaths(footprint, envelopePaths).length === 0) continue
+    tops.push(resolveFeatureZSpan(project, feature).max)
+  }
+  return tops
+}
+
 interface FeatureSolid {
   paths: ClipperPath[]
   minZ: number
