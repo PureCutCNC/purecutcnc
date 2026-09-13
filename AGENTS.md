@@ -278,6 +278,15 @@ depth, or asks for a list they want enumerated — not because the work was big.
 - **Lead with the outcome in natural language.** What is true now, then only the
   check or caveat that matters. No preamble, no restating the request, no
   narrating progress, tool output, or internal process.
+- **Close testable work with a testing handoff.** When a reply reports an
+  implementation or any other change the maintainer can test, it says briefly
+  what changed and what to test — the behaviour to check and where it shows up
+  (a UI panel or flow, a fixture, a spec) — then gives the exact worktree path
+  and branch and the code locations that matter (`file:line` or symbol names).
+  Describe the test surface only; do not add instructions for launching the
+  app. When nothing needs manual testing, say so in one line and name the
+  automated check that covers it, if one does. The handoff is prose inside the
+  short reply, not a report block.
 - **Evidence you must hold is not evidence you must print.** The Task Router's
   "Required evidence" column and the citation rule in **Operating notes** say
   what you must have verified before speaking, not what the reply must carry.
