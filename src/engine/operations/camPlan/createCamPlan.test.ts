@@ -14,13 +14,18 @@
  * limitations under the License.
  */
 
+import { Buffer } from 'buffer'
+import { readFileSync } from 'fs'
 import type { ToolLibraryEntry } from '../../../toolLibrary'
-import { circleProfile, newProject, rectProfile, type Project, type SketchFeature, type SketchProfile, type Tool } from '../../../types/project'
+import { circleProfile, newProject, rectProfile, type FeatureInstance, type Project, type SketchFeature, type SketchProfile, type Tool } from '../../../types/project'
 import { projectWithFeatures } from '../../../test/projectFixtures'
 import { materializeCamPlan } from '../../../store/helpers/camPlanApply'
+import { normalizeProject } from '../../../store/projectStore'
 import { convertProjectUnits } from '../../../utils/units'
+import { generateFinishSurfaceToolpath } from '../../toolpaths/finishSurface'
+import { generateRoughSurfaceToolpath } from '../../toolpaths/roughSurface'
 import { resolvePocketRegions } from '../../toolpaths/resolver'
-import { createCamPlan } from './createCamPlan'
+import { camPlanProjectFingerprint, createCamPlan } from './createCamPlan'
 import { reconcileCamPlanDownstream, reconcileCamPlanRest } from './reconcileRest'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -745,6 +750,152 @@ function testReactiveRestRemoval(): void {
   assert(finish?.dependencies.includes(source.key), 'finish dependency returns to the source after rest removal')
 }
 
+function importedModelPlanFixture(): Project {
+  const raw = readFileSync(new URL('../../test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8')
+  const fixture = normalizeProject(JSON.parse(raw) as Project)
+  return {
+    ...fixture,
+    operations: [],
+    tools: [
+      ...fixture.tools,
+      tool('rough-alternate', 'flat_endmill', 0.0625),
+      tool('ball-finish', 'ball_endmill', 0.0625),
+    ],
+  }
+}
+
+function importedModelInstance(project: Project): FeatureInstance {
+  const definition = Object.values(project.featureDefinitions).find((candidate) =>
+    candidate.operation === 'model' && candidate.kind === 'stl',
+  )
+  const instance = definition
+    ? project.features.find((candidate) => candidate.definitionId === definition.id)
+    : null
+  if (!instance) throw new Error('expected imported-model fixture instance')
+  return instance
+}
+
+function testImportedModelSurfaceRecommendations(): void {
+  const project = importedModelPlanFixture()
+  const model = importedModelInstance(project)
+  const plan = createCamPlan(project, [])
+  const surface = plan.operations.filter((draft) =>
+    draft.operation.target.source === 'features'
+    && draft.operation.target.featureIds.includes(model.id),
+  )
+  const rough = surface.find((draft) => draft.operation.kind === 'rough_surface')
+  const finish = surface.find((draft) => draft.operation.kind === 'finish_surface')
+  assert(rough && finish, 'an eligible imported model receives rough and finish surface recommendations')
+  assert(rough.operation.toolRef === 't6792422', 'rough surface prefers the available flat end mill')
+  assert(finish.operation.toolRef === 'ball-finish', 'finish surface prefers the available ball end mill')
+  assert(rough.operation.stockToLeaveRadial > 0 && rough.operation.stockToLeaveAxial > 0, 'rough surface leaves radial and axial stock')
+  assert(finish.operation.stockToLeaveRadial === 0 && finish.operation.stockToLeaveAxial === 0, 'finish surface removes the roughing allowance')
+  assert(finish.dependencies.includes(rough.key), 'finish surface depends on its proposed roughing pass')
+  assert(surface.every((draft) => draft.operation.target.source === 'features' && draft.operation.target.featureIds.length === 1), 'each imported model stage targets exactly one model')
+  assert(rough.toolLimitSource === 'model-footprint' && rough.maximumToolDiameter !== null, 'surface tool fit uses the transformed model footprint')
+
+  const materialized = materializeCamPlan(project, plan)
+  assert(materialized.ok, 'the imported-model surface plan materializes atomically')
+  if (!materialized.ok) return
+  const materializedRough = materialized.project.operations.find((operation) => operation.kind === 'rough_surface')
+  const materializedFinish = materialized.project.operations.find((operation) => operation.kind === 'finish_surface')
+  assert(materializedRough && materializedFinish, 'materialized project retains both surface stages')
+  assert(generateRoughSurfaceToolpath(materialized.project, materializedRough).moves.some((move) => move.kind === 'cut'), 'rough surface recommendation produces cutting moves')
+  assert(generateFinishSurfaceToolpath(materialized.project, materializedFinish).moves.some((move) => move.kind === 'cut'), 'finish surface recommendation produces cutting moves')
+
+  const twoModels: Project = {
+    ...project,
+    features: [...project.features, { ...model, id: 'duplicated-model', name: 'Duplicated model' }],
+  }
+  const twoModelPlan = createCamPlan(twoModels, [])
+  const twoModelFinishTargets = twoModelPlan.operations.filter((draft) => draft.operation.kind === 'finish_surface')
+  assert(twoModelFinishTargets.length === 2, 'two imported models receive one finish proposal each')
+  assert(twoModelFinishTargets.every((draft) => draft.operation.target.source === 'features' && draft.operation.target.featureIds.length === 1), 'finish proposals are never merged across imported models')
+
+  const existingProject: Project = {
+    ...project,
+    operations: [
+      { ...rough.operation, id: 'existing-model-rough', name: 'Existing model rough' },
+      { ...finish.operation, id: 'existing-model-finish', name: 'Existing model finish' },
+    ],
+  }
+  const existingPlan = createCamPlan(existingProject, [])
+  assert(!existingPlan.operations.some((draft) => draft.operation.kind === 'rough_surface' || draft.operation.kind === 'finish_surface'), 'enabled existing model stages suppress only their matching recommendations')
+  assert(existingPlan.coverage.find((coverage) => coverage.featureId === model.id)?.status === 'existing', 'enabled existing model stages remain visible as coverage')
+
+  const corrected = {
+    ...plan,
+    operations: plan.operations.map((draft) => draft.key === rough.key
+      ? {
+        ...draft,
+        operation: { ...draft.operation, toolRef: 'rough-alternate' },
+        userOverrides: ['toolRef'] satisfies Array<keyof typeof draft.operation>,
+      }
+      : draft),
+  }
+  const reconciled = reconcileCamPlanDownstream(project, corrected, rough.key)
+  assert(reconciled.operations.find((draft) => draft.key === finish.key)?.operation.toolRef === 'ball-finish', 'rough-tool corrections re-rank the model finish instead of forcing the rough cutter')
+}
+
+function testImportedModelSurfaceFailuresAndStaleness(): void {
+  const project = importedModelPlanFixture()
+  const model = importedModelInstance(project)
+  const plan = createCamPlan(project, [])
+  const noToolPlan = createCamPlan({ ...project, tools: [] }, [])
+  assert(
+    noToolPlan.operations.filter((draft) => draft.operation.kind === 'rough_surface' || draft.operation.kind === 'finish_surface').every((draft) => draft.hardError),
+    'a model without compatible surface tools remains a focused blocking correction path',
+  )
+
+  const missingAssetPlan = createCamPlan({ ...project, modelAssets: {} }, [])
+  assert(missingAssetPlan.coverage.find((coverage) => coverage.featureId === model.id)?.status === 'unresolved', 'a missing imported mesh remains visible as unresolved')
+  assert(!missingAssetPlan.operations.some((draft) => draft.operation.kind === 'rough_surface' || draft.operation.kind === 'finish_surface'), 'a missing imported mesh receives no speculative surface operation')
+
+  const outOfStockProject: Project = {
+    ...project,
+    features: project.features.map((feature) => feature.id === model.id
+      ? { ...feature, transform: { ...feature.transform, e: feature.transform.e + 10 } }
+      : feature),
+  }
+  const outOfStockPlan = createCamPlan(outOfStockProject, [])
+  assert(outOfStockPlan.coverage.find((coverage) => coverage.featureId === model.id)?.status === 'unresolved', 'an out-of-stock imported mesh remains visible as unresolved')
+  assert(!outOfStockPlan.operations.some((draft) => draft.operation.kind === 'rough_surface' || draft.operation.kind === 'finish_surface'), 'an out-of-stock imported mesh receives no speculative surface operation')
+
+  const movedProject: Project = {
+    ...project,
+    features: project.features.map((feature) => feature.id === model.id
+      ? { ...feature, transform: { ...feature.transform, e: feature.transform.e + 1 } }
+      : feature),
+  }
+  assert(!materializeCamPlan(movedProject, plan).ok, 'moving an imported model invalidates a stale plan')
+
+  const definition = project.featureDefinitions[model.definitionId]
+  const assetId = definition?.stl?.meshAssetId
+  const asset = assetId ? project.modelAssets?.[assetId] : null
+  if (!assetId || !asset) throw new Error('expected imported-model fixture mesh asset')
+  const degenerateAssetProject: Project = {
+    ...project,
+    modelAssets: {
+      ...project.modelAssets,
+      [assetId]: {
+        ...asset,
+        vertexCount: 3,
+        triangleCount: 1,
+        positions: Buffer.from(new Float32Array([0, 0, 0, 0, 0, 0, 0, 0, 0]).buffer).toString('base64'),
+        indices: Buffer.from(new Uint32Array([0, 1, 2]).buffer).toString('base64'),
+        bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0 },
+      },
+    },
+  }
+  assert(createCamPlan(degenerateAssetProject, []).coverage.find((coverage) => coverage.featureId === model.id)?.status === 'unresolved', 'a degenerate imported mesh remains visible as unresolved')
+  const changedAssetProject: Project = {
+    ...project,
+    modelAssets: { ...project.modelAssets, [assetId]: { ...asset, positions: `${asset.positions}changed` } },
+  }
+  assert(camPlanProjectFingerprint(project) !== camPlanProjectFingerprint(changedAssetProject), 'imported mesh payload changes invalidate the plan fingerprint')
+  assert(!materializeCamPlan(changedAssetProject, plan).ok, 'changed imported mesh payload cannot be applied through a stale plan')
+}
+
 testRepresentativePlan()
 testMatchingHolesShareOneDrillingOperation()
 testCompatiblePocketsShareOneOperationAcrossDepths()
@@ -764,4 +915,6 @@ testFallbackNoToolAndUnits()
 testResolvedWorldTransformAndOrdering()
 testReactiveRestReconciliation()
 testReactiveRestRemoval()
+testImportedModelSurfaceRecommendations()
+testImportedModelSurfaceFailuresAndStaleness()
 console.log('CAM plan POC tests passed')
