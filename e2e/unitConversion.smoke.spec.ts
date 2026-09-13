@@ -41,6 +41,36 @@ interface CircleProjectSnapshot {
   }>
 }
 
+type FeatureDefinitionSnapshot = CircleProjectSnapshot['featureDefinitions'][string]
+
+/**
+ * The first native circle in a project, by definition id.
+ *
+ * The expectation is read from the example file rather than written as a
+ * literal, so the example's content may change (it lost two circles in #754)
+ * while the assertion still says what it means to say: the conversion scales
+ * whatever geometry is there and changes nothing else. A hardcoded centre and
+ * radius silently becomes a test of the example's contents instead.
+ */
+function firstCircleId(project: CircleProjectSnapshot): string | null {
+  for (const [id, definition] of Object.entries(project.featureDefinitions)) {
+    if (definition.profile.segments.some((segment) => segment.type === 'circle' && segment.center)) {
+      return id
+    }
+  }
+  return null
+}
+
+function circleOf(definition: FeatureDefinitionSnapshot | undefined): { center: { x: number; y: number }; radius: number } | null {
+  const segment = definition?.profile.segments.find((entry) => entry.type === 'circle' && entry.center)
+  if (!definition || !segment?.center) return null
+  const { start } = definition.profile
+  return {
+    center: segment.center,
+    radius: Math.hypot(start.x - segment.center.x, start.y - segment.center.y),
+  }
+}
+
 async function seedInchProject(page: Parameters<typeof getProject>[0]): Promise<void> {
   const project = await getProject(page)
   const metadata = project.meta as Record<string, unknown>
@@ -154,24 +184,23 @@ test('converts native circles in the T-style example without changing their shap
   await chooseUnits(app.page, ui, 'Millimeters')
   await ui.unitConversionDialog.convertButton(app.page).click()
 
+  const source = JSON.parse(example) as CircleProjectSnapshot
+  const id = firstCircleId(source)
   const converted = await getProject(app.page) as unknown as CircleProjectSnapshot
-  const circleProfile = Object.values(converted.featureDefinitions)
-    .map((definition) => definition.profile)
-    .find((profile) => profile.segments.some((segment) => segment.type === 'circle'))
-  const circle = circleProfile?.segments.find((segment) => segment.type === 'circle')
 
   expect(converted.meta.units).toBe('mm')
-  expect(circleProfile).toBeDefined()
-  expect(circle?.center).toBeDefined()
-  if (!circleProfile || !circle?.center) return
+  expect(id).not.toBeNull()
+  if (id === null) return
 
-  const radius = Math.hypot(
-    circleProfile.start.x - circle.center.x,
-    circleProfile.start.y - circle.center.y,
-  )
-  expect(circle.center.x).toBeCloseTo(13.240586030257012 * 25.4)
-  expect(circle.center.y).toBeCloseTo(8.925006054020724 * 25.4)
-  expect(radius).toBeCloseTo(0.09375 * 25.4)
+  const before = circleOf(source.featureDefinitions[id])
+  const after = circleOf(converted.featureDefinitions[id])
+  expect(before).not.toBeNull()
+  expect(after).not.toBeNull()
+  if (!before || !after) return
+
+  expect(after.center.x).toBeCloseTo(before.center.x * 25.4)
+  expect(after.center.y).toBeCloseTo(before.center.y * 25.4)
+  expect(after.radius).toBeCloseTo(before.radius * 25.4)
 })
 
 test.describe('tablet unit conversion dialog', () => {
