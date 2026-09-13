@@ -18,20 +18,20 @@ import type { Operation } from '../../types/project'
 import { useI18n } from '../../i18n/i18nContext'
 import { surfaceSlopeRange } from '../../engine/toolpaths/finishSurfaceSlope'
 
-export function SurfaceSlopeFields({ operation, updateOperation }: {
+export function SurfaceSlopeFields({ operation, onPatch }: {
   operation: Operation
-  updateOperation: (id: string, patch: Partial<Operation>) => void
+  onPatch: (patch: Partial<Operation>) => void
 }) {
   const { t } = useI18n()
   const range = surfaceSlopeRange(operation)
   const commit = (field: 'finishSlopeMin' | 'finishSlopeMax', value: string) => {
     const next = value.trim() === '' ? undefined : Number(value)
-    updateOperation(operation.id, { [field]: next })
+    onPatch({ [field]: next })
   }
   return (
     <div>
       <label className="properties-check">
-        <input type="checkbox" checked={range !== null} onChange={(event) => updateOperation(operation.id,
+        <input type="checkbox" checked={range !== null} onChange={(event) => onPatch(
           event.target.checked ? { finishSlopeMin: 0, finishSlopeMax: 30 }
             : { finishSlopeMin: undefined, finishSlopeMax: undefined })} />
         <span>{t('cam.operation.slopeFilter')}</span>

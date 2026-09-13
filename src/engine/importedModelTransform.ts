@@ -17,7 +17,7 @@
 import { IDENTITY_MATRIX } from '../types/project'
 import type { Matrix2D, ModelOrientation, Point, SketchFeature } from '../types/project'
 
-type TransformableImportedModel = SketchFeature & { transform?: Matrix2D }
+type TransformableImportedModel = SketchFeature | { transform?: Matrix2D }
 
 /** Column-major 4x4 affine matrix shared by Three.js and manifold-3d. */
 export type ImportedModelMatrix4 = [
@@ -28,8 +28,8 @@ export type ImportedModelMatrix4 = [
 ]
 
 /** Return the strict instance transform, with identity for legacy test callers. */
-export function importedModelInstanceTransform(feature: SketchFeature): Matrix2D {
-  return (feature as TransformableImportedModel).transform ?? IDENTITY_MATRIX
+export function importedModelInstanceTransform(feature: TransformableImportedModel): Matrix2D {
+  return (feature as { transform?: Matrix2D }).transform ?? IDENTITY_MATRIX
 }
 
 /** Apply the model's authoritative 2D instance transform to an X/Y point. */

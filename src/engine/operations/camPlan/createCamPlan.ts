@@ -15,8 +15,9 @@
  */
 
 import type { ToolLibraryEntry } from '../../../toolLibrary'
-import { defaultTool, type Operation, type OperationKind, type OperationPass, type OperationTarget, type Project, type Tab } from '../../../types/project'
+import { defaultTool, getStockBounds, type Operation, type OperationKind, type OperationPass, type OperationTarget, type Project, type Tab } from '../../../types/project'
 import { getFeatureGeometryBounds } from '../../../text'
+import { loadSTLTransformedGeometry } from '../../csg'
 import { resolveDimensionRef } from '../../toolpaths/geometry'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../toolpaths/restRegions'
 import { resolveInsideEdgeRegions, resolvePocketRegions } from '../../toolpaths/resolver'
@@ -27,6 +28,7 @@ import { resolveFeatureInstances, type ResolvedSketchFeature } from '../../../st
 import { buildAutoTabsForFeature } from '../autoTabs'
 import {
   camPlanToolPool,
+  CAM_PLAN_INTERIOR_TOOL_FRACTION,
   camPlanRoughStockToLeave,
   chooseDrillingTool,
   materiallySmallerCamPlanTools,
@@ -47,8 +49,9 @@ const Z_EPSILON = 1e-7
 export function camPlanProjectFingerprint(project: Project): string {
   return JSON.stringify({
     modified: project.meta.modified,
-    features: project.features.map((feature) => [feature.id, feature.definitionId, feature.z_top, feature.z_bottom]),
-    definitions: Object.values(project.featureDefinitions).map((definition) => [definition.id, definition.operation, definition.kind]),
+    features: project.features.map((feature) => [feature.id, feature.definitionId, feature.transform, feature.z_top, feature.z_bottom]),
+    definitions: Object.values(project.featureDefinitions).map((definition) => [definition.id, definition.operation, definition.kind, definition.stl]),
+    modelAssets: Object.entries(project.modelAssets ?? {}).sort(([a], [b]) => a.localeCompare(b)),
     tools: project.tools.map((tool) => [tool.id, tool.type, tool.units, tool.diameter, tool.maxCutDepth]),
     operations: project.operations.map((operation) => [operation.id, operation.kind, operation.pass, operation.enabled, operation.target, operation.toolRef]),
     tabs: project.tabs.map((tab) => [tab.id, tab.x, tab.y, tab.w, tab.h, tab.z_top, tab.z_bottom]),
@@ -127,6 +130,7 @@ interface PlanBuilder {
   reusedToolIds: Set<string>
   covered: Set<string>
   existing: Set<string>
+  unresolvedModels: Map<string, string>
   sequence: number
 }
 
@@ -137,10 +141,17 @@ function applyRoughStockToLeave(project: Project, operation: { kind: OperationKi
     && operation.kind !== 'pocket'
     && operation.kind !== 'edge_route_inside'
     && operation.kind !== 'edge_route_outside'
+    && operation.kind !== 'rough_surface'
   ) return
   const allowance = camPlanRoughStockToLeave(project.meta.units)
   operation.stockToLeaveRadial = allowance
   operation.stockToLeaveAxial = allowance
+}
+
+interface PlannerToolConstraints {
+  requiredCutDepth?: number
+  maximumToolDiameter?: number | null
+  toolLimitSource?: 'feature-span' | 'model-footprint'
 }
 
 function restAnalysisOperation(operation: Operation): Operation {
@@ -159,6 +170,7 @@ function addPlannedOperation(
   rationale: string,
   dependencies: string[] = [],
   forcedTool?: CamPlanTool,
+  constraints?: PlannerToolConstraints,
 ): CamPlanOperationDraft | null {
   const featureIds = features
     .map((feature) => feature.id)
@@ -170,7 +182,8 @@ function addPlannedOperation(
 
   const plannedFeatures = features.filter((feature) => featureIds.includes(feature.id))
   const target: OperationTarget = { source: 'features', featureIds }
-  const requiredDepth = Math.max(...plannedFeatures.map((feature) => featureDepth(builder.project, feature)))
+  const requiredDepth = constraints?.requiredCutDepth
+    ?? Math.max(...plannedFeatures.map((feature) => featureDepth(builder.project, feature)))
   const ranked = rankCamPlanTools(
     builder.project,
     kind,
@@ -178,8 +191,12 @@ function addPlannedOperation(
     builder.tools,
     requiredDepth,
     builder.reusedToolIds,
+    constraints?.maximumToolDiameter,
   )
   const selected = forcedTool ?? ranked.tools[0] ?? null
+  const missingToolError = kind === 'rough_surface' || kind === 'finish_surface'
+    ? 'No compatible surface tool satisfies this model\'s footprint and reach. Choose or add one, or exclude the model.'
+    : 'Choose or add a tool that fits this operation before creating it.'
   const key = `cam-plan-op:${builder.sequence + 1}`
   builder.sequence += 1
   const wasReused = selected ? builder.reusedToolIds.has(selected.id) : false
@@ -206,13 +223,18 @@ function addPlannedOperation(
     targetLabel: targetLabel(builder.project, plannedFeatures),
     rationale,
     toolReason: selected
-      ? toolChoiceReason(selected, kind, ranked.maximumDiameter, wasReused)
-      : 'No available tool satisfies this operation\'s type, scale, and reach constraints.',
+      ? toolChoiceReason(selected, kind, ranked.maximumDiameter, wasReused, constraints?.toolLimitSource)
+      : kind === 'rough_surface' || kind === 'finish_surface'
+        ? missingToolError
+        : 'No available tool satisfies this operation\'s type, scale, and reach constraints.',
     toolOptions: ranked.tools.map((candidate) => candidate.id),
+    maximumToolDiameter: ranked.maximumDiameter,
+    toolLimitSource: constraints?.toolLimitSource,
+    requiredCutDepth: requiredDepth,
     coveredFeatureIds: featureIds,
     dependencies,
     hardError: !selected
-      ? 'Choose or add a tool that fits this operation before creating it.'
+      ? missingToolError
       : (!isOperationTargetValid(builder.project, kind, target) ? 'The proposed target is not valid for this operation.' : null),
     staleReason: null,
     userOverrides: [],
@@ -292,6 +314,95 @@ function addRoughFinishPair(
   )
   const rest = addFinishRestOperation(builder, rough, finish)
   return [rough, finish, rest].filter((draft): draft is CamPlanOperationDraft => draft !== null)
+}
+
+interface ImportedModelCandidate {
+  feature: ResolvedSketchFeature
+  constraints: Required<PlannerToolConstraints>
+}
+
+function importedModelCandidate(
+  project: Project,
+  feature: ResolvedSketchFeature,
+): { candidate: ImportedModelCandidate | null; reason: string | null } {
+  const transformed = loadSTLTransformedGeometry(feature, project)
+  if (!transformed) {
+    return { candidate: null, reason: 'The imported mesh is unavailable, corrupt, or has no usable height.' }
+  }
+
+  const { positions } = transformed
+  if (positions.length < 9 || positions.length % 3 !== 0) {
+    return { candidate: null, reason: 'The imported mesh has no usable triangles.' }
+  }
+
+  let minX = Infinity
+  let minY = Infinity
+  let minZ = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  let maxZ = -Infinity
+  for (let index = 0; index < positions.length; index += 3) {
+    const x = positions[index]!
+    const y = positions[index + 1]!
+    const z = positions[index + 2]!
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+      return { candidate: null, reason: 'The transformed imported mesh contains invalid coordinates.' }
+    }
+    minX = Math.min(minX, x)
+    minY = Math.min(minY, y)
+    minZ = Math.min(minZ, z)
+    maxX = Math.max(maxX, x)
+    maxY = Math.max(maxY, y)
+    maxZ = Math.max(maxZ, z)
+  }
+
+  if (maxX - minX <= Z_EPSILON || maxY - minY <= Z_EPSILON || maxZ - minZ <= Z_EPSILON) {
+    return { candidate: null, reason: 'The transformed imported mesh is degenerate.' }
+  }
+
+  const stock = getStockBounds(project.stock)
+  const overlapWidth = Math.min(maxX, stock.maxX) - Math.max(minX, stock.minX)
+  const overlapHeight = Math.min(maxY, stock.maxY) - Math.max(minY, stock.minY)
+  const overlapDepth = Math.min(maxZ, project.stock.thickness) - Math.max(minZ, 0)
+  if (overlapWidth <= Z_EPSILON || overlapHeight <= Z_EPSILON || overlapDepth <= Z_EPSILON) {
+    return { candidate: null, reason: 'The transformed imported mesh does not overlap the stock with machinable volume.' }
+  }
+
+  return {
+    candidate: {
+      feature,
+      constraints: {
+        requiredCutDepth: Math.max(0, project.stock.thickness - Math.max(minZ, 0)),
+        maximumToolDiameter: Math.min(overlapWidth, overlapHeight) * CAM_PLAN_INTERIOR_TOOL_FRACTION,
+        toolLimitSource: 'model-footprint',
+      },
+    },
+    reason: null,
+  }
+}
+
+function addImportedModelSurfacePair(builder: PlanBuilder, candidate: ImportedModelCandidate): void {
+  const { feature, constraints } = candidate
+  const rough = addPlannedOperation(
+    builder,
+    'rough_surface',
+    'rough',
+    [feature],
+    'This imported model intersects the stock, so rough its transformed surface before finishing it.',
+    [],
+    undefined,
+    constraints,
+  )
+  addPlannedOperation(
+    builder,
+    'finish_surface',
+    'finish',
+    [feature],
+    'This imported model needs a dedicated finish pass after roughing.',
+    rough ? [rough.key] : [],
+    undefined,
+    constraints,
+  )
 }
 
 function buildSharedTabs(builder: PlanBuilder): CamPlanSharedTabsDraft[] {
@@ -543,6 +654,10 @@ function coverageFor(
   const resolvedNonTargetSubtractIds = resolvedNonTargetSubtractFeatureIds(builder)
   return features.flatMap<CamPlanCoverage>((feature) => {
     if (isRegion(feature) || isConstruction(feature)) return []
+    const unresolvedDetail = builder.unresolvedModels.get(feature.id)
+    if (unresolvedDetail) {
+      return [{ featureId: feature.id, featureName: feature.name, status: 'unresolved', detail: unresolvedDetail }]
+    }
     if (builder.covered.has(feature.id)) {
       return [{ featureId: feature.id, featureName: feature.name, status: 'planned', detail: 'Covered by one or more recommendations.' }]
     }
@@ -562,7 +677,7 @@ function coverageFor(
       return [{ featureId: feature.id, featureName: feature.name, status: 'unsupported', detail: 'Line engraving is outside this POC.' }]
     }
     if (feature.kind === 'stl') {
-      return [{ featureId: feature.id, featureName: feature.name, status: 'unsupported', detail: 'Imported-model planning is outside this POC.' }]
+      return [{ featureId: feature.id, featureName: feature.name, status: 'unresolved', detail: 'The imported model cannot be planned safely.' }]
     }
     return [{ featureId: feature.id, featureName: feature.name, status: 'unsupported', detail: 'No confident POC rule matched this feature.' }]
   })
@@ -583,6 +698,7 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
     reusedToolIds: new Set(),
     covered: new Set(),
     existing: new Set(),
+    unresolvedModels: new Map(),
     sequence: 0,
   }
 
@@ -647,6 +763,15 @@ export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]
   }
   for (const group of groupByDepth(project, through)) {
     addRoughFinishPair(builder, 'edge_route_inside', group, 'This closed subtract reaches the stock bottom, so the removable slug is routed on its inside edge.')
+  }
+
+  for (const feature of features.filter((candidate) => candidate.operation === 'model' && candidate.kind === 'stl')) {
+    const result = importedModelCandidate(project, feature)
+    if (!result.candidate) {
+      builder.unresolvedModels.set(feature.id, result.reason ?? 'The imported model cannot be planned safely.')
+      continue
+    }
+    addImportedModelSurfacePair(builder, result.candidate)
   }
 
   const outerAdds = outerClosedAdds.filter((feature) =>

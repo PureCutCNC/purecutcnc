@@ -21,6 +21,8 @@ import { formatLength, parseLengthInput } from '../../utils/units'
 import { Select } from '../Select'
 import { camT } from './camI18n'
 import { OPERATION_FIELDS, resolvedEntryStrategy, type OperationFieldId } from './operationFields'
+import { ScallopHeightField } from './ScallopHeightField'
+import { SurfaceSlopeFields } from './SurfaceSlopeFields'
 
 function operationLabel(kind: OperationKind): string {
   switch (kind) {
@@ -108,21 +110,51 @@ export interface CAMPlanOperationEditorProps {
   onUseRecommendedRestTool?: () => void
 }
 
+function supportsPlanTool(operation: Operation, candidate: CamPlanTool): boolean {
+  if (operation.kind === 'v_carve' || operation.kind === 'v_carve_medial') return candidate.tool.type === 'v_bit'
+  if (operation.kind === 'rough_surface' || operation.kind === 'finish_surface') {
+    return candidate.tool.type === 'flat_endmill' || candidate.tool.type === 'ball_endmill'
+  }
+  return true
+}
+
+function surfaceToolConstraintReason(draft: CamPlanOperationDraft, candidate: CamPlanTool, units: Tool['units']): string | null {
+  if (draft.toolOptions.includes(candidate.id)) return null
+
+  const { tool } = candidate
+  if (draft.requiredCutDepth != null && tool.maxCutDepth > 0 && tool.maxCutDepth + 1e-9 < draft.requiredCutDepth) {
+    return camT('cam.plan.toolInsufficientCutDepth', {
+      required: formatLength(draft.requiredCutDepth, units),
+      available: formatLength(tool.maxCutDepth, units),
+      units: units === 'inch' ? 'in' : 'mm',
+    })
+  }
+  if (draft.maximumToolDiameter != null && tool.diameter > draft.maximumToolDiameter + 1e-9) {
+    return camT('cam.plan.toolExceedsDiameter', {
+      maximum: formatLength(draft.maximumToolDiameter, units),
+      units: units === 'inch' ? 'in' : 'mm',
+    })
+  }
+  return camT('cam.plan.toolIncompatible')
+}
+
 export function CAMPlanOperationEditor({ draft, tools, units, onPatch, onUseRecommendedRestTool }: CAMPlanOperationEditorProps) {
   const operation = draft.operation
   const selectedTool = tools.find((candidate) => candidate.id === operation.toolRef)?.tool ?? null
-  const isVCarve = operation.kind === 'v_carve' || operation.kind === 'v_carve_medial'
+  const ballRadius = selectedTool?.type === 'ball_endmill' ? selectedTool.diameter / 2 : null
+  const isSurfacePlan = operation.kind === 'rough_surface' || operation.kind === 'finish_surface'
   const error = draft.hardError ?? draft.staleReason
   const canUseRecommendedRestTool = Boolean(
     draft.rest
     && draft.hardError
     && draft.toolOptions.some((toolRef) => toolRef !== operation.toolRef),
   )
-  // The plan can introduce a bundled tool when applied, so a user never has
-  // to preload a tool merely to choose it here. Match the ordinary operation
-  // editor by reserving the V-carve list for V-bits.
+  // Surface-plan rows expose every relevant cutter, including those whose
+  // recorded reach or diameter makes them unsafe. An unavailable tool stays
+  // visible with its reason, but cannot turn a fail-closed recommendation
+  // into a runnable operation.
   const toolOptions = tools.filter((candidate) =>
-    candidate.id === operation.toolRef || !isVCarve || candidate.tool.type === 'v_bit',
+    candidate.id === operation.toolRef || supportsPlanTool(operation, candidate),
   )
 
   return (
@@ -148,10 +180,15 @@ export function CAMPlanOperationEditor({ draft, tools, units, onPatch, onUseReco
             value={operation.toolRef ?? ''}
             options={[
               { value: '', label: camT('cam.operation.noTool') },
-              ...toolOptions.map((candidate) => ({
-                value: candidate.id,
-                label: `${candidate.tool.name} · ${formatLength(candidate.tool.diameter, units)} ${units === 'inch' ? 'in' : 'mm'}`,
-              })),
+              ...toolOptions.map((candidate) => {
+                const unavailableReason = isSurfacePlan ? surfaceToolConstraintReason(draft, candidate, units) : null
+                const label = `${candidate.tool.name} · ${formatLength(candidate.tool.diameter, units)} ${units === 'inch' ? 'in' : 'mm'}`
+                return {
+                  value: candidate.id,
+                  label: unavailableReason ? `${label} — ${unavailableReason}` : label,
+                  disabled: unavailableReason !== null,
+                }
+              }),
             ]}
             onChange={(toolRef) => onPatch({ toolRef: toolRef || null }, true)}
           />
@@ -182,6 +219,18 @@ export function CAMPlanOperationEditor({ draft, tools, units, onPatch, onUseReco
               onChange={(pattern) => onPatch({ pocketPattern: pattern as PocketPattern }, true)}
             />
           </label>
+        ) : null}
+        {fieldApplies('scallopHeight', operation, selectedTool) && ballRadius !== null ? (
+          <ScallopHeightField
+            height={operation.finishScallopHeight}
+            radius={ballRadius}
+            legacySpacing={operation.stepover * ballRadius * 2}
+            units={units}
+            onCommit={(finishScallopHeight) => onPatch({ finishScallopHeight }, true)}
+          />
+        ) : null}
+        {fieldApplies('slopeFilter', operation, selectedTool) ? (
+          <SurfaceSlopeFields operation={operation} onPatch={(patch) => onPatch(patch, true)} />
         ) : null}
         {fieldApplies('edgeStrategy', operation, selectedTool) ? (
           <label className="cam-plan-field">

@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from 'react'
 export interface SelectOption<T extends string> {
   value: T
   label: string
+  disabled?: boolean
 }
 
 interface SelectProps<T extends string> {
@@ -72,11 +73,13 @@ export function Select<T extends string>({ value, options, onChange, disabled }:
           {options.map((option) => (
             <div
               key={option.value}
-              className={`ui-select__option ${option.value === value ? 'ui-select__option--selected' : ''}`}
+              className={`ui-select__option ${option.value === value ? 'ui-select__option--selected' : ''} ${option.disabled ? 'ui-select__option--disabled' : ''}`}
               role="option"
               aria-selected={option.value === value}
+              aria-disabled={option.disabled || undefined}
               onPointerDown={(e) => {
                 e.preventDefault()
+                if (option.disabled) return
                 onChange(option.value)
                 setOpen(false)
               }}
