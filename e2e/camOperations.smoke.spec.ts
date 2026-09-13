@@ -227,7 +227,12 @@ test.describe('CAM operation browser smoke', () => {
     await expect(dialog.getByText('Stock to leave axial', { exact: true })).toBeVisible()
     const roughToolField = dialog.locator('.cam-plan-field').filter({ hasText: 'Tool' }).first()
     await roughToolField.locator('.ui-select__trigger').click()
-    await expect(app.page.getByRole('option', { name: /Plan oversized endmill/ })).toHaveCount(0)
+    const oversized = app.page.getByRole('option', { name: /Plan oversized endmill/ })
+    await expect(oversized).toHaveAttribute('aria-disabled', 'true')
+    await expect(oversized).toContainText('maximum cutter diameter')
+    const shallowBall = app.page.getByRole('option', { name: /1\/8" Ball Endmill/ })
+    await expect(shallowBall).toHaveAttribute('aria-disabled', 'true')
+    await expect(shallowBall).toContainText('needs 0.75 in cutting depth; this tool provides 0.5 in')
     await app.page.getByRole('option', { name: /Plan ball finish/ }).click()
 
     await rough.focus()
