@@ -198,7 +198,8 @@ eligible operation is selected, and overlays three planar layers in project
 coordinates:
 
 - **Generated** — the raw toolpath before adjacent-collinear cut moves are merged
-  (captured at the `optimizeLinearMoves` seam in `src/app/useToolpathGeneration.ts`
+  (captured at the `optimizeLinearMoves` seam in
+  `src/engine/toolpaths/generateOperation.ts`
   into an ephemeral `ToolpathGenerationTrace`; never serialised into `.camj`).
 - **Optimized** — the canonical toolpath after always-on line optimization,
   before export arc fitting.

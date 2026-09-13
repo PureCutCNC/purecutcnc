@@ -17,7 +17,7 @@ opt-in rollout. `noSyncCallers.test.ts` enforces that nothing outside the two
 executors generates directly.
 
 **The worker is opt-in and the default is still the main thread.** The backend
-is chosen from the status bar, stored per machine (never in `.camj`), and the
+is chosen from the gear menu in the CAM panel, stored per machine (never in `.camj`), and the
 worker really runs: `generationBackend.smoke.spec.ts` proves in Chromium *and*
 WebKit that choosing it starts a real `Worker` and that the G-code it produces
 is identical to the main thread's, and `npm run check:worker-production` proves
