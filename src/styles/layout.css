@@ -2275,6 +2275,16 @@
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
+.ui-select__option--disabled {
+  color: var(--text-dim);
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.ui-select__option--disabled:hover {
+  background: transparent;
+}
+
 .properties-field textarea {
   min-height: 88px;
   padding: 8px;
