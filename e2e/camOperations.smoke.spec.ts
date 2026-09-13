@@ -232,7 +232,9 @@ test.describe('CAM operation browser smoke', () => {
     await expect(oversized).toContainText('maximum cutter diameter')
     const shallowBall = app.page.getByRole('option', { name: /1\/8" Ball Endmill/ })
     await expect(shallowBall).toHaveAttribute('aria-disabled', 'true')
-    await expect(shallowBall).toContainText('needs 0.75 in cutting depth; this tool provides 0.5 in')
+    await expect(shallowBall.locator('.ui-select__option-detail')).toHaveText('needs 0.75 in cutting depth; this tool provides 0.5 in')
+    await expect(shallowBall).toHaveCSS('white-space', 'normal')
+    await expect(roughToolField.locator('.ui-select')).toHaveClass(/ui-select--detailed/)
     await app.page.getByRole('option', { name: /Plan ball finish/ }).click()
 
     await rough.focus()

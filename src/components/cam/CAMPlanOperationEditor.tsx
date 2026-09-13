@@ -185,7 +185,8 @@ export function CAMPlanOperationEditor({ draft, tools, units, onPatch, onUseReco
                 const label = `${candidate.tool.name} · ${formatLength(candidate.tool.diameter, units)} ${units === 'inch' ? 'in' : 'mm'}`
                 return {
                   value: candidate.id,
-                  label: unavailableReason ? `${label} — ${unavailableReason}` : label,
+                  label,
+                  detail: unavailableReason ?? undefined,
                   disabled: unavailableReason !== null,
                 }
               }),

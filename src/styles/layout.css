@@ -2263,6 +2263,29 @@
   text-overflow: ellipsis;
 }
 
+.ui-select--detailed .ui-select__dropdown {
+  max-height: min(48vh, 520px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.ui-select--detailed .ui-select__option {
+  white-space: normal;
+}
+
+.ui-select__option-label,
+.ui-select__option-detail {
+  display: block;
+}
+
+.ui-select__option-detail {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 0.88em;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
 .ui-select__option:hover {
   background: var(--surface-hover);
 }
@@ -2279,6 +2302,10 @@
   color: var(--text-dim);
   cursor: not-allowed;
   opacity: 0.62;
+}
+
+.ui-select__option--disabled .ui-select__option-detail {
+  color: inherit;
 }
 
 .ui-select__option--disabled:hover {

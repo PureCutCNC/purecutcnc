@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from 'react'
 export interface SelectOption<T extends string> {
   value: T
   label: string
+  detail?: string
   disabled?: boolean
 }
 
@@ -33,6 +34,7 @@ export function Select<T extends string>({ value, options, onChange, disabled }:
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const selectedLabel = options.find((o) => o.value === value)?.label ?? value
+  const hasDetailedOptions = options.some((option) => option.detail)
 
   useEffect(() => {
     if (!open) return
@@ -53,7 +55,7 @@ export function Select<T extends string>({ value, options, onChange, disabled }:
   }, [open])
 
   return (
-    <div ref={rootRef} className={`ui-select ${open ? 'ui-select--open' : ''} ${disabled ? 'ui-select--disabled' : ''}`}>
+    <div ref={rootRef} className={`ui-select ${open ? 'ui-select--open' : ''} ${disabled ? 'ui-select--disabled' : ''} ${hasDetailedOptions ? 'ui-select--detailed' : ''}`}>
       <button
         type="button"
         className="ui-select__trigger"
@@ -84,7 +86,8 @@ export function Select<T extends string>({ value, options, onChange, disabled }:
                 setOpen(false)
               }}
             >
-              {option.label}
+              <span className="ui-select__option-label">{option.label}</span>
+              {option.detail ? <span className="ui-select__option-detail">{option.detail}</span> : null}
             </div>
           ))}
         </div>
