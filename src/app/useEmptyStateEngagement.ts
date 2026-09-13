@@ -48,11 +48,16 @@ export function useEmptyStateEngagement({
   onDismiss: () => void
   frameOpenedProject: () => void
 } {
-  // The empty-state overlay is a one-time nudge per project. Once the user has
-  // engaged (started any draw, opened import, or the project has features), it
-  // stays dismissed — so cancelling a draw or deleting the last feature keeps
-  // them on the sketch view instead of popping the overlay back up.
+  // The empty-state overlay is a one-time nudge for the blank document the app
+  // opens with. Once the user has engaged (started any draw, opened import, or
+  // the project has features), it stays dismissed — so cancelling a draw or
+  // deleting the last feature keeps them on the sketch view instead of popping
+  // the overlay back up.
   const [emptyStateEngaged, setEmptyStateEngaged] = useState(false)
+
+  // Keyed to the boot document: a project the user created or opened must land
+  // on the sketch view unobstructed, never behind the card (issue #769).
+  const [bootProjectKey] = useState(projectKey)
 
   function handleEmptyStateDraw() {
     setCenterTab('sketch')
@@ -79,12 +84,6 @@ export function useEmptyStateEngagement({
     })
   }
 
-  // Reset the one-time empty-state nudge for each new/opened project.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setEmptyStateEngaged(false)
-  }, [projectKey])
-
   // Latch engagement once the project has any feature or a draw is in progress
   // (covers toolbar draws too), so the overlay doesn't reappear after a cancel
   // or after deleting the last feature.
@@ -96,7 +95,7 @@ export function useEmptyStateEngagement({
   }, [featureCount, pendingAdd])
 
   return {
-    emptyStateEngaged,
+    emptyStateEngaged: emptyStateEngaged || projectKey !== bootProjectKey,
     onDraw: handleEmptyStateDraw,
     onImport: handleEmptyStateImport,
     onDismiss: handleDismiss,

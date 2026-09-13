@@ -171,3 +171,22 @@ test('a qualifying selection joins with no panel at all (issue #522)', async ({ 
   await expect.poll(() => getFeatureCount(app.page)).toBe(1)
   await expect(app.page.locator('.canvas-workflow-panel--join')).toHaveCount(0)
 })
+
+test('a new project lands on the sketch view with no empty-state card (issue #769)', async ({ app, ui }) => {
+  const card = app.page.locator('.empty-state-card')
+
+  // The blank document the app opens with still gets the first-run nudge.
+  await expect(card).toBeVisible()
+
+  await ui.toolbar.newProjectButton(app.page).click()
+  const dialog = ui.newProjectDialog.root(app.page)
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name: 'Create project' }).click()
+
+  await expect(dialog).toHaveCount(0)
+
+  // The nudge belongs to the boot document only. A project the user deliberately
+  // created must land on the sketch view drawable, not behind the card.
+  await expect(card).toHaveCount(0)
+  await expect(app.page.locator('#workspace-panel-sketch')).toHaveClass(/centre-view--active/)
+})
