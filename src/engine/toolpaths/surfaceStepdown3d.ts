@@ -50,6 +50,7 @@ import {
   unionClipperPaths,
   unionClipperPathsEvenOdd,
 } from './modelProtection'
+import { addFeatureTopZs, buildRetainedMaterial, containingAddFeatures, type RetainedMaterial } from './retainedMaterial'
 
 export interface Resolved3DSurfaceLevel {
   z: number
@@ -531,9 +532,17 @@ export function resolve3DSurfaceStepdown(
   const floorAreaThreshold = minMachinableFloorArea(initialInset)
   const mergedFloorAreas = dedupeFloorAreasDescending(floorAreaByZ)
   const machinableFloorLevels = mergedFloorAreas.filter((entry) => entry.area >= floorAreaThreshold)
+  // A plate top is a machining floor just as a subtract's bottom is (issue #773):
+  // a stepdown that does not land on it leaves up to a whole stepdown standing on
+  // the plate. Exempt from the area bound for the same reason as those floors. A
+  // top at the stock top would be a level that cuts nothing.
+  const addTopLevels = addFeatureTopZs(project, new Set(target.featureIds), outlineForShift(0))
+    .map((top) => top + axialLeave)
+    .filter((z) => z < stockTop - Z_TOLERANCE)
   const criticalLevels = dedupeZLevelsDescending([
     ...machinableFloorLevels.map((entry) => entry.z + axialLeave),
     ...subtractFloorLevels,
+    ...addTopLevels,
   ])
   const roughLevels = dedupeZLevelsDescending([...stepLevels, ...criticalLevels])
     .filter((z) => z <= stockTop + 1e-9 && z >= effectiveBottom - 1e-9)
@@ -562,6 +571,28 @@ export function resolve3DSurfaceStepdown(
   }
 
   const levels: Resolved3DSurfaceLevel[] = []
+  // `buildProtectedFootprintPaths` drops an add that contains the level outline
+  // as base geometry, and dropping it used to mean ignoring it: a plate larger
+  // than the grown outline was roughed straight through, which only went
+  // unnoticed because a typical cutter grows the outline past a typical plate
+  // (issue #773). What of those adds stands above the level, after the subtracts
+  // cut into them, is protected instead. Only when it reaches the outline, so a
+  // level that never touches it runs exactly the Clipper work it did before.
+  // Cached by the dropped set, which changes only when the outline does.
+  const retainedTargetIds = new Set(target.featureIds)
+  const retainedByAddSet = new Map<string, RetainedMaterial | null>()
+  const retainedPathsAtLevel = (protectionZ: number, envelopePaths: ClipperPath[]): ClipperPath[] => {
+    const adds = containingAddFeatures(project, retainedTargetIds, envelopePaths, 0)
+    if (adds.length === 0) return []
+    const key = adds.map((feature) => feature.id).join('|')
+    let material = retainedByAddSet.get(key)
+    if (material === undefined) {
+      material = buildRetainedMaterial(project, retainedTargetIds, adds)
+      retainedByAddSet.set(key, material)
+    }
+    const footprint = material?.footprintAbove(protectionZ) ?? []
+    return footprint.length > 0 && intersectClipperPaths(footprint, envelopePaths).length > 0 ? footprint : []
+  }
   let protectedAbovePaths: ClipperPath[] = []
   let usedOpenSliceFallback = false
   // Running maximum of what decimation has actually cost so far. It is a
@@ -617,11 +648,17 @@ export function resolve3DSurfaceStepdown(
     const surroundingProtectedPaths = buildProtectedFootprintPaths(project, {
       targetFeatureIds: new Set(target.featureIds),
       z,
+      // A tip on a plate top is touching it, not cutting it, and stock to leave
+      // holds the tip that far above (issue #773).
+      featureClearanceZ: protectionZ,
       featureExpansion: 0,
       tabExpansion: 0,
       clampExpansion: 0,
       machiningEnvelopePaths: levelOutlinePaths,
     })
+    // Stock to leave keeps the tip that far above a retained top, the same way
+    // the mesh slice is taken at `protectionZ` rather than at `z`.
+    const retainedPaths = retainedPathsAtLevel(protectionZ, levelOutlinePaths)
 
     // Last point before any mesh-driven Clipper work at this level, and the
     // first at which the driver is known. Everything above is either cached
@@ -629,6 +666,7 @@ export function resolve3DSurfaceStepdown(
     const levelVertexCount = countPathVertices(slicePaths)
       + countPathVertices(protectedAbovePaths)
       + countPathVertices(surroundingProtectedPaths)
+      + countPathVertices(retainedPaths)
     if (levelVertexCount > DEFAULT_SURFACE_3D_SLICE_VERTEX_BUDGET) {
       return {
         ok: false,
@@ -647,6 +685,7 @@ export function resolve3DSurfaceStepdown(
       ...protectedAbovePaths,
       ...slicePaths,
       ...surroundingProtectedPaths,
+      ...retainedPaths,
     ])
 
     if (sliceResult.openChainCount > 0) {

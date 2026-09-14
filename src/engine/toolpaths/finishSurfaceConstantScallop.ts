@@ -44,6 +44,7 @@ import {
 } from './finishSurfaceParallel'
 import { retractToSafe, transitionToCutEntry } from './pocket'
 import { finishScallopSpacing } from './scallopHeight'
+import type { RetainedMaterialCheck } from './retainedMaterial'
 import {
   buildGeodesicDistanceField,
   extractConstantDistanceContours,
@@ -383,11 +384,15 @@ function buildLinkCheck(
   tool: NormalizedTool,
   axialLeave: number,
   linkInside: (from: Point, to: Point) => boolean,
+  retainedCheck: RetainedMaterialCheck | null,
 ): (from: ToolpathPoint, to: ToolpathPoint) => boolean {
   const sampleSpacing = Math.max(heightMap.cellSize, tool.radius * 0.5)
   const cushion = Math.max(heightMap.cellSize * 0.5, 1e-3)
   return (from: ToolpathPoint, to: ToolpathPoint): boolean => {
     if (!linkInside(from, to)) return false
+    // Exact and without the height-map cushion: a link dipping half a cell into
+    // a pocket wall is a gouge, not sampling noise (issue #773).
+    if (retainedCheck !== null && !retainedCheck.segmentIsClear(from, to)) return false
     const dx = to.x - from.x
     const dy = to.y - from.y
     const dz = to.z - from.z
@@ -473,12 +478,13 @@ function emitContours(
   spacing: number,
   minCutZAtPoint: (point: Point) => number,
   hasMachinableSurface: (point: Point, liftedSurfaceZ: number) => boolean,
+  retainedCheck: RetainedMaterialCheck | null,
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const moves: ToolpathMove[] = []
   const stepLevels = new Set<number>()
   const linkInside = createSurfaceDomainLinkCheck(domain)
   const axialLeave = Math.max(0, operation.stockToLeaveAxial)
-  const safeLinkCheck = buildLinkCheck(heightMap, tool, axialLeave, linkInside)
+  const safeLinkCheck = buildLinkCheck(heightMap, tool, axialLeave, linkInside, retainedCheck)
   const linkMaxDistance = spacing * LINK_REACH_IN_SPACINGS
   // Every pass is lifted before any is emitted, because the travel order is
   // over the lifted pieces and a contour does not know how many it will produce.
@@ -486,14 +492,22 @@ function emitContours(
   for (const contour of applyDirection(contours, operation.cutDirection)) {
     const dense = { ...contour, points: densify(contour.points, contour.closed, heightMap.cellSize) }
     for (const fragment of splitByDomain(dense, linkInside)) {
-      appendAll(pieces, liftFragment(
+      const lifted = liftFragment(
         fragment,
         heightMap,
         tool,
         axialLeave,
         minCutZAtPoint,
         hasMachinableSurface,
-      ))
+      )
+      // Break a pass where the cutter body would enter retained 2.5D material
+      // (issue #773). The distance field knows nothing of it, so a level set
+      // runs straight up to a pocket wall; this is where it stops.
+      for (const piece of lifted) {
+        appendAll(pieces, retainedCheck === null
+          ? [piece]
+          : retainedCheck.splitPolyline(piece.points, piece.closed, (point) => point.z, (x, y, z) => ({ x, y, z })))
+      }
     }
   }
 
@@ -571,6 +585,7 @@ export function generateFinishSurfaceConstantScallop(
   minCutZAtPoint: (point: Point) => number,
   hasMachinableSurface: (point: Point, liftedSurfaceZ: number) => boolean,
   warnings: ToolpathWarning[],
+  retainedCheck: RetainedMaterialCheck | null = null,
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const stepoverRatio = operation.stepover ?? 0.5
   const spacing = finishScallopSpacing(operation, tool) ?? stepoverRatio * tool.diameter
@@ -603,5 +618,7 @@ export function generateFinishSurfaceConstantScallop(
     return { moves: [], stepLevels: new Set() }
   }
   const contours = planContours(domain, extractConstantDistanceContours(field, spacing))
-  return emitContours(contours, domain, heightMap, tool, operation, safeZ, spacing, minCutZAtPoint, hasMachinableSurface)
+  return emitContours(
+    contours, domain, heightMap, tool, operation, safeZ, spacing, minCutZAtPoint, hasMachinableSurface, retainedCheck,
+  )
 }
