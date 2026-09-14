@@ -205,6 +205,7 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
     : null
   const uncovered = useMemo(() => plan.coverage.filter((coverage) =>
     coverage.status === 'unsupported'
+    || coverage.status === 'unresolved'
     || (coverage.status === 'planned' && !enabledCoverage(plan, coverage.featureId)),
   ), [plan])
   const blockingErrors = plan.operations.flatMap((draft) => {
@@ -291,6 +292,26 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
     })
   }
 
+  function focusAdjacentPlanItem(current: HTMLElement, delta: -1 | 1) {
+    const rows = Array.from(current.parentElement?.querySelectorAll<HTMLElement>('.cam-plan-row') ?? [])
+    const next = rows[rows.indexOf(current) + delta]
+    if (!next) return
+    next.focus()
+    next.click()
+  }
+
+  function handlePlanItemKeyDown(event: React.KeyboardEvent<HTMLElement>, item: SelectedPlanItem) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      setSelected(item)
+      return
+    }
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault()
+      focusAdjacentPlanItem(event.currentTarget, event.key === 'ArrowUp' ? -1 : 1)
+    }
+  }
+
   function handleMove(key: string, delta: -1 | 1) {
     setPlan((current) => {
       const operations = moveOperation(current.operations, key, delta)
@@ -331,7 +352,6 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
       <div className="dialog dialog--cam-plan" role="dialog" aria-modal="true" aria-labelledby="cam-plan-title" ref={dialogRef} tabIndex={-1}>
         <header className="dialog-header cam-plan-header">
           <div>
-            <span className="cam-plan-eyebrow">{camT('cam.plan.preview')}</span>
             <h2 id="cam-plan-title">{camT('cam.plan.title')}</h2>
             <p>{camT('cam.plan.subtitle')}</p>
           </div>
@@ -381,7 +401,7 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
                     role="button"
                     tabIndex={0}
                     onClick={() => setSelected(item)}
-                    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') setSelected(item) }}
+                    onKeyDown={(event) => handlePlanItemKeyDown(event, item)}
                   >
                     <input type="checkbox" checked={draft.enabled} aria-label={camT('cam.plan.includeOperation', { name: draft.operation.name })} onClick={(event) => event.stopPropagation()} onChange={(event) => toggleOperation(draft.key, event.currentTarget.checked)} />
                     <span className="cam-plan-row__index">{index + 1}</span>
@@ -402,7 +422,7 @@ export function CAMPlanDialog({ initialPlan, onRecalculate, onClose, onCreated, 
               {plan.sharedTabs.map((draft) => {
                 const item: SelectedPlanItem = { type: 'tabs', key: draft.key }
                 return (
-                  <button key={draft.key} type="button" className={`cam-plan-row cam-plan-row--shared${selectedItemKey(selected) === selectedItemKey(item) ? ' cam-plan-row--selected' : ''}`} onClick={() => setSelected(item)}>
+                  <button key={draft.key} type="button" className={`cam-plan-row cam-plan-row--shared${selectedItemKey(selected) === selectedItemKey(item) ? ' cam-plan-row--selected' : ''}`} onClick={() => setSelected(item)} onKeyDown={(event) => handlePlanItemKeyDown(event, item)}>
                     <span className="cam-plan-row__index"><Icon id="tab" size={14} /></span>
                     <span className="cam-plan-row__content"><strong>{camT('cam.plan.sharedTabs')}</strong><span>{draft.targetLabel}</span><small>{camT('cam.plan.sharedByCount', { count: draft.operationKeys.length })}</small></span>
                   </button>

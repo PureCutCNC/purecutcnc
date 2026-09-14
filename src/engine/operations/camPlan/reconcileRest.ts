@@ -309,14 +309,17 @@ export function reconcileCamPlanDownstream(project: Project, plan: CamPlanDraft,
     }
 
     const pairedRough = primaryRoughForFinish(draft, new Map(operations.map((candidate) => [candidate.key, candidate])))
-    const forcedTool = pairedRough ? candidateById(plan, pairedRough.operation.toolRef) : null
+    const forcedTool = pairedRough && draft.operation.kind !== 'finish_surface'
+      ? candidateById(plan, pairedRough.operation.toolRef)
+      : null
     const ranked = rankCamPlanTools(
       project,
       draft.operation.kind,
       draft.operation.target,
       plan.tools,
-      requiredCutDepth(project, draft.operation),
+      draft.requiredCutDepth ?? requiredCutDepth(project, draft.operation),
       reusedToolIds,
+      draft.maximumToolDiameter,
     )
     const suggested = forcedTool ?? ranked?.tools[0] ?? null
     const wasReused = suggested ? reusedToolIds.has(suggested.id) : false
@@ -327,10 +330,14 @@ export function reconcileCamPlanDownstream(project: Project, plan: CamPlanDraft,
         ? operationWithSuggestedTool(draft.operation, suggested, overrides)
         : { ...draft.operation, toolRef: null },
       toolReason: suggested
-        ? toolChoiceReason(suggested, draft.operation.kind, ranked.maximumDiameter, wasReused)
-        : 'No available tool satisfies this operation\'s type, scale, and reach constraints.',
+        ? toolChoiceReason(suggested, draft.operation.kind, ranked.maximumDiameter, wasReused, draft.toolLimitSource)
+        : draft.operation.kind === 'rough_surface' || draft.operation.kind === 'finish_surface'
+          ? 'No compatible surface tool satisfies this model\'s footprint and reach. Choose or add one, or exclude the model.'
+          : 'No available tool satisfies this operation\'s type, scale, and reach constraints.',
       toolOptions: [...new Set([...(forcedTool ? [forcedTool.id] : []), ...ranked.tools.map((candidate) => candidate.id)])],
-      hardError: suggested ? null : 'Choose or add a tool that fits this operation before creating it.',
+      hardError: suggested ? null : draft.operation.kind === 'rough_surface' || draft.operation.kind === 'finish_surface'
+        ? 'No compatible surface tool satisfies this model\'s footprint and reach. Choose or add one, or exclude the model.'
+        : 'Choose or add a tool that fits this operation before creating it.',
     }
     if (suggested) reusedToolIds.add(suggested.id)
   }
