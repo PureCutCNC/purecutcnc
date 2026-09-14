@@ -118,7 +118,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.surface3dDegenerateBoundary': 'El límite exterior calculado es degenerado; la silueta del modelo puede ser demasiado pequeña.',
   'warnings.surface3dNoDepthInPocket': 'El elemento de sustracción que contiene el modelo no deja profundidad de mecanizado.',
   'warnings.surface3dNoStepLevels': 'No se generaron niveles de paso.',
-  'warnings.surface3dOpenMesh': 'El modelo tiene cortes abiertos o no es estanco. El desbaste utilizó una protección de silueta conservadora.',
+  'warnings.surface3dOpenMesh': 'El modelo tiene cortes abiertos o no es estanco. Una operación de superficie utilizó protección de silueta conservadora.',
   'warnings.surface3dFloorCollapsed': 'El piso de limpieza crítica en Z={z} colapsó después de la inserción y se omitió.',
   'warnings.surface3dNoLevels': 'No se encontraron niveles de superficie 3D mecanizables.',
   'warnings.surface3dMeshTooDense': 'La malla tiene demasiado detalle para el mecanizado de superficie 3D en Z={z} ({vertices} puntos de contorno frente a un presupuesto de {budget}). Reduzca el detalle de la malla antes de importarla o limite la operación a una región.',

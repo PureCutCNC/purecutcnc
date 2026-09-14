@@ -118,7 +118,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.surface3dDegenerateBoundary': 'La limite extérieure calculée est dégénérée — la silhouette du modèle est peut-être trop petite',
   'warnings.surface3dNoDepthInPocket': 'L’entité de soustraction contenante ne laisse aucune profondeur d’usinage pour ce modèle',
   'warnings.surface3dNoStepLevels': 'Aucun niveau de passe généré',
-  'warnings.surface3dOpenMesh': 'Le modèle comporte des tranches ouvertes/non étanches ; l’ébauche a utilisé une protection de silhouette prudente',
+  'warnings.surface3dOpenMesh': 'Le modèle comporte des tranches ouvertes/non étanches ; une opération de surface a utilisé une protection de silhouette prudente',
   'warnings.surface3dFloorCollapsed': 'Le fond de nettoyage critique à Z={z} s’est effondré après retrait et a été ignoré',
   'warnings.surface3dNoLevels': 'Aucun niveau de surface 3D usinable n’a été trouvé',
   'warnings.surface3dMeshTooDense': 'Le maillage est trop détaillé pour l’usinage de surface 3D à Z={z} ({vertices} points de contour pour un budget de {budget}) — réduisez le détail du maillage avant l’import, ou limitez l’opération à une région',

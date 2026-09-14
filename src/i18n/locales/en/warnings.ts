@@ -129,7 +129,7 @@ export const warningsEn = {
   'warnings.surface3dDegenerateBoundary': 'Computed outer boundary is degenerate — model silhouette may be too small',
   'warnings.surface3dNoDepthInPocket': 'Containing subtract feature leaves no machining depth for this model',
   'warnings.surface3dNoStepLevels': 'No step levels generated',
-  'warnings.surface3dOpenMesh': 'Model has open/non-watertight slices; roughing used conservative silhouette protection',
+  'warnings.surface3dOpenMesh': 'Model has open/non-watertight slices; a surface operation used conservative silhouette protection',
   'warnings.surface3dFloorCollapsed': 'Critical cleanup floor at Z={z} collapsed after inset and was skipped',
   'warnings.surface3dNoLevels': 'No machinable 3D surface levels were found',
   'warnings.surface3dMeshTooDense': 'Mesh is too detailed for 3D surface machining at Z={z} ({vertices} contour points against a budget of {budget}) — reduce the mesh detail before importing, or restrict the operation to a region',

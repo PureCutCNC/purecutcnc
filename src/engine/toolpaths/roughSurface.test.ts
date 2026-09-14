@@ -575,6 +575,60 @@ function makeOpenSliceProject(): { project: Project; operation: Operation } {
   return { project, operation }
 }
 
+/** A valid central section plus an unrelated open shell at every rough level. */
+function makeMixedSliceProject(): { project: Project; operation: Operation } {
+  const vertices: number[] = []
+  const indices: number[] = []
+  appendMeshBox(vertices, indices, 4, 8, 2, 6, 0, 6)
+
+  // This shell is deliberately open, but it must not discard the valid box
+  // section at the same Z in favour of the broad silhouette.
+  appendVerticalQuad(vertices, indices, [0, 0], [12, 0], 0, 6)
+  appendVerticalQuad(vertices, indices, [12, 0], [12, 8], 0, 6)
+  appendVerticalQuad(vertices, indices, [12, 8], [0, 8], 0, 6)
+
+  const mesh = serializeImportedMesh({
+    positions: new Float32Array(vertices),
+    index: new Uint32Array(indices),
+    bounds: {
+      minX: 0,
+      maxX: 12,
+      minY: 0,
+      maxY: 8,
+      minZ: 0,
+      maxZ: 6,
+    },
+  }, 'stl')
+
+  const model: SketchFeature = {
+    ...makeModelFeature(),
+    stl: {
+      format: 'stl',
+      meshAssetId: 'mixed-shell',
+      scale: 1,
+      axisSwap: 'none',
+      silhouettePaths: [[
+        { x: 0, y: 0 },
+        { x: 12, y: 0 },
+        { x: 12, y: 8 },
+        { x: 0, y: 8 },
+        { x: 0, y: 0 },
+      ]],
+    },
+  }
+  const project = projectWithFeatures({
+    ...newProject('rough-surface-mixed-shell-test', 'mm'),
+    tools: [makeTool()],
+    modelAssets: { 'mixed-shell': mesh },
+  }, [model])
+  project.stock.thickness = TEST_STOCK_THICKNESS
+  const operation = {
+    ...makeRoughOperation(['model1']),
+    stepdown: 2,
+  }
+  return { project, operation }
+}
+
 function cutMoves(moves: ToolpathMove[]): ToolpathMove[] {
   return moves.filter((move) => move.kind === 'cut')
 }
@@ -793,6 +847,26 @@ function testRoughSurfaceProtectsOpenMeshSlicesConservatively(): void {
   )
   assert(cutMoves(result.moves).length > 0, 'expected rough surface moves')
   assert(destructiveCuts.length === 0, `expected no rough cuts inside open-slice silhouette, got ${destructiveCuts.length}`)
+}
+
+function testRoughSurfaceUsesClosedSectionAlongsideOpenChains(): void {
+  console.log('Testing rough_surface uses closed sections when the same slice has open chains...')
+  const { project, operation } = makeMixedSliceProject()
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const lowerCuts = cutMoves(result.moves).filter((move) => move.to.z <= 2 + 1e-9)
+  const exposedCuts = lowerCuts.filter((move) => [move.from, move.to].some((point) => (
+    point.x > 0.25 && point.x < 3.75 && point.y > 0.25 && point.y < 7.75
+  )))
+  const destructiveCuts = lowerCuts.filter((move) => [move.from, move.to].some((point) => (
+    point.x > 4.25 && point.x < 7.75 && point.y > 2.25 && point.y < 5.75
+  )))
+
+  assert(
+    !result.warnings.some((warning) => warning.code === 'surface3dOpenMesh'),
+    'a valid closed section must avoid the whole-silhouette open-mesh fallback',
+  )
+  assert(exposedCuts.length > 0, 'expected rough cuts outside the valid closed section')
+  assert(destructiveCuts.length === 0, `expected no rough cuts inside the closed section, got ${destructiveCuts.length}`)
 }
 
 function testRoughSurfaceAvoidsSurroundingAddFeature(): void {
@@ -1256,6 +1330,7 @@ testRoughSurfaceFindsModelWhenRegionIsFirst()
   testRoughSurfaceKeepsOuterWallEnvelopeTight()
   testRoughSurfaceProtectsOverhangingModelShadow()
 testRoughSurfaceProtectsOpenMeshSlicesConservatively()
+testRoughSurfaceUsesClosedSectionAlongsideOpenChains()
 testRoughSurfaceAvoidsSurroundingAddFeature()
 testRoughSurfaceIgnoresContainingBaseFeature()
 testRoughSurfaceIgnoresTightBaseWhenPocketLimitsEnvelope()
