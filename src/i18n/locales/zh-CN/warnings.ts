@@ -122,7 +122,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.surface3dDegenerateBoundary': '计算出的外边界退化 — 模型轮廓可能过小',
   'warnings.surface3dNoDepthInPocket': '包含的减去特征没有为此模型留下加工深度',
   'warnings.surface3dNoStepLevels': '未生成分层切削层',
-  'warnings.surface3dOpenMesh': '模型存在开放/非水密切片；粗加工采用了保守的轮廓保护',
+  'warnings.surface3dOpenMesh': '模型存在开放/非水密切片；表面加工使用了保守的轮廓保护',
   'warnings.surface3dFloorCollapsed': 'Z={z} 处的关键清理底面在内缩后塌缩，已跳过',
   'warnings.surface3dNoLevels': '未找到可加工的3D曲面层',
   'warnings.surface3dMeshTooDense': 'Z={z} 处的网格对3D曲面加工来说过于精细（{vertices} 个轮廓点，预算为 {budget}）——请在导入前降低网格精度，或将该操作限制在某个区域内',
