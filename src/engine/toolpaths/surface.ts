@@ -17,6 +17,7 @@
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
+import { loadSTLTransformedGeometry } from '../csg'
 import { createEntryPolicy, withEntryStartZ, withEntryHandoffFeedScale } from './entry'
 import type {
   ClipperPath,
@@ -104,6 +105,11 @@ import {
   splitFeatureTargets,
 } from './regions'
 import { resolveRegionDomainCentre } from './regionDomain'
+import {
+  modelSilhouetteClipperPaths,
+  resolveClosedModelSection,
+  sliceDecimationTolerance,
+} from './modelSection'
 import {
   appendClampBlockedWarnings,
   clampKeepOutPaths,
@@ -433,11 +439,24 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
 
   // Adds and subtracts in project feature order, so band protection can tell
   // material a later subtract removed from material still standing (#759).
-  const solidFeatures: SurfaceSolidFeature[] = resolvedProjectFeatures(project)
+  const resolvedFeatures = resolvedProjectFeatures(project)
+  const modelFeatures = resolvedFeatures.filter(
+    (feature) => feature.operation === 'model' && feature.kind === 'stl',
+  )
+  const modelSectionTool = operation.toolRef
+    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
+    : null
+  const modelSectionTolerance = modelSectionTool
+    ? sliceDecimationTolerance(normalizeToolForProject(modelSectionTool, project).radius)
+    : 0
+  const modelSections = modelFeatures.map((feature) => ({
+    feature,
+    geometry: loadSTLTransformedGeometry(feature, project),
+  }))
+  const solidFeatures: SurfaceSolidFeature[] = resolvedFeatures
+    .filter((feature) => feature.operation === 'add' || feature.operation === 'subtract')
     .flatMap((feature) => expandFeatureGeometry(feature))
-    .filter((feature) => (
-      (feature.operation === 'add' || feature.operation === 'subtract') && featureHasClosedGeometry(feature)
-    ))
+    .filter((feature) => featureHasClosedGeometry(feature))
     .map((feature, order) => {
       const span = resolveFeatureZSpan(project, feature)
       return { feature, top: span.max, span, order }
@@ -473,6 +492,32 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     // Only what the model still has above the floor is protected (#759).
     const activeTargetIdSet = new Set(activeTargets.map(({ feature }) => feature.id))
     const protectedFeatures = allAddFeatures.filter(({ top, feature }) => top > bottomZ && !activeTargetIdSet.has(feature.id))
+    const protectedModelIds: string[] = []
+    const protectedModelPaths = modelSections.flatMap(({ feature, geometry }) => {
+      if (!geometry) {
+        const silhouettePaths = modelSilhouetteClipperPaths(feature)
+        if (silhouettePaths.length > 0) {
+          protectedModelIds.push(feature.id)
+          appendUniqueWarning(warnings, { code: 'surface3dLoadFailed' })
+        }
+        return silhouettePaths
+      }
+
+      const section = resolveClosedModelSection(geometry, bottomZ, modelSectionTolerance)
+      if (section.paths.length > 0) {
+        protectedModelIds.push(feature.id)
+        return section.paths
+      }
+      if (section.openChainCount > 0) {
+        const silhouettePaths = modelSilhouetteClipperPaths(feature)
+        if (silhouettePaths.length > 0) {
+          protectedModelIds.push(feature.id)
+          appendUniqueWarning(warnings, { code: 'surface3dOpenMesh' })
+        }
+        return silhouettePaths
+      }
+      return []
+    })
     // A clamp standing over this band is protected exactly like a taller add
     // feature: `buildSurfaceCoverageRegions` grows every protected path by the
     // tool radius before subtracting it, which is why the keep-out is requested
@@ -483,6 +528,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     )
     const protectedPaths = [
       ...protectedMaterialPaths(protectedFeatures, subtractFootprints, bottomZ),
+      ...protectedModelPaths,
       ...clampKeepOutPaths(project, { z: bottomZ, expansion: 0 }),
     ]
     subjectPaths = executeClipPaths(subjectPaths, protectedPaths, ClipperLib.ClipType.ctDifference)
@@ -490,7 +536,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     const regions = polyTreeToRegions(
       polyTree,
       activeTargets.map(({ feature }) => feature.id),
-      protectedFeatures.map(({ feature }) => feature.id),
+      [...protectedFeatures.map(({ feature }) => feature.id), ...protectedModelIds],
     )
 
     if (regions.length === 0) {
@@ -502,7 +548,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       topZ,
       bottomZ,
       targetFeatureIds: activeTargets.map(({ feature }) => feature.id),
-      islandFeatureIds: protectedFeatures.map(({ feature }) => feature.id),
+      islandFeatureIds: [...protectedFeatures.map(({ feature }) => feature.id), ...protectedModelIds],
       regions,
       subjectPaths,
       protectedPaths,

@@ -14,17 +14,14 @@
  * limitations under the License.
  */
 
-import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
+import type { CutDirection, Operation, Project } from '../../types/project'
 import type { ClipperPath, NormalizedTool, PocketToolpathResult, ResolvedPocketRegion } from './types'
 import type { ToolpathWarning } from './warningCodes'
 import {
   DEFAULT_CLIPPER_SCALE,
   checkMaxCutDepthWarning,
-  flattenProfile,
   getOperationSafeZ,
-  normalizeWinding,
   normalizeToolForProject,
-  toClipperPath,
 } from './geometry'
 import {
   buildInsetRegions,
@@ -32,12 +29,14 @@ import {
   generateStepLevels,
   polyTreeToRegions,
 } from './pocket'
-import { simplifyClosedRing } from './arcReconstruction'
 import { loadSTLTransformedGeometry } from '../csg'
-import { getMeshSliceIndex, sliceMeshAtZDetailed } from './meshSlicing'
 import { buildRegionMask, splitFeatureTargets } from './regions'
 import { resolveRegionDomainArea } from './regionDomain'
-import { significantSilhouettePaths } from './silhouette'
+import {
+  modelSilhouetteClipperPaths,
+  resolveClosedModelSection,
+  sliceDecimationTolerance,
+} from './modelSection'
 import {
   appendClampBlockedWarnings,
   buildProtectedFootprintPaths,
@@ -48,7 +47,6 @@ import {
   offsetClipperPaths,
   relatedSubtractFeatures,
   unionClipperPaths,
-  unionClipperPathsEvenOdd,
 } from './modelProtection'
 import { addFeatureTopZs, buildRetainedMaterial, containingAddFeatures, type RetainedMaterial } from './retainedMaterial'
 
@@ -121,17 +119,13 @@ const OUTER_WALL_MARGIN = 1e-3
  * `finishSurfaceWaterline.ts`), so 1% of tool radius sits about two orders of
  * magnitude below what the finish pass can resolve and cannot be the binding
  * fidelity limit. It is deliberately not scaled off `stockToLeaveRadial`, whose
- * default is 0: `slicePolygonsToClipperPaths` re-expands the keep-out by what
+ * default is 0: the model-section resolver re-expands the keep-out by what
  * thinning actually cost, so roughing leaves *extra* stock against the model and
  * never less — safe at zero stock-to-leave by construction.
  *
  * This is a ceiling on the error, not the error itself. What any given contour
  * is charged is measured, and is usually far below it.
  */
-const SLICE_DECIMATION_TOLERANCE_FRACTION = 0.01
-const MIN_SLICE_DECIMATION_TOLERANCE = 0.002
-const MAX_SLICE_DECIMATION_TOLERANCE = 0.02
-
 /**
  * Contour vertices one Z level may hand to Clipper, counting this level's
  * decimated slice, the protection accumulated from the levels above, and the
@@ -163,68 +157,12 @@ const MAX_SLICE_DECIMATION_TOLERANCE = 0.02
  */
 export const DEFAULT_SURFACE_3D_SLICE_VERTEX_BUDGET = 50_000
 
-export function sliceDecimationTolerance(toolRadius: number): number {
-  return Math.min(
-    MAX_SLICE_DECIMATION_TOLERANCE,
-    Math.max(MIN_SLICE_DECIMATION_TOLERANCE, toolRadius * SLICE_DECIMATION_TOLERANCE_FRACTION),
-  )
-}
+export { sliceDecimationTolerance } from './modelSection'
 
 function countPathVertices(paths: ClipperPath[]): number {
   let total = 0
   for (const path of paths) total += path.length
   return total
-}
-
-interface DecimatedSlice {
-  paths: ClipperPath[]
-  /**
-   * Greatest distance any dropped vertex sits from the contour that replaced
-   * it, and 0 when nothing was dropped. The caller owes exactly this much
-   * margin to keep the keep-out containing the true cross-section.
-   */
-  deviation: number
-}
-
-/**
- * Mesh cross-section at one Z, thinned, with the error that thinning introduced
- * reported rather than paid for here.
- *
- * The safety margin that error buys is applied by the caller, folded into the
- * sliver-cleanup open/close it already runs on `clearablePaths`. That placement
- * is not cosmetic: applying it here needs a `ClipperOffset` of its own over the
- * whole contour set, which is the same expensive operation decimation exists to
- * make cheaper. Measured per level on a 101.6 x 76.2 mm relief plaque, that
- * offset cost 10 ms at 4,445 contour vertices, 107 ms at 13,690 and 810 ms at
- * 35,308 — enough to make an ordinary model *slower* than before #674, and paid
- * in full even on a mesh the budget was about to refuse. Folding it into the
- * existing open/close costs nothing at all. The thinning itself is cheap by
- * comparison: 1-13 ms across the same range.
- *
- * The margin is the *measured* deviation rather than `decimationTolerance`,
- * which matters more than it looks. A rectangular or otherwise coarse
- * cross-section has no vertex RDP can drop, so it reports 0, the caller's
- * erosion becomes a no-op (`offsetClipperPaths` returns its input under a 1e-9
- * delta) and the level comes out byte-identical to pre-#674 — no margin, no
- * envelope shift, no change to the emitted program.
- *
- * Mesh-only: the 2.5D generators never reach this function. `src/import/stl.ts`
- * has a private function of the same name for silhouette extraction and is a
- * different code path.
- */
-function slicePolygonsToClipperPaths(
-  slicePolygons: Array<Array<[number, number]>>,
-  decimationTolerance: number,
-): DecimatedSlice {
-  let deviation = 0
-  const paths = slicePolygons
-    .filter((poly) => poly.length >= 3)
-    .map((poly) => {
-      const simplified = simplifyClosedRing(poly.map(([x, y]) => ({ x, y })), decimationTolerance)
-      if (simplified.deviation > deviation) deviation = simplified.deviation
-      return toClipperPath(normalizeWinding(simplified.points, false), DEFAULT_CLIPPER_SCALE)
-    })
-  return { paths: unionClipperPathsEvenOdd(paths), deviation }
 }
 
 function emptyResult(operation: Operation, warning: ToolpathWarning): PocketToolpathResult {
@@ -296,16 +234,6 @@ function dedupeFloorAreasDescending(areaByZ: Map<number, number>): Array<{ z: nu
   return merged
 }
 
-function modelSilhouetteClipperPaths(modelFeature: SketchFeature): ClipperPath[] {
-  if (modelFeature.kind === 'stl' && modelFeature.stl?.silhouettePaths?.length) {
-    return significantSilhouettePaths(modelFeature.stl.silhouettePaths)
-      .map((path) => toClipperPath(normalizeWinding(path, true), DEFAULT_CLIPPER_SCALE))
-  }
-
-  const modelProfile = flattenProfile(modelFeature.sketch.profile)
-  return [toClipperPath(modelProfile.points)]
-}
-
 export function resolve3DSurfaceStepdown(
   project: Project,
   operation: Operation,
@@ -374,7 +302,6 @@ export function resolve3DSurfaceStepdown(
   }
 
   const { positions: transformedPos, index } = stlData
-  const sliceIndex = getMeshSliceIndex(stlData)
 
   let modelTopZ = -Infinity
   let modelBottomZ = Infinity
@@ -599,24 +526,13 @@ export function resolve3DSurfaceStepdown(
   // running maximum rather than this level's own figure because
   // `protectedAbovePaths` carries the levels above, already expanded by theirs.
   let appliedDecimation = 0
-  const sliceSampleEpsilon = Math.max(Math.abs(modelTopZ - modelBottomZ) * 1e-6, 1e-6)
 
   for (const z of roughLevels) {
     const protectionZ = z - axialLeave
-    const sliceWithinModel = protectionZ <= modelTopZ - sliceSampleEpsilon
-      && protectionZ >= modelBottomZ - sliceSampleEpsilon
-    const sliceZ = Math.min(
-      modelTopZ - sliceSampleEpsilon,
-      Math.max(modelBottomZ + sliceSampleEpsilon, protectionZ + sliceSampleEpsilon),
-    )
-
-    const sliceResult = sliceWithinModel
-      ? sliceMeshAtZDetailed(sliceIndex, sliceZ)
-      : { polygons: [], openChainCount: 0, segmentCount: 0 }
-    const decimatedSlice = slicePolygonsToClipperPaths(sliceResult.polygons, decimationTolerance)
-    const slicePaths = decimatedSlice.paths
-    if (decimatedSlice.deviation > appliedDecimation) {
-      appliedDecimation = decimatedSlice.deviation
+    const modelSection = resolveClosedModelSection(stlData, protectionZ, decimationTolerance)
+    const slicePaths = modelSection.paths
+    if (modelSection.deviation > appliedDecimation) {
+      appliedDecimation = modelSection.deviation
     }
     const outlinePaths = outlineForShift(2 * appliedDecimation)
 
@@ -688,7 +604,7 @@ export function resolve3DSurfaceStepdown(
       ...retainedPaths,
     ])
 
-    if (sliceResult.openChainCount > 0) {
+    if (modelSection.openChainCount > 0 && slicePaths.length === 0) {
       protectedAtLevel = unionClipperPaths([
         ...protectedAtLevel,
         ...modelFootprintPaths,
@@ -751,7 +667,7 @@ export function resolve3DSurfaceStepdown(
 
     const sliceArea = calculateClipperArea(slicePaths)
     const isSolidFloor = sliceArea > 0.95 * silhouetteArea
-    if (isSolidFloor || sliceResult.openChainCount > 0) {
+    if (isSolidFloor || (modelSection.openChainCount > 0 && slicePaths.length === 0)) {
       protectedAbovePaths = unionClipperPaths([
         ...protectedAbovePaths,
         ...modelFootprintPaths,

@@ -129,7 +129,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.surface3dDegenerateBoundary': 'Berechnete Außenbegrenzung ist entartet – Modellsilhouette ist möglicherweise zu klein',
   'warnings.surface3dNoDepthInPocket': 'Umschließendes Abzieh-Feature lässt keine Bearbeitungstiefe für dieses Modell',
   'warnings.surface3dNoStepLevels': 'Keine Stufenebenen erzeugt',
-  'warnings.surface3dOpenMesh': 'Modell hat offene/nicht wasserdichte Schnitte; das Schruppen verwendete konservativen Silhouettenschutz',
+  'warnings.surface3dOpenMesh': 'Modell hat offene/nicht wasserdichte Schnitte; ein Oberflächenvorgang verwendete konservativen Silhouettenschutz',
   'warnings.surface3dFloorCollapsed': 'Kritischer Nacharbeitsboden bei Z={z} kollabierte nach Versatz und wurde übersprungen',
   'warnings.surface3dNoLevels': 'Keine bearbeitbaren 3D-Oberflächenebenen gefunden',
   'warnings.surface3dMeshTooDense': 'Netz ist für die 3D-Oberflächenbearbeitung bei Z={z} zu detailliert ({vertices} Konturpunkte gegenüber einem Budget von {budget}) — Netzdetails vor dem Import reduzieren oder die Operation auf einen Bereich beschränken',
