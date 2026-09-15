@@ -32,6 +32,7 @@ import {
   selectSourceUnitsMm,
   openImportDialog,
 } from './importGeometry.helpers'
+import { stepFile, type StepFixtureSolid } from '../src/test/stepFixtures'
 
 function projectFeatureOperations(project: Record<string, unknown>): Array<string | undefined> {
   const features = project.features as Array<{ definitionId: string }>
@@ -322,6 +323,97 @@ test.describe('DXF import', () => {
     // An open Line feature exists
     const lineIdx = operations.findIndex((operation) => operation === 'line')
     expect(lineIdx).toBeGreaterThanOrEqual(0)
+  })
+})
+
+// ── STEP: tessellated by Open CASCADE in the import worker (issue #784) ──
+
+interface ImportedModelProject {
+  meta: { units: 'mm' | 'inch' }
+  features: Array<{ id: string, definitionId: string, folderId: string | null }>
+  featureFolders: Array<{ id: string, name: string }>
+  featureDefinitions: Record<string, { operation?: string, stl?: { format?: string, meshAssetId?: string } | null }>
+  modelAssets?: Record<string, { sourceFormat?: string, bounds: { minX: number, maxX: number } }>
+}
+
+function stepBox(min: [number, number, number], max: [number, number, number]): StepFixtureSolid {
+  return { kind: 'box', min, max }
+}
+
+test.describe('STEP import', () => {
+  test('an inch part imports through the worker at its declared size', async ({ app }) => {
+    test.setTimeout(90_000)
+    const dialog = await openImportDialog(app.page)
+    await dialog.locator('input[type="file"]').setInputFiles({
+      name: 'bracket.step',
+      mimeType: 'application/step',
+      buffer: Buffer.from(stepFile([stepBox([0, 0, 0], [2, 1, 0.5])], { unit: 'inch' })),
+    })
+
+    // The declared unit is shown and preselected, and the tolerance is a visible input.
+    const sourceUnits = dialog.locator('.import-dialog__info-row').filter({ hasText: 'Source units' }).locator('select')
+    await expect(sourceUnits).toHaveValue('inch')
+    await expect(dialog.locator('[data-testid="import-step-units"]')).toHaveText('Units declared in the file: in')
+    await expect(dialog.locator('[data-testid="import-step-tolerance"]')).not.toHaveValue('')
+
+    await dialog.locator('.dialog-footer .btn-primary').click()
+    await expect(dialog).not.toBeVisible({ timeout: 60_000 })
+
+    const project = await getProject(app.page) as unknown as ImportedModelProject
+    expect(project.features).toHaveLength(1)
+    const definition = project.featureDefinitions[project.features[0].definitionId]
+    expect(definition.operation).toBe('model')
+    expect(definition.stl?.format).toBe('step')
+    const asset = project.modelAssets?.[definition.stl?.meshAssetId ?? '']
+    expect(asset?.sourceFormat).toBe('step')
+    // Two declared inches, in whatever units the project uses.
+    const width = project.meta.units === 'inch' ? 2 : 50.8
+    expect((asset?.bounds.maxX ?? 0) - (asset?.bounds.minX ?? 0)).toBeCloseTo(width, 3)
+  })
+
+  test('a two-solid file becomes a folder of two model features', async ({ app }) => {
+    test.setTimeout(90_000)
+    const dialog = await openImportDialog(app.page)
+    await dialog.locator('input[type="file"]').setInputFiles({
+      name: 'pair.stp',
+      mimeType: 'application/step',
+      buffer: Buffer.from(stepFile([stepBox([0, 0, 0], [10, 10, 5]), stepBox([20, 0, 0], [30, 10, 5])])),
+    })
+    await expect(dialog.locator('.import-dialog__info-row').filter({ hasText: 'Format' }).locator('strong')).toHaveText('STEP')
+
+    await dialog.locator('.dialog-footer .btn-primary').click()
+    await expect(dialog).not.toBeVisible({ timeout: 60_000 })
+
+    const project = await getProject(app.page) as unknown as ImportedModelProject
+    expect(project.features).toHaveLength(2)
+    const folderIds = new Set(project.features.map((feature) => feature.folderId))
+    expect(folderIds.size).toBe(1)
+    expect(project.featureFolders.find((folder) => folderIds.has(folder.id))?.name).toBe('pair')
+    for (const feature of project.features) {
+      expect(project.featureDefinitions[feature.definitionId].stl?.format).toBe('step')
+    }
+  })
+
+  test('a malformed file reports why and leaves the project unchanged', async ({ app }) => {
+    test.setTimeout(90_000)
+    const before = await getProject(app.page) as unknown as ImportedModelProject
+    const dialog = await openImportDialog(app.page)
+    await dialog.locator('input[type="file"]').setInputFiles({
+      name: 'broken.step',
+      mimeType: 'application/step',
+      buffer: Buffer.from('this is not a STEP file'),
+    })
+
+    // Nothing is declared, so the user must choose before importing.
+    await expect(dialog.locator('.import-dialog__field-note--warn')).toContainText('Units not detected')
+    await selectSourceUnitsMm(dialog)
+    await dialog.locator('.dialog-footer .btn-primary').click()
+
+    await expect(dialog.locator('.cam-field-message')).toContainText('The STEP file could not be read.', { timeout: 60_000 })
+    await expect(dialog).toBeVisible()
+    const after = await getProject(app.page) as unknown as ImportedModelProject
+    expect(after.features).toHaveLength(before.features.length)
+    expect(Object.keys(after.modelAssets ?? {})).toHaveLength(Object.keys(before.modelAssets ?? {}).length)
   })
 })
 

@@ -366,7 +366,12 @@ export function cloneTextFeatureData(text: TextFeatureData | null | undefined): 
   return text ? { ...text } : null
 }
 
-export type ImportedModelSourceFormat = 'stl' | 'obj'
+/**
+ * The file format an imported model came from. A STEP model is tessellated once
+ * at import (issue #784) and stored as a mesh like any other; the STEP file
+ * itself is never persisted.
+ */
+export type ImportedModelSourceFormat = 'stl' | 'obj' | 'step'
 
 export interface PersistedImportedMeshBounds {
   minX: number

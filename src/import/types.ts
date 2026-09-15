@@ -17,9 +17,10 @@
 import type { FeatureOperation, SketchProfile } from '../types/project'
 import type { Units } from '../utils/units'
 
-export type ImportSourceType = 'svg' | 'dxf' | 'stl' | 'obj' | 'camj'
+export type ImportSourceType = 'svg' | 'dxf' | 'stl' | 'obj' | 'step' | 'camj'
 
-export const SUPPORTED_IMPORT_EXTENSIONS = ['svg', 'dxf', 'stl', 'obj', 'camj'] as const
+/** Accepted file extensions; `stp` is the other spelling of `step`. */
+export const SUPPORTED_IMPORT_EXTENSIONS = ['svg', 'dxf', 'stl', 'obj', 'step', 'stp', 'camj'] as const
 export const SUPPORTED_IMPORT_ACCEPT = '.' + SUPPORTED_IMPORT_EXTENSIONS.join(',.')
 
 /** Geometry import mode — how the importer assigns feature roles. */
@@ -89,7 +90,7 @@ export interface ImportContext {
 export function detectImportSourceType(fileName: string): ImportSourceType | null {
   const lowerName = fileName.toLowerCase()
   for (const ext of SUPPORTED_IMPORT_EXTENSIONS) {
-    if (lowerName.endsWith('.' + ext)) return ext
+    if (lowerName.endsWith('.' + ext)) return ext === 'stp' ? 'step' : ext
   }
   return null
 }

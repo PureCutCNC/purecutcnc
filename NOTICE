@@ -3,3 +3,23 @@ Copyright 2026 Franja (Frank) Povazanj
 
 This product includes software developed by Franja (Frank) Povazanj 
 as part of the PureCutCNC project.
+
+Third-party software
+--------------------
+
+STEP import uses occt-import-js 0.0.23 (https://github.com/kovacsv/occt-import-js),
+a WebAssembly build of Open CASCADE Technology (https://dev.opencascade.org).
+Both are licensed under the GNU Lesser General Public License, version 2.1. The
+license texts ship with the application in licenses/ (public/licenses/ in this
+repository).
+
+The WebAssembly module is distributed unmodified, as a separate file loaded at
+run time; its JavaScript loader is bundled into the STEP import worker.
+PureCutCNC's own source is available under the Apache License 2.0, so the
+application can be rebuilt against a modified copy of the library.
+
+Corresponding source:
+- occt-import-js: https://github.com/kovacsv/occt-import-js/tree/0.0.23
+- Open CASCADE Technology, at the commit that tag pins
+  (d2abb6d844231cb8f29be6894440874a4700e4a5):
+  https://git.dev.opencascade.org/repos/occt.git

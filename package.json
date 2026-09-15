@@ -42,6 +42,7 @@
     "clipper-lib": "^6.4.2",
     "delaunator": "^5.1.0",
     "manifold-3d": "^3.3.2",
+    "occt-import-js": "0.0.23",
     "pdf-lib": "^1.17.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

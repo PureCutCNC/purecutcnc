@@ -28,11 +28,11 @@ import {
   type ImportInspection,
   type ImportSourceType,
 } from '../../import'
+import { inspectStepFileUnits, type StepUnitInspection } from '../../import/stepUnits'
+import { StepImportError } from '../../import/stepProtocol'
 import { useProjectStore } from '../../store/projectStore'
-import {
-  type ImportedModelFormat,
-  type ModelAxisOrientation,
-} from '../../engine/importedMesh'
+import type { ModelAxisOrientation } from '../../engine/importedMesh'
+import type { ImportedModelSourceFormat } from '../../types/project'
 import type { Units } from '../../utils/units'
 import { useImportGeometryAnalysis } from './useImportGeometryAnalysis'
 import { ImportGeometryModeSection } from './ImportGeometryModeSection'
@@ -49,6 +49,8 @@ interface LoadedImportFile {
   sourceType: ImportSourceType
   inspection: ImportInspection
   camj?: CamjInspection
+  /** Declared length units, for STEP files only. */
+  step?: StepUnitInspection
 }
 
 interface ImportGeometryDialogProps {
@@ -56,17 +58,20 @@ interface ImportGeometryDialogProps {
   onImportComplete?: () => void
 }
 
-function sourceTypeLabel(sourceType: ImportSourceType, td: (key: keyof typeof dialogsEn) => string): string {
+type DialogTranslate = (key: keyof typeof dialogsEn, params?: MessageParams) => string
+
+function sourceTypeLabel(sourceType: ImportSourceType, td: DialogTranslate): string {
   if (sourceType === 'svg') return 'SVG'
   if (sourceType === 'dxf') return 'DXF'
   if (sourceType === 'stl') return 'STL'
   if (sourceType === 'obj') return 'OBJ'
+  if (sourceType === 'step') return 'STEP'
   if (sourceType === 'camj') return td('dialogs.importGeometry.formatLabel.camj')
   return td('dialogs.importGeometry.formatLabel.unknown')
 }
 
-function isModelSourceType(sourceType: ImportSourceType): sourceType is ImportedModelFormat {
-  return sourceType === 'stl' || sourceType === 'obj'
+function isModelSourceType(sourceType: ImportSourceType): sourceType is ImportedModelSourceFormat {
+  return sourceType === 'stl' || sourceType === 'obj' || sourceType === 'step'
 }
 
 function defaultJoinTolerance(units: Units): string {
@@ -77,10 +82,50 @@ function joinToleranceStep(units: Units): string {
   return units === 'inch' ? '0.001' : '0.01'
 }
 
+/** The chord error allowed between a tessellated STEP surface and the true one. */
+function defaultStepTolerance(units: Units): string {
+  return units === 'inch' ? '0.0005' : '0.01'
+}
+
+function stepToleranceStep(units: Units): string {
+  return units === 'inch' ? '0.0001' : '0.001'
+}
+
+function stepImportErrorText(error: StepImportError, td: DialogTranslate, languageTag: string): string {
+  switch (error.code) {
+    case 'invalid-tolerance':
+      return td('dialogs.importGeometry.error.stepTolerance')
+    case 'file-too-large':
+      return td('dialogs.importGeometry.error.stepFileTooLarge', { limit: Math.round((error.limit ?? 0) / (1024 * 1024)) })
+    case 'runtime-unavailable':
+      return td('dialogs.importGeometry.error.stepRuntimeUnavailable')
+    case 'unreadable':
+      return td('dialogs.importGeometry.error.stepUnreadable')
+    case 'no-geometry':
+      return td('dialogs.importGeometry.error.stepNoGeometry')
+    case 'too-many-triangles':
+      return td('dialogs.importGeometry.error.stepTooManyTriangles', { limit: (error.limit ?? 0).toLocaleString(languageTag) })
+    case 'out-of-memory':
+      return td('dialogs.importGeometry.error.stepOutOfMemory')
+    case 'tessellation-failed':
+      return td('dialogs.importGeometry.error.stepTessellationFailed')
+    case 'worker-failed':
+      return td('dialogs.importGeometry.error.stepWorkerFailed')
+    case 'cancelled':
+      return td('dialogs.importGeometry.error.importFailed')
+  }
+}
+
+/** The translated message, followed by the runtime's own diagnostic when there is one. */
+function stepImportErrorMessage(error: StepImportError, td: DialogTranslate, languageTag: string): string {
+  const message = stepImportErrorText(error, td, languageTag)
+  return error.detail ? td('dialogs.importGeometry.error.stepDetail', { message, detail: error.detail }) : message
+}
+
 export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeometryDialogProps) {
   useRestoreCanvasFocus()
   const { project, importShapes, importCamjFolders } = useProjectStore()
-  const { t } = useI18n()
+  const { t, languageTag } = useI18n()
 
   function td(key: keyof typeof dialogsEn, params?: MessageParams): string {
     return t(key, params)
@@ -99,7 +144,11 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
   const [silhouetteZSteps, setSilhouetteZSteps] = useState('')
   const [importStock, setImportStock] = useState(false)
   const [geometryMode, setGeometryMode] = useState<ImportGeometryMode>('auto')
+  const [stepTolerance, setStepTolerance] = useState(() => defaultStepTolerance(project.meta.units))
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // The model import in flight. Closing the dialog aborts it, which terminates a
+  // STEP tessellation and stops the import from landing after the dialog is gone.
+  const importAbortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -108,6 +157,11 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
+
+  useEffect(() => {
+    const importAbort = importAbortRef
+    return () => importAbort.current?.abort()
+  }, [])
 
   // ── analysis hook (SVG/DXF parse + classify) ──────────────────────────
   const sourceType = loadedFile?.sourceType
@@ -161,6 +215,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
     setSelectedLayers(new Set())
     setSilhouetteZSteps('')
     setImportStock(false)
+    setStepTolerance(defaultStepTolerance(project.meta.units))
   }
 
   function loadSelectedFile(file: File): void {
@@ -179,21 +234,26 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
           const modelBuffer = readerEvent.target?.result
           if (!(modelBuffer instanceof ArrayBuffer)) throw new Error('Failed to read model file.')
           const label = sourceTypeLabel(nextSourceType, td)
+          // A STEP file declares its units, so Source units starts from the
+          // declaration — or stays empty, making the user choose. STL and OBJ
+          // declare nothing and start from the project units as before.
+          const step = nextSourceType === 'step' ? inspectStepFileUnits(modelBuffer) : undefined
           setLoadedFile({
             fileName: file.name,
             text: '',
             modelBuffer,
             sourceType: nextSourceType,
+            step,
             inspection: {
               layers: [],
               warnings: [],
               sourceUnitScale: 1,
-              detectedUnits: null,
-              unitsReliable: false,
+              detectedUnits: step?.defaultSourceUnits ?? null,
+              unitsReliable: step ? step.defaultSourceUnits !== null : false,
               summary: `${label} file - 3D mesh imported by top-down silhouette projection`,
             },
           })
-          setSourceUnits(project.meta.units)
+          setSourceUnits(step ? (step.defaultSourceUnits ?? '') : project.meta.units)
           setSelectedLayers(new Set())
         } else if (nextSourceType === 'camj') {
           const text = String(readerEvent.target?.result ?? '')
@@ -228,6 +288,7 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
         setAllowCrossLayerJoins(false)
         setSilhouetteZSteps('')
         setImportStock(false)
+        setStepTolerance(defaultStepTolerance(project.meta.units))
         setDialogError(null)
       } catch (error) {
         setLoadedFile(null)
@@ -314,6 +375,8 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
       } else if (isModelSourceType(loadedFile.sourceType)) {
         const modelBuffer = loadedFile.modelBuffer
         if (!modelBuffer) throw new Error('Missing file data')
+        const controller = new AbortController()
+        importAbortRef.current = controller
         createdIds = await importModelFile({
           modelFormat: loadedFile.sourceType,
           modelBuffer,
@@ -322,6 +385,8 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
           sourceUnits: sourceUnits as Units,
           axisSwap,
           silhouetteZSteps,
+          step: loadedFile.step ? { outputUnit: loadedFile.step.outputUnit, tolerance: stepTolerance } : undefined,
+          signal: controller.signal,
           onProgress: (stage, pct) => { setLoadingStage(stage); setLoadingProgress(pct) },
         })
       } else {
@@ -357,7 +422,13 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
       onImportComplete?.()
       onClose()
     } catch (error) {
-      setDialogError(error instanceof Error ? error.message : td('dialogs.importGeometry.error.importFailed'))
+      // Aborted only because the dialog is closing: there is nobody left to tell.
+      if (importAbortRef.current?.signal.aborted) return
+      if (error instanceof StepImportError) {
+        setDialogError(stepImportErrorMessage(error, td, languageTag))
+      } else {
+        setDialogError(error instanceof Error ? error.message : td('dialogs.importGeometry.error.importFailed'))
+      }
       setBusy(false)
       setLoadingProgress(null)
       setLoadingStage(td('dialogs.importGeometry.processingModel'))
@@ -465,7 +536,21 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                     </select>
                   )}
                 </div>
-                {!loadedFile.inspection.detectedUnits && !isModelSourceType(loadedFile.sourceType) && !isCamj ? (
+                {loadedFile.step && loadedFile.step.declaredUnits.length > 0 ? (
+                  <div
+                    className={`import-dialog__field-note${loadedFile.step.convertedToMm ? ' import-dialog__field-note--warn' : ''}`}
+                    data-testid="import-step-units"
+                  >
+                    {td(
+                      loadedFile.step.convertedToMm
+                        ? 'dialogs.importGeometry.stepUnitsConverted'
+                        : 'dialogs.importGeometry.stepUnitsDeclared',
+                      { units: loadedFile.step.declaredUnits.join(', ') },
+                    )}
+                  </div>
+                ) : null}
+                {!loadedFile.inspection.detectedUnits
+                  && (loadedFile.sourceType === 'step' || (!isModelSourceType(loadedFile.sourceType) && !isCamj)) ? (
                   <div className="import-dialog__field-note import-dialog__field-note--warn">
                     {td('dialogs.importGeometry.unitsNotDetected')}
                   </div>
@@ -529,6 +614,21 @@ export function ImportGeometryDialog({ onClose, onImportComplete }: ImportGeomet
                       placeholder={td('dialogs.importGeometry.silhouetteAuto')}
                       value={silhouetteZSteps}
                       onChange={(event) => setSilhouetteZSteps(event.target.value)}
+                    />
+                  </div>
+                ) : null}
+
+                {/* STEP surface tolerance: how far the tessellated mesh may stray from the true surface */}
+                {loadedFile.sourceType === 'step' ? (
+                  <div className="import-dialog__info-row">
+                    <span>{td('dialogs.importGeometry.stepTolerance', { unit: project.meta.units === 'inch' ? 'in' : 'mm' })}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step={stepToleranceStep(project.meta.units)}
+                      value={stepTolerance}
+                      onChange={(event) => setStepTolerance(event.target.value)}
+                      data-testid="import-step-tolerance"
                     />
                   </div>
                 ) : null}

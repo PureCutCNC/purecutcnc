@@ -12,7 +12,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [store/](store/INDEX.md) — Zustand state (the single source of truth for projects). **All mutations go through here.**
 - [engine/](engine/INDEX.md) — pure-logic CAM core: toolpaths, G-code, simulation, CSG, mesh import
 - [components/](components/INDEX.md) — React UI (canvas, viewport3d, simulation, panels)
-- [import/](import/) — DXF / SVG / STL / OBJ parsers that normalize into `.camj`; `camj.ts` adds partial-import (merge selected folders from another `.camj` into the current project)
+- [import/](import/INDEX.md) — DXF / SVG / STL / OBJ / STEP importers that normalize into `.camj` (STEP is tessellated by Open CASCADE in a worker); `camj.ts` adds partial-import (merge selected folders from another `.camj` into the current project)
 - [postProcessorConverter/](postProcessorConverter/INDEX.md) — standalone CLI that converts external CAM post-processor files into a `MachineDefinition` JSON plus a conversion report
 - [text/](text/) — text-to-geometry (font → machinable paths); `index.ts` is the public API, `fontData.ts` the typed font-parse seam, and `outlineContours.ts` removes self-intersection slivers before profiles reach downstream consumers. `baseline.ts` bends a straight run onto an arc or a guide path (issue #671) — one similarity transform per glyph, so letterforms are never sheared
 - [geometry/](geometry/INDEX.md) — layer-neutral pure profile primitives (`clonePoint`, `translatePoint`, `transformProfile`, `translateProfile`, `cloneProfile`) shared by the store and `text/` so neither depends on the other
