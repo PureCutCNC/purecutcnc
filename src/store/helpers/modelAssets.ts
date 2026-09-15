@@ -51,6 +51,10 @@ export function normalizeImportedModelStorage(
   }
 
   if (!stl.fileData) return stl
+  // STEP is tessellated once at import and only its mesh is stored, so embedded
+  // STEP bytes can only come from a hand-edited file, and there is no
+  // synchronous parser to recover them with. Leave the data as it is.
+  if (stl.format === 'step') return stl
 
   const format: ImportedModelFormat = stl.format ?? 'stl'
   const mesh = loadImportedTriangleMesh(format, stl.fileData, stl.axisSwap ?? 'none')

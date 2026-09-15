@@ -45,10 +45,11 @@ Imported geometry can then be transformed, assigned operations, and used like ha
 
 ### Import 3D models
 
-Import STL and OBJ meshes to drive 3D surface machining:
+Import STL, OBJ, and STEP models to drive 3D surface machining:
 
 - STL import (binary and ASCII)
 - OBJ import
+- STEP import (`.step` / `.stp`): tessellated at a surface tolerance you choose, with the units the file declares; each solid becomes its own model feature
 - axis orientation swaps for parts authored in a different up-axis
 - automatic silhouette extraction so the mesh appears as a sketch feature you can position, transform, and use as a region
 

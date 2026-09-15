@@ -29,21 +29,24 @@ function assert(cond: boolean, msg: string): void {
 // ── Constants ──
 
 assert(
-  SUPPORTED_IMPORT_EXTENSIONS.length === 5,
-  'SUPPORTED_IMPORT_EXTENSIONS has 5 entries'
+  SUPPORTED_IMPORT_EXTENSIONS.length === 7,
+  'SUPPORTED_IMPORT_EXTENSIONS has 7 entries'
 )
 assert(
   SUPPORTED_IMPORT_EXTENSIONS[0] === 'svg' &&
   SUPPORTED_IMPORT_EXTENSIONS[1] === 'dxf' &&
   SUPPORTED_IMPORT_EXTENSIONS[2] === 'stl' &&
   SUPPORTED_IMPORT_EXTENSIONS[3] === 'obj' &&
-  SUPPORTED_IMPORT_EXTENSIONS[4] === 'camj',
-  'SUPPORTED_IMPORT_EXTENSIONS contains svg,dxf,stl,obj,camj in order'
+  SUPPORTED_IMPORT_EXTENSIONS[4] === 'step' &&
+  SUPPORTED_IMPORT_EXTENSIONS[5] === 'stp' &&
+  SUPPORTED_IMPORT_EXTENSIONS[6] === 'camj',
+  'SUPPORTED_IMPORT_EXTENSIONS contains svg,dxf,stl,obj,step,stp,camj in order'
 )
 
+// The browser accept list and the desktop picker filter both derive from this.
 assert(
-  SUPPORTED_IMPORT_ACCEPT === '.svg,.dxf,.stl,.obj,.camj',
-  'SUPPORTED_IMPORT_ACCEPT equals .svg,.dxf,.stl,.obj,.camj'
+  SUPPORTED_IMPORT_ACCEPT === '.svg,.dxf,.stl,.obj,.step,.stp,.camj',
+  'SUPPORTED_IMPORT_ACCEPT equals .svg,.dxf,.stl,.obj,.step,.stp,.camj'
 )
 
 // ── detectImportSourceType ──
@@ -53,10 +56,13 @@ assert(detectImportSourceType('part.dxf') === 'dxf', 'part.dxf → dxf')
 assert(detectImportSourceType('model.stl') === 'stl', 'model.stl → stl')
 assert(detectImportSourceType('mesh.obj') === 'obj', 'mesh.obj → obj')
 assert(detectImportSourceType('project.camj') === 'camj', 'project.camj → camj')
+assert(detectImportSourceType('bracket.step') === 'step', 'bracket.step → step')
+assert(detectImportSourceType('bracket.stp') === 'step', 'bracket.stp → step (one source type, two spellings)')
 
 // Case-insensitive
 assert(detectImportSourceType('PART.SVG') === 'svg', 'PART.SVG → svg')
 assert(detectImportSourceType('Model.StL') === 'stl', 'Model.StL → stl')
+assert(detectImportSourceType('BRACKET.STP') === 'step', 'BRACKET.STP → step')
 
 // Rejected extensions
 assert(detectImportSourceType('image.png') === null, 'image.png → null')

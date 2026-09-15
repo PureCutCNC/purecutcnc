@@ -17,7 +17,7 @@
 import * as THREE from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js'
-import type { ModelOrientation, PersistedImportedMesh } from '../types/project'
+import type { ImportedModelSourceFormat, ModelOrientation, PersistedImportedMesh } from '../types/project'
 import {
   isIdentityModelOrientation,
   modelOrientationKey,
@@ -25,6 +25,7 @@ import {
   rotatePointByModelOrientation,
 } from './importedModelTransform'
 
+/** Formats the synchronous parsers read. STEP is tessellated by `src/import/stepImportClient.ts` instead. */
 export type ImportedModelFormat = 'stl' | 'obj'
 export type ModelAxisOrientation = 'none' | 'yz' | 'xz' | 'xy'
 
@@ -206,7 +207,7 @@ export function normalizeImportedMeshForStorage(mesh: ImportedTriangleMesh, scal
 
 export function serializeImportedMesh(
   mesh: ImportedTriangleMesh,
-  sourceFormat?: ImportedModelFormat,
+  sourceFormat?: ImportedModelSourceFormat,
 ): PersistedImportedMesh {
   return {
     storage: 'mesh-v1',
@@ -959,6 +960,35 @@ export function splitMeshByConnectedComponents(mesh: ImportedTriangleMesh): Impo
   }
 
   return subMeshes
+}
+
+/**
+ * Join meshes into one, offsetting each mesh's indices past the vertices before
+ * it. Vertices are not welded, so each input keeps its own shading seams.
+ */
+export function concatenateTriangleMeshes(meshes: readonly ImportedTriangleMesh[]): ImportedTriangleMesh {
+  let positionCount = 0
+  let indexCount = 0
+  for (const mesh of meshes) {
+    positionCount += mesh.positions.length
+    indexCount += mesh.index.length
+  }
+
+  const positions = new Float32Array(positionCount)
+  const index = new Uint32Array(indexCount)
+  let positionOffset = 0
+  let indexOffset = 0
+  for (const mesh of meshes) {
+    positions.set(mesh.positions, positionOffset)
+    const vertexOffset = positionOffset / 3
+    for (let i = 0; i < mesh.index.length; i += 1) {
+      index[indexOffset + i] = mesh.index[i] + vertexOffset
+    }
+    positionOffset += mesh.positions.length
+    indexOffset += mesh.index.length
+  }
+
+  return { positions, index, bounds: computeMeshBounds(positions) }
 }
 
 export function computeMeshBounds(positions: Float32Array): ImportedMeshBounds {

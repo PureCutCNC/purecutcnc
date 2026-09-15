@@ -80,6 +80,12 @@ export default defineConfig({
       },
     },
   },
+  // Pre-bundle the STEP worker's CommonJS dependency when the dev server starts,
+  // rather than discovering it on the first STEP import: a late discovery
+  // re-optimizes dependencies and reloads the page mid-import (issue #784).
+  optimizeDeps: {
+    include: ['occt-import-js'],
+  },
   server: {
     port: 1420,
     strictPort: true,

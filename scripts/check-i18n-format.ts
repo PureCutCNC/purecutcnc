@@ -301,7 +301,7 @@ function canonicalizeImport(text: string, specifier: string): string {
  */
 const SENTENCE_CASE_TERMS = new Set([
   // Acronyms, file formats, and dimensionality.
-  'CNC', 'CAD', 'CAM', 'CAMJ', 'DXF', 'STL', 'OBJ', 'SVG', 'PDF', 'PNG', 'JPEG',
+  'CNC', 'CAD', 'CAM', 'CAMJ', 'DXF', 'STL', 'OBJ', 'STEP', 'SVG', 'PDF', 'PNG', 'JPEG', 'MB',
   'JSON', 'RPM', 'WCAG', 'BCP', 'UI', 'OS', 'WebGL', 'GPU', 'Canvas', 'ID', '2D', '3D', '2.5D',
   // Axes, G-code words, and machine addresses. `V` is the bit profile, as in
   // "V flanks" and "V groove", not an axis.
