@@ -159,6 +159,61 @@ function makeModelOnAddProject(openSlice = false): { project: Project; operation
   }
 }
 
+/**
+ * The lower ring has a real cavity, but an upper box caps it. A surface-clean
+ * operation must clear the cavity at the plate floor while keeping the upper
+ * box intact at its own stepdown levels.
+ */
+function makeCappedCavityModelOnAddProject(): { project: Project; operation: Operation; floorZ: number; capZ: number } {
+  const vertices: number[] = []
+  const indices: number[] = []
+  const floorZ = 1
+  const capZ = 4
+
+  // A 4×4 ring from Z=0 to Z=2, with a 2×2 cavity at its centre.
+  appendMeshBox(vertices, indices, 4, 5, 2, 6, 0, 2)
+  appendMeshBox(vertices, indices, 7, 8, 2, 6, 0, 2)
+  appendMeshBox(vertices, indices, 5, 7, 2, 3, 0, 2)
+  appendMeshBox(vertices, indices, 5, 7, 5, 6, 0, 2)
+  // The cap occupies that same XY cavity from Z=2 through the upper levels.
+  appendMeshBox(vertices, indices, 5, 7, 3, 5, 2, 6)
+
+  const mesh = serializeImportedMesh({
+    positions: new Float32Array(vertices),
+    index: new Uint32Array(indices),
+    bounds: { minX: 4, maxX: 8, minY: 2, maxY: 6, minZ: 0, maxZ: 6 },
+  }, 'stl')
+  const plate = makeBoss('plate-capped-cavity', 0, 0, 12, 8, floorZ)
+  const model: SketchFeature = {
+    ...makeBoss('model-capped-cavity', 0, 0, 12, 8, 6),
+    kind: 'stl',
+    operation: 'model',
+    stl: {
+      format: 'stl',
+      meshAssetId: 'surface-capped-cavity-model',
+      scale: 1,
+      axisSwap: 'none',
+      silhouettePaths: [[
+        { x: 0, y: 0 },
+        { x: 12, y: 0 },
+        { x: 12, y: 8 },
+        { x: 0, y: 8 },
+      ]],
+    },
+    z_top: 6,
+    z_bottom: 0,
+  }
+  const project = baseProject([makeEndmill('t1', 1)], [plate, model])
+  project.modelAssets['surface-capped-cavity-model'] = mesh
+  project.stock.thickness = 6
+  return {
+    project,
+    operation: makeSurfaceOp({ featureIds: [plate.id], stepdown: 1, id: 'surface-capped-cavity' }),
+    floorZ,
+    capZ,
+  }
+}
+
 function baseProject(tools: Tool[], features: SketchFeature[]): Project {
   const project = newProject('surface-test', 'mm')
   return projectWithFeatures({ ...project, tools }, features)
@@ -784,8 +839,36 @@ function testSurfaceCleanProtectsModelCrossSectionInsteadOfItsSilhouette() {
   console.log('   PASSED')
 }
 
+function testSurfaceCleanProtectsTheModelAtEachStepdown() {
+  console.log('15. surface clean resolves the model section at every stepdown (issue #781)...')
+  const { project, operation, floorZ, capZ } = makeCappedCavityModelOnAddProject()
+  const result = generateSurfaceCleanToolpath(project, operation)
+  const toolRadius = project.tools[0]!.diameter / 2
+  const capCentre = { x: 6, y: 4 }
+
+  const capCuts = result.moves.filter((move) => move.kind === 'cut'
+    && Math.abs(move.from.z - capZ) < 1e-9
+    && Math.abs(move.to.z - capZ) < 1e-9)
+  assert(capCuts.length > 0, 'the cap level must contain surface-clean motion around the model')
+  const capNearestCut = Math.min(...capCuts.map((move) => distanceToMove(capCentre, move)))
+  assert(
+    capNearestCut >= toolRadius - 1e-6,
+    `the cutter body must not enter the upper model cap; nearest cut is ${capNearestCut}`,
+  )
+
+  const floorCuts = result.moves.filter((move) => move.kind === 'cut'
+    && Math.abs(move.from.z - floorZ) < 1e-9
+    && Math.abs(move.to.z - floorZ) < 1e-9)
+  const floorNearestCut = Math.min(...floorCuts.map((move) => distanceToMove(capCentre, move)))
+  assert(
+    floorNearestCut <= toolRadius + 1e-6,
+    `the lower cavity must still be surfaced at the plate floor; nearest cut is ${floorNearestCut}`,
+  )
+  console.log('   PASSED')
+}
+
 function testSurfaceCleanFallsBackForAWhollyOpenModelSlice() {
-  console.log('15. surface clean protects the silhouette when no closed model section exists (issue #781)...')
+  console.log('16. surface clean protects the silhouette when no closed model section exists (issue #781)...')
   const { project, operation } = makeModelOnAddProject(true)
   const result = generateSurfaceCleanToolpath(project, operation)
 
@@ -814,6 +897,7 @@ try {
   testShallowSubtractLeavesIslandBuried()
   testSubtractsCarvingNoProtectedMaterialAreByteIdentical()
   testSurfaceCleanProtectsModelCrossSectionInsteadOfItsSilhouette()
+  testSurfaceCleanProtectsTheModelAtEachStepdown()
   testSurfaceCleanFallsBackForAWhollyOpenModelSlice()
   console.log('\nAll surface.test.ts tests PASSED.')
 } catch (e) {
