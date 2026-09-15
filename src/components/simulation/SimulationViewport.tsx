@@ -23,6 +23,8 @@ import { createInstancedBoundaryGroup } from '../../engine/simulation/instancedB
 import { PlaybackController } from '../../engine/simulation/playback'
 import { buildToolMesh, disposeToolMesh } from '../../engine/simulation/toolMesh'
 import { attachWebglContextGuard } from '../viewport3d/webglContextGuard'
+import { createViewportRenderer, type WebglStatus } from '../viewport3d/webglRenderer'
+import { WebglStatusOverlay } from '../viewport3d/WebglStatusOverlay'
 import { createOrbitControls, type OrbitControls } from '../viewport3d/orbitControls'
 import type { ViewPreset } from '../viewport3d/viewPresets'
 import { ViewPresetMenu } from '../viewport3d/ViewPresetMenu'
@@ -268,13 +270,9 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   // heavy heightfield + shader-driven boundary mesh is allocated.
   const [isPlaybackBuilding, setIsPlaybackBuilding] = useState(false)
   const [isPlaybackReady, setIsPlaybackReady] = useState(false)
-  // 'unavailable': WebGL2 context creation failed (old browser, GPU denylist,
-  // hardware acceleration off) — the 3D scene never initializes and a fallback
-  // message replaces the canvas. 'context-lost': the browser revoked the
-  // context (GPU memory pressure, driver reset); three restores GL state
-  // automatically when the browser returns it, we only pause playback and
-  // surface an overlay until then.
-  const [webglStatus, setWebglStatus] = useState<'ok' | 'context-lost' | 'unavailable'>('ok')
+  // Shared with the 3D preview (see WebglStatus). On context loss this view
+  // also pauses playback until the browser restores the context.
+  const [webglStatus, setWebglStatus] = useState<WebglStatus>('ok')
   // Mirror isActive into a ref so the render loop (raw RAF, not React-driven)
   // can read it without re-binding the closure each prop change.
   const isActiveRef = useRef(isActive)
@@ -441,20 +439,15 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       return
     }
 
-    let renderer: THREE.WebGLRenderer
-    try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
-    } catch (error) {
-      // three r163+ requires WebGL2; the constructor throws when the browser
-      // can't create a context (old browser, GPU denylist, hardware
-      // acceleration off). Leave the refs null — every sibling effect guards
-      // on them — so the fallback message renders instead of the throw
-      // escaping the effect and taking down the whole app via the error
-      // boundary.
-      console.error('SimulationViewport: WebGL2 context creation failed', error)
+    const created = createViewportRenderer('SimulationViewport')
+    if (!created) {
+      // Leave the refs null — every sibling effect guards on them — so the
+      // fallback message renders in place of the scene.
       setWebglStatus('unavailable')
       return
     }
+    // Re-bound so the hoisted `animate` declaration below sees a non-null type.
+    const renderer = created
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(mount.clientWidth, mount.clientHeight)
     renderer.setClearColor(initialThreePaletteRef.current.background, 1)
@@ -1069,22 +1062,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
           <div className="simulation-viewport__spinner" />
         </div>
       )}
-      {webglStatus === 'unavailable' && (
-        <div className="simulation-viewport__webgl-overlay">
-          <div className="simulation-viewport__webgl-message">
-            <strong>{t('viewport.sim.webglUnavailableTitle')}</strong>
-            <p>{t('viewport.sim.webglUnavailableBody')}</p>
-          </div>
-        </div>
-      )}
-      {webglStatus === 'context-lost' && (
-        <div className="simulation-viewport__webgl-overlay">
-          <div className="simulation-viewport__webgl-message">
-            <strong>{t('viewport.sim.webglLostTitle')}</strong>
-            <p>{t('viewport.sim.webglLostBody')}</p>
-          </div>
-        </div>
-      )}
+      <WebglStatusOverlay status={webglStatus} view="simulation" />
       {zoomWindowActive && (
         <div
           className="viewport-zoom-select-overlay"

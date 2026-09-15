@@ -1015,7 +1015,7 @@
   to { transform: rotate(360deg); }
 }
 
-.simulation-viewport__webgl-overlay {
+.viewport-webgl-overlay {
   position: absolute;
   inset: 0;
   display: flex;
@@ -1026,7 +1026,7 @@
   z-index: 6;
 }
 
-.simulation-viewport__webgl-message {
+.viewport-webgl-message {
   max-width: 360px;
   padding: 16px 20px;
   border: 1px solid var(--line-strong);
@@ -1037,13 +1037,13 @@
   text-align: center;
 }
 
-.simulation-viewport__webgl-message strong {
+.viewport-webgl-message strong {
   display: block;
   margin-bottom: 6px;
   font-size: 14px;
 }
 
-.simulation-viewport__webgl-message p {
+.viewport-webgl-message p {
   margin: 0;
   line-height: 1.5;
   color: var(--text-dim);

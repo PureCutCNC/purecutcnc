@@ -23,6 +23,7 @@ PureCutCNC is a web-based, parametric 2.5D CAM application designed for CNC enth
     - **Toolpath backend contract:** `renderSketchToolpaths` passes the same ordered results, view transform, backing dimensions, visibility and emphasis to both backends. `gpuToolpathRenderer` retains full XY segments, uses shared layer/style rules, and resolves opaque coverage before applying alpha once per layer/feed bucket. `gpuToolpathAnnotations` composites the shared Canvas arrow/debug raster in each operation's painter slot; it reuses cached arrow placement and navigation deferral. Final sketch interaction overlays stay above paths. Booklet snapshots always use full-detail Canvas independently of the selected live renderer. GPU default enablement and Canvas retirement remain separate maintainer gates.
     - **3D Preview:** Three.js viewport rendering the CSG-derived model (`src/components/viewport3d/Viewport3D.tsx`).
     - **Simulation:** Voxel-based material removal playback (`src/components/simulation/SimulationViewport.tsx`).
+    - **WebGL failure (both 3D views):** renderers are created through `createViewportRenderer` (`src/components/viewport3d/webglRenderer.ts`), which returns `null` rather than throwing when the browser denies a WebGL2 context, and `WebglStatusOverlay` explains an unavailable or lost context in place of the scene. No WebGL failure may reach the app error boundary: a browser without WebGL still opens the 2D workspace (issue #786).
 
 ## 3. Key Data Models (.camj)
 Defined in `src/types/project.ts`:

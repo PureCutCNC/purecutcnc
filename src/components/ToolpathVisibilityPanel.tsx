@@ -21,7 +21,7 @@ import type { MessageKey } from '../i18n/locales/en'
 import { useTheme } from '../theme/themeContext'
 import { canvasFeedColour } from '../theme/palette'
 import { Icon } from './Icon'
-import { ToolpathRendererControl } from './ToolpathRendererControl'
+import { ToolpathRendererControl, ToolpathRendererFallback } from './ToolpathRendererControl'
 import { ToolpathGpuSuggestion } from './ToolpathGpuSuggestion'
 import type { ToolpathRendererControl as RendererControl } from './canvas/toolpathRendererPreference'
 import { ToolpathLevelRail } from './ToolpathLevelRail'
@@ -96,6 +96,8 @@ export function ToolpathVisibilityPanel({ visibility, onChange, className, expan
         <Icon id="gcode" />
       </button>
       {expanded && renderer ? <ToolpathRendererControl renderer={renderer} /> : null}
+      {/* Not gated on `expanded`: collapsing the panel must not hide that GPU fell back to Canvas (issue #786). */}
+      {renderer?.status === 'fallback' ? <ToolpathRendererFallback onRetry={renderer.onRetry} /> : null}
       {renderer?.suggestion && <ToolpathGpuSuggestion {...renderer.suggestion} />}
       {expanded && levelValues.length > 0 && onLevelChange && units && (
         <ToolpathLevelRail
