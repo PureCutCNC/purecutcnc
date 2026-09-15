@@ -45,6 +45,9 @@ import { ARROW_KINDS, buildArrowBatch, type ArrowPlacement } from './arrowBatch'
 import { createOrbitControls, type OrbitControls } from './orbitControls'
 import type { ViewPreset } from './viewPresets'
 import { ViewPresetMenu } from './ViewPresetMenu'
+import { attachWebglContextGuard } from './webglContextGuard'
+import { createViewportRenderer, type WebglStatus } from './webglRenderer'
+import { WebglStatusOverlay } from './WebglStatusOverlay'
 
 function configureGridMaterial(material: THREE.Material | THREE.Material[]) {
   const materials = Array.isArray(material) ? material : [material]
@@ -412,6 +415,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   const originObjectRef = useRef<THREE.Object3D | null>(null)
   const buildRequestRef = useRef(0)
   const [activePreset, setActivePreset] = useState<ViewPreset | null>('iso')
+  const [webglStatus, setWebglStatus] = useState<WebglStatus>('ok')
   const zoomWindowActiveRef = useRef(zoomWindowActive)
   const [zoomWindowBox, setZoomWindowBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
@@ -465,11 +469,17 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     const mount = mountRef.current
     if (!mount) return
 
-    const renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: false,
-      powerPreference: 'high-performance',
-    })
+    const created = createViewportRenderer('Viewport3D')
+    if (!created) {
+      // No WebGL2 context: skip the scene. Sibling effects and the view handle
+      // already guard on its refs, so the 2D workspace keeps working and the
+      // overlay explains the empty view instead of the app error screen (#786).
+      setWebglStatus('unavailable')
+      // Grid visibility re-runs this effect; each attempt reports afresh.
+      return () => setWebglStatus('ok')
+    }
+    // Re-bound so the hoisted `animate` declaration below sees a non-null type.
+    const renderer = created
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(mount.clientWidth, mount.clientHeight)
     renderer.setClearColor(threePaletteRef.current.background, 1)
@@ -516,6 +526,13 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     })
     controlsRef.current = controls
 
+    // three rebuilds its GL state itself when the browser returns the context;
+    // this only drives the overlay while the context is gone.
+    const detachContextGuard = attachWebglContextGuard(renderer.domElement, {
+      onLost: () => setWebglStatus('context-lost'),
+      onRestored: () => setWebglStatus('ok'),
+    })
+
     function animate() {
       frameRef.current = requestAnimationFrame(animate)
       // Skip the GPU draw while another centre tab is showing (issue #664).
@@ -538,6 +555,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
 
     return () => {
       cancelAnimationFrame(frameRef.current)
+      detachContextGuard()
       controls.dispose()
       ro.disconnect()
       for (const object of objectsRef.current) {
@@ -547,6 +565,8 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       objectsRef.current = []
       renderer.dispose()
       mount.removeChild(renderer.domElement)
+      // The next run gets a fresh context; a stale 'context-lost' must not outlive this one.
+      setWebglStatus('ok')
     }
   }, [syncGridVisibility])
 
@@ -958,6 +978,7 @@ useImperativeHandle(ref, () => ({
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
+      <WebglStatusOverlay status={webglStatus} view="view3d" />
       {zoomWindowActive && (
         <div
           className="viewport-zoom-select-overlay"

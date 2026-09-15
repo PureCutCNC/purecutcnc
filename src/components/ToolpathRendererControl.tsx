@@ -36,12 +36,17 @@ export function ToolpathRendererControl({ renderer }: { renderer: RendererContro
       {renderer.status === 'loading' && (
         <span className="viewport-toolpath-renderer__loading" role="status">{t('appShell.toolpath.rendererLoading')}</span>
       )}
-      {renderer.status === 'fallback' && (
-        <span className="viewport-toolpath-renderer__status" role="status">
-          <span>{t('appShell.toolpath.rendererFallback')}</span>
-          <button type="button" onClick={renderer.onRetry}>{t('appShell.toolpath.rendererRetry')}</button>
-        </span>
-      )}
     </>
+  )
+}
+
+/** GPU rendering failed or lost its context, so toolpaths draw with Canvas; Retry asks for GPU again. */
+export function ToolpathRendererFallback({ onRetry }: { onRetry: () => void }) {
+  const { t } = useI18n()
+  return (
+    <span className="viewport-toolpath-renderer__status" role="status">
+      <span>{t('appShell.toolpath.rendererFallback')}</span>
+      <button type="button" onClick={onRetry}>{t('appShell.toolpath.rendererRetry')}</button>
+    </span>
   )
 }
