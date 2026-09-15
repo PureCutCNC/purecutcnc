@@ -268,22 +268,25 @@ function buildSurfaceCoverageRegions(
 }
 
 /**
- * Returns the model keep-outs at one machining level.  A surface-clean band
- * spans several Z levels, but a mesh section can change within that span: a
- * lower cavity is not evidence that the material capping it above is absent.
- * Only an unresolved open slice uses the conservative whole silhouette.
+ * Returns one imported model section at a machining level. Only an unresolved
+ * open slice uses the conservative whole silhouette.
  */
-function protectedModelPathsAtLevel(
+function modelPathsAtLevel(
   modelSections: readonly SurfaceCleanModelSection[],
   z: number,
   warnings: ToolpathWarning[],
 ): ClipperPath[] {
   return modelSections.flatMap(({ geometry, silhouettePaths, decimationTolerance }) => {
+    // `modelSilhouetteClipperPaths` normalizes outlines clockwise for direct
+    // offsetting. The cumulative union keeps outer rings counter-clockwise;
+    // mixing those orientations cancels a repeated fallback silhouette under
+    // Clipper's non-zero fill rule.
+    const cumulativeSilhouettePaths = silhouettePaths.map((path) => [...path].reverse())
     if (!geometry) {
       if (silhouettePaths.length > 0) {
         appendUniqueWarning(warnings, { code: 'surface3dLoadFailed' })
       }
-      return silhouettePaths
+      return cumulativeSilhouettePaths
     }
 
     const section = resolveClosedModelSection(geometry, z, decimationTolerance)
@@ -294,22 +297,49 @@ function protectedModelPathsAtLevel(
       if (silhouettePaths.length > 0) {
         appendUniqueWarning(warnings, { code: 'surface3dOpenMesh' })
       }
-      return silhouettePaths
+      return cumulativeSilhouettePaths
     }
     return []
   })
 }
 
+/**
+ * A flat endmill removes a vertical column above its tip, so a cut at a lower
+ * Z must avoid every model section already encountered above it. The levels
+ * arrive top-to-bottom, matching `resolve3DSurfaceStepdown`'s cumulative
+ * `protectedAbovePaths` invariant.
+ */
+function buildCumulativeModelKeepOuts(
+  modelSections: readonly SurfaceCleanModelSection[],
+  levels: readonly number[],
+  warnings: ToolpathWarning[],
+): ReadonlyMap<number, ClipperPath[]> {
+  const keepOutsByLevel = new Map<number, ClipperPath[]>()
+  let protectedAbovePaths: ClipperPath[] = []
+
+  for (const z of levels) {
+    const pathsAtLevel = modelPathsAtLevel(modelSections, z, warnings)
+    if (pathsAtLevel.length > 0) {
+      protectedAbovePaths = unionClipperPaths([
+        ...protectedAbovePaths,
+        ...pathsAtLevel,
+      ])
+    }
+    keepOutsByLevel.set(z, protectedAbovePaths)
+  }
+
+  return keepOutsByLevel
+}
+
 function buildSurfaceCoverageRegionsAtLevel(
   band: SurfaceCleanBand,
-  z: number,
+  modelKeepOutPaths: readonly ClipperPath[],
   toolRadius: number,
   radialLeave: number,
-  warnings: ToolpathWarning[],
 ): ResolvedPocketRegion[] {
   let coverageRegions = buildSurfaceCoverageRegions(
     band.subjectPaths,
-    [...band.protectedPaths, ...protectedModelPathsAtLevel(band.modelSections, z, warnings)],
+    [...band.protectedPaths, ...modelKeepOutPaths],
     band.regions,
     toolRadius,
   )
@@ -659,6 +689,7 @@ function generateRoughBandMoves(
   // can no longer disagree about which patterns exist.
   const roughCoverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
   const stepLevels = generateStepLevels(band.topZ, effectiveBottom, stepdown)
+  const modelKeepOutsByLevel = buildCumulativeModelKeepOuts(band.modelSections, stepLevels, warnings)
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
   const effectiveStepover = Math.max(stepoverDistance, minStepover)
   let currentPosition: ToolpathPoint | null = null
@@ -675,7 +706,12 @@ function generateRoughBandMoves(
 
     for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
       const z = stepLevels[levelIndex]
-      const coverageRegions = buildSurfaceCoverageRegionsAtLevel(band, z, toolRadius, radialLeave, warnings)
+      const coverageRegions = buildSurfaceCoverageRegionsAtLevel(
+        band,
+        modelKeepOutsByLevel.get(z) ?? [],
+        toolRadius,
+        radialLeave,
+      )
       const roughRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, initialInset))
       if (roughRegions.length === 0) {
         appendUniqueWarning(warnings, { code: 'surfaceNoCleanupRegion', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
@@ -790,7 +826,12 @@ function generateRoughBandMoves(
     : undefined
 
   const buildOffsetPlan = (z: number) => {
-    const coverageRegions = buildSurfaceCoverageRegionsAtLevel(band, z, toolRadius, radialLeave, warnings)
+    const coverageRegions = buildSurfaceCoverageRegionsAtLevel(
+      band,
+      modelKeepOutsByLevel.get(z) ?? [],
+      toolRadius,
+      radialLeave,
+    )
     const centreRegions = coverageRegions.flatMap((region) =>
       buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
     const seedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
@@ -1072,7 +1113,7 @@ function generateFinishBandMoves(
   band: SurfaceCleanBand,
   operation: Operation,
   safeZ: number,
-  _stepdown: number,
+  stepdown: number,
   toolRadius: number,
   stepoverDistance: number,
   maxLinkDistance: number,
@@ -1099,12 +1140,16 @@ function generateFinishBandMoves(
   }
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
+  const modelKeepOutsByLevel = buildCumulativeModelKeepOuts(
+    band.modelSections,
+    generateStepLevels(band.topZ, effectiveBottom, stepdown),
+    warnings,
+  )
   const coverageRegions = buildSurfaceCoverageRegionsAtLevel(
     band,
-    effectiveBottom,
+    modelKeepOutsByLevel.get(effectiveBottom) ?? [],
     toolRadius,
     radialLeave,
-    warnings,
   )
   if (coverageRegions.length === 0) {
     return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }

@@ -160,9 +160,10 @@ function makeModelOnAddProject(openSlice = false): { project: Project; operation
 }
 
 /**
- * The lower ring has a real cavity, but an upper box caps it. A surface-clean
- * operation must clear the cavity at the plate floor while keeping the upper
- * box intact at its own stepdown levels.
+ * The lower ring has a cavity split into capped and exposed halves. A
+ * surface-clean operation must not cut the lower capped half because the
+ * endmill body passes through the upper box, while its exposed half remains
+ * clearable at the plate floor.
  */
 function makeCappedCavityModelOnAddProject(): { project: Project; operation: Operation; floorZ: number; capZ: number } {
   const vertices: number[] = []
@@ -170,18 +171,18 @@ function makeCappedCavityModelOnAddProject(): { project: Project; operation: Ope
   const floorZ = 1
   const capZ = 4
 
-  // A 4×4 ring from Z=0 to Z=2, with a 2×2 cavity at its centre.
-  appendMeshBox(vertices, indices, 4, 5, 2, 6, 0, 2)
-  appendMeshBox(vertices, indices, 7, 8, 2, 6, 0, 2)
-  appendMeshBox(vertices, indices, 5, 7, 2, 3, 0, 2)
-  appendMeshBox(vertices, indices, 5, 7, 5, 6, 0, 2)
-  // The cap occupies that same XY cavity from Z=2 through the upper levels.
-  appendMeshBox(vertices, indices, 5, 7, 3, 5, 2, 6)
+  // An 8×6 ring from Z=0 to Z=2, with a 4×2 cavity at its centre.
+  appendMeshBox(vertices, indices, 2, 4, 1, 7, 0, 2)
+  appendMeshBox(vertices, indices, 8, 10, 1, 7, 0, 2)
+  appendMeshBox(vertices, indices, 4, 8, 1, 3, 0, 2)
+  appendMeshBox(vertices, indices, 4, 8, 5, 7, 0, 2)
+  // The upper cap covers only the left half; the right half stays exposed.
+  appendMeshBox(vertices, indices, 4, 6, 3, 5, 2, 6)
 
   const mesh = serializeImportedMesh({
     positions: new Float32Array(vertices),
     index: new Uint32Array(indices),
-    bounds: { minX: 4, maxX: 8, minY: 2, maxY: 6, minZ: 0, maxZ: 6 },
+    bounds: { minX: 2, maxX: 10, minY: 1, maxY: 7, minZ: 0, maxZ: 6 },
   }, 'stl')
   const plate = makeBoss('plate-capped-cavity', 0, 0, 12, 8, floorZ)
   const model: SketchFeature = {
@@ -839,12 +840,13 @@ function testSurfaceCleanProtectsModelCrossSectionInsteadOfItsSilhouette() {
   console.log('   PASSED')
 }
 
-function testSurfaceCleanProtectsTheModelAtEachStepdown() {
-  console.log('15. surface clean resolves the model section at every stepdown (issue #781)...')
+function testSurfaceCleanProtectsTheCumulativeModelShadow() {
+  console.log('15. surface clean protects the cumulative model shadow (issue #781)...')
   const { project, operation, floorZ, capZ } = makeCappedCavityModelOnAddProject()
   const result = generateSurfaceCleanToolpath(project, operation)
   const toolRadius = project.tools[0]!.diameter / 2
-  const capCentre = { x: 6, y: 4 }
+  const capCentre = { x: 5, y: 4 }
+  const exposedCavityCentre = { x: 7, y: 4 }
 
   const capCuts = result.moves.filter((move) => move.kind === 'cut'
     && Math.abs(move.from.z - capZ) < 1e-9
@@ -856,14 +858,27 @@ function testSurfaceCleanProtectsTheModelAtEachStepdown() {
     `the cutter body must not enter the upper model cap; nearest cut is ${capNearestCut}`,
   )
 
-  const floorCuts = result.moves.filter((move) => move.kind === 'cut'
-    && Math.abs(move.from.z - floorZ) < 1e-9
-    && Math.abs(move.to.z - floorZ) < 1e-9)
-  const floorNearestCut = Math.min(...floorCuts.map((move) => distanceToMove(capCentre, move)))
-  assert(
-    floorNearestCut <= toolRadius + 1e-6,
-    `the lower cavity must still be surfaced at the plate floor; nearest cut is ${floorNearestCut}`,
-  )
+  const surfacePasses: Array<[string, PocketToolpathResult]> = [
+    ['rough offset', result],
+    ['rough parallel', generateSurfaceCleanToolpath(project, { ...operation, pocketPattern: 'parallel' })],
+    ['finish', generateSurfaceCleanToolpath(project, { ...operation, pass: 'finish' })],
+  ]
+  for (const [label, surfacePass] of surfacePasses) {
+    const floorCuts = surfacePass.moves.filter((move) => move.kind === 'cut'
+      && Math.abs(move.from.z - floorZ) < 1e-9
+      && Math.abs(move.to.z - floorZ) < 1e-9)
+    assert(floorCuts.length > 0, `${label} must contain floor cuts`)
+    const floorCapNearestCut = Math.min(...floorCuts.map((move) => distanceToMove(capCentre, move)))
+    assert(
+      floorCapNearestCut >= toolRadius - 1e-6,
+      `${label} must not enter the upper cap from the lower floor; nearest cut is ${floorCapNearestCut}`,
+    )
+    const floorExposedNearestCut = Math.min(...floorCuts.map((move) => distanceToMove(exposedCavityCentre, move)))
+    assert(
+      floorExposedNearestCut <= toolRadius + 1e-6,
+      `${label} must surface the exposed lower cavity; nearest cut is ${floorExposedNearestCut}`,
+    )
+  }
   console.log('   PASSED')
 }
 
@@ -897,7 +912,7 @@ try {
   testShallowSubtractLeavesIslandBuried()
   testSubtractsCarvingNoProtectedMaterialAreByteIdentical()
   testSurfaceCleanProtectsModelCrossSectionInsteadOfItsSilhouette()
-  testSurfaceCleanProtectsTheModelAtEachStepdown()
+  testSurfaceCleanProtectsTheCumulativeModelShadow()
   testSurfaceCleanFallsBackForAWhollyOpenModelSlice()
   console.log('\nAll surface.test.ts tests PASSED.')
 } catch (e) {
