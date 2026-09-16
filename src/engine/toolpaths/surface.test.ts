@@ -32,6 +32,7 @@
 import type { Operation, Project, SketchFeature, Tool } from '../../types/project'
 import { defaultTool, newProject, rectProfile } from '../../types/project'
 import { projectWithFeatures } from '../../test/projectFixtures'
+import { serializeImportedMesh } from '../importedMesh'
 import { generateSurfaceCleanToolpath } from './surface'
 import { ENGAGEMENT_FEED_BUCKET_COUNT } from './engagement'
 import type { PocketToolpathResult, ToolpathMove } from './types'
@@ -73,6 +74,144 @@ function makeBoss(id: string, x: number, y: number, w: number, h: number, zTop =
     z_bottom: 0,
     visible: true,
     locked: false,
+  }
+}
+
+function appendMeshBox(
+  vertices: number[],
+  indices: number[],
+  minX: number,
+  maxX: number,
+  minY: number,
+  maxY: number,
+  minZ: number,
+  maxZ: number,
+): void {
+  const offset = vertices.length / 3
+  vertices.push(
+    minX, minY, minZ,
+    maxX, minY, minZ,
+    maxX, maxY, minZ,
+    minX, maxY, minZ,
+    minX, minY, maxZ,
+    maxX, minY, maxZ,
+    maxX, maxY, maxZ,
+    minX, maxY, maxZ,
+  )
+  const faces = [
+    [0, 1, 2], [0, 2, 3],
+    [4, 6, 5], [4, 7, 6],
+    [0, 4, 5], [0, 5, 1],
+    [1, 5, 6], [1, 6, 2],
+    [2, 6, 7], [2, 7, 3],
+    [3, 7, 4], [3, 4, 0],
+  ]
+  for (const face of faces) {
+    indices.push(offset + face[0], offset + face[1], offset + face[2])
+  }
+}
+
+/** The mesh silhouette is the full plate, while its section at Z=2 is only the box. */
+function makeModelOnAddProject(openSlice = false): { project: Project; operation: Operation; floorZ: number } {
+  const vertices: number[] = []
+  const indices: number[] = []
+  const floorZ = 2
+  if (openSlice) {
+    vertices.push(0, 0, 0, 12, 0, 0, 12, 0, 6, 0, 0, 6)
+    indices.push(0, 1, 2, 0, 2, 3)
+  } else {
+    appendMeshBox(vertices, indices, 4, 8, 2, 6, 0, 6)
+  }
+  const mesh = serializeImportedMesh({
+    positions: new Float32Array(vertices),
+    index: new Uint32Array(indices),
+    bounds: openSlice
+      ? { minX: 0, maxX: 12, minY: 0, maxY: 0, minZ: 0, maxZ: 6 }
+      : { minX: 4, maxX: 8, minY: 2, maxY: 6, minZ: 0, maxZ: 6 },
+  }, 'stl')
+  const plate = makeBoss('plate', 0, 0, 12, 8, floorZ)
+  const model: SketchFeature = {
+    ...makeBoss('model', 0, 0, 12, 8, 6),
+    kind: 'stl',
+    operation: 'model',
+    stl: {
+      format: 'stl',
+      meshAssetId: 'surface-model',
+      scale: 1,
+      axisSwap: 'none',
+      silhouettePaths: [[
+        { x: 0, y: 0 },
+        { x: 12, y: 0 },
+        { x: 12, y: 8 },
+        { x: 0, y: 8 },
+      ]],
+    },
+    z_top: 6,
+    z_bottom: 0,
+  }
+  const project = baseProject([makeEndmill('t1', 1)], [plate, model])
+  project.modelAssets['surface-model'] = mesh
+  project.stock.thickness = 6
+  return {
+    project,
+    operation: makeSurfaceOp({ featureIds: ['plate'], stepdown: 1, id: 'surface-model-on-add' }),
+    floorZ,
+  }
+}
+
+/**
+ * The lower ring has a cavity split into capped and exposed halves. A
+ * surface-clean operation must not cut the lower capped half because the
+ * endmill body passes through the upper box, while its exposed half remains
+ * clearable at the plate floor.
+ */
+function makeCappedCavityModelOnAddProject(): { project: Project; operation: Operation; floorZ: number; capZ: number } {
+  const vertices: number[] = []
+  const indices: number[] = []
+  const floorZ = 1
+  const capZ = 4
+
+  // An 8×6 ring from Z=0 to Z=2, with a 4×2 cavity at its centre.
+  appendMeshBox(vertices, indices, 2, 4, 1, 7, 0, 2)
+  appendMeshBox(vertices, indices, 8, 10, 1, 7, 0, 2)
+  appendMeshBox(vertices, indices, 4, 8, 1, 3, 0, 2)
+  appendMeshBox(vertices, indices, 4, 8, 5, 7, 0, 2)
+  // The upper cap covers only the left half; the right half stays exposed.
+  appendMeshBox(vertices, indices, 4, 6, 3, 5, 2, 6)
+
+  const mesh = serializeImportedMesh({
+    positions: new Float32Array(vertices),
+    index: new Uint32Array(indices),
+    bounds: { minX: 2, maxX: 10, minY: 1, maxY: 7, minZ: 0, maxZ: 6 },
+  }, 'stl')
+  const plate = makeBoss('plate-capped-cavity', 0, 0, 12, 8, floorZ)
+  const model: SketchFeature = {
+    ...makeBoss('model-capped-cavity', 0, 0, 12, 8, 6),
+    kind: 'stl',
+    operation: 'model',
+    stl: {
+      format: 'stl',
+      meshAssetId: 'surface-capped-cavity-model',
+      scale: 1,
+      axisSwap: 'none',
+      silhouettePaths: [[
+        { x: 0, y: 0 },
+        { x: 12, y: 0 },
+        { x: 12, y: 8 },
+        { x: 0, y: 8 },
+      ]],
+    },
+    z_top: 6,
+    z_bottom: 0,
+  }
+  const project = baseProject([makeEndmill('t1', 1)], [plate, model])
+  project.modelAssets['surface-capped-cavity-model'] = mesh
+  project.stock.thickness = 6
+  return {
+    project,
+    operation: makeSurfaceOp({ featureIds: [plate.id], stepdown: 1, id: 'surface-capped-cavity' }),
+    floorZ,
+    capZ,
   }
 }
 
@@ -667,6 +806,95 @@ function testSubtractsCarvingNoProtectedMaterialAreByteIdentical() {
   console.log('   PASSED')
 }
 
+function testSurfaceCleanProtectsModelCrossSectionInsteadOfItsSilhouette() {
+  console.log('14. surface clean protects the model section at the plate floor (issue #781)...')
+  const { project, operation, floorZ } = makeModelOnAddProject()
+  const result = generateSurfaceCleanToolpath(project, operation)
+  const floorCuts = result.moves.filter((move) => move.kind === 'cut'
+    && Math.abs(move.from.z - floorZ) < 1e-9
+    && Math.abs(move.to.z - floorZ) < 1e-9)
+  const toolRadius = project.tools[0]!.diameter / 2
+
+  assert(
+    floorCuts.length > 0,
+    `the plate outside the model section must still be surfaced; cut Zs are ${[...new Set(result.moves.filter((move) => move.kind === 'cut').map((move) => move.to.z))].join(', ')}`,
+  )
+  assert(
+    floorCuts.some((move) => distanceToMove({ x: 1, y: 4 }, move) <= toolRadius + 1e-6),
+    'the cutter body must sweep the plate outside the model section',
+  )
+
+  const protectedSamples = [
+    { x: 5, y: 3 },
+    { x: 5, y: 5 },
+    { x: 7, y: 3 },
+    { x: 7, y: 5 },
+  ]
+  for (const sample of protectedSamples) {
+    const nearestCut = Math.min(...floorCuts.map((move) => distanceToMove(sample, move)))
+    assert(
+      nearestCut >= toolRadius - 1e-6,
+      `the cutter body must not enter the model section at (${sample.x}, ${sample.y}); nearest cut is ${nearestCut}`,
+    )
+  }
+  console.log('   PASSED')
+}
+
+function testSurfaceCleanProtectsTheCumulativeModelShadow() {
+  console.log('15. surface clean protects the cumulative model shadow (issue #781)...')
+  const { project, operation, floorZ, capZ } = makeCappedCavityModelOnAddProject()
+  const result = generateSurfaceCleanToolpath(project, operation)
+  const toolRadius = project.tools[0]!.diameter / 2
+  const capCentre = { x: 5, y: 4 }
+  const exposedCavityCentre = { x: 7, y: 4 }
+
+  const capCuts = result.moves.filter((move) => move.kind === 'cut'
+    && Math.abs(move.from.z - capZ) < 1e-9
+    && Math.abs(move.to.z - capZ) < 1e-9)
+  assert(capCuts.length > 0, 'the cap level must contain surface-clean motion around the model')
+  const capNearestCut = Math.min(...capCuts.map((move) => distanceToMove(capCentre, move)))
+  assert(
+    capNearestCut >= toolRadius - 1e-6,
+    `the cutter body must not enter the upper model cap; nearest cut is ${capNearestCut}`,
+  )
+
+  const surfacePasses: Array<[string, PocketToolpathResult]> = [
+    ['rough offset', result],
+    ['rough parallel', generateSurfaceCleanToolpath(project, { ...operation, pocketPattern: 'parallel' })],
+    ['finish', generateSurfaceCleanToolpath(project, { ...operation, pass: 'finish' })],
+  ]
+  for (const [label, surfacePass] of surfacePasses) {
+    const floorCuts = surfacePass.moves.filter((move) => move.kind === 'cut'
+      && Math.abs(move.from.z - floorZ) < 1e-9
+      && Math.abs(move.to.z - floorZ) < 1e-9)
+    assert(floorCuts.length > 0, `${label} must contain floor cuts`)
+    const floorCapNearestCut = Math.min(...floorCuts.map((move) => distanceToMove(capCentre, move)))
+    assert(
+      floorCapNearestCut >= toolRadius - 1e-6,
+      `${label} must not enter the upper cap from the lower floor; nearest cut is ${floorCapNearestCut}`,
+    )
+    const floorExposedNearestCut = Math.min(...floorCuts.map((move) => distanceToMove(exposedCavityCentre, move)))
+    assert(
+      floorExposedNearestCut <= toolRadius + 1e-6,
+      `${label} must surface the exposed lower cavity; nearest cut is ${floorExposedNearestCut}`,
+    )
+  }
+  console.log('   PASSED')
+}
+
+function testSurfaceCleanFallsBackForAWhollyOpenModelSlice() {
+  console.log('16. surface clean protects the silhouette when no closed model section exists (issue #781)...')
+  const { project, operation } = makeModelOnAddProject(true)
+  const result = generateSurfaceCleanToolpath(project, operation)
+
+  assert(
+    result.warnings.some((warning) => warning.code === 'surface3dOpenMesh'),
+    `expected an open-slice warning, got ${JSON.stringify(result.warnings)}`,
+  )
+  assert(!result.moves.some((move) => move.kind === 'cut'), 'an open-only slice must leave the plate silhouette uncut')
+  console.log('   PASSED')
+}
+
 // ── Runner ───────────────────────────────────────────────────────────
 
 try {
@@ -683,6 +911,9 @@ try {
   testSubtractBeforeBodyIsFilledBack()
   testShallowSubtractLeavesIslandBuried()
   testSubtractsCarvingNoProtectedMaterialAreByteIdentical()
+  testSurfaceCleanProtectsModelCrossSectionInsteadOfItsSilhouette()
+  testSurfaceCleanProtectsTheCumulativeModelShadow()
+  testSurfaceCleanFallsBackForAWhollyOpenModelSlice()
   console.log('\nAll surface.test.ts tests PASSED.')
 } catch (e) {
   console.error(e)

@@ -17,6 +17,7 @@
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
+import { loadSTLTransformedGeometry, type STLTransformedData } from '../csg'
 import { createEntryPolicy, withEntryStartZ, withEntryHandoffFeedScale } from './entry'
 import type {
   ClipperPath,
@@ -105,6 +106,11 @@ import {
 } from './regions'
 import { resolveRegionDomainCentre } from './regionDomain'
 import {
+  modelSilhouetteClipperPaths,
+  resolveClosedModelSection,
+  sliceDecimationTolerance,
+} from './modelSection'
+import {
   appendClampBlockedWarnings,
   clampKeepOutPaths,
   clampsBlockingArea,
@@ -127,7 +133,15 @@ interface PolyTreeNode {
 interface SurfaceCleanBand extends ResolvedPocketBand {
   subjectPaths: ClipperPath[]
   protectedPaths: ClipperPath[]
+  modelSections: SurfaceCleanModelSection[]
   regionMask: ReturnType<typeof buildRegionMask>
+}
+
+interface SurfaceCleanModelSection {
+  feature: SketchFeature
+  geometry: STLTransformedData | null
+  silhouettePaths: ClipperPath[]
+  decimationTolerance: number
 }
 
 interface SurfaceCleanResult {
@@ -251,6 +265,112 @@ function buildSurfaceCoverageRegions(
 
   return polyTreeToRegions(polyTree, targetFeatureIds, islandFeatureIds, scale)
     .filter((region) => region.outer.length >= 3)
+}
+
+/**
+ * Returns one imported model section at a machining level. Only an unresolved
+ * open slice uses the conservative whole silhouette.
+ */
+function modelPathsAtLevel(
+  modelSections: readonly SurfaceCleanModelSection[],
+  z: number,
+  warnings: ToolpathWarning[],
+): ClipperPath[] {
+  return modelSections.flatMap(({ geometry, silhouettePaths, decimationTolerance }) => {
+    // `modelSilhouetteClipperPaths` normalizes outlines clockwise for direct
+    // offsetting. The cumulative union keeps outer rings counter-clockwise;
+    // mixing those orientations cancels a repeated fallback silhouette under
+    // Clipper's non-zero fill rule.
+    const cumulativeSilhouettePaths = silhouettePaths.map((path) => [...path].reverse())
+    if (!geometry) {
+      if (silhouettePaths.length > 0) {
+        appendUniqueWarning(warnings, { code: 'surface3dLoadFailed' })
+      }
+      return cumulativeSilhouettePaths
+    }
+
+    const section = resolveClosedModelSection(geometry, z, decimationTolerance)
+    if (section.paths.length > 0) {
+      return section.paths
+    }
+    if (section.openChainCount > 0) {
+      if (silhouettePaths.length > 0) {
+        appendUniqueWarning(warnings, { code: 'surface3dOpenMesh' })
+      }
+      return cumulativeSilhouettePaths
+    }
+    return []
+  })
+}
+
+/**
+ * A flat endmill removes a vertical column above its tip, so a cut at a lower
+ * Z must avoid every model section already encountered above it. The levels
+ * arrive top-to-bottom, matching `resolve3DSurfaceStepdown`'s cumulative
+ * `protectedAbovePaths` invariant.
+ */
+function buildCumulativeModelKeepOuts(
+  modelSections: readonly SurfaceCleanModelSection[],
+  levels: readonly number[],
+  warnings: ToolpathWarning[],
+): ReadonlyMap<number, ClipperPath[]> {
+  const keepOutsByLevel = new Map<number, ClipperPath[]>()
+  let protectedAbovePaths: ClipperPath[] = []
+
+  for (const z of levels) {
+    const pathsAtLevel = modelPathsAtLevel(modelSections, z, warnings)
+    if (pathsAtLevel.length > 0) {
+      protectedAbovePaths = unionClipperPaths([
+        ...protectedAbovePaths,
+        ...pathsAtLevel,
+      ])
+    }
+    keepOutsByLevel.set(z, protectedAbovePaths)
+  }
+
+  return keepOutsByLevel
+}
+
+function buildSurfaceCoverageRegionsAtLevel(
+  band: SurfaceCleanBand,
+  modelKeepOutPaths: readonly ClipperPath[],
+  toolRadius: number,
+  radialLeave: number,
+): ResolvedPocketRegion[] {
+  let coverageRegions = buildSurfaceCoverageRegions(
+    band.subjectPaths,
+    [...band.protectedPaths, ...modelKeepOutPaths],
+    band.regions,
+    toolRadius,
+  )
+
+  // Apply region mask after toolRadius expansion.  coverageRegions is already
+  // a tool-centre domain, so both polarities need the remaining clearance.
+  if (!band.regionMask) {
+    return coverageRegions
+  }
+
+  const scale = DEFAULT_CLIPPER_SCALE
+  const domainPaths = coverageRegions
+    .flatMap((region) => region.outer.length >= 3
+      ? [toClipperPath(normalizeWinding(region.outer, false), scale)]
+      : [])
+  if (domainPaths.length === 0) {
+    return []
+  }
+  const domain = unionClipperPaths(domainPaths).filter((path) => path.length >= 2)
+  if (domain.length === 0) {
+    return []
+  }
+  const maskedDomain = resolveRegionDomainCentre(domain, band.regionMask, toolRadius + radialLeave)
+    .filter((path) => path.length >= 2)
+  if (maskedDomain.length === 0) {
+    return []
+  }
+  const polyTree = executeDifference(maskedDomain, [])
+  coverageRegions = polyTreeToRegions(polyTree, band.targetFeatureIds, band.islandFeatureIds, scale)
+    .filter((region) => region.outer.length >= 3)
+  return coverageRegions
 }
 
 /** An add or subtract with its Z span and its place in project feature order. */
@@ -433,11 +553,26 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
 
   // Adds and subtracts in project feature order, so band protection can tell
   // material a later subtract removed from material still standing (#759).
-  const solidFeatures: SurfaceSolidFeature[] = resolvedProjectFeatures(project)
+  const resolvedFeatures = resolvedProjectFeatures(project)
+  const modelFeatures = resolvedFeatures.filter(
+    (feature) => feature.operation === 'model' && feature.kind === 'stl',
+  )
+  const modelSectionTool = operation.toolRef
+    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
+    : null
+  const modelSectionTolerance = modelSectionTool
+    ? sliceDecimationTolerance(normalizeToolForProject(modelSectionTool, project).radius)
+    : 0
+  const modelSections: SurfaceCleanModelSection[] = modelFeatures.map((feature) => ({
+    feature,
+    geometry: loadSTLTransformedGeometry(feature, project),
+    silhouettePaths: modelSilhouetteClipperPaths(feature),
+    decimationTolerance: modelSectionTolerance,
+  }))
+  const solidFeatures: SurfaceSolidFeature[] = resolvedFeatures
+    .filter((feature) => feature.operation === 'add' || feature.operation === 'subtract')
     .flatMap((feature) => expandFeatureGeometry(feature))
-    .filter((feature) => (
-      (feature.operation === 'add' || feature.operation === 'subtract') && featureHasClosedGeometry(feature)
-    ))
+    .filter((feature) => featureHasClosedGeometry(feature))
     .map((feature, order) => {
       const span = resolveFeatureZSpan(project, feature)
       return { feature, top: span.max, span, order }
@@ -490,7 +625,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     const regions = polyTreeToRegions(
       polyTree,
       activeTargets.map(({ feature }) => feature.id),
-      protectedFeatures.map(({ feature }) => feature.id),
+      [...protectedFeatures.map(({ feature }) => feature.id), ...modelSections.map(({ feature }) => feature.id)],
     )
 
     if (regions.length === 0) {
@@ -502,10 +637,11 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       topZ,
       bottomZ,
       targetFeatureIds: activeTargets.map(({ feature }) => feature.id),
-      islandFeatureIds: protectedFeatures.map(({ feature }) => feature.id),
+      islandFeatureIds: [...protectedFeatures.map(({ feature }) => feature.id), ...modelSections.map(({ feature }) => feature.id)],
       regions,
       subjectPaths,
       protectedPaths,
+      modelSections,
       regionMask,
     })
   }
@@ -547,39 +683,13 @@ function generateRoughBandMoves(
   }
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
-  let coverageRegions = buildSurfaceCoverageRegions(band.subjectPaths, band.protectedPaths, band.regions, toolRadius)
-  // Apply region mask after toolRadius expansion.  coverageRegions is already
-  // a tool-centre domain, so both polarities must dilate by the remaining
-  // clearance (toolRadius + radialLeave) — no further erosion will happen.
-  if (band.regionMask) {
-    const scale = DEFAULT_CLIPPER_SCALE
-    const domainPaths = coverageRegions
-      .flatMap((r) => r.outer.length >= 3 ? [toClipperPath(normalizeWinding(r.outer, false), scale)] : [])
-    if (domainPaths.length === 0) {
-      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
-    }
-    const domain = unionClipperPaths(domainPaths).filter((p) => p.length >= 2)
-    if (domain.length === 0) {
-      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
-    }
-    const maskedDomain = resolveRegionDomainCentre(domain, band.regionMask, toolRadius + radialLeave)
-      .filter((p) => p.length >= 2)
-    if (maskedDomain.length === 0) {
-      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
-    }
-    const polyTree = executeDifference(maskedDomain, [])
-    coverageRegions = polyTreeToRegions(polyTree, band.targetFeatureIds, band.islandFeatureIds, scale)
-      .filter((r) => r.outer.length >= 3)
-    if (coverageRegions.length === 0) {
-      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
-    }
-  }
   const initialInset = radialLeave
   // What the stored pattern actually clears with (issue #609): the declared
   // table decides, so the raster branch below and the seed gate further down
   // can no longer disagree about which patterns exist.
   const roughCoverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
   const stepLevels = generateStepLevels(band.topZ, effectiveBottom, stepdown)
+  const modelKeepOutsByLevel = buildCumulativeModelKeepOuts(band.modelSections, stepLevels, warnings)
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
   const effectiveStepover = Math.max(stepoverDistance, minStepover)
   let currentPosition: ToolpathPoint | null = null
@@ -590,39 +700,42 @@ function generateRoughBandMoves(
   )
 
   if (roughCoverage.rasterSegments) {
-    const roughRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, initialInset))
-    if (roughRegions.length === 0) {
-      return {
-        moves,
-        stepLevels,
-        warnings: [{ code: 'surfaceNoCleanupRegion', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
-      }
-    }
-
-    const boundaryContours = applyContourDirection(buildContourLoops(roughRegions), direction)
-    const segments = buildPocketParallelSegments(roughRegions, effectiveStepover, operation.pocketAngle)
-    const entryPolicy = withEntryHandoffFeedScale(
-      createEntryPolicy(
-        operation,
-        toolRadius * 2,
-        roughRegions,
-        (warning) => appendUniqueWarning(warnings, warning),
-      ),
-      slotScale,
-    )
     // Raster clearing has no ring for a lead to join, so a request here is
     // answered rather than dropped (issue #695).
     warnXyLeadDeclined(operation, false, band.regionMask !== null, (warning) => appendUniqueWarning(warnings, warning))
-    if (segments.length === 0) {
-      return {
-        moves,
-        stepLevels,
-        warnings: [{ code: 'surfaceNoCleanupSegments', params: { topZ: band.topZ, bottomZ: band.bottomZ } }],
-      }
-    }
 
     for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
       const z = stepLevels[levelIndex]
+      const coverageRegions = buildSurfaceCoverageRegionsAtLevel(
+        band,
+        modelKeepOutsByLevel.get(z) ?? [],
+        toolRadius,
+        radialLeave,
+      )
+      const roughRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, initialInset))
+      if (roughRegions.length === 0) {
+        appendUniqueWarning(warnings, { code: 'surfaceNoCleanupRegion', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
+        currentPosition = retractToSafe(moves, currentPosition, safeZ)
+        continue
+      }
+
+      const boundaryContours = applyContourDirection(buildContourLoops(roughRegions), direction)
+      const segments = buildPocketParallelSegments(roughRegions, effectiveStepover, operation.pocketAngle)
+      if (segments.length === 0) {
+        appendUniqueWarning(warnings, { code: 'surfaceNoCleanupSegments', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
+        currentPosition = retractToSafe(moves, currentPosition, safeZ)
+        continue
+      }
+
+      const entryPolicy = withEntryHandoffFeedScale(
+        createEntryPolicy(
+          operation,
+          toolRadius * 2,
+          roughRegions,
+          (warning) => appendUniqueWarning(warnings, warning),
+        ),
+        slotScale,
+      )
       const levelEntryPolicy = withEntryStartZ(
         entryPolicy,
         levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
@@ -695,8 +808,6 @@ function generateRoughBandMoves(
     ? ClipperLib.JoinType.jtRound
     : ClipperLib.JoinType.jtMiter
   const smoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, effectiveStepover)
-  const centreRegions = coverageRegions.flatMap((region) =>
-    buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
   // Seeded circle clearing (issue #554). Full circles grow from each region's
   // clearance seed; the last is recorded as an island so each offset ring
   // stays one stepover outside the cleared disc. Both are independent inner
@@ -705,53 +816,6 @@ function generateRoughBandMoves(
   const seedStart = roughCoverage.seedCircles
     ? seedStartRadius(operation, toolRadius)
     : 0
-  const seedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
-  const regionTrees = centreRegions.map((region) => {
-    const plans = seedStart > 0
-      ? planSeedCircles(region, seedStart, effectiveStepover, toolRadius * 2, radialLeave)
-      : []
-    if (plans.length === 0) return buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
-
-    const seeded = buildOffsetRegionTree(
-      { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
-      effectiveStepover,
-      islandJoinType,
-    )
-    // The tree must OFFSET around the seed islands but must not CUT them:
-    // seed stacks emit those exact laps separately, and `cutOffsetRegionNode`
-    // emits every island of the node it is cutting. Restoring the root's
-    // original island list drops the duplicates while the children retain the
-    // seed islands that keep every outward ring clear.
-    const tree: OffsetRegionNode = { region, children: seeded.children }
-    seedPlans.set(tree, plans)
-    return tree
-  })
-  // Leftover excursions (issue #576): the enlarged island is what deletes the
-  // graze rings, and it is also what can strand a sliver where it merges with
-  // a wall or a real island. Planned once per band and cut after the rings at
-  // every level.
-  const seedLeftovers = regionTrees.flatMap((tree) => planRegionSeedLeftovers(
-    tree,
-    seedPlans.get(tree) ?? [],
-    effectiveStepover,
-    toolRadius,
-    islandJoinType,
-    direction,
-    smoothRadius,
-  ))
-  // Tangential links (issue #545): replace the straight ring-to-ring link
-  // with a tangent S-curve, gated by the operation field (absent = today's
-  // straight links). The domain is the band's tool-centre region — the tree
-  // roots are exactly that construction — and the solver falls back to the
-  // straight link when nothing fits. Which kinds link on which patterns is
-  // usesTangentLinks's call (#616); this gate no longer keeps its own list.
-  const tangentLink = usesTangentLinks(operation.kind, operation.pocketPattern) && operation.roundLinkCorners
-    ? pocketTangentLinkOptions(
-      operation.roundLinkCorners,
-      toolRadius * 2,
-      regionTrees.map((tree) => tree.region),
-    )
-    : undefined
   const engagementCacheEnabled = telemetry !== null && operation.pocketFeedReduction === 'engagement'
   const wallCleanup = clearingControlApplies(operation.kind, 'cleanWallCorners') && operation.roundOutsideCorners
     && operation.cleanWallCorners === true
@@ -760,51 +824,99 @@ function generateRoughBandMoves(
       onFallback: (): void => appendUniqueWarning(warnings, { code: 'pocketWallCornerCleanupFallback' }),
     }
     : undefined
-  const ringPerimeters = engagementCacheEnabled
-    ? buildRingPerimeterIndex(regionTrees, direction, smoothRadius ?? null, wallCleanup !== undefined, toolRadius)
-    : null
-  const entryPolicy = withEntryHandoffFeedScale(
-    createEntryPolicy(
-      operation,
-      toolRadius * 2,
-      regionTrees.map((tree) => tree.region),
-      (warning) => appendUniqueWarning(warnings, warning),
-    ),
-    slotScale,
-  )
-  // XY leads (issue #695). In a ROUGHING pass only the root node's own rings
-  // define a surface that survives, and only when no radial stock is left for a
-  // finish pass to take the mark away. Resolved once per band because the
-  // domain predicate precomputes its loop bounds.
-  const xyLeadPassOptions = !roughingRingIsTheFinishedWall(operation)
-    ? undefined
-    : resolveXyLeadOptions(
-    operation,
-    toolRadius * 2,
-    regionTrees.map((tree) => tree.region),
-    band.regionMask !== null,
-    (warning) => appendUniqueWarning(warnings, warning),
-  )
+
+  const buildOffsetPlan = (z: number) => {
+    const coverageRegions = buildSurfaceCoverageRegionsAtLevel(
+      band,
+      modelKeepOutsByLevel.get(z) ?? [],
+      toolRadius,
+      radialLeave,
+    )
+    const centreRegions = coverageRegions.flatMap((region) =>
+      buildInsetRegions(region, initialInset, ClipperLib.JoinType.jtMiter, islandJoinType))
+    const seedPlans = new Map<OffsetRegionNode, SeedCirclePlan[]>()
+    const regionTrees = centreRegions.map((region) => {
+      const plans = seedStart > 0
+        ? planSeedCircles(region, seedStart, effectiveStepover, toolRadius * 2, radialLeave)
+        : []
+      if (plans.length === 0) return buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
+
+      const seeded = buildOffsetRegionTree(
+        { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
+        effectiveStepover,
+        islandJoinType,
+      )
+      // The tree must OFFSET around the seed islands but must not CUT them:
+      // seed stacks emit those exact laps separately, and `cutOffsetRegionNode`
+      // emits every island of the node it is cutting. Restoring the root's
+      // original island list drops the duplicates while the children retain the
+      // seed islands that keep every outward ring clear.
+      const tree: OffsetRegionNode = { region, children: seeded.children }
+      seedPlans.set(tree, plans)
+      return tree
+    })
+    const seedLeftovers = regionTrees.flatMap((tree) => planRegionSeedLeftovers(
+      tree,
+      seedPlans.get(tree) ?? [],
+      effectiveStepover,
+      toolRadius,
+      islandJoinType,
+      direction,
+      smoothRadius,
+    ))
+    const tangentLink = usesTangentLinks(operation.kind, operation.pocketPattern) && operation.roundLinkCorners
+      ? pocketTangentLinkOptions(
+        operation.roundLinkCorners,
+        toolRadius * 2,
+        regionTrees.map((tree) => tree.region),
+      )
+      : undefined
+    const ringPerimeters = engagementCacheEnabled
+      ? buildRingPerimeterIndex(regionTrees, direction, smoothRadius ?? null, wallCleanup !== undefined, toolRadius)
+      : null
+    const entryPolicy = withEntryHandoffFeedScale(
+      createEntryPolicy(
+        operation,
+        toolRadius * 2,
+        regionTrees.map((tree) => tree.region),
+        (warning) => appendUniqueWarning(warnings, warning),
+      ),
+      slotScale,
+    )
+    // The protected model section can differ at every level, so all path
+    // planning that depends on its tool-centre domain lives in this plan.
+    const xyLeadPassOptions = !roughingRingIsTheFinishedWall(operation)
+      ? undefined
+      : resolveXyLeadOptions(
+        operation,
+        toolRadius * 2,
+        regionTrees.map((tree) => tree.region),
+        band.regionMask !== null,
+        (warning) => appendUniqueWarning(warnings, warning),
+      )
+    return { entryPolicy, regionTrees, ringPerimeters, seedLeftovers, seedPlans, tangentLink, xyLeadPassOptions }
+  }
 
   for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
     const z = stepLevels[levelIndex]
+    const plan = buildOffsetPlan(z)
     const levelEntryPolicy = withEntryStartZ(
-      entryPolicy,
+      plan.entryPolicy,
       levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
     )
     const levelXyLead = beginXyLeadLevel(
-      xyLeadPassOptions,
+      plan.xyLeadPassOptions,
       (warning) => appendUniqueWarning(warnings, warning),
     )
 
-    if (regionTrees.length === 0) {
+    if (plan.regionTrees.length === 0) {
       warnings.push({ code: 'surfaceNoOffsetContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
       currentPosition = retractToSafe(moves, currentPosition, safeZ)
       continue
     }
 
     const levelStartIndex = moves.length
-    const remainingSeedPlans = regionTrees.flatMap((tree) => seedPlans.get(tree) ?? [])
+    const remainingSeedPlans = plan.regionTrees.flatMap((tree) => plan.seedPlans.get(tree) ?? [])
     // A seed stack is an independent section. Its links are safe only inside
     // the stack, so every cross-section transition retracts before the
     // nearest-entry choice moves in XY.
@@ -832,7 +944,7 @@ function generateRoughBandMoves(
           linkStartIndex,
           circle,
           circleMoves,
-          tangentLink,
+          plan.tangentLink,
         )
         if (tangentSplice) {
           circleMoves = tangentSplice.cutMoves
@@ -848,7 +960,7 @@ function generateRoughBandMoves(
       // Legacy schedule: each whole offset tree is one section competing on
       // its innermost entry. This is the plain `offset` path, and the
       // byte-identical fallback seeded_offset must keep when no seed fits.
-      const remainingOffsetSections = regionTrees.map((node) => ({ node, parent: null, depth: 0 }))
+      const remainingOffsetSections = plan.regionTrees.map((node) => ({ node, parent: null, depth: 0 }))
       while (remainingOffsetSections.length > 0) {
         const choice = nextRoughSection(
           remainingSeedPlans,
@@ -880,7 +992,7 @@ function generateRoughBandMoves(
             smoothRadius,
             depth: section.depth,
             entryPolicy: levelEntryPolicy,
-            tangentLink,
+            tangentLink: plan.tangentLink,
             wallCleanup,
             toolRadius,
             xyLead: levelXyLead,
@@ -898,7 +1010,7 @@ function generateRoughBandMoves(
       // another tree travel at safe Z first — the same rule the legacy
       // section-to-section transitions used.
       const { frontier, pendingChildren, unitByNode } = buildOffsetUnitFrontier(
-        regionTrees,
+        plan.regionTrees,
         direction,
         smoothRadius,
         wallCleanup,
@@ -940,7 +1052,7 @@ function generateRoughBandMoves(
             smoothRadius,
             depth: unit.depth,
             entryPolicy: levelEntryPolicy,
-            tangentLink,
+            tangentLink: plan.tangentLink,
             wallCleanup,
             toolRadius,
             parent: unit.parent ?? undefined,
@@ -962,10 +1074,10 @@ function generateRoughBandMoves(
       }
     }
 
-    if (seedLeftovers.length > 0) {
+    if (plan.seedLeftovers.length > 0) {
       currentPosition = cutSeedLeftoverExcursions(
         moves,
-        seedLeftovers,
+        plan.seedLeftovers,
         z,
         safeZ,
         currentPosition,
@@ -974,8 +1086,8 @@ function generateRoughBandMoves(
     }
 
     const levelEndIndex = moves.length
-    const engagementCache = ringPerimeters !== null
-      ? buildOffsetBandEngagementClassification(moves, levelStartIndex, levelEndIndex, { toolRadius, ringPerimeters })
+    const engagementCache = plan.ringPerimeters !== null
+      ? buildOffsetBandEngagementClassification(moves, levelStartIndex, levelEndIndex, { toolRadius, ringPerimeters: plan.ringPerimeters })
       : null
 
     applyLevelFeed(
@@ -1001,7 +1113,7 @@ function generateFinishBandMoves(
   band: SurfaceCleanBand,
   operation: Operation,
   safeZ: number,
-  _stepdown: number,
+  stepdown: number,
   toolRadius: number,
   stepoverDistance: number,
   maxLinkDistance: number,
@@ -1028,32 +1140,19 @@ function generateFinishBandMoves(
   }
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
-  let coverageRegions = buildSurfaceCoverageRegions(band.subjectPaths, band.protectedPaths, band.regions, toolRadius)
-  // Apply region mask after toolRadius expansion.  coverageRegions is already
-  // a tool-centre domain, so both polarities must dilate by the remaining
-  // clearance (toolRadius + radialLeave) — no further erosion will happen.
-  if (band.regionMask) {
-    const scale = DEFAULT_CLIPPER_SCALE
-    const domainPaths = coverageRegions
-      .flatMap((r) => r.outer.length >= 3 ? [toClipperPath(normalizeWinding(r.outer, false), scale)] : [])
-    if (domainPaths.length === 0) {
-      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
-    }
-    const domain = unionClipperPaths(domainPaths).filter((p) => p.length >= 2)
-    if (domain.length === 0) {
-      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
-    }
-    const maskedDomain = resolveRegionDomainCentre(domain, band.regionMask, toolRadius + radialLeave)
-      .filter((p) => p.length >= 2)
-    if (maskedDomain.length === 0) {
-      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
-    }
-    const polyTree = executeDifference(maskedDomain, [])
-    coverageRegions = polyTreeToRegions(polyTree, band.targetFeatureIds, band.islandFeatureIds, scale)
-      .filter((r) => r.outer.length >= 3)
-    if (coverageRegions.length === 0) {
-      return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
-    }
+  const modelKeepOutsByLevel = buildCumulativeModelKeepOuts(
+    band.modelSections,
+    generateStepLevels(band.topZ, effectiveBottom, stepdown),
+    warnings,
+  )
+  const coverageRegions = buildSurfaceCoverageRegionsAtLevel(
+    band,
+    modelKeepOutsByLevel.get(effectiveBottom) ?? [],
+    toolRadius,
+    radialLeave,
+  )
+  if (coverageRegions.length === 0) {
+    return { moves, stepLevels: [], warnings: [{ code: 'surfaceNoFinishContours', params: { topZ: band.topZ, bottomZ: band.bottomZ } }] }
   }
   const finishDelta = radialLeave
   const finishRegions = coverageRegions.flatMap((region) => buildInsetRegions(region, finishDelta))
