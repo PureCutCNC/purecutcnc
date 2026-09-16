@@ -1144,9 +1144,21 @@ function testRoughSurfaceGenerationMatrix(): void {
   const streams = new Map<PocketPattern, PocketToolpathResult>()
   for (const pattern of offered) {
     const result = generateForPattern(pattern)
+    // The contour patterns must be silent. Trochoidal is allowed exactly one
+    // ADVISORY — a tight spot — and no more (issue #789).
+    //
+    // That advisory is geometry, not slack. The channel is a virtual tool 1.5x
+    // the cutter, and this fixture's frustum leaves a clearable area at its
+    // apex narrower than 0.75 mm: real stock a 0.5 mm cutter could reach and
+    // the channel cannot. Naming it is the whole point of the warning, and
+    // suppressing it here would be suppressing the one thing that tells a user
+    // their part is not finished. Every FATAL code stays banned, because those
+    // mean a ring was skipped rather than a passage reported.
+    const allowed = pattern === 'trochoidal' ? ['pocketTrochoidalTightSpot'] : []
+    const unexpected = result.warnings.filter((warning) => !allowed.includes(warning.code))
     assert(
-      result.warnings.length === 0,
-      `${pattern}: unexpected warnings ${JSON.stringify(result.warnings)}`,
+      unexpected.length === 0,
+      `${pattern}: unexpected warnings ${JSON.stringify(unexpected)}`,
     )
     assert(
       cutMoves(result.moves).length > 0,
@@ -1171,6 +1183,15 @@ function testRoughSurfaceGenerationMatrix(): void {
   assert(
     JSON.stringify(parallel.moves) !== JSON.stringify(offset.moves),
     'parallel fell through to the offset stream',
+  )
+  // Trochoidal's fall-through is issue #789 itself, and it did not look like a
+  // byte-identical stream: the pattern switched the tangential S-links off on
+  // its way past, so the rings differed slightly while still being rings. The
+  // orbit's own transition marker is what separates the two.
+  const trochoidal = streams.get('trochoidal')!
+  assert(
+    trochoidal.moves.some((move) => move.source === 'trochoidal-transition'),
+    'trochoidal fell through to contour rings — the rings were traced, not orbited (#789)',
   )
 
   // The raster branch must cut the level boundary before its segments, as the

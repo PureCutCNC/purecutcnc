@@ -1170,7 +1170,7 @@ function engagementChunkBoundaries(
  * set too high runs full feed through exactly the heavy moves it exists to
  * catch.
  */
-function engagementRadialDepth(operation: Operation, toolDiameter: number): number {
+export function engagementRadialDepth(operation: Operation, toolDiameter: number): number {
   if (isTrochoidalPocket(operation)) {
     return resolveTrochoidalGeometry(operation, toolDiameter).advance
   }
@@ -2299,7 +2299,7 @@ export function buildOffsetRegionTree(
  * nominal channel would leave a hairline ridge exactly where this is trying to
  * remove one.
  */
-function appendResidualCoreGuides(
+export function appendResidualCoreGuides(
   node: OffsetRegionNode,
   channelWidth: number,
   toolDiameter: number,
@@ -3022,7 +3022,7 @@ export interface OffsetRingOptions {
  * Everything the ring emitter needs to orbit a guide, resolved once per
  * operation. `budget` is shared across every band and level of the operation.
  */
-interface TrochoidalRingOptions {
+export interface TrochoidalRingOptions {
   orbitRadius: number
   advance: number
   toolDiameter: number
@@ -3065,7 +3065,7 @@ export function createPocketTrochoidalBudget(): TrochoidalOperationBudget {
  * safe partial answer, so every one of these is fatal — the same contract
  * `hasFatalTrochoidalWarning` holds for edge routes.
  */
-function hasFatalPocketTrochoidalWarning(warnings: readonly ToolpathWarning[]): boolean {
+export function hasFatalPocketTrochoidalWarning(warnings: readonly ToolpathWarning[]): boolean {
   return warnings.some((warning) => (
     warning.code === 'pocketTrochoidalInvalidGuide'
     || warning.code === 'pocketTrochoidalMoveBudget'
@@ -3154,6 +3154,93 @@ function checkTrochoidalStepover(stepover: number, cutWidth: number, warnings: T
       limit: TROCHOIDAL_MAX_COVERING_STEPOVER,
     },
   })
+}
+
+/**
+ * What a clearing pass needs in order to orbit its rings instead of tracing
+ * them. Every number here differs from the contour equivalent, and getting any
+ * one of them from the contour formula is a silent wrong cut rather than an
+ * error — which is exactly how issue #789 shipped.
+ */
+export interface TrochoidalClearingPlan {
+  /** The virtual tool's width. Rings sweep this, not the cutter diameter. */
+  readonly channelWidth: number
+  /** Ring spacing: one channel width scaled by the operation's stepover. */
+  readonly stepover: number
+  /**
+   * Guide inset, expressed against the SAME boundary the caller's regions are
+   * measured from — see `regionsInsetBy`.
+   */
+  readonly inset: number
+  /** Ring options for `cutOffsetNodeRings` / `cutOffsetRegionNode`. */
+  readonly ringOptions: TrochoidalRingOptions | undefined
+}
+
+/**
+ * Resolve one clearing pass's trochoidal geometry, and raise everything that
+ * has to be said before it cuts.
+ *
+ * One definition with five callers: pocket's rough band and finish floor,
+ * surface clean's rough band and finish floor, and rough surface's levels.
+ * They had one between them when trochoidal shipped (#676) — `pocket.ts` — and
+ * the other three kinds offered the pattern while silently tracing contours at
+ * `toolDiameter x stepover` (#789). Ring spacing, guide inset, the width floor,
+ * the pitch advisory and the tight-spot scan are the load-bearing five, so they
+ * live together rather than being re-spelled per generator.
+ *
+ * Returns `null` when the channel is too narrow to orbit at all. That is a
+ * refusal, not a trim: the caller must abandon the pass, because a ring that
+ * does not orbit leaves its channel full and the next Z level descends into it.
+ *
+ * `regionsInsetBy` is the one thing callers genuinely disagree about. A pocket
+ * band hands over raw region boundaries (0); the surface generators hand over a
+ * domain `buildSurfaceCoverageRegionsAtLevel` has already eroded by the tool
+ * radius. Both insets below are reduced by it so the guide lands in the same
+ * physical place either way, instead of each caller doing that subtraction —
+ * and getting it wrong — on its own.
+ */
+export function resolveTrochoidalClearing(params: {
+  operation: Operation
+  toolRadius: number
+  radialLeave: number
+  /** Regions to scan for tight spots, on the caller's own inset basis. */
+  regions: readonly ResolvedPocketRegion[]
+  /** How far the caller's regions are already inset from the raw boundary. */
+  regionsInsetBy?: number
+  /** The operation-wide budget. Absent means the caller cannot orbit. */
+  budget: TrochoidalOperationBudget | null
+  warnings: ToolpathWarning[]
+}): TrochoidalClearingPlan | null {
+  const { operation, toolRadius, radialLeave, regions, regionsInsetBy = 0, budget, warnings } = params
+  const toolDiameter = toolRadius * 2
+  const geometry = resolveTrochoidalGeometry(operation, toolDiameter)
+  if (!checkTrochoidalCutWidth(geometry.cutWidth, toolDiameter, warnings)) return null
+  checkTrochoidalStepover(operation.stepover, geometry.cutWidth, warnings)
+
+  const rawGuideInset = geometry.cutWidth / 2 + toolDiameter * TROCHOIDAL_GUIDE_SAFETY_FRACTION + radialLeave
+  const rawCutterInset = toolRadius + radialLeave
+  warnTrochoidalTightSpots(
+    regions,
+    rawGuideInset - regionsInsetBy,
+    geometry.cutWidth,
+    rawCutterInset - regionsInsetBy,
+    warnings,
+  )
+
+  return {
+    channelWidth: geometry.cutWidth,
+    stepover: Math.max(geometry.cutWidth * operation.stepover, 1 / DEFAULT_CLIPPER_SCALE),
+    inset: rawGuideInset - regionsInsetBy,
+    ringOptions: budget
+      ? {
+        orbitRadius: geometry.orbitRadius,
+        advance: geometry.advance,
+        toolDiameter,
+        budget,
+        operation,
+      }
+      : undefined,
+  }
 }
 
 /**
@@ -3686,28 +3773,24 @@ function generateRoughBandMoves(
   const roughCoverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
   const stepLevels = generateStepLevels(band.topZ, effectiveBottom, stepdown)
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
-  let initialInset = toolRadius + radialLeave
-  let effectiveStepover = Math.max(stepoverDistance, minStepover)
   // Trochoidal ring spacing: rings are one channel-width apart, scaled by the
   // operation's stepover. The inset follows the same guide-offset formula as
-  // edge routes (planning/TROCHOIDAL_EDGE_DESIGN.md).
+  // edge routes (planning/TROCHOIDAL_EDGE_DESIGN.md). Band regions are raw
+  // boundaries here, so no `regionsInsetBy` correction applies.
   const isTrochoidal = roughCoverage.trochoidal
-  const trochoidalGeometry = resolveTrochoidalGeometry(operation, toolRadius * 2)
-  if (isTrochoidal) {
-    if (!checkTrochoidalCutWidth(trochoidalGeometry.cutWidth, toolRadius * 2, warnings)) {
-      return { moves, stepLevels: [], warnings }
-    }
-    checkTrochoidalStepover(operation.stepover, trochoidalGeometry.cutWidth, warnings)
-    effectiveStepover = Math.max(trochoidalGeometry.cutWidth * operation.stepover, minStepover)
-    initialInset = trochoidalGeometry.cutWidth / 2 + toolRadius * 2 * TROCHOIDAL_GUIDE_SAFETY_FRACTION + radialLeave
-    warnTrochoidalTightSpots(
-      band.regions,
-      initialInset,
-      trochoidalGeometry.cutWidth,
-      toolRadius + radialLeave,
+  const trochoidalPlan = isTrochoidal
+    ? resolveTrochoidalClearing({
+      operation,
+      toolRadius,
+      radialLeave,
+      regions: band.regions,
+      budget: trochoidalBudget,
       warnings,
-    )
-  }
+    })
+    : null
+  if (isTrochoidal && !trochoidalPlan) return { moves, stepLevels: [], warnings }
+  const initialInset = trochoidalPlan?.inset ?? toolRadius + radialLeave
+  const effectiveStepover = trochoidalPlan?.stepover ?? Math.max(stepoverDistance, minStepover)
   const slotScale = resolveSlotFeedScale(operation)
   const slotDistance = Math.max(
     toolRadius * 2 * SLOT_FEED_ENGAGEMENT_FACTOR,
@@ -3837,8 +3920,8 @@ function generateRoughBandMoves(
       : []
     if (plans.length === 0) {
       const tree = buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
-      if (isTrochoidal) {
-        appendResidualCoreGuides(tree, trochoidalGeometry.cutWidth, toolRadius * 2, islandJoinType)
+      if (trochoidalPlan) {
+        appendResidualCoreGuides(tree, trochoidalPlan.channelWidth, toolRadius * 2, islandJoinType)
       }
       return tree
     }
@@ -3929,15 +4012,7 @@ function generateRoughBandMoves(
 
   // The budget belongs to the operation, not to this band — it arrives already
   // created and part-spent by earlier bands.
-  const trochoidalRingOptions: TrochoidalRingOptions | undefined = isTrochoidal && trochoidalBudget
-    ? {
-        orbitRadius: trochoidalGeometry.orbitRadius,
-        advance: trochoidalGeometry.advance,
-        toolDiameter: toolRadius * 2,
-        budget: trochoidalBudget,
-        operation,
-      }
-    : undefined
+  const trochoidalRingOptions = trochoidalPlan?.ringOptions
 
   // Keep XY travel at the global safe Z, but start the entry just above the
   // previous level's floor instead of at safe Z — otherwise a deep pocket
@@ -4422,20 +4497,22 @@ function generateFinishBandMoves(
   // the same operation-wide budget — a finish floor that claimed its own would
   // double what one operation may emit.
   const isTrochoidalFloor = finishCoverage.trochoidal && operation.finishFloor
-  const floorTrochoidalGeometry = resolveTrochoidalGeometry(operation, toolRadius * 2)
-  if (isTrochoidalFloor && !checkTrochoidalCutWidth(floorTrochoidalGeometry.cutWidth, toolRadius * 2, warnings)) {
-    return { moves, stepLevels: [], warnings }
-  }
-  if (isTrochoidalFloor) checkTrochoidalStepover(operation.stepover, floorTrochoidalGeometry.cutWidth, warnings)
-  const floorTrochoidalRingOptions: TrochoidalRingOptions | undefined = isTrochoidalFloor && trochoidalBudget
-    ? {
-        orbitRadius: floorTrochoidalGeometry.orbitRadius,
-        advance: floorTrochoidalGeometry.advance,
-        toolDiameter: toolRadius * 2,
-        budget: trochoidalBudget,
-        operation,
-      }
-    : undefined
+  // Same five numbers as the rough pass, from the same resolver. A floor-only
+  // finish never reaches the rough generator, so this is the only place they
+  // get raised for it — including the tight-spot scan, which is why the
+  // resolver owns that too rather than leaving it to a follow-up call here.
+  const floorTrochoidalPlan = isTrochoidalFloor
+    ? resolveTrochoidalClearing({
+      operation,
+      toolRadius,
+      radialLeave,
+      regions: band.regions,
+      budget: trochoidalBudget,
+      warnings,
+    })
+    : null
+  if (isTrochoidalFloor && !floorTrochoidalPlan) return { moves, stepLevels: [], warnings }
+  const floorTrochoidalRingOptions = floorTrochoidalPlan?.ringOptions
   // Offset floors are cut through the same inner-first ring traversal as the
   // rough pass (each disjoint floor area starts at its innermost loop and
   // works outward). The tree roots replicate buildPocketFloorContours'
@@ -4447,22 +4524,7 @@ function generateFinishBandMoves(
   // `toolDiameter x stepover` spaced a 9 mm channel's rings 3 mm apart on a
   // 6 mm cutter at 0.5 stepover — covered, but at three times the rings needed,
   // and the CAM panel's pitch readout said 4.5 mm while the program cut 3 mm.
-  const floorStepover = Math.max(
-    isTrochoidalFloor ? floorTrochoidalGeometry.cutWidth * operation.stepover : stepoverDistance,
-    minFloorStepover,
-  )
-  // And the same tight-spot check: a floor-only finish operation never reaches
-  // the rough generator, so without this a passage too narrow for the channel
-  // is skipped with nothing said — the exact failure the warning exists for.
-  if (isTrochoidalFloor) {
-    warnTrochoidalTightSpots(
-      band.regions,
-      floorTrochoidalGeometry.cutWidth / 2 + toolRadius * 2 * TROCHOIDAL_GUIDE_SAFETY_FRACTION + radialLeave,
-      floorTrochoidalGeometry.cutWidth,
-      toolRadius + radialLeave,
-      warnings,
-    )
-  }
+  const floorStepover = floorTrochoidalPlan?.stepover ?? Math.max(stepoverDistance, minFloorStepover)
   const floorSmoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, floorStepover)
   // The island join mirrors the rough pass (issue #550): with rounding on,
   // island holes are grown with round joins so the island-side floor rings
@@ -4499,15 +4561,15 @@ function generateFinishBandMoves(
       .flatMap((region) => buildInsetRegions(region, 0))
       .flatMap((region) => buildInsetRegions(region, floorStepover, ClipperLib.JoinType.jtMiter, floorIslandJoin))
     : []
-  const floorReach = isTrochoidalFloor ? floorTrochoidalGeometry.cutWidth / 2 : toolRadius
+  const floorReach = floorTrochoidalPlan ? floorTrochoidalPlan.channelWidth / 2 : toolRadius
   const floorTrees = restrictFloorRoots(floorRoots, floorCoverageArea, floorReach).flatMap((region) => {
     const plans = floorSeedStart > 0
       ? planSeedCircles(region, floorSeedStart, floorStepover, toolRadius * 2, radialLeave)
       : []
     if (plans.length === 0) {
       const tree = buildOffsetRegionTree(region, floorStepover, floorIslandJoin)
-      if (isTrochoidalFloor) {
-        appendResidualCoreGuides(tree, floorTrochoidalGeometry.cutWidth, toolRadius * 2, floorIslandJoin)
+      if (floorTrochoidalPlan) {
+        appendResidualCoreGuides(tree, floorTrochoidalPlan.channelWidth, toolRadius * 2, floorIslandJoin)
       }
       return [tree]
     }
