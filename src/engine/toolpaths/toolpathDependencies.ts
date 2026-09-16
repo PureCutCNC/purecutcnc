@@ -372,6 +372,11 @@ export function operationFootprint(project: Project, operation: Operation): Oper
   // It also covers the harder half, a *new* subtract joining the chain: to join,
   // it must touch the reach, so its bbox must contact this one, so it lands
   // inside these bounds and invalidates.
+  //
+  // 2026-08-25 maintainer decision: this static conservative footprint is the
+  // permanent cache contract, not a placeholder for a future resolver read-set.
+  // If its inputs cannot be resolved or bounded, return `bounds: null` so the
+  // cache remains fail-closed rather than risking a stale toolpath.
   const reach = foldsNonTargetSubtracts(operation)
     ? growBoundsThroughTouchingSubtracts(project, targetUnion, targetFeatureIds)
     : targetUnion
