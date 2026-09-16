@@ -26,6 +26,10 @@ function approx(left: number, right: number, epsilon = 1e-9): boolean {
   return Math.abs(left - right) <= epsilon
 }
 
+function samePoint(left: Point, right: Point): boolean {
+  return approx(left.x, right.x) && approx(left.y, right.y)
+}
+
 const rectangle: Point[] = [
   { x: 0, y: 0 },
   { x: 10, y: 0 },
@@ -239,6 +243,34 @@ function testOpenGuideCompletesExitOrbit(): void {
 }
 
 /**
+ * `dwell: false` drops the turns made on the spot and nothing else (issue
+ * #790). A ring link relies on that: its first and last points must be the
+ * ones the dwelling orbit starts and ends on, because the two joins onto the
+ * neighbouring rings are chords of exactly those circles.
+ */
+function testNoDwellKeepsTheAdvancingOrbit(): void {
+  const guide: Point[] = [{ x: 0, y: 0 }, { x: 7, y: 3 }]
+  const options = { orbitRadius: 1.5, advance: 0.6, toolDiameter: 6, angularDirection: -1 as const, closed: false }
+  const dwelling = buildTrochoidalContour(guide, options)
+  const link = buildTrochoidalContour(guide, { ...options, dwell: false })
+  assert(dwelling.error === undefined && link.error === undefined, 'both open guides must build')
+  const steps = stepsPerLoopOf(dwelling, false)
+  assert(link.points.length === dwelling.points.length - 2 * steps, 'exactly the two spot turns must go')
+  const advancing = dwelling.points.slice(steps, steps + dwelling.loopCount * steps + 1)
+  assert(
+    advancing.every((point, index) => samePoint(point, link.points[index])),
+    'the advancing orbit must be the dwelling path, point for point',
+  )
+  assert(samePoint(link.points[0], dwelling.points[0]), 'a link must start where the dwelling orbit starts')
+  assert(samePoint(link.points.at(-1)!, dwelling.points.at(-1)!), 'a link must end where the dwelling orbit ends')
+
+  const ring = buildTrochoidalContour(rectangle, { ...options, closed: true, dwell: false })
+  const closedDwelling = buildTrochoidalContour(rectangle, { ...options, closed: true })
+  assert(ring.points.length === closedDwelling.points.length - stepsPerLoopOf(closedDwelling, true), 'a closed guide drops its entry turn')
+  assert(samePoint(ring.points[0], ring.points.at(-1)!), 'a closed guide without dwell still closes')
+}
+
+/**
  * The sagitta bound, asserted on emitted chords (issue #660).
  *
  * This deliberately does not look at `stepsPerLoop`. The step count is how the
@@ -334,6 +366,7 @@ testOrbitRadiusAndDirection()
 testDeterminismAndSeam()
 testInvalidInputsAndBudget()
 testOpenGuideCompletesExitOrbit()
+testNoDwellKeepsTheAdvancingOrbit()
 testStationaryOrbitSagittaBound()
 testAdvancingOrbitSagittaBound()
 

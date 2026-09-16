@@ -104,6 +104,14 @@ export interface TrochoidalContourOptions {
   toolDiameter: number
   angularDirection: 1 | -1
   closed?: boolean
+  /**
+   * The full turns made on the spot before the orbit advances and, on an open
+   * guide, after it arrives. Default true: they clear the disc a helical entry
+   * bored and the disc the path stops on. A link between two trochoidal rings
+   * leaves both out (issue #790) — the ring it leaves has already swept its
+   * start disc, and the ring it joins sweeps its end disc as its own first turn.
+   */
+  dwell?: boolean
   maxPoints?: number
 }
 
@@ -239,6 +247,7 @@ export function buildTrochoidalContour(
   options: TrochoidalContourOptions,
 ): TrochoidalContourResult {
   const closed = options.closed ?? true
+  const dwell = options.dwell ?? true
   const path = buildArcLengthPath(contour, closed)
   if (!path || !(options.orbitRadius > 0) || !(options.advance > 0) || !(options.toolDiameter > 0)) {
     return { points: [], entryCenter: null, loopCount: 0, actualAdvance: 0, error: 'invalid-guide' }
@@ -266,7 +275,7 @@ export function buildTrochoidalContour(
   const stepsPerLoop = orbitStepsPerLoop(options.orbitRadius, options.toolDiameter)
   const movingSteps = loopCount * stepsPerLoop
   const maxPoints = Math.min(DEFAULT_TROCHOIDAL_POINT_BUDGET, options.maxPoints ?? DEFAULT_TROCHOIDAL_POINT_BUDGET)
-  const stationarySteps = stepsPerLoop * (closed ? 1 : 2)
+  const stationarySteps = dwell ? stepsPerLoop * (closed ? 1 : 2) : 0
   if (movingSteps + stationarySteps + 1 > maxPoints) {
     return { points: [], entryCenter: null, loopCount, actualAdvance, error: 'move-budget' }
   }
@@ -282,9 +291,11 @@ export function buildTrochoidalContour(
   }
 
   const points: Point[] = [orbitPoint(entryCenter, entryFrame.tangent, entryFrame.normal, options.orbitRadius, 0)]
-  for (let step = 1; step <= stepsPerLoop; step += 1) {
-    const phase = options.angularDirection * 2 * Math.PI * step / stepsPerLoop
-    points.push(orbitPoint(entryCenter, entryFrame.tangent, entryFrame.normal, options.orbitRadius, phase))
+  if (dwell) {
+    for (let step = 1; step <= stepsPerLoop; step += 1) {
+      const phase = options.angularDirection * 2 * Math.PI * step / stepsPerLoop
+      points.push(orbitPoint(entryCenter, entryFrame.tangent, entryFrame.normal, options.orbitRadius, phase))
+    }
   }
 
   for (let step = 1; step <= movingSteps; step += 1) {
@@ -296,7 +307,7 @@ export function buildTrochoidalContour(
     points.push(orbitPoint(center, frame.tangent, frame.normal, options.orbitRadius, phase))
   }
 
-  if (!closed) {
+  if (!closed && dwell) {
     const exitCenter = samplePosition(path, path.length)
     const exitFrame = sampleFrame(path, path.length, frameLookaround)
     if (!exitFrame) return { points: [], entryCenter: null, loopCount, actualAdvance, error: 'invalid-guide' }

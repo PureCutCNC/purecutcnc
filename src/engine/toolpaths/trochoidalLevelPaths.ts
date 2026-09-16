@@ -61,6 +61,8 @@ export interface TrochoidalPathParams {
   advance: number
   toolDiameter: number
   angularDirection: 1 | -1
+  /** `buildTrochoidalContour`'s `dwell`. Absent means true, as there. */
+  dwell?: boolean
 }
 
 /**
@@ -89,6 +91,7 @@ export function trochoidalGuideSignature(
     coordinate(params.advance),
     coordinate(params.toolDiameter),
     String(params.angularDirection),
+    params.dwell === false ? 'no-dwell' : 'dwell',
     String(points.length),
   ].join('|')
   const guide = points.map((point) => `${coordinate(point.x)},${coordinate(point.y)}`).join(';')
