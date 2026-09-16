@@ -48,6 +48,7 @@ import {
   effectivePocketPattern,
   offeredPocketPatterns,
   takesPocketPattern,
+  TROCHOIDAL_RING_STEPOVER,
   type EffectivePocketPattern,
   usesTangentLinks,
 } from './pocketPatterns'
@@ -225,8 +226,37 @@ function makeFloorOperation(
   return { ...base, ...overrides }
 }
 
-/** One `(kind, pattern)` row: generate on a fixture that pattern should cut. */
-function generateFloor(kind: OperationKind, pattern: PocketPattern): PocketToolpathResult {
+/**
+ * The stepover a row is generated at.
+ *
+ * The fixtures store a contour stepover, a fraction of the tool diameter. A
+ * trochoidal stepover is a fraction of the CHANNEL, and the CAM panel replaces
+ * the stored value with `TROCHOIDAL_RING_STEPOVER` the moment the pattern is
+ * picked. The matrix generates what a user gets by picking the pattern, so
+ * trochoidal rows take the seeded value.
+ *
+ * It matters on the 3D roughing fixture: at its stored 0.32 the rings are dense
+ * enough to exhaust that job's point budget, and the pass refuses. That refusal
+ * is asserted on its own in `testTrochoidalBudgetRefusalEmitsNothing`.
+ */
+function patternStepover(pattern: PocketPattern, stored: number): number {
+  return pattern === 'trochoidal' ? TROCHOIDAL_RING_STEPOVER : stored
+}
+
+/**
+ * One `(kind, pattern)` row: generate on a fixture that pattern should cut.
+ *
+ * `pass` only means anything to `pocket` and `surface_clean`, which clear a
+ * whole band on the rough pass and only the floor on the finish pass. It
+ * defaults to the finish floor — the narrower, easier-to-hide half — and
+ * `testTrochoidalRowsOrbit` runs both, because #789's report was a ROUGH pass
+ * and a floor-only matrix would have stayed green through it.
+ */
+function generateFloor(
+  kind: OperationKind,
+  pattern: PocketPattern,
+  pass: 'rough' | 'finish' = 'finish',
+): PocketToolpathResult {
   if (kind === 'pocket') {
     const project = projectWithFeatures(
       { ...newProject('pattern-matrix-pocket', 'mm'), tools: [makeFlatEndmill('t1', 4)] },
@@ -237,6 +267,8 @@ function generateFloor(kind: OperationKind, pattern: PocketPattern): PocketToolp
       target: { source: 'features', featureIds: ['a'] },
       toolRef: 't1',
       pocketPattern: pattern,
+      stepover: patternStepover(pattern, 0.4),
+      pass,
     }))
   }
   if (kind === 'surface_clean') {
@@ -251,6 +283,8 @@ function generateFloor(kind: OperationKind, pattern: PocketPattern): PocketToolp
       toolRef: 't1',
       stepdown: 1,
       pocketPattern: pattern,
+      stepover: patternStepover(pattern, 0.4),
+      pass,
     }))
   }
   if (kind === 'finish_surface') {
@@ -277,7 +311,11 @@ function generateFloor(kind: OperationKind, pattern: PocketPattern): PocketToolp
     const project = loadFixture('model-in-pocket.camj')
     const operation = project.operations.find((candidate) => candidate.kind === 'rough_surface')
     assert(operation, 'expected a rough_surface operation in model-in-pocket.camj')
-    return generateRoughSurfaceToolpath(project, { ...operation, pocketPattern: pattern })
+    return generateRoughSurfaceToolpath(project, {
+      ...operation,
+      pocketPattern: pattern,
+      stepover: patternStepover(pattern, operation.stepover),
+    })
   }
   throw new Error(`no fixture for pattern-taking kind ${kind}`)
 }
@@ -298,6 +336,95 @@ function testEveryOfferedPairCutsSomething(): void {
     }
   }
   assert(rows >= 11, `expected the full offered matrix, only ran ${rows} rows`)
+}
+
+/**
+ * Every kind that offers trochoidal must actually ORBIT (issue #789).
+ *
+ * `testEveryOfferedPairCutsSomething` above is a non-emptiness check, and that
+ * is precisely the hole #789 fell through: `surface_clean` and `rough_surface`
+ * offered trochoidal, traced the ring centrelines as plain contours, emitted
+ * plenty of cut moves and no warning. The row was green for six months while
+ * the program cut a 50 %-of-diameter contour bite the panel described as a
+ * light orbit.
+ *
+ * So this asserts pattern CHARACTER rather than pattern presence. Two
+ * independent signatures, because either alone has a cheap false pass:
+ *
+ *   - the emitter's own ring-to-ring transition, which only the orbit path
+ *     produces (a contour ring links at depth or retracts unmarked), and
+ *   - a cut count far above the contour row's, because an orbit walks a
+ *     sampled trochoid where a contour walks the guide itself. A generator
+ *     that emitted one marked transition and then traced contours would pass
+ *     the first check and fail this one.
+ *
+ * The table cannot state this. `areaCoverage` is exhaustive over the pattern
+ * union — it forces every pattern to SAY what it covers — but nothing forces a
+ * generator to READ the member it is handed, and a generator that destructures
+ * three of four members compiles cleanly. Until that is closable at the type
+ * level, this is the guard.
+ */
+function testTrochoidalRowsOrbit(): void {
+  console.log('Testing every kind that offers trochoidal emits orbits, not contours...')
+  let rows = 0
+  for (const kind of ALL_KINDS) {
+    if (!offeredPocketPatterns(kind).includes('trochoidal')) continue
+    // Rough clears the band, finish clears only the floor, and both orbit —
+    // `isTrochoidalPocket`'s `finishFloor` term says so. 3D roughing has no
+    // such split, so its two rows are the same pass and one is enough.
+    const passes = kind === 'rough_surface' ? (['rough'] as const) : (['rough', 'finish'] as const)
+    for (const pass of passes) {
+      const orbit = generateFloor(kind, 'trochoidal', pass)
+      const contour = generateFloor(kind, 'offset', pass)
+      const orbitCuts = orbit.moves.filter((move) => move.kind === 'cut').length
+      const contourCuts = contour.moves.filter((move) => move.kind === 'cut').length
+      const transitions = orbit.moves.filter((move) => move.source === 'trochoidal-transition').length
+
+      assert(
+        transitions > 0,
+        `${kind} ${pass} offers trochoidal but emitted no orbit transition — the rings were `
+        + `traced as contours, which is issue #789 (warnings: ${JSON.stringify(orbit.warnings)})`,
+      )
+      assert(
+        orbitCuts > contourCuts * 2,
+        `${kind} ${pass} trochoidal emitted ${orbitCuts} cuts against ${contourCuts} on offset; an `
+        + 'orbit samples far more densely than the guide it rides, so a comparable count means '
+        + 'the guide itself was cut',
+      )
+      rows += 1
+    }
+  }
+  assert(rows === 5, `expected pocket and surface_clean on both passes plus rough_surface, ran ${rows}`)
+}
+
+/**
+ * A trochoidal pass that exhausts its budget emits nothing.
+ *
+ * Whether a pass exhausts the budget depends on the job — roughly cut area x
+ * number of levels / ring spacing, for every clearing kind alike — not on a
+ * stepover threshold. The 3D roughing fixture at its stored 0.32 is simply one
+ * job that does. What is asserted is the refusal: an empty program carrying the
+ * budget warning. The alternative is emitting the rings that did fit, after
+ * which the level below descends into channels no orbit has opened.
+ */
+function testTrochoidalBudgetRefusalEmitsNothing(): void {
+  console.log('Testing a trochoidal pass that exhausts its budget emits nothing...')
+  const project = loadFixture('model-in-pocket.camj')
+  const operation = project.operations.find((candidate) => candidate.kind === 'rough_surface')
+  assert(operation, 'expected a rough_surface operation in model-in-pocket.camj')
+  const result = generateRoughSurfaceToolpath(project, {
+    ...operation,
+    pocketPattern: 'trochoidal',
+    stepover: 0.32,
+  })
+  assert(
+    result.moves.length === 0,
+    `a trochoidal pass that could not emit every ring must emit nothing, got ${result.moves.length} moves`,
+  )
+  assert(
+    result.warnings.some((warning) => warning.code === 'pocketTrochoidalMoveBudget'),
+    `expected the budget refusal to be named, got ${JSON.stringify(result.warnings.map((w) => w.code))}`,
+  )
 }
 
 function testTangentLinkApplicability(): void {
@@ -321,6 +448,8 @@ async function run(): Promise<void> {
   testKindsWithoutAPatternRowResolveToNothing()
   testCoverageIsSingleValued()
   testEveryOfferedPairCutsSomething()
+  testTrochoidalRowsOrbit()
+  testTrochoidalBudgetRefusalEmitsNothing()
   testTangentLinkApplicability()
   console.log('pocketPatterns.test.ts: all tests passed')
 }

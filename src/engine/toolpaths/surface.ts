@@ -42,6 +42,7 @@ import {
   toClipperPath,
 } from './geometry'
 import {
+  appendResidualCoreGuides,
   applyLevelFeed,
   buildContourLoops,
   buildInsetRegions,
@@ -51,12 +52,15 @@ import {
   buildPocketParallelSegments,
   buildRingPerimeterIndex,
   contourStartPoint,
+  createPocketTrochoidalBudget,
   createSharedEngagementTelemetry,
   cutSeedLeftoverExcursions,
   cutOffsetNodeRings,
   cutOffsetRegionNode,
+  engagementRadialDepth,
   executeDifference,
   generateStepLevels,
+  hasFatalPocketTrochoidalWarning,
   nextRoughSection,
   offsetSectionEntryPoint,
   offsetUnitEntryPoint,
@@ -69,6 +73,7 @@ import {
   retractToSafe,
   resolveBandBottomZ,
   resolveSlotFeedScale,
+  resolveTrochoidalClearing,
   rotateContourToNearestEntry,
   SLOT_FEED_ADJACENCY_FACTOR,
   SLOT_FEED_ENGAGEMENT_FACTOR,
@@ -81,6 +86,7 @@ import {
   updateBounds,
 } from './pocket'
 import type { OffsetRegionNode } from './pocket'
+import type { TrochoidalOperationBudget } from './trochoidalPath'
 import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
 import { buildOffsetDomainCheck, pocketTangentLinkOptions } from './tangentLink'
 import {
@@ -670,6 +676,7 @@ function generateRoughBandMoves(
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
   telemetry: EngagementTelemetryAccumulator | null = null,
+  trochoidalBudget: TrochoidalOperationBudget | null = null,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -683,7 +690,6 @@ function generateRoughBandMoves(
   }
 
   const radialLeave = Math.max(0, operation.stockToLeaveRadial)
-  const initialInset = radialLeave
   // What the stored pattern actually clears with (issue #609): the declared
   // table decides, so the raster branch below and the seed gate further down
   // can no longer disagree about which patterns exist.
@@ -691,7 +697,39 @@ function generateRoughBandMoves(
   const stepLevels = generateStepLevels(band.topZ, effectiveBottom, stepdown)
   const modelKeepOutsByLevel = buildCumulativeModelKeepOuts(band.modelSections, stepLevels, warnings)
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
-  const effectiveStepover = Math.max(stepoverDistance, minStepover)
+  // Trochoidal clearing (issue #789). `surface_clean` offered this pattern from
+  // the day it shipped (#676) and never implemented it, so the rings were
+  // traced as plain contours at `toolDiameter x stepover` — a heavier cut than
+  // the panel's own pitch readout described, with nothing said. The resolver in
+  // pocket.ts owns every number; the only thing special here is the basis:
+  // `buildSurfaceCoverageRegionsAtLevel` returns a tool-centre domain, already
+  // eroded by the tool radius, so both insets are measured from there.
+  //
+  // Resolved once per band, against the top level's coverage. Levels below
+  // differ only by their model keep-outs, and the tight-spot scan is a pair of
+  // Clipper offsets per region — per-level would pay that on every step to
+  // re-raise warnings `appendUniqueWarning` then discards.
+  const trochoidalPlan = roughCoverage.trochoidal
+    ? resolveTrochoidalClearing({
+      operation,
+      toolRadius,
+      radialLeave,
+      regions: stepLevels.length > 0
+        ? buildSurfaceCoverageRegionsAtLevel(
+          band,
+          modelKeepOutsByLevel.get(stepLevels[0]) ?? [],
+          toolRadius,
+          radialLeave,
+        )
+        : [],
+      regionsInsetBy: toolRadius,
+      budget: trochoidalBudget,
+      warnings,
+    })
+    : null
+  if (roughCoverage.trochoidal && !trochoidalPlan) return { moves, stepLevels: [], warnings }
+  const initialInset = trochoidalPlan?.inset ?? radialLeave
+  const effectiveStepover = trochoidalPlan?.stepover ?? Math.max(stepoverDistance, minStepover)
   let currentPosition: ToolpathPoint | null = null
   const slotScale = resolveSlotFeedScale(operation)
   const slotDistance = Math.max(
@@ -839,7 +877,16 @@ function generateRoughBandMoves(
       const plans = seedStart > 0
         ? planSeedCircles(region, seedStart, effectiveStepover, toolRadius * 2, radialLeave)
         : []
-      if (plans.length === 0) return buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
+      if (plans.length === 0) {
+        const tree = buildOffsetRegionTree(region, effectiveStepover, islandJoinType)
+        // A trochoidal tree stops one PITCH short while each guide only sweeps
+        // half a CHANNEL, so the innermost ring can leave a bar on the medial
+        // axis. Same correction the pocket tree takes.
+        if (trochoidalPlan) {
+          appendResidualCoreGuides(tree, trochoidalPlan.channelWidth, toolRadius * 2, islandJoinType)
+        }
+        return tree
+      }
 
       const seeded = buildOffsetRegionTree(
         { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
@@ -900,10 +947,15 @@ function generateRoughBandMoves(
   for (let levelIndex = 0; levelIndex < stepLevels.length; levelIndex += 1) {
     const z = stepLevels[levelIndex]
     const plan = buildOffsetPlan(z)
-    const levelEntryPolicy = withEntryStartZ(
-      plan.entryPolicy,
-      levelIndex === 0 ? safeZ : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance),
-    )
+    const levelEntryStartZ = levelIndex === 0
+      ? safeZ
+      : Math.min(safeZ, stepLevels[levelIndex - 1] + entryClearance)
+    const levelEntryPolicy = withEntryStartZ(plan.entryPolicy, levelEntryStartZ)
+    // The orbit entry starts from the same height as the contour entry, so a
+    // deep band does not re-bore already-cleared air once per ring per level.
+    const levelTrochoidal = trochoidalPlan?.ringOptions
+      ? { ...trochoidalPlan.ringOptions, entryStartZ: levelEntryStartZ }
+      : undefined
     const levelXyLead = beginXyLeadLevel(
       plan.xyLeadPassOptions,
       (warning) => appendUniqueWarning(warnings, warning),
@@ -996,7 +1048,12 @@ function generateRoughBandMoves(
             wallCleanup,
             toolRadius,
             xyLead: levelXyLead,
+            trochoidal: levelTrochoidal,
           },
+          // The orbit emitter reports budget and guide failures through this
+          // array; without it a ring that could not be emitted leaves its
+          // channel full and says nothing.
+          warnings,
         )
       }
     } else {
@@ -1057,7 +1114,9 @@ function generateRoughBandMoves(
             toolRadius,
             parent: unit.parent ?? undefined,
             xyLead: levelXyLead,
+            trochoidal: levelTrochoidal,
           },
+          warnings,
         )
         previousUnitRoot = unit.root
         const parentNode = unit.parent
@@ -1119,6 +1178,7 @@ function generateFinishBandMoves(
   maxLinkDistance: number,
   direction: CutDirection = 'conventional',
   telemetry: EngagementTelemetryAccumulator | null = null,
+  trochoidalBudget: TrochoidalOperationBudget | null = null,
 ): { moves: ToolpathMove[]; stepLevels: number[]; warnings: ToolpathWarning[] } {
   const moves: ToolpathMove[] = []
   const warnings: ToolpathWarning[] = []
@@ -1219,13 +1279,34 @@ function generateFinishBandMoves(
     }
   }
   const minFloorStepover = 1 / DEFAULT_CLIPPER_SCALE
-  const floorStepover = Math.max(stepoverDistance, minFloorStepover)
+  const finishCoverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
+  const isParallelPocket = finishCoverage.rasterSegments
+  // A trochoidal finish FLOOR orbits its rings; the walls stay a contour, which
+  // is `isTrochoidalPocket`'s `finishFloor` term (issue #789). A floor-only
+  // finish never reaches the rough band above, so this is the only place the
+  // channel geometry and its warnings get raised for it.
+  const floorTrochoidalPlan = finishCoverage.trochoidal && operation.finishFloor
+    ? resolveTrochoidalClearing({
+      operation,
+      toolRadius,
+      radialLeave,
+      regions: coverageRegions,
+      regionsInsetBy: toolRadius,
+      budget: trochoidalBudget,
+      warnings,
+    })
+    : null
+  if (finishCoverage.trochoidal && operation.finishFloor && !floorTrochoidalPlan) {
+    return { moves, stepLevels: [], warnings }
+  }
+  // The floor spaces its rings by the CHANNEL, not the cutter — the same
+  // correction pocket's floor takes, and the reason the panel's pitch readout
+  // and the emitted program agree.
+  const floorStepover = floorTrochoidalPlan?.stepover ?? Math.max(stepoverDistance, minFloorStepover)
   const floorSmoothRadius = cornerSmoothingRadius(operation.roundOutsideCorners, toolRadius, floorStepover)
   const floorIslandJoin = operation.roundOutsideCorners
     ? ClipperLib.JoinType.jtRound
     : ClipperLib.JoinType.jtMiter
-  const finishCoverage = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern))
-  const isParallelPocket = finishCoverage.rasterSegments
   // Seeded circle clearing on the finish floor (issue #579): the same phase 1
   // the rough pass runs (issue #554), planned against each region the floor
   // tree is actually built from so every circle fits whole. Each plan's last
@@ -1244,7 +1325,13 @@ function generateFinishBandMoves(
         const plans = floorSeedStart > 0
           ? planSeedCircles(region, floorSeedStart, floorStepover, toolRadius * 2, radialLeave)
           : []
-        if (plans.length === 0) return [buildOffsetRegionTree(region, floorStepover, floorIslandJoin)]
+        if (plans.length === 0) {
+          const tree = buildOffsetRegionTree(region, floorStepover, floorIslandJoin)
+          if (floorTrochoidalPlan) {
+            appendResidualCoreGuides(tree, floorTrochoidalPlan.channelWidth, toolRadius * 2, floorIslandJoin)
+          }
+          return [tree]
+        }
         const seeded = buildOffsetRegionTree(
           { ...region, islands: [...region.islands, ...plans.map((plan) => plan.island)] },
           floorStepover,
@@ -1335,7 +1422,9 @@ function generateFinishBandMoves(
             entryPolicy,
             tangentLink: floorTangentLink,
             toolRadius,
+            trochoidal: floorTrochoidalPlan?.ringOptions,
           },
+          warnings,
         )
       }
     } else {
@@ -1427,7 +1516,9 @@ function generateFinishBandMoves(
             tangentLink: floorTangentLink,
             toolRadius,
             parent: unit.parent ?? undefined,
+            trochoidal: floorTrochoidalPlan?.ringOptions,
           },
+          warnings,
         )
         previousUnitRoot = unit.root
         const parentNode = unit.parent
@@ -1551,25 +1642,47 @@ function generateFinishBandMoves(
 }
 
 export function generateSurfaceCleanToolpath(project: Project, operation: Operation): PocketToolpathResult {
+  const isTrochoidal = areaCoverage(effectivePocketPattern(operation.kind, operation.pocketPattern)).trochoidal
   if (isFeatureFirst(operation, project)) {
     const parts = perFeatureOperations(operation, project)
     const sharedTelemetry = createSharedEngagementTelemetry(project, operation)
-    const merged = mergePocketToolpathResults(
-      operation.id,
-      parts.map((subOp) => generateSurfaceCleanToolpathSingle(project, subOp, sharedTelemetry)),
-      { orderBlocks: 'nearest' },
-    )
+    // The ceiling is what ONE operation may emit, so every per-feature target
+    // draws on the same budget — created here rather than per target, for the
+    // reason planning/TROCHOIDAL_EDGE_DESIGN.md § Machining order gives.
+    const sharedTrochoidalBudget = isTrochoidal ? createPocketTrochoidalBudget() : null
+    const results = parts.map((subOp) =>
+      generateSurfaceCleanToolpathSingle(project, subOp, sharedTelemetry, sharedTrochoidalBudget))
+    // `mergePocketToolpathResults` concatenates with no failure check, so a
+    // target that failed closed would be silently skipped while its neighbours
+    // were cut. Multi-target trochoidal stays atomic.
+    if (isTrochoidal && results.some((part) => hasFatalPocketTrochoidalWarning(part.warnings))) {
+      return {
+        operationId: operation.id,
+        moves: [],
+        warnings: results.flatMap((part) => part.warnings),
+        bounds: null,
+        stepLevels: [],
+        ...(sharedTelemetry ? { engagementTelemetry: sharedTelemetry.toTelemetry() } : {}),
+      }
+    }
+    const merged = mergePocketToolpathResults(operation.id, results, { orderBlocks: 'nearest' })
     return sharedTelemetry
       ? { ...merged, engagementTelemetry: sharedTelemetry.toTelemetry() }
       : merged
   }
-  return generateSurfaceCleanToolpathSingle(project, operation)
+  return generateSurfaceCleanToolpathSingle(
+    project,
+    operation,
+    undefined,
+    isTrochoidal ? createPocketTrochoidalBudget() : null,
+  )
 }
 
 function generateSurfaceCleanToolpathSingle(
   project: Project,
   operation: Operation,
   sharedTelemetry?: EngagementTelemetryAccumulator | null,
+  trochoidalBudget: TrochoidalOperationBudget | null = null,
 ): PocketToolpathResult {
   const resolved = resolveSurfaceCleanRegions(project, operation)
   const toolRecord = operation.toolRef
@@ -1610,13 +1723,21 @@ function generateSurfaceCleanToolpathSingle(
   const safeZ = getOperationSafeZ(project)
   const entryClearance = getOperationClearance(project)
   const stepoverDistance = tool.diameter * operation.stepover
-  const effectiveStepover = Math.max(stepoverDistance, 1 / DEFAULT_CLIPPER_SCALE)
   const maxLinkDistance = tool.diameter
   const direction = operation.cutDirection ?? 'conventional'
+  // Reported against the bar the feed decision uses (`applyLevelFeed` passes
+  // `engagementRadialDepth`), and the one the feature-first path already uses
+  // via `createSharedEngagementTelemetry`. For a contour pattern that is the
+  // same number as `effectiveStepover`; for a trochoidal one it is the orbit's
+  // advance, and measuring an orbit against the contour bar understates how
+  // much of it runs heavy (issue #789).
   const telemetry = sharedTelemetry !== undefined
     ? sharedTelemetry
     : operation.pocketFeedReduction === 'engagement'
-      ? new EngagementTelemetryAccumulator(nominalEngagement(effectiveStepover, tool.radius))
+      ? new EngagementTelemetryAccumulator(nominalEngagement(
+        Math.max(engagementRadialDepth(operation, tool.diameter), 1 / DEFAULT_CLIPPER_SCALE),
+        tool.radius,
+      ))
       : null
   const allMoves: ToolpathMove[] = []
   const warnings = [...resolved.warnings]
@@ -1639,6 +1760,7 @@ function generateSurfaceCleanToolpathSingle(
         maxLinkDistance,
         direction,
         telemetry,
+        trochoidalBudget,
       )
       : generateRoughBandMoves(
         band,
@@ -1651,12 +1773,31 @@ function generateSurfaceCleanToolpathSingle(
         maxLinkDistance,
         direction,
         telemetry,
+        trochoidalBudget,
       )
 
     const { moves, stepLevels, warnings: bandWarnings } = result
     moves.forEach((move) => allMoves.push(move))
     stepLevels.forEach((level) => allStepLevels.add(level))
     appendUniqueWarnings(warnings, bandWarnings)
+    // A trochoidal ring that could not be emitted leaves its channel uncleared,
+    // and the next band would descend into stock no orbit has opened. Stop at
+    // the first band that failed rather than cutting the rest around it.
+    if (trochoidalBudget && hasFatalPocketTrochoidalWarning(bandWarnings)) break
+  }
+
+  // Fail closed. A trochoidal operation that could not emit every ring has left
+  // channels full; emitting the rings that did fit would be a program that
+  // ploughs the cutter into them at full stepdown.
+  if (trochoidalBudget && hasFatalPocketTrochoidalWarning(warnings)) {
+    return {
+      operationId: operation.id,
+      moves: [],
+      warnings,
+      bounds: null,
+      stepLevels: [],
+      ...(!sharedTelemetry && telemetry ? { engagementTelemetry: telemetry.toTelemetry() } : {}),
+    }
   }
 
   let bounds: ToolpathBounds | null = null
