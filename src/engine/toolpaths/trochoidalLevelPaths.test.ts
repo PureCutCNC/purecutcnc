@@ -123,6 +123,7 @@ test('every build parameter splits the signature', () => {
     ['advance', { ...params, advance: params.advance + 1e-9 }],
     ['toolDiameter', { ...params, toolDiameter: params.toolDiameter + 1e-9 }],
     ['angularDirection', { ...params, angularDirection: -1 }],
+    ['dwell', { ...params, dwell: false }],
   ]
   for (const [name, variant] of variants) {
     assert(
@@ -130,6 +131,15 @@ test('every build parameter splits the signature', () => {
       `${name} must participate in the key`,
     )
   }
+})
+
+test('an absent dwell keys the same as an explicit one', () => {
+  // `buildTrochoidalContour` reads an absent `dwell` as true, so the two
+  // generate the same path and must share it (issue #790).
+  assert(
+    trochoidalGuideSignature(guide, false, params) === trochoidalGuideSignature(guide, false, { ...params, dwell: true }),
+    'dwell: true and an absent dwell must produce the same key',
+  )
 })
 
 /**

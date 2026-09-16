@@ -117,6 +117,7 @@ import { buildTrochoidalContour, DEFAULT_TROCHOIDAL_POINT_BUDGET, ORBIT_SAGITTA_
 import type { TrochoidalContourError } from './trochoidalEdge'
 import { createTrochoidalPathStore } from './trochoidalLevelPaths'
 import type { TrochoidalPathParams } from './trochoidalLevelPaths'
+import { appendLinkedTrochoidalRing, appendOrbitCuts, recordTrochoidalRingEnd } from './trochoidalRingLinks'
 import {
   appendTrochoidalEntry,
   resolveTrochoidalGeometry,
@@ -3012,6 +3013,12 @@ export interface OffsetRingOptions {
   wallCleanup?: WallCornerCleanupContext
   toolRadius?: number
   parent?: OffsetRegionNode
+  /**
+   * The tree being cut. `cutOffsetRegionNode` fills it in on the way down;
+   * absent means the node is its own root. Trochoidal ring links (issue #790)
+   * join only rings of one root and stay inside its region.
+   */
+  root?: OffsetRegionNode
   /** Level-scoped XY lead state (issue #695); absent = no leads. */
   xyLead?: XyLeadContext
   /** Trochoidal ring-orbit emission in place of direct contour tracing. */
@@ -3247,8 +3254,11 @@ export function resolveTrochoidalClearing(params: {
  * Emit trochoidal orbits for each ring contour (outer + islands) of one
  * offset-tree node at one Z level. Returns the position after the last ring.
  *
- * Between rings the tool retracts to safe Z and rapids — a trochoidal orbit
- * closes on itself, so linking at depth has no natural handoff.
+ * A ring that follows another of the same tree and orbit sense is joined to it
+ * at depth by an orbited straight link (issue #790, `trochoidalRingLinks.ts`).
+ * Every other ring — the first of a tree, an island loop after an outer ring,
+ * a ring too far away — retracts to safe Z, rapids to its guide start and
+ * helixes in.
  */
 function cutTrochoidalRingMoves(
   moves: ToolpathMove[],
@@ -3256,10 +3266,10 @@ function cutTrochoidalRingMoves(
   z: number,
   safeZ: number,
   fromPosition: ToolpathPoint | null,
-  options: TrochoidalRingOptions & { direction: CutDirection; loops?: 'all' | 'outer' },
+  options: TrochoidalRingOptions & { direction: CutDirection; loops?: 'all' | 'outer'; root: OffsetRegionNode },
   warnings: ToolpathWarning[],
 ): ToolpathPoint | null {
-  const { direction, orbitRadius, advance, toolDiameter, budget, operation, loops = 'all' } = options
+  const { direction, orbitRadius, advance, toolDiameter, budget, operation, loops = 'all', root } = options
   const pathStore = budget.paths
   // Never below safe Z's own guarantee, and never below the cut itself.
   const entryStartZ = Math.max(z, Math.min(safeZ, options.entryStartZ ?? safeZ))
@@ -3297,6 +3307,12 @@ function cutTrochoidalRingMoves(
 
   for (const { points: contour, angularDirection } of contours) {
     const pathParams: TrochoidalPathParams = { orbitRadius, advance, toolDiameter, angularDirection }
+    const linked = appendLinkedTrochoidalRing(moves, contour, z, nextPosition, pathParams, root, budget)
+    if (linked) {
+      nextPosition = linked
+      continue
+    }
+
     const entryMoves = trochoidalEntryMoveCount(entryStartZ, z, orbitRadius, operation)
     if (entryMoves > MAX_TROCHOIDAL_ENTRY_MOVES || entryMoves + 3 >= budget.remainingMoves) {
       warnings.push({ code: 'pocketTrochoidalEntryBudget', params: { x: contour[0]?.x ?? 0, y: contour[0]?.y ?? 0 } })
@@ -3335,7 +3351,7 @@ function cutTrochoidalRingMoves(
     budget.remainingPoints -= generatedPoints
     budget.remainingMoves -= emittedPoints
 
-    // Retract and rapid to the guide start — no at-depth linking between rings.
+    // Retract and rapid to the guide start: this ring starts a new chain.
     nextPosition = retractToSafe(moves, nextPosition, safeZ)
     const rapidTo: ToolpathPoint = { x: built.points[0].x, y: built.points[0].y, z: safeZ }
     if (nextPosition) {
@@ -3360,14 +3376,8 @@ function cutTrochoidalRingMoves(
       angularDirection,
     )
 
-    // Emit orbit as cut moves.
-    for (let index = 0; index < built.points.length - 1; index += 1) {
-      moves.push({
-        kind: 'cut',
-        from: { x: built.points[index].x, y: built.points[index].y, z },
-        to: { x: built.points[index + 1].x, y: built.points[index + 1].y, z },
-      })
-    }
+    appendOrbitCuts(moves, built.points, z)
+    recordTrochoidalRingEnd(moves, root, built.entryCenter, pathParams)
     nextPosition = { x: built.points[built.points.length - 1].x, y: built.points[built.points.length - 1].y, z }
   }
 
@@ -3409,7 +3419,7 @@ export function cutOffsetNodeRings(
     // caller that wants island loops left to another pass.
     return cutTrochoidalRingMoves(
       moves, node, z, safeZ, fromPosition,
-      { ...trochoidal, direction, loops },
+      { ...trochoidal, direction, loops, root: options.root ?? node },
       warnings ?? [],
     )
   }
@@ -3501,7 +3511,7 @@ export function cutOffsetRegionNode(
       maxLinkDistance,
       nextPosition,
       traversalMode,
-      { ...options, depth: depth + 1, parent: node },
+      { ...options, depth: depth + 1, parent: node, root: options.root ?? node },
       warnings,
     )
     remainingChildren.splice(remainingChildren.indexOf(childNode), 1)

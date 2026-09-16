@@ -145,12 +145,13 @@ export const OPERATION_PATTERN_SUPPORT: Readonly<Record<OperationKind, Operation
  * booklet, and the generators.
  */
 export function usesTangentLinks(kind: OperationKind, pattern: PocketPattern): boolean {
-  // Trochoidal joins nothing at depth: an orbit closes on itself, so the
-  // generator retracts to safe Z and rapids between rings rather than splicing
-  // a tangential S-link. It is excluded here rather than at each consumer
-  // because the CAM panel, the operation booklet and the generators all ask
-  // this one function — leaving it true offered `roundLinkCorners` and the XY
-  // lead row on an operation whose program neither can change.
+  // Trochoidal splices no tangential S-link. Its rings are joined at depth by a
+  // straight guide cut as an orbit where one fits (issue #790,
+  // `trochoidalRingLinks.ts`) and by a retract where it does not; neither is
+  // shaped by `roundLinkCorners` or an XY lead. It is excluded here rather than
+  // at each consumer because the CAM panel, the operation booklet and the
+  // generators all ask this one function — leaving it true offered those
+  // controls on an operation whose program neither can change.
   return CLEARING_CONTROL_SUPPORT[kind].clears && pattern !== 'parallel' && pattern !== 'trochoidal'
 }
 

@@ -191,6 +191,20 @@ function sustainedEngagement(moves: ToolpathMove[]): number {
   return samples[samples.length - 1].engagement
 }
 
+/**
+ * Rings in a trochoidal stream. Each one begins with a helical entry or, when
+ * it follows a ring of the same tree, with an orbited link (#790) — so the
+ * starts of those two kinds of run count the rings.
+ */
+function ringCount(moves: readonly ToolpathMove[]): number {
+  let count = 0
+  moves.forEach((move, index) => {
+    const starts = move.source === 'trochoidal-entry' || move.source === 'trochoidal-link'
+    if (starts && moves[index - 1]?.source !== move.source) count += 1
+  })
+  return count
+}
+
 function warningCodes(result: { warnings: readonly { code: string }[] }): string[] {
   return result.warnings.map((warning) => warning.code)
 }
@@ -522,12 +536,10 @@ test('#676 ring spacing scales with the channel width, not the tool diameter', (
   assert(narrow.moves.length > 0 && wide.moves.length > 0, 'both channels must generate')
 
   // A wider channel steps further per ring, so the same pocket needs fewer of
-  // them. Counting helical entries counts rings: one entry per guide.
-  const entries = (moves: ToolpathMove[]): number =>
-    moves.filter((move) => move.kind === 'rapid' && move.source === 'trochoidal-transition').length
+  // them. Every ring starts with either a helical entry or a link (#790).
   assert(
-    entries(wide.moves) < entries(narrow.moves),
-    `a 2x channel must need fewer rings, got ${entries(wide.moves)} vs ${entries(narrow.moves)}`,
+    ringCount(wide.moves) < ringCount(narrow.moves),
+    `a 2x channel must need fewer rings, got ${ringCount(wide.moves)} vs ${ringCount(narrow.moves)}`,
   )
 })
 
@@ -777,11 +789,9 @@ test('#676 the finish floor spaces its rings by the channel, like the rough pass
   const wide = generatePocketToolpath(project, { ...operation, trochoidalCutWidth: DEFAULT_CUT_WIDTH * 2 })
   assert(narrow.moves.length > 0 && wide.moves.length > 0, 'both floors must generate')
 
-  const rings = (moves: readonly ToolpathMove[]): number =>
-    moves.filter((move) => move.kind === 'rapid' && move.source === 'trochoidal-transition').length
   assert(
-    rings(wide.moves) < rings(narrow.moves),
-    `a 2x channel must need fewer floor rings, got ${rings(wide.moves)} vs ${rings(narrow.moves)}`,
+    ringCount(wide.moves) < ringCount(narrow.moves),
+    `a 2x channel must need fewer floor rings, got ${ringCount(wide.moves)} vs ${ringCount(narrow.moves)}`,
   )
 })
 

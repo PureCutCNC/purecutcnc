@@ -378,11 +378,13 @@ function testTrochoidalRowsOrbit(): void {
       const contour = generateFloor(kind, 'offset', pass)
       const orbitCuts = orbit.moves.filter((move) => move.kind === 'cut').length
       const contourCuts = contour.moves.filter((move) => move.kind === 'cut').length
-      const transitions = orbit.moves.filter((move) => move.source === 'trochoidal-transition').length
+      // Every chain of orbits opens with its own entry; a linked ring (#790)
+      // has no retract of its own, so the entry is the marker that always exists.
+      const entries = orbit.moves.filter((move) => move.source === 'trochoidal-entry').length
 
       assert(
-        transitions > 0,
-        `${kind} ${pass} offers trochoidal but emitted no orbit transition — the rings were `
+        entries > 0,
+        `${kind} ${pass} offers trochoidal but emitted no orbit entry — the rings were `
         + `traced as contours, which is issue #789 (warnings: ${JSON.stringify(orbit.warnings)})`,
       )
       assert(
@@ -402,10 +404,12 @@ function testTrochoidalRowsOrbit(): void {
  *
  * Whether a pass exhausts the budget depends on the job — roughly cut area x
  * number of levels / ring spacing, for every clearing kind alike — not on a
- * stepover threshold. The 3D roughing fixture at its stored 0.32 is simply one
- * job that does. What is asserted is the refusal: an empty program carrying the
- * budget warning. The alternative is emitting the rings that did fit, after
- * which the level below descends into channels no orbit has opened.
+ * stepover threshold. The 3D roughing fixture at 0.3 is simply one job that
+ * does — its stored 0.32 did until #790 joined rings at depth, which saved the
+ * helical entries that took it past the ceiling (997,711 moves now). What is
+ * asserted is the refusal: an empty program carrying the budget warning. The
+ * alternative is emitting the rings that did fit, after which the level below
+ * descends into channels no orbit has opened.
  */
 function testTrochoidalBudgetRefusalEmitsNothing(): void {
   console.log('Testing a trochoidal pass that exhausts its budget emits nothing...')
@@ -415,7 +419,7 @@ function testTrochoidalBudgetRefusalEmitsNothing(): void {
   const result = generateRoughSurfaceToolpath(project, {
     ...operation,
     pocketPattern: 'trochoidal',
-    stepover: 0.32,
+    stepover: 0.3,
   })
   assert(
     result.moves.length === 0,
