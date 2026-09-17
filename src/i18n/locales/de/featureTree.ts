@@ -99,7 +99,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.treeRow.addEntry.clamp': 'Spannzwinge hinzufügen',
 
   // ── TreeRow: operation button tooltips ──
-  'featureTree.treeRow.operation.lineClosedTooltip': 'Linie – geschlossener Pfad, nutzbar für Gravieren, Kontur und V-Gravur',
+  'featureTree.treeRow.operation.lineClosedTooltip': 'Linie – geschlossener Pfad, nutzbar für Gravieren und V-Gravur',
   'featureTree.treeRow.operation.lineOpenTooltip': 'Linie – offenes Profil (nur Linie ↔ Konstruktion)',
   'featureTree.treeRow.operation.modelTooltip': 'Modell – importiertes 3D-Objekt (gesperrt)',
   'featureTree.treeRow.operation.addFirstSolidTooltip': 'Hinzufügen – erster Körper (Abziehen nicht verfügbar; in eine Nicht-Körper-Rolle umwandeln, um es freizugeben)',
@@ -122,7 +122,7 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.treeRow.operation.menuAddTooltip': 'Hinzufügen – Feature fügt Material hinzu',
   'featureTree.treeRow.operation.menuSubtractTooltip': 'Abziehen – Feature entfernt Material',
   'featureTree.treeRow.operation.menuSubtractDisabledTooltip': 'Abziehen nicht verfügbar – der erste Körper muss „Hinzufügen" sein oder in eine Nicht-Körper-Rolle umgewandelt werden',
-  'featureTree.treeRow.operation.menuLineClosedTooltip': 'Linie – geschlossener Pfad, bearbeitet durch Gravier-/Kontur-Operationen',
+  'featureTree.treeRow.operation.menuLineClosedTooltip': 'Linie – geschlossener Pfad, bearbeitet durch Gravier-/V-Gravur-Operationen',
   'featureTree.treeRow.operation.menuRegionTooltip': 'Bereichsmaske – Feature filtert Bearbeitungsoperationen',
   'featureTree.treeRow.operation.menuConstructionTooltip': 'Konstruktion – Skizzen-Referenzgeometrie, wird nie bearbeitet',
 

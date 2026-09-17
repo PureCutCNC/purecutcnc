@@ -105,7 +105,7 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.treeRow.addEntry.clamp': '添加夹具',
 
   // ── TreeRow: operation button tooltips ──
-  'featureTree.treeRow.operation.lineClosedTooltip': '线条 — 闭合路径，可用于雕刻、轮廓和 V雕加工操作',
+  'featureTree.treeRow.operation.lineClosedTooltip': '线条 — 闭合路径，可用于雕刻和 V雕加工操作',
   'featureTree.treeRow.operation.lineOpenTooltip': '线条 — 开放轮廓（仅可在线条 ↔ 构造之间切换）',
   'featureTree.treeRow.operation.modelTooltip': '模型 — 导入的 3D 对象（已锁定）',
   'featureTree.treeRow.operation.addFirstSolidTooltip': '添加 — 首个实体（Subtract 不可用；转换为非实体角色以解锁）',
@@ -128,7 +128,7 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.treeRow.operation.menuAddTooltip': '添加 — 特征添加材料',
   'featureTree.treeRow.operation.menuSubtractTooltip': '减去 — 特征移除材料',
   'featureTree.treeRow.operation.menuSubtractDisabledTooltip': 'Subtract 不可用 — 首个实体必须是 Add 或转换为非实体角色',
-  'featureTree.treeRow.operation.menuLineClosedTooltip': '线条 — 闭合路径，可通过雕刻/轮廓操作加工',
+  'featureTree.treeRow.operation.menuLineClosedTooltip': '线条 — 闭合路径，可通过雕刻或 V雕操作加工',
   'featureTree.treeRow.operation.menuRegionTooltip': '区域遮罩 — 特征过滤加工操作',
   'featureTree.treeRow.operation.menuConstructionTooltip': '构造 — 草图参考几何，不会被加工',
 

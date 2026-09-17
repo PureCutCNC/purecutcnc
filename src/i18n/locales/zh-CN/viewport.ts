@@ -84,7 +84,7 @@ export const viewportZhCN: Record<keyof typeof viewportEn, string> = {
   'viewport.empty.drawTitle': '绘制形状',
   'viewport.empty.drawMeta': '在画布上绘制一个矩形',
   'viewport.empty.importTitle': '导入文件',
-  'viewport.empty.importMeta': 'SVG、DXF、OBJ、STL 或 CAMJ 文件',
+  'viewport.empty.importMeta': 'SVG、DXF、STL、OBJ、STEP 或 CAMJ 文件',
   'viewport.empty.examplesLabel': '打开示例…',
   'viewport.error.eyebrow': '出了些问题',
   'viewport.error.title': '抱歉 — PureCutCNC 无法在此设备上启动。',

@@ -3221,7 +3221,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             : creation.creationPanelShape === 'polygon' ? t('canvas.shape.polygon')
             : creation.creationPanelShape === 'spline' ? t('canvas.shape.spline')
             : creation.creationPanelShape === 'slot' ? t('canvas.shape.slot')
-            : creation.creationPanelShape === 'ngon' ? t('canvas.shape.polygon')
+            : creation.creationPanelShape === 'ngon' ? t('canvas.shape.regularPolygon')
             : creation.creationPanelShape === 'gear' ? t('canvas.shape.gear')
             : creation.creationPanelShape === 'roundrect' ? t('canvas.shape.roundedRectangle')
             : creation.creationPanelShape === 'chamferrect' ? t('canvas.shape.chamferedRectangle')
