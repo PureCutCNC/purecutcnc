@@ -4,6 +4,7 @@ Shared test-only infrastructure.
 
 ## Files
 
+- `cpuRatio.ts` — ratio-based CPU-work measurement helper for stable performance assertions; use it with an invariant-work reference rather than an absolute timing budget
 - `spreadLimit.ts` — `maxSpreadableLength()`, the largest array this engine can spread into a call, measured by search rather than hard-coded (issue #668). Tests that must exceed the argument limit assert against the measured value, so a fixture that quietly stopped exceeding it fails instead of passing while proving nothing
 - `guitarTopFixture.ts` — the 332 × 470 mm procedural carved guitar-top mesh used for #697’s strategy measurements and #702’s 0–30° slope-filter acceptance; it is retained as a synthetic test model rather than represented as a sourced CAD model
 - `surfaceSlopeFixtures.ts` — closed analytic height-field meshes and normalized finish projects for deterministic slope-domain tests
