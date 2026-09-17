@@ -170,6 +170,22 @@ area `INDEX.md` files rather than being restated here.
    `src/app/toolpathGeneration/` owns the queue and cache and runs through the
    inline or worker backend. Cache validity lives in
    `toolpathGeneration/cacheInputs.ts`; `isCacheHit` remains a wrapper.
+
+   **Toolpath-cache contract.** `isCacheHit` is deliberately only the app-level
+   wrapper around `cacheInputsValid`. `buildToolpathCacheEntry` captures
+   `ToolpathCacheInputs` once with the generated result, so every operation
+   compares the current project with the particular immutable project snapshot
+   it was generated from. `cacheInputsValid` is the sole authority for those
+   comparisons: it first checks direct operation, stock, tab, clamp, and tool
+   inputs, then uses the recorded operation footprint to narrow geometry and
+   subtract-ownership changes. An unknown or unbounded dependency has a null
+   footprint and invalidates rather than risking a stale toolpath.
+
+   The footprint is intentionally a static conservative description of engine
+   reads, including the operation's cutter reach and chained non-target
+   subtracts. It is the permanent cache contract, not a planned resolver
+   read-set implementation: over-invalidation is acceptable; an unproven
+   dependency must remain fail-closed.
 3. **Inside a generator**, using `generatePocketToolpath` (`pocket.ts`) as the
    reference shape:
    1. `resolveFeatureInstance` (`src/store/helpers/resolveFeatures.ts`) —
