@@ -52,10 +52,10 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     title: 'Pocket',
     shortSummary: 'Clear material from inside a closed profile to a fixed depth',
     fullDescription:
-      'Pocket clears the interior of one or more closed subtract profiles down to a fixed Z. Choose between offset (concentric, outside-in) or parallel (scanline) patterns; parallel takes a configurable angle.',
+      'Pocket clears the interior of one or more closed subtract profiles down to a fixed Z. Choose a clearing pattern: offset (concentric), seeded circles (open areas cleared with growing circles first, then offset rings), parallel (scanlines at a configurable angle) or trochoidal (orbiting rings for low tool engagement).',
     keyPoints: [
       'Requires one or more closed subtract profiles',
-      'Offset or parallel clearing pattern',
+      'Offset, seeded circles, parallel or trochoidal clearing pattern',
       'Supports rough and finish passes',
       'Best with flat endmills for clean floors',
       'Optional closed regions act as XY filters',
@@ -124,11 +124,11 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     title: 'Surface clean',
     shortSummary: 'Clean the flat top of an add/model around taller features sitting on it',
     fullDescription:
-      'Surface clean machines the flat top surface of one or more add/model features in the area around any taller add features that sit on top of them. It produces a band of cleanup passes at each step height — useful for finishing pads, terraces, and stepped surfaces. Pattern can be offset or parallel.',
+      'Surface clean machines the flat top surface of one or more add/model features in the area around any taller add features that sit on top of them. It produces a band of cleanup passes at each step height — useful for finishing pads, terraces, and stepped surfaces. Pattern can be offset, seeded circles, parallel or trochoidal.',
     keyPoints: [
       'Requires one or more closed add or model features',
       'Clears the area between taller features at each step height',
-      'Offset or parallel clearing pattern',
+      'Offset, seeded circles, parallel or trochoidal clearing pattern',
       'Supports rough and finish passes',
       'Optional closed regions act as XY filters',
     ],
@@ -152,10 +152,10 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     title: 'Drill',
     shortSummary: 'Drill holes at circle feature locations',
     fullDescription:
-      'Drilling produces a hole at the center of each selected circle feature using a canned drill cycle. Choose the drilling method (simple G81, peck G83, dwell G82, chip-breaking G73) and depth on the operation.',
+      'Drilling produces a hole at the center of each selected circle feature. Choose the drill type and depth on the operation: simple (G81), peck (G83), dwell (G82) or chip breaking (G73) canned cycles; helical, which bores a hole wider than a flat endmill along a helix; or countersink, which opens a countersink with a V-bit.',
     keyPoints: [
       'Requires one or more circle features',
-      'Four cycle types: simple (G81), peck (G83), dwell (G82), chip-breaking (G73)',
+      'Six drill types: simple (G81), peck (G83), dwell (G82), chip breaking (G73), helical, countersink',
       'Peck and chip-breaking cycles use a peck increment',
       'Fast for repeated hole patterns',
       'Optional closed regions filter which holes are drilled',
@@ -164,12 +164,12 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
   },
   rough_surface: {
     title: '3D surface rough',
-    shortSummary: 'Level-by-level roughing of an imported 3D model with offset clearing',
+    shortSummary: 'Level-by-level roughing of an imported 3D model',
     fullDescription:
-      'Rough surface slices the imported 3D model at constant Z levels (waterline-style) and clears each level with offset passes, leaving radial and axial stock for finishing. Use larger stepdown and stepover for speed; follow with a finish operation for accuracy.',
+      'Rough surface slices the imported 3D model at constant Z levels (waterline-style) and clears each level with the chosen pattern (offset, seeded circles, parallel or trochoidal), leaving radial and axial stock for finishing. Use larger stepdown and stepover for speed; follow with a finish operation for accuracy.',
     keyPoints: [
       'Requires an imported 3D model',
-      'Waterline-style level slicing with offset clearing per level',
+      'Waterline-style level slicing; offset, seeded circles, parallel or trochoidal clearing per level',
       'Honors radial and axial stock-to-leave for the finish pass',
       'Single-pass operation (no rough/finish split — this op is roughing)',
       'Optional closed regions act as XY filters',
@@ -178,12 +178,12 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
   },
   finish_surface: {
     title: '3D surface finish',
-    shortSummary: 'Finish pass over an imported 3D model using parallel or waterline strategy',
+    shortSummary: 'Finish pass over an imported 3D model using parallel, constant scallop or waterline strategy',
     fullDescription:
-      'Finish surface produces the final surface on an imported 3D model. Choose parallel (scanlines at a configurable angle) for shallower geometry or waterline (constant-Z contours) for steeper walls. Use a small stepover for parallel or small stepdown for waterline.',
+      'Finish surface produces the final surface on an imported 3D model. Choose parallel (scanlines at a configurable angle) for shallower geometry, constant scallop (passes spaced evenly along the surface itself) for sculpted and carved tops, or waterline (constant-Z contours) for steeper walls. For constant scallop with a ball endmill, set scallop height: smaller values give a finer finish and longer machining time.',
     keyPoints: [
       'Requires an imported 3D model',
-      'Parallel (scanline) or waterline (constant-Z) pattern',
+      'Parallel (scanline), constant scallop or waterline (constant-Z) pattern',
       'Single-pass operation (no rough/finish split — this op is the finish)',
       'Usually follows 3D surface rough',
       'Optional closed regions act as XY filters',
@@ -194,11 +194,11 @@ export const operationDescriptions: Record<OperationKind, OperationDescription> 
     title: '3D surface cleanup',
     shortSummary: 'Finish walls and floors at the deepest Z of each rough-surface step',
     fullDescription:
-      'Surface cleanup emits finish-only wall and floor passes at the deepest retained Z of each step left by the 3D rough operation. It deduplicates repeated wall/floor columns across levels so each is cut once at its lowest effective depth — cleaning up rough-surface terraces without re-roughing.',
+      'Surface cleanup emits finish-only wall and floor passes at the deepest retained Z of each step left by the 3D rough operation. It deduplicates repeated wall/floor columns across levels so each is cut once at its lowest effective depth — cleaning up rough-surface terraces without re-roughing. Floors are cleared with an offset, seeded circles or parallel pattern.',
     keyPoints: [
       'Requires an imported 3D model',
       'Independent finish walls and finish floor toggles',
-      'Offset or parallel pattern for floors',
+      'Offset, seeded circles or parallel pattern for floors',
       'Typically run after 3D surface rough as the final pass',
       'Optional closed regions act as XY filters',
     ],

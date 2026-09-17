@@ -23,12 +23,19 @@
  * with fewer silently hides a translated string. Neither is a type error, so it
  * is checked here.
  *
+ * It also holds the English text to the strategies each operation offers
+ * (issue #795): the full description and the key points must both name every
+ * pattern `offeredPocketPatterns` returns, and for drilling every `DrillType`.
+ * Those lists went stale once already, silently, when seeded circles,
+ * trochoidal, constant scallop, helical and countersink shipped.
+ *
  * Run with: npx tsx src/types/operationDescriptions.test.ts
  */
 
 import { OPERATION_DESCRIPTION_SEGMENT, operationDescriptions } from './operationDescriptions'
-import type { OperationKind } from './project'
+import type { DrillType, OperationKind, PocketPattern } from './project'
 import { camEn } from '../i18n/locales/en/cam'
+import { offeredPocketPatterns } from '../engine/toolpaths/pocketPatterns'
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -36,6 +43,36 @@ function assert(condition: boolean, message: string): asserts condition {
 
 const catalog = camEn as Record<string, string>
 const kinds = Object.keys(operationDescriptions) as OperationKind[]
+
+type CamKey = keyof typeof camEn
+
+// The dropdown labels. Full records, so a new pattern or drill type does not
+// compile until it has a label here, and the naming test below then fails until
+// the descriptions mention it.
+const PATTERN_LABEL_KEYS: Record<PocketPattern, CamKey> = {
+  offset: 'cam.pocketPattern.offset',
+  seeded_offset: 'cam.pocketPattern.seededOffset',
+  parallel: 'cam.pocketPattern.parallel',
+  trochoidal: 'cam.pocketPattern.trochoidal',
+  waterline: 'cam.pocketPattern.waterline',
+  constant_scallop: 'cam.pocketPattern.constantScallop',
+}
+
+const DRILL_TYPE_LABEL_KEYS: Record<DrillType, CamKey> = {
+  simple: 'cam.drillType.simple',
+  peck: 'cam.drillType.peck',
+  dwell: 'cam.drillType.dwell',
+  chip_breaking: 'cam.drillType.chipBreaking',
+  helical: 'cam.drillType.helical',
+  countersink: 'cam.drillType.countersink',
+}
+
+function offeredOptionLabels(kind: OperationKind): string[] {
+  const keys = kind === 'drilling'
+    ? Object.values(DRILL_TYPE_LABEL_KEYS)
+    : offeredPocketPatterns(kind).map((pattern) => PATTERN_LABEL_KEYS[pattern])
+  return keys.map((key) => camEn[key])
+}
 
 function testEveryKindHasASegment(): void {
   for (const kind of kinds) {
@@ -79,8 +116,31 @@ function testKeyPointCountsMatchTheCatalog(): void {
   }
 }
 
+function testDescriptionsNameEveryOfferedOption(): void {
+  for (const kind of kinds) {
+    const segment = OPERATION_DESCRIPTION_SEGMENT[kind]
+    const description = catalog[`cam.opDesc.${segment}.fullDescription`].toLowerCase()
+    const keyPoints = operationDescriptions[kind].keyPoints.map(
+      (_, index) => catalog[`cam.opDesc.${segment}.keyPoint.${index}`].toLowerCase(),
+    )
+
+    for (const label of offeredOptionLabels(kind)) {
+      const needle = label.toLowerCase()
+      assert(
+        description.includes(needle),
+        `cam.opDesc.${segment}.fullDescription does not name the "${label}" option ${kind} offers`,
+      )
+      assert(
+        keyPoints.some((point) => point.includes(needle)),
+        `no cam.opDesc.${segment}.keyPoint.* names the "${label}" option ${kind} offers`,
+      )
+    }
+  }
+}
+
 testEveryKindHasASegment()
 testTitleAndDescriptionKeysExist()
 testKeyPointCountsMatchTheCatalog()
+testDescriptionsNameEveryOfferedOption()
 
 console.log('operationDescriptions parity tests passed')
