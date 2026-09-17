@@ -1,7 +1,7 @@
 ---
-status: current
-authoritative-for: execution ledger for the issue #341 theme-tokenization slices
-last-verified: 2026-07-21
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #341 (delivered by PRs #346 and #365)
+last-verified: 2026-09-16
 ---
 
 # Integration Handoff — Complete theme tokenization (issue #341)

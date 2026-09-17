@@ -1,7 +1,7 @@
 ---
-status: current
-authoritative-for: delegated execution state for issue 633 wall-corner cleanup on rough_surface
-last-verified: 2026-08-25
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #633 (delivered by PR #634)
+last-verified: 2026-09-16
 ---
 
 # Integration Handoff — Issue #633 Wall-Corner Cleanup for `rough_surface`

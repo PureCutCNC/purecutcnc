@@ -16,6 +16,7 @@
 
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
+import { appendUniqueWarning } from './warningDedup'
 import type { Operation, Point, Project, SketchFeature, Tab } from '../../types/project'
 import { isTrochoidalEdgeRoughing, tabShape } from '../../types/project'
 import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
@@ -410,13 +411,6 @@ function appendUniqueTrochoidalWarning(warnings: ToolpathWarning[], warning: Too
       && entry.params?.y === warning.params?.y
   ))
   if (!existing) warnings.push(warning)
-}
-
-function appendUniqueWarning(warnings: ToolpathWarning[], warning: ToolpathWarning): void {
-  const key = `${warning.code}:${JSON.stringify(warning.params ?? {})}`
-  if (!warnings.some((entry) => `${entry.code}:${JSON.stringify(entry.params ?? {})}` === key)) {
-    warnings.push(warning)
-  }
 }
 
 function validateTrochoidalTabs(tabs: Tab[], warnings: ToolpathWarning[]): boolean {

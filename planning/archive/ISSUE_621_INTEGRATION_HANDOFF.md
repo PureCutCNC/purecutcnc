@@ -1,7 +1,7 @@
 ---
-status: current
-authoritative-for: delegated execution state for issue 621 tangential S-links on rough_surface and the cleanup floor rings
-last-verified: 2026-08-25
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #621 (delivered by PR #628)
+last-verified: 2026-09-16
 ---
 
 # Integration Handoff — Issue #621 Tangential S-Links for `rough_surface` and `finish_surface_cleanup`

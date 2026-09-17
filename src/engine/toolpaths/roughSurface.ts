@@ -62,19 +62,12 @@ import {
 import { planSeedCircles, seedCircleContours, seedStartRadius } from './seedClearing'
 import { applyContourDirection, DEFAULT_CLIPPER_SCALE } from './geometry'
 import { EngagementTelemetryAccumulator, nominalEngagement } from './engagement'
-import type { ToolpathWarning } from './warningCodes'
+import { appendUniqueWarning } from './warningDedup'
 import { isFeatureFirst, perFeatureOperations, mergePocketToolpathResults } from './multiFeature'
 import { createSharedEngagementTelemetry } from './pocket'
 import { resolvedFeatureMap } from '../../store/helpers/resolveFeatures'
 import { clearingControlApplies } from './clearingControls'
 import { appendAll } from './appendAll'
-
-function appendUniqueWarning(warnings: ToolpathWarning[], warning: ToolpathWarning): void {
-  const key = `${warning.code}:${JSON.stringify(warning.params ?? {})}`
-  if (!warnings.some((entry) => `${entry.code}:${JSON.stringify(entry.params ?? {})}` === key)) {
-    warnings.push(warning)
-  }
-}
 
 /**
  * Whether every part of a per-feature split would still carry a mesh to rough.

@@ -16,6 +16,7 @@
 
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
+import { appendUniqueWarning } from './warningDedup'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
 import { loadSTLTransformedGeometry, type STLTransformedData } from '../csg'
 import { createEntryPolicy, withEntryStartZ, withEntryHandoffFeedScale } from './entry'
@@ -156,13 +157,6 @@ interface SurfaceCleanResult {
   bands: SurfaceCleanBand[]
   regionMask: ReturnType<typeof buildRegionMask>
   warnings: ToolpathWarning[]
-}
-
-function appendUniqueWarning(warnings: ToolpathWarning[], warning: ToolpathWarning): void {
-  const key = `${warning.code}:${JSON.stringify(warning.params ?? {})}`
-  if (!warnings.some((entry) => `${entry.code}:${JSON.stringify(entry.params ?? {})}` === key)) {
-    warnings.push(warning)
-  }
 }
 
 /**

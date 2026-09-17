@@ -16,6 +16,7 @@
 
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
+import { appendUniqueWarning } from './warningDedup'
 import { addOpenSubject, openPathsFromPolyTree } from '../clipperOpenPaths'
 import { isTrochoidalPocket } from '../../types/project'
 import type { CutDirection, Operation, Point, Project } from '../../types/project'
@@ -323,13 +324,6 @@ export function retractToSafe(moves: ToolpathMove[], from: ToolpathPoint | null,
 export type SafeLinkCheck = (from: ToolpathPoint, to: ToolpathPoint) => boolean
 
 type OffsetTraversalMode = 'outer-first' | 'inner-first'
-
-function appendUniqueWarning(warnings: ToolpathWarning[], warning: ToolpathWarning): void {
-  const key = `${warning.code}:${JSON.stringify(warning.params ?? {})}`
-  if (!warnings.some((entry) => `${entry.code}:${JSON.stringify(entry.params ?? {})}` === key)) {
-    warnings.push(warning)
-  }
-}
 
 /**
  * Merge one band's warnings into the operation's own list, uniquely.

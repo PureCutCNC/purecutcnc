@@ -1,7 +1,7 @@
 ---
-status: current
-authoritative-for: delegated execution state for issue 468 bulk tab and clamp editing
-last-verified: 2026-08-09
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #468 (delivered by PR #477)
+last-verified: 2026-09-16
 ---
 
 # Integration Handoff — Issue #468 Bulk Tab and Clamp Editing

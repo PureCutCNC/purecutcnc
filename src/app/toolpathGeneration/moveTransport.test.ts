@@ -58,6 +58,27 @@ let totalMoves = 0
 let withSource = 0
 let withFeedScale = 0
 
+function corpusIncludesPattern(id: string, kind: string, pattern: string): boolean {
+  const parityCase = corpus.find((candidate) => candidate.id === id)
+  const operation = parityCase && resolveOperation(parityCase.project, parityCase.operationId)
+  return operation?.kind === kind && operation.pocketPattern === pattern
+}
+
+check(
+  'the corpus includes a trochoidal pocket',
+  corpusIncludesPattern('synthetic/pocket_trochoidal', 'pocket', 'trochoidal'),
+  'Pocket trochoidal generation is absent from the worker/inline parity corpus',
+)
+check(
+  'the corpus includes a constant-scallop finish',
+  corpusIncludesPattern(
+    'variant/3d-imported-block-test3-constant-scallop/op6792424-constant-scallop',
+    'finish_surface',
+    'constant_scallop',
+  ),
+  'Finish Surface Constant Scallop generation is absent from the worker/inline parity corpus',
+)
+
 for (const parityCase of corpus) {
   const operation = resolveOperation(parityCase.project, parityCase.operationId)
   if (!operation) continue

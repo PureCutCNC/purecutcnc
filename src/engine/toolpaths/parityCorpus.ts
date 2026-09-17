@@ -345,6 +345,27 @@ function tabbedFinishCases(): ParityCase[] {
       },
       operationId: 'op6792424',
     },
+    {
+      // The saved model supplies the imported-mesh path; this copy switches its
+      // finish operation to the ball-endmill-only constant-scallop strategy.
+      id: 'variant/3d-imported-block-test3-constant-scallop/op6792424-constant-scallop',
+      project: {
+        ...finish,
+        tools: finish.tools.map((candidate) => candidate.id === 't6792422'
+          ? { ...candidate, name: '1/8" Ball Endmill', type: 'ball_endmill' }
+          : candidate),
+        operations: finish.operations.map((candidate) => candidate.id === 'op6792424'
+          ? {
+            ...candidate,
+            id: 'op6792424-constant-scallop',
+            name: '3D Surface finish - constant scallop',
+            pocketPattern: 'constant_scallop',
+            finishScallopHeight: 0.003,
+          }
+          : candidate),
+      },
+      operationId: 'op6792424-constant-scallop',
+    },
   ]
 }
 
@@ -405,6 +426,11 @@ function syntheticCases(): ParityCase[] {
         kind: 'pocket', target: { source: 'features', featureIds: ['a'] }, toolRef: 't1',
         stepdown: 0.1, feed: 30, plungeFeed: 12,
       }), 'inch'),
+    syntheticCase('synthetic/pocket_trochoidal', [endmill],
+      [rectFeature('a', 0, 0, 60, 60, 2, 0)], operation({
+        kind: 'pocket', target: { source: 'features', featureIds: ['a'] }, toolRef: 't1',
+        pocketPattern: 'trochoidal', stepover: 0.25,
+      })),
   ]
 
   for (const drillType of ['simple', 'peck', 'dwell', 'chip_breaking', 'helical'] as const) {
@@ -558,4 +584,18 @@ function syntheticCases(): ParityCase[] {
 /** The full corpus, in a stable order. */
 export function buildParityCorpus(): ParityCase[] {
   return [...fixtureCases(), ...exampleCases(), ...tabbedFinishCases(), ...syntheticCases()]
+}
+
+/**
+ * The service seams need one representative per operation kind plus the
+ * patterns whose implementation diverges inside a shared kind.
+ */
+export function parityCoverageKey(operation: Operation): string {
+  if (operation.kind === 'pocket' && operation.pocketPattern === 'trochoidal') {
+    return 'pocket/trochoidal'
+  }
+  if (operation.kind === 'finish_surface' && operation.pocketPattern === 'constant_scallop') {
+    return 'finish_surface/constant_scallop'
+  }
+  return operation.kind
 }

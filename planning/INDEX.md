@@ -32,17 +32,6 @@ architecture contracts.
 - [BAND_RESOLVER_SEMANTICS.md](BAND_RESOLVER_SEMANTICS.md) — the depth-band void fold: feature order, parent material, non-target subtracts, and the material silhouette.
 - [TROCHOIDAL_EDGE_DESIGN.md](TROCHOIDAL_EDGE_DESIGN.md) — trochoidal Edge Route roughing: guide-domain fragmentation, the clearance budget, and the pipeline stages it must bypass.
 - [INTEGRATION_HANDOFF_TEMPLATE.md](INTEGRATION_HANDOFF_TEMPLATE.md) — optional execution-ledger template for explicitly delegated, multi-slice work.
-- [ISSUE_633_INTEGRATION_HANDOFF.md](ISSUE_633_INTEGRATION_HANDOFF.md) — active execution ledger for issue #633 (wall-corner cleanup on `rough_surface`) on `feat/issue-633-wall-cleanup`.
-- [ISSUE_622_INTEGRATION_HANDOFF.md](ISSUE_622_INTEGRATION_HANDOFF.md) — active execution ledger for issue #622 (feed reduction and corner controls) on `fix/issue-622-feed-and-corner-controls`.
-- [ISSUE_629_INTEGRATION_HANDOFF.md](ISSUE_629_INTEGRATION_HANDOFF.md) — active execution ledger for issue #629 (S-link probe counters and prune guard) on `perf/issue-629-slink-probes`.
-- [ISSUE_621_INTEGRATION_HANDOFF.md](ISSUE_621_INTEGRATION_HANDOFF.md) — active execution ledger for issue #621 (tangential S-links on `rough_surface` and the cleanup floor rings) on `feat/issue-621-tangent-links`.
-- [ISSUE_620_INTEGRATION_HANDOFF.md](ISSUE_620_INTEGRATION_HANDOFF.md) — active execution ledger for issue #620 (machining order on `surface_clean` and `rough_surface`) on `feat/issue-620-machining-order`.
-- [ISSUE_619_INTEGRATION_HANDOFF.md](ISSUE_619_INTEGRATION_HANDOFF.md) — active execution ledger for issue #619 (feed reduction on `rough_surface` and `finish_surface_cleanup`) on `feat/issue-619-feed-reduction`.
-- [ISSUE_468_INTEGRATION_HANDOFF.md](ISSUE_468_INTEGRATION_HANDOFF.md) — active execution ledger for issue #468 (bulk tab and clamp editing) on `feat/issue-468-bulk-tabs-clamps`.
-- [ISSUE_414_INTEGRATION_HANDOFF.md](ISSUE_414_INTEGRATION_HANDOFF.md) — active execution ledger for issue #414 (smooth tabs) on `feat/issue-414-smooth-tabs`.
-- [I18N_MULTI_LANGUAGE_HANDOFF.md](I18N_MULTI_LANGUAGE_HANDOFF.md) — active execution ledger for issue #314 (multi-language support) on `feat/issue-314-multi-language`.
-- [THEME_TOKENIZATION_HANDOFF.md](THEME_TOKENIZATION_HANDOFF.md) — colour policy and active execution ledger for issue #341 (complete theme tokenization).
-- [REGION_DOMAIN_HANDOFF.md](REGION_DOMAIN_HANDOFF.md) — active execution ledger for issue #452 (regions as a resolved operation domain) on `feat/issue-452-region-domain`.
 
 ## Export and simulation
 

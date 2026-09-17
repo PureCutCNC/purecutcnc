@@ -1,7 +1,7 @@
 ---
-status: current
-authoritative-for: delegated execution state for issue 622 feed reduction and corner controls
-last-verified: 2026-08-25
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #622 (delivered by PR #636)
+last-verified: 2026-09-16
 ---
 
 # Integration Handoff — Issue #622 Feed Reduction and Corner Controls

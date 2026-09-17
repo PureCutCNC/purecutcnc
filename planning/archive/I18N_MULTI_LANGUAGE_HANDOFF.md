@@ -1,7 +1,7 @@
 ---
-status: current
-authoritative-for: issue #314 delegated execution state (multi-language support)
-last-verified: 2026-07-17
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #314 (delivered by PR #317)
+last-verified: 2026-09-16
 ---
 
 # Integration Handoff — Multi-language support (issue #314)
