@@ -1,7 +1,7 @@
 ---
-status: current
-authoritative-for: issue #414 smooth-tab delegated execution ledger
-last-verified: 2026-08-10
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #414 (delivered by PR #478)
+last-verified: 2026-09-16
 ---
 
 # Integration Handoff — Issue #414 smooth tabs

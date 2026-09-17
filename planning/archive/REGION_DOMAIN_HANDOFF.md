@@ -1,7 +1,7 @@
 ---
-status: current
-authoritative-for: issue #452 delegated slice execution state and ledger
-last-verified: 2026-08-05
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #452 (delivered by PR #457)
+last-verified: 2026-09-16
 ---
 
 # Integration Handoff — Region domain redesign (#452)

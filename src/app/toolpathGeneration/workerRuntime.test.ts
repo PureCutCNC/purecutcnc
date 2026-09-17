@@ -33,7 +33,7 @@
 import { createHash } from 'node:crypto'
 import { Worker } from 'node:worker_threads'
 import { computeOperationToolpath } from '../../engine/toolpaths/generateOperation'
-import { buildParityCorpus, postParityCase } from '../../engine/toolpaths/parityCorpus'
+import { buildParityCorpus, parityCoverageKey, postParityCase } from '../../engine/toolpaths/parityCorpus'
 import { canonicalize } from '../../engine/toolpaths/parityRecord'
 import { TOOLPATH_PROTOCOL_VERSION, isWorkerToMain, resolveOperation } from './protocol'
 import { unpackResult } from './moveTransport'
@@ -123,10 +123,12 @@ async function main(): Promise<void> {
   console.log('\nGeneration worker on a real thread (live engine result)')
 
   const corpus = buildParityCorpus()
-  const byKind = new Map<string, typeof corpus[number]>()
+  const byCoverage = new Map<string, typeof corpus[number]>()
   for (const parityCase of corpus) {
     const operation = resolveOperation(parityCase.project, parityCase.operationId)
-    if (operation && !byKind.has(operation.kind)) byKind.set(operation.kind, parityCase)
+    if (operation && !byCoverage.has(parityCoverageKey(operation))) {
+      byCoverage.set(parityCoverageKey(operation), parityCase)
+    }
   }
 
   const driver = createDriver()
@@ -140,11 +142,11 @@ async function main(): Promise<void> {
   let requestId = 1
   let snapshotId = 1
 
-  for (const [kind, parityCase] of byKind) {
+  for (const [coverage, parityCase] of byCoverage) {
     const operation = resolveOperation(parityCase.project, parityCase.operationId)!
     const expected = computeOperationToolpath(parityCase.project, operation, { trace: true })
     if (!expected || !expected.raw) {
-      check(`${kind} direct engine`, false, 'expected a traced engine result')
+      check(`${coverage} direct engine`, false, 'expected a traced engine result')
       continue
     }
 
@@ -164,7 +166,7 @@ async function main(): Promise<void> {
     snapshotId += 1
 
     if (answer.kind !== 'completed') {
-      check(`${kind} on the worker thread`, false, `worker failed: ${JSON.stringify(answer)}`)
+      check(`${coverage} on the worker thread`, false, `worker failed: ${JSON.stringify(answer)}`)
       continue
     }
 
@@ -175,17 +177,17 @@ async function main(): Promise<void> {
     const raw = answer.raw ? unpackResult(answer.raw) : null
 
     check(
-      `${kind}: worker result equals the direct engine result`,
+      `${coverage}: worker result equals the direct engine result`,
       sha256(canonicalize(result)) === sha256(canonicalize(expected.result)),
       'the worker result differs from the engine result',
     )
     check(
-      `${kind}: worker raw trace equals the direct engine result`,
+      `${coverage}: worker raw trace equals the direct engine result`,
       raw !== null && sha256(canonicalize(raw)) === sha256(canonicalize(expected.raw)),
       'the worker raw trace differs from the engine result',
     )
     check(
-      `${kind}: G-code posted from the worker result equals the engine result`,
+      `${coverage}: G-code posted from the worker result equals the engine result`,
       sha256(postParityCase(parityCase.project, operation, result))
         === sha256(postParityCase(parityCase.project, operation, expected.result)),
       'the posted program differs from the engine result',
@@ -195,10 +197,10 @@ async function main(): Promise<void> {
   // Order dependence: module-level caches in the worker's realm persist between
   // requests, so a snapshot replaced and an earlier operation re-run must still
   // give the same answer. An A/B/A sequence is what exposes that.
-  const kinds = [...byKind.entries()]
-  if (kinds.length >= 2) {
-    const [firstKind, first] = kinds[0]
-    const [, second] = kinds[1]
+  const coverageCases = [...byCoverage.entries()]
+  if (coverageCases.length >= 2) {
+    const [firstCoverage, first] = coverageCases[0]
+    const [, second] = coverageCases[1]
     const firstOperation = resolveOperation(first.project, first.operationId)!
     const firstExpected = computeOperationToolpath(first.project, firstOperation)
     for (const parityCase of [second, first]) {
@@ -217,7 +219,7 @@ async function main(): Promise<void> {
       snapshotId += 1
       if (parityCase === first) {
         check(
-          `A/B/A: ${firstKind} is unchanged after another snapshot was installed`,
+          `A/B/A: ${firstCoverage} is unchanged after another snapshot was installed`,
           answer.kind === 'completed'
             && firstExpected !== null
             && sha256(canonicalize(unpackResult(answer.result))) === sha256(canonicalize(firstExpected.result)),
@@ -231,7 +233,7 @@ async function main(): Promise<void> {
   // must fail, not compute something from whatever it has installed.
   const stray: RequestIdentity = {
     documentKey: 1, workerEpoch: 0, requestId, snapshotId: 9999,
-    operationId: kinds[0][1].operationId, traceMode: false,
+    operationId: coverageCases[0][1].operationId, traceMode: false,
   }
   driver.send({ kind: 'generate', identity: stray })
   const rejected = await driver.await(

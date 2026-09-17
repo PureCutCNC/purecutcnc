@@ -1,7 +1,7 @@
 ---
-status: current
-authoritative-for: delegated execution state for issue 620 machining order on surface_clean and rough_surface
-last-verified: 2026-08-24
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #620 (delivered by PR #627)
+last-verified: 2026-09-16
 ---
 
 # Integration Handoff — Issue #620 Machining Order for `surface_clean` and `rough_surface`

@@ -1,7 +1,7 @@
 ---
-status: current
-authoritative-for: delegated execution state for issue 619 feed reduction on the model-aware clearing kinds
-last-verified: 2026-08-24
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #619 (delivered by PR #626)
+last-verified: 2026-09-16
 ---
 
 # Integration Handoff — Issue #619 Feed Reduction for `rough_surface` and `finish_surface_cleanup`

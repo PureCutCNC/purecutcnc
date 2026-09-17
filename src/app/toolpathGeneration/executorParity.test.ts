@@ -22,13 +22,14 @@
  * result cannot be altered on its way through the machinery that schedules it.
  *
  * Run through the real service against a live engine result, one operation per
- * kind: the heavy fixtures add minutes and nothing this suite is asking about,
- * since the corpus test already replays all of them.
+ * kind plus the strategy variants with an implementation seam: the heavy
+ * fixtures add minutes and nothing this suite is asking about, since the corpus
+ * test already replays all of them.
  */
 
 import { createHash } from 'node:crypto'
 import { computeOperationToolpath } from '../../engine/toolpaths/generateOperation'
-import { buildParityCorpus, postParityCase } from '../../engine/toolpaths/parityCorpus'
+import { buildParityCorpus, parityCoverageKey, postParityCase } from '../../engine/toolpaths/parityCorpus'
 import { canonicalize } from '../../engine/toolpaths/parityRecord'
 import { createToolpathGenerationService } from './service'
 import { resolveOperation } from './protocol'
@@ -48,17 +49,19 @@ async function main(): Promise<void> {
   console.log('\nInline executor parity through the service (live engine result)')
 
   const corpus = buildParityCorpus()
-  const byKind = new Map<string, typeof corpus[number]>()
+  const byCoverage = new Map<string, typeof corpus[number]>()
   for (const parityCase of corpus) {
     const operation = resolveOperation(parityCase.project, parityCase.operationId)
-    if (operation && !byKind.has(operation.kind)) byKind.set(operation.kind, parityCase)
+    if (operation && !byCoverage.has(parityCoverageKey(operation))) {
+      byCoverage.set(parityCoverageKey(operation), parityCase)
+    }
   }
 
-  for (const [kind, parityCase] of byKind) {
+  for (const [coverage, parityCase] of byCoverage) {
     const operation = resolveOperation(parityCase.project, parityCase.operationId)!
     const expected = computeOperationToolpath(parityCase.project, operation, { trace: true })
     if (!expected || !expected.raw) {
-      check(`${kind} direct engine`, false, 'expected a traced engine result')
+      check(`${coverage} direct engine`, false, 'expected a traced engine result')
       continue
     }
     const context = { project: parityCase.project, documentKey: 1 }
@@ -66,23 +69,23 @@ async function main(): Promise<void> {
 
     const outcome = await service.request(context, parityCase.operationId, { purpose: 'export', trace: true })
     if (outcome.status !== 'completed') {
-      check(`${kind}`, false, `expected completed, got ${outcome.status}`)
+      check(`${coverage}`, false, `expected completed, got ${outcome.status}`)
       service.dispose()
       continue
     }
 
     check(
-      `${kind} result`,
+      `${coverage} result`,
       sha256(canonicalize(outcome.result)) === sha256(canonicalize(expected.result)),
       'the service altered the engine result',
     )
     check(
-      `${kind} raw`,
+      `${coverage} raw`,
       outcome.raw !== null && sha256(canonicalize(outcome.raw)) === sha256(canonicalize(expected.raw)),
       'the service altered the engine raw trace',
     )
     check(
-      `${kind} gcode`,
+      `${coverage} gcode`,
       sha256(postParityCase(parityCase.project, operation, outcome.result))
         === sha256(postParityCase(parityCase.project, operation, expected.result)),
       'the service result posts differently from the engine result',
@@ -93,12 +96,12 @@ async function main(): Promise<void> {
     // would see a change that never happened.
     const again = await service.request(context, parityCase.operationId, { purpose: 'preview' })
     check(
-      `${kind} cache identity`,
+      `${coverage} cache identity`,
       again.status === 'completed' && again.result === outcome.result,
       'a cache hit returned a different object',
     )
     check(
-      `${kind} peekCurrent`,
+      `${coverage} peekCurrent`,
       service.peekCurrent(context, parityCase.operationId) === outcome.result,
       'peekCurrent disagrees with the installed result',
     )

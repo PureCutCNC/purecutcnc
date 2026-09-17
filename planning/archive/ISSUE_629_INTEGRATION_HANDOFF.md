@@ -1,7 +1,7 @@
 ---
-status: current
-authoritative-for: delegated execution state for issue 629 tangential S-link performance probes and prune guard
-last-verified: 2026-08-25
+status: Done
+authoritative-for: nothing — completed execution ledger, retained as the review record for issue #629 (delivered by PR #632)
+last-verified: 2026-09-16
 ---
 
 # Integration Handoff — Issue #629 S-Link Probe Counters and Prune Guard
