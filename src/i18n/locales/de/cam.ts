@@ -454,9 +454,9 @@ export const camDe: Record<keyof typeof camEn, string> = {
   // ── Operation descriptions (OperationAddMenu expanded cards) ──
   // Pocket
   'cam.opDesc.pocket.title': 'Tasche',
-  'cam.opDesc.pocket.fullDescription': 'Tasche räumt das Innere eines oder mehrerer geschlossener Abzieh-Profile bis zu einem festen Z aus. Wählen Sie zwischen Offset- (konzentrisch, von außen nach innen) oder Parallel-Muster (Scanlinien); Parallel nimmt einen einstellbaren Winkel.',
+  'cam.opDesc.pocket.fullDescription': 'Tasche räumt das Innere eines oder mehrerer geschlossener Abzieh-Profile bis zu einem festen Z aus. Wählen Sie ein Räummuster: Offset (konzentrisch), Startkreise (offene Bereiche werden zuerst mit wachsenden Kreisen geräumt, dann mit Offset-Ringen), Parallel (Scanlinien in einstellbarem Winkel) oder Trochoidal (kreisende Ringe für geringen Werkzeugeingriff).',
   'cam.opDesc.pocket.keyPoint.0': 'Erfordert ein oder mehrere geschlossene Abzieh-Profile',
-  'cam.opDesc.pocket.keyPoint.1': 'Offset- oder Parallel-Räummuster',
+  'cam.opDesc.pocket.keyPoint.1': 'Räummuster Offset, Startkreise, Parallel oder Trochoidal',
   'cam.opDesc.pocket.keyPoint.2': 'Unterstützt Schrupp- und Schlichtdurchgänge',
   'cam.opDesc.pocket.keyPoint.3': 'Am besten mit Schaftfräsern für saubere Böden',
   'cam.opDesc.pocket.keyPoint.4': 'Optionale geschlossene Bereiche wirken als XY-Filter',
@@ -501,10 +501,10 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // Surface clean
   'cam.opDesc.surfaceClean.title': 'Oberfläche säubern',
-  'cam.opDesc.surfaceClean.fullDescription': 'Oberfläche säubern bearbeitet die flache Oberseite eines oder mehrerer Hinzufügen-/Modell-Features im Bereich um alle höheren Hinzufügen-Features, die darauf sitzen. Es erzeugt ein Band von Säuberungsdurchgängen auf jeder Stufenhöhe – nützlich zum Schlichten von Podesten, Terrassen und gestuften Oberflächen. Das Muster kann Offset oder Parallel sein.',
+  'cam.opDesc.surfaceClean.fullDescription': 'Oberfläche säubern bearbeitet die flache Oberseite eines oder mehrerer Hinzufügen-/Modell-Features im Bereich um alle höheren Hinzufügen-Features, die darauf sitzen. Es erzeugt ein Band von Säuberungsdurchgängen auf jeder Stufenhöhe – nützlich zum Schlichten von Podesten, Terrassen und gestuften Oberflächen. Das Muster kann Offset, Startkreise, Parallel oder Trochoidal sein.',
   'cam.opDesc.surfaceClean.keyPoint.0': 'Erfordert ein oder mehrere geschlossene Hinzufügen- oder Modell-Features',
   'cam.opDesc.surfaceClean.keyPoint.1': 'Räumt die Fläche zwischen höheren Features auf jeder Stufenhöhe',
-  'cam.opDesc.surfaceClean.keyPoint.2': 'Offset- oder Parallel-Räummuster',
+  'cam.opDesc.surfaceClean.keyPoint.2': 'Räummuster Offset, Startkreise, Parallel oder Trochoidal',
   'cam.opDesc.surfaceClean.keyPoint.3': 'Unterstützt Schrupp- und Schlichtdurchgänge',
   'cam.opDesc.surfaceClean.keyPoint.4': 'Optionale geschlossene Bereiche wirken als XY-Filter',
 
@@ -519,18 +519,18 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // Drilling
   'cam.opDesc.drilling.title': 'Bohren',
-  'cam.opDesc.drilling.fullDescription': 'Bohren erzeugt ein Loch in der Mitte jedes ausgewählten Kreis-Features mit einem festen Bohrzyklus. Wählen Sie die Bohrmethode (einfach G81, Tiefloch G83, Verweilen G82, Spanbruch G73) und die Tiefe an der Operation.',
+  'cam.opDesc.drilling.fullDescription': 'Bohren erzeugt ein Loch in der Mitte jedes ausgewählten Kreis-Features. Wählen Sie den Bohrtyp und die Tiefe an der Operation: die festen Bohrzyklen Einfach (G81), Tieflochbohren (G83), Verweilen (G82) oder Spanbruch (G73); Helikal, das mit einem flachen Schaftfräser ein Loch, größer als der Fräser, entlang einer Helix ausfräst; oder Senken, das mit einem V-Nutfräser eine Senkung öffnet.',
   'cam.opDesc.drilling.keyPoint.0': 'Erfordert ein oder mehrere Kreis-Features',
-  'cam.opDesc.drilling.keyPoint.1': 'Vier Zyklustypen: einfach (G81), Tiefloch (G83), Verweilen (G82), Spanbruch (G73)',
+  'cam.opDesc.drilling.keyPoint.1': 'Sechs Bohrtypen: Einfach (G81), Tieflochbohren (G83), Verweilen (G82), Spanbruch (G73), Helikal, Senken',
   'cam.opDesc.drilling.keyPoint.2': 'Tiefloch- und Spanbruchzyklen verwenden ein Entspan-Inkrement',
   'cam.opDesc.drilling.keyPoint.3': 'Schnell für wiederholte Lochmuster',
   'cam.opDesc.drilling.keyPoint.4': 'Optionale geschlossene Bereiche filtern, welche Löcher gebohrt werden',
 
   // 3D Surface rough
   'cam.opDesc.roughSurface.title': '3D-Oberfläche schruppen',
-  'cam.opDesc.roughSurface.fullDescription': 'Oberflächenschruppen schneidet das importierte 3D-Modell auf konstanten Z-Ebenen (Wasserlinien-Stil) und räumt jede Ebene mit Offset-Durchgängen aus, wobei radiales und axiales Aufmaß für das Schlichten verbleibt. Verwenden Sie größere Zustellung und größeren Bahnabstand für mehr Tempo; folgen Sie mit einer Schlichtoperation für Genauigkeit.',
+  'cam.opDesc.roughSurface.fullDescription': 'Oberflächenschruppen schneidet das importierte 3D-Modell auf konstanten Z-Ebenen (Wasserlinien-Stil) und räumt jede Ebene mit dem gewählten Muster (Offset, Startkreise, Parallel oder Trochoidal) aus, wobei radiales und axiales Aufmaß für das Schlichten verbleibt. Verwenden Sie größere Zustellung und größeren Bahnabstand für mehr Tempo; folgen Sie mit einer Schlichtoperation für Genauigkeit.',
   'cam.opDesc.roughSurface.keyPoint.0': 'Erfordert ein importiertes 3D-Modell',
-  'cam.opDesc.roughSurface.keyPoint.1': 'Wasserlinien-Ebenenschnitt mit Offset-Räumung pro Ebene',
+  'cam.opDesc.roughSurface.keyPoint.1': 'Wasserlinien-Ebenenschnitt; Räumung pro Ebene mit Offset, Startkreise, Parallel oder Trochoidal',
   'cam.opDesc.roughSurface.keyPoint.2': 'Berücksichtigt radiales und axiales Aufmaß für den Schlichtdurchgang',
   'cam.opDesc.roughSurface.keyPoint.3': 'Einzeldurchgang-Operation (keine Schrupp-/Schlicht-Aufteilung – diese Operation ist das Schruppen)',
   'cam.opDesc.roughSurface.keyPoint.4': 'Optionale geschlossene Bereiche wirken als XY-Filter',
@@ -539,17 +539,17 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.opDesc.finishSurface.title': '3D-Oberfläche schlichten',
   'cam.opDesc.finishSurface.fullDescription': 'Oberflächenschlichten erzeugt die endgültige Oberfläche eines importierten 3D-Modells. Wählen Sie Parallel (Scanlinien in einstellbarem Winkel) für flachere Geometrie, Konstante Riefenhöhe (Bahnen mit gleichmäßigem Abstand entlang der Oberfläche) für gewölbte und geschnitzte Decken oder Wasserlinie (Konturen bei konstantem Z) für steilere Wände. Stellen Sie für Konstante Riefenhöhe mit einem Kugelfräser die Riefenhöhe ein: Kleinere Werte ergeben eine feinere Oberfläche und längere Bearbeitungszeit.',
   'cam.opDesc.finishSurface.keyPoint.0': 'Erfordert ein importiertes 3D-Modell',
-  'cam.opDesc.finishSurface.keyPoint.1': 'Parallel- (Scanlinie) oder Wasserlinien-Muster (konstantes Z)',
+  'cam.opDesc.finishSurface.keyPoint.1': 'Muster Parallel (Scanlinie), Konstante Riefenhöhe oder Wasserlinie (konstantes Z)',
   'cam.opDesc.finishSurface.keyPoint.2': 'Einzeldurchgang-Operation (keine Schrupp-/Schlicht-Aufteilung – diese Operation ist das Schlichten)',
   'cam.opDesc.finishSurface.keyPoint.3': 'Folgt normalerweise auf 3D-Oberfläche schruppen',
   'cam.opDesc.finishSurface.keyPoint.4': 'Optionale geschlossene Bereiche wirken als XY-Filter',
 
   // 3D Surface cleanup
   'cam.opDesc.finishSurfaceCleanup.title': '3D-Oberfläche nacharbeiten',
-  'cam.opDesc.finishSurfaceCleanup.fullDescription': 'Oberflächen-Nacharbeit gibt reine Schlicht-Durchgänge für Wände und Boden auf dem tiefsten beibehaltenen Z jeder von der 3D-Schruppoperation gelassenen Stufe aus. Es dedupliziert wiederholte Wand-/Boden-Spalten über Ebenen hinweg, sodass jede einmal auf ihrer tiefsten wirksamen Tiefe geschnitten wird – zum Nacharbeiten von Schrupp-Terrassen ohne erneutes Schruppen.',
+  'cam.opDesc.finishSurfaceCleanup.fullDescription': 'Oberflächen-Nacharbeit gibt reine Schlicht-Durchgänge für Wände und Boden auf dem tiefsten beibehaltenen Z jeder von der 3D-Schruppoperation gelassenen Stufe aus. Es dedupliziert wiederholte Wand-/Boden-Spalten über Ebenen hinweg, sodass jede einmal auf ihrer tiefsten wirksamen Tiefe geschnitten wird – zum Nacharbeiten von Schrupp-Terrassen ohne erneutes Schruppen. Böden werden mit dem Muster Offset, Startkreise oder Parallel geräumt.',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.0': 'Erfordert ein importiertes 3D-Modell',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.1': 'Unabhängige Schalter für Wände schlichten und Boden schlichten',
-  'cam.opDesc.finishSurfaceCleanup.keyPoint.2': 'Offset- oder Parallel-Muster für Böden',
+  'cam.opDesc.finishSurfaceCleanup.keyPoint.2': 'Muster Offset, Startkreise oder Parallel für Böden',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.3': 'Wird normalerweise nach 3D-Oberfläche schruppen als letzter Durchgang ausgeführt',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.4': 'Optionale geschlossene Bereiche wirken als XY-Filter',
   // ── Bibliothek-Import-Dialog ──

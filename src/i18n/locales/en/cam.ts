@@ -457,9 +457,9 @@ export const camEn = {
   // ── Operation descriptions (OperationAddMenu expanded cards) ──
   // Pocket
   'cam.opDesc.pocket.title': 'Pocket',
-  'cam.opDesc.pocket.fullDescription': 'The pocket operation clears the interior of one or more closed subtract profiles down to a fixed Z. Choose between offset (concentric, outside-in) or parallel (scanline) patterns; parallel takes a configurable angle.',
+  'cam.opDesc.pocket.fullDescription': 'The pocket operation clears the interior of one or more closed subtract profiles down to a fixed Z. Choose a clearing pattern: offset (concentric), seeded circles (open areas cleared with growing circles first, then offset rings), parallel (scanlines at a configurable angle) or trochoidal (orbiting rings for low tool engagement).',
   'cam.opDesc.pocket.keyPoint.0': 'Requires one or more closed subtract profiles',
-  'cam.opDesc.pocket.keyPoint.1': 'Offset or parallel clearing pattern',
+  'cam.opDesc.pocket.keyPoint.1': 'Offset, seeded circles, parallel or trochoidal clearing pattern',
   'cam.opDesc.pocket.keyPoint.2': 'Supports rough and finish passes',
   'cam.opDesc.pocket.keyPoint.3': 'Best with flat endmills for clean floors',
   'cam.opDesc.pocket.keyPoint.4': 'Optional closed regions act as XY filters',
@@ -504,10 +504,10 @@ export const camEn = {
 
   // Surface clean
   'cam.opDesc.surfaceClean.title': 'Surface clean',
-  'cam.opDesc.surfaceClean.fullDescription': 'The surface clean operation machines the flat top surface of one or more add/model features in the area around any taller add features that sit on top of them. It produces a band of cleanup passes at each step height — useful for finishing pads, terraces, and stepped surfaces. Pattern can be offset or parallel.',
+  'cam.opDesc.surfaceClean.fullDescription': 'The surface clean operation machines the flat top surface of one or more add/model features in the area around any taller add features that sit on top of them. It produces a band of cleanup passes at each step height — useful for finishing pads, terraces, and stepped surfaces. Pattern can be offset, seeded circles, parallel or trochoidal.',
   'cam.opDesc.surfaceClean.keyPoint.0': 'Requires one or more closed add or model features',
   'cam.opDesc.surfaceClean.keyPoint.1': 'Clears the area between taller features at each step height',
-  'cam.opDesc.surfaceClean.keyPoint.2': 'Offset or parallel clearing pattern',
+  'cam.opDesc.surfaceClean.keyPoint.2': 'Offset, seeded circles, parallel or trochoidal clearing pattern',
   'cam.opDesc.surfaceClean.keyPoint.3': 'Supports rough and finish passes',
   'cam.opDesc.surfaceClean.keyPoint.4': 'Optional closed regions act as XY filters',
 
@@ -522,18 +522,18 @@ export const camEn = {
 
   // Drilling
   'cam.opDesc.drilling.title': 'Drill',
-  'cam.opDesc.drilling.fullDescription': 'The drilling operation produces a hole at the center of each selected circle feature using a canned drill cycle. Choose the drilling method (simple G81, peck G83, dwell G82, chip-breaking G73) and depth on the operation.',
+  'cam.opDesc.drilling.fullDescription': 'The drilling operation produces a hole at the center of each selected circle feature. Choose the drill type and depth on the operation: simple (G81), peck (G83), dwell (G82) or chip breaking (G73) canned cycles; helical, which bores a hole wider than a flat endmill along a helix; or countersink, which opens a countersink with a V-bit.',
   'cam.opDesc.drilling.keyPoint.0': 'Requires one or more circle features',
-  'cam.opDesc.drilling.keyPoint.1': 'Four cycle types: simple (G81), peck (G83), dwell (G82), chip-breaking (G73)',
+  'cam.opDesc.drilling.keyPoint.1': 'Six drill types: simple (G81), peck (G83), dwell (G82), chip breaking (G73), helical, countersink',
   'cam.opDesc.drilling.keyPoint.2': 'Peck and chip-breaking cycles use a peck increment',
   'cam.opDesc.drilling.keyPoint.3': 'Fast for repeated hole patterns',
   'cam.opDesc.drilling.keyPoint.4': 'Optional closed regions filter which holes are drilled',
 
   // 3D Surface rough
   'cam.opDesc.roughSurface.title': '3D surface rough',
-  'cam.opDesc.roughSurface.fullDescription': 'The rough surface operation slices the imported 3D model at constant Z levels (waterline-style) and clears each level with offset passes, leaving radial and axial stock for finishing. Use larger stepdown and stepover for speed; follow with a finish operation for accuracy.',
+  'cam.opDesc.roughSurface.fullDescription': 'The rough surface operation slices the imported 3D model at constant Z levels (waterline-style) and clears each level with the chosen pattern (offset, seeded circles, parallel or trochoidal), leaving radial and axial stock for finishing. Use larger stepdown and stepover for speed; follow with a finish operation for accuracy.',
   'cam.opDesc.roughSurface.keyPoint.0': 'Requires an imported 3D model',
-  'cam.opDesc.roughSurface.keyPoint.1': 'Waterline-style level slicing with offset clearing per level',
+  'cam.opDesc.roughSurface.keyPoint.1': 'Waterline-style level slicing; offset, seeded circles, parallel or trochoidal clearing per level',
   'cam.opDesc.roughSurface.keyPoint.2': 'Honors radial and axial stock-to-leave for the finish pass',
   'cam.opDesc.roughSurface.keyPoint.3': 'Single-pass operation (no rough/finish split — this op is roughing)',
   'cam.opDesc.roughSurface.keyPoint.4': 'Optional closed regions act as XY filters',
@@ -542,17 +542,17 @@ export const camEn = {
   'cam.opDesc.finishSurface.title': '3D surface finish',
   'cam.opDesc.finishSurface.fullDescription': 'The finish surface operation produces the final surface on an imported 3D model. Choose parallel (scanlines at a configurable angle) for shallower geometry, constant scallop (passes spaced evenly along the surface itself) for sculpted and carved tops, or waterline (constant-Z contours) for steeper walls. For constant scallop with a ball endmill, set scallop height: smaller values give a finer finish and longer machining time.',
   'cam.opDesc.finishSurface.keyPoint.0': 'Requires an imported 3D model',
-  'cam.opDesc.finishSurface.keyPoint.1': 'Parallel (scanline) or waterline (constant-Z) pattern',
+  'cam.opDesc.finishSurface.keyPoint.1': 'Parallel (scanline), constant scallop or waterline (constant-Z) pattern',
   'cam.opDesc.finishSurface.keyPoint.2': 'Single-pass operation (no rough/finish split — this op is the finish)',
   'cam.opDesc.finishSurface.keyPoint.3': 'Usually follows 3D surface rough',
   'cam.opDesc.finishSurface.keyPoint.4': 'Optional closed regions act as XY filters',
 
   // 3D Surface cleanup
   'cam.opDesc.finishSurfaceCleanup.title': '3D surface cleanup',
-  'cam.opDesc.finishSurfaceCleanup.fullDescription': 'The surface cleanup operation emits finish-only wall and floor passes at the deepest retained Z of each step left by the 3D rough operation. It deduplicates repeated wall/floor columns across levels so each is cut once at its lowest effective depth — cleaning up rough-surface terraces without re-roughing.',
+  'cam.opDesc.finishSurfaceCleanup.fullDescription': 'The surface cleanup operation emits finish-only wall and floor passes at the deepest retained Z of each step left by the 3D rough operation. It deduplicates repeated wall/floor columns across levels so each is cut once at its lowest effective depth — cleaning up rough-surface terraces without re-roughing. Floors are cleared with an offset, seeded circles or parallel pattern.',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.0': 'Requires an imported 3D model',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.1': 'Independent finish walls and finish floor toggles',
-  'cam.opDesc.finishSurfaceCleanup.keyPoint.2': 'Offset or parallel pattern for floors',
+  'cam.opDesc.finishSurfaceCleanup.keyPoint.2': 'Offset, seeded circles or parallel pattern for floors',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.3': 'Typically run after 3D surface rough as the final pass',
   'cam.opDesc.finishSurfaceCleanup.keyPoint.4': 'Optional closed regions act as XY filters',
   // ── Library import dialog ──
