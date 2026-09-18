@@ -82,6 +82,7 @@ export const canvasDe: Record<keyof typeof canvasEn, string> = {
   'canvas.shape.tab': 'Haltesteg',
   'canvas.shape.clamp': 'Spannzwinge',
   'canvas.shape.polygon': 'Polygon',
+  'canvas.shape.regularPolygon': 'Regelmäßiges Polygon',
   'canvas.shape.spline': 'Spline',
   'canvas.shape.slot': 'Langloch',
   'canvas.shape.gear': 'Zahnrad',

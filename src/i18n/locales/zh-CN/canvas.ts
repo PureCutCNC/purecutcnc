@@ -77,6 +77,7 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.shape.tab': '连接桥',
   'canvas.shape.clamp': '夹具',
   'canvas.shape.polygon': '多边形',
+  'canvas.shape.regularPolygon': '正多边形',
   'canvas.shape.spline': '样条曲线',
   'canvas.shape.slot': '槽孔',
   'canvas.shape.gear': '齿轮',

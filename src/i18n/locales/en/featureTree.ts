@@ -104,7 +104,7 @@ export const featureTreeEn = {
   'featureTree.treeRow.addEntry.clamp': 'Add clamp',
 
   // ── TreeRow: operation button tooltips ──
-  'featureTree.treeRow.operation.lineClosedTooltip': 'Line — closed path usable by engrave, profile, and V-carve operations',
+  'featureTree.treeRow.operation.lineClosedTooltip': 'Line — closed path usable by engrave and V-carve operations',
   'featureTree.treeRow.operation.lineOpenTooltip': 'Line — open profile (line ↔ construction only)',
   'featureTree.treeRow.operation.modelTooltip': 'Model — imported 3D object (locked)',
   'featureTree.treeRow.operation.addFirstSolidTooltip': 'Add — first solid (subtract unavailable; convert to a non-solid role to unlock)',
@@ -127,7 +127,7 @@ export const featureTreeEn = {
   'featureTree.treeRow.operation.menuAddTooltip': 'Add — feature adds material',
   'featureTree.treeRow.operation.menuSubtractTooltip': 'Subtract — feature removes material',
   'featureTree.treeRow.operation.menuSubtractDisabledTooltip': 'Subtract unavailable — the first solid must be add or converted to a non-solid role',
-  'featureTree.treeRow.operation.menuLineClosedTooltip': 'Line — closed path machined by engrave/contour operations',
+  'featureTree.treeRow.operation.menuLineClosedTooltip': 'Line — closed path machined by engrave or V-carve operations',
   'featureTree.treeRow.operation.menuRegionTooltip': 'Region mask — feature filters machining operations',
   'featureTree.treeRow.operation.menuConstructionTooltip': 'Construction — sketch reference geometry, never machined',
 

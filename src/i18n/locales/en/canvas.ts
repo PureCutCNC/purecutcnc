@@ -87,6 +87,7 @@ export const canvasEn = {
   'canvas.shape.tab': 'Tab',
   'canvas.shape.clamp': 'Clamp',
   'canvas.shape.polygon': 'Polygon',
+  'canvas.shape.regularPolygon': 'Regular polygon',
   'canvas.shape.spline': 'Spline',
   'canvas.shape.slot': 'Slot',
   'canvas.shape.gear': 'Gear',

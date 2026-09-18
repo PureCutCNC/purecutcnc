@@ -78,7 +78,7 @@ export const viewportDe: Record<keyof typeof viewportEn, string> = {
   'viewport.empty.drawTitle': 'Form zeichnen',
   'viewport.empty.drawMeta': 'Ein Rechteck auf der Zeichenfläche skizzieren',
   'viewport.empty.importTitle': 'Datei importieren',
-  'viewport.empty.importMeta': 'SVG-, DXF-, OBJ-, STL- oder CAMJ-Dateien',
+  'viewport.empty.importMeta': 'SVG-, DXF-, STL-, OBJ-, STEP- oder CAMJ-Dateien',
   'viewport.empty.examplesLabel': 'Beispiel öffnen…',
   'viewport.error.eyebrow': 'Etwas ist schiefgelaufen',
   'viewport.error.title': 'Entschuldigung – PureCutCNC konnte auf diesem Gerät nicht starten.',

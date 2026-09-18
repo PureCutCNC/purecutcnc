@@ -82,7 +82,7 @@ export const viewportEn = {
   'viewport.empty.drawTitle': 'Draw a shape',
   'viewport.empty.drawMeta': 'Sketch a rectangle on the canvas',
   'viewport.empty.importTitle': 'Import a file',
-  'viewport.empty.importMeta': 'SVG, DXF, OBJ, STL, or CAMJ files',
+  'viewport.empty.importMeta': 'SVG, DXF, STL, OBJ, STEP, or CAMJ files',
   'viewport.empty.examplesLabel': 'Open an example…',
   'viewport.error.eyebrow': 'Something went wrong',
   'viewport.error.title': "Sorry — PureCutCNC couldn't start on this device.",

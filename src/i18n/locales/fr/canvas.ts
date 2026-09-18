@@ -71,6 +71,7 @@ export const canvasFr: Record<keyof typeof canvasEn, string> = {
   'canvas.shape.tab': 'Attache',
   'canvas.shape.clamp': 'Bride',
   'canvas.shape.polygon': 'Polygone',
+  'canvas.shape.regularPolygon': 'Polygone régulier',
   'canvas.shape.spline': 'Spline',
   'canvas.shape.slot': 'Lumière',
   'canvas.shape.gear': 'Engrenage',
