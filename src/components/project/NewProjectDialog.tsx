@@ -156,6 +156,8 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
     return { ...template, stock: defaultStock(width, height, thickness) }
   }, [currentProjectTemplate, fileProjectTemplate, imperialTemplate, metricTemplate, stockDraft, templateKind])
 
+  const previewTemplate = activeTemplate ?? (templateKind === 'blank_metric' ? metricTemplate : templateKind === 'blank_imperial' ? imperialTemplate : null)
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
@@ -172,30 +174,30 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
   }, [fileTemplate, project, templateKind])
 
   const templateSummary = useMemo(() => {
-    if (!activeTemplate) {
+    if (!previewTemplate) {
       return null
     }
 
     try {
-      const bounds = getStockBounds(activeTemplate.stock)
+      const bounds = getStockBounds(previewTemplate.stock)
       const width = bounds.maxX - bounds.minX
       const height = bounds.maxY - bounds.minY
 
       return {
-        units: activeTemplate.meta.units === 'inch' ? td('dialogs.common.inch') : td('dialogs.common.millimeter'),
-        stock: `${formatLength(width, activeTemplate.meta.units)} × ${formatLength(height, activeTemplate.meta.units)} × ${formatLength(activeTemplate.stock.thickness, activeTemplate.meta.units)}`,
-        features: activeTemplate.features.length,
-        tools: activeTemplate.tools.length,
-        operations: activeTemplate.operations.length,
+        units: previewTemplate.meta.units === 'inch' ? td('dialogs.common.inch') : td('dialogs.common.millimeter'),
+        stock: `${formatLength(width, previewTemplate.meta.units)} × ${formatLength(height, previewTemplate.meta.units)} × ${formatLength(previewTemplate.stock.thickness, previewTemplate.meta.units)}`,
+        features: previewTemplate.features.length,
+        tools: previewTemplate.tools.length,
+        operations: previewTemplate.operations.length,
         // The template carries only its own embedded snapshot; the machine
         // picker always reads the current application library instead.
-        machine: getActiveMachineDefinition(activeTemplate)?.name ?? td('dialogs.common.none'),
+        machine: getActiveMachineDefinition(previewTemplate)?.name ?? td('dialogs.common.none'),
       }
     } catch {
       return null
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
-  }, [activeTemplate, languageTag])
+  }, [languageTag, previewTemplate])
 
   function handleCreate() {
     if (!activeTemplate) {
@@ -313,68 +315,64 @@ export function NewProjectDialog({ onClose, onCreated }: NewProjectDialogProps) 
               {fileError ? <div className="cam-field-message">{fileError}</div> : null}
             </div>
 
-            {isBlankTemplate ? (
-              <div className="dialog-section-group">
-                <label className="dialog-section-title" htmlFor="new-project-stock-width">
-                  {td('dialogs.newProject.stockSize', { units: activeTemplate?.meta.units ?? (templateKind === 'blank_metric' ? 'mm' : 'inch') })}
-                </label>
-                <div className="new-project-stock-dimensions">
-                  <label className="properties-field">
-                    <span>{td('dialogs.newProject.stockWidth')}</span>
-                    <input
-                      id="new-project-stock-width"
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      step="any"
-                      value={stockDraft.width}
-                      onChange={(event) => setStockDraft((draft) => ({ ...draft, width: event.target.value }))}
-                    />
-                  </label>
-                  <label className="properties-field">
-                    <span>{td('dialogs.newProject.stockHeight')}</span>
-                    <input
-                      id="new-project-stock-height"
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      step="any"
-                      value={stockDraft.height}
-                      onChange={(event) => setStockDraft((draft) => ({ ...draft, height: event.target.value }))}
-                    />
-                  </label>
-                  <label className="properties-field">
-                    <span>{td('dialogs.newProject.stockThickness')}</span>
-                    <input
-                      id="new-project-stock-thickness"
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      step="any"
-                      value={stockDraft.thickness}
-                      onChange={(event) => setStockDraft((draft) => ({ ...draft, thickness: event.target.value }))}
-                    />
-                  </label>
-                </div>
-                {!activeTemplate ? <div className="cam-field-message" role="alert">{td('dialogs.newProject.stockDimensionsInvalid')}</div> : null}
-              </div>
-            ) : null}
           </div>
 
           <div className="dialog-preview-container">
             <label className="dialog-section-title">{td('dialogs.newProject.templatePreview')}</label>
             <div className="dialog-preview project-template-preview">
-              {activeTemplate && templateSummary ? (
+              {previewTemplate && templateSummary ? (
                 <div className="project-template-preview__content">
                   <div className="project-template-preview__title">{templateLabel(templateKind, project, fileTemplate, td)}</div>
                   <div className="project-template-preview__row">
                     <span>{td('dialogs.newProject.previewUnits')}</span>
                     <strong>{templateSummary.units}</strong>
                   </div>
-                  <div className="project-template-preview__row">
+                  <div className={`project-template-preview__row ${isBlankTemplate ? 'project-template-preview__row--stock' : ''}`}>
                     <span>{td('dialogs.newProject.previewStock')}</span>
-                    <strong>{templateSummary.stock}</strong>
+                    {isBlankTemplate ? (
+                      <div className="new-project-stock-dimensions">
+                        <label className="properties-field">
+                          <span>{td('dialogs.newProject.stockWidth')}</span>
+                          <input
+                            id="new-project-stock-width"
+                            type="number"
+                            inputMode="decimal"
+                            min="0"
+                            step="any"
+                            value={stockDraft.width}
+                            onChange={(event) => setStockDraft((draft) => ({ ...draft, width: event.target.value }))}
+                          />
+                        </label>
+                        <label className="properties-field">
+                          <span>{td('dialogs.newProject.stockHeight')}</span>
+                          <input
+                            id="new-project-stock-height"
+                            type="number"
+                            inputMode="decimal"
+                            min="0"
+                            step="any"
+                            value={stockDraft.height}
+                            onChange={(event) => setStockDraft((draft) => ({ ...draft, height: event.target.value }))}
+                          />
+                        </label>
+                        <label className="properties-field">
+                          <span>{td('dialogs.newProject.stockThickness')}</span>
+                          <input
+                            id="new-project-stock-thickness"
+                            type="number"
+                            inputMode="decimal"
+                            min="0"
+                            step="any"
+                            value={stockDraft.thickness}
+                            onChange={(event) => setStockDraft((draft) => ({ ...draft, thickness: event.target.value }))}
+                          />
+                        </label>
+                      </div>
+                    ) : (
+                      <strong>{templateSummary.stock}</strong>
+                    )}
                   </div>
+                  {isBlankTemplate && !activeTemplate ? <div className="cam-field-message" role="alert">{td('dialogs.newProject.stockDimensionsInvalid')}</div> : null}
                   <div className="project-template-preview__row">
                     <span>{td('dialogs.newProject.previewFeatures')}</span>
                     <strong>{templateSummary.features}</strong>

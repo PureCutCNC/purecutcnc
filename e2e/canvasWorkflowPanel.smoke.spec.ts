@@ -195,11 +195,18 @@ test('a new project lands on the sketch view with no empty-state card (issue #76
 test('blank templates create projects with their entered stock dimensions (issue #809)', async ({ app, ui }) => {
   await ui.toolbar.newProjectButton(app.page).click()
   const dialog = ui.newProjectDialog.root(app.page)
+  const stockInputWidth = await ui.newProjectDialog.stockDimension(app.page, 'width').evaluate(
+    (input) => input.getBoundingClientRect().width,
+  )
+
+  expect(stockInputWidth).toBeGreaterThan(80)
 
   await ui.newProjectDialog.stockDimension(app.page, 'width').fill('254')
   await ui.newProjectDialog.stockDimension(app.page, 'height').fill('127')
   await ui.newProjectDialog.stockDimension(app.page, 'thickness').fill('19')
-  await expect(dialog).toContainText('254')
+  await expect.poll(() =>
+    ui.newProjectDialog.stockDimension(app.page, 'width').evaluate((input) => (input as HTMLInputElement).value),
+  ).toBe('254')
   await dialog.getByRole('button', { name: 'Create project' }).click()
 
   const metricStock = (await getProject(app.page)).stock as { thickness: number }

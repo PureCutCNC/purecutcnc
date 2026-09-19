@@ -1098,11 +1098,19 @@
 .new-project-stock-dimensions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  flex: 0 1 330px;
   gap: 8px;
 }
 
 .new-project-stock-dimensions .properties-field {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 5px;
   min-width: 0;
+}
+
+.new-project-stock-dimensions .properties-field > :not(span):not(.properties-field-label-row):not(.op-param-ref) {
+  grid-column: 1;
 }
 
 .project-template-preview {
@@ -1126,6 +1134,10 @@
   gap: 16px;
   color: var(--text-dim);
   font-size: 12px;
+}
+
+.project-template-preview__row--stock {
+  align-items: start;
 }
 
 .project-template-preview__row strong {
