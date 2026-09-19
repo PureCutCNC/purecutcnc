@@ -1043,13 +1043,87 @@ function makeCell(x: number, y: number, h: number, region: EntryClearanceRegion,
   }
 }
 
+const contourBoundsCache = new WeakMap<Point[], { minX: number, minY: number, maxX: number, maxY: number } | null>()
+
+function cachedContourBounds(contour: Point[]): { minX: number, minY: number, maxX: number, maxY: number } | null {
+  const hit = contourBoundsCache.get(contour)
+  if (hit !== undefined) return hit
+  const value = contourBounds(contour)
+  contourBoundsCache.set(contour, value)
+  return value
+}
+
+function bboxDistanceSquared(point: Point, b: { minX: number, minY: number, maxX: number, maxY: number }): number {
+  const dx = point.x < b.minX ? b.minX - point.x : (point.x > b.maxX ? point.x - b.maxX : 0)
+  const dy = point.y < b.minY ? b.minY - point.y : (point.y > b.maxY ? point.y - b.maxY : 0)
+  return dx * dx + dy * dy
+}
+
+/**
+ * One indexed pass per contour yields all three facts the callers need: the
+ * minimum squared edge distance, the crossing parity, and whether the point
+ * lies on the boundary (exactly `minDistanceSquared <= 1e-16`, the same test
+ * `pointOnContour` makes edge by edge). Returns null when the contour's
+ * bounding box is farther than `pruneAboveSquared`, in which case the point is
+ * outside it and cannot lower the running minimum.
+ */
+function scanContour(
+  point: Point,
+  contour: Point[],
+  pruneAboveSquared: number,
+): { minDistanceSquared: number, crossings: boolean } | null {
+  const bounds = cachedContourBounds(contour)
+  if (bounds) {
+    const near = bboxDistanceSquared(point, bounds)
+    if (near > pruneAboveSquared) return null
+  }
+  let minDistanceSquared = Infinity
+  let crossings = false
+  const count = contour.length
+  for (let index = 0; index < count; index += 1) {
+    const a = contour[index]
+    const b = contour[index + 1 === count ? 0 : index + 1]
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    let candidate: number
+    if (dx === 0 && dy === 0) {
+      const px = point.x - a.x
+      const py = point.y - a.y
+      candidate = px * px + py * py
+    } else {
+      const ratio = clamp(((point.x - a.x) * dx + (point.y - a.y) * dy) / (dx * dx + dy * dy), 0, 1)
+      const px = point.x - (a.x + dx * ratio)
+      const py = point.y - (a.y + dy * ratio)
+      candidate = px * px + py * py
+    }
+    if (candidate < minDistanceSquared) minDistanceSquared = candidate
+    if ((a.y > point.y) !== (b.y > point.y) && point.x < dx * (point.y - a.y) / dy + a.x) {
+      crossings = !crossings
+    }
+  }
+  return { minDistanceSquared, crossings }
+}
+
 function pointToRegionDistance(point: Point, region: EntryClearanceRegion): number {
-  const inside = pointInRegion(point, region)
-  let distanceSquared = Infinity
-  for (const contour of [region.outer, ...region.islands]) {
-    forEachEdge(contour, (a, b) => {
-      distanceSquared = Math.min(distanceSquared, pointSegmentDistanceSquared(point, a, b))
-    })
+  const outer = scanContour(point, region.outer, Infinity)
+  let distanceSquared = outer ? outer.minDistanceSquared : Infinity
+  const outerOn = outer !== null && outer.minDistanceSquared <= 1e-16
+  let inside = outer !== null && (outerOn || outer.crossings)
+  if (inside) {
+    for (const island of region.islands) {
+      const scan = scanContour(point, island, distanceSquared)
+      if (!scan) continue
+      if (scan.minDistanceSquared < distanceSquared) distanceSquared = scan.minDistanceSquared
+      const on = scan.minDistanceSquared <= 1e-16
+      if (!on && scan.crossings) { inside = false; break }
+    }
+  }
+  if (!inside) {
+    for (const island of region.islands) {
+      const scan = scanContour(point, island, distanceSquared)
+      if (!scan) continue
+      if (scan.minDistanceSquared < distanceSquared) distanceSquared = scan.minDistanceSquared
+    }
   }
   const distance = Number.isFinite(distanceSquared) ? Math.sqrt(distanceSquared) : 0
   return inside ? distance : -distance
