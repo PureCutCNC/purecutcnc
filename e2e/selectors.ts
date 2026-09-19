@@ -190,6 +190,8 @@ export const statusBar = {
     statusBar.root(page).getByRole('button', { name: label, exact: true }),
   units: (page: Page) =>
     statusBar.root(page).getByRole('button', { name: /^Change project units from / }),
+  stockDimensions: (page: Page) =>
+    statusBar.root(page).getByRole('button', { name: 'Edit stock dimensions' }),
   about: (page: Page) => statusBar.root(page).locator('.statusbar-about'),
 }
 
@@ -205,6 +207,8 @@ export const newProjectDialog = {
   root: (page: Page) => page.locator('.dialog--new-project'),
   template: (page: Page, label: string) =>
     newProjectDialog.root(page).getByRole('button', { name: new RegExp(`^${label}`) }),
+  stockDimension: (page: Page, dimension: 'width' | 'height' | 'thickness') =>
+    newProjectDialog.root(page).locator(`#new-project-stock-${dimension}`),
 }
 
 // ── CAM operation properties ───────────────────────────────────────

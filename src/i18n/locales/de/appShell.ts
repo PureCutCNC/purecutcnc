@@ -59,6 +59,7 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
 
   // ── Status bar — stock dimensions ──
   'appShell.status.stockDim': 'Rohteil: {width} × {height} × {thickness} {units}',
+  'appShell.status.editStockDimensions': 'Rohteilmaße bearbeiten',
   'appShell.status.changeUnits': 'Projekteinheiten von {from} in {to} ändern',
 
   // ── Status bar — expand/collapse ──

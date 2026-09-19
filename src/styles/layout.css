@@ -3253,6 +3253,26 @@
   color: var(--text);
 }
 
+.statusbar-stock-dimensions {
+  appearance: none;
+  min-height: 20px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--status-text);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+}
+
+.statusbar-stock-dimensions:hover,
+.statusbar-stock-dimensions:focus-visible {
+  border-color: color-mix(in srgb, var(--line-strong) 48%, transparent);
+  background: var(--surface-sheen);
+  color: var(--text);
+}
+
 .statusbar-visibility {
   display: inline-flex;
   align-items: center;
