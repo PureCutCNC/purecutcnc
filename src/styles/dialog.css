@@ -1095,6 +1095,16 @@
   line-height: 1.4;
 }
 
+.new-project-stock-dimensions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.new-project-stock-dimensions .properties-field {
+  min-width: 0;
+}
+
 .project-template-preview {
   white-space: normal;
 }

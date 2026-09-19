@@ -1179,7 +1179,9 @@
 }
 
 [data-shell-mode="tablet"] .app-statusbar--tablet-expanded .statusbar-units,
-[data-shell-mode="tablet-compact"] .app-statusbar--tablet-expanded .statusbar-units {
+[data-shell-mode="tablet-compact"] .app-statusbar--tablet-expanded .statusbar-units,
+[data-shell-mode="tablet"] .app-statusbar--tablet-expanded .statusbar-stock-dimensions,
+[data-shell-mode="tablet-compact"] .app-statusbar--tablet-expanded .statusbar-stock-dimensions {
   height: var(--touch-target, 44px);
   min-height: var(--touch-target, 44px);
   padding: 0 10px;

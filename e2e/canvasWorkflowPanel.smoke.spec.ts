@@ -22,6 +22,7 @@ import {
   startRotateFeature,
   getKeepOriginals,
   getFeatureCount,
+  getProject,
 } from './helpers'
 import { seedOverlapFeatureProject } from './overlapFeatureSelection.helpers'
 
@@ -189,4 +190,46 @@ test('a new project lands on the sketch view with no empty-state card (issue #76
   // created must land on the sketch view drawable, not behind the card.
   await expect(card).toHaveCount(0)
   await expect(app.page.locator('#workspace-panel-sketch')).toHaveClass(/centre-view--active/)
+})
+
+test('blank templates create projects with their entered stock dimensions (issue #809)', async ({ app, ui }) => {
+  await ui.toolbar.newProjectButton(app.page).click()
+  const dialog = ui.newProjectDialog.root(app.page)
+
+  await ui.newProjectDialog.stockDimension(app.page, 'width').fill('254')
+  await ui.newProjectDialog.stockDimension(app.page, 'height').fill('127')
+  await ui.newProjectDialog.stockDimension(app.page, 'thickness').fill('19')
+  await expect(dialog).toContainText('254')
+  await dialog.getByRole('button', { name: 'Create project' }).click()
+
+  const metricStock = (await getProject(app.page)).stock as { thickness: number }
+  expect(metricStock.thickness).toBe(19)
+  await expect(ui.statusBar.stockDimensions(app.page)).toContainText('254')
+  await expect(ui.statusBar.stockDimensions(app.page)).toContainText('127')
+
+  await ui.toolbar.newProjectButton(app.page).click()
+  await ui.newProjectDialog.template(app.page, 'Blank imperial').click()
+  await ui.newProjectDialog.stockDimension(app.page, 'width').fill('12')
+  await ui.newProjectDialog.stockDimension(app.page, 'height').fill('8')
+  await ui.newProjectDialog.stockDimension(app.page, 'thickness').fill('0.75')
+  await dialog.getByRole('button', { name: 'Create project' }).click()
+
+  const imperialStock = (await getProject(app.page)).stock as { thickness: number }
+  expect(imperialStock.thickness).toBe(0.75)
+  await expect(ui.statusBar.stockDimensions(app.page)).toContainText('12')
+  await expect(ui.statusBar.stockDimensions(app.page)).toContainText('8')
+})
+
+test('stock summary opens editable Stock properties from pointer and keyboard (issue #809)', async ({ app, ui }) => {
+  const stockDimensions = ui.statusBar.stockDimensions(app.page)
+
+  await stockDimensions.click()
+  await expect(ui.properties.panel(app.page)).toContainText('Width')
+  await expect(ui.properties.panel(app.page)).toContainText('Thickness')
+
+  await ui.tree.projectRow(app.page).click()
+  await stockDimensions.focus()
+  await app.page.keyboard.press('Enter')
+  await expect(ui.properties.panel(app.page)).toContainText('Width')
+  await expect(ui.properties.panel(app.page)).toContainText('Thickness')
 })

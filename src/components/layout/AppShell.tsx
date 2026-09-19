@@ -337,6 +337,7 @@ export function AppShell({
     setAllTabsVisible,
     setAllClampsVisible,
     setUnits,
+    selectStock,
   } = useProjectStore()
   const requestUnitConversion = useCallback((toUnits: Project['meta']['units']) => {
     if (toUnits !== project.meta.units) setPendingUnits(toUnits)
@@ -370,6 +371,12 @@ export function AppShell({
   const changeUnitsLabel = t('appShell.status.changeUnits', {
     from: currentUnitLabel,
     to: nextUnitLabel,
+  })
+  const stockDimensionsLabel = t('appShell.status.stockDim', {
+    width: formatLength(stockWidth, project.meta.units),
+    height: formatLength(stockHeight, project.meta.units),
+    thickness: formatLength(project.stock.thickness, project.meta.units),
+    units: project.meta.units,
   })
 
   return (
@@ -737,14 +744,22 @@ export function AppShell({
         >
           {project.meta.units.toUpperCase()}
         </button>
-        <span>
-          {t('appShell.status.stockDim', {
-            width: formatLength(stockWidth, project.meta.units),
-            height: formatLength(stockHeight, project.meta.units),
-            thickness: formatLength(project.stock.thickness, project.meta.units),
-            units: project.meta.units,
-          })}
-        </span>
+        <button
+          className="statusbar-stock-dimensions"
+          type="button"
+          title={t('appShell.status.editStockDimensions')}
+          aria-label={t('appShell.status.editStockDimensions')}
+          onClick={() => {
+            selectStock()
+            if (tabletShell) {
+              setLeftDrawerOpen(true)
+            } else {
+              setLeftPanelVisible(true)
+            }
+          }}
+        >
+          {stockDimensionsLabel}
+        </button>
         {tabletShell ? (
           <button
             type="button"
