@@ -17,12 +17,12 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { ADAPTERS, formatCommonEvents, locateSessions, sessionDirSlug } from './lib/adapters.ts'
+import { ADAPTERS, claudeSessionDirSlug, formatCommonEvents, locateSessions, sessionDirSlug } from './lib/adapters.ts'
 import { appendClaim, detectCycle, readLedger } from './lib/ledger.ts'
 import { runResumeWork } from './run.ts'
 import type { ResumeConfig, SessionCandidate } from './lib/types.ts'
@@ -161,7 +161,7 @@ try {
   const dshArtifact = join(config.stores.dsh, `--${sessionDirSlug(cwd)}--`, 'session-fixture')
   mkdirSync(dshArtifact, { recursive: true })
   cpSync(join(fixtures, 'dsh.jsonl'), join(dshArtifact, 'session.jsonl.zstd'))
-  const claudeDirectory = join(config.stores['claude-code'], `-${sessionDirSlug(cwd)}`)
+  const claudeDirectory = join(config.stores['claude-code'], `-${claudeSessionDirSlug(cwd)}`)
   mkdirSync(claudeDirectory, { recursive: true })
   cpSync(join(fixtures, 'claude-code.jsonl'), join(claudeDirectory, 'claude-fixture.jsonl'))
   const codexDirectory = join(config.stores.codex, '2026', '08', '26')
@@ -183,6 +183,39 @@ try {
   }
   const located = locateSessions(cwd, config)
   assert.deepEqual(new Set(located.map((session) => session.agent)), expectedAgents)
+
+  // #804: the two stores spell dots differently. Claude Code folds every dot in
+  // the worktree path to a dash; dsh keeps them. The expected directory names
+  // are written out literally here rather than derived from the functions under
+  // test, so folding dots into `sessionDirSlug` fails this instead of moving
+  // both sides together.
+  const rootSlug = sessionDirSlug(root)
+  const dottedCwd = join(root, 'purecutcnc.github.io', 'fundamentals-finish')
+  mkdirSync(dottedCwd, { recursive: true })
+  assert.equal(sessionDirSlug(dottedCwd), `${rootSlug}-purecutcnc.github.io-fundamentals-finish`)
+  assert.equal(claudeSessionDirSlug(dottedCwd), `${rootSlug}-purecutcnc-github-io-fundamentals-finish`)
+
+  const dottedClaudeDirectory = join(config.stores['claude-code'], `-${rootSlug}-purecutcnc-github-io-fundamentals-finish`)
+  mkdirSync(dottedClaudeDirectory, { recursive: true })
+  cpSync(join(fixtures, 'claude-code.jsonl'), join(dottedClaudeDirectory, 'dotted-claude-fixture.jsonl'))
+  assert.deepEqual(ADAPTERS['claude-code'].locate(dottedCwd, config).map((session) => session.id), ['dotted-claude-fixture'])
+
+  const dottedDshArtifact = join(config.stores.dsh, `--${rootSlug}-purecutcnc.github.io-fundamentals-finish--`, 'dotted-dsh-fixture')
+  mkdirSync(dottedDshArtifact, { recursive: true })
+  cpSync(join(fixtures, 'dsh.jsonl'), join(dottedDshArtifact, 'session.jsonl.zstd'))
+  assert.deepEqual(ADAPTERS.dsh.locate(dottedCwd, config).map((session) => session.id), ['dotted-dsh-fixture'])
+
+  // Miss path: a store directory spelled some other way — here the dots-preserved
+  // spelling this tool used before #804 — still resolves through the loose scan,
+  // so a later change to Claude Code's encoding costs a readdir instead of an
+  // "artifact is unavailable" briefing.
+  const legacyCwd = join(root, 'legacy.store.io', 'worktree')
+  mkdirSync(legacyCwd, { recursive: true })
+  const legacyClaudeDirectory = join(config.stores['claude-code'], `-${sessionDirSlug(legacyCwd)}`)
+  mkdirSync(legacyClaudeDirectory, { recursive: true })
+  cpSync(join(fixtures, 'claude-code.jsonl'), join(legacyClaudeDirectory, 'legacy-claude-fixture.jsonl'))
+  assert.equal(existsSync(join(config.stores['claude-code'], `-${claudeSessionDirSlug(legacyCwd)}`)), false)
+  assert.deepEqual(ADAPTERS['claude-code'].locate(legacyCwd, config).map((session) => session.id), ['legacy-claude-fixture'])
 
   appendClaim(cwd, { ts: '2026-08-26T12:00:00Z', agent: 'dsh', session: 'a', branch: 'feat/issue-640-handoff', issue: 640, head: '(unknown)' })
   appendClaim(cwd, { ts: '2026-08-26T12:01:00Z', agent: 'codex', session: 'b', branch: 'feat/issue-640-handoff', issue: 640, head: '(unknown)' })

@@ -62,6 +62,15 @@ records for execution context.
 
 ## Configuration
 
+The two stores do not spell a worktree path the same way. Claude Code replaces
+every dot in `~/.claude/projects/<dir>` with a dash, so a worktree under
+`purecutcnc.github.io` is stored as `...-purecutcnc-github-io-...`, while dsh
+keeps the dots in `~/.dsh/sessions/--...--`. `claudeSessionDirSlug` exists for
+exactly that difference — do not unify it with `sessionDirSlug` (#804). When the
+exact directory is missing, the Claude Code lookup scans the store root once and
+matches ignoring punctuation, so a later encoding change degrades to a slower
+lookup instead of an empty briefing.
+
 [`config.json`](config.json) supplies the expected worktree base, store paths,
 branch-to-issue pattern, and conservative output limits. It uses `~`-relative
 defaults for the four supported stores: DSH, Claude Code, Codex, and OpenCode.

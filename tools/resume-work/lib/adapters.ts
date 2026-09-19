@@ -72,8 +72,9 @@ function safeStat(path: string): number {
 /**
  * cwd → store directory slug, portable across drive letters and separators.
  *
- * The dsh and claude-code store layouts name a session's directory after the
- * worktree path. The old `slice(1).replaceAll('/', '-')` was POSIX-only: on (portable-exempt: comment quotes the pre-#651 code)
+ * The dsh store layout names a session's directory after the worktree path,
+ * dots and all; claude-code folds dots too, so it uses `claudeSessionDirSlug`
+ * below rather than this function. The old `slice(1).replaceAll('/', '-')` was POSIX-only: on (portable-exempt: comment quotes the pre-#651 code)
  * Windows the drive-letter colon and the backslashes survived, producing an
  * invalid directory segment (`--:\Users\...--`) that could never be created or
  * found. `resolve()` makes the input absolute first, so the slug is stable
@@ -84,6 +85,44 @@ export function sessionDirSlug(cwd: string): string {
     .replace(/^[A-Za-z]:/, '') // drive prefix (Windows)
     .replace(/^[\\/]/, '') // leading separator (matches the old slice(1))
     .replace(/[\\/]/g, '-') // remaining separators
+}
+
+/**
+ * cwd → Claude Code store directory slug.
+ *
+ * `~/.claude/projects/` names a session's directory after the worktree path
+ * with every dot replaced by a dash as well, so a worktree under
+ * `purecutcnc.github.io` is stored as `...-purecutcnc-github-io-...`. dsh keeps
+ * the dots in its own store (`--...purecutcnc.github.io--`), so the two
+ * encodings cannot be unified — this wrapper exists precisely so
+ * `sessionDirSlug` stays correct for dsh (#804).
+ */
+export function claudeSessionDirSlug(cwd: string): string {
+  return sessionDirSlug(cwd).replace(/\./g, '-')
+}
+
+/** Directory name with every run of non-alphanumerics folded to a single dash. */
+function looseSlug(name: string): string {
+  return name.replace(/[^A-Za-z0-9]+/g, '-')
+}
+
+/**
+ * The Claude Code store directory for `cwd`, or `null` when nothing matches.
+ *
+ * The exact slug is tried first. On a miss the store root is scanned once and
+ * compared loosely, so a later change to Claude Code's punctuation encoding
+ * costs one `readdirSync` instead of yielding no candidates and rendering a
+ * briefing that claims the transcript is unavailable (#804).
+ */
+function claudeStoreRoot(store: string, cwd: string): string | null {
+  const encoded = `-${claudeSessionDirSlug(cwd)}`
+  const exact = join(store, encoded)
+  if (existsSync(exact)) return exact
+  if (!existsSync(store)) return null
+  const wanted = looseSlug(encoded)
+  const match = readdirSync(store, { withFileTypes: true })
+    .find((entry) => entry.isDirectory() && looseSlug(entry.name) === wanted)
+  return match === undefined ? null : join(store, match.name)
 }
 
 function candidatesFromFiles(agent: Agent, paths: string[]): SessionCandidate[] {
@@ -292,9 +331,8 @@ const dshAdapter: Adapter = {
 const claudeAdapter: Adapter = {
   agent: 'claude-code',
   locate(cwd, config) {
-    const encoded = `-${sessionDirSlug(cwd)}`
-    const root = join(expandHome(config.stores['claude-code']), encoded)
-    if (!existsSync(root)) return []
+    const root = claudeStoreRoot(expandHome(config.stores['claude-code']), cwd)
+    if (root === null) return []
     return candidatesFromFiles('claude-code', readdirSync(root)
       .filter((name) => name.endsWith('.jsonl'))
       .map((name) => join(root, name)))
