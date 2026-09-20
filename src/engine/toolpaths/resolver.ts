@@ -790,12 +790,22 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
       .map(({ feature }) => feature.id),
   )
   const reachableUnionPaths = reachableUnionForDiscovery(targetUnionPaths, nonTargetSubtracts)
-  const closedAddFeatures = nonTargetSubtracts.length > 0 ? closedAddFeaturesWithSpans(project) : []
+  const closedAddFeatures = nonTargetSubtracts.length > 0
+    ? closedAddFeaturesWithSpans(project).filter(({ feature }) => operation.kind !== 'pocket' || feature.kind !== 'stl')
+    : []
   const stockPaths = nonTargetSubtracts.length > 0 ? stockFootprintPaths(project) : []
 
   const candidateIslands = project.features
     .flatMap((feature) => expandFeatureGeometry(feature))
-    .filter((feature) => feature.operation === 'add' && featureHasClosedGeometry(feature))
+    // Pocket handles imported models from their true per-level sections in its
+    // generator. The synthetic add `expandFeatureGeometry` exposes for legacy
+    // 2.5D consumers is the full silhouette and would permanently close every
+    // exposed lower cavity before the generator can refine it (issue #819).
+    .filter((feature) => (
+      feature.operation === 'add'
+      && featureHasClosedGeometry(feature)
+      && (operation.kind !== 'pocket' || feature.kind !== 'stl')
+    ))
     .filter((feature) => pathsIntersect(reachableUnionPaths, [flattenFeatureToClipperPath(feature)]))
     .map((feature) => ({
       feature,

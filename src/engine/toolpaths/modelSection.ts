@@ -17,6 +17,8 @@
 import type { SketchFeature } from '../../types/project'
 import type { STLTransformedData } from '../csg'
 import type { ClipperPath } from './types'
+import type { ToolpathWarning } from './warningCodes'
+import { appendUniqueWarning } from './warningDedup'
 import {
   DEFAULT_CLIPPER_SCALE,
   flattenProfile,
@@ -25,7 +27,7 @@ import {
 } from './geometry'
 import { simplifyClosedRing } from './arcReconstruction'
 import { getMeshSliceIndex, sliceMeshAtZDetailed } from './meshSlicing'
-import { unionClipperPathsEvenOdd } from './modelProtection'
+import { unionClipperPaths, unionClipperPathsEvenOdd } from './modelProtection'
 import { significantSilhouettePaths } from './silhouette'
 
 export interface ModelSection {
@@ -34,6 +36,14 @@ export interface ModelSection {
   deviation: number
   /** Unclosed chains at the requested section, if any. */
   openChainCount: number
+}
+
+/** Imported-model data needed to protect 2.5D clearing at individual Z levels. */
+export interface ImportedModelSection {
+  featureId: string
+  geometry: STLTransformedData | null
+  silhouettePaths: ClipperPath[]
+  decimationTolerance: number
 }
 
 const EMPTY_MODEL_SECTION: ModelSection = {
@@ -104,4 +114,68 @@ export function resolveClosedModelSection(
     deviation,
     openChainCount: slice.openChainCount,
   }
+}
+
+/**
+ * Returns one imported-model section at a machining level. Only an unresolved
+ * open slice uses the conservative whole silhouette.
+ */
+function modelPathsAtLevel(
+  modelSections: readonly ImportedModelSection[],
+  z: number,
+  warnings: ToolpathWarning[],
+): ClipperPath[] {
+  return modelSections.flatMap(({ geometry, silhouettePaths, decimationTolerance }) => {
+    // `modelSilhouetteClipperPaths` normalizes outlines clockwise for direct
+    // offsetting. The cumulative union keeps outer rings counter-clockwise;
+    // mixing those orientations cancels a repeated fallback silhouette under
+    // Clipper's non-zero fill rule.
+    const cumulativeSilhouettePaths = silhouettePaths.map((path) => [...path].reverse())
+    if (!geometry) {
+      if (silhouettePaths.length > 0) {
+        appendUniqueWarning(warnings, { code: 'surface3dLoadFailed' })
+      }
+      return cumulativeSilhouettePaths
+    }
+
+    const section = resolveClosedModelSection(geometry, z, decimationTolerance)
+    if (section.paths.length > 0) {
+      return section.paths
+    }
+    if (section.openChainCount > 0) {
+      if (silhouettePaths.length > 0) {
+        appendUniqueWarning(warnings, { code: 'surface3dOpenMesh' })
+      }
+      return cumulativeSilhouettePaths
+    }
+    return []
+  })
+}
+
+/**
+ * A flat endmill removes a vertical column above its tip, so a cut at a lower
+ * Z must avoid every model section already encountered above it. The levels
+ * arrive top-to-bottom, matching the 3D surface generators' cumulative
+ * protection invariant.
+ */
+export function buildCumulativeModelKeepOuts(
+  modelSections: readonly ImportedModelSection[],
+  levels: readonly number[],
+  warnings: ToolpathWarning[],
+): ReadonlyMap<number, ClipperPath[]> {
+  const keepOutsByLevel = new Map<number, ClipperPath[]>()
+  let protectedAbovePaths: ClipperPath[] = []
+
+  for (const z of levels) {
+    const pathsAtLevel = modelPathsAtLevel(modelSections, z, warnings)
+    if (pathsAtLevel.length > 0) {
+      protectedAbovePaths = unionClipperPaths([
+        ...protectedAbovePaths,
+        ...pathsAtLevel,
+      ])
+    }
+    keepOutsByLevel.set(z, protectedAbovePaths)
+  }
+
+  return keepOutsByLevel
 }
