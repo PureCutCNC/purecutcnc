@@ -17,14 +17,16 @@
 import { Buffer } from 'buffer'
 import { readFileSync } from 'fs'
 import type { ToolLibraryEntry } from '../../../toolLibrary'
-import { circleProfile, newProject, rectProfile, type FeatureInstance, type Project, type SketchFeature, type SketchProfile, type Tool } from '../../../types/project'
+import { circleProfile, newProject, polygonProfile, rectProfile, type FeatureInstance, type Project, type SketchFeature, type SketchProfile, type Tool } from '../../../types/project'
 import { projectWithFeatures } from '../../../test/projectFixtures'
 import { materializeCamPlan } from '../../../store/helpers/camPlanApply'
 import { normalizeProject } from '../../../store/projectStore'
 import { convertProjectUnits } from '../../../utils/units'
 import { generateFinishSurfaceToolpath } from '../../toolpaths/finishSurface'
+import { flattenProfile } from '../../toolpaths/geometry'
 import { generateRoughSurfaceToolpath } from '../../toolpaths/roughSurface'
 import { resolvePocketRegions } from '../../toolpaths/resolver'
+import { tabLayoutFreeFraction, toolCentreContours } from '../../toolpaths/tabs'
 import { camPlanProjectFingerprint, createCamPlan } from './createCamPlan'
 import { reconcileCamPlanDownstream, reconcileCamPlanRest } from './reconcileRest'
 
@@ -214,6 +216,52 @@ function testCompatibleOutsideProfilesShareOneOperation(): void {
   assert(
     plan.sharedTabs[0]?.operationKeys.join() === `${rough?.key},${finish?.key}`,
     'the shared tab proposal is referenced by the grouped rough and finish operations',
+  )
+}
+
+function testSharedTabsFollowNonRectangularEdges(): void {
+  const base = newProject('CAM plan triangular tabs', 'inch')
+  base.stock.thickness = 1
+  const triangle = feature(
+    'outer-triangle',
+    'add',
+    polygonProfile([{ x: 1.5, y: 0 }, { x: 3, y: 3 }, { x: 0, y: 3 }]),
+    1,
+    0,
+    'polygon',
+  )
+  const project = projectWithFeatures({ ...base, tools: [tool('quarter', 'flat_endmill', 0.25)] }, [triangle])
+  const plan = createCamPlan(project, [])
+  const outside = plan.operations.find((draft) => (
+    draft.operation.kind === 'edge_route_outside'
+    && draft.operation.target.source === 'features'
+    && draft.operation.target.featureIds.includes(triangle.id)
+  ))
+  const tabs = plan.sharedTabs.find((draft) => draft.targetFeatureIds.includes(triangle.id))
+  assert(outside?.operation.toolRef, 'the triangular outside route has a selected tool')
+  assert(tabs, 'the triangular outside route has a shared tab draft')
+  const selectedTool = project.tools.find((candidate) => candidate.id === outside.operation.toolRef)
+  assert(selectedTool, 'the planned triangular tool resolves in the project')
+
+  const toolRadius = selectedTool.diameter / 2
+  const contours = toolCentreContours(flattenProfile(triangle.sketch.profile).points, toolRadius)
+  assert(tabs.tabs.length > 0, 'the shared draft proposes tabs for the triangular route')
+  assert(
+    tabs.tabs.every((tab) => 1 - tabLayoutFreeFraction(contours, [tab], toolRadius) > 1e-6),
+    'every CAM Plan tab intersects the triangular tool-centre route',
+  )
+  assert(
+    tabLayoutFreeFraction(contours, tabs.tabs, toolRadius) >= 0.15,
+    'the CAM Plan layout retains the minimum cut-through fraction',
+  )
+
+  const applied = materializeCamPlan(project, plan)
+  assert(applied.ok, 'the triangular CAM Plan materializes')
+  if (!applied.ok) return
+  assert(applied.project.tabs.length === tabs.tabs.length, 'the shared triangular tabs materialize once')
+  assert(
+    applied.project.tabs.every((tab) => 1 - tabLayoutFreeFraction(contours, [tab], toolRadius) > 1e-6),
+    'materialized CAM Plan tabs remain on the triangular route',
   )
 }
 
@@ -900,6 +948,7 @@ testRepresentativePlan()
 testMatchingHolesShareOneDrillingOperation()
 testCompatiblePocketsShareOneOperationAcrossDepths()
 testCompatibleOutsideProfilesShareOneOperation()
+testSharedTabsFollowNonRectangularEdges()
 testOutsideProfilesWithDifferentToolsStaySeparate()
 testExistingOperationsOnlySuppressExactRecommendations()
 testDeterministicAndAtomicApply()
