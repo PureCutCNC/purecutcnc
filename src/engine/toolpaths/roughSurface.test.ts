@@ -244,6 +244,23 @@ function makeTightContainingSubtractFeature(): SketchFeature {
   }
 }
 
+function makeNearlyContainingSubtractFeature(): SketchFeature {
+  return {
+    ...makeTightContainingSubtractFeature(),
+    id: 'pocket-nearly-containing',
+    name: 'Nearly containing pocket',
+    // The model may widen slightly beyond the pocket's rim as it rises. That
+    // does not turn the rim into a top-Z bound for the 3D operation.
+    sketch: {
+      profile: rectProfile(0.05, 0.05, 11.9, 7.9),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+  }
+}
+
 function makeRightHalfSubtractFeature(): SketchFeature {
   return {
     id: 'pocket2',
@@ -921,11 +938,11 @@ function testRoughSurfaceRespectsContainingPocketDepth(): void {
 }
 
 function testRoughSurfaceExtendsContainingPocketAboveItsTop(): void {
-  console.log('Testing rough_surface continues above an enclosing pocket top...')
+  console.log('Testing rough_surface continues above a nearly enclosing pocket top...')
   const { project, operation } = makeProject(['model1'])
   const pocketTop = 4
   const pocketBottom = 3
-  const containingPocket = { ...makeContainingSubtractFeature(), z_top: pocketTop, z_bottom: pocketBottom }
+  const containingPocket = { ...makeNearlyContainingSubtractFeature(), z_top: pocketTop, z_bottom: pocketBottom }
   replaceProjectFeatures(project, [makeContainingAddFeature(), containingPocket, ...project.features])
   const result = generateRoughSurfaceToolpath(project, operation)
   const cuts = cutMoves(result.moves)

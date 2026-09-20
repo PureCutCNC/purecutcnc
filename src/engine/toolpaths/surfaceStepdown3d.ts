@@ -411,16 +411,6 @@ export function resolve3DSurfaceStepdown(
     new Set(target.featureIds),
     modelFootprintPaths,
   )
-  // An enclosing pocket supplies the machining envelope around the model. Its
-  // floor still sets the lowest roughing level, but its top is only the rim of
-  // the opening: a model can rise above it and must keep clearing there. A
-  // merely overlapping subtract retains its own vertical span, so it cannot
-  // narrow unrelated upper model levels.
-  const enclosingSubtractIds = new Set(
-    relatedSubtracts
-      .filter((subtract) => differenceClipperPaths(modelFootprintPaths, subtract.paths).length === 0)
-      .map((subtract) => subtract.feature.id),
-  )
   if (relatedSubtracts.length > 0) {
     const deepestRelatedBottom = relatedSubtracts.reduce(
       (min, subtract) => Math.min(min, subtract.bottomZ),
@@ -549,9 +539,10 @@ export function resolve3DSurfaceStepdown(
     const activeSubtractPaths = relatedSubtracts.length > 0
       ? unionClipperPaths(
         relatedSubtracts
-          .filter((subtract) => z >= subtract.bottomZ - 1e-9 && (
-            enclosingSubtractIds.has(subtract.feature.id) || z <= subtract.topZ + 1e-9
-          ))
+          // A related pocket's floor restricts how low its part of the model
+          // can be roughed. Its top is the rim of an opening, not an upper
+          // machining bound: a model can rise or widen through that rim.
+          .filter((subtract) => z >= subtract.bottomZ - 1e-9)
           .flatMap((subtract) => subtract.paths),
       )
       : []
