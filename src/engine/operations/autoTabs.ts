@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { Operation, Project, SketchFeature, Tab } from '../../types/project'
+import type { Operation, Point, Project, SketchFeature, Tab } from '../../types/project'
 import { getProfileBounds } from '../../types/project'
 import { convertLength } from '../../utils/units'
 import { nextUniqueGeneratedId } from '../../store/helpers/ids'
@@ -43,32 +43,70 @@ function resolveToolDiameter(project: Project, operation: Operation): number | n
 }
 
 const MIN_FREE_PATH_FRACTION = 0.15
+const MIN_TAB_ROUTE_COVERAGE_FRACTION = 1e-6
+
+function nearestPerimeterPoint(points: Point[], target: Point): Point | null {
+  const first = points[0]
+  if (!first || points.length < 2) return null
+
+  let nearest: Point | null = null
+  let nearestDistanceSquared = Number.POSITIVE_INFINITY
+  for (const [index, start] of points.entries()) {
+    const end = points[(index + 1) % points.length] ?? first
+    const dx = end.x - start.x
+    const dy = end.y - start.y
+    const lengthSquared = dx * dx + dy * dy
+    const fraction = lengthSquared > 1e-9
+      ? Math.max(0, Math.min(1, ((target.x - start.x) * dx + (target.y - start.y) * dy) / lengthSquared))
+      : 0
+    const candidate = { x: start.x + dx * fraction, y: start.y + dy * fraction }
+    const distanceSquared = (target.x - candidate.x) ** 2 + (target.y - candidate.y) ** 2
+    if (distanceSquared < nearestDistanceSquared) {
+      nearest = candidate
+      nearestDistanceSquared = distanceSquared
+    }
+  }
+  return nearest
+}
 
 function tabRectsAt(
   count: 2 | 4,
   size: number,
+  profilePoints: Point[],
   bounds: { minX: number; maxX: number; minY: number; maxY: number },
   cx: number,
   cy: number,
   widthIsLongest: boolean,
 ): TabRect[] {
-  if (count === 2) {
-    return widthIsLongest
-      ? [
-          { x: cx - size / 2, y: bounds.minY - size / 2, w: size, h: size },
-          { x: cx - size / 2, y: bounds.maxY - size / 2, w: size, h: size },
-        ]
-      : [
-          { x: bounds.minX - size / 2, y: cy - size / 2, w: size, h: size },
-          { x: bounds.maxX - size / 2, y: cy - size / 2, w: size, h: size },
-        ]
+  const preferred = count === 4
+    ? [
+        { x: cx, y: bounds.minY },
+        { x: cx, y: bounds.maxY },
+        { x: bounds.minX, y: cy },
+        { x: bounds.maxX, y: cy },
+      ]
+    : widthIsLongest
+      ? [{ x: cx, y: bounds.minY }, { x: cx, y: bounds.maxY }]
+      : [{ x: bounds.minX, y: cy }, { x: bounds.maxX, y: cy }]
+  const anchors = preferred
+    .map((target) => nearestPerimeterPoint(profilePoints, target))
+    .filter((anchor): anchor is Point => anchor !== null)
+    .filter((anchor, index, all) => all.findIndex((other) => Math.hypot(other.x - anchor.x, other.y - anchor.y) < 1e-6) === index)
+  return anchors.map((anchor) => ({
+    x: anchor.x - size / 2,
+    y: anchor.y - size / 2,
+    w: size,
+    h: size,
+  }))
+}
+
+function layoutSafelyBlocksRoute(contours: Point[][], rects: TabRect[], toolRadius: number): boolean {
+  if (rects.length === 0 || tabLayoutFreeFraction(contours, rects, toolRadius) < MIN_FREE_PATH_FRACTION) {
+    return false
   }
-  return [
-    { x: cx - size / 2, y: bounds.minY - size / 2, w: size, h: size },
-    { x: cx - size / 2, y: bounds.maxY - size / 2, w: size, h: size },
-    { x: bounds.minX - size / 2, y: cy - size / 2, w: size, h: size },
-    { x: bounds.maxX - size / 2, y: cy - size / 2, w: size, h: size },
-  ]
+  return rects.every((rect) => (
+    1 - tabLayoutFreeFraction(contours, [rect], toolRadius) > MIN_TAB_ROUTE_COVERAGE_FRACTION
+  ))
 }
 
 /** Pure tab drafts shared by the manual command and CAM Plan preview. */
@@ -88,8 +126,9 @@ export function buildAutoTabsForFeature(
   const maxSize = Math.max(minSize, Math.min(width, height) * 0.18)
   const size = Math.min(Math.max(minSize, Math.min(width, height) * 0.1), maxSize)
   const toolRadius = (toolDiameter ?? 0) / 2
+  const profilePoints = flattenProfile(feature.sketch.profile).points
   const contours = toolCentreContours(
-    flattenProfile(feature.sketch.profile).points,
+    profilePoints,
     operation.kind === 'edge_route_inside' ? -toolRadius : toolRadius,
   )
   const widthIsLongest = width >= height
@@ -101,9 +140,13 @@ export function buildAutoTabsForFeature(
     candidates.push({ count: 4, size: minSize }, { count: 2, size: minSize })
   }
   const entries = candidates
-    .map((candidate) => tabRectsAt(candidate.count, candidate.size, bounds, cx, cy, widthIsLongest))
-    .find((rects) => tabLayoutFreeFraction(contours, rects, toolRadius) >= MIN_FREE_PATH_FRACTION)
-    ?? tabRectsAt(2, minSize, bounds, cx, cy, widthIsLongest)
+    .map((candidate) => ({
+      candidate,
+      rects: tabRectsAt(candidate.count, candidate.size, profilePoints, bounds, cx, cy, widthIsLongest),
+    }))
+    .find(({ candidate, rects }) => rects.length === candidate.count && layoutSafelyBlocksRoute(contours, rects, toolRadius))
+    ?.rects
+    ?? []
 
   const created: Tab[] = []
   for (const entry of entries) {

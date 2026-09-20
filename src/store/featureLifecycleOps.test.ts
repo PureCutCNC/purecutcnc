@@ -435,6 +435,47 @@ test('autoPlaceTabsForOperation measures a circle against its real toolpath', ()
   assert(circle.free > 0.15, `circle keeps real cut-through, free fraction ${circle.free.toFixed(3)}`)
 })
 
+test('autoPlaceTabsForOperation anchors every tab to a triangular edge route', () => {
+  resetStore()
+  const store = useProjectStore.getState()
+  store.addPolygonFeature('Triangle', [{ x: 40, y: 10 }, { x: 70, y: 70 }, { x: 10, y: 70 }], 12)
+  const feature = getFeatures()[0]
+  const tool = { ...defaultTool('mm', 1), id: 't1', name: '6.35mm endmill', diameter: 6.35 }
+  useProjectStore.setState({
+    project: { ...getProject(), tools: [tool] },
+  } as unknown as Partial<ProjectStore>)
+
+  const operationId = useProjectStore.getState().addOperation('edge_route_outside', 'rough', {
+    source: 'features',
+    featureIds: [feature.id],
+  })
+  const withOperation = getProject()
+  useProjectStore.setState({
+    project: {
+      ...withOperation,
+      operations: withOperation.operations.map((operation) => (
+        operation.id === operationId ? { ...operation, toolRef: tool.id, stepdown: 4 } : operation
+      )),
+    },
+  } as unknown as Partial<ProjectStore>)
+
+  useProjectStore.getState().autoPlaceTabsForOperation(operationId!)
+
+  const project = getProject()
+  const resolved = resolveFeatureInstance(project, feature.id)!
+  const toolRadius = tool.diameter / 2
+  const contours = toolCentreContours(flattenProfile(resolved.sketch.profile).points, toolRadius)
+  assert(project.tabs.length > 0, 'the triangular profile receives tabs')
+  assert(
+    project.tabs.every((tab) => 1 - tabLayoutFreeFraction(contours, [tab], toolRadius) > 1e-6),
+    'every automatic tab intersects the triangular tool-centre route',
+  )
+  assert(
+    tabLayoutFreeFraction(contours, project.tabs, toolRadius) >= 0.15,
+    'the triangular layout retains the minimum cut-through fraction',
+  )
+})
+
 test('updateTab modifies tab geometry', () => {
   resetStore()
   const store = useProjectStore.getState()
