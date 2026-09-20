@@ -920,6 +920,23 @@ function testRoughSurfaceRespectsContainingPocketDepth(): void {
   assert(minCutZ >= 3 - 1e-9, `expected no rough cuts below containing pocket bottom, got min Z ${minCutZ}`)
 }
 
+function testRoughSurfaceExtendsContainingPocketAboveItsTop(): void {
+  console.log('Testing rough_surface continues above an enclosing pocket top...')
+  const { project, operation } = makeProject(['model1'])
+  const pocketTop = 4
+  const pocketBottom = 3
+  const containingPocket = { ...makeContainingSubtractFeature(), z_top: pocketTop, z_bottom: pocketBottom }
+  replaceProjectFeatures(project, [makeContainingAddFeature(), containingPocket, ...project.features])
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  const minCutZ = Math.min(...cuts.map((move) => move.to.z))
+  const cutsAbovePocketTop = cuts.filter((move) => move.to.z > pocketTop + 1e-9)
+
+  assert(cuts.length > 0, 'expected rough surface moves')
+  assert(cutsAbovePocketTop.length > 0, 'expected rough cuts above the enclosing pocket top through the model upper extent')
+  assert(minCutZ >= pocketBottom - 1e-9, `expected no rough cuts below containing pocket bottom, got min Z ${minCutZ}`)
+}
+
 function testRoughSurfaceRespectsSplitPocketDepths(): void {
   console.log('Testing rough_surface respects split subtract pocket depths...')
   const { project, operation } = makeProject(['model1'])
@@ -1356,6 +1373,7 @@ testRoughSurfaceAvoidsSurroundingAddFeature()
 testRoughSurfaceIgnoresContainingBaseFeature()
 testRoughSurfaceIgnoresTightBaseWhenPocketLimitsEnvelope()
 testRoughSurfaceRespectsContainingPocketDepth()
+testRoughSurfaceExtendsContainingPocketAboveItsTop()
 testRoughSurfaceRespectsSplitPocketDepths()
 testRoughSurfaceLinksOffsetRingsAtZ()
 testRoughSurfaceGenerationMatrix()
