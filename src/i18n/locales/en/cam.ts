@@ -30,7 +30,7 @@ export const camEn = {
   // ── Tool type labels ──
   'cam.toolType.flatEndmill': 'Flat endmill',
   'cam.toolType.ballEndmill': 'Ball endmill',
-  'cam.toolType.vBit': 'V-Bit',
+  'cam.toolType.vBit': 'V-bit',
   'cam.toolType.drill': 'Drill',
 
   // ── Drill type labels ──
@@ -142,7 +142,7 @@ export const camEn = {
   'cam.plan.tabDimensions': 'Shared tab dimensions',
   'cam.plan.tabWidth': 'Width',
   'cam.plan.tabHeight': 'Height',
-  'cam.plan.tabTop': 'Top Z',
+  'cam.plan.tabTop': 'Z top',
   'cam.plan.tabSharedNote': 'Changing a value updates every proposed tab in this shared layout.',
   'cam.plan.tabsDisabledWarning': 'Tabs are disabled for this separating edge cut. Confirm another workholding method before machining.',
   'cam.plan.coverageReview': 'Needs explicit review',
