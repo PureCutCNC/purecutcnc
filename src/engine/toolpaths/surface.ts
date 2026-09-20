@@ -18,7 +18,7 @@ import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import { appendUniqueWarning } from './warningDedup'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
-import { loadSTLTransformedGeometry, type STLTransformedData } from '../csg'
+import { loadSTLTransformedGeometry } from '../csg'
 import { createEntryPolicy, withEntryStartZ, withEntryHandoffFeedScale } from './entry'
 import type {
   ClipperPath,
@@ -113,8 +113,9 @@ import {
 } from './regions'
 import { resolveRegionDomainCentre } from './regionDomain'
 import {
+  buildCumulativeModelKeepOuts,
+  type ImportedModelSection,
   modelSilhouetteClipperPaths,
-  resolveClosedModelSection,
   sliceDecimationTolerance,
 } from './modelSection'
 import {
@@ -140,15 +141,8 @@ interface PolyTreeNode {
 interface SurfaceCleanBand extends ResolvedPocketBand {
   subjectPaths: ClipperPath[]
   protectedPaths: ClipperPath[]
-  modelSections: SurfaceCleanModelSection[]
+  modelSections: ImportedModelSection[]
   regionMask: ReturnType<typeof buildRegionMask>
-}
-
-interface SurfaceCleanModelSection {
-  feature: SketchFeature
-  geometry: STLTransformedData | null
-  silhouettePaths: ClipperPath[]
-  decimationTolerance: number
 }
 
 interface SurfaceCleanResult {
@@ -265,70 +259,6 @@ function buildSurfaceCoverageRegions(
 
   return polyTreeToRegions(polyTree, targetFeatureIds, islandFeatureIds, scale)
     .filter((region) => region.outer.length >= 3)
-}
-
-/**
- * Returns one imported model section at a machining level. Only an unresolved
- * open slice uses the conservative whole silhouette.
- */
-function modelPathsAtLevel(
-  modelSections: readonly SurfaceCleanModelSection[],
-  z: number,
-  warnings: ToolpathWarning[],
-): ClipperPath[] {
-  return modelSections.flatMap(({ geometry, silhouettePaths, decimationTolerance }) => {
-    // `modelSilhouetteClipperPaths` normalizes outlines clockwise for direct
-    // offsetting. The cumulative union keeps outer rings counter-clockwise;
-    // mixing those orientations cancels a repeated fallback silhouette under
-    // Clipper's non-zero fill rule.
-    const cumulativeSilhouettePaths = silhouettePaths.map((path) => [...path].reverse())
-    if (!geometry) {
-      if (silhouettePaths.length > 0) {
-        appendUniqueWarning(warnings, { code: 'surface3dLoadFailed' })
-      }
-      return cumulativeSilhouettePaths
-    }
-
-    const section = resolveClosedModelSection(geometry, z, decimationTolerance)
-    if (section.paths.length > 0) {
-      return section.paths
-    }
-    if (section.openChainCount > 0) {
-      if (silhouettePaths.length > 0) {
-        appendUniqueWarning(warnings, { code: 'surface3dOpenMesh' })
-      }
-      return cumulativeSilhouettePaths
-    }
-    return []
-  })
-}
-
-/**
- * A flat endmill removes a vertical column above its tip, so a cut at a lower
- * Z must avoid every model section already encountered above it. The levels
- * arrive top-to-bottom, matching `resolve3DSurfaceStepdown`'s cumulative
- * `protectedAbovePaths` invariant.
- */
-function buildCumulativeModelKeepOuts(
-  modelSections: readonly SurfaceCleanModelSection[],
-  levels: readonly number[],
-  warnings: ToolpathWarning[],
-): ReadonlyMap<number, ClipperPath[]> {
-  const keepOutsByLevel = new Map<number, ClipperPath[]>()
-  let protectedAbovePaths: ClipperPath[] = []
-
-  for (const z of levels) {
-    const pathsAtLevel = modelPathsAtLevel(modelSections, z, warnings)
-    if (pathsAtLevel.length > 0) {
-      protectedAbovePaths = unionClipperPaths([
-        ...protectedAbovePaths,
-        ...pathsAtLevel,
-      ])
-    }
-    keepOutsByLevel.set(z, protectedAbovePaths)
-  }
-
-  return keepOutsByLevel
 }
 
 function buildSurfaceCoverageRegionsAtLevel(
@@ -563,8 +493,8 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
   const modelSectionTolerance = modelSectionTool
     ? sliceDecimationTolerance(normalizeToolForProject(modelSectionTool, project).radius)
     : 0
-  const modelSections: SurfaceCleanModelSection[] = modelFeatures.map((feature) => ({
-    feature,
+  const modelSections: ImportedModelSection[] = modelFeatures.map((feature) => ({
+    featureId: feature.id,
     geometry: loadSTLTransformedGeometry(feature, project),
     silhouettePaths: modelSilhouetteClipperPaths(feature),
     decimationTolerance: modelSectionTolerance,
@@ -625,7 +555,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
     const regions = polyTreeToRegions(
       polyTree,
       activeTargets.map(({ feature }) => feature.id),
-      [...protectedFeatures.map(({ feature }) => feature.id), ...modelSections.map(({ feature }) => feature.id)],
+      [...protectedFeatures.map(({ feature }) => feature.id), ...modelSections.map(({ featureId }) => featureId)],
     )
 
     if (regions.length === 0) {
@@ -637,7 +567,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
       topZ,
       bottomZ,
       targetFeatureIds: activeTargets.map(({ feature }) => feature.id),
-      islandFeatureIds: [...protectedFeatures.map(({ feature }) => feature.id), ...modelSections.map(({ feature }) => feature.id)],
+      islandFeatureIds: [...protectedFeatures.map(({ feature }) => feature.id), ...modelSections.map(({ featureId }) => featureId)],
       regions,
       subjectPaths,
       protectedPaths,
