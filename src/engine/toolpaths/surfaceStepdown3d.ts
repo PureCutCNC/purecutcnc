@@ -33,6 +33,7 @@ import { loadSTLTransformedGeometry } from '../csg'
 import { buildRegionMask, splitFeatureTargets } from './regions'
 import { resolveRegionDomainArea } from './regionDomain'
 import {
+  buildCumulativeModelKeepOuts,
   modelSilhouetteClipperPaths,
   resolveClosedModelSection,
   sliceDecimationTolerance,
@@ -383,6 +384,13 @@ export function resolve3DSurfaceStepdown(
   // measured against an envelope narrower than the protection reaching it.
   const silhouetteUnion = unionClipperPaths(modelSilhouettePaths)
   const baseSilhouetteOffset = 2 * initialInset + Math.max(minStepover, OUTER_WALL_MARGIN)
+  const outlineForFootprint = (footprintPaths: ClipperPath[], shift: number): ClipperPath[] => {
+    let paths = offsetClipperPaths(footprintPaths, baseSilhouetteOffset + shift)
+    if (regionMask) {
+      paths = resolveRegionDomainArea(paths, regionMask, initialInset)
+    }
+    return paths
+  }
   const outlineCache = new Map<number, ClipperPath[]>()
   const outlineForShift = (shift: number): ClipperPath[] => {
     // Quantized to the Clipper unit the offset would round to anyway, so near
@@ -390,10 +398,7 @@ export function resolve3DSurfaceStepdown(
     const key = Math.round(shift * DEFAULT_CLIPPER_SCALE)
     const cached = outlineCache.get(key)
     if (cached) return cached
-    let paths = offsetClipperPaths(silhouetteUnion, baseSilhouetteOffset + key / DEFAULT_CLIPPER_SCALE)
-    if (regionMask) {
-      paths = resolveRegionDomainArea(paths, regionMask, initialInset)
-    }
+    const paths = outlineForFootprint(silhouetteUnion, key / DEFAULT_CLIPPER_SCALE)
     outlineCache.set(key, paths)
     return paths
   }
@@ -482,6 +487,37 @@ export function resolve3DSurfaceStepdown(
   }
 
   const warnings: ToolpathWarning[] = []
+  // At a related pocket floor, roughing needs the silhouette of the model
+  // volume that remains above that floor rather than its lower global
+  // silhouette. The cumulative section is the same one Pocket and Surface
+  // Clean use for model protection. Away from a floor, roughing keeps its
+  // established outer-wall band so wide clearing patterns retain their usable
+  // domain.
+  const useVisiblePocketFloorEnvelope = operation.kind === 'rough_surface' && relatedSubtracts.length > 0
+  const roughProtectionLevels = useVisiblePocketFloorEnvelope
+    ? roughLevels.map((z) => z - axialLeave)
+    : []
+  const visiblePocketKeepOuts = useVisiblePocketFloorEnvelope
+    ? buildCumulativeModelKeepOuts([{
+      featureId: modelFeature.id,
+      geometry: stlData,
+      silhouettePaths: modelSilhouettePaths,
+      decimationTolerance,
+    }], roughProtectionLevels, warnings)
+    : null
+  const visiblePocketFootprintPaths = roughProtectionLevels.length > 0
+    ? visiblePocketKeepOuts?.get(roughProtectionLevels[roughProtectionLevels.length - 1]) ?? []
+    : []
+  const visiblePocketOutlineCache = new Map<number, ClipperPath[]>()
+  const visiblePocketOutlineForShift = (shift: number): ClipperPath[] => {
+    const key = Math.round(shift * DEFAULT_CLIPPER_SCALE)
+    const cached = visiblePocketOutlineCache.get(key)
+    if (cached) return cached
+    const paths = outlineForFootprint(visiblePocketFootprintPaths, key / DEFAULT_CLIPPER_SCALE)
+    visiblePocketOutlineCache.set(key, paths)
+    return paths
+  }
+
   const depthWarning = checkMaxCutDepthWarning(tool, Math.abs(stockTop - effectiveBottom))
   if (depthWarning) {
     warnings.push(depthWarning)
@@ -534,7 +570,14 @@ export function resolve3DSurfaceStepdown(
     if (modelSection.deviation > appliedDecimation) {
       appliedDecimation = modelSection.deviation
     }
-    const outlinePaths = outlineForShift(2 * appliedDecimation)
+    // Cleanup deliberately retains its established fixed wall envelope and is
+    // not a second roughing pass. Keep the global silhouette too when there is
+    // no usable visible section, including the slice sampler's top boundary.
+    const isVisiblePocketFloor = useVisiblePocketFloorEnvelope
+      && relatedSubtracts.some((subtract) => sameZ(z, subtract.bottomZ + axialLeave))
+    const outlinePaths = isVisiblePocketFloor && visiblePocketFootprintPaths.length > 0
+      ? visiblePocketOutlineForShift(2 * appliedDecimation)
+      : outlineForShift(2 * appliedDecimation)
 
     const activeSubtractPaths = relatedSubtracts.length > 0
       ? unionClipperPaths(

@@ -954,6 +954,26 @@ function testRoughSurfaceExtendsContainingPocketAboveItsTop(): void {
   assert(minCutZ >= pocketBottom - 1e-9, `expected no rough cuts below containing pocket bottom, got min Z ${minCutZ}`)
 }
 
+function testRoughSurfaceClipsLowerOnlySilhouetteAtPocketFloor(): void {
+  console.log('Testing rough_surface excludes lower-only model silhouette at a pocket floor...')
+  const { project, operation } = makeProject(['model1'])
+  const pocketBottom = 3
+  const containingPocket = { ...makeContainingSubtractFeature(), z_bottom: pocketBottom }
+  replaceProjectFeatures(project, [makeContainingAddFeature(), containingPocket, ...project.features])
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const floorCuts = cutMoves(result.moves).filter((move) => Math.abs(move.to.z - pocketBottom) < 1e-9)
+  const floorBounds = cutBounds(floorCuts)
+
+  assert(floorCuts.length > 0, 'expected rough cuts at the containing pocket floor')
+  assert(floorBounds !== null, 'expected bounds for the containing pocket floor')
+  if (!floorBounds) return
+  // The frustum is 12 mm wide at Z=0 but only spans X=2..10 from this floor
+  // upward. Its floor envelope can extend by the 0.25 mm tool radius, but it
+  // must not follow the lower-only X=0..2 or X=10..12 silhouette.
+  assert(floorBounds.minX >= 1.749, `expected floor min X >= 1.749, got ${floorBounds.minX}`)
+  assert(floorBounds.maxX <= 10.251, `expected floor max X <= 10.251, got ${floorBounds.maxX}`)
+}
+
 function testRoughSurfaceRespectsSplitPocketDepths(): void {
   console.log('Testing rough_surface respects split subtract pocket depths...')
   const { project, operation } = makeProject(['model1'])
@@ -1391,6 +1411,7 @@ testRoughSurfaceIgnoresContainingBaseFeature()
 testRoughSurfaceIgnoresTightBaseWhenPocketLimitsEnvelope()
 testRoughSurfaceRespectsContainingPocketDepth()
 testRoughSurfaceExtendsContainingPocketAboveItsTop()
+testRoughSurfaceClipsLowerOnlySilhouetteAtPocketFloor()
 testRoughSurfaceRespectsSplitPocketDepths()
 testRoughSurfaceLinksOffsetRingsAtZ()
 testRoughSurfaceGenerationMatrix()

@@ -404,7 +404,7 @@ function testTrochoidalRowsOrbit(): void {
  *
  * Whether a pass exhausts the budget depends on the job — roughly cut area x
  * number of levels / ring spacing, for every clearing kind alike — not on a
- * stepover threshold. The 3D roughing fixture at 0.3 is simply one job that
+ * stepover threshold. The 3D roughing fixture at 0.25 is simply one job that
  * does — its stored 0.32 did until #790 joined rings at depth, which saved the
  * helical entries that took it past the ceiling (997,711 moves now). What is
  * asserted is the refusal: an empty program carrying the budget warning. The
@@ -419,7 +419,7 @@ function testTrochoidalBudgetRefusalEmitsNothing(): void {
   const result = generateRoughSurfaceToolpath(project, {
     ...operation,
     pocketPattern: 'trochoidal',
-    stepover: 0.3,
+    stepover: 0.25,
   })
   assert(
     result.moves.length === 0,
