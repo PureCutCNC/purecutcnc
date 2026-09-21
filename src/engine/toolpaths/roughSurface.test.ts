@@ -244,6 +244,23 @@ function makeTightContainingSubtractFeature(): SketchFeature {
   }
 }
 
+function makeNearlyContainingSubtractFeature(): SketchFeature {
+  return {
+    ...makeTightContainingSubtractFeature(),
+    id: 'pocket-nearly-containing',
+    name: 'Nearly containing pocket',
+    // The model may widen slightly beyond the pocket's rim as it rises. That
+    // does not turn the rim into a top-Z bound for the 3D operation.
+    sketch: {
+      profile: rectProfile(0.05, 0.05, 11.9, 7.9),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+  }
+}
+
 function makeRightHalfSubtractFeature(): SketchFeature {
   return {
     id: 'pocket2',
@@ -897,6 +914,47 @@ function testRoughSurfaceIgnoresContainingBaseFeature(): void {
   assert(cutMoves(result.moves).length > 0, 'expected rough surface moves when a base add feature contains the model envelope')
 }
 
+function testRoughSurfaceUsesContainingAddTopAsEmbeddedModelFloor(): void {
+  console.log('Testing rough_surface uses a containing add top as the embedded-model floor...')
+  const { project, operation } = makeProject(['model1'])
+  const embeddedFloor = {
+    ...makeTightContainingAddFeature(),
+    id: 'embedded-floor',
+    name: 'Embedded model floor',
+    z_top: 3,
+    z_bottom: 0,
+  }
+  replaceProjectFeatures(project, [embeddedFloor, ...project.features])
+  project.tools[0] = { ...project.tools[0], maxCutDepth: 4 }
+
+  const resolved = resolve3DSurfaceStepdown(project, operation)
+  assert(resolved.ok, 'expected embedded model floor to resolve')
+  if (!resolved.ok) return
+  assert(
+    resolved.resolved.levels.every((level) => level.z >= 3 - 1e-9),
+    `expected no planned rough level below the containing add top, got ${resolved.resolved.levels.map((level) => level.z).join(', ')}`,
+  )
+
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  const upperCuts = cuts.filter((move) => Math.abs(move.to.z - 4) < 1e-9)
+  const upperBounds = cutBounds(upperCuts)
+
+  assert(cuts.length > 0, 'expected rough cuts above the embedded-model floor')
+  assert(
+    !result.warnings.some((warning) => warning.code === 'cutDepthExceedsToolMax'),
+    `expected the containing add top to remove the phantom depth warning, got ${result.warnings.join(', ')}`,
+  )
+  assert(Math.min(...cuts.map((move) => move.to.z)) >= 3 - 1e-9, 'expected no rough cuts below the containing add top')
+  assert(upperBounds !== null, 'expected rough cuts at Z=4')
+  if (!upperBounds) return
+  // The frustum is narrower at Z=4, but an embedded-model rough pass keeps
+  // the floor-to-top mesh envelope and cuts only within its floor section,
+  // rather than the stored 0..12 silhouette.
+  assert(upperBounds.minX >= 1.749, `expected upper mesh-envelope min X >= 1.749, got ${upperBounds.minX}`)
+  assert(upperBounds.maxX <= 10.251, `expected upper mesh-envelope max X <= 10.251, got ${upperBounds.maxX}`)
+}
+
 function testRoughSurfaceIgnoresTightBaseWhenPocketLimitsEnvelope(): void {
   console.log('Testing rough_surface ignores tight base when containing pocket limits envelope...')
   const { project, operation } = makeProject(['model1'])
@@ -918,6 +976,65 @@ function testRoughSurfaceRespectsContainingPocketDepth(): void {
   assert(result.warnings.length === 0, `unexpected warnings: ${result.warnings.join(', ')}`)
   assert(cutMoves(result.moves).length > 0, 'expected rough surface moves')
   assert(minCutZ >= 3 - 1e-9, `expected no rough cuts below containing pocket bottom, got min Z ${minCutZ}`)
+}
+
+function testRoughSurfaceExtendsContainingPocketAboveItsTop(): void {
+  console.log('Testing rough_surface continues above a nearly enclosing pocket top...')
+  const { project, operation } = makeProject(['model1'])
+  const pocketTop = 4
+  const pocketBottom = 3
+  const containingPocket = { ...makeNearlyContainingSubtractFeature(), z_top: pocketTop, z_bottom: pocketBottom }
+  replaceProjectFeatures(project, [makeContainingAddFeature(), containingPocket, ...project.features])
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  const minCutZ = Math.min(...cuts.map((move) => move.to.z))
+  const cutsAbovePocketTop = cuts.filter((move) => move.to.z > pocketTop + 1e-9)
+
+  assert(cuts.length > 0, 'expected rough surface moves')
+  assert(cutsAbovePocketTop.length > 0, 'expected rough cuts above the enclosing pocket top through the model upper extent')
+  assert(minCutZ >= pocketBottom - 1e-9, `expected no rough cuts below containing pocket bottom, got min Z ${minCutZ}`)
+}
+
+function testRoughSurfaceKeepsTheModelEnvelopeInsideThePocket(): void {
+  console.log('Testing rough_surface keeps the model envelope inside the pocket at every level...')
+  const { project, operation } = makeProject(['model1'])
+  const pocketBottom = 3
+  const containingPocket = { ...makeContainingSubtractFeature(), z_bottom: pocketBottom }
+  replaceProjectFeatures(project, [makeContainingAddFeature(), containingPocket, ...project.features])
+  const result = generateRoughSurfaceToolpath(project, operation)
+
+  // The envelope is the model's own outline read off the mesh from the pocket
+  // floor up. In this fixture that is the frustum's floor section, X=2..10, and
+  // the pocket around it reaches X=-2..14. The pocket's own area is not model
+  // material, so no level may cut there: every level stays within the envelope,
+  // 2 - 0.25 = 1.749 through 10 + 0.25 = 10.251 (issue #821).
+  for (const z of [3, 4, 5, 6]) {
+    const levelCuts = cutMoves(result.moves).filter((move) => Math.abs(move.to.z - z) < 1e-9)
+    const bounds = cutBounds(levelCuts)
+    assert(levelCuts.length > 0, `expected rough cuts at Z=${z}`)
+    if (!bounds) continue
+    assert(bounds.minX >= 1.749, `expected Z=${z} min X >= 1.749, got ${bounds.minX}`)
+    assert(bounds.maxX <= 10.251, `expected Z=${z} max X <= 10.251, got ${bounds.maxX}`)
+  }
+}
+
+function testRoughSurfaceClearsOverTheModelLowerParts(): void {
+  console.log('Testing rough_surface clears the stock standing over the model lower parts...')
+  const { project, operation } = makeProject(['model1'])
+  const pocketBottom = 3
+  const containingPocket = { ...makeContainingSubtractFeature(), z_bottom: pocketBottom }
+  replaceProjectFeatures(project, [makeContainingAddFeature(), containingPocket, ...project.features])
+  const result = generateRoughSurfaceToolpath(project, operation)
+
+  // The frustum narrows with height — at Z=4 it spans X=2.667..9.333 — but the
+  // stock standing above the taper inside the model's own envelope is still this
+  // operation's to remove. An envelope taken from the model's section at each Z
+  // would ring the section and leave that standing, which is the #821 report.
+  const upperCuts = cutMoves(result.moves).filter((move) => Math.abs(move.to.z - 4) < 1e-9)
+  const overTheTaper = upperCuts.filter((move) => [move.from, move.to].some((point) => point.x <= 2.4))
+  assert(upperCuts.length > 0, 'expected rough cuts at Z=4')
+  assert(overTheTaper.length > 0,
+    'expected rough cuts over the model lower parts at Z=4, inside the model envelope')
 }
 
 function testRoughSurfaceRespectsSplitPocketDepths(): void {
@@ -1354,8 +1471,12 @@ testRoughSurfaceProtectsOpenMeshSlicesConservatively()
 testRoughSurfaceUsesClosedSectionAlongsideOpenChains()
 testRoughSurfaceAvoidsSurroundingAddFeature()
 testRoughSurfaceIgnoresContainingBaseFeature()
+testRoughSurfaceUsesContainingAddTopAsEmbeddedModelFloor()
 testRoughSurfaceIgnoresTightBaseWhenPocketLimitsEnvelope()
 testRoughSurfaceRespectsContainingPocketDepth()
+testRoughSurfaceExtendsContainingPocketAboveItsTop()
+testRoughSurfaceKeepsTheModelEnvelopeInsideThePocket()
+testRoughSurfaceClearsOverTheModelLowerParts()
 testRoughSurfaceRespectsSplitPocketDepths()
 testRoughSurfaceLinksOffsetRingsAtZ()
 testRoughSurfaceGenerationMatrix()

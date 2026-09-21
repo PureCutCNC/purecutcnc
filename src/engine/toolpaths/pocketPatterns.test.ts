@@ -308,9 +308,18 @@ function generateFloor(
   if (kind === 'rough_surface') {
     // Roughing is model-aware with no wall/floor split; the whole pass is the
     // level clearing. The stored op in this fixture keeps every other setting.
-    const project = loadFixture('model-in-pocket.camj')
+    //
+    // `3d-imported-block-test3.camj`, not `model-in-pocket.camj`: the pocket
+    // fixture's model is a 0.78 in^2 prism, so the material a 3D rough owns
+    // there — the envelope around it, bounded by the pocket — is a ring one
+    // channel wide, and a trochoidal channel has to keep its guide half a
+    // channel off every wall. It fits nowhere, which the resolver now names
+    // (`pocketTrochoidalTightSpot`) instead of emitting nothing in silence. The
+    // offset row still covers that fixture's domain through
+    // `src/engine/toolpaths/roughSurface.test.ts`.
+    const project = loadFixture('3d-imported-block-test3.camj')
     const operation = project.operations.find((candidate) => candidate.kind === 'rough_surface')
-    assert(operation, 'expected a rough_surface operation in model-in-pocket.camj')
+    assert(operation, 'expected a rough_surface operation in 3d-imported-block-test3.camj')
     return generateRoughSurfaceToolpath(project, {
       ...operation,
       pocketPattern: pattern,
@@ -404,22 +413,25 @@ function testTrochoidalRowsOrbit(): void {
  *
  * Whether a pass exhausts the budget depends on the job — roughly cut area x
  * number of levels / ring spacing, for every clearing kind alike — not on a
- * stepover threshold. The 3D roughing fixture at 0.3 is simply one job that
- * does — its stored 0.32 did until #790 joined rings at depth, which saved the
- * helical entries that took it past the ceiling (997,711 moves now). What is
- * asserted is the refusal: an empty program carrying the budget warning. The
- * alternative is emitting the rings that did fit, after which the level below
- * descends into channels no orbit has opened.
+ * stepover threshold. The 3D roughing fixture at 0.25 is simply one job that
+ * does. What is asserted is the refusal: an empty program carrying the budget
+ * warning. The alternative is emitting the rings that did fit, after which the
+ * level below descends into channels no orbit has opened.
+ *
+ * `3d-imported-block-test3.camj` for the same reason the matrix row uses it: in
+ * `model-in-pocket.camj` the 3D rough's domain is a ring one channel wide, so
+ * that job now refuses for a different, also-named reason
+ * (`pocketTrochoidalTightSpot`) and would say nothing about the budget.
  */
 function testTrochoidalBudgetRefusalEmitsNothing(): void {
   console.log('Testing a trochoidal pass that exhausts its budget emits nothing...')
-  const project = loadFixture('model-in-pocket.camj')
+  const project = loadFixture('3d-imported-block-test3.camj')
   const operation = project.operations.find((candidate) => candidate.kind === 'rough_surface')
-  assert(operation, 'expected a rough_surface operation in model-in-pocket.camj')
+  assert(operation, 'expected a rough_surface operation in 3d-imported-block-test3.camj')
   const result = generateRoughSurfaceToolpath(project, {
     ...operation,
     pocketPattern: 'trochoidal',
-    stepover: 0.3,
+    stepover: 0.25,
   })
   assert(
     result.moves.length === 0,

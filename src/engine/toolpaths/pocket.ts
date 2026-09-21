@@ -3282,13 +3282,34 @@ export function resolveTrochoidalClearing(params: {
 
   const rawGuideInset = geometry.cutWidth / 2 + toolDiameter * TROCHOIDAL_GUIDE_SAFETY_FRACTION + radialLeave
   const rawCutterInset = toolRadius + radialLeave
+  const guideInset = rawGuideInset - regionsInsetBy
   warnTrochoidalTightSpots(
     regions,
-    rawGuideInset - regionsInsetBy,
+    guideInset,
     geometry.cutWidth,
     rawCutterInset - regionsInsetBy,
     warnings,
   )
+  // A region too narrow to hold a guide anywhere is a tight spot in its
+  // entirety, and the scan above cannot report it: its own hairline bound is
+  // wider than the shape, so every piece it finds is filtered out as an
+  // artefact of comparing two offsets. Left there, the channel fits nowhere, not
+  // a single ring is emitted, and the level comes back empty with nothing said —
+  // the failure mode #609 and #789 each shipped once. Named per region, by the
+  // same code and the same centre the scan uses.
+  if (guideInset > 0 && regions.length > 0
+    && regions.every((region) => buildInsetRegions(region, guideInset).length === 0)) {
+    for (const region of regions) {
+      if (region.outer.length < 3) continue
+      let x = 0
+      let y = 0
+      for (const point of region.outer) { x += point.x; y += point.y }
+      appendUniqueWarning(warnings, {
+        code: 'pocketTrochoidalTightSpot',
+        params: { x: x / region.outer.length, y: y / region.outer.length, width: geometry.cutWidth },
+      })
+    }
+  }
 
   return {
     channelWidth: geometry.cutWidth,

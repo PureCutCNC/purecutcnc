@@ -22,6 +22,7 @@ import {
   checkMaxCutDepthWarning,
   getOperationSafeZ,
   normalizeToolForProject,
+  resolveFeatureZSpan,
 } from './geometry'
 import {
   buildInsetRegions,
@@ -33,6 +34,7 @@ import { loadSTLTransformedGeometry } from '../csg'
 import { buildRegionMask, splitFeatureTargets } from './regions'
 import { resolveRegionDomainArea } from './regionDomain'
 import {
+  buildCumulativeModelKeepOutPlan,
   modelSilhouetteClipperPaths,
   resolveClosedModelSection,
   sliceDecimationTolerance,
@@ -383,6 +385,13 @@ export function resolve3DSurfaceStepdown(
   // measured against an envelope narrower than the protection reaching it.
   const silhouetteUnion = unionClipperPaths(modelSilhouettePaths)
   const baseSilhouetteOffset = 2 * initialInset + Math.max(minStepover, OUTER_WALL_MARGIN)
+  const outlineForFootprint = (footprintPaths: ClipperPath[], shift: number): ClipperPath[] => {
+    let paths = offsetClipperPaths(footprintPaths, baseSilhouetteOffset + shift)
+    if (regionMask) {
+      paths = resolveRegionDomainArea(paths, regionMask, initialInset)
+    }
+    return paths
+  }
   const outlineCache = new Map<number, ClipperPath[]>()
   const outlineForShift = (shift: number): ClipperPath[] => {
     // Quantized to the Clipper unit the offset would round to anyway, so near
@@ -390,10 +399,7 @@ export function resolve3DSurfaceStepdown(
     const key = Math.round(shift * DEFAULT_CLIPPER_SCALE)
     const cached = outlineCache.get(key)
     if (cached) return cached
-    let paths = offsetClipperPaths(silhouetteUnion, baseSilhouetteOffset + key / DEFAULT_CLIPPER_SCALE)
-    if (regionMask) {
-      paths = resolveRegionDomainArea(paths, regionMask, initialInset)
-    }
+    const paths = outlineForFootprint(silhouetteUnion, key / DEFAULT_CLIPPER_SCALE)
     outlineCache.set(key, paths)
     return paths
   }
@@ -406,17 +412,32 @@ export function resolve3DSurfaceStepdown(
   }
 
   const modelFootprintPaths = unionClipperPaths(modelSilhouettePaths)
+  const targetFeatureIds = new Set(target.featureIds)
   const relatedSubtracts = relatedSubtractFeatures(
     project,
-    new Set(target.featureIds),
+    targetFeatureIds,
     modelFootprintPaths,
   )
-  if (relatedSubtracts.length > 0) {
-    const deepestRelatedBottom = relatedSubtracts.reduce(
-      (min, subtract) => Math.min(min, subtract.bottomZ),
-      Infinity,
-    )
-    effectiveBottom = Math.max(effectiveBottom, deepestRelatedBottom + axialLeave)
+  // A model can be embedded directly in a containing Add instead of a 2D
+  // subtract pocket. That Add's exposed top is the same lower machining bound
+  // as a pocket floor: mesh below it is buried material, not a roughing target.
+  // Only use an Add that spans the model's own bottom and stops below its top;
+  // a full-height base remains the established free-standing-model path.
+  const containingAddFloorZ = relatedSubtracts.length === 0
+    ? containingAddFeatures(project, targetFeatureIds, modelFootprintPaths, 0).reduce((floorZ, feature) => {
+      const span = resolveFeatureZSpan(project, feature)
+      return span.min <= modelBottomZ + Z_TOLERANCE
+        && span.max > modelBottomZ + Z_TOLERANCE
+        && span.max < modelTopZ - Z_TOLERANCE
+        ? Math.max(floorZ, span.max)
+        : floorZ
+    }, -Infinity)
+    : -Infinity
+  const modelFloorZ = relatedSubtracts.length > 0
+    ? relatedSubtracts.reduce((min, subtract) => Math.min(min, subtract.bottomZ), Infinity)
+    : containingAddFloorZ
+  if (Number.isFinite(modelFloorZ)) {
+    effectiveBottom = Math.max(effectiveBottom, modelFloorZ + axialLeave)
     if (effectiveBottom > modelTopZ + 1e-6) {
       return {
         ok: false,
@@ -482,6 +503,49 @@ export function resolve3DSurfaceStepdown(
   }
 
   const warnings: ToolpathWarning[] = []
+  // The model's cutting envelope is its own outline, read off the mesh from the
+  // related pocket's floor upward, and then bounded by that pocket. Two things
+  // follow from that pair, and both are the point:
+  //
+  //  * The stored silhouette is an import-time outline and is only an
+  //    approximation, so it cannot be the boundary the cutter approaches. The
+  //    cumulative section is what Pocket and Surface Clean protect with
+  //    (`buildCumulativeModelKeepOuts`), and it is taken from the floor up so
+  //    mesh buried *below* the floor — which is stock, not model — cannot widen
+  //    the envelope into a flat pass over ground the model never occupies.
+  //  * The envelope is one footprint for the whole operation, not one per level.
+  //    A per-level footprint collapses the envelope onto the model's own section
+  //    at that Z, which rings a model that narrows with height and leaves the
+  //    stock standing over its lower parts with no pass at all (issue #821).
+  //
+  // A model with no related subtract keeps its established outer-wall band: that
+  // band is the whole domain, and it carries the pass along the outside wall.
+  const useModelFloorEnvelope = operation.kind === 'rough_surface' && Number.isFinite(modelFloorZ)
+  const envelopeProtectionLevels = useModelFloorEnvelope ? roughLevels.map((z) => z - axialLeave) : []
+  const modelSectionPlan = useModelFloorEnvelope
+    ? buildCumulativeModelKeepOutPlan([{
+      featureId: modelFeature.id,
+      geometry: stlData,
+      silhouettePaths: modelSilhouettePaths,
+      decimationTolerance,
+    }], envelopeProtectionLevels, warnings)
+    : null
+  const modelKeepOutsByLevel = modelSectionPlan?.keepOutsByLevel
+  // The deepest level is the pocket floor (or the model's own bottom when that
+  // is lower), so this is the model standing above the floor.
+  const floorFootprintPaths = envelopeProtectionLevels.length > 0
+    ? modelKeepOutsByLevel?.get(envelopeProtectionLevels[envelopeProtectionLevels.length - 1]) ?? []
+    : []
+  const pocketEnvelopeCache = new Map<number, ClipperPath[]>()
+  const pocketEnvelopeForShift = (shift: number): ClipperPath[] => {
+    const key = Math.round(shift * DEFAULT_CLIPPER_SCALE)
+    const cached = pocketEnvelopeCache.get(key)
+    if (cached) return cached
+    const paths = outlineForFootprint(floorFootprintPaths, key / DEFAULT_CLIPPER_SCALE)
+    pocketEnvelopeCache.set(key, paths)
+    return paths
+  }
+
   const depthWarning = checkMaxCutDepthWarning(tool, Math.abs(stockTop - effectiveBottom))
   if (depthWarning) {
     warnings.push(depthWarning)
@@ -529,20 +593,30 @@ export function resolve3DSurfaceStepdown(
 
   for (const z of roughLevels) {
     const protectionZ = z - axialLeave
-    const modelSection = resolveClosedModelSection(stlData, protectionZ, decimationTolerance)
+    const modelSection = modelSectionPlan?.sectionsByLevel.get(protectionZ)?.get(modelFeature.id)
+      ?? resolveClosedModelSection(stlData, protectionZ, decimationTolerance)
     const slicePaths = modelSection.paths
     if (modelSection.deviation > appliedDecimation) {
       appliedDecimation = modelSection.deviation
     }
-    const outlinePaths = outlineForShift(2 * appliedDecimation)
-
     const activeSubtractPaths = relatedSubtracts.length > 0
       ? unionClipperPaths(
         relatedSubtracts
-          .filter((subtract) => z <= subtract.topZ + 1e-9 && z >= subtract.bottomZ - 1e-9)
+          // A related pocket's floor restricts how low its part of the model
+          // can be roughed. Its top is the rim of an opening, not an upper
+          // machining bound: a model can rise or widen through that rim.
+          .filter((subtract) => z >= subtract.bottomZ - 1e-9)
           .flatMap((subtract) => subtract.paths),
       )
       : []
+    // The model's envelope, bounded by the pocket it sits in. Inside the pocket
+    // the boundary is that intersection, so no level reaches pocket area that
+    // lies outside the model's own outline. A missing envelope — a slice sampler
+    // top boundary, or no usable section at all — keeps the conservative stored
+    // silhouette.
+    const outlinePaths = useModelFloorEnvelope && floorFootprintPaths.length > 0
+      ? pocketEnvelopeForShift(2 * appliedDecimation)
+      : outlineForShift(2 * appliedDecimation)
     const levelOutlinePaths = relatedSubtracts.length > 0
       ? intersectClipperPaths(outlinePaths, activeSubtractPaths)
       : outlinePaths
@@ -553,6 +627,12 @@ export function resolve3DSurfaceStepdown(
       }
       continue
     }
+
+    // What the mesh actually occupies at this level: the cumulative keep-out
+    // Pocket and Surface Clean protect with. This is the boundary the cutter
+    // approaches, and it stands in for the stored silhouette wherever a level
+    // would otherwise fall back to it.
+    const modelKeepOutPaths = modelKeepOutsByLevel?.get(protectionZ) ?? []
 
     // Name the clamps that actually ate into this level, the same way the 2D
     // generators do. Avoiding a clamp without saying so leaves an unexplained
@@ -600,6 +680,7 @@ export function resolve3DSurfaceStepdown(
     let protectedAtLevel = unionClipperPaths([
       ...protectedAbovePaths,
       ...slicePaths,
+      ...modelKeepOutPaths,
       ...surroundingProtectedPaths,
       ...retainedPaths,
     ])
@@ -668,9 +749,17 @@ export function resolve3DSurfaceStepdown(
     const sliceArea = calculateClipperArea(slicePaths)
     const isSolidFloor = sliceArea > 0.95 * silhouetteArea
     if (isSolidFloor || (modelSection.openChainCount > 0 && slicePaths.length === 0)) {
+      // A solid-floor level is where the stored silhouette — an import-time
+      // outline — diverges most from what the mesh actually occupies, so the
+      // mesh's own cumulative keep-out stands in for it whenever there is one.
+      // An open slice with nothing closed is the one case with no mesh section
+      // to read a boundary from, and keeps the conservative fallback.
+      const solidFloorPaths = slicePaths.length > 0 && modelKeepOutPaths.length > 0
+        ? modelKeepOutPaths
+        : modelFootprintPaths
       protectedAbovePaths = unionClipperPaths([
         ...protectedAbovePaths,
-        ...modelFootprintPaths,
+        ...solidFloorPaths,
       ])
     } else if (slicePaths.length > 0) {
       protectedAbovePaths = unionClipperPaths([

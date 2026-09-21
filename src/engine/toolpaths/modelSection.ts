@@ -46,6 +46,16 @@ export interface ImportedModelSection {
   decimationTolerance: number
 }
 
+/**
+ * One top-down model-section pass. Consumers that need the raw section as
+ * well as its cumulative keep-out share the same mesh slice rather than
+ * resolving it twice.
+ */
+export interface CumulativeModelKeepOutPlan {
+  keepOutsByLevel: ReadonlyMap<number, ClipperPath[]>
+  sectionsByLevel: ReadonlyMap<number, ReadonlyMap<string, ModelSection>>
+}
+
 const EMPTY_MODEL_SECTION: ModelSection = {
   paths: [],
   deviation: 0,
@@ -124,8 +134,9 @@ function modelPathsAtLevel(
   modelSections: readonly ImportedModelSection[],
   z: number,
   warnings: ToolpathWarning[],
+  sectionsByFeatureId?: Map<string, ModelSection>,
 ): ClipperPath[] {
-  return modelSections.flatMap(({ geometry, silhouettePaths, decimationTolerance }) => {
+  return modelSections.flatMap(({ featureId, geometry, silhouettePaths, decimationTolerance }) => {
     // `modelSilhouetteClipperPaths` normalizes outlines clockwise for direct
     // offsetting. The cumulative union keeps outer rings counter-clockwise;
     // mixing those orientations cancels a repeated fallback silhouette under
@@ -139,6 +150,7 @@ function modelPathsAtLevel(
     }
 
     const section = resolveClosedModelSection(geometry, z, decimationTolerance)
+    sectionsByFeatureId?.set(featureId, section)
     if (section.paths.length > 0) {
       return section.paths
     }
@@ -158,16 +170,18 @@ function modelPathsAtLevel(
  * arrive top-to-bottom, matching the 3D surface generators' cumulative
  * protection invariant.
  */
-export function buildCumulativeModelKeepOuts(
+export function buildCumulativeModelKeepOutPlan(
   modelSections: readonly ImportedModelSection[],
   levels: readonly number[],
   warnings: ToolpathWarning[],
-): ReadonlyMap<number, ClipperPath[]> {
+): CumulativeModelKeepOutPlan {
   const keepOutsByLevel = new Map<number, ClipperPath[]>()
+  const sectionsByLevel = new Map<number, ReadonlyMap<string, ModelSection>>()
   let protectedAbovePaths: ClipperPath[] = []
 
   for (const z of levels) {
-    const pathsAtLevel = modelPathsAtLevel(modelSections, z, warnings)
+    const sectionsAtLevel = new Map<string, ModelSection>()
+    const pathsAtLevel = modelPathsAtLevel(modelSections, z, warnings, sectionsAtLevel)
     if (pathsAtLevel.length > 0) {
       protectedAbovePaths = unionClipperPaths([
         ...protectedAbovePaths,
@@ -175,7 +189,20 @@ export function buildCumulativeModelKeepOuts(
       ])
     }
     keepOutsByLevel.set(z, protectedAbovePaths)
+    sectionsByLevel.set(z, sectionsAtLevel)
   }
 
-  return keepOutsByLevel
+  return { keepOutsByLevel, sectionsByLevel }
+}
+
+/**
+ * A flat endmill removes a vertical column above its tip, so a cut at a lower
+ * Z must avoid every model section already encountered above it.
+ */
+export function buildCumulativeModelKeepOuts(
+  modelSections: readonly ImportedModelSection[],
+  levels: readonly number[],
+  warnings: ToolpathWarning[],
+): ReadonlyMap<number, ClipperPath[]> {
+  return buildCumulativeModelKeepOutPlan(modelSections, levels, warnings).keepOutsByLevel
 }
