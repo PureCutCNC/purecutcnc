@@ -487,34 +487,45 @@ export function resolve3DSurfaceStepdown(
   }
 
   const warnings: ToolpathWarning[] = []
-  // At a related pocket floor, roughing needs the silhouette of the model
-  // volume that remains above that floor rather than its lower global
-  // silhouette. The cumulative section is the same one Pocket and Surface
-  // Clean use for model protection. Away from a floor, roughing keeps its
-  // established outer-wall band so wide clearing patterns retain their usable
-  // domain.
-  const useVisiblePocketFloorEnvelope = operation.kind === 'rough_surface' && relatedSubtracts.length > 0
-  const roughProtectionLevels = useVisiblePocketFloorEnvelope
-    ? roughLevels.map((z) => z - axialLeave)
-    : []
-  const visiblePocketKeepOuts = useVisiblePocketFloorEnvelope
+  // The model's cutting envelope is its own outline, read off the mesh from the
+  // related pocket's floor upward, and then bounded by that pocket. Two things
+  // follow from that pair, and both are the point:
+  //
+  //  * The stored silhouette is an import-time outline and is only an
+  //    approximation, so it cannot be the boundary the cutter approaches. The
+  //    cumulative section is what Pocket and Surface Clean protect with
+  //    (`buildCumulativeModelKeepOuts`), and it is taken from the floor up so
+  //    mesh buried *below* the floor — which is stock, not model — cannot widen
+  //    the envelope into a flat pass over ground the model never occupies.
+  //  * The envelope is one footprint for the whole operation, not one per level.
+  //    A per-level footprint collapses the envelope onto the model's own section
+  //    at that Z, which rings a model that narrows with height and leaves the
+  //    stock standing over its lower parts with no pass at all (issue #821).
+  //
+  // A model with no related subtract keeps its established outer-wall band: that
+  // band is the whole domain, and it carries the pass along the outside wall.
+  const usePocketEnvelope = operation.kind === 'rough_surface' && relatedSubtracts.length > 0
+  const envelopeProtectionLevels = usePocketEnvelope ? roughLevels.map((z) => z - axialLeave) : []
+  const modelKeepOutsByLevel = usePocketEnvelope
     ? buildCumulativeModelKeepOuts([{
       featureId: modelFeature.id,
       geometry: stlData,
       silhouettePaths: modelSilhouettePaths,
       decimationTolerance,
-    }], roughProtectionLevels, warnings)
+    }], envelopeProtectionLevels, warnings)
     : null
-  const visiblePocketFootprintPaths = roughProtectionLevels.length > 0
-    ? visiblePocketKeepOuts?.get(roughProtectionLevels[roughProtectionLevels.length - 1]) ?? []
+  // The deepest level is the pocket floor (or the model's own bottom when that
+  // is lower), so this is the model standing above the floor.
+  const floorFootprintPaths = envelopeProtectionLevels.length > 0
+    ? modelKeepOutsByLevel?.get(envelopeProtectionLevels[envelopeProtectionLevels.length - 1]) ?? []
     : []
-  const visiblePocketOutlineCache = new Map<number, ClipperPath[]>()
-  const visiblePocketOutlineForShift = (shift: number): ClipperPath[] => {
+  const pocketEnvelopeCache = new Map<number, ClipperPath[]>()
+  const pocketEnvelopeForShift = (shift: number): ClipperPath[] => {
     const key = Math.round(shift * DEFAULT_CLIPPER_SCALE)
-    const cached = visiblePocketOutlineCache.get(key)
+    const cached = pocketEnvelopeCache.get(key)
     if (cached) return cached
-    const paths = outlineForFootprint(visiblePocketFootprintPaths, key / DEFAULT_CLIPPER_SCALE)
-    visiblePocketOutlineCache.set(key, paths)
+    const paths = outlineForFootprint(floorFootprintPaths, key / DEFAULT_CLIPPER_SCALE)
+    pocketEnvelopeCache.set(key, paths)
     return paths
   }
 
@@ -570,15 +581,6 @@ export function resolve3DSurfaceStepdown(
     if (modelSection.deviation > appliedDecimation) {
       appliedDecimation = modelSection.deviation
     }
-    // Cleanup deliberately retains its established fixed wall envelope and is
-    // not a second roughing pass. Keep the global silhouette too when there is
-    // no usable visible section, including the slice sampler's top boundary.
-    const isVisiblePocketFloor = useVisiblePocketFloorEnvelope
-      && relatedSubtracts.some((subtract) => sameZ(z, subtract.bottomZ + axialLeave))
-    const outlinePaths = isVisiblePocketFloor && visiblePocketFootprintPaths.length > 0
-      ? visiblePocketOutlineForShift(2 * appliedDecimation)
-      : outlineForShift(2 * appliedDecimation)
-
     const activeSubtractPaths = relatedSubtracts.length > 0
       ? unionClipperPaths(
         relatedSubtracts
@@ -589,6 +591,14 @@ export function resolve3DSurfaceStepdown(
           .flatMap((subtract) => subtract.paths),
       )
       : []
+    // The model's envelope, bounded by the pocket it sits in. Inside the pocket
+    // the boundary is that intersection, so no level reaches pocket area that
+    // lies outside the model's own outline. A missing envelope — a slice sampler
+    // top boundary, or no usable section at all — keeps the conservative stored
+    // silhouette.
+    const outlinePaths = usePocketEnvelope && floorFootprintPaths.length > 0
+      ? pocketEnvelopeForShift(2 * appliedDecimation)
+      : outlineForShift(2 * appliedDecimation)
     const levelOutlinePaths = relatedSubtracts.length > 0
       ? intersectClipperPaths(outlinePaths, activeSubtractPaths)
       : outlinePaths
@@ -599,6 +609,12 @@ export function resolve3DSurfaceStepdown(
       }
       continue
     }
+
+    // What the mesh actually occupies at this level: the cumulative keep-out
+    // Pocket and Surface Clean protect with. This is the boundary the cutter
+    // approaches, and it stands in for the stored silhouette wherever a level
+    // would otherwise fall back to it.
+    const modelKeepOutPaths = modelKeepOutsByLevel?.get(protectionZ) ?? []
 
     // Name the clamps that actually ate into this level, the same way the 2D
     // generators do. Avoiding a clamp without saying so leaves an unexplained
@@ -646,6 +662,7 @@ export function resolve3DSurfaceStepdown(
     let protectedAtLevel = unionClipperPaths([
       ...protectedAbovePaths,
       ...slicePaths,
+      ...modelKeepOutPaths,
       ...surroundingProtectedPaths,
       ...retainedPaths,
     ])
@@ -714,9 +731,17 @@ export function resolve3DSurfaceStepdown(
     const sliceArea = calculateClipperArea(slicePaths)
     const isSolidFloor = sliceArea > 0.95 * silhouetteArea
     if (isSolidFloor || (modelSection.openChainCount > 0 && slicePaths.length === 0)) {
+      // A solid-floor level is where the stored silhouette — an import-time
+      // outline — diverges most from what the mesh actually occupies, so the
+      // mesh's own cumulative keep-out stands in for it whenever there is one.
+      // An open slice with nothing closed is the one case with no mesh section
+      // to read a boundary from, and keeps the conservative fallback.
+      const solidFloorPaths = slicePaths.length > 0 && modelKeepOutPaths.length > 0
+        ? modelKeepOutPaths
+        : modelFootprintPaths
       protectedAbovePaths = unionClipperPaths([
         ...protectedAbovePaths,
-        ...modelFootprintPaths,
+        ...solidFloorPaths,
       ])
     } else if (slicePaths.length > 0) {
       protectedAbovePaths = unionClipperPaths([

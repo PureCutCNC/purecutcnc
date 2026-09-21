@@ -954,24 +954,46 @@ function testRoughSurfaceExtendsContainingPocketAboveItsTop(): void {
   assert(minCutZ >= pocketBottom - 1e-9, `expected no rough cuts below containing pocket bottom, got min Z ${minCutZ}`)
 }
 
-function testRoughSurfaceClipsLowerOnlySilhouetteAtPocketFloor(): void {
-  console.log('Testing rough_surface excludes lower-only model silhouette at a pocket floor...')
+function testRoughSurfaceKeepsTheModelEnvelopeInsideThePocket(): void {
+  console.log('Testing rough_surface keeps the model envelope inside the pocket at every level...')
   const { project, operation } = makeProject(['model1'])
   const pocketBottom = 3
   const containingPocket = { ...makeContainingSubtractFeature(), z_bottom: pocketBottom }
   replaceProjectFeatures(project, [makeContainingAddFeature(), containingPocket, ...project.features])
   const result = generateRoughSurfaceToolpath(project, operation)
-  const floorCuts = cutMoves(result.moves).filter((move) => Math.abs(move.to.z - pocketBottom) < 1e-9)
-  const floorBounds = cutBounds(floorCuts)
 
-  assert(floorCuts.length > 0, 'expected rough cuts at the containing pocket floor')
-  assert(floorBounds !== null, 'expected bounds for the containing pocket floor')
-  if (!floorBounds) return
-  // The frustum is 12 mm wide at Z=0 but only spans X=2..10 from this floor
-  // upward. Its floor envelope can extend by the 0.25 mm tool radius, but it
-  // must not follow the lower-only X=0..2 or X=10..12 silhouette.
-  assert(floorBounds.minX >= 1.749, `expected floor min X >= 1.749, got ${floorBounds.minX}`)
-  assert(floorBounds.maxX <= 10.251, `expected floor max X <= 10.251, got ${floorBounds.maxX}`)
+  // The envelope is the model's own outline read off the mesh from the pocket
+  // floor up. In this fixture that is the frustum's floor section, X=2..10, and
+  // the pocket around it reaches X=-2..14. The pocket's own area is not model
+  // material, so no level may cut there: every level stays within the envelope,
+  // 2 - 0.25 = 1.749 through 10 + 0.25 = 10.251 (issue #821).
+  for (const z of [3, 4, 5, 6]) {
+    const levelCuts = cutMoves(result.moves).filter((move) => Math.abs(move.to.z - z) < 1e-9)
+    const bounds = cutBounds(levelCuts)
+    assert(levelCuts.length > 0, `expected rough cuts at Z=${z}`)
+    if (!bounds) continue
+    assert(bounds.minX >= 1.749, `expected Z=${z} min X >= 1.749, got ${bounds.minX}`)
+    assert(bounds.maxX <= 10.251, `expected Z=${z} max X <= 10.251, got ${bounds.maxX}`)
+  }
+}
+
+function testRoughSurfaceClearsOverTheModelLowerParts(): void {
+  console.log('Testing rough_surface clears the stock standing over the model lower parts...')
+  const { project, operation } = makeProject(['model1'])
+  const pocketBottom = 3
+  const containingPocket = { ...makeContainingSubtractFeature(), z_bottom: pocketBottom }
+  replaceProjectFeatures(project, [makeContainingAddFeature(), containingPocket, ...project.features])
+  const result = generateRoughSurfaceToolpath(project, operation)
+
+  // The frustum narrows with height — at Z=4 it spans X=2.667..9.333 — but the
+  // stock standing above the taper inside the model's own envelope is still this
+  // operation's to remove. An envelope taken from the model's section at each Z
+  // would ring the section and leave that standing, which is the #821 report.
+  const upperCuts = cutMoves(result.moves).filter((move) => Math.abs(move.to.z - 4) < 1e-9)
+  const overTheTaper = upperCuts.filter((move) => [move.from, move.to].some((point) => point.x <= 2.4))
+  assert(upperCuts.length > 0, 'expected rough cuts at Z=4')
+  assert(overTheTaper.length > 0,
+    'expected rough cuts over the model lower parts at Z=4, inside the model envelope')
 }
 
 function testRoughSurfaceRespectsSplitPocketDepths(): void {
@@ -1411,7 +1433,8 @@ testRoughSurfaceIgnoresContainingBaseFeature()
 testRoughSurfaceIgnoresTightBaseWhenPocketLimitsEnvelope()
 testRoughSurfaceRespectsContainingPocketDepth()
 testRoughSurfaceExtendsContainingPocketAboveItsTop()
-testRoughSurfaceClipsLowerOnlySilhouetteAtPocketFloor()
+testRoughSurfaceKeepsTheModelEnvelopeInsideThePocket()
+testRoughSurfaceClearsOverTheModelLowerParts()
 testRoughSurfaceRespectsSplitPocketDepths()
 testRoughSurfaceLinksOffsetRingsAtZ()
 testRoughSurfaceGenerationMatrix()
