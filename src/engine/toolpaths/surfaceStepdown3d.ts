@@ -22,6 +22,7 @@ import {
   checkMaxCutDepthWarning,
   getOperationSafeZ,
   normalizeToolForProject,
+  resolveFeatureZSpan,
 } from './geometry'
 import {
   buildInsetRegions,
@@ -33,7 +34,7 @@ import { loadSTLTransformedGeometry } from '../csg'
 import { buildRegionMask, splitFeatureTargets } from './regions'
 import { resolveRegionDomainArea } from './regionDomain'
 import {
-  buildCumulativeModelKeepOuts,
+  buildCumulativeModelKeepOutPlan,
   modelSilhouetteClipperPaths,
   resolveClosedModelSection,
   sliceDecimationTolerance,
@@ -411,17 +412,32 @@ export function resolve3DSurfaceStepdown(
   }
 
   const modelFootprintPaths = unionClipperPaths(modelSilhouettePaths)
+  const targetFeatureIds = new Set(target.featureIds)
   const relatedSubtracts = relatedSubtractFeatures(
     project,
-    new Set(target.featureIds),
+    targetFeatureIds,
     modelFootprintPaths,
   )
-  if (relatedSubtracts.length > 0) {
-    const deepestRelatedBottom = relatedSubtracts.reduce(
-      (min, subtract) => Math.min(min, subtract.bottomZ),
-      Infinity,
-    )
-    effectiveBottom = Math.max(effectiveBottom, deepestRelatedBottom + axialLeave)
+  // A model can be embedded directly in a containing Add instead of a 2D
+  // subtract pocket. That Add's exposed top is the same lower machining bound
+  // as a pocket floor: mesh below it is buried material, not a roughing target.
+  // Only use an Add that spans the model's own bottom and stops below its top;
+  // a full-height base remains the established free-standing-model path.
+  const containingAddFloorZ = relatedSubtracts.length === 0
+    ? containingAddFeatures(project, targetFeatureIds, modelFootprintPaths, 0).reduce((floorZ, feature) => {
+      const span = resolveFeatureZSpan(project, feature)
+      return span.min <= modelBottomZ + Z_TOLERANCE
+        && span.max > modelBottomZ + Z_TOLERANCE
+        && span.max < modelTopZ - Z_TOLERANCE
+        ? Math.max(floorZ, span.max)
+        : floorZ
+    }, -Infinity)
+    : -Infinity
+  const modelFloorZ = relatedSubtracts.length > 0
+    ? relatedSubtracts.reduce((min, subtract) => Math.min(min, subtract.bottomZ), Infinity)
+    : containingAddFloorZ
+  if (Number.isFinite(modelFloorZ)) {
+    effectiveBottom = Math.max(effectiveBottom, modelFloorZ + axialLeave)
     if (effectiveBottom > modelTopZ + 1e-6) {
       return {
         ok: false,
@@ -504,16 +520,17 @@ export function resolve3DSurfaceStepdown(
   //
   // A model with no related subtract keeps its established outer-wall band: that
   // band is the whole domain, and it carries the pass along the outside wall.
-  const usePocketEnvelope = operation.kind === 'rough_surface' && relatedSubtracts.length > 0
-  const envelopeProtectionLevels = usePocketEnvelope ? roughLevels.map((z) => z - axialLeave) : []
-  const modelKeepOutsByLevel = usePocketEnvelope
-    ? buildCumulativeModelKeepOuts([{
+  const useModelFloorEnvelope = operation.kind === 'rough_surface' && Number.isFinite(modelFloorZ)
+  const envelopeProtectionLevels = useModelFloorEnvelope ? roughLevels.map((z) => z - axialLeave) : []
+  const modelSectionPlan = useModelFloorEnvelope
+    ? buildCumulativeModelKeepOutPlan([{
       featureId: modelFeature.id,
       geometry: stlData,
       silhouettePaths: modelSilhouettePaths,
       decimationTolerance,
     }], envelopeProtectionLevels, warnings)
     : null
+  const modelKeepOutsByLevel = modelSectionPlan?.keepOutsByLevel
   // The deepest level is the pocket floor (or the model's own bottom when that
   // is lower), so this is the model standing above the floor.
   const floorFootprintPaths = envelopeProtectionLevels.length > 0
@@ -576,7 +593,8 @@ export function resolve3DSurfaceStepdown(
 
   for (const z of roughLevels) {
     const protectionZ = z - axialLeave
-    const modelSection = resolveClosedModelSection(stlData, protectionZ, decimationTolerance)
+    const modelSection = modelSectionPlan?.sectionsByLevel.get(protectionZ)?.get(modelFeature.id)
+      ?? resolveClosedModelSection(stlData, protectionZ, decimationTolerance)
     const slicePaths = modelSection.paths
     if (modelSection.deviation > appliedDecimation) {
       appliedDecimation = modelSection.deviation
@@ -596,7 +614,7 @@ export function resolve3DSurfaceStepdown(
     // lies outside the model's own outline. A missing envelope — a slice sampler
     // top boundary, or no usable section at all — keeps the conservative stored
     // silhouette.
-    const outlinePaths = usePocketEnvelope && floorFootprintPaths.length > 0
+    const outlinePaths = useModelFloorEnvelope && floorFootprintPaths.length > 0
       ? pocketEnvelopeForShift(2 * appliedDecimation)
       : outlineForShift(2 * appliedDecimation)
     const levelOutlinePaths = relatedSubtracts.length > 0

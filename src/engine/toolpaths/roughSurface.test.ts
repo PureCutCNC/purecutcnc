@@ -914,6 +914,47 @@ function testRoughSurfaceIgnoresContainingBaseFeature(): void {
   assert(cutMoves(result.moves).length > 0, 'expected rough surface moves when a base add feature contains the model envelope')
 }
 
+function testRoughSurfaceUsesContainingAddTopAsEmbeddedModelFloor(): void {
+  console.log('Testing rough_surface uses a containing add top as the embedded-model floor...')
+  const { project, operation } = makeProject(['model1'])
+  const embeddedFloor = {
+    ...makeTightContainingAddFeature(),
+    id: 'embedded-floor',
+    name: 'Embedded model floor',
+    z_top: 3,
+    z_bottom: 0,
+  }
+  replaceProjectFeatures(project, [embeddedFloor, ...project.features])
+  project.tools[0] = { ...project.tools[0], maxCutDepth: 4 }
+
+  const resolved = resolve3DSurfaceStepdown(project, operation)
+  assert(resolved.ok, 'expected embedded model floor to resolve')
+  if (!resolved.ok) return
+  assert(
+    resolved.resolved.levels.every((level) => level.z >= 3 - 1e-9),
+    `expected no planned rough level below the containing add top, got ${resolved.resolved.levels.map((level) => level.z).join(', ')}`,
+  )
+
+  const result = generateRoughSurfaceToolpath(project, operation)
+  const cuts = cutMoves(result.moves)
+  const upperCuts = cuts.filter((move) => Math.abs(move.to.z - 4) < 1e-9)
+  const upperBounds = cutBounds(upperCuts)
+
+  assert(cuts.length > 0, 'expected rough cuts above the embedded-model floor')
+  assert(
+    !result.warnings.some((warning) => warning.code === 'cutDepthExceedsToolMax'),
+    `expected the containing add top to remove the phantom depth warning, got ${result.warnings.join(', ')}`,
+  )
+  assert(Math.min(...cuts.map((move) => move.to.z)) >= 3 - 1e-9, 'expected no rough cuts below the containing add top')
+  assert(upperBounds !== null, 'expected rough cuts at Z=4')
+  if (!upperBounds) return
+  // The frustum is narrower at Z=4, but an embedded-model rough pass keeps
+  // the floor-to-top mesh envelope and cuts only within its floor section,
+  // rather than the stored 0..12 silhouette.
+  assert(upperBounds.minX >= 1.749, `expected upper mesh-envelope min X >= 1.749, got ${upperBounds.minX}`)
+  assert(upperBounds.maxX <= 10.251, `expected upper mesh-envelope max X <= 10.251, got ${upperBounds.maxX}`)
+}
+
 function testRoughSurfaceIgnoresTightBaseWhenPocketLimitsEnvelope(): void {
   console.log('Testing rough_surface ignores tight base when containing pocket limits envelope...')
   const { project, operation } = makeProject(['model1'])
@@ -1430,6 +1471,7 @@ testRoughSurfaceProtectsOpenMeshSlicesConservatively()
 testRoughSurfaceUsesClosedSectionAlongsideOpenChains()
 testRoughSurfaceAvoidsSurroundingAddFeature()
 testRoughSurfaceIgnoresContainingBaseFeature()
+testRoughSurfaceUsesContainingAddTopAsEmbeddedModelFloor()
 testRoughSurfaceIgnoresTightBaseWhenPocketLimitsEnvelope()
 testRoughSurfaceRespectsContainingPocketDepth()
 testRoughSurfaceExtendsContainingPocketAboveItsTop()
