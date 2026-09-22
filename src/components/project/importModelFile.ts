@@ -19,6 +19,7 @@ import { useProjectStore } from '../../store/projectStore'
 import {
   applyAxisOrientationToPositions,
   clearImportedSourceCaches,
+  computeMeshBounds,
   concatenateTriangleMeshes,
   flipImportedMeshPlanY,
   loadImportedTriangleMesh,
@@ -31,7 +32,7 @@ import {
 import { translate } from '../../i18n/store'
 import { StepImportError, type StepOutputUnit } from '../../import/stepProtocol'
 import { tessellateStepFile, type StepBody, type TessellateStepFileOptions } from '../../import/stepImportClient'
-import type { ImportedModelSourceFormat, PersistedImportedMesh } from '../../types/project'
+import { getStockBounds, type ImportedModelSourceFormat, type PersistedImportedMesh, type Stock } from '../../types/project'
 import type { Units } from '../../utils/units'
 
 /** Maximum number of disjoint bodies the model importer will split. */
@@ -110,6 +111,45 @@ function bodyCapWarning(modelLabel: string, bodyCount: number): string {
     `Split the file into smaller pieces or boolean-union it before importing if you need per-body features.`
 }
 
+/**
+ * Park the model in the stock's lower-left corner, in place.
+ *
+ * A body keeps the file's own coordinates — the feature is added with an
+ * identity transform — so an untouched import lands wherever the file put its
+ * origin, which for a model standing on its own base is the front-left of its
+ * footprint and therefore *above* the stock once the plan Y is negated
+ * (issue #824). One translation for the whole import moves every body by the
+ * same delta, so a multi-body assembly keeps its internal layout.
+ *
+ * The body meshes are fresh copies by this point (normalized, or split into
+ * components), so mutating them is safe, and the silhouette, profile and
+ * top-view image are all derived from them afterwards.
+ */
+function placeBodiesInStock(bodies: readonly ImportBody[], stock: Stock): void {
+  if (bodies.length === 0) return
+
+  let minX = Infinity
+  let maxY = -Infinity
+  for (const { mesh } of bodies) {
+    if (mesh.bounds.minX < minX) minX = mesh.bounds.minX
+    if (mesh.bounds.maxY > maxY) maxY = mesh.bounds.maxY
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(maxY)) return
+
+  const stockBounds = getStockBounds(stock)
+  const dx = stockBounds.minX - minX
+  const dy = stockBounds.maxY - maxY
+  if (dx === 0 && dy === 0) return
+
+  for (const { mesh } of bodies) {
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      mesh.positions[i] += dx
+      mesh.positions[i + 1] += dy
+    }
+    mesh.bounds = computeMeshBounds(mesh.positions)
+  }
+}
+
 /** STL and OBJ: parse, scale, and find bodies by connectivity. */
 function loadMeshBodies(params: ImportModelFileParams, format: 'stl' | 'obj', modelScale: number): LoadedBodies {
   const { modelBuffer, axisSwap, onProgress } = params
@@ -123,7 +163,7 @@ function loadMeshBodies(params: ImportModelFileParams, format: 'stl' | 'obj', mo
   onProgress('Normalizing mesh', 10)
   // The parsed mesh is in the file's world frame (Y up); project space is
   // Y-down, so the plan Y is negated before anything downstream reads it.
-  const importedMesh = normalizeImportedMeshForStorage(flipImportedMeshPlanY(parsedMesh), modelScale)
+  const importedMesh = normalizeImportedMeshForStorage(flipImportedMeshPlanY(parsedMesh, axisSwap), modelScale)
   parsedMesh = null
   clearImportedSourceCaches()
   const height = importedMesh.bounds.maxZ - importedMesh.bounds.minZ
@@ -170,7 +210,7 @@ async function loadStepBodies(params: ImportModelFileParams, modelScale: number)
   const bodies = stepBodies.map(({ name, mesh }) => {
     applyAxisOrientationToPositions(mesh.positions, axisSwap)
     // Same world-frame → project-space conversion as the STL/OBJ path.
-    const normalized = normalizeImportedMeshForStorage(flipImportedMeshPlanY(mesh), modelScale)
+    const normalized = normalizeImportedMeshForStorage(flipImportedMeshPlanY(mesh, axisSwap), modelScale)
     minZ = Math.min(minZ, normalized.bounds.minZ)
     maxZ = Math.max(maxZ, normalized.bounds.maxZ)
     return { name, mesh: normalized }
@@ -223,6 +263,7 @@ export async function importModelFile(params: ImportModelFileParams): Promise<st
     ? await loadStepBodies(params, modelScale)
     : loadMeshBodies(params, modelFormat, modelScale)
   const { bodies } = loaded
+  placeBodiesInStock(bodies, useProjectStore.getState().project.stock)
   const resolvedZSteps = requestedSilhouetteZSteps ?? recommendedSilhouetteZSteps(loaded.height, projectUnits)
 
   const splitIntoBodies = bodies.length > 1

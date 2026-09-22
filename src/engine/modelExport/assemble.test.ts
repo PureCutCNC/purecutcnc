@@ -31,6 +31,22 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error('Assertion failed: ' + message)
 }
 
+/** Signed volume of a closed mesh: positive when its triangles face outward. */
+function signedVolume(mesh: { positions: Float32Array; index: Uint32Array }): number {
+  const { positions, index } = mesh
+  let volume = 0
+  for (let i = 0; i < index.length; i += 3) {
+    const a = index[i] * 3
+    const b = index[i + 1] * 3
+    const c = index[i + 2] * 3
+    volume +=
+      positions[a] * (positions[b + 1] * positions[c + 2] - positions[b + 2] * positions[c + 1]) -
+      positions[a + 1] * (positions[b] * positions[c + 2] - positions[b + 2] * positions[c]) +
+      positions[a + 2] * (positions[b] * positions[c + 1] - positions[b + 1] * positions[c])
+  }
+  return volume / 6
+}
+
 /** Axis-aligned box spanning x in [0,2], y in [0,1], z in [0,3] — three distinct extents. */
 function boxMesh(): ImportedTriangleMesh {
   const positions = new Float32Array([
@@ -95,20 +111,32 @@ assert(bounds.minY === -1 && bounds.maxY === 0, 'Y extent: ' + bounds.minY + '..
 assert(bounds.minX === 0 && bounds.maxX === 2, 'X extent: ' + bounds.minX + '..' + bounds.maxX)
 assert(bounds.minZ === 0 && bounds.maxZ === 3, 'Z extent: ' + bounds.minZ + '..' + bounds.maxZ)
 
+// A mirror inverts every triangle, so the winding is reversed with the
+// positions: an STL whose normals point inward reads as a broken solid.
+const sourceMesh = boxMesh()
+assert(signedVolume(sourceMesh) > 0, 'the fixture box is wound outward: ' + signedVolume(sourceMesh))
+assert(
+  Math.abs(signedVolume(result.mesh) - signedVolume(sourceMesh)) < 1e-6,
+  'the exported mesh keeps the source winding: ' + signedVolume(result.mesh),
+)
+
 // The import negates the same axis back, so re-importing the file returns the
 // mesh the project stores: the export -> import round trip is exact.
 const reimported = flipImportedMeshPlanY({
   positions: result.mesh.positions,
   index: result.mesh.index,
   bounds,
-})
-const source = boxMesh().positions
+}, 'none')
+const source = sourceMesh.positions
 assert(reimported.positions.length === source.length, 'vertex count survives the round trip')
 for (let i = 0; i < source.length; i += 1) {
   assert(
     reimported.positions[i] === source[i],
     'vertex ' + i + ': ' + reimported.positions[i] + ' !== ' + source[i],
   )
+}
+for (let i = 0; i < sourceMesh.index.length; i += 1) {
+  assert(reimported.index[i] === sourceMesh.index[i], 'winding ' + i + ' survives the round trip')
 }
 
 console.log('modelExport/assemble.test.ts passed')

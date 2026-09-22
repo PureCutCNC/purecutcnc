@@ -211,9 +211,10 @@ export function normalizeImportedMeshForStorage(mesh: ImportedTriangleMesh, scal
  * space (Y increasing downward).
  *
  * The conversion is its own inverse, so the import and the model export share
- * this one function ({@link flipImportedMeshPlanY} on the way in,
- * `modelExport/assemble.ts` on the way out), and an exported file re-imports
- * unchanged (issue #824).
+ * this pair of functions — {@link flipImportedMeshPlanY} on the way in,
+ * `modelExport/assemble.ts` on the way out — and an exported file re-imports
+ * unchanged (issue #824). A mirror reverses the winding too, so pairing it with
+ * {@link reverseTriangleWinding} is what keeps the mesh outward-facing.
  */
 export function negatePlanYPositions(positions: Float32Array): Float32Array {
   const negated = new Float32Array(positions.length)
@@ -223,6 +224,20 @@ export function negatePlanYPositions(positions: Float32Array): Float32Array {
     negated[i + 2] = positions[i + 2]
   }
   return negated
+}
+
+/**
+ * Copy of `index` with each triangle's last two vertices swapped — the winding
+ * flip a mirrored mesh needs to keep facing outward.
+ */
+export function reverseTriangleWinding(index: Uint32Array): Uint32Array {
+  const reversed = new Uint32Array(index)
+  for (let i = 0; i < reversed.length; i += 3) {
+    const swap = reversed[i + 1]
+    reversed[i + 1] = reversed[i + 2]
+    reversed[i + 2] = swap
+  }
+  return reversed
 }
 
 /**
@@ -237,6 +252,15 @@ export function negatePlanYPositions(positions: Float32Array): Float32Array {
  * own mirror about the XZ plane, and an axis swap — a transposition, and so a
  * mirror itself — stays one instead of composing into a rotation.
  *
+ * `axisOrientation` is the swap the caller has already applied, because it
+ * decides the winding: a mirror inverts the orientation of every triangle, and
+ * an inside-out mesh lights from behind — the top-view shader in
+ * `src/import/stl.ts` reads `nz` off the index order, so a mirrored mesh drew
+ * flat and dim until the winding was reversed (#825). The negation and the swap
+ * compose to a mirror only when no swap ran: each swap is a transposition, also
+ * a reflection, so one swap cancels the negation's handedness and no reversal is
+ * due.
+ *
  * Deliberately not folded into {@link normalizeImportedMeshForStorage}: the
  * legacy `.camj` asset rebuild (`store/helpers/modelAssets.ts`) shares that
  * helper and must keep re-deriving meshes in the frame the silhouette stored
@@ -245,9 +269,13 @@ export function negatePlanYPositions(positions: Float32Array): Float32Array {
  * Returns a new mesh — `loadImportedTriangleMesh` hands back a cached, shared
  * one, so the negation is never applied in place.
  */
-export function flipImportedMeshPlanY(mesh: ImportedTriangleMesh): ImportedTriangleMesh {
+export function flipImportedMeshPlanY(
+  mesh: ImportedTriangleMesh,
+  axisOrientation: ModelAxisOrientation,
+): ImportedTriangleMesh {
   const positions = negatePlanYPositions(mesh.positions)
-  return { positions, index: mesh.index, bounds: computeMeshBounds(positions) }
+  const index = axisOrientation === 'none' ? reverseTriangleWinding(mesh.index) : mesh.index
+  return { positions, index, bounds: computeMeshBounds(positions) }
 }
 
 export function serializeImportedMesh(

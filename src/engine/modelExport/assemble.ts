@@ -17,7 +17,7 @@
 import type { Manifold as ManifoldSolid } from 'manifold-3d'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { buildFeatureSolid, getManifoldModule, loadSTLTransformedGeometry } from '../csg'
-import { negatePlanYPositions } from '../importedMesh'
+import { negatePlanYPositions, reverseTriangleWinding } from '../importedMesh'
 import { expandFeatureGeometry } from '../../text'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import type { Project, SketchFeature } from '../../types/project'
@@ -110,7 +110,15 @@ export async function assembleModelExportMesh(
   }
 
   const merged = concatMeshes(meshes)
-  return { mesh: { positions: negatePlanYPositions(merged.positions), index: merged.index }, warnings }
+  // The winding is reversed with the positions: a mirror turns every triangle
+  // inside out, and an export whose normals point inward reads as a broken solid.
+  return {
+    mesh: {
+      positions: negatePlanYPositions(merged.positions),
+      index: reverseTriangleWinding(merged.index),
+    },
+    warnings,
+  }
 }
 
 function shouldIncludeInBoolean(feature: SketchFeature): boolean {
