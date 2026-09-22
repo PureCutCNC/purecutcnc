@@ -205,6 +205,51 @@ export function normalizeImportedMeshForStorage(mesh: ImportedTriangleMesh, scal
   return { positions, index, bounds: computeMeshBounds(positions) }
 }
 
+/**
+ * Copy of `positions` with its plan Y negated — the axis conversion between the
+ * world frame model files use (X right, Y away from the front, Z up) and project
+ * space (Y increasing downward).
+ *
+ * The conversion is its own inverse, so the import and the model export share
+ * this one function ({@link flipImportedMeshPlanY} on the way in,
+ * `modelExport/assemble.ts` on the way out), and an exported file re-imports
+ * unchanged (issue #824).
+ */
+export function negatePlanYPositions(positions: Float32Array): Float32Array {
+  const negated = new Float32Array(positions.length)
+  for (let i = 0; i < positions.length; i += 3) {
+    negated[i] = positions[i]
+    negated[i + 1] = -positions[i + 1]
+    negated[i + 2] = positions[i + 2]
+  }
+  return negated
+}
+
+/**
+ * Convert a parsed model's plan coordinates into project space by negating Y
+ * (issue #824).
+ *
+ * Every world-coordinate source is negated on the way in — `convertPoint` in
+ * `src/import/dxf.ts` maps a DXF point at world y = 10 to project y = -10 — and
+ * the G-code export negates again (`projectToMachinePoint`), so a world point at
+ * y = 10 is cut at machine Y = 10. Mesh files carry that same world frame, so an
+ * imported model needs the same negation; without it the part is machined as its
+ * own mirror about the XZ plane, and an axis swap — a transposition, and so a
+ * mirror itself — stays one instead of composing into a rotation.
+ *
+ * Deliberately not folded into {@link normalizeImportedMeshForStorage}: the
+ * legacy `.camj` asset rebuild (`store/helpers/modelAssets.ts`) shares that
+ * helper and must keep re-deriving meshes in the frame the silhouette stored
+ * beside them was projected in.
+ *
+ * Returns a new mesh — `loadImportedTriangleMesh` hands back a cached, shared
+ * one, so the negation is never applied in place.
+ */
+export function flipImportedMeshPlanY(mesh: ImportedTriangleMesh): ImportedTriangleMesh {
+  const positions = negatePlanYPositions(mesh.positions)
+  return { positions, index: mesh.index, bounds: computeMeshBounds(positions) }
+}
+
 export function serializeImportedMesh(
   mesh: ImportedTriangleMesh,
   sourceFormat?: ImportedModelSourceFormat,

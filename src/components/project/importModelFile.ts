@@ -20,6 +20,7 @@ import {
   applyAxisOrientationToPositions,
   clearImportedSourceCaches,
   concatenateTriangleMeshes,
+  flipImportedMeshPlanY,
   loadImportedTriangleMesh,
   normalizeImportedMeshForStorage,
   serializeImportedMesh,
@@ -120,7 +121,9 @@ function loadMeshBodies(params: ImportModelFileParams, format: 'stl' | 'obj', mo
   onProgress('Parsing mesh', 10)
 
   onProgress('Normalizing mesh', 10)
-  const importedMesh = normalizeImportedMeshForStorage(parsedMesh, modelScale)
+  // The parsed mesh is in the file's world frame (Y up); project space is
+  // Y-down, so the plan Y is negated before anything downstream reads it.
+  const importedMesh = normalizeImportedMeshForStorage(flipImportedMeshPlanY(parsedMesh), modelScale)
   parsedMesh = null
   clearImportedSourceCaches()
   const height = importedMesh.bounds.maxZ - importedMesh.bounds.minZ
@@ -166,7 +169,8 @@ async function loadStepBodies(params: ImportModelFileParams, modelScale: number)
   let maxZ = -Infinity
   const bodies = stepBodies.map(({ name, mesh }) => {
     applyAxisOrientationToPositions(mesh.positions, axisSwap)
-    const normalized = normalizeImportedMeshForStorage(mesh, modelScale)
+    // Same world-frame → project-space conversion as the STL/OBJ path.
+    const normalized = normalizeImportedMeshForStorage(flipImportedMeshPlanY(mesh), modelScale)
     minZ = Math.min(minZ, normalized.bounds.minZ)
     maxZ = Math.max(maxZ, normalized.bounds.maxZ)
     return { name, mesh: normalized }

@@ -17,6 +17,7 @@
 import type { Manifold as ManifoldSolid } from 'manifold-3d'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { buildFeatureSolid, getManifoldModule, loadSTLTransformedGeometry } from '../csg'
+import { negatePlanYPositions } from '../importedMesh'
 import { expandFeatureGeometry } from '../../text'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import type { Project, SketchFeature } from '../../types/project'
@@ -30,14 +31,12 @@ import {
 /**
  * Build the boolean union of all visible solid features for export.
  *
- * Output is in PureCutCNC's internal design coordinates (Z-up, Y oriented the
- * same way the rest of the app stores it — i.e. matches the sketch data). This
- * makes round-tripping (export → re-import as STL feature) preserve position,
- * and matches what the 3D viewport and G-code pipeline already treat as
- * canonical. External viewers/slicers will see the model with Y in the same
- * direction the sketch top-view uses; Z is still up so the model imports the
- * right way up. Users who care about a particular Y orientation in a downstream
- * tool can rotate there.
+ * Output is in the standard right-handed Z-up frame model files use. Project
+ * space is Y-down, so the assembled mesh's plan Y is negated on the way out —
+ * the exact inverse of the negation the model import applies (issue #824), which
+ * is what makes export → re-import preserve the mesh. Z is up either way; the
+ * viewport and the G-code pipeline work in project space and never see this
+ * mesh.
  */
 export async function assembleModelExportMesh(
   project: Project,
@@ -110,7 +109,8 @@ export async function assembleModelExportMesh(
     }
   }
 
-  return { mesh: concatMeshes(meshes), warnings }
+  const merged = concatMeshes(meshes)
+  return { mesh: { positions: negatePlanYPositions(merged.positions), index: merged.index }, warnings }
 }
 
 function shouldIncludeInBoolean(feature: SketchFeature): boolean {

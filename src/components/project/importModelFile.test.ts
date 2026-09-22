@@ -16,7 +16,9 @@
 
 /**
  * A model import lands whole or not at all, and STEP bodies become model
- * features (issue #784).
+ * features (issue #784). Every format lands in project space: the file's world
+ * Y is negated on the way in, exactly as the DXF importer negates it
+ * (issue #824).
  *
  * Tessellation is injected — the real worker needs a browser — so the STEP
  * bodies are built here; `src/import/stepTessellation.test.ts` covers what Open
@@ -28,12 +30,14 @@
  */
 
 import { computeMeshBounds, type ImportedTriangleMesh } from '../../engine/importedMesh'
+import { projectToMachinePoint } from '../../engine/gcode/utils'
+import { getBundledMachine } from '../../machine/registry'
 import { StepImportError } from '../../import/stepProtocol'
 import type { StepBody, TessellateStepFileOptions } from '../../import/stepImportClient'
 import { decodeProjectFormat } from '../../store/helpers/projectFormat'
 import { useProjectStore } from '../../store/projectStore'
 import type { ProjectStore, SelectionState } from '../../store/types'
-import { newProject, type PersistedImportedMesh, type Project } from '../../types/project'
+import { newProject, type MachineOrigin, type PersistedImportedMesh, type Project } from '../../types/project'
 import { getOperationAddHint } from '../cam/operationValidity'
 import { importModelFile, type ImportModelFileParams } from './importModelFile'
 
@@ -100,6 +104,22 @@ function asciiStl(boxes: ReadonlyArray<[Vec3, Vec3]>): ArrayBuffer {
   return new TextEncoder().encode(`solid parts\n${facets.join('\n')}\nendsolid parts\n`).buffer
 }
 
+function asciiObj(boxes: ReadonlyArray<[Vec3, Vec3]>): ArrayBuffer {
+  const lines: string[] = []
+  let base = 1
+  for (const [min, max] of boxes) {
+    const mesh = boxMesh(min, max)
+    for (let v = 0; v < mesh.positions.length / 3; v += 1) {
+      lines.push(`v ${mesh.positions[v * 3]} ${mesh.positions[v * 3 + 1]} ${mesh.positions[v * 3 + 2]}`)
+    }
+    for (let t = 0; t < mesh.index.length; t += 3) {
+      lines.push(`f ${mesh.index[t] + base} ${mesh.index[t + 1] + base} ${mesh.index[t + 2] + base}`)
+    }
+    base += mesh.positions.length / 3
+  }
+  return new TextEncoder().encode(`${lines.join('\n')}\n`).buffer
+}
+
 function resetStore(): Project {
   useProjectStore.setState({
     project: newProject(),
@@ -162,6 +182,22 @@ function stlParams(overrides: Partial<ImportModelFileParams> = {}): ImportModelF
     ...overrides,
   }
 }
+
+function objParams(overrides: Partial<ImportModelFileParams> = {}): ImportModelFileParams {
+  return {
+    ...stlParams(),
+    modelFormat: 'obj',
+    modelBuffer: asciiObj([[[0, 0, 0], [10, 3, 10]]]),
+    fileName: 'bracket.obj',
+    ...overrides,
+  }
+}
+
+/** The model's plan, as the file states it: box `[min]`..`[max]` in world X/Y/Z. */
+const ASYMMETRIC_BOX: [Vec3, Vec3] = [[0, 0, 0], [10, 3, 10]]
+
+/** An origin at the project origin, so machine Y is the negated project Y. */
+const ZERO_ORIGIN: MachineOrigin = { name: 'O', x: 0, y: 0, z: 0, visible: true }
 
 /** Throws from the progress callback the first time the import reaches `label`. */
 function failAt(label: string): (stage: string) => void {
@@ -263,7 +299,54 @@ await test('axis orientation applies to STEP bodies', async () => {
   resetStore()
   const [id] = await importModelFile(stepParams([stepBody('Part', [0, 0, 0], [10, 20, 5])], { axisSwap: 'yz' }))
   const { bounds } = assetOf(id)
-  assert(bounds.maxY === 5 && bounds.maxZ === 20, JSON.stringify(bounds))
+  // The Y/Z swap puts the file's 20-unit Y-up extent on Z; the project-space
+  // plan conversion then negates the swapped Y, which holds the file's former
+  // Z extent (0..5) and composes the swap into a rotation rather than a mirror.
+  assert(bounds.maxZ === 20, `Z extent: ${bounds.maxZ}`)
+  assert(bounds.minY === -5 && bounds.maxY === 0, `Y extent: ${bounds.minY}..${bounds.maxY}`)
+})
+
+await test('an imported model lands in project space, not in the file world frame (#824)', async () => {
+  resetStore()
+  const [id] = await importModelFile(stlParams({
+    modelBuffer: asciiStl([ASYMMETRIC_BOX]),
+    fileName: 'bracket.stl',
+  }))
+  const { bounds } = assetOf(id)
+  // The file's world +Y is project -y: up on the canvas, away from the operator.
+  assert(bounds.minY === -3 && bounds.maxY === 0, `Y extent: ${bounds.minY}..${bounds.maxY}`)
+  assert(bounds.minX === 0 && bounds.maxX === 10, `X extent: ${bounds.minX}..${bounds.maxX}`)
+  assert(bounds.minZ === 0 && bounds.maxZ === 10, `Z extent: ${bounds.minZ}..${bounds.maxZ}`)
+
+  // What the negation is for: the G-code export negates project Y as well, so
+  // the file's +Y face has to come out at machine +Y rather than mirrored.
+  const machine = getBundledMachine('grbl')
+  assert(machine, 'the bundled grbl machine exists')
+  const plusYFace = projectToMachinePoint({ x: 0, y: bounds.minY, z: 0 }, ZERO_ORIGIN, machine)
+  assert(plusYFace.y === 3, `machine Y of the file's +Y face: ${plusYFace.y}`)
+
+  // The sketch silhouette follows the mesh into the same frame.
+  const silhouette = featureOf(id).definition.stl?.silhouettePaths?.[0] ?? []
+  const silhouetteY = silhouette.map((point) => point.y)
+  assert(silhouette.length >= 3, `silhouette: ${JSON.stringify(silhouette)}`)
+  assert(Math.max(...silhouetteY) <= 1e-9, `silhouette Y max: ${Math.max(...silhouetteY)}`)
+  assert(Math.min(...silhouetteY) >= -3 - 1e-6, `silhouette Y min: ${Math.min(...silhouetteY)}`)
+})
+
+await test('OBJ imports land in project space the same way (#824)', async () => {
+  resetStore()
+  const [id] = await importModelFile(objParams())
+  const { bounds } = assetOf(id)
+  assert(bounds.minY === -3 && bounds.maxY === 0, `Y extent: ${bounds.minY}..${bounds.maxY}`)
+  assert(bounds.minX === 0 && bounds.maxX === 10, `X extent: ${bounds.minX}..${bounds.maxX}`)
+})
+
+await test('STEP bodies land in project space too (#824)', async () => {
+  resetStore()
+  const [id] = await importModelFile(stepParams([stepBody('Part', ...ASYMMETRIC_BOX)]))
+  const { bounds } = assetOf(id)
+  assert(bounds.minY === -3 && bounds.maxY === 0, `Y extent: ${bounds.minY}..${bounds.maxY}`)
+  assert(bounds.minX === 0 && bounds.maxX === 10, `X extent: ${bounds.minX}..${bounds.maxX}`)
 })
 
 await test('a failure on a later STEP body leaves the project exactly as it was', async () => {
