@@ -1,0 +1,345 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Packer core (issue #844). Every guarantee is checked on the placed geometry
+ * itself — distances are measured between the transformed footprints, not
+ * inferred from the translations the packer reports.
+ *
+ * Run with: npx tsx src/engine/nesting/packer.test.ts
+ */
+
+import ClipperLib from 'clipper-lib'
+import type { Point } from '../../types/project'
+import { NEST_SCALE, ringToPath, rotateRing } from './clipperOps'
+import { expandByHalfGap, largestFirst } from './defaults'
+import { nest } from './packer'
+import type { NestPart, NestRequest, NestResult, NestRing } from './types'
+
+function assert(condition: boolean, message: string): void {
+  if (!condition) throw new Error(`Assertion failed: ${message}`)
+}
+
+const GAP_TOLERANCE = 1e-6
+
+function rect(x: number, y: number, w: number, h: number): NestRing {
+  return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }]
+}
+
+function gear(teeth: number, outer: number, inner: number): NestRing {
+  const ring: NestRing = []
+  const steps = teeth * 4
+  for (let i = 0; i < steps; i += 1) {
+    const angle = (i / steps) * Math.PI * 2
+    const r = i % 4 < 2 ? outer : inner
+    ring.push({ x: Math.cos(angle) * r, y: Math.sin(angle) * r })
+  }
+  return ring
+}
+
+function request(overrides: Partial<NestRequest> & Pick<NestRequest, 'parts'>): NestRequest {
+  return {
+    sheet: rect(0, 0, 100, 100),
+    obstacles: [],
+    minimumGap: 6,
+    expandFootprint: expandByHalfGap,
+    orderParts: largestFirst,
+    ...overrides,
+  }
+}
+
+function placedRings(req: NestRequest, result: NestResult): { key: string; rings: NestRing[] }[] {
+  return result.placements.map((placement) => {
+    const part = req.parts.find((candidate) => candidate.id === placement.partId)
+    if (!part) throw new Error(`unknown part ${placement.partId}`)
+    const rings = part.footprint.map((ring) => rotateRing(ring, placement.rotation).map((p) => ({
+      x: p.x + placement.translation.x,
+      y: p.y + placement.translation.y,
+    })))
+    return { key: `${placement.partId}#${placement.copyIndex}`, rings }
+  })
+}
+
+function overlapArea(a: NestRing[], b: NestRing[]): number {
+  const clipper = new ClipperLib.Clipper()
+  clipper.AddPaths(a.map(ringToPath), ClipperLib.PolyType.ptSubject, true)
+  clipper.AddPaths(b.map(ringToPath), ClipperLib.PolyType.ptClip, true)
+  const solution = new ClipperLib.Paths()
+  clipper.Execute(
+    ClipperLib.ClipType.ctIntersection,
+    solution,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  return solution.reduce((sum, path) => sum + Math.abs(ClipperLib.Clipper.Area(path)), 0) / NEST_SCALE ** 2
+}
+
+/** Area of `inner` lying outside `outer`. */
+function outsideArea(inner: NestRing[], outer: NestRing): number {
+  const clipper = new ClipperLib.Clipper()
+  clipper.AddPaths(inner.map(ringToPath), ClipperLib.PolyType.ptSubject, true)
+  clipper.AddPaths([ringToPath(outer)], ClipperLib.PolyType.ptClip, true)
+  const solution = new ClipperLib.Paths()
+  clipper.Execute(
+    ClipperLib.ClipType.ctDifference,
+    solution,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  return solution.reduce((sum, path) => sum + Math.abs(ClipperLib.Clipper.Area(path)), 0) / NEST_SCALE ** 2
+}
+
+function pointSegmentDistance(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const lengthSq = dx * dx + dy * dy
+  const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq))
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+}
+
+/** Closest approach between two non-overlapping ring sets. */
+function ringDistance(a: NestRing[], b: NestRing[]): number {
+  if (overlapArea(a, b) > 0) return 0
+  let best = Infinity
+  const scan = (from: NestRing[], to: NestRing[]) => {
+    for (const ring of from) {
+      for (const point of ring) {
+        for (const target of to) {
+          for (let i = 0; i < target.length; i += 1) {
+            best = Math.min(best, pointSegmentDistance(point, target[i], target[(i + 1) % target.length]))
+          }
+        }
+      }
+    }
+  }
+  scan(a, b)
+  scan(b, a)
+  return best
+}
+
+function assertValidLayout(req: NestRequest, result: NestResult, label: string): number {
+  const placed = placedRings(req, result)
+  let closest = Infinity
+  for (const entry of placed) {
+    const outside = outsideArea(entry.rings, req.sheet)
+    assert(outside < 1e-6, `${label}: ${entry.key} lies ${outside} mm² outside the sheet`)
+    for (const obstacle of req.obstacles) {
+      const distance = ringDistance(entry.rings, [obstacle])
+      assert(distance >= req.minimumGap - GAP_TOLERANCE, `${label}: ${entry.key} is ${distance} from an obstacle`)
+    }
+  }
+  for (let i = 0; i < placed.length; i += 1) {
+    for (let j = i + 1; j < placed.length; j += 1) {
+      const distance = ringDistance(placed[i].rings, placed[j].rings)
+      closest = Math.min(closest, distance)
+      assert(
+        distance >= req.minimumGap - GAP_TOLERANCE,
+        `${label}: ${placed[i].key} and ${placed[j].key} are ${distance} apart, need ${req.minimumGap}`,
+      )
+    }
+  }
+  return closest
+}
+
+function countPlaced(result: NestResult, partId: string): number {
+  return result.placements.filter((placement) => placement.partId === partId).length
+}
+
+function unplacedCount(result: NestResult, partId: string): number {
+  return result.unplaced.find((entry) => entry.partId === partId)?.count ?? 0
+}
+
+function part(id: string, footprint: NestRing[], quantity: number, rotations = [0]): NestPart {
+  return { id, footprint, quantity, rotations }
+}
+
+function testFillsCapacityAndReportsOverflow(): void {
+  // 45 + 6 + 45 = 96 ≤ 100, so exactly a 2×2 grid of 45 mm squares fits.
+  const req = request({ parts: [part('sq', [rect(0, 0, 45, 45)], 5, [0, 90])] })
+  const result = nest(req)
+  assert(countPlaced(result, 'sq') === 4, `expected 4 squares placed, got ${countPlaced(result, 'sq')}`)
+  assert(unplacedCount(result, 'sq') === 1, 'the fifth square is reported as unplaced')
+  const closest = assertValidLayout(req, result, 'capacity')
+  assert(closest <= req.minimumGap + 0.05, `packing is tight: closest pair ${closest}`)
+}
+
+function testGapComesFromTheCaller(): void {
+  const footprint = [rect(0, 0, 20, 20)]
+  for (const gap of [0, 3, 12]) {
+    const req = request({ minimumGap: gap, parts: [part('sq', footprint, 9)] })
+    const result = nest(req)
+    const closest = assertValidLayout(req, result, `gap ${gap}`)
+    assert(Math.abs(closest - gap) < 0.05, `gap ${gap}: neighbours sit at the gap, got ${closest}`)
+  }
+
+  // The placer hands the gap to expandFootprint and uses nothing else: an
+  // expansion that ignores it decides the spacing on its own.
+  const seen: number[] = []
+  const req = request({
+    minimumGap: 1,
+    expandFootprint: (rings, minimumGap) => {
+      seen.push(minimumGap)
+      return expandByHalfGap(rings, 10)
+    },
+    parts: [part('sq', footprint, 4)],
+  })
+  const result = nest(req)
+  assert(seen.length > 0 && seen.every((value) => value === 1), 'expandFootprint receives the caller gap')
+  const closest = assertValidLayout({ ...req, minimumGap: 10 }, result, 'custom expansion')
+  assert(closest >= 10 - GAP_TOLERANCE, `custom expansion governs spacing, got ${closest}`)
+}
+
+function testObstaclesKeepTheGap(): void {
+  const clamp = rect(40, 0, 20, 30)
+  const req = request({ obstacles: [clamp], parts: [part('sq', [rect(0, 0, 25, 25)], 6, [0, 90])] })
+  const result = nest(req)
+  assert(result.placements.length > 0, 'parts are placed around the obstacle')
+  assertValidLayout(req, result, 'obstacle')
+}
+
+function testNonRectangularSheet(): void {
+  // L-shaped sheet: the top-right 60×60 corner is missing.
+  const sheet: NestRing = [
+    { x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 60 }, { x: 100, y: 60 }, { x: 100, y: 100 }, { x: 0, y: 100 },
+  ]
+  const req = request({ sheet, parts: [part('sq', [rect(0, 0, 30, 30)], 8, [0])] })
+  const result = nest(req)
+  assert(countPlaced(result, 'sq') === 3, `three 30 mm squares fit the L, got ${countPlaced(result, 'sq')}`)
+  assertValidLayout(req, result, 'L sheet')
+}
+
+function testRotationSetIsRespected(): void {
+  // A 90×10 strip only fits a 50-wide sheet when turned a quarter.
+  const strip = [rect(0, 0, 90, 10)]
+  const tall = rect(0, 0, 50, 200)
+  const grain = request({ sheet: tall, parts: [part('strip', strip, 2, [0, 180])] })
+  const grainResult = nest(grain)
+  assert(grainResult.placements.length === 0, 'grain mode never turns the strip')
+  assert(unplacedCount(grainResult, 'strip') === 2, 'both strips reported unplaced')
+
+  const free = request({ sheet: tall, parts: [part('strip', strip, 2, [0, 90, 180, 270])] })
+  const freeResult = nest(free)
+  assert(freeResult.placements.length === 2, 'quarter turns let both strips fit')
+  assert(freeResult.placements.every((p) => p.rotation === 90 || p.rotation === 270), 'strips are turned')
+  assertValidLayout(free, freeResult, 'rotated strips')
+
+  // On a sheet where the strip fits either way, 0/180 must still never yield 90.
+  const wide = request({ sheet: rect(0, 0, 200, 200), parts: [part('strip', strip, 6, [0, 180])] })
+  const wideResult = nest(wide)
+  assert(wideResult.placements.every((p) => p.rotation === 0 || p.rotation === 180), 'only 0/180 used')
+}
+
+function testSmallPartsStillPlacedAfterOverflow(): void {
+  const req = request({
+    parts: [
+      part('big', [rect(0, 0, 60, 60)], 3),
+      part('small', [rect(0, 0, 10, 10)], 4),
+    ],
+  })
+  const result = nest(req)
+  assert(countPlaced(result, 'big') === 1 && unplacedCount(result, 'big') === 2, 'one big part fits')
+  assert(countPlaced(result, 'small') === 4, 'small parts fill the remaining space')
+  assertValidLayout(req, result, 'mixed')
+}
+
+function testNonConvexPartsNeverOverlap(): void {
+  const req = request({
+    sheet: rect(0, 0, 220, 160),
+    minimumGap: 4,
+    parts: [part('gear', [gear(12, 20, 14)], 12, [0, 90, 180, 270])],
+  })
+  const result = nest(req)
+  assert(result.placements.length >= 6, `gears are placed, got ${result.placements.length}`)
+  assertValidLayout(req, result, 'gears')
+}
+
+function testMultiRingPartMovesRigidly(): void {
+  // An "i": a stem and a separate dot, one part.
+  const letter = [rect(0, 10, 6, 30), rect(0, 0, 6, 6)]
+  const req = request({ minimumGap: 3, parts: [part('i', letter, 10, [0, 90])] })
+  const result = nest(req)
+  assert(result.placements.length > 0, 'letters are placed')
+  assertValidLayout(req, result, 'letter i')
+}
+
+function testExactFitIsAccepted(): void {
+  const req = request({ parts: [part('sheet-sized', [rect(0, 0, 100, 100)], 2)] })
+  const result = nest(req)
+  assert(countPlaced(result, 'sheet-sized') === 1, 'a part exactly the sheet size fits once')
+  assert(unplacedCount(result, 'sheet-sized') === 1, 'the second copy is reported')
+  assertValidLayout(req, result, 'exact fit')
+}
+
+function testDeterministic(): void {
+  const build = () => request({
+    parts: [
+      part('gear', [gear(8, 15, 11)], 5, [0, 90, 180, 270]),
+      part('sq', [rect(0, 0, 12, 12)], 6, [0, 90]),
+    ],
+  })
+  const first = JSON.stringify(nest(build()))
+  const second = JSON.stringify(nest(build()))
+  assert(first === second, 'identical input gives identical output')
+}
+
+function testRejectsInvalidInput(): void {
+  const expectThrow = (label: string, run: () => void) => {
+    let threw = false
+    try {
+      run()
+    } catch {
+      threw = true
+    }
+    assert(threw, `${label} is rejected`)
+  }
+  const sq = [rect(0, 0, 10, 10)]
+  expectThrow('negative gap', () => nest(request({ minimumGap: -1, parts: [part('a', sq, 1)] })))
+  expectThrow('NaN gap', () => nest(request({ minimumGap: Number.NaN, parts: [part('a', sq, 1)] })))
+  expectThrow('duplicate id', () => nest(request({ parts: [part('a', sq, 1), part('a', sq, 1)] })))
+  expectThrow('fractional quantity', () => nest(request({ parts: [part('a', sq, 1.5)] })))
+  expectThrow('no rotation', () => nest(request({ parts: [part('a', sq, 1, [])] })))
+  expectThrow('empty footprint', () => nest(request({ parts: [part('a', [], 1)] })))
+}
+
+const tests: [string, () => void][] = [
+  ['fills capacity and reports overflow', testFillsCapacityAndReportsOverflow],
+  ['gap comes from the caller', testGapComesFromTheCaller],
+  ['obstacles keep the gap', testObstaclesKeepTheGap],
+  ['non-rectangular sheet', testNonRectangularSheet],
+  ['rotation set is respected', testRotationSetIsRespected],
+  ['small parts still placed after overflow', testSmallPartsStillPlacedAfterOverflow],
+  ['non-convex parts never overlap', testNonConvexPartsNeverOverlap],
+  ['multi-ring part moves rigidly', testMultiRingPartMovesRigidly],
+  ['exact fit is accepted', testExactFitIsAccepted],
+  ['deterministic', testDeterministic],
+  ['rejects invalid input', testRejectsInvalidInput],
+]
+
+let failed = 0
+for (const [name, run] of tests) {
+  try {
+    run()
+    console.log(`  ✓ ${name}`)
+  } catch (error) {
+    failed += 1
+    console.error(`  ✗ ${name}\n    ${(error as Error).message}`)
+  }
+}
+if (failed > 0) {
+  console.error(`\n${failed} nesting packer test(s) failed`)
+  process.exit(1)
+}
+console.log('\nAll nesting packer tests passed')

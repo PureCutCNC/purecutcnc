@@ -39,6 +39,7 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
 - [designPrint/](designPrint/INDEX.md) — vector renderer for the 2D design view: page/scale layout math + SVG/HTML generation for printing (issue #254) and the geometry-only SVG export (issue #257)
 - [operationBooklet/](operationBooklet/INDEX.md) — per-operation report model and PDF booklet generation
 - [simulation/](simulation/INDEX.md) — heightfield-based material removal sim (grid, replay/stepping, GPU heightfield mesh + shaders)
+- [nesting/](nesting/INDEX.md) — sheet nesting (#741): pure packer that places copies of part footprints on a sheet with a caller-supplied gap (no-fit polygons over convex pieces, bottom-left fill)
 
 ## Conventions
 - All public exports flow through each subfolder's `index.ts`.
