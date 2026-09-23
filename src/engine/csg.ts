@@ -28,7 +28,7 @@ import {
   importedModelTransformKey,
   isIdentityModelOrientation,
   modelOrientationKey,
-  modelOrientationMatrix4,
+  modelOrientationAroundBoundsMatrix4,
   transformImportedModelPoint,
 } from './importedModelTransform'
 import type { MeshSliceIndex } from './toolpaths/meshSlicing'
@@ -465,7 +465,7 @@ export function buildFeatureMesh(
 
       const orientGroup = new THREE.Group()
       orientGroup.matrixAutoUpdate = false
-      orientGroup.matrix.fromArray(modelOrientationMatrix4(orientation))
+      orientGroup.matrix.fromArray(modelOrientationAroundBoundsMatrix4(orientation, persistedMesh.bounds))
       orientGroup.matrix.scale(new THREE.Vector3(userScale, userScale, userScale))
       innerGroup.add(orientGroup)
       for (const chunk of chunks) {
