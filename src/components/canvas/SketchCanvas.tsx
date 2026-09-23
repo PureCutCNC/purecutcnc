@@ -58,6 +58,7 @@ import { useFeatureDistributionWorkflow } from './useFeatureDistributionWorkflow
 import { FeatureDistributionPanel } from './FeatureDistributionPanel'
 import { drawTextLayoutPreview, textLayoutConfigFor } from './textLayoutPreview'
 import { TextLayoutPanel } from './TextLayoutPanel'
+import { NestPanelHost } from '../nesting/NestPanel'
 import { useTextLayoutWorkflow } from './useTextLayoutWorkflow'
 import { useCreationWorkflow } from './useCreationWorkflow'
 import { useCanvasKeyboard } from './useCanvasKeyboard'
@@ -3054,6 +3055,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           onCancel={featureDistribution.cancelFeatureDistributionFromPanel}
         />
       )}
+      <NestPanelHost containerRef={containerRef} canvasRef={canvasRef} clearTransientCanvasState={clearTransientCanvasState} />
       {pendingTextLayout && textLayoutConfig && (
         <TextLayoutPanel
           layout={pendingTextLayout.layout}

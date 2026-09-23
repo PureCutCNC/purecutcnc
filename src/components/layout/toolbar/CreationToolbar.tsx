@@ -90,6 +90,8 @@ export function CreationToolbar({
           onCreatePattern={toolbar.sketchCommands.arrange.startFeatureDistribution}
           canLayOutText={toolbar.sketchCommands.predicates.canLayOutText}
           onLayOutText={toolbar.sketchCommands.arrange.startTextLayout}
+          canNest={toolbar.sketchCommands.predicates.canNest}
+          onNest={toolbar.sketchCommands.arrange.startNest}
         />
         <BackdropEditActions
           enabled={toolbar.hasSelectedBackdrop}

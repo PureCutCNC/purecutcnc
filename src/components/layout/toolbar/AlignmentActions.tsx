@@ -36,7 +36,9 @@ interface DistributionMenuOption extends PopoverMenuOption<FeatureDistribution> 
  * widening `FeatureDistributionMode`.
  */
 type TextLayoutAction = 'text-layout'
-type DistributionAction = FeatureDistribution | FeatureDistributionMode | TextLayoutAction
+/** Sheet nesting (#741) arranges copies on the stock — the same menu, its own command. */
+type NestAction = 'nest'
+type DistributionAction = FeatureDistribution | FeatureDistributionMode | TextLayoutAction | NestAction
 
 const ALIGNMENT_OPTIONS: AlignmentMenuOption[] = [
   { value: 'left', icon: 'align-left', label: '', labelKey: 'sketch.align.left' },
@@ -93,18 +95,22 @@ function DistributionActions({
   canDistributeEvenly,
   canCreatePattern,
   canLayOutText,
+  canNest,
   onDistribute,
   onCreatePattern,
   onLayOutText,
+  onNest,
 }: {
   enabled: boolean
   tooltipSide?: 'bottom' | 'right'
   canDistributeEvenly: boolean
   canCreatePattern: boolean
   canLayOutText: boolean
+  canNest: boolean
   onDistribute: (distribution: FeatureDistribution) => void
   onCreatePattern: (mode: FeatureDistributionMode) => void
   onLayOutText: () => void
+  onNest: () => void
 }) {
   const { t } = useI18n()
 
@@ -123,6 +129,7 @@ function DistributionActions({
     // One entry, not one per baseline: the panel already has a mode selector,
     // so a button per mode was two doors into the same room.
     { value: 'text-layout', icon: 'text', label: t('canvas.textLayout.title'), enabled: canLayOutText },
+    { value: 'nest', icon: 'stock', label: t('canvas.nest.title'), enabled: canNest },
   ]
 
   function selectDistribution(action: DistributionAction) {
@@ -132,6 +139,10 @@ function DistributionActions({
     }
     if (action === 'text-layout') {
       onLayOutText()
+      return
+    }
+    if (action === 'nest') {
+      onNest()
       return
     }
     onCreatePattern(action as FeatureDistributionMode)

@@ -19,8 +19,10 @@
 export { nest } from './packer'
 export { expandByHalfGap, largestFirst } from './defaults'
 export { flattenProfileWithin } from './flatten'
+export { requestFromJob, type NestJob } from './job'
 export type {
   ExpandFootprint,
+  NestGravity,
   NestPart,
   NestPlacement,
   NestRequest,

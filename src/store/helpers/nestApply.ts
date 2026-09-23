@@ -35,6 +35,11 @@ export interface ApplyNestInput {
   /** Packer output for that part. */
   placements: NestPlacement[]
   settings: NestSettings
+  /**
+   * An existing nest to replace in the same step. The placements must have
+   * been computed on the project with that nest discarded.
+   */
+  replaceNestId?: string
 }
 
 export interface ApplyNestResult {
@@ -49,7 +54,8 @@ export interface ApplyNestResult {
  * (#741 decision 3). Every copy joins each operation that targets its source
  * (decision 5). Returns null when nothing would change.
  */
-export function applyNestToProject(project: Project, input: ApplyNestInput): ApplyNestResult | null {
+export function applyNestToProject(current: Project, input: ApplyNestInput): ApplyNestResult | null {
+  const project = input.replaceNestId ? discardNestFromProject(current, input.replaceNestId) ?? current : current
   const sources = input.featureIds
     .map((id) => resolveFeatureInstance(project, id))
     .filter((feature): feature is ResolvedSketchFeature => feature !== null)

@@ -14,7 +14,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `pendingAddSlice.ts` — in-progress feature being drawn but not yet committed, including multi-step gear placement; re-arms a fresh draft of the same shape on completion (sticky drawing, issue #415)
   - `pendingCompletionSlice.ts` — partially-completed sketches awaiting closure
   - `featureDistributionSlice.ts` — transient one-shot grid/radial/path copy distribution; commits reference or independent instances as one undoable action (issue #205)
-  - `nestingSlice.ts` — sheet nesting commits (issue #741): `applyNest` / `discardNest`, each exactly one history entry
+  - `nestingSlice.ts` — sheet nesting (issue #741): the Nest panel's `pendingNest` subject (`startNest`/`cancelNest`) and the `applyNest` / `discardNest` commits, each exactly one history entry; `applyNest` can replace an existing nest in the same step
   - `textLayoutSlice.ts` — transient text-on-arc/path workflow: applies a baseline to an **already placed** text run (grouped with the distribution workflows, not with text creation), bakes a picked guide outline into it, and writes the baseline to the **instance row** (`FeatureInstance.textLayout`) rather than the shared definition, so curving one copy leaves its siblings straight (issue #671)
   - `dimensionsSlice.ts` — persistent dimension annotations (`project.annotations`): add/update/delete + selection (history-tracked)
   - `dimensionToolSlice.ts` — transient measure tools: tape measure + in-progress permanent-dimension placement (not persisted, not in history)

@@ -19,9 +19,10 @@
 
 import ClipperLib from 'clipper-lib'
 import {
-  expandByHalfGap,
   flattenProfileWithin,
-  largestFirst,
+  requestFromJob,
+  type NestGravity,
+  type NestJob,
   type NestPlacement,
   type NestRequest,
   type NestRing,
@@ -30,7 +31,7 @@ import { differencePaths, NEST_SCALE, outerContours, pathToRing, ringToPath } fr
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
 import type { ClipperPath } from '../../engine/toolpaths/types'
 import { getFeatureGeometryProfiles } from '../../text'
-import type { LocalConstraint, Matrix2D, NestSettings, Point, Project } from '../../types/project'
+import { getStockBounds, type LocalConstraint, type Matrix2D, type NestRecord, type NestSettings, type Point, type Project } from '../../types/project'
 import { isMachinable } from './featureRoles'
 import { resolvedProjectFeatures, type ResolvedSketchFeature } from './resolveFeatures'
 
@@ -228,15 +229,14 @@ export function nestSheetRing(project: Project): NestRing | null {
   ))
 }
 
-/** A ready-to-run packer request for one resolved part. */
-export function buildNestRequest(
+/** A serializable packer job for one resolved part (see `requestFromJob`). */
+export function buildNestJob(
   project: Project,
   part: { featureIds: string[]; footprint: NestRing[] },
   settings: NestSettings,
-): NestRequest | null {
+): NestJob | null {
   const sheet = nestSheetRing(project)
   if (!sheet) return null
-  const tolerance = nestFlattenTolerance(project)
   return {
     sheet,
     obstacles: nestObstacleRings(project, part.featureIds, part.footprint, settings.keepOriginals),
@@ -247,9 +247,36 @@ export function buildNestRequest(
       rotations: settings.rotations,
     }],
     minimumGap: settings.minimumGap,
-    expandFootprint: (rings, minimumGap) => expandByHalfGap(rings, minimumGap + 2 * tolerance),
-    orderParts: largestFirst,
+    growthPadding: nestFlattenTolerance(project),
+    gravity: nestGravity(project),
   }
+}
+
+/** Pack toward the stock corner nearest the machine origin. */
+export function nestGravity(project: Project): NestGravity {
+  const bounds = getStockBounds(project.stock)
+  return {
+    x: project.origin.x <= (bounds.minX + bounds.maxX) / 2 ? 1 : -1,
+    y: project.origin.y <= (bounds.minY + bounds.maxY) / 2 ? 1 : -1,
+  }
+}
+
+/** A ready-to-run packer request for one resolved part. */
+export function buildNestRequest(
+  project: Project,
+  part: { featureIds: string[]; footprint: NestRing[] },
+  settings: NestSettings,
+): NestRequest | null {
+  const job = buildNestJob(project, part, settings)
+  return job ? requestFromJob(job) : null
+}
+
+/** The nest a selection belongs to — through a source or a copy — if any. */
+export function findNestForSelection(project: Project, selectedIds: string[]): NestRecord | null {
+  const selected = new Set(selectedIds)
+  return project.nests?.find((nest) => (
+    nest.sourceIds.some((id) => selected.has(id)) || nest.copyIds.some((id) => selected.has(id))
+  )) ?? null
 }
 
 /** The world-space transform a placement applies: rotate about the origin, then translate. */

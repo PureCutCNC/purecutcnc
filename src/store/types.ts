@@ -227,6 +227,12 @@ export interface PendingTextLayout {
   session: number
 }
 
+/** The Nest panel's subject (issue #741): the selection it was opened on. */
+export interface PendingNest {
+  sourceIds: string[]
+  session: number
+}
+
 export interface PendingFeatureDistribution {
   sourceIds: string[]
   guideId: string | null
@@ -301,6 +307,7 @@ export interface ProjectStore {
   pendingTransform: PendingTransformTool | null
   pendingOffset: PendingOffsetTool | null
   pendingFeatureDistribution: PendingFeatureDistribution | null
+  pendingNest: PendingNest | null
   pendingShapeAction: PendingShapeActionTool | null
   backdropImageLoading: boolean
   sketchEditSession: SketchEditSession | null
@@ -593,6 +600,9 @@ export interface ProjectStore {
   setFeatureDistributionRadialCenter: (center: Point) => void
   cancelFeatureDistribution: () => void
   completeFeatureDistribution: () => string[]
+  /** Open the Nest panel on the current feature selection (issue #741). */
+  startNest: () => void
+  cancelNest: () => void
   /** Commit a computed sheet nest as one history step; returns the nest id, or null if nothing changed (issue #741). */
   applyNest: (input: ApplyNestInput) => string | null
   /** Remove a nest's copies, strip them from operations and restore moved originals, as one history step. */

@@ -45,7 +45,7 @@ import {
   type IntBox,
 } from './clipperOps'
 import { convexPieces } from './convex'
-import type { NestPart, NestPlacement, NestRequest, NestResult, NestUnplaced } from './types'
+import type { NestGravity, NestPart, NestPlacement, NestRequest, NestResult, NestUnplaced } from './types'
 
 /**
  * Every forbidden region is grown by this many integer units before feasible
@@ -88,6 +88,7 @@ interface Range {
 
 export function nest(request: NestRequest): NestResult {
   validateRequest(request)
+  const gravity = request.gravity ?? { x: 1, y: 1 }
 
   const sheetPath = ringToPath(request.sheet)
   const sheetBox = pathsBox([sheetPath])
@@ -204,7 +205,7 @@ export function nest(request: NestRequest): NestResult {
           for (const vertex of path) {
             const dx = clamp(vertex.X, xRange)
             const dy = clamp(vertex.Y, yRange)
-            const score = placementScore(placedBox, oriented.rawBox, dx, dy)
+            const score = placementScore(placedBox, oriented.rawBox, dx, dy, gravity)
             if (!best || compareScores(score, best.score) < 0) best = { oriented, dx, dy, score }
           }
         }
@@ -294,12 +295,24 @@ function mergeBox(a: IntBox | null, b: IntBox): IntBox {
 }
 
 /**
- * Smallest bounding box of the placed set first, then the lowest Y, then the
- * lowest X — a deterministic gravity toward the sheet's min corner.
+ * Smallest bounding box of the placed set first, then the part's edge nearest
+ * the gravity corner in Y, then in X — deterministic, and comparable across
+ * rotations because it scores the placed box, not the raw translation.
  */
-function placementScore(placedBox: IntBox | null, rawBox: IntBox, dx: number, dy: number): number[] {
-  const box = mergeBox(placedBox, shiftBox(rawBox, dx, dy))
-  return [(box.maxX - box.minX) * (box.maxY - box.minY), dy, dx]
+function placementScore(
+  placedBox: IntBox | null,
+  rawBox: IntBox,
+  dx: number,
+  dy: number,
+  gravity: NestGravity,
+): number[] {
+  const part = shiftBox(rawBox, dx, dy)
+  const box = mergeBox(placedBox, part)
+  return [
+    (box.maxX - box.minX) * (box.maxY - box.minY),
+    gravity.y > 0 ? part.minY : -part.maxY,
+    gravity.x > 0 ? part.minX : -part.maxX,
+  ]
 }
 
 function compareScores(a: number[], b: number[]): number {

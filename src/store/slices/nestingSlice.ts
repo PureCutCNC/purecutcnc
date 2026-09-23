@@ -16,17 +16,37 @@
 
 import type { StateCreator } from 'zustand'
 import { applyNestToProject, discardNestFromProject } from '../helpers/nestApply'
+import { nextPlacementSession } from '../helpers/ids'
 import { cloneProject } from '../helpers/normalize'
 import type { ProjectStore } from '../types'
 import { sanitizeSelection } from './selectionSlice'
 
-export type NestingSlice = Pick<ProjectStore, 'applyNest' | 'discardNest'>
+export type NestingSlice = Pick<ProjectStore, 'pendingNest' | 'startNest' | 'cancelNest' | 'applyNest' | 'discardNest'>
 
 /** Sheet nesting commits (issue #741). Each action is exactly one history entry. */
 export function createNestingSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
 ): NestingSlice {
   return {
+    pendingNest: null,
+
+    startNest: () => set((s) => {
+      const sourceIds = s.selection.selectedFeatureIds
+      if (sourceIds.length === 0) return {}
+      return {
+        pendingAdd: null,
+        pendingMove: null,
+        pendingTransform: null,
+        pendingOffset: null,
+        pendingShapeAction: null,
+        pendingFeatureDistribution: null,
+        sketchEditSession: null,
+        pendingNest: { sourceIds: [...sourceIds], session: nextPlacementSession() },
+      }
+    }),
+
+    cancelNest: () => set({ pendingNest: null }),
+
     applyNest: (input) => {
       let nestId: string | null = null
       set((s) => {

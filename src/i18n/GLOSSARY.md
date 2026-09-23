@@ -41,6 +41,7 @@ has no case, so the check does not apply to the other locales.
 | toolpath | parcours d’outil | Standard CAD/CAM term |
 | tool | outil | Use `fraise` or `foret` when the cutter type matters |
 | stock | brut | CNC/machining stock |
+| nest / nesting | imbriquer / imbrication | Arranging part copies on the stock (issue #741) |
 | machine | machine | CNC machine |
 | pocket | poche | |
 | profile / edge route | contournage | Add `intérieur` / `extérieur` where needed |
@@ -86,6 +87,7 @@ has no case, so the check does not apply to the other locales.
 | toolpath | 刀路 | industry shorthand for 刀具路径 |
 | tool | 刀具 | cutter, not software tool (软件工具) |
 | stock | 毛坯 | |
+| nest / nesting | 排样 | Arranging part copies on the stock (issue #741) |
 | machine | 机床 | the CNC machine; 机器 only for generic machinery |
 | profile (operation) | 轮廓 | |
 | pocket (operation) | 挖槽 | |
@@ -141,6 +143,7 @@ second-person regional forms. Use European-CNC vocabulary where it differs
 | toolpath | trayectoria de herramienta | full term in UI; `toolpath` only where space is tight |
 | tool | herramienta | cutter, not software tool |
 | stock | material en bruto | |
+| nest / nesting | anidar / anidado | Arranging part copies on the stock (issue #741) |
 | machine | máquina | CNC machine in context |
 | profile (operation) | perfil | |
 | pocket (operation) | cajera | Common European-CNC term; avoid literal `bolsillo`. |
@@ -214,6 +217,7 @@ the requester) settles it; the choice below is the shipped default.
 | V-bit | V-Nutfräser | hobby shops also say "V-Bit" or "Gravierfräser" |
 | drill (tool) | Bohrer | |
 | stock | Rohteil | the raw blank |
+| nest / nesting | verschachteln / Verschachtelung | Arranging part copies on the stock (issue #741) |
 | machine | Maschine | the CNC machine |
 | origin (work zero) | Nullpunkt | Werkstücknullpunkt; machine X0 Y0 |
 | pocket | Tasche | |
