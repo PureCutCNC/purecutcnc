@@ -35,19 +35,53 @@ export const LIGHTING_GLSL = /* glsl */ `
   }
 `
 
+/**
+ * One predicate decides whether a grid edge is a vertical step, shared by the
+ * surface sheet and the wall mesh so the two can never disagree about it: the
+ * surface shades a slope, the wall draws a step. If they disagree, the loser's
+ * shading shows up as a dark rim on a flat top — a tab's stock-to-tab wall
+ * painted its own normal onto the 20 mm top beside it (issue #829).
+ *
+ * An edge is a slope when its step continues the gradient on either side of it
+ * (same sign, comparable magnitude), which is what a V-flank or a ball
+ * roundover looks like across many cells. An isolated step is a wall, and so is
+ * any step onto a cell whose material has been removed entirely.
+ */
+export const STEP_GLSL = /* glsl */ `
+  bool edgeIsStep(float hNear, float hFar, float hNearBeyond, float hFarBeyond, float stockBottomZ) {
+    float dCenter = hFar - hNear;
+    if (dCenter == 0.0) {
+      // Adjacent cells at equal height — nothing here for either mesh to draw.
+      return false;
+    }
+    float dNear = hNear - hNearBeyond;
+    float dFar = hFarBeyond - hFar;
+    bool slopeContinues =
+      (dNear * dCenter > 0.0 && abs(dCenter) <= 4.0 * abs(dNear)) ||
+      (dFar * dCenter > 0.0 && abs(dCenter) <= 4.0 * abs(dFar));
+    bool cutThroughRim = min(hNear, hFar) <= stockBottomZ + 0.000001;
+    return !slopeContinues || cutThroughRim;
+  }
+`
+
 const vertexShader = /* glsl */ `
   uniform sampler2D uHeightfield;
+  uniform vec2 uOrigin;
+  uniform float uCellSize;
 
-  varying vec2 vUv;
-  varying float vHeight;
+  flat out ivec2 vCell;
+  out float vHeight;
 
   void main() {
-    vUv = uv;
-    float height = texture2D(uHeightfield, uv).r;
+    vCell = ivec2(int(position.x + 0.5), gl_InstanceID);
+    float height = texelFetch(uHeightfield, vCell, 0).r;
     vHeight = height;
 
-    vec3 displaced = position;
-    displaced.y = height;
+    vec3 displaced = vec3(
+      uOrigin.x + (position.x + position.y) * uCellSize,
+      height,
+      uOrigin.y + (float(gl_InstanceID) + position.z) * uCellSize
+    );
 
     gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
   }
@@ -58,34 +92,53 @@ const fragmentShader = /* glsl */ `
   uniform vec3 uColor;
   uniform float uStockBottomZ;
   uniform float uStockTopZ;
-  uniform vec2 uTexelSize;
   uniform float uCellSize;
 
-  varying vec2 vUv;
-  varying float vHeight;
+  flat in ivec2 vCell;
+  in float vHeight;
+  out vec4 fragColor;
 
   ${LIGHTING_GLSL}
 
+  ${STEP_GLSL}
+
   void main() {
     float threshold = uStockBottomZ + 0.000001;
-    vec2 maxCellIndex = (vec2(1.0) / uTexelSize) - vec2(1.0);
-    vec2 cellIndex = floor(clamp(vUv / uTexelSize, vec2(0.0), maxCellIndex));
-    vec2 cellUv = (cellIndex + vec2(0.5)) * uTexelSize;
-    float cellHeight = texture2D(uHeightfield, cellUv).r;
-
-    if (cellHeight <= threshold) {
+    if (vHeight <= threshold) {
       discard;
     }
 
-    float hL = texture2D(uHeightfield, vUv - vec2(uTexelSize.x, 0.0)).r;
-    float hR = texture2D(uHeightfield, vUv + vec2(uTexelSize.x, 0.0)).r;
-    float hD = texture2D(uHeightfield, vUv - vec2(0.0, uTexelSize.y)).r;
-    float hU = texture2D(uHeightfield, vUv + vec2(0.0, uTexelSize.y)).r;
+    ivec2 lastCell = textureSize(uHeightfield, 0) - ivec2(1);
+    float hL = texelFetch(uHeightfield, clamp(vCell + ivec2(-1, 0), ivec2(0), lastCell), 0).r;
+    float hR = texelFetch(uHeightfield, clamp(vCell + ivec2(1, 0), ivec2(0), lastCell), 0).r;
+    float hD = texelFetch(uHeightfield, clamp(vCell + ivec2(0, -1), ivec2(0), lastCell), 0).r;
+    float hU = texelFetch(uHeightfield, clamp(vCell + ivec2(0, 1), ivec2(0), lastCell), 0).r;
 
-    if (hL <= threshold) hL = vHeight;
-    if (hR <= threshold) hR = vHeight;
-    if (hD <= threshold) hD = vHeight;
-    if (hU <= threshold) hU = vHeight;
+    // Second ring: a step is only a slope if it continues the gradient beyond
+    // it, and that cannot be judged from the immediate neighbors alone.
+    float hLL = texelFetch(uHeightfield, clamp(vCell + ivec2(-2, 0), ivec2(0), lastCell), 0).r;
+    float hRR = texelFetch(uHeightfield, clamp(vCell + ivec2(2, 0), ivec2(0), lastCell), 0).r;
+    float hDD = texelFetch(uHeightfield, clamp(vCell + ivec2(0, -2), ivec2(0), lastCell), 0).r;
+    float hUU = texelFetch(uHeightfield, clamp(vCell + ivec2(0, 2), ivec2(0), lastCell), 0).r;
+
+    // This cell is a flat tread. An axis bounded by a step takes no gradient
+    // from it — the wall mesh draws that riser, and borrowing its normal is
+    // what painted a dark band along every tab. Only a slope the surface
+    // itself renders still tilts the normal.
+    bool stepX =
+      edgeIsStep(hL, vHeight, hLL, hR, uStockBottomZ) ||
+      edgeIsStep(vHeight, hR, hL, hRR, uStockBottomZ);
+    bool stepZ =
+      edgeIsStep(hD, vHeight, hDD, hU, uStockBottomZ) ||
+      edgeIsStep(vHeight, hU, hD, hUU, uStockBottomZ);
+    if (stepX) {
+      hL = vHeight;
+      hR = vHeight;
+    }
+    if (stepZ) {
+      hD = vHeight;
+      hU = vHeight;
+    }
 
     float dhdx = (hR - hL) / (2.0 * uCellSize);
     float dhdz = (hU - hD) / (2.0 * uCellSize);
@@ -97,7 +150,7 @@ const fragmentShader = /* glsl */ `
     float depthRatio = clamp((uStockTopZ - vHeight) / max(uStockTopZ - uStockBottomZ, 0.001), 0.0, 1.0);
     float depthDarken = 1.0 - depthRatio * 0.12;
 
-    gl_FragColor = vec4(uColor * lighting * depthDarken, 1.0);
+    fragColor = vec4(uColor * lighting * depthDarken, 1.0);
   }
 `
 
@@ -112,12 +165,12 @@ export function createHeightfieldMaterial(
       uColor: { value: stockColor },
       uStockBottomZ: { value: grid.stockBottomZ },
       uStockTopZ: { value: grid.stockTopZ },
-      uTexelSize: { value: new THREE.Vector2(1 / grid.cols, 1 / grid.rows) },
+      uOrigin: { value: new THREE.Vector2(grid.originX, grid.originY) },
       uCellSize: { value: grid.cellSize },
     },
     vertexShader,
     fragmentShader,
+    glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
   })
 }
-

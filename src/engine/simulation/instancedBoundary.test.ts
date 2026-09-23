@@ -27,6 +27,7 @@ import {
   wallInstanceCount,
 } from './instancedBoundary'
 import { createHeightfieldTexture } from './gpuMesh'
+import { createHeightfieldMaterial, STEP_GLSL } from './heightfieldShader'
 import type { SimulationGrid } from './types'
 
 function assert(condition: boolean, message: string): void {
@@ -114,6 +115,41 @@ function testTemplateBoundingSphereCoversStock(): void {
   console.log('template bounding sphere: PASSED')
 }
 
+function testSurfaceAndWallsShareStepPredicate(): void {
+  console.log('Testing the surface sheet and the wall mesh classify an edge with one predicate...')
+  // Issue #829: when the wall mesh drew a step the surface did not know about,
+  // the flat top beside it borrowed the riser's normal and a tab grew a dark
+  // band. Both shaders must call edgeIsStep, not a private copy of the rule.
+  const grid = makeGrid(8, 8)
+  const texture = createHeightfieldTexture(grid)
+  const stock = new THREE.Color(0x8899aa)
+  const surface = createHeightfieldMaterial(texture, grid, stock)
+  const boundary = createInstancedBoundaryGroup(texture, grid, stock)
+  const walls = boundary.children.filter(
+    (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.geometry instanceof THREE.InstancedBufferGeometry,
+  )
+
+  assert(STEP_GLSL.includes('bool edgeIsStep('), 'the shared predicate must be exported for both shaders')
+  assert(surface.fragmentShader.includes('edgeIsStep('), 'the top surface must classify its edges with edgeIsStep')
+  assert(walls.length === 2, 'boundary group must expose both wall strips')
+  for (const wall of walls) {
+    assert(
+      (wall.material as THREE.ShaderMaterial).vertexShader.includes('edgeIsStep('),
+      'both wall strips must classify their edges with the same predicate as the surface',
+    )
+  }
+
+  surface.dispose()
+  boundary.traverse((object) => {
+    if (object instanceof THREE.Mesh) {
+      object.geometry.dispose()
+      ;(object.material as THREE.Material).dispose()
+    }
+  })
+  texture.dispose()
+  console.log('shared step predicate: PASSED')
+}
+
 function testBoundaryGroupShape(): void {
   console.log('Testing boundary group wiring (meshes, materials, uniforms)...')
   const grid = makeGrid(30, 12)
@@ -154,6 +190,7 @@ try {
   testWallInstanceCount()
   testStripTemplateScalesByRowOnly()
   testTemplateBoundingSphereCoversStock()
+  testSurfaceAndWallsShareStepPredicate()
   testBoundaryGroupShape()
   console.log('\nAll instanced boundary tests PASSED.')
 } catch (e) {

@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: GPU heightfield simulation rendering and playback update design
-last-verified: 2026-07-15
+last-verified: 2026-09-23
 ---
 
 # Simulation GPU Heightfield Design
@@ -20,10 +20,23 @@ The shipped implementation plan and playback experiments are preserved in
 - The CPU grid is the canonical simulation state and owns removal math.
 - Playback reports the dirty grid region changed by applied moves.
 - A texture mirrors height values for rendering.
-- Static geometry supplies the heightfield plane, stock boundary walls, and
-  bottom surfaces.
-- The shader displaces vertices and derives lighting normals from neighboring
-  height samples.
+- An instanced row template supplies an independent flat top quad for each
+  heightfield cell; boundary walls and the underside use the same texture.
+- The shader places each top at its own cell height and derives lighting
+  normals from neighboring height samples. Cut-through cells discard their
+  top quad. Adjacent tops cannot share corners because a one-cell-wide tab
+  would otherwise slope down into a removed neighbor and look like a hole.
+- Boundary slope smoothing keeps every wall next to a cut-through cell. A tab
+  can form a descending stock-to-tab-to-cut sequence whose outer step must
+  still render as a wall.
+- One shared step/slope predicate decides which mesh shades an edge: the surface
+  sheet takes a lighting gradient only across a slope, and the wall mesh draws
+  the steps it leaves flat. A step is classified by whether it continues the
+  gradient beyond it, so a V-flank or ball roundover still shades smoothly while
+  a tab's 17 mm drop stays a wall. Both meshes asking the same predicate is what
+  keeps "wall drawn" and "top stays flat" from drifting apart — when they
+  disagreed, the surface painted the riser's normal onto the flat top beside it
+  as a dark band across the tab (issue #829).
 - Static and playback views use the same rendering contract.
 
 Implementation is centered in `src/engine/simulation/` and
