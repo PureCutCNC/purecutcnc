@@ -90,6 +90,8 @@ Re-shoot: cam-setup/tabs/tab-crossings.png
 - `Changed:` is written for the docs author, who has not read the PR: what the
   user now sees or gets, in user terms, including exact new labels and
   defaults.
+- Write app issue and PR references as `purecutcnc#NN`. The docs issue lives
+  in the docs repo, where a bare `#NN` links to one of *its* issues.
 - `None` is the only line when there is no impact.
 
 Validate before pushing (Node 24+ runs it directly):
