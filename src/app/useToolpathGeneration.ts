@@ -143,6 +143,8 @@ export interface ToolpathGenerationBinding {
     signal?: AbortSignal,
   ) => Promise<ToolpathGenerationTrace | null>
   generatingOperationIds: Set<string>
+  /** Operations whose displayed toolpath carries any warning or error (issue #837). */
+  warningOperationIds: Set<string>
   selectedToolpath: ToolpathResult | null
   visibleToolpaths: ToolpathResult[]
   collidingClampIds: string[]
@@ -233,6 +235,16 @@ export function useToolpathGeneration(
     ? toolpathMap.get(selectedOperation.id) ?? null
     : null
 
+  // Only what the preview has generated is known; a hidden, unselected
+  // operation is not generated just to colour its row.
+  const warningOperationIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const [id, toolpath] of toolpathMap) {
+      if (toolpath.warnings.length > 0) ids.add(id)
+    }
+    return ids
+  }, [toolpathMap])
+
   const visibleToolpaths = useMemo<ToolpathResult[]>(() => {
     return project.operations
       .filter((operation) => operation.showToolpath)
@@ -255,6 +267,7 @@ export function useToolpathGeneration(
     requestToolpath,
     requestGenerationTrace,
     generatingOperationIds,
+    warningOperationIds,
     selectedToolpath,
     visibleToolpaths,
     collidingClampIds,

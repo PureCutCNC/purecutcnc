@@ -3638,12 +3638,17 @@
   margin-bottom: 8px;
 }
 
-.cam-operation-status__title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+/* The warnings list is collapsible (#837). It heads the panel, so it drops the
+   separator the property groups draw above themselves. Collapsed, the header
+   takes the warning colour and shows the count so hidden warnings still read
+   as warnings. */
+.cam-operation-warnings {
+  border-top: none;
+  margin-top: 0;
+}
+
+.cam-operation-warnings:not(.disclosure-section--open) .disclosure-section__header {
+  color: var(--warning-text);
 }
 
 /* Dev-only toolpath debug toggle (#559). Set apart from the groups above it
@@ -3764,6 +3769,12 @@
 
 .cam-operation-tree .tree-row:not(.tree-row--selected) .tree-label {
   color: var(--text);
+}
+
+/* An operation whose toolpath has warnings or errors reads as such in the tree,
+   selected or not (#837). Matches the specificity of the two rules above. */
+.cam-operation-tree .tree-row.cam-operation-row--warning .tree-label {
+  color: var(--warning-text);
 }
 
 .cam-operation-badge {

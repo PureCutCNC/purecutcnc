@@ -16,7 +16,7 @@
 
 import { test, expect } from './fixtures'
 import { readFileSync } from 'node:fs'
-import { seedCamQuickOperationProject } from './camOperations.helpers'
+import { seedCamQuickOperationProject, seedCamQuickOperationProjectWithLowTab } from './camOperations.helpers'
 import {
   clickMenuItem,
   getProject,
@@ -898,6 +898,52 @@ test.describe('CAM operation browser smoke', () => {
       app.page.locator('.cam-operation-properties .properties-group')
         .getByText('Debug toolpath', { exact: true }),
     ).toHaveCount(0)
+  })
+
+  test('toolpath warnings collapse to a coloured header with their count (#837)', async ({ app, ui }) => {
+    await seedCamQuickOperationProjectWithLowTab(app.page)
+
+    const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
+    await ui.contextMenu.item(carveMenu, 'Create operation').hover()
+    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create pocket')
+    await expect(ui.operations.rows(app.page)).toHaveCount(1)
+
+    const section = app.page.locator('.cam-operation-properties .cam-operation-warnings')
+    const header = section.locator('.disclosure-section__header')
+    const notes = section.locator('.cam-field-note')
+
+    // Open by default: the warnings are listed and no count is shown.
+    await expect(header).toHaveAttribute('aria-expanded', 'true')
+    await expect(notes.first()).toBeVisible()
+    const count = await notes.count()
+    await expect(section.locator('.disclosure-section__suffix')).toHaveCount(0)
+    const openColour = await header.evaluate((el) => getComputedStyle(el).color)
+
+    // Collapsed: the list is gone, the header carries the count and turns the warning colour.
+    await header.click()
+    await expect(header).toHaveAttribute('aria-expanded', 'false')
+    await expect(notes).toHaveCount(0)
+    await expect(section.locator('.disclosure-section__suffix')).toHaveText(`(${count})`)
+    const warningColour = await app.page.evaluate(() => {
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--warning-text)'
+      document.body.appendChild(probe)
+      const colour = getComputedStyle(probe).color
+      probe.remove()
+      return colour
+    })
+    await expect.poll(() => header.evaluate((el) => getComputedStyle(el).color)).toBe(warningColour)
+    expect(warningColour).not.toBe(openColour)
+
+    // Expanding again restores the list.
+    await header.click()
+    await expect(notes).toHaveCount(count)
+
+    // The operation's row in the tree takes the warning colour too, selected or not.
+    const row = ui.operations.rows(app.page).first()
+    const rowLabelColour = () => row.locator('.tree-label').evaluate((el) => getComputedStyle(el).color)
+    await expect(row).toHaveClass(/cam-operation-row--warning/)
+    await expect.poll(rowLabelColour).toBe(warningColour)
   })
 
   test('expanded properties lay out in exactly two columns (#559)', async ({ app, ui }) => {

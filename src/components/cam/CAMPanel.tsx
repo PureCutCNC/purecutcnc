@@ -92,6 +92,8 @@ interface CAMPanelProps {
   documentKey: number
   toolpathWarnings?: ToolpathWarning[] | null
   generatingOperationIds?: Set<string>
+  /** Operations whose toolpath has a warning or error; their rows take the warning colour. */
+  warningOperationIds?: Set<string>
   /**
    * True while the user has stopped automatic generation. The operations in
    * `generatingOperationIds` still need generating — that is why they are
@@ -601,6 +603,7 @@ export function CAMPanel({
   documentKey,
   toolpathWarnings,
   generatingOperationIds,
+  warningOperationIds,
   generationPaused = false,
   generationSettings,
   onOperationHighlightChange,
@@ -2044,14 +2047,19 @@ export function CAMPanel({
               <div className="cam-field-message">{bookletExportMessage?.text}</div>
             ) : null}
             {hasWarnings ? (
-              <>
-                <span className="cam-operation-status__title">{camT('cam.operation.toolpathWarnings')}</span>
+              <DisclosureSection
+                title={camT('cam.operation.toolpathWarnings')}
+                storageKey="cam-op-warnings"
+                defaultOpen
+                className="cam-operation-warnings"
+                collapsedSuffix={`(${toolpathWarnings?.length ?? 0})`}
+              >
                 {toolpathWarnings?.map((warning, index) => (
                   <div key={`${operation.id}-warning-${index}`} className="cam-field-note">
                     {toolpathWarningText(warning)}
                   </div>
                 ))}
-              </>
+              </DisclosureSection>
             ) : null}
           </div>
         ) : null}
@@ -2323,6 +2331,7 @@ export function CAMPanel({
                             'tree-row--feature',
                             operation.id === selectedOperationId ? 'tree-row--selected' : '',
                             dragOperationId === operation.id ? 'tree-row--dragging' : '',
+                            warningOperationIds?.has(operation.id) ? 'cam-operation-row--warning' : '',
                           ].join(' ')}
                           onClick={() => handleSelectOperation(operation.id)}
                           onKeyDown={(event) => {

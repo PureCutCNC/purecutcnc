@@ -222,10 +222,10 @@ function App() {
   const generationBackend = useExecutorPreference()
 
   const {
-    toolpathMap,
     requestToolpath,
     requestGenerationTrace,
     generatingOperationIds,
+    warningOperationIds,
     selectedToolpath,
     visibleToolpaths,
     collidingClampIds,
@@ -247,7 +247,6 @@ function App() {
     projectKey,
     generationBackend.resolved,
   )
-  void toolpathMap
 
   const toolpathLevelSelection = useToolpathLevelSelection(selectedOperation, selectedToolpath)
 
@@ -489,6 +488,7 @@ function App() {
             }}
             toolpathWarnings={selectedToolpath?.warnings ?? null}
             generatingOperationIds={generatingOperationIds}
+            warningOperationIds={warningOperationIds}
             onOperationHighlightChange={setOperationHighlightKind}
           />
         }
