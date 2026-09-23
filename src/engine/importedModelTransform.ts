@@ -167,6 +167,24 @@ export function modelOrientationMatrix4(orientation: ModelOrientation): Imported
   ]
 }
 
+/** Rotate about the original mesh bounds center, retaining its sketch position. */
+export function modelOrientationAroundBoundsMatrix4(
+  orientation: ModelOrientation,
+  bounds: { minX: number, maxX: number, minY: number, maxY: number, minZ: number, maxZ: number },
+): ImportedModelMatrix4 {
+  const matrix = modelOrientationMatrix4(orientation)
+  const center = {
+    x: (bounds.minX + bounds.maxX) / 2,
+    y: (bounds.minY + bounds.maxY) / 2,
+    z: (bounds.minZ + bounds.maxZ) / 2,
+  }
+  const rotatedCenter = rotatePointByModelOrientation(orientation, center.x, center.y, center.z)
+  matrix[12] = center.x - rotatedCenter.x
+  matrix[13] = center.y - rotatedCenter.y
+  matrix[14] = center.z - rotatedCenter.z
+  return matrix
+}
+
 /** Stable cache-key fragment for an orientation. Identity collapses to `none`. */
 export function modelOrientationKey(orientation: ModelOrientation | null | undefined): string {
   const normalized = normalizeModelOrientation(orientation)

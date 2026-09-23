@@ -29,6 +29,7 @@ import { resolveFeatureInstance } from '../store/helpers/resolveFeatures'
 import { buildFeatureMesh, buildFeatureSolid, getManifoldModule, loadSTLTransformedGeometry } from './csg'
 import { THEME_PALETTES } from '../theme/palette'
 import { computeMeshBounds, orientImportedMesh, serializeImportedMesh, type ImportedTriangleMesh } from './importedMesh'
+import { assembleModelExportMesh } from './modelExport/assemble'
 import {
   isIdentityModelOrientation,
   modelOrientationKey,
@@ -65,15 +66,27 @@ function makeBoxMesh(): ImportedTriangleMesh {
   return { positions, index, bounds: computeMeshBounds(positions) }
 }
 
+function offsetBoxMesh(dx: number, dy: number, dz: number): ImportedTriangleMesh {
+  const mesh = makeBoxMesh()
+  const positions = new Float32Array(mesh.positions)
+  for (let i = 0; i < positions.length; i += 3) {
+    positions[i] += dx
+    positions[i + 1] += dy
+    positions[i + 2] += dz
+  }
+  return { positions, index: mesh.index, bounds: computeMeshBounds(positions) }
+}
+
 function makeProject(
   orientation: ModelOrientation | undefined,
   zBottom: number,
   zTop: number,
   featureId = 'model',
+  mesh = makeBoxMesh(),
 ): Project {
   const project = newProject('Model orientation', 'mm')
   const assetId = `model-asset-${featureId}`
-  project.modelAssets = { [assetId]: serializeImportedMesh(makeBoxMesh(), 'stl') }
+  project.modelAssets = { [assetId]: serializeImportedMesh(mesh, 'stl') }
   project.featureDefinitions = {
     [featureId]: {
       id: featureId,
@@ -225,13 +238,13 @@ const Z90: ModelOrientation = { rx: 0, ry: 0, rz: 90 }
 
   const rotated = orientImportedMesh(mesh, X90)
   assert(rotated !== mesh, 'a real rotation returns a new mesh')
-  // rx=90 maps (x,y,z) → (x, -z, y): x stays 0..2, y becomes -3..0, z becomes 0..1.
+  // The source bounds center (1, 0.5, 1.5) remains fixed.
   assertApprox(rotated.bounds.minX, 0, 'rotated minX')
   assertApprox(rotated.bounds.maxX, 2, 'rotated maxX')
-  assertApprox(rotated.bounds.minY, -3, 'rotated minY')
-  assertApprox(rotated.bounds.maxY, 0, 'rotated maxY')
-  assertApprox(rotated.bounds.minZ, 0, 'rotated minZ')
-  assertApprox(rotated.bounds.maxZ, 1, 'rotated maxZ')
+  assertApprox(rotated.bounds.minY, -1, 'rotated minY')
+  assertApprox(rotated.bounds.maxY, 2, 'rotated maxY')
+  assertApprox(rotated.bounds.minZ, 1, 'rotated minZ')
+  assertApprox(rotated.bounds.maxZ, 2, 'rotated maxZ')
   assert(mesh.bounds.maxZ === 3, 'the source mesh must not be mutated in place')
 }
 
@@ -257,8 +270,8 @@ const manifold = await getManifoldModule()
   assertApprox(bounds.maxZ - bounds.minZ, 1, 'rotated Z extent — a squashed model fails here')
   assertApprox(bounds.minZ, 2, 'rotated geometry sits on its z_bottom')
   assertApprox(bounds.maxZ, 3, 'rotated geometry reaches its z_top')
-  assertApprox(bounds.minY, -3, 'rotated geometry Y min')
-  assertApprox(bounds.maxY, 0, 'rotated geometry Y max')
+  assertApprox(bounds.minY, -1, 'rotated geometry Y min')
+  assertApprox(bounds.maxY, 2, 'rotated geometry Y max')
 
   // Preview world axes are (modelX, modelZ, modelY) after rotateX(-π/2) and the
   // final Z flip, mirroring the mapping asserted in importedModelTransform.test.
@@ -285,7 +298,70 @@ const manifold = await getManifoldModule()
 }
 
 // ---------------------------------------------------------------------------
-// 6. A Z band that does not match the rotated height still fits, as before
+// 6. Offset and separate bodies retain their own placement across consumers
+// ---------------------------------------------------------------------------
+
+// Each body uses its own original bounds, even when source coordinates are
+// offset. The committed Z band reseats the rotated mesh at its intended lift.
+for (const [bodyIndex, source] of [
+  offsetBoxMesh(40, 25, 7),
+  offsetBoxMesh(70, 45, 11),
+].entries()) {
+  const originalCenterX = (source.bounds.minX + source.bounds.maxX) / 2
+  const originalCenterY = (source.bounds.minY + source.bounds.maxY) / 2
+  const firstX = orientImportedMesh(source, X90)
+  orientImportedMesh(source, Y90)
+  const secondX = orientImportedMesh(source, X90)
+  assert(firstX.positions.every((value, i) => value === secondX.positions[i]),
+    `body ${bodyIndex}: repeated edits must derive from the original mesh`)
+
+  for (const [axis, orientation] of [['X', X90], ['Y', Y90], ['Z', Z90]] as const) {
+    const oriented = orientImportedMesh(source, orientation)
+    assertApprox((oriented.bounds.minX + oriented.bounds.maxX) / 2, originalCenterX,
+      `body ${bodyIndex} ${axis}: sketch X center`)
+    assertApprox((oriented.bounds.minY + oriented.bounds.maxY) / 2, originalCenterY,
+      `body ${bodyIndex} ${axis}: sketch Y center`)
+
+    const height = oriented.bounds.maxZ - oriented.bounds.minZ
+    const project = makeProject(orientation, 4, 4 + height, `body-${bodyIndex}-${axis}`, source)
+    const feature = resolveFeatureInstance(project, `body-${bodyIndex}-${axis}`)
+    assert(feature, `${axis}: model should resolve`)
+    const cam = loadSTLTransformedGeometry(feature, project)
+    assert(cam, `${axis}: CAM geometry should load`)
+    const bounds = positionBounds(cam.positions)
+    assertApprox(bounds.minX, oriented.bounds.minX, `${axis}: CAM X min`)
+    assertApprox(bounds.maxX, oriented.bounds.maxX, `${axis}: CAM X max`)
+    assertApprox(bounds.minY, oriented.bounds.minY, `${axis}: CAM Y min`)
+    assertApprox(bounds.maxY, oriented.bounds.maxY, `${axis}: CAM Y max`)
+    assertApprox(bounds.minZ, 4, `${axis}: reseated bottom`)
+    assertApprox(bounds.maxZ, 4 + height, `${axis}: rigid rotated height`)
+
+    const preview = buildFeatureMesh(project, feature, false, false, undefined, threePalette)
+    preview.updateMatrixWorld(true)
+    const previewBounds = new THREE.Box3().setFromObject(preview)
+    assertApprox(previewBounds.min.x, bounds.minX, `${axis}: preview X min`)
+    assertApprox(previewBounds.max.x, bounds.maxX, `${axis}: preview X max`)
+    assertApprox(previewBounds.min.y, bounds.minZ, `${axis}: preview Z min`)
+    assertApprox(previewBounds.max.y, bounds.maxZ, `${axis}: preview Z max`)
+    assertApprox(previewBounds.min.z, bounds.minY, `${axis}: preview Y min`)
+    assertApprox(previewBounds.max.z, bounds.maxY, `${axis}: preview Y max`)
+
+    const exported = await assembleModelExportMesh(project, {
+      includeImportedMeshes: true,
+      curveQuality: 'normal',
+    })
+    const exportBounds = positionBounds(exported.mesh.positions)
+    assertApprox(exportBounds.minX, bounds.minX, `${axis}: export X min`)
+    assertApprox(exportBounds.maxX, bounds.maxX, `${axis}: export X max`)
+    assertApprox(exportBounds.minY, -bounds.maxY, `${axis}: export Y min`)
+    assertApprox(exportBounds.maxY, -bounds.minY, `${axis}: export Y max`)
+    assertApprox(exportBounds.minZ, bounds.minZ, `${axis}: export Z min`)
+    assertApprox(exportBounds.maxZ, bounds.maxZ, `${axis}: export Z max`)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 7. A Z band that does not match the rotated height still fits, as before
 // ---------------------------------------------------------------------------
 
 {
@@ -304,7 +380,7 @@ const manifold = await getManifoldModule()
 }
 
 // ---------------------------------------------------------------------------
-// 7. Cache key includes orientation (stale-geometry guard)
+// 8. Cache key includes orientation (stale-geometry guard)
 // ---------------------------------------------------------------------------
 
 {

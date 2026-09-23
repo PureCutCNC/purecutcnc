@@ -20,6 +20,7 @@ import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUti
 import type { ImportedModelSourceFormat, ModelOrientation, PersistedImportedMesh } from '../types/project'
 import {
   isIdentityModelOrientation,
+  modelOrientationAroundBoundsMatrix4,
   modelOrientationKey,
   normalizeModelOrientation,
   rotatePointByModelOrientation,
@@ -379,8 +380,9 @@ export function applyModelOrientationToPositions(
 }
 
 /**
- * Return the mesh as seen through its post-import orientation, with bounds
- * recomputed from the rotated vertices.
+ * Return the mesh rotated about its original 3D bounds center, with bounds
+ * recomputed from the rotated vertices. The feature's Z fit reseats its bottom
+ * at the intended height after this rigid rotation.
  *
  * Identity orientation returns the **same object**, so every project that
  * predates the field — and every model the user never rotated — pays nothing.
@@ -407,6 +409,12 @@ export function orientImportedMesh(
 
   const positions = new Float32Array(mesh.positions)
   applyModelOrientationToPositions(positions, normalized)
+  const placement = modelOrientationAroundBoundsMatrix4(normalized, mesh.bounds)
+  for (let i = 0; i < positions.length; i += 3) {
+    positions[i] += placement[12]
+    positions[i + 1] += placement[13]
+    positions[i + 2] += placement[14]
+  }
   const oriented: ImportedTriangleMesh = {
     positions,
     index: mesh.index,

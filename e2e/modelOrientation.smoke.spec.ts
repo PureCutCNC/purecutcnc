@@ -39,7 +39,7 @@ interface ModelState {
   orientation?: { rx: number, ry: number, rz: number }
   zTop: number
   zBottom: number
-  silhouetteBounds: { width: number, height: number }
+  silhouetteBounds: { minX: number, maxX: number, minY: number, maxY: number, width: number, height: number }
 }
 
 function readModelState(project: Record<string, unknown>): ModelState {
@@ -57,6 +57,10 @@ function readModelState(project: Record<string, unknown>): ModelState {
     zTop: instance.z_top,
     zBottom: instance.z_bottom,
     silhouetteBounds: {
+      minX: xs.length ? Math.min(...xs) : 0,
+      maxX: xs.length ? Math.max(...xs) : 0,
+      minY: ys.length ? Math.min(...ys) : 0,
+      maxY: ys.length ? Math.max(...ys) : 0,
       width: xs.length ? Math.max(...xs) - Math.min(...xs) : 0,
       height: ys.length ? Math.max(...ys) - Math.min(...ys) : 0,
     },
@@ -152,6 +156,14 @@ test.describe('imported model 3D orientation', () => {
       .toBeCloseTo(before.silhouetteBounds.width, 2)
     expect(after.silhouetteBounds.height, 'Y extent becomes the old model height')
       .toBeCloseTo(beforeHeight, 2)
+    expect((after.silhouetteBounds.minX + after.silhouetteBounds.maxX) / 2,
+      'X rotation keeps the sketch placement center').toBeCloseTo(
+      (before.silhouetteBounds.minX + before.silhouetteBounds.maxX) / 2, 2,
+    )
+    expect((after.silhouetteBounds.minY + after.silhouetteBounds.maxY) / 2,
+      'X rotation keeps the sketch placement center instead of jumping above stock').toBeCloseTo(
+      (before.silhouetteBounds.minY + before.silhouetteBounds.maxY) / 2, 2,
+    )
   })
 
   test('lift moves the model without changing its height', async ({ app }) => {
