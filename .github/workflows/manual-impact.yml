@@ -1,0 +1,164 @@
+name: Manual Impact
+
+# Tells the user manual when the app changes (issue #818).
+#
+# Every PR description carries a Manual impact section, written by the author
+# with .agents/skills/manual-impact: either `None`, or the manual pages the
+# change affects and what changed. Two jobs read it:
+#
+#   manual-impact-check  on pull_request. Fails when the section is missing or
+#                        malformed, and keeps the `manual-impact` label in step
+#                        with it. Runs on `pull_request` rather than
+#                        `pull_request_target` so its result attaches to the PR
+#                        head commit and can be a required check.
+#   manual-impact-issue  on merge. Opens an issue in the docs repo from the
+#                        section *as merged*, with the merge commit, so the
+#                        issue records what landed rather than what the PR said
+#                        when it was opened. `pull_request_target` because it
+#                        needs DOCS_ISSUES_TOKEN; it never checks out PR code,
+#                        only reads the PR through the API.
+#
+# The tool runs on plain Node (type stripping), so neither job installs
+# dependencies. The PR body is untrusted: it only ever reaches a step through
+# an environment variable or a file, never through ${{ }} in a script.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  pull_request_target:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Merged PR to (re)open the docs issue for'
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+jobs:
+  manual-impact-check:
+    name: manual-impact-check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    concurrency:
+      group: manual-impact-check-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/manual-impact
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Check the Manual impact section
+        id: check
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node tools/manual-impact/cli.ts check
+
+      - name: Match the manual-impact label
+        # A fork PR's token is read-only; the check result above still stands.
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          IMPACT: ${{ steps.check.outputs.impact }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'manual-impact') }}
+        run: |
+          if [ "$IMPACT" = true ] && [ "$HAS_LABEL" != true ]; then
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/labels" -f 'labels[]=manual-impact' > /dev/null
+            echo "Added manual-impact"
+          elif [ "$IMPACT" = false ] && [ "$HAS_LABEL" = true ]; then
+            gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/manual-impact" > /dev/null
+            echo "Removed manual-impact"
+          fi
+
+  manual-impact-issue:
+    name: manual-impact-issue
+    if: >-
+      (github.event_name == 'pull_request_target' && github.event.pull_request.merged == true)
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      REPOSITORY: ${{ github.repository }}
+      DOCS_REPO: PureCutCNC/purecutcnc.github.io
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+
+    steps:
+      # The base branch, never the PR head: this job holds a cross-repo token.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/manual-impact
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Fetch the merged PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pr.json"
+
+      - name: Render the docs issue
+        id: render
+        env:
+          PR_JSON: ${{ runner.temp }}/pr.json
+          OUT_DIR: ${{ runner.temp }}/docs-issue
+        run: node tools/manual-impact/cli.ts render
+
+      - name: Open the docs issue
+        id: docs
+        if: steps.render.outputs.impact == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_ISSUES_TOKEN }}
+          OUT_DIR: ${{ runner.temp }}/docs-issue
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error title=Manual impact::DOCS_ISSUES_TOKEN is not set; the docs issue was not opened"
+            exit 1
+          fi
+          marker=$(cat "$OUT_DIR/marker.txt")
+          url=$(gh issue list -R "$DOCS_REPO" --label app-change --state all --limit 1000 --json url,body \
+            | jq -r --arg marker "$marker" 'map(select(.body | contains($marker))) | first | .url // empty')
+          if [ -n "$url" ]; then
+            echo "Docs issue already open for this PR: $url"
+          else
+            url=$(gh issue create -R "$DOCS_REPO" --label app-change \
+              --title "$(cat "$OUT_DIR/title.txt")" --body-file "$OUT_DIR/body.md")
+            echo "Opened $url"
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Link it from the PR
+        if: steps.docs.outputs.url != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCS_ISSUE_URL: ${{ steps.docs.outputs.url }}
+        run: |
+          marker='<!-- manual-impact-docs-issue -->'
+          if gh api --paginate "repos/$REPOSITORY/issues/$PR_NUMBER/comments" --jq '.[].body' | grep -qF "$marker"; then
+            echo "The PR already links the docs issue"
+            exit 0
+          fi
+          printf '%s\nThe manual has been told: %s\n' "$marker" "$DOCS_ISSUE_URL" > "$RUNNER_TEMP/comment.md"
+          gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -F "body=@$RUNNER_TEMP/comment.md" > /dev/null
