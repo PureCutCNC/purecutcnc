@@ -83,7 +83,7 @@ test.describe('View preset menu', () => {
   })
 })
 
-test('simulation GPU keeps a one-cell tab top and still shows through-cuts at two angles', async ({ app }) => {
+test('simulation GPU keeps tab tops and cut-through rims at two angles', async ({ app }) => {
   // The reported tab bridge can be only one sampled cell wide. Render that
   // heightfield through the actual surface geometry and shader in WebGL.
   await app.page.addScriptTag({ type: 'module', content: `
@@ -159,6 +159,25 @@ test('simulation GPU keeps a one-cell tab top and still shows through-cuts at tw
     renderer.render(scene, camera);
     gl.finish();
     document.body.dataset.tab829Wall = String(sample(2, 1.5, 1.5));
+    boundary.visible = false;
+    scene.children[0].visible = true;
+    camera.position.set(1.5, 6, 1.5);
+    camera.lookAt(1.5, 0, 1.5);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    renderer.render(scene, camera);
+    gl.finish();
+    const edgeX = sample(1.5, 3, 1.5);
+    grid.topZ.set([0, 20, 0, 0, 3, 0, 0, 0, 0]);
+    texture.needsUpdate = true;
+    renderer.render(scene, camera);
+    gl.finish();
+    const edgeZ = sample(1.5, 3, 1.5);
+    grid.topZ.set([0, 0, 0, 3, 3, 3, 0, 0, 0]);
+    texture.needsUpdate = true;
+    renderer.render(scene, camera);
+    gl.finish();
+    document.body.dataset.tab829TopLighting = JSON.stringify({ edgeX, edgeZ, flatTop: sample(1.5, 3, 1.5) });
     boundary.traverse((object) => {
       if (object.isMesh) {
         object.geometry.dispose();
@@ -182,4 +201,9 @@ test('simulation GPU keeps a one-cell tab top and still shows through-cuts at tw
   }
   const wallSample = Number(await app.page.locator('body').getAttribute('data-tab829-wall'))
   expect(wallSample).toBeGreaterThan(70)
+  const topLighting = JSON.parse(await app.page.locator('body').getAttribute('data-tab829-top-lighting') ?? '{}') as {
+    edgeX: number; edgeZ: number; flatTop: number
+  }
+  expect(Math.abs(topLighting.edgeX - topLighting.flatTop)).toBeLessThanOrEqual(2)
+  expect(Math.abs(topLighting.edgeZ - topLighting.flatTop)).toBeLessThanOrEqual(2)
 })

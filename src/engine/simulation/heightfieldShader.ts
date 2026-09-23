@@ -83,10 +83,17 @@ const fragmentShader = /* glsl */ `
     float hD = texelFetch(uHeightfield, clamp(vCell + ivec2(0, -1), ivec2(0), lastCell), 0).r;
     float hU = texelFetch(uHeightfield, clamp(vCell + ivec2(0, 1), ivec2(0), lastCell), 0).r;
 
-    if (hL <= threshold) hL = vHeight;
-    if (hR <= threshold) hR = vHeight;
-    if (hD <= threshold) hD = vHeight;
-    if (hU <= threshold) hU = vHeight;
+    // A cut-through neighbor is a vertical rim, not a continuation of the
+    // top surface. Keep that axis flat even when the opposite neighbor is
+    // taller; a one-cell tab otherwise acquires a false sloped, dark top.
+    if (hL <= threshold || hR <= threshold) {
+      hL = vHeight;
+      hR = vHeight;
+    }
+    if (hD <= threshold || hU <= threshold) {
+      hD = vHeight;
+      hU = vHeight;
+    }
 
     float dhdx = (hR - hL) / (2.0 * uCellSize);
     float dhdz = (hU - hD) / (2.0 * uCellSize);

@@ -29,6 +29,9 @@ The shipped implementation plan and playback experiments are preserved in
 - Boundary slope smoothing keeps every wall next to a cut-through cell. A tab
   can form a descending stock-to-tab-to-cut sequence whose outer step must
   still render as a wall.
+- Top-surface lighting treats an axis next to a cut-through cell as flat;
+  that cell marks a vertical rim, so the height on its opposite side must not
+  tilt the tab's flat top into a false dark bevel.
 - Static and playback views use the same rendering contract.
 
 Implementation is centered in `src/engine/simulation/` and
