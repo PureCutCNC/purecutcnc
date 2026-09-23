@@ -35,6 +35,35 @@ export const LIGHTING_GLSL = /* glsl */ `
   }
 `
 
+/**
+ * One predicate decides whether a grid edge is a vertical step, shared by the
+ * surface sheet and the wall mesh so the two can never disagree about it: the
+ * surface shades a slope, the wall draws a step. If they disagree, the loser's
+ * shading shows up as a dark rim on a flat top — a tab's stock-to-tab wall
+ * painted its own normal onto the 20 mm top beside it (issue #829).
+ *
+ * An edge is a slope when its step continues the gradient on either side of it
+ * (same sign, comparable magnitude), which is what a V-flank or a ball
+ * roundover looks like across many cells. An isolated step is a wall, and so is
+ * any step onto a cell whose material has been removed entirely.
+ */
+export const STEP_GLSL = /* glsl */ `
+  bool edgeIsStep(float hNear, float hFar, float hNearBeyond, float hFarBeyond, float stockBottomZ) {
+    float dCenter = hFar - hNear;
+    if (dCenter == 0.0) {
+      // Adjacent cells at equal height — nothing here for either mesh to draw.
+      return false;
+    }
+    float dNear = hNear - hNearBeyond;
+    float dFar = hFarBeyond - hFar;
+    bool slopeContinues =
+      (dNear * dCenter > 0.0 && abs(dCenter) <= 4.0 * abs(dNear)) ||
+      (dFar * dCenter > 0.0 && abs(dCenter) <= 4.0 * abs(dFar));
+    bool cutThroughRim = min(hNear, hFar) <= stockBottomZ + 0.000001;
+    return !slopeContinues || cutThroughRim;
+  }
+`
+
 const vertexShader = /* glsl */ `
   uniform sampler2D uHeightfield;
   uniform vec2 uOrigin;
@@ -71,6 +100,8 @@ const fragmentShader = /* glsl */ `
 
   ${LIGHTING_GLSL}
 
+  ${STEP_GLSL}
+
   void main() {
     float threshold = uStockBottomZ + 0.000001;
     if (vHeight <= threshold) {
@@ -83,14 +114,28 @@ const fragmentShader = /* glsl */ `
     float hD = texelFetch(uHeightfield, clamp(vCell + ivec2(0, -1), ivec2(0), lastCell), 0).r;
     float hU = texelFetch(uHeightfield, clamp(vCell + ivec2(0, 1), ivec2(0), lastCell), 0).r;
 
-    // A cut-through neighbor is a vertical rim, not a continuation of the
-    // top surface. Keep that axis flat even when the opposite neighbor is
-    // taller; a one-cell tab otherwise acquires a false sloped, dark top.
-    if (hL <= threshold || hR <= threshold) {
+    // Second ring: a step is only a slope if it continues the gradient beyond
+    // it, and that cannot be judged from the immediate neighbors alone.
+    float hLL = texelFetch(uHeightfield, clamp(vCell + ivec2(-2, 0), ivec2(0), lastCell), 0).r;
+    float hRR = texelFetch(uHeightfield, clamp(vCell + ivec2(2, 0), ivec2(0), lastCell), 0).r;
+    float hDD = texelFetch(uHeightfield, clamp(vCell + ivec2(0, -2), ivec2(0), lastCell), 0).r;
+    float hUU = texelFetch(uHeightfield, clamp(vCell + ivec2(0, 2), ivec2(0), lastCell), 0).r;
+
+    // This cell is a flat tread. An axis bounded by a step takes no gradient
+    // from it — the wall mesh draws that riser, and borrowing its normal is
+    // what painted a dark band along every tab. Only a slope the surface
+    // itself renders still tilts the normal.
+    bool stepX =
+      edgeIsStep(hL, vHeight, hLL, hR, uStockBottomZ) ||
+      edgeIsStep(vHeight, hR, hL, hRR, uStockBottomZ);
+    bool stepZ =
+      edgeIsStep(hD, vHeight, hDD, hU, uStockBottomZ) ||
+      edgeIsStep(vHeight, hU, hD, hUU, uStockBottomZ);
+    if (stepX) {
       hL = vHeight;
       hR = vHeight;
     }
-    if (hD <= threshold || hU <= threshold) {
+    if (stepZ) {
       hD = vHeight;
       hU = vHeight;
     }

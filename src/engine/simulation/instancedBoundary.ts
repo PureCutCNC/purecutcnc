@@ -36,7 +36,7 @@
  */
 
 import * as THREE from 'three'
-import { LIGHTING_GLSL } from './heightfieldShader'
+import { LIGHTING_GLSL, STEP_GLSL } from './heightfieldShader'
 import type { SimulationGrid } from './types'
 
 /**
@@ -67,6 +67,8 @@ const wallVertexShader = /* glsl */ `
 
   varying vec3 vNormal;
   varying float vWallHeight;
+
+  ${STEP_GLSL}
 
   float cellHeight(ivec2 cell) {
     if (cell.x < 0 || cell.y < 0 || cell.x >= uCols || cell.y >= uRows) {
@@ -114,24 +116,16 @@ const wallVertexShader = /* glsl */ `
     // otherwise draw a sliver wall whose axis-aligned lighting differs sharply
     // from the surface sheet's smooth per-fragment normals (reads as corduroy
     // striping on V/ball walls). A step that merely CONTINUES its neighbors'
-    // gradient (same sign, comparable magnitude) is part of a slope the
-    // surface already renders — collapse it. Isolated steps (pocket walls,
-    // stepdown terraces, cut-through rims) keep their wall: their neighbors
-    // are flat or the step dwarfs the neighbor gradient.
+    // gradient is part of a slope the surface already renders — collapse it.
+    // Isolated steps (pocket walls, stepdown terraces, cut-through rims, a
+    // tab's stock-to-tab wall) keep their wall.
+    //
+    // The surface sheet asks the same predicate before it takes a gradient
+    // across an edge (issue #829), so "wall drawn" and "surface stays flat"
+    // are one decision rather than two that can drift apart.
     float hNearBeyond = cellHeight(nearCell - perpStep);
     float hFarBeyond = cellHeight(farCell + perpStep);
-    float dCenter = hFar - hNear;
-    float dNear = hNear - hNearBeyond;
-    float dFar = hFarBeyond - hFar;
-    bool slopeContinues =
-      (dNear * dCenter > 0.0 && abs(dCenter) <= 4.0 * abs(dNear)) ||
-      (dFar * dCenter > 0.0 && abs(dCenter) <= 4.0 * abs(dFar));
-    // A tab can descend from full stock to its 3 mm top and then to a
-    // cut-through neighbor. The second step continues the first gradient,
-    // but it is the tab's outer wall, not a smooth flank. Never collapse a
-    // wall bordering a cell whose material has been removed entirely.
-    bool cutThroughRim = min(hNear, hFar) <= uStockBottomZ + 0.000001;
-    if (slopeContinues && !cutThroughRim) {
+    if (!edgeIsStep(hNear, hFar, hNearBeyond, hFarBeyond, uStockBottomZ)) {
       top = bottom;
     }
 

@@ -29,9 +29,14 @@ The shipped implementation plan and playback experiments are preserved in
 - Boundary slope smoothing keeps every wall next to a cut-through cell. A tab
   can form a descending stock-to-tab-to-cut sequence whose outer step must
   still render as a wall.
-- Top-surface lighting treats an axis next to a cut-through cell as flat;
-  that cell marks a vertical rim, so the height on its opposite side must not
-  tilt the tab's flat top into a false dark bevel.
+- One shared step/slope predicate decides which mesh shades an edge: the surface
+  sheet takes a lighting gradient only across a slope, and the wall mesh draws
+  the steps it leaves flat. A step is classified by whether it continues the
+  gradient beyond it, so a V-flank or ball roundover still shades smoothly while
+  a tab's 17 mm drop stays a wall. Both meshes asking the same predicate is what
+  keeps "wall drawn" and "top stays flat" from drifting apart — when they
+  disagreed, the surface painted the riser's normal onto the flat top beside it
+  as a dark band across the tab (issue #829).
 - Static and playback views use the same rendering contract.
 
 Implementation is centered in `src/engine/simulation/` and
