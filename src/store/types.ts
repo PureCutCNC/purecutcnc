@@ -47,6 +47,7 @@ import type { TextLayoutKind } from '../sketch/textPlacement'
 import type { ToolLibraryEntry } from '../toolLibrary'
 import type { GearCreationParams } from '../sketch/gearProfile'
 import type { FeatureDistributionMode, FeatureDistributionSpec } from '../sketch/featureDistribution'
+import type { ApplyNestInput } from './helpers/nestApply'
 
 export type SelectionMode = 'feature' | 'sketch_edit'
 
@@ -592,6 +593,10 @@ export interface ProjectStore {
   setFeatureDistributionRadialCenter: (center: Point) => void
   cancelFeatureDistribution: () => void
   completeFeatureDistribution: () => string[]
+  /** Commit a computed sheet nest as one history step; returns the nest id, or null if nothing changed (issue #741). */
+  applyNest: (input: ApplyNestInput) => string | null
+  /** Remove a nest's copies, strip them from operations and restore moved originals, as one history step. */
+  discardNest: (nestId: string) => void
   cancelPendingTransform: () => void
   setPendingTransformReferenceStart: (point: Point) => void
   setPendingTransformReferenceEnd: (point: Point) => void

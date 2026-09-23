@@ -29,6 +29,7 @@ import type {
   FeatureDefinition,
   FeatureInstance,
   Matrix2D,
+  NestRecord,
   Operation,
   PersistedImportedMesh,
   Project,
@@ -322,6 +323,52 @@ function normalizeInstance(feature: FeatureInstance, definitions: Record<string,
   return normalized
 }
 
+/**
+ * Nest records are disposable layout output (issue #741), so a malformed one
+ * is dropped rather than failing the load, and ids that no longer name an
+ * instance are pruned — discard then simply skips what is already gone.
+ */
+function normalizeNests(value: unknown, features: FeatureInstance[]): NestRecord[] {
+  if (!Array.isArray(value)) return []
+  const featureIds = new Set(features.map((feature) => feature.id))
+  const ids = (list: unknown) => (Array.isArray(list)
+    ? list.filter((id): id is string => typeof id === 'string' && featureIds.has(id))
+    : [])
+  return value.flatMap((raw): NestRecord[] => {
+    if (!isRecord(raw) || typeof raw.id !== 'string' || typeof raw.name !== 'string') return []
+    const settings = raw.settings
+    if (!isRecord(settings)
+      || typeof settings.quantity !== 'number' || !Number.isFinite(settings.quantity)
+      || !Array.isArray(settings.rotations) || !settings.rotations.every((r) => typeof r === 'number' && Number.isFinite(r))
+      || typeof settings.minimumGap !== 'number' || !Number.isFinite(settings.minimumGap)
+      || typeof settings.keepOriginals !== 'boolean') {
+      return []
+    }
+    const movedOriginals = Array.isArray(raw.movedOriginals)
+      ? raw.movedOriginals.flatMap((entry): NestRecord['movedOriginals'] => (
+        isRecord(entry) && typeof entry.featureId === 'string' && featureIds.has(entry.featureId)
+          && isFiniteMatrix(entry.transform)
+          ? [{ featureId: entry.featureId, transform: { ...entry.transform } }]
+          : []
+      ))
+      : []
+    return [{
+      id: raw.id,
+      name: raw.name,
+      folderId: typeof raw.folderId === 'string' ? raw.folderId : null,
+      sourceIds: ids(raw.sourceIds),
+      copyIds: ids(raw.copyIds),
+      movedOriginals,
+      settings: {
+        quantity: settings.quantity,
+        rotations: [...settings.rotations as number[]],
+        minimumGap: settings.minimumGap,
+        keepOriginals: settings.keepOriginals,
+      },
+    }]
+  })
+}
+
 function assertProjectEnvelope(input: unknown): asserts input is ProjectFormatInput {
   if (!isRecord(input)) throw new Error('Failed to load project: not a project object.')
   if (!isRecord(input.meta)) throw new Error('Failed to load project: missing metadata.')
@@ -544,6 +591,9 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     tabs: input.tabs ?? [],
     clamps: input.clamps ?? [],
   }
+  const nests = normalizeNests(input.nests, features)
+  if (nests.length > 0) authoritativeProject.nests = nests
+  else delete authoritativeProject.nests
   const machines = normalizeMachineDefinitions(authoritativeProject)
   const meta = {
     ...authoritativeProject.meta,
