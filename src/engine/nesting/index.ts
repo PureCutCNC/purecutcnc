@@ -18,6 +18,7 @@
 
 export { nest } from './packer'
 export { expandByHalfGap, largestFirst } from './defaults'
+export { flattenProfileWithin } from './flatten'
 export type {
   ExpandFootprint,
   NestPart,

@@ -871,6 +871,42 @@ export function tabShape(tab: Tab): TabShape {
 }
 
 // ============================================================
+// Nests (issue #741)
+// ============================================================
+
+/** The settings a sheet nest was produced with. */
+export interface NestSettings {
+  /** Parts on the sheet, originals included. */
+  quantity: number
+  /** Allowed rotations in degrees. */
+  rotations: number[]
+  /** Minimum clearance between parts, in project units. */
+  minimumGap: number
+  /** Originals stay where they are and are nested around, instead of being moved. */
+  keepOriginals: boolean
+}
+
+/**
+ * A sheet-nesting result: disposable layout output, not design geometry.
+ *
+ * Membership is held here by instance id rather than as a field on each
+ * instance, so it survives rows being dragged between folders and is never
+ * copied onto a pasted duplicate. The folder is only for legibility.
+ */
+export interface NestRecord {
+  id: string
+  name: string
+  folderId: string | null
+  /** The part's own instances. */
+  sourceIds: string[]
+  /** Instances the nest created. Discard deletes exactly these. */
+  copyIds: string[]
+  /** Pre-nest transforms of the source instances the nest moved; Discard restores them. */
+  movedOriginals: { featureId: string; transform: Matrix2D }[]
+  settings: NestSettings
+}
+
+// ============================================================
 // Backdrop
 // ============================================================
 
@@ -951,6 +987,8 @@ export interface Project {
   operations: Operation[]
   tabs: Tab[]
   clamps: Clamp[]
+  /** Sheet nests (issue #741). Absent in files that never nested. */
+  nests?: NestRecord[]
   ai_history: AIMessage[]
 }
 

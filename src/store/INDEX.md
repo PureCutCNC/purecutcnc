@@ -14,6 +14,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `pendingAddSlice.ts` — in-progress feature being drawn but not yet committed, including multi-step gear placement; re-arms a fresh draft of the same shape on completion (sticky drawing, issue #415)
   - `pendingCompletionSlice.ts` — partially-completed sketches awaiting closure
   - `featureDistributionSlice.ts` — transient one-shot grid/radial/path copy distribution; commits reference or independent instances as one undoable action (issue #205)
+  - `nestingSlice.ts` — sheet nesting commits (issue #741): `applyNest` / `discardNest`, each exactly one history entry
   - `textLayoutSlice.ts` — transient text-on-arc/path workflow: applies a baseline to an **already placed** text run (grouped with the distribution workflows, not with text creation), bakes a picked guide outline into it, and writes the baseline to the **instance row** (`FeatureInstance.textLayout`) rather than the shared definition, so curving one copy leaves its siblings straight (issue #671)
   - `dimensionsSlice.ts` — persistent dimension annotations (`project.annotations`): add/update/delete + selection (history-tracked)
   - `dimensionToolSlice.ts` — transient measure tools: tape measure + in-progress permanent-dimension placement (not persisted, not in history)
@@ -48,6 +49,8 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `operationDefaults.ts` — operation defaults: target validation, tool matching, kind labels, fallback targets, and default operation construction
   - `camPlanApply.ts` — stale-safe pure CAM-plan materialization: deduplicate/import tools, create rest regions and shared tabs, validate and append operations, and return one complete project for the store's atomic history transition
   - `copyFeatures.ts` — build rotated, mirrored, linear, and arbitrary-affine copies of features, clamps, and tabs; reference-vs-independent duplicate semantics with extractClonedDefinitions
+  - `nestPart.ts` — sheet nesting, project side (issue #846): selection → one rigid part (grouped folders + containment; locked/model/external-constraint refusals), gap from the outside edge route's tool, obstacles (clamps + other features), sheet, and the packer request with the flattening tolerance folded into the gap
+  - `nestApply.ts` — pure apply/discard of a nest: linked copies in a nest folder, copies joined to their sources' operations, intra-part constraint references re-pointed at sibling copies, originals moved or kept, and exact restoration on discard
   - `instanceTransforms.ts` — affine matrix builders and transform-delta composition for feature instances
   - `resolveFeatures.ts` — strict definition+instance resolver, ephemeral world-space read model, and commit boundary back to lightweight instances
   - `projectFormat.ts` — validates format 3.x projects, performs the one-way 1.0/2.0/2.1 legacy conversion without retaining baked rows, and migrates pre-3.1 absolute `retractHeight` values to distances above the material on load (issue #481)
@@ -74,6 +77,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `featureLifecycle.test.ts` — create→definition, save/load round-trip, undo/redo, delete→GC per FeatureKind
 - `featureLifecycleOps.test.ts` — stock/tabs/align-distribute lifecycle paths (no prior coverage): setStock, setStockSourceFeature, tab CRUD + auto-place + edit, alignFeatures/distributeFeatures + undo
 - `featureDistribution.test.ts` — issue #205 grid/radial/path distribution commit: reference and independent definitions, source/guide preservation, root-level selectable copies, and one-step undo/redo
+- `nesting.test.ts` — issue #846 sheet nesting: part resolution and refusals, gap from the tool, apply/discard as single undo steps, keep-originals, constraint re-pointing, save/load, clamps, and curved parts — gaps measured on resolved world geometry
 - `gearCreation.test.ts` — gear creation store flow: radius placement, optional bore as a grouped subtract feature, validation, selection, and definitions
 - `featureReferencesMigration.test.ts` — strict 3.0 serialization, 1.0/2.0/2.1 one-way conversion, malformed-row rejection, and linked-instance size regression
 - `featureResolver.test.ts` — matrix resolution and definition lookup behavior
