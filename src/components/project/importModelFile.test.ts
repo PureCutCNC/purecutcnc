@@ -16,7 +16,9 @@
 
 /**
  * A model import lands whole or not at all, and STEP bodies become model
- * features (issue #784).
+ * features (issue #784). Every format lands in project space: the file's world
+ * Y is negated on the way in, exactly as the DXF importer negates it
+ * (issue #824).
  *
  * Tessellation is injected — the real worker needs a browser — so the STEP
  * bodies are built here; `src/import/stepTessellation.test.ts` covers what Open
@@ -27,13 +29,21 @@
  * Run with: npx tsx src/components/project/importModelFile.test.ts
  */
 
-import { computeMeshBounds, type ImportedTriangleMesh } from '../../engine/importedMesh'
+import { computeMeshBounds, deserializeImportedMesh, type ImportedTriangleMesh } from '../../engine/importedMesh'
+import { projectToMachinePoint } from '../../engine/gcode/utils'
+import { getBundledMachine } from '../../machine/registry'
 import { StepImportError } from '../../import/stepProtocol'
 import type { StepBody, TessellateStepFileOptions } from '../../import/stepImportClient'
 import { decodeProjectFormat } from '../../store/helpers/projectFormat'
 import { useProjectStore } from '../../store/projectStore'
 import type { ProjectStore, SelectionState } from '../../store/types'
-import { newProject, type PersistedImportedMesh, type Project } from '../../types/project'
+import {
+  getStockBounds,
+  newProject,
+  type MachineOrigin,
+  type PersistedImportedMesh,
+  type Project,
+} from '../../types/project'
 import { getOperationAddHint } from '../cam/operationValidity'
 import { importModelFile, type ImportModelFileParams } from './importModelFile'
 
@@ -100,6 +110,22 @@ function asciiStl(boxes: ReadonlyArray<[Vec3, Vec3]>): ArrayBuffer {
   return new TextEncoder().encode(`solid parts\n${facets.join('\n')}\nendsolid parts\n`).buffer
 }
 
+function asciiObj(boxes: ReadonlyArray<[Vec3, Vec3]>): ArrayBuffer {
+  const lines: string[] = []
+  let base = 1
+  for (const [min, max] of boxes) {
+    const mesh = boxMesh(min, max)
+    for (let v = 0; v < mesh.positions.length / 3; v += 1) {
+      lines.push(`v ${mesh.positions[v * 3]} ${mesh.positions[v * 3 + 1]} ${mesh.positions[v * 3 + 2]}`)
+    }
+    for (let t = 0; t < mesh.index.length; t += 3) {
+      lines.push(`f ${mesh.index[t] + base} ${mesh.index[t + 1] + base} ${mesh.index[t + 2] + base}`)
+    }
+    base += mesh.positions.length / 3
+  }
+  return new TextEncoder().encode(`${lines.join('\n')}\n`).buffer
+}
+
 function resetStore(): Project {
   useProjectStore.setState({
     project: newProject(),
@@ -161,6 +187,42 @@ function stlParams(overrides: Partial<ImportModelFileParams> = {}): ImportModelF
     onProgress: () => {},
     ...overrides,
   }
+}
+
+function objParams(overrides: Partial<ImportModelFileParams> = {}): ImportModelFileParams {
+  return {
+    ...stlParams(),
+    modelFormat: 'obj',
+    modelBuffer: asciiObj([OFFSET_BOX]),
+    fileName: 'bracket.obj',
+    ...overrides,
+  }
+}
+
+/** The model's plan, as the file states it: box `[min]`..`[max]` in world X/Y/Z. */
+const ASYMMETRIC_BOX: [Vec3, Vec3] = [[0, 0, 0], [10, 3, 10]]
+
+/** The same box away from the file's origin, so placement has something to do. */
+const OFFSET_BOX: [Vec3, Vec3] = [[40, 20, 0], [50, 23, 10]]
+
+/** Two bodies apart along the file's Y: 0..3 is the front face, 10..13 the back. */
+const FRONT_BOX: [Vec3, Vec3] = [[0, 0, 0], [10, 3, 10]]
+const BACK_BOX: [Vec3, Vec3] = [[20, 10, 0], [30, 13, 10]]
+
+/** Signed volume of a closed mesh: positive when its triangles face outward. */
+function signedVolume(mesh: { positions: Float32Array; index: Uint32Array }): number {
+  const { positions, index } = mesh
+  let volume = 0
+  for (let i = 0; i < index.length; i += 3) {
+    const a = index[i] * 3
+    const b = index[i + 1] * 3
+    const c = index[i + 2] * 3
+    volume +=
+      positions[a] * (positions[b + 1] * positions[c + 2] - positions[b + 2] * positions[c + 1]) -
+      positions[a + 1] * (positions[b] * positions[c + 2] - positions[b + 2] * positions[c]) +
+      positions[a + 2] * (positions[b] * positions[c + 1] - positions[b + 1] * positions[c])
+  }
+  return volume / 6
 }
 
 /** Throws from the progress callback the first time the import reaches `label`. */
@@ -263,7 +325,109 @@ await test('axis orientation applies to STEP bodies', async () => {
   resetStore()
   const [id] = await importModelFile(stepParams([stepBody('Part', [0, 0, 0], [10, 20, 5])], { axisSwap: 'yz' }))
   const { bounds } = assetOf(id)
-  assert(bounds.maxY === 5 && bounds.maxZ === 20, JSON.stringify(bounds))
+  const stock = getStockBounds(project().stock)
+  // The Y/Z swap puts the file's 20-unit Y-up extent on Z; the project-space
+  // plan conversion then negates the swapped Y, which holds the file's former
+  // Z extent (0..5) and composes the swap into a rotation rather than a mirror.
+  assert(bounds.maxZ === 20, `Z extent: ${bounds.maxZ}`)
+  assert(bounds.maxY - bounds.minY === 5, `Y extent: ${bounds.minY}..${bounds.maxY}`)
+  assert(bounds.maxY === stock.maxY, `placed on the stock's lower edge: ${bounds.maxY}`)
+
+  // The swap mirrors the plan, and the plan conversion cancels its handedness;
+  // with the winding reversal the stored mesh stays outward-facing rather than
+  // inside-out.
+  const swapped = deserializeImportedMesh(assetOf(id))
+  assert(swapped, 'the swapped mesh deserializes')
+  assert(signedVolume(swapped) > 0, `swapped mesh volume: ${signedVolume(swapped)}`)
+})
+
+await test('an imported model parks on the stock, in project space (#824)', async () => {
+  resetStore()
+  const [id] = await importModelFile(stlParams({
+    modelBuffer: asciiStl([ASYMMETRIC_BOX]),
+    fileName: 'bracket.stl',
+  }))
+  const { bounds } = assetOf(id)
+  const stock = getStockBounds(project().stock)
+  // The file's own origin is not a placement: the model's lower-left corner lands
+  // on the stock's, so the cut sits in the machine's first quadrant.
+  assert(bounds.minX === stock.minX, `left edge ${bounds.minX}, stock left ${stock.minX}`)
+  assert(bounds.maxY === stock.maxY, `lower edge ${bounds.maxY}, stock lower ${stock.maxY}`)
+  // ... and the file's 10 x 3 x 10 box is neither scaled nor distorted by it.
+  assert(bounds.maxX - bounds.minX === 10, `width: ${bounds.maxX - bounds.minX}`)
+  assert(bounds.maxY - bounds.minY === 3, `depth: ${bounds.maxY - bounds.minY}`)
+  assert(bounds.minZ === 0 && bounds.maxZ === 10, `Z extent: ${bounds.minZ}..${bounds.maxZ}`)
+
+  // The sketch silhouette is placed with the mesh.
+  const silhouette = featureOf(id).definition.stl?.silhouettePaths?.[0] ?? []
+  const silhouetteY = silhouette.map((point) => point.y)
+  assert(silhouette.length >= 3, `silhouette: ${JSON.stringify(silhouette)}`)
+  assert(
+    Math.abs(Math.max(...silhouetteY) - stock.maxY) < 1e-6,
+    `silhouette lower edge: ${Math.max(...silhouetteY)} vs stock ${stock.maxY}`,
+  )
+
+  // A mirror inverts every triangle, so the winding is reversed with the
+  // positions: an inside-out mesh lights from behind — the flat, dim top view
+  // reported on #825 — and reads as a broken solid to every normal consumer.
+  const stored = deserializeImportedMesh(assetOf(id))
+  assert(stored, 'the stored mesh deserializes')
+  const sourceBox = boxMesh(ASYMMETRIC_BOX[0], ASYMMETRIC_BOX[1])
+  assert(signedVolume(sourceBox) > 0, `the fixture box is wound outward: ${signedVolume(sourceBox)}`)
+  assert(
+    Math.abs(signedVolume(stored) - signedVolume(sourceBox)) < 1e-6,
+    `the stored mesh keeps the source winding: ${signedVolume(stored)} vs ${signedVolume(sourceBox)}`,
+  )
+})
+
+await test("the file's front face stays toward the operator (#824)", async () => {
+  resetStore()
+  const ids = await importModelFile(stlParams({
+    modelBuffer: asciiStl([FRONT_BOX, BACK_BOX]),
+    fileName: 'pair.stl',
+  }))
+  assert(ids.length === 2, `bodies: ${ids.length}`)
+  const boxes = ids.map((id) => assetOf(id).bounds)
+  const front = boxes.find((box) => box.minX === 0)
+  const back = boxes.find((box) => box.minX === 20)
+  assert(front && back, `bodies at x 0 and x 20: ${JSON.stringify(boxes)}`)
+  const stock = getStockBounds(project().stock)
+
+  // One placement for the whole import, so the file's spacing survives.
+  assert(front.maxY === stock.maxY, `the front body sits on the stock's lower edge: ${front.maxY}`)
+  assert(front.minY - back.maxY === 7, `the file's 7-unit gap survives: ${front.minY - back.maxY}`)
+  // The file's +Y is project -y, so the body behind it is *above* on the canvas.
+  assert(back.maxY < front.minY, `back ${back.minY}..${back.maxY}, front ${front.minY}..${front.maxY}`)
+
+  // Which is the machine's back: the export negates project Y again, so the
+  // file's front face is cut on the machine's Y = 0 line.
+  const machine = getBundledMachine('grbl')
+  assert(machine, 'the bundled grbl machine exists')
+  const origin: MachineOrigin = { name: 'O', x: stock.minX, y: stock.maxY, z: 0, visible: true }
+  const frontY = projectToMachinePoint({ x: 0, y: front.maxY, z: 0 }, origin, machine).y
+  const backY = projectToMachinePoint({ x: 0, y: back.maxY, z: 0 }, origin, machine).y
+  assert(frontY === 0, `the file's front face sits at machine Y 0: ${frontY}`)
+  assert(backY === 10, `the file's back face sits 10 mm from the operator: ${backY}`)
+})
+
+await test('OBJ imports land in project space the same way (#824)', async () => {
+  resetStore()
+  const [id] = await importModelFile(objParams())
+  const { bounds } = assetOf(id)
+  const stock = getStockBounds(project().stock)
+  assert(bounds.minX === stock.minX && bounds.maxY === stock.maxY, `placed at ${JSON.stringify(bounds)}`)
+  assert(bounds.maxX - bounds.minX === 10, `width: ${bounds.maxX - bounds.minX}`)
+  assert(bounds.maxY - bounds.minY === 3, `depth: ${bounds.maxY - bounds.minY}`)
+})
+
+await test('STEP bodies land in project space too (#824)', async () => {
+  resetStore()
+  const [id] = await importModelFile(stepParams([stepBody('Part', ...OFFSET_BOX)]))
+  const { bounds } = assetOf(id)
+  const stock = getStockBounds(project().stock)
+  assert(bounds.minX === stock.minX && bounds.maxY === stock.maxY, `placed at ${JSON.stringify(bounds)}`)
+  assert(bounds.maxX - bounds.minX === 10, `width: ${bounds.maxX - bounds.minX}`)
+  assert(bounds.maxY - bounds.minY === 3, `depth: ${bounds.maxY - bounds.minY}`)
 })
 
 await test('a failure on a later STEP body leaves the project exactly as it was', async () => {
