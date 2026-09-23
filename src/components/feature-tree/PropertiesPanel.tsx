@@ -30,7 +30,7 @@ import { defaultStock, getStockBounds, profileExceedsStock, profileHasSelfInters
 import type { TabShape } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
-import { isMachinable, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
+import { canChooseSubtract, isMachinable, sectionForOperation } from '../../store/helpers/featureRoles'
 import type { FeatureTreeSection } from '../../store/helpers/featureRoles'
 import { defaultFontIdForStyle, getTextFontOptions } from '../../text'
 import { convertLength, formatLength } from '../../utils/units'
@@ -1217,12 +1217,11 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
 
   // First SOLID feature in the tree must be 'add' (lines/regions/construction
   // don't count as base solids); imported STL models are locked as Model.
-  // The first Add can be converted to a non-solid role (Line, Region,
-  // Construction); only Subtract is disabled on that row.
-  const firstSolidFeature = features.find(isSolid) ?? null
-  const isFirstFeature =
-    firstSolidFeature?.id === selectedFeature.id
-  const subtractDisabled = isFirstFeature && selectedFeature.operation === 'add'
+  // Subtract is withheld wherever choosing it would make this row the first
+  // solid — the store would turn it straight back into Add (#827). The other
+  // roles stay available.
+  const subtractDisabled = selectedFeature.operation !== 'subtract'
+    && !canChooseSubtract(features, selectedFeature.id)
 
   const selectedDefId = getDefinitionId(selectedFeature)
   const linkedInstanceCount = getInstanceIdsForDefinition(project, selectedDefId).length

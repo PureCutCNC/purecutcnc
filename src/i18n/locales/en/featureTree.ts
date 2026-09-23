@@ -126,7 +126,7 @@ export const featureTreeEn = {
   'featureTree.treeRow.operation.menuLineOpenTooltip': 'Line — open path machined by engrave operations',
   'featureTree.treeRow.operation.menuAddTooltip': 'Add — feature adds material',
   'featureTree.treeRow.operation.menuSubtractTooltip': 'Subtract — feature removes material',
-  'featureTree.treeRow.operation.menuSubtractDisabledTooltip': 'Subtract unavailable — the first solid must be add or converted to a non-solid role',
+  'featureTree.treeRow.operation.menuSubtractDisabledTooltip': 'Subtract unavailable — this would become the first solid, which must be add. Place an add feature above it first',
   'featureTree.treeRow.operation.menuLineClosedTooltip': 'Line — closed path machined by engrave or V-carve operations',
   'featureTree.treeRow.operation.menuRegionTooltip': 'Region mask — feature filters machining operations',
   'featureTree.treeRow.operation.menuConstructionTooltip': 'Construction — sketch reference geometry, never machined',

@@ -70,6 +70,29 @@ export function isSolid(entity: HasOperation): boolean {
 }
 
 /**
+ * Whether Subtract can be chosen for row `targetId` without the base-solid rule
+ * turning it straight back into Add (#827).
+ *
+ * After every operation edit `applyFeaturePatch` forces the first solid row to
+ * Add. So Subtract only sticks when some other solid row still comes first once
+ * this row becomes Subtract. Linked copies share the definition's operation, so
+ * they become Subtract too and count as this row. `features` must be in row
+ * order, as `resolvedProjectFeatures` returns them.
+ */
+export function canChooseSubtract(
+  features: ReadonlyArray<HasOperation & { id: string; definitionId?: string }>,
+  targetId: string,
+): boolean {
+  const target = features.find((feature) => feature.id === targetId)
+  if (!target) return false
+  const changes = (feature: { id: string; definitionId?: string }) =>
+    feature.id === targetId
+    || (target.definitionId !== undefined && feature.definitionId === target.definitionId)
+  const firstSolidAfter = features.find((feature) => changes(feature) || isSolid(feature))
+  return firstSolidAfter !== undefined && !changes(firstSolidAfter)
+}
+
+/**
  * Features the 3D model pipeline (CSG → preview/simulation) may consume.
  * Regions stay included — they render display-only walls — but construction
  * geometry is fully absent from the model.

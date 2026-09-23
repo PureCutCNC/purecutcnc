@@ -19,7 +19,7 @@ import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
-import { isConstruction, isMachinable, isRegion, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
+import { canChooseSubtract, isConstruction, isMachinable, isRegion, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
 import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
@@ -374,6 +374,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         profileClosed={feature.sketch.profile.closed}
         regionMaskMode={feature.regionMaskMode ?? 'include'}
         isFirstFeature={feature.id === firstSolidFeature?.id}
+        subtractDisabled={feature.operation !== 'subtract' && !canChooseSubtract(features, feature.id)}
         linkedCount={linkedCount}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
         onMouseEnter={() => hoverFeature(feature.id)}
@@ -862,6 +863,7 @@ interface TreeRowProps {
   profileClosed?: boolean
   regionMaskMode?: RegionMaskMode
   isFirstFeature?: boolean
+  subtractDisabled?: boolean
   linkedCount?: number
   onClick: (event: ReactMouseEvent<HTMLDivElement>) => void
   onMouseEnter: () => void
@@ -904,6 +906,7 @@ function TreeRow({
   profileClosed = true,
   regionMaskMode,
   isFirstFeature = false,
+  subtractDisabled = false,
   linkedCount,
   onClick,
   onMouseEnter,
@@ -934,11 +937,11 @@ function TreeRow({
   onDrop,
 }: TreeRowProps) {
   // The first solid feature must be Add (base-solid rule), but it can be
-  // converted to a non-solid role (Line, Region, Construction). Only Subtract
-  // is disabled on that row — the rest of the menu is available.
+  // converted to a non-solid role (Line, Region, Construction). Subtract is
+  // disabled (`subtractDisabled`) wherever choosing it would make this row the
+  // first solid, since the store would turn it straight back into Add (#827).
   // Open profiles (line / construction) get a reduced menu of Line +
   // Construction; closed profiles get the full menu including Line.
-  const subtractDisabled = isFirstFeature && operation === 'add'
   const openProfileOperations = (operation === 'line' && !profileClosed) || (operation === 'construction' && !profileClosed)
 
   // Popup menu state for operation selector — stores viewport position for fixed positioning
@@ -1217,7 +1220,7 @@ function TreeRow({
                   : operation === 'model'
                   ? t('featureTree.treeRow.operation.modelTooltip')
                   : operation === 'add'
-                  ? subtractDisabled
+                  ? isFirstFeature
                     ? t('featureTree.treeRow.operation.addFirstSolidTooltip')
                     : t('featureTree.treeRow.operation.addTooltip')
                   : operation === 'subtract'
