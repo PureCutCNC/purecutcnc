@@ -173,6 +173,7 @@ export type { SketchCanvasHandle }
 
 export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
   {
+    isActive,
     onFeatureContextMenu,
     onTabContextMenu,
     onClampContextMenu,
@@ -463,7 +464,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   const showCutFlowPanel = pendingShapeAction?.kind === 'cut'
   const cutFlowPanelPhase = pendingShapeAction?.kind === 'cut' ? pendingShapeAction.phase : null
-  const { lockModeRef, lockMode, applyLock, cycleLock, reset: resetLock } = useAxisLock(scheduleDraw)
+  const { lockModeRef, lockMode, applyLock, cycleLock, reset: resetLock } = useAxisLock(isActive, scheduleDraw)
   const cutWorkflowPanel = useCanvasWorkflowPanel({
     open: showCutFlowPanel,
     phaseKey: cutFlowPanelPhase,
