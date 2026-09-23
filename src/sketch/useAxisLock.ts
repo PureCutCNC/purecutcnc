@@ -22,10 +22,12 @@ import { useWindowEvent } from '../hooks/useEventListener'
 import { canvasRgba } from '../components/canvas/canvasPalette'
 
 /**
+ * @param isActive - Whether the sketch view currently owns keyboard shortcuts.
  * @param onLockChange - Called whenever the lock mode changes so the caller can redraw.
  */
-export function useAxisLock(onLockChange?: () => void) {
+export function useAxisLock(isActive: boolean, onLockChange?: () => void) {
   const lockModeRef = useRef<LockMode>('none')
+  const altTapPendingRef = useRef(false)
   const [lockMode, setLockMode] = useState<LockMode>('none')
   // Stable wrapper so the latest `onLockChange` is invoked without writing a ref
   // during render (react-hooks/refs).
@@ -38,12 +40,30 @@ export function useAxisLock(onLockChange?: () => void) {
   }
 
   useWindowEvent('keydown', (event) => {
+    if (event.key !== 'Alt') {
+      altTapPendingRef.current = false
+      return
+    }
+    if (event.repeat) return
+    altTapPendingRef.current = isActive && !isEditableKeyboardTarget(event.target) && !event.ctrlKey && !event.metaKey
+      && !event.shiftKey && !event.getModifierState('AltGraph')
+  })
+
+  useWindowEvent('keyup', (event) => {
     if (event.key !== 'Alt') return
-    event.preventDefault()
-    setLock(cycleLockMode(lockModeRef.current))
+    const completedTap = altTapPendingRef.current && isActive && document.hasFocus()
+      && !isEditableKeyboardTarget(event.target)
+      && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.getModifierState('AltGraph')
+    altTapPendingRef.current = false
+    if (completedTap) setLock(cycleLockMode(lockModeRef.current))
+  })
+
+  useWindowEvent('blur', () => {
+    altTapPendingRef.current = false
   })
 
   const reset = useCallback(() => {
+    altTapPendingRef.current = false
     lockModeRef.current = 'none'
     setLockMode('none')
   }, [])
@@ -68,6 +88,12 @@ export function useAxisLock(onLockChange?: () => void) {
   })
 
   return { lockModeRef, lockMode, applyLock, cycleLock, reset }
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (
+    target.isContentEditable || target.closest('input, textarea, select, [role="textbox"]') !== null
+  )
 }
 
 /** Cycles through lock modes: none → x → y → none */

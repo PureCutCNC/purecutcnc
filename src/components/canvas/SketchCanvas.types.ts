@@ -63,6 +63,7 @@ export interface SketchCanvasHandle {
 }
 
 export interface SketchCanvasProps {
+  isActive: boolean
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
   onTabContextMenu?: (tabId: string, x: number, y: number) => void
   onClampContextMenu?: (clampId: string, x: number, y: number) => void

@@ -389,6 +389,7 @@ function App() {
         sketchCanvas={
           <>
             <SketchCanvas
+              isActive={centerTab === 'sketch'}
               ref={sketchCanvasRef}
               onFeatureContextMenu={openFeatureContextMenu}
               onTabContextMenu={openTabContextMenu}

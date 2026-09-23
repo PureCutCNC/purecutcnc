@@ -28,6 +28,77 @@ import { seedOverlapFeatureProject } from './overlapFeatureSelection.helpers'
 
 const PANEL = '.canvas-workflow-panel--creation'
 
+test('Alt cycles axis lock only after an uninterrupted tap (issue #826)', async ({ app }) => {
+  const page = app.page
+  const lock = page.locator('.axis-lock-chip')
+  const canvas = page.locator('#workspace-panel-sketch canvas').first()
+  await canvas.focus()
+
+  await page.keyboard.down('Alt')
+  await expect(lock).toHaveCount(0)
+  await page.keyboard.up('Alt')
+  await expect(lock).toContainText('Lock X')
+
+  await page.keyboard.down('Alt')
+  await page.keyboard.press('Tab')
+  await page.keyboard.up('Alt')
+  await expect(lock).toContainText('Lock X')
+
+  await page.keyboard.down('Alt')
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')))
+  await page.keyboard.up('Alt')
+  await expect(lock).toContainText('Lock X')
+
+  await canvas.focus()
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', repeat: true, bubbles: true }))
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt', bubbles: true }))
+  })
+  await expect(lock).toContainText('Lock X')
+
+  await page.keyboard.press('Control+Alt')
+  await expect(lock).toContainText('Lock X')
+  await page.keyboard.press('Shift+Alt')
+  await expect(lock).toContainText('Lock X')
+  await page.keyboard.press('Meta+Alt')
+  await expect(lock).toContainText('Lock X')
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', ctrlKey: true, bubbles: true }))
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt', bubbles: true }))
+  })
+  await expect(lock).toContainText('Lock X')
+
+  await openRectangleCreationPanel(page)
+  const dimensions = page.locator(PANEL).getByRole('button', { name: 'Dimensions (Tab)' })
+  await dimensions.click()
+  const width = page.locator(PANEL).locator('input').first()
+  await width.focus()
+  await page.keyboard.press('Alt')
+  await expect(lock).toContainText('Lock X')
+
+  await canvas.focus()
+  await page.keyboard.press('Alt')
+  await expect(lock).toContainText('Lock Y')
+
+  await page.locator('#workspace-tab-preview3d').click()
+  await page.keyboard.press('Alt')
+  await page.locator('#workspace-tab-sketch').click()
+  await expect(lock).toContainText('Lock Y')
+
+  await canvas.focus()
+  const shortcutWasSwallowed = await page.evaluate(() => {
+    const down = new KeyboardEvent('keydown', { key: 'Alt', bubbles: true, cancelable: true })
+    const up = new KeyboardEvent('keyup', { key: 'Alt', bubbles: true, cancelable: true })
+    window.dispatchEvent(down)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', altKey: true, bubbles: true }))
+    window.dispatchEvent(up)
+    return down.defaultPrevented || up.defaultPrevented
+  })
+  expect(shortcutWasSwallowed).toBe(false)
+  await expect(lock).toContainText('Lock Y')
+})
+
 /** Rectangle mid-draw: anchor placed, waiting for the opposite corner. */
 async function openRectangleCreationPanel(page: Parameters<typeof startAddRectPlacement>[0]) {
   await startAddRectPlacement(page)
