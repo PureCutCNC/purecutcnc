@@ -223,6 +223,16 @@ function rangesOverlap(minA: number, maxA: number, minB: number, maxB: number): 
   return Math.max(minA, minB) < Math.min(maxA, maxB) - 1e-9
 }
 
+/**
+ * Whether a tab occupies a cut level in [minZ, maxZ]. Half-open like the motion
+ * test in `splitCutMoveAcrossTabsFrom`: a level at the tab's bottom is lifted,
+ * one at its top is not. A plain interval overlap misses the first case, and a
+ * finish edge route cuts only its final depth, where auto tabs start (#828).
+ */
+function tabSpansCutZ(tab: PreservedObstacle, minZ: number, maxZ: number): boolean {
+  return minZ < tab.zTop && maxZ >= tab.zBottom
+}
+
 function obstacleBounds(obstacle: PreservedObstacle) {
   let minX = Number.POSITIVE_INFINITY
   let maxX = Number.NEGATIVE_INFINITY
@@ -705,7 +715,7 @@ export function applyTabWarnings(project: Project, operation: Operation, result:
     }
 
     if (Number.isFinite(cutMinZ) && Number.isFinite(cutMaxZ)) {
-      const affectsCutDepth = rangesOverlap(tab.zBottom, tab.zTop, cutMinZ, cutMaxZ)
+      const affectsCutDepth = tabSpansCutZ(tab, cutMinZ, cutMaxZ)
       if (!affectsCutDepth) {
         xyOnlyTabNames.push(tab.name)
         continue

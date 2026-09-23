@@ -26,9 +26,11 @@
  */
 
 import { circleProfile, defaultTool, newProject, rectProfile, type Operation, type Project, type Tab } from '../../types/project'
-import { projectWithFeatures } from '../../test/projectFixtures'
+import { projectWithFeatures, resolvedFeature } from '../../test/projectFixtures'
 import { flattenProfile } from './geometry'
 import { generateEdgeRouteToolpath } from './edge'
+import { buildAutoTabsForFeature } from '../operations/autoTabs'
+import { computeOperationToolpath } from './generateOperation'
 import { applyEdgeRouteTabs, applyTabsToEdgeRoute, applyTabWarnings, tabLayoutFreeFraction, toolCentreContours } from './tabs'
 import type { ToolpathResult } from './types'
 
@@ -211,6 +213,76 @@ test('a tab genuinely above the cut range is still reported', () => {
     codes.some((code) => code === 'tabOutsideCutZ' || code.startsWith('tabsOutsideCutZ')),
     `outside-cut-Z warning still fires, got [${codes.join(', ')}]`,
   )
+})
+
+// ── Issue #828: a finish pass cut at the tab's own bottom ──
+
+console.log('\nFinish pass at the tab bottom (issue #828)')
+
+/** The reported workflow: rectangle, Edge Out Both, auto tabs placed from the rough op. */
+function rectangleEdgeOutBoth(): { project: Project; rough: Operation; finish: Operation } {
+  const withFeature = projectWithFeatures(baseProject(), [
+    {
+      id: 'f1',
+      name: 'Rect',
+      kind: 'rect',
+      folderId: null,
+      sketch: {
+        profile: rectProfile(20, 20, 80, 50),
+        origin: { x: 0, y: 0 },
+        orientationAngle: 0,
+        dimensions: [],
+        constraints: [],
+      },
+      operation: 'add',
+      z_top: 12,
+      z_bottom: 0,
+      visible: true,
+      locked: false,
+    },
+  ] as never)
+  const rough = edgeOperation('f1', 'edge_route_outside')
+  const finish: Operation = { ...rough, id: 'op2', name: 'Edge finish', pass: 'finish' }
+  const tabs = buildAutoTabsForFeature(resolvedFeature(withFeature, 'f1'), withFeature, rough, [])
+  return { project: { ...withFeature, tabs }, rough, finish }
+}
+
+function outsideCutZCodes(result: ToolpathResult): string[] {
+  return result.warnings
+    .map((warning) => warning.code)
+    .filter((code) => code === 'tabOutsideCutZ' || code.startsWith('tabsOutsideCutZ'))
+}
+
+test('auto tabs are not reported outside the cut Z range on the finish pass', () => {
+  const { project, rough, finish } = rectangleEdgeOutBoth()
+  assert(project.tabs.length > 0, 'auto placement produced tabs')
+  for (const operation of [rough, finish]) {
+    const envelope = computeOperationToolpath(project, operation)
+    assert(envelope, `${operation.pass} pass generated`)
+    const codes = outsideCutZCodes(envelope.result)
+    assert(codes.length === 0, `${operation.pass}: no outside-cut-Z warning, got [${codes.join(', ')}]`)
+  }
+})
+
+test('the finish pass still lifts over the tabs and reaches final depth elsewhere', () => {
+  const { project, finish } = rectangleEdgeOutBoth()
+  const tabTop = project.tabs[0].z_top
+  const envelope = computeOperationToolpath(project, finish)
+  assert(envelope, 'finish pass generated')
+  const cuts = envelope.result.moves.filter((move) => move.kind === 'cut')
+  assert(cuts.some((move) => Math.abs(move.from.z - tabTop) < 1e-6 && Math.abs(move.to.z - tabTop) < 1e-6), 'part of the pass runs at the tab top')
+  assert(Math.abs(deepestCutZ(envelope.result)) < 1e-9, 'the rest of the pass reaches z=0')
+})
+
+test('a tab raised clear of the finish level is still reported', () => {
+  // The finish pass cuts only at z=0; a tab from z=1 never meets it, and the
+  // motion pass leaves the finish cut at z=0 through it.
+  const { project, finish } = rectangleEdgeOutBoth()
+  const raised = { ...project, tabs: project.tabs.map((entry) => ({ ...entry, z_bottom: 1 })) }
+  const envelope = computeOperationToolpath(raised, finish)
+  assert(envelope, 'finish pass generated')
+  const codes = outsideCutZCodes(envelope.result)
+  assert(codes.length > 0, 'outside-cut-Z warning still fires for an ineffective tab')
 })
 
 // ── Step 3: total coverage is reported ──
