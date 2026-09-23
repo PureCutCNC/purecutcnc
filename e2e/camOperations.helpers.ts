@@ -194,3 +194,16 @@ const CAM_QUICK_OPERATION_FIXTURE_JSON = buildCamQuickOperationProjectJson()
 export async function seedCamQuickOperationProject(page: Page): Promise<void> {
   await seedProject(page, CAM_QUICK_OPERATION_FIXTURE_JSON)
 }
+
+/**
+ * The same project with one tab under Carve Target that sits below any cut a
+ * pocket makes there (tab z 0 -> 1, cut z 1.5 -> 2), so an operation on that
+ * feature reliably reports a toolpath warning (#837).
+ */
+export async function seedCamQuickOperationProjectWithLowTab(page: Page): Promise<void> {
+  const project = JSON.parse(CAM_QUICK_OPERATION_FIXTURE_JSON) as { tabs: unknown[] }
+  project.tabs = [{
+    id: 'tb-low', name: 'Low Tab', x: 95, y: 25, w: 10, h: 10, z_top: 1, z_bottom: 0, visible: true,
+  }]
+  await seedProject(page, JSON.stringify(project))
+}

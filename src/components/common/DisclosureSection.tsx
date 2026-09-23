@@ -36,6 +36,8 @@ interface DisclosureSectionProps {
   defaultOpen?: boolean
   /** Extra class names applied to the outer container. */
   className?: string
+  /** Shown after the title only while collapsed, e.g. a count of what is hidden. */
+  collapsedSuffix?: ReactNode
 }
 
 /**
@@ -49,6 +51,7 @@ export function DisclosureSection({
   storageKey,
   defaultOpen = false,
   className,
+  collapsedSuffix,
 }: DisclosureSectionProps) {
   // Persist the open/collapsed boolean via the existing pure disclosureState
   // helpers ('open'/'closed' strings), so the stored format and corrupt-value
@@ -80,6 +83,9 @@ export function DisclosureSection({
       >
         <Icon id="chevron-down" size={12} className={open ? 'disclosure-section__chevron disclosure-section__chevron--open' : 'disclosure-section__chevron'} />
         <span className="disclosure-section__title">{title}</span>
+        {!open && collapsedSuffix !== undefined ? (
+          <span className="disclosure-section__suffix">{collapsedSuffix}</span>
+        ) : null}
       </button>
       {open ? <div className="disclosure-section__body">{children}</div> : null}
     </div>
