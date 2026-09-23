@@ -189,6 +189,49 @@ test.describe('SVG import', () => {
     expect(ops).toEqual(['add', 'line'])
   })
 
+  test('closed Lines offer Subtract only below an Add (#827)', async ({ app }) => {
+    const { page } = app
+    const dialog = await openImportDialog(page)
+    await dialog.locator('input[type="file"]').setInputFiles({
+      name: 'test.svg',
+      mimeType: 'image/svg+xml',
+      buffer: Buffer.from(SVG_FILL_AND_STROKE),
+    })
+    await selectSourceUnitsMm(dialog)
+    const summary = dialog.locator('[data-testid="import-analysis-summary"]')
+    await expect(summary).toBeVisible({ timeout: 10000 })
+    await dialog.locator('#import-geometry-mode').selectOption('paths')
+    await expect(summary.locator('[data-testid="import-summary-closed-line"] strong')).toHaveText('2')
+    await dialog.locator('.dialog-footer .btn-primary').click()
+    await expect(dialog).not.toBeVisible({ timeout: 5000 })
+
+    const rows = page.locator('.tree-row--feature')
+    await expect(rows).toHaveCount(2)
+    const menuItem = (label: string) =>
+      page.locator('.tree-operation-menu__item').filter({ hasText: new RegExp(`^.?${label}$`) })
+
+    // No Add anywhere: Subtract would make either Line the base solid.
+    for (const index of [0, 1]) {
+      await rows.nth(index).locator('.tree-action-btn--operation').click()
+      await expect(menuItem('Subtract')).toBeDisabled()
+      await expect(menuItem('Subtract')).toHaveAttribute('title', /first solid/)
+      await page.locator('.tree-operation-overlay').click()
+    }
+
+    // An Add in the first row unlocks Subtract on the row below it.
+    await rows.nth(0).locator('.tree-action-btn--operation').click()
+    await menuItem('Add').click()
+    await rows.nth(1).locator('.tree-action-btn--operation').click()
+    await expect(menuItem('Subtract')).toBeEnabled()
+    await menuItem('Subtract').focus()
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.tree-operation-menu')).not.toBeAttached()
+
+    // The chosen role sticks: nothing was silently turned back into Add.
+    const project = await getProject(page)
+    expect(projectFeatureOperations(project)).toEqual(['add', 'subtract'])
+  })
+
   test('large path import completes and leaves the app interactive', async ({ baseURL }) => {
     test.setTimeout(60_000)
     const browser = await chromium.launch()

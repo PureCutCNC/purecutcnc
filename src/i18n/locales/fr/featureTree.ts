@@ -92,7 +92,7 @@ export const featureTreeFr: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.treeRow.operation.menuLineOpenTooltip': 'Ligne — chemin ouvert usiné par les opérations de gravure',
   'featureTree.treeRow.operation.menuAddTooltip': 'Ajouter — l’entité ajoute de la matière',
   'featureTree.treeRow.operation.menuSubtractTooltip': 'Soustraire — l’entité enlève de la matière',
-  'featureTree.treeRow.operation.menuSubtractDisabledTooltip': 'Soustraire indisponible — le premier solide doit être Ajouter ou un rôle non solide',
+  'featureTree.treeRow.operation.menuSubtractDisabledTooltip': 'Soustraire indisponible — ce serait le premier solide, qui doit être Ajouter. Placez d’abord un élément Ajouter au-dessus',
   'featureTree.treeRow.operation.menuLineClosedTooltip': 'Ligne — chemin fermé usiné par la gravure ou la gravure en V',
   'featureTree.treeRow.operation.menuRegionTooltip': 'Masque de région — l’entité filtre les opérations d’usinage',
   'featureTree.treeRow.operation.menuConstructionTooltip': 'Construction — géométrie de référence d’esquisse, jamais usinée',

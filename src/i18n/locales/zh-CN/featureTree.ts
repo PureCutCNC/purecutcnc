@@ -127,7 +127,7 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.treeRow.operation.menuLineOpenTooltip': '线条 — 开放路径，可通过雕刻操作加工',
   'featureTree.treeRow.operation.menuAddTooltip': '添加 — 特征添加材料',
   'featureTree.treeRow.operation.menuSubtractTooltip': '减去 — 特征移除材料',
-  'featureTree.treeRow.operation.menuSubtractDisabledTooltip': 'Subtract 不可用 — 首个实体必须是 Add 或转换为非实体角色',
+  'featureTree.treeRow.operation.menuSubtractDisabledTooltip': 'Subtract 不可用 — 它会成为首个实体，而首个实体必须是 Add。请先在其上方放置一个 Add 特征',
   'featureTree.treeRow.operation.menuLineClosedTooltip': '线条 — 闭合路径，可通过雕刻或 V雕操作加工',
   'featureTree.treeRow.operation.menuRegionTooltip': '区域遮罩 — 特征过滤加工操作',
   'featureTree.treeRow.operation.menuConstructionTooltip': '构造 — 草图参考几何，不会被加工',

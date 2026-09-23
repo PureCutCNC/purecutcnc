@@ -92,7 +92,7 @@ export const featureTreeEs: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.treeRow.operation.menuLineOpenTooltip': 'Línea: trayectoria abierta mecanizada por operaciones de grabado',
   'featureTree.treeRow.operation.menuAddTooltip': 'Agregar: el elemento añade material',
   'featureTree.treeRow.operation.menuSubtractTooltip': 'Restar: el elemento elimina material',
-  'featureTree.treeRow.operation.menuSubtractDisabledTooltip': 'Restar no disponible: el primer sólido debe ser Agregar o convertirse en un rol no sólido',
+  'featureTree.treeRow.operation.menuSubtractDisabledTooltip': 'Restar no disponible: pasaría a ser el primer sólido, que debe ser Agregar. Coloque antes un elemento Agregar encima',
   'featureTree.treeRow.operation.menuLineClosedTooltip': 'Línea: trayectoria cerrada mecanizada por operaciones de grabado/V-carve',
   'featureTree.treeRow.operation.menuRegionTooltip': 'Máscara de región: el elemento filtra las operaciones de mecanizado',
   'featureTree.treeRow.operation.menuConstructionTooltip': 'Construcción: geometría de referencia del croquis, nunca se mecaniza',
