@@ -284,6 +284,7 @@ export function createTabsSlice(
           project: {
             ...s.project,
             tabs: [...s.project.tabs, ...createdTabs],
+            meta: { ...s.project.meta, modified: new Date().toISOString() },
           },
           selection: {
             ...s.selection,
@@ -295,6 +296,11 @@ export function createTabsSlice(
             mode: 'feature',
             hoveredFeatureId: null,
             activeControl: null,
+          },
+          history: {
+            past: [...s.history.past, cloneProject(s.project)].slice(-100),
+            future: [],
+            transactionStart: null,
           },
         }
       }),

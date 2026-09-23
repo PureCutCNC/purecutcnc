@@ -30,6 +30,7 @@ import {
   type Project,
   type SketchFeature,
   type Stock,
+  type Tab,
 } from '../types/project'
 import { useProjectStore } from './projectStore'
 import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
@@ -371,6 +372,53 @@ test('autoPlaceTabsForOperation creates tabs for edge_route_outside', () => {
   for (const tab of tabs) {
     assert(tab.w > 0 && tab.h > 0, `tab should have positive dimensions, got w=${tab.w}, h=${tab.h}`)
   }
+})
+
+test('autoPlaceTabsForOperation commits the entire tab set as one undo step', () => {
+  resetStore()
+  const store = useProjectStore.getState()
+  store.addRectFeature('Part', 10, 10, 50, 40, 5)
+  const feature = getFeatures()[0]
+  const tool = { ...defaultTool('mm', 1), id: 't1', name: '6mm endmill', diameter: 6 }
+  useProjectStore.setState({
+    project: { ...getProject(), tools: [tool] },
+  } as unknown as Partial<ProjectStore>)
+  const operationId = store.addOperation('edge_route_outside', 'rough', {
+    source: 'features',
+    featureIds: [feature.id],
+  })
+  assert(operationId !== null, 'edge route operation should be created')
+
+  const existingTab: Tab = {
+    id: 'tb-existing', name: 'Existing', x: 200, y: 200, w: 6, h: 6,
+    z_top: 3, z_bottom: 0, visible: true, shape: 'rect',
+  }
+  useProjectStore.setState({
+    project: { ...getProject(), tabs: [existingTab] },
+  } as unknown as Partial<ProjectStore>)
+  const historyBefore = useProjectStore.getState().history.past.length
+  const tabsBefore = JSON.stringify(getProject().tabs)
+
+  store.autoPlaceTabsForOperation(operationId)
+  const tabsAfter = JSON.stringify(getProject().tabs)
+  assert(getProject().tabs.length > 2, 'one click should generate multiple tabs')
+  assert(useProjectStore.getState().history.past.length === historyBefore + 1,
+    'the complete generated set should add exactly one undo step')
+
+  store.undo()
+  assert(JSON.stringify(getProject().tabs) === tabsBefore, 'undo should restore only the pre-existing tab')
+  assert(getProject().operations.some((operation) => operation.id === operationId),
+    'undo should preserve the edge route operation')
+
+  const futureBefore = useProjectStore.getState().history.future.length
+  store.autoPlaceTabsForOperation('missing-operation')
+  assert(JSON.stringify(getProject().tabs) === tabsBefore, 'failed placement should leave tabs unchanged')
+  assert(useProjectStore.getState().history.future.length === futureBefore,
+    'failed placement should preserve the redo step')
+
+  store.redo()
+  assert(JSON.stringify(getProject().tabs) === tabsAfter,
+    'redo should restore the entire generated set with the same IDs and geometry')
 })
 
 // Issue #445: tab spacing has to be judged against the tool-centre path, not the
