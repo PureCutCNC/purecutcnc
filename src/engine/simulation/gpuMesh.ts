@@ -17,9 +17,6 @@
 import * as THREE from 'three'
 import type { DirtyRegion, SimulationGrid } from './types'
 
-const MAX_UINT16_INDEX = 65535
-const STOCK_PLANE_CHUNK_CELLS = 128
-
 /**
  * Build a `DataTexture` backed by the grid's `topZ` Float32Array. The texture
  * uses a single RED channel so each texel stores one height value. The array is
@@ -44,124 +41,41 @@ export function createHeightfieldTexture(grid: SimulationGrid): THREE.DataTextur
   return texture
 }
 
-/**
- * Build a static subdivided plane whose vertices sit at grid cell centers.
- * The vertex shader will displace world-Y from the heightfield texture, so
- * the geometry itself has Y = 0 everywhere.
- *
- * World coordinate mapping (matches the existing CPU mesh):
- *   grid col  → world X
- *   grid row  → world Z
- *   grid topZ → world Y  (displaced by shader)
- *
- * We build a custom grid rather than using `PlaneGeometry` because we need
- * vertices at cell centers with UVs that map exactly to texel centers.
+/** One flat top quad per heightfield cell, with no shared vertices across cells.
+ * A shared corner samples only one neighboring texel; on a one-cell-wide tab
+ * it drags the other three corners to cut-through height and paints a false
+ * sloped hole. Row instancing keeps the template O(cols) at high detail.
+ * position encodes (column, x corner, y corner); gl_InstanceID supplies row.
  */
-export function createStockPlaneGeometry(grid: SimulationGrid): THREE.BufferGeometry {
-  return createStockPlaneGeometryChunk(grid, 0, 0, grid.cols, grid.rows)
-}
-
-export function createStockPlaneGeometries(grid: SimulationGrid): THREE.BufferGeometry[] {
-  const fullVertexCount = (grid.cols + 1) * (grid.rows + 1)
-  if (fullVertexCount <= MAX_UINT16_INDEX) {
-    return [createStockPlaneGeometry(grid)]
+export function createStockPlaneGeometry(grid: SimulationGrid): THREE.InstancedBufferGeometry {
+  const geometry = new THREE.InstancedBufferGeometry()
+  const positions = new Float32Array(grid.cols * 4 * 3)
+  const indices = grid.cols * 4 <= 65535
+    ? new Uint16Array(grid.cols * 6)
+    : new Uint32Array(grid.cols * 6)
+  for (let col = 0; col < grid.cols; col += 1) {
+    const vertex = col * 4
+    positions.set([
+      col, 0, 0,
+      col, 1, 0,
+      col, 0, 1,
+      col, 1, 1,
+    ], vertex * 3)
+    indices.set([vertex, vertex + 2, vertex + 1, vertex + 1, vertex + 2, vertex + 3], col * 6)
   }
-
-  const geometries: THREE.BufferGeometry[] = []
-  for (let rowStart = 0; rowStart < grid.rows; rowStart += STOCK_PLANE_CHUNK_CELLS) {
-    const chunkRows = Math.min(STOCK_PLANE_CHUNK_CELLS, grid.rows - rowStart)
-    for (let colStart = 0; colStart < grid.cols; colStart += STOCK_PLANE_CHUNK_CELLS) {
-      const chunkCols = Math.min(STOCK_PLANE_CHUNK_CELLS, grid.cols - colStart)
-      geometries.push(createStockPlaneGeometryChunk(grid, colStart, rowStart, chunkCols, chunkRows))
-    }
-  }
-  return geometries
-}
-
-function createStockPlaneGeometryChunk(
-  grid: SimulationGrid,
-  colStart: number,
-  rowStart: number,
-  chunkCols: number,
-  chunkRows: number,
-): THREE.BufferGeometry {
-  const { originX, originY, cellSize, cols, rows } = grid
-
-  // One vertex per cell corner → (cols+1) × (rows+1) vertices
-  const vertCols = chunkCols + 1
-  const vertRows = chunkRows + 1
-  const vertexCount = vertCols * vertRows
-  const positions = new Float32Array(vertexCount * 3)
-  const uvs = new Float32Array(vertexCount * 2)
-
-  for (let row = 0; row <= chunkRows; row += 1) {
-    const gridRow = rowStart + row
-    for (let col = 0; col <= chunkCols; col += 1) {
-      const gridCol = colStart + col
-      const idx = row * vertCols + col
-      const worldX = originX + gridCol * cellSize
-      const worldZ = originY + gridRow * cellSize
-
-      positions[idx * 3] = worldX
-      positions[idx * 3 + 1] = 0 // Y displaced by shader
-      positions[idx * 3 + 2] = worldZ
-
-      // UV maps to texel centers: col 0 → 0.5/cols, col cols → (cols-0.5)/cols
-      // At cell boundaries we average neighboring texels, which is correct for
-      // vertex positions sitting on cell edges.
-      uvs[idx * 2] = Math.max(0, Math.min(1, gridCol / cols))
-      uvs[idx * 2 + 1] = Math.max(0, Math.min(1, gridRow / rows))
-    }
-  }
-
-  // Two triangles per cell
-  const indexCount = chunkCols * chunkRows * 6
-  const indices = vertexCount > MAX_UINT16_INDEX ? new Uint32Array(indexCount) : new Uint16Array(indexCount)
-  let offset = 0
-  for (let row = 0; row < chunkRows; row += 1) {
-    for (let col = 0; col < chunkCols; col += 1) {
-      const tl = row * vertCols + col
-      const tr = tl + 1
-      const bl = (row + 1) * vertCols + col
-      const br = bl + 1
-
-      indices[offset] = tl
-      indices[offset + 1] = bl
-      indices[offset + 2] = tr
-      indices[offset + 3] = tr
-      indices[offset + 4] = bl
-      indices[offset + 5] = br
-      offset += 6
-    }
-  }
-
-  const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
   geometry.setIndex(new THREE.BufferAttribute(indices, 1))
-
-  // The stored geometry is flat (Y = 0 everywhere); the vertex shader displaces
-  // each vertex up to its heightfield value at draw time. Computing bounds from
-  // the raw positions therefore yields a zero-height slab sitting at Y = 0 —
-  // roughly half the stock thickness BELOW where the surface actually renders.
-  // three's frustum culler tests that stale sphere, so on a tilted view the
-  // bottom-of-frame chunks fall outside the frustum and get wrongly culled,
-  // and the always-drawn boundary wall shows through as a sawtooth along the
-  // near edge. The error scales with detail: at low detail the chunk sphere is
-  // large enough to swallow the offset, but at high detail the chunks (and
-  // their spheres) shrink while the offset stays ~half the stock thickness, so
-  // the artifact only appears at high detail. Bound the true displacement
-  // range [stockBottomZ, stockTopZ] instead so culling stays correct.
-  const minX = originX + colStart * cellSize
-  const maxX = originX + (colStart + chunkCols) * cellSize
-  const minZ = originY + rowStart * cellSize
-  const maxZ = originY + (rowStart + chunkRows) * cellSize
+  geometry.instanceCount = grid.rows
   geometry.boundingBox = new THREE.Box3(
-    new THREE.Vector3(minX, grid.stockBottomZ, minZ),
-    new THREE.Vector3(maxX, grid.stockTopZ, maxZ),
+    new THREE.Vector3(grid.originX, grid.stockBottomZ, grid.originY),
+    new THREE.Vector3(grid.originX + grid.cols * grid.cellSize, grid.stockTopZ, grid.originY + grid.rows * grid.cellSize),
   )
   geometry.boundingSphere = geometry.boundingBox.getBoundingSphere(new THREE.Sphere())
   return geometry
+}
+
+export function createStockPlaneGeometries(grid: SimulationGrid): THREE.BufferGeometry[] {
+  return [createStockPlaneGeometry(grid)]
 }
 
 /**
@@ -224,4 +138,3 @@ export function uploadHeightfieldRegion(
   gl.bindTexture(gl.TEXTURE_2D, previousBinding)
   return true
 }
-

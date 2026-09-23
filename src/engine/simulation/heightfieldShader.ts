@@ -37,17 +37,22 @@ export const LIGHTING_GLSL = /* glsl */ `
 
 const vertexShader = /* glsl */ `
   uniform sampler2D uHeightfield;
+  uniform vec2 uOrigin;
+  uniform float uCellSize;
 
-  varying vec2 vUv;
-  varying float vHeight;
+  flat out ivec2 vCell;
+  out float vHeight;
 
   void main() {
-    vUv = uv;
-    float height = texture2D(uHeightfield, uv).r;
+    vCell = ivec2(int(position.x + 0.5), gl_InstanceID);
+    float height = texelFetch(uHeightfield, vCell, 0).r;
     vHeight = height;
 
-    vec3 displaced = position;
-    displaced.y = height;
+    vec3 displaced = vec3(
+      uOrigin.x + (position.x + position.y) * uCellSize,
+      height,
+      uOrigin.y + (float(gl_InstanceID) + position.z) * uCellSize
+    );
 
     gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
   }
@@ -58,29 +63,25 @@ const fragmentShader = /* glsl */ `
   uniform vec3 uColor;
   uniform float uStockBottomZ;
   uniform float uStockTopZ;
-  uniform vec2 uTexelSize;
   uniform float uCellSize;
 
-  varying vec2 vUv;
-  varying float vHeight;
+  flat in ivec2 vCell;
+  in float vHeight;
+  out vec4 fragColor;
 
   ${LIGHTING_GLSL}
 
   void main() {
     float threshold = uStockBottomZ + 0.000001;
-    vec2 maxCellIndex = (vec2(1.0) / uTexelSize) - vec2(1.0);
-    vec2 cellIndex = floor(clamp(vUv / uTexelSize, vec2(0.0), maxCellIndex));
-    vec2 cellUv = (cellIndex + vec2(0.5)) * uTexelSize;
-    float cellHeight = texture2D(uHeightfield, cellUv).r;
-
-    if (cellHeight <= threshold) {
+    if (vHeight <= threshold) {
       discard;
     }
 
-    float hL = texture2D(uHeightfield, vUv - vec2(uTexelSize.x, 0.0)).r;
-    float hR = texture2D(uHeightfield, vUv + vec2(uTexelSize.x, 0.0)).r;
-    float hD = texture2D(uHeightfield, vUv - vec2(0.0, uTexelSize.y)).r;
-    float hU = texture2D(uHeightfield, vUv + vec2(0.0, uTexelSize.y)).r;
+    ivec2 lastCell = textureSize(uHeightfield, 0) - ivec2(1);
+    float hL = texelFetch(uHeightfield, clamp(vCell + ivec2(-1, 0), ivec2(0), lastCell), 0).r;
+    float hR = texelFetch(uHeightfield, clamp(vCell + ivec2(1, 0), ivec2(0), lastCell), 0).r;
+    float hD = texelFetch(uHeightfield, clamp(vCell + ivec2(0, -1), ivec2(0), lastCell), 0).r;
+    float hU = texelFetch(uHeightfield, clamp(vCell + ivec2(0, 1), ivec2(0), lastCell), 0).r;
 
     if (hL <= threshold) hL = vHeight;
     if (hR <= threshold) hR = vHeight;
@@ -97,7 +98,7 @@ const fragmentShader = /* glsl */ `
     float depthRatio = clamp((uStockTopZ - vHeight) / max(uStockTopZ - uStockBottomZ, 0.001), 0.0, 1.0);
     float depthDarken = 1.0 - depthRatio * 0.12;
 
-    gl_FragColor = vec4(uColor * lighting * depthDarken, 1.0);
+    fragColor = vec4(uColor * lighting * depthDarken, 1.0);
   }
 `
 
@@ -112,12 +113,12 @@ export function createHeightfieldMaterial(
       uColor: { value: stockColor },
       uStockBottomZ: { value: grid.stockBottomZ },
       uStockTopZ: { value: grid.stockTopZ },
-      uTexelSize: { value: new THREE.Vector2(1 / grid.cols, 1 / grid.rows) },
+      uOrigin: { value: new THREE.Vector2(grid.originX, grid.originY) },
       uCellSize: { value: grid.cellSize },
     },
     vertexShader,
     fragmentShader,
+    glslVersion: THREE.GLSL3,
     side: THREE.DoubleSide,
   })
 }
-

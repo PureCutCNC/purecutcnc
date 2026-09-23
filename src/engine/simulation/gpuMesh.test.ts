@@ -44,56 +44,45 @@ function makeGrid(cols: number, rows: number): SimulationGrid {
   }
 }
 
-function testUsesUint16WhenVertexIdsFit(): void {
-  const geometry = createStockPlaneGeometry(makeGrid(280, 140))
+function testOneIndependentTopPerCell(): void {
+  const grid = makeGrid(280, 140)
+  const geometry = createStockPlaneGeometry(grid)
+  const position = geometry.getAttribute('position')
   const index = geometry.getIndex()
   if (!index) throw new Error('Assertion failed: expected indexed geometry')
-  assert(index.array instanceof Uint16Array, 'expected Uint16 indices when all vertex ids fit in 16 bits')
+  assert(position.count === grid.cols * 4, 'each cell in the row needs four private top vertices')
+  assert(index.count === grid.cols * 6, 'each cell needs two top triangles')
+  assert(geometry.instanceCount === grid.rows, 'row template should be instanced for every row')
+  assert(index.array instanceof Uint16Array, 'row template should fit Uint16 indices')
+  const p = position.array
+  assert(p[0] === 0 && p[12] === 1, 'neighboring cells must not share top vertices')
   geometry.dispose()
 }
 
-function testChunksLargePlanesIntoUint16Geometry(): void {
+function testHighDetailUsesOneSmallRowTemplate(): void {
   const geometries = createStockPlaneGeometries(makeGrid(280, 280))
-  assert(geometries.length > 1, 'expected square high-detail plane to be chunked')
-
-  for (const geometry of geometries) {
-    const position = geometry.getAttribute('position')
-    const index = geometry.getIndex()
-    assert(position.count <= 65535, `expected chunk vertex count to fit in Uint16, got ${position.count}`)
-    if (!index) throw new Error('Assertion failed: expected indexed chunk geometry')
-    assert(index.array instanceof Uint16Array, 'expected chunk to use Uint16 indices')
-    geometry.dispose()
-  }
+  assert(geometries.length === 1, 'high detail should keep one instanced row template')
+  assert(geometries[0].getAttribute('position').count === 280 * 4, 'template size must scale by row width')
+  geometries[0].dispose()
 }
 
-// The stock plane geometry is stored flat (Y = 0) and displaced up to the
-// heightfield in the vertex shader. Its bounding volume must therefore cover
-// the true displaced Y range [stockBottomZ, stockTopZ]; if it were computed
-// from the raw flat positions it would collapse to a zero-height slab at Y = 0,
-// and three's frustum culler would wrongly drop bottom-of-frame chunks at high
-// detail (surface teeth revealing the wall behind). Pin the Y span so that
-// regression can't return.
-function testStockPlaneChunkBoundsCoverDisplacedHeight(): void {
-  const grid = makeGrid(280, 280) // high enough to force chunking
+function testStockPlaneBoundsCoverDisplacedHeight(): void {
+  const grid = makeGrid(280, 280)
   const geometries = createStockPlaneGeometries(grid)
-  assert(geometries.length > 1, 'expected the plane to be chunked for this test to be meaningful')
 
   for (const geometry of geometries) {
     const box = geometry.boundingBox
-    if (!box) throw new Error('Assertion failed: stock plane chunk must carry a bounding box')
+    if (!box) throw new Error('Assertion failed: stock plane must carry a bounding box')
     assert(
       Math.abs(box.min.y - grid.stockBottomZ) < 1e-6,
-      `chunk bounding box min Y should sit at stockBottomZ (${grid.stockBottomZ}), got ${box.min.y}`,
+      `bounding box min Y should sit at stockBottomZ (${grid.stockBottomZ}), got ${box.min.y}`,
     )
     assert(
       Math.abs(box.max.y - grid.stockTopZ) < 1e-6,
-      `chunk bounding box max Y should reach stockTopZ (${grid.stockTopZ}), got ${box.max.y}`,
+      `bounding box max Y should reach stockTopZ (${grid.stockTopZ}), got ${box.max.y}`,
     )
     const sphere = geometry.boundingSphere
-    if (!sphere) throw new Error('Assertion failed: stock plane chunk must carry a bounding sphere')
-    // The sphere must be centered at the true mid-height, not at Y = 0 (the old
-    // flat-slab bug centered it half a thickness too low) — check the top-face
-    // center sits comfortably inside.
+    if (!sphere) throw new Error('Assertion failed: stock plane must carry a bounding sphere')
     const midHeight = (grid.stockBottomZ + grid.stockTopZ) / 2
     assert(
       Math.abs(sphere.center.y - midHeight) < 1e-6,
@@ -112,7 +101,7 @@ function testStockPlaneChunkBoundsCoverDisplacedHeight(): void {
   }
 }
 
-testUsesUint16WhenVertexIdsFit()
-testChunksLargePlanesIntoUint16Geometry()
-testStockPlaneChunkBoundsCoverDisplacedHeight()
+testOneIndependentTopPerCell()
+testHighDetailUsesOneSmallRowTemplate()
+testStockPlaneBoundsCoverDisplacedHeight()
 console.log('gpu mesh tests passed')
