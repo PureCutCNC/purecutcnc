@@ -56,6 +56,17 @@ export interface NestRequest {
   minimumGap: number
   expandFootprint: ExpandFootprint
   orderParts: OrderParts
+  /**
+   * The sheet corner parts pack toward: +1 prefers small coordinates, −1
+   * large ones. Defaults to the min corner. Callers point it at the machine
+   * origin, so the layout starts where the operator zeroes the machine.
+   */
+  gravity?: NestGravity
+}
+
+export interface NestGravity {
+  x: 1 | -1
+  y: 1 | -1
 }
 
 /** Maps a footprint point `p` to `rotate(p, rotation) + translation`. */

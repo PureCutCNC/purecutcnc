@@ -40,6 +40,7 @@ import {
 import { projectWithFeatures } from '../test/projectFixtures'
 import { defaultOperationForTarget } from './helpers/operationDefaults'
 import { normalizeProject, type ProjectFormatInput } from './helpers/projectFormat'
+import { discardNestFromProject } from './helpers/nestApply'
 import { buildNestRequest, nestGapForPart, resolveNestPart } from './helpers/nestPart'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import { useProjectStore } from './projectStore'
@@ -366,6 +367,37 @@ function testClampsAreAvoided(): void {
   console.log('clamps are avoided: PASSED')
 }
 
+function testReplaceNestIsOneStep(): void {
+  const before = makeProject()
+  resetStore(before)
+  const { nestId } = nestIntoStore(['plate'], settings({ quantity: 3 }))
+  const first = useProjectStore.getState().project
+  // Re-nest: compute on the project with the old nest discarded, commit as a replacement.
+  const base = discardNestFromProject(first, nestId)!
+  const part = resolveNestPart(base, first.nests![0].sourceIds)
+  assert(part.ok, 'the nested part resolves on the discarded base')
+  const replaceSettings = settings({ quantity: 5 })
+  const request = buildNestRequest(base, part, replaceSettings)!
+  const result = nest(request)
+  const replacedId = useProjectStore.getState().applyNest({
+    featureIds: part.featureIds,
+    placements: result.placements,
+    settings: replaceSettings,
+    replaceNestId: nestId,
+  })
+  const after = useProjectStore.getState()
+  assert(replacedId && replacedId !== nestId, 'a new nest replaces the old one')
+  assert(after.project.nests?.length === 1, 'exactly one nest remains')
+  assert(plateInstances(after.project).length === 5, 'five plates after re-nesting')
+  assert(after.project.featureFolders.length === 1, 'the old nest folder is gone, the new one exists')
+  assert(after.history.past.length === 2, 'replacing is one history entry')
+  after.undo()
+  assert(JSON.stringify(useProjectStore.getState().project) === JSON.stringify(first), 'one undo returns to the first nest')
+  useProjectStore.getState().discardNest(nestId)
+  assert(JSON.stringify(useProjectStore.getState().project.features) === JSON.stringify(before.features), 'discarding the first nest restores the design')
+  console.log('replace nest: PASSED')
+}
+
 testPartResolution()
 testApplyIsOneStepAndMachinesEveryCopy()
 testDiscardRestoresTheDesign()
@@ -374,4 +406,5 @@ testConstraintReferencesFollowTheCopy()
 testSaveLoadRoundTrip()
 testCurvedPartsKeepTheGap()
 testClampsAreAvoided()
+testReplaceNestIsOneStep()
 console.log('All nesting store tests passed')

@@ -283,6 +283,18 @@ function testExactFitIsAccepted(): void {
   assertValidLayout(req, result, 'exact fit')
 }
 
+function testGravityCorner(): void {
+  const footprint = [rect(0, 0, 20, 10)]
+  const toMax = request({ minimumGap: 2, gravity: { x: -1, y: -1 }, parts: [part('p', footprint, 1)] })
+  const [first] = nest(toMax).placements
+  assert(first.translation.x === 80 && first.translation.y === 90, `first part in the max corner, got ${JSON.stringify(first.translation)}`)
+  const bottomLeft = request({ minimumGap: 2, gravity: { x: 1, y: -1 }, parts: [part('p', footprint, 3)] })
+  const result = nest(bottomLeft)
+  assertValidLayout(bottomLeft, result, 'gravity')
+  assert(result.placements.every((p) => p.translation.y + 10 >= 100 - 1e-9 - 20), 'parts hug the max-Y edge')
+  assert(result.placements[0].translation.x === 0 && result.placements[0].translation.y === 90, 'first part at min X, max Y')
+}
+
 function testDeterministic(): void {
   const build = () => request({
     parts: [
@@ -324,6 +336,7 @@ const tests: [string, () => void][] = [
   ['non-convex parts never overlap', testNonConvexPartsNeverOverlap],
   ['multi-ring part moves rigidly', testMultiRingPartMovesRigidly],
   ['exact fit is accepted', testExactFitIsAccepted],
+  ['gravity corner', testGravityCorner],
   ['deterministic', testDeterministic],
   ['rejects invalid input', testRejectsInvalidInput],
 ]
