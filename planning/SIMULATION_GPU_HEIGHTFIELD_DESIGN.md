@@ -26,6 +26,9 @@ The shipped implementation plan and playback experiments are preserved in
   normals from neighboring height samples. Cut-through cells discard their
   top quad. Adjacent tops cannot share corners because a one-cell-wide tab
   would otherwise slope down into a removed neighbor and look like a hole.
+- Boundary slope smoothing keeps every wall next to a cut-through cell. A tab
+  can form a descending stock-to-tab-to-cut sequence whose outer step must
+  still render as a wall.
 - Static and playback views use the same rendering contract.
 
 Implementation is centered in `src/engine/simulation/` and

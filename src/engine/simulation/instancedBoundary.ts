@@ -126,7 +126,12 @@ const wallVertexShader = /* glsl */ `
     bool slopeContinues =
       (dNear * dCenter > 0.0 && abs(dCenter) <= 4.0 * abs(dNear)) ||
       (dFar * dCenter > 0.0 && abs(dCenter) <= 4.0 * abs(dFar));
-    if (slopeContinues) {
+    // A tab can descend from full stock to its 3 mm top and then to a
+    // cut-through neighbor. The second step continues the first gradient,
+    // but it is the tab's outer wall, not a smooth flank. Never collapse a
+    // wall bordering a cell whose material has been removed entirely.
+    bool cutThroughRim = min(hNear, hFar) <= uStockBottomZ + 0.000001;
+    if (slopeContinues && !cutThroughRim) {
       top = bottom;
     }
 

@@ -90,6 +90,7 @@ test('simulation GPU keeps a one-cell tab top and still shows through-cuts at tw
     import * as THREE from '/node_modules/.vite/deps/three.js';
     import { createHeightfieldTexture, createStockPlaneGeometry } from '/src/engine/simulation/gpuMesh.ts';
     import { createHeightfieldMaterial } from '/src/engine/simulation/heightfieldShader.ts';
+    import { createInstancedBoundaryGroup, createWallStripTemplate } from '/src/engine/simulation/instancedBoundary.ts';
 
     const grid = {
       originX: 0, originY: 0, cellSize: 1, cols: 3, rows: 3,
@@ -132,6 +133,38 @@ test('simulation GPU keeps a one-cell tab top and still shows through-cuts at tw
       grid.topZ[4] = 3;
       texture.needsUpdate = true;
     }
+    // A full-stock → tab-top → cut-through staircase is not a smooth slope.
+    // The wall between 3 and 0 must render, or it leaves a dark slit at the tab.
+    grid.topZ.set([0, 0, 0, 20, 3, 0, 0, 0, 0]);
+    texture.needsUpdate = true;
+    const boundary = createInstancedBoundaryGroup(texture, grid, new THREE.Color('#b9a83c'));
+    // Isolate the x=2 rim; otherwise the x=1 stock-to-tab wall behind it can
+    // fill the same screen pixel and mask a missing outer wall.
+    const rimGeometry = createWallStripTemplate(grid, 1, 2);
+    const rimPositions = rimGeometry.getAttribute('position');
+    for (let vertex = 0; vertex < rimPositions.count; vertex += 1) {
+      rimPositions.setX(vertex, 2);
+    }
+    rimPositions.needsUpdate = true;
+    boundary.children[0].geometry.dispose();
+    boundary.children[0].geometry = rimGeometry;
+    boundary.children[1].visible = false;
+    boundary.children[2].visible = false;
+    scene.children[0].visible = false;
+    scene.add(boundary);
+    camera.position.set(5, 1.5, 1.5);
+    camera.lookAt(1.5, 1.5, 1.5);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    renderer.render(scene, camera);
+    gl.finish();
+    document.body.dataset.tab829Wall = String(sample(2, 1.5, 1.5));
+    boundary.traverse((object) => {
+      if (object.isMesh) {
+        object.geometry.dispose();
+        object.material.dispose();
+      }
+    });
     renderer.dispose();
     geometry.dispose();
     material.dispose();
@@ -147,4 +180,6 @@ test('simulation GPU keeps a one-cell tab top and still shows through-cuts at tw
     expect(result.cleared).toBeLessThan(10)
     expect(result.cutThrough).toBeLessThan(10)
   }
+  const wallSample = Number(await app.page.locator('body').getAttribute('data-tab829-wall'))
+  expect(wallSample).toBeGreaterThan(70)
 })
