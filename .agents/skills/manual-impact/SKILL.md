@@ -7,7 +7,7 @@ description: Write the Manual impact section every PureCutCNC PR description car
 
 The user manual lives in a separate repo, `PureCutCNC/purecutcnc.github.io`,
 and nothing else tells it when the app changes (#818). You write a **Manual
-impact** section in the PR description; when the PR merges,
+impact** section in the description of every PR into `main`; when it merges,
 [`manual-impact.yml`](../../../.github/workflows/manual-impact.yml) opens an
 issue in the docs repo from that section **as merged**, with the merge commit.
 The `manual-impact-check` job fails the PR while the section is missing or
@@ -64,7 +64,9 @@ what you found; do not guess a page that is not in the list.
 
 ## 3. Write the section
 
-Put it in the PR description, exactly one per PR. No impact:
+Put it in the PR description, exactly one per PR. PRs into any other branch
+skip the check: for an integration branch, the branch's own PR into `main`
+carries one section covering every slice merged into it. No impact:
 
 ```markdown
 <!-- manual-impact:start -->
