@@ -126,17 +126,24 @@ test('Nest on stock arranges copies of a part and Discard removes them', async (
 
   await panel.getByLabel('Gap (inch)').fill('0.25')
   await panel.getByLabel('Parts on sheet').fill('6')
+  // A rotation step is a longer angle list on the nest record (#867).
+  await panel.getByLabel('Rotation').selectOption({ label: 'Every 45°' })
   await expect(run).toBeEnabled()
   await run.click()
 
   await expect(panel.getByRole('status')).toHaveText('All 6 parts fit on the stock.')
   await expect.poll(() => getFeatureCount(page)).toBe(12)
-  const nested = await getProject(page) as { nests?: { name: string }[]; featureFolders: { name: string }[] }
+  const nested = await getProject(page) as {
+    nests?: { name: string; settings: { rotations: number[] } }[]
+    featureFolders: { name: string }[]
+  }
   expect(nested.nests?.map((nest) => nest.name)).toEqual(['Nest 1'])
+  expect(nested.nests?.[0].settings.rotations).toEqual([0, 45, 90, 135, 180, 225, 270, 315])
   expect(nested.featureFolders.map((folder) => folder.name)).toContain('Nest 1')
 
-  // The panel now targets the nest it just made.
+  // The panel now targets the nest it just made, with its settings.
   await expect(panel.getByRole('button', { name: 'Nest again', exact: true })).toBeVisible()
+  await expect(panel.getByLabel('Rotation')).toHaveValue('step45')
 
   // Keep improving searches on in the worker (#862). Identical copies never
   // improve, so the search may stall on its own before Stop lands.

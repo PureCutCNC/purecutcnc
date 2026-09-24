@@ -430,6 +430,7 @@ export const canvasEs: Record<keyof typeof canvasEn, string> = {
   'canvas.nest.rotation.quarter': 'Cualquier cuarto de vuelta',
   'canvas.nest.rotation.grain': 'Respetar la veta (0° / 180°)',
   'canvas.nest.rotation.none': 'Sin rotación',
+  'canvas.nest.rotation.step': 'Cada {step}°',
   'canvas.nest.keepOriginals': 'Mantener los originales en su sitio',
   'canvas.nest.gapFromTool': 'La fresa necesita al menos {gap} {units} entre piezas.',
   'canvas.nest.gapNoTool': 'Ningún contorneado exterior corta esta pieza, introduzca la separación que necesita la fresa.',

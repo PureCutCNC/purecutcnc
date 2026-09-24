@@ -488,6 +488,7 @@ export const canvasEn = {
   'canvas.nest.rotation.quarter': 'Any quarter turn',
   'canvas.nest.rotation.grain': 'Keep grain (0° / 180°)',
   'canvas.nest.rotation.none': 'No rotation',
+  'canvas.nest.rotation.step': 'Every {step}°',
   'canvas.nest.keepOriginals': 'Keep originals in place',
   'canvas.nest.gapFromTool': 'The cutter needs at least {gap} {units} between parts.',
   'canvas.nest.gapNoTool': 'No outside edge route cuts this part, so enter the gap the cutter needs.',

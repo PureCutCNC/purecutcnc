@@ -32,11 +32,14 @@ import { projectWithFeatures } from '../../test/projectFixtures'
 import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 import { defaultStock, defaultTool, newProject, rectProfile, type Project, type SketchFeature } from '../../types/project'
 import {
+  NEST_ROTATION_STEPS,
   NEST_ROTATIONS,
   initialNestForm,
   nestSettingsFromForm,
   nestSubject,
   presetForRotations,
+  rotationsForStep,
+  stepOfPreset,
   validateNestForm,
   watchForEdits,
 } from './nestForm'
@@ -147,6 +150,34 @@ function testJobSurvivesStructuredClone(): void {
   console.log('job crosses postMessage: PASSED')
 }
 
+function testRotationStepsRoundTrip(): void {
+  assert(rotationsForStep(45).join() === '0,45,90,135,180,225,270,315', 'a step lists every multiple below a full turn')
+  assert(NEST_ROTATION_STEPS.every((step) => Number.isInteger(360 / step)), 'every offered step divides a full turn')
+  for (const preset of Object.keys(NEST_ROTATIONS) as (keyof typeof NEST_ROTATIONS)[]) {
+    const shuffled = [...NEST_ROTATIONS[preset]].reverse()
+    assert(presetForRotations(shuffled) === preset, `${preset} round-trips in any order`)
+  }
+  assert(stepOfPreset('step15') === 15 && stepOfPreset('quarter') === null, 'a step preset names its angle')
+  assert(presetForRotations([0, 45]) === 'quarter', 'an unknown list falls back to quarter turns')
+
+  // A nest made with a step reopens with that step.
+  const project = makeProject(true)
+  const subject = nestSubject(project, ['plate'])
+  assert(subject.parts.ok, 'part resolves')
+  const settings = nestSettingsFromForm({ ...initialNestForm(subject), rotation: 'step30' })
+  assert(settings.rotations.length === 12, 'a 30° step tries twelve angles')
+  const job = buildNestJob(subject.base, subject.parts.parts, [3], settings)
+  assert(job, 'job builds')
+  const applied = applyNestToProject(project, {
+    parts: [{ featureIds: subject.parts.parts[0].featureIds, quantity: 3 }],
+    placements: nest(requestFromJob(job)).placements,
+    settings,
+  })
+  assert(applied, 'nest applies')
+  assert(initialNestForm(nestSubject(applied.project, [applied.copyIds[0]])).rotation === 'step30', 'the form reopens on the step')
+  console.log('rotation steps round-trip: PASSED')
+}
+
 function testRevealingAFolderIsNotAnEdit(): void {
   useProjectStore.setState({ project: makeProject(true), history: { past: [], future: [], transactionStart: null }, dirty: false })
   const store = () => useProjectStore.getState()
@@ -187,5 +218,6 @@ testFreshSubject()
 testSeveralPartsDefaultToArranging()
 testNestedSubjectTargetsTheNest()
 testJobSurvivesStructuredClone()
+testRotationStepsRoundTrip()
 testRevealingAFolderIsNotAnEdit()
 console.log('All nest panel state tests passed')

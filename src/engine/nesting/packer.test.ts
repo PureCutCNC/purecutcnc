@@ -279,6 +279,47 @@ function testRotatedHost(): void {
   assertValidLayout(req, result, 'rotated host')
 }
 
+/**
+ * Grows axis-aligned rectangles by exactly half the gap, with no rounding
+ * pad: whatever the grid rounding of a rotated shape costs must be paid for by
+ * the placer itself (#867).
+ */
+function exactRectHalfGap(rings: NestRing[], minimumGap: number): NestRing[] {
+  return rings.map((ring) => {
+    const xs = ring.map((p) => p.x)
+    const ys = ring.map((p) => p.y)
+    const half = minimumGap / 2
+    const minX = Math.min(...xs) - half
+    const minY = Math.min(...ys) - half
+    return rect(minX, minY, Math.max(...xs) + half - minX, Math.max(...ys) + half - minY)
+  })
+}
+
+function testOddAnglesKeepTheExactGap(): void {
+  // Every angle off the quarter turns rounds the rotated shapes to the integer
+  // grid. Copies at one shared angle touch along parallel edges, so a grid
+  // loss shows up as a gap just short of the minimum.
+  const lists = [
+    ...Array.from({ length: 45 }, (_, index) => [index * 2 + 1]),
+    [0, 7, 13, 30, 45],
+    Array.from({ length: 24 }, (_, index) => index * 15),
+  ]
+  for (const rotations of lists) {
+    const req = request({
+      minimumGap: 6,
+      expandFootprint: exactRectHalfGap,
+      parts: [part('long', [rect(0, 0, 37, 9)], 6, rotations), part('sq', [rect(0, 0, 13, 13)], 6, rotations)],
+    })
+    const result = nest(req)
+    assert(result.placements.length >= 6, `${rotations.join('/')}°: parts are placed`)
+    assert(
+      result.placements.every((p) => rotations.includes(p.rotation)),
+      `${rotations.join('/')}°: only the allowed angles are used`,
+    )
+    assertValidLayout(req, result, `${rotations.join('/')}°`)
+  }
+}
+
 function testDeterministic(): void {
   const build = () => request({
     parts: [
@@ -332,6 +373,7 @@ const tests: [string, () => void][] = [
   ['an island inside a hole is avoided', testIslandInsideAHoleIsAvoided],
   ['a round hole', testRoundHole],
   ['a rotated host carries its hole', testRotatedHost],
+  ['odd angles keep the exact gap', testOddAnglesKeepTheExactGap],
   ['deterministic', testDeterministic],
   ['rejects invalid input', testRejectsInvalidInput],
 ]

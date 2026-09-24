@@ -31,7 +31,9 @@ import { useCanvasWorkflowPanel } from '../canvas/useCanvasWorkflowPanel'
 import {
   initialNestForm,
   nestSettingsFromForm,
+  NEST_ROTATIONS,
   nestSubject,
+  stepOfPreset,
   subjectParts,
   validateNestForm,
   watchForEdits,
@@ -76,6 +78,13 @@ const REFUSAL_KEYS: Record<string, MessageKey> = {
   model: 'canvas.nest.refusal.model',
   'external-constraint': 'canvas.nest.refusal.externalConstraint',
   'no-closed-geometry': 'canvas.nest.refusal.noClosedGeometry',
+}
+
+/** Labels of the presets that are not a step; a step's label names its angle. */
+const FIXED_ROTATION_KEYS: Partial<Record<NestRotationPreset, MessageKey>> = {
+  quarter: 'canvas.nest.rotation.quarter',
+  grain: 'canvas.nest.rotation.grain',
+  none: 'canvas.nest.rotation.none',
 }
 
 const FORM_ERROR_KEYS: Record<NestFormError, MessageKey> = {
@@ -342,9 +351,14 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
                 aria-label={t('canvas.nest.rotation')}
                 onChange={(event) => setForm({ ...form, rotation: event.currentTarget.value as NestRotationPreset })}
               >
-                <option value="quarter">{t('canvas.nest.rotation.quarter')}</option>
-                <option value="grain">{t('canvas.nest.rotation.grain')}</option>
-                <option value="none">{t('canvas.nest.rotation.none')}</option>
+                {(Object.keys(NEST_ROTATIONS) as NestRotationPreset[]).map((preset) => {
+                  const fixed = FIXED_ROTATION_KEYS[preset]
+                  return (
+                    <option key={preset} value={preset}>
+                      {fixed ? t(fixed) : t('canvas.nest.rotation.step', { step: stepOfPreset(preset) ?? 0 })}
+                    </option>
+                  )
+                })}
               </select>
             </label>
           </div>
