@@ -75,7 +75,7 @@ protected_bucket() {
     # a gate belongs here — not just check-*. Add to this list when a new gate
     # lands; scripts/backlog-hygiene.ts arrived after the first draft and was
     # missed by the original `scripts/check-*` glob.
-    scripts/check-*|scripts/run-tests.ts|scripts/docs-check-core.ts|scripts/backlog-hygiene.ts|tools/resume-work/*)
+    scripts/check-*|scripts/run-tests.ts|scripts/docs-check-core.ts|scripts/backlog-hygiene.ts|tools/resume-work/*|tools/manual-impact/*)
       echo 'process & gate machinery' ;;
     *) return 1 ;;
   esac
