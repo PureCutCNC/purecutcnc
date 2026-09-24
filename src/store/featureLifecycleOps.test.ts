@@ -38,6 +38,7 @@ import type { ProjectStore } from './types'
 import { getProfileBounds } from '../types/project'
 import { flattenProfile } from '../engine/toolpaths/geometry'
 import { tabLayoutFreeFraction, toolCentreContours } from '../engine/toolpaths/tabs'
+import { defaultFontIdForStyle, defaultTextToolConfig, resolveTextFeatureShapes } from '../text'
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -522,6 +523,61 @@ test('autoPlaceTabsForOperation anchors every tab to a triangular edge route', (
     tabLayoutFreeFraction(contours, project.tabs, toolRadius) >= 0.15,
     'the triangular layout retains the minimum cut-through fraction',
   )
+})
+
+// Issue #872: a text feature's own profile is its frame rectangle. Auto-tabs
+// have to land on the glyphs the edge route actually cuts, one set per glyph.
+test('autoPlaceTabsForOperation places tabs on each glyph of a text feature', () => {
+  resetStore()
+  const base = newProject()
+  useProjectStore.setState({
+    project: { ...base, meta: { ...base.meta, units: 'mm' }, stock: { ...base.stock, thickness: 12 } },
+  } as unknown as Partial<ProjectStore>)
+  useProjectStore.getState().startAddTextPlacement({
+    ...defaultTextToolConfig('mm'),
+    text: 'Xo',
+    style: 'outline',
+    fontId: defaultFontIdForStyle('outline'),
+    size: 60,
+    operation: 'add',
+  })
+  const [featureId] = useProjectStore.getState().placePendingTextAt({ x: 10, y: 10 })
+  assert(featureId, 'the text feature is placed')
+  const tool = { ...defaultTool('mm', 1), id: 't1', name: '6.35mm endmill', diameter: 6.35 }
+  useProjectStore.setState({
+    project: { ...getProject(), tools: [tool] },
+  } as unknown as Partial<ProjectStore>)
+
+  const operationId = useProjectStore.getState().addOperation('edge_route_outside', 'rough', {
+    source: 'features',
+    featureIds: [featureId],
+  })
+  const withOperation = getProject()
+  useProjectStore.setState({
+    project: {
+      ...withOperation,
+      operations: withOperation.operations.map((operation) => (
+        operation.id === operationId ? { ...operation, toolRef: tool.id, stepdown: 4 } : operation
+      )),
+    },
+  } as unknown as Partial<ProjectStore>)
+
+  useProjectStore.getState().autoPlaceTabsForOperation(operationId!)
+
+  const project = getProject()
+  const toolRadius = tool.diameter / 2
+  const glyphs = resolveTextFeatureShapes(resolveFeatureInstance(project, featureId)!)
+    .filter((shape) => shape.operation === 'add')
+  assert(glyphs.length === 2, `"Xo" resolves to two routed glyph outlines, got ${glyphs.length}`)
+  for (const [index, glyph] of glyphs.entries()) {
+    const contours = toolCentreContours(flattenProfile(glyph.profile).points, toolRadius)
+    const onGlyph = project.tabs.filter((tab) => 1 - tabLayoutFreeFraction(contours, [tab], toolRadius) > 1e-6)
+    assert(onGlyph.length >= 2, `glyph ${index} gets its own tabs, got ${onGlyph.length}`)
+    assert(
+      tabLayoutFreeFraction(contours, onGlyph, toolRadius) >= 0.15,
+      `glyph ${index} keeps the minimum cut-through fraction`,
+    )
+  }
 })
 
 test('updateTab modifies tab geometry', () => {
