@@ -20,8 +20,9 @@ import { discardNestFromProject } from '../../store/helpers/nestApply'
 import {
   findNestForSelection,
   nestGapForPart,
-  resolveNestPart,
-  type NestPartResolution,
+  resolveNestParts,
+  type NestPartSpec,
+  type NestPartsResolution,
 } from '../../store/helpers/nestPart'
 import type { NestRecord, NestSettings, Project } from '../../types/project'
 
@@ -45,52 +46,64 @@ export interface NestSubject {
   base: Project
   /** The existing nest this selection belongs to; Nest replaces it, Discard removes it. */
   replaceNest: NestRecord | null
-  part: NestPartResolution
-  /** The tool's clearance, the smallest gap allowed; null when no edge route cuts the part. */
+  parts: NestPartsResolution
+  /** The tools' clearance, the smallest gap allowed; null when no edge route cuts any part. */
   gapFloor: number | null
 }
 
 export function nestSubject(project: Project, selectedIds: string[]): NestSubject {
   const replaceNest = findNestForSelection(project, selectedIds)
   const base = replaceNest ? discardNestFromProject(project, replaceNest.id) ?? project : project
-  const part = resolveNestPart(base, replaceNest ? replaceNest.sourceIds : selectedIds)
+  const parts = resolveNestParts(base, replaceNest ? replaceNest.parts.flatMap((part) => part.sourceIds) : selectedIds)
   return {
     base,
     replaceNest,
-    part,
-    gapFloor: part.ok ? nestGapForPart(base, part.featureIds) : null,
+    parts,
+    gapFloor: parts.ok ? nestGapForPart(base, parts.parts.flatMap((part) => part.featureIds)) : null,
   }
 }
 
+export function subjectParts(subject: NestSubject): NestPartSpec[] {
+  return subject.parts.ok ? subject.parts.parts : []
+}
+
 export interface NestForm {
-  /** Parts on the sheet, originals included. */
-  quantity: number
+  /** Per part, parts on the sheet — originals included. */
+  quantities: number[]
   rotation: NestRotationPreset
   gap: number | null
   keepOriginals: boolean
 }
 
+/** One part defaults to a sheet's worth; several default to one each, which arranges them. */
 export const DEFAULT_NEST_QUANTITY = 10
 
 export function initialNestForm(subject: NestSubject): NestForm {
-  const previous = subject.replaceNest?.settings
+  const parts = subjectParts(subject)
+  const previous = subject.replaceNest
+  const quantities = parts.map((part) => {
+    const recorded = previous?.parts.find((entry) => entry.sourceIds.some((id) => part.featureIds.includes(id)))
+    return recorded?.quantity ?? (parts.length === 1 ? DEFAULT_NEST_QUANTITY : 1)
+  })
   if (previous) {
     return {
-      quantity: previous.quantity,
-      rotation: presetForRotations(previous.rotations),
-      gap: Math.max(previous.minimumGap, subject.gapFloor ?? 0),
-      keepOriginals: previous.keepOriginals,
+      quantities,
+      rotation: presetForRotations(previous.settings.rotations),
+      gap: Math.max(previous.settings.minimumGap, subject.gapFloor ?? 0),
+      keepOriginals: previous.settings.keepOriginals,
     }
   }
-  return { quantity: DEFAULT_NEST_QUANTITY, rotation: 'quarter', gap: subject.gapFloor, keepOriginals: false }
+  return { quantities, rotation: 'quarter', gap: subject.gapFloor, keepOriginals: false }
 }
 
 export type NestFormError = 'quantity' | 'gap-missing' | 'gap-below-tool'
 
 export function validateNestForm(form: NestForm, gapFloor: number | null): NestFormError | null {
-  if (!Number.isInteger(form.quantity) || form.quantity < 1 || (form.keepOriginals && form.quantity < 2)) {
+  if (form.quantities.length === 0 || form.quantities.some((quantity) => !Number.isInteger(quantity) || quantity < 1)) {
     return 'quantity'
   }
+  // Keeping every original with nothing to copy would be an empty nest.
+  if (form.keepOriginals && form.quantities.every((quantity) => quantity < 2)) return 'quantity'
   if (form.gap === null || !Number.isFinite(form.gap) || form.gap <= 0) return 'gap-missing'
   // The floor is a machining fact — the cutter cannot pass through less — so it can be raised, never lowered.
   if (gapFloor !== null && form.gap < gapFloor - 1e-9) return 'gap-below-tool'
@@ -99,7 +112,6 @@ export function validateNestForm(form: NestForm, gapFloor: number | null): NestF
 
 export function nestSettingsFromForm(form: NestForm): NestSettings {
   return {
-    quantity: form.quantity,
     rotations: [...NEST_ROTATIONS[form.rotation]],
     minimumGap: form.gap ?? 0,
     keepOriginals: form.keepOriginals,

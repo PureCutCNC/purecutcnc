@@ -874,16 +874,20 @@ export function tabShape(tab: Tab): TabShape {
 // Nests (issue #741)
 // ============================================================
 
-/** The settings a sheet nest was produced with. */
+/** The settings a sheet nest was produced with, shared by all its parts. */
 export interface NestSettings {
-  /** Parts on the sheet, originals included. */
-  quantity: number
   /** Allowed rotations in degrees. */
   rotations: number[]
   /** Minimum clearance between parts, in project units. */
   minimumGap: number
   /** Originals stay where they are and are nested around, instead of being moved. */
   keepOriginals: boolean
+}
+
+export interface NestRecordPart {
+  sourceIds: string[]
+  /** Parts on the sheet, originals included. */
+  quantity: number
 }
 
 /**
@@ -897,8 +901,8 @@ export interface NestRecord {
   id: string
   name: string
   folderId: string | null
-  /** The part's own instances. */
-  sourceIds: string[]
+  /** The nested parts: each part's own instances and how many were asked for. */
+  parts: NestRecordPart[]
   /** Instances the nest created. Discard deletes exactly these. */
   copyIds: string[]
   /** Pre-nest transforms of the source instances the nest moved; Discard restores them. */

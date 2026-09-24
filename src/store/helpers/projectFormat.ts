@@ -338,7 +338,6 @@ function normalizeNests(value: unknown, features: FeatureInstance[]): NestRecord
     if (!isRecord(raw) || typeof raw.id !== 'string' || typeof raw.name !== 'string') return []
     const settings = raw.settings
     if (!isRecord(settings)
-      || typeof settings.quantity !== 'number' || !Number.isFinite(settings.quantity)
       || !Array.isArray(settings.rotations) || !settings.rotations.every((r) => typeof r === 'number' && Number.isFinite(r))
       || typeof settings.minimumGap !== 'number' || !Number.isFinite(settings.minimumGap)
       || typeof settings.keepOriginals !== 'boolean') {
@@ -352,15 +351,25 @@ function normalizeNests(value: unknown, features: FeatureInstance[]): NestRecord
           : []
       ))
       : []
+    // Prototype records (#846) held one part as top-level sourceIds plus
+    // settings.quantity; they load as a one-part nest.
+    const rawParts = Array.isArray(raw.parts)
+      ? raw.parts
+      : [{ sourceIds: raw.sourceIds, quantity: settings.quantity }]
+    const parts = rawParts.flatMap((part): NestRecord['parts'] => (
+      isRecord(part) && typeof part.quantity === 'number' && Number.isFinite(part.quantity)
+        ? [{ sourceIds: ids(part.sourceIds), quantity: part.quantity }]
+        : []
+    ))
+    if (parts.length === 0) return []
     return [{
       id: raw.id,
       name: raw.name,
       folderId: typeof raw.folderId === 'string' ? raw.folderId : null,
-      sourceIds: ids(raw.sourceIds),
+      parts,
       copyIds: ids(raw.copyIds),
       movedOriginals,
       settings: {
-        quantity: settings.quantity,
         rotations: [...settings.rotations as number[]],
         minimumGap: settings.minimumGap,
         keepOriginals: settings.keepOriginals,

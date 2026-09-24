@@ -29,10 +29,16 @@ import { constraintReference, nestPlacementMatrix } from './nestPart'
 import { syncFeatureTreeProject } from './normalize'
 import { resolveFeatureInstance, type ResolvedSketchFeature } from './resolveFeatures'
 
-export interface ApplyNestInput {
-  /** The resolved part (see `resolveNestPart`). */
+export interface ApplyNestPart {
+  /** The part's instances (see `resolveNestParts`). */
   featureIds: string[]
-  /** Packer output for that part. */
+  /** Parts on the sheet, originals included, as asked for. */
+  quantity: number
+}
+
+export interface ApplyNestInput {
+  parts: ApplyNestPart[]
+  /** Packer output; `partId` is the index into `parts`. */
   placements: NestPlacement[]
   settings: NestSettings
   /**
@@ -50,23 +56,25 @@ export interface ApplyNestResult {
 
 /**
  * Mints linked copies for the placements and records the nest. Unless the
- * originals are kept in place, placement 0 moves the originals themselves
- * (#741 decision 3). Every copy joins each operation that targets its source
- * (decision 5). Returns null when nothing would change.
+ * originals are kept in place, each part's placement 0 moves that part's
+ * originals (#741 decision 3). Every copy joins each operation that targets
+ * its source (decision 5). Returns null when nothing would change.
  */
 export function applyNestToProject(current: Project, input: ApplyNestInput): ApplyNestResult | null {
   const project = input.replaceNestId ? discardNestFromProject(current, input.replaceNestId) ?? current : current
-  const sources = input.featureIds
+  const partSources = input.parts.map((part) => part.featureIds
     .map((id) => resolveFeatureInstance(project, id))
-    .filter((feature): feature is ResolvedSketchFeature => feature !== null)
-  if (sources.length === 0 || sources.length !== input.featureIds.length) return null
+    .filter((feature): feature is ResolvedSketchFeature => feature !== null))
+  if (partSources.some((sources, index) => sources.length === 0 || sources.length !== input.parts[index].featureIds.length)) {
+    return null
+  }
 
-  const moveOriginals = !input.settings.keepOriginals
-  const originalPlacement = moveOriginals
-    ? input.placements.find((placement) => placement.copyIndex === 0) ?? null
-    : null
-  const copyPlacements = input.placements.filter((placement) => placement !== originalPlacement)
-  if (!originalPlacement && copyPlacements.length === 0) return null
+  const placementsOf = (partIndex: number) => input.placements.filter((placement) => placement.partId === String(partIndex))
+  const originalPlacements = input.parts.map((_, index) => (
+    input.settings.keepOriginals ? null : placementsOf(index).find((placement) => placement.copyIndex === 0) ?? null
+  ))
+  const copyPlacements = input.parts.map((_, index) => placementsOf(index).filter((placement) => placement !== originalPlacements[index]))
+  if (originalPlacements.every((placement) => placement === null) && copyPlacements.every((list) => list.length === 0)) return null
 
   const nestId = nextUniqueGeneratedId(project, 'nest')
   const folderId = nextUniqueGeneratedId(project, 'fd')
@@ -79,60 +87,61 @@ export function applyNestToProject(current: Project, input: ApplyNestInput): App
     grouped: false,
   }
 
-  const matrices = copyPlacements.map(nestPlacementMatrix)
   const copiesBySource = new Map<string, string[]>()
   const instances: FeatureInstance[] = []
   let existing = [...project.features]
-  for (const source of sources) {
-    const created = buildTransformedCopiedFeatures(
-      [source],
-      existing,
-      matrices,
-      project.featureDefinitions,
-      'reference',
-    )
-    // The nest folder sits in the features section; copies of regions or
-    // construction stay at the root of their own section.
-    const inFolder = sectionForOperation(source.operation) === 'features'
-    const rows = created.map((feature) => createFeatureInstance(
-      { ...feature, folderId: inFolder ? folderId : null },
-      feature.definitionId,
-      feature.transform,
-    ))
-    copiesBySource.set(source.id, rows.map((row) => row.id))
-    instances.push(...rows)
-    existing = [...existing, ...rows]
-  }
-  // A copy's constraints still name the originals; point references within
-  // the part at the sibling copy of the same placement so no copy is ever
-  // measured from (and re-solved toward) a part on the other side of the sheet.
-  const siblingOf = (reference: string, placementIndex: number) => copiesBySource.get(reference)?.[placementIndex]
-  for (const rowIds of copiesBySource.values()) {
-    rowIds.forEach((rowId, placementIndex) => {
-      const row = instances.find((candidate) => candidate.id === rowId)!
-      row.constraints = row.constraints.map((constraint) => {
-        const reference = constraintReference(constraint)
-        const sibling = reference ? siblingOf(reference, placementIndex) : undefined
-        if (!sibling) return constraint
-        return {
-          ...constraint,
-          ...(constraint.reference_feature_id ? { reference_feature_id: sibling } : {}),
-          segment_ids: constraint.type === 'fixed_distance'
-            ? [sibling, ...constraint.segment_ids.slice(1)]
-            : constraint.segment_ids,
-        }
+  partSources.forEach((sources, partIndex) => {
+    const matrices = copyPlacements[partIndex].map(nestPlacementMatrix)
+    if (matrices.length === 0) return
+    const partCopies = new Map<string, FeatureInstance[]>()
+    for (const source of sources) {
+      const created = buildTransformedCopiedFeatures([source], existing, matrices, project.featureDefinitions, 'reference')
+      // The nest folder sits in the features section; copies of regions or
+      // construction stay at the root of their own section.
+      const inFolder = sectionForOperation(source.operation) === 'features'
+      const rows = created.map((feature) => createFeatureInstance(
+        { ...feature, folderId: inFolder ? folderId : null },
+        feature.definitionId,
+        feature.transform,
+      ))
+      partCopies.set(source.id, rows)
+      copiesBySource.set(source.id, rows.map((row) => row.id))
+      instances.push(...rows)
+      existing = [...existing, ...rows]
+    }
+    // A copy's constraints still name the originals; point references within
+    // the part at the sibling copy of the same placement so no copy is ever
+    // measured from (and re-solved toward) a part elsewhere on the sheet.
+    for (const rows of partCopies.values()) {
+      rows.forEach((row, placementIndex) => {
+        row.constraints = row.constraints.map((constraint) => {
+          const reference = constraintReference(constraint)
+          const sibling = reference ? partCopies.get(reference)?.[placementIndex]?.id : undefined
+          if (!sibling) return constraint
+          return {
+            ...constraint,
+            ...(constraint.reference_feature_id ? { reference_feature_id: sibling } : {}),
+            segment_ids: constraint.type === 'fixed_distance'
+              ? [sibling, ...constraint.segment_ids.slice(1)]
+              : constraint.segment_ids,
+          }
+        })
       })
-    })
-  }
+    }
+  })
   const copyIds = instances.map((row) => row.id)
 
-  const originalMatrix = originalPlacement ? nestPlacementMatrix(originalPlacement) : null
-  const sourceIds = new Set(input.featureIds)
+  const moveOf = new Map<string, ReturnType<typeof nestPlacementMatrix>>()
+  input.parts.forEach((part, index) => {
+    const placement = originalPlacements[index]
+    if (placement) part.featureIds.forEach((id) => moveOf.set(id, nestPlacementMatrix(placement)))
+  })
   const movedOriginals: NestRecord['movedOriginals'] = []
   const features = project.features.map((feature) => {
-    if (!originalMatrix || !sourceIds.has(feature.id)) return feature
+    const matrix = moveOf.get(feature.id)
+    if (!matrix) return feature
     movedOriginals.push({ featureId: feature.id, transform: { ...feature.transform } })
-    return { ...feature, transform: multiplyMatrix(originalMatrix, feature.transform) }
+    return { ...feature, transform: multiplyMatrix(matrix, feature.transform) }
   })
 
   const operations = project.operations.map((operation) => {
@@ -146,7 +155,7 @@ export function applyNestToProject(current: Project, input: ApplyNestInput): App
     id: nestId,
     name: folder.name,
     folderId: copyIds.length > 0 ? folderId : null,
-    sourceIds: [...input.featureIds],
+    parts: input.parts.map((part) => ({ sourceIds: [...part.featureIds], quantity: part.quantity })),
     copyIds,
     movedOriginals,
     settings: { ...input.settings, rotations: [...input.settings.rotations] },

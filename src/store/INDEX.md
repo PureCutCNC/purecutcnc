@@ -49,7 +49,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `operationDefaults.ts` — operation defaults: target validation, tool matching, kind labels, fallback targets, and default operation construction
   - `camPlanApply.ts` — stale-safe pure CAM-plan materialization: deduplicate/import tools, create rest regions and shared tabs, validate and append operations, and return one complete project for the store's atomic history transition
   - `copyFeatures.ts` — build rotated, mirrored, linear, and arbitrary-affine copies of features, clamps, and tabs; reference-vs-independent duplicate semantics with extractClonedDefinitions
-  - `nestPart.ts` — sheet nesting, project side (issue #846): selection → one rigid part (grouped folders + containment; locked/model/external-constraint refusals), gap from the outside edge route's tool, obstacles (clamps + other features), sheet, and the packer request with the flattening tolerance folded into the gap
+  - `nestPart.ts` — sheet nesting, project side (issues #846, #855): selection → rigid parts (each touched grouped folder is one; the rest split by outline, overlapping outlines and a feature's own outlines kept together; contained features join; locked/model/cross-part-constraint refusals), gap from the outside edge routes' tools, obstacles (clamps + other features), sheet, and the serializable packer job with flattening and simplification tolerances
   - `nestApply.ts` — pure apply/discard of a nest: linked copies in a nest folder, copies joined to their sources' operations, intra-part constraint references re-pointed at sibling copies, originals moved or kept, and exact restoration on discard
   - `instanceTransforms.ts` — affine matrix builders and transform-delta composition for feature instances
   - `resolveFeatures.ts` — strict definition+instance resolver, ephemeral world-space read model, and commit boundary back to lightweight instances
@@ -78,6 +78,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `featureLifecycleOps.test.ts` — stock/tabs/align-distribute lifecycle paths (no prior coverage): setStock, setStockSourceFeature, tab CRUD + auto-place + edit, alignFeatures/distributeFeatures + undo
 - `featureDistribution.test.ts` — issue #205 grid/radial/path distribution commit: reference and independent definitions, source/guide preservation, root-level selectable copies, and one-step undo/redo
 - `nesting.test.ts` — issue #846 sheet nesting: part resolution and refusals, gap from the tool, apply/discard as single undo steps, keep-originals, constraint re-pointing, save/load, clamps, and curved parts — gaps measured on resolved world geometry
+- `nestingMultipart.test.ts` — issue #855: splitting a selection into parts (overlapping strokes, multi-glyph text, cross-part constraint), a mixed nest with per-part quantities measured on world geometry, and loading a prototype-shaped nest record
 - `gearCreation.test.ts` — gear creation store flow: radius placement, optional bore as a grouped subtract feature, validation, selection, and definitions
 - `featureReferencesMigration.test.ts` — strict 3.0 serialization, 1.0/2.0/2.1 one-way conversion, malformed-row rejection, and linked-instance size regression
 - `featureResolver.test.ts` — matrix resolution and definition lookup behavior

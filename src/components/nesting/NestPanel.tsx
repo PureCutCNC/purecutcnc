@@ -30,6 +30,7 @@ import {
   initialNestForm,
   nestSettingsFromForm,
   nestSubject,
+  subjectParts,
   validateNestForm,
   type NestForm,
   type NestFormError,
@@ -46,7 +47,7 @@ interface NestPanelHostProps {
 type NestRun =
   | { state: 'idle' }
   | { state: 'running' }
-  | { state: 'done'; placed: number; requested: number }
+  | { state: 'done'; placed: number; requested: number; missing: { name: string; count: number }[] }
   | { state: 'failed'; message: string }
 
 const REFUSAL_KEYS: Record<string, MessageKey> = {
@@ -89,18 +90,28 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
   // After a nest is applied the selection's rows belong to it, so the same
   // panel now targets that nest: Nest replaces it, Discard removes it.
   const subject = useMemo(() => nestSubject(project, sourceIds), [project, sourceIds])
+  const parts = subjectParts(subject)
   const [form, setForm] = useState<NestForm>(() => initialNestForm(subject))
   const [run, setRun] = useState<NestRun>({ state: 'idle' })
   const abortRef = useRef<AbortController | null>(null)
   useEffect(() => () => abortRef.current?.abort(), [])
 
-  const formError = subject.part.ok ? validateNestForm(form, subject.gapFloor) : null
-  const canNest = subject.part.ok && formError === null && run.state !== 'running'
+  // The part list can change under an open panel (undo, a replaced nest);
+  // keep one quantity per part.
+  const quantities = parts.map((_, index) => form.quantities[index] ?? 1)
+  const formError = subject.parts.ok ? validateNestForm({ ...form, quantities }, subject.gapFloor) : null
+  const canNest = subject.parts.ok && formError === null && run.state !== 'running'
+
+  function setQuantity(index: number, value: number) {
+    const next = [...quantities]
+    next[index] = value
+    setForm({ ...form, quantities: next })
+  }
 
   async function startNest() {
-    if (!subject.part.ok || formError) return
+    if (!subject.parts.ok || formError) return
     const settings = nestSettingsFromForm(form)
-    const job = buildNestJob(subject.base, subject.part, settings)
+    const job = buildNestJob(subject.base, parts, quantities, settings)
     if (!job) {
       setRun({ state: 'failed', message: t('canvas.nest.error.noStock') })
       return
@@ -110,18 +121,18 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
     setRun({ state: 'running' })
     try {
       const result = await runNestJob(job, { signal: controller.signal })
-      const requested = job.parts[0]?.quantity ?? 0
-      if (result.placements.length === 0) {
-        setRun({ state: 'done', placed: 0, requested })
-        return
+      const offset = settings.keepOriginals ? 1 : 0
+      const requested = quantities.reduce((sum, quantity) => sum + quantity, 0)
+      const missing = result.unplaced.map((entry) => ({ name: parts[Number(entry.partId)]?.name ?? '', count: entry.count }))
+      if (result.placements.length > 0) {
+        applyNest({
+          parts: parts.map((part, index) => ({ featureIds: part.featureIds, quantity: quantities[index] })),
+          placements: result.placements,
+          settings,
+          replaceNestId: subject.replaceNest?.id,
+        })
       }
-      applyNest({
-        featureIds: subject.part.featureIds,
-        placements: result.placements,
-        settings,
-        replaceNestId: subject.replaceNest?.id,
-      })
-      setRun({ state: 'done', placed: result.placements.length, requested })
+      setRun({ state: 'done', placed: result.placements.length + offset * parts.length, requested, missing })
     } catch (error: unknown) {
       if (error instanceof NestCancelledError) setRun({ state: 'idle' })
       else setRun({ state: 'failed', message: error instanceof Error ? error.message : String(error) })
@@ -136,7 +147,18 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
   }
 
   const step = run.state === 'running' ? t('canvas.nest.step.running') : t('canvas.nest.step.configure')
-  const offset = form.keepOriginals ? 1 : 0
+  const quantityInput = (index: number, label: string) => (
+    <input
+      className="canvas-workflow-panel__count-input"
+      type="number"
+      inputMode="numeric"
+      min={1}
+      step={1}
+      value={Number.isFinite(quantities[index]) ? quantities[index] : ''}
+      aria-label={label}
+      onChange={(event) => setQuantity(index, event.currentTarget.valueAsNumber)}
+    />
+  )
 
   return (
     <CanvasWorkflowPanel
@@ -163,28 +185,48 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
         </>
       )}
     >
-      {!subject.part.ok ? (
-        <p className="canvas-workflow-panel__warning" role="alert">{t(REFUSAL_KEYS[subject.part.refusal])}</p>
+      {!subject.parts.ok ? (
+        <p className="canvas-workflow-panel__warning" role="alert">{t(REFUSAL_KEYS[subject.parts.refusal])}</p>
       ) : (
         <>
           <p className="canvas-workflow-panel__summary">
-            {tPlural(subject.part.featureIds.length, 'canvas.nest.part.one', 'canvas.nest.part.other')}
+            {parts.length === 1
+              ? tPlural(parts[0].featureIds.length, 'canvas.nest.part.one', 'canvas.nest.part.other')
+              : tPlural(parts.length, 'canvas.nest.parts.one', 'canvas.nest.parts.other')}
             {subject.replaceNest && <> · {t('canvas.nest.existing', { name: subject.replaceNest.name })}</>}
           </p>
           <div className="canvas-workflow-panel__grid">
-            <label className="canvas-workflow-panel__field">
-              <span>{t('canvas.nest.quantity')}</span>
-              <input
-                className="canvas-workflow-panel__count-input"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                step={1}
-                value={form.quantity}
-                aria-label={t('canvas.nest.quantity')}
-                onChange={(event) => setForm({ ...form, quantity: event.currentTarget.valueAsNumber })}
-              />
-            </label>
+            {parts.length === 1 ? (
+              <label className="canvas-workflow-panel__field">
+                <span>{t('canvas.nest.quantity')}</span>
+                {quantityInput(0, t('canvas.nest.quantity'))}
+              </label>
+            ) : (
+              <>
+                <label className="canvas-workflow-panel__field">
+                  <span>{t('canvas.nest.quantityAll')}</span>
+                  <input
+                    className="canvas-workflow-panel__count-input"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    value={quantities.every((quantity) => quantity === quantities[0]) ? quantities[0] : ''}
+                    aria-label={t('canvas.nest.quantityAll')}
+                    onChange={(event) => {
+                      const value = event.currentTarget.valueAsNumber
+                      setForm({ ...form, quantities: parts.map(() => value) })
+                    }}
+                  />
+                </label>
+                {parts.map((part, index) => (
+                  <label className="canvas-workflow-panel__field" key={part.featureIds[0]}>
+                    <span>{part.name}</span>
+                    {quantityInput(index, t('canvas.nest.quantityFor', { name: part.name }))}
+                  </label>
+                ))}
+              </>
+            )}
             <label className="canvas-workflow-panel__field">
               <span>{t('canvas.nest.gap', { units })}</span>
               <input
@@ -232,13 +274,16 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
           {formError && <p className="canvas-workflow-panel__warning" role="alert">{t(FORM_ERROR_KEYS[formError])}</p>}
           {run.state === 'done' && (
             <p className="canvas-workflow-panel__summary" role="status">
-              {run.placed === run.requested
-                ? t('canvas.nest.result.all', { placed: run.placed + offset })
+              {run.missing.length === 0
+                ? t('canvas.nest.result.all', { placed: run.placed })
                 : t('canvas.nest.result.partial', {
-                  placed: run.placed + offset,
-                  requested: run.requested + offset,
+                  placed: run.placed,
+                  requested: run.requested,
                   missing: run.requested - run.placed,
                 })}
+              {run.missing.length > 0 && parts.length > 1 && (
+                <> {t('canvas.nest.result.missing', { list: run.missing.map((entry) => `${entry.name} ×${entry.count}`).join(', ') })}</>
+              )}
               {run.placed > 0 && project.tabs.length > 0 && <> {t('canvas.nest.result.tabs')}</>}
             </p>
           )}

@@ -27,6 +27,7 @@ import { defaultOperationForTarget } from '../../store/helpers/operationDefaults
 import { normalizeProject, type ProjectFormatInput } from '../../store/helpers/projectFormat'
 import { requestFromJob } from '../../engine/nesting'
 import { projectWithFeatures } from '../../test/projectFixtures'
+import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 import { defaultStock, defaultTool, newProject, rectProfile, type Project, type SketchFeature } from '../../types/project'
 import {
   NEST_ROTATIONS,
@@ -69,16 +70,17 @@ function makeProject(withEdgeRoute: boolean): Project {
 function testFreshSubject(): void {
   const subject = nestSubject(makeProject(true), ['plate'])
   assert(subject.replaceNest === null, 'nothing nested yet')
-  assert(subject.part.ok && subject.part.featureIds.join() === 'plate,pocket', 'the pocket joins the part')
+  assert(subject.parts.ok && subject.parts.parts.length === 1 && subject.parts.parts[0].featureIds.join() === 'plate,pocket', 'the pocket joins the part')
   assert(subject.gapFloor === 4.5, `gap floor is 4 + 2 × 0.25, got ${subject.gapFloor}`)
   const form = initialNestForm(subject)
-  assert(form.gap === 4.5 && form.quantity === 10 && form.rotation === 'quarter' && !form.keepOriginals, 'defaults')
+  assert(form.gap === 4.5 && form.quantities.join() === '10' && form.rotation === 'quarter' && !form.keepOriginals, 'defaults')
   assert(validateNestForm(form, subject.gapFloor) === null, 'defaults are valid')
   assert(validateNestForm({ ...form, gap: 4 }, subject.gapFloor) === 'gap-below-tool', 'the gap cannot go below the tool')
   assert(validateNestForm({ ...form, gap: 6 }, subject.gapFloor) === null, 'the gap can be raised')
-  assert(validateNestForm({ ...form, quantity: 0 }, subject.gapFloor) === 'quantity', 'at least one part')
-  assert(validateNestForm({ ...form, quantity: 2.5 }, subject.gapFloor) === 'quantity', 'whole parts only')
-  assert(validateNestForm({ ...form, quantity: 1, keepOriginals: true }, subject.gapFloor) === 'quantity', 'keeping the original needs a copy to make')
+  assert(validateNestForm({ ...form, quantities: [0] }, subject.gapFloor) === 'quantity', 'at least one part')
+  assert(validateNestForm({ ...form, quantities: [2.5] }, subject.gapFloor) === 'quantity', 'whole parts only')
+  assert(validateNestForm({ ...form, quantities: [1], keepOriginals: true }, subject.gapFloor) === 'quantity', 'keeping the original needs a copy to make')
+  assert(validateNestForm({ ...form, quantities: [1] }, subject.gapFloor) === null, 'one part moved in place is a valid arrangement')
 
   const noTool = nestSubject(makeProject(false), ['plate'])
   assert(noTool.gapFloor === null, 'no edge route, no floor')
@@ -88,15 +90,30 @@ function testFreshSubject(): void {
   console.log('fresh subject and validation: PASSED')
 }
 
+function testSeveralPartsDefaultToArranging(): void {
+  const base = makeProject(true)
+  const project = normalizeProject(JSON.parse(JSON.stringify(projectWithFeatures(base, [
+    ...base.features.map((feature) => resolveFeatureInstance(base, feature.id)!),
+    rect('bracket', 'add', 60, 5, 20, 20),
+  ]))) as ProjectFormatInput)
+  const subject = nestSubject(project, ['plate', 'bracket'])
+  assert(subject.parts.ok && subject.parts.parts.length === 2, 'two parts')
+  const form = initialNestForm(subject)
+  assert(form.quantities.join() === '1,1', 'several parts default to one each, which arranges them')
+  assert(validateNestForm({ ...form, keepOriginals: true }, subject.gapFloor) === 'quantity', 'keeping every original with nothing to copy is empty')
+  assert(validateNestForm({ ...form, quantities: [1, 3], keepOriginals: true }, subject.gapFloor) === null, 'one part with copies is enough')
+  console.log('several parts: PASSED')
+}
+
 function testNestedSubjectTargetsTheNest(): void {
   const project = makeProject(true)
   const subject = nestSubject(project, ['plate'])
-  assert(subject.part.ok, 'part resolves')
-  const settings = { ...nestSettingsFromForm(initialNestForm(subject)), quantity: 3, rotations: NEST_ROTATIONS.grain }
-  const job = buildNestJob(subject.base, subject.part, settings)
+  assert(subject.parts.ok, 'part resolves')
+  const settings = { ...nestSettingsFromForm(initialNestForm(subject)), rotations: NEST_ROTATIONS.grain }
+  const job = buildNestJob(subject.base, subject.parts.parts, [3], settings)
   assert(job, 'job builds')
   const applied = applyNestToProject(project, {
-    featureIds: subject.part.featureIds,
+    parts: [{ featureIds: subject.parts.parts[0].featureIds, quantity: 3 }],
     placements: nest(requestFromJob(job)).placements,
     settings,
   })
@@ -106,18 +123,19 @@ function testNestedSubjectTargetsTheNest(): void {
   // Selecting any copy re-targets the nest: the base drops it again.
   const again = nestSubject(applied.project, [copyId])
   assert(again.replaceNest?.id === applied.nestId, 'a copy selects its nest')
-  assert(again.part.ok && again.part.featureIds.join() === 'plate,pocket', 'the part is the nest sources, not the copy')
+  assert(again.parts.ok && again.parts.parts[0].featureIds.join() === 'plate,pocket', 'the part is the nest sources, not the copy')
   assert(!again.base.nests && again.base.features.length === 2, 'the job runs on the project without that nest')
   const form = initialNestForm(again)
-  assert(form.quantity === 3 && form.rotation === 'grain', 'the form reopens with the nest settings')
+  assert(form.quantities.join() === '3' && form.rotation === 'grain', 'the form reopens with the nest settings')
   console.log('nested subject: PASSED')
 }
 
 function testJobSurvivesStructuredClone(): void {
   const project = makeProject(true)
   const subject = nestSubject(project, ['plate'])
-  assert(subject.part.ok, 'part resolves')
-  const job = buildNestJob(subject.base, subject.part, nestSettingsFromForm(initialNestForm(subject)))
+  assert(subject.parts.ok, 'part resolves')
+  const form = initialNestForm(subject)
+  const job = buildNestJob(subject.base, subject.parts.parts, form.quantities, nestSettingsFromForm(form))
   assert(job, 'job builds')
   // What postMessage does to it: functions would throw here.
   const cloned = structuredClone(job)
@@ -127,6 +145,7 @@ function testJobSurvivesStructuredClone(): void {
 }
 
 testFreshSubject()
+testSeveralPartsDefaultToArranging()
 testNestedSubjectTargetsTheNest()
 testJobSurvivesStructuredClone()
 console.log('All nest panel state tests passed')

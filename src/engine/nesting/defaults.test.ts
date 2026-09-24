@@ -70,6 +70,42 @@ function testGrowthContainsExactOffset(): void {
   }
 }
 
+function wavyDisc(points: number): NestRing {
+  // A many-vertex curved outline with concave dips, like a flattened glyph.
+  return Array.from({ length: points }, (_, i) => {
+    const angle = (i / points) * Math.PI * 2
+    const radius = 20 + 3 * Math.sin(angle * 7)
+    return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius }
+  })
+}
+
+function testSimplifiedGrowthStillContainsExactOffset(): void {
+  const shapes: [string, NestRing][] = [
+    ['wavy disc', wavyDisc(400)],
+    ['square', [{ x: 0, y: 0 }, { x: 25, y: 0 }, { x: 25, y: 25 }, { x: 0, y: 25 }]],
+    ['sharp triangle', [{ x: 0, y: 0 }, { x: 40, y: 3 }, { x: 0, y: 6 }]],
+  ]
+  for (const tolerance of [0.05, 0.3]) {
+    for (const gap of [0, 3, 6]) {
+      for (const [label, ring] of shapes) {
+        const grown = expandByHalfGap([ring], gap, tolerance)
+        const radius = gap / 2 - 1e-6
+        const probes = radius > 0 ? 72 : 1
+        for (const vertex of ring) {
+          for (let step = 0; step < probes; step += 1) {
+            const angle = (step / probes) * Math.PI * 2
+            const probe = { x: vertex.x + Math.cos(angle) * Math.max(radius, 0), y: vertex.y + Math.sin(angle) * Math.max(radius, 0) }
+            assert(inside(probe, grown), `${label}, gap ${gap}, tol ${tolerance}: ${JSON.stringify(probe)} escapes the simplified growth`)
+          }
+        }
+      }
+    }
+  }
+  const plain = expandByHalfGap([wavyDisc(400)], 6)[0].length
+  const simplified = expandByHalfGap([wavyDisc(400)], 6, 0.05)[0].length
+  assert(simplified < plain / 2, `simplification cuts vertices: ${plain} → ${simplified}`)
+}
+
 function testLargestFirst(): void {
   const square = (id: string, size: number) => ({
     id,
@@ -82,5 +118,6 @@ function testLargestFirst(): void {
 }
 
 testGrowthContainsExactOffset()
+testSimplifiedGrowthStillContainsExactOffset()
 testLargestFirst()
 console.log('All nesting default-strategy tests passed')

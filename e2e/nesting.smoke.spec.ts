@@ -50,7 +50,7 @@ function row(id: string, definitionId: string, zBottom: number) {
   }
 }
 
-function nestingProjectJson(): string {
+function nestingProjectJson(withBracket = false): string {
   const now = '2026-09-23T00:00:00.000Z'
   return JSON.stringify({
     version: '3.0',
@@ -86,8 +86,15 @@ function nestingProjectJson(): string {
     featureDefinitions: {
       'def-plate': { id: 'def-plate', kind: 'rect', profile: rectProfile(1, 1, 3, 2), dimensions: [], text: null, stl: null, operation: 'add' },
       'def-pocket': { id: 'def-pocket', kind: 'rect', profile: rectProfile(1.5, 1.5, 1, 1), dimensions: [], text: null, stl: null, operation: 'subtract' },
+      ...(withBracket
+        ? { 'def-bracket': { id: 'def-bracket', kind: 'rect', profile: rectProfile(6, 1, 2, 4), dimensions: [], text: null, stl: null, operation: 'add' } }
+        : {}),
     },
-    features: [row('f-plate', 'def-plate', 0), row('f-pocket', 'def-pocket', 0.5)],
+    features: [
+      row('f-plate', 'def-plate', 0),
+      row('f-pocket', 'def-pocket', 0.5),
+      ...(withBracket ? [row('f-bracket', 'def-bracket', 0)] : []),
+    ],
     featureFolders: [],
     featureTree: [],
     global_constraints: [],
@@ -138,4 +145,31 @@ test('Nest on stock arranges copies of a part and Discard removes them', async (
 
   await panel.getByRole('button', { name: 'Done', exact: true }).click()
   await expect(panel).toHaveCount(0)
+})
+
+test('Nest on stock takes a quantity per part when several parts are selected', async ({ app }) => {
+  const { page } = app
+  await seedProject(page, nestingProjectJson(true))
+  await selectFeatures(page, ['f-plate', 'f-bracket'])
+
+  await page.getByRole('button', { name: 'Distribute selected features', exact: true }).first().click()
+  await page.getByRole('menu').getByRole('button', { name: 'Nest on stock', exact: true }).click()
+  const panel = page.locator(PANEL)
+  await expect(panel).toContainText('2 parts')
+  await expect(panel.getByLabel('Parts on sheet: f-plate')).toHaveValue('1')
+  await expect(panel.getByLabel('Parts on sheet: f-bracket')).toHaveValue('1')
+
+  await panel.getByLabel('All parts').fill('3')
+  await panel.getByLabel('Parts on sheet: f-bracket').fill('2')
+  await panel.getByLabel('Gap (inch)').fill('0.25')
+  await panel.getByRole('button', { name: 'Nest', exact: true }).click()
+
+  await expect(panel.getByRole('status')).toHaveText('All 5 parts fit on the stock.')
+  // 3 plates with their pockets, 2 brackets.
+  await expect.poll(() => getFeatureCount(page)).toBe(8)
+  const nested = await getProject(page) as { nests?: { parts: { quantity: number }[] }[] }
+  expect(nested.nests?.[0].parts.map((part) => part.quantity)).toEqual([3, 2])
+
+  await panel.getByRole('button', { name: 'Discard nest', exact: true }).click()
+  await expect.poll(() => getFeatureCount(page)).toBe(3)
 })
