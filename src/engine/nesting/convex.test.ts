@@ -24,7 +24,7 @@
 
 import ClipperLib from 'clipper-lib'
 import type { ClipperPath } from '../toolpaths/types'
-import { outerContours } from './clipperOps'
+import { differencePaths, growPaths, noFitPolygon, outerContours } from './clipperOps'
 import { convexHull, convexPieces, convexSum } from './convex'
 
 function assert(condition: boolean, message: string): void {
@@ -89,6 +89,24 @@ function testConvexSum(): void {
   assert(convexHull([{ X: 0, Y: 0 }, { X: 5, Y: 5 }, { X: 10, Y: 0 }, { X: 5, Y: 1 }]).length === 3, 'hull drops the interior point')
 }
 
+function testNoFitPolygonMatchesOneShotUnion(): void {
+  // A concave, many-piece shape: the case where the staged union matters (#853).
+  const shape = star(9, 20000, 7000)
+  const pieces = convexPieces(shape)
+  const reflected = pieces.map((piece) => piece.map((p) => ({ X: -p.X, Y: -p.Y })))
+  const oneShot = outerContours(reflected.flatMap((moving) => pieces.map((fixed) => convexSum(fixed, moving))))
+  const staged = noFitPolygon(pieces, pieces)
+  assert(staged.length === oneShot.length, `same number of outer contours: ${staged.length} vs ${oneShot.length}`)
+  // Intersection points round differently between the two union orders, so
+  // the boundaries may differ by a unit; the packer's forbidden regions are
+  // grown by two. Within one unit, each must cover the other.
+  const uncovered = (a: ClipperPath[], b: ClipperPath[]) => differencePaths(a, growPaths(b, 1))
+    .reduce((sum, path) => sum + Math.abs(area(path)), 0)
+  assert(uncovered(oneShot, staged) === 0, `staged NFP covers the one-shot NFP: ${uncovered(oneShot, staged)} left over`)
+  assert(uncovered(staged, oneShot) === 0, `and adds nothing beyond it: ${uncovered(staged, oneShot)} extra`)
+}
+
 testDecomposition()
 testConvexSum()
+testNoFitPolygonMatchesOneShotUnion()
 console.log('All convex decomposition tests passed')

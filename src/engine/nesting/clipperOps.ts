@@ -142,12 +142,21 @@ function negate(path: ClipperPath): ClipperPath {
  */
 export function noFitPolygon(fixedPieces: ClipperPath[], movingPieces: ClipperPath[]): ClipperPath[] {
   if (fixedPieces.length === 0 || movingPieces.length === 0) return []
-  const sums: ClipperPath[] = []
-  for (const moving of movingPieces) {
+  // Union per moving piece, then merge pairwise. One Clipper union of every
+  // sum at once is far slower on heavily overlapping input: 53 × 53 pieces
+  // took 15 s that way and 105 ms this way, for the same region (#853).
+  let level = movingPieces.map((moving) => {
     const reflected = negate(moving)
-    for (const fixed of fixedPieces) sums.push(convexSum(fixed, reflected))
+    return unionPaths(fixedPieces.map((fixed) => convexSum(fixed, reflected)))
+  })
+  while (level.length > 1) {
+    const next: ClipperPath[][] = []
+    for (let index = 0; index < level.length; index += 2) {
+      next.push(index + 1 < level.length ? unionPaths([...level[index], ...level[index + 1]]) : level[index])
+    }
+    level = next
   }
-  return outerContours(sums)
+  return outerContours(level[0])
 }
 
 /** Rotates integer paths about the origin (via the exact-quarter-turn ring rotation). */
