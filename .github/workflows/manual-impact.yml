@@ -2,7 +2,7 @@ name: Manual Impact
 
 # Tells the user manual when the app changes (issue #818).
 #
-# Every PR description carries a Manual impact section, written by the author
+# Every PR into main carries a Manual impact section, written by the author
 # with .agents/skills/manual-impact: either `None`, or the manual pages the
 # change affects and what changed. Two jobs read it:
 #
@@ -18,6 +18,10 @@ name: Manual Impact
 #                        needs DOCS_ISSUES_TOKEN; it never checks out PR code,
 #                        only reads the PR through the API.
 #
+# Only PRs into main (#856). An integration branch collects slice PRs until it
+# is ready; a docs issue per slice would carry a merge commit that is not on
+# main, so the branch's own PR into main carries one section for all of it.
+#
 # The tool runs on plain Node (type stripping), so neither job installs
 # dependencies. The PR body is untrusted: it only ever reaches a step through
 # an environment variable or a file, never through ${{ }} in a script.
@@ -25,8 +29,10 @@ name: Manual Impact
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
+    branches: [main]
   pull_request_target:
     types: [closed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       pr_number:
