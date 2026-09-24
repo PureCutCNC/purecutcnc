@@ -45,10 +45,6 @@ export function nestFlattenTolerance(project: Pick<Project, 'meta'>): number {
 
 export type NestPartRefusal = 'empty' | 'locked' | 'model' | 'external-constraint' | 'no-closed-geometry'
 
-export type NestPartResolution =
-  | { ok: true; featureIds: string[]; footprint: NestRing[] }
-  | { ok: false; refusal: NestPartRefusal; featureId?: string }
-
 function featureRings(feature: ResolvedSketchFeature, tolerance: number): { ring: NestRing; closed: boolean }[] {
   return getFeatureGeometryProfiles(feature)
     .filter((profile) => profile.segments.length > 0)
@@ -110,53 +106,141 @@ export function constraintReference(constraint: LocalConstraint): string | undef
   return constraint.reference_feature_id ?? (constraint.type === 'fixed_distance' ? constraint.segment_ids[0] : undefined)
 }
 
+export interface NestPartSpec {
+  /** The part's instances, in authored order. */
+  featureIds: string[]
+  /** Filled outer contours of its closed machinable outlines. */
+  footprint: NestRing[]
+  /** A grouped folder's name, or the name of the part's largest feature. */
+  name: string
+}
+
+export type NestPartsResolution =
+  | { ok: true; parts: NestPartSpec[] }
+  | { ok: false; refusal: NestPartRefusal; featureId?: string }
+
+function pathsBoxOverlap(a: ClipperPath, b: ClipperPath): boolean {
+  const box = (path: ClipperPath) => path.reduce((acc, p) => ({
+    minX: Math.min(acc.minX, p.X), minY: Math.min(acc.minY, p.Y), maxX: Math.max(acc.maxX, p.X), maxY: Math.max(acc.maxY, p.Y),
+  }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity })
+  const ba = box(a)
+  const bb = box(b)
+  return ba.minX <= bb.maxX && bb.minX <= ba.maxX && ba.minY <= bb.maxY && bb.minY <= ba.maxY
+}
+
 /**
- * Resolves a selection into one rigid part (#741 decision 1): the selection,
- * every member of a grouped folder it touches, and every feature lying inside
- * its closed outline. Parts the nest must not move are refused.
+ * Splits a selection into rigid parts (#741 decision 1, extended in #855):
+ *
+ * - every grouped folder the selection touches is one part;
+ * - the rest is split by outline — closed machinable outlines that overlap or
+ *   touch form one part, and a feature with several outlines (a text run's
+ *   glyphs) keeps them in one part;
+ * - every other feature lying inside a part's outline joins that part.
+ *
+ * Parts the nest must not move are refused: a locked member, an imported
+ * model, or a constraint that measures from outside its own part.
  */
-export function resolveNestPart(project: Project, selectedIds: string[]): NestPartResolution {
+export function resolveNestParts(project: Project, selectedIds: string[]): NestPartsResolution {
   const resolved = resolvedProjectFeatures(project)
   const byId = new Map(resolved.map((feature) => [feature.id, feature]))
-  const ids = new Set(selectedIds.filter((id) => byId.has(id)))
-  if (ids.size === 0) return { ok: false, refusal: 'empty' }
-
-  const groupedFolders = new Set(project.featureFolders.filter((folder) => folder.grouped).map((folder) => folder.id))
-  for (const feature of resolved) {
-    const selectedSibling = feature.folderId && groupedFolders.has(feature.folderId)
-      && resolved.some((other) => ids.has(other.id) && other.folderId === feature.folderId)
-    if (selectedSibling) ids.add(feature.id)
-  }
-
+  const selected = new Set(selectedIds.filter((id) => byId.has(id)))
+  if (selected.size === 0) return { ok: false, refusal: 'empty' }
   const tolerance = nestFlattenTolerance(project)
-  const outline = outerContours(
-    [...ids].flatMap((id) => (isMachinable(byId.get(id)!) ? closedPaths(byId.get(id)!, tolerance) : [])),
+  const closedOf = new Map<string, ClipperPath[]>()
+  const closed = (id: string) => {
+    let paths = closedOf.get(id)
+    if (!paths) {
+      const feature = byId.get(id)!
+      paths = isMachinable(feature) ? closedPaths(feature, tolerance) : []
+      closedOf.set(id, paths)
+    }
+    return paths
+  }
+
+  const groupedFolders = new Map(project.featureFolders.filter((folder) => folder.grouped).map((folder) => [folder.id, folder]))
+  const touchedGroups = new Set(
+    [...selected].map((id) => byId.get(id)!.folderId).filter((folderId): folderId is string => !!folderId && groupedFolders.has(folderId)),
   )
-  if (outline.length === 0) return { ok: false, refusal: 'no-closed-geometry' }
+  const drafts: { ids: Set<string>; outline: ClipperPath[]; name: string | null }[] = []
+  for (const folderId of touchedGroups) {
+    const ids = new Set(resolved.filter((feature) => feature.folderId === folderId).map((feature) => feature.id))
+    const outline = outerContours([...ids].flatMap(closed))
+    if (outline.length > 0) drafts.push({ ids, outline, name: groupedFolders.get(folderId)!.name })
+  }
 
+  // Loose selection: connected components over the union's outer contours.
+  const loose = [...selected].filter((id) => !touchedGroups.has(byId.get(id)!.folderId ?? ''))
+  const looseClosed = loose.filter((id) => closed(id).length > 0)
+  const contours = outerContours(looseClosed.flatMap(closed))
+  const parent = contours.map((_, index) => index)
+  const find = (index: number): number => (parent[index] === index ? index : (parent[index] = find(parent[index])))
+  const contoursOf = new Map<string, number[]>()
+  for (const id of looseClosed) {
+    const owned = new Set<number>()
+    for (const path of closed(id)) {
+      const index = contours.findIndex((contour) => pathsBoxOverlap(path, contour)
+        && pathsArea(differencePaths([path], [contour])) <= flatteningSlack(pathToRing(path), tolerance))
+      if (index >= 0) owned.add(index)
+    }
+    const list = [...owned]
+    list.slice(1).forEach((index) => { parent[find(index)] = find(list[0]) })
+    contoursOf.set(id, list)
+  }
+  const components = new Map<number, { ids: Set<string>; outline: ClipperPath[] }>()
+  contours.forEach((contour, index) => {
+    const root = find(index)
+    const component = components.get(root) ?? { ids: new Set<string>(), outline: [] }
+    component.outline.push(contour)
+    components.set(root, component)
+  })
+  for (const [id, list] of contoursOf) {
+    if (list.length > 0) components.get(find(list[0]))!.ids.add(id)
+  }
+  // A contour no feature claims (possible only through rounding) is skipped
+  // rather than nested as an empty part.
+  for (const component of components.values()) {
+    if (component.ids.size > 0) drafts.push({ ...component, name: null })
+  }
+  if (drafts.length === 0) return { ok: false, refusal: 'no-closed-geometry' }
+
+  // Everything else inside a part's outline travels with it.
+  const assigned = new Set(drafts.flatMap((draft) => [...draft.ids]))
   for (const feature of resolved) {
-    if (!ids.has(feature.id) && liesWithin(feature, outline, tolerance)) ids.add(feature.id)
+    if (assigned.has(feature.id)) continue
+    const draft = drafts.find((candidate) => liesWithin(feature, candidate.outline, tolerance))
+    if (draft) {
+      draft.ids.add(feature.id)
+      assigned.add(feature.id)
+    }
   }
 
-  const featureIds = project.features.map((feature) => feature.id).filter((id) => ids.has(id))
-  for (const id of featureIds) {
-    const feature = byId.get(id)!
-    if (feature.locked) return { ok: false, refusal: 'locked', featureId: id }
-    if (feature.kind === 'stl') return { ok: false, refusal: 'model', featureId: id }
-    const external = feature.sketch.constraints.some((constraint) => {
-      const reference = constraintReference(constraint)
-      return reference !== undefined && reference !== id && !ids.has(reference)
-    })
-    if (external) return { ok: false, refusal: 'external-constraint', featureId: id }
+  const order = new Map(project.features.map((feature, index) => [feature.id, index]))
+  const parts: NestPartSpec[] = []
+  for (const draft of drafts) {
+    const featureIds = [...draft.ids].sort((a, b) => order.get(a)! - order.get(b)!)
+    for (const id of featureIds) {
+      const feature = byId.get(id)!
+      if (feature.locked) return { ok: false, refusal: 'locked', featureId: id }
+      if (feature.kind === 'stl') return { ok: false, refusal: 'model', featureId: id }
+      const external = feature.sketch.constraints.some((constraint) => {
+        const reference = constraintReference(constraint)
+        return reference !== undefined && reference !== id && !draft.ids.has(reference)
+      })
+      if (external) return { ok: false, refusal: 'external-constraint', featureId: id }
+    }
+    const largest = featureIds
+      .map((id) => ({ id, area: pathsArea(closed(id)) }))
+      .reduce((best, entry) => (entry.area > best.area ? entry : best), { id: featureIds[0], area: -1 })
+    parts.push({ featureIds, footprint: draft.outline.map(pathToRing), name: draft.name ?? byId.get(largest.id)!.name })
   }
-  const spanning = project.global_constraints.find((constraint) => (
-    constraint.feature_ids.some((id) => ids.has(id)) && constraint.feature_ids.some((id) => !ids.has(id))
-  ))
+  const spanning = project.global_constraints.find((constraint) => parts.some((part) => (
+    constraint.feature_ids.some((id) => part.featureIds.includes(id)) && constraint.feature_ids.some((id) => !part.featureIds.includes(id))
+  )))
   if (spanning) {
-    return { ok: false, refusal: 'external-constraint', featureId: spanning.feature_ids.find((id) => ids.has(id)) }
+    return { ok: false, refusal: 'external-constraint', featureId: spanning.feature_ids.find((id) => assigned.has(id)) }
   }
-
-  return { ok: true, featureIds, footprint: outline.map(pathToRing) }
+  parts.sort((a, b) => order.get(a.featureIds[0])! - order.get(b.featureIds[0])!)
+  return { ok: true, parts }
 }
 
 /**
@@ -229,27 +313,62 @@ export function nestSheetRing(project: Project): NestRing | null {
   ))
 }
 
-/** A serializable packer job for one resolved part (see `requestFromJob`). */
+/** Simplification tolerance for grown footprints, in project units (#855). */
+export function nestSimplifyTolerance(project: Pick<Project, 'meta'>): number {
+  return project.meta.units === 'inch' ? 0.002 : 0.05
+}
+
+/**
+ * A serializable packer job (see `requestFromJob`). Part `i` of the job is
+ * `parts[i]`, with `quantities[i]` counted the way the panel shows them:
+ * parts on the sheet, originals included.
+ */
 export function buildNestJob(
   project: Project,
-  part: { featureIds: string[]; footprint: NestRing[] },
+  parts: Pick<NestPartSpec, 'featureIds' | 'footprint'>[],
+  quantities: number[],
   settings: NestSettings,
 ): NestJob | null {
   const sheet = nestSheetRing(project)
-  if (!sheet) return null
+  if (!sheet || parts.length === 0) return null
   return {
     sheet,
-    obstacles: nestObstacleRings(project, part.featureIds, part.footprint, settings.keepOriginals),
-    parts: [{
-      id: 'part',
+    obstacles: nestObstacleRings(
+      project,
+      parts.flatMap((part) => part.featureIds),
+      parts.flatMap((part) => part.footprint),
+      settings.keepOriginals,
+    ),
+    parts: parts.map((part, index) => ({
+      id: String(index),
       footprint: part.footprint,
-      quantity: Math.max(0, settings.keepOriginals ? settings.quantity - 1 : settings.quantity),
+      quantity: Math.max(0, (quantities[index] ?? 0) - (settings.keepOriginals ? 1 : 0)),
       rotations: settings.rotations,
-    }],
+    })),
     minimumGap: settings.minimumGap,
     growthPadding: nestFlattenTolerance(project),
+    simplifyTolerance: nestSimplifyTolerance(project),
     gravity: nestGravity(project),
   }
+}
+
+/** A ready-to-run packer request (see `buildNestJob`). */
+export function buildNestRequest(
+  project: Project,
+  parts: Pick<NestPartSpec, 'featureIds' | 'footprint'>[],
+  quantities: number[],
+  settings: NestSettings,
+): NestRequest | null {
+  const job = buildNestJob(project, parts, quantities, settings)
+  return job ? requestFromJob(job) : null
+}
+
+/** The nest a selection belongs to — through a source or a copy — if any. */
+export function findNestForSelection(project: Project, selectedIds: string[]): NestRecord | null {
+  const selected = new Set(selectedIds)
+  return project.nests?.find((nest) => (
+    nest.parts.some((part) => part.sourceIds.some((id) => selected.has(id))) || nest.copyIds.some((id) => selected.has(id))
+  )) ?? null
 }
 
 /** Pack toward the stock corner nearest the machine origin. */
@@ -259,24 +378,6 @@ export function nestGravity(project: Project): NestGravity {
     x: project.origin.x <= (bounds.minX + bounds.maxX) / 2 ? 1 : -1,
     y: project.origin.y <= (bounds.minY + bounds.maxY) / 2 ? 1 : -1,
   }
-}
-
-/** A ready-to-run packer request for one resolved part. */
-export function buildNestRequest(
-  project: Project,
-  part: { featureIds: string[]; footprint: NestRing[] },
-  settings: NestSettings,
-): NestRequest | null {
-  const job = buildNestJob(project, part, settings)
-  return job ? requestFromJob(job) : null
-}
-
-/** The nest a selection belongs to — through a source or a copy — if any. */
-export function findNestForSelection(project: Project, selectedIds: string[]): NestRecord | null {
-  const selected = new Set(selectedIds)
-  return project.nests?.find((nest) => (
-    nest.sourceIds.some((id) => selected.has(id)) || nest.copyIds.some((id) => selected.has(id))
-  )) ?? null
 }
 
 /** The world-space transform a placement applies: rotate about the origin, then translate. */

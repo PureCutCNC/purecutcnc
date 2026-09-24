@@ -53,7 +53,7 @@ export function createNestingSlice(
         const result = applyNestToProject(s.project, input)
         if (!result) return {}
         nestId = result.nestId
-        const selectedIds = [...input.featureIds, ...result.copyIds]
+        const selectedIds = [...input.parts.flatMap((part) => part.featureIds), ...result.copyIds]
         const primaryId = selectedIds.at(-1) ?? null
         return {
           project: result.project,

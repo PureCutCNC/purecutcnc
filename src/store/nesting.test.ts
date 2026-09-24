@@ -41,7 +41,7 @@ import { projectWithFeatures } from '../test/projectFixtures'
 import { defaultOperationForTarget } from './helpers/operationDefaults'
 import { normalizeProject, type ProjectFormatInput } from './helpers/projectFormat'
 import { discardNestFromProject } from './helpers/nestApply'
-import { buildNestRequest, nestGapForPart, resolveNestPart } from './helpers/nestPart'
+import { buildNestRequest, nestGapForPart, resolveNestParts, type NestPartSpec } from './helpers/nestPart'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import { useProjectStore } from './projectStore'
 
@@ -102,25 +102,39 @@ function resetStore(project: Project): void {
   useProjectStore.setState({ project, history: { past: [], future: [], transactionStart: null }, dirty: false })
 }
 
-function settings(overrides: Partial<NestSettings> = {}): NestSettings {
+/** Nest settings plus the quantity every part in the selection gets. */
+type TestRun = NestSettings & { quantity: number | number[] }
+
+function settings(overrides: Partial<TestRun> = {}): TestRun {
   return { quantity: 6, rotations: [0, 90, 180, 270], minimumGap: GAP, keepOriginals: false, ...overrides }
 }
 
+function onePart(project: Project, selected: string[]): NestPartSpec {
+  const resolution = resolveNestParts(project, selected)
+  assert(resolution.ok && resolution.parts.length === 1, `one part expected, got ${JSON.stringify(resolution)}`)
+  return resolution.parts[0]
+}
+
 /** Runs the whole pipeline the UI will: resolve, request, pack, commit. */
-function nestIntoStore(selected: string[], nestSettings: NestSettings): { nestId: string; placed: number } {
-  const project = useProjectStore.getState().project
-  const part = resolveNestPart(project, selected)
-  assert(part.ok, 'part resolves')
-  const request = buildNestRequest(project, part, nestSettings)
+function nestIntoStore(selected: string[], run: TestRun, replaceNestId?: string): { nestId: string; placed: number; unplaced: number } {
+  const current = useProjectStore.getState().project
+  const project = replaceNestId ? discardNestFromProject(current, replaceNestId)! : current
+  const resolution = resolveNestParts(project, selected)
+  assert(resolution.ok, 'parts resolve')
+  const quantities = resolution.parts.map((_, index) => (Array.isArray(run.quantity) ? run.quantity[index] : run.quantity))
+  const { quantity: _quantity, ...nestSettings } = run
+  void _quantity
+  const request = buildNestRequest(project, resolution.parts, quantities, nestSettings)
   assert(request, 'request builds')
   const result = nest(request)
   const nestId = useProjectStore.getState().applyNest({
-    featureIds: part.featureIds,
+    parts: resolution.parts.map((part, index) => ({ featureIds: part.featureIds, quantity: quantities[index] })),
     placements: result.placements,
     settings: nestSettings,
+    replaceNestId,
   })
   assert(nestId, 'nest applied')
-  return { nestId, placed: result.placements.length }
+  return { nestId, placed: result.placements.length, unplaced: result.unplaced.reduce((sum, entry) => sum + entry.count, 0) }
 }
 
 function worldRing(project: Project, id: string): Point[] {
@@ -165,29 +179,28 @@ function plateInstances(project: Project): string[] {
 
 function testPartResolution(): void {
   const project = makeProject()
-  const part = resolveNestPart(project, ['plate'])
-  assert(part.ok, 'plate resolves')
+  const part = onePart(project, ['plate'])
   assert(part.featureIds.join() === 'plate,hole,slot', `containment pulls the hole and slot in, got ${part.featureIds.join()}`)
   assert(part.footprint.length === 1, 'one outer footprint ring')
 
-  const grouped = resolveNestPart(makeProject({ grouped: true }), ['hole'])
-  assert(grouped.ok && grouped.featureIds.join() === 'plate,hole,slot', 'a grouped folder is one part, then containment applies')
+  const grouped = onePart(makeProject({ grouped: true }), ['hole'])
+  assert(grouped.featureIds.join() === 'plate,hole,slot', 'a grouped folder is one part, then containment applies')
 
-  const locked = resolveNestPart(makeProject({ lockHole: true }), ['plate'])
+  const locked = resolveNestParts(makeProject({ lockHole: true }), ['plate'])
   assert(!locked.ok && locked.refusal === 'locked' && locked.featureId === 'hole', 'a locked member refuses the part')
 
   const externalConstraint: LocalConstraint = {
     id: 'c1', type: 'fixed_distance', segment_ids: ['other'], reference_feature_id: 'other', value: 5,
   }
-  const external = resolveNestPart(makeProject({ slotConstraint: externalConstraint }), ['plate'])
+  const external = resolveNestParts(makeProject({ slotConstraint: externalConstraint }), ['plate'])
   assert(!external.ok && external.refusal === 'external-constraint' && external.featureId === 'slot', 'an outside reference refuses the part')
 
-  const internal = resolveNestPart(makeProject({
+  const internal = resolveNestParts(makeProject({
     slotConstraint: { ...externalConstraint, segment_ids: ['plate'], reference_feature_id: 'plate' },
   }), ['plate'])
   assert(internal.ok, 'a reference inside the part is fine')
 
-  assert(!resolveNestPart(project, []).ok, 'an empty selection is refused')
+  assert(!resolveNestParts(project, []).ok, 'an empty selection is refused')
   const gap = nestGapForPart(project, ['plate', 'hole', 'slot'])
   assert(gap !== null && Math.abs(gap - GAP) < 1e-9, `gap = cutter diameter + 2 × radial stock to leave, got ${gap} (${JSON.stringify(project.operations.map((o) => o.target))})`)
   assert(nestGapForPart(project, ['hole']) === null, 'no outside edge route → no gap')
@@ -344,7 +357,8 @@ function testCurvedPartsKeepTheGap(): void {
     }
   }
   assert(closest >= TOOL_DIAMETER - 1e-6, `curved parts keep the gap: closest ${closest}`)
-  assert(closest <= TOOL_DIAMETER + 0.1, `and are packed tight: closest ${closest}`)
+  // Tight up to the footprint simplification, which pads each part by 0.05 mm (#855).
+  assert(closest <= TOOL_DIAMETER + 0.15, `and are packed tight: closest ${closest}`)
   console.log('curved parts keep the gap: PASSED')
 }
 
@@ -373,18 +387,7 @@ function testReplaceNestIsOneStep(): void {
   const { nestId } = nestIntoStore(['plate'], settings({ quantity: 3 }))
   const first = useProjectStore.getState().project
   // Re-nest: compute on the project with the old nest discarded, commit as a replacement.
-  const base = discardNestFromProject(first, nestId)!
-  const part = resolveNestPart(base, first.nests![0].sourceIds)
-  assert(part.ok, 'the nested part resolves on the discarded base')
-  const replaceSettings = settings({ quantity: 5 })
-  const request = buildNestRequest(base, part, replaceSettings)!
-  const result = nest(request)
-  const replacedId = useProjectStore.getState().applyNest({
-    featureIds: part.featureIds,
-    placements: result.placements,
-    settings: replaceSettings,
-    replaceNestId: nestId,
-  })
+  const { nestId: replacedId } = nestIntoStore(first.nests![0].parts[0].sourceIds, settings({ quantity: 5 }), nestId)
   const after = useProjectStore.getState()
   assert(replacedId && replacedId !== nestId, 'a new nest replaces the old one')
   assert(after.project.nests?.length === 1, 'exactly one nest remains')

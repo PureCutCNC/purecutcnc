@@ -20,6 +20,7 @@
 import ClipperLib from 'clipper-lib'
 import { NEST_SCALE, outerContours, pathToRing, ringToPath } from './clipperOps'
 import type { ClipperPath } from '../toolpaths/types'
+import { simplifyRing } from './simplify'
 import type { NestPart, NestRing } from './types'
 
 /** Integer units added to the growth so rounding to the Clipper grid never shortens it. */
@@ -35,14 +36,20 @@ const GROW_ROUNDING_PAD = 2
  * 90° corner can come out as a single chord that cuts well inside the arc —
  * measured at 0.022 mm short of a 6 mm gap with a 0.05 mm arc tolerance.
  */
-export function expandByHalfGap(rings: NestRing[], minimumGap: number): NestRing[] {
+export function expandByHalfGap(rings: NestRing[], minimumGap: number, simplifyTolerance = 0): NestRing[] {
   const paths = outerContours(rings.map(ringToPath))
-  if (minimumGap <= 0) return paths.map(pathToRing)
+  const simplify = simplifyTolerance > 0 ? simplifyTolerance : 0
+  if (minimumGap <= 0 && simplify === 0) return paths.map(pathToRing)
   const offset = new ClipperLib.ClipperOffset()
   offset.AddPaths(paths, ClipperLib.JoinType.jtSquare, ClipperLib.EndType.etClosedPolygon)
   const grown: ClipperPath[] = new ClipperLib.Paths()
-  offset.Execute(grown, (minimumGap / 2) * NEST_SCALE + GROW_ROUNDING_PAD)
-  return outerContours(grown).map(pathToRing)
+  // With simplification the growth is padded by its tolerance: the
+  // simplified boundary stays within one tolerance of the grown one, and
+  // every point of the exact gap/2 offset is at least that far inside the
+  // grown boundary, so it stays inside the simplified one too (#855).
+  offset.Execute(grown, (Math.max(0, minimumGap) / 2 + simplify) * NEST_SCALE + GROW_ROUNDING_PAD)
+  const contours = outerContours(grown).map(pathToRing)
+  return simplify > 0 ? outerContours(contours.map((ring) => ringToPath(simplifyRing(ring, simplify)))).map(pathToRing) : contours
 }
 
 /** Parts with the largest footprint area first; ties keep id order. */

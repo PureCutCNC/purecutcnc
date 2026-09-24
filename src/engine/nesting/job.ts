@@ -31,6 +31,12 @@ export interface NestJob {
    * tolerance, so curves flattened for packing never cost clearance.
    */
   growthPadding: number
+  /**
+   * Grown footprints are simplified within this tolerance (and padded for it)
+   * before packing. Fewer vertices make every no-fit polygon cheaper — glyph
+   * outlines went from 30 s to 1.2 s for an alphabet (#855). 0 disables it.
+   */
+  simplifyTolerance?: number
   gravity?: NestGravity
 }
 
@@ -41,7 +47,11 @@ export function requestFromJob(job: NestJob): NestRequest {
     obstacles: job.obstacles,
     parts: job.parts,
     minimumGap: job.minimumGap,
-    expandFootprint: (rings, minimumGap) => expandByHalfGap(rings, minimumGap + 2 * job.growthPadding),
+    expandFootprint: (rings, minimumGap) => expandByHalfGap(
+      rings,
+      minimumGap + 2 * job.growthPadding,
+      job.simplifyTolerance ?? 0,
+    ),
     orderParts: largestFirst,
     gravity: job.gravity,
   }
