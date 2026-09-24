@@ -117,3 +117,24 @@ export function nestSettingsFromForm(form: NestForm): NestSettings {
     keepOriginals: form.keepOriginals,
   }
 }
+
+export interface EditWatch {
+  /** Take the current state as the search's own, after it applied a layout. */
+  accept(): void
+  /** Whether the user changed the project since the last `accept`. */
+  edited(): boolean
+}
+
+/**
+ * Tells the keep-improving search whether the project was edited under it
+ * (#864). It watches undo history, not the project: UI state such as a tree
+ * folder revealed for the new selection is written into the project too, but
+ * only real edits, undo, redo and started drags replace `history`.
+ */
+export function watchForEdits(getHistory: () => object): EditWatch {
+  let expected = getHistory()
+  return {
+    accept: () => { expected = getHistory() },
+    edited: () => getHistory() !== expected,
+  }
+}

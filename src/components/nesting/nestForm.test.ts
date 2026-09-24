@@ -15,7 +15,8 @@
  */
 /**
  * Nest panel state (issue #848): which nest a selection targets, the base the
- * job runs on, the gap floor, presets, and form validation.
+ * job runs on, the gap floor, presets, form validation, and what counts as an
+ * edit under the keep-improving search (#864).
  *
  * Run with: npx tsx src/components/nesting/nestForm.test.ts
  */
@@ -26,6 +27,7 @@ import { applyNestToProject } from '../../store/helpers/nestApply'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { normalizeProject, type ProjectFormatInput } from '../../store/helpers/projectFormat'
 import { requestFromJob } from '../../engine/nesting'
+import { useProjectStore } from '../../store/projectStore'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 import { defaultStock, defaultTool, newProject, rectProfile, type Project, type SketchFeature } from '../../types/project'
@@ -36,6 +38,7 @@ import {
   nestSubject,
   presetForRotations,
   validateNestForm,
+  watchForEdits,
 } from './nestForm'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -144,8 +147,45 @@ function testJobSurvivesStructuredClone(): void {
   console.log('job crosses postMessage: PASSED')
 }
 
+function testRevealingAFolderIsNotAnEdit(): void {
+  useProjectStore.setState({ project: makeProject(true), history: { past: [], future: [], transactionStart: null }, dirty: false })
+  const store = () => useProjectStore.getState()
+  const subject = nestSubject(store().project, ['plate'])
+  const form = initialNestForm(subject)
+  const parts = subject.parts.ok ? subject.parts.parts : []
+  const job = buildNestJob(subject.base, parts, [3], nestSettingsFromForm(form))!
+  const apply = (amend: boolean, replaceNestId?: string) => store().applyNest({
+    parts: parts.map((part) => ({ featureIds: part.featureIds, quantity: 3 })),
+    placements: nest(requestFromJob(job)).placements,
+    settings: nestSettingsFromForm(form),
+    replaceNestId,
+    amend,
+  })
+  const nestId = apply(false)!
+
+  const edits = watchForEdits(() => store().history)
+  const folder = store().project.featureFolders.find((entry) => entry.name === store().project.nests![0].name)!
+  assert(folder.collapsed, 'a nest folder starts collapsed')
+  // What FeatureTree does when the nest's copies get selected.
+  const before = store().project
+  store().revealFeatureFolder(folder.id)
+  assert(store().project !== before, 'revealing the folder writes the project')
+  assert(!edits.edited(), 'a revealed folder is not an edit')
+
+  const amendedId = apply(true, nestId)
+  edits.accept()
+  assert(!edits.edited(), 'the search accepts its own layout')
+  store().discardNest(amendedId!)
+  assert(edits.edited(), 'discarding the nest is an edit')
+  edits.accept()
+  store().undo()
+  assert(edits.edited(), 'undo is an edit')
+  console.log('revealing a folder is not an edit: PASSED')
+}
+
 testFreshSubject()
 testSeveralPartsDefaultToArranging()
 testNestedSubjectTargetsTheNest()
 testJobSurvivesStructuredClone()
+testRevealingAFolderIsNotAnEdit()
 console.log('All nest panel state tests passed')

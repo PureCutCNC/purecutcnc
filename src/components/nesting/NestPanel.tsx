@@ -34,6 +34,7 @@ import {
   nestSubject,
   subjectParts,
   validateNestForm,
+  watchForEdits,
   type NestForm,
   type NestFormError,
   type NestRotationPreset,
@@ -179,14 +180,14 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
     abortRef.current = controller
     let nestId = record.id
     let amend = false
-    let expected = useProjectStore.getState().project
+    const edits = watchForEdits(() => useProjectStore.getState().history)
     let state: NestImprove = { running: true, evaluated: 0, first: null, best: null, ended: null }
     setImprove(state)
     try {
       await improveNestJob(job, {
         signal: controller.signal,
         onProgress: (update) => {
-          if (useProjectStore.getState().project !== expected) {
+          if (edits.edited()) {
             state = { ...state, ended: 'changed' }
             controller.abort()
             return
@@ -203,7 +204,7 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
               nestId = id
               amend = true
             }
-            expected = useProjectStore.getState().project
+            edits.accept()
             setRun(summarize(update.best, searchParts, searchQuantities, record.settings.keepOriginals))
           }
           state = {
