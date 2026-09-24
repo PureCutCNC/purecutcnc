@@ -100,4 +100,8 @@ export interface NestUnplaced {
 export interface NestResult {
   placements: NestPlacement[]
   unplaced: NestUnplaced[]
+  /** Footprint area of the unplaced copies, in project units². */
+  unplacedArea: number
+  /** Area of the placed footprints' bounding box, in project units² — what the placer minimises. */
+  usedArea: number
 }

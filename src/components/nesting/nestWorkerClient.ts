@@ -18,8 +18,8 @@
 // thread when a Worker is available. Cancellation is `terminate()`: the packer
 // is synchronous and would never see a message.
 
-import { nest, requestFromJob, type NestJob, type NestResult } from '../../engine/nesting'
-import type { NestWorkerResponse } from './nest.worker'
+import { improveNest, nest, requestFromJob, type NestJob, type NestResult } from '../../engine/nesting'
+import type { NestWorkerRequest, NestWorkerResponse } from './nest.worker'
 
 export class NestCancelledError extends Error {
   constructor() {
@@ -29,7 +29,7 @@ export class NestCancelledError extends Error {
 }
 
 export interface NestWorkerLike {
-  postMessage(message: NestJob): void
+  postMessage(message: NestWorkerRequest): void
   terminate(): void
   onmessage: ((event: MessageEvent<NestWorkerResponse>) => void) | null
   onerror: ((event: ErrorEvent) => void) | null
@@ -43,18 +43,63 @@ export function createDefaultNestWorker(): NestWorkerLike | null {
   return new Worker(new URL('./nest.worker.ts', import.meta.url), { type: 'module' }) as unknown as NestWorkerLike
 }
 
-/** Runs one nest job off the main thread; falls back to running inline without a Worker. */
-export function runNestJob(
-  job: NestJob,
-  options: { signal?: AbortSignal; createWorker?: NestWorkerFactory } = {},
-): Promise<NestResult> {
-  if (options.signal?.aborted) return Promise.reject(new NestCancelledError())
-  let worker: NestWorkerLike | null = null
+interface WorkerOptions {
+  signal?: AbortSignal
+  createWorker?: NestWorkerFactory
+}
+
+function startWorker(options: WorkerOptions): NestWorkerLike | null {
   try {
-    worker = (options.createWorker ?? createDefaultNestWorker)()
+    return (options.createWorker ?? createDefaultNestWorker)()
   } catch {
-    worker = null
+    return null
   }
+}
+
+/**
+ * Posts one request and settles on its first final message. `onMessage`
+ * returns the value to resolve with, or undefined to keep listening. Every way
+ * out terminates the worker.
+ */
+function converse<T>(
+  worker: NestWorkerLike,
+  request: NestWorkerRequest,
+  signal: AbortSignal | undefined,
+  onMessage: (response: NestWorkerResponse) => T | undefined,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const finish = (outcome: () => void) => {
+      worker.terminate()
+      signal?.removeEventListener('abort', onAbort)
+      outcome()
+    }
+    const onAbort = () => finish(() => reject(new NestCancelledError()))
+    signal?.addEventListener('abort', onAbort, { once: true })
+    worker.onmessage = (event) => {
+      const response = event.data
+      if (response.type === 'error') {
+        finish(() => reject(new Error(response.message)))
+        return
+      }
+      let value: T | undefined
+      try {
+        value = onMessage(response)
+      } catch (error: unknown) {
+        finish(() => reject(error))
+        return
+      }
+      // A listener may have aborted: the abort already settled the promise.
+      if (value !== undefined && !signal?.aborted) finish(() => resolve(value))
+    }
+    worker.onerror = (event) => finish(() => reject(new Error(event.message || 'Nesting worker failed')))
+    worker.postMessage(request)
+  })
+}
+
+/** Runs one nest job off the main thread; falls back to running inline without a Worker. */
+export function runNestJob(job: NestJob, options: WorkerOptions = {}): Promise<NestResult> {
+  if (options.signal?.aborted) return Promise.reject(new NestCancelledError())
+  const worker = startWorker(options)
   if (!worker) {
     try {
       return Promise.resolve(nest(requestFromJob(job)))
@@ -62,23 +107,50 @@ export function runNestJob(
       return Promise.reject(error)
     }
   }
+  return converse(worker, { type: 'nest', job }, options.signal, (response) => (
+    response.type === 'result' ? response.result : undefined
+  ))
+}
 
-  const active = worker
-  return new Promise<NestResult>((resolve, reject) => {
-    const finish = (outcome: () => void) => {
-      active.terminate()
-      options.signal?.removeEventListener('abort', onAbort)
-      outcome()
+export interface NestImproveUpdate {
+  /** Layouts placed so far, the first answer included. */
+  evaluated: number
+  /** Present on the first layout (the one-shot answer) and on every improvement. */
+  best?: NestResult
+}
+
+/**
+ * Keeps searching for a better layout of `job` (#862) until the search stalls
+ * or `signal` aborts. Resolves with the number of layouts tried. Without a
+ * Worker it runs inline, yielding to the event loop between layouts.
+ */
+export function improveNestJob(
+  job: NestJob,
+  options: WorkerOptions & { seed?: number; onProgress: (update: NestImproveUpdate) => void },
+): Promise<number> {
+  if (options.signal?.aborted) return Promise.reject(new NestCancelledError())
+  const worker = startWorker(options)
+  if (!worker) return improveInline(job, options)
+  return converse(worker, { type: 'improve', job, seed: options.seed }, options.signal, (response) => {
+    if (response.type === 'progress') {
+      options.onProgress(response.best ? { evaluated: response.evaluated, best: response.best } : { evaluated: response.evaluated })
+      return undefined
     }
-    const onAbort = () => finish(() => reject(new NestCancelledError()))
-    options.signal?.addEventListener('abort', onAbort, { once: true })
-    active.onmessage = (event) => {
-      const response = event.data
-      finish(() => (response.type === 'result'
-        ? resolve(response.result)
-        : reject(new Error(response.message))))
-    }
-    active.onerror = (event) => finish(() => reject(new Error(event.message || 'Nesting worker failed')))
-    active.postMessage(job)
+    return response.type === 'done' ? response.evaluated : undefined
   })
+}
+
+async function improveInline(
+  job: NestJob,
+  options: { signal?: AbortSignal; seed?: number; onProgress: (update: NestImproveUpdate) => void },
+): Promise<number> {
+  let evaluated = 0
+  for (const step of improveNest(requestFromJob(job), { seed: options.seed })) {
+    if (options.signal?.aborted) throw new NestCancelledError()
+    evaluated = step.evaluated
+    options.onProgress(step.improved || evaluated === 1 ? { evaluated, best: step.best } : { evaluated })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+  if (options.signal?.aborted) throw new NestCancelledError()
+  return evaluated
 }

@@ -14,16 +14,16 @@
  * limitations under the License.
  */
 /**
- * Nest worker client (issue #848): every way out terminates the worker, a
- * cancel rejects with NestCancelledError, and without a Worker the job runs
- * inline with the same result.
+ * Nest worker client (issues #848, #862): every way out terminates the worker,
+ * a cancel rejects with NestCancelledError, without a Worker the job runs
+ * inline with the same result, and an improve run forwards its progress.
  *
  * Run with: npx tsx src/components/nesting/nestWorkerClient.test.ts
  */
 
 import { nest, requestFromJob, type NestJob } from '../../engine/nesting'
-import type { NestWorkerResponse } from './nest.worker'
-import { NestCancelledError, runNestJob, type NestWorkerLike } from './nestWorkerClient'
+import type { NestWorkerRequest, NestWorkerResponse } from './nest.worker'
+import { improveNestJob, NestCancelledError, runNestJob, type NestImproveUpdate, type NestWorkerLike } from './nestWorkerClient'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -38,19 +38,26 @@ const job: NestJob = {
   growthPadding: 0.01,
 }
 
+/** Answers each request with a scripted list of messages, one microtask apart. */
 class FakeWorker implements NestWorkerLike {
   onmessage: ((event: MessageEvent<NestWorkerResponse>) => void) | null = null
   onerror: ((event: ErrorEvent) => void) | null = null
-  posted: NestJob[] = []
+  posted: NestWorkerRequest[] = []
   terminated = 0
-  private readonly reply: ((job: NestJob) => NestWorkerResponse) | null
-  constructor(reply: ((job: NestJob) => NestWorkerResponse) | null) {
+  private readonly reply: ((request: NestWorkerRequest) => NestWorkerResponse[]) | null
+  constructor(reply: ((request: NestWorkerRequest) => NestWorkerResponse[]) | null) {
     this.reply = reply
   }
-  postMessage(message: NestJob): void {
+  postMessage(message: NestWorkerRequest): void {
     this.posted.push(message)
-    const reply = this.reply
-    if (reply) queueMicrotask(() => this.onmessage?.({ data: reply(message) } as MessageEvent<NestWorkerResponse>))
+    const replies = this.reply?.(message) ?? []
+    void (async () => {
+      for (const data of replies) {
+        await Promise.resolve()
+        if (this.terminated > 0) return
+        this.onmessage?.({ data } as MessageEvent<NestWorkerResponse>)
+      }
+    })()
   }
   terminate(): void {
     this.terminated += 1
@@ -58,14 +65,15 @@ class FakeWorker implements NestWorkerLike {
 }
 
 async function testResult(): Promise<void> {
-  const worker = new FakeWorker((posted) => ({ type: 'result', result: nest(requestFromJob(posted)) }))
+  const worker = new FakeWorker((posted) => [{ type: 'result', result: nest(requestFromJob(posted.job)) }])
   const result = await runNestJob(job, { createWorker: () => worker })
   assert(result.placements.length === 4, 'four squares placed')
-  assert(worker.posted.length === 1 && worker.terminated === 1, 'one job posted, worker terminated after')
+  assert(worker.posted.length === 1 && worker.posted[0].type === 'nest', 'one nest request posted')
+  assert(worker.terminated === 1, 'worker terminated after')
 }
 
 async function testError(): Promise<void> {
-  const worker = new FakeWorker(() => ({ type: 'error', message: 'boom' }))
+  const worker = new FakeWorker(() => [{ type: 'error', message: 'boom' }])
   let message = ''
   try {
     await runNestJob(job, { createWorker: () => worker })
@@ -94,8 +102,75 @@ async function testInlineFallback(): Promise<void> {
   assert(JSON.stringify(result) === JSON.stringify(nest(requestFromJob(job))), 'inline run gives the same result')
 }
 
+async function testImprove(): Promise<void> {
+  const first = nest(requestFromJob(job))
+  const better = { ...first, usedArea: first.usedArea / 2 }
+  const worker = new FakeWorker(() => [
+    { type: 'progress', evaluated: 1, best: first },
+    { type: 'progress', evaluated: 2 },
+    { type: 'progress', evaluated: 3, best: better },
+    { type: 'done', evaluated: 3 },
+  ])
+  const updates: NestImproveUpdate[] = []
+  const evaluated = await improveNestJob(job, { createWorker: () => worker, seed: 4, onProgress: (update) => updates.push(update) })
+  assert(evaluated === 3, 'resolves with the layouts tried')
+  assert(updates.map((update) => `${update.evaluated}:${update.best?.usedArea ?? '-'}`).join() === `1:${first.usedArea},2:-,3:${better.usedArea}`, 'progress is forwarded in order')
+  const [request] = worker.posted
+  assert(request.type === 'improve' && request.seed === 4, 'an improve request carries the seed')
+  assert(worker.terminated === 1, 'worker terminated when the search stalls')
+}
+
+async function testImproveStopFromProgress(): Promise<void> {
+  // The panel stops from inside a progress callback when the project changes.
+  const worker = new FakeWorker(() => [
+    { type: 'progress', evaluated: 1, best: nest(requestFromJob(job)) },
+    { type: 'progress', evaluated: 2 },
+    { type: 'progress', evaluated: 3 },
+  ])
+  const controller = new AbortController()
+  const seen: number[] = []
+  let cancelled = false
+  try {
+    await improveNestJob(job, {
+      createWorker: () => worker,
+      signal: controller.signal,
+      onProgress: (update) => {
+        seen.push(update.evaluated)
+        if (update.evaluated === 2) controller.abort()
+      },
+    })
+  } catch (error) {
+    cancelled = error instanceof NestCancelledError
+  }
+  assert(cancelled && worker.terminated === 1, 'aborting from progress cancels and terminates')
+  assert(seen.join() === '1,2', `nothing after the stop is reported, got ${seen.join()}`)
+}
+
+async function testImproveInline(): Promise<void> {
+  const controller = new AbortController()
+  const updates: NestImproveUpdate[] = []
+  let cancelled = false
+  try {
+    await improveNestJob(job, {
+      createWorker: () => null,
+      signal: controller.signal,
+      onProgress: (update) => {
+        updates.push(update)
+        if (update.evaluated === 5) controller.abort()
+      },
+    })
+  } catch (error) {
+    cancelled = error instanceof NestCancelledError
+  }
+  assert(cancelled && updates.length === 5, `inline search runs until stopped, got ${updates.length}`)
+  assert(JSON.stringify(updates[0].best) === JSON.stringify(nest(requestFromJob(job))), 'its first layout is the one-shot answer')
+}
+
 await testResult()
 await testError()
 await testCancel()
 await testInlineFallback()
+await testImprove()
+await testImproveStopFromProgress()
+await testImproveInline()
 console.log('All nest worker client tests passed')

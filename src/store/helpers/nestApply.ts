@@ -46,6 +46,12 @@ export interface ApplyNestInput {
    * been computed on the project with that nest discarded.
    */
   replaceNestId?: string
+  /**
+   * Fold the change into the latest undo step instead of adding one (#862):
+   * each further layout the keep-improving search finds replaces its previous
+   * one, and one Undo returns to the layout the search started from.
+   */
+  amend?: boolean
 }
 
 export interface ApplyNestResult {

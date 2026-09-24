@@ -16,10 +16,12 @@
 // The Nest panel (issue #848, step 3 of #741): arrange N copies of a part on
 // the stock. Rendered by SketchCanvas; opened by `startNest` from the
 // Distribute menu. The packer runs in a worker; the result is committed with
-// one `applyNest` history step.
+// one `applyNest` history step. Keep improving (#862) searches on in the
+// worker; its better layouts share one more history step.
 
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { buildNestJob } from '../../store/helpers/nestPart'
+import type { NestResult } from '../../engine/nesting'
+import { buildNestJob, type NestPartSpec } from '../../store/helpers/nestPart'
 import { useProjectStore } from '../../store/projectStore'
 import type { MessageKey } from '../../i18n/locales/en'
 import { useI18n } from '../../i18n/i18nContext'
@@ -36,7 +38,7 @@ import {
   type NestFormError,
   type NestRotationPreset,
 } from './nestForm'
-import { NestCancelledError, runNestJob } from './nestWorkerClient'
+import { improveNestJob, NestCancelledError, runNestJob } from './nestWorkerClient'
 
 interface NestPanelHostProps {
   containerRef: RefObject<HTMLDivElement | null>
@@ -49,6 +51,23 @@ type NestRun =
   | { state: 'running' }
   | { state: 'done'; placed: number; requested: number; missing: { name: string; count: number }[] }
   | { state: 'failed'; message: string }
+
+interface NestImprove {
+  running: boolean
+  evaluated: number
+  /** The one-shot answer, as the search re-placed it. */
+  first: NestResult | null
+  best: NestResult | null
+  /** Why a finished search ended; null while running or after Stop. */
+  ended: 'stalled' | 'changed' | null
+}
+
+/** What the result line reports for a layout of `parts` placed with `quantities`. */
+function summarize(result: NestResult, parts: NestPartSpec[], quantities: number[], keepOriginals: boolean): NestRun {
+  const requested = quantities.reduce((sum, quantity) => sum + quantity, 0)
+  const missing = result.unplaced.map((entry) => ({ name: parts[Number(entry.partId)]?.name ?? '', count: entry.count }))
+  return { state: 'done', placed: result.placements.length + (keepOriginals ? parts.length : 0), requested, missing }
+}
 
 const REFUSAL_KEYS: Record<string, MessageKey> = {
   empty: 'canvas.nest.refusal.empty',
@@ -93,14 +112,16 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
   const parts = subjectParts(subject)
   const [form, setForm] = useState<NestForm>(() => initialNestForm(subject))
   const [run, setRun] = useState<NestRun>({ state: 'idle' })
+  const [improve, setImprove] = useState<NestImprove | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const busy = run.state === 'running' || improve?.running === true
   useEffect(() => () => abortRef.current?.abort(), [])
 
   // The part list can change under an open panel (undo, a replaced nest);
   // keep one quantity per part.
   const quantities = parts.map((_, index) => form.quantities[index] ?? 1)
   const formError = subject.parts.ok ? validateNestForm({ ...form, quantities }, subject.gapFloor) : null
-  const canNest = subject.parts.ok && formError === null && run.state !== 'running'
+  const canNest = subject.parts.ok && formError === null && !busy
 
   function setQuantity(index: number, value: number) {
     const next = [...quantities]
@@ -119,11 +140,9 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
     const controller = new AbortController()
     abortRef.current = controller
     setRun({ state: 'running' })
+    setImprove(null)
     try {
       const result = await runNestJob(job, { signal: controller.signal })
-      const offset = settings.keepOriginals ? 1 : 0
-      const requested = quantities.reduce((sum, quantity) => sum + quantity, 0)
-      const missing = result.unplaced.map((entry) => ({ name: parts[Number(entry.partId)]?.name ?? '', count: entry.count }))
       if (result.placements.length > 0) {
         applyNest({
           parts: parts.map((part, index) => ({ featureIds: part.featureIds, quantity: quantities[index] })),
@@ -132,7 +151,7 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
           replaceNestId: subject.replaceNest?.id,
         })
       }
-      setRun({ state: 'done', placed: result.placements.length + offset * parts.length, requested, missing })
+      setRun(summarize(result, parts, quantities, settings.keepOriginals))
     } catch (error: unknown) {
       if (error instanceof NestCancelledError) setRun({ state: 'idle' })
       else setRun({ state: 'failed', message: error instanceof Error ? error.message : String(error) })
@@ -141,12 +160,80 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
     }
   }
 
+  /**
+   * Searches for a better layout of the nest on the canvas, from the same job
+   * that produced it. The first better layout is one undo step and every later
+   * one amends it, so Undo returns to the layout the search started from. Any
+   * other change to the project stops the search.
+   */
+  async function startImprove() {
+    const record = subject.replaceNest
+    if (!record || !subject.parts.ok || busy) return
+    const searchParts = parts
+    const searchQuantities = searchParts.map((part) => (
+      record.parts.find((entry) => entry.sourceIds.some((id) => part.featureIds.includes(id)))?.quantity ?? 1
+    ))
+    const job = buildNestJob(subject.base, searchParts, searchQuantities, record.settings)
+    if (!job) return
+    const controller = new AbortController()
+    abortRef.current = controller
+    let nestId = record.id
+    let amend = false
+    let expected = useProjectStore.getState().project
+    let state: NestImprove = { running: true, evaluated: 0, first: null, best: null, ended: null }
+    setImprove(state)
+    try {
+      await improveNestJob(job, {
+        signal: controller.signal,
+        onProgress: (update) => {
+          if (useProjectStore.getState().project !== expected) {
+            state = { ...state, ended: 'changed' }
+            controller.abort()
+            return
+          }
+          if (update.best && state.first) {
+            const id = applyNest({
+              parts: searchParts.map((part, index) => ({ featureIds: part.featureIds, quantity: searchQuantities[index] })),
+              placements: update.best.placements,
+              settings: record.settings,
+              replaceNestId: nestId,
+              amend,
+            })
+            if (id) {
+              nestId = id
+              amend = true
+            }
+            expected = useProjectStore.getState().project
+            setRun(summarize(update.best, searchParts, searchQuantities, record.settings.keepOriginals))
+          }
+          state = {
+            ...state,
+            evaluated: update.evaluated,
+            first: state.first ?? update.best ?? null,
+            best: update.best ?? state.best,
+          }
+          setImprove(state)
+        },
+      })
+      state = { ...state, ended: 'stalled' }
+    } catch (error: unknown) {
+      if (!(error instanceof NestCancelledError)) {
+        setRun({ state: 'failed', message: error instanceof Error ? error.message : String(error) })
+      }
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null
+      setImprove({ ...state, running: false })
+    }
+  }
+
   function close() {
     abortRef.current?.abort()
     cancelNest()
   }
 
-  const step = run.state === 'running' ? t('canvas.nest.step.running') : t('canvas.nest.step.configure')
+  const step = run.state === 'running'
+    ? t('canvas.nest.step.running')
+    : improve?.running ? t('canvas.nest.step.improving') : t('canvas.nest.step.configure')
   const quantityInput = (index: number, label: string) => (
     <input
       className="canvas-workflow-panel__count-input"
@@ -172,7 +259,7 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
       pageLevel
       actions={(
         <>
-          {run.state === 'running' ? (
+          {busy ? (
             <CanvasWorkflowCancel label={t('canvas.nest.stop')} onClick={() => abortRef.current?.abort()} />
           ) : (
             <CanvasWorkflowConfirm
@@ -287,15 +374,21 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
               {run.placed > 0 && project.tabs.length > 0 && <> {t('canvas.nest.result.tabs')}</>}
             </p>
           )}
+          {improve && <NestImproveStatus improve={improve} />}
           {run.state === 'failed' && <p className="canvas-workflow-panel__warning" role="alert">{run.message}</p>}
-          {subject.replaceNest && run.state !== 'running' && (
+          {subject.replaceNest && !busy && (
             <div className="canvas-workflow-panel__picking-actions">
+              <CanvasWorkflowAction
+                label={t('canvas.nest.improve')}
+                onClick={() => { void startImprove() }}
+              />
               <CanvasWorkflowAction
                 label={t('canvas.nest.discard')}
                 variant="cancel"
                 onClick={() => {
                   discardNest(subject.replaceNest!.id)
                   setRun({ state: 'idle' })
+                  setImprove(null)
                 }}
               />
             </div>
@@ -303,5 +396,24 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
         </>
       )}
     </CanvasWorkflowPanel>
+  )
+}
+
+function NestImproveStatus({ improve }: { improve: NestImprove }) {
+  const { t, tPlural } = useI18n()
+  const { first, best } = improve
+  let gain = t('canvas.nest.improve.none')
+  if (first && best && best !== first) {
+    const more = best.placements.length - first.placements.length
+    gain = more > 0
+      ? tPlural(more, 'canvas.nest.improve.more.one', 'canvas.nest.improve.more.other')
+      : t('canvas.nest.improve.gain', { percent: (100 * (1 - best.usedArea / first.usedArea)).toFixed(1) })
+  }
+  return (
+    <p className="canvas-workflow-panel__summary" role="status" aria-live="polite">
+      {tPlural(improve.evaluated, 'canvas.nest.improve.tried.one', 'canvas.nest.improve.tried.other')} {gain}
+      {improve.ended === 'stalled' && <> {t('canvas.nest.improve.stalled')}</>}
+      {improve.ended === 'changed' && <> {t('canvas.nest.improve.changed')}</>}
+    </p>
   )
 }
