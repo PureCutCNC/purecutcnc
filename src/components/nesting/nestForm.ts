@@ -26,19 +26,40 @@ import {
 } from '../../store/helpers/nestPart'
 import type { NestRecord, NestSettings, Project } from '../../types/project'
 
-export type NestRotationPreset = 'quarter' | 'grain' | 'none'
+/**
+ * Finer rotation steps offered after the presets (#867). Each divides 360, and
+ * each costs search time: every angle is tried for every copy, and every
+ * relative angle between two parts needs its own no-fit polygon.
+ */
+export const NEST_ROTATION_STEPS = [45, 30, 15] as const
 
+export type NestRotationStep = typeof NEST_ROTATION_STEPS[number]
+export type NestRotationPreset = 'quarter' | 'grain' | 'none' | `step${NestRotationStep}`
+
+/** The angles 0, step, 2·step, … below a full turn. */
+export function rotationsForStep(step: number): number[] {
+  return Array.from({ length: Math.round(360 / step) }, (_, index) => index * step)
+}
+
+/** Every rotation choice, in the order the panel lists them. */
 export const NEST_ROTATIONS: Record<NestRotationPreset, number[]> = {
-  quarter: [0, 90, 180, 270],
+  quarter: rotationsForStep(90),
   grain: [0, 180],
   none: [0],
+  step45: rotationsForStep(45),
+  step30: rotationsForStep(30),
+  step15: rotationsForStep(15),
 }
 
 export function presetForRotations(rotations: number[]): NestRotationPreset {
   const key = [...rotations].sort((a, b) => a - b).join()
-  if (key === NEST_ROTATIONS.grain.join()) return 'grain'
-  if (key === NEST_ROTATIONS.none.join()) return 'none'
-  return 'quarter'
+  const presets = Object.keys(NEST_ROTATIONS) as NestRotationPreset[]
+  return presets.find((preset) => NEST_ROTATIONS[preset].join() === key) ?? 'quarter'
+}
+
+/** The step a preset rotates by, or null for the fixed presets. */
+export function stepOfPreset(preset: NestRotationPreset): NestRotationStep | null {
+  return NEST_ROTATION_STEPS.find((step) => preset === `step${step}`) ?? null
 }
 
 export interface NestSubject {

@@ -437,6 +437,7 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.nest.rotation.quarter': '任意 90° 旋转',
   'canvas.nest.rotation.grain': '保持纹理方向（0° / 180°）',
   'canvas.nest.rotation.none': '不旋转',
+  'canvas.nest.rotation.step': '每 {step}°',
   'canvas.nest.keepOriginals': '原件保持原位',
   'canvas.nest.gapFromTool': '刀具在零件之间至少需要 {gap} {units}。',
   'canvas.nest.gapNoTool': '没有外轮廓加工切割此零件，请输入刀具所需的间距。',

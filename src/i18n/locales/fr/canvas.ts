@@ -431,6 +431,7 @@ export const canvasFr: Record<keyof typeof canvasEn, string> = {
   'canvas.nest.rotation.quarter': 'Tout quart de tour',
   'canvas.nest.rotation.grain': 'Respecter le fil (0° / 180°)',
   'canvas.nest.rotation.none': 'Aucune rotation',
+  'canvas.nest.rotation.step': 'Tous les {step}°',
   'canvas.nest.keepOriginals': 'Garder les originaux en place',
   'canvas.nest.gapFromTool': 'La fraise a besoin d’au moins {gap} {units} entre les pièces.',
   'canvas.nest.gapNoTool': 'Aucun contournage extérieur ne découpe cette pièce, saisir l’écart nécessaire à la fraise.',

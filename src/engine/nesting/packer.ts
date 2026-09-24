@@ -63,6 +63,17 @@ import type { NestGravity, NestPart, NestPlacement, NestRequest, NestResult, Nes
  */
 const SAFETY_UNITS = 2
 
+/**
+ * Extra growth for a forbidden region built from a shape turned off the
+ * quarter turns (#867). Such a turn rounds every vertex to the grid, up to
+ * √2/2 unit, and it happens twice on the way to a no-fit polygon: turning the
+ * moving part to the relative angle, and turning the cached polygon to the
+ * fixed part's angle. Together with the √2/2 each union and difference may
+ * round away, that is at most 4 × √2/2 ≈ 2.83 units; growing by 4 in all
+ * keeps at least 4 − √2/2 ≈ 3.29 after the growth itself is rounded.
+ */
+const ROTATION_UNITS = 2
+
 /** A part's footprint at rotation 0, as given and as grown by the caller. */
 interface PartShape {
   raw: ClipperPath[]
@@ -179,13 +190,16 @@ export function createNester(request: NestRequest): Nester {
       const shape = shapeOf(part)
       const raw = rotatePaths(shape.raw, rotation)
       const grown = rotatePaths(shape.grown, rotation)
+      // Off the quarter turns the rounded outline can sit half a unit inside
+      // the exact one, so the box that keeps the part on the sheet is widened.
+      const slack = isQuarterTurn(rotation) ? 0 : 1
       entry = {
         key,
         part,
         rotation,
         rawPieces: raw.flatMap(convexPieces),
         grownPieces: grown.flatMap(convexPieces),
-        rawBox: pathsBox(raw),
+        rawBox: widenBox(pathsBox(raw), slack),
         grownBox: pathsBox(grown),
       }
       orientedCache.set(key, entry)
@@ -223,7 +237,8 @@ export function createNester(request: NestRequest): Nester {
         if (fits.length > 0) base = differencePaths(base, fits)
         nfpCache.set(baseKey, base)
       }
-      nfp = growPaths(rotatePaths(base, fixed.rotation), SAFETY_UNITS)
+      const exact = isQuarterTurn(relative) && isQuarterTurn(fixed.rotation)
+      nfp = growPaths(rotatePaths(base, fixed.rotation), SAFETY_UNITS + (exact ? 0 : ROTATION_UNITS))
       nfpCache.set(key, nfp)
     }
     return nfp
@@ -238,7 +253,7 @@ export function createNester(request: NestRequest): Nester {
         // close into a ring whose inside is where the part fits.
         ...noFitPolygon(outsideSheetPieces, moving.rawPieces, false),
       ]
-      paths = unionPaths(growPaths(base, SAFETY_UNITS))
+      paths = unionPaths(growPaths(base, SAFETY_UNITS + (isQuarterTurn(moving.rotation) ? 0 : ROTATION_UNITS)))
       fixedForbidden.set(moving.key, paths)
     }
     return paths
@@ -359,6 +374,15 @@ function holeFit(hole: Hole, moving: Oriented): ClipperPath[] {
   const fit = rectPath({ minX: xRange.lo, maxX: xRange.hi, minY: yRange.lo, maxY: yRange.hi })
   // Unfilled: the free positions are exactly the holes this polygon encloses.
   return differencePaths([fit], noFitPolygon(hole.framePieces, moving.grownPieces, false))
+}
+
+/** Whether a turn maps the integer grid onto itself, so rotating by it rounds nothing. */
+function isQuarterTurn(degrees: number): boolean {
+  return Math.abs(degrees / 90 - Math.round(degrees / 90)) < 1e-12
+}
+
+function widenBox(box: IntBox, units: number): IntBox {
+  return { minX: box.minX - units, minY: box.minY - units, maxX: box.maxX + units, maxY: box.maxY + units }
 }
 
 function normalizeRotation(degrees: number): number {

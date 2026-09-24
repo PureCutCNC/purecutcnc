@@ -482,6 +482,7 @@ export const canvasDe: Record<keyof typeof canvasEn, string> = {
   'canvas.nest.rotation.quarter': 'Jede Vierteldrehung',
   'canvas.nest.rotation.grain': 'Faserrichtung halten (0° / 180°)',
   'canvas.nest.rotation.none': 'Keine Drehung',
+  'canvas.nest.rotation.step': 'Alle {step}°',
   'canvas.nest.keepOriginals': 'Originale an ihrem Platz lassen',
   'canvas.nest.gapFromTool': 'Der Fräser braucht mindestens {gap} {units} zwischen den Teilen.',
   'canvas.nest.gapNoTool': 'Keine Außenkontur-Bearbeitung schneidet dieses Teil, bitte den nötigen Abstand eingeben.',
