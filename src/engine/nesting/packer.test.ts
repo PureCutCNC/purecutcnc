@@ -320,6 +320,17 @@ function testOddAnglesKeepTheExactGap(): void {
   }
 }
 
+function testReportsProgress(): void {
+  // Four fit and three do not: the progress counts every copy tried (#869).
+  const req = request({ parts: [part('sq', [rect(0, 0, 30, 30)], 7)] })
+  const calls: [number, number][] = []
+  const result = nest(req, (done, total) => calls.push([done, total]))
+  assert(countPlaced(result, 'sq') === 4 && unplacedCount(result, 'sq') === 3, 'four fit, three do not')
+  assert(calls.length === 8, `one call before each of 7 copies and one after, got ${calls.length}`)
+  assert(calls.every(([done, total], index) => done === index && total === 7), 'counts rise by one to the total')
+  assert(JSON.stringify(result) === JSON.stringify(nest(req)), 'reporting progress does not change the layout')
+}
+
 function testDeterministic(): void {
   const build = () => request({
     parts: [
@@ -374,6 +385,7 @@ const tests: [string, () => void][] = [
   ['a round hole', testRoundHole],
   ['a rotated host carries its hole', testRotatedHost],
   ['odd angles keep the exact gap', testOddAnglesKeepTheExactGap],
+  ['reports progress', testReportsProgress],
   ['deterministic', testDeterministic],
   ['rejects invalid input', testRejectsInvalidInput],
 ]

@@ -96,8 +96,15 @@ function converse<T>(
   })
 }
 
-/** Runs one nest job off the main thread; falls back to running inline without a Worker. */
-export function runNestJob(job: NestJob, options: WorkerOptions = {}): Promise<NestResult> {
+/**
+ * Runs one nest job off the main thread; falls back to running inline without
+ * a Worker. `onPlacing` hears how many copies have been tried (#869), a few
+ * times a second.
+ */
+export function runNestJob(
+  job: NestJob,
+  options: WorkerOptions & { onPlacing?: (done: number, total: number) => void } = {},
+): Promise<NestResult> {
   if (options.signal?.aborted) return Promise.reject(new NestCancelledError())
   const worker = startWorker(options)
   if (!worker) {
@@ -107,9 +114,10 @@ export function runNestJob(job: NestJob, options: WorkerOptions = {}): Promise<N
       return Promise.reject(error)
     }
   }
-  return converse(worker, { type: 'nest', job }, options.signal, (response) => (
-    response.type === 'result' ? response.result : undefined
-  ))
+  return converse(worker, { type: 'nest', job }, options.signal, (response) => {
+    if (response.type === 'placing') options.onPlacing?.(response.done, response.total)
+    return response.type === 'result' ? response.result : undefined
+  })
 }
 
 export interface NestImproveUpdate {

@@ -72,6 +72,18 @@ async function testResult(): Promise<void> {
   assert(worker.terminated === 1, 'worker terminated after')
 }
 
+async function testPlacingProgress(): Promise<void> {
+  const worker = new FakeWorker((posted) => [
+    { type: 'placing', done: 0, total: 4 },
+    { type: 'placing', done: 3, total: 4 },
+    { type: 'result', result: nest(requestFromJob(posted.job)) },
+  ])
+  const seen: string[] = []
+  const result = await runNestJob(job, { createWorker: () => worker, onPlacing: (done, total) => seen.push(`${done}/${total}`) })
+  assert(seen.join() === '0/4,3/4', `placing progress is forwarded, got ${seen.join()}`)
+  assert(result.placements.length === 4 && worker.terminated === 1, 'the result still settles the run')
+}
+
 async function testError(): Promise<void> {
   const worker = new FakeWorker(() => [{ type: 'error', message: 'boom' }])
   let message = ''
@@ -167,6 +179,7 @@ async function testImproveInline(): Promise<void> {
 }
 
 await testResult()
+await testPlacingProgress()
 await testError()
 await testCancel()
 await testInlineFallback()

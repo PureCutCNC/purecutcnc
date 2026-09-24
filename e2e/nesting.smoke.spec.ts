@@ -165,7 +165,9 @@ test('Nest on stock arranges copies of a part and Discard removes them', async (
   await expect(run).toBeEnabled()
   await run.click()
 
-  await expect(panel.getByRole('status')).toHaveText('All 6 parts fit on the stock.')
+  // The running line (#869) is gone once the result is in; the result says how long it took.
+  await expect(panel.locator('.canvas-workflow-panel__running')).toHaveCount(0)
+  await expect(panel.getByRole('status')).toHaveText(/^All 6 parts fit on the stock\. Took \d+:\d\d\.$/)
   await expect.poll(() => getFeatureCount(page)).toBe(12)
   const nested = await getProject(page) as {
     nests?: { name: string; settings: { rotations: number[] } }[]
@@ -187,6 +189,8 @@ test('Nest on stock arranges copies of a part and Discard removes them', async (
   await expect(titleButtons).toHaveCount(1)
   await panel.getByRole('button', { name: 'Stop', exact: true }).click({ timeout: 2_000 }).catch(() => undefined)
   await expect(keepImproving).toBeVisible({ timeout: 30_000 })
+  await expect(panel.getByRole('status').filter({ hasText: /layouts tried/ })).toHaveText(/Searched for \d+:\d\d\.$/)
+  await expect(panel.locator('.inline-spinner')).toHaveCount(0)
   await expect.poll(() => getFeatureCount(page)).toBe(12)
   await panel.getByRole('button', { name: 'Discard nest', exact: true }).click()
   await expect.poll(() => getFeatureCount(page)).toBe(2)
@@ -217,7 +221,7 @@ test('Nest on stock takes a quantity per part when several parts are selected', 
   await panel.getByLabel('Gap (inch)').fill('0.25')
   await panel.getByRole('button', { name: 'Nest', exact: true }).click()
 
-  await expect(panel.getByRole('status')).toHaveText('All 5 parts fit on the stock.')
+  await expect(panel.getByRole('status')).toHaveText(/^All 5 parts fit on the stock\. Took \d+:\d\d\.$/)
   // 3 plates with their pockets, 2 brackets.
   await expect.poll(() => getFeatureCount(page)).toBe(8)
   const nested = await getProject(page) as { nests?: { parts: { quantity: number }[] }[] }
@@ -243,7 +247,7 @@ test('Nest panel keeps every control on screen with 26 parts, and Cancel reverts
 
   await panel.getByLabel('Gap (inch)').fill('0.25')
   await panel.getByRole('button', { name: 'Nest', exact: true }).click()
-  await expect(panel.getByRole('status')).toHaveText('All 26 parts fit on the stock.')
+  await expect(panel.getByRole('status')).toHaveText(/^All 26 parts fit on the stock\. Took \d+:\d\d\.$/)
   // Quantity 1 each: the originals are laid out, not copied.
   await expect.poll(() => nestCount(page)).toBe(1)
 

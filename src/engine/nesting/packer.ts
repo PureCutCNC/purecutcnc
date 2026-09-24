@@ -131,12 +131,18 @@ export interface Nester {
    * the same part — identical shapes facing a region that only grows — are
    * reported unplaced without being tried.
    */
-  place(sequence: string[]): NestResult
+  place(sequence: string[], onProgress?: NestProgress): NestResult
 }
 
-export function nest(request: NestRequest): NestResult {
+/**
+ * Told how many copies of `total` have been tried, before the first and after
+ * each one (#869), so a caller can show how far a long nest has got.
+ */
+export type NestProgress = (done: number, total: number) => void
+
+export function nest(request: NestRequest, onProgress?: NestProgress): NestResult {
   const nester = createNester(request)
-  return nester.place(nester.initialSequence)
+  return nester.place(nester.initialSequence, onProgress)
 }
 
 export function createNester(request: NestRequest): Nester {
@@ -262,7 +268,7 @@ export function createNester(request: NestRequest): Nester {
   const initialSequence = request.orderParts(request.parts)
     .flatMap((part) => Array.from({ length: Math.max(0, part.quantity) }, () => part.id))
 
-  function place(sequence: string[]): NestResult {
+  function place(sequence: string[], onProgress?: NestProgress): NestResult {
     validateSequence(request.parts, sequence)
     const forbidden = new Map<string, ForbiddenRegion>()
     const placed: Placed[] = []
@@ -288,7 +294,8 @@ export function createNester(request: NestRequest): Nester {
       return region.paths
     }
 
-    for (const partId of sequence) {
+    for (const [done, partId] of sequence.entries()) {
+      onProgress?.(done, sequence.length)
       const part = partsById.get(partId)!
       const failed = unplaced.find((entry) => entry.partId === partId)
       if (failed) {
@@ -337,6 +344,7 @@ export function createNester(request: NestRequest): Nester {
       })
     }
 
+    onProgress?.(sequence.length, sequence.length)
     const usedArea = placedBox
       ? ((placedBox.maxX - placedBox.minX) / NEST_SCALE) * ((placedBox.maxY - placedBox.minY) / NEST_SCALE)
       : 0

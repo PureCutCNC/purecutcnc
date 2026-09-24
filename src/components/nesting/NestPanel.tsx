@@ -41,6 +41,7 @@ import {
   type NestFormError,
   type NestRotationPreset,
 } from './nestForm'
+import { formatElapsed } from './nestProgress'
 import { improveNestJob, NestCancelledError, runNestJob } from './nestWorkerClient'
 
 interface NestPanelHostProps {
@@ -51,12 +52,23 @@ interface NestPanelHostProps {
 
 type NestRun =
   | { state: 'idle' }
-  | { state: 'running' }
-  | { state: 'done'; placed: number; requested: number; missing: { name: string; count: number }[] }
+  /** `total` is null until the worker's first report. */
+  | { state: 'running'; startedAt: number; done: number; total: number | null }
+  | {
+    state: 'done'
+    placed: number
+    requested: number
+    missing: { name: string; count: number }[]
+    /** How long the one-shot nest took; absent for a layout the search found. */
+    elapsedMs?: number
+  }
   | { state: 'failed'; message: string }
 
 interface NestImprove {
   running: boolean
+  startedAt: number
+  /** When the search ended; null while it runs. */
+  endedAt: number | null
   evaluated: number
   /** The one-shot answer, as the search re-placed it. */
   first: NestResult | null
@@ -65,8 +77,22 @@ interface NestImprove {
   ended: 'stalled' | 'changed' | null
 }
 
+/**
+ * The current time, ticking once a second while `active` (#869). Until the
+ * first tick it can trail a run's start, which the elapsed format shows as 0:00.
+ */
+function useClock(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!active) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [active])
+  return now
+}
+
 /** What the result line reports for a layout of `parts` placed with `quantities`. */
-function summarize(result: NestResult, parts: NestPartSpec[], quantities: number[], keepOriginals: boolean): NestRun {
+function summarize(result: NestResult, parts: NestPartSpec[], quantities: number[], keepOriginals: boolean): Extract<NestRun, { state: 'done' }> {
   const requested = quantities.reduce((sum, quantity) => sum + quantity, 0)
   const missing = result.unplaced.map((entry) => ({ name: parts[Number(entry.partId)]?.name ?? '', count: entry.count }))
   return { state: 'done', placed: result.placements.length + (keepOriginals ? parts.length : 0), requested, missing }
@@ -133,6 +159,7 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
   // is someone else's, and undoing past it would take it too.
   const ownStepsRef = useRef({ count: 0, history: null as object | null })
   const busy = run.state === 'running' || improve?.running === true
+  const now = useClock(busy)
   useEffect(() => () => abortRef.current?.abort(), [])
 
   // The part list can change under an open panel (undo, a replaced nest);
@@ -162,10 +189,14 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
     }
     const controller = new AbortController()
     abortRef.current = controller
-    setRun({ state: 'running' })
+    const startedAt = Date.now()
+    setRun({ state: 'running', startedAt, done: 0, total: null })
     setImprove(null)
     try {
-      const result = await runNestJob(job, { signal: controller.signal })
+      const result = await runNestJob(job, {
+        signal: controller.signal,
+        onPlacing: (done, total) => setRun((current) => (current.state === 'running' ? { ...current, done, total } : current)),
+      })
       if (result.placements.length > 0) {
         const id = applyNest({
           parts: parts.map((part, index) => ({ featureIds: part.featureIds, quantity: quantities[index] })),
@@ -175,7 +206,7 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
         })
         if (id) recordOwnStep(true)
       }
-      setRun(summarize(result, parts, quantities, settings.keepOriginals))
+      setRun({ ...summarize(result, parts, quantities, settings.keepOriginals), elapsedMs: Date.now() - startedAt })
     } catch (error: unknown) {
       if (error instanceof NestCancelledError) setRun({ state: 'idle' })
       else setRun({ state: 'failed', message: error instanceof Error ? error.message : String(error) })
@@ -204,7 +235,15 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
     let nestId = record.id
     let amend = false
     const edits = watchForEdits(() => useProjectStore.getState().history)
-    let state: NestImprove = { running: true, evaluated: 0, first: null, best: null, ended: null }
+    let state: NestImprove = {
+      running: true,
+      startedAt: Date.now(),
+      endedAt: null,
+      evaluated: 0,
+      first: null,
+      best: null,
+      ended: null,
+    }
     setImprove(state)
     // Better layouts are applied live; toolpaths regenerate once, at the end.
     setNestSearching(true)
@@ -250,7 +289,7 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
     } finally {
       setNestSearching(false)
       if (abortRef.current === controller) abortRef.current = null
-      setImprove({ ...state, running: false })
+      setImprove({ ...state, running: false, endedAt: Date.now() })
     }
   }
 
@@ -416,6 +455,19 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
               : t('canvas.nest.gapNoTool')}
           </p>
           {formError && <p className="canvas-workflow-panel__warning" role="alert">{t(FORM_ERROR_KEYS[formError])}</p>}
+          {run.state === 'running' && (
+            <p className="canvas-workflow-panel__summary canvas-workflow-panel__running" role="status" aria-live="polite">
+              <span className="inline-spinner" aria-hidden="true" />
+              <span>
+                {run.total === null
+                  ? t('canvas.nest.running', { elapsed: formatElapsed(now - run.startedAt) })
+                  : tPlural(run.total, 'canvas.nest.running.progress.one', 'canvas.nest.running.progress.other', {
+                    done: run.done,
+                    elapsed: formatElapsed(now - run.startedAt),
+                  })}
+              </span>
+            </p>
+          )}
           {run.state === 'done' && (
             <p className="canvas-workflow-panel__summary" role="status">
               {run.missing.length === 0
@@ -429,9 +481,10 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
                 <> {t('canvas.nest.result.missing', { list: run.missing.map((entry) => `${entry.name} ×${entry.count}`).join(', ') })}</>
               )}
               {run.placed > 0 && project.tabs.length > 0 && <> {t('canvas.nest.result.tabs')}</>}
+              {run.elapsedMs !== undefined && <> {t('canvas.nest.took', { elapsed: formatElapsed(run.elapsedMs) })}</>}
             </p>
           )}
-          {improve && <NestImproveStatus improve={improve} />}
+          {improve && <NestImproveStatus improve={improve} now={now} />}
           {run.state === 'failed' && <p className="canvas-workflow-panel__warning" role="alert">{run.message}</p>}
           <div className="canvas-workflow-panel__picking-actions canvas-workflow-panel__nest-actions">
             {busy ? (
@@ -453,7 +506,7 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
   )
 }
 
-function NestImproveStatus({ improve }: { improve: NestImprove }) {
+function NestImproveStatus({ improve, now }: { improve: NestImprove; now: number }) {
   const { t, tPlural } = useI18n()
   const { first, best } = improve
   let gain = t('canvas.nest.improve.none')
@@ -464,10 +517,19 @@ function NestImproveStatus({ improve }: { improve: NestImprove }) {
       : t('canvas.nest.improve.gain', { percent: (100 * (1 - best.usedArea / first.usedArea)).toFixed(1) })
   }
   return (
-    <p className="canvas-workflow-panel__summary" role="status" aria-live="polite">
-      {tPlural(improve.evaluated, 'canvas.nest.improve.tried.one', 'canvas.nest.improve.tried.other')} {gain}
-      {improve.ended === 'stalled' && <> {t('canvas.nest.improve.stalled')}</>}
-      {improve.ended === 'changed' && <> {t('canvas.nest.improve.changed')}</>}
+    <p
+      className={`canvas-workflow-panel__summary${improve.running ? ' canvas-workflow-panel__running' : ''}`}
+      role="status"
+      aria-live="polite"
+    >
+      {improve.running && <span className="inline-spinner" aria-hidden="true" />}
+      <span>
+        {improve.running && <>{t('canvas.nest.improve.searching', { elapsed: formatElapsed(now - improve.startedAt) })} </>}
+        {tPlural(improve.evaluated, 'canvas.nest.improve.tried.one', 'canvas.nest.improve.tried.other')} {gain}
+        {improve.ended === 'stalled' && <> {t('canvas.nest.improve.stalled')}</>}
+        {improve.ended === 'changed' && <> {t('canvas.nest.improve.changed')}</>}
+        {improve.endedAt !== null && <> {t('canvas.nest.improve.took', { elapsed: formatElapsed(improve.endedAt - improve.startedAt) })}</>}
+      </span>
     </p>
   )
 }
