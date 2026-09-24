@@ -18,6 +18,10 @@
 // (#862) runs until the search stalls, reporting every layout it places.
 
 import { improveNest, nest, requestFromJob, type NestJob, type NestResult } from '../../engine/nesting'
+import { throttle } from './nestProgress'
+
+/** How often a one-shot nest reports how many copies it has tried (#869). */
+const PLACING_INTERVAL_MS = 250
 
 export type NestWorkerRequest =
   | { type: 'nest'; job: NestJob }
@@ -25,6 +29,8 @@ export type NestWorkerRequest =
 
 export type NestWorkerResponse =
   | { type: 'result'; result: NestResult }
+  /** A one-shot nest has tried `done` of `total` copies; throttled. */
+  | { type: 'placing'; done: number; total: number }
   /** One per layout placed; `best` rides along on the first and on each improvement. */
   | { type: 'progress'; evaluated: number; best?: NestResult }
   | { type: 'done'; evaluated: number }
@@ -41,7 +47,10 @@ self.onmessage = (event) => {
   const message = event.data
   try {
     if (message.type === 'nest') {
-      self.postMessage({ type: 'result', result: nest(requestFromJob(message.job)) })
+      const placing = throttle((done: number, total: number) => {
+        self.postMessage({ type: 'placing', done, total })
+      }, PLACING_INTERVAL_MS)
+      self.postMessage({ type: 'result', result: nest(requestFromJob(message.job), placing) })
       return
     }
     let evaluated = 0

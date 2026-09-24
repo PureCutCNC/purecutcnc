@@ -125,6 +125,19 @@
   line-height: 1.35;
 }
 
+/* A nest or search in progress (#869): spinner beside a ticking clock. */
+.canvas-workflow-panel__running {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.canvas-workflow-panel__running .inline-spinner {
+  flex-shrink: 0;
+  align-self: center;
+}
+
 .canvas-workflow-panel__meta {
   display: flex;
   align-items: center;
