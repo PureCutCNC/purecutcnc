@@ -326,6 +326,14 @@
   flex: none;
 }
 
+/* Messages change as a nest runs and a search goes on, and the panel is sized
+   to its content: they wrap at the width the form sets instead of widening it
+   (#870). A zero width keeps them out of the panel's max-content size. */
+.canvas-workflow-panel--nest .canvas-workflow-panel__body > p {
+  width: 0;
+  min-width: 100%;
+}
+
 .canvas-workflow-panel--nest .canvas-workflow-panel__body > .canvas-workflow-panel__parts {
   display: flex;
   flex: 0 1 auto;
