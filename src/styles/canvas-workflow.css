@@ -301,6 +301,13 @@
   gap: 6px;
 }
 
+/* The row swaps between one Stop button and up to four actions as a nest runs,
+   so like the messages it takes no part in the panel's width (#871). */
+.canvas-workflow-panel--nest .canvas-workflow-panel__nest-actions {
+  width: 0;
+  min-width: 100%;
+}
+
 /* One quantity row per selected part: a 26-letter selection would push the
    panel past the window. The panel is capped at the space below its own top
    edge, and the parts list is the one piece that gives way — it shrinks and
