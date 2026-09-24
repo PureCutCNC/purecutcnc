@@ -105,6 +105,7 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
   const applyNest = useProjectStore((s) => s.applyNest)
   const discardNest = useProjectStore((s) => s.discardNest)
   const cancelNest = useProjectStore((s) => s.cancelNest)
+  const setNestSearching = useProjectStore((s) => s.setNestSearching)
   const units = project.meta.units
 
   // After a nest is applied the selection's rows belong to it, so the same
@@ -183,6 +184,8 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
     const edits = watchForEdits(() => useProjectStore.getState().history)
     let state: NestImprove = { running: true, evaluated: 0, first: null, best: null, ended: null }
     setImprove(state)
+    // Better layouts are applied live; toolpaths regenerate once, at the end.
+    setNestSearching(true)
     try {
       await improveNestJob(job, {
         signal: controller.signal,
@@ -222,6 +225,7 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
         setRun({ state: 'failed', message: error instanceof Error ? error.message : String(error) })
       }
     } finally {
+      setNestSearching(false)
       if (abortRef.current === controller) abortRef.current = null
       setImprove({ ...state, running: false })
     }

@@ -117,7 +117,6 @@ function App() {
     selection,
     startAddRectPlacement,
     pendingAdd,
-    history,
   } = useProjectStore()
 
   const {
@@ -221,6 +220,10 @@ function App() {
   // toolpath was computed cannot change what it is (issue #675).
   const generationBackend = useExecutorPreference()
 
+  // Coalesce during gestures (issue #518, S4) and nest searches (#862): one
+  // drag or search regenerates once, when it ends, not on every change.
+  const deferGeneration = useProjectStore((s) => s.history.transactionStart !== null || s.nestSearching)
+
   const {
     requestToolpath,
     requestGenerationTrace,
@@ -238,10 +241,7 @@ function App() {
   } = useToolpathGeneration(
     project,
     selectedOperation,
-    // Coalesce during gestures (issue #518, S4): `transactionStart` is open
-    // for the duration of a drag, so one gesture produces one regeneration
-    // instead of one per pointermove.
-    history.transactionStart !== null,
+    deferGeneration,
     // The document session (issue #675). A result produced before a new or
     // opened file must never land on the one that replaced it.
     projectKey,
