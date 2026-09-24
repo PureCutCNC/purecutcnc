@@ -14,24 +14,44 @@
  * limitations under the License.
  */
 // Worker entry for sheet nesting (issue #848). One job per worker: the client
-// terminates it on completion, failure and cancellation.
+// terminates it on completion, failure and cancellation. An improve job
+// (#862) runs until the search stalls, reporting every layout it places.
 
-import { nest, requestFromJob, type NestJob, type NestResult } from '../../engine/nesting'
+import { improveNest, nest, requestFromJob, type NestJob, type NestResult } from '../../engine/nesting'
+
+export type NestWorkerRequest =
+  | { type: 'nest'; job: NestJob }
+  | { type: 'improve'; job: NestJob; seed?: number }
 
 export type NestWorkerResponse =
   | { type: 'result'; result: NestResult }
+  /** One per layout placed; `best` rides along on the first and on each improvement. */
+  | { type: 'progress'; evaluated: number; best?: NestResult }
+  | { type: 'done'; evaluated: number }
   | { type: 'error'; message: string }
 
 interface NestWorkerScope {
   postMessage(message: NestWorkerResponse): void
-  onmessage: ((event: MessageEvent<NestJob>) => void) | null
+  onmessage: ((event: MessageEvent<NestWorkerRequest>) => void) | null
 }
 
 declare const self: NestWorkerScope
 
 self.onmessage = (event) => {
+  const message = event.data
   try {
-    self.postMessage({ type: 'result', result: nest(requestFromJob(event.data)) })
+    if (message.type === 'nest') {
+      self.postMessage({ type: 'result', result: nest(requestFromJob(message.job)) })
+      return
+    }
+    let evaluated = 0
+    for (const step of improveNest(requestFromJob(message.job), { seed: message.seed })) {
+      evaluated = step.evaluated
+      self.postMessage(step.improved || evaluated === 1
+        ? { type: 'progress', evaluated, best: step.best }
+        : { type: 'progress', evaluated })
+    }
+    self.postMessage({ type: 'done', evaluated })
   } catch (error: unknown) {
     self.postMessage({ type: 'error', message: error instanceof Error ? error.message : String(error) })
   }

@@ -137,6 +137,15 @@ test('Nest on stock arranges copies of a part and Discard removes them', async (
 
   // The panel now targets the nest it just made.
   await expect(panel.getByRole('button', { name: 'Nest again', exact: true })).toBeVisible()
+
+  // Keep improving searches on in the worker (#862). Identical copies never
+  // improve, so the search may stall on its own before Stop lands.
+  const keepImproving = panel.getByRole('button', { name: 'Keep improving', exact: true })
+  await keepImproving.click()
+  await expect(panel.getByRole('status').filter({ hasText: /layouts tried/ })).toBeVisible()
+  await panel.getByRole('button', { name: 'Stop', exact: true }).click({ timeout: 2_000 }).catch(() => undefined)
+  await expect(keepImproving).toBeVisible({ timeout: 30_000 })
+  await expect.poll(() => getFeatureCount(page)).toBe(12)
   await panel.getByRole('button', { name: 'Discard nest', exact: true }).click()
   await expect.poll(() => getFeatureCount(page)).toBe(2)
   const discarded = await getProject(page) as { nests?: unknown[]; featureFolders: unknown[] }

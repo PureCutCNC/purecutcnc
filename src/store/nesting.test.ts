@@ -116,7 +116,7 @@ function onePart(project: Project, selected: string[]): NestPartSpec {
 }
 
 /** Runs the whole pipeline the UI will: resolve, request, pack, commit. */
-function nestIntoStore(selected: string[], run: TestRun, replaceNestId?: string): { nestId: string; placed: number; unplaced: number } {
+function nestIntoStore(selected: string[], run: TestRun, replaceNestId?: string, amend = false): { nestId: string; placed: number; unplaced: number } {
   const current = useProjectStore.getState().project
   const project = replaceNestId ? discardNestFromProject(current, replaceNestId)! : current
   const resolution = resolveNestParts(project, selected)
@@ -132,6 +132,7 @@ function nestIntoStore(selected: string[], run: TestRun, replaceNestId?: string)
     placements: result.placements,
     settings: nestSettings,
     replaceNestId,
+    amend,
   })
   assert(nestId, 'nest applied')
   return { nestId, placed: result.placements.length, unplaced: result.unplaced.reduce((sum, entry) => sum + entry.count, 0) }
@@ -401,6 +402,23 @@ function testReplaceNestIsOneStep(): void {
   console.log('replace nest: PASSED')
 }
 
+function testAmendedNestStaysOneStep(): void {
+  const before = makeProject()
+  resetStore(before)
+  const { nestId } = nestIntoStore(['plate'], settings({ quantity: 3 }))
+  // The keep-improving search swaps in a better layout of the same nest (#862).
+  const sources = useProjectStore.getState().project.nests![0].parts[0].sourceIds
+  const { nestId: amendedId } = nestIntoStore(sources, settings({ quantity: 3 }), nestId, true)
+  const after = useProjectStore.getState()
+  assert(amendedId !== nestId && after.project.nests?.length === 1, 'the amended layout replaces the nest')
+  assert(after.history.past.length === 1, 'amending adds no history entry')
+  after.undo()
+  const undone = useProjectStore.getState().project
+  assert(JSON.stringify(undone.features) === JSON.stringify(before.features), 'one undo restores the design')
+  assert(!undone.nests, 'one undo drops the nest')
+  console.log('amended nest stays one step: PASSED')
+}
+
 testPartResolution()
 testApplyIsOneStepAndMachinesEveryCopy()
 testDiscardRestoresTheDesign()
@@ -410,4 +428,5 @@ testSaveLoadRoundTrip()
 testCurvedPartsKeepTheGap()
 testClampsAreAvoided()
 testReplaceNestIsOneStep()
+testAmendedNestStaysOneStep()
 console.log('All nesting store tests passed')

@@ -16,7 +16,8 @@
 
 // Sheet nesting (issue #741): places copies of part footprints on a sheet.
 
-export { nest } from './packer'
+export { createNester, nest, type Nester } from './packer'
+export { DEFAULT_IMPROVE_OPTIONS, improveNest, isBetterNest, type ImproveOptions, type ImproveStep } from './improve'
 export { expandByHalfGap, largestFirst, shrinkByHalfGap } from './defaults'
 export { flattenProfileWithin } from './flatten'
 export { simplifyRing } from './simplify'

@@ -23,7 +23,7 @@ import { sanitizeSelection } from './selectionSlice'
 
 export type NestingSlice = Pick<ProjectStore, 'pendingNest' | 'startNest' | 'cancelNest' | 'applyNest' | 'discardNest'>
 
-/** Sheet nesting commits (issue #741). Each action is exactly one history entry. */
+/** Sheet nesting commits (issue #741). Each action is exactly one history entry; an amended nest (#862) adds none. */
 export function createNestingSlice(
   set: Parameters<StateCreator<ProjectStore>>[0],
 ): NestingSlice {
@@ -65,11 +65,13 @@ export function createNestingSlice(
             mode: 'feature' as const,
             activeControl: null,
           },
-          history: {
-            past: [...s.history.past, cloneProject(s.project)].slice(-100),
-            future: [],
-            transactionStart: null,
-          },
+          history: input.amend
+            ? { ...s.history, future: [], transactionStart: null }
+            : {
+              past: [...s.history.past, cloneProject(s.project)].slice(-100),
+              future: [],
+              transactionStart: null,
+            },
         }
       })
       return nestId
