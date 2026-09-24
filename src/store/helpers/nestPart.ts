@@ -27,11 +27,30 @@ import {
   type NestRequest,
   type NestRing,
 } from '../../engine/nesting'
-import { differencePaths, NEST_SCALE, outerContours, pathToRing, ringToPath } from '../../engine/nesting/clipperOps'
-import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
+import {
+  differencePaths,
+  NEST_SCALE,
+  outerContours,
+  pathToRing,
+  regionComponents,
+  ringToPath,
+  unionPaths,
+} from '../../engine/nesting/clipperOps'
+import { normalizeToolForProject, resolveFeatureZSpan } from '../../engine/toolpaths/geometry'
 import type { ClipperPath } from '../../engine/toolpaths/types'
-import { getFeatureGeometryProfiles } from '../../text'
-import { getStockBounds, type LocalConstraint, type Matrix2D, type NestRecord, type NestSettings, type Point, type Project } from '../../types/project'
+import { getFeatureGeometryProfiles, isTextFeature, resolveTextFeatureShapes } from '../../text'
+import {
+  getStockBounds,
+  type FeatureOperation,
+  type LocalConstraint,
+  type Matrix2D,
+  type NestRecord,
+  type NestSettings,
+  type OperationKind,
+  type Point,
+  type Project,
+  type SketchProfile,
+} from '../../types/project'
 import { isMachinable } from './featureRoles'
 import { resolvedProjectFeatures, type ResolvedSketchFeature } from './resolveFeatures'
 
@@ -111,6 +130,8 @@ export interface NestPartSpec {
   featureIds: string[]
   /** Filled outer contours of its closed machinable outlines. */
   footprint: NestRing[]
+  /** Holes other parts may be placed in (see {@link nestPartHoles}). */
+  holes: NestRing[]
   /** A grouped folder's name, or the name of the part's largest feature. */
   name: string
 }
@@ -231,7 +252,12 @@ export function resolveNestParts(project: Project, selectedIds: string[]): NestP
     const largest = featureIds
       .map((id) => ({ id, area: pathsArea(closed(id)) }))
       .reduce((best, entry) => (entry.area > best.area ? entry : best), { id: featureIds[0], area: -1 })
-    parts.push({ featureIds, footprint: draft.outline.map(pathToRing), name: draft.name ?? byId.get(largest.id)!.name })
+    parts.push({
+      featureIds,
+      footprint: draft.outline.map(pathToRing),
+      holes: nestPartHoles(project, featureIds.map((id) => byId.get(id)!), tolerance),
+      name: draft.name ?? byId.get(largest.id)!.name,
+    })
   }
   const spanning = project.global_constraints.find((constraint) => parts.some((part) => (
     constraint.feature_ids.some((id) => part.featureIds.includes(id)) && constraint.feature_ids.some((id) => !part.featureIds.includes(id))
@@ -241,6 +267,104 @@ export function resolveNestParts(project: Project, selectedIds: string[]): NestP
   }
   parts.sort((a, b) => order.get(a.featureIds[0])! - order.get(b.featureIds[0])!)
   return { ok: true, parts }
+}
+
+/** Operations that cut only along a boundary, leaving what it encloses whole. */
+const EDGE_ROUTE_KINDS: ReadonlySet<OperationKind> = new Set(['edge_route_inside', 'edge_route_outside'])
+
+/** Nothing clears, drills or carves inside the feature: every operation targeting it only routes its edge. */
+function onlyEdgeRouted(project: Project, featureId: string): boolean {
+  return project.operations.every((operation) => (
+    operation.target.source !== 'features'
+    || !operation.target.featureIds.includes(featureId)
+    || EDGE_ROUTE_KINDS.has(operation.kind)
+  ))
+}
+
+function intersectionArea(a: ClipperPath[], b: ClipperPath[]): number {
+  if (a.length === 0 || b.length === 0) return 0
+  const clipper = new ClipperLib.Clipper()
+  clipper.AddPaths(a, ClipperLib.PolyType.ptSubject, true)
+  clipper.AddPaths(b, ClipperLib.PolyType.ptClip, true)
+  const solution: ClipperPath[] = new ClipperLib.Paths()
+  clipper.Execute(ClipperLib.ClipType.ctIntersection, solution, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero)
+  return solution.reduce((sum, path) => sum + ClipperLib.Clipper.Area(path), 0)
+}
+
+/** An open polyline as a closed sliver two units wide, so it can be intersected. */
+function polylineSliver(ring: NestRing): ClipperPath[] {
+  const offset = new ClipperLib.ClipperOffset()
+  offset.AddPaths([ringToPath(ring)], ClipperLib.JoinType.jtSquare, ClipperLib.EndType.etOpenSquare)
+  const solution: ClipperPath[] = new ClipperLib.Paths()
+  offset.Execute(solution, 1)
+  return solution
+}
+
+interface PartShape {
+  featureId: string
+  operation: FeatureOperation
+  profile: SketchProfile
+  min: number
+  max: number
+}
+
+/**
+ * Holes another part may be placed in (#859): regions enclosed by the part's
+ * material where nothing would machine a part lying inside.
+ *
+ * The material is built in row order: add shapes are unioned, and a subtract
+ * shape that cuts the part's full depth and is only ever edge-routed opens it.
+ * A text feature's counters are such subtracts. A hole survives only if every
+ * other shape either misses it or covers it whole — so no open profile, other
+ * subtract or crossing boundary lies inside, while an island of material may.
+ * Anything doubtful drops the hole, which costs placements, never clearance.
+ */
+export function nestPartHoles(project: Project, features: ResolvedSketchFeature[], tolerance: number): NestRing[] {
+  const shapes: PartShape[] = features.filter(isMachinable).flatMap((feature) => {
+    const span = resolveFeatureZSpan(project, feature)
+    const own = isTextFeature(feature)
+      ? resolveTextFeatureShapes(feature)
+      : [{ operation: feature.operation, profile: feature.sketch.profile }]
+    return own.map((shape) => ({ featureId: feature.id, operation: shape.operation, profile: shape.profile, min: span.min, max: span.max }))
+  })
+  const adds = shapes.filter((shape) => shape.operation === 'add' && shape.profile.closed)
+  if (adds.length === 0) return []
+  const top = Math.max(...adds.map((shape) => shape.max))
+  const bottom = Math.min(...adds.map((shape) => shape.min))
+  const Z_EPSILON = 1e-9
+  const edgeRouted = new Map<string, boolean>()
+  const opens = (shape: PartShape) => {
+    if (shape.operation !== 'subtract' || !shape.profile.closed) return false
+    if (shape.max < top - Z_EPSILON || shape.min > bottom + Z_EPSILON) return false
+    if (!edgeRouted.has(shape.featureId)) edgeRouted.set(shape.featureId, onlyEdgeRouted(project, shape.featureId))
+    return edgeRouted.get(shape.featureId)!
+  }
+
+  const pathsOf = new Map<PartShape, ClipperPath[]>()
+  for (const shape of shapes) {
+    const ring = flattenProfileWithin(shape.profile, tolerance)
+    pathsOf.set(shape, shape.profile.closed ? (ring.length >= 3 ? [ringToPath(ring)] : []) : polylineSliver(ring))
+  }
+  let material: ClipperPath[] = []
+  for (const shape of shapes) {
+    if (shape.operation === 'add' && shape.profile.closed) material = unionPaths([...material, ...pathsOf.get(shape)!])
+    else if (opens(shape)) material = differencePaths(material, pathsOf.get(shape)!)
+  }
+  const components = regionComponents(differencePaths(outerContours(material), material))
+
+  return components.filter((component) => {
+    const area = component.reduce((sum, path) => sum + ClipperLib.Clipper.Area(path), 0)
+    // A two-unit sliver along the boundary absorbs Clipper's rounding.
+    const slack = 2 * component.reduce((sum, path) => sum + perimeter(pathToRing(path)) * NEST_SCALE, 0)
+    return shapes.every((shape) => {
+      const overlap = intersectionArea(pathsOf.get(shape)!, component)
+      // A path is thinner than the slack, so any touch at all counts.
+      if (!shape.profile.closed) return overlap <= 0
+      if (overlap <= slack) return true
+      const bounding = shape.profile.closed && (shape.operation === 'add' || opens(shape))
+      return bounding && overlap >= area - slack
+    })
+  }).flatMap((component) => component.map(pathToRing))
 }
 
 /**
@@ -325,7 +449,7 @@ export function nestSimplifyTolerance(project: Pick<Project, 'meta'>): number {
  */
 export function buildNestJob(
   project: Project,
-  parts: Pick<NestPartSpec, 'featureIds' | 'footprint'>[],
+  parts: Pick<NestPartSpec, 'featureIds' | 'footprint' | 'holes'>[],
   quantities: number[],
   settings: NestSettings,
 ): NestJob | null {
@@ -342,6 +466,7 @@ export function buildNestJob(
     parts: parts.map((part, index) => ({
       id: String(index),
       footprint: part.footprint,
+      holes: part.holes,
       quantity: Math.max(0, (quantities[index] ?? 0) - (settings.keepOriginals ? 1 : 0)),
       rotations: settings.rotations,
     })),
@@ -355,7 +480,7 @@ export function buildNestJob(
 /** A ready-to-run packer request (see `buildNestJob`). */
 export function buildNestRequest(
   project: Project,
-  parts: Pick<NestPartSpec, 'featureIds' | 'footprint'>[],
+  parts: Pick<NestPartSpec, 'featureIds' | 'footprint' | 'holes'>[],
   quantities: number[],
   settings: NestSettings,
 ): NestRequest | null {

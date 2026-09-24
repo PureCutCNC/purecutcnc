@@ -23,12 +23,18 @@ export type NestRing = Point[]
  * One kind of part to place. Every copy is the same rigid shape.
  *
  * `footprint` holds outer boundaries only. Overlapping or nested rings are
- * unioned, and any hole the union leaves is ignored — nothing is placed inside
- * a part (part-in-hole placement is a later step of #741).
+ * unioned, and any hole the union leaves is filled.
  */
 export interface NestPart {
   id: string
   footprint: NestRing[]
+  /**
+   * Empty regions inside the footprint that other parts may be placed in
+   * (#859), such as the counter of an O. Read with the non-zero rule: a
+   * counter-clockwise ring encloses a hole and a clockwise ring inside it is an
+   * island of material. Used only with `NestRequest.shrinkHoles`.
+   */
+  holes?: NestRing[]
   quantity: number
   /** Allowed rotations in degrees, counter-clockwise in the ring's own axes. */
   rotations: number[]
@@ -40,6 +46,13 @@ export interface NestPart {
  * obstacles alike, never to the sheet.
  */
 export type ExpandFootprint = (rings: NestRing[], minimumGap: number) => NestRing[]
+
+/**
+ * The mirror of {@link ExpandFootprint} for holes: shrinks hole regions so that
+ * a grown footprint lying inside a shrunk hole keeps at least `minimumGap`
+ * between the original shape and the hole's edge.
+ */
+export type ShrinkHoles = (rings: NestRing[], minimumGap: number) => NestRing[]
 
 export type OrderParts = (parts: NestPart[]) => NestPart[]
 
@@ -55,6 +68,8 @@ export interface NestRequest {
    */
   minimumGap: number
   expandFootprint: ExpandFootprint
+  /** Required when any part has holes; without holes it is never called. */
+  shrinkHoles?: ShrinkHoles
   orderParts: OrderParts
   /**
    * The sheet corner parts pack toward: +1 prefers small coordinates, −1
