@@ -19,13 +19,13 @@
 // one `applyNest` history step. Keep improving (#862) searches on in the
 // worker; its better layouts share one more history step.
 
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react'
 import type { NestResult } from '../../engine/nesting'
 import { buildNestJob, type NestPartSpec } from '../../store/helpers/nestPart'
 import { useProjectStore } from '../../store/projectStore'
 import type { MessageKey } from '../../i18n/locales/en'
 import { useI18n } from '../../i18n/i18nContext'
-import { CanvasWorkflowAction, CanvasWorkflowCancel, CanvasWorkflowConfirm } from '../canvas/CanvasWorkflowAction'
+import { CanvasWorkflowAction, CanvasWorkflowCancel } from '../canvas/CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from '../canvas/CanvasWorkflowPanel'
 import { useCanvasWorkflowPanel } from '../canvas/useCanvasWorkflowPanel'
 import {
@@ -115,6 +115,7 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
   const discardNest = useProjectStore((s) => s.discardNest)
   const cancelNest = useProjectStore((s) => s.cancelNest)
   const setNestSearching = useProjectStore((s) => s.setNestSearching)
+  const undo = useProjectStore((s) => s.undo)
   const units = project.meta.units
 
   // After a nest is applied the selection's rows belong to it, so the same
@@ -124,7 +125,13 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
   const [form, setForm] = useState<NestForm>(() => initialNestForm(subject))
   const [run, setRun] = useState<NestRun>({ state: 'idle' })
   const [improve, setImprove] = useState<NestImprove | null>(null)
+  const [partsOpen, setPartsOpen] = useState(true)
+  const partsListId = useId()
   const abortRef = useRef<AbortController | null>(null)
+  // The undo steps this panel pushed, and the history they left on top. Cancel
+  // undoes them only while that history is still current: an edit made since
+  // is someone else's, and undoing past it would take it too.
+  const ownStepsRef = useRef({ count: 0, history: null as object | null })
   const busy = run.state === 'running' || improve?.running === true
   useEffect(() => () => abortRef.current?.abort(), [])
 
@@ -133,6 +140,11 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
   const quantities = parts.map((_, index) => form.quantities[index] ?? 1)
   const formError = subject.parts.ok ? validateNestForm({ ...form, quantities }, subject.gapFloor) : null
   const canNest = subject.parts.ok && formError === null && !busy
+
+  function recordOwnStep(pushed: boolean) {
+    const own = ownStepsRef.current
+    ownStepsRef.current = { count: own.count + (pushed ? 1 : 0), history: useProjectStore.getState().history }
+  }
 
   function setQuantity(index: number, value: number) {
     const next = [...quantities]
@@ -155,12 +167,13 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
     try {
       const result = await runNestJob(job, { signal: controller.signal })
       if (result.placements.length > 0) {
-        applyNest({
+        const id = applyNest({
           parts: parts.map((part, index) => ({ featureIds: part.featureIds, quantity: quantities[index] })),
           placements: result.placements,
           settings,
           replaceNestId: subject.replaceNest?.id,
         })
+        if (id) recordOwnStep(true)
       }
       setRun(summarize(result, parts, quantities, settings.keepOriginals))
     } catch (error: unknown) {
@@ -213,6 +226,7 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
               amend,
             })
             if (id) {
+              recordOwnStep(!amend)
               nestId = id
               amend = true
             }
@@ -240,9 +254,26 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
     }
   }
 
-  function close() {
-    abortRef.current?.abort()
+  /** Keeps the nest on the canvas and closes the panel. */
+  function accept() {
     cancelNest()
+  }
+
+  /** Stops any search, reverts what this panel committed, and closes. */
+  function cancel() {
+    abortRef.current?.abort()
+    const own = ownStepsRef.current
+    if (own.count > 0 && useProjectStore.getState().history === own.history) {
+      for (let step = 0; step < own.count; step += 1) undo()
+    }
+    cancelNest()
+  }
+
+  function discard() {
+    discardNest(subject.replaceNest!.id)
+    recordOwnStep(true)
+    setRun({ state: 'idle' })
+    setImprove(null)
   }
 
   const step = run.state === 'running'
@@ -271,20 +302,7 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
       actionRowProps={panel.actionRowProps}
       className="canvas-workflow-panel--nest"
       pageLevel
-      actions={(
-        <>
-          {busy ? (
-            <CanvasWorkflowCancel label={t('canvas.nest.stop')} onClick={() => abortRef.current?.abort()} />
-          ) : (
-            <CanvasWorkflowConfirm
-              label={subject.replaceNest ? t('canvas.nest.renest') : t('canvas.nest.run')}
-              onClick={() => { void startNest() }}
-              disabled={!canNest}
-            />
-          )}
-          <CanvasWorkflowCancel label={t('canvas.common.done')} onClick={close} />
-        </>
-      )}
+      actions={<CanvasWorkflowCancel label={t('canvas.common.cancel')} onClick={cancel} />}
     >
       {!subject.parts.ok ? (
         <p className="canvas-workflow-panel__warning" role="alert">{t(REFUSAL_KEYS[subject.parts.refusal])}</p>
@@ -296,14 +314,9 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
               : tPlural(parts.length, 'canvas.nest.parts.one', 'canvas.nest.parts.other')}
             {subject.replaceNest && <> · {t('canvas.nest.existing', { name: subject.replaceNest.name })}</>}
           </p>
-          <div className="canvas-workflow-panel__grid">
-            {parts.length === 1 ? (
-              <label className="canvas-workflow-panel__field">
-                <span>{t('canvas.nest.quantity')}</span>
-                {quantityInput(0, t('canvas.nest.quantity'))}
-              </label>
-            ) : (
-              <>
+          {parts.length > 1 && (
+            <>
+              <div className="canvas-workflow-panel__grid">
                 <label className="canvas-workflow-panel__field">
                   <span>{t('canvas.nest.quantityAll')}</span>
                   <input
@@ -320,13 +333,38 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
                     }}
                   />
                 </label>
-                {parts.map((part, index) => (
-                  <label className="canvas-workflow-panel__field" key={part.featureIds[0]}>
-                    <span>{part.name}</span>
-                    {quantityInput(index, t('canvas.nest.quantityFor', { name: part.name }))}
-                  </label>
-                ))}
-              </>
+              </div>
+              {/* A toggle, not <details>: the list must shrink to the window, and
+                  WebKit does not lay out a <details> as a flex container. */}
+              <div className="canvas-workflow-panel__parts">
+                <button
+                  type="button"
+                  className="canvas-workflow-panel__parts-toggle"
+                  aria-expanded={partsOpen}
+                  aria-controls={partsListId}
+                  onClick={() => setPartsOpen(!partsOpen)}
+                >
+                  {t('canvas.nest.partsList', { count: parts.length })}
+                </button>
+                {partsOpen && (
+                  <div className="canvas-workflow-panel__parts-list" id={partsListId}>
+                    {parts.map((part, index) => (
+                      <label className="canvas-workflow-panel__field" key={part.featureIds[0]}>
+                        <span>{part.name}</span>
+                        {quantityInput(index, t('canvas.nest.quantityFor', { name: part.name }))}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+          <div className="canvas-workflow-panel__grid">
+            {parts.length === 1 && (
+              <label className="canvas-workflow-panel__field">
+                <span>{t('canvas.nest.quantity')}</span>
+                {quantityInput(0, t('canvas.nest.quantity'))}
+              </label>
             )}
             <label className="canvas-workflow-panel__field">
               <span>{t('canvas.nest.gap', { units })}</span>
@@ -395,23 +433,20 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
           )}
           {improve && <NestImproveStatus improve={improve} />}
           {run.state === 'failed' && <p className="canvas-workflow-panel__warning" role="alert">{run.message}</p>}
-          {subject.replaceNest && !busy && (
-            <div className="canvas-workflow-panel__picking-actions">
-              <CanvasWorkflowAction
-                label={t('canvas.nest.improve')}
-                onClick={() => { void startImprove() }}
-              />
-              <CanvasWorkflowAction
-                label={t('canvas.nest.discard')}
-                variant="cancel"
-                onClick={() => {
-                  discardNest(subject.replaceNest!.id)
-                  setRun({ state: 'idle' })
-                  setImprove(null)
-                }}
-              />
-            </div>
-          )}
+          <div className="canvas-workflow-panel__picking-actions canvas-workflow-panel__nest-actions">
+            {busy ? (
+              <CanvasWorkflowAction label={t('canvas.nest.stop')} variant="cancel" onClick={() => abortRef.current?.abort()} />
+            ) : subject.replaceNest ? (
+              <>
+                <CanvasWorkflowAction label={t('canvas.nest.renest')} onClick={() => { void startNest() }} disabled={!canNest} />
+                <CanvasWorkflowAction label={t('canvas.nest.improve')} onClick={() => { void startImprove() }} />
+                <CanvasWorkflowAction label={t('canvas.nest.discard')} variant="cancel" onClick={discard} />
+                <CanvasWorkflowAction label={t('canvas.nest.accept')} variant="confirm" onClick={accept} />
+              </>
+            ) : (
+              <CanvasWorkflowAction label={t('canvas.nest.run')} variant="confirm" onClick={() => { void startNest() }} disabled={!canNest} />
+            )}
+          </div>
         </>
       )}
     </CanvasWorkflowPanel>

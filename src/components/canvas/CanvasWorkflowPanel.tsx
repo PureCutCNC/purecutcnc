@@ -16,7 +16,7 @@
 
 import { Children } from 'react'
 import { createPortal } from 'react-dom'
-import type { HTMLAttributes, KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from 'react'
+import type { CSSProperties, HTMLAttributes, KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from 'react'
 import { useI18n } from '../../i18n/i18nContext'
 import type { CanvasWorkflowPanelPosition } from './useCanvasWorkflowPanel'
 
@@ -122,7 +122,8 @@ export function CanvasWorkflowPanel({
     <div
       ref={panelRef}
       className={panelClassName}
-      style={{ left: position.x, top: position.y }}
+      // The top is also a variable so a panel can cap its height to the space below it.
+      style={{ left: position.x, top: position.y, '--canvas-workflow-panel-top': `${position.y}px` } as CSSProperties}
       role={dialogAria ? 'dialog' : undefined}
       aria-label={dialogAria?.label}
       aria-modal={dialogAria ? dialogAria.modal ?? true : undefined}
