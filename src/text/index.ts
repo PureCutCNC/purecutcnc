@@ -799,6 +799,18 @@ export function getFeatureGeometryProfiles(feature: SketchFeature): SketchProfil
     : [feature.sketch.profile]
 }
 
+/**
+ * Whether any shape this feature resolves into has `operation`. A plain feature
+ * is its own single shape; a text feature resolves into glyph outlines carrying
+ * its operation and counters carrying the inverse — so an add text's counters
+ * are subtracts an inside route or pocket can target (issue #861).
+ */
+export function featureHasShapeWithOperation(feature: SketchFeature, operation: SketchFeature['operation']): boolean {
+  return isTextFeature(feature)
+    ? resolveTextFeatureShapes(feature).some((shape) => shape.operation === operation)
+    : feature.operation === operation
+}
+
 export function featureHasClosedGeometry(feature: SketchFeature): boolean {
   return getFeatureGeometryProfiles(feature).every((profile) => profile.closed)
 }

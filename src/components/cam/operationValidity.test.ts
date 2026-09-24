@@ -29,6 +29,7 @@
 import {
   compatibleFeatureIdsForOperation,
   getOperationAddHint,
+  operationTargetFromSelection,
   operationTargetsRegion,
   quickOperationGroup,
   quickOperationLabel,
@@ -37,6 +38,7 @@ import {
 } from './operationValidity'
 import type { SelectionState } from '../../store/types'
 import { projectWithFeatures } from '../../test/projectFixtures'
+import { getTextFontOptions } from '../../text'
 import {
   newProject,
   rectProfile,
@@ -523,6 +525,98 @@ function testMixedSubtractAndLineIsValid(): void {
   )
 }
 
+function makeTextFeature(id: string, text: string, operation: 'add' | 'subtract'): SketchFeature {
+  return {
+    ...makeFeature(id, operation, 'text'),
+    text: { text, style: 'outline', fontId: getTextFontOptions('outline')[0].id, size: 1 },
+    sketch: {
+      profile: rectProfile(0, 0, 1, 1.4),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+  }
+}
+
+// An add text's counters are subtracts, so pocket and inside route can cut
+// them without exploding the text (issue #861).
+function testAddTextWithCountersOffersInsideRouteAndPocket(): void {
+  const project = projectWith([makeTextFeature('text', 'O', 'add')])
+  const kinds = validQuickOperationsForFeature(project, 'text').map((op) => op.kind)
+
+  assert(kinds.includes('edge_route_inside'), 'add "O" should offer inside route for its counter')
+  assert(kinds.includes('pocket'), 'add "O" should offer pocket for its counter')
+  assert(kinds.includes('edge_route_outside'), 'add "O" should still offer outside route')
+}
+
+function testAddTextWithoutCountersIsRefusedForInsideRoute(): void {
+  const project = projectWith([makeTextFeature('text', 'L', 'add')])
+  const kinds = validQuickOperationsForFeature(project, 'text').map((op) => op.kind)
+
+  assert(!kinds.includes('edge_route_inside'), 'add "L" has no counter, so no inside route')
+  assert(!kinds.includes('pocket'), 'add "L" has no counter, so no pocket')
+  assert(
+    getOperationAddHint(project, selectionFor(['text']), 'edge_route_inside') === getOperationAddHint(
+      projectWith([makeFeature('add', 'add')]),
+      selectionFor(['add']),
+      'edge_route_inside',
+    ),
+    'add "L" should get the same "only subtract" hint as a plain add',
+  )
+}
+
+// The mirror case: a subtract text's islands are adds an outside route walks.
+function testSubtractTextWithIslandsOffersOutsideRoute(): void {
+  const project = projectWith([makeTextFeature('text', 'O', 'subtract')])
+  const kinds = validQuickOperationsForFeature(project, 'text').map((op) => op.kind)
+
+  assert(kinds.includes('edge_route_outside'), 'subtract "O" should offer outside route for its island')
+  assert(kinds.includes('edge_route_inside'), 'subtract "O" should still offer inside route')
+}
+
+// The CAM panel's Add button and "Use current selection" take their target
+// from this, so a multi-selection must follow the same rule as a single
+// feature does in the quick-operation menu (issue #861).
+function testTargetFromMultiSelectionOfAddTexts(): void {
+  const project = projectWith([
+    makeTextFeature('o', 'O', 'add'),
+    makeTextFeature('p', 'P', 'add'),
+    makeTextFeature('l', 'L', 'add'),
+  ])
+
+  const target = operationTargetFromSelection(project, selectionFor(['o', 'p']), 'edge_route_inside')
+  assert(
+    target !== null && target.source === 'features' && target.featureIds.join(',') === 'o,p',
+    `add "O" + "P" should give an inside route target, got ${JSON.stringify(target)}`,
+  )
+  assert(
+    operationTargetFromSelection(project, selectionFor(['o', 'p']), 'pocket') !== null,
+    'add "O" + "P" should give a pocket target',
+  )
+  assert(
+    operationTargetFromSelection(project, selectionFor(['o', 'l']), 'edge_route_inside') === null,
+    'a selection with a counterless add "L" is refused, as a plain add would be',
+  )
+}
+
+function testTargetFromSelectionRefusesUnknownIds(): void {
+  const project = projectWith([makeFeature('sub', 'subtract')])
+
+  assert(
+    operationTargetFromSelection(project, selectionFor(['sub']), 'pocket') !== null,
+    'a subtract should give a pocket target',
+  )
+  assert(
+    operationTargetFromSelection(project, selectionFor(['sub', 'gone']), 'pocket') === null,
+    'a selection naming a missing feature should give no target',
+  )
+  assert(
+    operationTargetFromSelection(project, selectionFor([]), 'pocket') === null,
+    'an empty selection should give no target',
+  )
+}
+
 testSubtractFeatureOffersPocketingNotSurface()
 testAddFeatureOffersOutsideRouteAndSurfaceClean()
 testStlModelOffersSurfaceOperations()
@@ -548,5 +642,10 @@ testVCarveSelectAllIncludesLines()
 testLargeCompatibilityScanResolvesEachInstanceOnce()
 testEmptySelectionVCarveHintMentionsLines()
 testMixedSubtractAndLineIsValid()
+testAddTextWithCountersOffersInsideRouteAndPocket()
+testAddTextWithoutCountersIsRefusedForInsideRoute()
+testSubtractTextWithIslandsOffersOutsideRoute()
+testTargetFromMultiSelectionOfAddTexts()
+testTargetFromSelectionRefusesUnknownIds()
 
 console.log('operationValidity tests passed')
