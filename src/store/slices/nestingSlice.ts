@@ -21,7 +21,10 @@ import { cloneProject } from '../helpers/normalize'
 import type { ProjectStore } from '../types'
 import { sanitizeSelection } from './selectionSlice'
 
-export type NestingSlice = Pick<ProjectStore, 'pendingNest' | 'startNest' | 'cancelNest' | 'applyNest' | 'discardNest'>
+export type NestingSlice = Pick<
+  ProjectStore,
+  'pendingNest' | 'nestSearching' | 'startNest' | 'cancelNest' | 'setNestSearching' | 'applyNest' | 'discardNest'
+>
 
 /** Sheet nesting commits (issue #741). Each action is exactly one history entry; an amended nest (#862) adds none. */
 export function createNestingSlice(
@@ -29,6 +32,7 @@ export function createNestingSlice(
 ): NestingSlice {
   return {
     pendingNest: null,
+    nestSearching: false,
 
     startNest: () => set((s) => {
       const sourceIds = s.selection.selectedFeatureIds
@@ -45,7 +49,9 @@ export function createNestingSlice(
       }
     }),
 
-    cancelNest: () => set({ pendingNest: null }),
+    cancelNest: () => set({ pendingNest: null, nestSearching: false }),
+
+    setNestSearching: (searching) => set({ nestSearching: searching }),
 
     applyNest: (input) => {
       let nestId: string | null = null

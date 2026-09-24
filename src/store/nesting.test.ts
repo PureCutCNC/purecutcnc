@@ -419,6 +419,18 @@ function testAmendedNestStaysOneStep(): void {
   console.log('amended nest stays one step: PASSED')
 }
 
+function testSearchFlagClearsWithThePanel(): void {
+  resetStore(makeProject())
+  const store = () => useProjectStore.getState()
+  assert(store().nestSearching === false, 'no search by default')
+  store().setNestSearching(true)
+  assert(store().nestSearching, 'the panel marks a running search')
+  // Closing the panel ends the search; toolpaths must not stay deferred.
+  store().cancelNest()
+  assert(store().nestSearching === false, 'closing the panel clears it')
+  console.log('search flag clears with the panel: PASSED')
+}
+
 testPartResolution()
 testApplyIsOneStepAndMachinesEveryCopy()
 testDiscardRestoresTheDesign()
@@ -429,4 +441,5 @@ testCurvedPartsKeepTheGap()
 testClampsAreAvoided()
 testReplaceNestIsOneStep()
 testAmendedNestStaysOneStep()
+testSearchFlagClearsWithThePanel()
 console.log('All nesting store tests passed')
