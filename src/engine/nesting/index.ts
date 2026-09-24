@@ -17,7 +17,7 @@
 // Sheet nesting (issue #741): places copies of part footprints on a sheet.
 
 export { nest } from './packer'
-export { expandByHalfGap, largestFirst } from './defaults'
+export { expandByHalfGap, largestFirst, shrinkByHalfGap } from './defaults'
 export { flattenProfileWithin } from './flatten'
 export { simplifyRing } from './simplify'
 export { requestFromJob, type NestJob } from './job'
@@ -31,4 +31,5 @@ export type {
   NestRing,
   NestUnplaced,
   OrderParts,
+  ShrinkHoles,
 } from './types'

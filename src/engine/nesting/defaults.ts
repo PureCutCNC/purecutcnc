@@ -18,7 +18,7 @@
 // back to these on its own: spacing and order are always the caller's choice.
 
 import ClipperLib from 'clipper-lib'
-import { NEST_SCALE, outerContours, pathToRing, ringToPath } from './clipperOps'
+import { NEST_SCALE, outerContours, pathToRing, ringToPath, unionPaths } from './clipperOps'
 import type { ClipperPath } from '../toolpaths/types'
 import { simplifyRing } from './simplify'
 import type { NestPart, NestRing } from './types'
@@ -50,6 +50,26 @@ export function expandByHalfGap(rings: NestRing[], minimumGap: number, simplifyT
   offset.Execute(grown, (Math.max(0, minimumGap) / 2 + simplify) * NEST_SCALE + GROW_ROUNDING_PAD)
   const contours = outerContours(grown).map(pathToRing)
   return simplify > 0 ? outerContours(contours.map((ring) => ringToPath(simplifyRing(ring, simplify)))).map(pathToRing) : contours
+}
+
+/**
+ * Shrinks hole regions by half the gap (#859), so a part grown by
+ * {@link expandByHalfGap} that lies inside a shrunk hole is `minimumGap` from
+ * the hole's edge. Islands inside a hole grow by the same amount.
+ *
+ * Shrinking a hole is growing the material around it, so the square-join and
+ * simplification arguments above carry over unchanged: the result lies inside
+ * the exact inward offset.
+ */
+export function shrinkByHalfGap(rings: NestRing[], minimumGap: number, simplifyTolerance = 0): NestRing[] {
+  const paths = unionPaths(rings.map(ringToPath))
+  const simplify = simplifyTolerance > 0 ? simplifyTolerance : 0
+  const offset = new ClipperLib.ClipperOffset()
+  offset.AddPaths(paths, ClipperLib.JoinType.jtSquare, ClipperLib.EndType.etClosedPolygon)
+  const shrunk: ClipperPath[] = new ClipperLib.Paths()
+  offset.Execute(shrunk, -((Math.max(0, minimumGap) / 2 + simplify) * NEST_SCALE + GROW_ROUNDING_PAD))
+  if (simplify === 0) return shrunk.map(pathToRing)
+  return unionPaths(shrunk.map((path) => ringToPath(simplifyRing(pathToRing(path), simplify)))).map(pathToRing)
 }
 
 /** Parts with the largest footprint area first; ties keep id order. */

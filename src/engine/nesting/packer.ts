@@ -28,16 +28,24 @@
 //  - `grown`, the caller's `expandFootprint` result, tested against other
 //    grown parts and grown obstacles, so touching grown shapes are exactly the
 //    caller's gap apart.
+//
+// A part's holes (#859) are shrunk by the caller's `shrinkHoles`. A placed
+// part's no-fit polygon then loses the inner-fit region of each of its shrunk
+// holes: the translations that put the moving part's grown footprint inside
+// one. Only the placed part's holes are used — under largest-first order a
+// part never fits inside the hole of a part placed after it.
 
 import type { ClipperPath } from '../toolpaths/types'
 import {
   NEST_SCALE,
   differencePaths,
+  frameAround,
   growPaths,
   noFitPolygon,
   outerContours,
   pathsBox,
   rectPath,
+  regionComponents,
   ringToPath,
   rotatePaths,
   translatePaths,
@@ -58,6 +66,14 @@ const SAFETY_UNITS = 2
 interface PartShape {
   raw: ClipperPath[]
   grown: ClipperPath[]
+  holes: Hole[]
+}
+
+/** One connected piece of a part's shrunk holes, with the frame around it. */
+interface Hole {
+  box: IntBox
+  /** Convex pieces of the hole's bounding rectangle outside it, islands included. */
+  framePieces: ClipperPath[]
 }
 
 interface Oriented {
@@ -67,6 +83,7 @@ interface Oriented {
   rawPieces: ClipperPath[]
   grownPieces: ClipperPath[]
   rawBox: IntBox
+  grownBox: IntBox
 }
 
 interface Placed {
@@ -117,7 +134,13 @@ export function nest(request: NestRequest): NestResult {
       if (raw.length === 0 || grown.length === 0) {
         throw new Error(`nest: part "${part.id}" has an empty footprint`)
       }
-      shape = { raw, grown }
+      const holes = part.holes && part.holes.length > 0
+        ? regionComponents(request.shrinkHoles!(part.holes, request.minimumGap).map(ringToPath)).map((piece) => {
+          const box = pathsBox([piece[0]])
+          return { box, framePieces: frameAround(box, piece).flatMap(convexPieces) }
+        })
+        : []
+      shape = { raw, grown, holes }
       shapes.set(part.id, shape)
     }
     return shape
@@ -131,13 +154,15 @@ export function nest(request: NestRequest): NestResult {
     if (!entry) {
       const shape = shapeOf(part)
       const raw = rotatePaths(shape.raw, rotation)
+      const grown = rotatePaths(shape.grown, rotation)
       entry = {
         key,
         part,
         rotation,
         rawPieces: raw.flatMap(convexPieces),
-        grownPieces: rotatePaths(shape.grown, rotation).flatMap(convexPieces),
+        grownPieces: grown.flatMap(convexPieces),
         rawBox: pathsBox(raw),
+        grownBox: pathsBox(grown),
       }
       orientedCache.set(key, entry)
     }
@@ -154,7 +179,10 @@ export function nest(request: NestRequest): NestResult {
       const baseKey = `${fixed.part.id}@0|${moving.part.id}@${relative}`
       let base = nfpCache.get(baseKey)
       if (!base) {
-        base = noFitPolygon(orientedOf(fixed.part, 0).grownPieces, orientedOf(moving.part, relative).grownPieces)
+        const turned = orientedOf(moving.part, relative)
+        base = noFitPolygon(orientedOf(fixed.part, 0).grownPieces, turned.grownPieces)
+        const fits = shapeOf(fixed.part).holes.flatMap((hole) => holeFit(hole, turned))
+        if (fits.length > 0) base = differencePaths(base, fits)
         nfpCache.set(baseKey, base)
       }
       nfp = growPaths(rotatePaths(base, fixed.rotation), SAFETY_UNITS)
@@ -168,7 +196,9 @@ export function nest(request: NestRequest): NestResult {
     if (!region) {
       const base = [
         ...noFitPolygon(obstaclePieces, moving.grownPieces),
-        ...noFitPolygon(outsideSheetPieces, moving.rawPieces),
+        // Unfilled, as for holes: around a round sheet these no-fit polygons
+        // close into a ring whose inside is where the part fits.
+        ...noFitPolygon(outsideSheetPieces, moving.rawPieces, false),
       ]
       region = { paths: unionPaths(growPaths(base, SAFETY_UNITS)), placedCount: 0 }
       forbidden.set(moving.key, region)
@@ -238,6 +268,23 @@ export function nest(request: NestRequest): NestResult {
   }
 }
 
+/**
+ * Translations that put `moving`'s grown footprint inside one shrunk hole: the
+ * hole's bounding rectangle, as an inner-fit range, minus the no-fit polygon of
+ * the frame around the hole (islands included) — the sheet's construction. A
+ * hole whose box cannot hold the part costs no Minkowski sum.
+ */
+function holeFit(hole: Hole, moving: Oriented): ClipperPath[] {
+  const { box } = hole
+  const xRange = innerFitRange(box.minX, box.maxX, moving.grownBox.minX, moving.grownBox.maxX)
+  const yRange = innerFitRange(box.minY, box.maxY, moving.grownBox.minY, moving.grownBox.maxY)
+  // An exact fit has no area to subtract, so it is not worth a sum.
+  if (!xRange || !yRange || xRange.hi - xRange.lo < 2 || yRange.hi - yRange.lo < 2) return []
+  const fit = rectPath({ minX: xRange.lo, maxX: xRange.hi, minY: yRange.lo, maxY: yRange.hi })
+  // Unfilled: the free positions are exactly the holes this polygon encloses.
+  return differencePaths([fit], noFitPolygon(hole.framePieces, moving.grownPieces, false))
+}
+
 function normalizeRotation(degrees: number): number {
   return ((degrees % 360) + 360) % 360
 }
@@ -259,6 +306,9 @@ function validateRequest(request: NestRequest): void {
     }
     if (part.rotations.some((rotation) => !Number.isFinite(rotation))) {
       throw new Error(`nest: part "${part.id}" has a non-finite rotation`)
+    }
+    if (part.holes && part.holes.length > 0 && !request.shrinkHoles) {
+      throw new Error(`nest: part "${part.id}" has holes but the request has no shrinkHoles`)
     }
   }
 }

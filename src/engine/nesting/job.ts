@@ -18,7 +18,7 @@
 // Functions cannot cross postMessage, so the caller's growth strategy travels
 // as data and is rebuilt on the other side.
 
-import { expandByHalfGap, largestFirst } from './defaults'
+import { expandByHalfGap, largestFirst, shrinkByHalfGap } from './defaults'
 import type { NestGravity, NestPart, NestRequest, NestRing } from './types'
 
 export interface NestJob {
@@ -40,7 +40,10 @@ export interface NestJob {
   gravity?: NestGravity
 }
 
-/** Rebuilds the packer request: grow by half the gap plus the padding, largest parts first. */
+/**
+ * Rebuilds the packer request: grow parts and shrink holes by half the gap
+ * plus the padding, largest parts first.
+ */
 export function requestFromJob(job: NestJob): NestRequest {
   return {
     sheet: job.sheet,
@@ -48,6 +51,11 @@ export function requestFromJob(job: NestJob): NestRequest {
     parts: job.parts,
     minimumGap: job.minimumGap,
     expandFootprint: (rings, minimumGap) => expandByHalfGap(
+      rings,
+      minimumGap + 2 * job.growthPadding,
+      job.simplifyTolerance ?? 0,
+    ),
+    shrinkHoles: (rings, minimumGap) => shrinkByHalfGap(
       rings,
       minimumGap + 2 * job.growthPadding,
       job.simplifyTolerance ?? 0,

@@ -26,6 +26,8 @@ import type { NestRing } from './types'
 
 export const NEST_SCALE = DEFAULT_CLIPPER_SCALE
 
+type PolyNode = InstanceType<typeof ClipperLib.PolyTree>
+
 export interface IntBox {
   minX: number
   minY: number
@@ -100,6 +102,66 @@ export function outerContours(paths: ClipperPath[]): ClipperPath[] {
   return children.map((node) => orientPositive(node.Contour()))
 }
 
+/**
+ * Splits a region given with the non-zero rule into its connected pieces: each
+ * outer boundary with the islands directly inside it. A region inside an
+ * island is its own piece.
+ */
+export function regionComponents(paths: ClipperPath[]): ClipperPath[][] {
+  if (paths.length === 0) return []
+  const clipper = new ClipperLib.Clipper()
+  clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true)
+  const tree = new ClipperLib.PolyTree()
+  clipper.Execute(
+    ClipperLib.ClipType.ctUnion,
+    tree,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  const components: ClipperPath[][] = []
+  const visit = (nodes: PolyNode[]) => {
+    for (const outer of nodes) {
+      const islands = outer.Childs?.() ?? outer.m_Childs ?? []
+      components.push([orientPositive(outer.Contour()), ...islands.map((island) => orientNegative(island.Contour()))])
+      for (const island of islands) visit(island.Childs?.() ?? island.m_Childs ?? [])
+    }
+  }
+  visit(tree.Childs?.() ?? tree.m_Childs ?? [])
+  return components
+}
+
+/**
+ * Everything in `box` outside `region`, as filled pieces with no pinch points,
+ * ready for {@link convexPieces}. A hole left inside a piece is filled, which
+ * only forbids more.
+ */
+export function frameAround(box: IntBox, region: ClipperPath[]): ClipperPath[] {
+  const clipper = new ClipperLib.Clipper()
+  clipper.StrictlySimple = true
+  clipper.AddPaths([rectPath(box)], ClipperLib.PolyType.ptSubject, true)
+  clipper.AddPaths(region, ClipperLib.PolyType.ptClip, true)
+  const tree = new ClipperLib.PolyTree()
+  clipper.Execute(
+    ClipperLib.ClipType.ctDifference,
+    tree,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  const pieces: ClipperPath[] = []
+  const visit = (nodes: PolyNode[]) => {
+    for (const node of nodes) {
+      pieces.push(orientPositive(node.Contour()))
+      for (const hole of node.Childs?.() ?? node.m_Childs ?? []) visit(hole.Childs?.() ?? hole.m_Childs ?? [])
+    }
+  }
+  visit(tree.Childs?.() ?? tree.m_Childs ?? [])
+  return pieces
+}
+
+function orientNegative(path: ClipperPath): ClipperPath {
+  return ClipperLib.Clipper.Area(path) > 0 ? [...path].reverse() : path
+}
+
 function orientPositive(path: ClipperPath): ClipperPath {
   return ClipperLib.Clipper.Area(path) < 0 ? [...path].reverse() : path
 }
@@ -138,9 +200,10 @@ function negate(path: ClipperPath): ClipperPath {
 /**
  * No-fit polygon of `moving` around `fixed`: the translations at which the two
  * shapes' interiors overlap, `fixed ⊕ (−moving)`. Both are given as convex
- * pieces (see `convexPieces`); the result is filled (see {@link outerContours}).
+ * pieces (see `convexPieces`). The result is filled (see {@link outerContours})
+ * unless `fill` is false, when enclosed free positions are kept as holes.
  */
-export function noFitPolygon(fixedPieces: ClipperPath[], movingPieces: ClipperPath[]): ClipperPath[] {
+export function noFitPolygon(fixedPieces: ClipperPath[], movingPieces: ClipperPath[], fill = true): ClipperPath[] {
   if (fixedPieces.length === 0 || movingPieces.length === 0) return []
   // Union per moving piece, then merge pairwise. One Clipper union of every
   // sum at once is far slower on heavily overlapping input: 53 × 53 pieces
@@ -156,7 +219,7 @@ export function noFitPolygon(fixedPieces: ClipperPath[], movingPieces: ClipperPa
     }
     level = next
   }
-  return outerContours(level[0])
+  return fill ? outerContours(level[0]) : level[0]
 }
 
 /** Rotates integer paths about the origin (via the exact-quarter-turn ring rotation). */

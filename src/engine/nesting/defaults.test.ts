@@ -18,13 +18,15 @@
  * The default packer strategies (issue #844). `expandByHalfGap` must contain
  * the exact offset: every point at distance gap/2 from a footprint lies inside
  * the grown footprint, corners included — the case Clipper's round joins get
- * wrong once their step count is rounded down.
+ * wrong once their step count is rounded down. `shrinkByHalfGap` is the
+ * mirror for holes (#859): nothing nearer than gap/2 to a hole's edge, or to an
+ * island inside it, survives the shrink.
  *
  * Run with: npx tsx src/engine/nesting/defaults.test.ts
  */
 
 import type { Point } from '../../types/project'
-import { expandByHalfGap, largestFirst } from './defaults'
+import { expandByHalfGap, largestFirst, shrinkByHalfGap } from './defaults'
 import type { NestRing } from './types'
 
 function assert(condition: boolean, message: string): void {
@@ -106,6 +108,43 @@ function testSimplifiedGrowthStillContainsExactOffset(): void {
   assert(simplified < plain / 2, `simplification cuts vertices: ${plain} → ${simplified}`)
 }
 
+/** Points of every ring's boundary: each vertex and four more along each edge. */
+function boundarySamples(rings: NestRing[]): Point[] {
+  return rings.flatMap((ring) => ring.flatMap((a, i) => {
+    const b = ring[(i + 1) % ring.length]
+    return [0, 0.2, 0.4, 0.6, 0.8].map((t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }))
+  }))
+}
+
+function testShrunkHoleKeepsHalfGapFromEveryEdge(): void {
+  const square: NestRing = [{ x: 0, y: 0 }, { x: 25, y: 0 }, { x: 25, y: 25 }, { x: 0, y: 25 }]
+  // Clockwise: an island of material inside the square hole.
+  const island: NestRing = [{ x: 10, y: 10 }, { x: 10, y: 14 }, { x: 14, y: 14 }, { x: 14, y: 10 }]
+  const holes: [string, NestRing[]][] = [
+    ['square', [square]],
+    ['sharp triangle', [[{ x: 0, y: 0 }, { x: 40, y: 3 }, { x: 0, y: 6 }]]],
+    ['wavy disc', [wavyDisc(400)]],
+    ['square with island', [square, island]],
+  ]
+  for (const tolerance of [0, 0.05, 0.3]) {
+    for (const gap of [0.5, 3, 6]) {
+      for (const [label, rings] of holes) {
+        const shrunk = shrinkByHalfGap(rings, gap, tolerance)
+        const radius = gap / 2 - 1e-6
+        for (const point of boundarySamples(rings)) {
+          for (let step = 0; step < 72; step += 1) {
+            const angle = (step / 72) * Math.PI * 2
+            const probe = { x: point.x + Math.cos(angle) * radius, y: point.y + Math.sin(angle) * radius }
+            assert(!inside(probe, shrunk), `${label}, gap ${gap}, tol ${tolerance}: ${JSON.stringify(probe)} is too near the edge`)
+          }
+        }
+      }
+    }
+  }
+  const shrunk = shrinkByHalfGap([square, island], 3)
+  assert(shrunk.length === 2 && inside({ x: 5, y: 5 }, shrunk) && !inside({ x: 12, y: 12 }, shrunk), 'the island survives as an island')
+}
+
 function testLargestFirst(): void {
   const square = (id: string, size: number) => ({
     id,
@@ -119,5 +158,6 @@ function testLargestFirst(): void {
 
 testGrowthContainsExactOffset()
 testSimplifiedGrowthStillContainsExactOffset()
+testShrunkHoleKeepsHalfGapFromEveryEdge()
 testLargestFirst()
 console.log('All nesting default-strategy tests passed')

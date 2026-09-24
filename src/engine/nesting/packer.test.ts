@@ -24,8 +24,8 @@
 
 import ClipperLib from 'clipper-lib'
 import type { Point } from '../../types/project'
-import { NEST_SCALE, ringToPath, rotateRing } from './clipperOps'
-import { expandByHalfGap, largestFirst } from './defaults'
+import { NEST_SCALE, pathToRing, ringToPath, rotateRing } from './clipperOps'
+import { expandByHalfGap, largestFirst, shrinkByHalfGap } from './defaults'
 import { nest } from './packer'
 import type { NestPart, NestRequest, NestResult, NestRing } from './types'
 
@@ -56,16 +56,33 @@ function request(overrides: Partial<NestRequest> & Pick<NestRequest, 'parts'>): 
     obstacles: [],
     minimumGap: 6,
     expandFootprint: expandByHalfGap,
+    shrinkHoles: shrinkByHalfGap,
     orderParts: largestFirst,
     ...overrides,
   }
+}
+
+/** The footprint minus its holes, clockwise rings being holes (non-zero rule). */
+function materialRings(part: NestPart): NestRing[] {
+  if (!part.holes?.length) return part.footprint
+  const clipper = new ClipperLib.Clipper()
+  clipper.AddPaths(part.footprint.map(ringToPath), ClipperLib.PolyType.ptSubject, true)
+  clipper.AddPaths(part.holes.map(ringToPath), ClipperLib.PolyType.ptClip, true)
+  const solution = new ClipperLib.Paths()
+  clipper.Execute(
+    ClipperLib.ClipType.ctDifference,
+    solution,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  return solution.map(pathToRing)
 }
 
 function placedRings(req: NestRequest, result: NestResult): { key: string; rings: NestRing[] }[] {
   return result.placements.map((placement) => {
     const part = req.parts.find((candidate) => candidate.id === placement.partId)
     if (!part) throw new Error(`unknown part ${placement.partId}`)
-    const rings = part.footprint.map((ring) => rotateRing(ring, placement.rotation).map((p) => ({
+    const rings = materialRings(part).map((ring) => rotateRing(ring, placement.rotation).map((p) => ({
       x: p.x + placement.translation.x,
       y: p.y + placement.translation.y,
     })))
@@ -162,8 +179,17 @@ function unplacedCount(result: NestResult, partId: string): number {
   return result.unplaced.find((entry) => entry.partId === partId)?.count ?? 0
 }
 
-function part(id: string, footprint: NestRing[], quantity: number, rotations = [0]): NestPart {
-  return { id, footprint, quantity, rotations }
+function part(id: string, footprint: NestRing[], quantity: number, rotations = [0], holes?: NestRing[]): NestPart {
+  return holes ? { id, footprint, quantity, rotations, holes } : { id, footprint, quantity, rotations }
+}
+
+/** A 60 mm frame with a 40 mm square hole, filling a 60 mm sheet. */
+function frameRequest(small: NestPart, minimumGap: number, islands: NestRing[] = []): NestRequest {
+  return request({
+    sheet: rect(0, 0, 60, 60),
+    minimumGap,
+    parts: [part('frame', [rect(0, 0, 60, 60)], 1, [0], [rect(10, 10, 40, 40), ...islands]), small],
+  })
 }
 
 function testFillsCapacityAndReportsOverflow(): void {
@@ -219,6 +245,17 @@ function testNonRectangularSheet(): void {
   const result = nest(req)
   assert(countPlaced(result, 'sq') === 3, `three 30 mm squares fit the L, got ${countPlaced(result, 'sq')}`)
   assertValidLayout(req, result, 'L sheet')
+}
+
+function testRoundSheet(): void {
+  const sheet: NestRing = Array.from({ length: 64 }, (_, i) => ({
+    x: 50 + 50 * Math.cos((i / 64) * Math.PI * 2),
+    y: 50 + 50 * Math.sin((i / 64) * Math.PI * 2),
+  }))
+  const req = request({ sheet, minimumGap: 3, parts: [part('sq', [rect(0, 0, 10, 10)], 5)] })
+  const result = nest(req)
+  assert(countPlaced(result, 'sq') === 5, `squares fit a round sheet, got ${countPlaced(result, 'sq')}`)
+  assertValidLayout(req, result, 'round sheet')
 }
 
 function testRotationSetIsRespected(): void {
@@ -295,11 +332,80 @@ function testGravityCorner(): void {
   assert(result.placements[0].translation.x === 0 && result.placements[0].translation.y === 90, 'first part at min X, max Y')
 }
 
+function testSmallPartsGoInsideAHole(): void {
+  // 10 + 6 + 10 ≤ 40 − 2·6: a 2×2 block of 10 mm squares fits the hole with
+  // the full gap to its edge, and nothing fits anywhere else.
+  const req = frameRequest(part('sq', [rect(0, 0, 10, 10)], 5), 6)
+  const result = nest(req)
+  assert(countPlaced(result, 'frame') === 1, 'the frame is placed')
+  assert(countPlaced(result, 'sq') === 4, `four squares go in the hole, got ${countPlaced(result, 'sq')}`)
+  assert(unplacedCount(result, 'sq') === 1, 'the fifth square is reported')
+  assertValidLayout(req, result, 'hole')
+
+  const noHoles = request({ ...req, parts: req.parts.map((entry) => ({ ...entry, holes: undefined })) })
+  assert(countPlaced(nest(noHoles), 'sq') === 0, 'without holes nothing fits')
+}
+
+function testHoleKeepsTheFullGap(): void {
+  // A 30 mm square needs 30 + 2·gap ≤ 40: it fits with a 4 mm gap, not a 6 mm one.
+  const square = part('sq', [rect(0, 0, 30, 30)], 1)
+  const fits = frameRequest(square, 4)
+  const fitsResult = nest(fits)
+  assert(countPlaced(fitsResult, 'sq') === 1, 'fits the hole at gap 4')
+  const closest = assertValidLayout(fits, fitsResult, 'gap 4')
+  assert(closest <= 4 + 0.05, `the square sits at the gap from the hole's edge, got ${closest}`)
+  assert(countPlaced(nest(frameRequest(square, 6)), 'sq') === 0, 'does not fit the hole at gap 6')
+}
+
+function testIslandInsideAHoleIsAvoided(): void {
+  // A 10 mm island of material in the middle of the hole, wound clockwise.
+  const island = [...rect(25, 25, 10, 10)].reverse()
+  const req = frameRequest(part('sq', [rect(0, 0, 8, 8)], 12), 3, [island])
+  const result = nest(req)
+  assert(countPlaced(result, 'sq') >= 4, `squares surround the island, got ${countPlaced(result, 'sq')}`)
+  assertValidLayout(req, result, 'island')
+}
+
+function testRoundHole(): void {
+  // The frame around a round hole is four corner pieces whose no-fit polygons
+  // close into a ring; the free positions are the hole that ring encloses.
+  const circle: NestRing = Array.from({ length: 64 }, (_, i) => ({
+    x: 30 + 20 * Math.cos((i / 64) * Math.PI * 2),
+    y: 30 + 20 * Math.sin((i / 64) * Math.PI * 2),
+  }))
+  const req = request({
+    sheet: rect(0, 0, 60, 60),
+    minimumGap: 3,
+    parts: [part('frame', [rect(0, 0, 60, 60)], 1, [0], [circle]), part('sq', [rect(0, 0, 8, 8)], 6)],
+  })
+  const result = nest(req)
+  assert(countPlaced(result, 'sq') >= 4, `squares go in the round hole, got ${countPlaced(result, 'sq')}`)
+  assertValidLayout(req, result, 'round hole')
+}
+
+function testRotatedHost(): void {
+  // A 60×30 frame with an off-centre hole only fits a 30×60 sheet turned, so
+  // the hole moves with the rotation.
+  const req = request({
+    sheet: rect(0, 0, 30, 60),
+    minimumGap: 2,
+    parts: [
+      part('frame', [rect(0, 0, 60, 30)], 1, [0, 90], [rect(3, 3, 24, 24)]),
+      part('sq', [rect(0, 0, 8, 8)], 4, [0, 90]),
+    ],
+  })
+  const result = nest(req)
+  assert(result.placements.find((p) => p.partId === 'frame')?.rotation === 90, 'the frame is turned')
+  assert(countPlaced(result, 'sq') === 4, `squares fill the turned hole, got ${countPlaced(result, 'sq')}`)
+  assertValidLayout(req, result, 'rotated host')
+}
+
 function testDeterministic(): void {
   const build = () => request({
     parts: [
       part('gear', [gear(8, 15, 11)], 5, [0, 90, 180, 270]),
       part('sq', [rect(0, 0, 12, 12)], 6, [0, 90]),
+      part('frame', [rect(0, 0, 50, 50)], 2, [0, 90], [rect(8, 8, 30, 30)]),
     ],
   })
   const first = JSON.stringify(nest(build()))
@@ -324,6 +430,10 @@ function testRejectsInvalidInput(): void {
   expectThrow('fractional quantity', () => nest(request({ parts: [part('a', sq, 1.5)] })))
   expectThrow('no rotation', () => nest(request({ parts: [part('a', sq, 1, [])] })))
   expectThrow('empty footprint', () => nest(request({ parts: [part('a', [], 1)] })))
+  expectThrow('holes without shrinkHoles', () => nest(request({
+    shrinkHoles: undefined,
+    parts: [part('a', [rect(0, 0, 30, 30)], 1, [0], [rect(5, 5, 20, 20)])],
+  })))
 }
 
 const tests: [string, () => void][] = [
@@ -331,12 +441,18 @@ const tests: [string, () => void][] = [
   ['gap comes from the caller', testGapComesFromTheCaller],
   ['obstacles keep the gap', testObstaclesKeepTheGap],
   ['non-rectangular sheet', testNonRectangularSheet],
+  ['round sheet', testRoundSheet],
   ['rotation set is respected', testRotationSetIsRespected],
   ['small parts still placed after overflow', testSmallPartsStillPlacedAfterOverflow],
   ['non-convex parts never overlap', testNonConvexPartsNeverOverlap],
   ['multi-ring part moves rigidly', testMultiRingPartMovesRigidly],
   ['exact fit is accepted', testExactFitIsAccepted],
   ['gravity corner', testGravityCorner],
+  ['small parts go inside a hole', testSmallPartsGoInsideAHole],
+  ['a hole keeps the full gap', testHoleKeepsTheFullGap],
+  ['an island inside a hole is avoided', testIslandInsideAHoleIsAvoided],
+  ['a round hole', testRoundHole],
+  ['a rotated host carries its hole', testRotatedHost],
   ['deterministic', testDeterministic],
   ['rejects invalid input', testRejectsInvalidInput],
 ]
