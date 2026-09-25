@@ -29,6 +29,7 @@ import type {
   FeatureDefinition,
   FeatureInstance,
   Matrix2D,
+  NestMargins,
   NestRecord,
   Operation,
   PersistedImportedMesh,
@@ -373,9 +374,18 @@ function normalizeNests(value: unknown, features: FeatureInstance[]): NestRecord
         rotations: [...settings.rotations as number[]],
         minimumGap: settings.minimumGap,
         keepOriginals: settings.keepOriginals,
+        ...normalizeNestMargins(settings.margins),
       },
     }]
   })
+}
+
+/** A nest's margins; a missing or bad side reads as 0, and all-zero margins as none. */
+function normalizeNestMargins(raw: unknown): { margins?: NestMargins } {
+  if (!isRecord(raw)) return {}
+  const side = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0)
+  const margins = { top: side(raw.top), bottom: side(raw.bottom), left: side(raw.left), right: side(raw.right) }
+  return Object.values(margins).some((value) => value > 0) ? { margins } : {}
 }
 
 function assertProjectEnvelope(input: unknown): asserts input is ProjectFormatInput {

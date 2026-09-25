@@ -31,7 +31,9 @@ import {
   differencePaths,
   NEST_SCALE,
   outerContours,
+  pathsBox,
   pathToRing,
+  rectPath,
   regionComponents,
   ringToPath,
   unionPaths,
@@ -45,6 +47,7 @@ import {
   type FeatureOperation,
   type LocalConstraint,
   type Matrix2D,
+  type NestMargins,
   type NestRecord,
   type NestSettings,
   type OperationKind,
@@ -374,17 +377,32 @@ export function nestPartHoles(project: Project, features: ResolvedSketchFeature[
  * edge routes that cut the part. Null when nothing cuts its outline.
  */
 export function nestGapForPart(project: Project, featureIds: string[]): number | null {
+  const cutters = outlineCutters(project, featureIds)
+  if (cutters.length === 0) return null
+  return Math.max(...cutters.map((cutter) => cutter.diameter + 2 * cutter.leave))
+}
+
+/**
+ * How far the cut reaches outside the part's outline — the largest tool
+ * diameter plus radial stock-to-leave over the operations that route it
+ * outside (#881) — or null when nothing does. A margin is kept on top of it.
+ */
+export function nestEdgeClearance(project: Project, featureIds: string[]): number | null {
+  const cutters = outlineCutters(project, featureIds)
+  if (cutters.length === 0) return null
+  return Math.max(...cutters.map((cutter) => cutter.diameter + cutter.leave))
+}
+
+/** The tool and radial leave of every outside edge route that cuts one of `featureIds`. */
+function outlineCutters(project: Project, featureIds: string[]): { diameter: number; leave: number }[] {
   const ids = new Set(featureIds)
-  let gap: number | null = null
-  for (const operation of project.operations) {
-    if (operation.kind !== 'edge_route_outside' || operation.target.source !== 'features') continue
-    if (!operation.target.featureIds.some((id) => ids.has(id))) continue
+  return project.operations.flatMap((operation) => {
+    if (operation.kind !== 'edge_route_outside' || operation.target.source !== 'features') return []
+    if (!operation.target.featureIds.some((id) => ids.has(id))) return []
     const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
-    if (!tool) continue
-    const needed = normalizeToolForProject(tool, project).diameter + 2 * Math.max(0, operation.stockToLeaveRadial)
-    gap = gap === null ? needed : Math.max(gap, needed)
-  }
-  return gap
+    if (!tool) return []
+    return [{ diameter: normalizeToolForProject(tool, project).diameter, leave: Math.max(0, operation.stockToLeaveRadial) }]
+  })
 }
 
 function offsetRings(rings: NestRing[], delta: number): NestRing[] {
@@ -444,10 +462,31 @@ export function clampCornerPad(minimumGap: number): number {
   return (Math.max(0, minimumGap) / 2) * (1 - Math.SQRT1_2) + CLAMP_KEEPOUT_EPSILON
 }
 
-/** The stock outline, shrunk by the flattening tolerance. */
-export function nestSheetRing(project: Project): NestRing | null {
+/**
+ * The stock outline, shrunk by the flattening tolerance. With `margins` (#881)
+ * it is also cut to the stock's bounding box inset on each side by that side's
+ * margin plus `edgeClearance`, the cut's reach outside a part; a side with no
+ * margin is not inset. Exact for rectangular stock, and on any other outline
+ * it only takes more room away.
+ */
+export function nestSheetRing(project: Project, margins?: NestMargins, edgeClearance = 0): NestRing | null {
   const tolerance = nestFlattenTolerance(project)
-  const stock = flattenProfileWithin(project.stock.profile, tolerance)
+  let stock = flattenProfileWithin(project.stock.profile, tolerance)
+  if (margins && Object.values(margins).some((margin) => margin > 0)) {
+    const inset = (margin: number) => (margin > 0 ? margin + Math.max(0, edgeClearance) : 0)
+    const box = pathsBox([ringToPath(stock)])
+    const allowed = rectPath({
+      minX: box.minX + Math.round(inset(margins.left) * NEST_SCALE),
+      minY: box.minY + Math.round(inset(margins.bottom) * NEST_SCALE),
+      maxX: box.maxX - Math.round(inset(margins.right) * NEST_SCALE),
+      maxY: box.maxY - Math.round(inset(margins.top) * NEST_SCALE),
+    })
+    if (allowed[0].X >= allowed[2].X || allowed[0].Y >= allowed[2].Y) return null
+    const outside = differencePaths([rectPath({ minX: box.minX - 1, minY: box.minY - 1, maxX: box.maxX + 1, maxY: box.maxY + 1 })], [allowed])
+    const pieces = differencePaths([ringToPath(stock)], outside)
+    if (pieces.length === 0) return null
+    stock = pathToRing(pieces.reduce((best, path) => (Math.abs(ClipperLib.Clipper.Area(path)) > Math.abs(ClipperLib.Clipper.Area(best)) ? path : best)))
+  }
   const shrunk = offsetRings([stock], -tolerance)
   if (shrunk.length === 0) return null
   return shrunk.reduce((best, ring) => (
@@ -471,13 +510,14 @@ export function buildNestJob(
   quantities: number[],
   settings: NestSettings,
 ): NestJob | null {
-  const sheet = nestSheetRing(project)
+  const featureIds = parts.flatMap((part) => part.featureIds)
+  const sheet = nestSheetRing(project, settings.margins, nestEdgeClearance(project, featureIds) ?? 0)
   if (!sheet || parts.length === 0) return null
   return {
     sheet,
     obstacles: nestObstacleRings(
       project,
-      parts.flatMap((part) => part.featureIds),
+      featureIds,
       parts.flatMap((part) => part.footprint),
       settings.keepOriginals,
       settings.minimumGap,

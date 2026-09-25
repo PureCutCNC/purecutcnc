@@ -34,7 +34,9 @@ import { defaultStock, defaultTool, newProject, rectProfile, type Project, type 
 import {
   NEST_ROTATION_STEPS,
   NEST_ROTATIONS,
+  NO_MARGINS,
   initialNestForm,
+  marginsLeaveRoom,
   nestSettingsFromForm,
   nestSubject,
   presetForRotations,
@@ -178,6 +180,48 @@ function testRotationStepsRoundTrip(): void {
   console.log('rotation steps round-trip: PASSED')
 }
 
+function testMarginsFormAndRecord(): void {
+  const project = makeProject(true)
+  const subject = nestSubject(project, ['plate'])
+  assert(subject.parts.ok, 'part resolves')
+  const fresh = initialNestForm(subject)
+  assert(JSON.stringify(fresh.margins) === JSON.stringify(NO_MARGINS), 'a new nest starts without margins')
+  assert(!('margins' in nestSettingsFromForm(fresh)), 'no margins are stored as none')
+
+  const check = (margins: typeof NO_MARGINS) => validateNestForm({ ...fresh, margins }, subject.gapFloor, marginsLeaveRoom(subject, margins))
+  assert(check({ ...NO_MARGINS, left: -1 }) === 'margin-invalid', 'a negative margin is refused')
+  assert(check({ ...NO_MARGINS, top: Number.NaN }) === 'margin-invalid', 'an empty margin is refused')
+  assert(check({ ...NO_MARGINS, left: 120, right: 120 }) === 'margins-no-room', 'margins wider than the stock leave no room')
+  assert(check({ top: 5, bottom: 10, left: 15, right: 20 }) === null, 'sensible margins pass')
+
+  // A nest made with margins stores them, survives save and load, and reopens with them.
+  const margins = { top: 5, bottom: 10, left: 15, right: 20 }
+  const settings = nestSettingsFromForm({ ...fresh, quantities: [2], margins })
+  const job = buildNestJob(subject.base, subject.parts.parts, [2], settings)
+  assert(job, 'job builds')
+  const applied = applyNestToProject(project, {
+    parts: [{ featureIds: subject.parts.parts[0].featureIds, quantity: 2 }],
+    placements: nest(requestFromJob(job)).placements,
+    settings,
+  })
+  assert(applied, 'nest applies')
+  const saved = JSON.parse(JSON.stringify(applied.project)) as ProjectFormatInput
+  const loaded = normalizeProject(JSON.parse(JSON.stringify(saved)) as ProjectFormatInput)
+  assert(JSON.stringify(loaded.nests?.[0].settings.margins) === JSON.stringify(margins), 'margins survive save and load')
+  assert(JSON.stringify(initialNestForm(nestSubject(loaded, [applied.copyIds[0]])).margins) === JSON.stringify(margins), 'the form reopens with them')
+
+  // Records from before margins, and partial or bad ones, read side by side as 0.
+  const reload = (value: unknown) => {
+    const copy = JSON.parse(JSON.stringify(saved)) as { nests: { settings: Record<string, unknown> }[] }
+    copy.nests[0].settings.margins = value
+    return normalizeProject(copy as unknown as ProjectFormatInput).nests?.[0].settings.margins
+  }
+  assert(reload(undefined) === undefined, 'a record without margins has none')
+  assert(JSON.stringify(reload({ top: 5, left: 'x', right: -2 })) === JSON.stringify({ top: 5, bottom: 0, left: 0, right: 0 }), 'missing or bad sides read as 0')
+  assert(reload({ top: 0, bottom: 0 }) === undefined, 'all-zero margins are none')
+  console.log('margins in the form and the record: PASSED')
+}
+
 function testRevealingAFolderIsNotAnEdit(): void {
   useProjectStore.setState({ project: makeProject(true), history: { past: [], future: [], transactionStart: null }, dirty: false })
   const store = () => useProjectStore.getState()
@@ -219,5 +263,6 @@ testSeveralPartsDefaultToArranging()
 testNestedSubjectTargetsTheNest()
 testJobSurvivesStructuredClone()
 testRotationStepsRoundTrip()
+testMarginsFormAndRecord()
 testRevealingAFolderIsNotAnEdit()
 console.log('All nest panel state tests passed')

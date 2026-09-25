@@ -24,6 +24,7 @@ import type { NestResult } from '../../engine/nesting'
 import { buildNestJob, type NestPartSpec } from '../../store/helpers/nestPart'
 import { useProjectStore } from '../../store/projectStore'
 import type { MessageKey } from '../../i18n/locales/en'
+import type { NestMargins } from '../../types/project'
 import { useI18n } from '../../i18n/i18nContext'
 import { CanvasWorkflowAction, CanvasWorkflowCancel } from '../canvas/CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from '../canvas/CanvasWorkflowPanel'
@@ -35,6 +36,8 @@ import {
   nestSubject,
   stepOfPreset,
   subjectParts,
+  MARGIN_SIDES,
+  marginsLeaveRoom,
   validateNestForm,
   watchForEdits,
   type NestForm,
@@ -117,6 +120,15 @@ const FORM_ERROR_KEYS: Record<NestFormError, MessageKey> = {
   quantity: 'canvas.nest.error.quantity',
   'gap-missing': 'canvas.nest.error.gapMissing',
   'gap-below-tool': 'canvas.nest.error.gapBelowTool',
+  'margin-invalid': 'canvas.nest.error.marginInvalid',
+  'margins-no-room': 'canvas.nest.error.marginsNoRoom',
+}
+
+const MARGIN_KEYS: Record<keyof NestMargins, MessageKey> = {
+  top: 'canvas.nest.margin.top',
+  bottom: 'canvas.nest.margin.bottom',
+  left: 'canvas.nest.margin.left',
+  right: 'canvas.nest.margin.right',
 }
 
 export function NestPanelHost(props: NestPanelHostProps) {
@@ -165,7 +177,8 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
   // The part list can change under an open panel (undo, a replaced nest);
   // keep one quantity per part.
   const quantities = parts.map((_, index) => form.quantities[index] ?? 1)
-  const formError = subject.parts.ok ? validateNestForm({ ...form, quantities }, subject.gapFloor) : null
+  const roomForMargins = useMemo(() => marginsLeaveRoom(subject, form.margins), [subject, form.margins])
+  const formError = subject.parts.ok ? validateNestForm({ ...form, quantities }, subject.gapFloor, roomForMargins) : null
   const canNest = subject.parts.ok && formError === null && !busy
 
   function recordOwnStep(pushed: boolean) {
@@ -439,6 +452,41 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
               </select>
             </label>
           </div>
+          <div className="canvas-workflow-panel__grid">
+            <label className="canvas-workflow-panel__field">
+              <span>{t('canvas.nest.margins', { units })}</span>
+              <input
+                className="canvas-workflow-panel__count-input"
+                type="number"
+                inputMode="decimal"
+                step="any"
+                min={0}
+                value={MARGIN_SIDES.every((side) => form.margins[side] === form.margins.top) && Number.isFinite(form.margins.top) ? form.margins.top : ''}
+                aria-label={t('canvas.nest.marginsAll', { units })}
+                onChange={(event) => {
+                  const value = event.currentTarget.valueAsNumber
+                  setForm({ ...form, margins: { top: value, bottom: value, left: value, right: value } })
+                }}
+              />
+            </label>
+          </div>
+          <div className="canvas-workflow-panel__grid">
+            {MARGIN_SIDES.map((side) => (
+              <label className="canvas-workflow-panel__field" key={side}>
+                <span>{t(MARGIN_KEYS[side])}</span>
+                <input
+                  className="canvas-workflow-panel__count-input"
+                  type="number"
+                  inputMode="decimal"
+                  step="any"
+                  min={0}
+                  value={Number.isFinite(form.margins[side]) ? form.margins[side] : ''}
+                  aria-label={t('canvas.nest.marginFor', { side: t(MARGIN_KEYS[side]), units })}
+                  onChange={(event) => setForm({ ...form, margins: { ...form.margins, [side]: event.currentTarget.valueAsNumber } })}
+                />
+              </label>
+            ))}
+          </div>
           <div className="canvas-workflow-panel__meta">
             <label className="canvas-workflow-panel__check">
               <input
@@ -453,6 +501,7 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
             {subject.gapFloor !== null
               ? t('canvas.nest.gapFromTool', { gap: subject.gapFloor.toFixed(units === 'inch' ? 4 : 2), units })
               : t('canvas.nest.gapNoTool')}
+            {' '}{t('canvas.nest.marginsHint')}
           </p>
           {formError && <p className="canvas-workflow-panel__warning" role="alert">{t(FORM_ERROR_KEYS[formError])}</p>}
           {run.state === 'running' && (
