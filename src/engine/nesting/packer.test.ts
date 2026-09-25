@@ -23,7 +23,7 @@
  */
 
 import { expandByHalfGap, largestFirst, shrinkByHalfGap } from './defaults'
-import { nest } from './packer'
+import { createNester, nest } from './packer'
 import { assert, assertValidLayout, GAP_TOLERANCE, rect } from './testLayout'
 import type { NestPart, NestRequest, NestResult, NestRing } from './types'
 
@@ -331,6 +331,59 @@ function testReportsProgress(): void {
   assert(JSON.stringify(result) === JSON.stringify(nest(req)), 'reporting progress does not change the layout')
 }
 
+function testPinnedRotations(): void {
+  // #875: a pin fixes one copy's angle; null leaves it to the placer.
+  const req = request({ parts: [part('bar', [rect(0, 0, 40, 10)], 4, [0, 90])] })
+  const nester = createNester(req)
+  const pins = [90, null, 0, 90]
+  const result = nester.place(nester.initialSequence, { rotations: pins })
+  assert(result.placements.length === 4, 'all four bars placed')
+  pins.forEach((pin, index) => {
+    if (pin !== null) assert(result.placements[index].rotation === pin, `copy ${index} is pinned to ${pin}°`)
+  })
+  assertValidLayout(req, result, 'pinned')
+  assert(
+    JSON.stringify(nester.place(nester.initialSequence, { rotations: [null, null, null, null] })) === JSON.stringify(nest(req)),
+    'all-null pins place exactly as the placer alone',
+  )
+  let threw = 0
+  for (const rotations of [[45, null, null, null], [0, 90]]) {
+    try {
+      nester.place(nester.initialSequence, { rotations })
+    } catch {
+      threw += 1
+    }
+  }
+  assert(threw === 2, 'a disallowed angle and a wrong-length list are rejected')
+}
+
+function testFailedAngleSkipsOnlyThatAngle(): void {
+  // A 60 mm strip fits a 20 mm wide sheet only upright. The copy pinned flat
+  // finds no place, which must not stop the next copy from trying upright.
+  const req = request({ sheet: rect(0, 0, 20, 140), parts: [part('strip', [rect(0, 0, 60, 10)], 3, [0, 90])] })
+  const nester = createNester(req)
+  const result = nester.place(nester.initialSequence, { rotations: [0, 90, null] })
+  assert(unplacedCount(result, 'strip') === 1, `only the flat copy is unplaced, got ${unplacedCount(result, 'strip')}`)
+  assert(result.placements.length === 2 && result.placements.every((p) => p.rotation === 90), 'the others stand upright')
+  assertValidLayout(req, result, 'failed angle')
+}
+
+function testPinnedOddAnglesKeepTheExactGap(): void {
+  const rotations = Array.from({ length: 24 }, (_, index) => index * 15)
+  const req = request({
+    minimumGap: 6,
+    expandFootprint: exactRectHalfGap,
+    parts: [part('long', [rect(0, 0, 37, 9)], 5, rotations), part('sq', [rect(0, 0, 13, 13)], 5, rotations)],
+  })
+  const nester = createNester(req)
+  for (const offset of [1, 5, 7]) {
+    const pins = nester.initialSequence.map((_, index) => rotations[(index * offset + 1) % rotations.length])
+    const result = nester.place(nester.initialSequence, { rotations: pins })
+    assert(result.placements.length >= 5, `pins ×${offset}: parts are placed`)
+    assertValidLayout(req, result, `pins ×${offset}`)
+  }
+}
+
 function testDeterministic(): void {
   const build = () => request({
     parts: [
@@ -386,6 +439,9 @@ const tests: [string, () => void][] = [
   ['a rotated host carries its hole', testRotatedHost],
   ['odd angles keep the exact gap', testOddAnglesKeepTheExactGap],
   ['reports progress', testReportsProgress],
+  ['pinned rotations', testPinnedRotations],
+  ['a failed angle skips only that angle', testFailedAngleSkipsOnlyThatAngle],
+  ['pinned odd angles keep the exact gap', testPinnedOddAnglesKeepTheExactGap],
   ['deterministic', testDeterministic],
   ['rejects invalid input', testRejectsInvalidInput],
 ]

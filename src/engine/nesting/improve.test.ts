@@ -23,7 +23,7 @@
  */
 
 import { expandByHalfGap, largestFirst, shrinkByHalfGap } from './defaults'
-import { improveNest, isBetterNest, type ImproveStep } from './improve'
+import { improveNest, isBetterNest, MAX_GENE_ANGLES, type ImproveOptions, type ImproveStep } from './improve'
 import { createNester, nest } from './packer'
 import { assert, assertValidLayout, rect } from './testLayout'
 import type { NestRequest } from './types'
@@ -71,9 +71,32 @@ function testRanking(): void {
   console.log('ranking: PASSED')
 }
 
-function run(request: NestRequest, steps: number, seed = 1): ImproveStep[] {
+/**
+ * Six copies on a 65×52 sheet. Whatever the order, the placer's greedy angle
+ * per copy leaves two out; pinning some copies to the other angle leaves one
+ * (#875). Found by a random search over small rectangle sets.
+ */
+function rotationMatters(): NestRequest {
+  const part = (id: string, w: number, h: number, quantity: number) => ({ id, footprint: [rect(0, 0, w, h)], quantity, rotations: [0, 90] })
+  return {
+    sheet: rect(0, 0, 65, 52),
+    obstacles: [],
+    minimumGap: 2,
+    expandFootprint: expandByHalfGap,
+    shrinkHoles: shrinkByHalfGap,
+    orderParts: largestFirst,
+    parts: [part('p0', 37, 30, 2), part('p1', 25, 27, 1), part('p2', 17, 22, 2), part('p3', 12, 22, 1)],
+  }
+}
+
+function permutations<T>(items: T[]): T[][] {
+  if (items.length <= 1) return [items]
+  return items.flatMap((item, index) => permutations([...items.slice(0, index), ...items.slice(index + 1)]).map((rest) => [item, ...rest]))
+}
+
+function run(request: NestRequest, steps: number, seed = 1, options: ImproveOptions = {}): ImproveStep[] {
   const out: ImproveStep[] = []
-  for (const step of improveNest(request, { seed })) {
+  for (const step of improveNest(request, { seed, ...options })) {
     out.push(step)
     if (out.length >= steps) break
   }
@@ -120,6 +143,46 @@ function testBestNeverGetsWorseAndEveryImprovementIsValid(): void {
   console.log(`the best never gets worse and every improvement is valid (${improvements} improvements): PASSED`)
 }
 
+function testRotationCanFitWhatNoOrderDoes(): void {
+  const request = rotationMatters()
+  const nester = createNester(request)
+  const missing = (result: { unplaced: { count: number }[] }) => result.unplaced.reduce((sum, entry) => sum + entry.count, 0)
+  const orders = permutations(nester.initialSequence)
+  const fewest = Math.min(...orders.map((order) => missing(nester.place(order))))
+  assert(orders.length === 720 && fewest === 2, `every order with greedy angles leaves two out, got ${fewest}`)
+  const best = run(request, 300).at(-1)!.best
+  assert(missing(best) === 1, `pinned angles leave one out, got ${missing(best)}`)
+  assertValidLayout(request, best, 'rotation matters')
+  console.log('rotation can fit what no order does: PASSED')
+}
+
+function testSingleAngleSearchesAsBefore(): void {
+  // Parts with one angle draw nothing from the RNG for rotation, so the
+  // "No rotation" preset searches exactly as it did before #875: this trace
+  // was recorded from that search (seed 3, 120 layouts).
+  const steps = run(orderMatters(), 120, 3)
+  const improvedAt = steps.filter((step) => step.improved).map((step) => step.evaluated)
+  const usedArea = steps.at(-1)!.best.usedArea
+  assert(improvedAt.join() === '4,17', `improvements at the recorded layouts, got ${improvedAt.join()}`)
+  assert(Math.abs(usedArea - 3933.10980072) < 1e-6, `the recorded best area, got ${usedArea}`)
+  console.log('a single-angle search runs as before: PASSED')
+}
+
+function testFineStepsKeepTheGreedyAngle(): void {
+  // A 15° step allows 24 angles, past MAX_GENE_ANGLES: no copy gets a gene,
+  // so the rotation rate changes nothing. This search improves twice in 40
+  // layouts, so a gene drawn from the RNG would shift when it does.
+  const fine = Array.from({ length: 24 }, (_, index) => index * 15)
+  const request = { ...orderMatters(), parts: orderMatters().parts.map((part) => ({ ...part, rotations: fine })) }
+  assert(fine.length > MAX_GENE_ANGLES, 'the step allows more angles than genes take')
+  const trace = (rotationRate: number) => run(request, 40, 1, { rotationRate })
+    .map((step) => `${step.evaluated}:${step.improved}:${step.best.usedArea}`).join()
+  const order = trace(0)
+  assert(order.includes('true'), 'the search improves the layout')
+  assert(order === trace(0.5), 'a fine step searches order only')
+  console.log('fine steps keep the greedy angle: PASSED')
+}
+
 function testSeedReproducesTheRun(): void {
   const trace = (seed: number) => run(mixed(), 40, seed).map((step) => `${step.evaluated}:${step.improved}:${step.best.usedArea}`).join()
   assert(trace(7) === trace(7), 'the same seed gives the same run')
@@ -143,6 +206,9 @@ testRanking()
 testFirstStepIsTheOneShotAnswer()
 testOrderCanFitAPartTheOneShotLeftOut()
 testBestNeverGetsWorseAndEveryImprovementIsValid()
+testRotationCanFitWhatNoOrderDoes()
+testSingleAngleSearchesAsBefore()
+testFineStepsKeepTheGreedyAngle()
 testSeedReproducesTheRun()
 testStopsOnItsOwnWhenStalled()
 console.log('All nesting improve tests passed')

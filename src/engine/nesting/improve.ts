@@ -15,10 +15,13 @@
  */
 
 // Keep-improving search for a nest (issue #862, step 6 of #741): a small
-// genetic search over the order copies are placed in. Rotation stays the
-// placer's greedy choice per copy. The population is seeded with the one-shot
-// order, so the first result is the one-shot answer and the best can only get
-// better from there. A seeded RNG makes every run reproducible.
+// genetic search over the order copies are placed in and, since #875, the angle
+// each copy is placed at. A copy's rotation gene is null — the placer tries
+// every allowed angle and keeps the best — or one allowed angle it is pinned
+// to, which is also cheaper to place. The population is seeded with the
+// one-shot order and no pins, so the first result is the one-shot answer and
+// the best can only get better from there. A seeded RNG makes every run
+// reproducible.
 
 import { createNester } from './packer'
 import type { NestRequest, NestResult } from './types'
@@ -29,6 +32,8 @@ export interface ImproveOptions {
   populationSize?: number
   /** Chance per position of swapping a copy with its neighbour. */
   mutationRate?: number
+  /** Chance per copy of changing its rotation gene, for parts allowed several angles. */
+  rotationRate?: number
   /** Stop after this many layouts in a row without an improvement. */
   stallLimit?: number
 }
@@ -42,10 +47,20 @@ export interface ImproveStep {
   improved: boolean
 }
 
+/**
+ * Parts allowed more angles than this keep the placer's greedy choice and get
+ * no rotation gene (#875). Measured over 3 seeds on two files: genes help with
+ * quarter turns; at 45° they won on one file and lost on the other, and at 15°
+ * they lost — a random pin among many angles is mostly a poor one, and the
+ * search places too few layouts a second to recover from it.
+ */
+export const MAX_GENE_ANGLES = 4
+
 export const DEFAULT_IMPROVE_OPTIONS: Required<ImproveOptions> = {
   seed: 1,
   populationSize: 10,
   mutationRate: 0.1,
+  rotationRate: 0.1,
   stallLimit: 150,
 }
 
@@ -72,6 +87,8 @@ function random(seed: number): () => number {
 interface Individual {
   /** A permutation of positions in the initial sequence. */
   order: number[]
+  /** Per position in the initial sequence: the pinned angle, or null for the placer's choice. */
+  genes: (number | null)[]
   result: NestResult
 }
 
@@ -81,19 +98,28 @@ interface Individual {
  * earlier simply by not asking for the next step.
  */
 export function* improveNest(request: NestRequest, options: ImproveOptions = {}): Generator<ImproveStep, void, void> {
-  const { seed, populationSize, mutationRate, stallLimit } = { ...DEFAULT_IMPROVE_OPTIONS, ...options }
+  const { seed, populationSize, mutationRate, rotationRate, stallLimit } = { ...DEFAULT_IMPROVE_OPTIONS, ...options }
   const nester = createNester(request)
   const initial = nester.initialSequence
+  // The angles a gene may pin each copy to. A part with one angle has no
+  // choice, and one with more than MAX_GENE_ANGLES is left to the placer.
+  const anglesByPart = new Map(request.parts.map((part) => {
+    const options = [...new Set(part.rotations)]
+    return [part.id, options.length <= MAX_GENE_ANGLES ? options : []]
+  }))
+  const angles = initial.map((partId) => anglesByPart.get(partId) ?? [])
   const rng = random(seed)
   const size = Math.max(2, populationSize)
 
   let evaluated = 0
   let sinceImprovement = 0
   let best: Individual | null = null
-  const evaluate = (order: number[]): { individual: Individual; step: ImproveStep } => {
-    const result = nester.place(order.map((position) => initial[position]))
+  const evaluate = (order: number[], genes: (number | null)[]): { individual: Individual; step: ImproveStep } => {
+    const result = nester.place(order.map((position) => initial[position]), {
+      rotations: order.map((position) => genes[position]),
+    })
     evaluated += 1
-    const individual = { order, result }
+    const individual = { order, genes, result }
     const improved = best !== null && isBetterNest(result, best.result)
     if (best === null || improved) {
       best = individual
@@ -105,9 +131,11 @@ export function* improveNest(request: NestRequest, options: ImproveOptions = {})
   }
 
   const identity = initial.map((_, index) => index)
-  // Nothing to reorder: the one-shot answer is the only layout.
+  const unpinned = initial.map(() => null)
+  // Nothing to reorder, and one copy's greedy angle is already its best: the
+  // one-shot answer is the only layout.
   if (initial.length < 2) {
-    yield evaluate(identity).step
+    yield evaluate(identity, unpinned).step
     return
   }
 
@@ -124,19 +152,35 @@ export function* improveNest(request: NestRequest, options: ImproveOptions = {})
     return next
   }
 
+  // Each copy with a choice of angles moves to another option — null or an
+  // angle — with probability `rotationRate`. Parts with one angle draw nothing
+  // from the RNG, so a nest without rotation searches exactly as before.
+  const mutateGenes = (genes: (number | null)[]): (number | null)[] => genes.map((gene, position) => {
+    const options = angles[position]
+    if (options.length < 2 || rotationRate <= 0 || rng() >= rotationRate) return gene
+    const others = [null, ...options].filter((option) => option !== gene)
+    return others[Math.floor(rng() * others.length)]
+  })
+
   // Order crossover: a slice of one parent, the rest in the other's order.
-  const crossover = (first: number[], second: number[]): number[] => {
-    const a = Math.floor(rng() * first.length)
-    const b = a + Math.floor(rng() * (first.length - a)) + 1
-    const slice = first.slice(a, b)
+  // Each copy keeps the rotation gene of the parent its place came from.
+  const crossover = (first: Individual, second: Individual): { order: number[]; genes: (number | null)[] } => {
+    const a = Math.floor(rng() * first.order.length)
+    const b = a + Math.floor(rng() * (first.order.length - a)) + 1
+    const slice = first.order.slice(a, b)
     const taken = new Set(slice)
-    const rest = second.filter((value) => !taken.has(value))
-    return [...rest.slice(0, a), ...slice, ...rest.slice(a)]
+    const rest = second.order.filter((value) => !taken.has(value))
+    const genes = second.genes.map((gene, position) => (taken.has(position) ? first.genes[position] : gene))
+    return { order: [...rest.slice(0, a), ...slice, ...rest.slice(a)], genes }
   }
 
   let population: Individual[] = []
-  for (const order of [identity, ...Array.from({ length: size - 1 }, () => mutate(identity))]) {
-    const { individual, step } = evaluate(order)
+  const seeds = [
+    { order: identity, genes: unpinned },
+    ...Array.from({ length: size - 1 }, () => ({ order: mutate(identity), genes: mutateGenes(unpinned) })),
+  ]
+  for (const { order, genes } of seeds) {
+    const { individual, step } = evaluate(order, genes)
     population.push(individual)
     yield step
     if (sinceImprovement >= stallLimit) return
@@ -151,7 +195,8 @@ export function* improveNest(request: NestRequest, options: ImproveOptions = {})
   for (;;) {
     const next: Individual[] = [best!]
     while (next.length < size) {
-      const { individual, step } = evaluate(mutate(crossover(pick().order, pick().order)))
+      const child = crossover(pick(), pick())
+      const { individual, step } = evaluate(mutate(child.order), mutateGenes(child.genes))
       next.push(individual)
       yield step
       if (sinceImprovement >= stallLimit) return
