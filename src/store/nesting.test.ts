@@ -511,6 +511,28 @@ function testSearchFlagClearsWithThePanel(): void {
   console.log('search flag clears with the panel: PASSED')
 }
 
+function testAnotherProjectClosesThePanel(): void {
+  // #886: the panel belongs to the project it was opened on.
+  const store = () => useProjectStore.getState()
+  const saved = JSON.stringify(makeProject())
+  const switches: [string, () => void][] = [
+    ['a new project', () => store().createNewProject()],
+    ['loading a project', () => store().loadProject(makeProject())],
+    ['opening a file', () => store().openProjectFromText(saved, null)],
+  ]
+  for (const [label, open] of switches) {
+    resetStore(makeProject())
+    store().selectFeatures(['plate'])
+    store().startNest()
+    store().setNestSearching(true)
+    assert(store().pendingNest !== null, `${label}: the panel is open`)
+    open()
+    assert(store().pendingNest === null, `${label} closes the Nest panel`)
+    assert(store().nestSearching === false, `${label} ends a running search`)
+  }
+  console.log('another project closes the panel: PASSED')
+}
+
 testPartResolution()
 testApplyIsOneStepAndMachinesEveryCopy()
 testDiscardRestoresTheDesign()
@@ -525,4 +547,5 @@ testMarginsOnRoundStock()
 testReplaceNestIsOneStep()
 testAmendedNestStaysOneStep()
 testSearchFlagClearsWithThePanel()
+testAnotherProjectClosesThePanel()
 console.log('All nesting store tests passed')

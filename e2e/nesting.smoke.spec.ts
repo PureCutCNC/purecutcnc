@@ -284,3 +284,17 @@ test('Nest panel keeps every control on screen with 26 parts, and Cancel reverts
   await expect.poll(() => nestCount(page)).toBe(0)
   expect(await getFeatureCount(page)).toBe(26)
 })
+
+test('Opening another project closes the Nest panel (#886)', async ({ app }) => {
+  const { page } = app
+  await seedProject(page, nestingProjectJson())
+  await selectFeatures(page, ['f-plate'])
+  await page.getByRole('button', { name: 'Distribute selected features', exact: true }).first().click()
+  await page.getByRole('menu').getByRole('button', { name: 'Nest on stock', exact: true }).click()
+  const panel = page.locator(PANEL)
+  await expect(panel).toBeVisible()
+
+  // The same path as File → Open.
+  await seedProject(page, nestingProjectJson(true))
+  await expect(panel).toHaveCount(0)
+})

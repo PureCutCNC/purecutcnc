@@ -85,6 +85,9 @@ export function createProjectLifecycleSlice(
           pendingMove: null,
           pendingTransform: null,
           pendingOffset: null,
+          // A nest panel belongs to the project it was opened on (#886).
+          pendingNest: null,
+          nestSearching: false,
           selection: emptySelection(),
           projectKey: state.projectKey + 1,
           history: {
@@ -248,6 +251,8 @@ export function createProjectLifecycleSlice(
           pendingMove: null,
           pendingTransform: null,
           pendingOffset: null,
+          pendingNest: null,
+          nestSearching: false,
           selection: emptySelection(),
           projectKey: state.projectKey + 1,
           history: {
@@ -322,6 +327,8 @@ export function createProjectLifecycleSlice(
         pendingMove: null,
         pendingTransform: null,
         pendingOffset: null,
+        pendingNest: null,
+        nestSearching: false,
         selection: emptySelection(),
         projectKey: state.projectKey + 1,
         history: {
