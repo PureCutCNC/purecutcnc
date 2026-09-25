@@ -882,6 +882,20 @@ export interface NestSettings {
   minimumGap: number
   /** Originals stay where they are and are nested around, instead of being moved. */
   keepOriginals: boolean
+  /** Uncut stock kept at each stock edge (#881); absent means none. */
+  margins?: NestMargins
+}
+
+/**
+ * Per stock side, as seen on the canvas (top = +Y, right = +X), in project
+ * units: the uncut stock left between that edge and the cut. 0 lets the cut
+ * run off the edge, as without margins.
+ */
+export interface NestMargins {
+  top: number
+  bottom: number
+  left: number
+  right: number
 }
 
 export interface NestRecordPart {

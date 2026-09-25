@@ -19,12 +19,14 @@
 import { discardNestFromProject } from '../../store/helpers/nestApply'
 import {
   findNestForSelection,
+  nestEdgeClearance,
   nestGapForPart,
+  nestSheetRing,
   resolveNestParts,
   type NestPartSpec,
   type NestPartsResolution,
 } from '../../store/helpers/nestPart'
-import type { NestRecord, NestSettings, Project } from '../../types/project'
+import type { NestMargins, NestRecord, NestSettings, Project } from '../../types/project'
 
 /**
  * Finer rotation steps offered after the presets (#867). Each divides 360, and
@@ -70,6 +72,8 @@ export interface NestSubject {
   parts: NestPartsResolution
   /** The tools' clearance, the smallest gap allowed; null when no edge route cuts any part. */
   gapFloor: number | null
+  /** How far the cut reaches outside a part, kept on top of a margin; null when no edge route cuts any part. */
+  edgeClearance: number | null
 }
 
 export function nestSubject(project: Project, selectedIds: string[]): NestSubject {
@@ -81,6 +85,7 @@ export function nestSubject(project: Project, selectedIds: string[]): NestSubjec
     replaceNest,
     parts,
     gapFloor: parts.ok ? nestGapForPart(base, parts.parts.flatMap((part) => part.featureIds)) : null,
+    edgeClearance: parts.ok ? nestEdgeClearance(base, parts.parts.flatMap((part) => part.featureIds)) : null,
   }
 }
 
@@ -94,7 +99,13 @@ export interface NestForm {
   rotation: NestRotationPreset
   gap: number | null
   keepOriginals: boolean
+  /** Uncut stock per stock edge; a side left empty is NaN until the user fills it. */
+  margins: NestMargins
 }
+
+export const NO_MARGINS: NestMargins = { top: 0, bottom: 0, left: 0, right: 0 }
+
+export const MARGIN_SIDES = ['top', 'bottom', 'left', 'right'] as const satisfies readonly (keyof NestMargins)[]
 
 /** One part defaults to a sheet's worth; several default to one each, which arranges them. */
 export const DEFAULT_NEST_QUANTITY = 10
@@ -112,14 +123,19 @@ export function initialNestForm(subject: NestSubject): NestForm {
       rotation: presetForRotations(previous.settings.rotations),
       gap: Math.max(previous.settings.minimumGap, subject.gapFloor ?? 0),
       keepOriginals: previous.settings.keepOriginals,
+      margins: { ...(previous.settings.margins ?? NO_MARGINS) },
     }
   }
-  return { quantities, rotation: 'quarter', gap: subject.gapFloor, keepOriginals: false }
+  return { quantities, rotation: 'quarter', gap: subject.gapFloor, keepOriginals: false, margins: { ...NO_MARGINS } }
 }
 
-export type NestFormError = 'quantity' | 'gap-missing' | 'gap-below-tool'
+export type NestFormError = 'quantity' | 'gap-missing' | 'gap-below-tool' | 'margin-invalid' | 'margins-no-room'
 
-export function validateNestForm(form: NestForm, gapFloor: number | null): NestFormError | null {
+/**
+ * Checks the form. `roomForMargins` is the caller's answer from
+ * {@link marginsLeaveRoom}, which needs the stock.
+ */
+export function validateNestForm(form: NestForm, gapFloor: number | null, roomForMargins = true): NestFormError | null {
   if (form.quantities.length === 0 || form.quantities.some((quantity) => !Number.isInteger(quantity) || quantity < 1)) {
     return 'quantity'
   }
@@ -128,7 +144,15 @@ export function validateNestForm(form: NestForm, gapFloor: number | null): NestF
   if (form.gap === null || !Number.isFinite(form.gap) || form.gap <= 0) return 'gap-missing'
   // The floor is a machining fact — the cutter cannot pass through less — so it can be raised, never lowered.
   if (gapFloor !== null && form.gap < gapFloor - 1e-9) return 'gap-below-tool'
+  if (MARGIN_SIDES.some((side) => !Number.isFinite(form.margins[side]) || form.margins[side] < 0)) return 'margin-invalid'
+  if (!roomForMargins) return 'margins-no-room'
   return null
+}
+
+/** Whether the stock keeps any room once `margins`, and the cut's reach past each part, are taken off (#881). */
+export function marginsLeaveRoom(subject: NestSubject, margins: NestMargins): boolean {
+  if (MARGIN_SIDES.some((side) => !Number.isFinite(margins[side]) || margins[side] < 0)) return true
+  return nestSheetRing(subject.base, margins, subject.edgeClearance ?? 0) !== null
 }
 
 export function nestSettingsFromForm(form: NestForm): NestSettings {
@@ -136,6 +160,8 @@ export function nestSettingsFromForm(form: NestForm): NestSettings {
     rotations: [...NEST_ROTATIONS[form.rotation]],
     minimumGap: form.gap ?? 0,
     keepOriginals: form.keepOriginals,
+    // No margins are stored as none, so a nest without them is saved as before.
+    ...(MARGIN_SIDES.some((side) => form.margins[side] > 0) ? { margins: { ...form.margins } } : {}),
   }
 }
 

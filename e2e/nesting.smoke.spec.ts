@@ -219,13 +219,21 @@ test('Nest on stock takes a quantity per part when several parts are selected', 
   await panel.getByLabel('All parts').fill('3')
   await panel.getByLabel('Parts on sheet: f-bracket').fill('2')
   await panel.getByLabel('Gap (inch)').fill('0.25')
+  // Margins (#881): "All" fills every side, and a side can then differ.
+  await panel.getByLabel('All margins (inch)').fill('1')
+  await panel.getByLabel('Right margin (inch)').fill('2')
   await panel.getByRole('button', { name: 'Nest', exact: true }).click()
 
   await expect(panel.getByRole('status')).toHaveText(/^All 5 parts fit on the stock\. Took \d+:\d\d\.$/)
   // 3 plates with their pockets, 2 brackets.
   await expect.poll(() => getFeatureCount(page)).toBe(8)
-  const nested = await getProject(page) as { nests?: { parts: { quantity: number }[] }[] }
+  const nested = await getProject(page) as {
+    nests?: { parts: { quantity: number }[]; settings: { margins?: Record<string, number> } }[]
+  }
   expect(nested.nests?.[0].parts.map((part) => part.quantity)).toEqual([3, 2])
+  expect(nested.nests?.[0].settings.margins).toEqual({ top: 1, bottom: 1, left: 1, right: 2 })
+  await expect(panel.getByLabel('Right margin (inch)')).toHaveValue('2')
+  await expect(panel.getByLabel('Top margin (inch)')).toHaveValue('1')
 
   // Accept keeps the nest and closes the panel.
   await panel.getByRole('button', { name: 'Accept nest', exact: true }).click()

@@ -30,6 +30,7 @@ import {
   circleProfile,
   defaultStock,
   defaultTool,
+  getStockBounds,
   newProject,
   rectProfile,
   type LocalConstraint,
@@ -409,6 +410,58 @@ function testClampCornersKeepTheRouteWhole(): void {
   console.log('clamp corners keep the route whole: PASSED')
 }
 
+function testMarginsKeepTheUncutEdge(): void {
+  // #881: each side keeps its own margin of uncut stock beyond the cut, which
+  // reaches the tool diameter plus the radial leave outside the part.
+  const project = makeProject()
+  resetStore(project)
+  const margins = { top: 10, bottom: 20, left: 5, right: 15 }
+  const reach = TOOL_DIAMETER + STOCK_TO_LEAVE
+  const { placed } = nestIntoStore(['plate'], settings({ quantity: 30, margins }))
+  const nested = useProjectStore.getState().project
+  const stock = getStockBounds(nested.stock)
+  const plates = plateInstances(nested)
+  assert(placed === plates.length && placed >= 12, `plates placed: ${placed}`)
+  const edge = { left: Infinity, right: Infinity, bottom: Infinity, top: Infinity }
+  for (const id of plates) {
+    const ring = worldRing(nested, id)
+    const xs = ring.map((p) => p.x)
+    const ys = ring.map((p) => p.y)
+    edge.left = Math.min(edge.left, Math.min(...xs) - stock.minX)
+    edge.right = Math.min(edge.right, stock.maxX - Math.max(...xs))
+    edge.bottom = Math.min(edge.bottom, Math.min(...ys) - stock.minY)
+    edge.top = Math.min(edge.top, stock.maxY - Math.max(...ys))
+  }
+  for (const side of ['left', 'right', 'bottom', 'top'] as const) {
+    assert(edge[side] >= margins[side] + reach - 1e-6, `${side}: a part is ${edge[side]} from the edge, need ${margins[side] + reach}`)
+  }
+  // Still packed into the gravity corner, now at the margins.
+  assert(edge.left <= margins.left + reach + 0.2 && edge.bottom <= margins.bottom + reach + 0.2,
+    `packed against the left and bottom margins: ${edge.left}, ${edge.bottom}`)
+  console.log('margins keep the uncut edge: PASSED')
+}
+
+function testMarginsOnRoundStock(): void {
+  // On stock that is not a rectangle, margins trim its bounding box: parts
+  // stay inside the stock and inside the inset box.
+  const project = makeProject()
+  project.stock = { ...project.stock, profile: circleProfile(150, 100, 95) }
+  resetStore(project)
+  const margins = { top: 30, bottom: 30, left: 60, right: 0 }
+  const reach = TOOL_DIAMETER + STOCK_TO_LEAVE
+  const { placed } = nestIntoStore(['plate'], settings({ quantity: 12, margins }))
+  assert(placed >= 2, `plates placed: ${placed}`)
+  const nested = useProjectStore.getState().project
+  for (const id of plateInstances(nested)) {
+    for (const p of worldRing(nested, id)) {
+      assert(Math.hypot(p.x - 150, p.y - 100) <= 95 + 1e-6, `${id} stays on the round stock`)
+      assert(p.x >= 55 + margins.left + reach - 1e-6, `${id} keeps the left margin`)
+      assert(p.y >= 5 + margins.bottom + reach - 1e-6 && p.y <= 195 - margins.top - reach + 1e-6, `${id} keeps the top and bottom margins`)
+    }
+  }
+  console.log('margins on round stock: PASSED')
+}
+
 function testReplaceNestIsOneStep(): void {
   const before = makeProject()
   resetStore(before)
@@ -467,6 +520,8 @@ testSaveLoadRoundTrip()
 testCurvedPartsKeepTheGap()
 testClampsAreAvoided()
 testClampCornersKeepTheRouteWhole()
+testMarginsKeepTheUncutEdge()
+testMarginsOnRoundStock()
 testReplaceNestIsOneStep()
 testAmendedNestStaysOneStep()
 testSearchFlagClearsWithThePanel()
