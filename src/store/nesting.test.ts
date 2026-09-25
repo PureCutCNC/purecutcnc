@@ -24,6 +24,7 @@
 
 import ClipperLib from 'clipper-lib'
 import { flattenProfileWithin, nest } from '../engine/nesting'
+import { generateEdgeRouteToolpath } from '../engine/toolpaths/edge'
 import { NEST_SCALE, ringToPath } from '../engine/nesting/clipperOps'
 import {
   circleProfile,
@@ -382,6 +383,32 @@ function testClampsAreAvoided(): void {
   console.log('clamps are avoided: PASSED')
 }
 
+function testClampCornersKeepTheRouteWhole(): void {
+  // The toolpaths' clamp keep-out has square corners (#882): discs packed
+  // around a clamp's corner must still leave the outside route uncut by it.
+  // Without the corner pad, each of these clamp positions warns.
+  for (const [x, y] of [[34, 34], [55, 55], [69, 20]]) {
+    const base = newProject()
+    base.meta = { ...base.meta, units: 'mm' }
+    base.stock = defaultStock(120, 90, 12, 'mm')
+    base.tools = [{ ...defaultTool('mm', 1), id: 'tool-6', diameter: TOOL_DIAMETER }]
+    const project = projectWithFeatures(base, [row('disc', 'add', circleProfile(20, 20, 15))])
+    const edge = defaultOperationForTarget(project, 'edge_route_outside', 'finish', { source: 'features', featureIds: ['disc'] }, 0)
+    project.operations = [{ ...edge, id: 'op-edge', toolRef: 'tool-6', stockToLeaveRadial: 0 }]
+    project.clamps = [{ id: 'clamp-1', name: 'Clamp', type: 'step_clamp', x, y, w: 10, h: 10, height: 20, visible: true }]
+    resetStore(normalizeProject(JSON.parse(JSON.stringify(project)) as ProjectFormatInput))
+    const { placed } = nestIntoStore(['disc'], settings({ quantity: 12, minimumGap: TOOL_DIAMETER, rotations: [0] }))
+    assert(placed >= 4, `clamp at ${x},${y}: discs placed: ${placed}`)
+    const nested = useProjectStore.getState().project
+    const warnings = generateEdgeRouteToolpath(nested, nested.operations[0]).warnings
+    assert(
+      !warnings.some((warning) => warning.code === 'clampBlockedCut'),
+      `clamp at ${x},${y}: the route is cut short by the clamp`,
+    )
+  }
+  console.log('clamp corners keep the route whole: PASSED')
+}
+
 function testReplaceNestIsOneStep(): void {
   const before = makeProject()
   resetStore(before)
@@ -439,6 +466,7 @@ testConstraintReferencesFollowTheCopy()
 testSaveLoadRoundTrip()
 testCurvedPartsKeepTheGap()
 testClampsAreAvoided()
+testClampCornersKeepTheRouteWhole()
 testReplaceNestIsOneStep()
 testAmendedNestStaysOneStep()
 testSearchFlagClearsWithThePanel()
