@@ -129,7 +129,7 @@ function DistributionActions({
     // One entry, not one per baseline: the panel already has a mode selector,
     // so a button per mode was two doors into the same room.
     { value: 'text-layout', icon: 'text', label: t('canvas.textLayout.title'), enabled: canLayOutText },
-    { value: 'nest', icon: 'stock', label: t('canvas.nest.title'), enabled: canNest },
+    { value: 'nest', icon: 'nest', label: t('canvas.nest.title'), enabled: canNest },
   ]
 
   function selectDistribution(action: DistributionAction) {
