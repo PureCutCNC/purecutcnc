@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { featureHasClosedGeometry } from '../../text'
+import { featureHasClosedGeometry, featureHasShapeWithOperation } from '../../text'
 import { convertLength } from '../../utils/units'
 import { spacingToScallopHeight } from '../../engine/toolpaths/scallopHeight'
 import { defaultRetractOffset, defaultTool } from '../../types/project'
@@ -242,14 +242,14 @@ export function isOperationTargetValid(authoritativeProject: Project, kind: Oper
     const machiningFeatures = features.filter(isMachinable)
     const regionFeatures = features.filter(isRegion)
     return machiningFeatures.length > 0
-      && machiningFeatures.every((feature) => feature.operation === 'subtract' && feature.sketch.profile.closed)
+      && machiningFeatures.every((feature) => featureHasShapeWithOperation(feature, 'subtract') && feature.sketch.profile.closed)
       && regionFeatures.every((feature) => feature.sketch.profile.closed)
   }
 
   const machiningFeatures = features.filter(isMachinable)
   const regionFeatures = features.filter(isRegion)
   return machiningFeatures.length > 0
-    && machiningFeatures.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && feature.sketch.profile.closed)
+    && machiningFeatures.every((feature) => (featureHasShapeWithOperation(feature, 'add') || feature.operation === 'model') && feature.sketch.profile.closed)
     && regionFeatures.every((feature) => feature.sketch.profile.closed)
 }
 

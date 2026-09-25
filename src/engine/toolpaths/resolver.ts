@@ -18,7 +18,7 @@ import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import type { Operation, OperationKind, Project, SketchFeature } from '../../types/project'
 import { getEffectiveStockProfile, rectProfile } from '../../types/project'
-import { expandFeatureGeometry, featureHasClosedGeometry } from '../../text'
+import { expandFeatureGeometry, featureHasClosedGeometry, featureHasShapeWithOperation } from '../../text'
 import { resolveProject, type ResolvedProject } from '../../store/helpers/resolveFeatures'
 import type {
   ClipperPath,
@@ -699,9 +699,11 @@ export function resolvePocketRegions(authoritativeProject: Project, operation: O
   const validTargetSourceFeatures = selectedTargetFeatures
     .filter((feature) => isVCarve
       ? (feature.operation === 'subtract' || feature.operation === 'line')
-      : feature.operation === 'subtract')
+      // An add text qualifies through its counters, which expand to subtracts
+      // below (issue #861).
+      : featureHasShapeWithOperation(feature, 'subtract'))
 
-  const subtractSourceFeatures = validTargetSourceFeatures.filter((f) => f.operation === 'subtract')
+  const subtractSourceFeatures = validTargetSourceFeatures.filter((f) => featureHasShapeWithOperation(f, 'subtract'))
   const lineSourceFeatures = validTargetSourceFeatures.filter((f) => f.operation === 'line')
 
   const subtractTargetFeatures = subtractSourceFeatures
@@ -1082,8 +1084,10 @@ export function resolveInsideEdgeRegions(authoritativeProject: Project, operatio
     .filter((feature) => feature !== null)
   const regionFeatures = selectedTargetFeatures
     .filter((feature) => feature.operation === 'region')
+  // An add text qualifies through its counters, which expand to subtracts
+  // below (issue #861).
   const validTargetSourceFeatures = selectedTargetFeatures
-    .filter((feature) => feature.operation === 'subtract')
+    .filter((feature) => featureHasShapeWithOperation(feature, 'subtract'))
 
   const targetFeatures = validTargetSourceFeatures
     .flatMap((feature) => expandFeatureGeometry(feature))

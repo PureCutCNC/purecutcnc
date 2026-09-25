@@ -25,11 +25,11 @@
  */
 
 import type { SelectionState } from '../../store/types'
-import type { Operation, OperationKind, OperationPass, Project } from '../../types/project'
+import type { Operation, OperationKind, OperationPass, OperationTarget, Project } from '../../types/project'
 import { isConstruction, isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { isVCarveCompatibleFeature } from '../../store/helpers/vcarveTargets'
-import { featureHasClosedGeometry } from '../../text'
-import { resolvedFeatureMap, type ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
+import { featureHasClosedGeometry, featureHasShapeWithOperation } from '../../text'
+import { resolvedFeatureMap, resolveFeatureInstances, type ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { camT } from './camI18n'
 
 type ResolvedFeatureMap = ReadonlyMap<string, ResolvedSketchFeature>
@@ -238,8 +238,11 @@ function getOperationAddHintWithMap(
 
   const wantsSubtract = kind === 'pocket' || kind === 'edge_route_inside'
   const expectedOperation = wantsSubtract ? 'subtract' : 'add'
+  // Judged on the feature's shapes, not its own operation: an add text's
+  // counters are subtracts an inside route or pocket cuts, and a subtract
+  // text's islands are adds an outside route walks around (issue #861).
   const acceptsOperation = (feature: ResolvedSketchFeature) => (
-    feature.operation === expectedOperation
+    featureHasShapeWithOperation(feature, expectedOperation)
     || (kind === 'edge_route_outside' && feature.operation === 'model')
   )
   const machiningFeatures = features.filter(isMachinable)
@@ -267,6 +270,33 @@ function getOperationAddHintWithMap(
   }
 
   return null
+}
+
+/**
+ * The target an operation of `kind` would take from the current selection, or
+ * `null` when the selection cannot be one. Validity is `getOperationAddHint`'s
+ * alone — the CAM panel's Add button and "Use current selection" used to carry
+ * their own copy of these rules, which drifted from it (issue #861). On top of
+ * the hint, every selected id must still resolve: a target never carries an id
+ * that names no feature.
+ */
+export function operationTargetFromSelection(
+  project: Project,
+  selection: SelectionState,
+  kind: OperationKind,
+): OperationTarget | null {
+  if (selection.selectedFeatureIds.length === 0) {
+    return null
+  }
+
+  const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
+  if (features.length !== selection.selectedFeatureIds.length) {
+    return null
+  }
+
+  return getOperationAddHint(project, selection, kind) === null
+    ? { source: 'features', featureIds: features.map((feature) => feature.id) }
+    : null
 }
 
 /**

@@ -56,16 +56,14 @@ import { createOperationBookletPdf } from '../../engine/operationBooklet'
 import { ScallopHeightField } from './ScallopHeightField'
 import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
 import { platform } from '../../platform'
-import { isConstruction, isMachinable, isRegion } from '../../store/helpers/featureRoles'
-import { isVCarveCompatibleFeature } from '../../store/helpers/vcarveTargets'
-import { featureHasClosedGeometry } from '../../text'
-import { getOperationAddHint, operationKindLabel, operationRequiresClosedProfiles, operationTargetsRegion, selectAllCompatibleFeatureIds } from './operationValidity'
+import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
+import { getOperationAddHint, operationKindLabel, operationTargetFromSelection, operationTargetsRegion, selectAllCompatibleFeatureIds } from './operationValidity'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
 import { Icon } from '../Icon'
 import { GenerationSettingsMenu, type GenerationSettingsMenuProps } from './GenerationSettingsMenu'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { PanelSplit } from './PanelSplit'
-import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
+import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 import { camT, camTPlural } from './camI18n'
 import {
   OPERATION_FIELD_GROUPS,
@@ -424,164 +422,8 @@ function pocketPatternLabel(pattern: PocketPattern): string {
   }
 }
 
-function getValidOperationTarget(project: Project, selection: SelectionState, kind: OperationKind): OperationTarget | null {
-  // Construction geometry can never be part of an operation target (issue #199).
-  if (selection.selectedFeatureIds.some((featureId) => {
-    const feature = resolveFeatureInstance(project, featureId)
-    return feature !== null && isConstruction(feature)
-  })) {
-    return null
-  }
-
-  if (kind === 'drilling') {
-    if (selection.selectedFeatureIds.length === 0) {
-      return null
-    }
-
-    const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
-
-    if (features.length !== selection.selectedFeatureIds.length) {
-      return null
-    }
-
-    const machiningFeatures = features.filter(isMachinable)
-    const regionFeatures = features.filter(isRegion)
-    return machiningFeatures.length > 0
-      && machiningFeatures.every((feature) => feature.kind === 'circle')
-      && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
-      ? { source: 'features', featureIds: features.map((feature) => feature.id) }
-      : null
-  }
-
-  if (kind === 'follow_line') {
-    if (selection.selectedFeatureIds.length === 0) {
-      return null
-    }
-
-    const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
-
-    const machiningFeatures = features.filter(isMachinable)
-    const regionFeatures = features.filter(isRegion)
-    return features.length === selection.selectedFeatureIds.length
-      && machiningFeatures.length > 0
-      && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
-      ? { source: 'features', featureIds: features.map((feature) => feature.id) }
-      : null
-  }
-
-  if (kind === 'surface_clean') {
-    if (selection.selectedFeatureIds.length === 0) {
-      return null
-    }
-
-    const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
-
-    if (features.length !== selection.selectedFeatureIds.length) {
-      return null
-    }
-
-    const machiningFeatures = features.filter(isMachinable)
-    const regionFeatures = features.filter(isRegion)
-    return machiningFeatures.length > 0
-      && machiningFeatures.every((feature) => (feature.operation === 'add' || feature.operation === 'model') && (!operationRequiresClosedProfiles(kind) || featureHasClosedGeometry(feature)))
-      && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
-      ? { source: 'features', featureIds: features.map((feature) => feature.id) }
-      : null
-  }
-
-  if (kind === 'v_carve' || kind === 'v_carve_medial') {
-    if (selection.selectedFeatureIds.length === 0) {
-      return null
-    }
-
-    const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
-
-    if (features.length !== selection.selectedFeatureIds.length) {
-      return null
-    }
-
-    const machiningFeatures = features.filter(isMachinable)
-    const regionFeatures = features.filter(isRegion)
-    return machiningFeatures.length > 0
-      && machiningFeatures.every((feature) => isVCarveCompatibleFeature(feature))
-      && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
-      ? { source: 'features', featureIds: features.map((feature) => feature.id) }
-      : null
-  }
-
-  if (kind === 'rough_surface') {
-    if (selection.selectedFeatureIds.length === 0) {
-      return null
-    }
-
-    const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
-
-    if (features.length !== selection.selectedFeatureIds.length) {
-      return null
-    }
-
-    const machiningFeatures = features.filter(isMachinable)
-    const regionFeatures = features.filter(isRegion)
-    const hasModel = machiningFeatures.some((f) => f.operation === 'model' && f.kind === 'stl')
-    return hasModel && regionFeatures.every((feature) => featureHasClosedGeometry(feature))
-      ? { source: 'features', featureIds: features.map((f) => f.id) }
-      : null
-  }
-
-  if (kind === 'finish_surface' || kind === 'finish_surface_cleanup') {
-    if (selection.selectedFeatureIds.length === 0) {
-      return null
-    }
-
-    const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
-
-    if (features.length !== selection.selectedFeatureIds.length) {
-      return null
-    }
-
-    const modelCount = features.filter((feature) => feature.operation === 'model' && feature.kind === 'stl').length
-    const allValid = features.every((feature) => (
-      (feature.operation === 'model' && feature.kind === 'stl')
-      || (feature.operation === 'region' && featureHasClosedGeometry(feature))
-    ))
-    return modelCount === 1 && allValid
-      ? { source: 'features', featureIds: features.map((f) => f.id) }
-      : null
-  }
-
-  if (selection.selectedFeatureIds.length === 0) {
-    return null
-  }
-
-  const features = resolveFeatureInstances(project, selection.selectedFeatureIds)
-
-  if (features.length !== selection.selectedFeatureIds.length) {
-    return null
-  }
-
-  const wantsSubtract = kind === 'pocket' || kind === 'edge_route_inside'
-  const expectedOperation = wantsSubtract ? 'subtract' : 'add'
-  const machiningFeatures = features.filter(isMachinable)
-  const regionFeatures = features.filter(isRegion)
-  if (machiningFeatures.length === 0) {
-    return null
-  }
-  if (!machiningFeatures.every((feature) => feature.operation === expectedOperation || (!wantsSubtract && feature.operation === 'model'))) {
-    return null
-  }
-  if (!regionFeatures.every((feature) => featureHasClosedGeometry(feature))) {
-    return null
-  }
-
-  if (operationRequiresClosedProfiles(kind) && !features.every((feature) => featureHasClosedGeometry(feature))) {
-    return null
-  }
-
-  return { source: 'features', featureIds: features.map((feature) => feature.id) }
-}
-
 function getOperationTargetUpdateHint(project: Project, selection: SelectionState, operation: Project['operations'][number]): string | null {
-  const nextTarget = getValidOperationTarget(project, selection, operation.kind)
+  const nextTarget = operationTargetFromSelection(project, selection, operation.kind)
   if (nextTarget) {
     return null
   }
@@ -882,7 +724,7 @@ export function CAMPanel({
   }
 
   async function handleAddOperation(kind: OperationKind, mode: OperationPass | 'pair' = 'rough') {
-    const target = getValidOperationTarget(project, selection, kind)
+    const target = operationTargetFromSelection(project, selection, kind)
     if (!target) {
       setSelectedNewOperationKind(kind)
       return
@@ -924,7 +766,7 @@ export function CAMPanel({
   function handleChooseOperationForAdd(kind: OperationKind) {
     setSelectedNewOperationKind(kind)
 
-    const target = getValidOperationTarget(project, selection, kind)
+    const target = operationTargetFromSelection(project, selection, kind)
     if (!target) {
       return
     }
@@ -1032,7 +874,7 @@ export function CAMPanel({
       return
     }
 
-    const target = getValidOperationTarget(project, selection, selectedOperation.kind)
+    const target = operationTargetFromSelection(project, selection, selectedOperation.kind)
     if (!target) {
       setTargetUpdateMessage(
         {
