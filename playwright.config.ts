@@ -33,6 +33,9 @@ export default defineConfig({
     headless: true,
     trace: isCI ? 'retain-on-failure' : 'off',
     viewport: { width: 1440, height: 900 },
+    // Keep Chrome off the macOS keychain: without these a local run can pop
+    // up "A keychain cannot be found to store Chrome" mid-suite (#877).
+    launchOptions: { args: ['--use-mock-keychain', '--password-store=basic'] },
   },
   webServer: {
     command: `npm run dev -- --port ${e2ePort} --strictPort`,
