@@ -252,6 +252,35 @@ test.describe('Feature references browser smoke', () => {
     await expect(ui.properties.exactText(app.page, 'Shape')).toBeVisible({ timeout: 3000 })
   })
 
+  test('docked and expanded Properties keep the same sections open (#808)', async ({ app, ui }) => {
+    await seedLinkedProject(app.page)
+    await rowByName(app.page, 'Independent').click()
+
+    const docked = ui.properties.dockedSectionHeaders(app.page)
+    const expanded = ui.properties.expandedSectionHeaders(app.page)
+    await expect(docked).toHaveCount(2)
+    for (const header of await docked.all()) await header.click()
+    for (const header of await docked.all()) await expect(header).toHaveAttribute('aria-expanded', 'true')
+
+    // Expanding shows the sections the docked panel had open.
+    await ui.properties.expandButton(app.page).click()
+    await expect(ui.properties.expandedDialog(app.page)).toBeVisible()
+    for (const header of await expanded.all()) await expect(header).toHaveAttribute('aria-expanded', 'true')
+
+    // Collapsing them in the dialog collapses the docked panel too, rather than
+    // leaving it showing open sections that the next expand opens collapsed.
+    for (const header of await expanded.all()) await header.click()
+    for (const header of await docked.all()) await expect(header).toHaveAttribute('aria-expanded', 'false')
+
+    // And reopening them in the docked panel carries into the next expand.
+    await app.page.keyboard.press('Escape')
+    await expect(ui.properties.expandedDialog(app.page)).toHaveCount(0)
+    for (const header of await docked.all()) await header.click()
+    await ui.properties.expandButton(app.page).click()
+    await expect(expanded).toHaveCount(2)
+    for (const header of await expanded.all()) await expect(header).toHaveAttribute('aria-expanded', 'true')
+  })
+
   // ── 9. Save→load round-trip ─────────────────────────────────────
 
   test('save→load round-trip preserves tree structure and badges', async ({ app, ui }) => {

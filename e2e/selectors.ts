@@ -416,6 +416,20 @@ export const properties = {
   /** Delete Selected button in bulk panels. */
   deleteSelectedButton: (page: Page) =>
     page.locator('.properties-panel').getByRole('button', { name: 'Delete selected' }),
+
+  /** Section headers in the docked Properties panel (#808). */
+  dockedSectionHeaders: (page: Page) =>
+    page.locator('.panel-properties .disclosure-section__header'),
+
+  /** "Expand properties panel" button in the docked panel header. */
+  expandButton: (page: Page) => page.getByRole('button', { name: 'Expand properties panel' }),
+
+  /** The expanded Properties dialog. */
+  expandedDialog: (page: Page) => page.locator('.dialog--panel-expand'),
+
+  /** Section headers in the expanded Properties dialog (#808). */
+  expandedSectionHeaders: (page: Page) =>
+    page.locator('.dialog--panel-expand .disclosure-section__header'),
 }
 
 // ── Project unit conversion dialog ─────────────────────────────────
