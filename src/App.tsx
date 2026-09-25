@@ -36,7 +36,7 @@ import { ImportGeometryDialog } from './components/project/ImportGeometryDialog'
 import { EmptyStateOverlay } from './components/onboarding/EmptyStateOverlay'
 import { AboutDialog } from './components/about/AboutDialog'
 import { MachineUpdateNotice } from './components/machine/MachineUpdateNotice'
-import { useProjectStore } from './store/projectStore'
+import { toolpathGenerationDeferred, useProjectStore } from './store/projectStore'
 import { useDesktopIntegration } from './platform/useDesktopIntegration'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useToolpathGeneration } from './app/useToolpathGeneration'
@@ -220,9 +220,8 @@ function App() {
   // toolpath was computed cannot change what it is (issue #675).
   const generationBackend = useExecutorPreference()
 
-  // Coalesce during gestures (issue #518, S4) and nest searches (#862): one
-  // drag or search regenerates once, when it ends, not on every change.
-  const deferGeneration = useProjectStore((s) => s.history.transactionStart !== null || s.nestSearching)
+  // One regeneration per gesture or nest, when it ends — see toolpathGenerationDeferred.
+  const deferGeneration = useProjectStore(toolpathGenerationDeferred)
 
   const {
     requestToolpath,
