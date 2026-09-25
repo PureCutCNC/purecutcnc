@@ -23,8 +23,9 @@
  * Selection considers, in this order:
  *  - operation type → a best-first list of acceptable tool types,
  *  - project units → bundled-library entries are converted before comparison,
- *  - feature size → larger features get larger tools (largest that fits within
- *    half the feature's smallest dimension; smallest available otherwise).
+ *  - feature size → the largest tool within `autoToolDiameterLimit()` (a
+ *    fraction of the feature's smallest dimension, capped at 1/4" for routing
+ *    kinds); smallest available otherwise.
  *
  * Within each preferred type the function prefers a tool the project already
  * has, otherwise it imports the matching bundled-library entry. This module is
@@ -35,12 +36,46 @@ import type { OperationKind, OperationTarget, Project, Tool, ToolType } from '..
 import { getStockBounds } from '../../types/project'
 import { isMachinable } from '../../store/helpers/featureRoles'
 import { getFeatureGeometryBounds } from '../../text'
-import { convertToolUnits } from '../../utils/units'
+import { convertLength, convertToolUnits } from '../../utils/units'
 import type { ToolLibraryEntry } from '../../toolLibrary'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 
-/** A tool's diameter may be at most this fraction of the feature's min dimension. */
-export const TOOL_SIZE_FRACTION = 0.5
+/**
+ * Auto-created operations keep primary cutters comfortably below the narrowest
+ * target span. A purely clearance-based limit can otherwise pick a half- or
+ * three-quarter-inch tool for a small 2.5D part and hide its details. Rest
+ * machining can still clear what a conservative first cutter leaves behind.
+ */
+export const AUTO_TOOL_OUTSIDE_FRACTION = 0.15
+export const AUTO_TOOL_INTERIOR_FRACTION = 0.2
+
+/**
+ * Ceiling for auto-picked routing cutters, whatever the part size. 1/4" is the
+ * everyday woodworking cutter; bigger tools are something the user opts into by
+ * choosing them on the operation (#876).
+ */
+export const AUTO_TOOL_MAX_DIAMETER_INCH = 0.25
+
+/** Kinds whose auto-picked tool is held to `AUTO_TOOL_MAX_DIAMETER_INCH`. */
+function hasAutoToolCeiling(kind: OperationKind): boolean {
+  switch (kind) {
+    case 'pocket':
+    case 'edge_route_inside':
+    case 'edge_route_outside':
+    case 'follow_line':
+    case 'rough_surface':
+    case 'finish_surface':
+    case 'finish_surface_cleanup':
+      return true
+    // Drills are sized to the hole, a V-bit's reach comes from its angle rather
+    // than its diameter, and facing the stock wants a wide cutter.
+    case 'drilling':
+    case 'v_carve':
+    case 'v_carve_medial':
+    case 'surface_clean':
+      return false
+  }
+}
 
 /**
  * Acceptable tool types for an operation kind, best-first. The first type that
@@ -100,6 +135,27 @@ export function targetFeatureSize(project: Project, target: OperationTarget): nu
 }
 
 /**
+ * Applies the 1/4" routing ceiling to a diameter limit. A `null` limit (no
+ * usable target size) becomes the ceiling itself for kinds that have one.
+ */
+export function capAutoToolDiameter(kind: OperationKind, units: Tool['units'], limit: number | null): number | null {
+  if (!hasAutoToolCeiling(kind)) return limit
+  const ceiling = convertLength(AUTO_TOOL_MAX_DIAMETER_INCH, 'inch', units)
+  return limit == null ? ceiling : Math.min(limit, ceiling)
+}
+
+/**
+ * Largest diameter an auto-created operation may pick, in project units.
+ * Shared by the quick-operation/Add path and the CAM plan so they agree.
+ */
+export function autoToolDiameterLimit(project: Project, kind: OperationKind, target: OperationTarget): number | null {
+  const span = targetFeatureSize(project, target)
+  if (kind === 'drilling') return span
+  const fraction = kind === 'edge_route_outside' ? AUTO_TOOL_OUTSIDE_FRACTION : AUTO_TOOL_INTERIOR_FRACTION
+  return capAutoToolDiameter(kind, project.meta.units, span == null ? null : span * fraction)
+}
+
+/**
  * Picks the largest candidate whose diameter is within `maxDiameter`; if none
  * fit (or `maxDiameter` is unknown), picks the smallest candidate.
  */
@@ -111,7 +167,7 @@ function pickBySize<T extends { diameter: number }>(candidates: T[], maxDiameter
   if (maxDiameter == null) {
     return smallest()
   }
-  const fitting = candidates.filter((candidate) => candidate.diameter <= maxDiameter)
+  const fitting = candidates.filter((candidate) => candidate.diameter <= maxDiameter + 1e-9)
   if (fitting.length > 0) {
     return fitting.reduce((best, candidate) => (candidate.diameter > best.diameter ? candidate : best))
   }
@@ -155,8 +211,7 @@ export function selectToolForOperation(
   libraryTools: ToolLibraryEntry[],
 ): ToolSelection {
   const units = project.meta.units
-  const size = targetFeatureSize(project, target)
-  const maxDiameter = size != null ? size * TOOL_SIZE_FRACTION : null
+  const maxDiameter = autoToolDiameterLimit(project, kind, target)
 
   for (const type of preferredToolTypes(kind)) {
     const existing = pickBySize(project.tools.filter((tool) => tool.type === type), maxDiameter)

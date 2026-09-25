@@ -26,9 +26,9 @@ import { featuresOverlap } from '../../../store/helpers/clipping'
 import { defaultOperationForTarget, isOperationTargetValid } from '../../../store/helpers/operationDefaults'
 import { resolveFeatureInstances, type ResolvedSketchFeature } from '../../../store/helpers/resolveFeatures'
 import { buildAutoTabsForFeature } from '../autoTabs'
+import { AUTO_TOOL_INTERIOR_FRACTION } from '../toolSelection'
 import {
   camPlanToolPool,
-  CAM_PLAN_INTERIOR_TOOL_FRACTION,
   camPlanRoughStockToLeave,
   chooseDrillingTool,
   materiallySmallerCamPlanTools,
@@ -373,7 +373,7 @@ function importedModelCandidate(
       feature,
       constraints: {
         requiredCutDepth: Math.max(0, project.stock.thickness - Math.max(minZ, 0)),
-        maximumToolDiameter: Math.min(overlapWidth, overlapHeight) * CAM_PLAN_INTERIOR_TOOL_FRACTION,
+        maximumToolDiameter: Math.min(overlapWidth, overlapHeight) * AUTO_TOOL_INTERIOR_FRACTION,
         toolLimitSource: 'model-footprint',
       },
     },

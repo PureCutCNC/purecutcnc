@@ -21,11 +21,12 @@
  */
 
 import {
+  autoToolDiameterLimit,
   preferredToolTypes,
   selectToolForOperation,
   targetFeatureSize,
-  TOOL_SIZE_FRACTION,
 } from './toolSelection'
+import { camPlanToolPool, rankCamPlanTools } from './camPlan/toolPlanning'
 import {
   newProject,
   rectProfile,
@@ -122,7 +123,7 @@ function testTargetFeatureSize(): void {
 // ── selectToolForOperation ────────────────────────────────────────
 
 function testSizePicksLargestThatFits(): void {
-  // Feature min dimension = 1.0 → maxDiameter = 0.5. Tools: 0.125, 0.25, 0.5, 1.0.
+  // Pocket on a 1.0 square → limit 0.2 × 1.0 = 0.2. Tools: 0.125, 0.25, 0.5, 1.0.
   const tools = [
     makeTool('t-eighth', 'flat_endmill', 0.125),
     makeTool('t-quarter', 'flat_endmill', 0.25),
@@ -132,7 +133,77 @@ function testSizePicksLargestThatFits(): void {
   const project = projectWith(tools, [makeFeature('f', 'subtract', 1, 1)])
   const sel = selectToolForOperation(project, 'pocket', featureTarget('f'), [])
   assert(sel?.source === 'existing', 'should pick an existing tool')
-  assert(sel.toolId === 't-half', `largest tool <= 0.5 should win, got ${sel.toolId} (fraction ${TOOL_SIZE_FRACTION})`)
+  assert(sel.toolId === 't-eighth', `largest tool <= 0.2 should win, got ${sel.toolId}`)
+}
+
+const ROUTER_BITS = [0.125, 0.25, 0.375, 0.5, 0.75]
+function routerBitTools(): Tool[] {
+  return ROUTER_BITS.map((diameter) => makeTool(`t-${diameter}`, 'flat_endmill', diameter))
+}
+
+function testSmallOutsideProfileGetsQuarterNotThreeQuarter(): void {
+  // #876: a 2×2 outside route used to pick the 3/4 (limit 0.5 × 2 = 1.0).
+  // Now the limit is 0.15 × 2 = 0.3 → 1/4.
+  const project = projectWith(routerBitTools(), [makeFeature('f', 'add', 2, 2)])
+  const sel = selectToolForOperation(project, 'edge_route_outside', featureTarget('f'), [])
+  assert(sel?.source === 'existing' && sel.toolId === 't-0.25', `2x2 outside route picks 1/4, got ${JSON.stringify(sel)}`)
+}
+
+function testLargePartIsCappedAtQuarterInch(): void {
+  // 6" part: the fraction alone would allow 0.9 (outside) / 1.2 (pocket); the
+  // 1/4" ceiling keeps both on the everyday cutter.
+  const project = projectWith(routerBitTools(), [makeFeature('f', 'add', 6, 6), makeFeature('p', 'subtract', 6, 6)])
+  for (const [kind, id] of [['edge_route_outside', 'f'], ['edge_route_inside', 'p'], ['pocket', 'p']] as const) {
+    const sel = selectToolForOperation(project, kind, featureTarget(id), [])
+    assert(sel?.source === 'existing' && sel.toolId === 't-0.25', `${kind} on a 6" part picks 1/4, got ${JSON.stringify(sel)}`)
+  }
+  const limit = autoToolDiameterLimit(project, 'pocket', featureTarget('p'))
+  assert(limit === 0.25, `6" pocket limit is the 1/4" ceiling, got ${limit}`)
+}
+
+function testMetricCeilingAdmitsSixMillimetres(): void {
+  const tools = [3, 6, 8, 12].map((diameter) => makeTool(`t-${diameter}mm`, 'flat_endmill', diameter, 'mm'))
+  const project = projectWith(tools, [makeFeature('f', 'subtract', 150, 150)], 'mm')
+  const sel = selectToolForOperation(project, 'pocket', featureTarget('f'), [])
+  assert(sel?.source === 'existing' && sel.toolId === 't-6mm', `metric pocket picks 6 mm, got ${JSON.stringify(sel)}`)
+}
+
+function testOnlyBigToolStillFallsBack(): void {
+  const project = projectWith([makeTool('t-half', 'flat_endmill', 0.5)], [makeFeature('f', 'add', 6, 6)])
+  const sel = selectToolForOperation(project, 'edge_route_outside', featureTarget('f'), [])
+  assert(sel?.source === 'existing' && sel.toolId === 't-half', 'a project holding only a 1/2 still gets it')
+}
+
+function testUncappedKindsKeepLargerTools(): void {
+  // Drilling is sized to the hole (not half of it).
+  const drills = [makeTool('d-eighth', 'drill', 0.125), makeTool('d-quarter', 'drill', 0.25)]
+  const hole = projectWith(drills, [makeFeature('h', 'subtract', 0.25, 0.25)])
+  const drill = selectToolForOperation(hole, 'drilling', featureTarget('h'), [])
+  assert(drill?.source === 'existing' && drill.toolId === 'd-quarter', `1/4 hole picks the 1/4 drill, got ${JSON.stringify(drill)}`)
+
+  // V-carve: no 1/4" ceiling on V-bit diameter.
+  const vbits = [makeTool('v-half', 'v_bit', 0.5), makeTool('v-one', 'v_bit', 1)]
+  const sign = projectWith(vbits, [makeFeature('s', 'subtract', 10, 10)])
+  const vcarve = selectToolForOperation(sign, 'v_carve', featureTarget('s'), [])
+  assert(vcarve?.source === 'existing' && vcarve.toolId === 'v-one', `v-carve keeps the 1" V-bit, got ${JSON.stringify(vcarve)}`)
+
+  // Facing the stock wants a wide cutter.
+  const surfacing = projectWith([makeTool('t-quarter', 'flat_endmill', 0.25), makeTool('t-surfacing', 'flat_endmill', 1)], [])
+  surfacing.stock = { ...surfacing.stock, profile: rectProfile(0, 0, 12, 12) }
+  const facing = selectToolForOperation(surfacing, 'surface_clean', { source: 'stock' }, [])
+  assert(facing?.source === 'existing' && facing.toolId === 't-surfacing', `surface clean keeps the 1" surfacing bit, got ${JSON.stringify(facing)}`)
+}
+
+function testCamPlanRankingSharesTheCeiling(): void {
+  const project = projectWith(routerBitTools(), [makeFeature('f', 'add', 6, 6)])
+  const pool = camPlanToolPool(project, [])
+  const ranked = rankCamPlanTools(project, 'edge_route_outside', featureTarget('f'), pool, 0, new Set())
+  assert(ranked.maximumDiameter === 0.25, `CAM plan outside limit is capped at 1/4, got ${ranked.maximumDiameter}`)
+  assert(ranked.tools[0]?.id === 't-0.25', `CAM plan picks 1/4 on a 6" part, got ${ranked.tools[0]?.id}`)
+
+  // An explicit override (the imported-model footprint limit) is capped as well.
+  const surface = rankCamPlanTools(project, 'rough_surface', featureTarget('f'), pool, 0, new Set(), 2)
+  assert(surface.maximumDiameter === 0.25, `model-footprint override is capped at 1/4, got ${surface.maximumDiameter}`)
 }
 
 function testSizeFallsBackToSmallestWhenNoneFit(): void {
@@ -186,6 +257,12 @@ function testReturnsNullWhenNoCandidates(): void {
 testPreferredToolTypes()
 testTargetFeatureSize()
 testSizePicksLargestThatFits()
+testSmallOutsideProfileGetsQuarterNotThreeQuarter()
+testLargePartIsCappedAtQuarterInch()
+testMetricCeilingAdmitsSixMillimetres()
+testOnlyBigToolStillFallsBack()
+testUncappedKindsKeepLargerTools()
+testCamPlanRankingSharesTheCeiling()
 testSizeFallsBackToSmallestWhenNoneFit()
 testImportsVBitWhenProjectHasNone()
 testPrefersIdealTypeOverExistingLesserType()
