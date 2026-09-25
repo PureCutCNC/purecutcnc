@@ -18,7 +18,6 @@
 
 import { discardNestFromProject } from '../../store/helpers/nestApply'
 import {
-  findNestForSelection,
   nestEdgeClearance,
   nestGapForPart,
   nestSheetRing,
@@ -67,7 +66,7 @@ export function stepOfPreset(preset: NestRotationPreset): NestRotationStep | nul
 export interface NestSubject {
   /** The project the nest is computed on: with the nest being replaced already discarded. */
   base: Project
-  /** The existing nest this selection belongs to; Nest replaces it, Discard removes it. */
+  /** The nest this panel made, if it still exists; Nest replaces it, Discard removes it. */
   replaceNest: NestRecord | null
   parts: NestPartsResolution
   /** The tools' clearance, the smallest gap allowed; null when no edge route cuts any part. */
@@ -76,8 +75,14 @@ export interface NestSubject {
   edgeClearance: number | null
 }
 
-export function nestSubject(project: Project, selectedIds: string[]): NestSubject {
-  const replaceNest = findNestForSelection(project, selectedIds)
+/**
+ * What the panel nests: the selection, or — once this panel has made a nest —
+ * that nest's parts, on the project with the nest discarded. `nestId` is the
+ * panel's own nest (#889); a nest is never found from the selection, because
+ * its record is not saved and would not survive editing.
+ */
+export function nestSubject(project: Project, selectedIds: string[], nestId: string | null = null): NestSubject {
+  const replaceNest = nestId ? project.nests?.find((nest) => nest.id === nestId) ?? null : null
   const base = replaceNest ? discardNestFromProject(project, replaceNest.id) ?? project : project
   const parts = resolveNestParts(base, replaceNest ? replaceNest.parts.flatMap((part) => part.sourceIds) : selectedIds)
   return {

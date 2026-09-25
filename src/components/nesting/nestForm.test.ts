@@ -128,9 +128,11 @@ function testNestedSubjectTargetsTheNest(): void {
   assert(applied, 'nest applies')
   const copyId = applied.copyIds[0]
 
-  // Selecting any copy re-targets the nest: the base drops it again.
-  const again = nestSubject(applied.project, [copyId])
-  assert(again.replaceNest?.id === applied.nestId, 'a copy selects its nest')
+  // Selecting a copy does not reopen the nest (#889): its record is session state.
+  assert(nestSubject(applied.project, [copyId]).replaceNest === null, 'a copy starts a fresh nest')
+  // The panel's own nest is re-targeted: the base drops it again.
+  const again = nestSubject(applied.project, [copyId], applied.nestId)
+  assert(again.replaceNest?.id === applied.nestId, 'the panel targets the nest it made')
   assert(again.parts.ok && again.parts.parts[0].featureIds.join() === 'plate,pocket', 'the part is the nest sources, not the copy')
   assert(!again.base.nests && again.base.features.length === 2, 'the job runs on the project without that nest')
   const form = initialNestForm(again)
@@ -176,7 +178,7 @@ function testRotationStepsRoundTrip(): void {
     settings,
   })
   assert(applied, 'nest applies')
-  assert(initialNestForm(nestSubject(applied.project, [applied.copyIds[0]])).rotation === 'step30', 'the form reopens on the step')
+  assert(initialNestForm(nestSubject(applied.project, [applied.copyIds[0]], applied.nestId)).rotation === 'step30', 'the form reopens on the step')
   console.log('rotation steps round-trip: PASSED')
 }
 
@@ -194,7 +196,7 @@ function testMarginsFormAndRecord(): void {
   assert(check({ ...NO_MARGINS, left: 120, right: 120 }) === 'margins-no-room', 'margins wider than the stock leave no room')
   assert(check({ top: 5, bottom: 10, left: 15, right: 20 }) === null, 'sensible margins pass')
 
-  // A nest made with margins stores them, survives save and load, and reopens with them.
+  // A nest made with margins keeps them through undo snapshots, and the panel reopens with them.
   const margins = { top: 5, bottom: 10, left: 15, right: 20 }
   const settings = nestSettingsFromForm({ ...fresh, quantities: [2], margins })
   const job = buildNestJob(subject.base, subject.parts.parts, [2], settings)
@@ -207,8 +209,8 @@ function testMarginsFormAndRecord(): void {
   assert(applied, 'nest applies')
   const saved = JSON.parse(JSON.stringify(applied.project)) as ProjectFormatInput
   const loaded = normalizeProject(JSON.parse(JSON.stringify(saved)) as ProjectFormatInput)
-  assert(JSON.stringify(loaded.nests?.[0].settings.margins) === JSON.stringify(margins), 'margins survive save and load')
-  assert(JSON.stringify(initialNestForm(nestSubject(loaded, [applied.copyIds[0]])).margins) === JSON.stringify(margins), 'the form reopens with them')
+  assert(JSON.stringify(loaded.nests?.[0].settings.margins) === JSON.stringify(margins), 'margins survive normalization')
+  assert(JSON.stringify(initialNestForm(nestSubject(loaded, [applied.copyIds[0]], applied.nestId)).margins) === JSON.stringify(margins), 'the form reopens with them')
 
   // Records from before margins, and partial or bad ones, read side by side as 0.
   const reload = (value: unknown) => {

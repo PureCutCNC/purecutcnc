@@ -320,21 +320,38 @@ function testConstraintReferencesFollowTheCopy(): void {
   console.log('constraint references follow the copy: PASSED')
 }
 
-function testSaveLoadRoundTrip(): void {
+function testNestsStayOutOfTheFile(): void {
+  // #889: a nest's record is session state. The file holds only its copies.
   resetStore(makeProject())
+  const store = () => useProjectStore.getState()
   const { nestId } = nestIntoStore(['plate'], settings({ quantity: 3 }))
-  const saved = useProjectStore.getState().project
-  const loaded = normalizeProject(JSON.parse(JSON.stringify(saved)) as ProjectFormatInput)
-  assert(JSON.stringify(loaded.nests) === JSON.stringify(saved.nests), 'nests survive save and load')
-  resetStore(loaded)
-  useProjectStore.getState().discardNest(nestId)
-  assert(!useProjectStore.getState().project.nests, 'a loaded nest can be discarded')
+  const record = store().project.nests?.find((nest) => nest.id === nestId)
+  assert(record, 'the record exists while working')
+  const saved = JSON.parse(store().saveProject()) as Record<string, unknown>
+  assert(!('nests' in saved), 'a saved project has no nests')
+  const withNests = JSON.stringify({ ...saved, nests: [record] })
+  store().openProjectFromText(withNests, null)
+  assert(!store().project.nests, 'a file with nests loads without them')
+  assert(plateInstances(store().project).length === 3, 'the copies are kept as ordinary features')
+
+  // The next nest numbers on from the existing folder.
+  store().selectFeatures(['plate'])
+  nestIntoStore(['plate'], settings({ quantity: 2 }))
+  const names = store().project.featureFolders.map((folder) => folder.name)
+  assert(names.includes('Nest 1') && names.includes('Nest 2'), `numbering continues after the Nest folders, got ${names.join()}`)
+
+  // In memory, undo and redo keep the record in step with the copies.
+  resetStore(makeProject())
+  nestIntoStore(['plate'], settings({ quantity: 3 }))
+  store().undo()
+  assert(!store().project.nests, 'undo removes the record with the copies')
+  store().redo()
+  assert(store().project.nests?.length === 1, 'redo brings it back')
 
   const plain = makeProject()
-  assert(!('nests' in normalizeProject(JSON.parse(JSON.stringify(plain)) as ProjectFormatInput)), 'files that never nested gain no field')
   const malformed = normalizeProject({ ...JSON.parse(JSON.stringify(plain)), nests: [{ id: 'x' }, 'junk'] } as ProjectFormatInput)
   assert(!('nests' in malformed), 'malformed records are dropped, not fatal')
-  console.log('nest save/load: PASSED')
+  console.log('nests stay out of the file: PASSED')
 }
 
 function testCurvedPartsKeepTheGap(): void {
@@ -560,7 +577,7 @@ testApplyIsOneStepAndMachinesEveryCopy()
 testDiscardRestoresTheDesign()
 testKeepOriginalsNestsAround()
 testConstraintReferencesFollowTheCopy()
-testSaveLoadRoundTrip()
+testNestsStayOutOfTheFile()
 testCurvedPartsKeepTheGap()
 testClampsAreAvoided()
 testClampCornersKeepTheRouteWhole()

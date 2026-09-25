@@ -485,7 +485,8 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
   const machines = normalizeMachineDefinitions(input as unknown as Project)
   const migrationInfo: ProjectMigrationInfo = { retractHeightsReexpressed: 0 }
   return {
-    project: normalizeProject(input, migrationInfo),
+    // Nest records are session state, never read from a file (#889).
+    project: normalizeProject({ ...input, nests: undefined }, migrationInfo),
     sourceVersion,
     convertedLegacy,
     retractHeightsReexpressed: migrationInfo.retractHeightsReexpressed,

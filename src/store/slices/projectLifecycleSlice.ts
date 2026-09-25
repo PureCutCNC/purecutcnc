@@ -264,7 +264,9 @@ export function createProjectLifecycleSlice(
       }),
 
     saveProject: () => {
-      const p = normalizeProject(pruneUnusedModelAssets(get().project))
+      // Nest records are session state and stay out of the file (#889).
+      const { nests: _nests, ...p } = normalizeProject(pruneUnusedModelAssets(get().project))
+      void _nests
       const updated = {
         ...p,
         version: LATEST_PROJECT_VERSION,

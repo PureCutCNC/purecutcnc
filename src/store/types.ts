@@ -231,6 +231,12 @@ export interface PendingTextLayout {
 export interface PendingNest {
   sourceIds: string[]
   session: number
+  /**
+   * The nest this panel has made, which Nest again, Keep improving and Discard
+   * act on; null until the first nest. Nests are not reopened from a selection
+   * later: their records exist only in memory (#889).
+   */
+  nestId: string | null
 }
 
 export interface PendingFeatureDistribution {

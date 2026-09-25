@@ -84,7 +84,8 @@ export function applyNestToProject(current: Project, input: ApplyNestInput): App
 
   const nestId = nextUniqueGeneratedId(project, 'nest')
   const folderId = nextUniqueGeneratedId(project, 'fd')
-  const nestNumber = (project.nests?.length ?? 0) + 1
+  // Records are not saved (#889), so the next number follows the Nest folders.
+  const nestNumber = 1 + Math.max(0, ...project.featureFolders.map((folder) => Number(/^Nest (\d+)$/.exec(folder.name)?.[1] ?? 0)))
   const folder: FeatureFolder = {
     id: folderId,
     name: uniqueFolderName(`Nest ${nestNumber}`, project.featureFolders),
