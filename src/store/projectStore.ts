@@ -49,6 +49,7 @@ import { createPendingAddSlice } from './slices/pendingAddSlice'
 import { createPendingActionsSlice } from './slices/pendingActionsSlice'
 import { createPendingCompletionSlice } from './slices/pendingCompletionSlice'
 import { createFeatureDistributionSlice } from './slices/featureDistributionSlice'
+import { createNestingSlice } from './slices/nestingSlice'
 import { createTextLayoutSlice } from './slices/textLayoutSlice'
 import { createSelectionSlice, sanitizeSelection } from './slices/selectionSlice'
 import { createDimensionsSlice } from './slices/dimensionsSlice'
@@ -75,6 +76,7 @@ import {
 import type { ProjectStore } from './types'
 import { normalizeProject } from './helpers/projectFormat'
 export { normalizeProject } from './helpers/projectFormat'
+export { toolpathGenerationDeferred } from './slices/nestingSlice'
 
 
 // ============================================================
@@ -246,6 +248,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
     createDerivedFeature,
   }),
   ...createFeatureDistributionSlice(set, get),
+  ...createNestingSlice(set),
   ...createTextLayoutSlice(set, get),
   ...createPendingAddSlice(set, get),
   ...createDimensionsSlice(set, get),

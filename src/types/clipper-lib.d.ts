@@ -28,6 +28,7 @@ declare module 'clipper-lib' {
   }
 
   interface ClipperLike {
+    StrictlySimple: boolean
     AddPaths(paths: IntPoint[][], polyType: number, closed: boolean): void
     Execute(clipType: number, solution: unknown, subjFillType: number, clipFillType: number): boolean
   }
@@ -88,6 +89,7 @@ declare module 'clipper-lib' {
     }
     EndType: {
       etClosedPolygon: number
+      etOpenSquare: number
     }
   }
 

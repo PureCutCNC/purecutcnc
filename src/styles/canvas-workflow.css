@@ -125,6 +125,19 @@
   line-height: 1.35;
 }
 
+/* A nest or search in progress (#869): spinner beside a ticking clock. */
+.canvas-workflow-panel__running {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.canvas-workflow-panel__running .inline-spinner {
+  flex-shrink: 0;
+  align-self: center;
+}
+
 .canvas-workflow-panel__meta {
   display: flex;
   align-items: center;
@@ -281,6 +294,102 @@
   justify-content: flex-start;
 }
 
+/* The Nest panel's run/stop/accept row: up to four text buttons, which wrap
+   rather than widen the panel in de/fr. */
+.canvas-workflow-panel__nest-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* The row swaps between one Stop button and up to four actions as a nest runs,
+   so like the messages it takes no part in the panel's width (#871). */
+.canvas-workflow-panel--nest .canvas-workflow-panel__nest-actions {
+  width: 0;
+  min-width: 100%;
+}
+
+/* One quantity row per selected part: a 26-letter selection would push the
+   panel past the window. The panel is capped at the space below its own top
+   edge, and the parts list is the one piece that gives way — it shrinks and
+   scrolls, down to a floor of about two rows. Everything else keeps its size. */
+.canvas-workflow-panel--nest {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - var(--canvas-workflow-panel-top, 0px) - 12px);
+}
+
+.canvas-workflow-panel--nest .canvas-workflow-panel__header {
+  flex: none;
+}
+
+.canvas-workflow-panel--nest .canvas-workflow-panel__body {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.canvas-workflow-panel--nest .canvas-workflow-panel__body > * {
+  flex: none;
+}
+
+/* Messages change as a nest runs and a search goes on, and the panel is sized
+   to its content: they wrap at the width the form sets instead of widening it
+   (#870). A zero width keeps them out of the panel's max-content size. */
+.canvas-workflow-panel--nest .canvas-workflow-panel__body > p {
+  width: 0;
+  min-width: 100%;
+}
+
+.canvas-workflow-panel--nest .canvas-workflow-panel__body > .canvas-workflow-panel__parts {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.canvas-workflow-panel__parts-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.canvas-workflow-panel__parts-toggle::before {
+  content: '';
+  border: 4px solid transparent;
+  border-left: 6px solid currentcolor;
+  border-right-width: 0;
+  transition: transform 120ms ease;
+}
+
+.canvas-workflow-panel__parts-toggle[aria-expanded='true']::before {
+  transform: rotate(90deg);
+}
+
+.canvas-workflow-panel__parts-list {
+  display: grid;
+  flex: 0 1 auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  min-height: 76px;
+  max-height: 15rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: color-mix(in oklab, var(--accent) 70%, var(--line-strong)) var(--surface-input);
+  scrollbar-gutter: stable;
+  touch-action: pan-y;
+}
+
 .canvas-workflow-panel__warning {
   margin: 0;
   color: var(--warning-text);
@@ -298,7 +407,8 @@
 }
 
 @media (max-width: 520px) {
-  .canvas-workflow-panel__grid {
+  .canvas-workflow-panel__grid,
+  .canvas-workflow-panel__parts-list {
     grid-template-columns: 1fr;
   }
 }

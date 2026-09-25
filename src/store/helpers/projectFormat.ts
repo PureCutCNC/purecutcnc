@@ -29,6 +29,8 @@ import type {
   FeatureDefinition,
   FeatureInstance,
   Matrix2D,
+  NestMargins,
+  NestRecord,
   Operation,
   PersistedImportedMesh,
   Project,
@@ -322,6 +324,70 @@ function normalizeInstance(feature: FeatureInstance, definitions: Record<string,
   return normalized
 }
 
+/**
+ * Nest records are disposable layout output (issue #741), so a malformed one
+ * is dropped rather than failing the load, and ids that no longer name an
+ * instance are pruned — discard then simply skips what is already gone.
+ */
+function normalizeNests(value: unknown, features: FeatureInstance[]): NestRecord[] {
+  if (!Array.isArray(value)) return []
+  const featureIds = new Set(features.map((feature) => feature.id))
+  const ids = (list: unknown) => (Array.isArray(list)
+    ? list.filter((id): id is string => typeof id === 'string' && featureIds.has(id))
+    : [])
+  return value.flatMap((raw): NestRecord[] => {
+    if (!isRecord(raw) || typeof raw.id !== 'string' || typeof raw.name !== 'string') return []
+    const settings = raw.settings
+    if (!isRecord(settings)
+      || !Array.isArray(settings.rotations) || !settings.rotations.every((r) => typeof r === 'number' && Number.isFinite(r))
+      || typeof settings.minimumGap !== 'number' || !Number.isFinite(settings.minimumGap)
+      || typeof settings.keepOriginals !== 'boolean') {
+      return []
+    }
+    const movedOriginals = Array.isArray(raw.movedOriginals)
+      ? raw.movedOriginals.flatMap((entry): NestRecord['movedOriginals'] => (
+        isRecord(entry) && typeof entry.featureId === 'string' && featureIds.has(entry.featureId)
+          && isFiniteMatrix(entry.transform)
+          ? [{ featureId: entry.featureId, transform: { ...entry.transform } }]
+          : []
+      ))
+      : []
+    // Prototype records (#846) held one part as top-level sourceIds plus
+    // settings.quantity; they load as a one-part nest.
+    const rawParts = Array.isArray(raw.parts)
+      ? raw.parts
+      : [{ sourceIds: raw.sourceIds, quantity: settings.quantity }]
+    const parts = rawParts.flatMap((part): NestRecord['parts'] => (
+      isRecord(part) && typeof part.quantity === 'number' && Number.isFinite(part.quantity)
+        ? [{ sourceIds: ids(part.sourceIds), quantity: part.quantity }]
+        : []
+    ))
+    if (parts.length === 0) return []
+    return [{
+      id: raw.id,
+      name: raw.name,
+      folderId: typeof raw.folderId === 'string' ? raw.folderId : null,
+      parts,
+      copyIds: ids(raw.copyIds),
+      movedOriginals,
+      settings: {
+        rotations: [...settings.rotations as number[]],
+        minimumGap: settings.minimumGap,
+        keepOriginals: settings.keepOriginals,
+        ...normalizeNestMargins(settings.margins),
+      },
+    }]
+  })
+}
+
+/** A nest's margins; a missing or bad side reads as 0, and all-zero margins as none. */
+function normalizeNestMargins(raw: unknown): { margins?: NestMargins } {
+  if (!isRecord(raw)) return {}
+  const side = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0)
+  const margins = { top: side(raw.top), bottom: side(raw.bottom), left: side(raw.left), right: side(raw.right) }
+  return Object.values(margins).some((value) => value > 0) ? { margins } : {}
+}
+
 function assertProjectEnvelope(input: unknown): asserts input is ProjectFormatInput {
   if (!isRecord(input)) throw new Error('Failed to load project: not a project object.')
   if (!isRecord(input.meta)) throw new Error('Failed to load project: missing metadata.')
@@ -544,6 +610,9 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     tabs: input.tabs ?? [],
     clamps: input.clamps ?? [],
   }
+  const nests = normalizeNests(input.nests, features)
+  if (nests.length > 0) authoritativeProject.nests = nests
+  else delete authoritativeProject.nests
   const machines = normalizeMachineDefinitions(authoritativeProject)
   const meta = {
     ...authoritativeProject.meta,

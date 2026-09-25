@@ -1,0 +1,36 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// Sheet nesting (issue #741): places copies of part footprints on a sheet.
+
+export { createNester, nest, type Nester, type NestProgress, type PlaceOptions } from './packer'
+export { DEFAULT_IMPROVE_OPTIONS, improveNest, isBetterNest, type ImproveOptions, type ImproveStep } from './improve'
+export { expandByHalfGap, largestFirst, shrinkByHalfGap } from './defaults'
+export { flattenProfileWithin } from './flatten'
+export { simplifyRing } from './simplify'
+export { requestFromJob, type NestJob } from './job'
+export type {
+  ExpandFootprint,
+  NestGravity,
+  NestPart,
+  NestPlacement,
+  NestRequest,
+  NestResult,
+  NestRing,
+  NestUnplaced,
+  OrderParts,
+  ShrinkHoles,
+} from './types'

@@ -47,6 +47,7 @@ import type { TextLayoutKind } from '../sketch/textPlacement'
 import type { ToolLibraryEntry } from '../toolLibrary'
 import type { GearCreationParams } from '../sketch/gearProfile'
 import type { FeatureDistributionMode, FeatureDistributionSpec } from '../sketch/featureDistribution'
+import type { ApplyNestInput } from './helpers/nestApply'
 
 export type SelectionMode = 'feature' | 'sketch_edit'
 
@@ -226,6 +227,12 @@ export interface PendingTextLayout {
   session: number
 }
 
+/** The Nest panel's subject (issue #741): the selection it was opened on. */
+export interface PendingNest {
+  sourceIds: string[]
+  session: number
+}
+
 export interface PendingFeatureDistribution {
   sourceIds: string[]
   guideId: string | null
@@ -300,6 +307,12 @@ export interface ProjectStore {
   pendingTransform: PendingTransformTool | null
   pendingOffset: PendingOffsetTool | null
   pendingFeatureDistribution: PendingFeatureDistribution | null
+  pendingNest: PendingNest | null
+  /**
+   * A keep-improving search is running (#862). Its better layouts are applied
+   * live, but toolpath generation waits until it ends, like during a drag.
+   */
+  nestSearching: boolean
   pendingShapeAction: PendingShapeActionTool | null
   backdropImageLoading: boolean
   sketchEditSession: SketchEditSession | null
@@ -592,6 +605,14 @@ export interface ProjectStore {
   setFeatureDistributionRadialCenter: (center: Point) => void
   cancelFeatureDistribution: () => void
   completeFeatureDistribution: () => string[]
+  /** Open the Nest panel on the current feature selection (issue #741). */
+  startNest: () => void
+  cancelNest: () => void
+  setNestSearching: (searching: boolean) => void
+  /** Commit a computed sheet nest as one history step; returns the nest id, or null if nothing changed (issue #741). */
+  applyNest: (input: ApplyNestInput) => string | null
+  /** Remove a nest's copies, strip them from operations and restore moved originals, as one history step. */
+  discardNest: (nestId: string) => void
   cancelPendingTransform: () => void
   setPendingTransformReferenceStart: (point: Point) => void
   setPendingTransformReferenceEnd: (point: Point) => void

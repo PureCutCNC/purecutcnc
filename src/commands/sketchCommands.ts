@@ -63,6 +63,7 @@ export interface SketchCommandPredicates {
   canDistributeSelectedFeatures: boolean
   canCreateFeatureDistribution: boolean
   canLayOutText: boolean
+  canNest: boolean
   featureSketchEditActive: boolean
   sketchEditFeatureOpen: boolean
   selectedConstraintFeatureId: string | null
@@ -155,6 +156,9 @@ export function deriveSketchCommandPredicates({
     canCreateFeatureDistribution: hasSelectedFeatures
       && !hasLockedSelectedFeatures
       && selectedFeatures.every((feature) => feature.kind !== 'stl'),
+    // Nesting resolves the part itself (containment, grouped folders) and
+    // explains any refusal in its panel, so any selection may open it.
+    canNest: hasSelectedFeatures,
     // Laying text on a baseline edits one run, so unlike distribution it needs
     // exactly one selected feature and that feature has to be text.
     canLayOutText: selectedFeatures.length === 1
@@ -305,6 +309,7 @@ export function useSketchCommands(): SketchCommandState & {
     distributeFeatures: (distribution: FeatureDistribution) => void
     startFeatureDistribution: (mode: FeatureDistributionMode) => void
     startTextLayout: (kind?: TextLayoutKind) => void
+    startNest: () => void
   }
   sketchEdit: Record<SketchEditTool, CommandDescriptor>
   constraint: CommandDescriptor
@@ -362,6 +367,13 @@ export function useSketchCommands(): SketchCommandState & {
       return
     }
     store.startFeatureDistribution(mode)
+  }
+
+  function startNest() {
+    if (!state.predicates.canNest) {
+      return
+    }
+    store.startNest()
   }
 
   function startTextLayout(kind?: TextLayoutKind) {
@@ -488,6 +500,7 @@ export function useSketchCommands(): SketchCommandState & {
       distributeFeatures,
       startFeatureDistribution,
       startTextLayout,
+      startNest,
     },
     sketchEdit: {
       add_point: command('add_point', 'point-add', state.sketchEdit.add_point.active ? t('sketch.edit.cancelAddPoint') : t('sketch.edit.addPoint'), state.sketchEdit.add_point, () => toggleSketchEditTool('add_point')),

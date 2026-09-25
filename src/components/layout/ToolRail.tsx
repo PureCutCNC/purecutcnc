@@ -180,6 +180,11 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
     setShowDistributePopover(false)
   }
 
+  function startNest() {
+    sketchCommands.arrange.startNest()
+    setShowDistributePopover(false)
+  }
+
   function startTextLayout() {
     sketchCommands.arrange.startTextLayout()
     setShowDistributePopover(false)
@@ -321,6 +326,7 @@ export function ToolRail({ onZoomToModel: _onZoomToModel, onImportComplete: _onI
               <button type="button" aria-label={t('canvas.featureDistribution.radial')} disabled={!sketchCommands.predicates.canCreateFeatureDistribution} onClick={() => startFeatureDistribution('radial')}><Icon id="rotate" /></button>
               <button type="button" aria-label={t('canvas.featureDistribution.path')} disabled={!sketchCommands.predicates.canCreateFeatureDistribution} onClick={() => startFeatureDistribution('path')}><Icon id="spline" /></button>
               <button type="button" aria-label={t('canvas.textLayout.title')} disabled={!sketchCommands.predicates.canLayOutText} onClick={() => startTextLayout()}><Icon id="text" /></button>
+              <button type="button" aria-label={t('canvas.nest.title')} disabled={!sketchCommands.predicates.canNest} onClick={() => startNest()}><Icon id="nest" /></button>
             </RailFlyout>
           </div>
         )}

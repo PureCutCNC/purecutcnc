@@ -871,6 +871,60 @@ export function tabShape(tab: Tab): TabShape {
 }
 
 // ============================================================
+// Nests (issue #741)
+// ============================================================
+
+/** The settings a sheet nest was produced with, shared by all its parts. */
+export interface NestSettings {
+  /** Allowed rotations in degrees. */
+  rotations: number[]
+  /** Minimum clearance between parts, in project units. */
+  minimumGap: number
+  /** Originals stay where they are and are nested around, instead of being moved. */
+  keepOriginals: boolean
+  /** Uncut stock kept at each stock edge (#881); absent means none. */
+  margins?: NestMargins
+}
+
+/**
+ * Per stock side, as seen on the canvas (top = +Y, right = +X), in project
+ * units: the uncut stock left between that edge and the cut. 0 lets the cut
+ * run off the edge, as without margins.
+ */
+export interface NestMargins {
+  top: number
+  bottom: number
+  left: number
+  right: number
+}
+
+export interface NestRecordPart {
+  sourceIds: string[]
+  /** Parts on the sheet, originals included. */
+  quantity: number
+}
+
+/**
+ * A sheet-nesting result: disposable layout output, not design geometry.
+ *
+ * Membership is held here by instance id rather than as a field on each
+ * instance, so it survives rows being dragged between folders and is never
+ * copied onto a pasted duplicate. The folder is only for legibility.
+ */
+export interface NestRecord {
+  id: string
+  name: string
+  folderId: string | null
+  /** The nested parts: each part's own instances and how many were asked for. */
+  parts: NestRecordPart[]
+  /** Instances the nest created. Discard deletes exactly these. */
+  copyIds: string[]
+  /** Pre-nest transforms of the source instances the nest moved; Discard restores them. */
+  movedOriginals: { featureId: string; transform: Matrix2D }[]
+  settings: NestSettings
+}
+
+// ============================================================
 // Backdrop
 // ============================================================
 
@@ -951,6 +1005,8 @@ export interface Project {
   operations: Operation[]
   tabs: Tab[]
   clamps: Clamp[]
+  /** Sheet nests (issue #741). Absent in files that never nested. */
+  nests?: NestRecord[]
   ai_history: AIMessage[]
 }
 

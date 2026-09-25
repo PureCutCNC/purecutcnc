@@ -36,7 +36,7 @@ import { ImportGeometryDialog } from './components/project/ImportGeometryDialog'
 import { EmptyStateOverlay } from './components/onboarding/EmptyStateOverlay'
 import { AboutDialog } from './components/about/AboutDialog'
 import { MachineUpdateNotice } from './components/machine/MachineUpdateNotice'
-import { useProjectStore } from './store/projectStore'
+import { toolpathGenerationDeferred, useProjectStore } from './store/projectStore'
 import { useDesktopIntegration } from './platform/useDesktopIntegration'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useToolpathGeneration } from './app/useToolpathGeneration'
@@ -117,7 +117,6 @@ function App() {
     selection,
     startAddRectPlacement,
     pendingAdd,
-    history,
   } = useProjectStore()
 
   const {
@@ -221,6 +220,9 @@ function App() {
   // toolpath was computed cannot change what it is (issue #675).
   const generationBackend = useExecutorPreference()
 
+  // One regeneration per gesture or nest, when it ends — see toolpathGenerationDeferred.
+  const deferGeneration = useProjectStore(toolpathGenerationDeferred)
+
   const {
     requestToolpath,
     requestGenerationTrace,
@@ -238,10 +240,7 @@ function App() {
   } = useToolpathGeneration(
     project,
     selectedOperation,
-    // Coalesce during gestures (issue #518, S4): `transactionStart` is open
-    // for the duration of a drag, so one gesture produces one regeneration
-    // instead of one per pointermove.
-    history.transactionStart !== null,
+    deferGeneration,
     // The document session (issue #675). A result produced before a new or
     // opened file must never land on the one that replaced it.
     projectKey,
