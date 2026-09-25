@@ -76,6 +76,7 @@ import {
 import type { ProjectStore } from './types'
 import { normalizeProject } from './helpers/projectFormat'
 export { normalizeProject } from './helpers/projectFormat'
+export { toolpathGenerationDeferred } from './slices/nestingSlice'
 
 
 // ============================================================

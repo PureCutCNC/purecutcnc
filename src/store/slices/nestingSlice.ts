@@ -21,6 +21,17 @@ import { cloneProject } from '../helpers/normalize'
 import type { ProjectStore } from '../types'
 import { sanitizeSelection } from './selectionSlice'
 
+/**
+ * Whether automatic toolpath generation waits: during a gesture (#518), and
+ * while the Nest panel is open (#887) — a nest, re-nest or keep-improving
+ * search regenerates once, when the panel closes, not on every layout.
+ */
+export function toolpathGenerationDeferred(
+  state: Pick<ProjectStore, 'history' | 'nestSearching' | 'pendingNest'>,
+): boolean {
+  return state.history.transactionStart !== null || state.nestSearching || state.pendingNest !== null
+}
+
 export type NestingSlice = Pick<
   ProjectStore,
   'pendingNest' | 'nestSearching' | 'startNest' | 'cancelNest' | 'setNestSearching' | 'applyNest' | 'discardNest'

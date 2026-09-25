@@ -45,7 +45,7 @@ import { normalizeProject, type ProjectFormatInput } from './helpers/projectForm
 import { discardNestFromProject } from './helpers/nestApply'
 import { buildNestRequest, nestGapForPart, resolveNestParts, type NestPartSpec } from './helpers/nestPart'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
-import { useProjectStore } from './projectStore'
+import { toolpathGenerationDeferred, useProjectStore } from './projectStore'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -533,6 +533,28 @@ function testAnotherProjectClosesThePanel(): void {
   console.log('another project closes the panel: PASSED')
 }
 
+function testGenerationWaitsForTheNestPanel(): void {
+  // #887: toolpaths regenerate once, when the Nest panel closes.
+  const store = () => useProjectStore.getState()
+  const deferred = () => toolpathGenerationDeferred(store())
+  resetStore(makeProject())
+  assert(!deferred(), 'nothing defers generation by default')
+  store().selectFeatures(['plate'])
+  store().startNest()
+  assert(deferred(), 'an open Nest panel defers generation')
+  nestIntoStore(['plate'], settings({ quantity: 3 }))
+  assert(deferred(), 'a nest applied from the panel still waits')
+  store().setNestSearching(true)
+  assert(deferred(), 'so does a running search')
+  store().cancelNest()
+  assert(!deferred(), 'closing the panel (Accept or Cancel) regenerates')
+  store().selectFeatures(['plate'])
+  store().startNest()
+  store().createNewProject()
+  assert(!deferred(), 'opening another project closes the panel and regenerates')
+  console.log('generation waits for the Nest panel: PASSED')
+}
+
 testPartResolution()
 testApplyIsOneStepAndMachinesEveryCopy()
 testDiscardRestoresTheDesign()
@@ -548,4 +570,5 @@ testReplaceNestIsOneStep()
 testAmendedNestStaysOneStep()
 testSearchFlagClearsWithThePanel()
 testAnotherProjectClosesThePanel()
+testGenerationWaitsForTheNestPanel()
 console.log('All nesting store tests passed')
