@@ -56,7 +56,7 @@ export function createNestingSlice(
         pendingShapeAction: null,
         pendingFeatureDistribution: null,
         sketchEditSession: null,
-        pendingNest: { sourceIds: [...sourceIds], session: nextPlacementSession() },
+        pendingNest: { sourceIds: [...sourceIds], session: nextPlacementSession(), nestId: null },
       }
     }),
 
@@ -74,6 +74,7 @@ export function createNestingSlice(
         const primaryId = selectedIds.at(-1) ?? null
         return {
           project: result.project,
+          pendingNest: s.pendingNest ? { ...s.pendingNest, nestId: result.nestId } : null,
           selection: {
             ...s.selection,
             selectedFeatureId: primaryId,
@@ -99,6 +100,7 @@ export function createNestingSlice(
       if (!project) return {}
       return {
         project,
+        pendingNest: s.pendingNest?.nestId === nestId ? { ...s.pendingNest, nestId: null } : s.pendingNest,
         selection: sanitizeSelection(project, s.selection),
         history: {
           past: [...s.history.past, cloneProject(s.project)].slice(-100),

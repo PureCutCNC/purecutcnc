@@ -123,9 +123,10 @@ function manyPartsProjectJson(count: number): string {
   return JSON.stringify(project)
 }
 
-async function nestCount(page: Page): Promise<number> {
-  const project = await getProject(page) as { nests?: unknown[] }
-  return project.nests?.length ?? 0
+/** Every feature's id and placement, to compare a design before and after. */
+async function placements(page: Page): Promise<string> {
+  const project = await getProject(page) as { features: { id: string; transform?: unknown }[] }
+  return JSON.stringify(project.features.map((feature) => [feature.id, feature.transform ?? null]))
 }
 
 async function openNest(page: Page) {
@@ -169,12 +170,9 @@ test('Nest on stock arranges copies of a part and Discard removes them', async (
   await expect(panel.locator('.canvas-workflow-panel__running')).toHaveCount(0)
   await expect(panel.getByRole('status')).toHaveText(/^All 6 parts fit on the stock\. Took \d+:\d\d\.$/)
   await expect.poll(() => getFeatureCount(page)).toBe(12)
-  const nested = await getProject(page) as {
-    nests?: { name: string; settings: { rotations: number[] } }[]
-    featureFolders: { name: string }[]
-  }
-  expect(nested.nests?.map((nest) => nest.name)).toEqual(['Nest 1'])
-  expect(nested.nests?.[0].settings.rotations).toEqual([0, 45, 90, 135, 180, 225, 270, 315])
+  const nested = await getProject(page) as { nests?: unknown; featureFolders: { name: string }[] }
+  // The saved project holds the copies, never the nest record (#889).
+  expect(nested.nests).toBeUndefined()
   expect(nested.featureFolders.map((folder) => folder.name)).toContain('Nest 1')
 
   // The panel now targets the nest it just made, with its settings.
@@ -227,11 +225,8 @@ test('Nest on stock takes a quantity per part when several parts are selected', 
   await expect(panel.getByRole('status')).toHaveText(/^All 5 parts fit on the stock\. Took \d+:\d\d\.$/)
   // 3 plates with their pockets, 2 brackets.
   await expect.poll(() => getFeatureCount(page)).toBe(8)
-  const nested = await getProject(page) as {
-    nests?: { parts: { quantity: number }[]; settings: { margins?: Record<string, number> } }[]
-  }
-  expect(nested.nests?.[0].parts.map((part) => part.quantity)).toEqual([3, 2])
-  expect(nested.nests?.[0].settings.margins).toEqual({ top: 1, bottom: 1, left: 1, right: 2 })
+  const nested = await getProject(page) as { nests?: unknown }
+  expect(nested.nests).toBeUndefined()
   await expect(panel.getByLabel('Right margin (inch)')).toHaveValue('2')
   await expect(panel.getByLabel('Top margin (inch)')).toHaveValue('1')
 
@@ -253,11 +248,14 @@ test('Nest panel keeps every control on screen with 26 parts, and Cancel reverts
   const partsToggle = panel.getByRole('button', { name: 'Parts (26)', exact: true })
   await expect(partsToggle).toHaveAttribute('aria-expanded', 'true')
 
+  const before = await placements(page)
+  const discardNest = panel.getByRole('button', { name: 'Discard nest', exact: true })
   await panel.getByLabel('Gap (inch)').fill('0.25')
   await panel.getByRole('button', { name: 'Nest', exact: true }).click()
   await expect(panel.getByRole('status')).toHaveText(/^All 26 parts fit on the stock\. Took \d+:\d\d\.$/)
   // Quantity 1 each: the originals are laid out, not copied.
-  await expect.poll(() => nestCount(page)).toBe(1)
+  await expect(discardNest).toBeVisible()
+  expect(await placements(page)).not.toBe(before)
 
   // The parts list scrolls inside the panel; the panel stays in the window.
   const viewport = page.viewportSize()!
@@ -273,15 +271,16 @@ test('Nest panel keeps every control on screen with 26 parts, and Cancel reverts
   await expect(panel.getByLabel('Parts on sheet: part-a')).toBeHidden()
   await expect(panel.getByLabel('All parts')).toBeVisible()
 
-  await panel.getByRole('button', { name: 'Discard nest', exact: true }).click()
-  await expect.poll(() => nestCount(page)).toBe(0)
+  await discardNest.click()
+  await expect(discardNest).toHaveCount(0)
+  await expect.poll(() => placements(page)).toBe(before)
   await panel.getByRole('button', { name: 'Nest', exact: true }).click()
-  await expect.poll(() => nestCount(page)).toBe(1)
+  await expect(discardNest).toBeVisible()
 
   // Cancel undoes this panel's steps and closes it.
   await panel.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(panel).toHaveCount(0)
-  await expect.poll(() => nestCount(page)).toBe(0)
+  await expect.poll(() => placements(page)).toBe(before)
   expect(await getFeatureCount(page)).toBe(26)
 })
 

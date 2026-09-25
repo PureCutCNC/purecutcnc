@@ -143,10 +143,14 @@ export function NestPanelHost(props: NestPanelHostProps) {
   })
   if (!pendingNest) return null
   // Keyed by session so reopening the panel starts from a fresh form.
-  return <NestPanel key={pendingNest.session} sourceIds={pendingNest.sourceIds} panel={panel} />
+  return <NestPanel key={pendingNest.session} sourceIds={pendingNest.sourceIds} nestId={pendingNest.nestId} panel={panel} />
 }
 
-function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnType<typeof useCanvasWorkflowPanel> }) {
+function NestPanel({ sourceIds, nestId, panel }: {
+  sourceIds: string[]
+  nestId: string | null
+  panel: ReturnType<typeof useCanvasWorkflowPanel>
+}) {
   const { t, tPlural } = useI18n()
   const project = useProjectStore((s) => s.project)
   const applyNest = useProjectStore((s) => s.applyNest)
@@ -156,9 +160,8 @@ function NestPanel({ sourceIds, panel }: { sourceIds: string[]; panel: ReturnTyp
   const undo = useProjectStore((s) => s.undo)
   const units = project.meta.units
 
-  // After a nest is applied the selection's rows belong to it, so the same
-  // panel now targets that nest: Nest replaces it, Discard removes it.
-  const subject = useMemo(() => nestSubject(project, sourceIds), [project, sourceIds])
+  // After a nest is applied the panel targets it: Nest replaces it, Discard removes it.
+  const subject = useMemo(() => nestSubject(project, sourceIds, nestId), [project, sourceIds, nestId])
   const parts = subjectParts(subject)
   const [form, setForm] = useState<NestForm>(() => initialNestForm(subject))
   const [run, setRun] = useState<NestRun>({ state: 'idle' })

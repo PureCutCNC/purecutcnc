@@ -1005,7 +1005,11 @@ export interface Project {
   operations: Operation[]
   tabs: Tab[]
   clamps: Clamp[]
-  /** Sheet nests (issue #741). Absent in files that never nested. */
+  /**
+   * Sheet nests made in this session (#741). Session state only (#889): kept
+   * on the live project so undo and redo stay in step with the copies, but
+   * never saved to or read from a file.
+   */
   nests?: NestRecord[]
   ai_history: AIMessage[]
 }

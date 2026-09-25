@@ -48,7 +48,6 @@ import {
   type LocalConstraint,
   type Matrix2D,
   type NestMargins,
-  type NestRecord,
   type NestSettings,
   type OperationKind,
   type Point,
@@ -547,13 +546,6 @@ export function buildNestRequest(
   return job ? requestFromJob(job) : null
 }
 
-/** The nest a selection belongs to — through a source or a copy — if any. */
-export function findNestForSelection(project: Project, selectedIds: string[]): NestRecord | null {
-  const selected = new Set(selectedIds)
-  return project.nests?.find((nest) => (
-    nest.parts.some((part) => part.sourceIds.some((id) => selected.has(id))) || nest.copyIds.some((id) => selected.has(id))
-  )) ?? null
-}
 
 /** Pack toward the stock corner nearest the machine origin. */
 export function nestGravity(project: Project): NestGravity {
