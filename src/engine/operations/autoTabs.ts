@@ -17,6 +17,7 @@
 import type { Operation, Point, Project, SketchFeature, Tab } from '../../types/project'
 import { getProfileBounds } from '../../types/project'
 import { convertLength } from '../../utils/units'
+import { expandFeatureGeometry, isTextFeature } from '../../text'
 import { nextUniqueGeneratedId } from '../../store/helpers/ids'
 import { flattenProfile } from '../toolpaths/geometry'
 import { tabLayoutFreeFraction, toolCentreContours, type TabRect } from '../toolpaths/tabs'
@@ -116,6 +117,17 @@ export function buildAutoTabsForFeature(
   operation: Operation,
   existingTabs: Tab[],
 ): Tab[] {
+  // A text feature's own profile is its frame; the edge route cuts its glyph
+  // shapes, so each glyph the route targets gets its own tabs.
+  if (isTextFeature(feature)) {
+    const wanted = operation.kind === 'edge_route_inside' ? 'subtract' : 'add'
+    const created: Tab[] = []
+    for (const glyph of expandFeatureGeometry(feature)) {
+      if (glyph.operation !== wanted && glyph.operation !== 'region') continue
+      created.push(...buildAutoTabsForFeature(glyph, project, operation, [...existingTabs, ...created]))
+    }
+    return created
+  }
   const bounds = getProfileBounds(feature.sketch.profile)
   const width = Math.max(bounds.maxX - bounds.minX, convertLength(0.1, 'mm', project.meta.units))
   const height = Math.max(bounds.maxY - bounds.minY, convertLength(0.1, 'mm', project.meta.units))
