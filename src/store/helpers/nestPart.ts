@@ -37,6 +37,7 @@ import {
   unionPaths,
 } from '../../engine/nesting/clipperOps'
 import { normalizeToolForProject, resolveFeatureZSpan } from '../../engine/toolpaths/geometry'
+import { CLAMP_KEEPOUT_EPSILON } from '../../engine/toolpaths/modelProtection'
 import type { ClipperPath } from '../../engine/toolpaths/types'
 import { getFeatureGeometryProfiles, isTextFeature, resolveTextFeatureShapes } from '../../text'
 import {
@@ -399,17 +400,21 @@ function offsetRings(rings: NestRing[], delta: number): NestRing[] {
  * clearance, and every other closed machinable feature on the stock —
  * including the part itself when its originals stay in place. A feature that
  * contains the part (a sheet outline drawn as a feature) is not an obstacle.
+ *
+ * A clamp also gets the corner pad of {@link clampCornerPad}, so that a part
+ * kept `minimumGap` from it clears the toolpaths' square clamp keep-out.
  */
 export function nestObstacleRings(
   project: Project,
   partIds: string[],
   footprint: NestRing[],
   keepOriginals: boolean,
+  minimumGap: number,
 ): NestRing[] {
   const tolerance = nestFlattenTolerance(project)
   const part = new Set(partIds)
   const partPaths = footprint.map(ringToPath)
-  const clearance = project.meta.clampClearanceXY
+  const clearance = project.meta.clampClearanceXY + clampCornerPad(minimumGap)
   const clamps = project.clamps.map((clamp) => [
     { x: clamp.x - clearance, y: clamp.y - clearance },
     { x: clamp.x + clamp.w + clearance, y: clamp.y - clearance },
@@ -424,6 +429,19 @@ export function nestObstacleRings(
     return paths.map(pathToRing)
   })
   return [...clamps, ...features]
+}
+
+/**
+ * Extra growth for a clamp's rectangle before nesting (#882). Toolpaths keep
+ * the cutter out of the clamp grown with mitered joins — a rectangle whose
+ * corners are square — while the nest keeps parts a round distance away. Off
+ * a corner the square reaches √2 times as far, so the rectangle is grown by
+ * `a` with `√2 (r − a) + r + leave ≤ gap` for every cutter radius `r` and
+ * radial leave the gap allows (`2r + leave ≤ gap`): `a = (gap / 2)(1 − 1/√2)`,
+ * plus the keep-out's own epsilon.
+ */
+export function clampCornerPad(minimumGap: number): number {
+  return (Math.max(0, minimumGap) / 2) * (1 - Math.SQRT1_2) + CLAMP_KEEPOUT_EPSILON
 }
 
 /** The stock outline, shrunk by the flattening tolerance. */
@@ -462,6 +480,7 @@ export function buildNestJob(
       parts.flatMap((part) => part.featureIds),
       parts.flatMap((part) => part.footprint),
       settings.keepOriginals,
+      settings.minimumGap,
     ),
     parts: parts.map((part, index) => ({
       id: String(index),
