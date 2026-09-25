@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, type ReactNode } from 'react'
 import { Icon } from '../Icon'
 import { useLocalStorageState, type StorageCodec } from '../../hooks/useLocalStorageState'
 import {
@@ -22,6 +22,10 @@ import {
   parseDisclosureOpen,
   serializeDisclosureOpen,
 } from './disclosureState'
+
+// Mounted sections sharing a storageKey follow each other's toggles, so the
+// docked Properties panel and its expanded dialog never disagree (#808).
+const openListeners = new Map<string, Set<(open: boolean) => void>>()
 
 interface DisclosureSectionProps {
   /** Header label, e.g. "Advanced". */
@@ -69,8 +73,20 @@ export function DisclosureSection({
     { codec, enabled: Boolean(storageKey) },
   )
 
+  useEffect(() => {
+    if (!storageKey) return
+    const listeners = openListeners.get(storageKey) ?? new Set()
+    openListeners.set(storageKey, listeners)
+    listeners.add(setOpen)
+    return () => {
+      listeners.delete(setOpen)
+    }
+  }, [storageKey, setOpen])
+
   function toggle() {
-    setOpen((prev) => !prev)
+    const next = !open
+    setOpen(next)
+    if (storageKey) openListeners.get(storageKey)?.forEach((notify) => notify(next))
   }
 
   return (
