@@ -127,11 +127,21 @@ export interface Nester {
   initialSequence: string[]
   /**
    * Places one copy per entry, in order. `sequence` must hold each part id as
-   * many times as its quantity. Once a copy finds no place, the later copies of
-   * the same part — identical shapes facing a region that only grows — are
-   * reported unplaced without being tried.
+   * many times as its quantity. Once a copy finds no place at an angle, a later
+   * copy of the same part — an identical shape facing a region that only
+   * grows — is reported unplaced without being tried if every angle it would
+   * try has already failed.
    */
-  place(sequence: string[], onProgress?: NestProgress): NestResult
+  place(sequence: string[], options?: PlaceOptions): NestResult
+}
+
+export interface PlaceOptions {
+  /**
+   * One entry per sequence entry: an allowed angle pins that copy to it (#875),
+   * null leaves the choice to the placer — every allowed angle, best kept.
+   */
+  rotations?: (number | null)[]
+  onProgress?: NestProgress
 }
 
 /**
@@ -142,7 +152,7 @@ export type NestProgress = (done: number, total: number) => void
 
 export function nest(request: NestRequest, onProgress?: NestProgress): NestResult {
   const nester = createNester(request)
-  return nester.place(nester.initialSequence, onProgress)
+  return nester.place(nester.initialSequence, { onProgress })
 }
 
 export function createNester(request: NestRequest): Nester {
@@ -163,6 +173,12 @@ export function createNester(request: NestRequest): Nester {
   const orientedCache = new Map<string, Oriented>()
   const orientationsCache = new Map<string, Oriented[]>()
   const nfpCache = new Map<string, ClipperPath[]>()
+  /**
+   * Base no-fit polygons (fixed part at 0°), kept apart from `nfpCache`: with
+   * the fixed part at 0° both would have the same key, and a base cached first
+   * would be handed out without its safety growth.
+   */
+  const baseNfpCache = new Map<string, ClipperPath[]>()
   /** Obstacles and the sheet edge per orientation — the same for every layout. */
   const fixedForbidden = new Map<string, ClipperPath[]>()
 
@@ -235,13 +251,13 @@ export function createNester(request: NestRequest): Nester {
     if (!nfp) {
       const relative = normalizeRotation(moving.rotation - fixed.rotation)
       const baseKey = `${fixed.part.id}@0|${moving.part.id}@${relative}`
-      let base = nfpCache.get(baseKey)
+      let base = baseNfpCache.get(baseKey)
       if (!base) {
         const turned = orientedOf(moving.part, relative)
         base = noFitPolygon(orientedOf(fixed.part, 0).grownPieces, turned.grownPieces)
         const fits = shapeOf(fixed.part).holes.flatMap((hole) => holeFit(hole, turned))
         if (fits.length > 0) base = differencePaths(base, fits)
-        nfpCache.set(baseKey, base)
+        baseNfpCache.set(baseKey, base)
       }
       const exact = isQuarterTurn(relative) && isQuarterTurn(fixed.rotation)
       nfp = growPaths(rotatePaths(base, fixed.rotation), SAFETY_UNITS + (exact ? 0 : ROTATION_UNITS))
@@ -268,8 +284,24 @@ export function createNester(request: NestRequest): Nester {
   const initialSequence = request.orderParts(request.parts)
     .flatMap((part) => Array.from({ length: Math.max(0, part.quantity) }, () => part.id))
 
-  function place(sequence: string[], onProgress?: NestProgress): NestResult {
+  /** The copy's candidate orientations: the pinned one, or every allowed one. */
+  const candidatesFor = (part: NestPart, pinned: number | null): Oriented[] => {
+    const all = orientationsOf(part)
+    if (pinned === null) return all
+    const angle = normalizeRotation(pinned)
+    const match = all.find((oriented) => Math.abs(oriented.rotation - angle) < 1e-9)
+    if (!match) throw new Error(`nest: rotation ${pinned} is not allowed for part "${part.id}"`)
+    return [match]
+  }
+
+  function place(sequence: string[], options: PlaceOptions = {}): NestResult {
+    const { rotations, onProgress } = options
     validateSequence(request.parts, sequence)
+    if (rotations && rotations.length !== sequence.length) {
+      throw new Error(`nest: ${rotations.length} rotations for ${sequence.length} copies`)
+    }
+    /** Per part, the angles at which a copy already found no place. */
+    const failedAngles = new Map<string, Set<number>>()
     const forbidden = new Map<string, ForbiddenRegion>()
     const placed: Placed[] = []
     const placements: NestPlacement[] = []
@@ -297,14 +329,20 @@ export function createNester(request: NestRequest): Nester {
     for (const [done, partId] of sequence.entries()) {
       onProgress?.(done, sequence.length)
       const part = partsById.get(partId)!
-      const failed = unplaced.find((entry) => entry.partId === partId)
-      if (failed) {
-        failed.count += 1
+      const candidates = candidatesFor(part, rotations?.[done] ?? null)
+      const failed = failedAngles.get(partId)
+      const missed = () => {
+        const entry = unplaced.find((candidate) => candidate.partId === partId)
+        if (entry) entry.count += 1
+        else unplaced.push({ partId, count: 1 })
         unplacedArea += shapeOf(part).area
+      }
+      if (failed && candidates.every((oriented) => failed.has(oriented.rotation))) {
+        missed()
         continue
       }
       let best: { oriented: Oriented; dx: number; dy: number; score: number[] } | null = null
-      for (const oriented of orientationsOf(part)) {
+      for (const oriented of candidates) {
         const xRange = innerFitRange(sheetBox.minX, sheetBox.maxX, oriented.rawBox.minX, oriented.rawBox.maxX)
         const yRange = innerFitRange(sheetBox.minY, sheetBox.maxY, oriented.rawBox.minY, oriented.rawBox.maxY)
         if (!xRange || !yRange) continue
@@ -328,8 +366,10 @@ export function createNester(request: NestRequest): Nester {
       }
 
       if (!best) {
-        unplaced.push({ partId, count: 1 })
-        unplacedArea += shapeOf(part).area
+        const angles = failed ?? new Set<number>()
+        for (const oriented of candidates) angles.add(oriented.rotation)
+        failedAngles.set(partId, angles)
+        missed()
         continue
       }
       const copyIndex = copies.get(partId) ?? 0
