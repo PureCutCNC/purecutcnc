@@ -17,18 +17,9 @@
 import type { ToolLibraryEntry } from '../../../toolLibrary'
 import type { OperationKind, OperationTarget, Project, Tool } from '../../../types/project'
 import { convertLength, convertToolUnits } from '../../../utils/units'
-import { preferredToolTypes, targetFeatureSize } from '../toolSelection'
+import { autoToolDiameterLimit, capAutoToolDiameter, preferredToolTypes, targetFeatureSize } from '../toolSelection'
 import type { CamPlanTool } from './types'
 
-/**
- * The preview deliberately keeps primary cutters comfortably below the
- * narrowest target span. A purely clearance-based limit can otherwise pick a
- * half- or three-quarter-inch tool for a small 2.5D part and hide its details.
- * The POC starts conservatively; rest machining can still clear broad areas
- * efficiently with a suitable first cutter.
- */
-export const CAM_PLAN_OUTSIDE_TOOL_FRACTION = 0.15
-export const CAM_PLAN_INTERIOR_TOOL_FRACTION = 0.2
 export const CAM_PLAN_FINISH_REST_TOOL_FRACTION = 0.5
 export const CAM_PLAN_ROUGH_STOCK_TO_LEAVE_INCH = 0.005
 export const CAM_PLAN_HELICAL_BORE_FRACTION = 0.8
@@ -58,16 +49,6 @@ export function camPlanToolPool(project: Project, libraryTools: ToolLibraryEntry
   }))
   const imported = libraryTools.map((entry) => libraryTool(entry, project.meta.units))
   return [...existing, ...imported]
-}
-
-function maximumDiameter(project: Project, kind: OperationKind, target: OperationTarget): number | null {
-  const span = targetFeatureSize(project, target)
-  if (span == null) return null
-  if (kind === 'drilling') return span
-  const fraction = kind === 'edge_route_outside'
-    ? CAM_PLAN_OUTSIDE_TOOL_FRACTION
-    : CAM_PLAN_INTERIOR_TOOL_FRACTION
-  return span * fraction
 }
 
 function toolCanReach(tool: Tool, requiredDepth: number): boolean {
@@ -125,7 +106,9 @@ export function rankCamPlanTools(
   reusedToolIds: ReadonlySet<string>,
   maximumDiameterOverride?: number | null,
 ): RankedCamPlanTools {
-  const diameterLimit = maximumDiameterOverride ?? maximumDiameter(project, kind, target)
+  const diameterLimit = maximumDiameterOverride != null
+    ? capAutoToolDiameter(kind, project.meta.units, maximumDiameterOverride)
+    : autoToolDiameterLimit(project, kind, target)
   const tools = pool
     .filter((candidate) => Number.isFinite(toolTypeRank(kind, candidate.tool)))
     .filter((candidate) => candidate.tool.diameter > 0)
