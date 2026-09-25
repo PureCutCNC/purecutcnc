@@ -154,7 +154,7 @@ function testCompatiblePocketsShareOneOperationAcrossDepths(): void {
   base.stock.thickness = 1
   const project = projectWithFeatures({
     ...base,
-    tools: [tool('three-eighth', 'flat_endmill', 0.375), tool('eighth', 'flat_endmill', 0.125)],
+    tools: [tool('quarter', 'flat_endmill', 0.25), tool('eighth', 'flat_endmill', 0.125)],
   }, [
     feature('deep-pocket', 'subtract', rectProfile(0, 0, 2, 2), 1, 0.25),
     feature('shallow-pocket', 'subtract', rectProfile(3, 0, 2, 2), 1, 0.5),
@@ -165,7 +165,7 @@ function testCompatiblePocketsShareOneOperationAcrossDepths(): void {
   const rough = pockets.find((draft) => draft.operation.pass === 'rough')
   const finish = pockets.find((draft) => draft.operation.pass === 'finish')
   assert(pockets.length === 2, 'compatible blind pockets share one rough/finish pair despite different depths')
-  assert(rough?.operation.toolRef === 'three-eighth', 'the grouped rough pocket keeps its common selected tool')
+  assert(rough?.operation.toolRef === 'quarter', 'the grouped rough pocket keeps its common selected tool')
   assert(
     rough?.operation.target.source === 'features' && rough.operation.target.featureIds.join() === 'deep-pocket,shallow-pocket',
     'one rough pocket operation carries both direct targets',
@@ -270,7 +270,7 @@ function testOutsideProfilesWithDifferentToolsStaySeparate(): void {
   base.stock.thickness = 1
   const project = projectWithFeatures({
     ...base,
-    tools: [tool('three-eighth', 'flat_endmill', 0.375), tool('eighth', 'flat_endmill', 0.125)],
+    tools: [tool('quarter', 'flat_endmill', 0.25), tool('eighth', 'flat_endmill', 0.125)],
   }, [
     feature('large-outer', 'add', rectProfile(0, 0, 4, 4), 1, 0),
     feature('small-outer', 'add', rectProfile(5, 0, 1, 1), 1, 0),
@@ -281,7 +281,7 @@ function testOutsideProfilesWithDifferentToolsStaySeparate(): void {
 
   assert(rough.length === 2, 'outside profiles that select different cutters remain separate rough operations')
   assert(
-    rough.some((draft) => draft.operation.toolRef === 'three-eighth' && draft.coveredFeatureIds.join() === 'large-outer'),
+    rough.some((draft) => draft.operation.toolRef === 'quarter' && draft.coveredFeatureIds.join() === 'large-outer'),
     'the large outside profile keeps its larger selected cutter',
   )
   assert(
@@ -536,15 +536,15 @@ function testFixtureScaleAndFinishAllowances(): void {
   const pocketFinish = pocket.find((draft) => draft.operation.pass === 'finish' && !draft.rest)
   const outsideRough = outside.find((draft) => draft.operation.pass === 'rough')
   const outsideFinish = outside.find((draft) => draft.operation.pass === 'finish')
-  assert(pocketRough?.operation.toolRef === 'three-eighth', 'fixture pocket starts with a conservative 3/8 inch cutter')
+  assert(pocketRough?.operation.toolRef === 'quarter', 'fixture pocket starts with the 1/4 inch everyday cutter')
   assert(pocketRest?.operation.pass === 'finish', 'fixture rest proposal is a finish-rest pass')
   assert(pocketRest?.operation.toolRef === 'eighth', 'fixture finish rest uses a half-diameter-or-smaller detail cutter')
-  assert(pocketFinish?.operation.toolRef === 'three-eighth', 'fixture primary finish follows the primary roughing cutter')
+  assert(pocketFinish?.operation.toolRef === 'quarter', 'fixture primary finish follows the primary roughing cutter')
   assert(pocketRest?.dependencies.includes(pocketFinish?.key ?? ''), 'fixture finish rest runs after the primary finish')
-  assert(outsideRough?.operation.toolRef === 'three-eighth', 'fixture outside route is not oversized for the part')
+  assert(outsideRough?.operation.toolRef === 'quarter', 'fixture outside route is not oversized for the part')
   assert(
-    ![...pocket, ...outside].some((draft) => draft.operation.toolRef === 'three-quarter' || draft.operation.toolRef === 'half'),
-    'fixture recommendations exclude the 3/4 and 1/2 inch cutters',
+    ![...pocket, ...outside].some((draft) => ['three-quarter', 'half', 'three-eighth'].includes(draft.operation.toolRef ?? '')),
+    'fixture recommendations exclude cutters above 1/4 inch',
   )
   assert(pocketRough?.operation.stockToLeaveRadial === 0.005, 'pocket rough leaves radial finishing stock')
   assert(pocketRough?.operation.stockToLeaveAxial === 0.005, 'pocket rough leaves axial finishing stock')
@@ -564,22 +564,22 @@ function testBundledToolUnitPreference(): void {
   const project = projectWithFeatures({ ...base, tools: [] }, [
     feature('pocket', 'subtract', rectProfile(0.5, 0.5, 2, 2), 0.75, 0.5),
   ])
-  const metric = { ...tool('ten-mm', 'flat_endmill', 10), units: 'mm' as const, maxCutDepth: 25.4 }
+  const metric = { ...tool('six-mm', 'flat_endmill', 6), units: 'mm' as const, maxCutDepth: 25.4 }
   const library = [
+    libraryTool('inch-eighth', tool('eighth', 'flat_endmill', 0.125)),
+    libraryTool('metric-six', metric),
     libraryTool('inch-three-eighth', tool('three-eighth', 'flat_endmill', 0.375)),
-    libraryTool('metric-ten', metric),
-    libraryTool('inch-quarter', tool('quarter', 'flat_endmill', 0.25)),
   ]
   const plan = createCamPlan(project, library)
   const rough = plan.operations.find((draft) => draft.operation.kind === 'pocket' && draft.operation.pass === 'rough')
-  assert(rough?.operation.toolRef === 'cam-plan-tool:inch-three-eighth', 'inch projects prefer an equally suitable inch library tool')
+  assert(rough?.operation.toolRef === 'cam-plan-tool:inch-eighth', 'inch projects prefer an equally suitable inch library tool')
   const materialized = materializeCamPlan(project, plan)
   assert(materialized.ok, 'a plan can create its selected bundled tool without preloading it')
   if (!materialized.ok) return
   assert(
     materialized.project.tools.length === 1
-      && materialized.project.tools[0]?.name === 'three-eighth'
-      && materialized.project.tools[0]?.diameter === 0.375,
+      && materialized.project.tools[0]?.name === 'eighth'
+      && materialized.project.tools[0]?.diameter === 0.125,
     'materializing the plan imports only the selected bundled tool into the project',
   )
 }
@@ -646,14 +646,14 @@ function testReactiveRestReconciliation(): void {
   assert(existingRest?.rest, 'roughing source has a finish-rest proposal')
   const source = plan.operations.find((draft) => draft.key === existingRest.rest?.sourceOperationKey)
   assert(source, 'rest proposal resolves its roughing source')
-  assert(source.operation.toolRef === 'three-eighth', 'initial roughing source uses the larger cutter')
+  assert(source.operation.toolRef === 'quarter', 'initial roughing source uses the larger cutter')
   assert(existingRest.operation.pass === 'finish', 'initial rest proposal is a finish pass')
   assert(existingRest.operation.toolRef === 'eighth', 'initial finish rest uses a meaningfully smaller cutter')
   const initialFinish = plan.operations.find((draft) =>
     draft.operation.kind === source.operation.kind && draft.operation.pass === 'finish' && !draft.rest,
   )
   assert(
-    initialFinish?.operation.toolRef === 'three-eighth',
+    initialFinish?.operation.toolRef === 'quarter',
     'initial primary finish follows the roughing cutter',
   )
   assert(existingRest.dependencies.includes(initialFinish?.key ?? ''), 'initial finish rest follows the primary finish')
@@ -673,7 +673,7 @@ function testReactiveRestReconciliation(): void {
     draft.operation.kind === source.operation.kind && draft.operation.pass === 'finish' && !draft.rest,
   )
   assert(restoredRest?.dependencies.includes(restoredFinish?.key ?? ''), 'recreated finish rest follows the primary finish')
-  assert(restoredFinish?.operation.toolRef === 'three-eighth', 'recreated primary finish keeps the primary cutter')
+  assert(restoredFinish?.operation.toolRef === 'quarter', 'recreated primary finish keeps the primary cutter')
 
   const unrelated = plan.operations.find((draft) =>
     draft.operation.kind === 'pocket' && draft.operation.pass === 'finish' && !draft.rest,
@@ -700,7 +700,7 @@ function testReactiveRestReconciliation(): void {
       if (draft.key === source.key) {
         return {
           ...draft,
-          operation: { ...draft.operation, toolRef: 'quarter' },
+          operation: { ...draft.operation, toolRef: 'eighth' },
           userOverrides: ['toolRef'] satisfies Array<keyof typeof draft.operation>,
         }
       }
@@ -722,7 +722,7 @@ function testReactiveRestReconciliation(): void {
   )
   const revisedRest = revised.operations.find((draft) => draft.rest?.sourceOperationKey === source.key)
   assert(revisedRest, 'rest proposal remains when corrected source still leaves residual stock')
-  assert(revisedRest.operation.toolRef === 'eighth', 'suggested rest tool moves below the corrected source tool')
+  assert(revisedRest.operation.toolRef === 'sixteenth', 'suggested rest tool moves below the corrected source tool')
   assert(revisedRest.operation.stockToLeaveRadial === 0.007, 'explicit rest setting survives reactive regeneration')
   assert(revisedRest.staleReason === null, 'reactive regeneration produces a ready rest proposal')
   assert(
@@ -732,7 +732,7 @@ function testReactiveRestReconciliation(): void {
   assert(
     revised.operations.find((draft) =>
       draft.operation.kind === source.operation.kind && draft.operation.pass === 'finish' && !draft.rest,
-    )?.operation.toolRef === 'quarter',
+    )?.operation.toolRef === 'eighth',
     'automatic primary finish follows the corrected source cutter during a forward replan',
   )
   assert(revised.operations.find((draft) => draft.key === unrelated.key)?.enabled === false, 'unrelated include choice survives reactive regeneration')
@@ -742,14 +742,14 @@ function testReactiveRestReconciliation(): void {
     operations: revised.operations.map((draft) => draft.key === revisedRest.key
       ? {
         ...draft,
-        operation: { ...draft.operation, toolRef: 'quarter' },
+        operation: { ...draft.operation, toolRef: 'eighth' },
         userOverrides: [...new Set([...draft.userOverrides, 'toolRef' as const])],
       }
       : draft),
   }
   const preserved = reconcileCamPlanRest(project, conflicting, source.key)
   const preservedRest = preserved.operations.find((draft) => draft.key === revisedRest.key)
-  assert(preservedRest?.operation.toolRef === 'quarter', 'incompatible explicit rest tool is not silently replaced')
+  assert(preservedRest?.operation.toolRef === 'eighth', 'incompatible explicit rest tool is not silently replaced')
   assert(Boolean(preservedRest?.hardError), 'incompatible explicit rest tool becomes a focused blocking conflict')
 }
 
