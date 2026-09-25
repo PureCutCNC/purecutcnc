@@ -19,6 +19,7 @@ import type { Tab } from '../../types/project'
 import type { ProjectStore, SelectionState } from '../types'
 import { buildAutoTabsForFeature } from '../../engine/operations/autoTabs'
 import { convertLength } from '../../utils/units'
+import { featureHasShapeWithOperation } from '../../text'
 import { sanitizeSelection } from './selectionSlice'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
 import { resolveFeatureInstance } from '../helpers/resolveFeatures'
@@ -266,7 +267,8 @@ export function createTabsSlice(
         const targetFeatures = operation.target.featureIds
           .map((featureId) => resolveFeatureInstance(s.project, featureId))
           .filter((feature) => feature !== null)
-          .filter((feature) => feature.operation === expectedOperation || feature.operation === 'model' || feature.operation === 'region')
+          // An add text qualifies for an inside route through its counters (#861).
+          .filter((feature) => featureHasShapeWithOperation(feature, expectedOperation) || feature.operation === 'model' || feature.operation === 'region')
 
         if (targetFeatures.length === 0) {
           return {}
