@@ -1,5 +1,5 @@
 {
-  "version": "3.1",
+  "version": "3.2",
   "meta": {
     "name": "t-style-body",
     "created": "2026-05-27T23:07:37.953Z",
@@ -831,7 +831,7 @@
       "pocketPattern": "offset",
       "pocketAngle": 0,
       "edgeStrategy": "contour",
-      "entryStrategy": "helix",
+      "entryStrategy": "plunge",
       "entryRampAngle": 5,
       "pocketSlotFeedPercent": 100,
       "pocketFeedReduction": "slots_only",
@@ -878,7 +878,7 @@
       "pocketPattern": "offset",
       "pocketAngle": 0,
       "edgeStrategy": "contour",
-      "entryStrategy": "helix",
+      "entryStrategy": "plunge",
       "entryRampAngle": 5,
       "pocketSlotFeedPercent": 100,
       "pocketFeedReduction": "slots_only",

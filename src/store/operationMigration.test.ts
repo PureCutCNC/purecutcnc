@@ -376,6 +376,80 @@ test('3.1 files report zero re-expressions', () => {
   assert(findDrillOp(decoded.project).retractHeight === 2, 'a 3.1 distance must survive untouched')
 })
 
+// ── Format 3.2: dormant edge-route entry strategies reset to plunge (#891) ──
+
+function flatEndmill(id: string): Tool {
+  return { ...defaultTool('mm', 1), id, type: 'flat_endmill', diameter: 6, maxCutDepth: 20 }
+}
+
+/** A modern-envelope .camj body with one operation, as a 3.1/3.2 file would
+ *  carry it: normalized once (decode rejects legacy baked rows), then
+ *  re-stamped with the claimed version and the operation fields "read". */
+function entryFile(version: '3.1' | '3.2', fields: Partial<Operation>): ProjectFormatInput {
+  const project = legacyProjectWithRecursiveOp()
+  project.tools = [flatEndmill('t1')]
+  project.operations = [{ ...recursiveOperation(), id: 'entry-op', kind: 'edge_route_outside' }]
+  const base = normalizeProject(project)
+  const stored = base.operations[0]
+  assert(stored !== undefined, 'expected the operation to survive the first normalize')
+  return { ...base, version, operations: [{ ...stored, ...fields }] }
+}
+
+function decodedEntryOp(version: '3.1' | '3.2', fields: Partial<Operation>): { op: Operation; reset: number } {
+  const decoded = decodeProjectFormat(entryFile(version, fields))
+  const op = decoded.project.operations.find((entry) => entry.id === 'entry-op')
+  assert(op !== undefined, 'expected the operation to survive decode')
+  return { op, reset: decoded.edgeEntryStrategiesReset }
+}
+
+test('a 3.1 contour edge route with the dormant v0.4 helix loads as plunge (#891)', () => {
+  // v0.4 wrote helix on every new rough edge route but plunged; the file must
+  // keep cutting the way it did, not start helixing into uncut material.
+  const { op, reset } = decodedEntryOp('3.1', { pass: 'rough', entryStrategy: 'helix', entryRampAngle: 5 })
+  assert(op.entryStrategy === 'plunge', `expected plunge, got ${op.entryStrategy}`)
+  assert(reset === 1, `expected 1 reset reported, got ${reset}`)
+  assert(op.entryRampAngle === 5, 'the unused ramp angle stays in the file as it was')
+})
+
+test('a 3.1 inside edge route with ramp also loads as plunge', () => {
+  const { op, reset } = decodedEntryOp('3.1', { kind: 'edge_route_inside', pass: 'finish', entryStrategy: 'ramp' })
+  assert(op.entryStrategy === 'plunge', `expected plunge, got ${op.entryStrategy}`)
+  assert(reset === 1, `expected 1 reset reported, got ${reset}`)
+})
+
+test('a 3.1 trochoidal edge route keeps its helix', () => {
+  // Trochoidal edges honoured the entry strategy in v0.4 already.
+  const { op, reset } = decodedEntryOp('3.1', { pass: 'rough', edgeStrategy: 'trochoidal', entryStrategy: 'helix' })
+  assert(op.entryStrategy === 'helix', `expected helix to survive, got ${op.entryStrategy}`)
+  assert(reset === 0, `expected no reset reported, got ${reset}`)
+})
+
+test('a 3.1 pocket keeps its helix', () => {
+  const { op, reset } = decodedEntryOp('3.1', { kind: 'pocket', entryStrategy: 'helix' })
+  assert(op.entryStrategy === 'helix', `expected helix to survive, got ${op.entryStrategy}`)
+  assert(reset === 0, `expected no reset reported, got ${reset}`)
+})
+
+test('a 3.1 edge route without an entry strategy is left without one', () => {
+  const { op, reset } = decodedEntryOp('3.1', { pass: 'rough', entryStrategy: undefined })
+  assert(op.entryStrategy === undefined, `expected no entry strategy, got ${op.entryStrategy}`)
+  assert(reset === 0, `expected no reset reported, got ${reset}`)
+})
+
+test('a 3.2 edge route helix is a live choice and is kept', () => {
+  const { op, reset } = decodedEntryOp('3.2', { pass: 'rough', entryStrategy: 'helix' })
+  assert(op.entryStrategy === 'helix', `expected helix to survive, got ${op.entryStrategy}`)
+  assert(reset === 0, `expected no reset reported, got ${reset}`)
+})
+
+test('a migrated file is stamped 3.2, so the reset happens once', () => {
+  const first = decodeProjectFormat(entryFile('3.1', { pass: 'rough', entryStrategy: 'helix' }))
+  assert(first.project.version === '3.2', `expected the 3.2 stamp, got ${first.project.version}`)
+  const saved = JSON.parse(JSON.stringify(first.project)) as ProjectFormatInput
+  const again = decodeProjectFormat(saved)
+  assert(again.edgeEntryStrategiesReset === 0, `a re-load must not reset again, got ${again.edgeEntryStrategiesReset}`)
+})
+
 console.log(`\noperationMigration.test.ts: ${passed} passed, ${failed} failed`)
 if (failed > 0) {
   throw new Error(`${failed} operationMigration test(s) failed`)

@@ -267,7 +267,7 @@ test('current-format decode is idempotent and is not reported as legacy', () => 
   const current = projectWithFeatures(newProject('Current', 'mm'), [makeRectFeature('rect-current')])
   const decoded = decodeProjectFormat(JSON.parse(JSON.stringify(current)))
   assert(!decoded.convertedLegacy, 'current project should not report conversion')
-  assert(decoded.sourceVersion === '3.1', 'source version should remain the current one')
+  assert(decoded.sourceVersion === LATEST_PROJECT_VERSION, 'source version should remain the current one')
   assert(JSON.stringify(decoded.project) === JSON.stringify(normalizeProject(current)), 'normalization should be idempotent')
 })
 
