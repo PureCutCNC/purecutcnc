@@ -36,7 +36,7 @@ import type {
   Project,
   SketchFeature,
 } from '../../types/project'
-import { parseProjectVersion } from '../../types/project'
+import { isTrochoidalEdgeRoughing, parseProjectVersion } from '../../types/project'
 import { cloneTextFeatureData } from '../../types/project'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { syncIdCounter } from './ids'
@@ -84,6 +84,9 @@ export interface DecodedProjectFormat {
   /** Drilling retract-height values re-expressed absolute → relative by the
    *  format-3.1 migration on this decode (#481/#599); 0 when nothing moved. */
   retractHeightsReexpressed: number
+  /** Edge-route entry strategies reset to plunge by the format-3.2 migration
+   *  on this decode (#891); 0 when nothing changed. */
+  edgeEntryStrategiesReset: number
   machineMigration: DecodedMachineMigration
 }
 
@@ -91,6 +94,7 @@ export interface DecodedProjectFormat {
  *  migrations rewrote, without widening its Project-returning signature. */
 export interface ProjectMigrationInfo {
   retractHeightsReexpressed: number
+  edgeEntryStrategiesReset: number
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -468,6 +472,40 @@ function migrateRetractHeightToRelative(
   return rewritten > 0 ? { project: { ...project, operations }, rewritten } : { project, rewritten: 0 }
 }
 
+/**
+ * Format 3.2 made an edge route's `entryStrategy` live (issue #891). Builds up
+ * to v0.4.0 wrote `entryStrategy: 'helix'` on every new rough edge route, but
+ * only trochoidal edges read it: a contour edge route plunged and hid the
+ * field. #708/#730 gave every edge route the entry policy without a format
+ * bump, so that dormant helix started cutting material v0.4 never touched.
+ *
+ * Files older than 3.2 therefore get the plunge they actually cut with. Only
+ * non-trochoidal edge routes are rewritten; trochoidal edges, pockets and
+ * surface kinds honoured the field in v0.4 and keep it. The ramp angle and
+ * helix size stay in the file, unused, exactly as before. The version gate
+ * makes this idempotent. A dev build that saved a deliberate edge helix
+ * before 3.2 also reads back as plunge — accepted, since those files cannot
+ * be told apart from v0.4 ones.
+ */
+function migrateDormantEdgeEntryStrategy(
+  project: Project,
+  sourceVersion: string | null,
+): { project: Project; rewritten: number } {
+  if (sourceVersion !== null) {
+    const [major, minor] = parseProjectVersion(sourceVersion)
+    if (major > 3 || (major === 3 && minor >= 2)) return { project, rewritten: 0 }
+  }
+  let rewritten = 0
+  const operations = project.operations.map((operation) => {
+    if (operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') return operation
+    if (isTrochoidalEdgeRoughing(operation)) return operation
+    if (operation.entryStrategy === undefined || operation.entryStrategy === 'plunge') return operation
+    rewritten += 1
+    return { ...operation, entryStrategy: 'plunge' as const }
+  })
+  return rewritten > 0 ? { project: { ...project, operations }, rewritten } : { project, rewritten: 0 }
+}
+
 /** Decode 1.0/2.0/2.1 baked rows or validate a lightweight 3.x project. */
 export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
   assertProjectEnvelope(input)
@@ -483,13 +521,14 @@ export function decodeProjectFormat(input: unknown): DecodedProjectFormat {
     throw new Error(`Project format ${sourceVersion ?? '(missing)'} contains legacy baked feature geometry.`)
   }
   const machines = normalizeMachineDefinitions(input as unknown as Project)
-  const migrationInfo: ProjectMigrationInfo = { retractHeightsReexpressed: 0 }
+  const migrationInfo: ProjectMigrationInfo = { retractHeightsReexpressed: 0, edgeEntryStrategiesReset: 0 }
   return {
     // Nest records are session state, never read from a file (#889).
     project: normalizeProject({ ...input, nests: undefined }, migrationInfo),
     sourceVersion,
     convertedLegacy,
     retractHeightsReexpressed: migrationInfo.retractHeightsReexpressed,
+    edgeEntryStrategiesReset: migrationInfo.edgeEntryStrategiesReset,
     machineMigration: {
       customDefinitions: machines.customDefinitions,
       compacted: machines.compacted,
@@ -672,7 +711,11 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
         },
       }
     : prunedProject, sourceVersion, fileRetractPositions)
-  if (migrationInfo) migrationInfo.retractHeightsReexpressed = migrated.rewritten
-  syncIdCounter(migrated.project)
-  return migrated.project
+  const edgeEntry = migrateDormantEdgeEntryStrategy(migrated.project, sourceVersion)
+  if (migrationInfo) {
+    migrationInfo.retractHeightsReexpressed = migrated.rewritten
+    migrationInfo.edgeEntryStrategiesReset = edgeEntry.rewritten
+  }
+  syncIdCounter(edgeEntry.project)
+  return edgeEntry.project
 }

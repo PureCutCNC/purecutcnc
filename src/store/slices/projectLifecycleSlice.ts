@@ -323,6 +323,9 @@ export function createProjectLifecycleSlice(
           decoded.retractHeightsReexpressed > 0
             ? `${decoded.retractHeightsReexpressed === 1 ? 'One drilling retract height was' : `${decoded.retractHeightsReexpressed} drilling retract heights were`} re-expressed relative to the material surface to match the current file format (issue #481). The original file is unchanged until you save.`
             : null,
+          decoded.edgeEntryStrategiesReset > 0
+            ? `${decoded.edgeEntryStrategiesReset === 1 ? 'One edge route entry strategy was' : `${decoded.edgeEntryStrategiesReset} edge route entry strategies were`} reset to Plunge to match how this file cut in v0.4 (issue #891). The original file is unchanged until you save.`
+            : null,
           machineWarning,
         ),
         pendingAdd: null,

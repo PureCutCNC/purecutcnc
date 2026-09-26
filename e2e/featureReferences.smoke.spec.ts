@@ -355,7 +355,7 @@ test.describe('Feature references browser smoke', () => {
       await dialog.accept()
     })
 
-    // Load a project with version > LATEST_PROJECT_VERSION (3.1)
+    // Load a project with version > LATEST_PROJECT_VERSION
     const base = await getProject(app.page)
     ;(base as Record<string, unknown>).version = '4.0'
     await seedProject(app.page, JSON.stringify(base))
