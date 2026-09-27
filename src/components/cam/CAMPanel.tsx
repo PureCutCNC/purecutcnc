@@ -59,6 +59,7 @@ import { platform } from '../../platform'
 import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { getOperationAddHint, operationKindLabel, operationTargetFromSelection, operationTargetsRegion, selectAllCompatibleFeatureIds } from './operationValidity'
 import { convertToolUnits, formatLength, parseLengthInput } from '../../utils/units'
+import { formatScallopHeight, formatStoredScallopHeight } from '../../utils/scallopHeightFormat'
 import { Icon } from '../Icon'
 import { GenerationSettingsMenu, type GenerationSettingsMenuProps } from './GenerationSettingsMenu'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
@@ -179,15 +180,26 @@ interface DraftLengthInputProps {
   units: 'mm' | 'inch'
   min?: number
   max?: number
+  /**
+   * Shows the value in place of `formatLength`. A field that sets it shows the
+   * stored value exactly, so leaving it untouched must not write anything back.
+   */
+  format?: (value: number) => string
   onCommit: (value: number) => void
 }
 
-function DraftLengthInput({ value, units, min, max, onCommit }: DraftLengthInputProps) {
+function DraftLengthInput({ value, units, min, max, format, onCommit }: DraftLengthInputProps) {
+  const displayValue = format ? format(value) : formatLength(value, units)
+
   function reset(element: HTMLInputElement) {
-    element.value = formatLength(value, units)
+    element.value = displayValue
   }
 
   function commit(element: HTMLInputElement) {
+    if (format && element.value.trim() === displayValue) {
+      reset(element)
+      return
+    }
     const next = parseLengthInput(element.value, units)
     if (next === null || !Number.isFinite(next)) {
       reset(element)
@@ -214,7 +226,7 @@ function DraftLengthInput({ value, units, min, max, onCommit }: DraftLengthInput
       key={value}
       type="text"
       inputMode="decimal"
-      defaultValue={formatLength(value, units)}
+      defaultValue={displayValue}
       spellCheck={false}
       onBlur={(event) => commit(event.currentTarget)}
       onKeyDown={(event) => {
@@ -975,7 +987,7 @@ export function CAMPanel({
     const impliedScallop = (spacing: number): string | null => {
       if (ballRadius === null) return null
       const height = spacingToScallopHeight(ballRadius, spacing)
-      return height === null ? null : formatLength(height, project.meta.units)
+      return height === null ? null : formatScallopHeight(height, project.meta.units)
     }
     const stepoverScallop = impliedScallop(operation.stepover * (operationTool?.diameter ?? 0))
     const adaptiveScallop = impliedScallop(selectedOperationWaterlineSpacing)
@@ -1357,6 +1369,7 @@ export function CAMPanel({
               units={project.meta.units}
               min={0}
               max={ballRadius ?? undefined}
+              format={formatStoredScallopHeight}
               onCommit={(value) => updateOperation(operation.id, { finishScallopHeight: value })}
             />
             <OperationParameterReference kind="scallopHeight" />

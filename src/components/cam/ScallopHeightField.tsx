@@ -17,6 +17,7 @@
 import { useId, useState } from 'react'
 import { spacingToScallopHeight } from '../../engine/toolpaths/scallopHeight'
 import { parseLengthInput, type Units } from '../../utils/units'
+import { formatStoredScallopHeight } from '../../utils/scallopHeightFormat'
 import { useI18n } from '../../i18n/i18nContext'
 import { OperationParameterReference } from './OperationParameterReference'
 
@@ -37,7 +38,7 @@ export function ScallopHeightField({ height, radius, legacySpacing, units, onCom
   const displayedHeight = height === undefined || height === 0
     ? spacingToScallopHeight(radius, legacySpacing)
     : height
-  const displayValue = displayedHeight === null ? '' : String(Number(displayedHeight.toPrecision(8)))
+  const displayValue = displayedHeight === null ? '' : formatStoredScallopHeight(displayedHeight)
   const unitLabel = units === 'inch' ? 'in' : 'mm'
 
   function reset(input: HTMLInputElement) {

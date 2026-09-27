@@ -71,22 +71,29 @@ test('waterline derives its coarse Z increment from the steep threshold', () => 
   assert(Math.abs((filteredStep as number) - spacing * Math.sin(Math.PI / 4)) <= 1e-12)
 })
 
-test('new ball-endmill finish operations preserve the tool default spacing as a cusp', () => {
-  const tool = {
-    ...defaultTool('mm', 1),
-    type: 'ball_endmill' as const,
-    diameter: 4,
-    defaultStepover: 0.25,
+// #893: the default is stored rounded (4 dp inch, 3 dp mm, at least two
+// significant digits), so the field, which shows the stored value as is,
+// reads a clean number that is also the one the toolpath uses.
+test('new ball-endmill finish operations store the tool default spacing as a rounded cusp', () => {
+  for (const [units, places, diameter] of [['mm', 3, 4], ['inch', 4, 0.25]] as const) {
+    const tool = {
+      ...defaultTool(units, 1),
+      type: 'ball_endmill' as const,
+      diameter,
+      defaultStepover: 0.25,
+    }
+    const project = { ...newProject('scallop-default', units), tools: [tool] }
+    const operation = defaultOperationForTarget(
+      project,
+      'finish_surface',
+      'finish',
+      { source: 'features', featureIds: ['model'] },
+      0,
+    )
+    const exact = spacingToScallopHeight(diameter / 2, diameter * 0.25)
+    assert.notEqual(exact, null)
+    const rounded = Number((exact as number).toFixed(places))
+    assert.notEqual(rounded, exact, `${units} fixture must need rounding`)
+    assert.equal(operation.finishScallopHeight, rounded)
   }
-  const project = { ...newProject('scallop-default', 'mm'), tools: [tool] }
-  const operation = defaultOperationForTarget(
-    project,
-    'finish_surface',
-    'finish',
-    { source: 'features', featureIds: ['model'] },
-    0,
-  )
-  const expected = spacingToScallopHeight(2, 1)
-  assert.notEqual(expected, null)
-  assert(Math.abs((operation.finishScallopHeight ?? 0) - (expected as number)) <= 1e-12)
 })
