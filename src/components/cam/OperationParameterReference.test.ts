@@ -106,10 +106,27 @@ function testVariantKindsRenderEveryOption(): void {
   }
 }
 
+// The cut-direction arrow runs along the outside of the part's top edge. With a
+// clockwise (M3) spindle, climb travels clockwise around the part — rightward
+// on that edge — and conventional leftward (#899).
+function arrowPointsRight(html: string): boolean {
+  const head = /class="gear-reference__accent-fill" d="M[\d.]+ [\d.]+l(-?[\d.]+)/.exec(html)
+  assert(head, 'cutDirection rendered no arrowhead')
+  // The head path starts at the tip; its base lies behind it, so a base to the
+  // left of the tip (negative dx) means the arrow points right.
+  return Number(head[1]) < 0
+}
+
+function testCutDirectionArrowOrientation(): void {
+  assert(arrowPointsRight(renderKind('cutDirection', 'climb')), 'climb arrow must point right')
+  assert(!arrowPointsRight(renderKind('cutDirection', 'conventional')), 'conventional arrow must point left')
+}
+
 testNoDuplicateKinds()
 testAllKindsHaveNonEmptyLabel()
 testAllLabelsAreUnique()
 testEveryKindRendersSvg()
 testVariantKindsRenderEveryOption()
+testCutDirectionArrowOrientation()
 
 console.log('OperationParameterReference tests passed')

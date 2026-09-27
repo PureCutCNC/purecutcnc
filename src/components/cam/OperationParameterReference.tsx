@@ -330,15 +330,17 @@ export function OperationParameterReference({
       return (
         <OpParamRefFrame label={label}>
           <rect className="gear-reference__outline" x="13" y="10" width="32" height="18" rx="2" />
+          {/* Tool travel along the outside of the top edge. With a clockwise
+              (M3) spindle, climb goes clockwise around the part: rightward here. */}
           {climb ? (
-            <>
-              <path className="gear-reference__accent" d="M40 6H18" />
-              <path className="gear-reference__accent-fill" d="M18 6l4.5-2.7v5.4z" />
-            </>
-          ) : (
             <>
               <path className="gear-reference__accent" d="M18 6h22" />
               <path className="gear-reference__accent-fill" d="M40 6l-4.5-2.7v5.4z" />
+            </>
+          ) : (
+            <>
+              <path className="gear-reference__accent" d="M40 6H18" />
+              <path className="gear-reference__accent-fill" d="M18 6l4.5-2.7v5.4z" />
             </>
           )}
         </OpParamRefFrame>
