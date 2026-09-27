@@ -1211,6 +1211,36 @@ test('ball-endmill finish uses scallop height with collapsed spacing overrides',
   await expect(scallopHeight.locator('input')).toHaveValue('0.001')
 })
 
+test('parallel scallop height shows the stored value and a click-through keeps it', async ({ app, ui }) => {
+  // #893. A 1/16 in ball at 0.1 stepover defaults to 0.00016 in; the field
+  // used to show 0.0002 and write that back on blur, a 28 % taller cusp. An
+  // older project can hold an unrounded default, which must survive too.
+  for (const [index, [height, shown]] of ([[0.00016, '0.00016'], [0.0006265703616725044, '0.00062657036']] as const).entries()) {
+    if (index > 0) await app.page.reload()
+    const project = JSON.parse(readFileSync(new URL('../src/engine/test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8'))
+    project.operations = [project.operations.find((operation: {kind: string}) => operation.kind === 'finish_surface')]
+    project.operations[0].name = 'Scallop finish'
+    project.operations[0].finishScallopHeight = height
+    project.tools[0].type = 'ball_endmill'
+    await seedProject(app.page, JSON.stringify(project))
+    await ui.operations.rowByName(app.page, 'Scallop finish').click()
+    const strategy = ui.cam.operationGroup(app.page, 'Strategy')
+    await expect(strategy).toBeVisible()
+    if ((await strategy.getAttribute('aria-expanded')) === 'false') await strategy.click()
+
+    const pattern = ui.cam.operationField(app.page, 'Pattern')
+    await expect(pattern.locator('.ui-select__label')).toHaveText('Parallel')
+    const input = app.page.locator('.cam-operation-properties .properties-field')
+      .filter({ has: app.page.getByText(/^Scallop height$/) })
+      .locator('input')
+    await expect(input).toHaveValue(shown)
+    await input.focus()
+    await input.blur()
+    const stored = (await getProject(app.page)).operations as Array<Record<string, unknown>>
+    expect(stored[0].finishScallopHeight).toBe(height)
+  }
+})
+
 test('flat-endmill finish keeps legacy spacing controls', async ({ app, ui }) => {
   const project = JSON.parse(readFileSync(new URL('../src/engine/test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8'))
   project.operations = [project.operations.find((operation: {kind: string}) => operation.kind === 'finish_surface')]
