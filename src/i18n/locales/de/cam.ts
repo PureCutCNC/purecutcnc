@@ -203,6 +203,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.scallopHeight': 'Riefenhöhe',
   'cam.operation.scallopHeightTooltip': 'Angestrebte Riefenhöhe zwischen benachbarten Schlichtbahnen eines Kugelfräsers.',
   'cam.operation.scallopHeightHint': 'Höhe der Riefen zwischen den Bahnen. Kleinere Werte ergeben eine feinere Oberfläche und längere Bearbeitungszeit.',
+  'cam.operation.scallopHeightZeroHint': 'Auf 0 setzen, um die Bahnabstände stattdessen über die erweiterten Überschreibungen festzulegen.',
   'cam.operation.scallopHeightInvalid': 'Geben Sie eine Höhe größer als null und kleiner als den Kugelradius ein ({radius} {units}).',
   'cam.operation.scallopWaterlineAssumption': 'Waterline verwendet den angenommenen Steilheitsschwellenwert von {angle}°.',
   'cam.operation.impliedScallop': 'Abgeleitete Riefe: {value}',

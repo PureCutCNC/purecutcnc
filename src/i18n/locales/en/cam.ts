@@ -206,6 +206,7 @@ export const camEn = {
   'cam.operation.scallopHeight': 'Scallop height',
   'cam.operation.scallopHeightTooltip': 'Target ridge height between adjacent ball-endmill finish passes.',
   'cam.operation.scallopHeightHint': 'Height of the ridges between passes. Smaller values give a finer finish and longer machining time.',
+  'cam.operation.scallopHeightZeroHint': 'Set to 0 to space the passes with the advanced overrides instead.',
   'cam.operation.scallopHeightInvalid': 'Enter a height greater than zero and smaller than the ball radius ({radius} {units}).',
   'cam.operation.scallopWaterlineAssumption': 'Waterline uses the assumed {angle}° steep threshold.',
   'cam.operation.impliedScallop': 'Implied cusp: {value}',

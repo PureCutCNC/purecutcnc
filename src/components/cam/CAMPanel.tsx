@@ -1374,6 +1374,7 @@ export function CAMPanel({
             />
             <OperationParameterReference kind="scallopHeight" />
           </label>
+          <span className="properties-hint">{camT('cam.operation.scallopHeightZeroHint')}</span>
           {operation.pocketPattern === 'waterline' && operation.finishSlopeMin === undefined ? (
             <span className="properties-hint">
               {camT('cam.operation.scallopWaterlineAssumption', {

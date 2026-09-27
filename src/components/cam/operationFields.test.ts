@@ -201,6 +201,31 @@ function testScallopHeightIsOnlyOfferedForBallEndmillSurfaceFinishing() {
   assert(operationFieldsForGroup('advanced', operation, ballTool).length === 0, 'constant scallop must have no advanced overrides')
 }
 
+// #894: a set scallop height replaces the spacing overrides, so they hide;
+// zero hands control back and they return. Flat endmills never use it.
+function testScallopHeightHidesTheOverridesItReplaces() {
+  const flatTool = defaultTool('mm', 1)
+  const ballTool = { ...flatTool, type: 'ball_endmill' as const }
+  const visible = (operation: Operation, tool: typeof flatTool) => OPERATION_FIELD_GROUPS
+    .flatMap((group) => operationFieldsForGroup(group.id, operation, tool))
+    .map((field) => field.id)
+
+  const parallel = makeOperation({ kind: 'finish_surface', pass: 'finish', pocketPattern: 'parallel', finishScallopHeight: 0.01 })
+  assert(!visible(parallel, ballTool).includes('stepover'), 'parallel with a scallop height must hide stepover')
+  assert(visible(parallel, ballTool).includes('stepdown'), 'parallel still steps its levels by stepdown')
+  assert(visible(parallel, flatTool).includes('stepover'), 'a flat endmill ignores scallop height, so keeps stepover')
+  assert(visible({ ...parallel, finishScallopHeight: 0 }, ballTool).includes('stepover'), 'zero scallop height brings stepover back')
+
+  const waterline = makeOperation({ kind: 'finish_surface', pass: 'finish', pocketPattern: 'waterline', finishScallopHeight: 0.01 })
+  for (const id of ['adaptiveSpacing', 'stepdown'] as const) {
+    assert(!visible(waterline, ballTool).includes(id), `waterline with a scallop height must hide ${id}`)
+    assert(visible({ ...waterline, finishScallopHeight: 0 }, ballTool).includes(id), `zero scallop height brings ${id} back`)
+    assert(visible({ ...waterline, finishScallopHeight: undefined }, ballTool).includes(id), `a legacy operation keeps ${id}`)
+    assert(visible(waterline, flatTool).includes(id), `a flat endmill keeps ${id}`)
+  }
+  assert(visible(waterline, ballTool).includes('maxRings'), 'max rings still guards the ring loop, so stays')
+}
+
 function testEveryFieldIsReachable() {
   const shapes = everyOperationShape()
   const ballTool = { ...defaultTool('mm', 1), type: 'ball_endmill' as const }
@@ -507,5 +532,6 @@ testStockToLeaveFollowsTheSurfacePattern()
 testRoundLinkCornersFollowsTheGeneratorsOwnLinking()
 testDrillingHidesTheTwoDimensionalStrategyFields()
 testClearingControlsMatchTheDeclaration()
+testScallopHeightHidesTheOverridesItReplaces()
 
 console.log('operationFields tests passed')

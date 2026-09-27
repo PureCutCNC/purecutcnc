@@ -181,6 +181,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.operation.scallopHeight': 'Hauteur de crête',
   'cam.operation.scallopHeightTooltip': 'Hauteur de crête visée entre deux passes de finition adjacentes avec une fraise boule.',
   'cam.operation.scallopHeightHint': 'Hauteur des crêtes entre les passes. Une valeur plus petite donne une finition plus fine et un usinage plus long.',
+  'cam.operation.scallopHeightZeroHint': 'Mettre à 0 pour espacer les passes avec les réglages avancés.',
   'cam.operation.scallopHeightInvalid': 'Saisissez une hauteur supérieure à zéro et inférieure au rayon de la fraise boule ({radius} {units}).',
   'cam.operation.scallopWaterlineAssumption': 'Waterline utilise le seuil de pente raide supposé de {angle}°.',
   'cam.operation.impliedScallop': 'Crête implicite : {value}',
