@@ -71,10 +71,10 @@ export function OperationParameterReference({
     case 'scallopHeight':
       return (
         <OpParamRefFrame label={label}>
-          <path className="gear-reference__outline" d="M8 26H50M13 26a16 16 0 0 1 32 0" />
-          <path className="gear-reference__guide" d="M13 26a16 16 0 0 0 32 0" strokeDasharray="2 2" />
-          <path className="gear-reference__accent" d="M29 22v4" />
-          <path className="gear-reference__accent-fill" d="M29 20l-2.4 3.3h4.8zM29 28l-2.4-3.3h4.8z" />
+          <path className="gear-reference__outline" d="M7 10C10 21 13 27 18 27S26 21 29 10M29 10C32 21 35 27 40 27S48 21 51 10" />
+          <path className="gear-reference__guide" d="M18 27H40" strokeDasharray="2 2" />
+          <path className="gear-reference__accent" d="M25 20Q27 15 29 10Q31 15 33 20M29 16v6" />
+          <path className="gear-reference__accent-fill" d="M29 12l-2.3 4h4.6zM29 26l-2.3-4h4.6z" />
         </OpParamRefFrame>
       )
 
