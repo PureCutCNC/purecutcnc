@@ -164,7 +164,8 @@ function testEveryAgentEntrypointExists(): void {
 // two lists drifted apart once already (#761). Read the real `case` patterns
 // out of the script and match them here, rather than spawning bash: the Windows
 // desktop build runs this file through `npm run build` (tauri's
-// beforeBuildCommand), where `bash` is not guaranteed to resolve.
+// beforeBuildCommand), where `bash` is not guaranteed to resolve — and where a
+// `core.autocrlf` checkout hands us CRLF, so the caller normalizes to LF (#901).
 function protectedPathPatterns(scriptText: string): RegExp[] {
   const body = /^protected_bucket\(\) \{\n([\s\S]*?)\n\}/m.exec(scriptText)?.[1]
   assert.ok(body, 'protected_bucket() not found in scripts/check-fast-lane.sh')
@@ -179,7 +180,7 @@ function protectedPathPatterns(scriptText: string): RegExp[] {
 function testEveryAgentEntrypointIsFastLaneProtected(): void {
   const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
   const patterns = protectedPathPatterns(
-    readFileSync(join(repositoryRoot, 'scripts/check-fast-lane.sh'), 'utf8'),
+    readFileSync(join(repositoryRoot, 'scripts/check-fast-lane.sh'), 'utf8').replace(/\r\n?/g, '\n'),
   )
   // Guard the parser itself: an unmatched glob would make every assertion vacuous.
   assert.ok(patterns.some((pattern) => pattern.test('src/engine/toolpaths/pocket.ts')))
