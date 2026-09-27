@@ -207,6 +207,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.scallopHeight': '残脊高度',
   'cam.operation.scallopHeightTooltip': '球头铣刀相邻精加工刀路之间的目标残脊高度。',
   'cam.operation.scallopHeightHint': '相邻刀路之间的残脊高度。数值越小，表面越精细，加工时间越长。',
+  'cam.operation.scallopHeightZeroHint': '设为 0 则改用高级覆盖值设置刀路间距。',
   'cam.operation.scallopHeightInvalid': '请输入大于零且小于球头半径的高度（{radius} {units}）。',
   'cam.operation.scallopWaterlineAssumption': 'Waterline 使用假定的 {angle}° 陡峭阈值。',
   'cam.operation.impliedScallop': '对应残脊：{value}',

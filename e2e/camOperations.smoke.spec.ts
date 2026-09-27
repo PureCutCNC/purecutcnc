@@ -1241,6 +1241,53 @@ test('parallel scallop height shows the stored value and a click-through keeps i
   }
 })
 
+test('a set scallop height hides the overrides it replaces', async ({ app, ui }) => {
+  // #894. A ball-endmill scallop height sets the pass spacing (and the
+  // waterline Z step), so those overrides hide; 0 hands control back.
+  const project = JSON.parse(readFileSync(new URL('../src/engine/test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8'))
+  project.operations = [project.operations.find((operation: {kind: string}) => operation.kind === 'finish_surface')]
+  project.operations[0].name = 'Scallop finish'
+  project.operations[0].finishScallopHeight = 0.001
+  project.tools[0].type = 'ball_endmill'
+  await seedProject(app.page, JSON.stringify(project))
+  await ui.operations.rowByName(app.page, 'Scallop finish').click()
+  await ui.cam.operationGroup(app.page, 'Strategy').click()
+
+  const pattern = ui.cam.operationField(app.page, 'Pattern')
+  const scallopHeight = app.page.locator('.cam-operation-properties .properties-field')
+    .filter({ has: app.page.getByText(/^Scallop height$/) })
+  const advanced = ui.cam.operationGroup(app.page, 'Advanced overrides')
+  const stepover = ui.cam.operationField(app.page, 'Stepover ratio')
+  const stepdown = ui.cam.operationField(app.page, 'Stepdown')
+  const adaptiveSpacing = ui.cam.operationField(app.page, 'Adaptive spacing')
+  const maxRings = ui.cam.operationField(app.page, 'Max rings / band')
+  const setHeight = async (value: string): Promise<void> => {
+    await scallopHeight.locator('input').fill(value)
+    await scallopHeight.locator('input').blur()
+  }
+
+  await expect(pattern.locator('.ui-select__label')).toHaveText('Parallel')
+  await expect(app.page.getByText('Set to 0 to space the passes with the advanced overrides instead.', { exact: true })).toBeVisible()
+  await advanced.click()
+  await expect(stepdown).toBeVisible()
+  await expect(stepover).toHaveCount(0)
+  await setHeight('0')
+  await expect(stepover).toBeVisible()
+
+  await setHeight('0.001')
+  await pattern.locator('.ui-select__trigger').click()
+  await app.page.getByRole('option', { name: 'Waterline', exact: true }).click()
+  await expect(pattern.locator('.ui-select__label')).toHaveText('Waterline')
+  await expect(maxRings).toBeVisible()
+  await expect(stepdown).toHaveCount(0)
+  await expect(adaptiveSpacing).toHaveCount(0)
+  await setHeight('0')
+  await expect(stepdown).toBeVisible()
+  await expect(adaptiveSpacing).toBeVisible()
+  const stored = (await getProject(app.page)).operations as Array<Record<string, unknown>>
+  expect(stored[0].finishScallopHeight).toBe(0)
+})
+
 test('flat-endmill finish keeps legacy spacing controls', async ({ app, ui }) => {
   const project = JSON.parse(readFileSync(new URL('../src/engine/test-fixtures/3d-imported-block-test3.camj', import.meta.url), 'utf8'))
   project.operations = [project.operations.find((operation: {kind: string}) => operation.kind === 'finish_surface')]

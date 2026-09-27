@@ -46,6 +46,7 @@ import { isTrochoidalCarve, isTrochoidalEdgeRoughing, isTrochoidalPocket } from 
 import { clearingControlApplies, type ClearingControl } from '../../engine/toolpaths/clearingControls'
 import { takesPocketPattern, usesTangentLinks } from '../../engine/toolpaths/pocketPatterns'
 import { roughingRingIsTheFinishedWall } from '../../engine/toolpaths/xyLead'
+import { hasConfiguredFinishScallopHeight } from '../../engine/toolpaths/scallopHeight'
 import {
   isTrochoidalOperation,
   resolvedEntryStrategy,
@@ -109,6 +110,15 @@ export function isCountersinkDrill(operation: Operation): boolean {
 /** Waterline finishing is the only pattern with adaptive ring refinement. */
 function isWaterlineFinish(operation: Operation): boolean {
   return operation.kind === 'finish_surface' && operation.pocketPattern === 'waterline'
+}
+
+/** A ball-endmill finish with a scallop height spaces its passes from that
+ *  height, so the spacing overrides it replaces are hidden rather than shown
+ *  with values the generator ignores (#894). Zero hands control back. */
+function scallopHeightReplacesSpacing(operation: Operation, tool?: Tool | null): boolean {
+  return operation.kind === 'finish_surface'
+    && tool?.type === 'ball_endmill'
+    && hasConfiguredFinishScallopHeight(operation)
 }
 
 /** Feed reduction applies wherever the cutter can end up fully engaged.
@@ -327,7 +337,10 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     id: 'stepdown',
     group: (operation) => operation.kind === 'finish_surface' ? 'advanced' : 'depth',
     paramRef: 'stepdown',
-    appliesTo: showStepdown,
+    // Waterline derives its Z step from the scallop height; parallel still
+    // steps its levels by this value.
+    appliesTo: (operation, tool) => showStepdown(operation)
+      && !(isWaterlineFinish(operation) && scallopHeightReplacesSpacing(operation, tool)),
   },
   { id: 'finishWalls', group: 'depth', paramRef: 'finishWalls', appliesTo: offersFinishSurfaces },
   { id: 'finishFloor', group: 'depth', paramRef: 'finishFloor', appliesTo: offersFinishSurfaces },
@@ -423,7 +436,8 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
       && operation.kind !== 'edge_route_inside'
       && operation.kind !== 'edge_route_outside'
       && !isWaterlineFinish(operation)
-      && !(operation.kind === 'finish_surface' && operation.pocketPattern === 'constant_scallop' && tool?.type === 'ball_endmill'),
+      && !(operation.kind === 'finish_surface' && operation.pocketPattern === 'constant_scallop' && tool?.type === 'ball_endmill')
+      && !scallopHeightReplacesSpacing(operation, tool),
   },
   { id: 'slopeFilter', group: 'strategy', appliesTo: (operation) => operation.kind === 'finish_surface' },
   {
@@ -436,7 +450,9 @@ export const OPERATION_FIELDS: readonly OperationFieldSpec[] = [
     id: 'adaptiveSpacing',
     group: 'advanced',
     paramRef: 'adaptiveSpacing',
-    appliesTo: (operation) => isWaterlineFinish(operation) && (operation.waterlineAdaptiveRefinement ?? true),
+    appliesTo: (operation, tool) => isWaterlineFinish(operation)
+      && (operation.waterlineAdaptiveRefinement ?? true)
+      && !scallopHeightReplacesSpacing(operation, tool),
   },
   {
     id: 'maxRings',

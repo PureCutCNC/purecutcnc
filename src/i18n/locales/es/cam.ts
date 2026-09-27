@@ -181,6 +181,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.operation.scallopHeight': 'Altura de cresta',
   'cam.operation.scallopHeightTooltip': 'Altura de cresta objetivo entre pasadas de acabado adyacentes con una fresa esférica.',
   'cam.operation.scallopHeightHint': 'Altura de las crestas entre pasadas. Los valores menores dan un acabado más fino y un mecanizado más largo.',
+  'cam.operation.scallopHeightZeroHint': 'Pon 0 para espaciar las pasadas con los ajustes avanzados.',
   'cam.operation.scallopHeightInvalid': 'Introduzca una altura mayor que cero y menor que el radio de la fresa esférica ({radius} {units}).',
   'cam.operation.scallopWaterlineAssumption': 'Waterline usa el umbral de pendiente pronunciada supuesto de {angle}°.',
   'cam.operation.impliedScallop': 'Cresta implícita: {value}',
