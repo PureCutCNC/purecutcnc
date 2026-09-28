@@ -16,7 +16,11 @@
 
 import { test, expect } from './fixtures'
 import { readFileSync } from 'node:fs'
-import { seedCamQuickOperationProject, seedCamQuickOperationProjectWithLowTab } from './camOperations.helpers'
+import {
+  seedCamQuickOperationProject,
+  seedCamQuickOperationProjectWithLowTab,
+  seedCamQuickOperationProjectWithSmallCarveTarget,
+} from './camOperations.helpers'
 import {
   clickMenuItem,
   getProject,
@@ -773,7 +777,9 @@ test.describe('CAM operation browser smoke', () => {
     await expect(ui.contextMenu.item(addMenu, 'Add to operation')).toBeDisabled()
   })
   test('the seeded circle pocket pattern is selectable and reaches the project (#554)', async ({ app, ui }) => {
-    await seedCamQuickOperationProject(app.page)
+    // Picking the pattern regenerates the toolpath on the main thread; the
+    // full-size target makes that ~42 s and times the test out (#908).
+    await seedCamQuickOperationProjectWithSmallCarveTarget(app.page)
 
     const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
     await ui.contextMenu.item(carveMenu, 'Create operation').hover()

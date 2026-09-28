@@ -207,3 +207,16 @@ export async function seedCamQuickOperationProjectWithLowTab(page: Page): Promis
   }]
   await seedProject(page, JSON.stringify(project))
 }
+
+/**
+ * The same project with Carve Target shrunk to 4 x 2 in. A seeded-circle
+ * pocket on the full 40 x 8 in target is ~283k moves and ~42 s of synchronous
+ * generation (#908); this size still generates real seeded toolpaths in ~1 s.
+ */
+export async function seedCamQuickOperationProjectWithSmallCarveTarget(page: Page): Promise<void> {
+  const project = JSON.parse(CAM_QUICK_OPERATION_FIXTURE_JSON) as {
+    featureDefinitions: Record<string, { profile: unknown }>
+  }
+  project.featureDefinitions['def-carve-target'].profile = resolvedRectProfile(0, 0, 4, 2)
+  await seedProject(page, JSON.stringify(project))
+}
