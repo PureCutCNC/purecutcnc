@@ -35,6 +35,14 @@ import { appendAll } from './appendAll'
 
 const CHIP_BREAK_CLEARANCE = 0.5    // tiny retract between pecks in chip-breaking mode (project units)
 
+/**
+ * Largest hole a centred helical bore can clear, as a multiple of the flat
+ * endmill diameter. Past it the orbit leaves an uncut core and the hole needs
+ * pocketing instead. The CAM plan uses the same bound when it chooses helical
+ * boring, so it never plans a bore this generator will refuse.
+ */
+export const HELICAL_BORE_MAX_HOLE_TO_TOOL_RATIO = 2
+
 interface DrillTarget {
   feature: SketchFeature
   center: Point
@@ -645,7 +653,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
         const holeDiameter = holeRadius * 2
         const toolDiameter = tool.diameter
         const toolRadius = toolDiameter / 2
-        const twiceDiameter = toolDiameter * 2
+        const twiceDiameter = toolDiameter * HELICAL_BORE_MAX_HOLE_TO_TOOL_RATIO
 
         // Eligibility: the selected-circle diameter must be strictly larger
         // than the tool diameter and no greater than twice it.  Outside that

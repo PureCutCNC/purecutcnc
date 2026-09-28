@@ -149,6 +149,38 @@ function testMatchingHolesShareOneDrillingOperation(): void {
   )
 }
 
+function testHelicalBoringStaysWithinTheBoreLimit(): void {
+  const base = newProject('CAM plan helical bore limit', 'inch')
+  base.stock.thickness = 1
+  const inchProject = projectWithFeatures({
+    ...base,
+    tools: [
+      tool('three-quarter', 'flat_endmill', 0.75),
+      tool('quarter', 'flat_endmill', 0.25),
+      tool('eighth', 'flat_endmill', 0.125),
+    ],
+  }, [
+    feature('small-hole', 'subtract', circleProfile(0.5, 0.5, 0.125), 1, 0, 'circle'),
+    feature('large-circle', 'subtract', circleProfile(2, 2, 0.5), 1, 0.5, 'circle'),
+  ])
+  for (const project of [inchProject, convertProjectUnits(inchProject, 'mm')]) {
+    const units = project.meta.units
+    const plan = createCamPlan(project, [])
+    const drills = plan.operations.filter((draft) => draft.operation.kind === 'drilling')
+    const smallDrill = drills.find((draft) => draft.coveredFeatureIds.includes('small-hole'))
+    assert(smallDrill?.operation.drillType === 'helical', `${units}: a hole within 2x an available endmill is helical-bored`)
+    assert(smallDrill.operation.toolRef === 'eighth', `${units}: the small hole is bored with the only endmill that fits it`)
+    assert(
+      !drills.some((draft) => draft.coveredFeatureIds.includes('large-circle')),
+      `${units}: a circle larger than 2x every endmill within the auto-pick ceiling is not helical-bored`,
+    )
+    assert(
+      plan.operations.some((draft) => draft.operation.kind === 'pocket' && draft.coveredFeatureIds.includes('large-circle')),
+      `${units}: the large blind circle falls back to a pocket`,
+    )
+  }
+}
+
 function testCompatiblePocketsShareOneOperationAcrossDepths(): void {
   const base = newProject('CAM plan pocket grouping', 'inch')
   base.stock.thickness = 1
@@ -946,6 +978,7 @@ function testImportedModelSurfaceFailuresAndStaleness(): void {
 
 testRepresentativePlan()
 testMatchingHolesShareOneDrillingOperation()
+testHelicalBoringStaysWithinTheBoreLimit()
 testCompatiblePocketsShareOneOperationAcrossDepths()
 testCompatibleOutsideProfilesShareOneOperation()
 testSharedTabsFollowNonRectangularEdges()

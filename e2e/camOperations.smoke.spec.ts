@@ -100,6 +100,13 @@ test.describe('CAM operation browser smoke', () => {
         vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 18000, defaultFeed: 90,
         defaultPlungeFeed: 20, defaultStepdown: 0.25, defaultStepover: 0.4, maxCutDepth: 5,
       },
+      // The 20 in drill target is past every end mill's helical bore limit
+      // (#906), so it only plans as drilling with a matching drill.
+      {
+        id: 'plan-drill-target', name: 'Plan drill target', units: 'inch', type: 'drill', diameter: 20,
+        vBitAngle: null, flutes: 2, material: 'carbide', defaultRpm: 1000, defaultFeed: 10,
+        defaultPlungeFeed: 5, defaultStepdown: 0.25, defaultStepover: 0.4, maxCutDepth: 5,
+      },
     ]
     await seedProject(app.page, JSON.stringify(seeded))
 
