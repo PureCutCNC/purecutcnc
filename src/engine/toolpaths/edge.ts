@@ -1660,7 +1660,7 @@ function generateEdgeRouteToolpathSingle(
       && (frame === null || framesOverlap(frame, reach)))
   }
   function warnPartsBlockingRoute(name: string): ((z: number, fragment: ClosedGuideFragment) => void) | undefined {
-    if (allAdditiveObstacles.length === 0 || process.env.DIAG_NOWARN) return undefined
+    if (allAdditiveObstacles.length === 0) return undefined
     let warned = false
     return (z, fragment) => {
       if (warned) return
