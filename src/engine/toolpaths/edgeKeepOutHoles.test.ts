@@ -35,6 +35,7 @@ import { projectWithFeatures } from '../../test/projectFixtures'
 import {
   circleProfile,
   defaultTool,
+  polygonProfile,
   newProject,
   type Clamp,
   type Operation,
@@ -219,6 +220,41 @@ for (const entryStrategy of ['plunge', 'helix'] as const) {
     `the span the neighbour blocks must be reported; warnings ${JSON.stringify(codes(result))}`,
   )
   console.log(`  ✓ neighbour in the hole kept ${closest.toFixed(3)} mm off, blocked span reported`)
+}
+
+// ── A neighbour's sharp corner keeps the cutter a radius off, no more ──
+
+{
+  // A diamond whose 90° tip points at the boss, one tool diameter plus 1 mm
+  // from its edge. The cutter fits past it with 1 mm to spare. A mitred
+  // keep-out pushed the tip out to r·√2 and cut the wall path short there.
+  const boss = { x: 40, y: 40, r: 15 }
+  const tipX = boss.x + boss.r + TOOL_DIAMETER + 1
+  const diamond: Point[] = [
+    { x: tipX, y: boss.y }, { x: tipX + 8, y: boss.y - 8 }, { x: tipX + 16, y: boss.y }, { x: tipX + 8, y: boss.y + 8 },
+  ]
+  const neighbour: SketchFeature = {
+    ...circle('diamond', CENTRE, 1),
+    kind: 'polygon',
+    sketch: { ...circle('diamond', CENTRE, 1).sketch, profile: polygonProfile(diamond) },
+  }
+  const result = generateEdgeRouteToolpath(
+    project([circle('boss', boss, boss.r), neighbour]),
+    outsideOperation('boss'),
+  )
+  assert(
+    !codes(result).includes('edgeRouteBlockedByParts'),
+    `a corner the cutter clears must not cut the route short; warnings ${JSON.stringify(codes(result))}`,
+  )
+  const segmentDistance = (p: Point, a: Point, b: Point) => {
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / ((b.x - a.x) ** 2 + (b.y - a.y) ** 2)))
+    return Math.hypot(p.x - (a.x + t * (b.x - a.x)), p.y - (a.y + t * (b.y - a.y)))
+  }
+  const closest = Math.min(...samplesBelowTop(result.moves).map((p) => Math.min(
+    ...diamond.map((a, index) => segmentDistance(p, a, diamond[(index + 1) % diamond.length])),
+  ) - R))
+  assert(closest >= -TOLERANCE, `the cutter body reached ${(-closest).toFixed(3)} mm into the diamond`)
+  console.log(`  ✓ sharp neighbour corner: route whole, cutter body ${closest.toFixed(2)} mm off it`)
 }
 
 // ── A clamp that blocks the route is a clamp, not a part ─────────────

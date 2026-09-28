@@ -1651,17 +1651,17 @@ function testEdgeOutsideClipsAroundNonSelectedAddFeatures() {
   const cuts = cutMoves(result.moves)
   assert(cuts.length > 0, 'outside edge route produces cut moves')
 
-  // Tool center must not enter featureB's keep-away zone. FeatureB spans
-  // x=[12..22], expanded by tool.radius (2) means keep-away starts at x=10.
-  // A cut move's tool center landing strictly inside that zone (x>10) would
-  // have the tool overlap featureB's material. Tool center exactly on the
-  // boundary (x=10) puts the cutting edge exactly at featureB's left edge
-  // (x=12) — that's the optimal safe stopping position, not a violation.
-  const violatingCuts = cuts.filter((move) => {
-    const inKeepAwayY = move.to.y >= -2 && move.to.y <= 12
-    const inKeepAwayX = move.to.x > 10 && move.to.x < 24
-    return inKeepAwayX && inKeepAwayY
-  })
+  // Tool center must stay a tool radius (2) off featureB's material
+  // (x=[12..22], y=[0..10]). Exactly a radius off puts the cutting edge on
+  // featureB's edge — the optimal safe stopping position, not a violation.
+  // Measured as the true distance to the rectangle: the keep-away is rounded
+  // at featureB's corners (issue #914), so a corner of the grown box that is
+  // more than a radius from featureB is open air, not a violation.
+  const distanceToFeatureB = (point: { x: number; y: number }) => Math.hypot(
+    Math.max(12 - point.x, 0, point.x - 22),
+    Math.max(0 - point.y, 0, point.y - 10),
+  )
+  const violatingCuts = cuts.filter((move) => distanceToFeatureB(move.to) < tool.diameter / 2 - 1e-3)
 
   assert(
     violatingCuts.length === 0,

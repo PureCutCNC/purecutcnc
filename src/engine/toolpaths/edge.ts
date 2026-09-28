@@ -1615,7 +1615,16 @@ function generateEdgeRouteToolpathSingle(
       .flatMap((obstacle) => obstacleMaterial(obstacle, z))
     let mask: ReturnType<typeof buildMaskFromClipperPaths> = null
     if (activePaths.length > 0) {
-      mask = buildMaskFromClipperPaths(offsetPaths(activePaths, tool.radius * DEFAULT_CLIPPER_SCALE))
+      // `jtRound`, as the lead and entry domain use: the cutter centre must stay
+      // a radius off a convex corner, and no further. A mitre pushed a sharp
+      // corner out to twice that, so a neighbour's wall path passing a glyph's
+      // tip was cut short where the cutter fits — 24 of the 90 routes on a
+      // nested letter sheet lost a span per level, silently (issue #914).
+      mask = buildMaskFromClipperPaths(offsetPaths(
+        activePaths,
+        tool.radius * DEFAULT_CLIPPER_SCALE,
+        ClipperLib.JoinType.jtRound,
+      ))
     }
     cache.set(key, mask)
     return mask

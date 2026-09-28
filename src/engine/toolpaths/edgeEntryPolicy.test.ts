@@ -644,14 +644,27 @@ function testAMaskedRouteStillGetsItsEntry() {
 
 /**
  * Where the domain really is too tight, the fallback ladder runs and SAYS so.
- * The fixture pinches the wall path against an obstacle's clearance, so the
- * open span that starts in that wedge has room for neither a helix nor a ramp.
+ * Two parts crossing the wall path leave only a sliver of it open at the top
+ * level, and a third boxes that sliver in from outside, so the open span there
+ * has room for neither a helix nor a ramp.
+ *
+ * It used to be one part pinching the span's start in a wedge. That fell back
+ * only because the per-level mask was mitred: its span ends missed the round
+ * entry domain by a hair. With the mask round (issue #914) the entry fits the
+ * wedge, as the domain always said it did.
  */
 function testAnUnplaceableEntryFallsBackOutLoud() {
   console.log('Testing an unplaceable entry warns rather than descending quietly...')
+  const around = (degrees: number, distance: number, r: number) => ({
+    x: BOSS.x + distance * Math.cos(degrees * Math.PI / 180),
+    y: BOSS.y + distance * Math.sin(degrees * Math.PI / 180),
+    r,
+  })
   const project = edgeProject([
     circleFeature('boss', BOSS, 'add'),
-    circleFeature('neighbour', { x: 63, y: 40, r: 5 }, 'add', 0, -3),
+    circleFeature('left', around(19, 23, 5), 'add', 0, -3),
+    circleFeature('right', around(-19, 23, 5), 'add', 0, -3),
+    circleFeature('lid', around(0, 26, 4), 'add', 0, -3),
   ])
   for (const strategy of RAMPED) {
     const result = generateEdgeRouteToolpath(
