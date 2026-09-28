@@ -324,13 +324,37 @@ export function roughingRingIsTheFinishedWall(operation: Operation): boolean {
  * The boundary is deliberately generous and the keep-out deliberately strict:
  * a lead rejected here costs a fallback to the direct entry the route already
  * had, while one admitted wrongly costs a gouge.
+ *
+ * `frameLoops`, when given, sets the box instead of `keepOut` (issue #909): an
+ * outside route passes only the wall it follows, so the domain around one part
+ * does not grow with every other part on the sheet. Islands wholly outside the
+ * box are dropped, which changes no answer the domain gives — the box is
+ * convex, so a point inside it is always nearer the box edge than anything
+ * beyond it, and no segment inside it can cross such an island.
  */
 export function domainOutsideLoops(
   keepOut: Point[][],
   reach: number,
+  frameLoops?: Point[][],
 ): TangentLinkDomainRegion[] {
   const loops = keepOut.filter((loop) => loop.length >= 3)
-  if (loops.length === 0) return []
+  const box = loopsBox((frameLoops ?? keepOut).filter((loop) => loop.length >= 3))
+  if (loops.length === 0 || !box) return []
+  const lo = { x: box.minX - reach, y: box.minY - reach }
+  const hi = { x: box.maxX + reach, y: box.maxY + reach }
+  return [{
+    outer: [lo, { x: hi.x, y: lo.y }, hi, { x: lo.x, y: hi.y }],
+    islands: frameLoops
+      ? loops.filter((loop) => {
+        const island = loopsBox([loop])!
+        return island.maxX >= lo.x && island.minX <= hi.x && island.maxY >= lo.y && island.minY <= hi.y
+      })
+      : loops,
+  }]
+}
+
+function loopsBox(loops: Point[][]): { minX: number, minY: number, maxX: number, maxY: number } | null {
+  if (loops.length === 0) return null
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   for (const loop of loops) {
     for (const point of loop) {
@@ -340,12 +364,7 @@ export function domainOutsideLoops(
       if (point.y > maxY) maxY = point.y
     }
   }
-  const lo = { x: minX - reach, y: minY - reach }
-  const hi = { x: maxX + reach, y: maxY + reach }
-  return [{
-    outer: [lo, { x: hi.x, y: lo.y }, hi, { x: lo.x, y: hi.y }],
-    islands: loops,
-  }]
+  return { minX, minY, maxX, maxY }
 }
 
 /**
