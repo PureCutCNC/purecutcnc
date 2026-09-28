@@ -48,6 +48,9 @@
  * pruning, and the toolpath it produces is a different toolpath. Do not update
  * the hash without re-deciding the issue.
  *
+ * The move hashes were re-recorded once, for #911, on the same tree with no
+ * engine change: only the serialisation moved to `roundedMoves`.
+ *
  * Run with: npx tsx src/engine/toolpaths/entryDenseIslandsFixture.test.ts
  */
 
@@ -87,12 +90,26 @@ function digest(text: string): string {
   return createHash('sha256').update(text).digest('hex').slice(0, 16)
 }
 
+/**
+ * Every number in the moves, rounded to 1e-6 project units (a micro-inch here).
+ *
+ * The raw doubles are not portable: the macOS arm64 runner lands the last bit
+ * of a few coordinates differently from x86 and moved two hashes, while the
+ * move counts, the warnings and the posted G-code all stayed identical (#911).
+ * A different helix centre moves a coordinate far more than this, so the hash
+ * still tells one placement from another; last-bit noise does not.
+ */
+function roundedMoves(moves: ToolpathResult['moves']): string {
+  return JSON.stringify(moves, (_key, value: unknown) =>
+    typeof value === 'number' ? Math.round(value * 1e6) / 1e6 : value)
+}
+
 interface Expectation {
   id: string
   kind: string
   label: string
   moves: number
-  /** sha256 of the serialised move array. */
+  /** sha256 of the serialised move array, numbers rounded by `roundedMoves`. */
   hash: string
   /** Every warning the operation raises, by code. */
   warnings: Record<string, number>
@@ -101,25 +118,25 @@ interface Expectation {
 const EXPECTED: Expectation[] = [
   {
     id: 'op0626', kind: 'drilling', label: 'Drill',
-    moves: 679, hash: 'e38126d435ec9e75', warnings: {},
+    moves: 679, hash: '5d6af0ece5069e57', warnings: {},
   },
   {
     id: 'op0627', kind: 'edge_route_inside', label: 'Edge route inside (rough)',
-    moves: 45_882, hash: '502e17ae1967823f',
+    moves: 45_882, hash: '310dbd8e10ffce22',
     warnings: { edgeNoInsideContour: 21, entryStrategyFallback: 12, entryHelixDiameterClamped: 4, tabNoIntersect: 85 },
   },
   {
     id: 'op0628', kind: 'edge_route_inside', label: 'Edge route inside (finish)',
-    moves: 14_241, hash: 'a23465077e3c4fe2',
+    moves: 14_241, hash: '51c11f6c824f7326',
     warnings: { edgeNoInsideContour: 12, entryStrategyFallback: 17, entryHelixDiameterClamped: 3, tabNoIntersect: 95 },
   },
   {
     id: 'op0629', kind: 'edge_route_outside', label: 'Edge route outside (rough)',
-    moves: 5_049, hash: '106fe9234bfbe0c6', warnings: { tabNoIntersect: 104 },
+    moves: 5_049, hash: 'd82d5e104e1ba53e', warnings: { tabNoIntersect: 104 },
   },
   {
     id: 'op0630', kind: 'edge_route_outside', label: 'Edge route outside (finish)',
-    moves: 1_115, hash: 'b8c8d0d866d1e555', warnings: { tabNoIntersect: 104 },
+    moves: 1_115, hash: 'ed4435dbc890c6db', warnings: { tabNoIntersect: 104 },
   },
 ]
 
@@ -207,7 +224,7 @@ for (const expectation of EXPECTED) {
       `expected ${expectation.id} to be a ${expectation.kind}, got ${String(operation?.kind)}`)
     assert(result.moves.length === expectation.moves,
       `expected ${expectation.moves} moves, got ${result.moves.length}`)
-    const hash = digest(JSON.stringify(result.moves))
+    const hash = digest(roundedMoves(result.moves))
     assert(hash === expectation.hash,
       `move hash ${hash}, expected ${expectation.hash}. #812 is pruning only — the same placement, `
       + 'the same moves. A different hash means the placement search now picks a different centre, '
