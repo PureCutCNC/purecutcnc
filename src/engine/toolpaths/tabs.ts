@@ -31,13 +31,53 @@ import { planSmoothTabMotion, splitCutMoveWithSmoothTabs } from './tabSmoothing'
 import { convertLength } from '../../utils/units'
 import { appendAll } from './appendAll'
 
+interface Bounds2D {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
 interface PreservedObstacle {
   id: string
   name: string
   points: Point[]
+  /** The box of `points`, kept alongside them so every move can reject it cheaply. */
+  bounds: Bounds2D
   zTop: number
   zBottom: number
   shape: TabShape
+}
+
+/**
+ * How far outside a polygon's box a segment or point must lie before the box
+ * alone may answer for the polygon (issue #916). `clipSegmentPolygon2D` only
+ * returns an interval whose midpoint `pointInPolygon` puts strictly inside, and
+ * an inside point lies inside the box, so a segment clear of the box always
+ * clips to `null`. The margin only absorbs rounding in the interpolated
+ * midpoints and crossings; it sits far below any coordinate difference that
+ * could decide a real hit.
+ */
+const BOUNDS_REJECT_MARGIN = 1e-9
+
+function segmentMissesBounds(x0: number, y0: number, x1: number, y1: number, bounds: Bounds2D): boolean {
+  return Math.max(x0, x1) < bounds.minX - BOUNDS_REJECT_MARGIN
+    || Math.min(x0, x1) > bounds.maxX + BOUNDS_REJECT_MARGIN
+    || Math.max(y0, y1) < bounds.minY - BOUNDS_REJECT_MARGIN
+    || Math.min(y0, y1) > bounds.maxY + BOUNDS_REJECT_MARGIN
+}
+
+/** `clipSegmentPolygon2D`, answered by the box whenever the box alone can. */
+function clipSegmentObstacle2D(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  obstacle: PreservedObstacle,
+): [number, number] | null {
+  return segmentMissesBounds(x0, y0, x1, y1, obstacle.bounds)
+    ? null
+    : clipSegmentPolygon2D(x0, y0, x1, y1, obstacle.points)
 }
 
 /**
@@ -103,25 +143,29 @@ function expandObstacles(obstacles: PreservedObstacle[], delta: number): Preserv
     return obstacles
   }
 
-  return obstacles.map((obstacle) => ({
-    ...obstacle,
-    points: offsetObstaclePoints(obstacle.points, delta),
-  }))
+  return obstacles.map((obstacle) => {
+    const points = offsetObstaclePoints(obstacle.points, delta)
+    return { ...obstacle, points, bounds: pointsBounds(points) }
+  })
 }
 
 function buildTabObstacles(project: Project): PreservedObstacle[] {
-  return project.tabs.map((tab) => ({
-    id: tab.id,
-    name: tab.name,
+  return project.tabs.map((tab) => {
     // The footprint stays rectangular whatever the shape. Smooth tabs change how
     // Z moves across the footprint, never which XY the footprint occupies — so
     // hit-testing, cutter-envelope expansion, layout coverage, overlap warnings,
     // and auto-placement all keep working off one rectangle.
-    points: sampleProfilePoints(rectProfile(tab.x, tab.y, tab.w, tab.h)),
-    zTop: tab.z_top,
-    zBottom: tab.z_bottom,
-    shape: tabShape(tab),
-  }))
+    const points = sampleProfilePoints(rectProfile(tab.x, tab.y, tab.w, tab.h))
+    return {
+      id: tab.id,
+      name: tab.name,
+      points,
+      bounds: pointsBounds(points),
+      zTop: tab.z_top,
+      zBottom: tab.z_bottom,
+      shape: tabShape(tab),
+    }
+  })
 }
 
 function pointInPolygon(x: number, y: number, polygon: Point[]): boolean {
@@ -233,13 +277,13 @@ function tabSpansCutZ(tab: PreservedObstacle, minZ: number, maxZ: number): boole
   return minZ < tab.zTop && maxZ >= tab.zBottom
 }
 
-function obstacleBounds(obstacle: PreservedObstacle) {
+function pointsBounds(points: Point[]): Bounds2D {
   let minX = Number.POSITIVE_INFINITY
   let maxX = Number.NEGATIVE_INFINITY
   let minY = Number.POSITIVE_INFINITY
   let maxY = Number.NEGATIVE_INFINITY
 
-  for (const point of obstacle.points) {
+  for (const point of points) {
     minX = Math.min(minX, point.x)
     maxX = Math.max(maxX, point.x)
     minY = Math.min(minY, point.y)
@@ -250,8 +294,8 @@ function obstacleBounds(obstacle: PreservedObstacle) {
 }
 
 function rectsOverlap(a: PreservedObstacle, b: PreservedObstacle): boolean {
-  const boundsA = obstacleBounds(a)
-  const boundsB = obstacleBounds(b)
+  const boundsA = a.bounds
+  const boundsB = b.bounds
   return rangesOverlap(boundsA.minX, boundsA.maxX, boundsB.minX, boundsB.maxX)
     && rangesOverlap(boundsA.minY, boundsA.maxY, boundsB.minY, boundsB.maxY)
     && rangesOverlap(a.zBottom, a.zTop, b.zBottom, b.zTop)
@@ -262,7 +306,7 @@ function obstacleOverlapsToolpathBounds(obstacle: PreservedObstacle, bounds: Too
     return false
   }
 
-  const obstacleRect = obstacleBounds(obstacle)
+  const obstacleRect = obstacle.bounds
   return rangesOverlap(obstacleRect.minX, obstacleRect.maxX, bounds.minX, bounds.maxX)
     && rangesOverlap(obstacleRect.minY, obstacleRect.maxY, bounds.minY, bounds.maxY)
 }
@@ -333,7 +377,7 @@ function splitCutMoveAcrossTabsFrom(
       if (!(baseZ < obstacle.zTop && baseZ >= obstacle.zBottom)) {
         return null
       }
-      const interval = clipSegmentPolygon2D(move.from.x, move.from.y, move.to.x, move.to.y, obstacle.points)
+      const interval = clipSegmentObstacle2D(move.from.x, move.from.y, move.to.x, move.to.y, obstacle)
       return interval ? { obstacle, interval } : null
     })
     .filter((entry): entry is { obstacle: PreservedObstacle; interval: [number, number] } => entry !== null)
@@ -405,7 +449,8 @@ function adjustVerticalMoveForTabs(
   }
 
   const requiredTop = obstacles
-    .filter((obstacle) => pointInPolygon(actualFrom.x, actualFrom.y, obstacle.points))
+    .filter((obstacle) => !segmentMissesBounds(actualFrom.x, actualFrom.y, actualFrom.x, actualFrom.y, obstacle.bounds)
+      && pointInPolygon(actualFrom.x, actualFrom.y, obstacle.points))
     .reduce<number | null>((max, tab) => {
       if (actualFrom.z > tab.zTop && move.to.z < tab.zTop) {
         return max === null ? tab.zTop : Math.max(max, tab.zTop)
@@ -466,12 +511,22 @@ export function applyTabsToEdgeRoute(project: Project, operation: Operation, res
   // Rectangular output is then preserved by construction rather than by a test
   // that has to notice a divergence — the same code runs that ran before #414.
   const hasSmoothTab = obstacles.some((obstacle) => obstacle.shape === 'smooth')
+  const obstacleByPoints = new Map(obstacles.map((obstacle) => [obstacle.points, obstacle]))
   const smoothPlan = hasSmoothTab
     ? planSmoothTabMotion(
         result.moves,
         obstacles,
         convertLength(SMOOTH_TAB_CHORD_TOLERANCE_MM, 'mm', project.meta.units),
-        { pointInPolygon, clipSegmentPolygon2D },
+        {
+          pointInPolygon,
+          // The planner hands back the envelope's own points, so the box rides along.
+          clipSegmentPolygon2D: (x0, y0, x1, y1, polygon) => {
+            const obstacle = obstacleByPoints.get(polygon)
+            return obstacle
+              ? clipSegmentObstacle2D(x0, y0, x1, y1, obstacle)
+              : clipSegmentPolygon2D(x0, y0, x1, y1, polygon)
+          },
+        },
       )
     : null
 
@@ -655,7 +710,47 @@ function unionLength(intervals: Array<[number, number]>): number {
   return Math.min(1, total + (currentEnd - currentStart))
 }
 
-export function applyTabWarnings(project: Project, operation: Operation, result: ToolpathResult): ToolpathResult {
+/**
+ * Whether two overlapping tabs cut exactly like their union. The rectangular
+ * pass lifts each span to the highest top among the tabs it is inside, so equal
+ * rectangles merge cleanly; smooth tabs ramp one by one and ride two humps, and
+ * unequal Z ranges lift differently level by level.
+ */
+function overlapCutsLikeUnion(a: PreservedObstacle, b: PreservedObstacle): boolean {
+  return a.shape === 'rect' && b.shape === 'rect'
+    && Math.abs(a.zTop - b.zTop) <= 1e-9
+    && Math.abs(a.zBottom - b.zBottom) <= 1e-9
+}
+
+/** Whether any wall outline passes through the tab's footprint. */
+function tabTouchesWall(tab: PreservedObstacle, walls: Array<{ points: Point[]; bounds: Bounds2D }>): boolean {
+  return walls.some((wall) => (
+    !segmentMissesBounds(wall.bounds.minX, wall.bounds.minY, wall.bounds.maxX, wall.bounds.maxY, tab.bounds)
+    && wall.points.some((from, index) => {
+      const to = wall.points[(index + 1) % wall.points.length]
+      return clipSegmentObstacle2D(from.x, from.y, to.x, to.y, tab) !== null
+    })
+  ))
+}
+
+/**
+ * Tab warnings for one operation's toolpath.
+ *
+ * Tabs are project-wide, so an operation has to decide which of them it judges.
+ * By default that is every tab inside its cut box. An edge route passes
+ * `targetWalls` instead (issue #916): on a nested sheet its box is the whole
+ * sheet, and an inside route would report every tab standing on an outside
+ * contour as one it failed to cross. It judges a tab that sits on one of its
+ * own walls, or that its path actually crosses, and reports `tabNoIntersect`
+ * only for a tab on its wall that it never crossed — the sign of a wall it did
+ * not cut.
+ */
+export function applyTabWarnings(
+  project: Project,
+  operation: Operation,
+  result: ToolpathResult,
+  targetWalls?: () => Point[][],
+): ToolpathResult {
   if (project.tabs.length === 0) {
     return result
   }
@@ -676,7 +771,23 @@ export function applyTabWarnings(project: Project, operation: Operation, result:
     cutBounds = updateBounds(cutBounds, move.to)
   }
 
-  const relevantTabs = visibleTabs.filter((entry) => obstacleOverlapsToolpathBounds(entry, cutBounds))
+  const crossedByCut = new Map<PreservedObstacle, boolean>()
+  const crossesCutPath = (entry: PreservedObstacle): boolean => {
+    let crossed = crossedByCut.get(entry)
+    if (crossed === undefined) {
+      crossed = cutMoves.some((move) => clipSegmentObstacle2D(move.from.x, move.from.y, move.to.x, move.to.y, entry) !== null)
+      crossedByCut.set(entry, crossed)
+    }
+    return crossed
+  }
+
+  let relevantTabs: PreservedObstacle[]
+  if (targetWalls && cutBounds) {
+    const walls = targetWalls().map((points) => ({ points, bounds: pointsBounds(points) }))
+    relevantTabs = visibleTabs.filter((entry) => tabTouchesWall(entry, walls) || crossesCutPath(entry))
+  } else {
+    relevantTabs = visibleTabs.filter((entry) => obstacleOverlapsToolpathBounds(entry, cutBounds))
+  }
   if (relevantTabs.length === 0) {
     return result
   }
@@ -708,8 +819,7 @@ export function applyTabWarnings(project: Project, operation: Operation, result:
       warnings.push({ code: 'tabAboveStockTop', params: { name: tab.name, zTop: tab.zTop.toFixed(3), stockTop: project.stock.thickness.toFixed(3) } })
     }
 
-    const intersectsCutPath = cutMoves.some((move) => clipSegmentPolygon2D(move.from.x, move.from.y, move.to.x, move.to.y, entry.points) !== null)
-    if (!intersectsCutPath) {
+    if (!crossesCutPath(entry)) {
       warnings.push({ code: 'tabNoIntersect', params: { name: tab.name } })
       continue
     }
@@ -759,7 +869,7 @@ export function applyTabWarnings(project: Project, operation: Operation, result:
     const tab = entry
     for (let otherIndex = index + 1; otherIndex < depthRelevantTabs.length; otherIndex += 1) {
       const other = depthRelevantTabs[otherIndex]
-      if (rectsOverlap(entry, other)) {
+      if (rectsOverlap(entry, other) && !overlapCutsLikeUnion(entry, other)) {
         warnings.push({ code: 'tabsOverlapAmbiguous', params: { a: tab.name, b: other.name } })
       }
     }

@@ -41,7 +41,7 @@ import { applyClampWarnings } from './clamps'
 import { applyEdgeRouteTabs, applyTabsToEdgeRoute, applyTabWarnings } from './tabs'
 import { optimizeLinearMoves } from './linearMoveOptimization'
 import { generateDrillingToolpath } from './drilling'
-import { generateEdgeRouteToolpath } from './edge'
+import { edgeRouteTargetWalls, generateEdgeRouteToolpath } from './edge'
 import { generateFinishSurfaceCleanupToolpath } from './finishSurfaceCleanup'
 import { generateFinishSurfaceToolpath } from './finishSurface'
 import { generateFollowLineToolpath } from './carving'
@@ -114,7 +114,13 @@ export function computeOperationToolpath(
     // Warnings first: applyTabWarnings judges each tab against the cut Z range, and
     // applyTabsToEdgeRoute raises that range to the tab tops. Run it on the adjusted
     // moves and every applied tab reports as lying outside the range it just created.
-    const warned = applyTabWarnings(project, operation, generateEdgeRouteToolpath(project, operation))
+    // Judged against the route's own walls, not its whole cut box (issue #916).
+    const warned = applyTabWarnings(
+      project,
+      operation,
+      generateEdgeRouteToolpath(project, operation),
+      () => edgeRouteTargetWalls(project, operation),
+    )
     // applyEdgeRouteTabs, not applyTabsToEdgeRoute: trochoidal roughing owns
     // its own tab motion and must not be tabbed twice. See its docstring.
     result = applyClampWarnings(project, optimizeAndCapture(applyEdgeRouteTabs(project, operation, warned)), operation)

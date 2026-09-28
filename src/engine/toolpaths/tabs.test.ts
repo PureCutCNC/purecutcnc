@@ -419,6 +419,141 @@ test('applyEdgeRouteTabs still tabs a contour edge route', () => {
   )
 })
 
+// ── Issue #916: an edge route judges only the tabs on its own walls ──
+
+console.log('\nEdge routes judge the tabs on their own walls (#916)')
+
+/** A rectangle feature row; `add` for a part, `subtract` for a hole. */
+function rectFeature(id: string, x: number, y: number, w: number, h: number, operation: 'add' | 'subtract') {
+  return {
+    id,
+    name: id,
+    kind: 'rect',
+    folderId: null,
+    sketch: {
+      profile: rectProfile(x, y, w, h),
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation,
+    z_top: 12,
+    z_bottom: 0,
+    visible: true,
+    locked: false,
+  }
+}
+
+/**
+ * Two 100 mm parts side by side, 20 mm apart, each with a 40 mm hole — the
+ * smallest nested sheet. Part p1's right wall is x = 100, so an outside route
+ * runs its tool centre at x = 103; the holes' inside routes stay within 33..187
+ * in x and 33..67 in y, a box that takes in p1's right wall at mid-height.
+ */
+function sheetProject(tabs: Tab[], extra: ReturnType<typeof rectFeature>[] = []): Project {
+  const project = projectWithFeatures(baseProject(), [
+    rectFeature('p1', 0, 0, 100, 100, 'add'),
+    rectFeature('h1', 30, 30, 40, 40, 'subtract'),
+    rectFeature('p2', 120, 0, 100, 100, 'add'),
+    rectFeature('h2', 150, 30, 40, 40, 'subtract'),
+    ...extra,
+  ] as never)
+  return { ...project, tabs }
+}
+
+function sheetOperation(kind: Operation['kind'], featureIds: string[], patch: Partial<Operation> = {}): Operation {
+  return { ...edgeOperation(featureIds[0], kind), target: { source: 'features', featureIds }, ...patch }
+}
+
+function warningsOf(project: Project, operation: Operation, code: string) {
+  const envelope = computeOperationToolpath(project, operation)
+  assert(envelope, `${operation.kind} generated nothing`)
+  return envelope.result.warnings.filter((warning) => warning.code === code)
+}
+
+/** Straddles p1's right wall at mid-height, across the outside route's path. */
+const WALL_TAB = tab('wall', 96, 46, 8)
+
+test('an inside route does not judge a tab on an outside wall inside its cut box', () => {
+  const project = sheetProject([WALL_TAB])
+  const inside = sheetOperation('edge_route_inside', ['h1', 'h2'])
+  const noIntersect = warningsOf(project, inside, 'tabNoIntersect')
+  assert(noIntersect.length === 0, `the tab belongs to the outside route, got ${noIntersect.length} tabNoIntersect`)
+})
+
+test('the outside route cuts through that tab and does not warn either', () => {
+  const project = sheetProject([WALL_TAB])
+  const outside = sheetOperation('edge_route_outside', ['p1', 'p2'])
+  const noIntersect = warningsOf(project, outside, 'tabNoIntersect')
+  assert(noIntersect.length === 0, `the outside route crosses the tab, got ${noIntersect.length} tabNoIntersect`)
+})
+
+test('a tab on a target wall the route cannot cut is still reported', () => {
+  // A 4 mm slot the 6 mm tool cannot enter: the inside route emits no contour
+  // for it, so the tab on its wall is never crossed — a genuine warning, the
+  // same shape as the unrouted nested parts of #914. The slot lies outside the
+  // cut box of the hole the route does cut, so the old box rule missed it.
+  const slot = rectFeature('slot', 10, 10, 4, 20, 'subtract')
+  const project = sheetProject([tab('slot', 8, 18, 4)], [slot])
+  const inside = sheetOperation('edge_route_inside', ['h1', 'slot'])
+  const noIntersect = warningsOf(project, inside, 'tabNoIntersect')
+  assert(noIntersect.length === 1, `expected the slot's tab to be reported once, got ${noIntersect.length}`)
+})
+
+test('a tab the route crosses off any wall is still checked for its Z range', () => {
+  // x 102..104 clears p1's wall at x = 100 but the tool centre at x = 103 runs
+  // through it, so the pass does lift over it and its Z range matters.
+  const project = sheetProject([{ ...tab('float', 102, 46, 2), z_top: 20 }])
+  const outside = sheetOperation('edge_route_outside', ['p1'])
+  const aboveStock = warningsOf(project, outside, 'tabAboveStockTop')
+  assert(aboveStock.length === 1, `expected tabAboveStockTop once, got ${aboveStock.length}`)
+  assert(warningsOf(project, outside, 'tabNoIntersect').length === 0, 'a crossed tab is not tabNoIntersect')
+})
+
+test('two identical rectangular tabs overlapping are not ambiguous', () => {
+  // The tab pass lifts to the highest top of the tabs it is inside, so two equal
+  // rectangles cut exactly like their union.
+  const project = sheetProject([tab('a', 96, 40, 8), tab('b', 96, 44, 8)])
+  const outside = sheetOperation('edge_route_outside', ['p1'])
+  const ambiguous = warningsOf(project, outside, 'tabsOverlapAmbiguous')
+  assert(ambiguous.length === 0, `expected no tabsOverlapAmbiguous, got ${ambiguous.length}`)
+})
+
+test('overlapping tabs of different heights are still ambiguous', () => {
+  const project = sheetProject([tab('a', 96, 40, 8), tab('b', 96, 44, 8, 5)])
+  const outside = sheetOperation('edge_route_outside', ['p1'])
+  const ambiguous = warningsOf(project, outside, 'tabsOverlapAmbiguous')
+  assert(ambiguous.length === 1, `expected tabsOverlapAmbiguous once, got ${ambiguous.length}`)
+})
+
+test('overlapping smooth tabs are still ambiguous', () => {
+  // Each smooth tab ramps on its own, so their overlap rides two humps rather
+  // than the union's one.
+  const project = sheetProject([{ ...tab('a', 96, 40, 8), shape: 'smooth' }, { ...tab('b', 96, 44, 8), shape: 'smooth' }])
+  const outside = sheetOperation('edge_route_outside', ['p1'])
+  const ambiguous = warningsOf(project, outside, 'tabsOverlapAmbiguous')
+  assert(ambiguous.length === 1, `expected tabsOverlapAmbiguous once, got ${ambiguous.length}`)
+})
+
+test('a tab beyond the route leaves its leads and entries unchanged', () => {
+  // The lead and entry keep-out only unions the tabs that can reach the route's
+  // frame. A tab on the other part must not move anything this route emits.
+  const near = [WALL_TAB]
+  const withFar = [WALL_TAB, tab('far', 216, 46, 8)]
+  for (const entryStrategy of ['helix', 'ramp'] as const) {
+    const finish = sheetOperation('edge_route_outside', ['p1'], { pass: 'finish', entryStrategy, entryRampAngle: 5 })
+    const a = computeOperationToolpath(sheetProject(near), finish)
+    const b = computeOperationToolpath(sheetProject(withFar), finish)
+    assert(a && b, 'outside finish generated nothing')
+    assert(a.result.moves.some((move) => move.kind === 'lead_in'), `${entryStrategy}: fixture must carry a lead or entry`)
+    assert(
+      JSON.stringify(a.result.moves) === JSON.stringify(b.result.moves),
+      `${entryStrategy}: a tab on the other part moved this route's output`,
+    )
+  }
+})
+
 // ── Summary ──────────────────────────────────────────────────────────
 
 console.log(`\n${passed} passed, ${failed} failed`)
