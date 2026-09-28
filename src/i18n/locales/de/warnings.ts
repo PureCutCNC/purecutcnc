@@ -118,6 +118,7 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeFeatureNoCutDepth': '{name} lässt nach axialem Aufmaß keine Schnitttiefe',
   'warnings.edgeBandNoCutDepth': 'Band {topZ} -> {bottomZ} lässt nach axialem Aufmaß keine Schnitttiefe',
   'warnings.edgeNoContourForFeature': 'Für {name} konnte keine gültige Kontur erzeugt werden',
+  'warnings.edgeRouteBlockedByParts': 'Außenkontur um {name} wurde von benachbarten Teilen freigehalten — ein Teil ihres Umrisses bleibt ungeschnitten.',
   'warnings.edgeNoInsideContour': 'Für Band {topZ} -> {bottomZ} konnte keine gültige Innenkontur erzeugt werden',
   'warnings.edgeClosedProfilesOnly': 'Kontur-Operationen unterstützen nur geschlossene Ziel-Profile',
   // 3D surface roughing (stepdown)

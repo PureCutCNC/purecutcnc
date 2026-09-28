@@ -118,6 +118,7 @@ export const warningsEn = {
   'warnings.edgeFeatureNoCutDepth': '{name} leaves no cut depth after axial stock-to-leave',
   'warnings.edgeBandNoCutDepth': 'Band {topZ} -> {bottomZ} leaves no cut depth after axial stock-to-leave',
   'warnings.edgeNoContourForFeature': 'No valid contour could be generated for {name}',
+  'warnings.edgeRouteBlockedByParts': 'Outside route around {name} was kept clear of neighbouring parts — part of its outline is left uncut.',
   'warnings.edgeNoInsideContour': 'No valid inside contour could be generated for band {topZ} -> {bottomZ}',
   'warnings.edgeClosedProfilesOnly': 'Edge-route operations only support closed target profiles',
   // 3D surface roughing (stepdown)

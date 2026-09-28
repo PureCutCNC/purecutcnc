@@ -1959,9 +1959,16 @@ function testTrochoidalOutsideFragmentsAroundTightObstacle() {
   const result = generateEdgeRouteToolpath(project, makeTrochoidalEdgeOperation('target', 'edge_route_outside'))
 
   assert(result.moves.length > 0, 'tight obstacle leaves safe trochoidal fragments instead of an empty route')
+  // The obstacle cuts the guide short, which the route now says (issue #914).
   assert(
-    result.warnings.every((warning) => warning.code === 'edgeTrochoidalSkippedSpan'),
+    result.warnings.every((warning) => (
+      warning.code === 'edgeTrochoidalSkippedSpan' || warning.code === 'edgeRouteBlockedByParts'
+    )),
     `unexpected tight-obstacle warnings: ${result.warnings.map((warning) => warning.code).join(', ')}`,
+  )
+  assert(
+    result.warnings.some((warning) => warning.code === 'edgeRouteBlockedByParts'),
+    'a guide the obstacle cuts short must be reported',
   )
   const distanceToObstacle = (point: { x: number; y: number }) => Math.hypot(
     Math.max(22 - point.x, 0, point.x - 42),

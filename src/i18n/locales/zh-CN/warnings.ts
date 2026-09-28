@@ -112,6 +112,7 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeFeatureNoCutDepth': '{name} 在轴向留量后没有剩余切削深度',
   'warnings.edgeBandNoCutDepth': '深度带 {topZ} -> {bottomZ} 在轴向留量后没有剩余切削深度',
   'warnings.edgeNoContourForFeature': '无法为 {name} 生成有效轮廓',
+  'warnings.edgeRouteBlockedByParts': '{name} 的外侧沿边路径已避开相邻零件 — 其部分轮廓未被切割。',
   'warnings.edgeNoInsideContour': '无法为深度带 {topZ} -> {bottomZ} 生成有效的内侧轮廓',
   'warnings.edgeClosedProfilesOnly': '沿边加工操作仅支持封闭的目标轮廓',
   'warnings.subtractChainLimitReached': '链式减运算达到 {operation} 的 {limit} 个特征上限，因此该区域未延伸至链上更远的几何体',
