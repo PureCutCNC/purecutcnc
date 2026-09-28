@@ -51,6 +51,15 @@
  * The move hashes were re-recorded once, for #911, on the same tree with no
  * engine change: only the serialisation moved to `roundedMoves`.
  *
+ * The `tabNoIntersect` counts were re-recorded for #916, which left every hash
+ * here untouched. An edge route now judges only the tabs on its own walls, not
+ * every tab in its cut box: the outside routes' 104 were all tabs standing in
+ * the inner slots, and the inside routes' remaining 10 sit on slots too narrow
+ * for the cutter (the `edgeNoInsideContour` bands), walls that genuinely go
+ * uncut. The inside routes' hashes also pin #916's tab keep-out framing:
+ * emptying the keep-out moved both (45,882 -> 54,931 and 14,241 -> 27,429
+ * moves), so a helix that lost a nearby tab would show here.
+ *
  * Run with: npx tsx src/engine/toolpaths/entryDenseIslandsFixture.test.ts
  */
 
@@ -123,20 +132,20 @@ const EXPECTED: Expectation[] = [
   {
     id: 'op0627', kind: 'edge_route_inside', label: 'Edge route inside (rough)',
     moves: 45_882, hash: '310dbd8e10ffce22',
-    warnings: { edgeNoInsideContour: 21, entryStrategyFallback: 12, entryHelixDiameterClamped: 4, tabNoIntersect: 85 },
+    warnings: { edgeNoInsideContour: 21, entryStrategyFallback: 12, entryHelixDiameterClamped: 4, tabNoIntersect: 10 },
   },
   {
     id: 'op0628', kind: 'edge_route_inside', label: 'Edge route inside (finish)',
     moves: 14_241, hash: '51c11f6c824f7326',
-    warnings: { edgeNoInsideContour: 12, entryStrategyFallback: 17, entryHelixDiameterClamped: 3, tabNoIntersect: 95 },
+    warnings: { edgeNoInsideContour: 12, entryStrategyFallback: 17, entryHelixDiameterClamped: 3, tabNoIntersect: 10 },
   },
   {
     id: 'op0629', kind: 'edge_route_outside', label: 'Edge route outside (rough)',
-    moves: 5_049, hash: 'd82d5e104e1ba53e', warnings: { tabNoIntersect: 104 },
+    moves: 5_049, hash: 'd82d5e104e1ba53e', warnings: {},
   },
   {
     id: 'op0630', kind: 'edge_route_outside', label: 'Edge route outside (finish)',
-    moves: 1_115, hash: 'ed4435dbc890c6db', warnings: { tabNoIntersect: 104 },
+    moves: 1_115, hash: 'ed4435dbc890c6db', warnings: {},
   },
 ]
 

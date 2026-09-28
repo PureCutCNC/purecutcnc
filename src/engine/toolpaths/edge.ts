@@ -258,6 +258,30 @@ function isEdgeRouteTargetFeature(feature: SketchFeature, operation: Operation):
   return feature.operation === 'add' || feature.operation === 'model'
 }
 
+/** The features whose walls an edge route cuts: a text's counters for an inside route, its glyphs for an outside one. */
+function edgeRouteTargetFeatures(selectedFeatures: SketchFeature[], operation: Operation): SketchFeature[] {
+  return selectedFeatures
+    .flatMap((feature) => (feature.operation === 'model' ? [feature] : expandFeatureGeometry(feature)))
+    .filter((feature) => isEdgeRouteTargetFeature(feature, operation))
+}
+
+/**
+ * The walls an edge route is asked to cut, as closed outlines (issue #916).
+ *
+ * Tabs are project-wide, so this is how a route tells its own tabs from the
+ * rest: a tab it should cross is one that sits on one of these walls. They
+ * come from the targets, not from the generated path, so a wall the route
+ * failed to cut still counts — which is what keeps `tabNoIntersect` honest
+ * when a wall goes unrouted (#914) or is too narrow for the tool.
+ */
+export function edgeRouteTargetWalls(project: Project, operation: Operation): Point[][] {
+  if (operation.target.source !== 'features') return []
+  return edgeRouteTargetFeatures(splitFeatureTargets(project, operation.target.featureIds).machiningFeatures, operation)
+    .filter((feature) => feature.operation !== 'region' && featureHasClosedGeometry(feature))
+    .flatMap((feature) => featureSilhouettePaths(feature))
+    .filter((wall) => wall.length >= 2)
+}
+
 /** An axis-aligned box in model units. */
 interface RouteFrame {
   minX: number
@@ -1348,9 +1372,7 @@ function generateEdgeRouteToolpathSingle(
   const selectedFeatures = splitTargets.machiningFeatures
   const regionMask = buildRegionMask(splitTargets.regionFeatures)
 
-  const targetFeatures = selectedFeatures
-    .flatMap((feature) => (feature.operation === 'model' ? [feature] : expandFeatureGeometry(feature)))
-    .filter((feature) => isEdgeRouteTargetFeature(feature, operation))
+  const targetFeatures = edgeRouteTargetFeatures(selectedFeatures, operation)
 
   const warnings: ToolpathWarning[] = []
   const trochoidalTabs = isTrochoidal ? project.tabs : []
@@ -1474,8 +1496,34 @@ function generateEdgeRouteToolpathSingle(
   // has to include the tabs standing at THIS level, which is why the domain is
   // rebuilt per level rather than once per pass. `expandedTabFootprints` is the
   // same footprint the tab pass itself uses, grown by the same clearance.
-  const tabKeepOutAtZ = (z: number): Point[][] =>
-    tabCutterPathsAtZ(project.tabs, z, tool.radius + radialLeave).map((path) => fromClipperPath(path))
+  //
+  // Framed and memoised (issue #916). Only tabs that can reach `frame`, the box
+  // the lead and entry domain lives in, are offset and unioned: a tab loop
+  // disjoint from the domain changes no point test and, since any segment from
+  // an interior point to it crosses the domain boundary first, no clearance
+  // distance either. On a nested sheet that is what stops every part paying for
+  // every other part's tabs. Levels share the union until a tab top is passed.
+  const tabKeepOutClearance = tool.radius + radialLeave
+  const tabKeepOutWithin = (frame: RouteFrame | null): ((z: number) => Point[][]) => {
+    const nearbyTabs = frame === null
+      ? project.tabs
+      : project.tabs.filter((tab) => framesOverlap(
+        growFrame({ minX: tab.x, minY: tab.y, maxX: tab.x + tab.w, maxY: tab.y + tab.h }, tabKeepOutClearance),
+        frame,
+      ))
+    const indexOfTab = new Map(nearbyTabs.map((tab, index) => [tab, index]))
+    const byActiveSet = new Map<string, Point[][]>()
+    return (z: number): Point[][] => {
+      const active = activeTabsAtZ(nearbyTabs, z)
+      const key = active.map((tab) => indexOfTab.get(tab)).join(',')
+      let loops = byActiveSet.get(key)
+      if (!loops) {
+        loops = expandedTabPaths(active, tabKeepOutClearance).map((path) => fromClipperPath(path))
+        byActiveSet.set(key, loops)
+      }
+      return loops
+    }
+  }
 
   const moves: ToolpathMove[] = []
   // Shared across sub-operations under feature-first ordering; a fresh budget
@@ -1565,6 +1613,9 @@ function generateEdgeRouteToolpathSingle(
     + (isTrochoidal ? trochoidalCutWidth : 0)
   const obstacleReach = Math.max(tool.radius + radialLeave, isTrochoidal ? trochoidalGuideOffset : 0)
     + tool.diameter
+  // `outsideDomain` boxes its region at the wall's frame plus the reach, which
+  // `routeReach` already covers, so no lead or entry can ask about a tab past it.
+  const outsideTabKeepOutAtZ = tabKeepOutWithin(routeFrame === null ? null : growFrame(routeFrame, routeReach))
   const obstacleCandidates = routeFrame === null
     ? null
     : sharedObstacleCandidates ?? routeObstacleCandidates(project)
@@ -1773,8 +1824,12 @@ function generateEdgeRouteToolpathSingle(
           (warning) => appendUniqueWarning(warnings, warning),
         )
         : undefined
+      // The band's own inset regions ARE the lead and entry domain, and they can
+      // run past the targets when a non-target subtract folds in (#526), so the
+      // tab keep-out is framed by them rather than by the targets.
+      const bandTabKeepOutAtZ = tabKeepOutWithin(pointsFrame(insetRegions.map((region) => region.outer)))
       const insideLeadForLevel = (z: number): XyLeadContext | undefined => beginXyLeadLevel(
-        withKeepOut(bandLeadOptions, tabKeepOutAtZ(z)),
+        bandLeadOptions && withKeepOut(bandLeadOptions, bandTabKeepOutAtZ(z)),
         (warning) => appendUniqueWarning(warnings, warning),
         wallLeadDepartsAlongAnArc,
       )
@@ -1797,7 +1852,7 @@ function generateEdgeRouteToolpathSingle(
           'internal',
         )
       const insideEntryForLevel = (z: number): EntryPolicy | undefined =>
-        withEntryKeepOut(bandEntryPolicy, tabKeepOutAtZ(z))
+        bandEntryPolicy && withEntryKeepOut(bandEntryPolicy, bandTabKeepOutAtZ(z))
       const rawContours = buildOuterContours(insetRegions)
       if (rawContours.length === 0) {
         warnings.push({ code: 'edgeNoInsideContour', params: { topZ: band.topZ, bottomZ: band.bottomZ } })
@@ -2081,13 +2136,13 @@ function generateEdgeRouteToolpathSingle(
 
   const outsideLeadForLevel = (options: XyLeadOptions | undefined) => (z: number): XyLeadContext | undefined =>
     beginXyLeadLevel(
-      withKeepOut(options, tabKeepOutAtZ(z)),
+      options && withKeepOut(options, outsideTabKeepOutAtZ(z)),
       (warning) => appendUniqueWarning(warnings, warning),
       wallLeadDepartsAlongAnArc,
     )
 
   const outsideEntryForLevel = (policy: EntryPolicy | undefined) => (z: number): EntryPolicy | undefined =>
-    withEntryKeepOut(policy, tabKeepOutAtZ(z))
+    policy && withEntryKeepOut(policy, outsideTabKeepOutAtZ(z))
 
   const shouldAttemptCombinedOutside = operation.kind === 'edge_route_outside' && routableTargets.length > 1
   if (shouldAttemptCombinedOutside) {
