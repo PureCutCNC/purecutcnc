@@ -258,6 +258,79 @@ function isEdgeRouteTargetFeature(feature: SketchFeature, operation: Operation):
   return feature.operation === 'add' || feature.operation === 'model'
 }
 
+/** An axis-aligned box in model units. */
+interface RouteFrame {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
+/**
+ * A retained feature an outside route may have to steer around, resolved once
+ * per operation rather than once per target (issue #909): under feature-first
+ * ordering every target is its own sub-operation, and rebuilding the list for
+ * each one made a nested sheet of N parts cost N² expansions.
+ */
+interface RouteObstacleCandidate {
+  featureId: string
+  paths: ClipperPath[]
+  minZ: number
+  maxZ: number
+  frame: RouteFrame | null
+}
+
+function clipperPathsFrame(paths: ClipperPath[]): RouteFrame | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const path of paths) {
+    for (const point of path) {
+      if (point.X < minX) minX = point.X
+      if (point.X > maxX) maxX = point.X
+      if (point.Y < minY) minY = point.Y
+      if (point.Y > maxY) maxY = point.Y
+    }
+  }
+  if (!(minX <= maxX)) return null
+  return {
+    minX: minX / DEFAULT_CLIPPER_SCALE,
+    minY: minY / DEFAULT_CLIPPER_SCALE,
+    maxX: maxX / DEFAULT_CLIPPER_SCALE,
+    maxY: maxY / DEFAULT_CLIPPER_SCALE,
+  }
+}
+
+function growFrame(frame: RouteFrame, by: number): RouteFrame {
+  return { minX: frame.minX - by, minY: frame.minY - by, maxX: frame.maxX + by, maxY: frame.maxY + by }
+}
+
+function framesOverlap(a: RouteFrame, b: RouteFrame): boolean {
+  return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
+}
+
+/**
+ * Obstacle paths all wound the same way (issue #909). The mask and the domain
+ * offset feature and clamp obstacles in ONE `ClipperOffset` call, and Clipper
+ * orients the whole set by its topmost path: a path wound against that one is
+ * taken for a hole and offset inward. Features arrive clockwise
+ * (`featureToClipperPaths`) and clamps counter-clockwise, so depending on which
+ * stood highest either every neighbouring part or every clamp shrank instead of
+ * growing. Each obstacle is a solid, so each is wound as an outer boundary.
+ */
+function solidPaths(paths: ClipperPath[]): ClipperPath[] {
+  return paths.map((path) => (ClipperLib.Clipper.Area(path) >= 0 ? path : [...path].reverse()))
+}
+
+function routeObstacleCandidates(project: Project): RouteObstacleCandidate[] {
+  return resolvedProjectFeatures(project)
+    .flatMap((feature) => (feature.operation === 'model' ? [feature] : expandFeatureGeometry(feature)))
+    .filter((feature) => (feature.operation === 'add' || feature.operation === 'model') && featureHasClosedGeometry(feature))
+    .map((feature) => {
+      const span = resolveFeatureZSpan(project, feature)
+      const paths = solidPaths(featureToClipperPaths(feature))
+      return { featureId: feature.id, paths, minZ: span.min, maxZ: span.max, frame: clipperPathsFrame(paths) }
+    })
+}
+
 function resolveEffectiveBottom(feature: SketchFeature, project: Project, operation: Operation): number | null {
   const span = resolveFeatureZSpan(project, feature)
   const descending = span.bottom < span.top
@@ -1032,8 +1105,13 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
           paths: createTrochoidalPathStore(),
         }
       : undefined
+    // Only an outside route steers around retained features; see
+    // RouteObstacleCandidate for why the list is built here, once.
+    const obstacleCandidates = operation.kind === 'edge_route_outside'
+      ? routeObstacleCandidates(project)
+      : []
     const parts = perFeatureOperations(operation, project).map((subOp) =>
-      generateEdgeRouteToolpathSingle(project, subOp, sharedBudget),
+      generateEdgeRouteToolpathSingle(project, subOp, sharedBudget, obstacleCandidates),
     )
     // And multi-target generation stays atomic: mergeToolpathResults would
     // happily emit the targets that succeeded alongside one that failed closed,
@@ -1059,6 +1137,7 @@ function generateEdgeRouteToolpathSingle(
   project: Project,
   operation: Operation,
   sharedTrochoidalBudget?: TrochoidalOperationBudget,
+  sharedObstacleCandidates?: RouteObstacleCandidate[],
 ): ToolpathResult {
   if (operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') {
     return {
@@ -1330,14 +1409,44 @@ function generateEdgeRouteToolpathSingle(
     minZ: number
     maxZ: number
   }
-  const allAdditiveObstacles: RouteObstacle[] = resolvedProjectFeatures(project)
-    .flatMap((feature) => (feature.operation === 'model' ? [feature] : expandFeatureGeometry(feature)))
-    .filter((feature) => (feature.operation === 'add' || feature.operation === 'model') && featureHasClosedGeometry(feature))
-    .filter((feature) => !targetFeatureIdSet.has(feature.id))
-    .map((feature) => {
-      const span = resolveFeatureZSpan(project, feature)
-      return { paths: featureToClipperPaths(feature), minZ: span.min, maxZ: span.max }
-    })
+  /**
+   * The route's frame (issue #909): the furthest from its targets any consumer
+   * of the obstacle set can ask about. The wall path sits `|offsetDistance|`
+   * out; a lead (2.5 x D budget), ramp (3 x D) or helix is confined to the
+   * outside domain, whose box reaches `OUTSIDE_DOMAIN_REACH_DIAMETERS` past the
+   * wall (see `outsideDomain`); and a trochoidal orbit swings its cut width
+   * past its guide.
+   *
+   * An obstacle matters only if, grown by the largest clearance any consumer
+   * offsets it by, it reaches that frame. Anything further can change no
+   * answer, so it is dropped — which is what keeps a nested sheet linear
+   * instead of every part paying for every other part. The margins are
+   * generous on purpose: an obstacle wrongly kept costs time, one wrongly
+   * dropped costs a gouge.
+   */
+  const routeFrame = operation.kind === 'edge_route_outside'
+    ? closedTargetFeatures
+      .map((feature) => clipperPathsFrame(featureToClipperPaths(feature)))
+      .filter((frame): frame is RouteFrame => frame !== null)
+      .reduce<RouteFrame | null>((union, frame) => (union === null ? frame : {
+        minX: Math.min(union.minX, frame.minX),
+        minY: Math.min(union.minY, frame.minY),
+        maxX: Math.max(union.maxX, frame.maxX),
+        maxY: Math.max(union.maxY, frame.maxY),
+      }), null)
+    : null
+  const routeReach = Math.abs(offsetDistance)
+    + tool.diameter * OUTSIDE_DOMAIN_REACH_DIAMETERS
+    + (isTrochoidal ? trochoidalCutWidth : 0)
+  const obstacleReach = Math.max(tool.radius + radialLeave, isTrochoidal ? trochoidalGuideOffset : 0)
+    + tool.diameter
+  const allAdditiveObstacles: RouteObstacle[] = routeFrame === null
+    ? []
+    : (sharedObstacleCandidates ?? routeObstacleCandidates(project))
+      .filter((candidate) => !targetFeatureIdSet.has(candidate.featureId))
+      .filter((candidate) => candidate.frame !== null
+        && framesOverlap(growFrame(candidate.frame, obstacleReach), growFrame(routeFrame, routeReach)))
+      .map(({ paths, minZ, maxZ }) => ({ paths, minZ, maxZ }))
 
   /**
    * Clamps are obstacles in the same sense the retained features are, and they
@@ -1352,7 +1461,7 @@ function generateEdgeRouteToolpathSingle(
    */
   const clampObstacles: RouteObstacle[] = clampKeepOuts(project, { expansion: 0 })
     .map((keepOut) => ({
-      paths: keepOut.paths,
+      paths: solidPaths(keepOut.paths),
       minZ: Number.NEGATIVE_INFINITY,
       maxZ: keepOut.requiredZ,
     }))
@@ -1687,19 +1796,22 @@ function generateEdgeRouteToolpathSingle(
    *
    * `jtRound` on purpose: an arc or a helix has to clear a convex corner of the
    * part on the diagonal, which a mitre would let it cut.
+   *
+   * `wall` is returned apart because it alone frames the domain (issue #909).
    */
   function outsideKeepOutLoops(
     targetPaths: ClipperPath[],
     topZ: number,
     bottomZ: number,
-  ): Point[][] {
-    const retained = unionPaths(offsetPaths(
+  ): { wall: Point[][], all: Point[][] } {
+    const wall = unionPaths(offsetPaths(
       targetPaths,
       Math.max(0, tool.radius + radialLeave - WALL_PATH_TOUCH_TOLERANCE) * DEFAULT_CLIPPER_SCALE,
       ClipperLib.JoinType.jtRound,
-    ))
-    return [...retained, ...retainedObstaclePathsForSpan(topZ, bottomZ, tool.radius + radialLeave)]
+    )).map((path) => fromClipperPath(path))
+    const obstacles = retainedObstaclePathsForSpan(topZ, bottomZ, tool.radius + radialLeave)
       .map((path) => fromClipperPath(path))
+    return { wall, all: [...wall, ...obstacles] }
   }
 
   /**
@@ -1713,6 +1825,12 @@ function generateEdgeRouteToolpathSingle(
    * they are asking the same question of the same space; each also has its own
    * reason to decline first, and a plunging route with no lead must not pay a
    * Clipper offset and union for an answer nobody reads.
+   *
+   * The box is set by the wall alone, never by the obstacles (issue #909). Boxing
+   * every keep-out loop made one part's domain span the whole sheet once it was
+   * nested, and the helix placement search, which grids that box, then both
+   * paid for every other part and shifted with them. Framed by its own wall, a
+   * route's leads and entries do not depend on anything outside its frame.
    */
   function outsideDomain(
     targetPaths: ClipperPath[],
@@ -1720,10 +1838,12 @@ function generateEdgeRouteToolpathSingle(
     bottomZ: number,
   ): () => EntryClearanceRegion[] {
     let cached: EntryClearanceRegion[] | null = null
-    return () => (cached ??= domainOutsideLoops(
-      outsideKeepOutLoops(targetPaths, topZ, bottomZ),
-      tool.diameter * OUTSIDE_DOMAIN_REACH_DIAMETERS,
-    ))
+    return () => {
+      if (cached) return cached
+      const loops = outsideKeepOutLoops(targetPaths, topZ, bottomZ)
+      cached = domainOutsideLoops(loops.all, tool.diameter * OUTSIDE_DOMAIN_REACH_DIAMETERS, loops.wall)
+      return cached
+    }
   }
 
   /** Lead options for an outside route, or undefined when this pass carries no lead. */
