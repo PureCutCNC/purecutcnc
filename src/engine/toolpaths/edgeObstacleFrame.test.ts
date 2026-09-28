@@ -228,7 +228,14 @@ function cutSamples(project: Project): Point[] {
 //   with the frame filter:     ratio 0.95-1.49
 //   filter removed (mutation): ratio 7.90-8.96, reference column unchanged —
 //                              every far part offset and split against at every level
-// Threshold at the geometric mid-point of the worst pair, sqrt(1.49 * 7.90) ~= 3.4.
+//
+// Re-measured after #914 boxed the guide split, which cut the route's own cost
+// (the reference) by about half and so left the once-per-operation listing of
+// the far parts a larger share of the subject:
+//   with the frame filter:     ratio 0.93-2.33 standalone (ten runs), 3.85 once
+//                              inside the parallel `npm run build` pool
+//   filter removed (mutation): ratio 12.64-15.37 (three runs), reference 3.4-3.5ms
+// Threshold at the geometric mid-point of the worst pair, sqrt(3.85 * 12.64) ~= 7.0.
 {
   const operation = outsideOperation({ entryStrategy: 'plunge' })
   const subject = withNear(farParts(80))
@@ -244,9 +251,9 @@ function cutSamples(project: Project): Point[] {
     + `(ratio ${ratio.toFixed(2)})`,
   )
   assert(
-    ratio < 3.4,
+    ratio < 7.0,
     `an outside route on a sheet of 80 far parts costs ${ratio.toFixed(2)}x the same route alone `
-    + `(limit 3.4x; ${subjectMs.toFixed(1)}ms vs ${referenceMs.toFixed(1)}ms CPU) — `
+    + `(limit 7.0x; ${subjectMs.toFixed(1)}ms vs ${referenceMs.toFixed(1)}ms CPU) — `
     + 'check that obstacles outside the route frame are dropped before the mask and domain are built',
   )
   console.log('  ✓ per-route cost does not grow with far parts')

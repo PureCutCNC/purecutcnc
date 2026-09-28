@@ -108,6 +108,7 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeFeatureNoCutDepth': '{name} no deja profundidad de corte después de aplicar el material axial a dejar.',
   'warnings.edgeBandNoCutDepth': 'La banda {topZ} -> {bottomZ} no deja profundidad de corte después de aplicar el material axial a dejar.',
   'warnings.edgeNoContourForFeature': 'No se pudo generar un contorno válido para {name}.',
+  'warnings.edgeRouteBlockedByParts': 'El contorneado exterior de {name} se mantuvo alejado de las piezas vecinas: parte de su contorno queda sin cortar.',
   'warnings.edgeNoInsideContour': 'No se pudo generar un contorno interior válido para la banda {topZ} -> {bottomZ}.',
   'warnings.edgeClosedProfilesOnly': 'Las operaciones de fresado de borde solo admiten perfiles objetivo cerrados.',
   'warnings.subtractChainLimitReached': 'Las sustracciones encadenadas alcanzaron el límite de {limit} elementos para {operation}, por lo que la región se detiene antes de la geometría más lejana de la cadena',

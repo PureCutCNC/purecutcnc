@@ -41,7 +41,7 @@ import {
   resolveReliefStepdown,
   type ReliefLoop,
 } from './cornerRelief'
-import { appendClampBlockedWarnings, clampKeepOuts, unionClipperPaths } from './modelProtection'
+import { appendClampBlockedWarnings, clampKeepOuts, differenceClipperPaths, unionClipperPaths } from './modelProtection'
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import {
   buildInsetRegions,
@@ -278,6 +278,19 @@ interface RouteObstacleCandidate {
   minZ: number
   maxZ: number
   frame: RouteFrame | null
+  /** Place in project feature order, the order `buildBooleanModel` folds in. */
+  order: number
+  /** An `add` piece. An STL silhouette is never carved: CSG cuts its mesh, not its footprint. */
+  carvable: boolean
+}
+
+/**
+ * What an outside route can meet, resolved once per operation: the solids it
+ * steers around, and the subtracts that may open holes in them (issue #914).
+ */
+interface RouteObstacleCandidates {
+  solids: RouteObstacleCandidate[]
+  subtracts: RouteObstacleCandidate[]
 }
 
 function clipperPathsFrame(paths: ClipperPath[]): RouteFrame | null {
@@ -297,6 +310,19 @@ function clipperPathsFrame(paths: ClipperPath[]): RouteFrame | null {
     maxX: maxX / DEFAULT_CLIPPER_SCALE,
     maxY: maxY / DEFAULT_CLIPPER_SCALE,
   }
+}
+
+function pointsFrame(loops: Point[][]): RouteFrame | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const loop of loops) {
+    for (const point of loop) {
+      if (point.x < minX) minX = point.x
+      if (point.x > maxX) maxX = point.x
+      if (point.y < minY) minY = point.y
+      if (point.y > maxY) maxY = point.y
+    }
+  }
+  return minX <= maxX ? { minX, minY, maxX, maxY } : null
 }
 
 function growFrame(frame: RouteFrame, by: number): RouteFrame {
@@ -320,15 +346,70 @@ function solidPaths(paths: ClipperPath[]): ClipperPath[] {
   return paths.map((path) => (ClipperLib.Clipper.Area(path) >= 0 ? path : [...path].reverse()))
 }
 
-function routeObstacleCandidates(project: Project): RouteObstacleCandidate[] {
-  return resolvedProjectFeatures(project)
+/**
+ * The subtracts that can open a hole in `solid` (issue #914): later in project
+ * order (an add after a subtract fills back in what it carved — see
+ * `planning/BAND_RESOLVER_SEMANTICS.md`), overlapping its box, and reaching
+ * its top. A subtract that stops below the top leaves material over it that
+ * the cutter's shank would pass through, so it opens nothing.
+ */
+function obstacleHoles(
+  solid: RouteObstacleCandidate & { frame: RouteFrame },
+  subtracts: RouteObstacleCandidate[],
+): { paths: ClipperPath[], minZ: number }[] {
+  return subtracts
+    .filter((subtract) => subtract.order > solid.order
+      && subtract.maxZ >= solid.maxZ - OBSTACLE_HOLE_Z_EPSILON
+      && subtract.frame !== null
+      && framesOverlap(subtract.frame, solid.frame))
+    .map(({ paths, minZ }) => ({ paths, minZ }))
+}
+
+/** Tolerance on "the subtract reaches the solid's top", in project units. */
+const OBSTACLE_HOLE_Z_EPSILON = 1e-6
+
+/**
+ * An obstacle's material from `z` up: its paths less every hole open down to
+ * `z` (issue #914). A text part's outline without this was solid across its
+ * counters, so a part nested in one had its whole wall path masked away.
+ *
+ * The difference leaves holes wound against their outer loop, which is what
+ * the nonzero offset and union downstream need to keep them open; an obstacle
+ * with no hole open here is returned as it always was.
+ */
+function obstacleMaterial(obstacle: { paths: ClipperPath[], holes: { paths: ClipperPath[], minZ: number }[] }, z: number): ClipperPath[] {
+  const open = obstacle.holes.filter((hole) => hole.minZ <= z + OBSTACLE_HOLE_Z_EPSILON)
+  if (open.length === 0) return obstacle.paths
+  return differenceClipperPaths(obstacle.paths, open.flatMap(({ paths }) => paths))
+}
+
+function routeObstacleCandidates(project: Project): RouteObstacleCandidates {
+  const candidates = resolvedProjectFeatures(project)
     .flatMap((feature) => (feature.operation === 'model' ? [feature] : expandFeatureGeometry(feature)))
-    .filter((feature) => (feature.operation === 'add' || feature.operation === 'model') && featureHasClosedGeometry(feature))
-    .map((feature) => {
+    .map((feature, order) => ({ feature, order }))
+    .filter(({ feature }) => (
+      feature.operation === 'add' || feature.operation === 'model' || feature.operation === 'subtract'
+    ) && featureHasClosedGeometry(feature))
+    .map(({ feature, order }): RouteObstacleCandidate & { operation: SketchFeature['operation'], kind: SketchFeature['kind'] } => {
       const span = resolveFeatureZSpan(project, feature)
       const paths = solidPaths(featureToClipperPaths(feature))
-      return { featureId: feature.id, paths, minZ: span.min, maxZ: span.max, frame: clipperPathsFrame(paths) }
+      return {
+        featureId: feature.id,
+        paths,
+        minZ: span.min,
+        maxZ: span.max,
+        frame: clipperPathsFrame(paths),
+        order,
+        carvable: feature.operation === 'add',
+        operation: feature.operation,
+        kind: feature.kind,
+      }
     })
+  return {
+    solids: candidates.filter(({ operation }) => operation !== 'subtract'),
+    // An STL subtract is cut from its mesh, so its footprint proves nothing is gone.
+    subtracts: candidates.filter(({ operation, kind }) => operation === 'subtract' && kind !== 'stl'),
+  }
 }
 
 function resolveEffectiveBottom(feature: SketchFeature, project: Project, operation: Operation): number | null {
@@ -433,6 +514,30 @@ function segmentInsideSafeRegions(from: Point, to: Point, regions: PreparedSafet
 function segmentOutsideForbiddenPaths(from: Point, to: Point, paths: ClipperPath[]): boolean {
   return pointOutsideForbiddenPaths(from, paths)
     && pointOutsideForbiddenPaths(to, paths)
+    && paths.every((path) => !segmentIntersectsPath(from, to, path))
+}
+
+/**
+ * `segmentOutsideForbiddenPaths` for a unioned obstacle set, which can have
+ * holes (issue #914): a point is inside when an odd number of loops strictly
+ * contain it, so the open air in a counter or a closed ring is outside. Riding
+ * any loop is tangency, as it is for the solid test. Only a union can be read
+ * this way — overlapping solids (tab footprints) would cancel out.
+ */
+function pointOutsideObstaclePaths(point: Point, paths: ClipperPath[]): boolean {
+  const candidate = toClipperPoint(point)
+  let inside = false
+  for (const path of paths) {
+    const result = pointInPolygon(candidate, path)
+    if (result === -1) return true
+    if (result === 1) inside = !inside
+  }
+  return !inside
+}
+
+function segmentOutsideObstaclePaths(from: Point, to: Point, paths: ClipperPath[]): boolean {
+  return pointOutsideObstaclePaths(from, paths)
+    && pointOutsideObstaclePaths(to, paths)
     && paths.every((path) => !segmentIntersectsPath(from, to, path))
 }
 
@@ -680,6 +785,18 @@ export function createTrochoidalFragmentPlanner(
 }
 
 /**
+ * Did splitting `before` lose any of it? Read off the split's own result rather
+ * than re-measured, so asking costs nothing on the unblocked path: a closed
+ * guide survives whole only as one closed fragment, and an open one only as a
+ * single fragment of the same length.
+ */
+function guideWasShortened(before: ClosedGuideFragment, after: ClosedGuideFragment[]): boolean {
+  if (before.closed) return !(after.length === 1 && after[0].closed)
+  return after.length !== 1
+    || Math.abs(polylineLength(after[0].points) - polylineLength(before.points)) > 1 / DEFAULT_CLIPPER_SCALE
+}
+
+/**
  * Fragment contours through the region mask and (per level) the obstacle set,
  * then emit closed or open cut moves with safe transitions.
  *
@@ -700,6 +817,7 @@ function appendFragmentedContoursAtLevels(
   obstacleMaskForZ: (z: number) => RegionMask | null,
   leadForLevel?: (z: number) => XyLeadContext | undefined,
   entryForLevel?: (z: number) => EntryPolicy | undefined,
+  onObstacleBlocked?: (z: number, fragment: ClosedGuideFragment) => void,
 ): ToolpathPoint | null {
   // Fragment by region mask once — region is Z-independent.
   const regionFragments = contours.flatMap((c) =>
@@ -718,6 +836,7 @@ function appendFragmentedContoursAtLevels(
 
     for (const frag of regionFragments) {
       const finalFragments = splitGuideFragmentsOutside([frag], obsMask?.paths ?? [])
+      if (onObstacleBlocked && obsMask && guideWasShortened(frag, finalFragments)) onObstacleBlocked(z, frag)
       if (finalFragments.length === 0) continue
 
       for (const ff of finalFragments) {
@@ -1109,7 +1228,7 @@ export function generateEdgeRouteToolpath(project: Project, operation: Operation
     // RouteObstacleCandidate for why the list is built here, once.
     const obstacleCandidates = operation.kind === 'edge_route_outside'
       ? routeObstacleCandidates(project)
-      : []
+      : undefined
     const parts = perFeatureOperations(operation, project).map((subOp) =>
       generateEdgeRouteToolpathSingle(project, subOp, sharedBudget, obstacleCandidates),
     )
@@ -1137,7 +1256,7 @@ function generateEdgeRouteToolpathSingle(
   project: Project,
   operation: Operation,
   sharedTrochoidalBudget?: TrochoidalOperationBudget,
-  sharedObstacleCandidates?: RouteObstacleCandidate[],
+  sharedObstacleCandidates?: RouteObstacleCandidates,
 ): ToolpathResult {
   if (operation.kind !== 'edge_route_inside' && operation.kind !== 'edge_route_outside') {
     return {
@@ -1408,6 +1527,12 @@ function generateEdgeRouteToolpathSingle(
     paths: ClipperPath[]
     minZ: number
     maxZ: number
+    /** Subtracts that open holes in it; see `obstacleMaterial`. */
+    holes: RouteObstacleHole[]
+  }
+  interface RouteObstacleHole {
+    paths: ClipperPath[]
+    minZ: number
   }
   /**
    * The route's frame (issue #909): the furthest from its targets any consumer
@@ -1440,13 +1565,22 @@ function generateEdgeRouteToolpathSingle(
     + (isTrochoidal ? trochoidalCutWidth : 0)
   const obstacleReach = Math.max(tool.radius + radialLeave, isTrochoidal ? trochoidalGuideOffset : 0)
     + tool.diameter
-  const allAdditiveObstacles: RouteObstacle[] = routeFrame === null
-    ? []
-    : (sharedObstacleCandidates ?? routeObstacleCandidates(project))
-      .filter((candidate) => !targetFeatureIdSet.has(candidate.featureId))
-      .filter((candidate) => candidate.frame !== null
-        && framesOverlap(growFrame(candidate.frame, obstacleReach), growFrame(routeFrame, routeReach)))
-      .map(({ paths, minZ, maxZ }) => ({ paths, minZ, maxZ }))
+  const obstacleCandidates = routeFrame === null
+    ? null
+    : sharedObstacleCandidates ?? routeObstacleCandidates(project)
+  const reachesRoute = (candidate: RouteObstacleCandidate): candidate is RouteObstacleCandidate & { frame: RouteFrame } =>
+    routeFrame !== null && candidate.frame !== null
+      && framesOverlap(growFrame(candidate.frame, obstacleReach), growFrame(routeFrame, routeReach))
+  const nearbySubtracts = obstacleCandidates?.subtracts.filter(reachesRoute) ?? []
+  const allAdditiveObstacles: RouteObstacle[] = (obstacleCandidates?.solids ?? [])
+    .filter((candidate) => !targetFeatureIdSet.has(candidate.featureId))
+    .filter(reachesRoute)
+    .map((candidate) => ({
+      paths: candidate.paths,
+      minZ: candidate.minZ,
+      maxZ: candidate.maxZ,
+      holes: candidate.carvable ? obstacleHoles(candidate, nearbySubtracts) : [],
+    }))
 
   /**
    * Clamps are obstacles in the same sense the retained features are, and they
@@ -1464,6 +1598,7 @@ function generateEdgeRouteToolpathSingle(
       paths: solidPaths(keepOut.paths),
       minZ: Number.NEGATIVE_INFINITY,
       maxZ: keepOut.requiredZ,
+      holes: [],
     }))
   const allObstacles: RouteObstacle[] = [...allAdditiveObstacles, ...clampObstacles]
 
@@ -1477,10 +1612,19 @@ function generateEdgeRouteToolpathSingle(
     if (cached !== undefined) return cached
     const activePaths = obstacles
       .filter((obstacle) => z <= obstacle.maxZ && z >= obstacle.minZ)
-      .flatMap(({ paths }) => paths)
+      .flatMap((obstacle) => obstacleMaterial(obstacle, z))
     let mask: ReturnType<typeof buildMaskFromClipperPaths> = null
     if (activePaths.length > 0) {
-      mask = buildMaskFromClipperPaths(offsetPaths(activePaths, tool.radius * DEFAULT_CLIPPER_SCALE))
+      // `jtRound`, as the lead and entry domain use: the cutter centre must stay
+      // a radius off a convex corner, and no further. A mitre pushed a sharp
+      // corner out to twice that, so a neighbour's wall path passing a glyph's
+      // tip was cut short where the cutter fits — 24 of the 90 routes on a
+      // nested letter sheet lost a span per level, silently (issue #914).
+      mask = buildMaskFromClipperPaths(offsetPaths(
+        activePaths,
+        tool.radius * DEFAULT_CLIPPER_SCALE,
+        ClipperLib.JoinType.jtRound,
+      ))
     }
     cache.set(key, mask)
     return mask
@@ -1499,6 +1643,63 @@ function generateEdgeRouteToolpathSingle(
   const clampMaskForZ = (z: number) => maskForZ(clampMaskCache, clampObstacles, z)
 
   /**
+   * Say when other parts, not clamps, cut an outside route's wall path short
+   * (issue #914). Before it a part nested where the cutter could not reach was
+   * skipped with no word at all. A clamp names itself (`clampBlockedCut`), so
+   * a blocked span is checked again against the parts alone — only where a
+   * clamp stands at that level, and only until the route has warned once.
+   */
+  const partMaskCache = new Map<string, ReturnType<typeof buildMaskFromClipperPaths>>()
+  const clampFrames = clampObstacles.map((clamp) => ({ clamp, frame: clipperPathsFrame(clamp.paths) }))
+  /** Could a clamp standing in `minZ..maxZ` reach a guide in `loops`, `clearance` away? */
+  function clampNear(loops: Point[][], minZ: number, maxZ: number, clearance: number): boolean {
+    const guide = pointsFrame(loops)
+    if (guide === null) return false
+    const reach = growFrame(guide, clearance + tool.diameter)
+    return clampFrames.some(({ clamp, frame }) => clamp.maxZ >= minZ && clamp.minZ <= maxZ
+      && (frame === null || framesOverlap(frame, reach)))
+  }
+  function warnPartsBlockingRoute(name: string): ((z: number, fragment: ClosedGuideFragment) => void) | undefined {
+    if (allAdditiveObstacles.length === 0) return undefined
+    let warned = false
+    return (z, fragment) => {
+      if (warned) return
+      // With no clamp near the span at this level the mask that blocked it
+      // held parts alone, and the split already answered the question.
+      if (clampNear([fragment.points], z, z, tool.radius)) {
+        const partMask = maskForZ(partMaskCache, allAdditiveObstacles, z)
+        if (!partMask || !guideFragmentsBlockedBy([fragment], partMask.paths)) return
+      }
+      warned = true
+      appendUniqueWarning(warnings, { code: 'edgeRouteBlockedByParts', params: { name } })
+    }
+  }
+
+  /**
+   * The same warning for a trochoidal guide, which is fragmented over its whole
+   * span at once. `guideObstacles` is the set the guide is fragmented by; it is
+   * the parts alone unless a clamp stands in the span.
+   */
+  function warnPartsBlockingGuide(
+    contours: Point[][],
+    topZ: number,
+    bottomZ: number,
+    guideObstacles: ClipperPath[],
+    name: string,
+  ): void {
+    if (allAdditiveObstacles.length === 0) return
+    const fragments: ClosedGuideFragment[] = contours.map((points) => ({ points, closed: true }))
+    const minZ = Math.min(topZ, bottomZ)
+    const maxZ = Math.max(topZ, bottomZ)
+    const parts = clampNear(contours, minZ, maxZ, trochoidalGuideOffset)
+      ? obstaclePathsForSpan(allAdditiveObstacles, topZ, bottomZ, trochoidalGuideOffset)
+      : guideObstacles
+    if (guideFragmentsBlockedBy(fragments, parts)) {
+      appendUniqueWarning(warnings, { code: 'edgeRouteBlockedByParts', params: { name } })
+    }
+  }
+
+  /**
    * Other retained features standing anywhere in this Z span, grown by
    * `clearance`. Serves both the trochoidal guide, which must keep a whole
    * orbit off them, and the XY lead's outside domain, which must keep the arc
@@ -1514,7 +1715,7 @@ function generateEdgeRouteToolpathSingle(
     const maxZ = Math.max(topZ, bottomZ)
     const activePaths = obstacles
       .filter((obstacle) => obstacle.maxZ >= minZ && obstacle.minZ <= maxZ)
-      .flatMap(({ paths }) => paths)
+      .flatMap((obstacle) => obstacleMaterial(obstacle, minZ))
     return unionPaths(offsetPaths(
       activePaths,
       clearance * DEFAULT_CLIPPER_SCALE,
@@ -1937,6 +2138,10 @@ function generateEdgeRouteToolpathSingle(
             referenceTarget.bottomZ,
             trochoidalGuideOffset,
           )
+          warnPartsBlockingGuide(
+            contours, referenceTarget.topZ, referenceTarget.bottomZ, guideObstacles,
+            routableTargets.map((target) => target.feature.name).join(', '),
+          )
           currentPosition = appendTrochoidalContoursAtLevels(
             moves,
             currentPosition,
@@ -1949,7 +2154,7 @@ function generateEdgeRouteToolpathSingle(
             outsideOrbitDirection,
             warnings,
             (from, to, z) => segmentOutsideForbiddenPaths(from, to, retainedWall)
-              && segmentOutsideForbiddenPaths(from, to, obstacles)
+              && segmentOutsideObstaclePaths(from, to, obstacles)
               && segmentOutsideForbiddenPaths(
                 from,
                 to,
@@ -1977,6 +2182,7 @@ function generateEdgeRouteToolpathSingle(
             regionMask, obstacleMaskForZ,
             outsideLeadForLevel(outsideLeadOptions(combinedDomain)),
             outsideEntryForLevel(outsideEntryPolicy(combinedDomain)),
+            warnPartsBlockingRoute(routableTargets.map((target) => target.feature.name).join(', ')),
           )
         }
       }
@@ -2031,6 +2237,7 @@ function generateEdgeRouteToolpathSingle(
           target.bottomZ,
           trochoidalGuideOffset,
         )
+        warnPartsBlockingGuide(contours, target.topZ, target.bottomZ, guideObstacles, target.feature.name)
         currentPosition = appendTrochoidalContoursAtLevels(
           moves,
           currentPosition,
@@ -2043,7 +2250,7 @@ function generateEdgeRouteToolpathSingle(
           outsideOrbitDirection,
           warnings,
           (from, to, z) => segmentOutsideForbiddenPaths(from, to, retainedWall)
-            && segmentOutsideForbiddenPaths(from, to, obstacles)
+            && segmentOutsideObstaclePaths(from, to, obstacles)
             && segmentOutsideForbiddenPaths(
               from,
               to,
@@ -2070,6 +2277,7 @@ function generateEdgeRouteToolpathSingle(
           regionMask, obstacleMaskForZ,
           outsideLeadForLevel(outsideLeadOptions(targetDomain)),
           outsideEntryForLevel(outsideEntryPolicy(targetDomain)),
+          warnPartsBlockingRoute(target.feature.name),
         )
       }
     }

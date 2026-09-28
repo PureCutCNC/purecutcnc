@@ -56,7 +56,7 @@ const ALL_CODES = [
   'carveTrochoidalMoveBudget', 'carveTrochoidalEntryBudget',
   'carveTrochoidalNeedsConstantDiameterTool',
   'edgeMixedDepthSpans', 'edgeNoCombinedContour', 'edgeFeatureNoCutDepth', 'edgeBandNoCutDepth',
-  'edgeNoContourForFeature', 'edgeNoInsideContour', 'edgeClosedProfilesOnly',
+  'edgeNoContourForFeature', 'edgeRouteBlockedByParts', 'edgeNoInsideContour', 'edgeClosedProfilesOnly',
   'surface3dNeedsModel', 'surface3dNotMesh', 'surface3dLoadFailed', 'surface3dStockToLeaveTooLarge',
   'surface3dDegenerateBoundary', 'surface3dNoDepthInPocket', 'surface3dNoStepLevels', 'surface3dOpenMesh',
   'surface3dFloorCollapsed', 'surface3dNoLevels', 'surface3dMeshTooDense',

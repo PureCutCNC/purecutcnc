@@ -54,6 +54,7 @@
 // wall is its own source of marking. One constant-radius arc at one feed is
 // what round-trips to a single G2/G3.
 
+import ClipperLib from 'clipper-lib'
 import type { Operation, OperationKind, Point } from '../../types/project'
 import { usesTangentLinks } from './pocketPatterns'
 import {
@@ -67,8 +68,9 @@ import {
   type TangentLinkDomainRegion,
 } from './tangentLink'
 import { entryBoundarySafety } from './entry'
-import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
-import type { ToolpathMove, ToolpathPoint } from './types'
+import { DEFAULT_FLATTEN_ARC_STEP, fromClipperPath, toClipperPath } from './geometry'
+import { unionClipperPaths } from './modelProtection'
+import type { ClipperPath, ToolpathMove, ToolpathPoint } from './types'
 import type { ToolpathWarning } from './warningCodes'
 
 const LEAD_EPSILON = 1e-9
@@ -331,6 +333,14 @@ export function roughingRingIsTheFinishedWall(operation: Operation): boolean {
  * box are dropped, which changes no answer the domain gives — the box is
  * convex, so a point inside it is always nearer the box edge than anything
  * beyond it, and no segment inside it can cross such an island.
+ *
+ * A keep-out can have holes (issue #914): a closed ring of parts merges into
+ * one loop with a hole, and a part nested in another part's counter sits in
+ * one. A hole is wound against its outer loop, as Clipper's union leaves it.
+ * Taken as one more island, the hole loop would wall off the open air inside
+ * it — the whole space around a route inside a closed ring — so a keep-out
+ * with holes is subtracted from the box instead, and each piece of open air
+ * becomes its own region.
  */
 export function domainOutsideLoops(
   keepOut: Point[][],
@@ -342,8 +352,16 @@ export function domainOutsideLoops(
   if (loops.length === 0 || !box) return []
   const lo = { x: box.minX - reach, y: box.minY - reach }
   const hi = { x: box.maxX + reach, y: box.maxY + reach }
+  const outer = [lo, { x: hi.x, y: lo.y }, hi, { x: lo.x, y: hi.y }]
+  const keepOutPaths = loops.map((loop) => toClipperPath(loop))
+  if (keepOutPaths.some((path) => ClipperLib.Clipper.Area(path) < 0)) {
+    const merged = unionClipperPaths(keepOutPaths)
+    if (merged.some((path) => ClipperLib.Clipper.Area(path) < 0)) {
+      return openAirRegions(toClipperPath(outer), merged)
+    }
+  }
   return [{
-    outer: [lo, { x: hi.x, y: lo.y }, hi, { x: lo.x, y: hi.y }],
+    outer,
     islands: frameLoops
       ? loops.filter((loop) => {
         const island = loopsBox([loop])!
@@ -351,6 +369,41 @@ export function domainOutsideLoops(
       })
       : loops,
   }]
+}
+
+interface OpenAirNode {
+  Contour(): ClipperPath
+  Childs(): OpenAirNode[]
+}
+
+/**
+ * `box` less `keepOut`, one `{ outer, islands }` region per piece of open air.
+ * `keepOut` must be a union (outer loops wound one way, holes the other) so
+ * nonzero filling reads its holes as open.
+ */
+function openAirRegions(box: ClipperPath, keepOut: ClipperPath[]): TangentLinkDomainRegion[] {
+  const clipper = new ClipperLib.Clipper()
+  clipper.AddPaths([box], ClipperLib.PolyType.ptSubject, true)
+  clipper.AddPaths(keepOut, ClipperLib.PolyType.ptClip, true)
+  const tree = new ClipperLib.PolyTree()
+  clipper.Execute(
+    ClipperLib.ClipType.ctDifference,
+    tree,
+    ClipperLib.PolyFillType.pftNonZero,
+    ClipperLib.PolyFillType.pftNonZero,
+  )
+  const regions: TangentLinkDomainRegion[] = []
+  const visit = (node: OpenAirNode) => {
+    for (const child of node.Childs()) {
+      regions.push({
+        outer: fromClipperPath(child.Contour()),
+        islands: child.Childs().map((hole) => fromClipperPath(hole.Contour())),
+      })
+      for (const hole of child.Childs()) visit(hole)
+    }
+  }
+  visit(tree as unknown as OpenAirNode)
+  return regions.filter((region) => region.outer.length >= 3)
 }
 
 function loopsBox(loops: Point[][]): { minX: number, minY: number, maxX: number, maxY: number } | null {

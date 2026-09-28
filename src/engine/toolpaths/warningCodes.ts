@@ -272,6 +272,7 @@ export type ToolpathWarningCode =
   | 'edgeFeatureNoCutDepth'
   | 'edgeBandNoCutDepth'
   | 'edgeNoContourForFeature'
+  | 'edgeRouteBlockedByParts'
   | 'edgeNoInsideContour'
   | 'edgeClosedProfilesOnly'
   // finish surface parallel / cleanup / pocket floors

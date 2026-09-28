@@ -108,6 +108,7 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.edgeFeatureNoCutDepth': '{name} ne laisse aucune profondeur de coupe après surépaisseur axiale',
   'warnings.edgeBandNoCutDepth': 'La bande {topZ} -> {bottomZ} ne laisse aucune profondeur de coupe après surépaisseur axiale',
   'warnings.edgeNoContourForFeature': 'Aucun contour valide n’a pu être généré pour {name}',
+  'warnings.edgeRouteBlockedByParts': 'Le contournage extérieur de {name} a été écarté des pièces voisines — une partie de son contour n’est pas découpée.',
   'warnings.edgeNoInsideContour': 'Aucun contour intérieur valide n’a pu être généré pour la bande {topZ} -> {bottomZ}',
   'warnings.edgeClosedProfilesOnly': 'Les opérations de contournage ne prennent en charge que des profils cibles fermés',
   'warnings.subtractChainLimitReached': "Les soustractions chaînées ont atteint la limite de {limit} entités pour {operation}, la région s'arrête donc avant la géométrie plus loin dans la chaîne",
