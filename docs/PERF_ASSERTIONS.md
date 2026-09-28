@@ -48,6 +48,19 @@ measuring nothing. Two worked examples:
 | `classifier.test.ts` | bbox reject gating pairwise nesting | 2,980 **disjoint** rects — gate rejects nearly every pair | 200 **concentric** rects — every bbox pair overlaps, so the gate never rejects |
 | `importBulk.test.ts` | suffix cursor in `createNameAllocator` | 2,980 **repeated** names — every one hits the suffix loop | 2,980 **unique** names — never `taken`, so they return before the loop |
 
+## The CPU clock is coarse on Windows
+
+`process.cpuUsage()` advances in 15.625ms scheduler ticks on Windows, against
+about a microsecond on Linux and macOS. A single run shorter than a tick reads 0
+on most reps, so a raw minimum collapses to 0 and the ratio to `Infinity` — the
+Windows desktop build failed `entrySearchPerf.test.ts` and `meshSlicing.test.ts`
+exactly this way (#903). `cpuRatio` handles it: each rep repeats the work until
+its summed readings span 20 clock steps and reports the per-run mean, which
+leaves Linux and macOS at one run per rep. Nothing to do in a new test beyond
+using `cpuRatio`/`bestCpuMs` rather than reading `process.cpuUsage()` directly;
+a hand-rolled size ratio (`arcReconstruction.test.ts`) must skip, loudly, when
+its baseline is below the clock step.
+
 ## A ratio between two input sizes is a different instrument
 
 A size ratio sees a complexity change but is blind to a constant factor: on the

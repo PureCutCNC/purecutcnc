@@ -146,8 +146,9 @@ function walk(entry: string): Walk {
   return { files, packages, chains }
 }
 
+/** `src/`-relative with `/` separators, so it compares against the prefixes above on Windows too. */
 function short(file: string): string {
-  return relative(SRC, file)
+  return relative(SRC, file).replaceAll('\\', '/')
 }
 
 console.log('\nWorker import graph')
