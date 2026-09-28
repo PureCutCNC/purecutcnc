@@ -58,6 +58,11 @@ function walk(dir: string): string[] {
   return out
 }
 
+/** `src/`-relative with `/` separators, so it matches `EXECUTORS` on Windows too. */
+function srcRelative(file: string): string {
+  return relative(SRC, file).replaceAll('\\', '/')
+}
+
 /** Strip comments so a mention in prose is not read as a call. */
 function code(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
@@ -111,7 +116,7 @@ test('the scan found the application sources', () => {
 test('only the executors call computeOperationToolpath', () => {
   const offenders: string[] = []
   for (const file of files) {
-    const rel = relative(SRC, file)
+    const rel = srcRelative(file)
     if (EXECUTORS.has(rel)) continue
     if (/\bcomputeOperationToolpath\s*\(/.test(code(readFileSync(file, 'utf8')))) offenders.push(rel)
   }
@@ -129,7 +134,7 @@ test('no application module calls a per-kind generator directly', () => {
   const generators = /\bgenerate(Pocket|EdgeRoute|VCarve|VCarveMedial|SurfaceClean|RoughSurface|FinishSurface|FinishSurfaceCleanup|FollowLine|Drilling)Toolpath\s*\(/
   const offenders: string[] = []
   for (const file of files) {
-    const rel = relative(SRC, file)
+    const rel = srcRelative(file)
     if (EXECUTORS.has(rel)) continue
     if (generators.test(code(readFileSync(file, 'utf8')))) offenders.push(rel)
   }
