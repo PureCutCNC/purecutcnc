@@ -17,7 +17,8 @@
 import type { ToolLibraryEntry } from '../../../toolLibrary'
 import type { OperationKind, OperationTarget, Project, Tool } from '../../../types/project'
 import { convertLength, convertToolUnits } from '../../../utils/units'
-import { autoToolDiameterLimit, capAutoToolDiameter, preferredToolTypes, targetFeatureSize } from '../toolSelection'
+import { HELICAL_BORE_MAX_HOLE_TO_TOOL_RATIO } from '../../toolpaths/drilling'
+import { AUTO_TOOL_MAX_DIAMETER_INCH, autoToolDiameterLimit, capAutoToolDiameter, preferredToolTypes, targetFeatureSize } from '../toolSelection'
 import type { CamPlanTool } from './types'
 
 export const CAM_PLAN_FINISH_REST_TOOL_FRACTION = 0.5
@@ -139,9 +140,15 @@ export function chooseDrillingTool(
   )
   if (matchingDrill) return { tool: matchingDrill, drillType: 'simple', options: ranked }
 
+  // A helical bore needs an endmill small enough to orbit, big enough that the
+  // generator will not refuse the hole, and within the same auto-pick ceiling
+  // as the pocket that would otherwise clear it.
+  const helicalCeiling = convertLength(AUTO_TOOL_MAX_DIAMETER_INCH, 'inch', project.meta.units)
   const helical = ranked.find((candidate) =>
     candidate.tool.type === 'flat_endmill'
-    && candidate.tool.diameter <= holeDiameter * CAM_PLAN_HELICAL_BORE_FRACTION + 1e-9,
+    && candidate.tool.diameter <= holeDiameter * CAM_PLAN_HELICAL_BORE_FRACTION + 1e-9
+    && candidate.tool.diameter <= helicalCeiling + 1e-9
+    && holeDiameter - candidate.tool.diameter * HELICAL_BORE_MAX_HOLE_TO_TOOL_RATIO <= 1e-9,
   )
   return helical ? { tool: helical, drillType: 'helical', options: ranked } : null
 }
