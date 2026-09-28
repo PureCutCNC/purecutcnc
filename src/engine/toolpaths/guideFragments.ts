@@ -99,6 +99,53 @@ export function pointInForbiddenPaths(point: Point, paths: Point[][]): boolean {
   return inside
 }
 
+/** A forbidden loop with its bounding box, so a query that cannot reach it skips it. */
+interface BoxedPath {
+  points: Point[]
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
+/**
+ * How far a box is grown before a query is refused by it, in project units.
+ *
+ * Only a spare for the tests' own tolerances, which are all orders of magnitude
+ * smaller: `pointOnSegment` and the collinear branch of
+ * `segmentIntersectionParameters` accept a point about `EPSILON / length`
+ * off an edge, and anything shorter than √EPSILON is already rejected, which
+ * bounds that at 3e-5. A query outside the grown box therefore gets exactly the
+ * answer it would have got from the full test, so skipping cannot change a
+ * fragment — only how long it takes to find it.
+ */
+const BOX_PAD = 1e-4
+
+function boxPath(points: Point[]): BoxedPath {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const point of points) {
+    if (point.x < minX) minX = point.x
+    if (point.x > maxX) maxX = point.x
+    if (point.y < minY) minY = point.y
+    if (point.y > maxY) maxY = point.y
+  }
+  return { points, minX: minX - BOX_PAD, minY: minY - BOX_PAD, maxX: maxX + BOX_PAD, maxY: maxY + BOX_PAD }
+}
+
+/**
+ * `pointInForbiddenPaths` over boxed loops. A point outside a loop's box is
+ * neither on it nor crossed an odd number of times by a ray from it, so that
+ * loop cannot flip the parity.
+ */
+function pointInBoxedPaths(point: Point, paths: BoxedPath[]): boolean {
+  let inside = false
+  for (const path of paths) {
+    if (point.x < path.minX || point.x > path.maxX || point.y < path.minY || point.y > path.maxY) continue
+    if (pointInPath(point, path.points)) inside = !inside
+  }
+  return inside
+}
+
 export function segmentIntersectionParameters(from: Point, to: Point, edgeFrom: Point, edgeTo: Point): number[] {
   const dx = to.x - from.x
   const dy = to.y - from.y
@@ -161,9 +208,13 @@ export function splitClosedGuideByForbiddenPaths(
   const normalizedGuide = normalizeClosedGuide(guide)
   if (normalizedGuide.length < 3 || !(clipperScale > 0)) return []
 
+  // Every guide segment is tested against every loop, and every interval
+  // midpoint for containment, so a nested sheet's masks made this the route's
+  // hot loop. The boxes let both skip the loops a query cannot reach (#914).
   const forbidden = forbiddenPaths
     .map((path) => normalizeClipperPath(path, clipperScale))
     .filter((path) => path.length >= 3)
+    .map(boxPath)
   if (forbidden.length === 0) {
     return keep === 'outside' ? [{ points: normalizedGuide, closed: true }] : []
   }
@@ -184,13 +235,19 @@ export function splitClosedGuideByForbiddenPaths(
     const from = normalizedGuide[index]
     const to = normalizedGuide[(index + 1) % normalizedGuide.length]
     const parameters = [0, 1]
+    const segMinX = Math.min(from.x, to.x)
+    const segMaxX = Math.max(from.x, to.x)
+    const segMinY = Math.min(from.y, to.y)
+    const segMaxY = Math.max(from.y, to.y)
     for (const path of forbidden) {
-      for (let edgeIndex = 0; edgeIndex < path.length; edgeIndex += 1) {
+      if (segMaxX < path.minX || segMinX > path.maxX || segMaxY < path.minY || segMinY > path.maxY) continue
+      const points = path.points
+      for (let edgeIndex = 0; edgeIndex < points.length; edgeIndex += 1) {
         appendAll(parameters, segmentIntersectionParameters(
           from,
           to,
-          path[edgeIndex],
-          path[(edgeIndex + 1) % path.length],
+          points[edgeIndex],
+          points[(edgeIndex + 1) % points.length],
         ))
       }
     }
@@ -204,7 +261,7 @@ export function splitClosedGuideByForbiddenPaths(
       const startPoint = pointAt(from, to, start)
       const endPoint = pointAt(from, to, end)
       const midpoint = pointAt(from, to, (start + end) / 2)
-      const forbiddenAtMidpoint = pointInForbiddenPaths(midpoint, forbidden)
+      const forbiddenAtMidpoint = pointInBoxedPaths(midpoint, forbidden)
       const retain = keep === 'inside' ? forbiddenAtMidpoint : !forbiddenAtMidpoint
       if (!retain) {
         hasDiscardedInterval = true
