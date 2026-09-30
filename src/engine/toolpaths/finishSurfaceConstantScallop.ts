@@ -30,8 +30,9 @@ import {
 } from './modelProtection'
 import {
   buildSurfaceSlopeDomain,
-  createSurfaceDomainLinkCheck,
+  createSurfaceDomainCheck,
   intersectSurfaceSlopeDomain,
+  type SurfaceDomainCheck,
 } from './finishSurfaceSlope'
 import {
   chooseHeightMapCellSize,
@@ -227,11 +228,15 @@ function densify(points: Point[], closed: boolean, maximumStep: number): Point[]
 
 function splitByDomain(
   contour: PlannedContour,
-  linkInside: (from: Point, to: Point) => boolean,
+  domain: SurfaceDomainCheck,
 ): Array<{ points: Point[]; closed: boolean }> {
   if (contour.boundary) return [{ points: contour.points, closed: true }]
   const points = contour.points
   const edgeCount = contour.closed ? points.length : points.length - 1
+  // Each vertex is the end of one edge and the start of the next, so its
+  // containment is tested once here rather than twice through `linkInside`
+  // (issue #922). The predicates are pure, so the verdicts are unchanged.
+  const inside = points.map((point) => domain.containsPoint(point))
   const fragments: Array<{ points: Point[]; closed: boolean }> = []
   let current: Point[] = []
   let allInside = true
@@ -241,8 +246,9 @@ function splitByDomain(
   }
   for (let index = 0; index < edgeCount; index += 1) {
     const from = points[index]
-    const to = points[(index + 1) % points.length]
-    if (!linkInside(from, to)) {
+    const toIndex = (index + 1) % points.length
+    const to = points[toIndex]
+    if (!(inside[index] && inside[toIndex] && domain.segmentStaysInside(from, to))) {
       allInside = false
       flush()
       continue
@@ -482,16 +488,16 @@ function emitContours(
 ): { moves: ToolpathMove[]; stepLevels: Set<number> } {
   const moves: ToolpathMove[] = []
   const stepLevels = new Set<number>()
-  const linkInside = createSurfaceDomainLinkCheck(domain)
+  const domainCheck = createSurfaceDomainCheck(domain)
   const axialLeave = Math.max(0, operation.stockToLeaveAxial)
-  const safeLinkCheck = buildLinkCheck(heightMap, tool, axialLeave, linkInside, retainedCheck)
+  const safeLinkCheck = buildLinkCheck(heightMap, tool, axialLeave, domainCheck.linkInside, retainedCheck)
   const linkMaxDistance = spacing * LINK_REACH_IN_SPACINGS
   // Every pass is lifted before any is emitted, because the travel order is
   // over the lifted pieces and a contour does not know how many it will produce.
   const pieces: LiftedContour[] = []
   for (const contour of applyDirection(contours, operation.cutDirection)) {
     const dense = { ...contour, points: densify(contour.points, contour.closed, heightMap.cellSize) }
-    for (const fragment of splitByDomain(dense, linkInside)) {
+    for (const fragment of splitByDomain(dense, domainCheck)) {
       const lifted = liftFragment(
         fragment,
         heightMap,
