@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npm run docs:check && npm run lint && npm run check:e2e-lanes && npm run check:colors && npm run check:portable-paths && npm run check:i18n && npx tsx scripts/build-icon-sprite.ts && tsc -b && npm test && vite build",
+    "build": "npx tsx scripts/run-build.ts",
     "check:colors": "npx tsx scripts/check-color-literals.ts",
     "check:e2e-lanes": "npx tsx scripts/check-e2e-lanes.ts",
     "check:i18n": "npx tsx scripts/check-i18n-format.ts",
