@@ -17,59 +17,33 @@
 import { test, expect } from './fixtures'
 
 test.describe('Tool library import dialog smoke', () => {
-  test('opens the dialog when trigger clicked', async ({ app }) => {
+  test('opens and closes by button, Escape and backdrop without mutation', async ({ app }) => {
     await app.page.getByRole('tab', { name: 'Tools' }).click()
     const trigger = app.page.getByRole('button', { name: /Import from library/ })
     await expect(trigger).toBeVisible()
-    await trigger.click()
-
     const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
-    await expect(dialog).toBeVisible()
+    const initialToolCount = await app.page.locator('.cam-tool-tree .tree-row--feature').count()
 
-    // Close button should be visible
+    await trigger.click()
+    await expect(dialog).toBeVisible()
     const closeXButton = dialog.locator('.dialog-close')
     await expect(closeXButton).toBeVisible()
-
-    // Search input should be visible and focused
     const searchInput = dialog.getByRole('searchbox')
     await expect(searchInput).toBeVisible()
     await expect(searchInput).toBeFocused()
-  })
 
-  test('closes via close button without mutation', async ({ app }) => {
-    await app.page.getByRole('tab', { name: 'Tools' }).click()
-    await app.page.getByRole('button', { name: /Import from library/ }).click()
-
-    const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
-    await expect(dialog).toBeVisible()
-
-    const initialToolCount = await app.page.locator('.cam-tool-tree .tree-row--feature').count()
-
-    await dialog.locator('.dialog-close').click()
+    await closeXButton.click()
     await expect(dialog).not.toBeVisible()
+    expect(await app.page.locator('.cam-tool-tree .tree-row--feature').count()).toBe(initialToolCount)
 
-    const finalToolCount = await app.page.locator('.cam-tool-tree .tree-row--feature').count()
-    expect(finalToolCount).toBe(initialToolCount)
-  })
-
-  test('closes via Escape key', async ({ app }) => {
-    await app.page.getByRole('tab', { name: 'Tools' }).click()
-    await app.page.getByRole('button', { name: /Import from library/ }).click()
-
-    const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
+    await trigger.click()
     await expect(dialog).toBeVisible()
-
     await app.page.keyboard.press('Escape')
     await expect(dialog).not.toBeVisible()
-  })
+    await expect(trigger).toBeFocused()
 
-  test('closes via backdrop click', async ({ app }) => {
-    await app.page.getByRole('tab', { name: 'Tools' }).click()
-    await app.page.getByRole('button', { name: /Import from library/ }).click()
-
-    const dialog = app.page.getByRole('dialog', { name: 'Import tools from library' })
+    await trigger.click()
     await expect(dialog).toBeVisible()
-
     await app.page.locator('.dialog-backdrop').click({ position: { x: 2, y: 2 } })
     await expect(dialog).not.toBeVisible()
   })
@@ -215,17 +189,6 @@ test.describe('Tool library import dialog smoke', () => {
 
     const importButton = dialog.locator('.dialog-footer .btn-primary')
     await expect(importButton).toBeDisabled()
-  })
-
-  test('restores focus to trigger on close', async ({ app }) => {
-    await app.page.getByRole('tab', { name: 'Tools' }).click()
-
-    const trigger = app.page.getByRole('button', { name: /Import from library/ })
-    await trigger.click()
-
-    await app.page.keyboard.press('Escape')
-
-    await expect(trigger).toBeFocused()
   })
 
   test('selected tool remains counted and importable after search hides it', async ({ app }) => {

@@ -267,14 +267,12 @@ test.describe('Bulk properties browser smoke', () => {
   test.describe('Tablet (touch) canvas multi-select', () => {
     test.use({ hasTouch: true, viewport: { width: 1024, height: 768 } })
 
-    test('coarse-pointer media query matches', async ({ app }) => {
+    test('tap Tab A then Tab C selects two tabs and shows bulk panel', async ({ app, ui }) => {
+      // The tap path must actually run with the coarse pointer it claims to cover.
       const coarse = await app.page.evaluate(() =>
         window.matchMedia('(pointer: coarse)').matches,
       )
       expect(coarse).toBe(true)
-    })
-
-    test('tap Tab A then Tab C selects two tabs and shows bulk panel', async ({ app, ui }) => {
       await seedProject(app.page, BULK_FIXTURE_JSON)
 
       // The tablet command bar renders a "Multi" button for multi-select mode.

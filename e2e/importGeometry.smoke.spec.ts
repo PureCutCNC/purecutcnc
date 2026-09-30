@@ -63,22 +63,14 @@ function largeStrokeOnlySvg(): string {
 
 // ── Dialog wiring ──────────────────────────────────────────────────────
 
-test('dialog opens and closes', async ({ app }) => {
+test('empty import dialog opens, gates import and closes', async ({ app }) => {
   const dialog = await openImportDialog(app.page)
-  await app.page.locator('.dialog-close').click()
-  await expect(dialog).not.toBeVisible({ timeout: 3000 })
-})
-
-test('import button disabled without file', async ({ app }) => {
-  await openImportDialog(app.page)
-  const importBtn = app.page.locator('.dialog-footer .btn-primary')
+  const importBtn = dialog.locator('.dialog-footer .btn-primary')
   await expect(importBtn).toBeDisabled()
-})
-
-test('geometry mode control hidden before file loaded', async ({ app }) => {
-  const dialog = await openImportDialog(app.page)
   const modeSelect = dialog.locator('[data-testid="import-geometry-mode"]')
   await expect(modeSelect).not.toBeVisible()
+  await app.page.locator('.dialog-close').click()
+  await expect(dialog).not.toBeVisible({ timeout: 3000 })
 })
 
 // ── SVG: Auto mode ─────────────────────────────────────────────────────
