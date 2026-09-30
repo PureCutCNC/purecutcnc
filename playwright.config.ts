@@ -23,7 +23,7 @@ export default defineConfig({
   fullyParallel: !isCI,
   timeout: 60000,
   reporter: isCI
-    ? [['github'], ['html', { outputFolder: 'playwright-report', open: 'never' }]]
+    ? [['github'], ['json', { outputFile: 'test-results/playwright-results.json' }], ['html', { outputFolder: 'playwright-report', open: 'never' }]]
     : 'list',
   expect: { timeout: 10000 },
   use: {

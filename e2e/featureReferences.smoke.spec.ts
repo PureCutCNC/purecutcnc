@@ -42,14 +42,12 @@ import {
 // ── Spec ────────────────────────────────────────────────────────────
 
 test.describe('Feature references browser smoke', () => {
-  // ── 1. Boots clean ─────────────────────────────────────────────
-
-  test('app boots clean — canvas + feature tree present', async ({ app, ui }) => {
-    await expect(ui.canvas.any(app.page)).toBeAttached()
-    await expect(ui.tree.rows(app.page).first()).toBeAttached()
-  })
+  // ── 1. Boots clean and feature-tree drag ──────────────────────
 
   test('HTML5 drag reorders project features and folders', async ({ app, ui }) => {
+    // The default project must boot with a canvas and feature tree before seeding.
+    await expect(ui.canvas.any(app.page)).toBeAttached()
+    await expect(ui.tree.rows(app.page).first()).toBeAttached()
     await seedLinkedProject(app.page)
 
     await rowByName(app.page, 'Linked B').dragTo(rowByName(app.page, 'Linked A'))

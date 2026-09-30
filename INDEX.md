@@ -12,6 +12,7 @@ Map of the repo. Start here when picking up new work. Each entry is a one-line s
 - [DRAWING_MODES_TUTORIAL_VOICEOVER.md](DRAWING_MODES_TUTORIAL_VOICEOVER.md) — editable narration source for the Drawing Modes tutorial video
 - [src/](src/INDEX.md) — application source (React + TS). **See its INDEX for the breakdown.**
 - [src-tauri/](src-tauri/) — Tauri (Rust) wrapper for desktop builds
+- [e2e/](e2e/README.md) — Playwright browser coverage, including the split CAM operation and surface-finish specs, and CI lane membership
 - [scripts/](scripts/INDEX.md) — quality gates, build/codegen tools, optional agent-dispatch harness, and one-off diagnostics
 - [tools/resume-work/](tools/resume-work/INDEX.md) — transcript-backed `/resume-work` handoff reader for agents taking over a worktree
 - [tools/manual-impact/](tools/manual-impact/INDEX.md) — parser for the PR description's Manual impact section; the `manual-impact` workflow checks it on every PR and turns it into a user-manual issue on merge (#818)

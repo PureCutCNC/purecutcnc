@@ -1,12 +1,9 @@
 # e2e — Browser Smoke (Playwright)
 
-Thin, repeatable browser smoke run before manual testing sessions and in PR CI.
-Covers DOM render + menu→action wiring. Does **NOT** assert geometry or
-WebGL canvas contents — those are owned by `npm test`. One deliberate
-exception: `feedColours.smoke.spec.ts` samples 2D canvas pixels, because
-the feed-colour ramp (issue #498) is a rendering contract that only pixels
-can prove; it also asserts the data-driven feed-colour legend via DOM
-selectors (issue #535), the other half of that contract.
+Browser tests cover rendered interactions, persistence, workers, and selected
+canvas/WebGL output. Structural tests own the broad geometry and machine-output
+matrices; browser tests exercise the wiring and rendering boundaries they cannot
+reach. Feed-colour and GPU/simulation specs include pixel-level checks.
 
 ## Quick start
 
@@ -28,20 +25,23 @@ PURECUT_E2E_ISOLATED=1 PURECUT_E2E_PORT=1431 npm run test:e2e
 
 ## CI gate
 
-Pull requests run three logical E2E lanes on separate runners. Each runner
-keeps the safe CI configuration of two workers with per-file parallelism
-disabled, so the split reduces elapsed time without increasing browser or Vite
-load inside a runner:
+Pull requests run four E2E lanes on separate runners. Each runner uses two
+workers with per-file parallelism disabled. The aggregate required `e2e` check
+passes only when every lane succeeds. The JSON report and retry traces are
+uploaded on every run; the HTML report is uploaded on failures.
 
-| Lane | Command | Specs |
-|------|---------|-------|
-| Settings | `npm run test:e2e:settings` | appearance, units, languages, language manager, theme manager |
-| Project input | `npm run test:e2e:project-input` | feature references, import geometry, creation targets |
-| Workflow UI | `npm run test:e2e:workflow-ui` | CAM operations, G-code export, motion debug, overlap selection, viewport views, panel handles |
+| Lane | Command | Coverage |
+|------|---------|----------|
+| Settings and import | `npm run test:e2e:settings` | Appearance, localization, themes, units, machines, tool library, geometry import |
+| Project editing | `npm run test:e2e:project-input` | Feature references, bulk edits, model orientation, distribution, nesting, text and sketch sessions |
+| CAM and interaction | `npm run test:e2e:workflow-ui` | CAM operations and surface finish, export, selection, panels, simulation and WebGL recovery |
+| Generation and rendering | `npm run test:e2e:generation` | Main/worker generation, parity, stop and resume, GPU/toolpath display |
 
-The aggregate `e2e` check succeeds only when every lane succeeds, preserving
-the required PR gate. Each failed lane uploads its own Playwright report and
-test results. `npm run test:e2e` remains the full local-suite command.
+The CAM surface-finish tests live in `camSurfaceFinish.smoke.spec.ts` so they can
+run beside other CAM interactions. Lane assignments were balanced from PR #930's per-file timings; future moves should use fresh CI reports.
+
+`npm run check:e2e-lanes` enforces exactly one lane per spec. `npm run test:e2e`
+remains the full local-suite command.
 
 ## Scaffolding (read before writing a test)
 

@@ -4,6 +4,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+concurrency:
+  group: pr-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,7 +26,27 @@ jobs:
         run: npm ci
 
       - name: Build
+        env:
+          RUN_TESTS_REPORT: test-results/structural-timings.json
+          BUILD_PHASE_REPORT: test-results/build-phases.json
         run: npm run build
+
+      - name: Install Playwright Chromium for packaged-worker smoke
+        run: npx playwright install chromium
+
+      - name: Check packaged worker startup
+        run: npm run check:worker-production
+
+      - name: Upload build timing reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-timings
+          path: |
+            test-results/build-phases.json
+            test-results/structural-timings.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   e2e-lanes:
     name: E2E - ${{ matrix.lane }}
@@ -32,18 +56,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - lane: Settings
+          - lane: Settings and import
             command: test:e2e:settings
-          - lane: Project input
+          - lane: Project editing
             command: test:e2e:project-input
-          - lane: Workflow UI
+          - lane: CAM and interaction
             command: test:e2e:workflow-ui
-          # Split out on runtime grounds: Workflow UI is already the longest
-          # lane (8m10s against ~4m for the others), and these tests construct
-          # real Workers, so each pulls a multi-megabyte chunk from the dev
-          # server on top of that. The lanes exist as a parallel matrix, so a
-          # small fourth lane costs less wall-clock than growing the longest.
-          - lane: Generation backend
+          # The GPU visibility spec runs beside real worker startup, using the
+          # measured spare capacity of this lane rather than competing with CAM.
+          - lane: Generation and rendering
             command: test:e2e:generation
 
     steps:
@@ -70,15 +91,23 @@ jobs:
       - name: Run Playwright e2e lane
         run: npm run ${{ matrix.command }}
 
-      - name: Upload Playwright failure artifacts
+      - name: Upload Playwright results and retry traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results-${{ matrix.lane }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload Playwright failure report
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ matrix.lane }}
-          path: |
-            playwright-report/
-            test-results/
+          path: playwright-report/
           if-no-files-found: ignore
+          retention-days: 14
 
   e2e:
     if: ${{ always() }}

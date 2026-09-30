@@ -13,9 +13,9 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { cpus } from 'node:os'
+import { cpus, freemem, totalmem } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, relative, resolve } from 'node:path'
 
@@ -49,6 +49,8 @@ function findTestFiles(root: string): string[] {
   return results.sort()
 }
 
+const startedAt = new Date().toISOString()
+const startedNs = process.hrtime.bigint()
 const testFiles = [srcRoot, toolsRoot].flatMap(findTestFiles)
 if (testFiles.length === 0) {
   console.error('run-tests: no .test.ts files found under src/ or tools/')
@@ -67,10 +69,13 @@ interface FileResult {
   output: string
   exitCode: number
   launchError?: string
+  durationMs: number
 }
 
 function runOne(file: string): Promise<FileResult> {
   const rel = relative(repoRoot, file)
+  const start = process.hrtime.bigint()
+  const durationMs = (): number => Math.round(Number(process.hrtime.bigint() - start) / 1e6)
   return new Promise((resolveResult) => {
     const child = spawn(testExecutable, [tsxCliPath, file], {
       cwd: repoRoot,
@@ -80,16 +85,18 @@ function runOne(file: string): Promise<FileResult> {
     child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
     child.stderr.on('data', (chunk: Buffer) => chunks.push(chunk))
     child.on('error', (error) => {
-      resolveResult({ rel, output: Buffer.concat(chunks).toString(), exitCode: 1, launchError: error.message })
+      resolveResult({ rel, output: Buffer.concat(chunks).toString(), exitCode: 1, launchError: error.message, durationMs: durationMs() })
     })
     child.on('close', (code) => {
-      resolveResult({ rel, output: Buffer.concat(chunks).toString(), exitCode: code ?? 1 })
+      resolveResult({ rel, output: Buffer.concat(chunks).toString(), exitCode: code ?? 1, durationMs: durationMs() })
     })
   })
 }
 
 let failed = 0
 let skipped = 0
+const results: Array<Pick<FileResult, 'rel' | 'exitCode' | 'durationMs' | 'launchError'>> = []
+const skippedFiles: string[] = []
 
 // Print skips up front so the parallel section only contains executed files.
 const queue: string[] = []
@@ -99,6 +106,7 @@ for (const file of testFiles) {
     process.stdout.write(`\n── ${rel} ─────────────────────────\n`)
     console.warn(`run-tests: SKIPPED ${rel} (in KNOWN_FAILING_TESTS — fix and re-enable)`)
     skipped += 1
+    skippedFiles.push(rel)
   } else {
     queue.push(file)
   }
@@ -109,8 +117,10 @@ for (const file of testFiles) {
 // unambiguous and the `── rel ──` / `run-tests: FAILED rel (exit N)` markers
 // consumed by scripts/build-summary.sh are unchanged.
 function reportResult(result: FileResult): void {
+  results.push({ rel: result.rel, exitCode: result.exitCode, durationMs: result.durationMs, launchError: result.launchError })
   process.stdout.write(`\n── ${result.rel} ─────────────────────────\n`)
   if (result.output.length > 0) process.stdout.write(result.output)
+  console.log(`run-tests: TIMING ${result.rel} ${result.durationMs}ms (exit ${result.exitCode})`)
   if (result.exitCode !== 0) {
     failed += 1
     if (result.launchError) {
@@ -136,6 +146,31 @@ async function runPool(): Promise<void> {
 }
 
 await runPool()
+
+const wallDurationMs = Math.round(Number(process.hrtime.bigint() - startedNs) / 1e6)
+const slowest = [...results].sort((a, b) => b.durationMs - a.durationMs).slice(0, 10)
+console.log(`run-tests: wall ${wallDurationMs}ms, ${jobs} jobs, ${failed} failed, ${skipped} skipped`)
+for (const result of slowest) console.log(`run-tests: SLOW ${result.rel} ${result.durationMs}ms`)
+
+const reportPath = process.env.RUN_TESTS_REPORT
+if (reportPath) {
+  const report = {
+    schemaVersion: 1,
+    startedAt,
+    wallDurationMs,
+    sumFileDurationMs: results.reduce((total, result) => total + result.durationMs, 0),
+    runner: { platform: process.platform, arch: process.arch, node: process.version, cpuCount: cpus().length, totalMemoryBytes: totalmem(), freeMemoryBytesAtEnd: freemem(), jobs },
+    discovered: testFiles.length,
+    executed: results.length,
+    failed,
+    skipped,
+    files: results.map(({ rel, exitCode, durationMs, launchError }) => ({ path: rel, exitCode, durationMs, ...(launchError ? { launchError } : {}) })).sort((a, b) => a.path.localeCompare(b.path)),
+    skippedFiles,
+  }
+  mkdirSync(dirname(resolve(reportPath)), { recursive: true })
+  writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n')
+  console.log(`run-tests: timing report ${reportPath}`)
+}
 
 if (failed > 0) {
   console.error(`\nrun-tests: ${failed} test file(s) failed`)
