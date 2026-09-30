@@ -913,6 +913,45 @@ test.describe('CAM operation browser smoke', () => {
     ).toHaveCount(0)
   })
 
+  test('booklet export shows it is busy and which stage is running (#924)', async ({ app, ui }) => {
+    await seedCamQuickOperationProject(app.page)
+
+    const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
+    await ui.contextMenu.item(carveMenu, 'Create operation').hover()
+    await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create pocket')
+    await expect(ui.operations.rows(app.page)).toHaveCount(1)
+
+    // Hold the save dialog open, so the export parks in its last stage and the
+    // busy state can be observed without racing the earlier ones.
+    await app.page.evaluate(() => {
+      const w = window as unknown as Record<string, unknown>
+      let release: () => void = () => {}
+      w.__releaseBookletSave = () => release()
+      w.showSaveFilePicker = () => new Promise((resolve) => {
+        release = () => resolve({
+          name: 'booklet.pdf',
+          createWritable: async () => ({ write: async () => {}, close: async () => {} }),
+        })
+      })
+    })
+
+    const button = app.page.getByRole('button', { name: 'Export booklet (PDF) for Pocket Rough' })
+    const status = app.page.locator('.cam-operation-status .cam-field-message')
+    await button.click()
+
+    await expect(button).toHaveAttribute('aria-busy', 'true')
+    await expect(button).toBeDisabled()
+    await expect(button.locator('.cam-generating-spinner')).toBeVisible()
+    await expect(status).toHaveText('Booklet: choose where to save the PDF...')
+    await expect(button).toHaveAttribute('title', 'Booklet: choose where to save the PDF...')
+
+    await app.page.evaluate(() => (window as unknown as { __releaseBookletSave: () => void }).__releaseBookletSave())
+    await expect(status).toHaveText('Booklet exported: booklet.pdf')
+    await expect(button).toHaveAttribute('aria-busy', 'false')
+    await expect(button).toBeEnabled()
+    await expect(button.locator('.cam-generating-spinner')).toHaveCount(0)
+  })
+
   test('toolpath warnings collapse to a coloured header with their count (#837)', async ({ app, ui }) => {
     await seedCamQuickOperationProjectWithLowTab(app.page)
 

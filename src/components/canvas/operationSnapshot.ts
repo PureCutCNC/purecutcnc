@@ -215,6 +215,23 @@ export async function renderOperationSnapshotPng(
     throw new Error('Failed to create operation booklet snapshot canvas.')
   }
 
+  drawOperationSnapshot(ctx, canvasW, canvasH, pixelRatio, project, operation, toolpath)
+  return canvasToPngBytes(canvas)
+}
+
+/**
+ * Draw the booklet's overview picture into any 2D context. Split from the PNG
+ * encoding so the drawing can be checked without a browser canvas.
+ */
+export function drawOperationSnapshot(
+  ctx: CanvasRenderingContext2D,
+  canvasW: number,
+  canvasH: number,
+  pixelRatio: number,
+  project: Project,
+  operation: Operation,
+  toolpath: ToolpathResult | null,
+): void {
   ctx.fillStyle = printPalette.snapshot.sheetBackground
   ctx.fillRect(0, 0, canvasW, canvasH)
 
@@ -260,7 +277,12 @@ export async function renderOperationSnapshotPng(
   }
 
   if (toolpath) {
-    drawToolpath(ctx, toolpath, vt, true, SNAPSHOT_TOOLPATH_VISIBILITY, 0.4, { simplifyForDisplay: false })
+    // Simplified the way the live canvas draws it (issue #924): connected
+    // same-feed runs merge up to a few canvas pixels at the snapshot's own
+    // scale, which the printed overview cannot resolve anyway. Stroking every
+    // emitted move made a dense surface finish the slowest step of the export.
+    // The booklet's figures come from the full toolpath in `report.ts`.
+    drawToolpath(ctx, toolpath, vt, true, SNAPSHOT_TOOLPATH_VISIBILITY, 0.4)
   }
 
   drawSnapshotOrigin(ctx, project, vt, pixelRatio)
@@ -268,6 +290,4 @@ export async function renderOperationSnapshotPng(
   ctx.fillStyle = printPalette.snapshot.labelText
   ctx.font = `${Math.round(14 * pixelRatio)}px "IBM Plex Mono", "SFMono-Regular", Consolas, monospace`
   ctx.fillText(operation.name, 22 * pixelRatio, 30 * pixelRatio)
-
-  return canvasToPngBytes(canvas)
 }

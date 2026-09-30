@@ -55,6 +55,7 @@ import {
 import { createOperationBookletPdf } from '../../engine/operationBooklet'
 import { ScallopHeightField } from './ScallopHeightField'
 import { renderOperationSnapshotPng } from '../canvas/operationSnapshot'
+import { afterNextPaint, BOOKLET_STAGE_MESSAGE_KEYS, bookletFileName, runBookletExport, type BookletStage } from './bookletExport'
 import { platform } from '../../platform'
 import { isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { getOperationAddHint, operationKindLabel, operationTargetFromSelection, operationTargetsRegion, selectAllCompatibleFeatureIds } from './operationValidity'
@@ -490,6 +491,7 @@ export function CAMPanel({
     text: string
   } | null>(null)
   const [exportingBookletOperationId, setExportingBookletOperationId] = useState<string | null>(null)
+  const [bookletExportStage, setBookletExportStage] = useState<BookletStage | null>(null)
   const [expandedCamSection, setExpandedCamSection] = useState<null | 'operation' | 'tool'>(null)
   const importLibraryButtonRef = useRef<HTMLButtonElement>(null)
   const camPlanButtonRef = useRef<HTMLButtonElement>(null)
@@ -921,56 +923,57 @@ export function CAMPanel({
     autoPlaceTabsForOperation(selectedOperation.id)
   }
 
+  const bookletBusy = exportingBookletOperationId !== null && exportingBookletOperationId === selectedOperation?.id
+
   async function handleExportBooklet() {
     if (!selectedOperation) {
       return
     }
 
-    setExportingBookletOperationId(selectedOperation.id)
-    setBookletExportMessage({ operationId: selectedOperation.id, text: camT('cam.booklet.building') })
-
     // Captured together, before the first await: the picture, the parameter
     // rows and the moves in the finished booklet must all describe one
     // revision, and every step below is asynchronous (issue #675).
     const captured = { project, operation: selectedOperation, documentKey }
+    const operationId = captured.operation.id
+    const showMessage = (text: string): void => setBookletExportMessage({ operationId, text })
+    setExportingBookletOperationId(operationId)
 
     try {
-      const toolpath = await requestToolpath(captured.operation.id, 'booklet')
-      if (!toolpath) {
-        setBookletExportMessage({ operationId: captured.operation.id, text: camT('cam.booklet.failed') })
-        return
-      }
-      const toolRecord = captured.operation.toolRef
-        ? captured.project.tools.find((tool) => tool.id === captured.operation.toolRef) ?? null
-        : null
-      const tool = toolRecord ? normalizeToolForProject(toolRecord, captured.project) : null
-      const snapshotPng = await renderOperationSnapshotPng(captured.project, captured.operation, toolpath)
-      const pdfBytes = await createOperationBookletPdf({
-        project: captured.project,
-        operation: captured.operation,
-        tool,
-        toolpath,
-        snapshotPng,
+      const outcome = await runBookletExport({
+        requestToolpath: () => requestToolpath(operationId, 'booklet'),
+        normalizeTool: () => {
+          const toolRecord = captured.operation.toolRef
+            ? captured.project.tools.find((tool) => tool.id === captured.operation.toolRef) ?? null
+            : null
+          return toolRecord ? normalizeToolForProject(toolRecord, captured.project) : null
+        },
+        renderSnapshot: (toolpath) => renderOperationSnapshotPng(captured.project, captured.operation, toolpath),
+        buildPdf: ({ tool, toolpath, snapshotPng }) => createOperationBookletPdf({
+          project: captured.project,
+          operation: captured.operation,
+          tool,
+          toolpath,
+          snapshotPng,
+        }),
+        save: (pdfBytes) => platform.saveBinaryFile(
+          bookletFileName(captured.project, captured.operation),
+          pdfBytes,
+          'pdf',
+          'application/pdf',
+        ),
+        yieldToPaint: afterNextPaint,
+      }, (stage) => {
+        setBookletExportStage(stage)
+        showMessage(camT(BOOKLET_STAGE_MESSAGE_KEYS[stage]))
       })
-      const safeProjectName = captured.project.meta.name.trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'project'
-      const safeOperationName = captured.operation.name.trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || 'operation'
-      const exportedPath = await platform.saveBinaryFile(
-        `${safeProjectName}_${safeOperationName}_booklet`,
-        pdfBytes,
-        'pdf',
-        'application/pdf',
-      )
-      setBookletExportMessage({
-        operationId: selectedOperation.id,
-        text: exportedPath ? camT('cam.booklet.exported', { path: exportedPath }) : camT('cam.booklet.cancelled'),
-      })
+      showMessage(outcome.status === 'exported'
+        ? camT('cam.booklet.exported', { path: outcome.path })
+        : outcome.status === 'cancelled' ? camT('cam.booklet.cancelled') : camT('cam.booklet.failed'))
     } catch (error) {
-      setBookletExportMessage({
-        operationId: selectedOperation.id,
-        text: error instanceof Error ? error.message : camT('cam.booklet.failed'),
-      })
+      showMessage(error instanceof Error ? error.message : camT('cam.booklet.failed'))
     } finally {
       setExportingBookletOperationId(null)
+      setBookletExportStage(null)
     }
   }
 
@@ -2346,16 +2349,20 @@ export function CAMPanel({
                   <button
                     className="tree-action-btn"
                     type="button"
-                    title={exportingBookletOperationId && exportingBookletOperationId === selectedOperation?.id
-                      ? camT('cam.operation.exporting')
+                    title={bookletBusy && bookletExportStage
+                      ? camT(BOOKLET_STAGE_MESSAGE_KEYS[bookletExportStage])
                       : camT('cam.panel.exportBookletForOperation')}
                     aria-label={selectedOperation
                       ? camT('cam.panel.exportBookletFor', { name: selectedOperation.name })
                       : camT('cam.panel.exportBookletForSelected')}
-                    disabled={!selectedOperation || exportingBookletOperationId === selectedOperation.id}
+                    aria-busy={bookletBusy}
+                    disabled={!selectedOperation || bookletBusy}
                     onClick={handleExportBooklet}
                   >
-                    <Icon id="booklet" />
+                    {/* The spinner replaces the icon while exporting (issue
+                        #924): the button is where the user clicked, and the
+                        stage text in the status strip may be scrolled away. */}
+                    {bookletBusy ? <span className="cam-generating-spinner" /> : <Icon id="booklet" />}
                   </button>
                   <button
                     className="tree-action-btn"
