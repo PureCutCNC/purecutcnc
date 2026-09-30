@@ -2067,14 +2067,21 @@ export function generateFinishSurfaceWaterline(
     return Number(aProjectedOnly) - Number(bProjectedOnly)
   })
 
-  const machiningEnvelopePaths = unionClipperPaths(
-    contourClipEnvelope
-      ? intersectClipperPaths(
-          waterlineLevels.flatMap((level) => level.contourPaths),
-          contourClipEnvelope,
-        )
-      : waterlineLevels.flatMap((level) => level.contourPaths),
-  )
+  // Every ring of every level in one union: about a third of the operation on
+  // LP-carved-top, and read only when a non-target add or model feature is
+  // active. Built on first use, at most once (issue #926).
+  let machiningEnvelopePaths: ClipperPath[] | null = null
+  const machiningEnvelope = (): ClipperPath[] => {
+    machiningEnvelopePaths ??= unionClipperPaths(
+      contourClipEnvelope
+        ? intersectClipperPaths(
+            waterlineLevels.flatMap((level) => level.contourPaths),
+            contourClipEnvelope,
+          )
+        : waterlineLevels.flatMap((level) => level.contourPaths),
+    )
+    return machiningEnvelopePaths
+  }
   // Name the clamps that actually ate into this operation, the same way the 2D
   // generators do. Judged at the deepest level the rings reach, against the
   // silhouette they are cut from: a clamp above every ring blocks nothing.
@@ -2096,7 +2103,7 @@ export function generateFinishSurfaceWaterline(
       tabExpansion: tool.radius,
       clampExpansion: tool.radius,
       includeTabs: false,
-      machiningEnvelopePaths: machiningEnvelopePaths.length > 0 ? machiningEnvelopePaths : undefined,
+      machiningEnvelopePaths: machiningEnvelope,
     })
     protectedPathsByZ.set(key, paths)
     return paths
@@ -2505,6 +2512,10 @@ export function generateFinishSurfaceWaterline(
       }
       previousRingHadCut = emittedRingCut
     }
+  }
+
+  if (operation.debugToolpath) {
+    warnings.push({ code: 'debug', params: { text: `Debug: waterline machining envelope ${machiningEnvelopePaths === null ? 'not built' : 'built'}` } })
   }
 
   const finalStepLevels = new Set<number>()

@@ -47,7 +47,13 @@ export interface ProtectedFootprintOptions {
   clampExpansion?: number
   tabExpansion?: number
   includeTabs?: boolean
-  machiningEnvelopePaths?: ClipperPath[]
+  /**
+   * Area the operation machines; a protected feature that contains all of it is
+   * the stock the part sits in, not an obstacle. Pass a function when the
+   * envelope is expensive: it is only called once a non-target add or model
+   * feature is active, which on most projects is never (issue #926).
+   */
+  machiningEnvelopePaths?: ClipperPath[] | (() => ClipperPath[])
 }
 
 export function offsetClipperPaths(paths: ClipperPath[], delta: number): ClipperPath[] {
@@ -594,7 +600,10 @@ export function buildProtectedFootprintPaths(
     }
 
     const expandedFootprints = offsetClipperPaths(featureFootprintPaths(feature), featureExpansion)
-    if (pathsContainEnvelope(expandedFootprints, options.machiningEnvelopePaths)) continue
+    const envelope = typeof options.machiningEnvelopePaths === 'function'
+      ? options.machiningEnvelopePaths()
+      : options.machiningEnvelopePaths
+    if (pathsContainEnvelope(expandedFootprints, envelope)) continue
     appendAll(protectedPaths, expandedFootprints)
   }
 
