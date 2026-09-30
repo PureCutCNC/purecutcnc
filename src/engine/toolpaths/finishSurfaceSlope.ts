@@ -17,6 +17,7 @@
 import ClipperLib from 'clipper-lib'
 import type { Operation, Point } from '../../types/project'
 import { addOpenSubject, openPathsFromPolyTree } from '../clipperOpenPaths'
+import { indexClipperPath, indexedEdgeBoundsOverlap, pointInIndexedPath, type IndexedClipperPath } from './clipperPathIndex'
 import type { HeightMap } from './finishSurfaceParallel'
 import { DEFAULT_CLIPPER_SCALE } from './geometry'
 import { pointInClipperPaths, unionClipperPaths } from './modelProtection'
@@ -129,55 +130,70 @@ export function intersectSurfaceSlopeDomain(domain: ClipperPath[], slope: Clippe
 
 interface IntegerBounds { minX: number; minY: number; maxX: number; maxY: number }
 
-interface BoundedDomainPath extends IntegerBounds {
+interface IndexedDomainPath {
   path: ClipperPath
-  edges: IntegerBounds[]
+  index: IndexedClipperPath
 }
 
 function boundsOverlap(a: IntegerBounds, b: IntegerBounds): boolean {
   return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
 }
 
-/** Build the exact link predicate once per generated operation. Path and edge
- * bounds reject the common case without constructing Clipper state; a link
- * that can touch any boundary still uses an exact open-path difference. */
-export function createSurfaceDomainLinkCheck(paths: ClipperPath[]): (from: Point, to: Point) => boolean {
-  const boundedPaths: BoundedDomainPath[] = paths.filter((path) => path.length >= 3).map((path) => {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    const edges: IntegerBounds[] = []
-    for (let i = 0; i < path.length; i += 1) {
-      const from = path[i]
-      const to = path[(i + 1) % path.length]
-      minX = Math.min(minX, from.X)
-      minY = Math.min(minY, from.Y)
-      maxX = Math.max(maxX, from.X)
-      maxY = Math.max(maxY, from.Y)
-      edges.push({
-        minX: Math.min(from.X, to.X), minY: Math.min(from.Y, to.Y),
-        maxX: Math.max(from.X, to.X), maxY: Math.max(from.Y, to.Y),
-      })
-    }
-    return { path, edges, minX, minY, maxX, maxY }
-  })
+const toClipperPoint = (point: Point): { X: number; Y: number } =>
+  ({ X: Math.round(point.x * DEFAULT_CLIPPER_SCALE), Y: Math.round(point.y * DEFAULT_CLIPPER_SCALE) })
 
-  return (from: Point, to: Point): boolean => {
-    const a = { X: Math.round(from.x * DEFAULT_CLIPPER_SCALE), Y: Math.round(from.y * DEFAULT_CLIPPER_SCALE) }
-    const b = { X: Math.round(to.x * DEFAULT_CLIPPER_SCALE), Y: Math.round(to.y * DEFAULT_CLIPPER_SCALE) }
+export interface SurfaceDomainCheck {
+  /** `pointInClipperPaths(paths, point)`, answered from the edge index. */
+  containsPoint: (point: Point) => boolean
+  /** The part of `linkInside` that does not depend on the endpoints: true when
+   *  a segment whose endpoints are both inside stays inside. Lets a caller
+   *  walking a polyline test each vertex once rather than once per edge. */
+  segmentStaysInside: (from: Point, to: Point) => boolean
+  /** Both endpoints inside and the segment never leaves the domain. */
+  linkInside: (from: Point, to: Point) => boolean
+}
+
+/** Build the exact domain predicates once per generated operation (issue
+ * #922). Every answer is the one the brute-force Clipper scan gave: the edge
+ * index (`clipperPathIndex.ts`) only skips edges that cannot change it. Path
+ * and edge bounds reject the common case without constructing Clipper state;
+ * a link that can touch any boundary still uses an exact open-path difference. */
+export function createSurfaceDomainCheck(paths: ClipperPath[]): SurfaceDomainCheck {
+  const indexedPaths: IndexedDomainPath[] = paths.filter((path) => path.length >= 3)
+    .map((path) => ({ path, index: indexClipperPath(path) }))
+
+  // Even-odd over every path, as `pointInClipperPaths` counts it. Scanning all
+  // paths rather than only those whose bounds meet a segment changes nothing:
+  // Clipper answers 0 for a point outside a closed path's bounds.
+  const containsPoint = (point: Point): boolean => {
+    const { X, Y } = toClipperPoint(point)
+    let inside = false
+    for (const { index } of indexedPaths) {
+      if (pointInIndexedPath(index, X, Y) !== 0) inside = !inside
+    }
+    return inside
+  }
+
+  const segmentStaysInside = (from: Point, to: Point): boolean => {
+    const a = toClipperPoint(from)
+    const b = toClipperPoint(to)
+    if (a.X === b.X && a.Y === b.Y) return true
     const segmentBounds = {
       minX: Math.min(a.X, b.X), minY: Math.min(a.Y, b.Y),
       maxX: Math.max(a.X, b.X), maxY: Math.max(a.Y, b.Y),
     }
     const candidates: ClipperPath[] = []
     let mayCrossBoundary = false
-    for (const bounded of boundedPaths) {
-      if (!boundsOverlap(bounded, segmentBounds)) continue
-      candidates.push(bounded.path)
-      if (!mayCrossBoundary && bounded.edges.some((edge) => boundsOverlap(edge, segmentBounds))) {
+    for (const { path, index } of indexedPaths) {
+      if (!boundsOverlap(index, segmentBounds)) continue
+      candidates.push(path)
+      if (!mayCrossBoundary && indexedEdgeBoundsOverlap(
+        index, segmentBounds.minX, segmentBounds.minY, segmentBounds.maxX, segmentBounds.maxY,
+      )) {
         mayCrossBoundary = true
       }
     }
-    if (!pointInClipperPaths(candidates, from) || !pointInClipperPaths(candidates, to)) return false
-    if (a.X === b.X && a.Y === b.Y || !mayCrossBoundary) return true
+    if (!mayCrossBoundary) return true
     const clipper = new ClipperLib.Clipper()
     addOpenSubject(clipper, [a, b])
     clipper.AddPaths(candidates, ClipperLib.PolyType.ptClip, true)
@@ -186,4 +202,15 @@ export function createSurfaceDomainLinkCheck(paths: ClipperPath[]): (from: Point
       ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftEvenOdd)
     return openPathsFromPolyTree(tree).length === 0
   }
+
+  return {
+    containsPoint,
+    segmentStaysInside,
+    linkInside: (from, to) => containsPoint(from) && containsPoint(to) && segmentStaysInside(from, to),
+  }
+}
+
+/** The exact link predicate alone, for callers that only join separate points. */
+export function createSurfaceDomainLinkCheck(paths: ClipperPath[]): (from: Point, to: Point) => boolean {
+  return createSurfaceDomainCheck(paths).linkInside
 }
