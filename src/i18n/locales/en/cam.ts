@@ -180,7 +180,6 @@ export const camEn = {
   'cam.operation.restMachining': 'Rest machining',
   'cam.operation.restTrochoidalUnavailable': 'Rest machining is unavailable for trochoidal edge routing.',
   'cam.operation.createRestOp': 'Create rest operation',
-  'cam.operation.exporting': 'Exporting...',
   'cam.operation.toolpathWarnings': 'Toolpath warnings',
   'cam.operation.tool': 'Tool',
   'cam.operation.noTool': 'No tool',
@@ -407,7 +406,10 @@ export const camEn = {
   'cam.hint.notCompatible': 'Current selection is not compatible with this operation',
 
   // ── Booklet export ──
-  'cam.booklet.building': 'Building booklet...',
+  'cam.booklet.stage.toolpath': 'Booklet: preparing the toolpath...',
+  'cam.booklet.stage.snapshot': 'Booklet: drawing the overview picture...',
+  'cam.booklet.stage.pdf': 'Booklet: building the PDF...',
+  'cam.booklet.stage.saving': 'Booklet: choose where to save the PDF...',
   'cam.booklet.exported': 'Booklet exported: {path}',
   'cam.booklet.cancelled': 'Booklet export cancelled',
   'cam.booklet.failed': 'Failed to export booklet',

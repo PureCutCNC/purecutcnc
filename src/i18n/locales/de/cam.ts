@@ -177,7 +177,6 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.operation.restMachining': 'Restbearbeitung',
   'cam.operation.restTrochoidalUnavailable': 'Restbearbeitung ist für trochoidale Konturfräsung nicht verfügbar.',
   'cam.operation.createRestOp': 'Restoperation erstellen',
-  'cam.operation.exporting': 'Wird exportiert…',
   'cam.operation.toolpathWarnings': 'Werkzeugweg-Warnungen',
   'cam.operation.tool': 'Werkzeug',
   'cam.operation.noTool': 'Kein Werkzeug',
@@ -404,7 +403,10 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.hint.notCompatible': 'Aktuelle Auswahl ist mit dieser Operation nicht kompatibel',
 
   // ── Booklet export ──
-  'cam.booklet.building': 'Broschüre wird erstellt…',
+  'cam.booklet.stage.toolpath': 'Broschüre: Werkzeugweg wird vorbereitet…',
+  'cam.booklet.stage.snapshot': 'Broschüre: Übersichtsbild wird gezeichnet…',
+  'cam.booklet.stage.pdf': 'Broschüre: PDF wird erstellt…',
+  'cam.booklet.stage.saving': 'Broschüre: Speicherort für das PDF wählen…',
   'cam.booklet.exported': 'Broschüre exportiert: {path}',
   'cam.booklet.cancelled': 'Broschüren-Export abgebrochen',
   'cam.booklet.failed': 'Broschüre konnte nicht exportiert werden',

@@ -181,7 +181,6 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.operation.restMachining': '残料加工',
   'cam.operation.restTrochoidalUnavailable': '摆线沿边加工无法使用残料加工。',
   'cam.operation.createRestOp': '创建残料操作',
-  'cam.operation.exporting': '导出中…',
   'cam.operation.toolpathWarnings': '刀路警告',
   'cam.operation.tool': '刀具',
   'cam.operation.noTool': '无刀具',
@@ -408,7 +407,10 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.hint.notCompatible': '当前选择与此操作不兼容',
 
   // ── Booklet export ──
-  'cam.booklet.building': '正在生成手册…',
+  'cam.booklet.stage.toolpath': '手册：正在准备刀具路径…',
+  'cam.booklet.stage.snapshot': '手册：正在绘制概览图…',
+  'cam.booklet.stage.pdf': '手册：正在生成 PDF…',
+  'cam.booklet.stage.saving': '手册：请选择 PDF 的保存位置…',
   'cam.booklet.exported': '手册已导出：{path}',
   'cam.booklet.cancelled': '手册导出已取消',
   'cam.booklet.failed': '手册导出失败',

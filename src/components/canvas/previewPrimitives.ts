@@ -594,7 +594,8 @@ function drawSourceMarker(ctx: CanvasRenderingContext2D, cx: number, cy: number,
 export interface ToolpathDisplayRenderOptions {
   /** Transient navigation detail only; never write this into saved visibility. */
   deferArrows?: boolean
-  /** Static exports retain every move instead of using the interactive merge. */
+  /** False keeps every emitted move instead of merging runs for display. The
+   *  booklet snapshot uses the merge too (issue #924). */
   simplifyForDisplay?: boolean
   /** Selected planar Z level, or All when null. Display-only (issue #752). */
   selectedLevel?: number | null
