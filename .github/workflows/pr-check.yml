@@ -39,6 +39,40 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # Draft-only same-revision experiment for issue #915. Remove after choosing
+  # a bounded worker count from wall time, runner time, retries, and failures.
+  structural-concurrency-trial:
+    if: ${{ github.event.pull_request.draft }}
+    name: Structural trial - ${{ matrix.jobs }} jobs
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        jobs: [2, 3, 4]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run structural tests
+        env:
+          RUN_TESTS_JOBS: ${{ matrix.jobs }}
+          RUN_TESTS_REPORT: test-results/structural-jobs-${{ matrix.jobs }}.json
+        run: npm test
+      - name: Upload trial timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: structural-trial-${{ matrix.jobs }}
+          path: test-results/structural-jobs-${{ matrix.jobs }}.json
+          if-no-files-found: ignore
+          retention-days: 7
+
   e2e-lanes:
     name: E2E - ${{ matrix.lane }}
     runs-on: ubuntu-latest
