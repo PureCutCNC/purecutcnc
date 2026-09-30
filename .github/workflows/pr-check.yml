@@ -4,6 +4,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+concurrency:
+  group: pr-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,7 +26,18 @@ jobs:
         run: npm ci
 
       - name: Build
+        env:
+          RUN_TESTS_REPORT: test-results/structural-timings.json
         run: npm run build
+
+      - name: Upload structural test timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: structural-test-timings
+          path: test-results/structural-timings.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   e2e-lanes:
     name: E2E - ${{ matrix.lane }}
@@ -70,15 +85,23 @@ jobs:
       - name: Run Playwright e2e lane
         run: npm run ${{ matrix.command }}
 
-      - name: Upload Playwright failure artifacts
+      - name: Upload Playwright results and retry traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results-${{ matrix.lane }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload Playwright failure report
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ matrix.lane }}
-          path: |
-            playwright-report/
-            test-results/
+          path: playwright-report/
           if-no-files-found: ignore
+          retention-days: 14
 
   e2e:
     if: ${{ always() }}

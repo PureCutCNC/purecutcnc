@@ -54,7 +54,7 @@ const modKey = process.platform === 'darwin' ? 'Meta' : 'Control'
 
 test.describe('CAM operation browser smoke', () => {
   test('HTML5 drag reorders CAM operations', async ({ app, ui }) => {
-    await seedCamQuickOperationProject(app.page)
+    await seedCamQuickOperationProjectWithSmallCarveTarget(app.page)
 
     const edgeMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
     await ui.contextMenu.item(edgeMenu, 'Create operation').hover()
@@ -456,7 +456,7 @@ test.describe('CAM operation browser smoke', () => {
   })
 
   test('Engrave strategy dropdown switches between Direct and Trochoidal', async ({ app, ui }) => {
-    await seedCamQuickOperationProject(app.page)
+    await seedCamQuickOperationProjectWithSmallCarveTarget(app.page)
 
     const row = rowByName(app.page, 'Carve Target')
     const menu = await openRowContextMenu(app.page, row)
@@ -592,7 +592,7 @@ test.describe('CAM operation browser smoke', () => {
   })
 
   test('quick operation creates a V-Carve medial with an auto-picked V-bit', async ({ app, ui }) => {
-    await seedCamQuickOperationProject(app.page)
+    await seedCamQuickOperationProjectWithSmallCarveTarget(app.page)
 
     const row = rowByName(app.page, 'Carve Target')
     const menu = await openRowContextMenu(app.page, row)
@@ -733,7 +733,7 @@ test.describe('CAM operation browser smoke', () => {
     expect(operations[0].countersinkDiameter).toBe(0.25)
   })
   test('context menu adds and removes features from existing operations', async ({ app, ui }) => {
-    await seedCamQuickOperationProject(app.page)
+    await seedCamQuickOperationProjectWithSmallCarveTarget(app.page)
 
     // With no operations at all, both entries render disabled.
     const emptyMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
@@ -807,7 +807,7 @@ test.describe('CAM operation browser smoke', () => {
     expect(operations[0].pocketPattern).toBe('seeded_offset')
   })
   test('the XY approach & exit selector is offered, persists, and follows the pattern (#695)', async ({ app, ui }) => {
-    await seedCamQuickOperationProject(app.page)
+    await seedCamQuickOperationProjectWithSmallCarveTarget(app.page)
 
     const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
     await ui.contextMenu.item(carveMenu, 'Create operation').hover()
@@ -874,7 +874,7 @@ test.describe('CAM operation browser smoke', () => {
     await expect(app.page.getByText('XY approach & exit', { exact: true })).toHaveCount(0)
   })
   test('actions, diagnostics and the dev toggle are not property rows (#559)', async ({ app, ui }) => {
-    await seedCamQuickOperationProject(app.page)
+    await seedCamQuickOperationProjectWithSmallCarveTarget(app.page)
 
     const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
     await ui.contextMenu.item(carveMenu, 'Create operation').hover()
@@ -999,7 +999,7 @@ test.describe('CAM operation browser smoke', () => {
   })
 
   test('expanded properties lay out in exactly two columns (#559)', async ({ app, ui }) => {
-    await seedCamQuickOperationProject(app.page)
+    await seedCamQuickOperationProjectWithSmallCarveTarget(app.page)
 
     const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
     await ui.contextMenu.item(carveMenu, 'Create operation').hover()
@@ -1044,7 +1044,7 @@ test.describe('CAM operation browser smoke', () => {
   })
 
   test('Feed reduction row carries its parameter-reference icon (#555)', async ({ app, ui }) => {
-    await seedCamQuickOperationProject(app.page)
+    await seedCamQuickOperationProjectWithSmallCarveTarget(app.page)
 
     const carveMenu = await openRowContextMenu(app.page, rowByName(app.page, 'Carve Target'))
     await ui.contextMenu.item(carveMenu, 'Create operation').hover()

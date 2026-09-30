@@ -18,6 +18,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: conformance-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   conformance:
     name: gcode-conformance
@@ -49,21 +53,6 @@ jobs:
       - name: Build controller interpreters
         if: steps.validator-cache.outputs.cache-hit != 'true'
         run: ./scripts/gcode-conformance/setup-validators.sh
-
-      # linuxcnc-uspace ships the standalone rs274 interpreter, but it is a
-      # Debian package and is NOT in the Ubuntu runner's sources — measured:
-      # "E: Unable to locate package linuxcnc-uspace". Reaching it would mean
-      # adding LinuxCNC's own apt repo or running the job in a Debian
-      # container; both were outside this change's timebox (issue #450).
-      # The step stays as a best-effort probe so the day it becomes available
-      # the interpreter starts running on its own, and the runner reports it
-      # as skipped until then.
-      - name: Install LinuxCNC interpreter (optional)
-        continue-on-error: true
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends linuxcnc-uspace || \
-            echo "linuxcnc-uspace unavailable on this runner; continuing without rs274"
 
       - name: Validate exported G-code
         run: npm run check:gcode
