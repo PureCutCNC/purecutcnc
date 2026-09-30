@@ -36,6 +36,7 @@
 // moves, so the S needs no special feed handling.
 
 import type { Point } from '../../types/project'
+import { boxLoop, pointInBoxedLoop, pointOnBoxedLoopEdge, type BoxedLoop } from './boxedLoop'
 import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
 
 // Call-count probes for the S-link solver. Cost assertions count work — never
@@ -47,14 +48,17 @@ import { DEFAULT_FLATTEN_ARC_STEP } from './geometry'
 let slinkArrivalsConsidered = 0
 let slinkArrivalsPruned = 0
 let slinkCandidatesEvaluated = 0
+let slinkCandidatesDomainChecked = 0
 let slinkDomainChecks = 0
 let slinkDomainScans = 0
 
-/** Read the S-link probe counters (arrivals considered, pruned, and candidates evaluated). */
+/** Read the S-link probe counters (arrivals considered, pruned, candidates
+ *  solved, and candidates that survived the cheap tests to reach the domain gate). */
 export function slinkProbeCounts(): {
   arrivalsConsidered: number
   arrivalsPruned: number
   candidatesEvaluated: number
+  candidatesDomainChecked: number
   domainChecks: number
   domainScans: number
 } {
@@ -62,6 +66,7 @@ export function slinkProbeCounts(): {
     arrivalsConsidered: slinkArrivalsConsidered,
     arrivalsPruned: slinkArrivalsPruned,
     candidatesEvaluated: slinkCandidatesEvaluated,
+    candidatesDomainChecked: slinkCandidatesDomainChecked,
     domainChecks: slinkDomainChecks,
     domainScans: slinkDomainScans,
   }
@@ -72,6 +77,7 @@ export function resetSlinkProbeCounts(): void {
   slinkArrivalsConsidered = 0
   slinkArrivalsPruned = 0
   slinkCandidatesEvaluated = 0
+  slinkCandidatesDomainChecked = 0
   slinkDomainChecks = 0
   slinkDomainScans = 0
 }
@@ -350,13 +356,29 @@ export function tangentSLink(
       const chordBudget = Math.max(2 * rMin * Math.sin(arcStep / 2), 1e-6)
       for (const candidate of candidates) {
         slinkCandidatesEvaluated += 1
+        // Every test that reads only the candidate's own vertices runs before
+        // the domain gate (issue #923): the gate samples the whole path at the
+        // floor-radius chord budget, each sample a point-in-polygon, and a
+        // candidate that is too long, arrives off-tangent, or cannot beat the
+        // incumbent (strict `<`, so a tie never wins) is discarded whatever the
+        // gate says. All four tests are pure, so the order cannot change which
+        // S is selected — only how many samples it costs to find it.
         let pathLength = 0
+        for (let step = 0; step + 1 < candidate.length; step += 1) {
+          const a = candidate[step]
+          const b = candidate[step + 1]
+          pathLength += Math.hypot(b.x - a.x, b.y - a.y)
+        }
+        if (pathLength > options.maxLength || !(pathLength < bestLength)) continue
+        // The last segment must be tangent to the arrival ring's direction.
+        const lastDir = norm(sub(candidate[candidate.length - 1], candidate[candidate.length - 2]))
+        if (Math.abs(signedAngle(lastDir, arrivalTangent)) > 0.1) continue
+        slinkCandidatesDomainChecked += 1
         let domainOk = true
         for (let step = 0; step + 1 < candidate.length && domainOk; step += 1) {
           const a = candidate[step]
           const b = candidate[step + 1]
           const segLen = Math.hypot(b.x - a.x, b.y - a.y)
-          pathLength += segLen
           if (!options.isInsideDomain(a.x, a.y)) {
             domainOk = false
             break
@@ -370,55 +392,14 @@ export function tangentSLink(
             }
           }
         }
-        if (!domainOk || pathLength > options.maxLength) continue
-        // The last segment must be tangent to the arrival ring's direction.
-        const lastDir = norm(sub(candidate[candidate.length - 1], candidate[candidate.length - 2]))
-        if (Math.abs(signedAngle(lastDir, arrivalTangent)) > 0.1) continue
-        if (pathLength < bestLength) {
-          bestLength = pathLength
-          best = { points: candidate, arrivalIndex: index }
-        }
+        if (!domainOk) continue
+        bestLength = pathLength
+        best = { points: candidate, arrivalIndex: index }
       }
     }
   }
 
   return best
-}
-
-function pointInPolygon(x: number, y: number, polygon: Point[]): boolean {
-  let inside = false
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
-    const xi = polygon[i].x
-    const yi = polygon[i].y
-    const xj = polygon[j].x
-    const yj = polygon[j].y
-    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
-      inside = !inside
-    }
-  }
-  return inside
-}
-
-/** Is the point on an edge of the polygon, within float dust? The ring paths
- *  are cut exactly ON the domain boundary (the wall-adjacent ring IS the
- *  domain polygon, the island rings ride the island expansions), so boundary
- *  points are legitimate and the ray-cast's parity must not decide them. */
-function pointOnPolygonEdge(x: number, y: number, polygon: Point[]): boolean {
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
-    const ax = polygon[i].x
-    const ay = polygon[i].y
-    const bx = polygon[j].x
-    const by = polygon[j].y
-    const dx = bx - ax
-    const dy = by - ay
-    const lenSq = dx * dx + dy * dy
-    if (lenSq <= 1e-18) continue
-    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / lenSq))
-    const qx = ax + dx * t - x
-    const qy = ay + dy * t - y
-    if (qx * qx + qy * qy <= 1e-12) return true
-  }
-  return false
 }
 
 /** Region roots at tool-centre offset: the cleared-domain boundary for links. */
@@ -427,31 +408,7 @@ export interface TangentLinkDomainRegion {
   islands: Point[][]
 }
 
-/**
- * Point-in-cleared-domain predicate for the band's tool-centre regions: inside
- * at least one outer and outside every island expansion.
- */
-interface BoxedLoop {
-  points: Point[]
-  minX: number
-  maxX: number
-  minY: number
-  maxY: number
-}
-
-/** Axis-aligned bounds, computed once so the per-sample scan can be skipped. */
-function boxLoop(points: Point[]): BoxedLoop {
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-  for (const p of points) {
-    if (p.x < minX) minX = p.x
-    if (p.x > maxX) maxX = p.x
-    if (p.y < minY) minY = p.y
-    if (p.y > maxY) maxY = p.y
-  }
-  return { points, minX, maxX, minY, maxY }
-}
-
-// `pointOnPolygonEdge` accepts a point within 1e-6 of an edge (it compares a
+// `pointOnBoxedLoopEdge` accepts a point within 1e-6 of an edge (it compares a
 // squared distance against 1e-12), so a point marginally outside the bounds can
 // still legitimately test as on-boundary. The box is inflated by exactly that
 // tolerance before rejecting, which is what makes the prefilter conservative
@@ -463,14 +420,19 @@ const outsideBox = (box: BoxedLoop, x: number, y: number): boolean =>
   x < box.minX - EDGE_TOLERANCE || x > box.maxX + EDGE_TOLERANCE
   || y < box.minY - EDGE_TOLERANCE || y > box.maxY + EDGE_TOLERANCE
 
+/**
+ * Point-in-cleared-domain predicate for the band's tool-centre regions: inside
+ * at least one outer and outside every island expansion.
+ */
 export function buildOffsetDomainCheck(
   regions: TangentLinkDomainRegion[],
 ): (x: number, y: number) => boolean {
-  // Bounds are precomputed per loop and rejected before any vertex scan. A
+  // Bounds are precomputed per loop and rejected before any edge is read. A
   // point outside a loop's bounding box cannot be inside the loop or on its
-  // edge, so this cannot change an answer — only how many of the O(vertices)
-  // scans run. The scan is the S-link solver's dominant cost: it runs twice
-  // per loop per sample (containment, then edge), thousands of times per link.
+  // edge, so this cannot change an answer — only how many scans run. The scan
+  // is the S-link solver's dominant cost: it runs twice per loop per sample
+  // (containment, then edge), thousands of times per link, so inside the box
+  // it reads only the edges of the sample's row (`boxedLoop.ts`, issue #923).
   const boxed = regions.map((region) => ({
     outer: boxLoop(region.outer),
     islands: region.islands.map(boxLoop),
@@ -482,11 +444,11 @@ export function buildOffsetDomainCheck(
     // rings themselves also ride that boundary, so boundary points pass.
     const inOuter = boxed.some((region) => !outsideBox(region.outer, x, y)
       && (slinkDomainScans += 1) > 0
-      && (pointInPolygon(x, y, region.outer.points) || pointOnPolygonEdge(x, y, region.outer.points)))
+      && (pointInBoxedLoop(region.outer, x, y) || pointOnBoxedLoopEdge(region.outer, x, y)))
     if (!inOuter) return false
     return !boxed.some((region) => region.islands.some((island) => !outsideBox(island, x, y)
       && (slinkDomainScans += 1) > 0
-      && pointInPolygon(x, y, island.points) && !pointOnPolygonEdge(x, y, island.points)))
+      && pointInBoxedLoop(island, x, y) && !pointOnBoxedLoopEdge(island, x, y)))
   }
 }
 
@@ -540,14 +502,14 @@ export function buildClearanceCheck(
     return boxed.some((region) => {
       if (outsideBox(region.outer, x, y)) return false
       slinkDomainScans += 1
-      if (!pointInPolygon(x, y, region.outer.points)) return false
+      if (!pointInBoxedLoop(region.outer, x, y)) return false
       if (distanceToLoop(x, y, region.outer.points) < clearance) return false
       return region.islands.every((island) => {
         // Outside the island's box by more than the clearance already answers it.
         if (x < island.minX - clearance || x > island.maxX + clearance
           || y < island.minY - clearance || y > island.maxY + clearance) return true
         slinkDomainScans += 1
-        if (pointInPolygon(x, y, island.points)) return false
+        if (pointInBoxedLoop(island, x, y)) return false
         return distanceToLoop(x, y, island.points) >= clearance
       })
     })
@@ -568,7 +530,7 @@ export function buildKeepOutCheck(loops: Point[][]): (x: number, y: number) => b
   const boxed = loops.filter((loop) => loop.length >= 3).map(boxLoop)
   if (boxed.length === 0) return () => false
   return (x: number, y: number): boolean => boxed.some((loop) => !outsideBox(loop, x, y)
-    && pointInPolygon(x, y, loop.points) && !pointOnPolygonEdge(x, y, loop.points))
+    && pointInBoxedLoop(loop, x, y) && !pointOnBoxedLoopEdge(loop, x, y))
 }
 
 /**

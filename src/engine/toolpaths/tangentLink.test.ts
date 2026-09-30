@@ -377,6 +377,43 @@ function testProbeCountersAndPruneGuard() {
   console.log('probe counters and prune guard: PASSED')
 }
 
+/**
+ * The cheap tests run before the domain gate (issue #923). Length, tangency and
+ * "cannot beat the incumbent" read only the candidate's own vertices, while the
+ * gate samples the whole path at the chord budget. Measured on this fixture:
+ *
+ *   cheap tests first           14 candidates reach the gate   (1,862 samples)
+ *   gate first (pre-#923)      104 candidates reach the gate  (20,685 samples)
+ *   threshold, geometric mid    38  (2.7x headroom either side)
+ *
+ * The selected S must be the same either way, so its arrival is pinned too.
+ */
+function testCheapTestsRunBeforeDomainGate() {
+  console.log('Testing the cheap candidate tests run before the domain gate...')
+  const ring: Point[] = Array.from({ length: 40 }, (_, i) => {
+    const angle = (i / 40) * Math.PI * 2
+    return { x: 3 * Math.cos(angle), y: 3 * Math.sin(angle) }
+  })
+  let samples = 0
+  resetSlinkProbeCounts()
+  const result = tangentSLink({ x: 0, y: -2 }, { x: 1, y: 0 }, ring, {
+    minRadius: 0.25,
+    maxLength: 6,
+    isInsideDomain: () => { samples += 1; return true },
+  })
+  const counts = slinkProbeCounts()
+  assert(result !== null && result.arrivalIndex === 31, 'expected the S to arrive at vertex 31, got ' + result?.arrivalIndex)
+  assert(counts.candidatesEvaluated === 104, 'expected 104 solved candidates, got ' + counts.candidatesEvaluated)
+  const DOMAIN_CHECKED_BUDGET = 38
+  assert(
+    counts.candidatesDomainChecked <= DOMAIN_CHECKED_BUDGET,
+    'candidatesDomainChecked (' + counts.candidatesDomainChecked + ') exceeded ' + DOMAIN_CHECKED_BUDGET
+      + ' — the domain gate is running before the cheap tests again',
+  )
+  console.log('cheap tests before domain gate: PASSED (' + counts.candidatesDomainChecked + ' of '
+    + counts.candidatesEvaluated + ' candidates gated, ' + samples + ' samples)')
+}
+
 try {
   testLateralStepSTangentAtBothEnds()
   testParallelLateralStep()
@@ -387,7 +424,8 @@ try {
   testDomainCheck()
   testPocketOptionsGating()
   testProbeCountersAndPruneGuard()
-testDomainPrefilterSkipsScans()
+  testDomainPrefilterSkipsScans()
+  testCheapTestsRunBeforeDomainGate()
   console.log('\nAll tangentLink tests PASSED.')
 } catch (e) {
   console.error(e)
