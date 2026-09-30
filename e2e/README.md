@@ -32,10 +32,13 @@ uploaded on every run; the HTML report is uploaded on failures.
 
 | Lane | Command | Coverage |
 |------|---------|----------|
-| Settings | `npm run test:e2e:settings` | Appearance, localization, themes, units, machines, tool library |
-| Project input | `npm run test:e2e:project-input` | Imports, feature references, bulk edits, model orientation, distribution, nesting, text and sketch sessions |
-| Workflow UI | `npm run test:e2e:workflow-ui` | CAM operations, export, selection, panels, toolpath/GPU display, simulation and WebGL recovery |
-| Generation backend | `npm run test:e2e:generation` | Main/worker generation, parity, stop and resume |
+| Settings and import | `npm run test:e2e:settings` | Appearance, localization, themes, units, machines, tool library, geometry import |
+| Project editing | `npm run test:e2e:project-input` | Feature references, bulk edits, model orientation, distribution, nesting, text and sketch sessions |
+| CAM and interaction | `npm run test:e2e:workflow-ui` | CAM operations and surface finish, export, selection, panels, simulation and WebGL recovery |
+| Generation and rendering | `npm run test:e2e:generation` | Main/worker generation, parity, stop and resume, GPU/toolpath display |
+
+The CAM surface-finish tests live in `camSurfaceFinish.smoke.spec.ts` so they can
+run beside other CAM interactions. Lane assignments were balanced from PR #930's per-file timings; future moves should use fresh CI reports.
 
 `npm run check:e2e-lanes` enforces exactly one lane per spec. `npm run test:e2e`
 remains the full local-suite command.

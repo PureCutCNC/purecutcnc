@@ -47,18 +47,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - lane: Settings
+          - lane: Settings and import
             command: test:e2e:settings
-          - lane: Project input
+          - lane: Project editing
             command: test:e2e:project-input
-          - lane: Workflow UI
+          - lane: CAM and interaction
             command: test:e2e:workflow-ui
-          # Split out on runtime grounds: Workflow UI is already the longest
-          # lane (8m10s against ~4m for the others), and these tests construct
-          # real Workers, so each pulls a multi-megabyte chunk from the dev
-          # server on top of that. The lanes exist as a parallel matrix, so a
-          # small fourth lane costs less wall-clock than growing the longest.
-          - lane: Generation backend
+          # The GPU visibility spec runs beside real worker startup, using the
+          # measured spare capacity of this lane rather than competing with CAM.
+          - lane: Generation and rendering
             command: test:e2e:generation
 
     steps:

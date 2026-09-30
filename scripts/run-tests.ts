@@ -95,7 +95,7 @@ function runOne(file: string): Promise<FileResult> {
 
 let failed = 0
 let skipped = 0
-const results: FileResult[] = []
+const results: Array<Pick<FileResult, 'rel' | 'exitCode' | 'durationMs' | 'launchError'>> = []
 const skippedFiles: string[] = []
 
 // Print skips up front so the parallel section only contains executed files.
@@ -117,7 +117,7 @@ for (const file of testFiles) {
 // unambiguous and the `── rel ──` / `run-tests: FAILED rel (exit N)` markers
 // consumed by scripts/build-summary.sh are unchanged.
 function reportResult(result: FileResult): void {
-  results.push(result)
+  results.push({ rel: result.rel, exitCode: result.exitCode, durationMs: result.durationMs, launchError: result.launchError })
   process.stdout.write(`\n── ${result.rel} ─────────────────────────\n`)
   if (result.output.length > 0) process.stdout.write(result.output)
   console.log(`run-tests: TIMING ${result.rel} ${result.durationMs}ms (exit ${result.exitCode})`)
