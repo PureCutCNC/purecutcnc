@@ -21,6 +21,7 @@ import {
   nestEdgeClearance,
   nestGapForPart,
   nestSheetRing,
+  nestStockIsRectangle,
   resolveNestParts,
   type NestPartSpec,
   type NestPartsResolution,
@@ -73,6 +74,8 @@ export interface NestSubject {
   gapFloor: number | null
   /** How far the cut reaches outside a part, kept on top of a margin; null when no edge route cuts any part. */
   edgeClearance: number | null
+  /** Rectangular stock takes a margin per side; custom stock takes one all round (#942). */
+  stockIsRectangle: boolean
 }
 
 /**
@@ -91,6 +94,7 @@ export function nestSubject(project: Project, selectedIds: string[], nestId: str
     parts,
     gapFloor: parts.ok ? nestGapForPart(base, parts.parts.flatMap((part) => part.featureIds)) : null,
     edgeClearance: parts.ok ? nestEdgeClearance(base, parts.parts.flatMap((part) => part.featureIds)) : null,
+    stockIsRectangle: nestStockIsRectangle(base),
   }
 }
 
@@ -123,12 +127,15 @@ export function initialNestForm(subject: NestSubject): NestForm {
     return recorded?.quantity ?? (parts.length === 1 ? DEFAULT_NEST_QUANTITY : 1)
   })
   if (previous) {
+    const margins = previous.settings.margins ?? NO_MARGINS
+    // Custom stock has one margin; the engine takes the largest side, so the form shows that.
+    const all = Math.max(margins.top, margins.bottom, margins.left, margins.right)
     return {
       quantities,
       rotation: presetForRotations(previous.settings.rotations),
       gap: Math.max(previous.settings.minimumGap, subject.gapFloor ?? 0),
       keepOriginals: previous.settings.keepOriginals,
-      margins: { ...(previous.settings.margins ?? NO_MARGINS) },
+      margins: subject.stockIsRectangle ? { ...margins } : { top: all, bottom: all, left: all, right: all },
     }
   }
   return { quantities, rotation: 'quarter', gap: subject.gapFloor, keepOriginals: false, margins: { ...NO_MARGINS } }
