@@ -113,7 +113,6 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketTrochoidalCornerReliefUnsupported': 'Eckenfreistellung ({style}) wird bei einer trochoidalen Tasche nicht angewendet: die Bahn durchläuft die Ringecke nicht, an der die Freistellung ansetzt. Entfernen Sie die Einstellung oder verwenden Sie ein Konturmuster.',
   'warnings.pocketTrochoidalTightSpot': 'Die Engstelle nahe ({x}, {y}) ist für den trochoidalen Kanal von {width} zu schmal; dort wurde keine Bahn erzeugt und Material bleibt stehen. Verringern Sie die Kanalbreite, verwenden Sie einen kleineren Fräser, oder räumen Sie diesen Bereich mit einem Konturmuster.',
   'warnings.pocketTrochoidalAdvanceDegenerate': 'Der trochoidale Vorschub nahe ({x}, {y}) ist zu klein: die Bahn bewegt sich weniger als 1% des Werkzeugdurchmessers pro Umlauf.',
-  'warnings.edgeMixedDepthSpans': 'Ausgewählte Außenkontur-Ziele haben unterschiedliche wirksame Tiefenspannen. Kombinierte Außenkontur wird für Ziele mit gemischter Tiefe noch nicht unterstützt; das Erzeugen separater Konturen kann innere Überlappungen schneiden. Teilen Sie die Operation nach Tiefe auf oder richten Sie Ober-/Unterseiten der Ziele aus.',
   'warnings.edgeNoCombinedContour': 'Für die ausgewählten Außenkontur-Ziele konnte keine gültige kombinierte Außenkontur erzeugt werden',
   'warnings.edgeFeatureNoCutDepth': '{name} lässt nach axialem Aufmaß keine Schnitttiefe',
   'warnings.edgeBandNoCutDepth': 'Band {topZ} -> {bottomZ} lässt nach axialem Aufmaß keine Schnitttiefe',
