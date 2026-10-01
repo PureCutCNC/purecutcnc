@@ -28,6 +28,7 @@ import { appendAll } from './appendAll'
 import { finishScallopSpacing } from './scallopHeight'
 import type { RetainedMaterialCheck } from './retainedMaterial'
 import type { FinishModelSurface } from './finishModelSurface'
+import { refineSurfacePathAtCliffs } from './surfacePathCliffs'
 
 function computeContourBounds(
   contours: Iterable<Array<Array<[number, number]>>>,
@@ -704,6 +705,18 @@ export function generateFinishSurfaceParallel(
   // misalignment still link. The kinematic check above is the real guard.
   const linkMaxDistance = stepoverDistance * 2
 
+  /**
+   * The Z this strategy gives a scan point at (x, y), every clamp included:
+   * what `applyGougeProtection` and `clampSurfaceSegmentToMinZ` make of a
+   * sample there. A vertex the cliff refinement adds is one a scanline would
+   * have placed itself (issue #938).
+   */
+  const scanPointZ = (x: number, y: number): number => {
+    const lifted = Math.max(queryHeightMapTopZ(heightMap, x, y) ?? Number.NEGATIVE_INFINITY, safeToolTipZAt(x, y, heightMap, tool))
+    if (!Number.isFinite(lifted)) return lifted
+    return Math.max(lifted + axialLeave, minCutZAtPoint({ x, y }))
+  }
+
   const angleRad = (angleDeg * Math.PI) / 180
   const cosNeg = Math.cos(-angleRad)
   const sinNeg = Math.sin(-angleRad)
@@ -787,11 +800,11 @@ export function generateFinishSurfaceParallel(
         // so what used to be one emission is a run per machinable stretch.
         for (const machinable of splitSegmentAtUnmachinableSurface(segment, hasMachinableSurface)) {
           const clampedSegment = clampSurfaceSegmentToMinZ(machinable, minCutZAtPoint)
-          const clampedPoints: ToolpathPoint[] = clampedSegment.map((sp) => ({
+          const clampedPoints: ToolpathPoint[] = refineSurfacePathAtCliffs(clampedSegment.map((sp) => ({
             x: sp.x,
             y: sp.y,
             z: sp.z,
-          }))
+          })), scanPointZ, heightMapCellSize)
           // The mesh height map knows nothing of retained 2.5D material, so a
           // scanline runs straight over a plate or into a pocket wall; break it
           // where the cutter body would enter one (issue #773). The whole

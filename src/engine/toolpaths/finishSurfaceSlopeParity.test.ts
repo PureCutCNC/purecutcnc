@@ -42,27 +42,41 @@ import type { Project } from '../../types/project'
 // grows slightly, 752 -> 777 moves and 23.50 -> 24.79 of length, because the
 // pass is now split at the boundary. The waterline row is byte-identical, since
 // waterline never takes this path.
+//
+// Six more rows have moved since, deliberately, all from #938's cliff
+// refinement: a surface-following pass no longer takes a straight move across
+// a cliff between two of its vertices. Measured against each model's own mesh
+// under the cutter footprint:
+// - `3d-imported-block-test3.camj` parallel (both ops): 3,915 -> 3,990 moves.
+//   Main cut up to 0.167" into the block's walls at 128 sampled points; now
+//   none.
+// - The same file's waterline (both ops): 3,321 -> 3,323 moves. Main cut
+//   0.019" in at 4 points; now none.
+// - `issue-401-cone-finish.camj` waterline (both ops): 5,415 -> 5,481 moves.
+//   The ball's deepest dip is unchanged at 0.0125", at fewer points (2,723 ->
+//   2,625).
+// Its parallel rows and every `model-in-pocket.camj` row are byte-identical.
 // Both the raw toolpath result and posted program must remain byte-identical.
 const baseline: Record<string, {moves: number; motion: string; gcode: string}> = {
   "3d-imported-block-test3.camj/op6792424/parallel": {
-    "moves": 3915,
-    "motion": "24336cbc8f719d4f7742fbfa1b97617a88337fa36067e97ce26ba8619704dbcc",
-    "gcode": "4bdc3fd0790fc22797aecfa1acd4db4ca09e0089fcaa12fa0313ef2dd8ff1500"
+    "moves": 3990,
+    "motion": "6da5830f50426c7f9ff513b39403c867f41d373f0ce2c08d1a2ba42f75834929",
+    "gcode": "87e86b2241c884ef5fd53de00370d1b1aa1c8edd3185b203d652de12407ee21f"
   },
   "3d-imported-block-test3.camj/op6792424/waterline": {
-    "moves": 3321,
-    "motion": "03443fc401d29e3da124f57af6c6378839f289a2b5187ee823180ed66e4209de",
-    "gcode": "23a929748dd41929ad79bed98e6861ae9762771d4f23cfe9a77022485c76177c"
+    "moves": 3323,
+    "motion": "0e082c29859152dec78d32443feb592b3a4256abeb87ece9167a1848857dec0b",
+    "gcode": "f50842293b2674c166b49c7c35b99a491a010f8d0da668538317182bc10c128b"
   },
   "3d-imported-block-test3.camj/op6792425/parallel": {
-    "moves": 3915,
-    "motion": "ad1152a5ebb65c08d0fc79af8877fa8c04b4c0591b5cf0d584e36da4d2517246",
-    "gcode": "11756942fc4e249272cf0f8ca4870fe08a1a5fae749a160b78a66e0be5accbbe"
+    "moves": 3990,
+    "motion": "a92478eeb03c84cb5a2d005c3a3ed349aa39aaee43de7e1cda73a16976d22a7d",
+    "gcode": "83a731b9eebd46929b488663fc2da719078ce5464fd95426b4b3587959a292d8"
   },
   "3d-imported-block-test3.camj/op6792425/waterline": {
-    "moves": 3321,
-    "motion": "29a74a1af1be28985a6b3cec25a15e25cd670aa7ab3a71cef7a3a9ec92b2d19c",
-    "gcode": "21c1732f2a990faa154dd82b09080e63c4467c274f983228f693ad8032050aab"
+    "moves": 3323,
+    "motion": "dd1417225749dffb93f8116706437a5826204538ff14c239f146e7ed2f240292",
+    "gcode": "2b7c1a34d9365b2035df3f6223b69fac354682b9573e3df6636a8793ab4baa4d"
   },
   "issue-401-cone-finish.camj/op0925/parallel": {
     "moves": 28245,
@@ -70,9 +84,9 @@ const baseline: Record<string, {moves: number; motion: string; gcode: string}> =
     "gcode": "132a41b34125066dc5563cc43d5e3b775f83eef9276a5df32719f30367b56b66"
   },
   "issue-401-cone-finish.camj/op0925/waterline": {
-    "moves": 5415,
-    "motion": "c7f5400ed2ae38429727a7221eabdbf3cb81624a0790d6ec43cae3a4dd3b1ff7",
-    "gcode": "d82c4a4b4de24321889ecd60f2cd3a8f3e1da28235f5e8d552b407c907a76bc0"
+    "moves": 5481,
+    "motion": "dd0cbac54abc863f4207409e1ed3332d6ee75b308d255e5008c385b04d1ff802",
+    "gcode": "9f9ca0bde7d3cffd040842328d65d90546fec53ff7f1ebb30fa738e2af7c016a"
   },
   "issue-401-cone-finish.camj/op0927/parallel": {
     "moves": 28245,
@@ -80,9 +94,9 @@ const baseline: Record<string, {moves: number; motion: string; gcode: string}> =
     "gcode": "99ca7dc8d150e01d14910249813c7de3d7cc04aac0a34aeca6567e5b74ea1295"
   },
   "issue-401-cone-finish.camj/op0927/waterline": {
-    "moves": 5415,
-    "motion": "e822baf0d9779f9ab8c3a807284bc8db3b8dd3d55fca86330a75692dde74cbf2",
-    "gcode": "877d04d11e8b6343e48ff06b4d10f11768c053ea513a2024094e55637518e7e0"
+    "moves": 5481,
+    "motion": "4a7e468fa7ef48412313d79cd46fdc2d424aa8760e4774b0d6c42925a1ff55ab",
+    "gcode": "386e8ead771625abe60b1ad21211715971d8af52c13feaa1991f47b55516d87b"
   },
   "model-in-pocket.camj/op6792442/parallel": {
     "moves": 786,

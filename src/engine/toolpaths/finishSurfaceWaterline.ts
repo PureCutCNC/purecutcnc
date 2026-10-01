@@ -65,6 +65,7 @@ import { appendAll } from './appendAll'
 import { finishScallopSpacing, finishScallopWaterlineStepdown } from './scallopHeight'
 import type { RetainedMaterialCheck } from './retainedMaterial'
 import type { FinishModelSurface } from './finishModelSurface'
+import { refineSurfacePathAtCliffs } from './surfacePathCliffs'
 
 const WATERLINE_LENGTH_EPSILON_MM = 0.01
 
@@ -1445,24 +1446,30 @@ export function snapClosedContourEntryToAnchor(
   return [{ x: anchor.x, y: anchor.y }, ...contour.slice(1)]
 }
 
+/**
+ * A projected ring's cut moves, Z per vertex from `zAtPoint`. Where two
+ * vertices straddle a cliff the straight move between them would cut across
+ * it, so the ring is refined there first (issue #938): on a guitar top one
+ * such move dropped 0.6" into a cavity over 0.165" and cut 0.45" into its edge.
+ */
 function toProjectedCutMoves(
   contour: Array<{ x: number; y: number }>,
   closed: boolean,
   zAtPoint: (point: { x: number; y: number }) => number,
+  cellSize: number,
   source?: string,
 ): ToolpathMove[] {
   if (contour.length < 2) return []
-  const sequence = closed ? [...contour, contour[0]] : contour
+  const lifted = refineSurfacePathAtCliffs(
+    contour.map((point) => ({ x: point.x, y: point.y, z: zAtPoint(point) })),
+    (x, y) => zAtPoint({ x, y }),
+    cellSize,
+    closed,
+  )
+  const sequence = closed ? [...lifted, lifted[0]] : lifted
   const moves: ToolpathMove[] = []
   for (let i = 0; i + 1 < sequence.length; i += 1) {
-    const fromPoint = sequence[i]
-    const toPoint = sequence[i + 1]
-    moves.push({
-      kind: 'cut',
-      from: { x: fromPoint.x, y: fromPoint.y, z: zAtPoint(fromPoint) },
-      to: { x: toPoint.x, y: toPoint.y, z: zAtPoint(toPoint) },
-      source,
-    })
+    moves.push({ kind: 'cut', from: sequence[i], to: sequence[i + 1], source })
   }
   return moves
 }
@@ -2502,7 +2509,7 @@ export function generateFinishSurfaceWaterline(
           const cutMovesForContour = shouldProjectToTargetContact
             || intersectingAdds.length > 0
             || ringEntry.projectZAtPoint
-            ? toProjectedCutMoves(safeRun.contour, safeRun.closed, liftedZAtPoint, ringEntry.source)
+            ? toProjectedCutMoves(safeRun.contour, safeRun.closed, liftedZAtPoint, heightMapCellSize, ringEntry.source)
             : safeRun.closed
               ? toClosedCutMoves(safeRun.contour, ringEntry.z)
               : toOpenCutMoves(safeRun.contour, ringEntry.z)

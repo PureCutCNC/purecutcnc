@@ -48,6 +48,7 @@ import { retractToSafe, transitionToCutEntry } from './pocket'
 import { finishScallopSpacing } from './scallopHeight'
 import type { RetainedMaterialCheck } from './retainedMaterial'
 import type { FinishModelSurface } from './finishModelSurface'
+import { refineSurfacePathAtCliffs } from './surfacePathCliffs'
 import {
   buildGeodesicDistanceField,
   extractConstantDistanceContours,
@@ -274,8 +275,16 @@ function liftFragment(
   const lifted: LiftedContour[] = []
   let current: ToolpathPoint[] = []
   let previousFloor: number | null = null
+  // The Z this pass gives a vertex, for the cliff refinement to add its own
+  // with (issue #938).
+  const vertexZ = (x: number, y: number): number => {
+    const surfaceZ = safeToolTipZAt(x, y, heightMap, tool)
+    return Number.isFinite(surfaceZ) ? Math.max(surfaceZ + axialLeave, minCutZAtPoint({ x, y })) : surfaceZ
+  }
   const flush = (closed = false): void => {
-    if (current.length >= (closed ? 3 : 2)) lifted.push({ points: current, closed })
+    if (current.length >= (closed ? 3 : 2)) {
+      lifted.push({ points: refineSurfacePathAtCliffs(current, vertexZ, heightMap.cellSize, closed), closed })
+    }
     current = []
     previousFloor = null
   }
