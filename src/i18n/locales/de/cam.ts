@@ -384,7 +384,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.hint.roughSurfaceNoModel': 'Oberflächenschruppen erfordert mindestens ein importiertes Modell-Feature; geschlossene Bereiche sind optionale Filter',
 
   // ── Validation hints: finish_surface / finish_surface_cleanup ──
-  'cam.hint.finishSurfaceCount': '{kind} erfordert genau ein importiertes Modell-Feature; geschlossene Bereiche sind optionale Filter',
+  'cam.hint.finishSurfaceCount': '{kind} erfordert mindestens ein importiertes Modell-Feature; geschlossene Bereiche sind optionale Filter',
   'cam.hint.finishSurfaceWrong': '{kind} akzeptiert nur ein importiertes Modell plus optionale geschlossene Bereiche',
 
   // ── Validation hints: generic (pocket, edge_route) ──

@@ -27,7 +27,8 @@ import type { ToolpathWarning } from './warningCodes'
 import type { PocketToolpathResult, ToolpathBounds } from './types'
 import { getOperationSafeZ, normalizeToolForProject } from './geometry'
 import { generateStepLevels, retractToSafe, updateBounds } from './pocket'
-import { loadSTLTransformedGeometry } from '../csg'
+import { resolveFinishModelSurface } from './finishModelSurface'
+import { unionClipperPaths } from './modelProtection'
 import { splitFeatureTargets } from './regions'
 import {
   buildExpandedTabFootprints,
@@ -40,7 +41,6 @@ import {
 import {
   generateFinishSurfaceParallel,
   modelSilhouettePathsForFinishSurface,
-  type FinishSurfaceParallelCacheHost,
 } from './finishSurfaceParallel'
 import { generateFinishSurfaceWaterline } from './finishSurfaceWaterline'
 import { generateFinishSurfaceConstantScallop } from './finishSurfaceConstantScallop'
@@ -193,10 +193,11 @@ export function generateFinishSurfaceToolpath(
     }
   }
 
-  const modelFeature = splitTargets.machiningFeatures.find((f) => f.operation === 'model' && f.kind === 'stl')
+  // Every target model, finished as one surface (issue #934).
+  const modelFeatures = splitTargets.machiningFeatures.filter((f) => f.operation === 'model' && f.kind === 'stl')
   const regionFeatures = splitTargets.regionFeatures.filter((f) => f.sketch.profile.closed)
 
-  if (!modelFeature) {
+  if (modelFeatures.length === 0) {
     return {
       operationId: operation.id,
       moves: [],
@@ -249,8 +250,8 @@ export function generateFinishSurfaceToolpath(
     }
   }
 
-  const stlData = loadSTLTransformedGeometry(modelFeature, project)
-  if (!stlData) {
+  const surface = resolveFinishModelSurface(project, modelFeatures)
+  if (!surface) {
     return {
       operationId: operation.id,
       moves: [],
@@ -260,7 +261,7 @@ export function generateFinishSurfaceToolpath(
     }
   }
 
-  const { positions: transformedPos, index } = stlData
+  const { positions: transformedPos, index } = surface.mesh
 
   let modelTopZ = -Infinity
   let modelBottomZ = Infinity
@@ -299,7 +300,9 @@ export function generateFinishSurfaceToolpath(
     }
   }
 
-  const modelSilhouettePaths = modelSilhouettePathsForFinishSurface(modelFeature)
+  const modelSilhouettePaths = modelFeatures.length === 1
+    ? modelSilhouettePathsForFinishSurface(modelFeatures[0])
+    : unionClipperPaths(modelFeatures.flatMap((feature) => modelSilhouettePathsForFinishSurface(feature)))
   const intersectingAdds = relatedIntersectingAddFeatures(
     project,
     new Set(target.featureIds),
@@ -445,7 +448,7 @@ export function generateFinishSurfaceToolpath(
       regionFeatures,
       tool,
       stepLevels,
-      stlData,
+      surface,
       safeZ,
       effectiveBottom,
       modelTopZ,
@@ -460,12 +463,10 @@ export function generateFinishSurfaceToolpath(
       ? generateFinishSurfaceConstantScallop(
         project,
         operation,
-        modelFeature,
+        modelFeatures,
         regionFeatures,
         tool,
-        transformedPos,
-        index,
-        stlData as FinishSurfaceParallelCacheHost,
+        surface,
         safeZ,
         minCutZAtPoint,
         hasMachinableSurface,
@@ -475,12 +476,10 @@ export function generateFinishSurfaceToolpath(
       : generateFinishSurfaceParallel(
         project,
         operation,
-        modelFeature,
+        modelFeatures,
         regionFeatures,
         tool,
-        transformedPos,
-        index,
-        stlData as FinishSurfaceParallelCacheHost,
+        surface,
         safeZ,
         minCutZAtPoint,
         hasMachinableSurface,

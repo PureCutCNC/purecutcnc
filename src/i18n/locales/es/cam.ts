@@ -334,7 +334,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.hint.vCarveRequiresClosed': '{kind} requiere al menos un elemento de sustracción o de línea cerrado; las regiones son solo filtros.',
   'cam.hint.vCarveWrongFeature': '{kind} solo acepta elementos de sustracción o de línea cerrados, además de regiones cerradas opcionales.',
   'cam.hint.roughSurfaceNoModel': 'El desbaste de superficie requiere al menos un elemento de modelo importado; las regiones cerradas son filtros opcionales.',
-  'cam.hint.finishSurfaceCount': '{kind} requiere exactamente un elemento de modelo importado; las regiones cerradas son filtros opcionales.',
+  'cam.hint.finishSurfaceCount': '{kind} requiere al menos un elemento de modelo importado; las regiones cerradas son filtros opcionales.',
   'cam.hint.finishSurfaceWrong': '{kind} solo acepta un modelo importado, además de regiones cerradas opcionales.',
   'cam.hint.noSubtractFeature': 'Seleccione al menos un elemento de sustracción; las regiones cerradas son filtros opcionales.',
   'cam.hint.noAddFeature': 'Seleccione al menos un elemento de adición; las regiones cerradas son filtros opcionales.',

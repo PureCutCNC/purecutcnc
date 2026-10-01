@@ -688,9 +688,9 @@ export function resolve3DSurfaceStepdown(
   // their top down (issue #933): a flat endmill removes the column above its
   // tip, so a level below a neighbour's bottom still may not clear under it.
   // Their stored silhouette, inside their own span only, was what protected
-  // them before, and roughing cut up into them from below. Only a rough pass
-  // takes this; finish cleanup shares this resolver and is #934's.
-  const protectsNeighbourMeshes = operation.kind === 'rough_surface'
+  // them before, and roughing cut up into them from below. Finish cleanup
+  // shares this resolver and takes the same protection (issue #934).
+  const protectsNeighbourMeshes = operation.kind === 'rough_surface' || operation.kind === 'finish_surface_cleanup'
   const neighbourPlan = protectsNeighbourMeshes
     ? neighbourModelKeepOutPlan(project, targetFeatureIds, outlineForShift(0), tool.diameter, decimationTolerance,
       roughLevels.map((z) => z - axialLeave), warnings)

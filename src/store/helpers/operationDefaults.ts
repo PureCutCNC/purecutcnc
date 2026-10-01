@@ -183,7 +183,8 @@ export function isOperationTargetValid(authoritativeProject: Project, kind: Oper
       (f.operation === 'region' && f.sketch.profile.closed)
     )
 
-    if (modelCount !== 1) return false
+    // Several models are finished as one surface (issue #934).
+    if (modelCount === 0) return false
     if (!allValid) return false
     return true
   }

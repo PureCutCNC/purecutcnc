@@ -64,6 +64,7 @@ import type { ClipperPath, NormalizedTool, ToolpathMove, ToolpathPoint } from '.
 import { appendAll } from './appendAll'
 import { finishScallopSpacing, finishScallopWaterlineStepdown } from './scallopHeight'
 import type { RetainedMaterialCheck } from './retainedMaterial'
+import type { FinishModelSurface } from './finishModelSurface'
 
 const WATERLINE_LENGTH_EPSILON_MM = 0.01
 
@@ -1563,7 +1564,7 @@ export function generateFinishSurfaceWaterline(
   regionFeatures: SketchFeature[],
   tool: NormalizedTool,
   stepLevels: number[],
-  stlData: { positions: Float32Array; index: Uint32Array; sliceIndex?: unknown },
+  surface: FinishModelSurface,
   safeZ: number,
   effectiveBottom: number,
   modelTopZ: number,
@@ -1625,6 +1626,8 @@ export function generateFinishSurfaceWaterline(
   const compositeAllowedForRegion: ClipperPath[] | null = regionMask
     ? resolveRegionDomainCentre(modelSilhouettePaths, regionMask, toolOffset)
     : null
+  // Every target model, as one surface (issue #934).
+  const stlData = surface.mesh
   const sliceIndex = getMeshSliceIndex(stlData as Parameters<typeof getMeshSliceIndex>[0])
   const sliceSampleEpsilon = Math.max(Math.abs(modelTopZ - effectiveBottom) * 1e-6, 1e-6)
   const sliceDecimationTolerance = convertLength(
@@ -2104,6 +2107,10 @@ export function generateFinishSurfaceWaterline(
       clampExpansion: tool.radius,
       includeTabs: false,
       machiningEnvelopePaths: machiningEnvelope,
+      // A neighbour stands in the way from its top down: only inside its own
+      // span, a level below its bottom cut under it and the flutes cut up
+      // into it (issue #934).
+      protectBelowBottom: true,
     })
     protectedPathsByZ.set(key, paths)
     return paths

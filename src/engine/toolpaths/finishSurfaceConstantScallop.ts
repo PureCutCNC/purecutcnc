@@ -27,6 +27,7 @@ import {
   clampsBlockingArea,
   clipperPathsToTupleContours,
   differenceClipperPaths,
+  unionClipperPaths,
 } from './modelProtection'
 import {
   buildSurfaceSlopeDomain,
@@ -46,6 +47,7 @@ import {
 import { retractToSafe, transitionToCutEntry } from './pocket'
 import { finishScallopSpacing } from './scallopHeight'
 import type { RetainedMaterialCheck } from './retainedMaterial'
+import type { FinishModelSurface } from './finishModelSurface'
 import {
   buildGeodesicDistanceField,
   extractConstantDistanceContours,
@@ -544,13 +546,15 @@ function emitContours(
 function resolveDomain(
   project: Project,
   operation: Operation,
-  modelFeature: SketchFeature,
+  modelFeatures: SketchFeature[],
   regionFeatures: SketchFeature[],
   tool: NormalizedTool,
   heightMap: HeightMap,
   warnings: ToolpathWarning[],
 ): ClipperPath[] {
-  const silhouette = modelSilhouettePathsForFinishSurface(modelFeature)
+  const silhouette = modelFeatures.length === 1
+    ? modelSilhouettePathsForFinishSurface(modelFeatures[0])
+    : unionClipperPaths(modelFeatures.flatMap((feature) => modelSilhouettePathsForFinishSurface(feature)))
   const regionMask = buildRegionMask(regionFeatures)
   const centreInset = tool.radius + Math.max(0, operation.stockToLeaveRadial ?? 0)
   let domain = resolveRegionDomainCentre(silhouette, regionMask, centreInset)
@@ -581,12 +585,10 @@ function resolveDomain(
 export function generateFinishSurfaceConstantScallop(
   project: Project,
   operation: Operation,
-  modelFeature: SketchFeature,
+  modelFeatures: SketchFeature[],
   regionFeatures: SketchFeature[],
   tool: NormalizedTool,
-  transformedPos: Float32Array,
-  index: Uint32Array,
-  cacheHost: FinishSurfaceParallelCacheHost,
+  surface: FinishModelSurface,
   safeZ: number,
   minCutZAtPoint: (point: Point) => number,
   hasMachinableSurface: (point: Point, liftedSurfaceZ: number) => boolean,
@@ -599,6 +601,9 @@ export function generateFinishSurfaceConstantScallop(
     warnings.push({ code: 'stepoverRatioRange' })
     return { moves: [], stepLevels: new Set() }
   }
+  // Every target model, as one surface (issue #934).
+  const { positions: transformedPos, index } = surface.mesh
+  const cacheHost = surface.mesh as FinishSurfaceParallelCacheHost
   const bounds = computeXYBounds(transformedPos)
   const requestedCellSize = Math.max(1e-6, Math.min(tool.radius / 5, spacing))
   const cellSize = chooseHeightMapCellSize(bounds, requestedCellSize, warnings)
@@ -610,7 +615,7 @@ export function generateFinishSurfaceConstantScallop(
     return { moves: [], stepLevels: new Set() }
   }
   const heightMap = getCachedHeightMap(cacheHost, transformedPos, index, bounds, cellSize)
-  const domain = resolveDomain(project, operation, modelFeature, regionFeatures, tool, heightMap, warnings)
+  const domain = resolveDomain(project, operation, modelFeatures, regionFeatures, tool, heightMap, warnings)
   if (domain.length === 0) {
     if (!warnings.some((warning) => warning.code === 'finishSlopeEmpty')) {
       warnings.push({ code: 'constantScallopEmpty' })
