@@ -465,7 +465,7 @@ function NestPanel({ sourceIds, nestId, panel }: {
                 step="any"
                 min={0}
                 value={MARGIN_SIDES.every((side) => form.margins[side] === form.margins.top) && Number.isFinite(form.margins.top) ? form.margins.top : ''}
-                aria-label={t('canvas.nest.marginsAll', { units })}
+                aria-label={t(subject.stockIsRectangle ? 'canvas.nest.marginsAll' : 'canvas.nest.margins', { units })}
                 onChange={(event) => {
                   const value = event.currentTarget.valueAsNumber
                   setForm({ ...form, margins: { top: value, bottom: value, left: value, right: value } })
@@ -473,7 +473,7 @@ function NestPanel({ sourceIds, nestId, panel }: {
               />
             </label>
           </div>
-          <div className="canvas-workflow-panel__grid">
+          {subject.stockIsRectangle && <div className="canvas-workflow-panel__grid">
             {MARGIN_SIDES.map((side) => (
               <label className="canvas-workflow-panel__field" key={side}>
                 <span>{t(MARGIN_KEYS[side])}</span>
@@ -489,7 +489,7 @@ function NestPanel({ sourceIds, nestId, panel }: {
                 />
               </label>
             ))}
-          </div>
+          </div>}
           <div className="canvas-workflow-panel__meta">
             <label className="canvas-workflow-panel__check">
               <input

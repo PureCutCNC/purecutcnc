@@ -30,7 +30,7 @@ import { requestFromJob } from '../../engine/nesting'
 import { useProjectStore } from '../../store/projectStore'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
-import { defaultStock, defaultTool, newProject, rectProfile, type Project, type SketchFeature } from '../../types/project'
+import { circleProfile, defaultStock, defaultTool, newProject, rectProfile, type Project, type SketchFeature } from '../../types/project'
 import {
   NEST_ROTATION_STEPS,
   NEST_ROTATIONS,
@@ -224,6 +224,29 @@ function testMarginsFormAndRecord(): void {
   console.log('margins in the form and the record: PASSED')
 }
 
+function testCustomStockTakesOneMargin(): void {
+  // #942: custom stock has no sides, so the form reopens a nest with the one margin the engine used.
+  const project = makeProject(true)
+  project.stock = { ...project.stock, profile: circleProfile(100, 50, 48) }
+  const subject = nestSubject(project, ['plate'])
+  assert(subject.parts.ok && !subject.stockIsRectangle, 'round stock is custom')
+  assert(nestSubject(makeProject(true), ['plate']).stockIsRectangle, 'the default stock is a rectangle')
+  const settings = nestSettingsFromForm({ ...initialNestForm(subject), quantities: [2], margins: { top: 2, bottom: 0, left: 3, right: 1 } })
+  const job = buildNestJob(subject.base, subject.parts.parts, [2], settings)
+  assert(job, 'job builds')
+  const applied = applyNestToProject(project, {
+    parts: [{ featureIds: subject.parts.parts[0].featureIds, quantity: 2 }],
+    placements: nest(requestFromJob(job)).placements,
+    settings,
+  })
+  assert(applied, 'nest applies')
+  const reopened = initialNestForm(nestSubject(applied.project, [applied.copyIds[0]], applied.nestId)).margins
+  assert(JSON.stringify(reopened) === JSON.stringify({ top: 3, bottom: 3, left: 3, right: 3 }), `the form reopens with the largest side: ${JSON.stringify(reopened)}`)
+  const check = (margin: number) => marginsLeaveRoom(subject, { top: margin, bottom: margin, left: margin, right: margin })
+  assert(check(10) && !check(48), 'a margin wider than the round stock leaves no room')
+  console.log('custom stock takes one margin: PASSED')
+}
+
 function testRevealingAFolderIsNotAnEdit(): void {
   useProjectStore.setState({ project: makeProject(true), history: { past: [], future: [], transactionStart: null }, dirty: false })
   const store = () => useProjectStore.getState()
@@ -266,5 +289,6 @@ testNestedSubjectTargetsTheNest()
 testJobSurvivesStructuredClone()
 testRotationStepsRoundTrip()
 testMarginsFormAndRecord()
+testCustomStockTakesOneMargin()
 testRevealingAFolderIsNotAnEdit()
 console.log('All nest panel state tests passed')

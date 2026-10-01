@@ -404,9 +404,10 @@ function outlineCutters(project: Project, featureIds: string[]): { diameter: num
   })
 }
 
-function offsetRings(rings: NestRing[], delta: number): NestRing[] {
+function offsetRings(rings: NestRing[], delta: number, join = ClipperLib.JoinType.jtMiter, arcTolerance = 0.25): NestRing[] {
   const offset = new ClipperLib.ClipperOffset()
-  offset.AddPaths(rings.map(ringToPath), ClipperLib.JoinType.jtMiter, ClipperLib.EndType.etClosedPolygon)
+  offset.ArcTolerance = arcTolerance
+  offset.AddPaths(rings.map(ringToPath), join, ClipperLib.EndType.etClosedPolygon)
   const solution: ClipperPath[] = new ClipperLib.Paths()
   offset.Execute(solution, delta * NEST_SCALE)
   return solution.map(pathToRing)
@@ -462,27 +463,50 @@ export function clampCornerPad(minimumGap: number): number {
 }
 
 /**
+ * Whether the stock outline is an axis-aligned rectangle (#942), the only
+ * outline whose top, bottom, left and right margins are well defined: its
+ * area fills its bounding box. A rotated rectangle, a rounded one, or any
+ * other outline is custom stock, which takes one margin all round.
+ */
+export function nestStockIsRectangle(project: Project): boolean {
+  const tolerance = nestFlattenTolerance(project)
+  const path = ringToPath(flattenProfileWithin(project.stock.profile, tolerance))
+  const box = pathsBox([path])
+  const width = box.maxX - box.minX
+  const height = box.maxY - box.minY
+  return width * height - Math.abs(ClipperLib.Clipper.Area(path)) <= 2 * (width + height) * tolerance * NEST_SCALE
+}
+
+/**
  * The stock outline, shrunk by the flattening tolerance. With `margins` (#881)
- * it is also cut to the stock's bounding box inset on each side by that side's
- * margin plus `edgeClearance`, the cut's reach outside a part; a side with no
- * margin is not inset. Exact for rectangular stock, and on any other outline
- * it only takes more room away.
+ * a side with a margin is inset by it plus `edgeClearance`, the cut's reach
+ * outside a part; a side with no margin is not inset. Rectangular stock is cut
+ * to its inset box. Custom stock (#942) has no sides, so its outline is offset
+ * inward by the largest margin plus `edgeClearance`, round at inside corners so
+ * the cut keeps that distance from the edge everywhere.
  */
 export function nestSheetRing(project: Project, margins?: NestMargins, edgeClearance = 0): NestRing | null {
   const tolerance = nestFlattenTolerance(project)
   let stock = flattenProfileWithin(project.stock.profile, tolerance)
   if (margins && Object.values(margins).some((margin) => margin > 0)) {
     const inset = (margin: number) => (margin > 0 ? margin + Math.max(0, edgeClearance) : 0)
-    const box = pathsBox([ringToPath(stock)])
-    const allowed = rectPath({
-      minX: box.minX + Math.round(inset(margins.left) * NEST_SCALE),
-      minY: box.minY + Math.round(inset(margins.bottom) * NEST_SCALE),
-      maxX: box.maxX - Math.round(inset(margins.right) * NEST_SCALE),
-      maxY: box.maxY - Math.round(inset(margins.top) * NEST_SCALE),
-    })
-    if (allowed[0].X >= allowed[2].X || allowed[0].Y >= allowed[2].Y) return null
-    const outside = differencePaths([rectPath({ minX: box.minX - 1, minY: box.minY - 1, maxX: box.maxX + 1, maxY: box.maxY + 1 })], [allowed])
-    const pieces = differencePaths([ringToPath(stock)], outside)
+    let pieces: ClipperPath[]
+    if (nestStockIsRectangle(project)) {
+      const box = pathsBox([ringToPath(stock)])
+      const allowed = rectPath({
+        minX: box.minX + Math.round(inset(margins.left) * NEST_SCALE),
+        minY: box.minY + Math.round(inset(margins.bottom) * NEST_SCALE),
+        maxX: box.maxX - Math.round(inset(margins.right) * NEST_SCALE),
+        maxY: box.maxY - Math.round(inset(margins.top) * NEST_SCALE),
+      })
+      if (allowed[0].X >= allowed[2].X || allowed[0].Y >= allowed[2].Y) return null
+      const outside = differencePaths([rectPath({ minX: box.minX - 1, minY: box.minY - 1, maxX: box.maxX + 1, maxY: box.maxY + 1 })], [allowed])
+      pieces = differencePaths([ringToPath(stock)], outside)
+    } else {
+      // Round joins are chords inside the arc by at most the arc tolerance, which the shrink below takes back.
+      const margin = inset(Math.max(margins.top, margins.bottom, margins.left, margins.right))
+      pieces = offsetRings([stock], -margin, ClipperLib.JoinType.jtRound, tolerance * NEST_SCALE).map(ringToPath)
+    }
     if (pieces.length === 0) return null
     stock = pathToRing(pieces.reduce((best, path) => (Math.abs(ClipperLib.Clipper.Area(path)) > Math.abs(ClipperLib.Clipper.Area(best)) ? path : best)))
   }

@@ -43,7 +43,7 @@ import { projectWithFeatures } from '../test/projectFixtures'
 import { defaultOperationForTarget } from './helpers/operationDefaults'
 import { normalizeProject, type ProjectFormatInput } from './helpers/projectFormat'
 import { discardNestFromProject } from './helpers/nestApply'
-import { buildNestRequest, nestGapForPart, resolveNestParts, type NestPartSpec } from './helpers/nestPart'
+import { buildNestRequest, nestGapForPart, nestStockIsRectangle, resolveNestParts, type NestPartSpec } from './helpers/nestPart'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import { toolpathGenerationDeferred, useProjectStore } from './projectStore'
 
@@ -459,24 +459,35 @@ function testMarginsKeepTheUncutEdge(): void {
 }
 
 function testMarginsOnRoundStock(): void {
-  // On stock that is not a rectangle, margins trim its bounding box: parts
-  // stay inside the stock and inside the inset box.
+  // #942: stock that is not a rectangle has no sides, so it takes the largest
+  // margin all round, measured from its real outline — not its bounding box,
+  // which on a circle leaves no margin at all between the box's edges.
   const project = makeProject()
   project.stock = { ...project.stock, profile: circleProfile(150, 100, 95) }
+  assert(!nestStockIsRectangle(project), 'round stock is custom')
   resetStore(project)
-  const margins = { top: 30, bottom: 30, left: 60, right: 0 }
+  const margins = { top: 4, bottom: 0, left: 12, right: 0 }
   const reach = TOOL_DIAMETER + STOCK_TO_LEAVE
-  const { placed } = nestIntoStore(['plate'], settings({ quantity: 12, margins }))
-  assert(placed >= 2, `plates placed: ${placed}`)
+  const { placed } = nestIntoStore(['plate'], settings({ quantity: 30, margins }))
+  assert(placed >= 4, `plates placed: ${placed}`)
   const nested = useProjectStore.getState().project
+  let closest = Infinity
   for (const id of plateInstances(nested)) {
-    for (const p of worldRing(nested, id)) {
-      assert(Math.hypot(p.x - 150, p.y - 100) <= 95 + 1e-6, `${id} stays on the round stock`)
-      assert(p.x >= 55 + margins.left + reach - 1e-6, `${id} keeps the left margin`)
-      assert(p.y >= 5 + margins.bottom + reach - 1e-6 && p.y <= 195 - margins.top - reach + 1e-6, `${id} keeps the top and bottom margins`)
-    }
+    for (const p of worldRing(nested, id)) closest = Math.min(closest, 95 - Math.hypot(p.x - 150, p.y - 100))
   }
+  assert(closest >= 12 + reach - 1e-3, `every part keeps the largest margin from the round edge: ${closest}, need ${12 + reach}`)
+  assert(closest <= 12 + reach + 1, `and is packed against it: ${closest}`)
   console.log('margins on round stock: PASSED')
+}
+
+function testStockShapeDecidesTheMargins(): void {
+  const project = makeProject()
+  assert(nestStockIsRectangle(project), 'default stock is a rectangle')
+  const square = rectProfile(0, 0, 100, 100)
+  const rotated = { ...square, start: { x: 50, y: 0 }, segments: [{ type: 'line' as const, to: { x: 100, y: 50 } }, { type: 'line' as const, to: { x: 50, y: 100 } }, { type: 'line' as const, to: { x: 0, y: 50 } }, { type: 'line' as const, to: { x: 50, y: 0 } }] }
+  assert(nestStockIsRectangle({ ...project, stock: { ...project.stock, profile: square } }), 'a drawn rectangle is a rectangle')
+  assert(!nestStockIsRectangle({ ...project, stock: { ...project.stock, profile: rotated } }), 'a rotated square is custom')
+  console.log('stock shape decides the margins: PASSED')
 }
 
 function testReplaceNestIsOneStep(): void {
@@ -583,6 +594,7 @@ testClampsAreAvoided()
 testClampCornersKeepTheRouteWhole()
 testMarginsKeepTheUncutEdge()
 testMarginsOnRoundStock()
+testStockShapeDecidesTheMargins()
 testReplaceNestIsOneStep()
 testAmendedNestStaysOneStep()
 testSearchFlagClearsWithThePanel()
