@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { CutDirection, Operation, Project } from '../../types/project'
+import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
 import type { ClipperPath, NormalizedTool, PocketToolpathResult, ResolvedPocketRegion } from './types'
 import type { ToolpathWarning } from './warningCodes'
 import {
@@ -30,7 +30,8 @@ import {
   generateStepLevels,
   polyTreeToRegions,
 } from './pocket'
-import { loadSTLTransformedGeometry } from '../csg'
+import { loadSTLTransformedGeometry, type STLTransformedData } from '../csg'
+import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { buildRegionMask, splitFeatureTargets } from './regions'
 import { resolveRegionDomainArea } from './regionDomain'
 import {
@@ -38,6 +39,8 @@ import {
   modelSilhouetteClipperPaths,
   resolveClosedModelSection,
   sliceDecimationTolerance,
+  type CumulativeModelKeepOutPlan,
+  type ModelSection,
 } from './modelSection'
 import {
   appendClampBlockedWarnings,
@@ -51,6 +54,8 @@ import {
   unionClipperPaths,
 } from './modelProtection'
 import { addFeatureTopZs, buildRetainedMaterial, containingAddFeatures, type RetainedMaterial } from './retainedMaterial'
+import { appendAll } from './appendAll'
+import { appendUniqueWarning } from './warningDedup'
 
 export interface Resolved3DSurfaceLevel {
   z: number
@@ -236,6 +241,64 @@ function dedupeFloorAreasDescending(areaByZ: Map<number, number>): Array<{ z: nu
   return merged
 }
 
+interface ClipperFrame { minX: number; minY: number; maxX: number; maxY: number }
+
+/** The box round `paths`, grown by `reach` project units; null when empty. */
+function clipperFrame(paths: ClipperPath[], reach: number): ClipperFrame | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const path of paths) {
+    for (const point of path) {
+      if (point.X < minX) minX = point.X
+      if (point.X > maxX) maxX = point.X
+      if (point.Y < minY) minY = point.Y
+      if (point.Y > maxY) maxY = point.Y
+    }
+  }
+  if (!(minX <= maxX)) return null
+  const grow = reach * DEFAULT_CLIPPER_SCALE
+  return { minX: minX - grow, minY: minY - grow, maxX: maxX + grow, maxY: maxY + grow }
+}
+
+function framesOverlap(a: ClipperFrame, b: ClipperFrame): boolean {
+  return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
+}
+
+/**
+ * What the imported models an operation does not target occupy, cumulative
+ * from the top down, at each protection level (issue #933).
+ *
+ * Only a model whose outline reaches the machining envelope is sliced: the
+ * envelope is where the cutter can go, so a model outside it can change no
+ * level, and a project of many models pays only for its neighbours. `reach`
+ * covers the envelope growing to pay for decimation as the levels go down.
+ */
+function neighbourModelKeepOutPlan(
+  project: Project,
+  targetFeatureIds: Set<string>,
+  envelopePaths: ClipperPath[],
+  reach: number,
+  decimationTolerance: number,
+  protectionLevels: number[],
+  warnings: ToolpathWarning[],
+): CumulativeModelKeepOutPlan | null {
+  const envelope = clipperFrame(envelopePaths, reach)
+  if (envelope === null) return null
+  const sections = resolvedProjectFeatures(project)
+    .filter((feature) => feature.operation === 'model' && feature.kind === 'stl' && !targetFeatureIds.has(feature.id))
+    .map((feature) => ({ feature, silhouettePaths: modelSilhouetteClipperPaths(feature) }))
+    .filter(({ silhouettePaths }) => {
+      const frame = clipperFrame(silhouettePaths, 0)
+      return frame !== null && framesOverlap(frame, envelope)
+    })
+    .map(({ feature, silhouettePaths }) => ({
+      featureId: feature.id,
+      geometry: loadSTLTransformedGeometry(feature, project),
+      silhouettePaths,
+      decimationTolerance,
+    }))
+  return sections.length > 0 ? buildCumulativeModelKeepOutPlan(sections, protectionLevels, warnings) : null
+}
+
 export function resolve3DSurfaceStepdown(
   project: Project,
   operation: Operation,
@@ -258,12 +321,17 @@ export function resolve3DSurfaceStepdown(
     }
   }
 
-  const modelFeature = splitTargets.machiningFeatures.find(
+  // Every target model, roughed as one surface (issue #933). Taking only the
+  // first left the others neither roughed nor protected, since protection
+  // skips targets: they were cut straight through.
+  const modelFeatures = splitTargets.machiningFeatures.filter(
     (feature) => feature.operation === 'model' && feature.kind === 'stl',
-  ) ?? null
+  )
   const regionFeatures = splitTargets.regionFeatures.filter((feature) => feature.sketch.profile.closed)
   const regionMask = buildRegionMask(regionFeatures)
-  if (!modelFeature?.stl?.meshAssetId || !project.modelAssets?.[modelFeature.stl.meshAssetId]) {
+  if (modelFeatures.length === 0 || modelFeatures.some((feature) => (
+    !feature.stl?.meshAssetId || !project.modelAssets?.[feature.stl.meshAssetId]
+  ))) {
     return {
       ok: false,
       result: emptyResult(operation, { code: 'surface3dNotMesh' }),
@@ -295,15 +363,17 @@ export function resolve3DSurfaceStepdown(
     }
   }
 
-  const stlData = loadSTLTransformedGeometry(modelFeature, project)
-  if (!stlData) {
-    return {
-      ok: false,
-      result: emptyResult(operation, { code: 'surface3dLoadFailed' }),
+  const targetModels: Array<{ feature: SketchFeature; geometry: STLTransformedData }> = []
+  for (const feature of modelFeatures) {
+    const geometry = loadSTLTransformedGeometry(feature, project)
+    if (!geometry) {
+      return {
+        ok: false,
+        result: emptyResult(operation, { code: 'surface3dLoadFailed' }),
+      }
     }
+    targetModels.push({ feature, geometry })
   }
-
-  const { positions: transformedPos, index } = stlData
 
   let modelTopZ = -Infinity
   let modelBottomZ = Infinity
@@ -313,30 +383,34 @@ export function resolve3DSurfaceStepdown(
   // would be a second pass over the whole mesh. Positions are transformed, so
   // the area is in final project mm^2 and comparable to the tool's own disc.
   const floorAreaByZ = new Map<number, number>()
+  let triangleCount = 0
 
-  for (let i = 0; i < index.length; i += 3) {
-    const i1 = index[i] * 3
-    const i2 = index[i + 1] * 3
-    const i3 = index[i + 2] * 3
+  for (const { geometry: { positions: transformedPos, index } } of targetModels) {
+    triangleCount += index.length / 3
+    for (let i = 0; i < index.length; i += 3) {
+      const i1 = index[i] * 3
+      const i2 = index[i + 1] * 3
+      const i3 = index[i + 2] * 3
 
-    const z1 = transformedPos[i1 + 2]
-    const z2 = transformedPos[i2 + 2]
-    const z3 = transformedPos[i3 + 2]
+      const z1 = transformedPos[i1 + 2]
+      const z2 = transformedPos[i2 + 2]
+      const z3 = transformedPos[i3 + 2]
 
-    if (z1 > modelTopZ) modelTopZ = z1
-    if (z2 > modelTopZ) modelTopZ = z2
-    if (z3 > modelTopZ) modelTopZ = z3
+      if (z1 > modelTopZ) modelTopZ = z1
+      if (z2 > modelTopZ) modelTopZ = z2
+      if (z3 > modelTopZ) modelTopZ = z3
 
-    if (z1 < modelBottomZ) modelBottomZ = z1
-    if (z2 < modelBottomZ) modelBottomZ = z2
-    if (z3 < modelBottomZ) modelBottomZ = z3
+      if (z1 < modelBottomZ) modelBottomZ = z1
+      if (z2 < modelBottomZ) modelBottomZ = z2
+      if (z3 < modelBottomZ) modelBottomZ = z3
 
-    if (Math.abs(z1 - z2) < 1e-6 && Math.abs(z2 - z3) < 1e-6) {
-      const area = Math.abs(
-        (transformedPos[i2] - transformedPos[i1]) * (transformedPos[i3 + 1] - transformedPos[i1 + 1])
-        - (transformedPos[i3] - transformedPos[i1]) * (transformedPos[i2 + 1] - transformedPos[i1 + 1]),
-      ) / 2
-      floorAreaByZ.set(z1, (floorAreaByZ.get(z1) ?? 0) + area)
+      if (Math.abs(z1 - z2) < 1e-6 && Math.abs(z2 - z3) < 1e-6) {
+        const area = Math.abs(
+          (transformedPos[i2] - transformedPos[i1]) * (transformedPos[i3 + 1] - transformedPos[i1 + 1])
+          - (transformedPos[i3] - transformedPos[i1]) * (transformedPos[i2 + 1] - transformedPos[i1 + 1]),
+        ) / 2
+        floorAreaByZ.set(z1, (floorAreaByZ.get(z1) ?? 0) + area)
+      }
     }
   }
 
@@ -359,7 +433,7 @@ export function resolve3DSurfaceStepdown(
   const minStepover = 1 / DEFAULT_CLIPPER_SCALE
   const effectiveStepover = Math.max(stepoverDistance, minStepover)
 
-  const modelSilhouettePaths = modelSilhouetteClipperPaths(modelFeature)
+  const modelSilhouettePaths = targetModels.flatMap(({ feature }) => modelSilhouetteClipperPaths(feature))
   const silhouetteArea = calculateClipperArea(modelSilhouettePaths)
   // Keep the tool-center envelope tight to the model outer wall. Rough/cleanup
   // only need enough radial band to retain a machinable outer-wall pass; they
@@ -523,12 +597,12 @@ export function resolve3DSurfaceStepdown(
   const useModelFloorEnvelope = operation.kind === 'rough_surface' && Number.isFinite(modelFloorZ)
   const envelopeProtectionLevels = useModelFloorEnvelope ? roughLevels.map((z) => z - axialLeave) : []
   const modelSectionPlan = useModelFloorEnvelope
-    ? buildCumulativeModelKeepOutPlan([{
-      featureId: modelFeature.id,
-      geometry: stlData,
-      silhouettePaths: modelSilhouettePaths,
+    ? buildCumulativeModelKeepOutPlan(targetModels.map(({ feature, geometry }) => ({
+      featureId: feature.id,
+      geometry,
+      silhouettePaths: modelSilhouetteClipperPaths(feature),
       decimationTolerance,
-    }], envelopeProtectionLevels, warnings)
+    })), envelopeProtectionLevels, warnings)
     : null
   const modelKeepOutsByLevel = modelSectionPlan?.keepOutsByLevel
   // The deepest level is the pocket floor (or the model's own bottom when that
@@ -557,7 +631,7 @@ export function resolve3DSurfaceStepdown(
     warnings.push({ code: 'debug', params: { text: `Debug: flat Zs = ${mergedFloorAreas.length}, machinable at >= ${floorAreaThreshold.toFixed(4)} mm^2 = ${machinableFloorLevels.length}` } })
     warnings.push({ code: 'debug', params: { text: `Debug: floor candidate Zs = ${machinableFloorLevels.map((entry) => entry.z.toFixed(4)).join(', ')}` } })
     warnings.push({ code: 'debug', params: { text: `Debug: rough levels = ${roughLevels.map((z) => z.toFixed(4)).join(', ')}` } })
-    warnings.push({ code: 'debug', params: { text: `Debug: mesh triangles = ${index.length / 3}` } })
+    warnings.push({ code: 'debug', params: { text: `Debug: mesh triangles = ${triangleCount}` } })
     warnings.push({ code: 'debug', params: { text: `Debug: initialInset=${initialInset.toFixed(4)} stepover=${effectiveStepover.toFixed(4)} stepdown=${resolvedStepdown.toFixed(4)}` } })
   }
 
@@ -584,6 +658,44 @@ export function resolve3DSurfaceStepdown(
     const footprint = material?.footprintAbove(protectionZ) ?? []
     return footprint.length > 0 && intersectClipperPaths(footprint, envelopePaths).length > 0 ? footprint : []
   }
+  // Each target model's own section at a level, joined into one (issue #933).
+  // A lone model is returned exactly as it always was. A model with no closed
+  // section but open chains stands in by its silhouette, the same fallback a
+  // lone model takes below, so one unclosed mesh cannot leave a hole in the
+  // others' protection.
+  const targetSectionAt = (protectionZ: number): ModelSection => {
+    const sections = targetModels.map(({ feature, geometry }) => ({
+      feature,
+      section: modelSectionPlan?.sectionsByLevel.get(protectionZ)?.get(feature.id)
+        ?? resolveClosedModelSection(geometry, protectionZ, decimationTolerance),
+    }))
+    if (sections.length === 1) return sections[0].section
+    const paths: ClipperPath[] = []
+    let deviation = 0
+    for (const { feature, section } of sections) {
+      if (section.deviation > deviation) deviation = section.deviation
+      if (section.paths.length > 0) {
+        appendAll(paths, section.paths)
+      } else if (section.openChainCount > 0) {
+        appendAll(paths, modelSilhouetteClipperPaths(feature).map((path) => [...path].reverse()))
+        appendUniqueWarning(warnings, { code: 'surface3dOpenMesh' })
+      }
+    }
+    return { paths: unionClipperPaths(paths), deviation, openChainCount: 0 }
+  }
+
+  // Models that are not targets are protected by what their mesh occupies, from
+  // their top down (issue #933): a flat endmill removes the column above its
+  // tip, so a level below a neighbour's bottom still may not clear under it.
+  // Their stored silhouette, inside their own span only, was what protected
+  // them before, and roughing cut up into them from below. Only a rough pass
+  // takes this; finish cleanup shares this resolver and is #934's.
+  const protectsNeighbourMeshes = operation.kind === 'rough_surface'
+  const neighbourPlan = protectsNeighbourMeshes
+    ? neighbourModelKeepOutPlan(project, targetFeatureIds, outlineForShift(0), tool.diameter, decimationTolerance,
+      roughLevels.map((z) => z - axialLeave), warnings)
+    : null
+
   let protectedAbovePaths: ClipperPath[] = []
   let usedOpenSliceFallback = false
   // Running maximum of what decimation has actually cost so far. It is a
@@ -593,12 +705,17 @@ export function resolve3DSurfaceStepdown(
 
   for (const z of roughLevels) {
     const protectionZ = z - axialLeave
-    const modelSection = modelSectionPlan?.sectionsByLevel.get(protectionZ)?.get(modelFeature.id)
-      ?? resolveClosedModelSection(stlData, protectionZ, decimationTolerance)
+    const modelSection = targetSectionAt(protectionZ)
     const slicePaths = modelSection.paths
     if (modelSection.deviation > appliedDecimation) {
       appliedDecimation = modelSection.deviation
     }
+    // A neighbour's sections are decimated too, and the same erosion below has
+    // to pay for them.
+    for (const section of neighbourPlan?.sectionsByLevel.get(protectionZ)?.values() ?? []) {
+      if (section.deviation > appliedDecimation) appliedDecimation = section.deviation
+    }
+    const neighbourKeepOutPaths = neighbourPlan?.keepOutsByLevel.get(protectionZ) ?? []
     const activeSubtractPaths = relatedSubtracts.length > 0
       ? unionClipperPaths(
         relatedSubtracts
@@ -651,6 +768,8 @@ export function resolve3DSurfaceStepdown(
       tabExpansion: 0,
       clampExpansion: 0,
       machiningEnvelopePaths: levelOutlinePaths,
+      excludeModels: protectsNeighbourMeshes,
+      protectBelowBottom: protectsNeighbourMeshes,
     })
     // Stock to leave keeps the tip that far above a retained top, the same way
     // the mesh slice is taken at `protectionZ` rather than at `z`.
@@ -663,6 +782,7 @@ export function resolve3DSurfaceStepdown(
       + countPathVertices(protectedAbovePaths)
       + countPathVertices(surroundingProtectedPaths)
       + countPathVertices(retainedPaths)
+      + countPathVertices(neighbourKeepOutPaths)
     if (levelVertexCount > DEFAULT_SURFACE_3D_SLICE_VERTEX_BUDGET) {
       return {
         ok: false,
@@ -683,6 +803,7 @@ export function resolve3DSurfaceStepdown(
       ...modelKeepOutPaths,
       ...surroundingProtectedPaths,
       ...retainedPaths,
+      ...neighbourKeepOutPaths,
     ])
 
     if (modelSection.openChainCount > 0 && slicePaths.length === 0) {

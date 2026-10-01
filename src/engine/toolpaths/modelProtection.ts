@@ -43,6 +43,18 @@ export interface ProtectedFootprintOptions {
    * (issue #773). Unset keeps the inclusive test every other caller relies on.
    */
   featureClearanceZ?: number
+  /**
+   * With `featureClearanceZ`: a feature also stands in the way below its own
+   * bottom (issue #933). A flat endmill removes the whole column above its tip,
+   * so a part whose bottom is above the level is cut by the flutes even though
+   * the tip passes under it. Unset keeps the span test other callers rely on.
+   */
+  protectBelowBottom?: boolean
+  /**
+   * Leave imported models out: the caller protects them by their mesh
+   * sections instead of their stored silhouette (issue #933).
+   */
+  excludeModels?: boolean
   featureExpansion?: number
   clampExpansion?: number
   tabExpansion?: number
@@ -591,10 +603,12 @@ export function buildProtectedFootprintPaths(
   for (const feature of resolvedProjectFeatures(project)) {
     if (options.targetFeatureIds.has(feature.id)) continue
     if (feature.operation !== 'add' && feature.operation !== 'model') continue
+    if (options.excludeModels && feature.operation === 'model') continue
     if (options.featureClearanceZ !== undefined) {
       // Touching a top face is not cutting it; see `featureClearanceZ`.
       const span = resolveFeatureZSpan(project, feature)
-      if (options.featureClearanceZ >= span.max - 1e-9 || options.featureClearanceZ < span.min - 1e-9) continue
+      if (options.featureClearanceZ >= span.max - 1e-9) continue
+      if (!options.protectBelowBottom && options.featureClearanceZ < span.min - 1e-9) continue
     } else if (!isActiveAtZ(project, feature, options.z)) {
       continue
     }
