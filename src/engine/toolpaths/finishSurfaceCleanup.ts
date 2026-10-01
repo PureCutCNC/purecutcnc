@@ -667,18 +667,21 @@ export function generateFinishSurfaceCleanupToolpath(
   const splitTargets = operation.target.source === 'features'
     ? splitFeatureTargets(project, operation.target.featureIds)
     : null
-  const modelFeature = splitTargets?.machiningFeatures.find(
+  // Every target model (issue #934); the resolver above already roughs them as one.
+  const modelFeatures = splitTargets?.machiningFeatures.filter(
     (feature) => feature.operation === 'model' && feature.kind === 'stl',
-  ) ?? null
-  const modelFootprintPaths = modelFeature ? featureFootprintPaths(modelFeature) : []
-  const relatedSubtracts = modelFeature
+  ) ?? []
+  const modelFootprintPaths = modelFeatures.length === 1
+    ? featureFootprintPaths(modelFeatures[0])
+    : unionClipperPaths(modelFeatures.flatMap((feature) => featureFootprintPaths(feature)))
+  const relatedSubtracts = modelFeatures.length > 0
     ? relatedSubtractFeatures(
       project,
       new Set(operation.target.source === 'features' ? operation.target.featureIds : []),
       modelFootprintPaths,
     )
     : []
-  const intersectingAdds = modelFeature
+  const intersectingAdds = modelFeatures.length > 0
     ? relatedIntersectingAddFeatures(
       project,
       new Set(operation.target.source === 'features' ? operation.target.featureIds : []),

@@ -171,18 +171,21 @@ function testOutsideRouteAddsOnlyAddOrModelFeatures(): void {
   assert(ids(addToOperationCandidates(project, ['sub1'])).length === 0, 'outside route rejects subtract features')
 }
 
-function testFinishSurfaceKeepsSingleModelInvariant(): void {
+function testFinishSurfaceAcceptsAnotherModel(): void {
   const project = projectWith(
     [
       makeFeature('model1', 'model', 'stl'),
       makeFeature('model2', 'model', 'stl'),
       makeFeature('reg1', 'region'),
+      makeFeature('sub1', 'subtract'),
     ],
     [makeOperation('finish', 'finish_surface', featureTarget('model1'))],
   )
 
   assert(ids(addToOperationCandidates(project, ['reg1'])).includes('finish'), 'finish surface accepts a region')
-  assert(ids(addToOperationCandidates(project, ['model2'])).length === 0, 'finish surface stays single-model')
+  // Several models finish as one surface (issue #934).
+  assert(ids(addToOperationCandidates(project, ['model2'])).includes('finish'), 'finish surface accepts a second model')
+  assert(ids(addToOperationCandidates(project, ['sub1'])).length === 0, 'finish surface still rejects other features')
 }
 
 function testStockTargetOperationsNeverAppear(): void {
@@ -246,7 +249,7 @@ const tests: Array<[string, () => void]> = [
   ['pocket accepts second subtract and regions', testPocketAcceptsSecondSubtractAndRegions],
   ['add excludes no-op and incompatible selections', testAddExcludesNoOpAndIncompatibleSelections],
   ['outside route adds only add/model features', testOutsideRouteAddsOnlyAddOrModelFeatures],
-  ['finish surface keeps single-model invariant', testFinishSurfaceKeepsSingleModelInvariant],
+  ['finish surface accepts another model', testFinishSurfaceAcceptsAnotherModel],
   ['stock-target operations never appear', testStockTargetOperationsNeverAppear],
   ['empty selection yields no candidates', testEmptySelectionYieldsNoCandidates],
   ['remove lists containing operations with validity flag', testRemoveListsContainingOperationsWithValidityFlag],

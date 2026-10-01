@@ -334,7 +334,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.hint.vCarveRequiresClosed': '{kind} exige au moins une entité fermée de soustraction ou de ligne ; les régions ne sont que des filtres',
   'cam.hint.vCarveWrongFeature': '{kind} accepte seulement des entités fermées de soustraction ou de ligne et des régions fermées facultatives',
   'cam.hint.roughSurfaceNoModel': 'L’ébauche de surface exige au moins une entité de modèle importé ; les régions fermées sont des filtres facultatifs',
-  'cam.hint.finishSurfaceCount': '{kind} exige exactement une entité de modèle importé ; les régions fermées sont des filtres facultatifs',
+  'cam.hint.finishSurfaceCount': '{kind} exige au moins une entité de modèle importé ; les régions fermées sont des filtres facultatifs',
   'cam.hint.finishSurfaceWrong': '{kind} accepte seulement un modèle importé et des régions fermées facultatives',
   'cam.hint.noSubtractFeature': 'Sélectionnez au moins une entité de soustraction ; les régions fermées sont des filtres facultatifs',
   'cam.hint.noAddFeature': 'Sélectionnez au moins une entité d’ajout ; les régions fermées sont des filtres facultatifs',

@@ -44,10 +44,11 @@ export interface ProtectedFootprintOptions {
    */
   featureClearanceZ?: number
   /**
-   * With `featureClearanceZ`: a feature also stands in the way below its own
-   * bottom (issue #933). A flat endmill removes the whole column above its tip,
-   * so a part whose bottom is above the level is cut by the flutes even though
-   * the tip passes under it. Unset keeps the span test other callers rely on.
+   * With `featureClearanceZ` or `z`: a feature also stands in the way below its
+   * own bottom (issues #933, #934). A flat endmill removes the whole column above
+   * its tip, so a part whose bottom is above the level is cut by the flutes even
+   * though the tip passes under it. Unset keeps the span test other callers
+   * rely on.
    */
   protectBelowBottom?: boolean
   /**
@@ -609,6 +610,8 @@ export function buildProtectedFootprintPaths(
       const span = resolveFeatureZSpan(project, feature)
       if (options.featureClearanceZ >= span.max - 1e-9) continue
       if (!options.protectBelowBottom && options.featureClearanceZ < span.min - 1e-9) continue
+    } else if (options.protectBelowBottom && options.z !== undefined) {
+      if (options.z > resolveFeatureZSpan(project, feature).max + 1e-9) continue
     } else if (!isActiveAtZ(project, feature, options.z)) {
       continue
     }

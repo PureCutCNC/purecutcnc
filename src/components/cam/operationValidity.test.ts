@@ -369,24 +369,24 @@ function testSelectAllReturnsEmptyWhenNothingCompatible(): void {
   )
 }
 
-function testSelectAllReturnsEmptyWhenJointSelectionInvalid(): void {
-  // Two models are each individually valid for finish_surface, but the kind
-  // accepts exactly one model — there is no unambiguous "all", so the
-  // affordance must not be offered.
+function testSelectAllOffersEveryModelForFinish(): void {
+  // Several models finish together as one surface (issue #934), so select-all
+  // offers every model; it used to offer none, since the kind took exactly one.
   const project = projectWith([
     makeFeature('model1', 'model', 'stl'),
     makeFeature('model2', 'model', 'stl'),
   ])
 
-  assert(
-    JSON.stringify(compatibleFeatureIdsForOperation(project, 'finish_surface'))
-      === JSON.stringify(['model1', 'model2']),
-    'both models should be individually compatible with finish surface',
-  )
-  assert(
-    selectAllCompatibleFeatureIds(project, 'finish_surface').length === 0,
-    'finish-surface select-all should be empty when two models exist',
-  )
+  for (const kind of ['finish_surface', 'finish_surface_cleanup'] as const) {
+    assert(
+      JSON.stringify(selectAllCompatibleFeatureIds(project, kind)) === JSON.stringify(['model1', 'model2']),
+      `${kind} select-all should offer both models`,
+    )
+    assert(
+      getOperationAddHint(project, selectionFor(['model1', 'model2']), kind) === null,
+      `${kind} should accept two models`,
+    )
+  }
   assert(
     JSON.stringify(selectAllCompatibleFeatureIds(projectWith([makeFeature('model1', 'model', 'stl')]), 'finish_surface'))
       === JSON.stringify(['model1']),
@@ -631,7 +631,7 @@ testCompatibleFeatureIdsReuseValidityRules()
 testCompatibleFeatureIdsMatchAddHint()
 testSelectAllReturnsCompatibleIdsWhenJointlyValid()
 testSelectAllReturnsEmptyWhenNothingCompatible()
-testSelectAllReturnsEmptyWhenJointSelectionInvalid()
+testSelectAllOffersEveryModelForFinish()
 testOperationTargetsRegion()
 testClosedLineIsValidVCarveTarget()
 testOpenLineIsInvalidVCarveTarget()

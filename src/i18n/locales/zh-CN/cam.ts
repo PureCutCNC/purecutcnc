@@ -388,7 +388,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.hint.roughSurfaceNoModel': '曲面粗加工需要至少一个导入的模型特征；闭合区域为可选过滤器',
 
   // ── Validation hints: finish_surface / finish_surface_cleanup ──
-  'cam.hint.finishSurfaceCount': '{kind}需要恰好一个导入的模型特征；闭合区域为可选过滤器',
+  'cam.hint.finishSurfaceCount': '{kind}需要至少一个导入的模型特征；闭合区域为可选过滤器',
   'cam.hint.finishSurfaceWrong': '{kind}仅接受一个导入模型加可选的闭合区域',
 
   // ── Validation hints: generic ──

@@ -387,7 +387,7 @@ export const camEn = {
   'cam.hint.roughSurfaceNoModel': 'Rough surface requires at least one imported model feature; closed regions are optional filters',
 
   // ── Validation hints: finish_surface / finish_surface_cleanup ──
-  'cam.hint.finishSurfaceCount': '{kind} requires exactly one imported model feature; closed regions are optional filters',
+  'cam.hint.finishSurfaceCount': '{kind} requires at least one imported model feature; closed regions are optional filters',
   'cam.hint.finishSurfaceWrong': '{kind} only accepts one imported model plus optional closed regions',
 
   // ── Validation hints: generic (pocket, edge_route) ──

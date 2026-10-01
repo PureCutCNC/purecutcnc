@@ -27,6 +27,7 @@ import { appendClampBlockedWarnings, buildProtectedFootprintPaths, clampsBlockin
 import { appendAll } from './appendAll'
 import { finishScallopSpacing } from './scallopHeight'
 import type { RetainedMaterialCheck } from './retainedMaterial'
+import type { FinishModelSurface } from './finishModelSurface'
 
 function computeContourBounds(
   contours: Iterable<Array<Array<[number, number]>>>,
@@ -601,6 +602,17 @@ export function modelSilhouettePathsForFinishSurface(modelFeature: SketchFeature
   return unionClipperPaths(coverageContoursToClipperPaths(modelSilhouetteContours(modelFeature)))
 }
 
+/**
+ * The outline a finish covers (issue #934): one target's silhouette as it
+ * always was, or several joined so the pass covers each place once.
+ */
+function targetSilhouetteContours(modelFeatures: SketchFeature[]): CoverageContours {
+  if (modelFeatures.length === 1) return modelSilhouetteContours(modelFeatures[0])
+  return clipperPathsToTupleContours(unionClipperPaths(
+    modelFeatures.flatMap((feature) => coverageContoursToClipperPaths(modelSilhouetteContours(feature))),
+  ))
+}
+
 function subtractProtectedContours(contours: CoverageContours, protectedPaths: ClipperPath[]): CoverageContours {
   if (contours.length === 0 || protectedPaths.length === 0) return contours
   const clipped = differenceClipperPaths(
@@ -613,12 +625,10 @@ function subtractProtectedContours(contours: CoverageContours, protectedPaths: C
 export function generateFinishSurfaceParallel(
   project: Project,
   operation: Operation,
-  modelFeature: SketchFeature,
+  modelFeatures: SketchFeature[],
   regionFeatures: SketchFeature[],
   tool: NormalizedTool,
-  transformedPos: Float32Array,
-  index: Uint32Array,
-  sliceIndexHost: FinishSurfaceParallelCacheHost,
+  surface: FinishModelSurface,
   safeZ: number,
   minCutZAtPoint: (point: Point) => number,
   hasMachinableSurface: (point: Point, liftedSurfaceZ: number) => boolean,
@@ -639,6 +649,9 @@ export function generateFinishSurfaceParallel(
     warnings.push({ code: 'debug', params: { text: `Debug: parallel mode, angle=${angleDeg}°, stepover=${stepoverDistance.toFixed(4)}` } })
   }
 
+  // Every target model, as one surface (issue #934).
+  const { positions: transformedPos, index } = surface.mesh
+  const sliceIndexHost = surface.mesh as FinishSurfaceParallelCacheHost
   const modelBbox = computeXYBounds(transformedPos)
   const regionMask = buildRegionMask(regionFeatures)
   const regionBounds = regionMask && !regionMask.baseIncludesSubject
@@ -816,7 +829,7 @@ export function generateFinishSurfaceParallel(
   const allMoves: ToolpathMove[] = []
   const allStepLevels = new Set<number>()
   const scanIndex = 0
-  const baseContours = modelSilhouetteContours(modelFeature)
+  const baseContours = targetSilhouetteContours(modelFeatures)
   const baseCoveragePaths = unionClipperPaths(coverageContoursToClipperPaths(baseContours))
   // Tabs are NOT 2D-subtracted from coverage here — they were being subtracted
   // unconditionally, which carved a hole above every tab regardless of how far

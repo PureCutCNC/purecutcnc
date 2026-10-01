@@ -216,7 +216,7 @@ function getOperationAddHintWithMap(
     const modelCount = features.filter((feature) => feature.operation === 'model' && feature.kind === 'stl').length
     const regionFeatures = features.filter((feature) => feature.operation === 'region')
 
-    if (modelCount !== 1) {
+    if (modelCount === 0) {
       return camT('cam.hint.finishSurfaceCount', { kind: operationKindLabel(kind) })
     }
     if (!regionFeatures.every((feature) => featureHasClosedGeometry(feature))) {
