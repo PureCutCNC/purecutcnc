@@ -267,7 +267,6 @@ export type ToolpathWarningCode =
   | 'resolverNoValidSubtracts'
   | 'resolverNoTargets'
   // edge route (bands)
-  | 'edgeMixedDepthSpans'
   | 'edgeNoCombinedContour'
   | 'edgeFeatureNoCutDepth'
   | 'edgeBandNoCutDepth'

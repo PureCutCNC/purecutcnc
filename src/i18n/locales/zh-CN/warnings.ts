@@ -107,7 +107,6 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketTrochoidalCornerReliefUnsupported': '摆线型腔不应用清角（{style}）：轨迹从不经过清角道次所依赖的环形转角，因此不会切出清角。请清除该设置，或改用轮廓图案。',
   'warnings.pocketTrochoidalTightSpot': '({x}, {y}) 附近的通道过窄，容纳不下 {width} 的摆线通道，该处未生成刀路，会残留材料。请减小通道宽度、改用更小的刀具，或用轮廓图案清除该区域。',
   'warnings.pocketTrochoidalAdvanceDegenerate': '({x}, {y}) 附近的摆线型腔每圈推进量对该刀具过小：每圈前进不足刀具直径的 1%。请提高每圈推进量。',
-  'warnings.edgeMixedDepthSpans': '选定的外侧沿边目标具有不同的有效深度范围。混合深度目标暂不支持组合外侧路径；分别生成轮廓可能会切到内部重叠区域。请按深度拆分加工操作，或对齐目标的顶部/底部。',
   'warnings.edgeNoCombinedContour': '无法为选定的外侧沿边目标生成有效的组合外轮廓',
   'warnings.edgeFeatureNoCutDepth': '{name} 在轴向留量后没有剩余切削深度',
   'warnings.edgeBandNoCutDepth': '深度带 {topZ} -> {bottomZ} 在轴向留量后没有剩余切削深度',

@@ -42,6 +42,7 @@ import {
   type ReliefLoop,
 } from './cornerRelief'
 import { appendClampBlockedWarnings, clampKeepOuts, differenceClipperPaths, unionClipperPaths } from './modelProtection'
+import { edgeLevelRuns, edgeTargetCutAt } from './edgeLevelRuns'
 import { isFeatureFirst, mergeToolpathResults, perFeatureOperations } from './multiFeature'
 import {
   buildInsetRegions,
@@ -392,6 +393,9 @@ function obstacleHoles(
 /** Tolerance on "the subtract reaches the solid's top", in project units. */
 const OBSTACLE_HOLE_Z_EPSILON = 1e-6
 
+/** Tolerance on "this level is that target's top", in project units. */
+const TARGET_TOP_EPSILON = 1e-6
+
 /**
  * An obstacle's material from `z` up: its paths less every hole open down to
  * `z` (issue #914). A text part's outline without this was solid across its
@@ -453,10 +457,6 @@ function resolveEffectiveBottom(feature: SketchFeature, project: Project, operat
   }
 
   return effectiveBottom
-}
-
-function depthValuesMatch(left: number, right: number): boolean {
-  return Math.abs(left - right) <= 1e-6
 }
 
 function toClipperPoint(point: Point): { X: number; Y: number } {
@@ -1571,13 +1571,35 @@ function generateEdgeRouteToolpathSingle(
    * offsets it by the clearance its own geometry needs, so nothing here carries
    * a tool radius.
    */
+  /**
+   * An obstacle blocks every level from its top down, not only the levels
+   * inside its own span (issue #179): the cutter is a cylinder, so material
+   * standing above the tip is cut even where the tip is below its bottom.
+   * `minZ` is where its material ends, which decides only which holes are open.
+   */
   interface RouteObstacle {
     paths: ClipperPath[]
     minZ: number
     maxZ: number
     /** Subtracts that open holes in it; see `obstacleMaterial`. */
     holes: RouteObstacleHole[]
+    /**
+     * Set on a target of this route: at a level where its wall is being cut it
+     * is routed, not steered around. Everywhere else it stands like any part.
+     */
+    cutAt?: (z: number) => boolean
   }
+  /**
+   * Does `obstacle` stand in the cutter's way at level `z`? A target at a
+   * level on its own top does not: the tip only touches that face, and the
+   * wall of the target being cut stands above it and has to be reached.
+   */
+  const obstacleBlocksAt = (obstacle: RouteObstacle, z: number): boolean => obstacle.cutAt
+    ? z < obstacle.maxZ - TARGET_TOP_EPSILON && !obstacle.cutAt(z)
+    : z <= obstacle.maxZ
+  /** The material of `obstacle` standing at or above level `z`. */
+  const obstacleMaterialAbove = (obstacle: RouteObstacle, z: number): ClipperPath[] =>
+    obstacleMaterial(obstacle, Math.max(z, obstacle.minZ))
   interface RouteObstacleHole {
     paths: ClipperPath[]
     minZ: number
@@ -1623,14 +1645,27 @@ function generateEdgeRouteToolpathSingle(
     routeFrame !== null && candidate.frame !== null
       && framesOverlap(growFrame(candidate.frame, obstacleReach), growFrame(routeFrame, routeReach))
   const nearbySubtracts = obstacleCandidates?.subtracts.filter(reachesRoute) ?? []
+  // A route's other targets are parts too (issue #179). With mixed depth spans
+  // one is still standing at levels where another is cut: a rough pass passes
+  // its bottom, or a finish pass reaches another target's bottom first.
+  const targetCutAt = new Map(closedTargetFeatures.map((feature) => {
+    const effectiveBottom = resolveEffectiveBottom(feature, project, operation)
+    const target = { topZ: resolveFeatureZSpan(project, feature).top, bottomZ: effectiveBottom ?? 0 }
+    const cutAt = (z: number): boolean => effectiveBottom !== null && edgeTargetCutAt(target, operation.pass, z)
+    return [feature.id, cutAt] as const
+  }))
+  // A lone target cannot stand in its own way: every level it is routed at
+  // cuts it. Leaving it out keeps a single-target route's work what it was.
+  const targetsCanBlock = closedTargetFeatures.length > 1
   const allAdditiveObstacles: RouteObstacle[] = (obstacleCandidates?.solids ?? [])
-    .filter((candidate) => !targetFeatureIdSet.has(candidate.featureId))
+    .filter((candidate) => targetsCanBlock || !targetFeatureIdSet.has(candidate.featureId))
     .filter(reachesRoute)
     .map((candidate) => ({
       paths: candidate.paths,
       minZ: candidate.minZ,
       maxZ: candidate.maxZ,
       holes: candidate.carvable ? obstacleHoles(candidate, nearbySubtracts) : [],
+      ...(targetFeatureIdSet.has(candidate.featureId) ? { cutAt: targetCutAt.get(candidate.featureId) } : {}),
     }))
 
   /**
@@ -1662,8 +1697,8 @@ function generateEdgeRouteToolpathSingle(
     const cached = cache.get(key)
     if (cached !== undefined) return cached
     const activePaths = obstacles
-      .filter((obstacle) => z <= obstacle.maxZ && z >= obstacle.minZ)
-      .flatMap((obstacle) => obstacleMaterial(obstacle, z))
+      .filter((obstacle) => obstacleBlocksAt(obstacle, z))
+      .flatMap((obstacle) => obstacleMaterialAbove(obstacle, z))
     let mask: ReturnType<typeof buildMaskFromClipperPaths> = null
     if (activePaths.length > 0) {
       // `jtRound`, as the lead and entry domain use: the cutter centre must stay
@@ -1762,11 +1797,12 @@ function generateEdgeRouteToolpathSingle(
     bottomZ: number,
     clearance: number,
   ): ClipperPath[] {
+    // Every consumer asks about one span with one set of targets cut through
+    // it, so the deepest level answers whether a target is cut or standing.
     const minZ = Math.min(topZ, bottomZ)
-    const maxZ = Math.max(topZ, bottomZ)
     const activePaths = obstacles
-      .filter((obstacle) => obstacle.maxZ >= minZ && obstacle.minZ <= maxZ)
-      .flatMap((obstacle) => obstacleMaterial(obstacle, minZ))
+      .filter((obstacle) => obstacleBlocksAt(obstacle, minZ))
+      .flatMap((obstacle) => obstacleMaterialAbove(obstacle, minZ))
     return unionPaths(offsetPaths(
       activePaths,
       clearance * DEFAULT_CLIPPER_SCALE,
@@ -2146,34 +2182,27 @@ function generateEdgeRouteToolpathSingle(
 
   const shouldAttemptCombinedOutside = operation.kind === 'edge_route_outside' && routableTargets.length > 1
   if (shouldAttemptCombinedOutside) {
-    const referenceTarget = routableTargets[0]
-    const canCombineOutsideTargets = routableTargets.every((target) => (
-      depthValuesMatch(target.topZ, referenceTarget.topZ)
-      && depthValuesMatch(target.bottomZ, referenceTarget.bottomZ)
-    ))
-
-    if (canCombineOutsideTargets) {
-      const combinedPaths = unionPaths(routableTargets.flatMap((target) => target.contourPaths))
+    // One outline per run of levels that cut the same targets (issue #179).
+    // Targets that share a depth span make a single run, cut as they always were.
+    for (const run of edgeLevelRuns(routableTargets, operation.pass, operation.stepdown)) {
+      const combinedPaths = unionPaths(run.targets.flatMap((target) => target.contourPaths))
       const rawContours = resolveContourPaths(combinedPaths)
 
       if (rawContours.length === 0) {
-        warnings.push({ code: 'edgeNoCombinedContour' })
+        appendUniqueWarning(warnings, { code: 'edgeNoCombinedContour' })
       } else {
         const contours = applyContourDirection(rawContours, outsideDirection)
         warnClampsBlockingGuide(
-          contours, referenceTarget.bottomZ, isTrochoidal ? trochoidalGuideOffset : tool.radius,
+          contours, run.bottomZ, isTrochoidal ? trochoidalGuideOffset : tool.radius,
         )
-        const levels =
-          operation.pass === 'finish'
-            ? [referenceTarget.bottomZ]
-            : generateStepLevels(referenceTarget.topZ, referenceTarget.bottomZ, operation.stepdown)
+        const levels = run.levels
 
         if (reliefStepdown !== null) {
           reliefSpans.push({
             clearedLoops: outsideClearedLoops(combinedPaths, radialLeave),
             wallLoops: outsideWallLoops(combinedPaths, reliefWallOffset, outsideJoinType),
-            topZ: referenceTarget.topZ,
-            bottomZ: referenceTarget.bottomZ,
+            topZ: run.topZ,
+            bottomZ: run.bottomZ,
           })
         }
 
@@ -2184,25 +2213,25 @@ function generateEdgeRouteToolpathSingle(
             ClipperLib.JoinType.jtRound,
           )
           const obstacles = retainedObstaclePathsForSpan(
-            referenceTarget.topZ,
-            referenceTarget.bottomZ,
+            run.topZ,
+            run.bottomZ,
             tool.radius + radialLeave,
           )
           const guideObstacles = retainedObstaclePathsForSpan(
-            referenceTarget.topZ,
-            referenceTarget.bottomZ,
+            run.topZ,
+            run.bottomZ,
             trochoidalGuideOffset,
           )
           warnPartsBlockingGuide(
-            contours, referenceTarget.topZ, referenceTarget.bottomZ, guideObstacles,
-            routableTargets.map((target) => target.feature.name).join(', '),
+            contours, run.topZ, run.bottomZ, guideObstacles,
+            run.targets.map((target) => target.feature.name).join(', '),
           )
           currentPosition = appendTrochoidalContoursAtLevels(
             moves,
             currentPosition,
             contours,
             levels,
-            referenceTarget.topZ,
+            run.topZ,
             safeZ,
             operation,
             tool.diameter,
@@ -2230,21 +2259,18 @@ function generateEdgeRouteToolpathSingle(
           )
         } else {
           const combinedDomain = outsideDomain(
-            combinedPaths, referenceTarget.topZ, referenceTarget.bottomZ,
+            combinedPaths, run.topZ, run.bottomZ,
           )
           currentPosition = appendFragmentedContoursAtLevels(
             moves, currentPosition, contours, levels, safeZ, maxLinkDistance,
             regionMask, obstacleMaskForZ,
             outsideLeadForLevel(outsideLeadOptions(combinedDomain)),
             outsideEntryForLevel(outsideEntryPolicy(combinedDomain)),
-            warnPartsBlockingRoute(routableTargets.map((target) => target.feature.name).join(', ')),
+            warnPartsBlockingRoute(run.targets.map((target) => target.feature.name).join(', ')),
           )
         }
       }
-    } else {
-      warnings.push(
-        { code: 'edgeMixedDepthSpans' },
-      )
+      if (isTrochoidal && hasFatalTrochoidalWarning(warnings)) break
     }
   }
 
