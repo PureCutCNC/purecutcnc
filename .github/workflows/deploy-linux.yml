@@ -56,6 +56,34 @@ jobs:
       - name: Build Linux app
         run: npm run tauri build -- --bundles appimage,deb
 
+      # The bundled libwayland-client comes from this 22.04 runner and is too
+      # old for the host EGL stack on newer distros: WebKitGTK aborts with
+      # EGL_BAD_PARAMETER or segfaults under Wayland (#929). Repack without it
+      # so the host's copy is used, keeping the runtime Tauri produced.
+      - name: Remove bundled libwayland-client from the AppImage
+        working-directory: src-tauri/target/release/bundle/appimage
+        env:
+          APPIMAGETOOL_VERSION: '1.9.1'
+        run: |
+          set -euo pipefail
+          appimage=$(ls *.AppImage)
+          offset=$(./"$appimage" --appimage-offset)
+          head -c "$offset" "$appimage" > runtime
+          ./"$appimage" --appimage-extract > /dev/null
+          removed=$(find squashfs-root -name 'libwayland-client.so*' -print -delete)
+          if [ -z "$removed" ]; then
+            echo "::warning::No bundled libwayland-client found; AppImage left unchanged"
+            rm -rf squashfs-root runtime
+            exit 0
+          fi
+          echo "Removed: $removed"
+          curl -fsSL -o appimagetool \
+            "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
+          chmod +x appimagetool
+          rm "$appimage"
+          APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 ./appimagetool --comp zstd --runtime-file runtime squashfs-root "$appimage"
+          rm -rf squashfs-root runtime appimagetool
+
       - name: Upload prerelease Linux bundles to release
         if: contains(inputs.version, '-')
         uses: softprops/action-gh-release@v2
