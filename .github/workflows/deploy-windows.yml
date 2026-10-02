@@ -35,16 +35,20 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Choose build mode
+        id: build-mode
+        uses: ./.github/actions/deploy-build-mode
+
       - name: Set version
         run: npm version "${{ inputs.version }}" --no-git-tag-version
 
       - name: Build Windows app for prerelease version
         if: contains(inputs.version, '-')
-        run: npm run tauri build -- --bundles nsis
+        run: npm run tauri build -- --bundles nsis --config ${{ steps.build-mode.outputs.tauri-config }}
 
       - name: Build Windows app for stable version
         if: ${{ !contains(inputs.version, '-') }}
-        run: npm run tauri build
+        run: npm run tauri build -- --config ${{ steps.build-mode.outputs.tauri-config }}
 
       - name: Upload prerelease installer to release
         if: contains(inputs.version, '-')
