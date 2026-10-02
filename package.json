@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "npx tsx scripts/run-build.ts",
+    "build:dist": "npx tsx scripts/build-icon-sprite.ts && vite build",
     "check:colors": "npx tsx scripts/check-color-literals.ts",
     "check:e2e-lanes": "npx tsx scripts/check-e2e-lanes.ts",
     "check:i18n": "npx tsx scripts/check-i18n-format.ts",

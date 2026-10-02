@@ -1,0 +1,38 @@
+name: Deploy build mode
+description: >
+  Choose how a deploy job builds the frontend (issue #950). A commit already on
+  main passed the required PR checks (build + e2e, strict up-to-date), so it
+  only needs the bundle: `build:dist`. Anything else — a release tagged off a
+  branch, a desktop build dispatched from a feature branch, or a failed lookup —
+  runs the full gated `build`.
+
+outputs:
+  npm-script:
+    description: The npm script that builds dist/ (`build:dist` or `build`)
+    value: ${{ steps.mode.outputs.npm-script }}
+  tauri-config:
+    description: Tauri config file that points beforeBuildCommand at that script
+    value: ${{ steps.mode.outputs.tauri-config }}
+
+runs:
+  using: composite
+  steps:
+    - id: mode
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status) || status=lookup-failed
+        case "$status" in
+          identical|behind)
+            script=build:dist
+            echo "::notice::$GITHUB_SHA is on main and passed PR checks; building dist/ without re-running the gates" ;;
+          *)
+            script=build
+            echo "::notice::$GITHUB_SHA is not on main (compare: $status); running the full gated build" ;;
+        esac
+        mkdir -p temp
+        config=temp/tauri-deploy-build.json
+        printf '{"build":{"beforeBuildCommand":"npm run tauri:icon && npm run %s"}}\n' "$script" > "$config"
+        echo "npm-script=$script" >> "$GITHUB_OUTPUT"
+        echo "tauri-config=$config" >> "$GITHUB_OUTPUT"

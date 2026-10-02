@@ -22,8 +22,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Choose build mode
+        id: build-mode
+        uses: ./.github/actions/deploy-build-mode
+
       - name: Build
-        run: npm run build
+        run: npm run ${{ steps.build-mode.outputs.npm-script }}
 
       - name: Checkout pages repo
         uses: actions/checkout@v4
