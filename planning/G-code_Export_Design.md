@@ -93,7 +93,10 @@ dialect and delegates. What the machine is asked to do is shared and lives in
   is restated at a new speed and stops, when coolant comes on, the feed and
   speed fallbacks, and the warnings for what was asked for but cannot be
   written;
-- the machine-coordinate transform, for moves and for drill cycles;
+- the machine-coordinate transform, for moves and for drill cycles, including
+  the turn of the operation's machining setup (issue #944): a Bottom
+  operation's stock-space toolpath is turned into its setup's frame before
+  the origin offset, and a Top operation takes the unturned path;
 - arc fitting, the emitted-arc fallback and their warnings;
 - the safe-Z split of a rapid, and the motion trace.
 

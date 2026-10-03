@@ -36,6 +36,8 @@ import type {
   Point,
   Project,
   Segment,
+  SetupFace,
+  SetupOrientation,
   SketchFeature,
   Stock,
   Tab,
@@ -488,6 +490,19 @@ export interface ProjectStore {
   deleteOperation: (id: string) => void
   duplicateOperation: (id: string) => string | null
   reorderOperations: (ids: string[]) => void
+
+  // ---- Machining setups (issue #944) ----
+  /** Add a setup. Returns its id, or null when the orientation is not one this build can machine. */
+  createSetup: (input: { name?: string; orientation: SetupOrientation }) => string | null
+  renameSetup: (id: string, name: string) => void
+  /** Remove a setup together with its operations, as one undo step. False for the last setup or an unknown id. */
+  deleteSetup: (id: string) => boolean
+  /** Switch the workspace to a setup. New operations join it. Not an undo step. */
+  setActiveSetup: (id: string) => void
+  /** Move an operation to another setup. Target validation is the caller's until #946. */
+  assignOperationToSetup: (operationId: string, setupId: string) => void
+  /** Change the face features are drawn on. Their stock-space Z span is not touched. */
+  setFeatureAuthoringFace: (featureIds: string[], face: SetupFace) => void
 
   selectFeature: (id: string | null, additive?: boolean, expandGroup?: boolean) => void
   selectFeatures: (ids: string[]) => void

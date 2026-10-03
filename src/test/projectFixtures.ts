@@ -14,8 +14,17 @@
  * limitations under the License.
  */
 
-import { IDENTITY_MATRIX, LATEST_PROJECT_VERSION, type FeatureInstance, type Project, type SketchFeature } from '../types/project'
+import {
+  IDENTITY_MATRIX,
+  LATEST_PROJECT_VERSION,
+  type FeatureInstance,
+  type MachiningSetup,
+  type Project,
+  type SetupOrientation,
+  type SketchFeature,
+} from '../types/project'
 import { normalizeProject } from '../store/helpers/projectFormat'
+import { syncProjectSetups } from '../store/helpers/setups'
 import {
   createDefinitionForFeatureWithId,
   createFeatureInstance,
@@ -78,4 +87,58 @@ export function resolvedFeatures(project: Project): ResolvedSketchFeature[] {
 /** Adapt the ephemeral resolved read model to geometry helpers used by tests. */
 export function asSketchFeature(feature: ResolvedSketchFeature): SketchFeature {
   return feature
+}
+
+/** Id of the setup {@link withBottomSetup} adds. */
+export const BOTTOM_SETUP_ID = 'setup-bottom'
+
+/**
+ * Add a Bottom setup beside the project's Top one (issue #944) and move the
+ * named operations into it. `axis` is the stock axis the part is flipped
+ * about. The result is reconciled, so each setup lists its operations.
+ */
+export function withBottomSetup(
+  project: Project,
+  options: { axis?: SetupOrientation['axis']; operationIds?: string[]; setup?: Partial<MachiningSetup> } = {},
+): Project {
+  const moved = new Set(options.operationIds ?? [])
+  const bottom: MachiningSetup = {
+    id: BOTTOM_SETUP_ID,
+    name: 'Bottom',
+    orientation: { axis: options.axis ?? 'x', angleDeg: 180 },
+    indexing: 'manual',
+    registration: [],
+    notes: '',
+    operationIds: [],
+    ...options.setup,
+  }
+  return syncProjectSetups({
+    ...project,
+    setups: [...project.setups, bottom],
+    operations: project.operations.map((operation) => (
+      moved.has(operation.id) ? { ...operation, setupId: bottom.id } : operation
+    )),
+  })
+}
+
+/**
+ * The same project as a file saved before setups existed would carry it: no
+ * `setups`, no `activeSetupId`, no `setupId` on operations and no
+ * `authoringFace` on features. Loading it exercises the migration.
+ */
+export function withoutSetupFields(project: Project): ProjectFormatInput {
+  const { setups: _setups, activeSetupId: _activeSetupId, ...rest } = structuredClone(project)
+  void _setups
+  void _activeSetupId
+  return {
+    ...rest,
+    operations: rest.operations.map(({ setupId: _setupId, ...operation }) => {
+      void _setupId
+      return operation
+    }),
+    features: rest.features.map(({ authoringFace: _authoringFace, ...feature }) => {
+      void _authoringFace
+      return feature as FeatureInstance
+    }),
+  }
 }

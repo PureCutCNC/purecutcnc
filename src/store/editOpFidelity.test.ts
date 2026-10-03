@@ -106,6 +106,7 @@ function addRectFeature(
     folderId: null,
     z_top: 5,
     z_bottom: 0,
+    authoringFace: 'top',
     visible: true,
     locked: false,
   }
@@ -146,6 +147,7 @@ function addLinkedInstance(
     folderId: null,
     z_top: 5,
     z_bottom: 0,
+    authoringFace: 'top',
     visible: true,
     locked: false,
   }

@@ -121,6 +121,7 @@ export function createFeatureGeometrySlice(
       constraints: feature.sketch.constraints.map((constraint) => ({ ...constraint })),
       z_top: feature.z_top,
       z_bottom: feature.z_bottom,
+      authoringFace: feature.authoringFace,
       folderId: feature.folderId,
       visible: feature.visible,
       locked: feature.locked,

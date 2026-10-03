@@ -506,6 +506,7 @@ function test_camj_import_merges_definitions_collision_safe(): void {
         folderId: 'src-fd1',
         z_top: 5,
         z_bottom: 0,
+        authoringFace: 'top',
         visible: true,
         locked: false,
       },

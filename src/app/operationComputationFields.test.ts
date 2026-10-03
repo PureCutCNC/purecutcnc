@@ -127,6 +127,7 @@ const OPERATION_FIELDS: Record<keyof Required<Operation>, FieldProbe> = {
   dwellTime: { role: 'computation', change: { dwellTime: 1 } },
   countersinkDiameter: { role: 'computation', change: { countersinkDiameter: 6 } },
   retractHeight: { role: 'computation', change: { retractHeight: 5 } },
+  setupId: { role: 'computation', change: { setupId: 'setup-bottom' } },
   finishSlopeMin: { role: 'computation', change: { finishSlopeMin: 10 } },
   finishSlopeMax: { role: 'computation', change: { finishSlopeMax: 30 } },
   finishScallopHeight: { role: 'computation', change: { finishScallopHeight: 0.02 } },

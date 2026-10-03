@@ -122,6 +122,7 @@ const OPERATION_FIELD_CLASSIFICATION: Record<keyof Operation, FieldClass> = {
   dwellTime: 'compare',
   countersinkDiameter: 'compare',
   retractHeight: 'compare',
+  setupId: 'compare', // the setup decides the frame the operation is cut in (#944)
   debugToolpath: 'compare',
   debugShowRejectedCorners: 'compare',
   finishSlopeMin: 'compare',
@@ -146,6 +147,7 @@ const FEATURE_FIELD_CLASSIFICATION: Record<keyof FeatureInstance, FieldClass> = 
   constraints: 'compare',
   z_top: 'compare',
   z_bottom: 'compare',
+  authoringFace: 'compare', // decides which setups may target the feature (#944)
 }
 
 /** A copy of `base` with exactly one field changed to a different value.

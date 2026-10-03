@@ -35,6 +35,7 @@ import type { Units } from '../utils/units'
 import { convertProjectUnits, convertToolUnits } from '../utils/units'
 import { uniqueName } from './normalize'
 import { decodeProjectFormat } from '../store/helpers/projectFormat'
+import { matchingSetupId } from '../store/helpers/setups'
 
 export interface CamjInspection {
   /** Parsed source project. Always uses source units (not yet converted). */
@@ -439,6 +440,11 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
       name: opName,
       target,
       toolRef,
+      // The source project's setup ids mean nothing here (issue #944).
+      setupId: matchingSetupId(
+        currentProject,
+        sourceProject.setups?.find((setup) => setup.id === operation.setupId),
+      ),
     })
   }
 

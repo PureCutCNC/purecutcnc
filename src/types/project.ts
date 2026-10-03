@@ -450,6 +450,8 @@ export interface SketchFeature {
   regionMaskMode?: RegionMaskMode
   z_top: DimensionRef
   z_bottom: DimensionRef
+  /** See {@link FeatureInstance.authoringFace}. Missing on a draft means Top. */
+  authoringFace?: SetupFace
   visible: boolean
   locked: boolean
 }
@@ -512,8 +514,21 @@ export interface FeatureInstance {
    */
   textLayout?: TextLayout | null
   constraints: LocalConstraint[]
+  /**
+   * Stock-space Z span — the volumetric truth, whichever face the feature was
+   * drawn on. A depth measured from a face is a derived view of this span
+   * (`depthFromFace` in `src/engine/setupOrientation.ts`) and is never stored
+   * in its place.
+   */
   z_top: DimensionRef
   z_bottom: DimensionRef
+  /**
+   * The stock face this feature is drawn and edited on (issue #944). It says
+   * where the feature is authored, not what it means: the span above is
+   * unchanged by it. Files saved before setups existed have no value and load
+   * as `'top'`.
+   */
+  authoringFace: SetupFace
   folderId: string | null
   visible: boolean
   locked: boolean
@@ -666,6 +681,14 @@ export interface Operation {
   id: string
   name: string
   description?: string
+  /**
+   * The machining setup this operation belongs to (issue #944). Every
+   * operation of a loaded project has one: `syncProjectSetups` stamps it on
+   * load and after each store change. It is optional in the type only so a
+   * hand-built operation stays valid — read it through `setupForOperation`,
+   * which treats a missing value as the Top orientation.
+   */
+  setupId?: string
   kind: OperationKind
   pass: OperationPass
   enabled: boolean
@@ -943,6 +966,82 @@ export interface BackdropImage {
 }
 
 // ============================================================
+// Machining setups (issue #944)
+// ============================================================
+
+/** A stock face: where a feature is drawn, and which face a setup turns up. */
+export type SetupFace = 'top' | 'bottom'
+
+/**
+ * How the stock is turned for a setup, stored as a rotation rather than a
+ * face name so an indexed 3+1 setup (#394) adds an angle instead of a second
+ * transform. The pivot is not stored: it is the centre of the stock at
+ * mid-thickness, so the turned stock still occupies `[0, thickness]`.
+ */
+export interface SetupOrientation {
+  /** Stock axis the part turns about: the flip axis for a Bottom setup. */
+  axis: 'x' | 'y'
+  /** 0 is Top, 180 is Bottom. This build accepts no other value. */
+  angleDeg: number
+}
+
+/** `'manual'`: the operator turns the part and each setup is its own program. */
+export type SetupIndexing = 'manual'
+
+export type RegistrationKind = 'dowel' | 'fence' | 'corner'
+
+/**
+ * What a registration reference locates the stock against. Points are in
+ * stock space, like feature geometry. A feature reference follows its feature
+ * and is dropped when that feature is deleted.
+ */
+export type RegistrationTarget =
+  | { type: 'feature'; featureId: string }
+  | { type: 'point'; point: Point }
+  | { type: 'edge'; start: Point; end: Point }
+
+/** A declared locating reference. It records intent; it verifies nothing. */
+export interface RegistrationReference {
+  id: string
+  kind: RegistrationKind
+  target: RegistrationTarget
+}
+
+/**
+ * One fixed orientation of the stock on the machine. Top and Bottom are
+ * setups; the face is derived from the orientation (`setupFace`), not stored.
+ */
+export interface MachiningSetup {
+  id: string
+  name: string
+  orientation: SetupOrientation
+  indexing: SetupIndexing
+  registration: RegistrationReference[]
+  notes: string
+  /**
+   * This setup's operations, in cutting order. Derived, not authored:
+   * membership is `Operation.setupId` and order is `Project.operations`, and
+   * `syncProjectSetups` rewrites this list to match both.
+   */
+  operationIds: string[]
+}
+
+/** Id of the Top setup every new and every migrated project starts with. */
+export const DEFAULT_SETUP_ID = 'setup-top'
+
+export function defaultTopSetup(operationIds: string[] = []): MachiningSetup {
+  return {
+    id: DEFAULT_SETUP_ID,
+    name: 'Top',
+    orientation: { axis: 'x', angleDeg: 0 },
+    indexing: 'manual',
+    registration: [],
+    notes: '',
+    operationIds: [...operationIds],
+  }
+}
+
+// ============================================================
 // Project — top-level .camj document
 // ============================================================
 
@@ -1007,6 +1106,15 @@ export interface Project {
   global_constraints: GlobalConstraint[]
   tools: Tool[]
   operations: Operation[]
+  /**
+   * Machining setups (issue #944) — always at least one. A file without the
+   * field loads as a single Top setup holding every operation. The format
+   * number does not mark it: 0.6.0 stays on 3.3, so the migration keys on the
+   * field being absent.
+   */
+  setups: MachiningSetup[]
+  /** The setup the workspace is on; new operations join it. Always names an entry of `setups`. */
+  activeSetupId: string
   tabs: Tab[]
   clamps: Clamp[]
   /**
@@ -1739,6 +1847,8 @@ export function newProject(name = 'Untitled', units: ProjectMeta['units'] = 'inc
     global_constraints: [],
     tools: [],
     operations: [],
+    setups: [defaultTopSetup()],
+    activeSetupId: DEFAULT_SETUP_ID,
     tabs: [],
     clamps: [],
     ai_history: [],

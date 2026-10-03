@@ -64,6 +64,7 @@ import { createTabsSlice } from './slices/tabsSlice'
 import { createBackdropSlice } from './slices/backdropSlice'
 import { createMachineDefsSlice } from './slices/machineDefsSlice'
 import { createOperationsSlice } from './slices/operationsSlice'
+import { createSetupsSlice, withSetupSync } from './slices/setupsSlice'
 import { createImportMergeSlice } from './slices/importMergeSlice'
 import { createProjectLifecycleSlice } from './slices/projectLifecycleSlice'
 import { createHistorySlice } from './slices/historySlice'
@@ -113,7 +114,8 @@ function withAutoDirty(rawSet: SetFn): SetFn {
 }
 
 export const useProjectStore = create<ProjectStore>((rawSet, get) => {
-  const set = withAutoDirty(rawSet)
+  // Every project written through `set` has its setups reconciled (#944).
+  const set = withAutoDirty(withSetupSync(rawSet))
   const applyProfileBreak = (
     featureId: string,
     resolveBreak: (profile: SketchProfile) => ProfileBreakResult | null,
@@ -259,6 +261,7 @@ export const useProjectStore = create<ProjectStore>((rawSet, get) => {
   ...createBackdropSlice(set),
   ...createMachineDefsSlice(set),
   ...createOperationsSlice(set, get),
+  ...createSetupsSlice(set, get),
   ...createImportMergeSlice(set, get),
   ...createFeatureSlice(set, get),
   ...createFeatureGeometrySlice(set, get, {

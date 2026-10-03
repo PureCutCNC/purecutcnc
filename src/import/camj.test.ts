@@ -35,7 +35,7 @@ import {
   stockFromFeature,
 } from '../types/project'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
-import { projectWithFeatures, replaceProjectFeatures } from '../test/projectFixtures'
+import { projectWithFeatures, replaceProjectFeatures, withBottomSetup } from '../test/projectFixtures'
 import { inspectCamjString, mergeCamjFolders } from './camj'
 
 function assert(cond: boolean, msg: string): void {
@@ -320,6 +320,30 @@ function testMergeImportsToolAndOperation(): void {
   assert(op.toolRef === newTools[0].id, 'operation toolRef should be remapped to new tool id')
   // The unused tool should not be imported.
   assert(!result.project.tools.some((t) => t.name === 'Unused'), 'unused tool should not be imported')
+}
+
+function testMergeMapsOperationsOntoMatchingSetups(): void {
+  // Setup ids are per project (issue #944): an imported operation joins the
+  // setup here that is turned the same way as the one it came from.
+  const source = withBottomSetup({
+    ...makeSourceProject('mm'),
+    tools: [makeTool('t-src-1', 'Endmill')],
+    operations: [
+      makeOperation('op-top', 'Top pocket', ['f-src-1'], 't-src-1'),
+      makeOperation('op-bottom', 'Bottom pocket', ['f-src-2'], 't-src-1'),
+    ],
+  }, { axis: 'y', operationIds: ['op-bottom'] })
+  // The target's own Bottom setup has a different id from the source's.
+  const target = withBottomSetup(newProject('Target', 'mm'), { axis: 'y', setup: { id: 'target-bottom' } })
+  const setupByName = (project: Project) => new Map(project.operations.map((operation) => [operation.name, operation.setupId]))
+
+  const merged = mergeCamjFolders({ currentProject: target, sourceProject: source, selectedFolderIds: ['fd-src-a'] }).project
+  assert(setupByName(merged).get('Top pocket') === target.setups[0].id, 'a Top operation joins the target Top setup')
+  assert(setupByName(merged).get('Bottom pocket') === 'target-bottom', 'a Bottom operation joins the target Bottom setup, not the source id')
+
+  // No setup turned that way here: the operation joins the active setup.
+  const topOnly = mergeCamjFolders({ currentProject: newProject('Top only', 'mm'), sourceProject: source, selectedFolderIds: ['fd-src-a'] }).project
+  assert(setupByName(topOnly).get('Bottom pocket') === topOnly.activeSetupId, 'without a matching setup the operation joins the active one')
 }
 
 function testMergeSkipsOperationsTargetingNonImportedFeatures(): void {
@@ -727,6 +751,7 @@ testMergeRenamesOnNameCollision()
 testMergeCopiesReferencedMeshAssets()
 testMergeCopiesReferencedDimensions()
 testMergeImportsToolAndOperation()
+testMergeMapsOperationsOntoMatchingSetups()
 testMergeSkipsOperationsTargetingNonImportedFeatures()
 testMergeSkipsStockTargetedOperations()
 testMergeScalesUnitsMmToInch()

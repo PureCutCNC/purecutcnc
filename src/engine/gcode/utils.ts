@@ -17,22 +17,32 @@
 import type { MachineDefinition } from './types'
 import type { MachineOrigin } from '../../types/project'
 import type { ToolpathPoint } from '../toolpaths/types'
+import { canonicalToSetupPoint, setupFlipsArcDirection, setupToCanonicalPoint } from '../setupOrientation'
+import type { SetupFrame } from '../setupOrientation'
 
 /**
  * Transforms a point from project coordinates to machine coordinates.
  * X/Z follow the usual origin-relative subtraction.
  * Y is inverted because project space increases downward on screen while
  * machine space increases upward from the chosen origin.
+ *
+ * `setup` is the frame of a setup that turns the stock (issue #944): the
+ * point is turned into the setup-local frame first, and the origin — one
+ * placement shared by every setup — is then applied in that frame. Top passes
+ * no frame and takes exactly the path it always did.
  */
 export function projectToMachinePoint(
   point: ToolpathPoint,
   origin: MachineOrigin,
-  definition: MachineDefinition
+  definition: MachineDefinition,
+  setup?: SetupFrame,
 ): ToolpathPoint {
+  const local = setup ? canonicalToSetupPoint(point, setup) : point
+
   // 1. Apply origin offset
-  const dx = point.x - origin.x
-  const dy = origin.y - point.y
-  const dz = point.z - origin.z
+  const dx = local.x - origin.x
+  const dy = origin.y - local.y
+  const dz = local.z - origin.z
 
   // 2. Map project axes (X=right, Y=forward, Z=up) to machine axes
   // and handle inverted axes (e.g., -X).
@@ -66,7 +76,8 @@ export function projectToMachinePoint(
 export function machineToProjectPoint(
   point: ToolpathPoint,
   origin: MachineOrigin,
-  definition: MachineDefinition
+  definition: MachineDefinition,
+  setup?: SetupFrame,
 ): ToolpathPoint {
   const { xAxis, yAxis, zAxis } = definition.coordinateSystem
 
@@ -97,11 +108,13 @@ export function machineToProjectPoint(
   //   dx = x - origin.x   =>   x = dx + origin.x
   //   dy = origin.y - y   =>   y = origin.y - dy
   //   dz = z - origin.z   =>   z = dz + origin.z
-  return {
+  const local = {
     x: dx + origin.x,
     y: origin.y - dy,
     z: dz + origin.z,
   }
+  // Undo the setup's turn last, mirroring the forward order.
+  return setup ? setupToCanonicalPoint(local, setup) : local
 }
 
 /**
@@ -112,8 +125,11 @@ export function machineToProjectPoint(
  * part is orientation-preserving, so a machine-CW arc renders CCW in project
  * space and callers must invert `clockwise` before drawing. The common
  * identity mapping (and 180° mappings like -X/-Y) need no flip.
+ *
+ * A setup that turns the stock over mirrors the plan view once more, so it
+ * reverses whatever the axis mapping alone decides.
  */
-export function machineToProjectFlipsArcDirection(definition: MachineDefinition): boolean {
+export function machineToProjectFlipsArcDirection(definition: MachineDefinition, setup?: SetupFrame): boolean {
   // Column of the machine→project XY Jacobian contributed by each machine
   // axis: px = origin.x + dx, py = origin.y - dy, where dx/dy are recovered
   // from the machine axis values with their signs.
@@ -129,7 +145,8 @@ export function machineToProjectFlipsArcDirection(definition: MachineDefinition)
   const cx = column(definition.coordinateSystem.xAxis)
   const cy = column(definition.coordinateSystem.yAxis)
   const det = cx[0] * cy[1] - cx[1] * cy[0]
-  return det > 0
+  const axesFlip = det > 0
+  return setup && setupFlipsArcDirection(setup.orientation) ? !axesFlip : axesFlip
 }
 
 /**

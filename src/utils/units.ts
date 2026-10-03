@@ -26,6 +26,7 @@ import type {
   GridSettings,
   LocalConstraint,
   LocalDimension,
+  MachiningSetup,
   NamedDimension,
   Operation,
   Point,
@@ -384,6 +385,26 @@ function convertOrigin(origin: Project['origin'], from: Units, to: Units): Proje
   }
 }
 
+/** Registration points are stock-space lengths; everything else about a setup is unitless. */
+function convertSetup(setup: MachiningSetup, from: Units, to: Units): MachiningSetup {
+  return {
+    ...setup,
+    registration: setup.registration.map((reference) => {
+      const { target } = reference
+      if (target.type === 'point') {
+        return { ...reference, target: { ...target, point: convertPoint(target.point, from, to) } }
+      }
+      if (target.type === 'edge') {
+        return {
+          ...reference,
+          target: { ...target, start: convertPoint(target.start, from, to), end: convertPoint(target.end, from, to) },
+        }
+      }
+      return reference
+    }),
+  }
+}
+
 function convertBackdrop(backdrop: BackdropImage, from: Units, to: Units): BackdropImage {
   return {
     ...backdrop,
@@ -430,6 +451,7 @@ export function convertProjectUnits(project: Project, toUnits: Units): Project {
     global_constraints: project.global_constraints.map((constraint) => convertGlobalConstraint(constraint, fromUnits, toUnits)),
     tools: project.tools,
     operations: project.operations.map((operation) => convertOperation(operation, fromUnits, toUnits)),
+    setups: (project.setups ?? []).map((setup) => convertSetup(setup, fromUnits, toUnits)),
     tabs: project.tabs.map((tab) => convertTab(tab, fromUnits, toUnits)),
     clamps: project.clamps.map((clamp) => convertClamp(clamp, fromUnits, toUnits)),
   }

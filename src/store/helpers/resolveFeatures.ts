@@ -70,6 +70,7 @@ export interface ResolvedSketchFeature {
   regionMaskMode: FeatureDefinition['regionMaskMode']
   z_top: FeatureInstance['z_top']
   z_bottom: FeatureInstance['z_bottom']
+  authoringFace: FeatureInstance['authoringFace']
   visible: FeatureInstance['visible']
   locked: FeatureInstance['locked']
 }
@@ -470,6 +471,7 @@ export function resolveFeatureRow(
     regionMaskMode: definition.operation === 'region' ? (definition.regionMaskMode ?? 'include') : undefined,
     z_top: feature.z_top,
     z_bottom: feature.z_bottom,
+    authoringFace: feature.authoringFace,
     visible: feature.visible,
     locked: feature.locked,
   }
@@ -534,6 +536,7 @@ export function featureInstanceFromResolved(
     constraints: feature.sketch.constraints.map((constraint) => ({ ...constraint })),
     z_top: feature.z_top,
     z_bottom: feature.z_bottom,
+    authoringFace: feature.authoringFace,
     folderId: feature.folderId,
     visible: feature.visible,
     locked: feature.locked,
@@ -596,6 +599,7 @@ export function commitResolvedInstances(
       constraints: editedFeature.sketch.constraints.map((constraint) => ({ ...constraint })),
       z_top: editedFeature.z_top,
       z_bottom: editedFeature.z_bottom,
+      authoringFace: editedFeature.authoringFace,
       folderId: editedFeature.folderId,
       visible: editedFeature.visible,
       locked: editedFeature.locked,

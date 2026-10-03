@@ -41,7 +41,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   warnings, the motion trace), `planDrillCycles` (drill cycles in machine
   coordinates, for a dialect with canned cycles), `splitRapid` (the safe-Z
   split of a rapid), and the emitted-number helpers arc validation judges
-  with. It is the only caller of `projectToMachinePoint` during export.
+  with. It is the only caller of `projectToMachinePoint` during export, and
+  the only place an operation's machining setup is applied (issue #944): the
+  setup's frame is resolved once per operation and passed to the transform,
+  for moves and drill cycles alike. `planDrillCycles` takes the operation for
+  that reason.
 - `opensbpEmitter.ts` — ShopBot part-file emitter. Its header comment cites
   where the syntax comes from and what was deliberately not consulted; keep it
   accurate when the emitter changes.
@@ -56,7 +60,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   `parseExportedMotion` (parses in the definition's own dialect), eligibility,
   the exported-vs-source diagnostic, and the three-layer model builder.
 - `utils.ts` — number formatting, `projectToMachinePoint` and its inverse
-  `machineToProjectPoint`.
+  `machineToProjectPoint`. Both take an optional setup frame
+  (`src/engine/setupOrientation.ts`): the point is turned into the setup-local
+  frame before the origin offset, and Top passes none.
 - `definitions/` — bundled machine definitions (`BUNDLED_DEFINITIONS`) and
   `getActiveMachineDefinition`, the export boundary. `shopbot.json` is the one
   non-G-code definition; see the note below.
@@ -65,7 +71,10 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect
   switch), `sbpMotionParser.test.ts`, `arcFitting.test.ts`,
   `gcodeMotionParser.test.ts`, `motionDebug.test.ts`,
-  `trochoidalArcExport.test.ts`.
+  `trochoidalArcExport.test.ts`, `setupExport.test.ts` (a Bottom operation
+  exports turned for both dialects, the shared origin on and off the flip
+  centreline, arc direction reversal, drill cycles, and Top with setups
+  byte-identical to a project without them).
 
 ## Adding a dialect
 

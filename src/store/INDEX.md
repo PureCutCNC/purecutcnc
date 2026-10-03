@@ -26,6 +26,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `backdropSlice.ts` — backdrop CRUD: load/set/update/delete backdrop image
   - `machineDefsSlice.ts` — the project's machine snapshot: one `setProjectMachine` action that atomically embeds or clears the single selected definition (history-tracked). The machine *library* lives in [`src/machine/`](../machine/INDEX.md) as an application preference and never touches the project.
   - `operationsSlice.ts` — operation CRUD, rest-operation creation, toolpath visibility, duplication, ordering, and the single-history-transition `applyCamPlan` action
+  - `setupsSlice.ts` — machining setups (issue #944): create/rename/delete setup, the active setup, assign an operation to a setup, set a feature's authoring face; plus `withSetupSync`, the `set` wrapper that reconciles setups after every project change. No cross-face validation here — that arrives with CAM grouping (#946)
   - `projectLifecycleSlice.ts` — project lifecycle and persistence actions: create/load/open/save, metadata display settings, and export path markers
   - `historySlice.ts` — undo/redo and history transaction lifecycle
   - `workpieceSlice.ts` — stock, stock-source sketch editing, grid/units, origin placement, and creation target actions
@@ -53,10 +54,11 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `nestApply.ts` — pure apply/discard of a nest: linked copies in a nest folder, copies joined to their sources' operations, intra-part constraint references re-pointed at sibling copies, originals moved or kept, and exact restoration on discard
   - `instanceTransforms.ts` — affine matrix builders and transform-delta composition for feature instances
   - `resolveFeatures.ts` — strict definition+instance resolver, ephemeral world-space read model, and commit boundary back to lightweight instances
-  - `projectFormat.ts` — validates format 3.x projects, performs the one-way 1.0/2.0/2.1 legacy conversion without retaining baked rows, and migrates pre-3.1 absolute `retractHeight` values to distances above the material on load (issue #481)
+  - `projectFormat.ts` — validates format 3.x projects, performs the one-way 1.0/2.0/2.1 legacy conversion without retaining baked rows, and migrates pre-3.1 absolute `retractHeight` values to distances above the material on load (issue #481) It also migrates files without machining setups — keyed on the missing fields, not the version — to a single Top setup (issue #944)
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `buildShapeFeature.ts` — shared feature builder for the addRect/Circle/Ellipse/… constructors; consolidates duplicated shape-construction logic
   - `manualFeatureOperation.ts` — resolves existing world-space Add/Subtract instances and applies the shared strict-containment classifier to default a newly-created closed feature; also `inferLineTopZFromEnclosingFeature` (issue #351) picks a newly-created Line's initial `z_top` from the smallest enclosing solid (subtract floor / add top)
+  - `setups.ts` — machining-setup bookkeeping (issue #944): `decodeSetups` (strict validation of the setups a file carries; an orientation or indexing mode this build cannot machine is an error, not a fallback), `syncProjectSetups` (the reconciler — at least one setup, a valid active setup, every operation in a setup, `operationIds` rebuilt from membership and project order, references to deleted features dropped), and `matchingSetupId` for operations imported from another project
   - `ids.ts` — ID generation/uniqueness
   - `normalize.ts` — lower-level project normalization helpers: cloning, ID deduplication, cache clearing, equality checks, and feature tree/sync helpers
   - `polygonSplit.ts` — splits polygons (e.g. for boolean ops)
@@ -99,6 +101,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `updateFeatureOperationPropagation.test.ts` — P1b regression: operation change on a linked instance propagates to the definition + all siblings via updateFeature
 - `unitChange.test.ts` — explicit convert-vs-reinterpret project unit changes, history/undo behavior, and same-unit no-op coverage
 - `vcarveTargets.test.ts` — `isVCarveCompatibleFeature` predicate: closed subtract/line valid, open/invalid operations rejected (issue #270 S2)
+- `setups.test.ts` — machining setups (issue #944): a 3.2 file and a 3.3 file saved before setups both load as one Top setup, every checked-in `.camj` does too, a project with a Bottom setup round-trips through save/open, files this build cannot honour are refused, the reconciler, and the store actions including undo. The header lists the mutations each assertion was checked against
 
 ## Gotchas
 - The store owns history — call actions, do not bypass them.

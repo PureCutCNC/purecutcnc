@@ -226,6 +226,8 @@ export function createFeatureInstance(
     constraints: feature.sketch.constraints.map((constraint) => ({ ...constraint })),
     z_top: feature.z_top,
     z_bottom: feature.z_bottom,
+    // A draft carries no face until the workspace stamps one; it is Top.
+    authoringFace: feature.authoringFace ?? 'top',
     folderId: feature.folderId,
     visible: feature.visible,
     locked: feature.locked,

@@ -36,6 +36,7 @@ export function syncIdCounter(project: Project): void {
     ...project.operations.map((operation) => operation.id),
     ...project.tabs.map((tab) => tab.id),
     ...project.clamps.map((clamp) => clamp.id),
+    ...(project.setups ?? []).map((setup) => setup.id),
   ]
   const maxSuffix = usedIds.reduce((max, id) => Math.max(max, idNumericSuffix(id)), 0)
   idCounter = Math.max(idCounter, maxSuffix + 1)
@@ -50,6 +51,7 @@ export function nextUniqueGeneratedId(project: Project, prefix: string): string 
     ...project.operations.map((operation) => operation.id),
     ...project.tabs.map((tab) => tab.id),
     ...project.clamps.map((clamp) => clamp.id),
+    ...(project.setups ?? []).map((setup) => setup.id),
   ])
 
   let nextId = genId(prefix)

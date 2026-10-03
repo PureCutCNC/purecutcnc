@@ -326,7 +326,8 @@ function testDrillCycleTransform(): void {
     { x: 45, y: 70, clearZ: 30, retractZ: 22, bottomZ: 14, drillType: 'peck', peckDepth: 2 },
   ]
   // Machine = (x − origin.x, origin.y − y, z − origin.z): project Y is down.
-  const planned = planDrillCycles(project, bundled('grbl'), cycles)
+  const operation = makeOperation('drill', 't1', { kind: 'drilling' })
+  const planned = planDrillCycles(project, bundled('grbl'), cycles, operation)
   assertEqual(planned.map(({ at, clear, bottomZ, retractZ }) => ({ at, clear, bottomZ, retractZ })), [
     { at: { x: 20, y: 60 }, clear: { x: 20, y: 60, z: 10 }, bottomZ: -12, retractZ: 2 },
     { at: { x: 40, y: 30 }, clear: { x: 40, y: 30, z: 10 }, bottomZ: -6, retractZ: 2 },
@@ -335,7 +336,7 @@ function testDrillCycleTransform(): void {
 
   // A mirrored X axis mirrors the hole positions and nothing else.
   const mirrored = bundled('grbl', { coordinateSystem: { xAxis: '-X', yAxis: 'Y', zAxis: 'Z' } })
-  assertEqual(planDrillCycles(project, mirrored, cycles).map((cycle) => [cycle.at, cycle.bottomZ]), [
+  assertEqual(planDrillCycles(project, mirrored, cycles, operation).map((cycle) => [cycle.at, cycle.bottomZ]), [
     [{ x: -20, y: 60 }, -12],
     [{ x: -40, y: 30 }, -6],
   ], 'mirrored X')
