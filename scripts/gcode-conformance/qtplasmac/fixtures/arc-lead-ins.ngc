@@ -1,0 +1,46 @@
+(arc lead-ins and lead-outs, G2 and G3)
+(PureCutCNC reference program for the QtPlasmaC simulator check, issue #954.)
+(Hand-written from the QtPlasmaC manual for LinuxCNC 2.9; each stanza names)
+(the manual section it comes from. See ../README.md.)
+
+(Manual: Preamble and Postamble Codes)
+G21 G40 G49 G64 P0.1 G80 G90 G92.1 G94 G97
+(Manual: Paused Motion)
+M52 P1
+(Manual: Automatic Material Handling - select, wait, then take the feed rate)
+(from the material; the three codes must come in this order)
+M190 P1
+M66 P3 L3 Q1
+F#<_hal[plasmac.cut-feed-rate]>
+
+(A rounded rectangle with a hole. Every cut enters and leaves on a quarter)
+(circle tangent to the path, so the pierce mark stays off the part edge.)
+
+(hole: 40 mm, centre X70 Y50, counter-clockwise, 10 mm arc lead-in and lead-out)
+G0 X80 Y40
+M3 $0 S1
+G3 X90 Y50 I0 J10
+G3 X90 Y50 I-20 J0
+G3 X80 Y60 I-10 J0
+M5 $0
+
+(outline: 100 x 60 with 10 mm corners, clockwise, 5 mm arc lead-in and lead-out)
+G0 X15 Y45
+M3 $0 S1
+G3 X20 Y50 I0 J5
+G1 X20 Y70
+G2 X30 Y80 I10 J0
+G1 X110 Y80
+G2 X120 Y70 I0 J-10
+G1 X120 Y30
+G2 X110 Y20 I-10 J0
+G1 X30 Y20
+G2 X20 Y30 I0 J10
+G1 X20 Y50
+G3 X15 Y55 I-5 J0
+M5 $0
+
+(Manual: Preamble and Postamble Codes)
+G0 X0 Y0
+G21 G40 G49 G64 P0.1 G80 G90 G92.1 G94 G97
+M2
