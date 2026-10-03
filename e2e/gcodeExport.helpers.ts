@@ -65,6 +65,11 @@ export interface GcodeExportSeedOptions {
    * other case, a program that really does change tool (issue #755).
    */
   routeBOnSecondTool?: boolean
+  /**
+   * The bundled machine to select; GRBL when omitted. `shopbot` selects the
+   * one bundled machine that does not export G-code (issue #953).
+   */
+  machineId?: string
 }
 
 /**
@@ -92,7 +97,7 @@ function buildGcodeExportProjectJson(options: GcodeExportSeedOptions): string {
       operationClearanceZ: 0.2,
       clampClearanceXY: 0.5,
       clampClearanceZ: 0.2,
-      machineId: 'grbl',
+      machineId: options.machineId ?? 'grbl',
     },
     grid: {
       extent: 200,

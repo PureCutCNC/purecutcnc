@@ -347,6 +347,7 @@ export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineManager.field.description': 'descripción',
   'dialogs.machineManager.field.vendor': 'proveedor',
   'dialogs.machineManager.field.fileExtension': 'extensión de archivo',
+  'dialogs.machineManager.field.outputDialect': 'formato de salida',
   'dialogs.machineManager.field.coordinateSystem': 'asignación de ejes',
   'dialogs.machineManager.field.numberFormat': 'formato numérico',
   'dialogs.machineManager.field.units': 'comandos de unidades',

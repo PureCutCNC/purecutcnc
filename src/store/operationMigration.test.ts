@@ -22,6 +22,7 @@
  */
 
 import {
+  LATEST_PROJECT_VERSION,
   circleProfile,
   defaultGrid,
   defaultStock,
@@ -442,9 +443,9 @@ test('a 3.2 edge route helix is a live choice and is kept', () => {
   assert(reset === 0, `expected no reset reported, got ${reset}`)
 })
 
-test('a migrated file is stamped 3.2, so the reset happens once', () => {
+test('a migrated file is stamped with the current version, so the reset happens once', () => {
   const first = decodeProjectFormat(entryFile('3.1', { pass: 'rough', entryStrategy: 'helix' }))
-  assert(first.project.version === '3.2', `expected the 3.2 stamp, got ${first.project.version}`)
+  assert(first.project.version === LATEST_PROJECT_VERSION, `expected the ${LATEST_PROJECT_VERSION} stamp, got ${first.project.version}`)
   const saved = JSON.parse(JSON.stringify(first.project)) as ProjectFormatInput
   const again = decodeProjectFormat(saved)
   assert(again.edgeEntryStrategiesReset === 0, `a re-load must not reset again, got ${again.edgeEntryStrategiesReset}`)

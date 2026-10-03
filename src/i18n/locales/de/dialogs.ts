@@ -392,6 +392,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineManager.field.description': 'Beschreibung',
   'dialogs.machineManager.field.vendor': 'Hersteller',
   'dialogs.machineManager.field.fileExtension': 'Dateiendung',
+  'dialogs.machineManager.field.outputDialect': 'Ausgabeformat',
   'dialogs.machineManager.field.coordinateSystem': 'Achsenzuordnung',
   'dialogs.machineManager.field.numberFormat': 'Zahlenformat',
   'dialogs.machineManager.field.units': 'Einheitenbefehle',

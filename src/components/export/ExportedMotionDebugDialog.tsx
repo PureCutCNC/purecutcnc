@@ -20,7 +20,7 @@ import { exportGeometryTolerance } from '../../utils/units'
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
 import {
-  parseGcodeMotion,
+  parseExportedMotion,
   buildExportedMotionDebugModel,
   getExportedMotionEligibility,
 } from '../../engine/gcode'
@@ -121,12 +121,7 @@ export function ExportedMotionDebugDialog({
         if (!postprocessorTrace) {
           throw new Error('no-motion-trace')
         }
-        const parsed = parseGcodeMotion(
-          previewResult.gcode,
-          definition.motion.arcFormat,
-          definition.program.commentPrefix,
-          definition.program.commentSuffix,
-        )
+        const parsed = parseExportedMotion(previewResult.gcode, definition)
         const built = buildExportedMotionDebugModel({
           trace,
           parsed,

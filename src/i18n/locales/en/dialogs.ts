@@ -396,6 +396,7 @@ export const dialogsEn = {
   'dialogs.machineManager.field.description': 'description',
   'dialogs.machineManager.field.vendor': 'vendor',
   'dialogs.machineManager.field.fileExtension': 'file extension',
+  'dialogs.machineManager.field.outputDialect': 'output format',
   'dialogs.machineManager.field.coordinateSystem': 'axis mapping',
   'dialogs.machineManager.field.numberFormat': 'number formatting',
   'dialogs.machineManager.field.units': 'unit commands',

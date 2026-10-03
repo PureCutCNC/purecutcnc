@@ -19,15 +19,22 @@ import type {
   PostProcessorResult,
   OperationMotionTrace,
 } from './types'
+import { resolveOutputDialect } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { projectToMachinePoint, formatGCodeNumber } from './utils'
-import type { ToolpathPoint, ToolpathMove } from '../toolpaths/types'
+import type { ToolpathPoint } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
 import type { FedMoveKind } from '../toolpaths/feed'
 import type { OperationTarget } from '../../types/project'
-import { exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
-import { fitArcsInMachineMoves, applyEmittedArcFallback, resolveEmittedArc } from './arcFitting'
-import type { ArcMoveDescriptor, FittedMoveDescriptor, EmittedArcOptions } from './arcFitting'
+import { resolveEmittedArc } from './arcFitting'
+import type { ArcMoveDescriptor } from './arcFitting'
+import {
+  createArcEmitOptions,
+  createEmittedValueFormatter,
+  planOperationMotion,
+  splitRapid,
+} from './motionPipeline'
+import { emitOpenSbpProgram } from './opensbpEmitter'
 
 interface ModalState {
   motionCommand: string | null   // last G0/G1/G2/G3
@@ -61,7 +68,24 @@ function safeCommentLines(text: string): string[] {
     .filter((line) => line.length > 0)
 }
 
+/**
+ * Export a program for the machine definition's output dialect.
+ *
+ * This is the only place a dialect is chosen. Each dialect owns its line
+ * syntax and nothing else: what the machine is asked to do comes from the
+ * shared `motionPipeline.ts`, so a change to motion planning lands in every
+ * dialect and no dialect is special-cased inside another's emitter.
+ */
 export function runPostProcessor(input: PostProcessorInput): PostProcessorResult {
+  switch (resolveOutputDialect(input.definition)) {
+    case 'opensbp':
+      return emitOpenSbpProgram(input)
+    case 'gcode':
+      return emitGcodeProgram(input)
+  }
+}
+
+function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   const { project, operations, definition, options } = input
   const lines: string[] = []
   const warnings: ToolpathWarning[] = []
@@ -85,23 +109,8 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
   const captureTrace = options.captureMotionTrace === true
   const motionTraces: OperationMotionTrace[] = []
 
-  // Formats a value exactly as it will be written, parsed back to a number.
-  // Arc validation must judge the numbers the controller reads, not ours.
-  const formatValue = (value: number): number =>
-    Number(formatGCodeNumber(value, definition, outputUnits))
-
-  // Everything the emitted-arc resolver needs to reproduce, and satisfy, what
-  // the controller will compute from the formatted words.
-  const arcEmitOptions: EmittedArcOptions = {
-    format: formatValue,
-    arcFormat: definition.motion.arcFormat,
-    // Controllers convert to millimetres before checking, so an inch program
-    // faces the same absolute budget.
-    mmPerOutputUnit: outputUnits === 'mm' ? 1 : MM_PER_INCH,
-    // The output grid I/J can be snapped onto. `decimalPlaces` is normalised
-    // to a per-unit object by the definition schema.
-    quantum: Math.pow(10, -definition.numberFormat.decimalPlaces[outputUnits]),
-  }
+  const formatValue = createEmittedValueFormatter(definition, outputUnits)
+  const arcEmitOptions = createArcEmitOptions(definition, outputUnits, definition.motion.arcFormat)
 
   // Where the *controller* believes the tool is: every emitted coordinate
   // after number formatting. Arc I/J offsets are relative to this, not to the
@@ -439,19 +448,8 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
 
       // Emit a single rapid (G0) with per-axis splitting.
       const emitRapid = (pt: ToolpathPoint) => {
-        const current = state.currentPosition
-        const hasXYChange =
-          current === null
-          || current.x !== pt.x
-          || current.y !== pt.y
-        const hasZChange =
-          current === null
-          || current.z !== pt.z
-        if (hasZChange) {
-          emitMotionLine(definition.motion.rapidCommand, { z: pt.z })
-        }
-        if (hasXYChange) {
-          emitMotionLine(definition.motion.rapidCommand, { x: pt.x, y: pt.y })
+        for (const axes of splitRapid(state.currentPosition, pt)) {
+          emitMotionLine(definition.motion.rapidCommand, axes)
         }
       }
 
@@ -515,105 +513,38 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         }
       }
 
-      // ── Arc fitting (export-stage) ──
+      // ── Motion plan (shared by every dialect) ──
+      // Machine-coordinate transform, arc fitting and the emitted-arc
+      // fallback; this emitter only spells the result as G-code words.
+      const plan = planOperationMotion({
+        project,
+        definition,
+        operation,
+        toolpath,
+        arcEmitOptions,
+        startPosition: emittedPosition,
+        captureTrace,
+      })
+      warnings.push(...plan.warnings)
 
-      const arcEnabled = operation.arcFittingEnabled ?? true
-      const machineHasArcs = definition.motion.arcInterpolation === true
-      const tryFit = arcEnabled && machineHasArcs
-
-      // Captured before emission so the debug trace below can replay the same
-      // decisions from the same starting point.
-      const operationStartPosition = emittedPosition
-
-      // Transform every move into machine coordinates once.
-      const transformMoves = (): ToolpathMove[] =>
-        toolpath.moves.map((move) => ({
-          ...move,
-          from: projectToMachinePoint(move.from, project.origin, definition),
-          to: projectToMachinePoint(move.to, project.origin, definition),
-        }))
-
-      if (tryFit) {
-        // Fit arcs, drop any run the controller would reject once formatted,
-        // then emit the mixed sequence.
-        const machineMoves = transformMoves()
-        const tolerance = exportGeometryTolerance(project.meta.units)
-        const fitted = fitArcsInMachineMoves(machineMoves, tolerance, 90)
-        const resolved = applyEmittedArcFallback(
-          fitted, arcEmitOptions, operationStartPosition,
-        )
-
-        if (resolved.fallbackRuns > 0) {
-          warnings.push({
-            code: 'postArcFallbackLinear',
-            params: { operation: operation.name, count: resolved.fallbackRuns },
-          })
-        }
-
-        for (const d of resolved.descriptors) {
-          if (d.kind === 'linear') {
-            if (d.moveKind === 'rapid') {
-              emitRapid(d.point)
-              continue
-            }
-            const feed = feedForMove(d.moveKind, d.feedScale)
-            emitMotionLine(definition.motion.linearCommand, d.point, feed)
-          } else {
-            const feed = feedForMove('cut', d.feedScale)
-            emitArcLine(d, feed)
+      for (const d of plan.steps) {
+        if (d.kind === 'linear') {
+          if (d.moveKind === 'rapid') {
+            emitRapid(d.point)
+            continue
           }
+          const feed = feedForMove(d.moveKind, d.feedScale)
+          emitMotionLine(definition.motion.linearCommand, d.point, feed)
+        } else {
+          const feed = feedForMove('cut', d.feedScale)
+          emitArcLine(d, feed)
         }
-      } else {
-        // Original linear emission (with arc-capability warning when
-        // fitting is enabled but the machine does not support it).
-        if (arcEnabled && !machineHasArcs) {
-          // Check whether arcs *would* have been found.
-          const machineMoves = transformMoves()
-          const tolerance = exportGeometryTolerance(project.meta.units)
-          const descriptors = fitArcsInMachineMoves(machineMoves, tolerance, 90)
-          const foundArcs = descriptors.some((d) => d.kind === 'arc')
-          if (foundArcs) {
-            warnings.push({
-              code: 'postArcNoCapability',
-              params: { operation: operation.name },
-            })
-          }
-        }
-
-        toolpath.moves.forEach((move) => {
-          const mPoint = projectToMachinePoint(move.to, project.origin, definition)
-
-          if (move.kind === 'rapid') {
-            emitRapid(mPoint)
-            return
-          }
-
-          const feed = feedForMove(move.kind, move.feedScale)
-          emitMotionLine(definition.motion.linearCommand, mPoint, feed)
-        })
       }
 
-      // Debug-only (issue #356): capture the machine-coordinate motion trace
-      // for the exported-motion debug view. Recomputed in isolation so the hot
-      // emission path above is untouched; only runs when captureMotionTrace.
-      if (captureTrace) {
-        const traceMachineMoves = transformMoves()
-        let traceDescriptors: FittedMoveDescriptor[] = []
-        if (tryFit) {
-          const tolerance = exportGeometryTolerance(project.meta.units)
-          // Same fallback resolution as the emission path above, so the debug
-          // view never draws an arc on a span that was emitted as G1.
-          traceDescriptors = applyEmittedArcFallback(
-            fitArcsInMachineMoves(traceMachineMoves, tolerance, 90),
-            arcEmitOptions, operationStartPosition,
-          ).descriptors
-        }
-        motionTraces.push({
-          operationId: operation.id,
-          machineMoves: traceMachineMoves,
-          descriptors: traceDescriptors,
-          tryFit,
-        })
+      // Debug-only (issue #356): the machine-coordinate motion trace for the
+      // exported-motion debug view.
+      if (plan.trace) {
+        motionTraces.push(plan.trace)
       }
     }
 

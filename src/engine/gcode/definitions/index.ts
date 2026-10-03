@@ -22,6 +22,7 @@ import mach3 from './mach3.json'
 import linuxcnc from './linuxcnc.json'
 import grblhal from './grblhal.json'
 import uccnc from './uccnc.json'
+import shopbot from './shopbot.json'
 
 export const BUNDLED_DEFINITIONS: MachineDefinition[] = [
   generic as unknown as MachineDefinition,
@@ -30,6 +31,12 @@ export const BUNDLED_DEFINITIONS: MachineDefinition[] = [
   mach3 as unknown as MachineDefinition,
   uccnc as unknown as MachineDefinition,
   linuxcnc as unknown as MachineDefinition,
+  // The one bundled definition that is not G-code (issue #953): it exports
+  // ShopBot part files through `opensbpEmitter.ts`. Its G-code command words
+  // are never read by this build. They are comment-prefixed on purpose, so a
+  // build that predates `outputDialect` — which ignores that field and takes
+  // the G-code path — writes a file of comments, not G-code, into a `.sbp`.
+  shopbot as unknown as MachineDefinition,
 ]
 
 /**

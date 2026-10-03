@@ -398,6 +398,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineManager.field.description': '描述',
   'dialogs.machineManager.field.vendor': '厂商',
   'dialogs.machineManager.field.fileExtension': '文件扩展名',
+  'dialogs.machineManager.field.outputDialect': '输出格式',
   'dialogs.machineManager.field.coordinateSystem': '轴映射',
   'dialogs.machineManager.field.numberFormat': '数字格式',
   'dialogs.machineManager.field.units': '单位指令',

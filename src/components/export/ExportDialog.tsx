@@ -29,6 +29,7 @@ import { programHasError, type ExportPostOptions } from '../../app/toolpathGener
 import { useExportPreparation } from '../../app/toolpathGeneration/useExportPreparation'
 import {
   listExportOperationOptions,
+  reusableExportPath,
   suggestGcodeFileName,
 } from './exportOperationSelection'
 import { ExportedMotionDebugDialog } from './ExportedMotionDebugDialog'
@@ -194,7 +195,12 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     const ext = activeDefinition.fileExtension
     // `exportable.gcode` was copied out above and is not re-read from state; the
     // bytes are frozen for this file action even if the preview moves on.
-    const exportedPath = await platform.saveTextFile(suggestedName, exportable.gcode, ext, lastExportPath)
+    const exportedPath = await platform.saveTextFile(
+      suggestedName,
+      exportable.gcode,
+      ext,
+      reusableExportPath(lastExportPath, ext),
+    )
     if (!exportedPath) return
 
     // The platform dialog is asynchronous, and another document can be opened

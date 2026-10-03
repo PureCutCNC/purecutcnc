@@ -45,6 +45,7 @@ const MACHINE_FIELD_LABEL_KEYS: Record<string, keyof typeof dialogsEn> = {
   vendor: 'dialogs.machineManager.field.vendor',
   builtin: 'dialogs.machineManager.field.builtin',
   fileExtension: 'dialogs.machineManager.field.fileExtension',
+  outputDialect: 'dialogs.machineManager.field.outputDialect',
   coordinateSystem: 'dialogs.machineManager.field.coordinateSystem',
   numberFormat: 'dialogs.machineManager.field.numberFormat',
   units: 'dialogs.machineManager.field.units',

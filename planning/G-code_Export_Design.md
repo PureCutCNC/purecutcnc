@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: machine origin, machine definitions, postprocessing, and G-code export
-last-verified: 2026-07-30
+last-verified: 2026-10-03
 ---
 
 # G-code Export Design
@@ -69,6 +69,80 @@ A definition may describe:
 
 Unknown or invalid capabilities produce validation errors or warnings; they are
 not guessed by the exporter.
+
+## Output dialects
+
+A machine definition describes G-code word syntax, and that is not every
+machine's language. A definition may therefore name an **output dialect**
+(issue #953):
+
+| `outputDialect` | Program | Bundled machine |
+| --- | --- | --- |
+| absent, or `gcode` | RS-274 G-code driven by the definition's words and templates | every definition but one |
+| `opensbp` | native ShopBot part file (`.sbp`) | ShopBot (SBP) |
+
+The field is optional and an absent key means G-code, so every definition and
+project that predates it behaves exactly as before, and parsing one adds
+nothing to it.
+
+**One pipeline, one emitter per dialect.** `runPostProcessor` chooses the
+dialect and delegates. The decisions about motion are shared and live in
+`motionPipeline.ts`: the machine-coordinate transform, arc fitting, the
+emitted-arc fallback, their warnings, the safe-Z split of a rapid, the emitted
+move count and the motion trace. An emitter contributes line syntax only. A
+later feature that changes what the machine is asked to do (setups, a rotary
+axis, another machine kind) changes the pipeline and reaches every dialect; it
+does not add branches for one dialect inside another's emitter.
+
+**What a ShopBot program contains.**
+
+- Header comments, the units guard, then `SA` (absolute mode).
+- The units guard: system variable `%(25)` is 0 when the control software is
+  set to inches and 1 for millimetres. A millimetre program starts with
+  `IF %(25)=0 THEN GOTO UNIT_ERROR`, an inch program with `%(25)=1`. The
+  `UNIT_ERROR` block is a message box and `END`, placed after the program's
+  own `END`, so a program never runs in the wrong units.
+- Speeds are modal and in units per **second**: `MS,xy,z`, written only when a
+  value changes and restated after a tool change. The XY speed follows the
+  feed of the move being cut and the Z speed follows the plunge feed, never
+  above that move's own feed; an axis a move does not travel on keeps its
+  speed. Jog speeds are left to the machine's own settings.
+- Rapids are jogs, split like every rapid: `JZ` first, then `J2`. Cuts are
+  `M3,x,y,z`. Fitted arcs are `CG,,endX,endY,I,J,T,dir` with `dir` 1 for
+  clockwise and -1 for counter-clockwise, and the centre offsets measured from
+  the position actually written on the previous line, as for G2/G3.
+- Spindle: `TR,rpm` then `C6` to start, `C7` to stop. Tool change: `&Tool=N`
+  then `C9`, the standard ShopBot tool-change macro (manual or automatic).
+- Drilling is written as its expanded moves: there are no canned cycles.
+- Coolant is not written, because output wiring differs per machine; asking
+  for it raises the same warning as on a G-code machine without coolant.
+- No line numbers. Lines end in CRLF, since the control software is a Windows
+  program.
+
+**Not covered.** Helical `CG`, the tab and pocket options of `CG`, A/B axes,
+converting third-party ShopBot posts, and controller conformance testing
+(`npm run check:gcode` has no ShopBot interpreter to run; the emitter is held
+by round-trip tests through `sbpMotionParser.ts` instead).
+
+**Sources and licensing.** ShopBot placed the part-file syntax and its
+Programming Handbook in the public domain (opensbp.com). Parameter order is
+checked against ShopBot's Apache-2.0 FabMo-Engine as a reference only. Autodesk's
+`shopbot.cps` and FreeCAD's `opensbp_post.py` are not used. "OpenSBP" is a
+ShopBot trademark: the machine is named "ShopBot (SBP)" and no compliance is
+claimed. `opensbpEmitter.ts` carries the citations.
+
+**The dialect is not editable in the machine library.** A bundled definition
+carries it and a duplicate inherits it. The focused editor form has no field
+for it and preserves it.
+
+**Older builds.** A build that predates the field drops it and exports through
+the G-code path, under the definition's `.sbp` extension. Two things address
+that. Project format 3.3 exists only so such a build shows its newer-version
+warning when it opens the file; that is a warning, not a refusal. And the
+bundled ShopBot definition's unused G-code words are comment-prefixed with
+non-modal motion, so what the G-code path writes is a file of comments ending
+in `END`, never motion. The second also covers a machine JSON imported into an
+older build, which no project version can.
 
 ## Application library vs project snapshot
 
@@ -192,8 +266,11 @@ project→machine coordinate transform and G-code emission. It does not modify
 
 The exported-motion debug view (issue #356, `src/components/export/ExportedMotionDebugDialog.tsx`
 backed by `src/engine/gcode/gcodeMotionParser.ts` and `motionDebug.ts`) is a
-diagnostic overlay that verifies the motion *written to the `.nc` file* still
-represents the intended path. It opens from the Export dialog when exactly one
+diagnostic overlay that verifies the motion *written to the exported file* still
+represents the intended path. The text is parsed in the definition's own output
+dialect (`parseExportedMotion`): G-code through `gcodeMotionParser.ts`, a
+ShopBot part file through `sbpMotionParser.ts`. Both return the same motion
+shape, so everything after the parse is dialect-independent. It opens from the Export dialog when exactly one
 eligible operation is selected, and overlays three planar layers in project
 coordinates:
 

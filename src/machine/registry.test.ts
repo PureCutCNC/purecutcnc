@@ -182,6 +182,40 @@ const differingMerge = mergeCustomMachineList([machineA], [{ ...structuredClone(
 assert(differingMerge.added.length === 1, 'a differing candidate is added')
 assert(differingMerge.added[0].id !== machineA.id, 'a differing candidate with a colliding id is re-keyed')
 
+// --- output dialect (issue #953) ----------------------------------------
+
+const shopbot = bundledMachines().find((definition) => definition.id === 'shopbot')
+assert(shopbot !== undefined && shopbot.outputDialect === 'opensbp', 'the build ships a ShopBot definition that exports SBP')
+if (shopbot) {
+  // The dialect is not editable: a copy is a ShopBot machine because its
+  // source was, through duplication, export and re-import alike.
+  const shopbotCopy = duplicateMachineAsCustom(shopbot, [])
+  assert(shopbotCopy.outputDialect === 'opensbp' && shopbotCopy.fileExtension === 'sbp', 'a duplicate keeps the output dialect')
+  assert(!shopbotCopy.builtin && shopbotCopy.id !== shopbot.id, 'the duplicate is an ordinary custom machine')
+
+  const reimportedShopbot = parseMachineImport(serializeMachineExport(shopbotCopy), [])
+  assert(reimportedShopbot.ok?.outputDialect === 'opensbp', 'export and import keep the output dialect')
+
+  assert(
+    machineSnapshotStatus(shopbot, bundledMachines()).kind === 'in-sync',
+    'a project snapshot of the ShopBot definition matches the library',
+  )
+  const { outputDialect: _dialect, ...withoutDialect } = shopbot
+  assert(
+    !machinesFunctionallyEqual(withoutDialect, shopbot),
+    'the dialect is a functional field: losing it is a different machine',
+  )
+
+  const invalidDialect = validateCustomMachine({ ...structuredClone(shopbotCopy), outputDialect: 'heidenhain' })
+  assert(invalidDialect.error !== undefined, 'an unknown output dialect is rejected, not exported as G-code')
+}
+
+// A G-code definition has no dialect key, and validating one does not add it:
+// a saved project's embedded snapshot stays exactly what it was.
+const gcodeCopy = duplicateMachineAsCustom(bundledMachines()[0], [])
+assert(!('outputDialect' in gcodeCopy), 'a G-code machine gains no outputDialect key')
+assert(!serializeMachineExport(gcodeCopy).includes('outputDialect'), 'nor does its exported JSON')
+
 const bundledCandidateMerge = mergeCustomMachineList([], [bundledMachines()[0]])
 assert(bundledCandidateMerge.added.length === 0, 'a bundled-id candidate is never merged into My Machines')
 

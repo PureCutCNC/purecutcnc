@@ -132,4 +132,28 @@ test.describe('Export G-code operation checklist smoke', () => {
     await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
     await expect(ui.exportDialog.errors(app.page)).toHaveCount(0)
   })
+
+  test('the ShopBot machine exports a ShopBot part file, not G-code', async ({ app, ui }) => {
+    await seedGcodeExportProject(app.page, { machineId: 'shopbot' })
+    await ui.operations.headerExportButton(app.page).click()
+
+    // The file the button saves is a .sbp.
+    await expect(ui.exportDialog.exportButton(app.page)).toContainText('.sbp')
+    await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+    await expect(ui.exportDialog.errors(app.page)).toHaveCount(0)
+
+    // The preview is the program that will be saved (issue #953): the fixture
+    // is in inches, so the units guard refuses a control set to millimetres,
+    // speeds are per second (60 and 30 in/min), and motion is jogs and moves.
+    const preview = ui.exportPreview.body(app.page)
+    await expect(preview).toContainText('IF %(25)=1 THEN GOTO UNIT_ERROR')
+    await expect(preview).toContainText('SA')
+    await expect(preview).toContainText('&Tool=1')
+    await expect(preview).toContainText('C9')
+    await expect(preview).toContainText('TR,18000')
+    await expect(preview).toContainText('C6')
+    await expect(preview).toContainText('MS,1.0000,0.5000')
+    await expect(preview).toContainText(/^M3,-?[\d.]+,-?[\d.]+,-?[\d.]+$/m)
+    await expect(preview).not.toContainText(/^(G0|G1|G21|G20|M30)\b/m)
+  })
 })

@@ -1,0 +1,70 @@
+{
+  "id": "shopbot",
+  "name": "ShopBot (SBP)",
+  "description": "ShopBot part files (.sbp) for the ShopBot control software, written natively rather than as G-code",
+  "vendor": "ShopBot Tools",
+  "builtin": true,
+  "fileExtension": "sbp",
+  "outputDialect": "opensbp",
+  "coordinateSystem": {
+    "xAxis": "X",
+    "yAxis": "Y",
+    "zAxis": "Z"
+  },
+  "numberFormat": {
+    "decimalPlaces": {
+      "mm": 3,
+      "inch": 4
+    },
+    "trailingZeros": true,
+    "leadingZero": true
+  },
+  "units": {
+    "mmCommand": null,
+    "inchCommand": null
+  },
+  "program": {
+    "header": [
+      "' {programName}",
+      "' ShopBot part files need PureCutCNC 0.6 or newer. This file holds no motion."
+    ],
+    "operationHeader": [],
+    "footer": [],
+    "commentPrefix": "'",
+    "commentSuffix": "",
+    "lineNumbers": false,
+    "lineNumberIncrement": 10
+  },
+  "workCoordinates": {
+    "selectCommand": null
+  },
+  "motion": {
+    "rapidCommand": "' G0",
+    "linearCommand": "' G1",
+    "cwArcCommand": "' G2",
+    "ccwArcCommand": "' G3",
+    "arcFormat": "ij",
+    "modalMotion": false,
+    "arcInterpolation": true
+  },
+  "feedSpeed": {
+    "feedCommand": "F",
+    "rpmCommand": "S",
+    "spindleOnCW": "' M3",
+    "spindleOnCCW": "' M4",
+    "spindleOff": "' M5",
+    "inlineWithMotion": true,
+    "modalFeedSpeed": true
+  },
+  "toolChange": {
+    "commands": ["' Tool change: {toolName}"],
+    "stopSpindleFirst": false,
+    "pauseAfterChange": false,
+    "pauseCommand": "' M0"
+  },
+  "cannedCycles": null,
+  "coolant": null,
+  "stop": {
+    "programEndCommand": "END"
+  }
+}

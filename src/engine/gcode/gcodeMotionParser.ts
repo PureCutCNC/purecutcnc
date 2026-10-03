@@ -219,6 +219,17 @@ function applyArc(
   } else {
     return { error: 'arc missing I/J or R centre word' }
   }
+  return arcMoveFromCenter(from, to, center, radius, clockwise)
+}
+
+/** A parsed arc from its resolved centre; shared by every dialect's parser. */
+export function arcMoveFromCenter(
+  from: ToolpathPoint,
+  to: ToolpathPoint,
+  center: { x: number; y: number },
+  radius: number,
+  clockwise: boolean,
+): ParsedArcMove {
   const sweep = directedSweep(from, to, center, clockwise)
   const largeArc = Math.abs(sweep) > Math.PI + EPS
   return { kind: 'arc', from, to, center, radius, clockwise, largeArc }
