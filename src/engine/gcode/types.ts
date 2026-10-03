@@ -47,6 +47,19 @@ const DecimalPlacesSchema = z.union([
     : value
 ))
 
+/**
+ * The program language a machine definition exports (issue #953).
+ *
+ * - `gcode` — RS-274 word syntax, driven by the definition's command words
+ *   and templates. This is every definition that predates the field.
+ * - `opensbp` — ShopBot part files (`.sbp`), written by `opensbpEmitter.ts`.
+ *   The definition's G-code command words and templates are not read; only
+ *   the dialect-neutral fields are (`coordinateSystem`, `numberFormat`,
+ *   `fileExtension`, `motion.arcInterpolation`).
+ */
+export const OUTPUT_DIALECTS = ['gcode', 'opensbp'] as const
+export type OutputDialect = (typeof OUTPUT_DIALECTS)[number]
+
 export const MachineDefinitionSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -54,6 +67,11 @@ export const MachineDefinitionSchema = z.object({
   vendor: z.string().optional(),
   builtin: z.boolean().default(false),
   fileExtension: z.string(),
+  // Optional rather than defaulted: an absent key means G-code, so parsing an
+  // existing definition adds nothing to it and a saved project's embedded
+  // snapshot stays byte-for-byte what it was. Read it through
+  // `resolveOutputDialect`, never directly.
+  outputDialect: z.enum(OUTPUT_DIALECTS).optional(),
   coordinateSystem: z.object({
     xAxis: z.enum(['X', 'Y', 'Z', '-X', '-Y', '-Z']),
     yAxis: z.enum(['X', 'Y', 'Z', '-X', '-Y', '-Z']),
@@ -129,6 +147,11 @@ export function validateMachineDefinition(data: unknown): MachineDefinition {
   return MachineDefinitionSchema.parse(data)
 }
 
+/** The dialect a definition exports; a definition without the field is G-code. */
+export function resolveOutputDialect(definition: Pick<MachineDefinition, 'outputDialect'>): OutputDialect {
+  return definition.outputDialect ?? 'gcode'
+}
+
 export interface PostProcessorInput {
   project: Project
   // Ordered list of operations to emit, in execution order.
@@ -147,19 +170,21 @@ export interface PostProcessorOptions {
   emitCoolant: boolean       // emit coolant commands if definition supports them
   programName?: string       // overrides project.meta.name in header
   /** When true, the postprocessor also returns a per-operation machine-coordinate
-   *  motion trace (see OperationMotionTrace) alongside the G-code text. Debug-only
+   *  motion trace (see OperationMotionTrace) alongside the program text. Debug-only
    *  (issue #356); defaults to false so the normal export path pays no cost. */
   captureMotionTrace?: boolean
 }
 
 export interface PostProcessorResult {
+  /** The program text in the definition's output dialect. The name predates
+   *  dialects (issue #953): for a ShopBot definition this holds SBP, not G-code. */
   gcode: string
   warnings: ToolpathWarning[]
   stats: {
-    /** Physical G-code lines, including setup, comments, and footer. */
+    /** Physical program lines, including setup, comments, and footer. */
     lineCount: number
     operationCount: number
-    /** Motion blocks actually emitted into the G-code after export fitting. */
+    /** Motion blocks actually emitted into the program after export fitting. */
     moveCount: number
   }
   /** Present only when `options.captureMotionTrace` was set. One entry per

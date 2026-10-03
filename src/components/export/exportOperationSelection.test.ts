@@ -23,6 +23,7 @@
 
 import {
   listExportOperationOptions,
+  reusableExportPath,
   suggestGcodeFileName,
 } from './exportOperationSelection'
 import { newProject, type Operation, type Project } from '../../types/project'
@@ -150,6 +151,26 @@ function testFileNameAppendsSingleOperationName(): void {
   )
 }
 
+// ── reusableExportPath ────────────────────────────────────────────
+
+function testExportPathIsReusedOnlyForTheSameKindOfFile(): void {
+  assert(reusableExportPath(null, 'nc') === null, 'no previous export: nothing to reuse')
+  assert(
+    reusableExportPath('/jobs/bracket.nc', 'nc') === '/jobs/bracket.nc',
+    'the same extension overwrites the previous export in place',
+  )
+  assert(
+    reusableExportPath('C:\\jobs\\BRACKET.NC', 'nc') === 'C:\\jobs\\BRACKET.NC',
+    'extension case does not matter',
+  )
+  // After switching to the ShopBot machine, a part file must not be written
+  // into the G-code file exported earlier (issue #953).
+  assert(reusableExportPath('/jobs/bracket.nc', 'sbp') === null, 'a different extension asks where to save')
+  assert(reusableExportPath('/jobs/bracket.sbp', 'nc') === null, 'and the other way round')
+  assert(reusableExportPath('/jobs/part.sbp.nc', 'sbp') === null, 'only the final extension counts')
+  assert(reusableExportPath('/jobs/nc', 'nc') === null, 'a name that merely ends in the letters is not that extension')
+}
+
 const tests = [
   testHealthyVisibleOperationIsExportableAndDefaultSelected,
   testHiddenToolpathIsExportableButNotDefaultSelected,
@@ -158,6 +179,7 @@ const tests = [
   testOptionsPreserveExecutionOrder,
   testFileNameUsesProjectNameForMultipleOperations,
   testFileNameAppendsSingleOperationName,
+  testExportPathIsReusedOnlyForTheSameKindOfFile,
 ]
 
 for (const test of tests) {

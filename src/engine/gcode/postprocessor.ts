@@ -19,23 +19,31 @@ import type {
   PostProcessorResult,
   OperationMotionTrace,
 } from './types'
+import { resolveOutputDialect } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
-import { projectToMachinePoint, formatGCodeNumber } from './utils'
-import type { ToolpathPoint, ToolpathMove } from '../toolpaths/types'
+import { formatGCodeNumber } from './utils'
+import type { ToolpathPoint } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
 import type { FedMoveKind } from '../toolpaths/feed'
 import type { OperationTarget } from '../../types/project'
-import { exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
-import { fitArcsInMachineMoves, applyEmittedArcFallback, resolveEmittedArc } from './arcFitting'
-import type { ArcMoveDescriptor, FittedMoveDescriptor, EmittedArcOptions } from './arcFitting'
+import { resolveEmittedArc } from './arcFitting'
+import type { ArcMoveDescriptor } from './arcFitting'
+import {
+  createArcEmitOptions,
+  createEmittedValueFormatter,
+  planDrillCycles,
+  planOperationMotion,
+  planProgramSequence,
+  splitRapid,
+} from './motionPipeline'
+import { emitOpenSbpProgram } from './opensbpEmitter'
 
+// What the emitter has written so far. Which tool is held and whether the
+// spindle and coolant are on are not tracked here: that is the program's
+// sequence, decided for every dialect by `planProgramSequence`.
 interface ModalState {
   motionCommand: string | null   // last G0/G1/G2/G3
   feedRate: number | null
-  spindleSpeed: number | null
-  spindleOn: boolean
-  coolantOn: boolean
-  currentToolId: string | null
   currentPosition: ToolpathPoint | null
   lineNumber: number
 }
@@ -61,7 +69,24 @@ function safeCommentLines(text: string): string[] {
     .filter((line) => line.length > 0)
 }
 
+/**
+ * Export a program for the machine definition's output dialect.
+ *
+ * This is the only place a dialect is chosen. Each dialect owns its line
+ * syntax and nothing else: what the machine is asked to do comes from the
+ * shared `motionPipeline.ts`, so a change to motion planning lands in every
+ * dialect and no dialect is special-cased inside another's emitter.
+ */
 export function runPostProcessor(input: PostProcessorInput): PostProcessorResult {
+  switch (resolveOutputDialect(input.definition)) {
+    case 'opensbp':
+      return emitOpenSbpProgram(input)
+    case 'gcode':
+      return emitGcodeProgram(input)
+  }
+}
+
+function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   const { project, operations, definition, options } = input
   const lines: string[] = []
   const warnings: ToolpathWarning[] = []
@@ -70,10 +95,6 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
   const state: ModalState = {
     motionCommand: null,
     feedRate: null,
-    spindleSpeed: null,
-    spindleOn: false,
-    coolantOn: false,
-    currentToolId: null,
     currentPosition: null,
     lineNumber: definition.program.lineNumbers ? definition.program.lineNumberIncrement : 0
   }
@@ -85,23 +106,8 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
   const captureTrace = options.captureMotionTrace === true
   const motionTraces: OperationMotionTrace[] = []
 
-  // Formats a value exactly as it will be written, parsed back to a number.
-  // Arc validation must judge the numbers the controller reads, not ours.
-  const formatValue = (value: number): number =>
-    Number(formatGCodeNumber(value, definition, outputUnits))
-
-  // Everything the emitted-arc resolver needs to reproduce, and satisfy, what
-  // the controller will compute from the formatted words.
-  const arcEmitOptions: EmittedArcOptions = {
-    format: formatValue,
-    arcFormat: definition.motion.arcFormat,
-    // Controllers convert to millimetres before checking, so an inch program
-    // faces the same absolute budget.
-    mmPerOutputUnit: outputUnits === 'mm' ? 1 : MM_PER_INCH,
-    // The output grid I/J can be snapped onto. `decimalPlaces` is normalised
-    // to a per-unit object by the definition schema.
-    quantum: Math.pow(10, -definition.numberFormat.decimalPlaces[outputUnits]),
-  }
+  const formatValue = createEmittedValueFormatter(definition, outputUnits)
+  const arcEmitOptions = createArcEmitOptions(definition, outputUnits, definition.motion.arcFormat)
 
   // Where the *controller* believes the tool is: every emitted coordinate
   // after number formatting. Arc I/J offsets are relative to this, not to the
@@ -224,9 +230,11 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
   }
 
   // 4. Operations
+  const sequence = planProgramSequence(input, { coolant: definition.coolant !== null })
   operations.forEach(({ operation, tool, toolpath }, opIndex) => {
-    const toolNumber = project.tools.findIndex(t => t.id === tool.id) + 1
-    const rpm = operation.rpm || tool.defaultRpm
+    const step = sequence[opIndex]
+    const { rpm } = step
+    warnings.push(...step.warnings)
     const operationContext = {
       ...commonContext,
       operationIndex: opIndex + 1,
@@ -235,10 +243,10 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
       operationKind: operation.kind,
       operationPass: operation.pass,
       operationTarget: operationTargetSummary(operation.target),
-      toolNumber: toolNumber > 0 ? toolNumber : 1,
+      toolNumber: step.toolNumber,
       toolName: safeCommentText(tool.name),
-      feed: formatGCodeNumber(operation.feed || tool.defaultFeed, definition, outputUnits),
-      plungeFeed: formatGCodeNumber(operation.plungeFeed || tool.defaultPlungeFeed, definition, outputUnits),
+      feed: formatGCodeNumber(step.cutFeed, definition, outputUnits),
+      plungeFeed: formatGCodeNumber(step.plungeFeed, definition, outputUnits),
       rpm: formatGCodeNumber(rpm, definition, outputUnits),
     }
     const descriptionLines = safeCommentLines(operation.description ?? '')
@@ -250,11 +258,9 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
     }
 
     // Tool change
-    const toolChanged = state.currentToolId !== tool.id
-    if (toolChanged && options.emitToolChanges) {
-      if (definition.toolChange.stopSpindleFirst && state.spindleOn) {
+    if (step.changeTool) {
+      if (definition.toolChange.stopSpindleFirst && step.spindleRunningAtToolChange) {
         emitLine(definition.feedSpeed.spindleOff)
-        state.spindleOn = false
       }
 
       const toolContext = {
@@ -268,34 +274,16 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
       if (definition.toolChange.pauseAfterChange) {
         emitLine(definition.toolChange.pauseCommand)
       }
-    } else if (toolChanged && !options.emitToolChanges && opIndex > 0) {
-      warnings.push({ code: 'postToolChangesDisabled', params: { operation: operation.name, tool: tool.name } })
     }
-    // Tracked whether or not the change was emitted (issue #755). Emitting on
-    // demand and tracking are different questions: with M6 off this variable
-    // still has to say which tool the machine is actually holding, or every
-    // later operation reads as a change and the same tool is reported as a
-    // different one. The warning above is what reports the real, unexecuted
-    // change; this keeps that report honest.
-    state.currentToolId = tool.id
 
     // Spindle On
-    if (!state.spindleOn || state.spindleSpeed !== rpm) {
+    if (step.startSpindle) {
       emitLine(`${definition.feedSpeed.spindleOnCW} ${definition.feedSpeed.rpmCommand}${formatGCodeNumber(rpm, definition, outputUnits)}`)
-      state.spindleOn = true
-      state.spindleSpeed = rpm
     }
 
     // Coolant
-    if (options.emitCoolant) {
-      if (definition.coolant) {
-        if (!state.coolantOn) {
-          emitLine(definition.coolant.floodOnCommand)
-          state.coolantOn = true
-        }
-      } else {
-        warnings.push({ code: 'postNoCoolantCommands' })
-      }
+    if (step.startCoolant && definition.coolant) {
+      emitLine(definition.coolant.floodOnCommand)
     }
 
     // Moves — emit canned cycles for drilling when supported, else expanded G0/G1
@@ -307,7 +295,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
       && toolpath.drillCycles.length > 0
       && definition.cannedCycles
     ) {
-      const cycles = toolpath.drillCycles
+      const cycles = planDrillCycles(project, definition, toolpath.drillCycles)
       const cannedDef = definition.cannedCycles
 
       // Resolve the command word for the operation's drill type
@@ -317,19 +305,18 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         peck: cannedDef.peckDrillCommand,
         chip_breaking: cannedDef.chipBreakDrillCommand,
       }
-      const cycleDrillType = cycles[0].drillType
+      const cycleDrillType = cycles[0].cycle.drillType
       const cannedCmd = drillTypeCommandMap[cycleDrillType]
 
       if (cannedCmd) {
         emittedCanned = true
 
-        const plungeFeed = operation.plungeFeed || tool.defaultPlungeFeed
+        const plungeFeed = step.plungeFeed
         const feedWord = definition.feedSpeed.feedCommand
         let feedEmitted = false
 
         // Rapid to first hole XY at clearZ so the controller has a defined initial plane
-        const firstCycle = cycles[0]
-        const firstMachineXY = projectToMachinePoint({ x: firstCycle.x, y: firstCycle.y, z: firstCycle.clearZ }, project.origin, definition)
+        const firstMachineXY = cycles[0].clear
         if (state.currentPosition) {
           const cp = state.currentPosition
           if (cp.z !== firstMachineXY.z) {
@@ -353,7 +340,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         let lastQ: string | null = null
         let lastP: string | null = null
 
-        for (const cycle of cycles) {
+        for (const { cycle, at: machineXY, bottomZ: machineBottomZ, retractZ: machineRetractZ } of cycles) {
           moveCount += 1
 
           const segs: string[] = []
@@ -365,12 +352,10 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
           }
 
           // X / Y
-          const machineXY = projectToMachinePoint({ x: cycle.x, y: cycle.y, z: 0 }, project.origin, definition)
           segs.push(`X${formatGCodeNumber(machineXY.x, definition, outputUnits)}`)
           segs.push(`Y${formatGCodeNumber(machineXY.y, definition, outputUnits)}`)
 
           // Z (bottom)
-          const machineBottomZ = projectToMachinePoint({ x: cycle.x, y: cycle.y, z: cycle.bottomZ }, project.origin, definition).z
           const zStr = formatGCodeNumber(machineBottomZ, definition, outputUnits)
           if (zStr !== lastZ) {
             segs.push(`Z${zStr}`)
@@ -378,7 +363,6 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
           }
 
           // R (retract plane)
-          const machineRetractZ = projectToMachinePoint({ x: cycle.x, y: cycle.y, z: cycle.retractZ }, project.origin, definition).z
           const rStr = formatGCodeNumber(machineRetractZ, definition, outputUnits)
           if (rStr !== lastR) {
             segs.push(`R${rStr}`)
@@ -420,8 +404,7 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         state.motionCommand = null
 
         // Track position as last hole's XY at clearZ (machine coords)
-        const lastCycle = cycles[cycles.length - 1]
-        const lastMachinePos = projectToMachinePoint({ x: lastCycle.x, y: lastCycle.y, z: lastCycle.clearZ }, project.origin, definition)
+        const lastMachinePos = cycles[cycles.length - 1].clear
         state.currentPosition = { x: lastMachinePos.x, y: lastMachinePos.y, z: lastMachinePos.z }
       } else {
         // Command not available for this drill type — fall back to expanded moves
@@ -435,23 +418,12 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
     if (!emittedCanned) {
       // ── Effective feed ──
       const feedForMove = (moveKind: FedMoveKind, feedScale?: number): number =>
-        effectiveFeed(moveKind, feedScale, operation.feed || tool.defaultFeed, operation.plungeFeed || tool.defaultPlungeFeed)
+        effectiveFeed(moveKind, feedScale, step.cutFeed, step.plungeFeed)
 
       // Emit a single rapid (G0) with per-axis splitting.
       const emitRapid = (pt: ToolpathPoint) => {
-        const current = state.currentPosition
-        const hasXYChange =
-          current === null
-          || current.x !== pt.x
-          || current.y !== pt.y
-        const hasZChange =
-          current === null
-          || current.z !== pt.z
-        if (hasZChange) {
-          emitMotionLine(definition.motion.rapidCommand, { z: pt.z })
-        }
-        if (hasXYChange) {
-          emitMotionLine(definition.motion.rapidCommand, { x: pt.x, y: pt.y })
+        for (const axes of splitRapid(state.currentPosition, pt)) {
+          emitMotionLine(definition.motion.rapidCommand, axes)
         }
       }
 
@@ -515,116 +487,45 @@ export function runPostProcessor(input: PostProcessorInput): PostProcessorResult
         }
       }
 
-      // ── Arc fitting (export-stage) ──
+      // ── Motion plan (shared by every dialect) ──
+      // Machine-coordinate transform, arc fitting and the emitted-arc
+      // fallback; this emitter only spells the result as G-code words.
+      const plan = planOperationMotion({
+        project,
+        definition,
+        operation,
+        toolpath,
+        arcEmitOptions,
+        startPosition: emittedPosition,
+        captureTrace,
+      })
+      warnings.push(...plan.warnings)
 
-      const arcEnabled = operation.arcFittingEnabled ?? true
-      const machineHasArcs = definition.motion.arcInterpolation === true
-      const tryFit = arcEnabled && machineHasArcs
-
-      // Captured before emission so the debug trace below can replay the same
-      // decisions from the same starting point.
-      const operationStartPosition = emittedPosition
-
-      // Transform every move into machine coordinates once.
-      const transformMoves = (): ToolpathMove[] =>
-        toolpath.moves.map((move) => ({
-          ...move,
-          from: projectToMachinePoint(move.from, project.origin, definition),
-          to: projectToMachinePoint(move.to, project.origin, definition),
-        }))
-
-      if (tryFit) {
-        // Fit arcs, drop any run the controller would reject once formatted,
-        // then emit the mixed sequence.
-        const machineMoves = transformMoves()
-        const tolerance = exportGeometryTolerance(project.meta.units)
-        const fitted = fitArcsInMachineMoves(machineMoves, tolerance, 90)
-        const resolved = applyEmittedArcFallback(
-          fitted, arcEmitOptions, operationStartPosition,
-        )
-
-        if (resolved.fallbackRuns > 0) {
-          warnings.push({
-            code: 'postArcFallbackLinear',
-            params: { operation: operation.name, count: resolved.fallbackRuns },
-          })
-        }
-
-        for (const d of resolved.descriptors) {
-          if (d.kind === 'linear') {
-            if (d.moveKind === 'rapid') {
-              emitRapid(d.point)
-              continue
-            }
-            const feed = feedForMove(d.moveKind, d.feedScale)
-            emitMotionLine(definition.motion.linearCommand, d.point, feed)
-          } else {
-            const feed = feedForMove('cut', d.feedScale)
-            emitArcLine(d, feed)
+      for (const d of plan.steps) {
+        if (d.kind === 'linear') {
+          if (d.moveKind === 'rapid') {
+            emitRapid(d.point)
+            continue
           }
+          const feed = feedForMove(d.moveKind, d.feedScale)
+          emitMotionLine(definition.motion.linearCommand, d.point, feed)
+        } else {
+          const feed = feedForMove('cut', d.feedScale)
+          emitArcLine(d, feed)
         }
-      } else {
-        // Original linear emission (with arc-capability warning when
-        // fitting is enabled but the machine does not support it).
-        if (arcEnabled && !machineHasArcs) {
-          // Check whether arcs *would* have been found.
-          const machineMoves = transformMoves()
-          const tolerance = exportGeometryTolerance(project.meta.units)
-          const descriptors = fitArcsInMachineMoves(machineMoves, tolerance, 90)
-          const foundArcs = descriptors.some((d) => d.kind === 'arc')
-          if (foundArcs) {
-            warnings.push({
-              code: 'postArcNoCapability',
-              params: { operation: operation.name },
-            })
-          }
-        }
-
-        toolpath.moves.forEach((move) => {
-          const mPoint = projectToMachinePoint(move.to, project.origin, definition)
-
-          if (move.kind === 'rapid') {
-            emitRapid(mPoint)
-            return
-          }
-
-          const feed = feedForMove(move.kind, move.feedScale)
-          emitMotionLine(definition.motion.linearCommand, mPoint, feed)
-        })
       }
 
-      // Debug-only (issue #356): capture the machine-coordinate motion trace
-      // for the exported-motion debug view. Recomputed in isolation so the hot
-      // emission path above is untouched; only runs when captureMotionTrace.
-      if (captureTrace) {
-        const traceMachineMoves = transformMoves()
-        let traceDescriptors: FittedMoveDescriptor[] = []
-        if (tryFit) {
-          const tolerance = exportGeometryTolerance(project.meta.units)
-          // Same fallback resolution as the emission path above, so the debug
-          // view never draws an arc on a span that was emitted as G1.
-          traceDescriptors = applyEmittedArcFallback(
-            fitArcsInMachineMoves(traceMachineMoves, tolerance, 90),
-            arcEmitOptions, operationStartPosition,
-          ).descriptors
-        }
-        motionTraces.push({
-          operationId: operation.id,
-          machineMoves: traceMachineMoves,
-          descriptors: traceDescriptors,
-          tryFit,
-        })
+      // Debug-only (issue #356): the machine-coordinate motion trace for the
+      // exported-motion debug view.
+      if (plan.trace) {
+        motionTraces.push(plan.trace)
       }
     }
 
-    // Spindle off after last move of operation if tool change follows or it's the last op
-    const nextOp = operations[opIndex + 1]
-    const toolWillChange = nextOp && nextOp.tool.id !== tool.id
-    
-    // Only turn off if it's the absolute end OR we are about to do a tool change that we are actually emitting
-    if (!nextOp || (toolWillChange && options.emitToolChanges)) {
+    // Spindle off after the last move when the program ends here, or a tool
+    // change that is actually going to be written comes next.
+    if (step.stopSpindleAfter) {
        emitLine(definition.feedSpeed.spindleOff)
-       state.spindleOn = false
     }
   })
 

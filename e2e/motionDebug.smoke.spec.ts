@@ -65,4 +65,27 @@ test.describe('Exported-motion debug view smoke', () => {
 
     await expect(ui.motionDebug.diagnostic(app.page)).toContainText('Verified')
   })
+
+  test('verifies a ShopBot part file export', async ({ app, ui }) => {
+    // Same route, exported as SBP (issue #953): the exported layer is parsed
+    // from the part file by the SBP parser, and must still match the path.
+    await seedGcodeExportProject(app.page, { machineId: 'shopbot' })
+
+    // The button that opens the export is named after the machine's format too.
+    await ui.operations.rowByName(app.page, 'Route B').click()
+    await ui.operations.propertiesExportButton(app.page, 'Route B', 'ShopBot part file').click()
+    await expect(ui.exportDialog.root(app.page)).toBeVisible()
+    await expect(ui.exportDialog.exportButton(app.page)).toContainText('.sbp')
+
+    await ui.exportDialog.inspectButton(app.page).click()
+    await expect(ui.motionDebug.root(app.page)).toBeVisible()
+    await expect(ui.motionDebug.svg(app.page)).toBeVisible()
+
+    // The exported layer is a part file here, not G-code.
+    await expect(ui.motionDebug.layerCheckbox(app.page, 'Exported part file')).toBeChecked()
+    await expect(ui.motionDebug.root(app.page)).not.toContainText('Exported G-code')
+
+    await ui.motionDebug.zLevelSelect(app.page).selectOption('all')
+    await expect(ui.motionDebug.diagnostic(app.page)).toContainText('Verified')
+  })
 })

@@ -23,10 +23,34 @@
 import type { MachineOrigin } from '../../types/project'
 import type { ToolpathGenerationTrace, ToolpathMove, ToolpathPoint } from '../toolpaths/types'
 import type { OperationMotionTrace, MachineDefinition } from './types'
+import { resolveOutputDialect } from './types'
+import { parseGcodeMotion } from './gcodeMotionParser'
 import type { ParsedGcodeMove, ParsedGcodeMotion } from './gcodeMotionParser'
+import { parseSbpMotion } from './sbpMotionParser'
 import { machineToProjectPoint, machineToProjectFlipsArcDirection } from './utils'
 
 const Z_EPS = 1e-6
+
+// ── Parsing the exported program ──────────────────────────────
+
+/**
+ * Parse an exported program in the definition's own output dialect. The
+ * debug view calls this rather than a dialect's parser directly, so the text
+ * it validates is always read in the language it was written in.
+ */
+export function parseExportedMotion(program: string, definition: MachineDefinition): ParsedGcodeMotion {
+  switch (resolveOutputDialect(definition)) {
+    case 'opensbp':
+      return parseSbpMotion(program)
+    case 'gcode':
+      return parseGcodeMotion(
+        program,
+        definition.motion.arcFormat,
+        definition.program.commentPrefix,
+        definition.program.commentSuffix,
+      )
+  }
+}
 
 // ── Eligibility ───────────────────────────────────────────────
 

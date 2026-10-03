@@ -84,6 +84,43 @@ test('custom machines live in My Machines and survive project changes and restar
   await expect(ui.machineManager.item(app.page, 'GRBL 1.1 (copy)')).toBeVisible()
 })
 
+test('a ShopBot duplicate keeps its output format and offers no G-code fields', async ({ app, ui }) => {
+  await seedMachineProject(app.page)
+  await openManager(app.page, ui)
+
+  // The ShopBot machine does not export G-code (issue #953), so its editor
+  // explains that instead of offering command words that would change nothing.
+  await ui.machineManager.item(app.page, 'ShopBot (SBP)').click()
+  await ui.machineManager.duplicateButton(app.page).click()
+  const editor = ui.machineEditor.dialog(app.page)
+  await expect(editor).toBeVisible()
+  await expect(editor).toContainText('This machine exports ShopBot part files')
+  await expect(editor.getByText('File extension', { exact: true })).toBeVisible()
+  await expect(editor.getByText('Units — mm command', { exact: true })).toHaveCount(0)
+  await expect(editor.getByText('Operation header', { exact: true })).toHaveCount(0)
+  await expect(editor.getByText('Flood on', { exact: true })).toHaveCount(0)
+  await expect(editor.getByText('Variables reference', { exact: true })).toHaveCount(0)
+  await ui.machineEditor.saveButton(app.page).click()
+  await expect(editor).toBeHidden()
+
+  // The copy is still a ShopBot machine once it is the project's machine.
+  await ui.machineManager.useButton(app.page).click()
+  const embedded = await embeddedMachine(app.page)
+  expect(embedded.definitions[0].name).toBe('ShopBot (SBP) (copy)')
+  expect(embedded.definitions[0].outputDialect).toBe('opensbp')
+  expect(embedded.definitions[0].fileExtension).toBe('sbp')
+
+  // A G-code machine keeps every field.
+  await ui.machineManager.item(app.page, 'GRBL 1.1').click()
+  await ui.machineManager.duplicateButton(app.page).click()
+  await expect(editor).toBeVisible()
+  await expect(editor).not.toContainText('This machine exports ShopBot part files')
+  await expect(editor.getByText('Units — mm command', { exact: true })).toBeVisible()
+  await expect(editor.getByText('Operation header', { exact: true })).toBeVisible()
+  await expect(editor.getByText('Variables reference', { exact: true })).toBeVisible()
+  await ui.machineEditor.cancelButton(app.page).click()
+})
+
 test('a stale project copy warns without changing anything until asked', async ({ app, ui }) => {
   // The project embeds an older copy of the bundled GRBL definition.
   const staleGrbl = e2eMachineDefinition({ id: 'grbl', name: 'GRBL 1.1', builtin: true })

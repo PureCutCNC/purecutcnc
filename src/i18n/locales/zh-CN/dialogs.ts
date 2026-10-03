@@ -194,6 +194,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
 
   // ── Export G-code dialog ──
   'dialogs.export.title': '导出 G 代码',
+  'dialogs.export.titleOpensbp': '导出 ShopBot 零件文件',
   'dialogs.export.machine': '机床',
   'dialogs.export.machineNone': '未选择',
   'dialogs.export.change': '更改',
@@ -205,6 +206,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.noOperations': '没有可导出的加工操作。请在加工操作面板中添加。',
   'dialogs.export.options': '选项',
   'dialogs.export.emitToolChanges': '输出换刀指令（M6）',
+  'dialogs.export.emitToolChangesOpensbp': '输出换刀指令（C9）',
   'dialogs.export.emitCoolant': '输出冷却液指令',
   'dialogs.export.errors': '错误',
   'dialogs.export.warnings': '警告',
@@ -230,6 +232,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.motionDebug.layerGenerated': '生成（原始）',
   'dialogs.motionDebug.layerOptimized': '优化后',
   'dialogs.motionDebug.layerExported': '导出 G 代码',
+  'dialogs.motionDebug.layerExportedOpensbp': '导出的零件文件',
   'dialogs.motionDebug.nonCuttingMoves': '非切削运动',
   'dialogs.motionDebug.cuttingLevel': '切削层',
   'dialogs.motionDebug.allLevels': '所有切削层',
@@ -360,6 +363,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.variablesReference': '变量参考',
   'dialogs.machineEditor.save': '保存',
   'dialogs.machineEditor.invalidJson': '无效的 JSON 语法',
+  'dialogs.machineEditor.opensbpNote': '此机床导出 ShopBot 零件文件。整个程序由 PureCutCNC 生成，因此这里没有可编辑的 G 代码指令或模板。轴映射、数字格式和圆弧支持位于“高级”中。',
 
   // ── Machine Manager dialog ──
   'dialogs.machineManager.title': '管理机床',
@@ -398,6 +402,7 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineManager.field.description': '描述',
   'dialogs.machineManager.field.vendor': '厂商',
   'dialogs.machineManager.field.fileExtension': '文件扩展名',
+  'dialogs.machineManager.field.outputDialect': '输出格式',
   'dialogs.machineManager.field.coordinateSystem': '轴映射',
   'dialogs.machineManager.field.numberFormat': '数字格式',
   'dialogs.machineManager.field.units': '单位指令',

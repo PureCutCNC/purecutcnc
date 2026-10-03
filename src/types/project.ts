@@ -985,8 +985,11 @@ export interface Project {
   /** Schema version. '3.0' made lightweight definition-backed instances
  *  authoritative; '3.1' reinterpreted drilling `retractHeight` as a distance
  *  above the material surface (issue #481); '3.2' marks files whose edge-route
- *  `entryStrategy` is live rather than a dormant default (issue #891). */
-  version: '1.0' | '2.0' | '2.1' | '3.0' | '3.1' | '3.2'
+ *  `entryStrategy` is live rather than a dormant default (issue #891); '3.3'
+ *  marks files whose embedded machine definition may carry `outputDialect`
+ *  (issue #953). 3.3 changes no stored data: it exists so a build that would
+ *  ignore the dialect and export G-code announces that the file is newer. */
+  version: '1.0' | '2.0' | '2.1' | '3.0' | '3.1' | '3.2' | '3.3'
   meta: ProjectMeta
   grid: GridSettings
   stock: Stock
@@ -1681,7 +1684,7 @@ export function profileExceedsStock(profile: SketchProfile, stock: Stock): boole
 }
 
 /** The newest project schema version this build understands. */
-export const LATEST_PROJECT_VERSION = '3.2'
+export const LATEST_PROJECT_VERSION = '3.3'
 
 /**
  * True when a loaded project's `version` is newer than this build supports

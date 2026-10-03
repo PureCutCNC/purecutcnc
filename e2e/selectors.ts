@@ -481,19 +481,24 @@ export const operations = {
   /** Operation labels within an Add-menu row locator. */
   addMenuRowLabels: (rows: Locator) => rows.locator('.cam-operation-label'),
 
-  /** The Properties-header "Export G-code" action for the selected operation. */
-  propertiesExportButton: (page: Page, name: string) =>
+  /** The Properties-header export action for the selected operation. Its name
+   *  says what the project's machine exports ("G-code" unless told otherwise). */
+  propertiesExportButton: (page: Page, name: string, format = 'G-code') =>
     page
       .locator('.cam-section--properties .cam-section-header')
-      .getByRole('button', { name: `Export G-code for ${name}` }),
+      .getByRole('button', { name: `Export ${format} for ${name}`, exact: true }),
 }
 
 // ── Export G-code dialog ────────────────────────────────────────────
 
 export const exportDialog = {
-  /** The Export G-code dialog root. */
+  /** The export dialog root. Found by its body, not its title: the title
+   *  names the machine's output format and differs for a ShopBot machine. */
   root: (page: Page) =>
-    page.locator('.dialog').filter({ has: page.locator('.dialog-title', { hasText: 'Export G-code' }) }),
+    page.locator('.dialog').filter({ has: page.locator('.dialog-body--gcode-export') }),
+
+  /** The dialog title. */
+  title: (page: Page) => exportDialog.root(page).locator('.dialog-title'),
 
   /** All rows of the operation checklist. */
   operationOptions: (page: Page) =>

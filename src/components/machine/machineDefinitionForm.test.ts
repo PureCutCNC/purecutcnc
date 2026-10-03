@@ -175,6 +175,18 @@ function makeTestDef(overrides?: Partial<MachineDefinition>): MachineDefinition 
 }
 
 {
+  // The output dialect has no form field (issue #953): editing a ShopBot
+  // machine in the focused form must not turn it into a G-code machine.
+  const def = makeTestDef({ outputDialect: 'opensbp', fileExtension: 'sbp' })
+  const form = toFormData(def)
+  form.name = 'Shop ShopBot'
+  const merged = mergeFormData(def, form)
+  assert(merged.outputDialect === 'opensbp', 'mergeFormData: output dialect preserved')
+  const validated = validateDef(merged)
+  assert(validated.ok?.outputDialect === 'opensbp', 'validateDef: output dialect survives validation')
+}
+
+{
   // operationHeader round-trip
   const def = makeTestDef({ program: { ...makeTestDef().program, operationHeader: ['G00 Z10', 'G01 Z-5'] } })
   const form = toFormData(def)

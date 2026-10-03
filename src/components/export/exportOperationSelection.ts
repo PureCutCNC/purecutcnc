@@ -68,3 +68,16 @@ export function suggestGcodeFileName(projectName: string, selectedOperationNames
     : projectName
   return stem.replace(/\s+/g, '_')
 }
+
+/**
+ * The previous export's path, when this export may overwrite it in place.
+ *
+ * Only a file of the same kind qualifies. After a change of machine the
+ * extension differs, and writing one machine's program under another's name is
+ * how a `.nc` would end up holding a ShopBot part file (issue #953); the
+ * caller then asks where to save instead.
+ */
+export function reusableExportPath(lastExportPath: string | null, extension: string): string | null {
+  if (!lastExportPath) return null
+  return lastExportPath.toLowerCase().endsWith(`.${extension.toLowerCase()}`) ? lastExportPath : null
+}
