@@ -2,8 +2,9 @@
 
 ## Purpose
 
-PureCutCNC is a browser-first, Tauri-wrapped CAD/CAM workspace for 3-axis CNC
-hobbyists, makers, and small shops. It combines sketching, machining intent,
+PureCutCNC is a browser-first, Tauri-wrapped CAD/CAM workspace for CNC hobbyists,
+makers, and small shops — primarily 3-axis routers, with indexed 4th-axis (3+1)
+machining and experimental plasma cutting. It combines sketching, machining intent,
 toolpath planning, preview, simulation, and export in one project rather than
 forcing users to move between separate CAD and CAM applications.
 
@@ -63,7 +64,9 @@ implemented behavior.
 PureCutCNC is not currently:
 
 - a general-purpose solid or direct 3D modeler;
-- a lathe, multi-axis, or production-shop scheduling system;
+- a lathe, simultaneous multi-axis, or production-shop scheduling system.
+  Indexed 4th axis (rotate, lock, then cut with 3-axis moves) is in scope;
+  continuous and wrapped rotary motion is not;
 - a cloud collaboration or project-sync service;
 - an automatic source of safe feeds, speeds, tooling, or machine setup;
 - an in-product AI/MCP agent surface. AI agents are development tools today.
@@ -81,6 +84,9 @@ schedule.
 G-code for a 3-axis router without leaving the application — on desktop and
 tablet, in their own language — and trust the output enough to run it.
 
+Plasma cutting and indexed 3+1 ship before 1.0 as additions; they do not change
+what 1.0 requires.
+
 **Required for 1.0:**
 
 - installers that do not warn on macOS and Windows;
@@ -91,9 +97,8 @@ tablet, in their own language — and trust the output enough to run it.
 **Explicitly post-1.0.** These are deferrals, not rejections, and each one is a
 legitimate future direction:
 
-- rotary and 4th-axis machining; turning and lathe work;
+- wrapped and continuous rotary machining; turning and lathe work;
 - parametrics, variables, and part variants;
-- nesting and layout optimisation;
 - joinery and fabrication generator packs;
 - cloud sync or collaboration;
 - an in-product AI or MCP agent surface.
@@ -108,6 +113,10 @@ and that answer needs no fresh argument.
 Preview and simulation are verification aids, not guarantees that a job is safe
 to run. The operator remains responsible for the machine, workholding, stock,
 tooling, controller setup, and physical test procedure.
+
+For plasma output, the operator also owns pierce and cut heights, material
+settings, torch height control, and fire and fume safety. Output marked
+experimental has not been verified on a real plasma table.
 
 Changes touching machine output must preserve these engineering rules:
 
