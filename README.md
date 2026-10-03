@@ -1,6 +1,6 @@
 # PureCutCNC
 
-`PureCutCNC` is a browser-based 2.5D CAD / CAM workspace for designing parts, defining machining operations, previewing toolpaths, and checking the result in 3D and simulation before export. The core focus is 2.5D, but the app also handles 3D surface machining of imported meshes (rough and finish passes).
+`PureCutCNC` is a browser-based 2.5D CAD / CAM workspace for designing parts, defining machining operations, previewing toolpaths, and checking the result in 3D and simulation before export. The core focus is 2.5D, but the app also handles 3D surface machining of imported meshes (rough and finish passes). The [product contract](PROJECT.md) also includes indexed 4th-axis (3+1) machining and experimental plasma cutting as additions before 1.0.
 
 The durable product scope, supported surfaces, terminology, and CNC safety
 contract are defined in [`PROJECT.md`](PROJECT.md). Contributors and AI agents
