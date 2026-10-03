@@ -17,6 +17,9 @@
 import { resolveOutputDialect } from '../../engine/gcode/types'
 import type { MachineDefinition, OutputDialect } from '../../engine/gcode/types'
 import type { MessageKey } from '../../i18n/locales/en'
+import type { camEn } from '../../i18n/locales/en/cam'
+
+type CamKey = keyof typeof camEn
 
 /**
  * The export wording that names the program's language (issue #953). A
@@ -30,6 +33,15 @@ export interface ExportDialectLabels {
   emitToolChanges: MessageKey
   /** The exported layer in the exported-motion debug view. */
   exportedLayer: MessageKey
+  /** CAM panel: tooltip of the per-operation export button. */
+  exportForOperation: CamKey
+  /** CAM panel: that button's accessible name while no operation is selected. */
+  exportForSelected: CamKey
+  /** CAM panel: that button's accessible name, with the operation's `{name}`. */
+  exportFor: CamKey
+  /** The desktop app's native menu item. Native menu labels are not
+   *  translated, so this is English text rather than a message key. */
+  nativeMenuItem: string
 }
 
 // A record over every dialect, so adding one without its wording does not compile.
@@ -38,11 +50,19 @@ const LABELS: Record<OutputDialect, ExportDialectLabels> = {
     title: 'dialogs.export.title',
     emitToolChanges: 'dialogs.export.emitToolChanges',
     exportedLayer: 'dialogs.motionDebug.layerExported',
+    exportForOperation: 'cam.panel.exportGcodeForOperation',
+    exportForSelected: 'cam.panel.exportGcodeForSelected',
+    exportFor: 'cam.panel.exportGcodeFor',
+    nativeMenuItem: 'Export G-code\u2026',
   },
   opensbp: {
     title: 'dialogs.export.titleOpensbp',
     emitToolChanges: 'dialogs.export.emitToolChangesOpensbp',
     exportedLayer: 'dialogs.motionDebug.layerExportedOpensbp',
+    exportForOperation: 'cam.panel.exportGcodeForOperationOpensbp',
+    exportForSelected: 'cam.panel.exportGcodeForSelectedOpensbp',
+    exportFor: 'cam.panel.exportGcodeForOpensbp',
+    nativeMenuItem: 'Export ShopBot Part File\u2026',
   },
 }
 

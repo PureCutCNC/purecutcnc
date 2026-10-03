@@ -155,10 +155,14 @@ and file extension and a note in place of the G-code command and template
 fields, which that machine never reads; the fields it does read (axis mapping,
 number format, arc support) are under Advanced.
 
-**Wording follows the dialect.** The export dialog's title and its "emit tool
-changes" option, and the exported layer of the debug view, name the format and
-the command actually written ("Export ShopBot part file", "(C9)", "Exported
-part file"). `exportDialectLabels.ts` maps each dialect to its wording.
+**Wording follows the dialect.** Everything that names the exported format
+names the one the project's machine writes: the export dialog's title and its
+"emit tool changes" option ("Export ShopBot part file", "(C9)"), the exported
+layer of the debug view ("Exported part file"), the per-operation export button
+in the CAM panel, and the desktop app's File menu item. `exportDialectLabels.ts`
+maps each dialect to its wording. The native menu is built in Rust and is not
+translated, so the app shell passes it an English label through the
+`set_export_menu_label` command whenever the wording changes.
 
 **Older builds.** A build that predates the field drops it and exports through
 the G-code path, under the definition's `.sbp` extension. Two things address

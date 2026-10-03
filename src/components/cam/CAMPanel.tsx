@@ -67,6 +67,8 @@ import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { PanelSplit } from './PanelSplit'
 import { resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 import { camT, camTPlural } from './camI18n'
+import { exportDialectLabels } from '../export/exportDialectLabels'
+import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
 import {
   OPERATION_FIELD_GROUPS,
   isCountersinkDrill,
@@ -521,6 +523,9 @@ export function CAMPanel({
     autoPlaceTabsForOperation,
     createRestOperation,
   } = useProjectStore()
+  // The export action is named after what the project's machine exports:
+  // G-code, or a ShopBot part file (issue #953).
+  const exportLabels = exportDialectLabels(getActiveMachineDefinition(project))
 
   const selectedToolId =
     selectedToolIdState && project.tools.some((tool) => tool.id === selectedToolIdState)
@@ -2333,10 +2338,10 @@ export function CAMPanel({
                   <button
                     className="tree-action-btn"
                     type="button"
-                    title={camT('cam.panel.exportGcodeForOperation')}
+                    title={camT(exportLabels.exportForOperation)}
                     aria-label={selectedOperation
-                      ? camT('cam.panel.exportGcodeFor', { name: selectedOperation.name })
-                      : camT('cam.panel.exportGcodeForSelected')}
+                      ? camT(exportLabels.exportFor, { name: selectedOperation.name })
+                      : camT(exportLabels.exportForSelected)}
                     disabled={!selectedOperation}
                     onClick={() => {
                       if (selectedOperation) {

@@ -71,8 +71,9 @@ test.describe('Exported-motion debug view smoke', () => {
     // from the part file by the SBP parser, and must still match the path.
     await seedGcodeExportProject(app.page, { machineId: 'shopbot' })
 
+    // The button that opens the export is named after the machine's format too.
     await ui.operations.rowByName(app.page, 'Route B').click()
-    await ui.operations.propertiesExportButton(app.page, 'Route B').click()
+    await ui.operations.propertiesExportButton(app.page, 'Route B', 'ShopBot part file').click()
     await expect(ui.exportDialog.root(app.page)).toBeVisible()
     await expect(ui.exportDialog.exportButton(app.page)).toContainText('.sbp')
 

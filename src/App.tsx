@@ -37,7 +37,7 @@ import { EmptyStateOverlay } from './components/onboarding/EmptyStateOverlay'
 import { AboutDialog } from './components/about/AboutDialog'
 import { MachineUpdateNotice } from './components/machine/MachineUpdateNotice'
 import { toolpathGenerationDeferred, useProjectStore } from './store/projectStore'
-import { useDesktopIntegration } from './platform/useDesktopIntegration'
+import { useAppDesktopIntegration } from './app/useAppDesktopIntegration'
 import { useLocalStorageState } from './hooks/useLocalStorageState'
 import { useToolpathGeneration } from './app/useToolpathGeneration'
 import { StatusBarExtras } from './components/layout/StatusBarExtras'
@@ -92,7 +92,7 @@ function App() {
 
   const handleExportGcode = useCallback(() => setExportDialogRequest({}), [])
   const handlePrintDesign = useCallback(() => setShowPrintDialog(true), [])
-  useDesktopIntegration({
+  useAppDesktopIntegration({
     onExportGcode: handleExportGcode,
     onPrintDesign: handlePrintDesign,
     onShowAbout: () => setShowAboutDialog(true),

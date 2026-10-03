@@ -481,11 +481,12 @@ export const operations = {
   /** Operation labels within an Add-menu row locator. */
   addMenuRowLabels: (rows: Locator) => rows.locator('.cam-operation-label'),
 
-  /** The Properties-header "Export G-code" action for the selected operation. */
-  propertiesExportButton: (page: Page, name: string) =>
+  /** The Properties-header export action for the selected operation. Its name
+   *  says what the project's machine exports ("G-code" unless told otherwise). */
+  propertiesExportButton: (page: Page, name: string, format = 'G-code') =>
     page
       .locator('.cam-section--properties .cam-section-header')
-      .getByRole('button', { name: `Export G-code for ${name}` }),
+      .getByRole('button', { name: `Export ${format} for ${name}`, exact: true }),
 }
 
 // ── Export G-code dialog ────────────────────────────────────────────
