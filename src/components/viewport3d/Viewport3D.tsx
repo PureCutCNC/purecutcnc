@@ -60,6 +60,23 @@ function configureGridMaterial(material: THREE.Material | THREE.Material[]) {
   }
 }
 
+/** Bounds of the visible objects, or null when there is nothing to frame. */
+function visibleBounds(objects: readonly THREE.Object3D[]): THREE.Box3 | null {
+  const bounds = new THREE.Box3()
+  for (const object of objects) {
+    if (object.visible) bounds.expandByObject(object)
+  }
+  return bounds.isEmpty() ? null : bounds
+}
+
+/**
+ * The far clip plane follows the scene's extent (#967), so report it after
+ * anything is added to the scene — grid, toolpaths and origin included.
+ */
+function reportSceneBounds(controls: OrbitControls | null, scene: THREE.Scene) {
+  controls?.setSceneBounds(new THREE.Box3().setFromObject(scene))
+}
+
 export interface Viewport3DHandle {
   zoomToModel: () => void
 }
@@ -414,6 +431,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   const toolpathObjectsRef = useRef<THREE.Object3D[]>([])
   const originObjectRef = useRef<THREE.Object3D | null>(null)
   const buildRequestRef = useRef(0)
+  // Set when a project is created or loaded; the scene build that lands next
+  // frames it. See the projectKey effect below.
+  const fitPendingRef = useRef(false)
   const [activePreset, setActivePreset] = useState<ViewPreset | null>('iso')
   const [webglStatus, setWebglStatus] = useState<WebglStatus>('ok')
   const zoomWindowActiveRef = useRef(zoomWindowActive)
@@ -449,20 +469,8 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   }, [project.grid.visible])
 
   const zoomToModel = useCallback(() => {
-    const controls = controlsRef.current
-    if (!controls || objectsRef.current.length === 0) return
-
-    const bounds = new THREE.Box3()
-    let hasRenderableObject = false
-
-    for (const object of objectsRef.current) {
-      if (!object.visible) continue
-      bounds.expandByObject(object)
-      hasRenderableObject = true
-    }
-
-    if (!hasRenderableObject || bounds.isEmpty()) return
-    controls.fitToBounds(bounds)
+    const bounds = visibleBounds(objectsRef.current)
+    if (bounds) controlsRef.current?.fitToBounds(bounds)
   }, [])
 
   useEffect(() => {
@@ -632,6 +640,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   useEffect(() => {
     rendererRef.current?.setClearColor(threePalette.background, 1)
     rebuildGridHelpers()
+    if (sceneRef.current) reportSceneBounds(controlsRef.current, sceneRef.current)
   }, [rebuildGridHelpers, threePalette])
 
   const clearRenderedObjects = useCallback((scene: THREE.Scene) => {
@@ -840,6 +849,17 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
 
           controls.setTarget(centerX, centerY, centerZ)
           rebuildGridHelpers()
+          reportSceneBounds(controls, scene)
+
+          if (fitPendingRef.current) {
+            fitPendingRef.current = false
+            const bounds = visibleBounds(objectsRef.current)
+            if (bounds) {
+              controls.fitToBounds(bounds, true)
+            } else {
+              controls.reset()
+            }
+          }
         }
       })()
     }, 150)
@@ -890,6 +910,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       scene.add(object)
     }
     toolpathObjectsRef.current = nextObjects
+    reportSceneBounds(controlsRef.current, scene)
 
     return () => {
       clearToolpathObjects(scene)
@@ -915,36 +936,20 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     const triad = buildOriginTriad(project.origin, axisSize, threePalette)
     scene.add(triad)
     originObjectRef.current = triad
+    reportSceneBounds(controlsRef.current, scene)
 
     return () => {
       clearOriginObject(scene)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is stable per theme; adding would rebuild triad on theme toggle
   }, [clearOriginObject, originVisible, project.origin, project.stock])
-// Reset to default isometric view when a new project is created/loaded
+// Reset to the default isometric view when a new project is created/loaded.
+// The scene is rebuilt asynchronously, so the fit is left to that build: a
+// timer here fired first and framed the previous project's objects, leaving a
+// sheet-sized project zoomed in at the old project's distance (#967).
 useEffect(() => {
   if (projectKey === 0) return
-  const controls = controlsRef.current
-  if (!controls) return
-
-  // Scene objects are rebuilt in a separate effect with a 150ms timeout.
-  // Wait for them to be available before fitting to bounds.
-  const timer = setTimeout(() => {
-    const bounds = new THREE.Box3()
-    let hasRenderableObject = false
-    for (const object of objectsRef.current) {
-      if (!object.visible) continue
-      bounds.expandByObject(object)
-      hasRenderableObject = true
-    }
-    if (!hasRenderableObject || bounds.isEmpty()) {
-      controls.reset()
-      return
-    }
-    controls.fitToBounds(bounds, true)
-  }, 250)
-
-  return () => clearTimeout(timer)
+  fitPendingRef.current = true
 }, [projectKey])
 
 useImperativeHandle(ref, () => ({
