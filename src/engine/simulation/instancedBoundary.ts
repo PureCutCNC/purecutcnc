@@ -36,7 +36,13 @@
  */
 
 import * as THREE from 'three'
-import { LIGHTING_GLSL, STEP_GLSL } from './heightfieldShader'
+import {
+  CELL_HEIGHT_GLSL,
+  LIGHTING_GLSL,
+  SLOPE_GRADIENT_GLSL,
+  STEP_GLSL,
+  SURFACE_NORMAL_GLSL,
+} from './heightfieldShader'
 import type { SimulationGrid } from './types'
 
 /**
@@ -60,22 +66,22 @@ const wallVertexShader = /* glsl */ `
   uniform float uStockBottomZ;
   uniform vec2 uOrigin;
   uniform float uCellSize;
-  uniform int uCols;
-  uniform int uRows;
   // 1.0 → vertical edges (wall plane ⊥ X), 0.0 → horizontal edges (⊥ Z).
   uniform float uVertical;
 
-  varying vec3 vNormal;
-  varying float vWallHeight;
+  out vec3 vNormal;
+  out float vWallHeight;
+  out float vHeight;
+  // > 0.5 when this edge is a riser inside a slope rather than a step.
+  flat out float vSlope;
+  // The cell on the far side of the edge, and the position inside it.
+  flat out ivec2 vCell;
+  out vec2 vLocal;
+  out vec3 vPositionInCells;
 
   ${STEP_GLSL}
 
-  float cellHeight(ivec2 cell) {
-    if (cell.x < 0 || cell.y < 0 || cell.x >= uCols || cell.y >= uRows) {
-      return uStockBottomZ;
-    }
-    return texelFetch(uHeightfield, cell, 0).r;
-  }
+  ${CELL_HEIGHT_GLSL}
 
   void main() {
     int edgeCol = int(position.x + 0.5);
@@ -111,23 +117,23 @@ const wallVertexShader = /* glsl */ `
     float top = max(hNear, hFar);
     float bottom = max(min(hNear, hFar), uStockBottomZ);
 
-    // Fin suppression on machined slopes: a V-flank or ball roundover crosses
-    // many cells, so every edge inside it has a small height step and would
-    // otherwise draw a sliver wall whose axis-aligned lighting differs sharply
-    // from the surface sheet's smooth per-fragment normals (reads as corduroy
-    // striping on V/ball walls). A step that merely CONTINUES its neighbors'
-    // gradient is part of a slope the surface already renders — collapse it.
+    // Risers inside a machined slope: a V-flank, a ball roundover or a finished
+    // 3D surface crosses many cells, so every edge inside it has a small height
+    // step. Lit as a wall, each one is a sliver whose axis-aligned normal differs
+    // sharply from the surface around it (corduroy striping on V/ball walls, a
+    // grid of dark lines on a finished surface). Left out, the flat cell tops
+    // leave a slit between them that shows the stock underside. So the riser is
+    // drawn, but shaded as the surface it is part of: the fragment shader lights
+    // it with the same smoothed normal the tops on either side use.
     // Isolated steps (pocket walls, stepdown terraces, cut-through rims, a
-    // tab's stock-to-tab wall) keep their wall.
+    // tab's stock-to-tab wall) keep their own wall normal.
     //
     // The surface sheet asks the same predicate before it takes a gradient
-    // across an edge (issue #829), so "wall drawn" and "surface stays flat"
-    // are one decision rather than two that can drift apart.
+    // across an edge (issue #829), so "wall lit as a wall" and "surface stays
+    // flat" are one decision rather than two that can drift apart.
     float hNearBeyond = cellHeight(nearCell - perpStep);
     float hFarBeyond = cellHeight(farCell + perpStep);
-    if (!edgeIsStep(hNear, hFar, hNearBeyond, hFarBeyond, uStockBottomZ)) {
-      top = bottom;
-    }
+    bool isStep = edgeIsStep(hNear, hFar, hNearBeyond, hFarBeyond, uStockBottomZ, uCellSize);
 
     vec3 pos = edgeStart + edgeAlong * position.y;
     pos.y = mix(bottom, top, position.z);
@@ -136,6 +142,11 @@ const wallVertexShader = /* glsl */ `
     float direction = hNear >= hFar ? 1.0 : -1.0;
     vNormal = normalize(normalMatrix * (direction * edgePerp));
     vWallHeight = top - bottom;
+    vHeight = pos.y;
+    vSlope = isStep ? 0.0 : 1.0;
+    vCell = farCell;
+    vLocal = uVertical > 0.5 ? vec2(0.0, position.y) : vec2(position.y, 0.0);
+    vPositionInCells = pos / uCellSize;
 
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
   }
@@ -144,16 +155,38 @@ const wallVertexShader = /* glsl */ `
 // NOTE: with glslVersion GLSL3, three does NOT alias gl_FragColor for custom
 // ShaderMaterials — the fragment shader must declare its own out variable.
 const wallFragmentShader = /* glsl */ `
+  uniform sampler2D uHeightfield;
   uniform vec3 uColor;
+  uniform float uStockBottomZ;
+  uniform float uStockTopZ;
+  uniform float uCellSize;
 
-  varying vec3 vNormal;
-  varying float vWallHeight;
+  in vec3 vNormal;
+  in float vWallHeight;
+  in float vHeight;
+  flat in float vSlope;
+  flat in ivec2 vCell;
+  in vec2 vLocal;
+  in vec3 vPositionInCells;
 
   out vec4 fragColor;
 
   ${LIGHTING_GLSL}
 
+  ${STEP_GLSL}
+
+  ${SLOPE_GRADIENT_GLSL}
+
+  ${SURFACE_NORMAL_GLSL}
+
   void main() {
+    if (vSlope > 0.5) {
+      // A riser inside a slope is a piece of the surface, not a wall.
+      float wide = gradientWidening(vPositionInCells);
+      vec3 lighting = calcLighting(surfaceNormal(vCell, vLocal, wide));
+      fragColor = vec4(uColor * lighting * depthDarken(vHeight, uStockTopZ), 1.0);
+      return;
+    }
     if (vWallHeight < 0.0001) {
       // Adjacent cells at equal height — the wall has zero extent.
       discard;
@@ -294,6 +327,7 @@ function sharedUniforms(
   return {
     uHeightfield: { value: heightfieldTexture },
     uStockBottomZ: { value: grid.stockBottomZ },
+    uStockTopZ: { value: grid.stockTopZ },
     uColor: { value: stockColor },
     uOrigin: { value: new THREE.Vector2(grid.originX, grid.originY) },
     uCellSize: { value: grid.cellSize },
