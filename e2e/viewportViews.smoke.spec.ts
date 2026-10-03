@@ -301,3 +301,182 @@ test('simulation shades a tab rim flat without flattening real slopes', async ({
   // The slope shading must survive, and be visibly darker than flat stock.
   expect(shading.ridgeTop - shading.ridgeFlank).toBeGreaterThan(40)
 })
+
+test('simulation shades a shallow ball finish smoothly at any zoom', async ({ app }) => {
+  // Issue #939: a ball finish on large stock samples each scallop with under
+  // three cells. Its edges used to be classified as steps, so the surface
+  // rendered as flat squares outlined by wall-lit risers, and moiré when zoomed
+  // out. The rule and the lighting live in GLSL, so only rendered pixels can
+  // catch a regression in them.
+  await app.page.addScriptTag({ type: 'module', content: `
+    import * as THREE from '/node_modules/.vite/deps/three.js';
+    import { createHeightfieldTexture, createStockPlaneGeometry } from '/src/engine/simulation/gpuMesh.ts';
+    import { createHeightfieldMaterial } from '/src/engine/simulation/heightfieldShader.ts';
+    import { createInstancedBoundaryGroup } from '/src/engine/simulation/instancedBoundary.ts';
+
+    // Parallel ball passes 2.7 cells apart (ball radius 8.5 cells, as a 1/4"
+    // ball is on a 20" top at detail 1360) on a gently tilted base, so edges on
+    // both axes carry a small height change.
+    const cols = 240;
+    const rows = 240;
+    const stepover = 2.7;
+    const ballRadius = 8.5;
+    const heights = new Float32Array(cols * rows);
+    for (let row = 0; row < rows; row += 1) {
+      const offset = ((row + 0.5) % stepover) - stepover / 2;
+      const scallop = ballRadius - Math.sqrt(ballRadius * ballRadius - offset * offset);
+      for (let col = 0; col < cols; col += 1) {
+        heights[row * cols + col] = 20 + 0.04 * col + scallop;
+      }
+    }
+    const grid = {
+      originX: 0, originY: 0, cellSize: 1, cols, rows,
+      stockBottomZ: 0, stockTopZ: 40, topZ: heights,
+    };
+    // Dark enough that the brightest lighting stays below the 8-bit clamp.
+    const color = new THREE.Color('#c8c8c8');
+    const texture = createHeightfieldTexture(grid);
+    const geometry = createStockPlaneGeometry(grid);
+    const material = createHeightfieldMaterial(texture, grid, color);
+    const boundary = createInstancedBoundaryGroup(texture, grid, color);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    scene.add(new THREE.Mesh(geometry, material));
+    scene.add(boundary);
+    const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(1);
+    renderer.setSize(400, 400, false);
+    const gl = renderer.getContext();
+
+    // Brightness statistics over a central square of pixels, small enough to lie
+    // wholly on the finished surface at that zoom.
+    const measure = (halfExtent, size) => {
+      const camera = new THREE.OrthographicCamera(-halfExtent, halfExtent, halfExtent, -halfExtent, 1, 2000);
+      camera.position.set(120 + 150, 21 + 260, 120 + 300);
+      camera.lookAt(120, 25, 120);
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld();
+      renderer.render(scene, camera);
+      gl.finish();
+      const pixels = new Uint8Array(size * size * 4);
+      gl.readPixels(200 - size / 2, 200 - size / 2, size, size, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      const brightness = new Float32Array(size * size);
+      for (let i = 0; i < size * size; i += 1) {
+        brightness[i] = pixels[i * 4] + pixels[i * 4 + 1] + pixels[i * 4 + 2];
+      }
+      const sorted = Float32Array.from(brightness).sort();
+      const median = sorted[sorted.length >> 1];
+      let maxJump = 0;
+      let sum = 0;
+      for (let y = 0; y < size; y += 1) {
+        for (let x = 0; x < size; x += 1) {
+          const value = brightness[y * size + x];
+          sum += value;
+          if (x > 0) maxJump = Math.max(maxJump, Math.abs(value - brightness[y * size + x - 1]));
+          if (y > 0) maxJump = Math.max(maxJump, Math.abs(value - brightness[(y - 1) * size + x]));
+        }
+      }
+      const mean = sum / (size * size);
+      let variance = 0;
+      for (const value of brightness) variance += (value - mean) * (value - mean);
+      return {
+        median,
+        darkest: sorted[0] / median,
+        brightest: sorted[sorted.length - 1] / median,
+        maxJump: maxJump / median,
+        spread: Math.sqrt(variance / (size * size)) / mean,
+      };
+    };
+
+    // Close: 40 pixels per cell. Far: more than one cell per pixel.
+    const close = measure(5, 160);
+    const far = measure(240, 60);
+
+    boundary.traverse((object) => {
+      if (object.isMesh) {
+        object.geometry.dispose();
+        object.material.dispose();
+      }
+    });
+    geometry.dispose();
+    material.dispose();
+    texture.dispose();
+    scene.clear();
+
+    // Which way a slope faces: four ramps of one cell per cell, seen from
+    // straight above, each sampled at its middle cell (the same height in all).
+    const rampCamera = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 500);
+    rampCamera.up.set(0, 0, -1);
+    rampCamera.position.set(4.5, 200, 4.5);
+    rampCamera.lookAt(4.5, 0, 4.5);
+    rampCamera.updateProjectionMatrix();
+    rampCamera.updateMatrixWorld();
+    const ramp = (slopeX, slopeZ) => {
+      const rampHeights = new Float32Array(81);
+      for (let row = 0; row < 9; row += 1) {
+        for (let col = 0; col < 9; col += 1) {
+          rampHeights[row * 9 + col] = 50 + slopeX * (col - 4) + slopeZ * (row - 4);
+        }
+      }
+      const rampGrid = {
+        originX: 0, originY: 0, cellSize: 1, cols: 9, rows: 9,
+        stockBottomZ: 0, stockTopZ: 100, topZ: rampHeights,
+      };
+      const rampTexture = createHeightfieldTexture(rampGrid);
+      const rampGeometry = createStockPlaneGeometry(rampGrid);
+      const rampMaterial = createHeightfieldMaterial(rampTexture, rampGrid, color);
+      const mesh = new THREE.Mesh(rampGeometry, rampMaterial);
+      scene.add(mesh);
+      renderer.render(scene, rampCamera);
+      gl.finish();
+      const pixel = new Uint8Array(4);
+      gl.readPixels(200, 200, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      scene.remove(mesh);
+      rampGeometry.dispose();
+      rampMaterial.dispose();
+      rampTexture.dispose();
+      return pixel[0] + pixel[1] + pixel[2];
+    };
+    const facing = {
+      level: ramp(0, 0),
+      plusX: ramp(-1, 0),
+      minusX: ramp(1, 0),
+      plusZ: ramp(0, -1),
+      minusZ: ramp(0, 1),
+    };
+
+    renderer.dispose();
+    document.body.dataset.scallop939 = JSON.stringify({ close, far, facing });
+  ` })
+  await expect(app.page.locator('body')).toHaveAttribute('data-scallop939', /close/)
+  const { close, far, facing } = JSON.parse(await app.page.locator('body').getAttribute('data-scallop939') ?? '{}') as {
+    close: { median: number; darkest: number; brightest: number; maxJump: number; spread: number }
+    far: { median: number; darkest: number; brightest: number; maxJump: number; spread: number }
+    facing: { level: number; plusX: number; minusX: number; plusZ: number; minusZ: number }
+  }
+  // A black frame would pass every ratio below.
+  expect(close.median).toBeGreaterThan(300)
+  expect(far.median).toBeGreaterThan(300)
+  // Close up, no riser may be lit as a wall and no slit may show the underside:
+  // either one is a line far darker (or brighter) than the scallop's own shading.
+  expect(close.darkest).toBeGreaterThan(0.85)
+  expect(close.brightest).toBeLessThan(1.15)
+  // The lighting changes continuously across cell borders: one flat shade per
+  // cell jumps by 1.6 % between neighboring pixels here, interpolated 0.5 %.
+  expect(close.maxJump).toBeLessThan(0.008)
+  // The scallops are still there up close — the smoothing has not erased them.
+  expect(close.brightest - close.darkest).toBeGreaterThan(0.03)
+  // Zoomed out the scallops are narrower than a pixel and must average out
+  // instead of aliasing into moiré: without the widened stencil neighboring
+  // pixels differ by 3.2 % and the spread is 0.9 %, with it 0.8 % and 0.4 %.
+  expect(far.maxJump).toBeLessThan(0.018)
+  expect(far.spread).toBeLessThan(0.006)
+  // A slope is lit by the side it faces. The key light stands at +X +Z, so a
+  // face turned toward either is much brighter than one turned away; the fill
+  // light stands further toward -X than -Z, which tells the two axes apart.
+  expect(facing.level).toBeGreaterThan(300)
+  expect(facing.plusX - facing.minusX).toBeGreaterThan(0.15 * facing.level)
+  expect(facing.plusZ - facing.minusZ).toBeGreaterThan(0.15 * facing.level)
+  expect(facing.minusX - facing.minusZ).toBeGreaterThan(0.015 * facing.level)
+})
+

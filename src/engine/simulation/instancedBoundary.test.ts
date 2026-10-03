@@ -27,7 +27,7 @@ import {
   wallInstanceCount,
 } from './instancedBoundary'
 import { createHeightfieldTexture } from './gpuMesh'
-import { createHeightfieldMaterial, STEP_GLSL } from './heightfieldShader'
+import { createHeightfieldMaterial, STEP_GLSL, SURFACE_NORMAL_GLSL } from './heightfieldShader'
 import type { SimulationGrid } from './types'
 
 function assert(condition: boolean, message: string): void {
@@ -136,6 +136,25 @@ function testSurfaceAndWallsShareStepPredicate(): void {
     assert(
       (wall.material as THREE.ShaderMaterial).vertexShader.includes('edgeIsStep('),
       'both wall strips must classify their edges with the same predicate as the surface',
+    )
+  }
+
+  // Issue #939: a riser inside a slope is a piece of the surface. The wall mesh
+  // lights it with the surface's own normal code, not a second estimate that
+  // could differ by a shade and draw the cell grid back in.
+  assert(
+    surface.fragmentShader.includes(SURFACE_NORMAL_GLSL) && surface.fragmentShader.includes(STEP_GLSL),
+    'the top surface must light itself with the shared surface normal',
+  )
+  for (const wall of walls) {
+    const wallFragment = (wall.material as THREE.ShaderMaterial).fragmentShader
+    assert(
+      wallFragment.includes(SURFACE_NORMAL_GLSL) && wallFragment.includes(STEP_GLSL),
+      'both wall strips must light slope risers with the same surface normal as the tops',
+    )
+    assert(
+      (wall.material as THREE.ShaderMaterial).uniforms.uStockTopZ.value === grid.stockTopZ,
+      'wall strips need the stock top to match the surface depth shading on slope risers',
     )
   }
 
