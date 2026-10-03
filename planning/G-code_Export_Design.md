@@ -86,13 +86,24 @@ project that predates it behaves exactly as before, and parsing one adds
 nothing to it.
 
 **One pipeline, one emitter per dialect.** `runPostProcessor` chooses the
-dialect and delegates. The decisions about motion are shared and live in
-`motionPipeline.ts`: the machine-coordinate transform, arc fitting, the
-emitted-arc fallback, their warnings, the safe-Z split of a rapid, the emitted
-move count and the motion trace. An emitter contributes line syntax only. A
-later feature that changes what the machine is asked to do (setups, a rotary
+dialect and delegates. What the machine is asked to do is shared and lives in
+`motionPipeline.ts`:
+
+- the program's sequence — whether the tool changes, when the spindle starts,
+  is restated at a new speed and stops, when coolant comes on, the feed and
+  speed fallbacks, and the warnings for what was asked for but cannot be
+  written;
+- the machine-coordinate transform, for moves and for drill cycles;
+- arc fitting, the emitted-arc fallback and their warnings;
+- the safe-Z split of a rapid, and the motion trace.
+
+An emitter contributes line syntax and keeps only what it has written so far.
+A later feature that changes what the machine is asked to do (setups, a rotary
 axis, another machine kind) changes the pipeline and reaches every dialect; it
-does not add branches for one dialect inside another's emitter.
+does not add branches for one dialect inside another's emitter. Sequencing is
+in the pipeline for a concrete reason: the first ShopBot emitter carried its
+own copy and dropped a spindle-speed change between two operations on one
+tool, which the G-code emitter restated.
 
 **What a ShopBot program contains.**
 
@@ -111,8 +122,14 @@ does not add branches for one dialect inside another's emitter.
   `M3,x,y,z`. Fitted arcs are `CG,,endX,endY,I,J,T,dir` with `dir` 1 for
   clockwise and -1 for counter-clockwise, and the centre offsets measured from
   the position actually written on the previous line, as for G2/G3.
-- Spindle: `TR,rpm` then `C6` to start, `C7` to stop. Tool change: `&Tool=N`
-  then `C9`, the standard ShopBot tool-change macro (manual or automatic).
+- Spindle: `TR,rpm` then `C6` to start, and the same pair again when the
+  speed changes between two operations that keep the spindle running — the
+  counterpart of G-code restating `M3 S…`. `C7` to stop.
+- Tool change: `&Tool=N` then `C9`, the standard ShopBot tool-change macro
+  (manual or automatic). `C9` moves the machine and may set speeds, so neither
+  is assumed afterwards: the next rapid states Z before it travels and the
+  next fed move restates `MS`. The G-code path does not restate position after
+  `M6`; changing that would change existing G-code output.
 - Drilling is written as its expanded moves: there are no canned cycles.
 - Coolant is not written, because output wiring differs per machine; asking
   for it raises the same warning as on a G-code machine without coolant.
@@ -133,7 +150,15 @@ claimed. `opensbpEmitter.ts` carries the citations.
 
 **The dialect is not editable in the machine library.** A bundled definition
 carries it and a duplicate inherits it. The focused editor form has no field
-for it and preserves it.
+for it and preserves it. For an `opensbp` machine the editor shows the name
+and file extension and a note in place of the G-code command and template
+fields, which that machine never reads; the fields it does read (axis mapping,
+number format, arc support) are under Advanced.
+
+**Wording follows the dialect.** The export dialog's title and its "emit tool
+changes" option, and the exported layer of the debug view, name the format and
+the command actually written ("Export ShopBot part file", "(C9)", "Exported
+part file"). `exportDialectLabels.ts` maps each dialect to its wording.
 
 **Older builds.** A build that predates the field drops it and exports through
 the G-code path, under the definition's `.sbp` extension. Two things address

@@ -52,8 +52,9 @@
  * - Rapids are jogs (`JZ`, `J2`, `J3`), cuts are `M3,x,y,z`, and fitted arcs
  *   are `CG,,endX,endY,I,J,T,dir` with `dir` 1 for clockwise and -1 for
  *   counter-clockwise.
- * - Spindle: `TR,rpm` then `C6` to start, `C7` to stop. Tool change:
- *   `&Tool=N` then `C9`.
+ * - Spindle: `TR,rpm` then `C6` to start, and the same pair again when the
+ *   speed changes between operations; `C7` to stop. Tool change: `&Tool=N`
+ *   then `C9`, after which speeds and position are treated as unknown.
  * - No canned cycles (drilling is written as its expanded moves), no coolant
  *   (output wiring differs per machine) and no line numbers.
  */
@@ -68,6 +69,7 @@ import {
   createArcEmitOptions,
   createEmittedValueFormatter,
   planOperationMotion,
+  planProgramSequence,
   splitRapid,
 } from './motionPipeline'
 import { formatGCodeNumber } from './utils'
@@ -125,8 +127,6 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
   // The `MS` values last written, as written. Null until the first `MS`, and
   // again after a tool change, whose macro is free to change speeds.
   let emittedSpeeds: { xy: string; z: string } | null = null
-  let spindleOn = false
-  let currentToolId: string | null = null
 
   const emit = (line: string) => {
     lines.push(line)
@@ -171,12 +171,15 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
   emit('SA')
 
   // ── Operations ──
+  // When the tool changes and when the spindle starts, is restated and stops
+  // is the same decision for every dialect. A part file has no coolant
+  // command (output wiring differs per machine), so a request for coolant
+  // comes back from the sequence as a warning rather than a line to write.
+  const sequence = planProgramSequence(input, { coolant: false })
   operations.forEach(({ operation, tool, toolpath }, opIndex) => {
-    const toolIndex = project.tools.findIndex((candidate) => candidate.id === tool.id) + 1
-    const toolNumber = toolIndex > 0 ? toolIndex : 1
-    const rpm = operation.rpm || tool.defaultRpm
-    const cutFeed = operation.feed || tool.defaultFeed
-    const plungeFeed = operation.plungeFeed || tool.defaultPlungeFeed
+    const step = sequence[opIndex]
+    const { toolNumber, cutFeed, plungeFeed } = step
+    warnings.push(...step.warnings)
 
     emitComment('')
     emitComment(`Operation ${opIndex + 1}: ${commentText(operation.name)}`)
@@ -185,36 +188,26 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
     }
     emitComment(`Tool ${toolNumber}: ${commentText(tool.name)}`)
 
-    // Tool change
-    const toolChanged = currentToolId !== tool.id
-    if (toolChanged && options.emitToolChanges) {
-      if (spindleOn) {
+    // Tool change. C9 is a macro: it moves the machine and may set speeds of
+    // its own, so neither is assumed afterwards. The next rapid restates Z
+    // before it travels and the next fed move restates `MS`.
+    if (step.changeTool) {
+      if (step.spindleRunningAtToolChange) {
         emit('C7')
-        spindleOn = false
       }
       emit(`&Tool=${toolNumber}`)
       emit('C9')
       emittedSpeeds = null
-    } else if (toolChanged && !options.emitToolChanges && opIndex > 0) {
-      warnings.push({ code: 'postToolChangesDisabled', params: { operation: operation.name, tool: tool.name } })
+      currentPosition = null
+      emittedPosition = null
     }
-    // Tracked whether or not the change was emitted (issue #755): this has to
-    // say which tool the machine is actually holding, or every later
-    // operation reads as a change.
-    currentToolId = tool.id
 
-    // Spindle on. The speed is restated on every start, not remembered across
-    // a stop: a tool-change macro may have set its own.
-    if (!spindleOn) {
-      emit(`TR,${Math.round(rpm)}`)
+    // Spindle on at this operation's speed: when it is stopped, and again
+    // when the speed changes between two operations that share a tool. Both
+    // cases write the pair, as the G-code path restates `M3 S…`.
+    if (step.startSpindle) {
+      emit(`TR,${Math.round(step.rpm)}`)
       emit('C6')
-      spindleOn = true
-    }
-
-    // Coolant: there is no portable command for it on a ShopBot, so a request
-    // for it is reported, never silently dropped.
-    if (options.emitCoolant) {
-      warnings.push({ code: 'postNoCoolantCommands' })
     }
 
     // ── Speeds ──
@@ -307,12 +300,9 @@ export function emitOpenSbpProgram(input: PostProcessorInput): PostProcessorResu
     }
 
     // Spindle off after the last operation, or before a tool change that is
-    // actually going to be emitted.
-    const nextOp = operations[opIndex + 1]
-    const toolWillChange = nextOp !== undefined && nextOp.tool.id !== tool.id
-    if (!nextOp || (toolWillChange && options.emitToolChanges)) {
+    // actually going to be written.
+    if (step.stopSpindleAfter) {
       emit('C7')
-      spindleOn = false
     }
   })
 

@@ -80,6 +80,10 @@ test.describe('Exported-motion debug view smoke', () => {
     await expect(ui.motionDebug.root(app.page)).toBeVisible()
     await expect(ui.motionDebug.svg(app.page)).toBeVisible()
 
+    // The exported layer is a part file here, not G-code.
+    await expect(ui.motionDebug.layerCheckbox(app.page, 'Exported part file')).toBeChecked()
+    await expect(ui.motionDebug.root(app.page)).not.toContainText('Exported G-code')
+
     await ui.motionDebug.zLevelSelect(app.page).selectOption('all')
     await expect(ui.motionDebug.diagnostic(app.page)).toContainText('Verified')
   })

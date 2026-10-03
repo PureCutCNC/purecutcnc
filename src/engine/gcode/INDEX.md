@@ -10,9 +10,16 @@ exports native part files (`.sbp`). Design reference:
 
 `runPostProcessor` picks the dialect and does nothing else. What the machine
 is asked to do is decided once, for every dialect, in `motionPipeline.ts`; a
-dialect's emitter only spells the result. New motion behaviour goes in the
-pipeline. New syntax goes in an emitter. A dialect is never special-cased
-inside another dialect's emitter.
+dialect's emitter only spells the result. New behaviour goes in the pipeline.
+New syntax goes in an emitter. A dialect is never special-cased inside another
+dialect's emitter.
+
+That covers sequencing as well as motion. Whether the tool changes, when the
+spindle starts, is restated at a new speed and stops, and when coolant comes
+on are one decision (`planProgramSequence`), because two copies of it drift:
+the first ShopBot emitter kept its own and dropped a spindle-speed change that
+the G-code emitter restated. An emitter keeps only what it has written so far
+(modal words, position, speeds).
 
 | Dialect | Emitter | Motion parser (debug view, round-trip tests) |
 | --- | --- | --- |
@@ -28,10 +35,13 @@ inside another dialect's emitter.
 - `postprocessor.ts` — `runPostProcessor` (the dialect switch) and the G-code
   emitter: templates, modal tracking, canned drill cycles, line numbers.
 - `motionPipeline.ts` — the dialect-neutral half of export:
-  `planOperationMotion` (project → machine transform, arc fitting, the
-  emitted-arc fallback and its warnings, the motion trace), `splitRapid`
-  (the safe-Z split of a rapid), and the emitted-number helpers arc validation
-  judges with.
+  `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
+  feed and speed fallbacks, and their warnings), `planOperationMotion`
+  (project → machine transform, arc fitting, the emitted-arc fallback and its
+  warnings, the motion trace), `planDrillCycles` (drill cycles in machine
+  coordinates, for a dialect with canned cycles), `splitRapid` (the safe-Z
+  split of a rapid), and the emitted-number helpers arc validation judges
+  with. It is the only caller of `projectToMachinePoint` during export.
 - `opensbpEmitter.ts` — ShopBot part-file emitter. Its header comment cites
   where the syntax comes from and what was deliberately not consulted; keep it
   accurate when the emitter changes.
@@ -50,20 +60,26 @@ inside another dialect's emitter.
 - `definitions/` — bundled machine definitions (`BUNDLED_DEFINITIONS`) and
   `getActiveMachineDefinition`, the export boundary. `shopbot.json` is the one
   non-G-code definition; see the note below.
-- `*.test.ts` — `postprocessor.test.ts` (G-code), `opensbpEmitter.test.ts`
-  (SBP and the dialect switch), `sbpMotionParser.test.ts`, `arcFitting.test.ts`,
+- `*.test.ts` — `postprocessor.test.ts` (G-code), `motionPipeline.test.ts`
+  (sequencing, drill-cycle transform, rapid split, and both emitters checked
+  against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect
+  switch), `sbpMotionParser.test.ts`, `arcFitting.test.ts`,
   `gcodeMotionParser.test.ts`, `motionDebug.test.ts`,
   `trochoidalArcExport.test.ts`.
 
 ## Adding a dialect
 
 1. Add its id to `OUTPUT_DIALECTS` in `types.ts`.
-2. Write an emitter that calls `planOperationMotion` and `splitRapid` and
-   returns a `PostProcessorResult`; add its case to `runPostProcessor`.
+2. Write an emitter that calls `planProgramSequence`, `planOperationMotion`
+   and `splitRapid` and returns a `PostProcessorResult`; add its case to
+   `runPostProcessor`, and its events to
+   `testBothDialectsWriteTheSameSequence`.
 3. Write a motion parser returning `ParsedGcodeMotion`; add its case to
    `parseExportedMotion`. Use it as the round-trip oracle in the emitter tests.
 4. Add the bundled definition, and decide what a build that predates the
    dialect would write for it (next section).
+5. Give it wording in `src/components/export/exportDialectLabels.ts`; the
+   record there does not compile until every dialect has some.
 
 ## What an `opensbp` definition uses
 
@@ -76,6 +92,10 @@ A build older than `outputDialect` drops the field and exports through the
 G-code path; with these values it writes a file of SBP comments ending in
 `END` rather than G-code under a `.sbp` name. `opensbpEmitter.test.ts` holds
 that property (`testOlderBuildWritesNoMotion`); do not "tidy" the words.
+
+The machine editor does not show those fields for an `opensbp` machine
+(`MachineDefinitionEditorDialog`): editing them would change nothing. The
+fields it does read are reachable under Advanced.
 
 ## Checks
 

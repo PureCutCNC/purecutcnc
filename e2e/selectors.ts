@@ -491,9 +491,13 @@ export const operations = {
 // ── Export G-code dialog ────────────────────────────────────────────
 
 export const exportDialog = {
-  /** The Export G-code dialog root. */
+  /** The export dialog root. Found by its body, not its title: the title
+   *  names the machine's output format and differs for a ShopBot machine. */
   root: (page: Page) =>
-    page.locator('.dialog').filter({ has: page.locator('.dialog-title', { hasText: 'Export G-code' }) }),
+    page.locator('.dialog').filter({ has: page.locator('.dialog-body--gcode-export') }),
+
+  /** The dialog title. */
+  title: (page: Page) => exportDialog.root(page).locator('.dialog-title'),
 
   /** All rows of the operation checklist. */
   operationOptions: (page: Page) =>

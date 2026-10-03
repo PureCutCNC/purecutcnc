@@ -21,7 +21,7 @@ import type {
 } from './types'
 import { resolveOutputDialect } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
-import { projectToMachinePoint, formatGCodeNumber } from './utils'
+import { formatGCodeNumber } from './utils'
 import type { ToolpathPoint } from '../toolpaths/types'
 import { effectiveFeed } from '../toolpaths/feed'
 import type { FedMoveKind } from '../toolpaths/feed'
@@ -31,18 +31,19 @@ import type { ArcMoveDescriptor } from './arcFitting'
 import {
   createArcEmitOptions,
   createEmittedValueFormatter,
+  planDrillCycles,
   planOperationMotion,
+  planProgramSequence,
   splitRapid,
 } from './motionPipeline'
 import { emitOpenSbpProgram } from './opensbpEmitter'
 
+// What the emitter has written so far. Which tool is held and whether the
+// spindle and coolant are on are not tracked here: that is the program's
+// sequence, decided for every dialect by `planProgramSequence`.
 interface ModalState {
   motionCommand: string | null   // last G0/G1/G2/G3
   feedRate: number | null
-  spindleSpeed: number | null
-  spindleOn: boolean
-  coolantOn: boolean
-  currentToolId: string | null
   currentPosition: ToolpathPoint | null
   lineNumber: number
 }
@@ -94,10 +95,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   const state: ModalState = {
     motionCommand: null,
     feedRate: null,
-    spindleSpeed: null,
-    spindleOn: false,
-    coolantOn: false,
-    currentToolId: null,
     currentPosition: null,
     lineNumber: definition.program.lineNumbers ? definition.program.lineNumberIncrement : 0
   }
@@ -233,9 +230,11 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   }
 
   // 4. Operations
+  const sequence = planProgramSequence(input, { coolant: definition.coolant !== null })
   operations.forEach(({ operation, tool, toolpath }, opIndex) => {
-    const toolNumber = project.tools.findIndex(t => t.id === tool.id) + 1
-    const rpm = operation.rpm || tool.defaultRpm
+    const step = sequence[opIndex]
+    const { rpm } = step
+    warnings.push(...step.warnings)
     const operationContext = {
       ...commonContext,
       operationIndex: opIndex + 1,
@@ -244,10 +243,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       operationKind: operation.kind,
       operationPass: operation.pass,
       operationTarget: operationTargetSummary(operation.target),
-      toolNumber: toolNumber > 0 ? toolNumber : 1,
+      toolNumber: step.toolNumber,
       toolName: safeCommentText(tool.name),
-      feed: formatGCodeNumber(operation.feed || tool.defaultFeed, definition, outputUnits),
-      plungeFeed: formatGCodeNumber(operation.plungeFeed || tool.defaultPlungeFeed, definition, outputUnits),
+      feed: formatGCodeNumber(step.cutFeed, definition, outputUnits),
+      plungeFeed: formatGCodeNumber(step.plungeFeed, definition, outputUnits),
       rpm: formatGCodeNumber(rpm, definition, outputUnits),
     }
     const descriptionLines = safeCommentLines(operation.description ?? '')
@@ -259,11 +258,9 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     }
 
     // Tool change
-    const toolChanged = state.currentToolId !== tool.id
-    if (toolChanged && options.emitToolChanges) {
-      if (definition.toolChange.stopSpindleFirst && state.spindleOn) {
+    if (step.changeTool) {
+      if (definition.toolChange.stopSpindleFirst && step.spindleRunningAtToolChange) {
         emitLine(definition.feedSpeed.spindleOff)
-        state.spindleOn = false
       }
 
       const toolContext = {
@@ -277,34 +274,16 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       if (definition.toolChange.pauseAfterChange) {
         emitLine(definition.toolChange.pauseCommand)
       }
-    } else if (toolChanged && !options.emitToolChanges && opIndex > 0) {
-      warnings.push({ code: 'postToolChangesDisabled', params: { operation: operation.name, tool: tool.name } })
     }
-    // Tracked whether or not the change was emitted (issue #755). Emitting on
-    // demand and tracking are different questions: with M6 off this variable
-    // still has to say which tool the machine is actually holding, or every
-    // later operation reads as a change and the same tool is reported as a
-    // different one. The warning above is what reports the real, unexecuted
-    // change; this keeps that report honest.
-    state.currentToolId = tool.id
 
     // Spindle On
-    if (!state.spindleOn || state.spindleSpeed !== rpm) {
+    if (step.startSpindle) {
       emitLine(`${definition.feedSpeed.spindleOnCW} ${definition.feedSpeed.rpmCommand}${formatGCodeNumber(rpm, definition, outputUnits)}`)
-      state.spindleOn = true
-      state.spindleSpeed = rpm
     }
 
     // Coolant
-    if (options.emitCoolant) {
-      if (definition.coolant) {
-        if (!state.coolantOn) {
-          emitLine(definition.coolant.floodOnCommand)
-          state.coolantOn = true
-        }
-      } else {
-        warnings.push({ code: 'postNoCoolantCommands' })
-      }
+    if (step.startCoolant && definition.coolant) {
+      emitLine(definition.coolant.floodOnCommand)
     }
 
     // Moves — emit canned cycles for drilling when supported, else expanded G0/G1
@@ -316,7 +295,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       && toolpath.drillCycles.length > 0
       && definition.cannedCycles
     ) {
-      const cycles = toolpath.drillCycles
+      const cycles = planDrillCycles(project, definition, toolpath.drillCycles)
       const cannedDef = definition.cannedCycles
 
       // Resolve the command word for the operation's drill type
@@ -326,19 +305,18 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         peck: cannedDef.peckDrillCommand,
         chip_breaking: cannedDef.chipBreakDrillCommand,
       }
-      const cycleDrillType = cycles[0].drillType
+      const cycleDrillType = cycles[0].cycle.drillType
       const cannedCmd = drillTypeCommandMap[cycleDrillType]
 
       if (cannedCmd) {
         emittedCanned = true
 
-        const plungeFeed = operation.plungeFeed || tool.defaultPlungeFeed
+        const plungeFeed = step.plungeFeed
         const feedWord = definition.feedSpeed.feedCommand
         let feedEmitted = false
 
         // Rapid to first hole XY at clearZ so the controller has a defined initial plane
-        const firstCycle = cycles[0]
-        const firstMachineXY = projectToMachinePoint({ x: firstCycle.x, y: firstCycle.y, z: firstCycle.clearZ }, project.origin, definition)
+        const firstMachineXY = cycles[0].clear
         if (state.currentPosition) {
           const cp = state.currentPosition
           if (cp.z !== firstMachineXY.z) {
@@ -362,7 +340,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         let lastQ: string | null = null
         let lastP: string | null = null
 
-        for (const cycle of cycles) {
+        for (const { cycle, at: machineXY, bottomZ: machineBottomZ, retractZ: machineRetractZ } of cycles) {
           moveCount += 1
 
           const segs: string[] = []
@@ -374,12 +352,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           }
 
           // X / Y
-          const machineXY = projectToMachinePoint({ x: cycle.x, y: cycle.y, z: 0 }, project.origin, definition)
           segs.push(`X${formatGCodeNumber(machineXY.x, definition, outputUnits)}`)
           segs.push(`Y${formatGCodeNumber(machineXY.y, definition, outputUnits)}`)
 
           // Z (bottom)
-          const machineBottomZ = projectToMachinePoint({ x: cycle.x, y: cycle.y, z: cycle.bottomZ }, project.origin, definition).z
           const zStr = formatGCodeNumber(machineBottomZ, definition, outputUnits)
           if (zStr !== lastZ) {
             segs.push(`Z${zStr}`)
@@ -387,7 +363,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
           }
 
           // R (retract plane)
-          const machineRetractZ = projectToMachinePoint({ x: cycle.x, y: cycle.y, z: cycle.retractZ }, project.origin, definition).z
           const rStr = formatGCodeNumber(machineRetractZ, definition, outputUnits)
           if (rStr !== lastR) {
             segs.push(`R${rStr}`)
@@ -429,8 +404,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
         state.motionCommand = null
 
         // Track position as last hole's XY at clearZ (machine coords)
-        const lastCycle = cycles[cycles.length - 1]
-        const lastMachinePos = projectToMachinePoint({ x: lastCycle.x, y: lastCycle.y, z: lastCycle.clearZ }, project.origin, definition)
+        const lastMachinePos = cycles[cycles.length - 1].clear
         state.currentPosition = { x: lastMachinePos.x, y: lastMachinePos.y, z: lastMachinePos.z }
       } else {
         // Command not available for this drill type — fall back to expanded moves
@@ -444,7 +418,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     if (!emittedCanned) {
       // ── Effective feed ──
       const feedForMove = (moveKind: FedMoveKind, feedScale?: number): number =>
-        effectiveFeed(moveKind, feedScale, operation.feed || tool.defaultFeed, operation.plungeFeed || tool.defaultPlungeFeed)
+        effectiveFeed(moveKind, feedScale, step.cutFeed, step.plungeFeed)
 
       // Emit a single rapid (G0) with per-axis splitting.
       const emitRapid = (pt: ToolpathPoint) => {
@@ -548,14 +522,10 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       }
     }
 
-    // Spindle off after last move of operation if tool change follows or it's the last op
-    const nextOp = operations[opIndex + 1]
-    const toolWillChange = nextOp && nextOp.tool.id !== tool.id
-    
-    // Only turn off if it's the absolute end OR we are about to do a tool change that we are actually emitting
-    if (!nextOp || (toolWillChange && options.emitToolChanges)) {
+    // Spindle off after the last move when the program ends here, or a tool
+    // change that is actually going to be written comes next.
+    if (step.stopSpindleAfter) {
        emitLine(definition.feedSpeed.spindleOff)
-       state.spindleOn = false
     }
   })
 

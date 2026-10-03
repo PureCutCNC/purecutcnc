@@ -29,6 +29,7 @@ import type { ToolpathGenerationTrace } from '../../engine/toolpaths/types'
 import type { MachineDefinition } from '../../engine/gcode'
 import type { Operation, Project } from '../../types/project'
 import { buildMotionLayerPathD } from './motionDebugSvg'
+import { exportDialectLabels } from './exportDialectLabels'
 
 interface ExportedMotionDebugDialogProps {
   operation: Operation
@@ -93,6 +94,10 @@ export function ExportedMotionDebugDialog({
   // preparation it belongs to has changed — is dropped rather than rendered.
   const [model, setModel] = useState<ReturnType<typeof buildExportedMotionDebugModel> | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // The exported layer is named after what the machine exports: G-code, or a
+  // ShopBot part file (issue #953).
+  const exportedLayerLabel = exportDialectLabels(definition).exportedLayer
 
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const [cssSize, setCssSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 })
@@ -330,7 +335,7 @@ export function ExportedMotionDebugDialog({
                       onChange={(e) => setVisibleLayers((s) => ({ ...s, [id]: e.target.checked }))}
                     />
                     <span className="motion-debug__swatch" style={{ background: LAYER_STYLE[id].color }} />
-                    {t(LAYER_STYLE[id].labelKey)}
+                    {t(id === 'exported' ? exportedLayerLabel : LAYER_STYLE[id].labelKey)}
                   </label>
                 ))}
                 <label className="motion-debug__layer-row">
@@ -351,7 +356,7 @@ export function ExportedMotionDebugDialog({
             </div>
 
             <div>
-              <div className="motion-debug__section-title">{t('dialogs.motionDebug.layerExported')}</div>
+              <div className="motion-debug__section-title">{t(exportedLayerLabel)}</div>
               <div className="motion-debug__metrics">
                 <div>{t('dialogs.motionDebug.linear')}: <strong>{model?.metrics.emitted.linear ?? '—'}</strong></div>
                 <div>{t('dialogs.motionDebug.rapid')}: <strong>{model?.metrics.emitted.rapid ?? '—'}</strong></div>

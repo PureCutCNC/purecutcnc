@@ -218,10 +218,11 @@ area `INDEX.md` files rather than being restated here.
    the definition's output dialect — G-code by default, ShopBot part files for
    `opensbp` — and hands over to that dialect's emitter. What the machine is
    asked to do is the same for every dialect and lives in
-   `motionPipeline.ts`: the machine-coordinate transform, arc fitting with its
-   emitted-arc fallback, their warnings, the safe-Z split of a rapid, and the
-   motion trace. An emitter owns line syntax only (for G-code: templates, modal
-   tracking, canned cycles). The result's `gcode` field is the program text in
+   `motionPipeline.ts`: the program's sequence (tool changes, spindle start,
+   restate and stop, coolant), the machine-coordinate transform, arc fitting
+   with its emitted-arc fallback, their warnings, the safe-Z split of a rapid,
+   and the motion trace. An emitter owns line syntax only (for G-code:
+   templates, modal tracking, canned cycles). The result's `gcode` field is the program text in
    whichever dialect was chosen.
 6. **Parallel consumers.** Simulation
    (`simulateOperationHeightfield`, `src/engine/simulation/replay.ts`), the
@@ -231,9 +232,8 @@ area `INDEX.md` files rather than being restated here.
 ### Three crossings worth knowing
 
 - **Y-down → Y-up happens exactly once**, at `projectToMachinePoint`
-  (`src/engine/gcode/utils.ts`), called only from the export step: the shared
-  `motionPipeline.ts` for every move of every dialect, and `postprocessor.ts`
-  for G-code canned drill cycles.
+  (`src/engine/gcode/utils.ts`), called during export only from the shared
+  `motionPipeline.ts`, for every move and drill cycle of every dialect.
   Everything upstream — resolver, region mask, generators, simulation — is
   internal Y-down (§8).
 - **Units are not converted per stage.** A project is stored in one system and

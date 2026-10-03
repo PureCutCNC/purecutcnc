@@ -192,6 +192,7 @@ export const dialogsEn = {
 
   // ── Export G-code dialog ──
   'dialogs.export.title': 'Export G-code',
+  'dialogs.export.titleOpensbp': 'Export ShopBot part file',
   'dialogs.export.machine': 'Machine',
   'dialogs.export.machineNone': 'None selected',
   'dialogs.export.change': 'Change',
@@ -203,6 +204,7 @@ export const dialogsEn = {
   'dialogs.export.noOperations': 'No operations to export. Add one in the operations panel.',
   'dialogs.export.options': 'Options',
   'dialogs.export.emitToolChanges': 'Emit tool changes (M6)',
+  'dialogs.export.emitToolChangesOpensbp': 'Emit tool changes (C9)',
   'dialogs.export.emitCoolant': 'Emit coolant commands',
   'dialogs.export.errors': 'Errors',
   'dialogs.export.warnings': 'Warnings',
@@ -228,6 +230,7 @@ export const dialogsEn = {
   'dialogs.motionDebug.layerGenerated': 'Generated (raw)',
   'dialogs.motionDebug.layerOptimized': 'Optimized',
   'dialogs.motionDebug.layerExported': 'Exported G-code',
+  'dialogs.motionDebug.layerExportedOpensbp': 'Exported part file',
   'dialogs.motionDebug.nonCuttingMoves': 'Non-cutting moves',
   'dialogs.motionDebug.cuttingLevel': 'Cutting level',
   'dialogs.motionDebug.allLevels': 'All cutting levels',
@@ -358,6 +361,7 @@ export const dialogsEn = {
   'dialogs.machineEditor.variablesReference': 'Variables reference',
   'dialogs.machineEditor.save': 'Save',
   'dialogs.machineEditor.invalidJson': 'Invalid JSON syntax',
+  'dialogs.machineEditor.opensbpNote': 'This machine exports ShopBot part files. PureCutCNC writes the whole program, so there are no G-code commands or templates to edit here. Axis mapping, number format and arc support are in the raw JSON section.',
 
   // ── Machine Manager dialog ──
   'dialogs.machineManager.title': 'Manage machines',

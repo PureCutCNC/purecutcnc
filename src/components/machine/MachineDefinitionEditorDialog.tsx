@@ -16,6 +16,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { resolveOutputDialect } from '../../engine/gcode/types'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import { DisclosureSection } from '../common/DisclosureSection'
 import {
@@ -148,6 +149,11 @@ function renderVar(name: string, desc: string, context?: string) {
 
   const canSave = mergedDef !== null && !jsonError
 
+  // A ShopBot machine's program is written by the emitter, not from this
+  // definition's command words and templates (issue #953). Showing those
+  // fields would offer edits that change nothing, so they are left out.
+  const usesGcodeFields = resolveOutputDialect(mergedDef ?? definition) === 'gcode'
+
   function renderTextAreaField(label: string, value: string, onChange: (v: string) => void) {
     return (
       <label className="machine-editor-field">
@@ -203,77 +209,88 @@ function renderVar(name: string, desc: string, context?: string) {
                   onChange={(e) => handleFormChange({ fileExtension: e.target.value })}
                 />
               </label>
-              <label className="machine-editor-field">
-                <span className="machine-editor-label">{td('dialogs.machineEditor.mmCommand')}</span>
-                <input
-                  className="machine-editor-input"
-                  type="text"
-                  value={form.mmCommand}
-                  placeholder="e.g. G21"
-                  onChange={(e) => handleFormChange({ mmCommand: e.target.value })}
-                />
-              </label>
-              <label className="machine-editor-field">
-                <span className="machine-editor-label">{td('dialogs.machineEditor.inchCommand')}</span>
-                <input
-                  className="machine-editor-input"
-                  type="text"
-                  value={form.inchCommand}
-                  placeholder="e.g. G20"
-                  onChange={(e) => handleFormChange({ inchCommand: e.target.value })}
-                />
-              </label>
-            </div>
-
-            <div className="dialog-section-group">
-              <span className="dialog-section-title">{td('dialogs.machineEditor.program')}</span>
-              {renderTextAreaField(td('dialogs.machineEditor.header'), form.header, (v) => handleFormChange({ header: v }))}
-              {renderTextAreaField(td('dialogs.machineEditor.operationHeader'), form.operationHeader, (v) =>
-                handleFormChange({ operationHeader: v }),
+              {usesGcodeFields ? null : (
+                <p className="machine-editor-note">{td('dialogs.machineEditor.opensbpNote')}</p>
               )}
-              {renderTextAreaField(td('dialogs.machineEditor.footer'), form.footer, (v) => handleFormChange({ footer: v }))}
+              {usesGcodeFields ? (
+                <>
+                  <label className="machine-editor-field">
+                    <span className="machine-editor-label">{td('dialogs.machineEditor.mmCommand')}</span>
+                    <input
+                      className="machine-editor-input"
+                      type="text"
+                      value={form.mmCommand}
+                      placeholder="e.g. G21"
+                      onChange={(e) => handleFormChange({ mmCommand: e.target.value })}
+                    />
+                  </label>
+                  <label className="machine-editor-field">
+                    <span className="machine-editor-label">{td('dialogs.machineEditor.inchCommand')}</span>
+                    <input
+                      className="machine-editor-input"
+                      type="text"
+                      value={form.inchCommand}
+                      placeholder="e.g. G20"
+                      onChange={(e) => handleFormChange({ inchCommand: e.target.value })}
+                    />
+                  </label>
+                </>
+              ) : null}
             </div>
 
-            <div className="dialog-section-group">
-              <span className="dialog-section-title">{td('dialogs.machineEditor.toolChange')}</span>
-              {renderTextAreaField(td('dialogs.machineEditor.toolChangeCommands'), form.toolChangeCommands, (v) =>
-                handleFormChange({ toolChangeCommands: v }),
-              )}
-            </div>
+            {usesGcodeFields ? (
+              <>
+                <div className="dialog-section-group">
+                  <span className="dialog-section-title">{td('dialogs.machineEditor.program')}</span>
+                  {renderTextAreaField(td('dialogs.machineEditor.header'), form.header, (v) => handleFormChange({ header: v }))}
+                  {renderTextAreaField(td('dialogs.machineEditor.operationHeader'), form.operationHeader, (v) =>
+                    handleFormChange({ operationHeader: v }),
+                  )}
+                  {renderTextAreaField(td('dialogs.machineEditor.footer'), form.footer, (v) => handleFormChange({ footer: v }))}
+                </div>
 
-            <div className="dialog-section-group">
-              <span className="dialog-section-title">{td('dialogs.machineEditor.coolant')}</span>
-              <label className="machine-editor-field">
-                <span className="machine-editor-label">{td('dialogs.machineEditor.floodOn')}</span>
-                <input
-                  className="machine-editor-input"
-                  type="text"
-                  value={form.floodOnCommand}
-                  placeholder="e.g. M8"
-                  onChange={(e) => handleFormChange({ floodOnCommand: e.target.value })}
-                />
-              </label>
-              <label className="machine-editor-field">
-                <span className="machine-editor-label">{td('dialogs.machineEditor.mistOn')}</span>
-                <input
-                  className="machine-editor-input"
-                  type="text"
-                  value={form.mistOnCommand}
-                  placeholder="e.g. M7"
-                  onChange={(e) => handleFormChange({ mistOnCommand: e.target.value })}
-                />
-              </label>
-              <label className="machine-editor-field">
-                <span className="machine-editor-label">{td('dialogs.machineEditor.coolantOff')}</span>
-                <input
-                  className="machine-editor-input"
-                  type="text"
-                  value={form.coolantOffCommand}
-                  placeholder="e.g. M9"
-                  onChange={(e) => handleFormChange({ coolantOffCommand: e.target.value })}
-                />
-              </label>
-            </div>
+                <div className="dialog-section-group">
+                  <span className="dialog-section-title">{td('dialogs.machineEditor.toolChange')}</span>
+                  {renderTextAreaField(td('dialogs.machineEditor.toolChangeCommands'), form.toolChangeCommands, (v) =>
+                    handleFormChange({ toolChangeCommands: v }),
+                  )}
+                </div>
+
+                <div className="dialog-section-group">
+                  <span className="dialog-section-title">{td('dialogs.machineEditor.coolant')}</span>
+                  <label className="machine-editor-field">
+                    <span className="machine-editor-label">{td('dialogs.machineEditor.floodOn')}</span>
+                    <input
+                      className="machine-editor-input"
+                      type="text"
+                      value={form.floodOnCommand}
+                      placeholder="e.g. M8"
+                      onChange={(e) => handleFormChange({ floodOnCommand: e.target.value })}
+                    />
+                  </label>
+                  <label className="machine-editor-field">
+                    <span className="machine-editor-label">{td('dialogs.machineEditor.mistOn')}</span>
+                    <input
+                      className="machine-editor-input"
+                      type="text"
+                      value={form.mistOnCommand}
+                      placeholder="e.g. M7"
+                      onChange={(e) => handleFormChange({ mistOnCommand: e.target.value })}
+                    />
+                  </label>
+                  <label className="machine-editor-field">
+                    <span className="machine-editor-label">{td('dialogs.machineEditor.coolantOff')}</span>
+                    <input
+                      className="machine-editor-input"
+                      type="text"
+                      value={form.coolantOffCommand}
+                      placeholder="e.g. M9"
+                      onChange={(e) => handleFormChange({ coolantOffCommand: e.target.value })}
+                    />
+                  </label>
+                </div>
+              </>
+            ) : null}
           </div>
 
           <div className="dialog-section">
@@ -302,29 +319,31 @@ function renderVar(name: string, desc: string, context?: string) {
               </div>
             ) : null}
 
-            <DisclosureSection
-              title={td('dialogs.machineEditor.variablesReference')}
-              storageKey="machine-editor-vars"
-            >
-              <div className="machine-editor-vars">
-                {renderVar('programName', 'Project name (comment-safe)', 'header, footer')}
-                {renderVar('date', 'Current date (YYYY-MM-DD)', 'header, footer')}
-                {renderVar('units', 'Project units: mm or inch', 'header, footer')}
-                {renderVar('unitsCommand', 'Units G-code command (e.g. G21)', 'header, footer')}
-                {renderVar('wcsCommand', 'Work coordinate select (e.g. G54)', 'header, footer')}
-                {renderVar('operationIndex', '1-based operation number', 'operation header')}
-                {renderVar('operationName', 'Operation name (comment-safe)', 'operation header')}
-                {renderVar('operationDescription', 'Operation description text', 'operation header')}
-                {renderVar('operationKind', 'Operation kind: contour, pocket, drill…', 'operation header')}
-                {renderVar('operationPass', 'rough or finish', 'operation header')}
-                {renderVar('operationTarget', 'Target shape summary', 'operation header')}
-                {renderVar('toolNumber', 'Tool index (1-based)', 'tool change, op header')}
-                {renderVar('toolName', 'Tool name (comment-safe)', 'tool change, op header')}
-                {renderVar('feed', 'Cutting feed rate (formatted)', 'operation header')}
-                {renderVar('plungeFeed', 'Plunge feed rate (formatted)', 'operation header')}
-                {renderVar('rpm', 'Spindle RPM (formatted)', 'tool change, op header')}
-              </div>
-            </DisclosureSection>
+            {usesGcodeFields ? (
+              <DisclosureSection
+                title={td('dialogs.machineEditor.variablesReference')}
+                storageKey="machine-editor-vars"
+              >
+                <div className="machine-editor-vars">
+                  {renderVar('programName', 'Project name (comment-safe)', 'header, footer')}
+                  {renderVar('date', 'Current date (YYYY-MM-DD)', 'header, footer')}
+                  {renderVar('units', 'Project units: mm or inch', 'header, footer')}
+                  {renderVar('unitsCommand', 'Units G-code command (e.g. G21)', 'header, footer')}
+                  {renderVar('wcsCommand', 'Work coordinate select (e.g. G54)', 'header, footer')}
+                  {renderVar('operationIndex', '1-based operation number', 'operation header')}
+                  {renderVar('operationName', 'Operation name (comment-safe)', 'operation header')}
+                  {renderVar('operationDescription', 'Operation description text', 'operation header')}
+                  {renderVar('operationKind', 'Operation kind: contour, pocket, drill…', 'operation header')}
+                  {renderVar('operationPass', 'rough or finish', 'operation header')}
+                  {renderVar('operationTarget', 'Target shape summary', 'operation header')}
+                  {renderVar('toolNumber', 'Tool index (1-based)', 'tool change, op header')}
+                  {renderVar('toolName', 'Tool name (comment-safe)', 'tool change, op header')}
+                  {renderVar('feed', 'Cutting feed rate (formatted)', 'operation header')}
+                  {renderVar('plungeFeed', 'Plunge feed rate (formatted)', 'operation header')}
+                  {renderVar('rpm', 'Spindle RPM (formatted)', 'tool change, op header')}
+                </div>
+              </DisclosureSection>
+            ) : null}
           </div>
         </div>
 

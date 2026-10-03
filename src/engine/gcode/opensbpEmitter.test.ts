@@ -646,6 +646,58 @@ function testArcFallbackWritesLines(): void {
   assert(linesStarting(fitted.lines, 'CG').length === 1 && fitted.warnings.length === 0, 'the span fits at 0.001 mm')
 }
 
+function testArcsCarryTheirOwnSpeed(): void {
+  console.log('Testing an arc sets the speed for its own feed...')
+  // A slowed arc (feedScale 0.5) between two full-feed straights. The arc is
+  // a fed move like any other: its speed is written before it and restored
+  // after it.
+  const arc = partialArcMoves(30, 40, 10, 0, Math.PI / 2, 18)
+  const arcCuts = arc.filter((move) => move.kind === 'cut').map((move) => ({ ...move, feedScale: 0.5 }))
+  const arcStart = arcCuts[0].from
+  const arcEnd = arcCuts[arcCuts.length - 1].to
+  const moves: ToolpathMove[] = [
+    ...chain(pt(0, 0, 5), [
+      ['rapid', pt(arcStart.x + 10, arcStart.y, 5)],
+      ['plunge', pt(arcStart.x + 10, arcStart.y, -1)],
+      ['cut', arcStart],
+    ]),
+    ...arcCuts,
+    ...chain(arcEnd, [['cut', pt(arcEnd.x - 10, arcEnd.y, -1)]]),
+  ]
+  const { lines } = run({ operations: [{ moves }] })
+  const fed = lines.filter((line) => /^(MS|M3|CG),/.test(line))
+  assertLines(fed, [
+    'MS,10.000,3.000',
+    'M3,50.000,-40.000,-1.000',
+    'M3,40.000,-40.000,-1.000',
+    'MS,5.000,3.000',
+    'CG,,30.000,-50.000,-10.000,0.000,T,1',
+    'MS,10.000,3.000',
+    'M3,20.000,-50.000,-1.000',
+  ], 'slowed arc')
+
+  // An arc as the first XY move of an operation whose plunge left the XY
+  // speed at the plunge feed (a ramp): the arc restores the cut feed itself.
+  const afterRamp = run({
+    operations: [{
+      moves: [
+        ...chain(pt(0, 0, 5), [
+          ['rapid', pt(arcStart.x + 10, arcStart.y, 5)],
+          ['plunge', pt(arcStart.x + 10, arcStart.y, 0)],
+          ['plunge', pt(arcStart.x, arcStart.y, -1)],
+        ]),
+        ...arcCuts.map((move) => ({ ...move, feedScale: undefined })),
+      ],
+    }],
+  }).lines
+  assertLines(afterRamp.filter((line) => /^(MS|CG),/.test(line)), [
+    'MS,10.000,3.000',
+    'MS,3.000,3.000',
+    'MS,10.000,3.000',
+    'CG,,30.000,-50.000,-10.000,0.000,T,1',
+  ], 'arc after a ramp')
+}
+
 function testArcsRespectOperationAndMachine(): void {
   console.log('Testing arcs are skipped when the operation or the machine rules them out...')
   const moves = circleMoves(30, 40, 10, 72)
@@ -703,6 +755,91 @@ function testToolChange(): void {
     if (line === 'C9') assert(!spindleOn, 'C9 must not be called with the spindle running')
   }
   assert(lines.indexOf('END') === lines.lastIndexOf('C7') + 1, 'the spindle stops right before the program ends')
+}
+
+function testSpindleSpeedChangeBetweenOperations(): void {
+  console.log('Testing a spindle-speed change between operations on one tool is written...')
+  // Review of PR #965: the second operation used to inherit the first one's
+  // speed, because TR was written only while the spindle was stopped.
+  const { lines, warnings } = run({
+    operations: [
+      { moves: simplePocketMoves(), overrides: { rpm: 12000 } },
+      { moves: simplePocketMoves(), overrides: { rpm: 18000 } },
+      { moves: simplePocketMoves(), overrides: { rpm: 18000 } },
+      // A speed with a fraction is written as a whole number of rpm.
+      { moves: simplePocketMoves(), overrides: { rpm: 9000.6 } },
+    ],
+  })
+  assertLines(lines.filter((line) => /^(&Tool=|C\d|TR,)/.test(line)), [
+    '&Tool=1',
+    'C9',
+    'TR,12000',
+    'C6',
+    // Same tool, so no stop and no tool change: the speed alone is restated,
+    // as the pair, before the second operation's first move.
+    'TR,18000',
+    'C6',
+    // The third operation runs at the speed already set.
+    'TR,9001',
+    'C6',
+    'C7',
+  ], 'speed changes')
+  assert(warnings.length === 0, `expected no warnings, got ${JSON.stringify(warnings)}`)
+
+  // The speed is in force before anything in that operation moves.
+  const secondOperation = lines.indexOf("' Operation 2: Op op2")
+  const restated = lines.indexOf('TR,18000')
+  const firstMotion = lines.findIndex((line, index) => index > secondOperation && /^(J|M\d|CG)/.test(line))
+  assert(secondOperation < restated && restated < firstMotion, 'the new speed is set before the operation moves')
+
+  // The dangerous direction with tool changes off: a second tool must not
+  // inherit the first tool's higher speed.
+  const disabled = run({
+    toolCount: 2,
+    options: { emitToolChanges: false },
+    operations: [
+      { toolRef: 't1', moves: simplePocketMoves(), overrides: { rpm: 18000 } },
+      { toolRef: 't2', moves: simplePocketMoves(), overrides: { rpm: 9000 } },
+    ],
+  })
+  assertLines(disabled.lines.filter((line) => /^(C\d|TR,)/.test(line)), ['TR,18000', 'C6', 'TR,9000', 'C6', 'C7'], 'tool changes off')
+}
+
+function testPositionIsUnknownAfterToolChange(): void {
+  console.log('Testing position is not assumed across a tool-change macro...')
+  // C9 moves the machine. The second operation starts at the height the
+  // first one ended at, but the tool is wherever the macro left it, so the
+  // jog must state Z before it travels and must not be skipped as "no move".
+  const { lines } = run({
+    toolCount: 2,
+    operations: [
+      { toolRef: 't1', moves: simplePocketMoves() },
+      { toolRef: 't2', moves: chain(pt(20, 15, 5), [['rapid', pt(20, 15, 5)], ['plunge', pt(20, 15, -1)], ['cut', pt(30, 15, -1)]]) },
+    ],
+  })
+  const change = lines.indexOf('&Tool=2')
+  assert(change > 0, 'fixture should change tool')
+  assertLines(lines.slice(change, change + 9), [
+    '&Tool=2',
+    'C9',
+    'TR,12000',
+    'C6',
+    'JZ,5.000',
+    'J2,20.000,-15.000',
+    'MS,10.000,3.000',
+    'M3,20.000,-15.000,-1.000',
+    'M3,30.000,-15.000,-1.000',
+  ], 'after the tool change')
+
+  // Without a tool change the same rapid is a no-op and writes nothing.
+  const sameTool = run({
+    operations: [
+      { moves: simplePocketMoves() },
+      { moves: chain(pt(20, 15, 5), [['rapid', pt(20, 15, 5)], ['plunge', pt(20, 15, -1)], ['cut', pt(30, 15, -1)]]) },
+    ],
+  }).lines
+  const second = sameTool.indexOf("' Operation 2: Op op2")
+  assert(sameTool[second + 2] === 'M3,20.000,-15.000,-1.000', `a known position is not restated, got "${sameTool[second + 2]}"`)
 }
 
 function testToolChangesDisabled(): void {
@@ -924,8 +1061,11 @@ testSpeedPerAxis()
 testArcDirectionAndCenter()
 testArcCenterUsesEmittedStart()
 testArcFallbackWritesLines()
+testArcsCarryTheirOwnSpeed()
 testArcsRespectOperationAndMachine()
 testToolChange()
+testSpindleSpeedChangeBetweenOperations()
+testPositionIsUnknownAfterToolChange()
 testToolChangesDisabled()
 testCoolantIsReported()
 testDrillingIsExpanded()

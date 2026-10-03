@@ -188,6 +188,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
 
   // ── Export G-code dialog ──
   'dialogs.export.title': 'G-Code exportieren',
+  'dialogs.export.titleOpensbp': 'ShopBot-Teiledatei exportieren',
   'dialogs.export.machine': 'Maschine',
   'dialogs.export.machineNone': 'Keine ausgewählt',
   'dialogs.export.change': 'Ändern',
@@ -199,6 +200,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.export.noOperations': 'Keine Operationen zum Exportieren. Fügen Sie eine im Operationsbereich hinzu.',
   'dialogs.export.options': 'Optionen',
   'dialogs.export.emitToolChanges': 'Werkzeugwechsel ausgeben (M6)',
+  'dialogs.export.emitToolChangesOpensbp': 'Werkzeugwechsel ausgeben (C9)',
   'dialogs.export.emitCoolant': 'Kühlmittelbefehle ausgeben',
   'dialogs.export.errors': 'Fehler',
   'dialogs.export.warnings': 'Warnungen',
@@ -224,6 +226,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.motionDebug.layerGenerated': 'Generiert (roh)',
   'dialogs.motionDebug.layerOptimized': 'Optimiert',
   'dialogs.motionDebug.layerExported': 'Exportierter G-Code',
+  'dialogs.motionDebug.layerExportedOpensbp': 'Exportierte Teiledatei',
   'dialogs.motionDebug.nonCuttingMoves': 'Nicht-schneidende Bewegungen',
   'dialogs.motionDebug.cuttingLevel': 'Schnittebene',
   'dialogs.motionDebug.allLevels': 'Alle Schnittebenen',
@@ -354,6 +357,7 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
   'dialogs.machineEditor.variablesReference': 'Variablen-Referenz',
   'dialogs.machineEditor.save': 'Speichern',
   'dialogs.machineEditor.invalidJson': 'Ungültige JSON-Syntax',
+  'dialogs.machineEditor.opensbpNote': 'Diese Maschine exportiert ShopBot-Teiledateien. PureCutCNC schreibt das gesamte Programm, daher gibt es hier keine G-Code-Befehle oder Vorlagen zu bearbeiten. Achszuordnung, Zahlenformat und Bogenunterstützung finden Sie unter „Erweitert“.',
 
   // ── Machine Manager dialog ──
   'dialogs.machineManager.title': 'Maschinen verwalten',

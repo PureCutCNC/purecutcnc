@@ -63,6 +63,8 @@ test.describe('Export G-code operation checklist smoke', () => {
     await ui.operations.headerExportButton(app.page).click()
 
     await expect(ui.exportDialog.root(app.page)).toBeVisible()
+    await expect(ui.exportDialog.title(app.page)).toHaveText('Export G-code')
+    await expect(ui.exportDialog.root(app.page)).toContainText('Emit tool changes (M6)')
     await expect(ui.exportDialog.operationCheckbox(app.page, 'Route A')).toBeChecked()
     await expect(ui.exportDialog.operationCheckbox(app.page, 'Route B')).toBeChecked()
     await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
@@ -136,6 +138,12 @@ test.describe('Export G-code operation checklist smoke', () => {
   test('the ShopBot machine exports a ShopBot part file, not G-code', async ({ app, ui }) => {
     await seedGcodeExportProject(app.page, { machineId: 'shopbot' })
     await ui.operations.headerExportButton(app.page).click()
+
+    // The dialog names what this machine exports, and the command its tool
+    // change writes, rather than G-code and M6.
+    await expect(ui.exportDialog.title(app.page)).toHaveText('Export ShopBot part file')
+    await expect(ui.exportDialog.root(app.page)).toContainText('Emit tool changes (C9)')
+    await expect(ui.exportDialog.root(app.page)).not.toContainText('(M6)')
 
     // The file the button saves is a .sbp.
     await expect(ui.exportDialog.exportButton(app.page)).toContainText('.sbp')

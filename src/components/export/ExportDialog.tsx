@@ -33,6 +33,7 @@ import {
   suggestGcodeFileName,
 } from './exportOperationSelection'
 import { ExportedMotionDebugDialog } from './ExportedMotionDebugDialog'
+import { exportDialectLabels } from './exportDialectLabels'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
@@ -71,6 +72,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
   })
 
   const activeDefinition = useMemo(() => getActiveMachineDefinition(project), [project])
+  const dialectLabels = exportDialectLabels(activeDefinition)
 
   const operationOptions = useMemo(() => listExportOperationOptions(project), [project])
 
@@ -227,7 +229,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog" onClick={(event) => event.stopPropagation()}>
         <div className="dialog-header">
-          <h2 className="dialog-title">{td('dialogs.export.title')}</h2>
+          <h2 className="dialog-title">{t(dialectLabels.title)}</h2>
           <button className="dialog-close" onClick={onClose} aria-label={td('dialogs.common.close')}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" />
@@ -313,7 +315,7 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
                     checked={emitToolChanges}
                     onChange={(event) => setEmitToolChanges(event.target.checked)}
                   />
-                  {td('dialogs.export.emitToolChanges')}
+                  {t(dialectLabels.emitToolChanges)}
                 </label>
                 <label className="export-option">
                   <input

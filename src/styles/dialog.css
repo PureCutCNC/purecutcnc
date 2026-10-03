@@ -2049,6 +2049,14 @@
   border-color: var(--accent);
 }
 
+/* Shown instead of the G-code fields for a machine that does not export G-code. */
+.machine-editor-note {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 4px 0 0;
+}
+
 .machine-editor-error {
   margin-top: 8px;
   padding: 8px 12px;
