@@ -27,6 +27,13 @@ import {
  *  is already tight (no sphere over-estimate). */
 const FIT_BOUNDS_MARGIN = 1.1
 
+/** Near plane as a fraction of the orbit radius. Depth precision is set by the
+ *  near plane, so it grows with the view instead of staying fixed while the
+ *  far plane moves out. */
+const NEAR_RADIUS_FRACTION = 0.01
+/** Slack on the far plane beyond the furthest point of the scene bounds. */
+const FAR_REACH_MARGIN = 1.1
+
 /**
  * Shared orbit-camera controls for the 3D preview and simulation viewports.
  *
@@ -61,6 +68,8 @@ export interface OrbitControls {
   setPreset: (preset: ViewPreset) => void
   /** Move the orbit target and render. */
   setTarget: (x: number, y: number, z: number) => void
+  /** Tell the controls how far the scene extends, so the far plane reaches it. */
+  setSceneBounds: (bounds: THREE.Box3) => void
   /** Frame the given world-space bounds, optionally reorienting to iso first. */
   fitToBounds: (bounds: THREE.Box3, alignToDefault?: boolean) => void
   /** Zoom to a screen-space rect (window-zoom tool). */
@@ -91,6 +100,11 @@ export function createOrbitControls(
   const cameraDirection = new THREE.Vector3()
   const touchPointers = new Map<number, { x: number; y: number }>()
   let gestureState: { centerX: number; centerY: number; distance: number } | null = null
+  // The far plane the camera was built with is the floor: a view never gets a
+  // shorter range than it had before clip planes followed the camera (#967).
+  const minFar = camera.far
+  const sceneSphere = new THREE.Sphere()
+  let hasSceneBounds = false
 
   function applyPreset(preset: ViewPreset, preserveRadius = true, render = true) {
     const presetState = VIEW_PRESETS[preset]
@@ -115,7 +129,19 @@ export function createOrbitControls(
     )
     camera.lookAt(target)
     camera.updateMatrixWorld()
+    updateClipPlanes()
     onChange()
+  }
+
+  // Fixed clip planes cut a sheet-sized project off at the far plane: framing a
+  // 1220 x 2400 mm stock needs the camera ~2900 mm out, beyond a far of 2000.
+  function updateClipPlanes() {
+    const reach = hasSceneBounds
+      ? (camera.position.distanceTo(sceneSphere.center) + sceneSphere.radius) * FAR_REACH_MARGIN
+      : 0
+    camera.near = spherical.radius * NEAR_RADIUS_FRACTION
+    camera.far = Math.max(minFar, spherical.radius * 2, reach)
+    camera.updateProjectionMatrix()
   }
 
   function getPointerDesignPlanePoint(clientX: number, clientY: number, out: THREE.Vector3) {
@@ -311,8 +337,24 @@ export function createOrbitControls(
       target.set(x, y, z)
       updateCamera()
     },
+    setSceneBounds: (bounds: THREE.Box3) => {
+      hasSceneBounds = !bounds.isEmpty()
+      if (hasSceneBounds) {
+        bounds.getBoundingSphere(sceneSphere)
+      }
+      updateCamera()
+    },
     fitToBounds: (bounds: THREE.Box3, alignToDefault = false) => {
       const center = bounds.getCenter(new THREE.Vector3())
+      // Whatever is framed must also be drawable, even when the caller never
+      // reported scene bounds (the simulation viewport does not).
+      const framed = bounds.getBoundingSphere(new THREE.Sphere())
+      if (hasSceneBounds) {
+        sceneSphere.union(framed)
+      } else {
+        sceneSphere.copy(framed)
+        hasSceneBounds = true
+      }
 
       if (alignToDefault) {
         applyPreset('iso', true, false)

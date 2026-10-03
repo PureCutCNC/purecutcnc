@@ -621,3 +621,99 @@ test('the horizon stays level while orbiting out of the top preset', () => {
     )
   }
 })
+
+// ---- clip planes follow the camera (issue #967) ----
+
+/** View-space depth of every corner of `box`, nearest first. */
+function cornerDepths(box: THREE.Box3, camera: THREE.PerspectiveCamera): number[] {
+  const depths: number[] = []
+  for (const x of [box.min.x, box.max.x]) {
+    for (const y of [box.min.y, box.max.y]) {
+      for (const z of [box.min.z, box.max.z]) {
+        depths.push(-new THREE.Vector3(x, y, z).applyMatrix4(camera.matrixWorldInverse).z)
+      }
+    }
+  }
+  return depths.sort((a, b) => a - b)
+}
+
+/** A full plywood sheet in millimetres: X by thickness by Y, as the 3D view lays it out. */
+const SHEET = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(1220, 20, 2400))
+
+test('fitToBounds on a sheet-sized stock keeps every corner between the clip planes', () => {
+  for (const preset of ['iso', 'top', 'front', 'right'] as const) {
+    const cam = new THREE.PerspectiveCamera(45, 1000 / 700, 0.1, 2000)
+    const controls = makeControls(cam)
+    controls.setPreset(preset)
+    controls.fitToBounds(SHEET)
+
+    const depths = cornerDepths(SHEET, cam)
+    assert.ok(
+      depths[0] > cam.near,
+      `${preset}: nearest corner at ${depths[0].toFixed(0)} is in front of the near plane ${cam.near.toFixed(1)}`,
+    )
+    assert.ok(
+      depths[depths.length - 1] < cam.far,
+      `${preset}: furthest corner at ${depths[depths.length - 1].toFixed(0)} is behind the far plane ${cam.far.toFixed(0)}`,
+    )
+  }
+})
+
+// Both ways the controls learn the scene's extent: told outright (the 3D view),
+// or from the last thing they were asked to frame (the simulation view).
+for (const [source, announce] of [
+  ['setSceneBounds', (controls: ReturnType<typeof makeControls>) => controls.setSceneBounds(SHEET)],
+  ['fitToBounds', (controls: ReturnType<typeof makeControls>) => controls.fitToBounds(SHEET)],
+] as const) {
+  test(`zooming in on a detail keeps the rest of the scene in range (bounds from ${source})`, () => {
+    const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+    const { listeners, controls } = makeListeningControls(cam)
+    announce(controls)
+    // Park the target on the sheet corner nearest the iso camera and zoom right
+    // in on it, so the whole sheet stretches away behind the target.
+    const corner = new THREE.Vector3(1220, 20, 2400)
+    controls.setTarget(corner.x, corner.y, corner.z)
+    for (let i = 0; i < 40; i++) {
+      dispatchWheel(listeners, 400, 300, -200)
+    }
+
+    const depths = cornerDepths(SHEET, cam)
+    const furthest = depths[depths.length - 1]
+    assert.ok(cam.position.distanceTo(corner) < 50, 'the camera must have zoomed in close')
+    assert.ok(furthest > 2000, `the scenario must reach past the built-in far plane (furthest corner ${furthest.toFixed(0)})`)
+    assert.ok(furthest < cam.far, `furthest corner at ${furthest.toFixed(0)} is behind the far plane ${cam.far.toFixed(0)}`)
+  })
+}
+
+test('the projection matrix is rebuilt whenever the clip planes move', () => {
+  const cam = new THREE.PerspectiveCamera(45, 1000 / 700, 0.1, 2000)
+  const controls = makeControls(cam)
+  controls.fitToBounds(SHEET)
+
+  // A corner beyond the old far plane only draws if the new one reached the
+  // matrix the renderer uses: NDC z stays inside [-1, 1].
+  const ndc = new THREE.Vector3(0, 0, 0).project(cam)
+  assert.ok(Math.abs(ndc.z) <= 1, `far corner projects outside the depth range (ndc z ${ndc.z})`)
+})
+
+test('the near plane stays in front of the orbit target at both radius limits', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const { listeners, controls } = makeListeningControls(cam)
+  controls.setSceneBounds(SHEET)
+
+  // The pointer is on the view centre, so the wheel leaves the target at the origin.
+  for (const deltaY of [-50000, 50000]) {
+    dispatchWheel(listeners, 400, 300, deltaY)
+    const radius = cam.position.length()
+    assert.ok(cam.near > 0, `near plane must stay positive (${cam.near})`)
+    assert.ok(cam.near < radius, `near plane ${cam.near} must be in front of the target at radius ${radius}`)
+    assert.ok(cam.far > radius, `far plane ${cam.far} must be behind the target at radius ${radius}`)
+  }
+})
+
+test('a small project keeps at least the far plane the camera was built with', () => {
+  const cam = new THREE.PerspectiveCamera(45, 800 / 600, 0.1, 2000)
+  const controls = makeControls(cam)
+  controls.fitToBounds(new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(100, 10, 80)))
+  assert.ok(cam.far >= 2000, `far plane shrank to ${cam.far}`)
+})
