@@ -42,8 +42,27 @@ export type TraceEvent = [
   feed: number, materialFeed: number,
 ]
 
+/** What QtPlasmaC's own sequence was doing when a run ran out of time. */
+export interface SimStall {
+  /** Name of plasmac's state, from the enum in LinuxCNC's plasmac.comp. */
+  plasmacState: string
+  /** The Z offset plasmac is commanding, in counts, and what motion has applied. */
+  zCounts: number
+  zOffset: number
+  offsetScale: number
+  feedHold: boolean
+  torchOn: boolean
+  arcOk: boolean
+}
+
 export interface SimRun {
   timedOut: boolean
+  /** Set when the run timed out. */
+  stall: SimStall | null
+  /** The Z count QtPlasmaC held at each torch-on: the same for every pierce when the probe is deterministic. */
+  pierceZCounts: number[]
+  /** Spacing, in Z counts, of the heights plasmac truncates to (0.01 mm or 0.001 in). */
+  zBoundaryCounts: number
   /** Messages LinuxCNC put on its error channel during the run. */
   errors: string[]
   seconds: number
@@ -284,7 +303,8 @@ function judgeFeed(report: SimProgramReport, run: SimRun): Finding[] {
 function judgeCompletion(report: SimProgramReport, run: SimRun): Finding[] {
   const findings: Finding[] = []
   if (run.timedOut) {
-    findings.push({ rule: 'completion', message: `the run did not finish within ${run.seconds} s` })
+    const where = run.stall ? ` (plasmac in ${run.stall.plasmacState})` : ''
+    findings.push({ rule: 'completion', message: `the run did not finish within ${run.seconds} s${where}` })
   }
   if (!run.atEnd.machineOn) {
     findings.push({ rule: 'completion', message: 'the machine was no longer on when the run ended' })
@@ -305,6 +325,65 @@ function judgeCompletion(report: SimProgramReport, run: SimRun): Finding[] {
     })
   }
   return findings
+}
+
+/**
+ * States in which plasmac waits, with no timeout, for the applied Z offset to
+ * equal a target it compares after truncation.
+ */
+const Z_TARGET_WAITS = new Set(['PROBE_HEIGHT', 'PIERCE_HEIGHT', 'PUDDLE_JUMP', 'CUT_HEIGHT', 'SAFE_HEIGHT', 'MAX_HEIGHT'])
+
+/**
+ * A run that timed out because the *simulator* stalled, not the program.
+ *
+ * LinuxCNC 2.9.10's plasmac can wait for ever at a Z target that is an exact
+ * multiple of 0.01 mm (see `attach_float_switch` in `sim/driver.py`). The
+ * driver's realtime float switch keeps the targets off those heights, so this
+ * should never fire; if a change to the rig brings it back, it must read as
+ * "the simulator stalled" and not as a verdict about whichever program was
+ * running.
+ */
+function simulatorStall(run: SimRun): Finding | null {
+  const stall = run.stall
+  if (!run.timedOut || !stall || !Z_TARGET_WAITS.has(stall.plasmacState)) return null
+  return {
+    rule: 'trace',
+    message: `the simulator stalled, not the program: plasmac sat in ${stall.plasmacState} at Z count `
+      + `${stall.zCounts} (applied offset ${stall.zOffset}) waiting for its Z target. `
+      + 'See "Why the float switch is realtime" in the README',
+  }
+}
+
+/**
+ * How close, in Z counts, a pierce may come to a height plasmac truncates to.
+ * The other Z targets of a pierce sit a whole number of steps away from it,
+ * give or take a count of rounding, so this margin covers them too.
+ */
+const Z_BOUNDARY_MARGIN_COUNTS = 50
+
+/** Distance in counts from `counts` to the nearest multiple of `boundary`. */
+export function boundaryDistance(counts: number, boundary: number): number {
+  const offset = ((counts % boundary) + boundary) % boundary
+  return Math.min(offset, boundary - offset)
+}
+
+/**
+ * The simulated sheet must keep QtPlasmaC's Z targets clear of the heights
+ * plasmac can stall on. The probe is deterministic, so a pierce that lands too
+ * close does so on every run: this turns that into a message naming the
+ * constant to move, before it can become a stall.
+ */
+function judgeSheetHeight(run: SimRun): Finding[] {
+  const close = run.pierceZCounts.filter(
+    (counts) => boundaryDistance(counts, run.zBoundaryCounts) < Z_BOUNDARY_MARGIN_COUNTS,
+  )
+  if (close.length === 0) return []
+  return [{
+    rule: 'trace',
+    message: `the simulated sheet puts a pierce at Z count ${close[0]}, `
+      + `${boundaryDistance(close[0], run.zBoundaryCounts)} count(s) from a height plasmac can stall on `
+      + `(every ${run.zBoundaryCounts} counts); move SHEET_TOP in sim/driver.py`,
+  }]
 }
 
 /** Every reason this program is not acceptable to QtPlasmaC. Empty means it passed. */
@@ -333,10 +412,16 @@ export function judge(report: SimProgramReport): Finding[] {
     findings.push({ rule: 'trace', message: 'the run trace has gaps; the torch rules cannot be judged' })
     return findings
   }
+  const stalled = simulatorStall(run)
+  if (stalled) {
+    findings.push(stalled)
+    return findings
+  }
   for (const error of run.errors) {
     findings.push({ rule: 'interpreter', message: `LinuxCNC error during the run: ${flatten(error)}` })
   }
   findings.push(
+    ...judgeSheetHeight(run),
     ...judgeCompletion(report, run),
     ...judgeTorch(report, run),
     ...judgeMaterial(run),

@@ -40,6 +40,8 @@ and presses Cycle Start:
    QtPlasmaC's own `M190` script, and `M3 $0 S1` really probes, pierces and
    waits for arc-OK. A realtime sampler records the torch, motion and feed
    signals on every servo period (1 kHz), so no move is too short to be seen.
+   The one part of the sim config that is replaced is its float switch; see
+   "Why the float switch is realtime".
 
 `verdict.ts` then applies the rules:
 
@@ -52,7 +54,7 @@ and presses Cycle Start:
 | `material` | the torch fires while QtPlasmaC still has its default material loaded |
 | `material-wait` | a material select is not followed by `M66 P3 L3 Qn` and then the feed word, before the next torch-on |
 | `feed` | a cut runs at an F word other than the loaded material's cut feed |
-| `trace` | the sampler dropped samples; nothing is proven and the check fails |
+| `trace` | the simulator, not the program: the sampler dropped samples, or `plasmac` stalled at a Z target, or the simulated sheet sits too close to a height where it can. Nothing is proven and the check fails |
 
 The `material` rule works by resetting QtPlasmaC to material 0 before every run
 (after the filter, which pre-selects the program's first material on load).
@@ -76,6 +78,69 @@ The feed is sampled from `motion.feed-mm-per-minute` (or `-inches-`), so a G20
 program on a metric machine compares in machine units, with
 `plasmac.adaptive-feed` divided out so QtPlasmaC's own velocity reduction
 (`M67 E3 Qn`, used for small holes) does not read as a wrong feed.
+
+## Why the float switch is realtime
+
+QtPlasmaC finds the sheet by lowering the torch until its float switch trips.
+In the sim config that switch is the sim panel, a GUI that polls the Z position
+and presses the switch when the torch is below the sheet. How far the torch has
+travelled by then depends on when the GUI polled, so every probe found a
+different height. The driver replaces it with a HAL `comp` in the servo thread
+(`attach_float_switch` in `sim/driver.py`), which trips at the same Z every
+time. Every pierce of every run now holds the same Z count, and `run.ts` prints
+it.
+
+This is not tidiness. It is the fix for a stall that failed one of the check's
+first five CI runs (#954), and its cause is in LinuxCNC 2.9.10 itself:
+
+- `plasmac` waits at each Z target, with no timeout, until the applied Z offset
+  equals the target, comparing the two after truncating them to 0.01 mm
+  (`(int)(z_offset_current * offset_res) == (int)(cut_target * offset_scale * offset_res)`
+  in `plasmac.comp`).
+- Motion applies the offset through a planner that stops once it is within a
+  small dead band of the command, not on it (`simple_tp.c`: "within 'tiny_dp'
+  of desired pos, no need to move"). Measured here, it stopped 0.00000007 mm
+  short.
+- So when a target is *exactly* a multiple of 0.01 mm and the planner stops
+  short of it, the applied offset truncates to one step less than the target,
+  and `plasmac` sits in `CUT_HEIGHT` for ever with the torch on and motion
+  held. A Z count is 0.00001 mm, so one height in a thousand is such a
+  multiple, and with a random probe every pierce was a draw.
+
+Reproduced on demand by shifting the probe result a few counts. With the
+cut-height target at count -6,998,000 or -6,997,000 the run stalled in all five
+attempts; at -6,998,001, one count away, and at -6,997,500 it ran normally.
+The stall is the same picture as the CI failure: torch fired, the cut move
+never started, timeout.
+
+`SHEET_TOP` in the driver is chosen so the targets sit well clear of those
+heights. Two guards keep that true, both reported as `trace` (the simulator,
+not the program):
+
+- a pierce within 50 counts of such a height fails the run and names
+  `SHEET_TOP` as the constant to move;
+- a run that times out with `plasmac` waiting at a Z target is reported as
+  "the simulator stalled", with the state and the count, rather than as the
+  program not completing.
+
+The same code runs on a real table, so the stall may be possible there too.
+That was not tested, and it has not been reported upstream.
+
+## A second operator: the GUI
+
+The QtPlasmaC GUI commands LinuxCNC too. On the first homing it runs `T0 M6`
+through MDI, and whenever the interpreter goes idle it switches LinuxCNC back to
+manual mode — each a little after the event, when it next polls. A Cycle Start
+that lands just after such a switch is refused, and the refusal is silent here,
+because LinuxCNC hands each error message to one reader and the GUI reads the
+same channel. The program then simply never ran, which showed up as "stopped
+before its last move" on a correct program.
+
+The driver therefore waits for LinuxCNC to be idle and out of MDI after homing
+(`let_gui_finish`), and confirms every Cycle Start: if the program has not
+started within two seconds it lets the GUI finish and presses again
+(`cycle_start`), logging that it did. Five refusals in a row are a simulator
+failure and fail the check.
 
 ## Why the full simulator, not `rs274`
 
@@ -198,11 +263,12 @@ whole job: 81 s to build the image, uncached, and 135 s to run the programs.
 ## Measured run time
 
 On the maintainer's laptop (MacBookPro15,1, Podman machine with 6 CPUs and
-2 GiB), with the image already built: **168 s** for the current twelve programs
-(142 s for the eleven on the metric machine, 24 s for the one on the imperial
-machine, 2026-10-04). The ten programs of the first version took 149 s, 152 s,
-165 s and 177 s over four runs. A program runs 9-25 s; the rest is two LinuxCNC
-start-ups and the per-program reset, filter and trace hand-over.
+2 GiB), with the image already built, five consecutive full runs of the twelve
+programs took **163 s to 167 s** (2026-10-04): 138 s for the eleven on the
+metric machine and 25 s for the one on the imperial machine. A program runs
+8-23 s; the rest is two LinuxCNC start-ups and the per-program reset, filter
+and trace hand-over. With the probe deterministic the run times repeat to
+within a few seconds, and all five runs held the same pierce Z counts.
 
 The first image build took **7 min 29 s** on the same machine, nearly all of it
 downloading packages. Later builds reuse that layer and take seconds.

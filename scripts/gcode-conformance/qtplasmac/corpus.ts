@@ -71,7 +71,7 @@ export const REFERENCE_CASES: PlasmaCase[] = [
   },
   {
     name: 'nested-sheet',
-    covers: 'several parts on one sheet: five pierces under one material select',
+    covers: 'several parts on one sheet: four pierces under one material select',
     machine: 'metric',
     program: fixture('nested-sheet.ngc'),
     expect: 'pass',

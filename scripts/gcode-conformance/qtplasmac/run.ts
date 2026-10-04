@@ -37,7 +37,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join, resolve } from 'node:path'
 import { PLASMA_CORPUS } from './corpus'
 import type { PlasmaCase, SimMachine } from './corpus'
-import { judge, mismatch } from './verdict'
+import { boundaryDistance, judge, mismatch } from './verdict'
 import type { SimProgramReport } from './verdict'
 
 const HERE = import.meta.dirname
@@ -229,6 +229,17 @@ function main(): void {
         for (const finding of findings) console.log(`       [${finding.rule}] ${finding.message}`)
       }
     }
+    // With the realtime float switch every probe finds the same height, so a
+    // program's pierces all hold the same Z count, run after run. Printed so a
+    // rig that has lost that — which is how this check came to be flaky
+    // (#954) — shows up in the log before it shows up as a stall.
+    const runs = result.programs.flatMap((report) => (report.run ? [report.run] : []))
+    const pierceCounts = runs.flatMap((run) => run.pierceZCounts)
+    const distinct = [...new Set(pierceCounts)].sort((a, b) => a - b)
+    const boundary = runs[0]?.zBoundaryCounts
+    const clearance = boundary ? Math.min(...distinct.map((counts) => boundaryDistance(counts, boundary))) : null
+    console.log(`  pierce Z count over ${pierceCounts.length} pierce(s): ${distinct.join(', ') || 'none'}`
+      + (clearance === null || distinct.length === 0 ? '' : `; nearest stall height ${clearance} counts away`))
     console.log(`  (${machine} machine: ${seconds(Date.now() - groupStarted)})`)
   }
 
