@@ -25,6 +25,8 @@ concurrency:
 jobs:
   conformance:
     name: gcode-conformance
+    env:
+      FABMO_OPEN_SBP_REQUIRED: '1'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -102,7 +104,7 @@ jobs:
       - name: Install LinuxCNC interpreter
         run: apt-get install -y --no-install-recommends linuxcnc-uspace
 
-      - name: Build GRBL interpreter
+      - name: Build controller interpreters
         run: ./scripts/gcode-conformance/setup-validators.sh
 
       - name: Validate exported G-code
