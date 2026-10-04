@@ -21,6 +21,7 @@ import {
   defaultMaxTravelZ,
   defaultOperationClearanceZ,
   defaultOrigin,
+  defaultTopSetup,
   getStockBounds,
   IDENTITY_MATRIX,
   LATEST_PROJECT_VERSION, cloneTextLayout,
@@ -28,6 +29,7 @@ import {
 import type {
   FeatureDefinition,
   FeatureInstance,
+  MachiningSetup,
   Matrix2D,
   NestMargins,
   NestRecord,
@@ -56,6 +58,7 @@ import { createFeatureInstance } from './featureDefinitions'
 import { invertMatrix, multiplyMatrix } from './instanceTransforms'
 import { resolveFeatureRow } from './resolveFeatures'
 import { transformProfileAffine, transformStlFeatureData } from './transform'
+import { assertOperationSetupsExist, decodeSetups, isSetupFace, syncProjectSetups } from './setups'
 import { normalizeBackdrop } from '../slices/backdropSlice'
 
 export type LegacyFeatureRow = SketchFeature & {
@@ -63,8 +66,15 @@ export type LegacyFeatureRow = SketchFeature & {
   transform?: Matrix2D
 }
 
-export type ProjectFormatInput = Omit<Project, 'features'> & {
+/**
+ * A project as a file or snapshot carries it. `setups` and `activeSetupId`
+ * are optional here because every file saved before setups existed lacks
+ * them (issue #944); {@link normalizeProject} supplies them.
+ */
+export type ProjectFormatInput = Omit<Project, 'features' | 'setups' | 'activeSetupId'> & {
   features: Array<FeatureInstance | LegacyFeatureRow>
+  setups?: MachiningSetup[]
+  activeSetupId?: string
 }
 
 /** What the machine-library compaction rescued or dropped while decoding. */
@@ -303,6 +313,12 @@ function normalizeInstance(feature: FeatureInstance, definitions: Record<string,
     || typeof feature.locked !== 'boolean') {
     throw new Error(`Project feature ${feature.id || '(unnamed)'} has invalid instance metadata.`)
   }
+  // Absent on every file saved before setups existed (issue #944): those
+  // features were all drawn on the top face.
+  const authoringFace: unknown = feature.authoringFace ?? 'top'
+  if (!isSetupFace(authoringFace)) {
+    throw new Error(`Project feature ${feature.id || '(unnamed)'} has an invalid authoring face.`)
+  }
   const normalized: FeatureInstance = {
     id: feature.id,
     name: feature.name,
@@ -314,6 +330,7 @@ function normalizeInstance(feature: FeatureInstance, definitions: Record<string,
     constraints: feature.constraints.map((constraint) => ({ ...constraint })),
     z_top: feature.z_top,
     z_bottom: feature.z_bottom,
+    authoringFace,
     folderId: feature.folderId,
     visible: feature.visible,
     locked: feature.locked,
@@ -634,9 +651,19 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
     }
   }
 
+  // Machining setups (issue #944). 0.6.0 stays on one format number, so this
+  // migration keys on the fields being absent, not on the version: a 3.2 file
+  // and a 3.3 file saved before setups existed both lack `setups`, and both
+  // become one Top setup holding every operation in order. A file that has
+  // setups is validated strictly and then only reconciled.
+  const rawSetups: { setups?: unknown; activeSetupId?: unknown } = input
+  const setups = decodeSetups(rawSetups.setups) ?? [defaultTopSetup()]
+
   const authoritativeProject: Project = {
     ...input,
     version: LATEST_PROJECT_VERSION,
+    setups,
+    activeSetupId: typeof rawSetups.activeSetupId === 'string' ? rawSetups.activeSetupId : setups[0].id,
     modelAssets,
     featureDefinitions,
     features,
@@ -691,11 +718,14 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
       : defaultOrigin(authoritativeProject.stock),
   })
   const normalizedBase = syncFeatureTreeProject(deduped)
-  const prunedProject = pruneUnusedModelAssets({
+  const operations = authoritativeProject.operations.map((operation, index) => normalizeOperation(operation, normalizedBase, index))
+  assertOperationSetupsExist(operations, setups)
+  // Stamps every operation with its setup and rebuilds each setup's list.
+  const prunedProject = syncProjectSetups(pruneUnusedModelAssets({
     ...normalizedBase,
     backdrop: normalizeBackdrop(authoritativeProject.backdrop, normalizedBase),
-    operations: authoritativeProject.operations.map((operation, index) => normalizeOperation(operation, normalizedBase, index)),
-  })
+    operations,
+  }))
   const resolvedStockSource = prunedProject.stock.sourceFeature
     ? resolveFeatureRow(prunedProject, prunedProject.stock.sourceFeature)
     : null

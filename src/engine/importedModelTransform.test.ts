@@ -85,6 +85,7 @@ function makeProject(transform: Matrix2D): Project {
     constraints: [],
     z_top: 4,
     z_bottom: 1,
+    authoringFace: 'top',
     folderId: null,
     visible: true,
     locked: false,

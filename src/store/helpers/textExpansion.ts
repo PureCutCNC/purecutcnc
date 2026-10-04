@@ -128,6 +128,7 @@ export function expandTextFeature(
         operation: shape.operation,
         z_top: textFeature.z_top,
         z_bottom: textFeature.z_bottom,
+        authoringFace: textFeature.authoringFace,
         visible: textFeature.visible,
         locked: textFeature.locked,
       }

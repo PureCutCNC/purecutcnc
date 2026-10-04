@@ -105,6 +105,9 @@ export function featureInstanceComputationEquals(a: FeatureInstance, b: FeatureI
   return (
     a.definitionId === b.definitionId
     && a.name === b.name
+    // Which face a feature is authored on decides which setups may target it
+    // (issue #944), so it invalidates like any other targeting input.
+    && a.authoringFace === b.authoringFace
     && transformEqual
     && (a.constraints === b.constraints || projectsEqual(a.constraints, b.constraints))
     // The baseline bends the run's geometry, so a changed layout has to

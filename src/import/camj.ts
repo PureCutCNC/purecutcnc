@@ -16,12 +16,14 @@
 
 import {
   defaultOrigin,
+  defaultTopSetup,
   type FeatureDefinition,
   type FeatureFolder,
   type FeatureInstance,
   type FeatureTreeEntry,
   type LocalConstraint,
   type MachineOrigin,
+  type MachiningSetup,
   type NamedDimension,
   type Operation,
   type PersistedImportedMesh,
@@ -35,6 +37,7 @@ import type { Units } from '../utils/units'
 import { convertProjectUnits, convertToolUnits } from '../utils/units'
 import { uniqueName } from './normalize'
 import { decodeProjectFormat } from '../store/helpers/projectFormat'
+import { findSetupWithTurn, syncProjectSetups } from '../store/helpers/setups'
 
 export interface CamjInspection {
   /** Parsed source project. Always uses source units (not yet converted). */
@@ -159,6 +162,7 @@ function collectExistingIds(project: Project): Set<string> {
     ...project.operations.map((o) => o.id),
     ...project.tabs.map((t) => t.id),
     ...project.clamps.map((c) => c.id),
+    ...(project.setups ?? []).map((s) => s.id),
     ...Object.keys(project.dimensions ?? {}),
     ...Object.keys(project.modelAssets ?? {}),
   ])
@@ -389,12 +393,19 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
   // 7. Decide which operations to import. Only operations whose target is
   //    'features' AND all target featureIds are inside the imported set.
   const importedFeatureSourceIds = new Set(importedFeatures.map((f) => f.id))
+  const sourceSetupById = new Map((sourceProject.setups ?? []).map((setup) => [setup.id, setup]))
   const operationsToImport: Operation[] = []
   for (const operation of sourceProject.operations) {
     if (operation.target.source !== 'features') continue
     const targetIds = operation.target.featureIds
     if (targetIds.length === 0) continue
     if (!targetIds.every((id) => importedFeatureSourceIds.has(id))) continue
+    // An operation naming a setup its own project does not define has no
+    // known orientation, so there is no face to import it onto.
+    if (operation.setupId !== undefined && !sourceSetupById.has(operation.setupId)) {
+      warnings.push(`Operation "${operation.name}" was not imported: its setup is missing from the source project.`)
+      continue
+    }
     operationsToImport.push(operation)
   }
 
@@ -419,6 +430,33 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
   }
 
   // 9. Build new operations with remapped refs.
+  //
+  // An imported operation keeps the turn it was made for (issue #944). Setup
+  // ids are per project, so each source setup maps onto the setup here that
+  // is turned the same way; when there is none, a setup with that turn is
+  // added. The operation never lands on another face or another flip axis:
+  // that would be a move, and a move is an explicit, validated action. An
+  // operation from a project saved before setups existed was made for Top,
+  // whichever setup this project happens to be on.
+  let nextSetups: MachiningSetup[] = currentProject.setups
+  const setupIdFor = (operation: Operation): string => {
+    const sourceSetup = operation.setupId === undefined ? undefined : sourceSetupById.get(operation.setupId)
+    const template = sourceSetup ?? defaultTopSetup()
+    const existing = findSetupWithTurn(nextSetups, template.orientation)
+    if (existing) return existing.id
+    const created: MachiningSetup = {
+      id: nextId('su'),
+      name: uniqueName(template.name, nextSetups.map((setup) => setup.name)),
+      orientation: { ...template.orientation },
+      indexing: 'manual',
+      registration: [],
+      notes: '',
+      operationIds: [],
+    }
+    nextSetups = [...nextSetups, created]
+    warnings.push(`Added setup "${created.name}" for the imported operations.`)
+    return created.id
+  }
   const existingOperationNames = currentProject.operations.map((o) => o.name)
   const reservedOperationNames: string[] = []
   const newOperations: Operation[] = []
@@ -439,6 +477,7 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
       name: opName,
       target,
       toolRef,
+      setupId: setupIdFor(operation),
     })
   }
 
@@ -504,10 +543,12 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
     featureTree: [...currentProject.featureTree, ...newTreeEntries],
     tools: [...currentProject.tools, ...newTools],
     operations: [...currentProject.operations, ...newOperations],
+    setups: nextSetups,
   }
 
   return {
-    project: mergedProject,
+    // Reconciled so each setup lists the operations it just received.
+    project: syncProjectSetups(mergedProject),
     createdFolderIds: newFolders.map((f) => f.id),
     createdFeatureIds: newFeatures.map((f) => f.id),
     stockReplaced,

@@ -128,6 +128,8 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
     && a.dwellTime === b.dwellTime
     && a.countersinkDiameter === b.countersinkDiameter
     && a.retractHeight === b.retractHeight
+    // The setup decides the frame an operation is cut in (issue #944).
+    && a.setupId === b.setupId
     && a.debugToolpath === b.debugToolpath
     && a.debugShowRejectedCorners === b.debugShowRejectedCorners
     && a.finishSlopeMin === b.finishSlopeMin

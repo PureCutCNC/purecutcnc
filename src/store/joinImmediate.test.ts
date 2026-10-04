@@ -101,6 +101,7 @@ function addRect(id: string, x: number, y: number, w: number, h: number, options
     folderId: null,
     z_top: 5,
     z_bottom: 0,
+    authoringFace: 'top',
     visible: true,
     locked: options.locked ?? false,
   }

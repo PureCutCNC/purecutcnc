@@ -16,6 +16,8 @@ Pure-logic CAM core. No React, no DOM. Everything here is testable in isolation.
 - `importedModelTransform.ts` — shared strict instance-matrix adapter for imported-model preview, CSG, CAM, and export, plus the post-import 3D orientation math (`ModelOrientation` → matrix, X→Y→Z order, cache key)
 - `importedModelTransform.test.ts` — imported-model affine transform and consumer-alignment regressions
 - `modelOrientation.test.ts` — post-import 3D orientation (issue #241): rotation order, exact 90° round-trips, rigid-rotation regression across preview/CSG/CAM, and the orientation cache key
+- `setupOrientation.ts` — machining-setup orientation (issue #944), the one module that knows how a setup turns the stock: canonical stock point ↔ setup-local point (`canonicalToSetupPoint` / `setupToCanonicalPoint`) through a `SetupFrame` whose pivot is derived from the stock, the derived face (`setupFace`), where the shared origin lands in stock space, arc-direction reversal, the operation → setup lookup the export pipeline uses, and the face-local depth view of a feature's Z span (`depthFromFace` / `spanFromFaceDepth`). Accepts only 0° and 180°; at 0° the point is returned untouched
+- `setupOrientation.test.ts` — the transforms in numbers on an off-origin, non-square stock: 0° identity, both half turns, other angles refused, round trips, the stock mapping onto itself, the shared origin on and off the flip centreline, arc direction, and face-local depth keeping floating and partial-depth spans intact. The header lists the mutations each assertion was checked against
 
 ## Subfolders
 - [toolpaths/](toolpaths/INDEX.md) — toolpath generation (pocket, profile, v-carve, surface rough/finish, drill, edge…). **The heart of CAM.**

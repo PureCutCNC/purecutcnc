@@ -91,6 +91,7 @@ function makeProject(): Project {
     constraints: [],
     z_top: 3,
     z_bottom: 0,
+    authoringFace: 'top',
     folderId: null,
     visible: true,
     locked: false,

@@ -24,7 +24,9 @@
  *   the warnings for what was asked for but cannot be written,
  * - the project → machine coordinate transform, for moves and for drill
  *   cycles alike — nothing outside this file calls `projectToMachinePoint`
- *   during export,
+ *   during export. That includes the turn of the operation's machining setup
+ *   (issue #944): a Bottom operation's stock-space toolpath is turned into
+ *   its setup's frame here, once, and no emitter knows a setup exists,
  * - arc fitting, and the emitted-arc validation that falls a run back to its
  *   original linear moves when the formatted block would be rejected,
  * - the warnings those steps raise,
@@ -45,6 +47,7 @@ import { exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
 import { applyEmittedArcFallback, fitArcsInMachineMoves } from './arcFitting'
 import type { EmittedArcOptions, FittedMoveDescriptor } from './arcFitting'
 import type { MachineDefinition, OperationMotionTrace, PostProcessorInput } from './types'
+import { setupFrameForOperation } from '../setupOrientation'
 import { formatGCodeNumber, projectToMachinePoint } from './utils'
 
 /** Largest sweep a single emitted arc may cover, in degrees. */
@@ -210,14 +213,21 @@ export interface MachineDrillCycle {
   retractZ: number
 }
 
-/** Transform an operation's drill cycles into machine coordinates. */
+/**
+ * Transform an operation's drill cycles into machine coordinates. The
+ * operation is required: its setup decides the transform, and a caller that
+ * could leave it out would drill a Bottom operation's holes unturned.
+ */
 export function planDrillCycles(
   project: Project,
   definition: MachineDefinition,
   cycles: readonly DrillCycle[],
+  operation: Operation,
 ): MachineDrillCycle[] {
+  // Undefined for a Top operation, which then takes the unturned path.
+  const setup = setupFrameForOperation(project, operation)
   const toMachine = (cycle: DrillCycle, z: number): ToolpathPoint =>
-    projectToMachinePoint({ x: cycle.x, y: cycle.y, z }, project.origin, definition)
+    projectToMachinePoint({ x: cycle.x, y: cycle.y, z }, project.origin, definition, setup)
   return cycles.map((cycle) => {
     const at = toMachine(cycle, 0)
     return {
@@ -267,12 +277,18 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
   const machineHasArcs = definition.motion.arcInterpolation === true
   const tryFit = arcEnabled && machineHasArcs
 
+  // The operation's setup, when it turns the stock; undefined for Top, which
+  // then takes the unturned path. Arc direction needs no handling of its own:
+  // arcs are fitted to the moves after this transform, so a mirrored plan
+  // view yields the mirrored sense.
+  const setup = setupFrameForOperation(project, operation)
+
   // Transform every move into machine coordinates once.
   const transformMoves = (): ToolpathMove[] =>
     toolpath.moves.map((move) => ({
       ...move,
-      from: projectToMachinePoint(move.from, project.origin, definition),
-      to: projectToMachinePoint(move.to, project.origin, definition),
+      from: projectToMachinePoint(move.from, project.origin, definition, setup),
+      to: projectToMachinePoint(move.to, project.origin, definition, setup),
     }))
   const tolerance = exportGeometryTolerance(project.meta.units)
 
@@ -310,7 +326,7 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
     }
     steps = toolpath.moves.map((move) => ({
       kind: 'linear',
-      point: projectToMachinePoint(move.to, project.origin, definition),
+      point: projectToMachinePoint(move.to, project.origin, definition, setup),
       moveKind: move.kind,
       source: move.source,
       feedScale: move.feedScale,

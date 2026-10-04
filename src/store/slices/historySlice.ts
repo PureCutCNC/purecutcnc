@@ -42,6 +42,12 @@ export function createHistorySlice(
     normalizeProject,
   } = deps
 
+  // Which setup the workspace is on is a view choice, not an edit (issue
+  // #944): a snapshot is restored onto the face the user is looking at, and
+  // normalising falls back to another setup when that one no longer exists.
+  const restoreSnapshot = (snapshot: Project, current: Project): Project =>
+    normalizeProject({ ...cloneProject(snapshot), activeSetupId: current.activeSetupId })
+
   return {
     undo: () =>
       set((state) => {
@@ -49,7 +55,7 @@ export function createHistorySlice(
         if (!previous) {
           return {}
         }
-        const restored = normalizeProject(cloneProject(previous))
+        const restored = restoreSnapshot(previous, state.project)
         return {
           project: restored,
           pendingAdd: null,
@@ -71,7 +77,7 @@ export function createHistorySlice(
         if (!next) {
           return {}
         }
-        const restored = normalizeProject(cloneProject(next))
+        const restored = restoreSnapshot(next, state.project)
         return {
           project: restored,
           pendingAdd: null,
@@ -106,7 +112,8 @@ export function createHistorySlice(
         if (!transactionStart) {
           return {}
         }
-        if (projectsEqual(transactionStart, state.project)) {
+        // Switching setups inside a transaction is not a change to undo.
+        if (projectsEqual({ ...transactionStart, activeSetupId: state.project.activeSetupId }, state.project)) {
           return {
             history: {
               ...state.history,
@@ -129,7 +136,7 @@ export function createHistorySlice(
         if (!transactionStart) {
           return {}
         }
-        const restored = normalizeProject(cloneProject(transactionStart))
+        const restored = restoreSnapshot(transactionStart, state.project)
         return {
           project: restored,
           pendingAdd: null,

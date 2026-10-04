@@ -295,7 +295,7 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       && toolpath.drillCycles.length > 0
       && definition.cannedCycles
     ) {
-      const cycles = planDrillCycles(project, definition, toolpath.drillCycles)
+      const cycles = planDrillCycles(project, definition, toolpath.drillCycles, operation)
       const cannedDef = definition.cannedCycles
 
       // Resolve the command word for the operation's drill type
