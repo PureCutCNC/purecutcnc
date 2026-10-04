@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { withCompatibleOperationTool } from '../toolPolicy'
 import {
   defaultOrigin,
   defaultTopSetup,
@@ -406,7 +407,7 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
       warnings.push(`Operation "${operation.name}" was not imported: its setup is missing from the source project.`)
       continue
     }
-    operationsToImport.push(operation)
+    operationsToImport.push(withCompatibleOperationTool(sourceProject, operation))
   }
 
   // 8. Decide which tools to import: any tool referenced by an imported

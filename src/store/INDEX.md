@@ -60,7 +60,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `manualFeatureOperation.ts` — resolves existing world-space Add/Subtract instances and applies the shared strict-containment classifier to default a newly-created closed feature; also `inferLineTopZFromEnclosingFeature` (issue #351) picks a newly-created Line's initial `z_top` from the smallest enclosing solid (subtract floor / add top)
   - `setups.ts` — machining-setup bookkeeping (issue #944): `decodeSetups` (strict validation of the setups a file carries; an orientation or indexing mode this build cannot machine is an error, not a fallback), `syncProjectSetups` (the reconciler — at least one setup, a valid active setup, every operation in a setup, `operationIds` rebuilt from membership and project order, references to deleted features dropped), and `findSetupWithTurn`, which places an operation imported from another project on a setup turned the way its source was — with no fallback, so the importer adds that setup rather than move the operation to another face
   - `ids.ts` — ID generation/uniqueness
-  - `normalize.ts` — lower-level project normalization helpers: cloning, ID deduplication, cache clearing, equality checks, and feature tree/sync helpers
+  - `normalize.ts` — lower-level project normalization helpers: incompatible tool-reference repair, cloning, ID deduplication, cache clearing, equality checks, and feature tree/sync helpers
   - `polygonSplit.ts` — splits polygons (e.g. for boolean ops)
 
 ## Tests

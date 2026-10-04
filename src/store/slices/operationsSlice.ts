@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { isToolCompatibleWithOperation } from '../../toolPolicy'
+import { isToolCompatibleWithOperation, withCompatibleOperationTool } from '../../toolPolicy'
 import type { StateCreator } from 'zustand'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../engine/toolpaths/restRegions'
 import { selectToolForOperation } from '../../engine/operations/toolSelection'
@@ -113,8 +113,9 @@ export function createOperationsSlice(
           resolvedToolRef = toolToAdd.id
         }
       } else {
-        resolvedTool = state.project.tools[0] ?? defaultTool(state.project.meta.units, 1)
-        resolvedToolRef = state.project.tools[0]?.id ?? null
+        const fallback = state.project.tools.find((tool) => isToolCompatibleWithOperation(tool, kind))
+        resolvedTool = fallback ?? defaultTool(state.project.meta.units, 1)
+        resolvedToolRef = fallback?.id ?? null
       }
 
       const template = defaultOperationForTarget(
@@ -155,7 +156,8 @@ export function createOperationsSlice(
         if (current) {
           const next = { ...current, ...patch }
           const tool = s.project.tools.find((candidate) => candidate.id === next.toolRef)
-          if (tool && !isToolCompatibleWithOperation(tool, next.kind)) return {}
+          if (tool && !isToolCompatibleWithOperation(tool, next.kind)
+            && (patch.toolRef !== undefined || patch.kind !== undefined)) return {}
         }
         const nextProject = {
           ...s.project,
@@ -164,7 +166,7 @@ export function createOperationsSlice(
               return operation
             }
 
-            const nextOperation = { ...operation, ...patch }
+            const nextOperation = withCompatibleOperationTool(s.project, { ...operation, ...patch })
             return isOperationTargetValid(s.project, nextOperation.kind, nextOperation.target)
               ? nextOperation
               : operation
@@ -455,7 +457,7 @@ export function createOperationsSlice(
 
       const nextId = nextUniqueGeneratedId(state.project, 'op')
       const duplicate: Operation = {
-        ...sourceOperation,
+        ...withCompatibleOperationTool(state.project, sourceOperation),
         id: nextId,
         name: duplicateOperationName(sourceOperation.name, state.project.operations),
         showToolpath: true,

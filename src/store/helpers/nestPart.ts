@@ -17,6 +17,7 @@
 // Sheet nesting, project side (issue #846, step 2 of #741): turns a selection
 // into one rigid part and a packer request. Pure — the store slice commits.
 
+import { findMillingOperationTool } from '../../toolPolicy'
 import ClipperLib from 'clipper-lib'
 import {
   flattenProfileWithin,
@@ -398,7 +399,7 @@ function outlineCutters(project: Project, featureIds: string[]): { diameter: num
   return project.operations.flatMap((operation) => {
     if (operation.kind !== 'edge_route_outside' || operation.target.source !== 'features') return []
     if (!operation.target.featureIds.some((id) => ids.has(id))) return []
-    const tool = project.tools.find((candidate) => candidate.id === operation.toolRef)
+    const tool = findMillingOperationTool(project, operation)
     if (!tool) return []
     return [{ diameter: normalizeToolForProject(tool, project).diameter, leave: Math.max(0, operation.stockToLeaveRadial) }]
   })

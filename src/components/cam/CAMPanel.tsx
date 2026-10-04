@@ -43,7 +43,7 @@ import type {
   ToolType,
   XyLeadStrategy,
 } from '../../types/project'
-import { isToolCompatibleWithOperation, plasmaToolDefaults } from '../../toolPolicy'
+import { findMillingOperationTool, isToolCompatibleWithOperation, defaultPlasmaTool } from '../../toolPolicy'
 import { defaultTool, defaultRetractOffset, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
@@ -950,9 +950,7 @@ export function CAMPanel({
       const outcome = await runBookletExport({
         requestToolpath: () => requestToolpath(operationId, 'booklet'),
         normalizeTool: () => {
-          const toolRecord = captured.operation.toolRef
-            ? captured.project.tools.find((tool) => tool.id === captured.operation.toolRef) ?? null
-            : null
+          const toolRecord = findMillingOperationTool(captured.project, captured.operation)
           return toolRecord ? normalizeToolForProject(toolRecord, captured.project) : null
         },
         renderSnapshot: (toolpath) => renderOperationSnapshotPng(captured.project, captured.operation, toolpath),
@@ -1988,7 +1986,7 @@ export function CAMPanel({
                             { value: 'plasma', label: toolTypeLabel('plasma') },
                           ]}
                           onChange={(nextType) => updateTool(selectedTool.id, {
-                            ...(nextType === 'plasma' ? plasmaToolDefaults(selectedTool.units)
+                            ...(nextType === 'plasma' ? defaultPlasmaTool(selectedTool.units)
                               : selectedTool.type === 'plasma' ? defaultTool(selectedTool.units) : {}),
                             id: selectedTool.id, name: selectedTool.name,
                             type: nextType,

@@ -34,7 +34,7 @@ import type {
   Tab,
   Tool,
 } from '../../types/project'
-import { normalizePlasmaTool } from '../../toolPolicy'
+import { normalizePlasmaTool, withCompatibleOperationTool } from '../../toolPolicy'
 import { normalizeTextFontId } from '../../text'
 import { idNumericSuffix } from './ids'
 import { isSolid } from './featureRoles'
@@ -247,7 +247,7 @@ export function normalizeOperation(rawOperation: Operation, project: Project, in
   const defaults = defaultOperationForTarget(project, operation.kind, 'rough', fallbackTarget, index)
   const normalized = {
     ...defaults,
-    ...operation,
+    ...withCompatibleOperationTool(project, operation),
     description: operation.description ?? '',
     roundOutsideCorners: operation.roundOutsideCorners ?? true,
     roundLinkCorners: operation.roundLinkCorners ?? true,

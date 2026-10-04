@@ -508,6 +508,11 @@ test('plasma tool editor persists consumable fields and hides milling controls (
   for (const label of ['Diameter', 'Flutes', 'Material', 'Default RPM', 'Default feed', 'Plunge feed', 'Stepdown', 'Max cut depth', 'Stepover ratio']) {
     await expect(panel.getByText(label, { exact: true })).toHaveCount(0)
   }
+  for (const [label, value] of [['Kerf width', '1.4'], ['Cut feed', '5560'], ['Pierce height', '3.8'],
+    ['Cut height', '1.5'], ['Pierce delay (s)', '0.2']]) {
+    await expect(panel.getByLabel(label, { exact: true })).toHaveValue(value)
+  }
+  await expect(panel.getByLabel('QtPlasmaC material number (optional)')).toHaveValue('')
   for (const [label, value] of [['Name', 'Plasma 45 A'], ['Kerf width', '1.2'], ['Cut feed', '2200'],
     ['Pierce height', '3.8'], ['Cut height', '1.5'], ['Pierce delay (s)', '0.65']]) {
     await panel.getByLabel(label, { exact: true }).fill(value)
@@ -552,4 +557,38 @@ test('milling operation selector excludes plasma consumables (#955)', async ({ a
   await selector.locator('.ui-select__trigger').click()
   await expect(selector.getByRole('option', { name: 'Plasma excluded', exact: true })).toHaveCount(0)
   await expect(selector.getByRole('option')).not.toHaveCount(1)
+})
+
+
+test('bundled plasma consumable filters and imports with starting settings (#955)', async ({ app }) => {
+  await app.page.getByRole('tab', { name: 'Tools' }).click()
+  await app.page.getByRole('button', { name: /Import from library/ }).click()
+  const dialog = app.page.getByRole('dialog')
+  await dialog.locator('.tl-filter-selects .ui-select__trigger').first().click()
+  await dialog.getByRole('option', { name: 'Plasma', exact: true }).click()
+  await dialog.locator('.tl-filter-selects .ui-select__trigger').nth(1).click()
+  await dialog.getByRole('option', { name: 'mm', exact: true }).click()
+  const row = dialog.locator('.tl-row').filter({ hasText: 'Powermax45 XP' })
+  await expect(row).toHaveCount(1)
+  await row.getByRole('checkbox').check()
+  await dialog.getByRole('button', { name: 'Import tool', exact: true }).click()
+  const project = await getProject(app.page)
+  expect((project.tools as Array<Record<string, unknown>>).find((tool) => tool.type === 'plasma')).toMatchObject({
+    diameter: 1.4, defaultFeed: 5560, pierceHeight: 3.8, cutHeight: 1.5, pierceDelay: 0.2,
+  })
+})
+
+test('milling creation with only plasma tools and no library remains unassigned (#955)', async ({ app, ui }) => {
+  await app.page.route('**/tool-library.json', (route) => route.fulfill({ json: { tools: [] } }))
+  await seedCamQuickOperationProject(app.page)
+  const project = await getProject(app.page)
+  const tools = project.tools as Array<Record<string, unknown>>
+  project.tools = [{ ...tools[0], id: 'only-plasma', type: 'plasma', defaultFeed: 5560,
+    diameter: 1.4, pierceHeight: 3.8, cutHeight: 1.5, pierceDelay: 0.2 }]
+  await seedProject(app.page, JSON.stringify(project))
+  const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
+  await ui.contextMenu.item(menu, 'Create operation').hover()
+  await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create outside route')
+  const current = await getProject(app.page)
+  expect((current.operations as Array<Record<string, unknown>>)[0].toolRef).toBeNull()
 })

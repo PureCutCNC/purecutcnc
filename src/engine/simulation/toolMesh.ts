@@ -59,6 +59,7 @@ export function buildToolMesh(info: ToolMeshInfo): THREE.Group {
   const shankLength = resolveShankLength(diameter, info.shankLength)
   const group = new THREE.Group()
   group.name = 'toolMesh'
+  if (info.toolType === 'plasma') return group
 
   const cutterMaterial = new THREE.MeshStandardMaterial({
     color: info.threePalette.toolCutter,

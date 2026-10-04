@@ -18,9 +18,13 @@
  * Mutation checked: bypass either family guard, skip missing-field migration,
  * lose delay on normalization, omit height unit conversion, ignore delay in
  * deduplication, drop the half-kerf, bypass the engraving lookup, or leak RPM.
- * All nine failed this test; no survivors.
+ * Follow-up regressions cover creation/import/history, normalized delay/material
+ * number, default/library settings, and all reviewed cutter-only readers.
  */
 import assert from 'node:assert/strict'
+import { createElement } from 'react'
+import { renderToString } from 'react-dom/server'
+import { useSimulationModel } from './app/useSimulationModel'
 import { readFileSync, readdirSync } from 'node:fs'
 import { defaultTool, newProject, rectProfile } from './types/project'
 import type { OperationKind, Project, Tool } from './types/project'
@@ -30,7 +34,7 @@ import { defaultOperationForTarget, toolMatchesTemplate } from './store/helpers/
 import { useProjectStore } from './store/projectStore'
 import { projectWithFeatures } from './test/projectFixtures'
 import { convertToolUnits, convertProjectUnits } from './utils/units'
-import { findOperationTool, isToolCompatibleWithOperation, plasmaToolDefaults } from './toolPolicy'
+import { defaultPlasmaTool, findMillingOperationTool, findOperationTool, isToolCompatibleWithOperation, plasmaToolDefaults } from './toolPolicy'
 import { parseToolLibraryFile } from './toolLibrary'
 import { toolMatchesLibraryEntry } from './components/cam/toolLibraryDialogModel'
 import { normalizeToolForProject } from './engine/toolpaths/geometry'
@@ -40,6 +44,18 @@ import { generatePocketToolpath, generateEdgeRouteToolpath, generateFollowLineTo
   generateFinishSurfaceCleanupToolpath } from './engine/toolpaths'
 import { selectToolForOperation } from './engine/operations/toolSelection'
 import { cutterSurfaceZ } from './engine/simulation/tools'
+import { mergeCamjFolders } from './import/camj'
+import { buildToolMesh, disposeToolMesh } from './engine/simulation/toolMesh'
+import { THEME_PALETTES } from './theme/palette'
+import { applyMoveToGrid, simulateOperationHeightfield, simulateReplayItemsHeightfield } from './engine/simulation/replay'
+import { createSimulationGrid } from './engine/simulation/grid'
+import type { ToolpathMove } from './engine/toolpaths/types'
+import { buildOperationBookletReport } from './engine/operationBooklet/report'
+import { clampCheckToolRadius } from './engine/toolpaths/clamps'
+import { operationFootprint } from './engine/toolpaths/toolpathDependencies'
+import { buildAutoTabsForFeature } from './engine/operations/autoTabs'
+import { resolveFeatureInstance } from './store/helpers/resolveFeatures'
+import { nestGapForPart, nestEdgeClearance } from './store/helpers/nestPart'
 
 const plasma: Tool = {
   ...plasmaToolDefaults('mm'), id: 'p1', name: '45 A consumables',
@@ -112,6 +128,11 @@ for (const field of ['flutes', 'defaultRpm', 'defaultStepdown', 'defaultPlungeFe
 }
 assert.equal(normalized.defaultFeed, 2200)
 assert.equal(normalized.pierceHeight, 3.8)
+assert.equal(normalized.cutHeight, 1.5)
+assert.equal(normalized.pierceDelay, 0.65, 'generation retains seconds delay')
+assert.equal(normalized.qtplasmacMaterialNumber, 12, 'generation retains material table number')
+assert.equal(normalizeToolForProject(plasma, inchProject).pierceDelay, 0.65)
+assert.equal(normalizeToolForProject(plasma, inchProject).qtplasmacMaterialNumber, 12)
 assert.equal(cutterSurfaceZ('plasma', 0.6, 1.5, 0), null, 'torch is not simulated as a milling cutter')
 
 const kinds: OperationKind[] = ['pocket', 'v_carve', 'v_carve_medial', 'edge_route_inside', 'edge_route_outside',
@@ -183,6 +204,142 @@ for (const field of ['pierceHeight', 'cutHeight', 'pierceDelay', 'qtplasmacMater
 seed(project)
 assert.equal(store().importTools(library.tools).length, 0, 'same consumable is not duplicated')
 assert.equal(store().importTools([{ ...library.tools[0], pierceDelay: 1.1 }]).length, 1, 'different pierce settings import separately')
+
+// New tools use a named manufacturer's example; legacy missing fields still migrate to zero.
+const starting = defaultPlasmaTool('mm')
+assert.equal(starting.diameter, 1.4)
+assert.equal(starting.defaultFeed, 5560)
+assert.equal(starting.pierceHeight, 3.8)
+assert.equal(starting.cutHeight, 1.5)
+assert.equal(starting.pierceDelay, 0.2)
+assert.equal(starting.qtplasmacMaterialNumber, undefined)
+const startingInch = defaultPlasmaTool('inch')
+for (const field of ['diameter', 'defaultFeed', 'pierceHeight', 'cutHeight'] as const) {
+  assert.equal(startingInch[field], starting[field]! / 25.4, 'new defaults honor tool units')
+}
+assert.equal(startingInch.pierceDelay, 0.2)
+const bundledRaw = JSON.parse(readFileSync(new URL('../public/tool-library.json', import.meta.url), 'utf8'))
+const bundled = parseToolLibraryFile(bundledRaw)
+const bundledPlasma = bundled.tools.find((tool) => tool.type === 'plasma' && tool.units === 'mm')
+assert.ok(bundledPlasma, 'bundled library includes a plasma consumable')
+assert.deepEqual({ ...bundledPlasma, key: undefined, name: undefined }, { ...starting, key: undefined, name: undefined })
+const bundledInch = bundled.tools.find((tool) => tool.type === 'plasma' && tool.units === 'inch')
+assert.ok(bundledInch, 'the default inch filter also offers a plasma consumable')
+assert.deepEqual({ ...bundledInch, key: undefined, name: undefined }, { ...startingInch, key: undefined, name: undefined })
+assert.equal(bundled.tools.filter((tool) => tool.type !== 'plasma').length, 34, 'all bundled milling tools remain')
+
+// Exercise the public creation action, including an unavailable/empty library.
+for (const kind of ['pocket', 'v_carve', 'v_carve_medial', 'follow_line', 'edge_route_outside'] as const) {
+  for (const available of [undefined, [], [bundledPlasma]]) {
+    const creationProject = kind === 'edge_route_outside' ? {
+      ...project, featureDefinitions: Object.fromEntries(Object.entries(project.featureDefinitions)
+        .map(([id, definition]) => [id, { ...definition, operation: 'add' as const }])),
+    } : project
+    seed({ ...creationProject, tools: [plasma], operations: [] })
+    const id = store().addOperation(kind, 'rough', { source: 'features', featureIds: ['f1'] }, available)
+    assert.ok(id, kind + ' creates a visible operation')
+    const created = store().project.operations.find((op) => op.id === id)!
+    assert.equal(created.toolRef, null, kind + ' creation cannot fall back to a torch')
+    assert.equal(created.feed, defaultTool('mm').defaultFeed, 'unassigned operation uses milling defaults')
+    store().undo()
+    assert.equal(store().project.operations.length, 0)
+    store().redo()
+    assert.equal(store().project.operations[0].toolRef, null, 'creation redo remains detached')
+  }
+}
+
+const malformed = { ...project, operations: [{ ...operation, toolRef: plasma.id }] }
+for (const version of ['3.2', '3.3'] as const) {
+  seed(project)
+  store().openProjectFromText(JSON.stringify({ ...malformed, version }), null)
+  assert.equal(store().project.operations[0].toolRef, null, 'open detaches a plasma-assigned milling operation')
+  assert.equal(JSON.parse(store().saveProject()).operations[0].toolRef, null, 'save keeps repaired reference')
+  const id = store().project.operations[0].id
+  store().updateOperation(id, { name: 'Editable after repair' })
+  assert.equal(store().project.operations[0].name, 'Editable after repair')
+  const duplicateId = store().duplicateOperation(id)
+  assert.ok(duplicateId)
+  assert.equal(store().project.operations.at(-1)!.toolRef, null)
+  store().undo(); store().redo()
+  assert.ok(store().project.operations.every((op) => op.toolRef === null), 'history never restores incompatible tools')
+}
+// Old in-memory snapshots and raw duplicate callers are protected as well.
+seed(malformed)
+assert.ok(store().duplicateOperation(operation.id))
+assert.equal(store().project.operations.at(-1)!.toolRef, null, 'raw duplicate detaches the torch')
+store().undo(); store().redo()
+assert.ok(store().project.operations.every((op) => op.toolRef === null))
+seed(malformed)
+store().updateOperation(operation.id, { name: 'Unrelated edit works' })
+assert.equal(store().project.operations[0].name, 'Unrelated edit works')
+assert.equal(store().project.operations[0].toolRef, null)
+
+const folderSource: Project = { ...malformed,
+  featureFolders: [{ id: 'plasma-folder', name: 'Imported', collapsed: false, section: 'features' }],
+  features: malformed.features.map((feature) => ({ ...feature, folderId: 'plasma-folder' })),
+}
+const merged = mergeCamjFolders({ currentProject: newProject('Import', 'mm'), sourceProject: folderSource,
+  selectedFolderIds: ['plasma-folder'], importStock: false })
+assert.equal(merged.project.operations.length, 1)
+assert.equal(merged.project.operations[0].toolRef, null, 'pure folder merge detaches incompatible source references')
+seed(newProject('Store import', 'mm'))
+assert.equal(store().importCamjFolders({ fileName: 'plasma-source.camj', sourceProject: folderSource, selectedFolderIds: ['plasma-folder'], importStock: false }).length, 1)
+assert.equal(store().project.operations[0].toolRef, null, 'actual folder import action remains detached')
+store().undo(); store().redo()
+assert.equal(store().project.operations[0].toolRef, null, 'folder import history remains detached')
+
+// Cutter-only readers must also fail closed for raw projects bypassing normalization.
+const badOperation = malformed.operations[0]
+assert.equal(findMillingOperationTool(malformed, badOperation), null)
+assert.equal(clampCheckToolRadius(malformed, badOperation), 0)
+assert.equal(operationFootprint(malformed, badOperation).bounds, null)
+const feature = resolveFeatureInstance(project, 'f1')!
+assert.deepEqual(buildAutoTabsForFeature(feature, { ...malformed, tools: [{ ...plasma, diameter: 20 }] }, badOperation, []).map((tab) => ({ ...tab, id: undefined })),
+  buildAutoTabsForFeature(feature, { ...malformed, tools: [] }, { ...badOperation, toolRef: null }, []).map((tab) => ({ ...tab, id: undefined })),
+  'auto-tabs never use plasma kerf as milling diameter')
+const outside = { ...badOperation, kind: 'edge_route_outside' as const }
+assert.equal(nestGapForPart({ ...malformed, operations: [outside] }, ['f1']), null, 'nesting ignores invalid plasma cutter gap')
+assert.equal(nestEdgeClearance({ ...malformed, operations: [outside] }, ['f1']), null, 'nesting ignores invalid plasma cutter clearance')
+const threePalette = THEME_PALETTES.dark.three
+const mesh = buildToolMesh({ toolType: 'plasma', toolRadius: 0.6, vBitAngle: null, threePalette })
+assert.equal(mesh.children.length, 0, 'plasma produces no milling cutter/shank mesh')
+disposeToolMesh(mesh)
+const millMesh = buildToolMesh({ toolType: 'flat_endmill', toolRadius: 2, vBitAngle: null, threePalette })
+assert.equal(millMesh.children.length, 2, 'milling mesh remains intact')
+disposeToolMesh(millMesh)
+const grid = createSimulationGrid(project, { targetLongAxisCells: 30 })
+const x = grid.originX + 5.5 * grid.cellSize
+const y = grid.originY + 5.5 * grid.cellSize
+const move: ToolpathMove = { kind: 'cut', from: { x, y, z: 5 }, to: { x: x + grid.cellSize, y, z: 5 } }
+const before = grid.topZ.slice()
+assert.equal(applyMoveToGrid(grid, move, 2, 'plasma', null).changedCount, 0, 'direct optimized simulation kernel skips plasma')
+assert.deepEqual(grid.topZ, before)
+assert.ok(applyMoveToGrid(grid, move, 2, 'flat_endmill', null).changedCount > 0, 'control: the same move cuts with a mill')
+const emptyPath = generatePocketToolpath(malformed, badOperation)
+const cachedPath = { ...emptyPath, moves: [move] }
+assert.equal(simulateOperationHeightfield(malformed, badOperation, cachedPath, { targetLongAxisCells: 30 }).stats.processedMoveCount, 0)
+assert.equal(simulateReplayItemsHeightfield(malformed, [{ operationId: badOperation.id, operationName: badOperation.name,
+  toolRef: plasma.id, toolType: 'plasma', toolRadius: 2, vBitAngle: null, toolpath: cachedPath }],
+{ targetLongAxisCells: 30 }).stats.processedMoveCount, 0, 'replay refuses stale plasma cutter moves')
+function simulationProbe(source: Project): string {
+  function Probe() {
+    const result = useSimulationModel({ project: source, centerTab: 'simulation', simulationMode: 'selected',
+      simulationDetailCells: 30, selectedOperation: source.operations[0], selectedToolpath: cachedPath,
+      requestToolpath: async () => null })
+    return createElement('span', null, JSON.stringify({ count: result.simulationOperationCount,
+      playback: result.simulationPlaybackInput !== null, moves: result.simulationResult?.stats.processedMoveCount }))
+  }
+  return renderToString(createElement(Probe))
+}
+assert.equal(simulationProbe(malformed), '<span>{&quot;count&quot;:0,&quot;playback&quot;:false,&quot;moves&quot;:0}</span>',
+  'real simulation hook excludes plasma playback even with a cached path')
+assert.ok(simulationProbe({ ...project, operations: [operation] }).includes('&quot;playback&quot;:true'),
+  'milling playback remains available')
+const report = buildOperationBookletReport({ project: malformed, operation: badOperation,
+  tool: normalized, toolpath: cachedPath, generatedAt: new Date('2026-10-04T00:00:00Z') })
+const noToolReport = buildOperationBookletReport({ project: malformed, operation: badOperation,
+  tool: null, toolpath: cachedPath, generatedAt: new Date('2026-10-04T00:00:00Z') })
+assert.deepEqual(report, noToolReport, 'booklet never prints a plasma consumable as a milling cutter')
 
 // Every existing checked-in milling tool keeps exactly the former normalization.
 let files = 0
