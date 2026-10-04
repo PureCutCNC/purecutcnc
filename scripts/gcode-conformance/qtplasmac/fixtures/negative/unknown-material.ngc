@@ -1,0 +1,28 @@
+(material not in the material file)
+(PureCutCNC NEGATIVE fixture for the QtPlasmaC simulator check, issue #954.)
+(The check MUST reject this program. It is single-outline.ngc with one defect:)
+(M190 names material 7, which the simulator's material file does not define.)
+
+(Manual: Preamble and Postamble Codes)
+G21 G40 G49 G64 P0.1 G80 G90 G92.1 G94 G97
+(Manual: Paused Motion)
+M52 P1
+(DEFECT: material 7 does not exist)
+M190 P7
+M66 P3 L3 Q1
+F#<_hal[plasmac.cut-feed-rate]>
+
+G0 X15 Y50
+M3 $0 S1
+G1 X20 Y50
+G1 X20 Y80
+G1 X120 Y80
+G1 X120 Y20
+G1 X20 Y20
+G1 X20 Y50
+M5 $0
+
+(Manual: Preamble and Postamble Codes)
+G0 X0 Y0
+G21 G40 G49 G64 P0.1 G80 G90 G92.1 G94 G97
+M2

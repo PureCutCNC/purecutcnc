@@ -112,3 +112,8 @@ fields it does read are reachable under Advanced.
 - `npm run check:gcode` runs real controller parsers over a G-code corpus
   (`scripts/gcode-conformance/`). It covers G-code definitions only: there is
   no ShopBot interpreter to run, so SBP relies on the round-trip tests.
+- `npm run check:gcode:qtplasmac` runs plasma programs through LinuxCNC's
+  QtPlasmaC simulator in a container
+  (`scripts/gcode-conformance/qtplasmac/`, #954). It holds hand-written
+  reference programs today; the plasma post output (#959) adds its exported
+  programs to that corpus and must keep it green.
