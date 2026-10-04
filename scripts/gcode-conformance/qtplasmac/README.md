@@ -38,8 +38,8 @@ and presses Cycle Start:
 3. **A real run** under LinuxCNC's task controller with the QtPlasmaC GUI, the
    `plasmac` HAL component and the simulated torch live. `M190` is executed by
    QtPlasmaC's own `M190` script, and `M3 $0 S1` really probes, pierces and
-   waits for arc-OK. A realtime sampler records the torch and motion signals on
-   every servo period (1 kHz), so no move is too short to be seen.
+   waits for arc-OK. A realtime sampler records the torch, motion and feed
+   signals on every servo period (1 kHz), so no move is too short to be seen.
 
 `verdict.ts` then applies the rules:
 
@@ -50,12 +50,32 @@ and presses Cycle Start:
 | `completion` | the run times out, stops before the program's last move, or ends with the torch on |
 | `torch` | a feed or arc move travels while `plasmac.torch-on` is off — or the program never cuts at all |
 | `material` | the torch fires while QtPlasmaC still has its default material loaded |
+| `material-wait` | a material select is not followed by `M66 P3 L3 Qn` and then the feed word, before the next torch-on |
+| `feed` | a cut runs at an F word other than the loaded material's cut feed |
 | `trace` | the sampler dropped samples; nothing is proven and the check fails |
 
 The `material` rule works by resetting QtPlasmaC to material 0 before every run
 (after the filter, which pre-selects the program's first material on load).
 Material 0 is therefore reserved: a program must select material 1 or 2
 (`sim/materials-*.cfg`).
+
+`material-wait` and `feed` are the cause and the effect of the same mistake.
+The manual requires `M190 Pn`, then `M66 P3 L3 Qn`, then the feed word, in that
+order. The interpreter reads ahead, so a feed word that is not behind the wait
+is evaluated before the material change has happened: the material changes, but
+the cut runs at the previous material's feed. The simulator shows exactly that —
+with the wait removed or moved after the feed word, material 1 (cut feed 5000)
+is cut at 4000, the default material's feed. `material-wait` reads the order off
+the program as QtPlasmaC's filter rewrote it, for every material change; `feed`
+compares the F word in effect with `plasmac.cut-feed-rate` on every cutting
+sample. The sequence rule is needed as well as the measurement because two
+materials can share a feed, and a successful run on the sim's small material
+file says nothing about the handshake on a large one.
+
+The feed is sampled from `motion.feed-mm-per-minute` (or `-inches-`), so a G20
+program on a metric machine compares in machine units, with
+`plasmac.adaptive-feed` divided out so QtPlasmaC's own velocity reduction
+(`M67 E3 Qn`, used for small holes) does not read as a wrong feed.
 
 ## Why the full simulator, not `rs274`
 
@@ -111,9 +131,12 @@ does not depend on a keyserver; the Containerfile checks its fingerprint.
   inside-first, several parts on one sheet, arc lead-ins, and inch output (on
   the inch machine, and again on the metric machine where the filter converts).
 - **Negative programs** (`fixtures/negative/*.ngc`) — a reference program with
-  one defect each. They must be rejected, each for exactly its own rule. This
-  is the mutation check: a negative program that passes, or fails for some
-  other reason, fails the run.
+  one defect each: a cut outside any torch pair, no material select, the
+  material wait missing, the material wait after the feed word, a syntax
+  error, a material the material file lacks. They must be rejected, each for
+  exactly its own rules. This is the mutation check: a negative program that
+  passes, fails for some other reason, or trips only part of what it should,
+  fails the run.
 - **Exported programs** — empty until #959.
 
 Every stanza in a reference program names the manual section it comes from
@@ -156,6 +179,8 @@ Nothing else changes — no new runner, no workflow edit. What the simulator
 needs from a case:
 
 - select material 1 or 2; material 0 is reserved (see the `material` rule);
+- follow every `M190` with `M66 P3 L3 Qn` and then the feed word, and cut at
+  the material's own feed (`material-wait`, `feed`);
 - stay on the sim table: X/Y 0–1200 mm on the metric machine, 0–48 in on the
   imperial one;
 - keep it small, because the run is real time.
@@ -167,13 +192,16 @@ requests that touch this folder or the engine. It is a separate workflow from
 `gcode-conformance.yml` because it shares nothing with it — no validator build,
 no Debian `rs274` — and, like those jobs, it is not a required check.
 
+Its first run on GitHub (ten programs, 2026-10-03) took **3 min 59 s** for the
+whole job: 81 s to build the image, uncached, and 135 s to run the programs.
+
 ## Measured run time
 
 On the maintainer's laptop (MacBookPro15,1, Podman machine with 6 CPUs and
-2 GiB, 2026-10-03), with the image already built, four full runs of the ten
-programs took **149 s, 152 s, 165 s and 177 s**. In the 149 s run the nine
-programs on the metric machine took 118 s and the one on the imperial machine
-29 s. A reference program runs 9-25 s of that; the rest is two LinuxCNC
+2 GiB), with the image already built: **168 s** for the current twelve programs
+(142 s for the eleven on the metric machine, 24 s for the one on the imperial
+machine, 2026-10-04). The ten programs of the first version took 149 s, 152 s,
+165 s and 177 s over four runs. A program runs 9-25 s; the rest is two LinuxCNC
 start-ups and the per-program reset, filter and trace hand-over.
 
 The first image build took **7 min 29 s** on the same machine, nearly all of it

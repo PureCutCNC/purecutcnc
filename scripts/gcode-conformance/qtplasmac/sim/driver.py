@@ -40,7 +40,7 @@ opens and runs:
    component and the simulated torch all live. M190 is executed by QtPlasmaC's
    own M190 script, and M3 $0 S1 really probes, pierces and waits for arc-OK.
 
-During the run a realtime `sampler` records five signals on every servo period
+During the run a realtime `sampler` records eight signals on every servo period
 (1 kHz), so no move is too short to be seen:
     spindle.0.on        the program's own M3 / M5
     plasmac.torch-on    QtPlasmaC's torch output
@@ -50,6 +50,15 @@ During the run a realtime `sampler` records five signals on every servo period
                         "current" from the moment M3 is issued, but QtPlasmaC
                         holds it until the arc is established; without this
                         signal that wait would read as cutting with no torch.
+    motion.feed-mm-per-minute (or -inches-) the feed of the move being
+                        executed, in machine units whatever the program's
+    plasmac.adaptive-feed  the factor QtPlasmaC is scaling that feed by (its
+                        velocity reduction for small holes, for one). Dividing
+                        it out leaves the F word the program set.
+    plasmac.cut-feed-rate  the cut feed of the material QtPlasmaC has loaded.
+                        It differs from the program's F when the feed was read
+                        from the material before the material change took
+                        effect, which the wait after M190 exists to prevent.
 """
 
 import glob
@@ -118,15 +127,26 @@ class Trace(threading.Thread):
         self.last_index = None
         self.samples = 0
         self.gaps = 0
+        self.programmed_feed = 0.0
 
     def run(self):
         for raw in self.process.stdout:
             parts = raw.split()
-            if len(parts) != 6:
+            if len(parts) != 9:
                 continue
             index = int(parts[0])
             moving = 1 if float(parts[5]) > 0 else 0
-            state = (int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4]), moving)
+            # motion reports F x feed override x adaptive feed. The override
+            # stays at 100 % here; dividing by the adaptive factor recovers F.
+            # While QtPlasmaC holds or reverses motion the factor is not a
+            # scale, so the last known F stands.
+            scaled_feed, adaptive = float(parts[6]), float(parts[8])
+            if scaled_feed == 0:
+                self.programmed_feed = 0.0
+            elif adaptive > 0:
+                self.programmed_feed = round(scaled_feed / adaptive, 3)
+            state = (int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4]), moving,
+                     self.programmed_feed, round(float(parts[7]), 3))
             with self.lock:
                 if self.last_index is not None and index != self.last_index + 1:
                     self.gaps += 1
@@ -288,15 +308,22 @@ class Simulator:
         return done.stdout.strip()
 
     def attach_sampler(self):
-        # Four of the five signals already exist in QtPlasmaC's own HAL file
-        # (qtplasmac_comp.hal); the sampler only listens to them.
+        # Most of these signals already exist in QtPlasmaC's own HAL
+        # (qtplasmac_comp.hal and the GUI's own nets); the sampler only listens.
+        # motion.feed-upm is in the *program's* units, so a G20 program on a
+        # metric machine would not compare with the material's feed; the
+        # per-unit pins are in fixed units.
+        feed_pin = 'motion.feed-mm-per-minute' if self.machine == 'metric' else 'motion.feed-inches-per-minute'
         setup = [
-            ['loadrt', 'sampler', 'depth=16384', 'cfg=bbssf'],
+            ['loadrt', 'sampler', 'depth=16384', 'cfg=bbssffff'],
             ['net', 'plasmac:cutting-start', 'sampler.0.pin.0'],
             ['net', 'plasmac:torch-on', 'sampler.0.pin.1'],
             ['net', 'plasmac:motion-type', 'sampler.0.pin.2'],
             ['net', 'simcheck:program-line', 'motion.program-line', 'sampler.0.pin.3'],
             ['net', 'plasmac:current-velocity', 'sampler.0.pin.4'],
+            ['net', 'simcheck:feed', feed_pin, 'sampler.0.pin.5'],
+            ['net', 'plasmac:cut-feed-rate', 'sampler.0.pin.6'],
+            ['net', 'plasmac:adaptive-feed', 'sampler.0.pin.7'],
             ['addf', 'sampler.0', 'servo-thread'],
         ]
         for step in setup:
