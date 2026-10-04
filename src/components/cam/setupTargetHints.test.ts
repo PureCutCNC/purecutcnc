@@ -35,6 +35,13 @@ import {
   validQuickOperationsForFeature,
 } from './operationValidity'
 import { addToOperationCandidates } from './operationTargetLists'
+import {
+  camSetupSections,
+  crossFaceTargets,
+  operationsDeletedWithSetup,
+  operationTargetReach,
+  unreachableTargets,
+} from './setupSections'
 import { camT } from './camI18n'
 import { groupExportOperationOptions, listExportOperationOptions } from '../export/exportOperationSelection'
 import type { SelectionState } from '../../store/types'
@@ -212,7 +219,70 @@ function testExportChecklistGroups(): void {
   assertEqual(groupExportOperationOptions(single, []), [], 'no operations: no group')
 }
 
+function testSections(): void {
+  console.log('Testing the CAM panel sections...')
+  const project = makeProject('bottom')
+  const { grouped, sections } = camSetupSections(project)
+  assert(grouped, 'two setups: the list is grouped')
+  assertEqual(sections.map((section) => [
+    section.setup.name, section.face, section.programNumber, section.active, section.operations.map((entry) => entry.id), section.flipAxis,
+    section.registrationCount, section.registrationMissing,
+  ]), [
+    ['Top', 'top', 1, false, ['topOp'], null, 0, false],
+    ['Bottom', 'bottom', 2, true, ['bottomOp'], 'x', 0, true],
+  ], 'one section per setup: program, face, the active one, its operations, the flip, registration')
+
+  // Declaring a reference clears the registration flag; the first setup never carries it.
+  const registered: Project = {
+    ...project,
+    setups: project.setups.map((setup) => (setup.id === BOTTOM_SETUP_ID
+      ? { ...setup, registration: [{ id: 'r1', kind: 'dowel' as const, target: { type: 'feature' as const, featureId: 'pin' } }] }
+      : setup)),
+  }
+  assertEqual(camSetupSections(registered).sections.map((section) => [section.registrationCount, section.registrationMissing]), [[0, false], [1, false]], 'registration status')
+
+  // An empty setup still has a section; a single setup is not grouped.
+  const emptyBottom: Project = { ...project, operations: project.operations.filter((entry) => entry.id === 'topOp') }
+  assertEqual(camSetupSections(emptyBottom).sections.map((section) => section.operations.length), [1, 0], 'an empty setup keeps its section')
+  const single: Project = { ...project, setups: [project.setups[0]], activeSetupId: project.setups[0].id, operations: emptyBottom.operations }
+  const one = camSetupSections(single)
+  assertEqual([one.grouped, one.sections.length, one.sections[0].operations.length], [false, 1, 1], 'one setup: a flat list')
+
+  assertEqual(operationsDeletedWithSetup(project, BOTTOM_SETUP_ID).map((entry) => entry.id), ['bottomOp'], 'deleting a setup lists the operations that go with it')
+  assertEqual(operationsDeletedWithSetup(emptyBottom, BOTTOM_SETUP_ID), [], 'none for an empty setup')
+
+  console.log('Testing cross-face marks and reach in the operation properties...')
+  const both: Project = {
+    ...project,
+    operations: [
+      { ...operation('fromTop', ['tray', 'pin']), setupId: project.setups[0].id },
+      { ...operation('fromBottom', ['pin', 'recess']), setupId: BOTTOM_SETUP_ID },
+      { ...operation('stale', ['tray']), setupId: BOTTOM_SETUP_ID },
+    ],
+  }
+  const [fromTop, fromBottom, stale] = both.operations
+  assertEqual(crossFaceTargets(both, fromTop).map((verdict) => verdict.featureId), [], 'the pin is drawn on Top: not cross-face from Top')
+  assertEqual(crossFaceTargets(both, fromBottom).map((verdict) => verdict.featureId), ['pin'], 'and cross-face from Bottom')
+  assertEqual(unreachableTargets(both, stale).map((verdict) => verdict.featureId), ['tray'], 'a blind Top feature in a Bottom operation is flagged')
+  assertEqual(unreachableTargets(both, fromBottom), [], 'a valid operation has none')
+
+  // The pin is the 20 × 20 rect at x 65 → 85, y 10 → 30.
+  const cut = (z: number) => ({ moves: [{ kind: 'cut' as const, from: { x: 75, y: 20, z }, to: { x: 75, y: 20, z } }] })
+  const paths = new Map([['fromTop', cut(8)], ['fromBottom', cut(9)]])
+  const reach = operationTargetReach(both, fromBottom, paths)
+  assertEqual(reach.map((entry) => [entry.featureName, entry.verdict.status, entry.range, entry.coverage?.status ?? null, entry.coverage?.overlap ?? null]), [
+    ['pin', 'cross-face', { min: 0, max: 9 }, 'meets', 1],
+    ['recess', 'same-face', null, null, null],
+  ], 'a cross-face through target reports its reach and that it meets the Top pass')
+  // Without the Top toolpath nothing is claimed.
+  const alone = operationTargetReach(both, fromBottom, new Map([['fromBottom', cut(9)]]))
+  assertEqual([alone[0].range, alone[0].coverage?.status], [{ min: 0, max: 9 }, 'unverified'], 'the other side unmeasured: unverified, not complete')
+  const none = operationTargetReach(both, fromBottom, new Map())
+  assertEqual([none[0].range, none[0].coverage?.status], [null, 'unverified'], 'no toolpath of its own: no range')
+}
+
 testAddHint()
+testSections()
 testOffers()
 testAddToOperationMenu()
 testExportChecklistGroups()
