@@ -21,7 +21,10 @@ Runs INSIDE the simulator container (issue #954); the host side is
 Input, one JSON document on stdin:
     {"machine": "metric" | "imperial",
      "timeoutSeconds": 120,
-     "programs": [{"name": "...", "gcode": "..."}]}
+     "programs": [{"name": "...", "gcode": "...", "fault": "refused-start"}]}
+
+`fault` is optional and only for the harness's own self-check: it makes the
+driver sabotage that program's first Cycle Start (see `inject_refused_start`).
 
 Output, one line on stdout: `@@RESULT@@ {...}`. Everything else (progress,
 LinuxCNC's own log on failure) goes to stderr.
@@ -40,7 +43,7 @@ opens and runs:
    component and the simulated torch all live. M190 is executed by QtPlasmaC's
    own M190 script, and M3 $0 S1 really probes, pierces and waits for arc-OK.
 
-During the run a realtime `sampler` records eight signals on every servo period
+During the run a realtime `sampler` records ten signals on every servo period
 (1 kHz), so no move is too short to be seen:
     spindle.0.on        the program's own M3 / M5
     plasmac.torch-on    QtPlasmaC's torch output
@@ -59,6 +62,11 @@ During the run a realtime `sampler` records eight signals on every servo period
                         It differs from the program's F when the feed was read
                         from the material before the material change took
                         effect, which the wait after M190 exists to prevent.
+    plasmac.state-out, plasmac.z-offset-counts  where QtPlasmaC's own sequence
+                        is, and the torch height it is holding. They are not
+                        judged; they say what the simulator was doing if a run
+                        stalls, and they show the probe landing on the same
+                        height every time (see `attach_float_switch`).
 """
 
 import glob
@@ -86,6 +94,16 @@ BOOT_TIMEOUT = 180
 # An accidental realtime hiccup is reported by LinuxCNC on the same channel as
 # program errors. It says nothing about the program.
 IGNORED_ERRORS = ('Unexpected realtime delay',)
+# Where the top of the simulated sheet is, in machine units above Z zero. See
+# `attach_float_switch` for why the exact value matters.
+SHEET_TOP = {'metric': 22.0105, 'imperial': 0.85}
+# `plasmac.state-out`, from the state enum in LinuxCNC's plasmac.comp.
+PLASMAC_STATES = (
+    'IDLE', 'PROBE_HEIGHT', 'PROBE_DOWN', 'PROBE_UP', 'ZERO_HEIGHT', 'PIERCE_HEIGHT', 'TORCH_ON', 'ARC_OK',
+    'PIERCE_DELAY', 'PUDDLE_JUMP', 'CUT_HEIGHT', 'CUT_MODE_01', 'CUT_MODE_2', 'PAUSE_AT_END', 'SAFE_HEIGHT',
+    'MAX_HEIGHT', 'END_CUT', 'END_JOB', 'TORCHPULSE', 'PAUSED_MOTION', 'OHMIC_TEST', 'PROBE_TEST', 'SCRIBING',
+    'CONSUMABLE_CHANGE_ON', 'CONSUMABLE_CHANGE_OFF', 'CUT_RECOVERY_ON', 'CUT_RECOVERY_OFF', 'DEBUG',
+)
 
 
 def log(message):
@@ -128,13 +146,17 @@ class Trace(threading.Thread):
         self.samples = 0
         self.gaps = 0
         self.programmed_feed = 0.0
+        self.pierce_z_counts = []
+        self.plasmac_state = 0
+        self.z_counts = 0
 
     def run(self):
         for raw in self.process.stdout:
             parts = raw.split()
-            if len(parts) != 9:
+            if len(parts) != 11:
                 continue
             index = int(parts[0])
+            self.plasmac_state, self.z_counts = int(parts[9]), int(parts[10])
             moving = 1 if float(parts[5]) > 0 else 0
             # motion reports F x feed override x adaptive feed. The override
             # stays at 100 % here; dividing by the adaptive factor recovers F.
@@ -159,6 +181,10 @@ class Trace(threading.Thread):
                 if state == previous and self.events:
                     continue
                 self.events.append([index, *state])
+                if state[1] == 1 and (previous is None or previous[1] == 0):
+                    # The torch fires at pierce height: the Z count QtPlasmaC
+                    # derived from this pierce's probe.
+                    self.pierce_z_counts.append(self.z_counts)
                 rising = state[0] == 1 and (previous is None or previous[0] == 0)
                 if rising and self.first_torch_on is None:
                     # Read at the moment the program's first M3 takes effect:
@@ -190,6 +216,7 @@ class Trace(threading.Thread):
             self.first_torch_on = None
             self.samples = 0
             self.gaps = 0
+            self.pierce_z_counts = []
             self.capturing = True
 
     def stop_capture(self):
@@ -200,7 +227,12 @@ class Trace(threading.Thread):
                 'samples': self.samples,
                 'gaps': self.gaps,
                 'firstTorchOn': self.first_torch_on,
+                'pierceZCounts': self.pierce_z_counts,
             }
+
+    def plasmac_now(self):
+        with self.lock:
+            return self.plasmac_state, self.z_counts
 
 
 class PreviewCanon:
@@ -298,8 +330,14 @@ class Simulator:
         self.ini = linuxcnc.ini(self.ini_path)
 
         self.attach_sampler()
+        self.attach_float_switch()
         self.power_up()
         self.default_cut_feed = float(hal.get_value('plasmac.cut-feed-rate'))
+        # plasmac truncates Z to 0.01 mm on a metric machine and 0.001 in on an
+        # imperial one (`offset_res` in plasmac.comp); this is that step in
+        # counts, the spacing of the heights it can stall on.
+        truncation = 100 if self.machine == 'metric' else 1000
+        self.z_boundary_counts = round(1 / (float(hal.get_value('plasmac.offset-scale')) * truncation))
         log('ready: LinuxCNC %s, default cut feed %s' % (self.version(), self.default_cut_feed))
 
     def version(self):
@@ -315,7 +353,7 @@ class Simulator:
         # per-unit pins are in fixed units.
         feed_pin = 'motion.feed-mm-per-minute' if self.machine == 'metric' else 'motion.feed-inches-per-minute'
         setup = [
-            ['loadrt', 'sampler', 'depth=16384', 'cfg=bbssffff'],
+            ['loadrt', 'sampler', 'depth=16384', 'cfg=bbssffffss'],
             ['net', 'plasmac:cutting-start', 'sampler.0.pin.0'],
             ['net', 'plasmac:torch-on', 'sampler.0.pin.1'],
             ['net', 'plasmac:motion-type', 'sampler.0.pin.2'],
@@ -324,6 +362,8 @@ class Simulator:
             ['net', 'simcheck:feed', feed_pin, 'sampler.0.pin.5'],
             ['net', 'plasmac:cut-feed-rate', 'sampler.0.pin.6'],
             ['net', 'plasmac:adaptive-feed', 'sampler.0.pin.7'],
+            ['net', 'plasmac:state', 'sampler.0.pin.8'],
+            ['net', 'plasmac:z-offset-counts', 'sampler.0.pin.9'],
             ['addf', 'sampler.0', 'servo-thread'],
         ]
         for step in setup:
@@ -332,6 +372,49 @@ class Simulator:
                 raise HarnessError('halcmd %s failed: %s' % (' '.join(step), err))
         self.trace = Trace(self.hal)
         self.trace.start()
+
+    def attach_float_switch(self):
+        """Give the simulated torch a float switch that trips in realtime.
+
+        QtPlasmaC finds the sheet by lowering the torch until its float switch
+        trips. The sim config's switch is the sim panel: a GUI, not realtime,
+        that polls the Z position and presses the switch when the torch is
+        below the sheet. How far the torch has travelled by then depends on
+        when the GUI happened to poll, so every probe found a slightly
+        different height, and with it a different Z target for the pierce and
+        the cut.
+
+        That randomness is what made this check flaky (issue #954). LinuxCNC
+        2.9.10's plasmac waits at each Z target, with no timeout, until the
+        applied Z offset equals the target, comparing the two after truncating
+        them to 0.01 mm (0.001 in). But motion applies an offset through a
+        planner that stops once it is within a small dead band of the command
+        (simple_tp.c: "within 'tiny_dp' of desired pos, no need to move"), not
+        on it; here it was measured stopping 0.00000007 mm short. When a
+        target is *exactly* a multiple of 0.01 mm and the planner stops short
+        of it, the applied offset truncates to one step less than the target,
+        and plasmac waits in CUT_HEIGHT for ever: torch on, motion held. A Z
+        count is 0.00001 mm, so one height in a thousand is such a multiple.
+
+        A `comp` in the servo thread trips at the same Z on every probe, so
+        every pierce in every run gets the same targets. SHEET_TOP is chosen
+        so those targets sit well away from a boundary; the Z count of each
+        pierce is reported so that stays visible.
+        """
+        setup = [
+            ['loadrt', 'comp', 'count=1'],
+            ['addf', 'comp.0', 'servo-thread'],
+            # comp.0.out is true while in1 > in0: sheet top above the torch.
+            ['setp', 'comp.0.in1', repr(SHEET_TOP[self.machine])],
+            ['net', 'plasmac:axis-position', 'comp.0.in0'],
+            # Take the sim panel's own switch off the signal and drive it here.
+            ['unlinkp', 'qtplasmac_sim.sensor_float'],
+            ['net', 'sim:float', 'comp.0.out'],
+        ]
+        for step in setup:
+            code, _, err = halcmd(*step)
+            if code != 0:
+                raise HarnessError('halcmd %s failed: %s' % (' '.join(step), err))
 
     def power_up(self):
         hal, linuxcnc, command = self.hal, self.linuxcnc, self.command
@@ -344,12 +427,6 @@ class Simulator:
         command.wait_complete()
         wait_for(self.machine_on, 10, 'the machine to turn on')
         self.home()
-
-        # Thicken the simulated sheet so its top sits just under QtPlasmaC's
-        # probe start height (25 mm / 1 in above Z's lower limit). Probing
-        # runs at probe speed only below that height, so this shortens every
-        # pierce by a few seconds without changing what is exercised.
-        hal.set_p('qtplasmac_sim.material_height', '17' if self.machine == 'metric' else '0.65')
 
         # QtPlasmaC starts with the torch disabled (a dry run). The check is
         # about the torch output, so press TORCH ENABLE through the pin the
@@ -380,6 +457,98 @@ class Simulator:
             self.stat.poll()
             return all(self.stat.homed[:self.stat.joints])
         wait_for(homed, 60, 'homing')
+        self.let_gui_finish()
+
+    def let_gui_finish(self):
+        """Wait until nobody is running anything through LinuxCNC.
+
+        The QtPlasmaC GUI is a second operator on the same LinuxCNC. On the
+        first homing it runs `T0 M6` through MDI and then returns to manual
+        mode; whenever the interpreter goes idle it returns to manual mode
+        again. It does these when it next polls, a little after the event, so
+        a command sent meanwhile can land in the wrong mode.
+
+        Quiet means: interpreter idle and not in MDI mode, held for a moment.
+        """
+        linuxcnc = self.linuxcnc
+        quiet_since = None
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            self.stat.poll()
+            quiet = (self.stat.interp_state == linuxcnc.INTERP_IDLE
+                     and self.stat.task_mode != linuxcnc.MODE_MDI)
+            if not quiet:
+                quiet_since = None
+            elif quiet_since is None:
+                quiet_since = time.time()
+            elif time.time() - quiet_since >= 0.5:
+                return
+            time.sleep(0.02)
+        raise HarnessError('LinuxCNC never became idle; the QtPlasmaC GUI is still running something')
+
+    def executing(self):
+        """Whether LinuxCNC is executing a program right now.
+
+        Read from LinuxCNC's status, which is current, and required to be in
+        auto mode: the GUI running something through MDI also makes the
+        interpreter busy, and that is not this program.
+        """
+        linuxcnc = self.linuxcnc
+        self.stat.poll()
+        return (self.stat.task_mode == linuxcnc.MODE_AUTO
+                and self.stat.interp_state != linuxcnc.INTERP_IDLE)
+
+    def cycle_start(self, has_motion, fault=None):
+        """Run the opened program, and make sure it really started.
+
+        A Cycle Start that arrives just after the GUI has switched LinuxCNC to
+        manual mode is refused, and the refusal is silent here: LinuxCNC
+        reports it on an error channel the GUI reads too, and whichever reads
+        first gets the message. Without this check the program simply never
+        ran, which reads as "stopped before its last move".
+
+        So confirm the start, and if it did not take, let the GUI finish and
+        press again, as an operator would. After a few attempts it is a
+        simulator fault, never a quiet pass. Returns the number of presses.
+
+        The only evidence accepted is LinuxCNC itself executing in auto mode
+        after this press. The run trace is no evidence: it is read through a
+        buffered pipe, so it can still be delivering samples from before the
+        press, and things change in it that are not execution (a material
+        change moves the feed signal with nothing running).
+        """
+        linuxcnc, command = self.linuxcnc, self.command
+        for attempt in range(1, 6):
+            command.mode(linuxcnc.MODE_AUTO)
+            command.wait_complete()
+            if fault == 'refused-start' and attempt == 1:
+                self.inject_refused_start()
+            command.auto(linuxcnc.AUTO_RUN, 0)
+            if not has_motion:
+                # Nothing to watch for: a program with no moves ends at once.
+                return attempt
+            deadline = time.time() + 2
+            while time.time() < deadline:
+                if self.executing():
+                    return attempt
+                time.sleep(0.01)
+            self.stat.poll()
+            log('cycle start %d did not take (task mode %d); pressing again' % (attempt, self.stat.task_mode))
+            self.let_gui_finish()
+        raise HarnessError('the program could not be started in the simulator')
+
+    def inject_refused_start(self):
+        """Self-check only: reproduce the GUI getting in ahead of Cycle Start.
+
+        Puts LinuxCNC back in manual mode, as the GUI does, so the Cycle Start
+        that follows is refused. Also changes the material, which moves the
+        feed signal in the trace with nothing executing: exactly what an
+        earlier version of the confirmation mistook for a program starting.
+        """
+        linuxcnc, command = self.linuxcnc, self.command
+        command.mode(linuxcnc.MODE_MANUAL)
+        command.wait_complete()
+        self.hal.set_p('qtplasmac.material_change_number', '2')
 
     # ── one program ─────────────────────────────────────────────────────
 
@@ -463,7 +632,7 @@ class Simulator:
             'motionLines': canon.motion_lines,
         }
 
-    def execute(self, filtered_path, timeout):
+    def execute(self, filtered_path, timeout, has_motion, fault=None):
         linuxcnc, command = self.linuxcnc, self.command
         command.mode(linuxcnc.MODE_AUTO)
         command.wait_complete()
@@ -473,9 +642,10 @@ class Simulator:
 
         self.trace.start_capture()
         started = time.time()
-        command.auto(linuxcnc.AUTO_RUN, 0)
-        left_idle = False
+        start_attempts = self.cycle_start(has_motion, fault)
+        left_idle = has_motion
         timed_out = False
+        stall = None
         while True:
             errors += self.drain_errors()
             idle = self.idle()
@@ -486,6 +656,7 @@ class Simulator:
                 break
             if elapsed > timeout:
                 timed_out = True
+                stall = self.describe_stall()
                 break
             time.sleep(0.02)
         run_seconds = round(time.time() - started, 2)
@@ -501,6 +672,10 @@ class Simulator:
         overruns = int(self.hal.get_value('sampler.0.overruns'))
         return {
             'timedOut': timed_out,
+            'startAttempts': start_attempts,
+            'stall': stall,
+            'pierceZCounts': trace['pierceZCounts'],
+            'zBoundaryCounts': self.z_boundary_counts,
             'errors': errors,
             'seconds': run_seconds,
             'atEnd': finished,
@@ -508,6 +683,20 @@ class Simulator:
             'samples': trace['samples'],
             'firstTorchOn': trace['firstTorchOn'],
             'events': trace['events'],
+        }
+
+    def describe_stall(self):
+        """What QtPlasmaC's own sequence was doing when a run ran out of time."""
+        hal = self.hal
+        state, z_counts = self.trace.plasmac_now()
+        return {
+            'plasmacState': PLASMAC_STATES[state] if 0 <= state < len(PLASMAC_STATES) else str(state),
+            'zCounts': z_counts,
+            'zOffset': float(hal.get_value('axis.z.eoffset')),
+            'offsetScale': float(hal.get_value('plasmac.offset-scale')),
+            'feedHold': bool(hal.get_value('plasmac.feed-hold')),
+            'torchOn': bool(hal.get_value('plasmac.torch-on')),
+            'arcOk': bool(hal.get_value('plasmac.arc-ok-out')),
         }
 
     def check(self, program, timeout):
@@ -543,7 +732,8 @@ class Simulator:
         # Running a file the interpreter already rejected proves nothing more,
         # and an interpreter error mid-run leaves the torch on until an abort.
         if report['preview']['error'] is None:
-            report['run'] = self.execute(filtered_path, timeout)
+            report['run'] = self.execute(
+                filtered_path, timeout, report['preview']['motionLines'] > 0, program.get('fault'))
         return report
 
     def shutdown(self):

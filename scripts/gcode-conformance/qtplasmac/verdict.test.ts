@@ -25,8 +25,8 @@
  */
 
 import assert from 'node:assert/strict'
-import { judge, mismatch } from './verdict'
-import type { Rule, SimProgramReport, SimRun, TraceEvent } from './verdict'
+import { boundaryDistance, judge, mismatch } from './verdict'
+import type { Rule, SimProgramReport, SimRun, SimStall, TraceEvent } from './verdict'
 
 const FILTERED = [
   'M190 P1', // 1
@@ -70,6 +70,10 @@ const CLEAN_EVENTS: TraceEvent[] = [
 function cleanRun(overrides: Partial<SimRun> = {}): SimRun {
   return {
     timedOut: false,
+    stall: null,
+    startAttempts: 1,
+    pierceZCounts: [-6767783],
+    zBoundaryCounts: 1000,
     errors: [],
     seconds: 6.5,
     atEnd: { spindleOn: false, torchOn: false, machineOn: true },
@@ -171,6 +175,48 @@ assert.deepEqual(rules(report({ run: cleanRun({ timedOut: true }) })), ['complet
 assert.deepEqual(rules(report({
   run: cleanRun({ atEnd: { spindleOn: true, torchOn: true, machineOn: true } }),
 })), ['completion'])
+
+// The stall of issue #954, as the simulator reported it when forced: torch on,
+// plasmac waiting for ever at a Z target. That is the simulator, so it must
+// read as "nothing proven" and never as a verdict on the program — here a
+// program that would otherwise also be blamed for an unfinished run and for
+// never cutting.
+{
+  const stall: SimStall = {
+    plasmacState: 'CUT_HEIGHT', zCounts: -6998000, zOffset: -69.98, offsetScale: 1e-5, feedHold: true, torchOn: true, arcOk: true,
+  }
+  const stalledRun = cleanRun({
+    timedOut: true,
+    stall,
+    seconds: 120.02,
+    atEnd: { spindleOn: true, torchOn: true, machineOn: true },
+    events: CLEAN_EVENTS.slice(0, 6),
+  })
+  const findings = judge(report({ run: stalledRun }))
+  assert.deepEqual(findings.map((finding) => finding.rule), ['trace'])
+  assert.match(findings[0].message, /simulator stalled, not the program: plasmac sat in CUT_HEIGHT at Z count -6998000/)
+  // A timeout anywhere else is still the program's: say where plasmac was.
+  const elsewhere = judge(report({ run: { ...stalledRun, stall: { ...stall, plasmacState: 'CUT_MODE_01' } } }))
+  assert.ok(elsewhere.some((finding) => finding.rule === 'completion' && /plasmac in CUT_MODE_01/.test(finding.message)))
+  assert.ok(!elsewhere.some((finding) => finding.rule === 'trace'))
+}
+
+// The sheet height must keep pierces clear of the heights plasmac truncates
+// to. Counts are negative (the torch is below where it started), and the
+// imperial machine's step is 2540 counts, not 1000.
+assert.equal(boundaryDistance(-6767783, 1000), 217)
+assert.equal(boundaryDistance(-6768000, 1000), 0)
+assert.equal(boundaryDistance(-6678983, 1000), 17)
+// Close from either side counts.
+assert.equal(boundaryDistance(-6679017, 1000), 17)
+assert.deepEqual(rules(report({ run: cleanRun({ pierceZCounts: [-6679017] }) })), ['trace'])
+assert.equal(boundaryDistance(-6966578, 2540), 642)
+assert.deepEqual(rules(report({ run: cleanRun({ pierceZCounts: [-6767783, -6767783] }) })), [])
+{
+  const findings = judge(report({ run: cleanRun({ pierceZCounts: [-6767783, -6678983] }) }))
+  assert.deepEqual(findings.map((finding) => finding.rule), ['trace'])
+  assert.match(findings[0].message, /pierce at Z count -6678983, 17 count\(s\) from a height plasmac can stall on/)
+}
 
 // A trace with holes proves nothing, in either direction.
 assert.deepEqual(rules(report({ run: cleanRun({ traceComplete: false }) })), ['trace'])
