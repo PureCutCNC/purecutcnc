@@ -507,7 +507,12 @@ export interface ProjectStore {
    * and undo/redo leave the workspace on the setup it is on.
    */
   setActiveSetup: (id: string) => void
-  /** Move an operation to another setup. Target validation is the caller's until #946. */
+  /**
+   * Move an operation to another setup (issue #946). Its targets are judged
+   * from the new face: those it cannot reach are dropped, and the move is
+   * refused when no valid target would be left. Plan it with
+   * `planOperationMove` first to show the user what will go.
+   */
   assignOperationToSetup: (operationId: string, setupId: string) => void
   /** Change the face features are drawn on. Their stock-space Z span is not touched. */
   setFeatureAuthoringFace: (featureIds: string[], face: SetupFace) => void

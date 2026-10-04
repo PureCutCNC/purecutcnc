@@ -15,15 +15,18 @@
  */
 
 /**
- * Machining-setup actions (issue #944). Only what the Top/Bottom UI and CAM
- * slices build on: no cross-face validation lives here — moving an operation
- * or a feature to another face is accepted as asked, and the rules for what
- * may target what arrive with the CAM grouping slice (#946).
+ * Machining-setup actions (issue #944). Moving an operation to another setup
+ * is validated (issue #946): its targets are re-judged from the new face by
+ * `planOperationMove`, and the move is refused when nothing valid would be
+ * left. Changing a feature's authoring face is still accepted as asked — an
+ * operation left targeting a face it cannot reach generates nothing and says
+ * why (`setupGenerationBlock`).
  */
 
 import type { StateCreator } from 'zustand'
 import { uniqueName } from '../../import'
 import { isSupportedSetupOrientation, setupFace } from '../../engine/setupOrientation'
+import { applyOperationMove, planOperationMove } from '../../engine/setupOperationMove'
 import type { MachiningSetup, Project } from '../../types/project'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
@@ -171,34 +174,11 @@ export function createSetupsSlice(
           : { project: { ...s.project, activeSetupId: id }, dirty: s.dirty }
       }),
 
+    // The move is planned against the project it is applied to, so the
+    // store cannot commit a move the plan would have blocked. Targets the new
+    // face cannot reach are dropped with it, as one undo step.
     assignOperationToSetup: (operationId, setupId) => {
       commit((current) => {
         const { project, id } = realizeProvisionalSetup(current, setupId)
-        return project.setups.some((setup) => setup.id === id)
-          ? {
-              ...project,
-              operations: project.operations.map((operation) => (
-                operation.id === operationId ? { ...operation, setupId: id } : operation
-              )),
-            }
-          : null
+        return applyOperationMove(project, planOperationMove(project, operationId, id))
       })
-    },
-
-    // Only where the feature is drawn changes. `z_top`/`z_bottom` are the
-    // feature's stock-space span and are deliberately left alone.
-    setFeatureAuthoringFace: (featureIds, face) => {
-      // A feature under a pending edit keeps its face until the edit is done.
-      if (isFaceEditInProgress(get())) return
-      const ids = new Set(featureIds)
-      commit((project) => ({
-        ...project,
-        features: project.features.map((feature) => (
-          ids.has(feature.id) && !feature.locked && feature.authoringFace !== face
-            ? { ...feature, authoringFace: face }
-            : feature
-        )),
-      }))
-    },
-  }
-}

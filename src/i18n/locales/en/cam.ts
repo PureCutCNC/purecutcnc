@@ -404,6 +404,8 @@ export const camEn = {
 
   // ── Validation hints: construction ──
   'cam.hint.construction': 'Construction geometry is never machined — deselect construction features first',
+  'cam.hint.otherFaceFromTop': '{features} is drawn on the bottom face and does not go through the stock, so the top setup cannot cut it. Switch to the bottom face to machine it.',
+  'cam.hint.otherFaceFromBottom': '{features} is drawn on the top face and does not go through the stock, so the bottom setup cannot cut it. Switch to the top face to machine it.',
 
   // ── Validation hints: drilling ──
   'cam.hint.drilling': 'Drilling requires circle features; closed regions are optional filters',

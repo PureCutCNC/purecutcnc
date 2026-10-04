@@ -27,6 +27,9 @@
  *   during export. That includes the turn of the operation's machining setup
  *   (issue #944): a Bottom operation's stock-space toolpath is turned into
  *   its setup's frame here, once, and no emitter knows a setup exists,
+ * - which setup a program is for (issue #946): the header lines that tell the
+ *   operator how the part must sit, and the refusal to run one program across
+ *   a manual turn of the part,
  * - arc fitting, and the emitted-arc validation that falls a run back to its
  *   original linear moves when the formatted block would be rejected,
  * - the warnings those steps raise,
@@ -47,7 +50,9 @@ import { exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
 import { applyEmittedArcFallback, fitArcsInMachineMoves } from './arcFitting'
 import type { EmittedArcOptions, FittedMoveDescriptor } from './arcFitting'
 import type { MachineDefinition, OperationMotionTrace, PostProcessorInput } from './types'
-import { setupFrameForOperation } from '../setupOrientation'
+import { setupForOperation, setupFrameForOperation } from '../setupOrientation'
+import { setupGenerationBlock } from '../setupTargets'
+import { projectExportsPerSetup, setupHeaderLines, setupLacksRegistration } from './setupPrograms'
 import { formatGCodeNumber, projectToMachinePoint } from './utils'
 
 /** Largest sweep a single emitted arc may cover, in degrees. */
@@ -205,6 +210,62 @@ export function planProgramSequence(
       warnings,
     }
   })
+}
+
+// ── The program's setup ───────────────────────────────────────
+
+/** What a dialect writes, and reports, about the setup a program is for. */
+export interface ProgramSetupPlan {
+  /**
+   * Lines to write as comments after the program header, in order: which
+   * setup this is and how the stock is turned, what locates the part, where
+   * to touch off, and the operator's notes. Empty for a project with a single
+   * setup, whose program is exactly what it was before setups existed.
+   */
+  headerComments: string[]
+  /** Raised for the program as a whole; the caller appends them to its own. */
+  warnings: ToolpathWarning[]
+}
+
+/**
+ * Decide, once for every dialect, what a program says about its setup.
+ *
+ * A program belongs to exactly one setup: the operator turns the part by hand
+ * between setups, and nothing in a program does it for them. Operations of
+ * two setups in one program are therefore reported as an error and the header
+ * is left out, rather than a header written for one of them.
+ */
+export function planProgramSetup(
+  input: Pick<PostProcessorInput, 'project' | 'operations'>,
+): ProgramSetupPlan {
+  const { project, operations } = input
+  const warnings: ToolpathWarning[] = []
+
+  // An operation its setup may not cut was generated with no motion. A file
+  // that silently lacks that pass must not be saved.
+  for (const { operation } of operations) {
+    if (setupGenerationBlock(project, operation)) {
+      warnings.push({ code: 'postSetupOperationRefused', params: { operation: operation.name } })
+    }
+  }
+
+  if (!projectExportsPerSetup(project)) return { headerComments: [], warnings }
+
+  const setups = [...new Set(operations.map(({ operation }) => setupForOperation(project, operation)))]
+  if (setups.length > 1) {
+    warnings.push({
+      code: 'postMixedSetups',
+      params: { setups: setups.map((setup) => setup?.name ?? 'Top').join(', ') },
+    })
+    return { headerComments: [], warnings }
+  }
+  const setup = setups[0]
+  if (!setup) return { headerComments: [], warnings }
+
+  if (setupLacksRegistration(project, setup)) {
+    warnings.push({ code: 'postSetupNoRegistration', params: { setup: setup.name } })
+  }
+  return { headerComments: setupHeaderLines(project, setup), warnings }
 }
 
 // ── Drill cycles ──────────────────────────────────────────────

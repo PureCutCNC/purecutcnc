@@ -1011,6 +1011,73 @@
   background: var(--surface-subtle);
 }
 
+/* Per-setup export (issue #946): the checklist is grouped by setup, and each
+   setup's program is listed with the file it will be written to. */
+.export-setup-heading {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.export-setup-heading:not(:first-child) {
+  margin-top: 4px;
+}
+
+.export-setup-note {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.export-program-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.export-program {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.export-program--active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent);
+}
+
+.export-program-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.export-program-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.export-program-file {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .export-option--disabled {
   color: var(--text-dim);
   cursor: default;

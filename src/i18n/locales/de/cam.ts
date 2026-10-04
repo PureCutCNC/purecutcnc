@@ -401,6 +401,8 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // ── Validation hints: construction ──
   'cam.hint.construction': 'Konstruktionsgeometrie wird nie bearbeitet – zuerst Konstruktions-Features abwählen',
+  'cam.hint.otherFaceFromTop': '{features} ist auf der Unterseite gezeichnet und geht nicht durch das Rohteil, daher kann die Aufspannung „Oben" es nicht schneiden. Wechseln Sie zu „Unten", um es zu bearbeiten.',
+  'cam.hint.otherFaceFromBottom': '{features} ist auf der Oberseite gezeichnet und geht nicht durch das Rohteil, daher kann die Aufspannung „Unten" es nicht schneiden. Wechseln Sie zu „Oben", um es zu bearbeiten.',
 
   // ── Validation hints: drilling ──
   'cam.hint.drilling': 'Bohren erfordert Kreis-Features; geschlossene Bereiche sind optionale Filter',

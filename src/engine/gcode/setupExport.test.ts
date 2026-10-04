@@ -145,6 +145,15 @@ function exportProgram(project: Project, definition: MachineDefinition, moves: T
   }).gcode
 }
 
+/** The program without the three-line setup header a two-setup project writes. */
+function withoutSetupHeader(program: string): string {
+  const lineEnding = program.includes('\r\n') ? '\r\n' : '\n'
+  return program
+    .split(lineEnding)
+    .filter((line) => !/(SETUP \d\d:|REGISTRATION:|TOUCH OFF:)/.test(line))
+    .join(lineEnding)
+}
+
 function planSteps(project: Project, definition: MachineDefinition, moves: ToolpathMove[] = MOVES): ToolpathPoint[] {
   const operation = project.operations[0]
   return planOperationMotion({
@@ -273,7 +282,9 @@ function testBottomOperationExportsTurned(): void {
     to: canonicalToSetupPoint(move.to, setupFrame(BOTTOM_X, aboutX.stock)),
   }))
   for (const definition of [GRBL, SHOPBOT]) {
-    const bottom = exportProgram(aboutX, definition)
+    // A project with two setups writes a setup header (issue #946); the
+    // motion under it is what is compared here.
+    const bottom = withoutSetupHeader(exportProgram(aboutX, definition))
     assertEqual(bottom, exportProgram(makeProject(['op1']), definition, turnedByHand), `${definition.id}: Bottom equals a hand-turned Top program`)
     assert(bottom !== exportProgram(makeProject(['op1']), definition), `${definition.id}: Bottom differs from the unturned program`)
   }

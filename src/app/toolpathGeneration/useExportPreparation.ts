@@ -31,8 +31,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MachineDefinition } from '../../engine/gcode/types'
 import {
   createExportToken,
+  exportHasError,
   prepareExport,
-  programHasError,
   tokenMatchesContext,
   type ExportPostOptions,
   type ExportPreparation,
@@ -61,14 +61,24 @@ export interface UseExportPreparationArgs {
   revision: unknown
 }
 
+/** The frozen bytes of one program and the file name to offer for it. */
+export interface ExportableProgram {
+  /** 1-based program number: the setup's position in the project. */
+  programNumber: number
+  gcode: string
+  /** Suggested file name, without the extension. */
+  fileStem: string
+}
+
 export interface ExportPreparationBinding {
   preparation: ExportPreparation | null
   /**
-   * Re-check the prepared program against the live context and hand back its
-   * bytes, or null if anything moved. Called at the moment Save is pressed —
-   * the preview being ready a moment ago is not the same as it being ready now.
+   * Re-check the prepared programs against the live context and hand back
+   * their bytes, or null if anything moved. Called at the moment Save is
+   * pressed — the preview being ready a moment ago is not the same as it being
+   * ready now. One entry per setup's program, in setup order (issue #946).
    */
-  takeExportable: () => { gcode: string; documentKey: number; operationNames: string[] } | null
+  takeExportable: () => { documentKey: number; programs: ExportableProgram[] } | null
 }
 
 export function useExportPreparation({
@@ -135,14 +145,17 @@ export function useExportPreparation({
     // Export button has to hold when the button is stale or bypassed. This is
     // the only G-code save path, so the re-check belongs here as much as the
     // token re-check above (issue #755).
-    if (programHasError(preparation.result.warnings)) return null
+    if (exportHasError(preparation.programs)) return null
     // The bytes are copied out here and never read again from state: once the
     // platform dialog is open the preview may be replaced underneath it, and
-    // the file must be the program the user approved.
+    // the files must be the programs the user approved.
     return {
-      gcode: preparation.result.gcode,
       documentKey: preparation.token.documentKey,
-      operationNames: preparation.operations.map((row) => row.operation.name),
+      programs: preparation.programs.map((program) => ({
+        programNumber: program.programNumber,
+        gcode: program.result.gcode,
+        fileStem: program.fileStem,
+      })),
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- as above
   }, [preparation, contextRef, operationKey, optionsKey, definition])

@@ -21,7 +21,9 @@
  * what filename to suggest for the resulting program.
  */
 
-import type { Operation, Project } from '../../types/project'
+import type { MachiningSetup, Operation, Project, SetupFace } from '../../types/project'
+import { projectExportsPerSetup, setupProgramNumber } from '../../engine/gcode/setupPrograms'
+import { setupFace, setupForOperation } from '../../engine/setupOrientation'
 
 /**
  * Translation-key references for operation exportability reasons.
@@ -54,6 +56,37 @@ export function listExportOperationOptions(project: Project): ExportOperationOpt
       reasonKey,
       defaultSelected: reasonKey === null && operation.showToolpath,
     }
+  })
+}
+
+/** The export checklist's operations under the setup that cuts them. */
+export interface ExportOperationGroup {
+  /** The setup; null for the one unlabelled group of a single-setup project. */
+  setup: MachiningSetup | null
+  programNumber: number
+  face: SetupFace
+  options: ExportOperationOption[]
+}
+
+/**
+ * Group the checklist by setup (issue #946): each setup exports as its own
+ * program, so the list shows which program an operation will land in. Setups
+ * come in project order and keep their operations in project order; a setup
+ * with no operations has no group. A project with a single setup is one
+ * unlabelled group — the list it always was.
+ */
+export function groupExportOperationOptions(
+  project: Project,
+  options: readonly ExportOperationOption[],
+): ExportOperationGroup[] {
+  if (!projectExportsPerSetup(project)) {
+    return options.length === 0 ? [] : [{ setup: null, programNumber: 1, face: 'top', options: [...options] }]
+  }
+  return project.setups.flatMap((setup) => {
+    const members = options.filter((option) => (setupForOperation(project, option.operation) ?? project.setups[0]) === setup)
+    return members.length === 0
+      ? []
+      : [{ setup, programNumber: setupProgramNumber(project, setup.id), face: setupFace(setup), options: members }]
   })
 }
 

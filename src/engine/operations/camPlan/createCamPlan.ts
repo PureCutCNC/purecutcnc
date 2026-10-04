@@ -26,6 +26,8 @@ import { featuresOverlap } from '../../../store/helpers/clipping'
 import { defaultOperationForTarget, isOperationTargetValid } from '../../../store/helpers/operationDefaults'
 import { resolveFeatureInstances, type ResolvedSketchFeature } from '../../../store/helpers/resolveFeatures'
 import { buildAutoTabsForFeature } from '../autoTabs'
+import { setupFace } from '../../setupOrientation'
+import { judgeTargetFromFace } from '../../setupTargets'
 import { AUTO_TOOL_INTERIOR_FRACTION } from '../toolSelection'
 import {
   camPlanToolPool,
@@ -49,7 +51,9 @@ const Z_EPSILON = 1e-7
 export function camPlanProjectFingerprint(project: Project): string {
   return JSON.stringify({
     modified: project.meta.modified,
-    features: project.features.map((feature) => [feature.id, feature.definitionId, feature.transform, feature.z_top, feature.z_bottom]),
+    features: project.features.map((feature) => [feature.id, feature.definitionId, feature.transform, feature.z_top, feature.z_bottom, feature.authoringFace]),
+    // Planned operations join the active setup, so the plan is for that setup (issue #946).
+    setup: [project.activeSetupId, project.setups?.find((setup) => setup.id === project.activeSetupId)?.orientation],
     definitions: Object.values(project.featureDefinitions).map((definition) => [definition.id, definition.operation, definition.kind, definition.stl]),
     modelAssets: Object.entries(project.modelAssets ?? {}).sort(([a], [b]) => a.localeCompare(b)),
     tools: project.tools.map((tool) => [tool.id, tool.type, tool.units, tool.diameter, tool.maxCutDepth]),
@@ -235,7 +239,9 @@ function addPlannedOperation(
     dependencies,
     hardError: !selected
       ? missingToolError
-      : (!isOperationTargetValid(builder.project, kind, target) ? 'The proposed target is not valid for this operation.' : null),
+      : (!isOperationTargetValid(builder.project, kind, target)
+        ? 'The proposed target is not valid for this operation.'
+        : activeSetupTurnsStock(builder.project) ? TURNED_SETUP_ERROR : null),
     staleReason: null,
     userOverrides: [],
   }
@@ -683,8 +689,30 @@ function coverageFor(
   })
 }
 
+/**
+ * The plan reads depths from the top face, so it can only propose operations
+ * for a setup that leaves the stock as drawn. On a turned setup every
+ * proposal says so instead of being created with depths from the wrong side.
+ */
+const TURNED_SETUP_ERROR = 'CAM Plan proposes operations for the Top setup only. Switch the workspace to Top, or add this operation by hand.'
+
+function activeSetup(project: Project) {
+  return project.setups?.find((setup) => setup.id === project.activeSetupId)
+}
+
+function activeSetupTurnsStock(project: Project): boolean {
+  const setup = activeSetup(project)
+  return setup !== undefined && setup.orientation.angleDeg !== 0
+}
+
 export function createCamPlan(project: Project, libraryTools: ToolLibraryEntry[]): CamPlanDraft {
+  // Planned operations join the active setup, so only what that setup may
+  // target is planned (issue #946): features drawn on its face, and
+  // through-features. With a single Top setup that is every feature.
+  const setup = activeSetup(project)
+  const face = setup ? setupFace(setup) : 'top'
   const features = resolveFeatureInstances(project)
+    .filter((feature) => judgeTargetFromFace(project, feature, face).status !== 'rejected')
   const tools = camPlanToolPool(project, libraryTools)
   const analysisProject = {
     ...project,

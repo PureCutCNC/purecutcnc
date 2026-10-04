@@ -195,6 +195,14 @@ export const dialogsEs: Record<keyof typeof dialogsEn, string> = {
 
   // ── Export: exported-motion debug view (issue #356) ──
   'dialogs.export.inspectMotion': 'Inspeccionar movimiento exportado',
+  'dialogs.export.programs': 'Programas',
+  'dialogs.export.perSetupNote': 'Un programa por sujeción. Usted voltea la pieza a mano entre programas; ningún programa la voltea.',
+  'dialogs.export.programLabel': '{number} · {setup}',
+  'dialogs.export.programOperations.one': '{count} operación',
+  'dialogs.export.programOperations.other': '{count} operaciones',
+  'dialogs.export.programSaved': 'guardado',
+  'dialogs.export.exportFiles': 'Exportar {count} archivos',
+  'dialogs.export.error.saveFailed': 'No se pudo guardar {file}. Pulse Exportar de nuevo para continuar con los archivos restantes.',
   'dialogs.motionDebug.title': 'Movimiento exportado — {operation}',
   'dialogs.motionDebug.layerGenerated': 'Generado (sin optimizar)',
   'dialogs.motionDebug.layerOptimized': 'Optimizado',

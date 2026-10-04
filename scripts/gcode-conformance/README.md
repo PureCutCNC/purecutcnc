@@ -25,6 +25,13 @@ failure), full circles, the 90° split boundary, inch output, the R dialect,
 per-machine dialects, and a pure-G1 control. SBP cases cover mm/inch, `CG` in
 both directions, two-tool changes, expanded peck drilling and the units guard.
 
+The `bottom-setup-*` cases (issue #946) export an operation from a setup that
+turns the stock over. They carry the setup header — comments in each dialect's
+own syntax, with free-text operator notes — and their moves have been through
+the two half turns a Bottom toolpath takes (into stock space when generated,
+back out when exported), which is exact only up to floating-point rounding.
+One case is a pocket drawn on the bottom face and generated end to end.
+
 ## Validators
 
 | validator | what it is | dialects |

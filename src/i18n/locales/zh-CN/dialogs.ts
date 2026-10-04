@@ -228,6 +228,14 @@ export const dialogsZhCN: Record<keyof typeof dialogsEn, string> = {
 
   // ── Export: exported-motion debug view (issue #356) ──
   'dialogs.export.inspectMotion': '检查导出运动',
+  'dialogs.export.programs': '程序',
+  'dialogs.export.perSetupNote': '每个装夹一个程序。程序之间由您手动翻转工件；程序本身不会翻转工件。',
+  'dialogs.export.programLabel': '{number} · {setup}',
+  'dialogs.export.programOperations.one': '{count} 个加工操作',
+  'dialogs.export.programOperations.other': '{count} 个加工操作',
+  'dialogs.export.programSaved': '已保存',
+  'dialogs.export.exportFiles': '导出 {count} 个文件',
+  'dialogs.export.error.saveFailed': '无法保存 {file}。请再次按“导出”以继续保存其余文件。',
   'dialogs.motionDebug.title': '导出运动 — {operation}',
   'dialogs.motionDebug.layerGenerated': '生成（原始）',
   'dialogs.motionDebug.layerOptimized': '优化后',

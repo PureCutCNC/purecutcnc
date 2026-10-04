@@ -23,6 +23,7 @@ import { nextUniqueGeneratedId } from './ids'
 import { normalizeFeatureZRange, syncFeatureTreeProject } from './normalize'
 import { uniqueFolderName } from './naming'
 import { isOperationTargetValid, toolMatchesTemplate } from './operationDefaults'
+import { targetAllowedInSetup } from '../../engine/setupTargets'
 
 export type CamPlanMaterializationResult =
   | { ok: true; project: Project; operationIds: string[] }
@@ -167,7 +168,13 @@ export function materializeCamPlan(project: Project, plan: CamPlanDraft): CamPla
       toolRef,
       showToolpath: true,
     }
-    if (!toolRef || !isOperationTargetValid(next, operation.kind, operation.target)) {
+    // The operation joins the active setup, so its targets are judged from
+    // that setup's face (issue #946).
+    if (
+      !toolRef
+      || !isOperationTargetValid(next, operation.kind, operation.target)
+      || !targetAllowedInSetup(next, operation.target, next.activeSetupId)
+    ) {
       return { ok: false, reason: 'invalid', message: `${draft.operation.name} no longer has a valid target or tool.` }
     }
     next = { ...next, operations: [...next.operations, operation] }

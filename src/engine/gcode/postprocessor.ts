@@ -34,6 +34,7 @@ import {
   planDrillCycles,
   planOperationMotion,
   planProgramSequence,
+  planProgramSetup,
   splitRapid,
 } from './motionPipeline'
 import { emitOpenSbpProgram } from './opensbpEmitter'
@@ -227,6 +228,14 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
     emitLine(wcsCommand)
   } else if (headerContainsWCS && !definition.workCoordinates.selectCommand) {
     warnings.push({ code: 'postWcsNullSelect' })
+  }
+
+  // Which setup the program is for, and how the part must sit (issue #946).
+  // Nothing is written for a project with a single setup.
+  const setupPlan = planProgramSetup(input)
+  warnings.push(...setupPlan.warnings)
+  for (const comment of setupPlan.headerComments) {
+    emitLine(`${definition.program.commentPrefix} ${safeCommentText(comment)}${definition.program.commentSuffix}`)
   }
 
   // 4. Operations

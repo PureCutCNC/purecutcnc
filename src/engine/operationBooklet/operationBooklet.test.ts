@@ -25,7 +25,8 @@ import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { resetI18nStoreForTests, setActiveLocale, translate } from '../../i18n/store'
 import { defaultTool, newProject, rectProfile } from '../../types/project'
 import type { Operation, Project, SketchFeature } from '../../types/project'
-import { replaceProjectFeatures } from '../../test/projectFixtures'
+import { replaceProjectFeatures, withBottomSetup } from '../../test/projectFixtures'
+import { syncProjectSetups } from '../../store/helpers/setups'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import type { ToolpathResult } from '../toolpaths/types'
 import { createOperationBookletPdf, shouldStackRowLabel } from './pdf'
@@ -874,7 +875,77 @@ function testReportPatternRowFollowsTakesPocketPattern(): void {
   )
 }
 
+/**
+ * The setup section (issue #946). A booklet is read at the machine, so for a
+ * project with more than one setup it says which program the operation is in
+ * and how the stock is turned, marks a target cut from the other face, and
+ * gives heights as the machine runs them rather than in stock space.
+ */
+function testReportSetupSection(): void {
+  console.log('Testing the booklet names the setup and reads heights in its frame...')
+  const { project, operation } = fixture()
+  const tool = normalizeToolForProject(project.tools[0], project)
+  const generatedAt = new Date('2026-06-04T12:00:00Z')
+  const row = (rows: Array<{ label: string; value: string }>, key: Parameters<typeof translate>[0]) =>
+    rows.find((entry) => entry.label === translate(key))?.value
+
+  // One setup: no section, and nothing else changes.
+  const single = syncProjectSetups({ ...project, operations: [operation] })
+  const singleOperation = single.operations[0]
+  const topToolpath: ToolpathResult = {
+    operationId: operation.id,
+    warnings: [],
+    bounds: { minX: 5, minY: 5, minZ: 12, maxX: 25, maxY: 21, maxZ: 25 },
+    moves: [{ kind: 'cut', from: { x: 5, y: 5, z: 12 }, to: { x: 25, y: 5, z: 12 } }],
+  }
+  const singleReport = buildOperationBookletReport({ project: single, operation: singleOperation, tool, toolpath: topToolpath, generatedAt })
+  assert(singleReport.setupRows.length === 0, 'a single-setup booklet has no setup section')
+  assert(singleReport.targetSummary === 'Pocket Region', 'and its target is listed plainly')
+  assert(row(singleReport.toolpathStats, 'booklet.label.bottomZ') === '12 mm', 'and its heights are stock heights')
+
+  // Two setups, the operation cut from Bottom: the through pocket was drawn on Top.
+  const two = withBottomSetup(single, {
+    operationIds: [operation.id],
+    setup: {
+      name: 'Underside',
+      notes: 'Flip toward you.\nSeat on the dowels.',
+      registration: [{ id: 'r1', kind: 'dowel', target: { type: 'feature', featureId: 'f-pocket' } }],
+    },
+  })
+  const bottomOperation = two.operations[0]
+  // The same cut as a Bottom operation stores it: 8 up from the bottom face, clearance under the stock.
+  const stockSpace: ToolpathResult = {
+    operationId: operation.id,
+    warnings: [],
+    bounds: { minX: 5, minY: 59, minZ: -5, maxX: 25, maxY: 75, maxZ: 8 },
+    moves: [
+      { kind: 'rapid', from: { x: 5, y: 75, z: -5 }, to: { x: 5, y: 75, z: -5 } },
+      { kind: 'cut', from: { x: 5, y: 75, z: 8 }, to: { x: 25, y: 75, z: 8 } },
+    ],
+  }
+  const report = buildOperationBookletReport({ project: two, operation: bottomOperation, tool, toolpath: stockSpace, generatedAt })
+  assert(row(report.setupRows, 'booklet.label.setup') === '02 · Underside', `the setup row names the program: ${row(report.setupRows, 'booklet.label.setup')}`)
+  assert(row(report.setupRows, 'booklet.label.setupTurn') === translate('booklet.value.setupBottom', { axis: 'X' }), 'the turn row says how the stock is flipped')
+  assert(row(report.setupRows, 'booklet.label.registration') === `${translate('booklet.registration.dowel')} Pocket Region`, 'registration names its reference')
+  assert(row(report.setupRows, 'booklet.label.setupNotes') === 'Flip toward you. Seat on the dowels.', 'operator notes are included')
+  assert(report.targetSummary === translate('booklet.target.crossFace', { name: 'Pocket Region' }), 'a target cut from the other face is marked')
+  // Stock Z 8 is 12 below the face that is up (20 − 8); clearance −5 is 25.
+  assert(row(report.toolpathStats, 'booklet.label.bottomZ') === '12 mm', `bottom Z is read in the setup: ${row(report.toolpathStats, 'booklet.label.bottomZ')}`)
+  assert(row(report.toolpathStats, 'booklet.label.topZ') === '25 mm', `top Z is read in the setup: ${row(report.toolpathStats, 'booklet.label.topZ')}`)
+  assert(stockSpace.bounds?.minZ === -5, 'the toolpath handed in is not written to')
+
+  // The Top operation of the same project.
+  const topInTwo = withBottomSetup(single, { setup: { name: 'Underside' } })
+  const topReport = buildOperationBookletReport({ project: topInTwo, operation: topInTwo.operations[0], tool, toolpath: topToolpath, generatedAt })
+  assert(row(topReport.setupRows, 'booklet.label.setup') === '01 · Top', 'the Top operation is in program 01')
+  assert(row(topReport.setupRows, 'booklet.label.setupTurn') === translate('booklet.value.setupTop'), 'with the top face up')
+  assert(row(topReport.setupRows, 'booklet.label.registration') === translate('booklet.value.registrationNone'), 'and no registration declared')
+  assert(row(topReport.setupRows, 'booklet.label.setupNotes') === undefined, 'no notes row without notes')
+  assert(topReport.targetSummary === 'Pocket Region', 'a same-face target is not marked')
+}
+
 testReportContent()
+testReportSetupSection()
 testFeedTimeFallsBackToToolDefaultFeed()
 testFeedTimeUsesScaledSlotFeed()
 testReportIncludesEngagementModeRow()

@@ -95,6 +95,7 @@ function reportText(report: OperationBookletReport): string[] {
     report.stockSizeSummary,
     report.targetSummary,
     ...report.targetFeatureNames,
+    ...report.setupRows.flatMap((row) => [row.label, row.value]),
     ...report.toolRows.flatMap((row) => [row.label, row.value]),
     ...report.settingRows.flatMap((row) => [row.label, row.value]),
     ...report.toolpathStats.flatMap((row) => [row.label, row.value]),
@@ -102,6 +103,7 @@ function reportText(report: OperationBookletReport): string[] {
     translate('booklet.pdf.title'),
     translate('booklet.pdf.snapshot'),
     translate('booklet.section.overview'),
+    translate('booklet.section.setup'),
     translate('booklet.section.tool'),
     translate('booklet.section.operationSettings'),
     translate('booklet.section.toolpath'),
@@ -478,6 +480,11 @@ export async function createOperationBookletPdf(input: OperationBookletInput): P
 
   drawSection(state, translate('booklet.section.overview'))
   drawRows(state, descriptionRows(report))
+
+  if (report.setupRows.length > 0) {
+    drawSection(state, translate('booklet.section.setup'))
+    drawRows(state, report.setupRows)
+  }
 
   drawSection(state, translate('booklet.section.tool'))
   drawRows(state, report.toolRows)

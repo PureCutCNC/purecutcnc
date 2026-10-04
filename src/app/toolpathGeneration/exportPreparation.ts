@@ -32,6 +32,13 @@
  * whole export and says which one; nothing is ever filtered out to make the
  * remainder postable.
  *
+ * ## One program per setup
+ *
+ * The operator turns the part by hand between machining setups, so an export
+ * of a project with more than one setup is a *set* of programs, one per setup
+ * (issue #946). The rule above scales with it: the export is all of its
+ * programs or it is nothing — an error in one program blocks every file.
+ *
  * ## The token
  *
  * A prepared program is bound to the inputs it was built from. Generation is
@@ -43,11 +50,12 @@
  */
 
 import { runPostProcessor } from '../../engine/gcode/postprocessor'
+import { planSetupPrograms } from '../../engine/gcode/setupPrograms'
 import type { MachineDefinition, PostProcessorResult } from '../../engine/gcode/types'
 import { normalizeToolForProject, type NormalizedTool } from '../../engine/toolpaths'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { warningSeverity, type ToolpathWarning } from '../../engine/toolpaths/warningCodes'
-import type { Operation, Project } from '../../types/project'
+import type { Operation, Project, SetupFace } from '../../types/project'
 import type { GenerationContext, ToolpathGenerationService } from './service'
 
 export interface ExportPostOptions {
@@ -62,6 +70,22 @@ export interface PreparedOperation {
   operation: Operation
   tool: NormalizedTool
   toolpath: ToolpathResult
+}
+
+/** One program of an export: the operations of one setup, posted. */
+export interface PreparedProgram {
+  /** The setup the program is for; null for a project without setups. */
+  setupId: string | null
+  /** The setup's name, for labelling the program; null with `setupId`. */
+  setupName: string | null
+  /** 1-based program number: the setup's position in the project. */
+  programNumber: number
+  face: SetupFace
+  /** Suggested file name, without the extension. */
+  fileStem: string
+  result: PostProcessorResult
+  /** This program's operations, in the order they are cut. */
+  operations: PreparedOperation[]
 }
 
 /**
@@ -90,7 +114,8 @@ export type ExportBlockReason =
 
 export type ExportPreparation =
   | { status: 'preparing'; token: ExportPreparationToken }
-  | { status: 'ready'; token: ExportPreparationToken; result: PostProcessorResult; operations: PreparedOperation[] }
+  /** One program per setup that has a selected operation, in setup order; never empty. */
+  | { status: 'ready'; token: ExportPreparationToken; programs: PreparedProgram[] }
   | { status: 'blocked'; token: ExportPreparationToken; reason: ExportBlockReason }
 
 /**
@@ -104,6 +129,11 @@ export type ExportPreparation =
  */
 export function programHasError(warnings: readonly ToolpathWarning[]): boolean {
   return warnings.some((warning) => warningSeverity(warning.code) === 'error')
+}
+
+/** An export is every one of its programs: an error in any of them blocks them all. */
+export function exportHasError(programs: readonly PreparedProgram[]): boolean {
+  return programs.some((program) => programHasError(program.result.warnings))
 }
 
 /** Stable key for the postprocessor options, so an option change invalidates a token. */
@@ -220,19 +250,42 @@ export async function prepareExport(
     })
   }
 
-  // The postprocessor sees the captured project, not the live one: origin,
-  // units, names and tools have to come from the same revision as the paths.
-  const result = runPostProcessor({
-    project: token.project,
-    operations: prepared,
-    definition,
-    options: {
-      emitToolChanges: options.emitToolChanges,
-      emitCoolant: options.emitCoolant,
-      programName: options.programName,
-      captureMotionTrace: options.captureMotionTrace,
-    },
+  // One program per setup. The postprocessor sees the captured project, not
+  // the live one: origin, units, names, tools and setups have to come from the
+  // same revision as the paths.
+  const preparedById = new Map(prepared.map((row) => [row.operation.id, row]))
+  const programs: PreparedProgram[] = planSetupPrograms(token.project, token.operationIds).map((program) => {
+    const operations = program.operationIds.flatMap((operationId) => {
+      const row = preparedById.get(operationId)
+      return row ? [row] : []
+    })
+    return {
+      setupId: program.setup?.id ?? null,
+      setupName: program.setup?.name ?? null,
+      programNumber: program.programNumber,
+      face: program.face,
+      fileStem: program.fileStem,
+      operations,
+      result: runPostProcessor({
+        project: token.project,
+        operations,
+        definition,
+        options: {
+          emitToolChanges: options.emitToolChanges,
+          emitCoolant: options.emitCoolant,
+          programName: options.programName,
+          captureMotionTrace: options.captureMotionTrace,
+        },
+      }),
+    }
   })
 
-  return { status: 'ready', token, result, operations: prepared }
+  // Every prepared operation is in exactly one program. One that fell between
+  // them would be a pass missing from every file.
+  const posted = programs.reduce((count, program) => count + program.operations.length, 0)
+  if (posted !== prepared.length) {
+    return { status: 'blocked', token, reason: { kind: 'stale' } }
+  }
+
+  return { status: 'ready', token, programs }
 }
