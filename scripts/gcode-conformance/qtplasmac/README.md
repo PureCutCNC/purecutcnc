@@ -153,6 +153,20 @@ driver do what the GUI does at the wrong moment (manual mode just before the
 first Cycle Start, plus a material change), and requires exactly two presses
 and then a passing run.
 
+The material pin is shared with the GUI in the same way. The load filter and
+this driver ask for a material by writing `qtplasmac.material_change_number`;
+the GUI acts on it when it next polls, and writes the same pin itself at the
+end of the change. A request made while the GUI is still loading the previous
+one is overwritten and lost. So the driver makes one request at a time: it
+waits for the GUI to finish loading the material the filter selected
+(`let_gui_load_selected_material`), then asks for the default and watches that
+it is shown and stays shown, repeating the request if the pin is overwritten
+(`select_default_material`).
+
+One timing limit is QtPlasmaC's own and stays: its `M190` script gives the GUI
+half a second to answer a material change. A simulator slower than that would
+cut on the wrong material, and the `material` or `feed` rule would say so.
+
 ## Why the full simulator, not `rs274`
 
 The issue's open question was whether LinuxCNC's standalone `rs274`
