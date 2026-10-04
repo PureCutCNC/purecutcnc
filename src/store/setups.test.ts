@@ -39,7 +39,13 @@
  *   → "a geometry edit leaves every face" / "an offset … stays on Bottom" fail;
  * - setup ids left out of id generation → "an id in use by a setup" fails;
  * - `assignOperationToSetup` accepting an unknown setup → "a refused
- *   assignment is not an undo step" fails.
+ *   assignment is not an undo step" fails;
+ * - an imported operation falling back to the active setup → "the Bottom
+ *   operation does not become a Top operation" fails;
+ * - the transaction commit comparing `activeSetupId` → "a transaction that
+ *   only switched setups leaves no undo step" fails;
+ * - undo, redo or cancel restoring the snapshot's `activeSetupId` → "undo /
+ *   redo / cancel does not switch setups" fail.
  *
  * Run with: npx tsx src/store/setups.test.ts
  */
@@ -50,7 +56,7 @@ import { decodeProjectFormat, normalizeProject } from './helpers/projectFormat'
 import type { ProjectFormatInput } from './helpers/projectFormat'
 import { nextUniqueGeneratedId, syncIdCounter } from './helpers/ids'
 import { commitResolvedInstances, featureInstanceFromResolved, resolvedProjectFeatures } from './helpers/resolveFeatures'
-import { matchingSetupId, syncProjectSetups } from './helpers/setups'
+import { findSetupWithTurn, syncProjectSetups } from './helpers/setups'
 import {
   DEFAULT_SETUP_ID,
   defaultTool,
@@ -58,7 +64,7 @@ import {
   newProject,
   rectProfile,
 } from '../types/project'
-import type { MachiningSetup, Operation, Project, SketchFeature } from '../types/project'
+import type { Operation, Project, SketchFeature } from '../types/project'
 import { setupFace } from '../engine/setupOrientation'
 import { convertProjectUnits } from '../utils/units'
 import { BOTTOM_SETUP_ID, projectWithFeatures, withBottomSetup, withoutSetupFields } from '../test/projectFixtures'
@@ -532,14 +538,103 @@ function testUnitsAndImport(): void {
   assertEqual(inches.setups[1].registration[0], project.setups[1].registration[0], 'a feature reference has nothing to convert')
   assertEqual(inches.setups[1].orientation, project.setups[1].orientation, 'the orientation is unitless')
 
-  console.log('Testing an imported operation joins a setup turned the same way...')
-  const bottomAboutY: MachiningSetup = project.setups[1]
-  const bottomAboutX: MachiningSetup = { ...bottomAboutY, id: 'other', orientation: { axis: 'x', angleDeg: 180 } }
-  assertEqual(matchingSetupId(project, bottomAboutY), BOTTOM_SETUP_ID, 'the same turn matches')
-  assertEqual(matchingSetupId(project, { ...defaultTopSetup(), id: 'their-top', orientation: { axis: 'y', angleDeg: 0 } }), DEFAULT_SETUP_ID, 'Top matches Top whatever its axis')
-  // A flip about the other axis is a different turn: no match, so the active setup.
-  assertEqual(matchingSetupId({ ...project, activeSetupId: DEFAULT_SETUP_ID }, bottomAboutX), DEFAULT_SETUP_ID, 'a different flip axis does not match')
-  assertEqual(matchingSetupId(project, undefined), BOTTOM_SETUP_ID, 'an operation from a pre-setup project joins the active setup')
+  console.log('Testing a setup is found by its turn, with no fallback...')
+  const { setups } = project
+  assertEqual(findSetupWithTurn(setups, { axis: 'y', angleDeg: 180 })?.id, BOTTOM_SETUP_ID, 'the same turn matches')
+  assertEqual(findSetupWithTurn(setups, { axis: 'y', angleDeg: 0 })?.id, DEFAULT_SETUP_ID, 'Top matches Top whatever its axis')
+  // A flip about the other axis is a different turn, and nothing stands in for it.
+  assertEqual(findSetupWithTurn(setups, { axis: 'x', angleDeg: 180 }), undefined, 'a different flip axis does not match')
+  assertEqual(findSetupWithTurn([setups[0]], { axis: 'y', angleDeg: 180 }), undefined, 'no Bottom setup, no match')
+}
+
+// ── Import through the store ──────────────────────────────────
+
+function testImportKeepsOperationFace(): void {
+  console.log('Testing an imported Bottom operation is not turned into a Top one...')
+  // A Bottom pocket from a two-sided project, imported into a Top-only one.
+  const base = newProject('Source', 'mm')
+  base.tools = [{ ...defaultTool('mm', 1), id: 't1', name: 'Tool 1' }]
+  base.featureFolders = [{ id: 'fd-src', name: 'Part', collapsed: false }]
+  base.featureTree = [{ type: 'folder', folderId: 'fd-src' }]
+  const withFeature = projectWithFeatures(base, [{ ...makeFeature('f-under', 5, 0), folderId: 'fd-src' }])
+  const sourceProject = withBottomSetup(
+    normalizeProject({
+      ...withFeature,
+      features: withFeature.features.map((feature) => ({ ...feature, authoringFace: 'bottom' as const })),
+      operations: [makeOperation('op-under', 'f-under')],
+    }),
+    { axis: 'x', operationIds: ['op-under'] },
+  )
+  seed(normalizeProject(newProject('Target', 'mm')))
+  const targetTop = store().project.setups[0].id
+
+  const createdIds = store().importCamjFolders({ fileName: 'source.camj', sourceProject, selectedFolderIds: ['fd-src'] })
+  assertEqual(createdIds.length, 1, 'fixture: one feature imported')
+  const project = store().project
+  const [operation] = project.operations
+  const setup = project.setups.find((entry) => entry.id === operation.setupId)
+  assertEqual(project.operations.length, 1, 'the operation came across')
+  assert(setup && setup.id !== targetTop, 'the Bottom operation does not become a Top operation')
+  assertEqual(setup.orientation, { axis: 'x', angleDeg: 180 }, 'it lands in a setup turned the way its source was')
+  assertEqual(setup.operationIds, [operation.id], 'that setup lists it')
+  assertEqual(project.setups[0].operationIds, [], 'the Top setup does not')
+  assertEqual(project.features.find((feature) => feature.id === createdIds[0])?.authoringFace, 'bottom', 'the feature stays authored on Bottom')
+  assertEqual(project.activeSetupId, targetTop, 'importing does not switch the workspace')
+
+  // The added setup belongs to the import's undo step.
+  store().undo()
+  assertEqual(store().project.setups.map((entry) => entry.id), [targetTop], 'undo removes the added setup with the import')
+  assertEqual(store().project.operations.length, 0, 'and the operation')
+}
+
+// ── The active setup and history ──────────────────────────────
+
+function testActiveSetupStaysOutOfHistory(): void {
+  console.log('Testing switching setups never becomes an undo step...')
+  seed(withBottomSetup(makeProject()))
+  const past = () => store().history.past.length
+
+  // Inside a transaction: the reviewer's reproduction on PR #970.
+  store().beginHistoryTransaction()
+  store().setActiveSetup(BOTTOM_SETUP_ID)
+  store().commitHistoryTransaction()
+  assertEqual(past(), 0, 'a transaction that only switched setups leaves no undo step')
+  assertEqual(store().dirty, false, 'and does not mark the project changed')
+  assertEqual(store().project.activeSetupId, BOTTOM_SETUP_ID, 'the switch itself stands')
+  assertEqual(store().history.transactionStart, null, 'the transaction is closed')
+
+  // A real edit in a transaction is still one step, switch or no switch.
+  store().beginHistoryTransaction()
+  store().setActiveSetup(DEFAULT_SETUP_ID)
+  store().renameSetup(BOTTOM_SETUP_ID, 'Underside')
+  store().commitHistoryTransaction()
+  assertEqual(past(), 1, 'an edit made in the same transaction is one undo step')
+
+  console.log('Testing undo and redo leave the workspace on its setup...')
+  store().setActiveSetup(BOTTOM_SETUP_ID)
+  store().undo()
+  assertEqual(store().project.setups[1].name, 'Bottom', 'undo reverts the edit')
+  assertEqual(store().project.activeSetupId, BOTTOM_SETUP_ID, 'undo does not switch setups')
+  store().setActiveSetup(DEFAULT_SETUP_ID)
+  store().redo()
+  assertEqual(store().project.setups[1].name, 'Underside', 'redo reapplies the edit')
+  assertEqual(store().project.activeSetupId, DEFAULT_SETUP_ID, 'redo does not switch setups')
+
+  // Cancelling a transaction restores the content, not the face.
+  store().beginHistoryTransaction()
+  store().renameSetup(BOTTOM_SETUP_ID, 'Scratch')
+  store().setActiveSetup(BOTTOM_SETUP_ID)
+  store().cancelHistoryTransaction()
+  assertEqual(store().project.setups[1].name, 'Underside', 'cancel restores the content')
+  assertEqual(store().project.activeSetupId, BOTTOM_SETUP_ID, 'cancel does not switch setups')
+
+  // The one case the face has to move: the setup it was on is undone away.
+  const createdId = store().createSetup({ orientation: { axis: 'y', angleDeg: 180 } })
+  assert(createdId, 'fixture: a third setup')
+  store().setActiveSetup(createdId)
+  store().undo()
+  assert(!store().project.setups.some((setup) => setup.id === createdId), 'undo removes the created setup')
+  assertEqual(store().project.activeSetupId, DEFAULT_SETUP_ID, 'and the workspace falls back to a setup that exists')
 }
 
 testLegacyMigration()
@@ -548,6 +643,8 @@ testBottomRoundTrip()
 testStrictDecode()
 testSync()
 testStoreActions()
+testImportKeepsOperationFace()
+testActiveSetupStaysOutOfHistory()
 testFaceSurvivesTheResolvedReadModel()
 testSetupIdsAreReserved()
 testUnitsAndImport()

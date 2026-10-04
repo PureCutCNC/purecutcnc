@@ -155,17 +155,20 @@ export function assertOperationSetupsExist(operations: readonly Operation[], set
 }
 
 /**
- * The setup an operation imported from another project joins: the first setup
- * here turned the same way as the one it came from, else the active setup.
- * Setup ids are per project, so the source id itself means nothing here.
+ * The first setup turned exactly this way, if there is one. Used to place an
+ * operation imported from another project, whose setup ids mean nothing here.
+ * There is deliberately no fallback: a caller that finds none must add a
+ * setup with this turn, never put the operation on another face.
  */
-export function matchingSetupId(target: Project, sourceSetup: MachiningSetup | undefined): string {
-  const sameTurn = sourceSetup && target.setups.find((setup) => (
-    setup.orientation.angleDeg === sourceSetup.orientation.angleDeg
+export function findSetupWithTurn(
+  setups: readonly MachiningSetup[],
+  orientation: SetupOrientation,
+): MachiningSetup | undefined {
+  return setups.find((setup) => (
+    setup.orientation.angleDeg === orientation.angleDeg
     // The axis of a 0° turn says nothing; for any other it is part of the turn.
-    && (setup.orientation.angleDeg === 0 || setup.orientation.axis === sourceSetup.orientation.axis)
+    && (orientation.angleDeg === 0 || setup.orientation.axis === orientation.axis)
   ))
-  return sameTurn ? sameTurn.id : target.activeSetupId
 }
 
 function sameIds(a: readonly string[], b: readonly string[]): boolean {

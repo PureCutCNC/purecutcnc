@@ -28,7 +28,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `operationsSlice.ts` — operation CRUD, rest-operation creation, toolpath visibility, duplication, ordering, and the single-history-transition `applyCamPlan` action
   - `setupsSlice.ts` — machining setups (issue #944): create/rename/delete setup, the active setup, assign an operation to a setup, set a feature's authoring face; plus `withSetupSync`, the `set` wrapper that reconciles setups after every project change. No cross-face validation here — that arrives with CAM grouping (#946)
   - `projectLifecycleSlice.ts` — project lifecycle and persistence actions: create/load/open/save, metadata display settings, and export path markers
-  - `historySlice.ts` — undo/redo and history transaction lifecycle
+  - `historySlice.ts` — undo/redo and history transaction lifecycle. The active machining setup is a view choice (issue #944): a snapshot is restored onto the setup the workspace is on, and a transaction that only switched setups leaves no undo step
   - `workpieceSlice.ts` — stock, stock-source sketch editing, grid/units, origin placement, and creation target actions
   - `importMergeSlice.ts` — shape import and `.camj` folder merge actions
   - `constraintsSlice.ts` — persistent fixed-distance constraint placement, value updates, cancellation, and deletion
@@ -58,7 +58,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `buildShapeFeature.ts` — shared feature builder for the addRect/Circle/Ellipse/… constructors; consolidates duplicated shape-construction logic
   - `manualFeatureOperation.ts` — resolves existing world-space Add/Subtract instances and applies the shared strict-containment classifier to default a newly-created closed feature; also `inferLineTopZFromEnclosingFeature` (issue #351) picks a newly-created Line's initial `z_top` from the smallest enclosing solid (subtract floor / add top)
-  - `setups.ts` — machining-setup bookkeeping (issue #944): `decodeSetups` (strict validation of the setups a file carries; an orientation or indexing mode this build cannot machine is an error, not a fallback), `syncProjectSetups` (the reconciler — at least one setup, a valid active setup, every operation in a setup, `operationIds` rebuilt from membership and project order, references to deleted features dropped), and `matchingSetupId` for operations imported from another project
+  - `setups.ts` — machining-setup bookkeeping (issue #944): `decodeSetups` (strict validation of the setups a file carries; an orientation or indexing mode this build cannot machine is an error, not a fallback), `syncProjectSetups` (the reconciler — at least one setup, a valid active setup, every operation in a setup, `operationIds` rebuilt from membership and project order, references to deleted features dropped), and `findSetupWithTurn`, which places an operation imported from another project on a setup turned the way its source was — with no fallback, so the importer adds that setup rather than move the operation to another face
   - `ids.ts` — ID generation/uniqueness
   - `normalize.ts` — lower-level project normalization helpers: cloning, ID deduplication, cache clearing, equality checks, and feature tree/sync helpers
   - `polygonSplit.ts` — splits polygons (e.g. for boolean ops)

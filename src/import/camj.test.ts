@@ -322,28 +322,92 @@ function testMergeImportsToolAndOperation(): void {
   assert(!result.project.tools.some((t) => t.name === 'Unused'), 'unused tool should not be imported')
 }
 
-function testMergeMapsOperationsOntoMatchingSetups(): void {
-  // Setup ids are per project (issue #944): an imported operation joins the
-  // setup here that is turned the same way as the one it came from.
-  const source = withBottomSetup({
-    ...makeSourceProject('mm'),
-    tools: [makeTool('t-src-1', 'Endmill')],
-    operations: [
-      makeOperation('op-top', 'Top pocket', ['f-src-1'], 't-src-1'),
-      makeOperation('op-bottom', 'Bottom pocket', ['f-src-2'], 't-src-1'),
-    ],
-  }, { axis: 'y', operationIds: ['op-bottom'] })
-  // The target's own Bottom setup has a different id from the source's.
-  const target = withBottomSetup(newProject('Target', 'mm'), { axis: 'y', setup: { id: 'target-bottom' } })
-  const setupByName = (project: Project) => new Map(project.operations.map((operation) => [operation.name, operation.setupId]))
+function testMergeKeepsOperationTurn(): void {
+  // Setup ids are per project (issue #944). An imported operation keeps the
+  // turn it was made for: it joins the setup here that is turned the same way,
+  // and when there is none that setup is added. It never lands on another face.
+  const bottomSource = (axis: 'x' | 'y') => {
+    const source = withBottomSetup({
+      ...makeSourceProject('mm'),
+      tools: [makeTool('t-src-1', 'Endmill')],
+      operations: [
+        makeOperation('op-top', 'Top pocket', ['f-src-1'], 't-src-1'),
+        makeOperation('op-bottom', 'Bottom pocket', ['f-src-2'], 't-src-1'),
+      ],
+    }, { axis, operationIds: ['op-bottom'] })
+    return {
+      ...source,
+      features: source.features.map((feature) => (
+        feature.id === 'f-src-2' ? { ...feature, authoringFace: 'bottom' as const } : feature
+      )),
+    }
+  }
+  const merge = (currentProject: Project, sourceProject: Project) =>
+    mergeCamjFolders({ currentProject, sourceProject, selectedFolderIds: ['fd-src-a'] }).project
+  const setupOf = (project: Project, operationName: string) => {
+    const operation = project.operations.find((entry) => entry.name === operationName)
+    return project.setups.find((setup) => setup.id === operation?.setupId)
+  }
+  const turns = (project: Project) => project.setups.map((setup) => `${setup.orientation.angleDeg}${setup.orientation.axis}`)
 
-  const merged = mergeCamjFolders({ currentProject: target, sourceProject: source, selectedFolderIds: ['fd-src-a'] }).project
-  assert(setupByName(merged).get('Top pocket') === target.setups[0].id, 'a Top operation joins the target Top setup')
-  assert(setupByName(merged).get('Bottom pocket') === 'target-bottom', 'a Bottom operation joins the target Bottom setup, not the source id')
+  // A setup turned the same way exists under another id: the operation joins it.
+  const twoSided = withBottomSetup(newProject('Target', 'mm'), { axis: 'y', setup: { id: 'target-bottom' } })
+  const mapped = merge(twoSided, bottomSource('y'))
+  assert(setupOf(mapped, 'Top pocket')?.id === twoSided.setups[0].id, 'a Top operation joins the target Top setup')
+  assert(setupOf(mapped, 'Bottom pocket')?.id === 'target-bottom', 'a Bottom operation joins the target Bottom setup, not the source id')
+  assert(mapped.setups.length === 2, 'no setup is added when the turns match')
+  assert(mapped.setups[1].operationIds.length === 1, 'the target setup lists the imported operation')
 
-  // No setup turned that way here: the operation joins the active setup.
-  const topOnly = mergeCamjFolders({ currentProject: newProject('Top only', 'mm'), sourceProject: source, selectedFolderIds: ['fd-src-a'] }).project
-  assert(setupByName(topOnly).get('Bottom pocket') === topOnly.activeSetupId, 'without a matching setup the operation joins the active one')
+  // Top-only target: the Bottom operation must not become a Top operation.
+  const topOnly = newProject('Top only', 'mm')
+  const added = merge(topOnly, bottomSource('x'))
+  const addedSetup = setupOf(added, 'Bottom pocket')
+  assert(added.setups.length === 2, `a Bottom setup is added to a Top-only project, got ${turns(added).join(',')}`)
+  assert(addedSetup?.orientation.angleDeg === 180 && addedSetup?.orientation.axis === 'x', 'the added setup keeps the source turn')
+  assert(addedSetup?.id !== topOnly.activeSetupId, 'the Bottom operation does not join the active Top setup')
+  assert(addedSetup?.operationIds.length === 1, 'the added setup lists the operation')
+  assert(setupOf(added, 'Top pocket')?.id === topOnly.setups[0].id, 'the Top operation still joins Top')
+  assert(added.activeSetupId === topOnly.activeSetupId, 'importing does not switch the workspace')
+  const importedBottomFeature = added.features.find((feature) => feature.name === 'Slot')
+  assert(importedBottomFeature?.authoringFace === 'bottom', 'the imported feature stays authored on Bottom')
+
+  // A Bottom setup flipped about the other axis is a different turn: the
+  // operation gets its own setup rather than the target's.
+  const otherAxis = merge(twoSided, bottomSource('x'))
+  const otherAxisSetup = setupOf(otherAxis, 'Bottom pocket')
+  assert(otherAxisSetup?.orientation.axis === 'x', 'a different flip axis is not silently replaced')
+  assert(otherAxisSetup?.id !== 'target-bottom', 'the operation does not join a setup flipped about another axis')
+  assert(turns(otherAxis).join(',') === '0x,180y,180x', `expected a third setup, got ${turns(otherAxis).join(',')}`)
+  assert(new Set(otherAxis.setups.map((setup) => setup.name)).size === 3, 'the added setup has a distinct name')
+  // The added setup's id is new even when the target already uses the first id the generator would hand out.
+  const idTaken = withBottomSetup(newProject('Target', 'mm'), { axis: 'y', setup: { id: 'su0001' } })
+  const distinctIds = merge(idTaken, bottomSource('x')).setups.map((setup) => setup.id)
+  assert(new Set(distinctIds).size === 3, `the added setup must not reuse a setup id, got ${distinctIds.join(',')}`)
+
+  // A source saved before setups existed was made for Top — whichever face
+  // the target is on, and even when the target has no Top setup at all.
+  const preSetup = bottomSource('x')
+  const legacySource = {
+    ...preSetup,
+    operations: preSetup.operations.map(({ setupId: _setupId, ...operation }) => { void _setupId; return operation }),
+  }
+  const onBottom = { ...twoSided, activeSetupId: 'target-bottom' }
+  const legacy = merge(onBottom, legacySource)
+  assert(setupOf(legacy, 'Top pocket')?.id === twoSided.setups[0].id, 'a pre-setup operation joins Top')
+  assert(setupOf(legacy, 'Bottom pocket')?.id === twoSided.setups[0].id, 'a pre-setup operation joins Top, not the active Bottom setup')
+  const bottomOnly = { ...onBottom, setups: [onBottom.setups[1]] }
+  const legacyNoTop = merge(bottomOnly, legacySource)
+  assert(setupOf(legacyNoTop, 'Top pocket')?.orientation.angleDeg === 0, 'a Top setup is added when the target has none')
+
+  // An operation whose setup its own project does not define is not imported.
+  const dangling = {
+    ...preSetup,
+    operations: preSetup.operations.map((operation) => (operation.id === 'op-bottom' ? { ...operation, setupId: 'gone' } : operation)),
+  }
+  const refused = mergeCamjFolders({ currentProject: topOnly, sourceProject: dangling, selectedFolderIds: ['fd-src-a'] })
+  assert(!refused.project.operations.some((operation) => operation.name === 'Bottom pocket'), 'an operation with an unknown setup is not imported')
+  assert(refused.warnings.some((warning) => warning.includes('Bottom pocket')), 'and the import says so')
+  assert(refused.project.setups.length === 1, 'and no setup is added for it')
 }
 
 function testMergeSkipsOperationsTargetingNonImportedFeatures(): void {
@@ -751,7 +815,7 @@ testMergeRenamesOnNameCollision()
 testMergeCopiesReferencedMeshAssets()
 testMergeCopiesReferencedDimensions()
 testMergeImportsToolAndOperation()
-testMergeMapsOperationsOntoMatchingSetups()
+testMergeKeepsOperationTurn()
 testMergeSkipsOperationsTargetingNonImportedFeatures()
 testMergeSkipsStockTargetedOperations()
 testMergeScalesUnitsMmToInch()
