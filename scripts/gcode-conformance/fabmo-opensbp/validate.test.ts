@@ -24,7 +24,8 @@ import { CORPUS, caseExtension, renderCase } from '../corpus'
 import { loadParser, unitsMessage, validateProgram } from './validate'
 
 const cases = CORPUS.filter((entry) => entry.machineId === 'shopbot')
-assert.equal(cases.length, 8)
+// Eight native SBP cases (#966) and two Bottom-setup ones (#946).
+assert.equal(cases.length, 10)
 const seen: string[] = []
 const recorder = { parse: (line: string) => { seen.push(line) } }
 for (const entry of cases) {
@@ -63,7 +64,7 @@ for (const entry of cases) {
   const speedLine = gcode.split('\n').findIndex((line) => line.startsWith('MS,')) + 1
   assert.throws(() => validateProgram(rejectMotion, gcode), new RegExp(`line ${speedLine}: bad MS`))
 }
-console.log('FabMo adapter: 8 exported SBP cases, exact exception boundaries and line reporting passed.')
+console.log('FabMo adapter: 10 exported SBP cases, exact exception boundaries and line reporting passed.')
 
 const validatorRoot = process.env.GCODE_VALIDATOR_DIR
   ? resolve(process.env.GCODE_VALIDATOR_DIR) : resolve('.gcode-conformance/validators')

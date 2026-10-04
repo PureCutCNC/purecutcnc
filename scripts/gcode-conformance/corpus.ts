@@ -417,7 +417,14 @@ function generatedBottomPocket(): { project: Project; operation: Operation; tool
   })
   const project = withBottomSetup(
     syncProjectSetups({ ...projectWithFeatures(base, [slot]), operations: [template] }),
-    { axis: 'x', operationIds: [template.id], setup: { notes: AWKWARD_NOTES } },
+    {
+      axis: 'x',
+      operationIds: [template.id],
+      setup: {
+        notes: AWKWARD_NOTES,
+        registration: [{ id: 'r1', kind: 'dowel', target: { type: 'point', point: { x: 100.5, y: 40.25 } } }],
+      },
+    },
   )
   const operation = project.operations[0]
   const envelope = computeOperationToolpath(project, operation)
@@ -759,7 +766,19 @@ function inBottomSetup(
       : project.origin
   const turned = withBottomSetup(
     syncProjectSetups({ ...project, origin, operations: [operation] }),
-    { axis: bottom.axis, operationIds: [operation.id], setup: { notes: bottom.notes ?? '' } },
+    {
+      axis: bottom.axis,
+      operationIds: [operation.id],
+      setup: {
+        notes: bottom.notes ?? '',
+        // A declared reference, so the header's registration line carries
+        // real content and the export raises no missing-registration warning.
+        registration: [
+          { id: 'r1', kind: 'corner', target: { type: 'point', point: { x: bounds.minX, y: bounds.maxY } } },
+          { id: 'r2', kind: 'fence', target: { type: 'edge', start: { x: bounds.minX, y: bounds.maxY }, end: { x: bounds.maxX, y: bounds.maxY } } },
+        ],
+      },
+    },
   )
   const frame = setupFrame({ axis: bottom.axis, angleDeg: 180 }, turned.stock)
   const stockSpace = toolpathInStockFrame({ operationId: operation.id, warnings: [], bounds: null, moves }, frame)
