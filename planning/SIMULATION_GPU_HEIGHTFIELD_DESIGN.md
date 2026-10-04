@@ -37,13 +37,16 @@ The shipped implementation plan and playback experiments are preserved in
   keeps "wall drawn" and "top stays flat" from drifting apart — when they
   disagreed, the surface painted the riser's normal onto the flat top beside it
   as a dark band across the tab (issue #829).
-- A height change of at most half a cell is always a slope. The Detail slider
+- A height change at or below half a cell is always a slope. The Detail slider
   sets cells along the stock's long axis, so on large stock a ball finish is
   sampled with only two or three cells per pass; its gradient then reverses at
   nearly every edge, nothing "continues" it, and the finished surface used to
-  render as flat squares outlined by wall-lit risers (issue #939). A cut-through
-  rim is still a wall however thin the skin beside it, and a cut-through cell
-  beyond an edge is never counted as a gradient that edge continues.
+  render as flat squares outlined by wall-lit risers (issue #939). A real step
+  at or below half a cell cannot be told from a scallop, so it gets the same
+  treatment: a pocket that shallow, or a tab within half a cell of the part's
+  top, keeps its riser but loses its crisp wall lighting. A cut-through rim is
+  still a wall however thin the skin beside it, and a cut-through cell beyond
+  an edge is never counted as a gradient that edge continues.
 - The surface normal is interpolated, not one per cell. Along an axis it blends
   the height change across the cell's two edges by position; across the axis it
   blends the three neighboring lines. The lighting is therefore continuous over

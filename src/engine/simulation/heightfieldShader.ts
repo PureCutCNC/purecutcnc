@@ -36,13 +36,19 @@ export const LIGHTING_GLSL = /* glsl */ `
 `
 
 /**
- * A height change of at most this many cells across one edge is always shaded
- * as a slope. A ball finish on large stock samples each scallop with only two
- * or three cells, so the gradient reverses at nearly every edge and no neighbor
- * "continues" it; without this bound those edges were drawn as risers and the
- * finished surface turned into a grid of flat squares (issue #939). The steepest
- * edge a scallop can produce is stepover / tool diameter cells tall, so half a
- * cell covers ball finishing up to roughly 45 % stepover.
+ * A height change at or below this many cells across one edge, between two
+ * cells that both still hold material, is always shaded as a slope. A ball
+ * finish on large stock samples each scallop with only two or three cells, so
+ * the gradient reverses at nearly every edge and no neighbor "continues" it;
+ * without this bound those edges were drawn as risers and the finished surface
+ * turned into a grid of flat squares (issue #939). The steepest edge a scallop
+ * can produce is stepover / tool diameter cells tall, so half a cell covers
+ * ball finishing up to roughly 45 % stepover.
+ *
+ * The heights cannot tell a scallop from a real step that shallow, so the rule
+ * covers both: a pocket at or below half a cell deep, or a tab within half a
+ * cell of the part's top, keeps its riser but has it lit as surface rather than
+ * as a crisp wall. A step onto a through cut is exempt and always a wall.
  */
 export const SHALLOW_SLOPE_CELLS = 0.5
 
@@ -56,16 +62,16 @@ export const SLOPE_CONTINUATION_RATIO = 4
  * shading shows up as a dark rim on a flat top — a tab's stock-to-tab wall
  * painted its own normal onto the 20 mm top beside it (issue #829).
  *
- * An edge is a slope when it is shallow (see `SHALLOW_SLOPE_CELLS`) or when its
- * step continues the gradient on either side of it (same sign, comparable
- * magnitude), which is what a V-flank or a ball roundover looks like across
- * many cells. An isolated step is a wall, and so is any step onto a cell whose
+ * An edge is a slope when it is at or below half a cell tall (see
+ * `SHALLOW_SLOPE_CELLS`) or when its step continues the gradient on either side
+ * of it (same sign, comparable magnitude), which is what a V-flank or a ball
+ * roundover looks like across many cells. An isolated step is a wall, and so is any step onto a cell whose
  * material has been removed entirely. A cut-through cell beyond the edge is the
  * far side of a wall, never more of a slope: counting its drop as a gradient
  * would turn a tall tab's stock-to-tab wall back into a shaded slope.
  *
  * Written in the scalar subset `glslScalar.testSupport.ts` can run, so the unit
- * tests exercise this exact source rather than a TypeScript copy of it.
+ * tests exercise this exact function rather than a TypeScript copy of it.
  */
 export const STEP_GLSL = /* glsl */ `
   bool edgeIsStep(float hNear, float hFar, float hNearBeyond, float hFarBeyond, float stockBottomZ, float cellSize) {

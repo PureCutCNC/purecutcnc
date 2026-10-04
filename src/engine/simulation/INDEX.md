@@ -25,7 +25,7 @@ builders — no React.
 - `gpuMesh.test.ts` — heightfield texture/mesh construction and per-cell top geometry
 - `tabbedEdgeSimulation.test.ts` — real rectangle/Edge Out/auto-tab toolpath replay at two detail levels, including playback and through-cut neighbors
 - `instancedBoundary.test.ts` — strip template scaling, instance counts, group wiring, and the step predicate and surface normal the surface and walls share
-- `heightfieldShader.test.ts` — the step/slope predicate and the lighting gradient, run from the GLSL source: a ball scallop at ~3 cells per pass is a slope, tab bridges and cut-through rims stay steps, the gradient is continuous across cell borders and takes nothing from a step
+- `heightfieldShader.test.ts` — the step/slope predicate and the lighting gradient's scalar helpers, run from the GLSL source: a ball scallop at ~3 cells per pass is a slope, tab bridges and cut-through rims stay steps, a step at or below half a cell is a slope, the gradient is continuous across cell borders and takes nothing from a step. The texture lookups and wiring around those helpers are restated in the test; the assembled shaders are covered by the rendered checks in `e2e/viewportViews.smoke.spec.ts`
 - `glslScalar.testSupport.ts` — test support that compiles the shaders' scalar GLSL functions to JavaScript, so those tests call the text the GPU compiles rather than a TypeScript copy
 - `replay.test.ts` — optimized cut-kernel parity against the `cutterSurfaceZ` reference
 

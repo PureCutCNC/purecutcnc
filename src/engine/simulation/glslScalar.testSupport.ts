@@ -22,7 +22,11 @@
  * source keeps those functions to a scalar subset — `float`/`bool` parameters
  * and locals, arithmetic, comparisons, `if`, the ternary, and the builtins
  * listed below — which reads as JavaScript once the type names are dropped.
- * The tests then call the very text the GPU compiles.
+ * The tests then call the very text the GPU compiles, for those functions.
+ *
+ * That is all it covers. The vector code around them — texture lookups, which
+ * cell feeds which argument, the final normal — cannot run here and is covered
+ * by the rendered e2e tests instead.
  *
  * Numbers are doubles here and 32-bit floats on the GPU, so tests should stay
  * clear of cases that depend on the last bit.

@@ -15,8 +15,16 @@
  */
 
 /**
- * Issue #939: the step/slope predicate and the surface lighting gradient, run
- * from the shader source itself (see `glslScalar.testSupport.ts`).
+ * Issue #939: the step/slope predicate and the scalar helpers of the surface
+ * lighting gradient, run from the shader source itself (see
+ * `glslScalar.testSupport.ts`).
+ *
+ * What runs here is `STEP_GLSL` and `SLOPE_GRADIENT_GLSL` as shipped. The
+ * shader's `surfaceNormal` — the thirteen texture lookups and how they are
+ * wired into those helpers — is vector GLSL this file cannot run; the
+ * `surfaceGradient` helper below restates that wiring in TypeScript. The
+ * assembled shaders are covered by the rendered tests in
+ * `e2e/viewportViews.smoke.spec.ts`.
  */
 import { compileScalarGlsl } from './glslScalar.testSupport'
 import { SHALLOW_SLOPE_CELLS, SLOPE_GRADIENT_GLSL, STEP_GLSL } from './heightfieldShader'
@@ -185,10 +193,11 @@ function testTabBridgeAndCutThroughStaySteps(): void {
   const bridge = [0, 0, 3, 0, 0]
   assert(edgeIsStep(bridge, 1, 1) && edgeIsStep(bridge, 2, 1), 'both walls of a one-cell tab bridge are steps')
 
-  // A one-cell tab against the part, at any height. The kerf's drop on the far
-  // side of the tab is a wall, not a gradient for the tab-to-part step to
-  // continue — otherwise a tall tab's wall turns into a shaded slope.
-  for (const tabHeight of [1, 3, 5, 8, 12, 16, 19]) {
+  // A one-cell tab against the part, at any height more than half a cell below
+  // the part's top. The kerf's drop on the far side of the tab is a wall, not a
+  // gradient for the tab-to-part step to continue — otherwise a tall tab's wall
+  // turns into a shaded slope.
+  for (const tabHeight of [1, 3, 5, 8, 12, 16, 19, 19.4]) {
     const tab = [0, 0, tabHeight, 20, 20]
     assert(edgeIsStep(tab, 1, 1), `kerf to ${tabHeight} mm tab is a step`)
     assert(edgeIsStep(tab, 2, 1), `${tabHeight} mm one-cell tab to part is a step`)
@@ -196,8 +205,19 @@ function testTabBridgeAndCutThroughStaySteps(): void {
     assert(edgeIsStep(mirrored, 1, 1) && edgeIsStep(mirrored, 2, 1), `${tabHeight} mm tab is a step from either side`)
   }
 
+  // The exception: a tab whose top is at or below half a cell under the part's.
+  // Its wall up from the kerf is still a wall; its step up to the part is a
+  // slope, like any other material-to-material step that shallow.
+  for (const tabHeight of [19.5, 19.8]) {
+    const nearTopTab = [0, tabHeight, 20, 20]
+    assert(edgeIsStep(nearTopTab, 0, 1), `kerf to ${tabHeight} mm tab is a step`)
+    assert(!edgeIsStep(nearTopTab, 1, 1), `${tabHeight} mm tab to the 20 mm part is a slope`)
+    const mirrored = [...nearTopTab].reverse()
+    assert(edgeIsStep(mirrored, 2, 1) && !edgeIsStep(mirrored, 1, 1), `${tabHeight} mm tab is the same from either side`)
+  }
+
   // A cut-through rim is a wall however thin the skin beside it is, including
-  // thinner than the shallow-slope bound.
+  // at or below half a cell.
   for (const skin of [0.05, 0.2, 0.5, 5]) {
     assert(edgeIsStep([skin, skin, 0, 0], 1, 1), `rim of a ${skin} mm skin is a step`)
     assert(edgeIsStep([0, 0, skin, skin], 1, 1), `rim of a ${skin} mm skin is a step from the kerf side`)
@@ -217,13 +237,24 @@ function testWallsAndSlopesKeepTheirClass(): void {
   const thinWall = [5, 5, 20, 5, 5]
   assert(edgeIsStep(thinWall, 1, 1) && edgeIsStep(thinWall, 2, 1), 'a one-cell wall between two pockets is two steps')
 
-  // The shallow bound is in cells: a pocket floor just over half a cell down
-  // keeps its crisp wall, one within it shades as a slope.
+  // The bound is in cells and applies to real steps too: a pocket floor more
+  // than half a cell down keeps its crisp wall, one at or below half a cell
+  // shades as a slope.
+  assert(SHALLOW_SLOPE_CELLS === 0.5, 'the cases below are written for a half-cell bound')
+  assert(!edgeIsStep([20, 20, 19.6, 19.6], 1, 1), 'a pocket 0.4 cell deep shades as a slope')
+  assert(!edgeIsStep([20, 20, 19.5, 19.5], 1, 1), 'a pocket exactly half a cell deep shades as a slope')
+  assert(edgeIsStep([20, 20, 19.4, 19.4], 1, 1), 'a pocket 0.6 cell deep keeps its wall')
+  assert(!edgeIsStep([19.5, 19.5, 20, 20], 1, 1) && edgeIsStep([19.4, 19.4, 20, 20], 1, 1), 'the same from the pocket side')
+  // The same depths on 2 mm cells are 0.2, 0.25 and 0.3 cell: all slopes. A
+  // 1 mm step, half a cell, still is; 1.2 mm is a wall.
+  assert(!edgeIsStep([20, 20, 19.4, 19.4], 1, 2), 'a 0.6 mm pocket on 2 mm cells is 0.3 cell deep: a slope')
+  assert(!edgeIsStep([20, 20, 19, 19], 1, 2), 'a 1 mm pocket on 2 mm cells is exactly half a cell deep: a slope')
+  assert(edgeIsStep([20, 20, 18.8, 18.8], 1, 2), 'a 1.2 mm pocket on 2 mm cells keeps its wall')
   const justOver = SHALLOW_SLOPE_CELLS + 0.1
   const justUnder = SHALLOW_SLOPE_CELLS - 0.1
   for (const cellSize of [0.1, 1, 2.5]) {
     assert(edgeIsStep([20, 20, 20 - justOver * cellSize, 20 - justOver * cellSize], 1, cellSize), `${justOver}-cell pocket wall is a step at cell ${cellSize}`)
-    assert(!edgeIsStep([20, 20, 20 - justUnder * cellSize, 20 - justUnder * cellSize], 1, cellSize), `${justUnder}-cell ripple is a slope at cell ${cellSize}`)
+    assert(!edgeIsStep([20, 20, 20 - justUnder * cellSize, 20 - justUnder * cellSize], 1, cellSize), `${justUnder}-cell step is a slope at cell ${cellSize}`)
   }
 
   // A V-flank: 3 mm per cell on both sides of a ridge, far too steep to be
