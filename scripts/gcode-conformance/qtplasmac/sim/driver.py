@@ -21,7 +21,10 @@ Runs INSIDE the simulator container (issue #954); the host side is
 Input, one JSON document on stdin:
     {"machine": "metric" | "imperial",
      "timeoutSeconds": 120,
-     "programs": [{"name": "...", "gcode": "..."}]}
+     "programs": [{"name": "...", "gcode": "...", "fault": "refused-start"}]}
+
+`fault` is optional and only for the harness's own self-check: it makes the
+driver sabotage that program's first Cycle Start (see `inject_refused_start`).
 
 Output, one line on stdout: `@@RESULT@@ {...}`. Everything else (progress,
 LinuxCNC's own log on failure) goes to stderr.
@@ -226,11 +229,6 @@ class Trace(threading.Thread):
                 'firstTorchOn': self.first_torch_on,
                 'pierceZCounts': self.pierce_z_counts,
             }
-
-    def saw_activity(self):
-        """Whether anything has happened since the capture started."""
-        with self.lock:
-            return len(self.events) > 1
 
     def plasmac_now(self):
         with self.lock:
@@ -488,7 +486,19 @@ class Simulator:
             time.sleep(0.02)
         raise HarnessError('LinuxCNC never became idle; the QtPlasmaC GUI is still running something')
 
-    def cycle_start(self, has_motion):
+    def executing(self):
+        """Whether LinuxCNC is executing a program right now.
+
+        Read from LinuxCNC's status, which is current, and required to be in
+        auto mode: the GUI running something through MDI also makes the
+        interpreter busy, and that is not this program.
+        """
+        linuxcnc = self.linuxcnc
+        self.stat.poll()
+        return (self.stat.task_mode == linuxcnc.MODE_AUTO
+                and self.stat.interp_state != linuxcnc.INTERP_IDLE)
+
+    def cycle_start(self, has_motion, fault=None):
         """Run the opened program, and make sure it really started.
 
         A Cycle Start that arrives just after the GUI has switched LinuxCNC to
@@ -499,25 +509,46 @@ class Simulator:
 
         So confirm the start, and if it did not take, let the GUI finish and
         press again, as an operator would. After a few attempts it is a
-        simulator fault, never a quiet pass.
+        simulator fault, never a quiet pass. Returns the number of presses.
+
+        The only evidence accepted is LinuxCNC itself executing in auto mode
+        after this press. The run trace is no evidence: it is read through a
+        buffered pipe, so it can still be delivering samples from before the
+        press, and things change in it that are not execution (a material
+        change moves the feed signal with nothing running).
         """
         linuxcnc, command = self.linuxcnc, self.command
         for attempt in range(1, 6):
             command.mode(linuxcnc.MODE_AUTO)
             command.wait_complete()
+            if fault == 'refused-start' and attempt == 1:
+                self.inject_refused_start()
             command.auto(linuxcnc.AUTO_RUN, 0)
             if not has_motion:
                 # Nothing to watch for: a program with no moves ends at once.
-                return
+                return attempt
             deadline = time.time() + 2
             while time.time() < deadline:
-                if not self.idle() or self.trace.saw_activity():
-                    return
+                if self.executing():
+                    return attempt
                 time.sleep(0.01)
             self.stat.poll()
             log('cycle start %d did not take (task mode %d); pressing again' % (attempt, self.stat.task_mode))
             self.let_gui_finish()
         raise HarnessError('the program could not be started in the simulator')
+
+    def inject_refused_start(self):
+        """Self-check only: reproduce the GUI getting in ahead of Cycle Start.
+
+        Puts LinuxCNC back in manual mode, as the GUI does, so the Cycle Start
+        that follows is refused. Also changes the material, which moves the
+        feed signal in the trace with nothing executing: exactly what an
+        earlier version of the confirmation mistook for a program starting.
+        """
+        linuxcnc, command = self.linuxcnc, self.command
+        command.mode(linuxcnc.MODE_MANUAL)
+        command.wait_complete()
+        self.hal.set_p('qtplasmac.material_change_number', '2')
 
     # ── one program ─────────────────────────────────────────────────────
 
@@ -601,7 +632,7 @@ class Simulator:
             'motionLines': canon.motion_lines,
         }
 
-    def execute(self, filtered_path, timeout, has_motion):
+    def execute(self, filtered_path, timeout, has_motion, fault=None):
         linuxcnc, command = self.linuxcnc, self.command
         command.mode(linuxcnc.MODE_AUTO)
         command.wait_complete()
@@ -611,7 +642,7 @@ class Simulator:
 
         self.trace.start_capture()
         started = time.time()
-        self.cycle_start(has_motion)
+        start_attempts = self.cycle_start(has_motion, fault)
         left_idle = has_motion
         timed_out = False
         stall = None
@@ -641,6 +672,7 @@ class Simulator:
         overruns = int(self.hal.get_value('sampler.0.overruns'))
         return {
             'timedOut': timed_out,
+            'startAttempts': start_attempts,
             'stall': stall,
             'pierceZCounts': trace['pierceZCounts'],
             'zBoundaryCounts': self.z_boundary_counts,
@@ -700,7 +732,8 @@ class Simulator:
         # Running a file the interpreter already rejected proves nothing more,
         # and an interpreter error mid-run leaves the torch on until an abort.
         if report['preview']['error'] is None:
-            report['run'] = self.execute(filtered_path, timeout, report['preview']['motionLines'] > 0)
+            report['run'] = self.execute(
+                filtered_path, timeout, report['preview']['motionLines'] > 0, program.get('fault'))
         return report
 
     def shutdown(self):

@@ -112,7 +112,7 @@ function runSimulator(runtime: string, tag: string, machine: SimMachine, cases: 
   const request = JSON.stringify({
     machine,
     timeoutSeconds: PROGRAM_TIMEOUT_SECONDS,
-    programs: cases.map((entry) => ({ name: entry.name, gcode: entry.program() })),
+    programs: cases.map((entry) => ({ name: entry.name, gcode: entry.program(), fault: entry.fault })),
   })
   // LinuxCNC's realtime helper and its GUI processes run as different users
   // and share memory through SysV segments; IPC_OWNER is what lets them. It is
@@ -142,7 +142,19 @@ function describeRun(report: SimProgramReport): string {
   const loaded = run.firstTorchOn
     ? `material ${run.firstTorchOn.material} at feed ${run.firstTorchOn.cutFeedRate}`
     : 'torch never fired'
-  return `ran ${run.seconds} s, ${loaded}`
+  // More than one press means the GUI got in ahead of a Cycle Start. The
+  // driver recovered, but it is worth seeing when it happens.
+  const presses = run.startAttempts > 1 ? `, started on Cycle Start ${run.startAttempts}` : ''
+  return `ran ${run.seconds} s, ${loaded}${presses}`
+}
+
+/** A harness self-check states how many Cycle Start presses its fault must cost. */
+function wrongStartAttempts(entry: PlasmaCase, report: SimProgramReport): string | null {
+  if (entry.startAttempts === undefined) return null
+  const seen = report.run?.startAttempts
+  if (seen === entry.startAttempts) return null
+  return `expected ${entry.startAttempts} Cycle Start press(es), saw ${seen ?? 'no run'}: `
+    + 'a refused start was not noticed'
 }
 
 function selectCases(): PlasmaCase[] {
@@ -184,6 +196,7 @@ function main(): void {
   let problems = 0
   let passed = 0
   let rejected = 0
+  let selfChecks = 0
   const machines = [...new Set(cases.map((entry) => entry.machine))]
   for (const machine of machines) {
     const group = cases.filter((entry) => entry.machine === machine)
@@ -214,12 +227,15 @@ function main(): void {
       writeFileSync(join(OUT_DIR, `${entry.name}.filtered.ngc`), `${report.filtered.join('\n')}\n`, 'utf8')
 
       const findings = judge(report)
-      const wrong = mismatch(entry.expect, findings)
+      const wrong = mismatch(entry.expect, findings) ?? wrongStartAttempts(entry, report)
       if (wrong) {
         problems += 1
         console.error(`  FAIL ${entry.name}: ${wrong} (${describeRun(report)})`)
         console.error(`       covers: ${entry.covers}`)
         for (const finding of findings) console.error(`       [${finding.rule}] ${finding.message}`)
+      } else if (entry.fault) {
+        selfChecks += 1
+        console.log(`  ok   ${entry.name} — harness self-check (${describeRun(report)})`)
       } else if (entry.expect === 'pass') {
         passed += 1
         console.log(`  ok   ${entry.name} — ${describeRun(report)}`)
@@ -249,7 +265,8 @@ function main(): void {
     process.exit(1)
   }
   console.log(`\n${passed} program(s) accepted by QtPlasmaC (LinuxCNC ${PINNED_LINUXCNC_VERSION}); `
-    + `${rejected} defective program(s) rejected as required. Total ${seconds(Date.now() - started)}.`)
+    + `${rejected} defective program(s) rejected as required; ${selfChecks} harness self-check(s) passed. `
+    + `Total ${seconds(Date.now() - started)}.`)
 }
 
 main()

@@ -142,6 +142,17 @@ started within two seconds it lets the GUI finish and presses again
 (`cycle_start`), logging that it did. Five refusals in a row are a simulator
 failure and fail the check.
 
+The only evidence of a start is LinuxCNC's own status: auto mode with the
+interpreter busy, read after the press. The run trace is deliberately not
+evidence. It arrives through a buffered pipe, so it can still be delivering
+samples from before the press, and it changes for reasons that are not
+execution — a material change moves the feed signal with nothing running.
+
+`refused-cycle-start` in the corpus is the regression for this. It makes the
+driver do what the GUI does at the wrong moment (manual mode just before the
+first Cycle Start, plus a material change), and requires exactly two presses
+and then a passing run.
+
 ## Why the full simulator, not `rs274`
 
 The issue's open question was whether LinuxCNC's standalone `rs274`
@@ -189,7 +200,7 @@ does not depend on a keyserver; the Containerfile checks its fingerprint.
 
 ## Corpus
 
-`corpus.ts` holds three groups:
+`corpus.ts` holds four groups:
 
 - **Reference programs** (`fixtures/*.ngc`) — hand-written from the QtPlasmaC
   manual, and they must pass: a single closed outline, a part with holes cut
@@ -203,6 +214,8 @@ does not depend on a keyserver; the Containerfile checks its fingerprint.
   passes, fails for some other reason, or trips only part of what it should,
   fails the run.
 - **Exported programs** — empty until #959.
+- **Harness self-checks** — the harness checking itself in the real simulator:
+  today one, `refused-cycle-start` (see "A second operator: the GUI").
 
 Every stanza in a reference program names the manual section it comes from
 (<https://linuxcnc.org/docs/2.9/html/plasma/qtplasmac.html>). The sequence the
@@ -269,6 +282,13 @@ metric machine and 25 s for the one on the imperial machine. A program runs
 8-23 s; the rest is two LinuxCNC start-ups and the per-program reset, filter
 and trace hand-over. With the probe deterministic the run times repeat to
 within a few seconds, and all five runs held the same pierce Z counts.
+
+The harness self-check added a thirteenth program. Two runs with it took 191 s
+and 202 s, on a machine that was busy with other work at the time.
+
+On GitHub, the first run with the realtime float switch took 4 min 47 s for the
+job, 115 s of it the image build, and printed the same pierce Z counts as the
+laptop.
 
 The first image build took **7 min 29 s** on the same machine, nearly all of it
 downloading packages. Later builds reuse that layer and take seconds.

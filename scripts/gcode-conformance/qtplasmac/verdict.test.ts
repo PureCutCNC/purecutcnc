@@ -71,6 +71,7 @@ function cleanRun(overrides: Partial<SimRun> = {}): SimRun {
   return {
     timedOut: false,
     stall: null,
+    startAttempts: 1,
     pierceZCounts: [-6767783],
     zBoundaryCounts: 1000,
     errors: [],

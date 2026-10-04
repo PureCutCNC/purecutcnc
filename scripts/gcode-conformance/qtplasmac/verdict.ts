@@ -59,6 +59,8 @@ export interface SimRun {
   timedOut: boolean
   /** Set when the run timed out. */
   stall: SimStall | null
+  /** How many times the driver had to press Cycle Start before LinuxCNC ran the program. */
+  startAttempts: number
   /** The Z count QtPlasmaC held at each torch-on: the same for every pierce when the probe is deterministic. */
   pierceZCounts: number[]
   /** Spacing, in Z counts, of the heights plasmac truncates to (0.01 mm or 0.001 in). */
