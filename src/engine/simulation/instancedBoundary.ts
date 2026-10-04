@@ -39,6 +39,10 @@ import * as THREE from 'three'
 import {
   CELL_HEIGHT_GLSL,
   LIGHTING_GLSL,
+  OUTLINE_CELL_GLSL,
+  OUTLINE_CORNER_GLSL,
+  OUTLINE_LOOKUP_GLSL,
+  OUTLINE_TURN_GLSL,
   SLOPE_GRADIENT_GLSL,
   STEP_GLSL,
   SURFACE_NORMAL_GLSL,
@@ -83,34 +87,48 @@ const wallVertexShader = /* glsl */ `
 
   ${CELL_HEIGHT_GLSL}
 
+  ${OUTLINE_LOOKUP_GLSL}
+
+  ${OUTLINE_TURN_GLSL}
+
+  ${OUTLINE_CORNER_GLSL}
+
   void main() {
     int edgeCol = int(position.x + 0.5);
     int edgeRow = gl_InstanceID;
 
-    vec3 edgeStart = vec3(
-      uOrigin.x + float(edgeCol) * uCellSize,
-      0.0,
-      uOrigin.y + float(edgeRow) * uCellSize
-    );
-    vec3 edgeAlong;
+    ivec2 startCorner = ivec2(edgeCol, edgeRow);
+    ivec2 endCorner;
     ivec2 nearCell;
     ivec2 farCell;
-    vec3 edgePerp;
-
     ivec2 perpStep;
     if (uVertical > 0.5) {
-      edgeAlong = vec3(0.0, 0.0, uCellSize);
+      endCorner = startCorner + ivec2(0, 1);
       nearCell = ivec2(edgeCol - 1, edgeRow);
       farCell = ivec2(edgeCol, edgeRow);
-      edgePerp = vec3(1.0, 0.0, 0.0);
       perpStep = ivec2(1, 0);
     } else {
-      edgeAlong = vec3(uCellSize, 0.0, 0.0);
+      endCorner = startCorner + ivec2(1, 0);
       nearCell = ivec2(edgeCol, edgeRow - 1);
       farCell = ivec2(edgeCol, edgeRow);
-      edgePerp = vec3(0.0, 0.0, 1.0);
       perpStep = ivec2(0, 1);
     }
+
+    // The edge runs between two grid corners, each moved onto the wall outline
+    // by the same offset the top surface gives it — so a wall and the tops on
+    // either side of it still share their corners.
+    // (A loop, so the corner rule is compiled into this shader once.)
+    vec2 cornersInCells[2];
+    for (int end = 0; end < 2; end += 1) {
+      ivec2 corner = end == 0 ? startCorner : endCorner;
+      cornersInCells[end] = vec2(corner) + outlineCornerOffset(corner);
+    }
+    vec2 startInCells = cornersInCells[0];
+    vec2 endInCells = cornersInCells[1];
+    vec2 edgeInCells = endInCells - startInCells;
+    // Perpendicular to the edge, pointing from the near cell to the far one.
+    vec2 perpInCells = uVertical > 0.5 ? vec2(edgeInCells.y, -edgeInCells.x) : vec2(-edgeInCells.y, edgeInCells.x);
+    vec3 edgePerp = normalize(vec3(perpInCells.x, 0.0, perpInCells.y));
 
     float hNear = cellHeight(nearCell);
     float hFar = cellHeight(farCell);
@@ -135,8 +153,12 @@ const wallVertexShader = /* glsl */ `
     float hFarBeyond = cellHeight(farCell + perpStep);
     bool isStep = edgeIsStep(hNear, hFar, hNearBeyond, hFarBeyond, uStockBottomZ, uCellSize);
 
-    vec3 pos = edgeStart + edgeAlong * position.y;
-    pos.y = mix(bottom, top, position.z);
+    vec2 alongEdge = mix(startInCells, endInCells, position.y);
+    vec3 pos = vec3(
+      uOrigin.x + alongEdge.x * uCellSize,
+      mix(bottom, top, position.z),
+      uOrigin.y + alongEdge.y * uCellSize
+    );
 
     // Light the face looking into the trough (away from the taller side).
     float direction = hNear >= hFar ? 1.0 : -1.0;
@@ -210,6 +232,7 @@ const floorVertexShader = /* glsl */ `
 const floorFragmentShader = /* glsl */ `
   uniform sampler2D uHeightfield;
   uniform float uStockBottomZ;
+  uniform float uCellSize;
   uniform vec3 uColor;
   uniform int uCols;
   uniform int uRows;
@@ -221,13 +244,23 @@ const floorFragmentShader = /* glsl */ `
 
   ${LIGHTING_GLSL}
 
+  ${STEP_GLSL}
+
+  ${CELL_HEIGHT_GLSL}
+
+  ${OUTLINE_LOOKUP_GLSL}
+
+  ${OUTLINE_TURN_GLSL}
+
+  ${OUTLINE_CORNER_GLSL}
+
+  ${OUTLINE_CELL_GLSL}
+
   void main() {
-    ivec2 cell = clamp(
-      ivec2(vUv * vec2(float(uCols), float(uRows))),
-      ivec2(0),
-      ivec2(uCols - 1, uRows - 1)
-    );
-    float cellTopZ = texelFetch(uHeightfield, cell, 0).r;
+    // The cell whose top covers this point: a hole in the underside ends on
+    // the same outline as the walls that come down to it.
+    ivec2 cell = outlineCellAt(vUv * vec2(float(uCols), float(uRows)));
+    float cellTopZ = cellHeight(cell);
     if (cellTopZ <= uStockBottomZ + 0.000001) {
       // Cut through (or outside the stock profile) — the underside is a hole.
       discard;

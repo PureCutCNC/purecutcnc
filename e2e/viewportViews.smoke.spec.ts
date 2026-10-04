@@ -480,3 +480,147 @@ test('simulation shades a shallow ball finish smoothly at any zoom', async ({ ap
   expect(facing.minusX - facing.minusZ).toBeGreaterThan(0.015 * facing.level)
 })
 
+test('simulation draws a slanted wall straight, with tops and walls sharing its outline', async ({ app }) => {
+  // Issue #939, part 2: a wall at 45° to the grid is sampled as a one-cell
+  // sawtooth. Both vertex shaders move the grid corners at those jogs onto the
+  // outline; only rendered pixels show whether the two meshes moved them alike.
+  await app.page.addScriptTag({ type: 'module', content: `
+    import * as THREE from '/node_modules/.vite/deps/three.js';
+    import { createHeightfieldTexture, createStockPlaneGeometry } from '/src/engine/simulation/gpuMesh.ts';
+    import { createHeightfieldMaterial } from '/src/engine/simulation/heightfieldShader.ts';
+    import { createInstancedBoundaryGroup } from '/src/engine/simulation/instancedBoundary.ts';
+
+    // 20 mm material where a cell's centre lies past the line z = x + 0.3, cut
+    // through elsewhere. Drawn on cell edges the wall zigzags between
+    // z - x = 0 and 1; on the outline it is the straight line z - x = 0.5.
+    const cols = 24;
+    const rows = 24;
+    const heights = new Float32Array(cols * rows);
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        heights[row * cols + col] = row - col > 0.3 ? 20 : 0;
+      }
+    }
+    const grid = {
+      originX: 0, originY: 0, cellSize: 1, cols, rows,
+      stockBottomZ: 0, stockTopZ: 20, topZ: heights,
+    };
+    const color = new THREE.Color('#c8c8c8');
+    const texture = createHeightfieldTexture(grid);
+    const geometry = createStockPlaneGeometry(grid);
+    const material = createHeightfieldMaterial(texture, grid, color);
+    const boundary = createInstancedBoundaryGroup(texture, grid, color);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    scene.add(new THREE.Mesh(geometry, material));
+    scene.add(boundary);
+    const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(1);
+    renderer.setSize(400, 400, false);
+    const gl = renderer.getContext();
+    const brightnessAt = (camera, x, y, z) => {
+      const point = new THREE.Vector3(x, y, z).project(camera);
+      const pixel = new Uint8Array(4);
+      gl.readPixels(Math.floor((point.x + 1) * 200), Math.floor((point.y + 1) * 200), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      return pixel[0] + pixel[1] + pixel[2];
+    };
+
+    // From straight above: points 0.2 cell either side of the outline.
+    const above = new THREE.OrthographicCamera(-12, 12, 12, -12, 0.1, 100);
+    above.up.set(0, 0, -1);
+    above.position.set(12, 60, 12);
+    above.lookAt(12, 0, 12);
+    above.updateProjectionMatrix();
+    above.updateMatrixWorld();
+    renderer.render(scene, above);
+    gl.finish();
+    const flatTop = brightnessAt(above, 4.5, 20, 18.5);
+    let darkestInside = 1000;
+    let brightestOutside = 0;
+    const across = 0.2 * Math.SQRT2;
+    for (let x = 3; x < 20; x += 0.37) {
+      darkestInside = Math.min(darkestInside, brightnessAt(above, x - across / 2, 20, x + 0.5 + across / 2));
+      brightestOutside = Math.max(brightestOutside, brightnessAt(above, x + across / 2, 20, x + 0.5 - across / 2));
+    }
+
+    // From the cut side, off the wall's normal so an X-facing and a Z-facing
+    // riser would be lit differently: the wall at mid height, and the top just
+    // inside its rim.
+    const side = new THREE.OrthographicCamera(-8, 8, 8, -8, 0.1, 200);
+    side.position.set(12 + 30, 15 + 14, 12 - 12);
+    side.lookAt(12, 15, 12.5);
+    side.updateProjectionMatrix();
+    side.updateMatrixWorld();
+    renderer.render(scene, side);
+    gl.finish();
+    let wallDarkest = 1000;
+    let wallBrightest = 0;
+    let rimDarkest = 1000;
+    for (let x = 8; x < 16; x += 0.31) {
+      const wall = brightnessAt(side, x, 10, x + 0.5);
+      wallDarkest = Math.min(wallDarkest, wall);
+      wallBrightest = Math.max(wallBrightest, wall);
+      rimDarkest = Math.min(rimDarkest, brightnessAt(side, x - 0.1, 20, x + 0.5 + 0.1));
+    }
+    const sideFlatTop = brightnessAt(side, 9.5, 20, 14.5);
+
+    // From straight below: the underside is there under material, in the
+    // middle of the stock and at its border alike, and open under the cut.
+    const below = new THREE.OrthographicCamera(-12, 12, 12, -12, 0.1, 100);
+    below.up.set(0, 0, -1);
+    below.position.set(12, -60, 12);
+    below.lookAt(12, 0, 12);
+    below.updateProjectionMatrix();
+    below.updateMatrixWorld();
+    scene.children[0].visible = false;
+    renderer.render(scene, below);
+    gl.finish();
+    const underside = {
+      middle: brightnessAt(below, 4.5, 0, 18.5),
+      westBorder: brightnessAt(below, 0.5, 0, 20.5),
+      southBorder: brightnessAt(below, 2.5, 0, 23.5),
+      underCut: brightnessAt(below, 18.5, 0, 4.5),
+    };
+
+    boundary.traverse((object) => {
+      if (object.isMesh) {
+        object.geometry.dispose();
+        object.material.dispose();
+      }
+    });
+    renderer.dispose();
+    geometry.dispose();
+    material.dispose();
+    texture.dispose();
+    document.body.dataset.outline939 = JSON.stringify({
+      flatTop, darkestInside, brightestOutside, wallDarkest, wallBrightest, rimDarkest, sideFlatTop, underside,
+    });
+  ` })
+  await expect(app.page.locator('body')).toHaveAttribute('data-outline939', /flatTop/)
+  const outline = JSON.parse(await app.page.locator('body').getAttribute('data-outline939') ?? '{}') as {
+    flatTop: number; darkestInside: number; brightestOutside: number
+    wallDarkest: number; wallBrightest: number; rimDarkest: number; sideFlatTop: number
+    underside: { middle: number; westBorder: number; southBorder: number; underCut: number }
+  }
+  expect(outline.flatTop).toBeGreaterThan(300)
+  expect(outline.sideFlatTop).toBeGreaterThan(300)
+  // The top surface ends on the straight outline: flat top everywhere just
+  // inside it, nothing just outside. On cell edges a sawtooth tooth or notch
+  // crosses one of the two rows of points.
+  expect(outline.darkestInside).toBeGreaterThan(0.97 * outline.flatTop)
+  expect(outline.brightestOutside).toBeLessThan(10)
+  // The wall is one flat face: lit alike along its whole length. A sawtooth
+  // alternates two faces at right angles.
+  expect(outline.wallDarkest).toBeGreaterThan(70)
+  expect(outline.wallBrightest - outline.wallDarkest).toBeLessThanOrEqual(0.03 * outline.wallBrightest)
+  // And the top meets it: just inside the rim is flat top, not a notch that
+  // shows the wall behind it.
+  expect(outline.rimDarkest).toBeGreaterThan(0.97 * outline.sideFlatTop)
+  // The underside still covers every cell that has material, out to the
+  // stock's border, and nothing else.
+  expect(outline.underside.middle).toBeGreaterThan(70)
+  expect(outline.underside.westBorder).toBe(outline.underside.middle)
+  expect(outline.underside.southBorder).toBe(outline.underside.middle)
+  expect(outline.underside.underCut).toBeLessThan(10)
+})
+

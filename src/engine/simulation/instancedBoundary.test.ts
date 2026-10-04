@@ -27,7 +27,13 @@ import {
   wallInstanceCount,
 } from './instancedBoundary'
 import { createHeightfieldTexture } from './gpuMesh'
-import { createHeightfieldMaterial, STEP_GLSL, SURFACE_NORMAL_GLSL } from './heightfieldShader'
+import {
+  createHeightfieldMaterial,
+  OUTLINE_CORNER_GLSL,
+  OUTLINE_TURN_GLSL,
+  STEP_GLSL,
+  SURFACE_NORMAL_GLSL,
+} from './heightfieldShader'
 import type { SimulationGrid } from './types'
 
 function assert(condition: boolean, message: string): void {
@@ -156,6 +162,26 @@ function testSurfaceAndWallsShareStepPredicate(): void {
       (wall.material as THREE.ShaderMaterial).uniforms.uStockTopZ.value === grid.stockTopZ,
       'wall strips need the stock top to match the surface depth shading on slope risers',
     )
+  }
+
+  // Issue #939, part 2: tops, walls and the underside all move a grid corner
+  // by one shared rule. A private copy in any of them opens a gap or an
+  // overlap along every slanted wall.
+  const floor = boundary.children.find(
+    (child): child is THREE.Mesh => child instanceof THREE.Mesh && !(child.geometry instanceof THREE.InstancedBufferGeometry),
+  )
+  assert(floor !== undefined, 'boundary group must expose the underside')
+  const outlineUsers: Array<[string, string]> = [
+    ['top surface vertex shader', surface.vertexShader],
+    ...walls.map((wall): [string, string] => ['wall strip vertex shader', (wall.material as THREE.ShaderMaterial).vertexShader]),
+    ['underside fragment shader', (floor!.material as THREE.ShaderMaterial).fragmentShader],
+  ]
+  for (const [name, source] of outlineUsers) {
+    assert(
+      source.includes(OUTLINE_TURN_GLSL) && source.includes(OUTLINE_CORNER_GLSL) && source.includes(STEP_GLSL),
+      `the ${name} must place grid corners with the shared outline rule`,
+    )
+    assert(/outline(CornerOffset|CellAt)\(/.test(source.split(OUTLINE_CORNER_GLSL)[1] ?? ''), `the ${name} must use the shared outline rule`)
   }
 
   surface.dispose()

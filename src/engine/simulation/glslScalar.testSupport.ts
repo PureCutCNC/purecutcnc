@@ -19,16 +19,19 @@
  *
  * The step/slope rule and the lighting gradient live in GLSL, where a unit test
  * cannot reach them. A TypeScript copy would only prove the copy, so the shader
- * source keeps those functions to a scalar subset — `float`/`bool` parameters
- * and locals, arithmetic, comparisons, `if`, the ternary, and the builtins
- * listed below — which reads as JavaScript once the type names are dropped.
- * The tests then call the very text the GPU compiles.
+ * source keeps those functions to a scalar subset — `float`/`bool`/`int`
+ * parameters, locals and fixed-size arrays, arithmetic, comparisons, `if`,
+ * `for`, the ternary, and the
+ * builtins listed below — which reads as JavaScript once the type names are
+ * dropped. The tests then call the very text the GPU compiles. A function the
+ * shader supplies itself, such as a texture lookup, is passed in as `extern`.
  *
  * Numbers are doubles here and 32-bit floats on the GPU, so tests should stay
  * clear of cases that depend on the last bit.
  */
 
-type ScalarFunction = (...args: Array<number | boolean>) => number | boolean
+type ScalarValue = number | boolean
+type ScalarFunction = (...args: ScalarValue[]) => ScalarValue
 
 const BUILTINS = {
   abs: Math.abs,
@@ -45,7 +48,10 @@ const TYPE = '(?:float|bool|int)'
  * source uses something outside the subset, so a shader edit that leaves it is
  * a failing test rather than a silently skipped one.
  */
-export function compileScalarGlsl(source: string): Record<string, ScalarFunction> {
+export function compileScalarGlsl(
+  source: string,
+  extern: Record<string, (...args: number[]) => ScalarValue> = {},
+): Record<string, ScalarFunction> {
   const names: string[] = []
   const withFunctions = source.replace(
     new RegExp(`\\b${TYPE}\\s+(\\w+)\\s*\\(([^)]*)\\)\\s*\\{`, 'g'),
@@ -63,7 +69,9 @@ export function compileScalarGlsl(source: string): Record<string, ScalarFunction
       return `function ${name}(${parameterNames.join(', ')}) {`
     },
   )
-  const script = withFunctions.replace(new RegExp(`\\b${TYPE}\\s+(\\w+)\\s*=`, 'g'), 'let $1 =')
+  const script = withFunctions
+    .replace(new RegExp(`\\b${TYPE}\\s+(\\w+)\\[(\\d+)\\];`, 'g'), 'let $1 = new Array($2);')
+    .replace(new RegExp(`\\b${TYPE}\\s+(\\w+)\\s*=`, 'g'), 'let $1 =')
 
   const leftover = /\b(?:float|bool|int|i?vec[234]|mat[234]|uniform|sampler2D|texelFetch)\b/.exec(script)
   if (leftover) {
@@ -71,9 +79,9 @@ export function compileScalarGlsl(source: string): Record<string, ScalarFunction
   }
   if (names.length === 0) throw new Error('compileScalarGlsl: no functions found')
 
-  const builtinNames = Object.keys(BUILTINS)
-  const factory = new Function(...builtinNames, `'use strict';\n${script}\nreturn { ${names.join(', ')} };`) as (
-    ...builtins: unknown[]
+  const scope = { ...BUILTINS, ...extern }
+  const factory = new Function(...Object.keys(scope), `'use strict';\n${script}\nreturn { ${names.join(', ')} };`) as (
+    ...scopeValues: unknown[]
   ) => Record<string, ScalarFunction>
-  return factory(...Object.values(BUILTINS))
+  return factory(...Object.values(scope))
 }
