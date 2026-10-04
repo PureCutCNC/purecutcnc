@@ -710,6 +710,7 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
         closed: authoritativeProject.stock.profile.closed ?? true,
       },
     },
+    // normalizeTool backfills missing plasma fields, even in mid-release 3.3 files.
     tools: authoritativeProject.tools.map((tool, index) => normalizeTool(tool, authoritativeProject.meta.units, index)),
     tabs: authoritativeProject.tabs.map((tab, index) => normalizeTab(tab, authoritativeProject.meta.units, index)),
     clamps: authoritativeProject.clamps.map((clamp, index) => normalizeClamp(clamp, authoritativeProject.meta.units, index)),

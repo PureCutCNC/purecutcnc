@@ -309,6 +309,10 @@ function convertTool(tool: Tool, from: Units, to: Units): Tool {
     defaultPlungeFeed: convertLength(tool.defaultPlungeFeed, from, to),
     defaultStepdown: convertLength(tool.defaultStepdown, from, to),
     maxCutDepth: convertLength(tool.maxCutDepth, from, to),
+    ...(tool.type === 'plasma' ? {
+      pierceHeight: convertLength(tool.pierceHeight ?? 0, from, to),
+      cutHeight: convertLength(tool.cutHeight ?? 0, from, to),
+    } : {}),
   }
 }
 

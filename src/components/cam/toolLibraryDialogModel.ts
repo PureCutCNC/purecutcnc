@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { samePlasmaParameters } from '../../toolPolicy'
 import type { Tool, ToolType } from '../../types/project'
 import type { ToolLibraryEntry } from '../../toolLibrary'
 
@@ -42,6 +43,7 @@ export function toolMatchesLibraryEntry(
   tool: Tool,
   libraryEntry: ToolLibraryEntry,
 ): boolean {
+  if (tool.type === 'plasma' || libraryEntry.type === 'plasma') return samePlasmaParameters(tool, libraryEntry)
   return (
     tool.name === libraryEntry.name
     && tool.units === libraryEntry.units

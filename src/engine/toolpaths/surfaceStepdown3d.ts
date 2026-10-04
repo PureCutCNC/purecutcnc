@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { findOperationTool } from '../../toolPolicy'
 import type { CutDirection, Operation, Project, SketchFeature } from '../../types/project'
 import type { ClipperPath, NormalizedTool, PocketToolpathResult, ResolvedPocketRegion } from './types'
 import type { ToolpathWarning } from './warningCodes'
@@ -338,8 +339,7 @@ export function resolve3DSurfaceStepdown(
     }
   }
 
-  const toolRecord =
-    operation.toolRef ? project.tools.find((entry) => entry.id === operation.toolRef) ?? null : null
+  const toolRecord = findOperationTool(project, operation)
   if (!toolRecord) {
     return {
       ok: false,

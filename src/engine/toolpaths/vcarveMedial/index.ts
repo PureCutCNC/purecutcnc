@@ -27,6 +27,7 @@
  * `operation.maxCarveDepth` clamps the depth in wide areas.
  */
 
+import { findOperationTool } from '../../../toolPolicy'
 import type { Operation, Point, Project } from '../../../types/project'
 import type {
   ToolpathBounds,
@@ -91,9 +92,7 @@ export function generateVCarveMedialToolpath(project: Project, operation: Operat
 
 function generateVCarveMedialToolpathSingle(project: Project, operation: Operation): ToolpathResult {
   const resolved = resolvePocketRegions(project, operation)
-  const toolRecord = operation.toolRef
-    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
-    : null
+  const toolRecord = findOperationTool(project, operation)
 
   if (!toolRecord) {
     return {

@@ -34,6 +34,7 @@ import type {
   Tab,
   Tool,
 } from '../../types/project'
+import { normalizePlasmaTool } from '../../toolPolicy'
 import { normalizeTextFontId } from '../../text'
 import { idNumericSuffix } from './ids'
 import { isSolid } from './featureRoles'
@@ -133,6 +134,7 @@ export function normalizeFeatureDefinition(definition: FeatureDefinition): Featu
 }
 
 export function normalizeTool(tool: Tool, units: Project['meta']['units'], index: number): Tool {
+  if (tool.type === 'plasma') return normalizePlasmaTool({ ...tool, units: tool.units ?? units })
   const defaults = defaultTool(units, index + 1)
   return {
     ...defaults,

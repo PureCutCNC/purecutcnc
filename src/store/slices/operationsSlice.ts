@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { isToolCompatibleWithOperation } from '../../toolPolicy'
 import type { StateCreator } from 'zustand'
 import { generateEdgeRestRegionDrafts, generatePocketRestRegionDrafts } from '../../engine/toolpaths/restRegions'
 import { selectToolForOperation } from '../../engine/operations/toolSelection'
@@ -150,6 +151,12 @@ export function createOperationsSlice(
 
     updateOperation: (id, patch) =>
       set((s) => {
+        const current = s.project.operations.find((operation) => operation.id === id)
+        if (current) {
+          const next = { ...current, ...patch }
+          const tool = s.project.tools.find((candidate) => candidate.id === next.toolRef)
+          if (tool && !isToolCompatibleWithOperation(tool, next.kind)) return {}
+        }
         const nextProject = {
           ...s.project,
           operations: s.project.operations.map((operation) => {

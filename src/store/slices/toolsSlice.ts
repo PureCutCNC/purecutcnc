@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { isToolCompatibleWithOperation } from '../../toolPolicy'
 import type { StateCreator } from 'zustand'
 import type { Tool } from '../../types/project'
 import type { ProjectStore } from '../types'
@@ -128,7 +129,13 @@ export function createToolsSlice(
       set((s) => {
         const nextProject = {
           ...s.project,
-          tools: s.project.tools.map((tool) => (tool.id === id ? { ...tool, ...patch } : tool)),
+          tools: s.project.tools.map((tool) => (tool.id === id ? (patch.type === 'plasma' || tool.type === 'plasma'
+            ? normalizeTool({ ...tool, ...patch }, s.project.meta.units, 0) : { ...tool, ...patch }) : tool)),
+          operations: s.project.operations.map((operation) => {
+            const tool = s.project.tools.find((candidate) => candidate.id === id)
+            return operation.toolRef === id && tool && !isToolCompatibleWithOperation({ ...tool, ...patch }, operation.kind)
+              ? { ...operation, toolRef: null } : operation
+          }),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }
         if (projectsEqual(nextProject, s.project)) {
