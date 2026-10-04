@@ -34,11 +34,12 @@ import type {
 import type { Point, Project, SketchFeature } from '../../types/project'
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { parseLengthInput } from '../../utils/units'
-import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { editableProjectFeatures } from '../../store/helpers/activeFace'
 import {
   canvasToWorld,
   computeBaseViewTransform,
   computeFitViewStateForBounds,
+  computeSketchViewTransform,
   computeViewTransform,
 } from './viewTransform'
 import type { CanvasPoint, SketchViewState, ViewTransform } from './viewTransform'
@@ -398,7 +399,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       return
     }
 
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+    const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
 
     // ── Begin dragging a dimension annotation to reposition it ──
@@ -450,7 +451,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const control = hitEditableControl(point)
     const hitClampId = findHitClampId(world, project.clamps)
     const hitTabId = findHitTabId(world, project.tabs)
-    const hitFeatureId = findHitFeatureId(world, resolvedProjectFeatures(project), vt)
+    const hitFeatureId = findHitFeatureId(world, editableProjectFeatures(project), vt)
     if (!control && !hitClampId && !hitTabId && !hitFeatureId) {
       if (isTouch) {
         isPanningRef.current = true
@@ -525,7 +526,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const pendingOffset = pendingOffsetRef.current
     const pendingClipboardPlacement = pendingClipboardPlacementRef.current
     const viewState = viewStateRef.current
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+    const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
     livePointerWorldRef.current = world
     const sketchEditTool = selection.sketchEditTool
@@ -898,7 +899,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       return
     }
 
-    const hitId = findHitFeatureId(world, resolvedProjectFeatures(project), vt)
+    const hitId = findHitFeatureId(world, editableProjectFeatures(project), vt)
     hoverFeature(hitId)
   }
 
@@ -925,7 +926,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       return false
     }
 
-    const vt = computeViewTransform(projectRef.current.stock, canvas.width, canvas.height, viewStateRef.current)
+    const vt = computeSketchViewTransform(projectRef.current, canvas.width, canvas.height, viewStateRef.current)
     const targetEndpoint = findOpenEndpointHit(rawPoint, vt, {
       exclude: {
         featureId: selection.selectedFeatureId,
@@ -1007,14 +1008,14 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       const dy = marqueeCurrentRef.current.cy - marqueeStartRef.current.cy
       const movedEnough = Math.hypot(dx, dy) >= 6
       if (movedEnough) {
-        const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+        const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewState)
         const startWorld = canvasToWorld(marqueeStartRef.current.cx, marqueeStartRef.current.cy, vt)
         const endWorld = canvasToWorld(marqueeCurrentRef.current.cx, marqueeCurrentRef.current.cy, vt)
         const minX = Math.min(startWorld.x, endWorld.x)
         const minY = Math.min(startWorld.y, endWorld.y)
         const maxX = Math.max(startWorld.x, endWorld.x)
         const maxY = Math.max(startWorld.y, endWorld.y)
-        const enclosedIds = resolvedProjectFeatures(project)
+        const enclosedIds = editableProjectFeatures(project)
           .filter((feature) => feature.visible)
           .filter((feature) => featureFullyInsideRect(feature, minX, minY, maxX, maxY))
           .map((feature) => feature.id)
@@ -1166,7 +1167,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+    const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewStateRef.current)
     const world = canvasToWorld(point.cx, point.cy, vt)
     const hitClampId = findHitClampId(world, project.clamps)
     if (hitClampId) {
@@ -1178,7 +1179,7 @@ export function usePointerGestures(ctx: PointerGesturesCtx): UsePointerGesturesR
       enterTabEdit(hitTabId)
       return
     }
-    const hitId = findHitFeatureId(world, resolvedProjectFeatures(project), vt)
+    const hitId = findHitFeatureId(world, editableProjectFeatures(project), vt)
     if (hitId) enterSketchEdit(hitId)
   }
 

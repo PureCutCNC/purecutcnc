@@ -27,8 +27,9 @@ import { isSupportedSetupOrientation, setupFace } from '../../engine/setupOrient
 import type { MachiningSetup, Project } from '../../types/project'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
+import { dropGhostSelection } from '../helpers/activeFace'
 import { syncProjectSetups } from '../helpers/setups'
-import type { ProjectStore } from '../types'
+import type { ProjectStore, SelectionState } from '../types'
 
 export type SetupsSlice = Pick<
   ProjectStore,
@@ -60,6 +61,24 @@ export function withSetupSync<S extends { project: Project }>(
     if (typeof update === 'function') set((state) => sync(update(state)))
     else set(sync(update))
   }
+}
+
+/**
+ * Wrap the store's `set` so no write can leave a ghost feature selected
+ * (issue #945): switching face, moving a feature to the other face, undo and
+ * every selection action all pass through here, so the rule has one home
+ * instead of one check per action.
+ */
+export function withGhostSelectionGuard<S extends { project: Project; selection: SelectionState }>(
+  set: (update: Partial<S> | ((state: S) => Partial<S>)) => void,
+): (update: Partial<S> | ((state: S) => Partial<S>)) => void {
+  return (update) => set((state) => {
+    const patch = typeof update === 'function' ? update(state) : update
+    if (patch.project === undefined && patch.selection === undefined) return patch
+    const selection = patch.selection ?? state.selection
+    const guarded = dropGhostSelection(patch.project ?? state.project, selection)
+    return guarded === selection ? patch : { ...patch, selection: guarded }
+  })
 }
 
 function touched(project: Project): Project {

@@ -183,4 +183,15 @@ export const appShellEn = {
   'appShell.toolRail.fillet': 'Fillet',
   'appShell.toolRail.trim': 'Trim',
   'appShell.toolRail.extend': 'Extend',
+
+  // ── Workspace face switch (issue #945) ──
+  'appShell.face.label': 'Face',
+  'appShell.face.top': 'Top',
+  'appShell.face.bottom': 'Bottom',
+  'appShell.face.switchToTop': 'Work on the top face',
+  'appShell.face.switchToBottom': 'Work on the bottom face',
+  'appShell.face.busy': 'Finish the current edit before switching face',
+  'appShell.face.otherSide': 'Other side',
+  'appShell.face.showOtherSide': 'Show the other side as a ghost',
+  'appShell.face.hideOtherSide': 'Hide the other side',
 } as const satisfies Record<string, string>

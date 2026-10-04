@@ -4,6 +4,9 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 
 ## Files
 - `projectStore.ts` — store composition root: initial state, shared dependencies, and slice assembly
+- `faceViewStore.ts` — workspace-local face state that is not part of the project (issue #945): whether the other side is drawn as a ghost, and the pending authoring-face change awaiting confirmation. Never dirties a file and is not an undo step
+- `workspaceFace.ts` — `switchWorkspaceFace`: the one place the UI changes the active setup; creates the Bottom setup (flipped about X) the first time Bottom is chosen
+- `workspaceFace.test.ts` — the face switch, the active face stamped on new features with a span measured from that face, Lines inside a Bottom pocket, Bottom text mirrored exactly once (both flip axes), ghosts that cannot be selected or hovered, paste and origin placement following the face
 - `surfaceSlope.test.ts` — slope-setting normalization, save/open, clearing, undo/redo, malformed-input fail-closed behavior, and cache invalidation lifecycle
 - `types.ts` — store-internal types (state shape, action signatures)
 
@@ -26,7 +29,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `backdropSlice.ts` — backdrop CRUD: load/set/update/delete backdrop image
   - `machineDefsSlice.ts` — the project's machine snapshot: one `setProjectMachine` action that atomically embeds or clears the single selected definition (history-tracked). The machine *library* lives in [`src/machine/`](../machine/INDEX.md) as an application preference and never touches the project.
   - `operationsSlice.ts` — operation CRUD, rest-operation creation, toolpath visibility, duplication, ordering, and the single-history-transition `applyCamPlan` action
-  - `setupsSlice.ts` — machining setups (issue #944): create/rename/delete setup, the active setup, assign an operation to a setup, set a feature's authoring face; plus `withSetupSync`, the `set` wrapper that reconciles setups after every project change. No cross-face validation here — that arrives with CAM grouping (#946)
+  - `setupsSlice.ts` — machining setups (issue #944): create/rename/delete setup, the active setup, assign an operation to a setup, set a feature's authoring face; plus `withSetupSync`, the `set` wrapper that reconciles setups after every project change. No cross-face validation here — that arrives with CAM grouping (#946). `withGhostSelectionGuard` wraps `set` so no write leaves a feature from the other face selected (#945)
   - `projectLifecycleSlice.ts` — project lifecycle and persistence actions: create/load/open/save, metadata display settings, and export path markers
   - `historySlice.ts` — undo/redo and history transaction lifecycle. The active machining setup is a view choice (issue #944): a snapshot is restored onto the setup the workspace is on, and a transaction that only switched setups leaves no undo step
   - `workpieceSlice.ts` — stock, stock-source sketch editing, grid/units, origin placement, and creation target actions
@@ -58,6 +61,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `buildShapeFeature.ts` — shared feature builder for the addRect/Circle/Ellipse/… constructors; consolidates duplicated shape-construction logic
   - `manualFeatureOperation.ts` — resolves existing world-space Add/Subtract instances and applies the shared strict-containment classifier to default a newly-created closed feature; also `inferLineTopZFromEnclosingFeature` (issue #351) picks a newly-created Line's initial `z_top` from the smallest enclosing solid (subtract floor / add top)
+  - `activeFace.ts` — the workspace face (issue #945): the active setup and its face, `projectUsesBothFaces` (a Top-only project shows no face UI), the ghost predicate and `editableProjectFeatures` (what hit-testing, snapping and edits may see), `dropGhostSelection`, `newFeatureSpan` (a new feature's span measured from the face it is drawn on), `faceArtworkMirror`/`faceArtworkTransform` (the single mirror that makes Bottom text read correctly), the face-aware origin (`activeOriginInStock`, `originPlacementFromStock`), `isThroughFeature` and `resolveStockSpan`
   - `setups.ts` — machining-setup bookkeeping (issue #944): `decodeSetups` (strict validation of the setups a file carries; an orientation or indexing mode this build cannot machine is an error, not a fallback), `syncProjectSetups` (the reconciler — at least one setup, a valid active setup, every operation in a setup, `operationIds` rebuilt from membership and project order, references to deleted features dropped), and `findSetupWithTurn`, which places an operation imported from another project on a setup turned the way its source was — with no fallback, so the importer adds that setup rather than move the operation to another face
   - `ids.ts` — ID generation/uniqueness
   - `normalize.ts` — lower-level project normalization helpers: cloning, ID deduplication, cache clearing, equality checks, and feature tree/sync helpers

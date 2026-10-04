@@ -46,7 +46,7 @@ import {
 import { appendSplineDraftSegment } from './draftGeometry'
 import { pointsEqual } from './hitTest'
 import { appendProfilePath, traceProfilePath } from './profilePrimitives'
-import { worldToCanvas } from './viewTransform'
+import { worldArcToCanvas, worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 import { canvasColors, canvasRgba, parseRgb } from './canvasPalette'
 import { canvasFeedColour, feedColourStep } from '../../theme/palette'
@@ -360,10 +360,10 @@ export function traceDraftSegments(
     const radius = Math.hypot(current.x - segment.center.x, current.y - segment.center.y) * vt.scale
     const startAngle = Math.atan2(current.y - segment.center.y, current.x - segment.center.x)
     if (segment.type === 'circle') {
-      ctx.arc(center.cx, center.cy, radius, startAngle, startAngle + Math.PI * 2, segment.clockwise)
+      ctx.arc(center.cx, center.cy, radius, ...worldArcToCanvas(startAngle, startAngle + Math.PI * 2, segment.clockwise, vt))
     } else {
       const endAngle = Math.atan2(segment.to.y - segment.center.y, segment.to.x - segment.center.x)
-      ctx.arc(center.cx, center.cy, radius, startAngle, endAngle, segment.clockwise)
+      ctx.arc(center.cx, center.cy, radius, ...worldArcToCanvas(startAngle, endAngle, segment.clockwise, vt))
     }
     current = segment.to
   }

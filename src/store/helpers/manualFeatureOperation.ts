@@ -23,6 +23,7 @@ import {
   normalizeWinding,
   toClipperPath,
 } from '../../engine/toolpaths/geometry'
+import { activeFace } from './activeFace'
 import { resolveFeatureInstances } from './resolveFeatures'
 
 const clipperPointInPolygon = (ClipperLib.Clipper as unknown as {
@@ -68,6 +69,11 @@ function safeResolveZ(project: Pick<Project, 'dimensions'>, value: DimensionRef)
  *   boundary (Clipper returns non-zero): a Line drawn along a pocket wall
  *   still inherits the pocket floor.
  * - With no enclosing solid, `defaultTopZ` is returned unchanged.
+ *
+ * The result is a height above the face being drawn on (issue #945): on
+ * Bottom the stock is read turned over, so a pocket's floor is its stock-space
+ * `z_top` and the height is measured down from the top face. Callers turn it
+ * into a stock span with `newFeatureSpan`.
  */
 export function inferLineTopZFromEnclosingFeature(
   project: Project,
@@ -84,6 +90,7 @@ export function inferLineTopZFromEnclosingFeature(
 
   let bestArea = Infinity
   let bestZ: number | null = null
+  const onTop = activeFace(project) === 'top'
 
   for (const feature of resolveFeatureInstances(project)) {
     if (feature.operation !== 'add' && feature.operation !== 'subtract') continue
@@ -106,12 +113,14 @@ export function inferLineTopZFromEnclosingFeature(
     const area = Math.abs(ClipperLib.Clipper.Area(containerPath))
     if (area >= bestArea) continue
 
-    const zRaw = feature.operation === 'subtract' ? feature.z_bottom : feature.z_top
+    // The surface nearest the cutter: a pocket's floor or a raised solid's
+    // top, seen from the face being drawn on.
+    const zRaw = (feature.operation === 'subtract') === onTop ? feature.z_bottom : feature.z_top
     const resolved = safeResolveZ(project, zRaw)
     if (resolved === null) continue
 
     bestArea = area
-    bestZ = resolved
+    bestZ = onTop ? resolved : project.stock.thickness - resolved
   }
 
   return bestZ ?? defaultTopZ

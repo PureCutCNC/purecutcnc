@@ -184,4 +184,15 @@ export const appShellZhCN: Record<keyof typeof appShellEn, string> = {
   'appShell.toolRail.fillet': '圆角',
   'appShell.toolRail.trim': '修剪',
   'appShell.toolRail.extend': '延伸',
+
+  // ── Workspace face switch (issue #945) ──
+  'appShell.face.label': '加工面',
+  'appShell.face.top': '顶面',
+  'appShell.face.bottom': '底面',
+  'appShell.face.switchToTop': '在顶面上工作',
+  'appShell.face.switchToBottom': '在底面上工作',
+  'appShell.face.busy': '请先完成当前编辑，再切换加工面',
+  'appShell.face.otherSide': '另一面',
+  'appShell.face.showOtherSide': '以虚影显示另一面',
+  'appShell.face.hideOtherSide': '隐藏另一面',
 }

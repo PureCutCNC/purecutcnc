@@ -17,6 +17,7 @@
 @import './styles/layout.css';
 @import './styles/dialog.css';
 @import './styles/canvas-workflow.css';
+@import './styles/face.css';
 @import './styles/tablet.css';
 
 :root {
@@ -70,6 +71,8 @@
   --role-region-text: #c4a6e0;
   --role-construction: #8a9aab;
   --role-construction-text: #a9b6c4;
+  --face-bottom: #e3a564;
+  --face-bottom-text: #f3c38c;
 
   /* CJK fallbacks precede the generic family so Simplified Chinese UI text
      gets a deliberate face (PingFang on macOS/iOS, YaHei on Windows) instead
@@ -134,6 +137,8 @@
   --role-region-text: #673b8c;
   --role-construction: #64748b;
   --role-construction-text: #4e5c70;
+  --face-bottom: #b06a1c;
+  --face-bottom-text: #8a4f0f;
 }
 
 * {

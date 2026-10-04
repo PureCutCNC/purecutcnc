@@ -23,7 +23,7 @@ import type { DimensionEditWorkflow } from './useDimensionEditWorkflow'
 import type { MoveWorkflow } from './useMoveWorkflow'
 import type { FilletWorkflow } from './useFilletWorkflow'
 import { formatLength } from '../../utils/units'
-import { computeViewTransform } from './viewTransform'
+import { computeSketchViewTransform } from './viewTransform'
 import { resolveOffsetPreview } from './draftGeometry'
 import { computeScaleFactorFromPreview, computeRotateDegreesFromPreview, type OperationDimEdit } from './manualEntry'
 import { filletRadiusFromPoint, chamferDistanceFromPoint } from '../../store/helpers/referenceTransforms'
@@ -221,7 +221,7 @@ export function triggerDimensionEdit(deps: TriggerDimensionEditDeps): void {
       const canvasWidth_ = canvasWidth
       const canvasHeight_ = canvasHeight
       if (canvasWidth_ > 0 && canvasHeight_ > 0) {
-        const vt = computeViewTransform(project.stock, canvasWidth_, canvasHeight_, viewState)
+        const vt = computeSketchViewTransform(project, canvasWidth_, canvasHeight_, viewState)
         const sourceFeatures = resolveFeatureInstances(project, pendingOffset.entityIds)
           .filter((f) => f.sketch.profile.closed)
         const previewInput = resolveOffsetPreview(sourceFeatures, rawOffsetPoint, snappedOffsetPoint, deps.activeSnapMode ?? null, vt)

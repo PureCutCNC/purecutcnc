@@ -17,6 +17,7 @@
 import { getProfileBounds } from '../types/project'
 import type { FeatureDefinition, Point, Project } from '../types/project'
 import { buildCopiedFeatures, type ReferencedSketchFeature } from '../store/helpers/copyFeatures'
+import { activeFace } from '../store/helpers/activeFace'
 import type { ProjectStore } from '../store/types'
 import { resolvedProjectFeatures, type ResolvedSketchFeature } from '../store/helpers/resolveFeatures'
 
@@ -156,8 +157,10 @@ export function pasteClipboardFeatures(
   }
 
   store.beginHistoryTransaction()
+  // Pasting puts the copies on the face the workspace is on (issue #945).
+  const authoringFace = activeFace(store.project)
   for (const feature of features) {
-    store.addFeature(feature)
+    store.addFeature({ ...feature, authoringFace })
   }
   store.selectFeatures(features.map((feature) => feature.id))
   store.commitHistoryTransaction()

@@ -137,4 +137,15 @@ export const appShellEs: Record<keyof typeof appShellEn, string> = {
   'appShell.toolRail.fillet': 'filete',
   'appShell.toolRail.trim': 'Recortar',
   'appShell.toolRail.extend': 'Extender',
+
+  // ── Workspace face switch (issue #945) ──
+  'appShell.face.label': 'Cara',
+  'appShell.face.top': 'Superior',
+  'appShell.face.bottom': 'Inferior',
+  'appShell.face.switchToTop': 'Trabajar en la cara superior',
+  'appShell.face.switchToBottom': 'Trabajar en la cara inferior',
+  'appShell.face.busy': 'Termina la edición actual antes de cambiar de cara',
+  'appShell.face.otherSide': 'Otra cara',
+  'appShell.face.showOtherSide': 'Mostrar la otra cara como fantasma',
+  'appShell.face.hideOtherSide': 'Ocultar la otra cara',
 }

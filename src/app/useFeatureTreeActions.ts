@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { useFaceViewStore } from '../store/faceViewStore'
+import { switchWorkspaceFace } from '../store/workspaceFace'
 import { useMemo } from 'react'
 import type { QuickOperation } from '../components/cam/operationValidity'
 import { useProjectStore } from '../store/projectStore'
@@ -102,6 +104,10 @@ export interface FeatureTreeActions {
   moveClamp: (clampId: string) => void
   deleteClamp: (clampId: string) => void
   deleteClamps: (clampIds: string[]) => void
+  /** Put the workspace on a ghost feature's face and select it there (issue #945). */
+  switchFaceToEdit: (featureId: string) => void
+  /** Open the confirmation for changing these features' authoring face. */
+  changeAuthoringFace: (featureIds: string[]) => void
 }
 
 export function createFeatureTreeActions({
@@ -152,6 +158,16 @@ export function createFeatureTreeActions({
   }
 
   return {
+    switchFaceToEdit: (featureId: string) => {
+      const face = project.features.find((feature) => feature.id === featureId)?.authoringFace
+      if (face && switchWorkspaceFace(face)) selectFeature(featureId)
+      setCenterTab('sketch')
+      closeTreeContextMenu()
+    },
+    changeAuthoringFace: (featureIds: string[]) => {
+      useFaceViewStore.getState().requestFaceChange(featureIds)
+      closeTreeContextMenu()
+    },
     editSketch: (featureId: string) => {
       selectFeature(featureId)
       enterSketchEdit(featureId)

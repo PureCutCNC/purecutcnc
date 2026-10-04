@@ -24,6 +24,7 @@ import { buildShapeFeature } from '../helpers/buildShapeFeature'
 import { createTextFeatureAt } from '../helpers/naming'
 import { isConstruction } from '../helpers/featureRoles'
 import { inferLineTopZFromEnclosingFeature } from '../helpers/manualFeatureOperation'
+import { activeFace, faceArtworkTransform, newFeatureSpan } from '../helpers/activeFace'
 import { resolvedProjectFeatures } from '../helpers/resolveFeatures'
 import { clonePoint } from '../../geometry/profile'
 import { pointsEqual } from '../helpers/geometry'
@@ -447,7 +448,13 @@ export function createPendingAddSlice(
       // creation path. Without this, reference copies point at a missing
       // definition and become un-resolvable / un-selectable (issue #228).
       const minted = createDefinitionForFeature(state.project, baseFeature)
-      const createdFeature = createFeatureInstance(baseFeature, minted.definitionId)
+      // On Bottom the run is drawn on the turned-over stock: it belongs to
+      // that face and is mirrored once so it reads correctly from below (#945).
+      const createdFeature = createFeatureInstance(
+        { ...baseFeature, authoringFace: activeFace(state.project) },
+        minted.definitionId,
+        faceArtworkTransform(state.project, point) ?? undefined,
+      )
 
       set((s) => {
         const nextProject = syncFeatureTreeProject({
@@ -567,8 +574,7 @@ export function createPendingAddSlice(
             constraints: [],
           },
           operation: openPathOperation,
-          z_top: lineTopZ,
-          z_bottom: 0,
+          ...newFeatureSpan(state.project, lineTopZ),
           visible: true,
           locked: false,
         }
@@ -604,8 +610,7 @@ export function createPendingAddSlice(
             constraints: [],
           },
           operation: openPathOperation,
-          z_top: lineTopZ,
-          z_bottom: 0,
+          ...newFeatureSpan(state.project, lineTopZ),
           visible: true,
           locked: false,
         }
@@ -835,8 +840,7 @@ export function createPendingAddSlice(
           constraints: [],
         },
         operation: openCompositeOperation,
-        z_top: lineTopZ,
-        z_bottom: 0,
+        ...newFeatureSpan(state.project, lineTopZ),
         visible: true,
         locked: false,
       }

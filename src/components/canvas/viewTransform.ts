@@ -14,9 +14,11 @@
  * limitations under the License.
  */
 
+import { canonicalToSetupPoint, setupFrame } from '../../engine/setupOrientation'
 import { getVisibleSceneBounds2D } from '../../sketch/sceneBounds'
+import { activeSetup } from '../../store/helpers/activeFace'
 import { getProfileBounds } from '../../types/project'
-import type { Point, Project, Stock } from '../../types/project'
+import type { Point, Project, SetupOrientation, Stock } from '../../types/project'
 
 // Re-exported for existing callers; the implementation moved to
 // sketch/sceneBounds.ts so the design-print engine can share it.
@@ -24,10 +26,21 @@ export { getVisibleSceneBounds2D }
 
 const VIEW_PADDING = 42
 
+/**
+ * World (stock-space) → canvas. `scale` and the offsets place the stock as it
+ * sits on the machine — the setup-local frame. For a Bottom setup the stock
+ * is turned over, so one axis is mirrored: a world coordinate `w` on that
+ * axis is drawn where `mirror − w` would be (issue #945). Both mirrors are
+ * absent for Top, and every Top code path is then exactly what it was.
+ */
 export interface ViewTransform {
   scale: number
   offsetX: number
   offsetY: number
+  /** World X is drawn at `mirrorX − x`. */
+  mirrorX?: number
+  /** World Y is drawn at `mirrorY − y`. */
+  mirrorY?: number
 }
 
 export interface CanvasPoint {
@@ -42,16 +55,75 @@ export interface SketchViewState {
 }
 
 export function worldToCanvas(point: Point, vt: ViewTransform): CanvasPoint {
+  const x = vt.mirrorX === undefined ? point.x : vt.mirrorX - point.x
+  const y = vt.mirrorY === undefined ? point.y : vt.mirrorY - point.y
   return {
-    cx: vt.offsetX + point.x * vt.scale,
-    cy: vt.offsetY + point.y * vt.scale,
+    cx: vt.offsetX + x * vt.scale,
+    cy: vt.offsetY + y * vt.scale,
   }
 }
 
 export function canvasToWorld(cx: number, cy: number, vt: ViewTransform): Point {
+  const x = (cx - vt.offsetX) / vt.scale
+  const y = (cy - vt.offsetY) / vt.scale
   return {
-    x: (cx - vt.offsetX) / vt.scale,
-    y: (cy - vt.offsetY) / vt.scale,
+    x: vt.mirrorX === undefined ? x : vt.mirrorX - x,
+    y: vt.mirrorY === undefined ? y : vt.mirrorY - y,
+  }
+}
+
+/** True when the view shows the stock turned over, so handedness is reversed. */
+export function viewIsMirrored(vt: ViewTransform): boolean {
+  return (vt.mirrorX === undefined) !== (vt.mirrorY === undefined)
+}
+
+/** A world-space direction angle as it reads on the canvas. */
+export function worldAngleToCanvas(angle: number, vt: ViewTransform): number {
+  const flippedY = vt.mirrorY === undefined ? angle : -angle
+  return vt.mirrorX === undefined ? flippedY : Math.PI - flippedY
+}
+
+/**
+ * `ctx.arc` arguments for an arc given by world-space angles. A mirrored view
+ * reverses the sweep, so the direction flag flips with the angles.
+ */
+export function worldArcToCanvas(
+  startAngle: number,
+  endAngle: number,
+  counterclockwise: boolean,
+  vt: ViewTransform,
+): [startAngle: number, endAngle: number, counterclockwise: boolean] {
+  if (vt.mirrorX === undefined && vt.mirrorY === undefined) return [startAngle, endAngle, counterclockwise]
+  const start = worldAngleToCanvas(startAngle, vt)
+  // Carry the sweep rather than the end angle, so a full circle stays one.
+  const sweep = endAngle - startAngle
+  return viewIsMirrored(vt)
+    ? [start, start - sweep, !counterclockwise]
+    : [start, start + sweep, counterclockwise]
+}
+
+/** Flip the drawing context the way the view is mirrored, about its current origin. */
+export function applyViewMirror(ctx: CanvasRenderingContext2D, vt: ViewTransform): void {
+  if (vt.mirrorX === undefined && vt.mirrorY === undefined) return
+  ctx.scale(vt.mirrorX === undefined ? 1 : -1, vt.mirrorY === undefined ? 1 : -1)
+}
+
+/**
+ * The mirrors a setup's turn puts on the view, read off the #944 transform:
+ * where the stock-space origin and unit axes land in the setup-local frame.
+ */
+export function viewMirrorForOrientation(
+  orientation: SetupOrientation,
+  stock: Stock,
+): Pick<ViewTransform, 'mirrorX' | 'mirrorY'> {
+  if (orientation.angleDeg === 0) return {}
+  const frame = setupFrame(orientation, stock)
+  const origin = canonicalToSetupPoint({ x: 0, y: 0, z: 0 }, frame)
+  const unitX = canonicalToSetupPoint({ x: 1, y: 0, z: 0 }, frame)
+  const unitY = canonicalToSetupPoint({ x: 0, y: 1, z: 0 }, frame)
+  return {
+    ...(unitX.x < origin.x ? { mirrorX: origin.x } : {}),
+    ...(unitY.y < origin.y ? { mirrorY: origin.y } : {}),
   }
 }
 
@@ -86,13 +158,45 @@ export function computeViewTransform(
   }
 }
 
+/**
+ * The sketch view of a project: the stock as the active setup turns it. Pan
+ * and zoom live in the setup-local frame, so switching face keeps the stock
+ * where it is on screen.
+ */
+export function computeSketchViewTransform(
+  project: Project,
+  canvasW: number,
+  canvasH: number,
+  viewState: SketchViewState,
+): ViewTransform {
+  const vt = computeViewTransform(project.stock, canvasW, canvasH, viewState)
+  const mirror = viewMirrorForOrientation(activeSetup(project).orientation, project.stock)
+  return mirror.mirrorX === undefined && mirror.mirrorY === undefined ? vt : { ...vt, ...mirror }
+}
+
 export function computeFitViewState(
   project: Project,
   canvasW: number,
   canvasH: number,
 ): SketchViewState {
   const bounds = getVisibleSceneBounds2D(project)
-  return computeFitViewStateForBounds(project.stock, bounds, canvasW, canvasH)
+  const { mirrorX, mirrorY } = viewMirrorForOrientation(activeSetup(project).orientation, project.stock)
+  // The fit is computed in the setup-local frame the view is drawn in.
+  const local = {
+    minX: mirrorX === undefined ? bounds.minX : mirrorX - bounds.maxX,
+    maxX: mirrorX === undefined ? bounds.maxX : mirrorX - bounds.minX,
+    minY: mirrorY === undefined ? bounds.minY : mirrorY - bounds.maxY,
+    maxY: mirrorY === undefined ? bounds.maxY : mirrorY - bounds.minY,
+  }
+  // The origin is placed relative to the face that is up, so in the local
+  // frame it sits at its stored position rather than at the mirrored one.
+  if (project.origin.visible && (mirrorX !== undefined || mirrorY !== undefined)) {
+    local.minX = Math.min(local.minX, project.origin.x)
+    local.maxX = Math.max(local.maxX, project.origin.x)
+    local.minY = Math.min(local.minY, project.origin.y)
+    local.maxY = Math.max(local.maxY, project.origin.y)
+  }
+  return computeFitViewStateForBounds(project.stock, local, canvasW, canvasH)
 }
 
 export function computeFitViewStateForBounds(

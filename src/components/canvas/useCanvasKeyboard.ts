@@ -49,7 +49,7 @@ import {
   type OperationDimEdit,
 } from './manualEntry'
 import type { ResolvedSnap } from './snappingHelpers'
-import { computeViewTransform, type SketchViewState } from './viewTransform'
+import { computeSketchViewTransform, type SketchViewState } from './viewTransform'
 import type { ConstraintWorkflow } from './useConstraintWorkflow'
 import type { DimensionEditWorkflow } from './useDimensionEditWorkflow'
 import type { FilletWorkflow } from './useFilletWorkflow'
@@ -582,7 +582,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
         if (rawOffsetPoint && snappedOffsetPoint) {
           const canvas = canvasRef.current
           if (canvas) {
-            const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+            const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewState)
             const sourceFeatures = resolveFeatureInstances(project, pendingOffset.entityIds)
               .filter((f) => f.sketch.profile.closed)
             const previewInput = resolveOffsetPreview(sourceFeatures, rawOffsetPoint, snappedOffsetPoint, activeSnapRef.current?.mode ?? null, vt)

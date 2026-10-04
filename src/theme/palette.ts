@@ -118,6 +118,9 @@ export interface CanvasThemePalette {
   measurementBackdrop: string
   measurementText: string
   stockExceeded: string
+  /** Other-face features shown for reference: dashed, never filled (issue #945). */
+  ghostTop: string
+  ghostBottom: string
   invalidText: string
   invalidBackdrop: string
 
@@ -280,6 +283,8 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       measurementBackdrop: 'rgba(15, 21, 29, 0.92)',
       measurementText: 'rgba(191, 224, 255, 0.96)',
       stockExceeded: 'rgba(207, 138, 224, 0.9)',
+      ghostTop: '#78b0e8',
+      ghostBottom: '#e3a564',
       invalidText: 'rgba(255, 180, 180, 0.95)',
       invalidBackdrop: 'rgba(80, 20, 20, 0.9)',
 
@@ -405,6 +410,8 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
       measurementBackdrop: 'rgba(255, 255, 255, 0.94)',
       measurementText: 'rgba(30, 41, 59, 0.95)',
       stockExceeded: 'rgba(142, 58, 134, 0.9)',
+      ghostTop: '#2b6cb0',
+      ghostBottom: '#b06a1c',
       invalidText: 'rgba(150, 30, 30, 0.95)',
       invalidBackdrop: 'rgba(255, 235, 235, 0.92)',
 

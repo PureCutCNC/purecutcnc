@@ -43,6 +43,7 @@ import { useTheme } from '../../theme/themeContext'
 import { feedColourStep, pocketSlotFeedPercent, threeFeedColour, type ThreeThemePalette } from '../../theme/palette'
 import { ARROW_KINDS, buildArrowBatch, type ArrowPlacement } from './arrowBatch'
 import { createOrbitControls, type OrbitControls } from './orbitControls'
+import { activeFace } from '../../store/helpers/activeFace'
 import type { ViewPreset } from './viewPresets'
 import { ViewPresetMenu } from './ViewPresetMenu'
 import { attachWebglContextGuard } from './webglContextGuard'
@@ -435,12 +436,24 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   // frames it. See the projectKey effect below.
   const fitPendingRef = useRef(false)
   const [activePreset, setActivePreset] = useState<ViewPreset | null>('iso')
+  // The plan-view presets follow the workspace face (issue #945): a view
+  // parked on Top or Bottom turns over with the stock; any other view is left
+  // where the user put it.
+  const activePresetRef = useRef(activePreset)
+  activePresetRef.current = activePreset
   const [webglStatus, setWebglStatus] = useState<WebglStatus>('ok')
   const zoomWindowActiveRef = useRef(zoomWindowActive)
   const [zoomWindowBox, setZoomWindowBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
   const zoomWindowBoxRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
 
   const { project, selection, projectKey } = useProjectStore()
+  const workspaceFace = activeFace(project)
+  useEffect(() => {
+    const preset = activePresetRef.current
+    if ((preset === 'top' || preset === 'bottom') && preset !== workspaceFace) {
+      controlsRef.current?.setPreset(workspaceFace)
+    }
+  }, [workspaceFace])
   // The toolpath overlay effect reads the project through this ref so the
   // per-toolpath slot-feed lookup stays fresh without rebuilding overlays on
   // unrelated project edits (toolpaths already change when the slot feed does).

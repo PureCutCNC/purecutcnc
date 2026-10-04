@@ -42,6 +42,9 @@ import { useRequestUnitConversion } from '../project/UnitConversionContext'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
+import { activeFace, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { AuthoringFaceRow } from './FaceChip'
+import { FaceDepthFields } from './FaceDepthFields'
 
 /**
  * Memoised because `App` subscribes to the whole store without a selector and
@@ -86,6 +89,9 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const updateFeatureFolder = useProjectStore((s) => s.updateFeatureFolder)
   const updateFeature = useProjectStore((s) => s.updateFeature)
   const updateFeatures = useProjectStore((s) => s.updateFeatures)
+  // The face rows appear only once the project uses both faces (issue #945).
+  const bothFaces = useProjectStore((s) => projectUsesBothFaces(s.project))
+  const workspaceFace = useProjectStore((s) => activeFace(s.project))
   const deleteFeature = useProjectStore((s) => s.deleteFeature)
   const deleteFeatures = useProjectStore((s) => s.deleteFeatures)
   const beginHistoryTransaction = useProjectStore((s) => s.beginHistoryTransaction)
@@ -1124,7 +1130,10 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 />
               </label>
             ) : null}
-            {selectedZEditableFeatures.length > 0 ? (
+            {bothFaces ? <AuthoringFaceRow face={workspaceFace} featureIds={selectedFeatureIds} /> : null}
+            {selectedZEditableFeatures.length > 0 && workspaceFace === 'bottom' ? (
+              <FaceDepthFields features={selectedZEditableFeatures} />
+            ) : selectedZEditableFeatures.length > 0 ? (
               <ZRangeSlider
                 selectionKey={`features-${selectedZEditableFeatureIds.join(',')}`}
                 zTop={commonSelectedZTop}
@@ -1400,6 +1409,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               onCommit={(next) => updateFeature(selectedFeature.id, { name: next })}
             />
           </label>
+          {bothFaces ? <AuthoringFaceRow face={selectedFeature.authoringFace} featureIds={[selectedFeature.id]} /> : null}
           {selectedFeature.operation === 'region' ? (
             <>
               <label className="properties-field">
@@ -1420,6 +1430,8 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
                 </div>
               </label>
             </>
+          ) : selectedFeature.authoringFace === 'bottom' ? (
+            <FaceDepthFields features={[selectedFeature]} />
           ) : !selectedFeature.sketch.profile.closed || selectedFeature.operation === 'line' ? (
             <ZRangeSlider
               selectionKey={`feature-${selectedFeature.id}`}

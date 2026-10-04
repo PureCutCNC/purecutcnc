@@ -21,6 +21,7 @@ import type { ToolpathVisibility } from '../toolpathVisibility'
 import { canvasColors } from './canvasPalette'
 import { drawToolpath } from './previewPrimitives'
 import type { SketchToolpathSurface } from './useSketchToolpathRenderer'
+import { applyViewMirror } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 import type { CanvasDrawSample } from './toolpathGpuSuggestion'
 
@@ -36,8 +37,15 @@ export function renderSketchToolpaths(
     const emphasized = toolpath.operationId === selectedId
     return { toolpath, emphasized, selectedLevel: emphasized ? selectedLevel : null, slotScale: percent === null ? 1 : percent / 100 }
   })
+  // A Bottom view shows the stock turned over (issue #945). The toolpath
+  // caches are built for an unmirrored view, so a mirrored one is drawn on
+  // the Canvas path through a mirrored context; #947 makes the preview
+  // setup-aware.
+  const mirrored = vt.mirrorX !== undefined || vt.mirrorY !== undefined
   let gpuActive = false
-  if (surface) {
+  if (surface && mirrored) {
+    surface.gpu.canvas.hidden = true
+  } else if (surface) {
     const foreground = surface.foreground
     if (foreground.canvas.width !== ctx.canvas.width) foreground.canvas.width = ctx.canvas.width
     if (foreground.canvas.height !== ctx.canvas.height) foreground.canvas.height = ctx.canvas.height
@@ -54,9 +62,20 @@ export function renderSketchToolpaths(
   }
   if (!gpuActive) {
     const start = observeCanvasDraw && entries.length > 0 ? performance.now() : null
-    for (const { toolpath, emphasized, selectedLevel: entryLevel, slotScale } of entries) {
-      drawToolpath(ctx, toolpath, vt, emphasized, visible, slotScale, { deferArrows, selectedLevel: entryLevel })
+    if (mirrored) {
+      ctx.save()
+      // Reflect about the canvas line the mirrored world axis maps onto.
+      ctx.translate(
+        vt.mirrorX === undefined ? 0 : 2 * vt.offsetX + vt.mirrorX * vt.scale,
+        vt.mirrorY === undefined ? 0 : 2 * vt.offsetY + vt.mirrorY * vt.scale,
+      )
+      applyViewMirror(ctx, vt)
     }
+    const plainView = mirrored ? { scale: vt.scale, offsetX: vt.offsetX, offsetY: vt.offsetY } : vt
+    for (const { toolpath, emphasized, selectedLevel: entryLevel, slotScale } of entries) {
+      drawToolpath(ctx, toolpath, plainView, emphasized, visible, slotScale, { deferArrows, selectedLevel: entryLevel })
+    }
+    if (mirrored) ctx.restore()
     if (start !== null) {
       const now = performance.now()
       observeCanvasDraw?.({ durationMs: now - start, now, navigating: deferArrows })

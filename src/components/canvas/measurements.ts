@@ -18,7 +18,7 @@ import type { SketchControlRef } from '../../store/types'
 import type { Point, SketchProfile } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { arcControlPoint, anchorPointForIndex } from './profilePrimitives'
-import { worldToCanvas } from './viewTransform'
+import { worldAngleToCanvas, worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 import { canvasColors, canvasRgba } from './canvasPalette'
 
@@ -186,7 +186,7 @@ export function drawAngleMeasurement(
   }
 
   const originCanvas = worldToCanvas(origin, vt)
-  const angleMid = startAngle + ((delta * Math.PI) / 180) / 2
+  const angleMid = worldAngleToCanvas(startAngle + ((delta * Math.PI) / 180) / 2, vt)
   const radius =
     Math.min(
       Math.max(

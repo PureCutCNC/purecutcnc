@@ -530,4 +530,13 @@ export const canvasDe: Record<keyof typeof canvasEn, string> = {
   'canvas.nest.improve.took': 'Gesucht: {elapsed}.',
   'canvas.nest.improve.stalled': 'Beendet: Seit einer Weile keine bessere Anordnung gefunden.',
   'canvas.nest.improve.changed': 'Beendet, weil sich der Entwurf geändert hat.',
+
+  // ── Stock faces on the sketch (issue #945) ──
+  'canvas.face.through': 'DURCH',
+  'canvas.face.topOriginLanding': 'Nullpunkt der Oberseite liegt nach dem Wenden hier',
+  'canvas.face.flippedAboutX': 'Rohteil um X gewendet (Vorderkante ↔ Hinterkante).',
+  'canvas.face.flippedAboutY': 'Rohteil um Y gewendet (linke Kante ↔ rechte Kante).',
+  'canvas.face.topIsGhost': 'Features der Oberseite sind ein Geisterbild und können hier nicht bearbeitet werden.',
+  'canvas.face.drawingOnTop': 'Zeichnen auf der Oberseite',
+  'canvas.face.drawingOnBottom': 'Zeichnen auf der Unterseite',
 }

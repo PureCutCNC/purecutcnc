@@ -22,7 +22,7 @@ import type { Units } from '../../utils/units'
 import { formatLength } from '../../utils/units'
 import { hexToRgba } from './previewPrimitives'
 import { arcControlPoint, anchorPointForIndex, traceProfilePath } from './profilePrimitives'
-import { worldToCanvas } from './viewTransform'
+import { applyViewMirror, worldArcToCanvas, worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 import type { CanvasThemePalette } from '../../theme/palette'
 import { canvasColors } from './canvasPalette'
@@ -119,7 +119,7 @@ export function drawSketchControls(
 
     // Dashed outline
     ctx.beginPath()
-    ctx.arc(center.cx, center.cy, radius, startAngle, endAngle, seg.clockwise)
+    ctx.arc(center.cx, center.cy, radius, ...worldArcToCanvas(startAngle, endAngle, seg.clockwise, vt))
     ctx.setLineDash([5, 5])
     ctx.strokeStyle = palette.mutedGeometry
     ctx.lineWidth = 1
@@ -576,6 +576,7 @@ export function drawBackdropImage(
 
   ctx.save()
   ctx.translate(center.cx, center.cy)
+  applyViewMirror(ctx, vt)
   ctx.rotate(rotation)
   ctx.globalAlpha = Math.min(Math.max(backdrop.opacity, 0), 1)
   ctx.drawImage(image, -width / 2, -height / 2, width, height)
@@ -584,6 +585,7 @@ export function drawBackdropImage(
   if (selected) {
     ctx.save()
     ctx.translate(center.cx, center.cy)
+    applyViewMirror(ctx, vt)
     ctx.rotate(rotation)
     ctx.beginPath()
     ctx.rect(-width / 2, -height / 2, width, height)

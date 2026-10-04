@@ -725,3 +725,19 @@ export const panelHandles = {
   /** The active sketch stage — measured to prove canvas reclamation. */
   sketchStage: (page: Page) => page.locator('#workspace-panel-sketch'),
 }
+
+// ── Top / Bottom faces (issue #945) ────────────────────────────────
+
+export const face = {
+  switchGroup: (page: Page) => page.getByRole('group', { name: 'Face' }),
+  segment: (page: Page, name: 'Top' | 'Bottom') =>
+    face.switchGroup(page).getByRole('button', { name, exact: true }),
+  otherSideToggle: (page: Page) => page.locator('.face-switch__ghost'),
+  banner: (page: Page) => page.locator('.face-banner'),
+  layer: (page: Page, which: 'top' | 'bottom') => page.locator(`[data-face-layer="${which}"]`),
+  ghostRows: (page: Page) => page.locator('.tree-row--feature[data-ghost="true"]'),
+  depthField: (page: Page, label: string): Locator =>
+    page.locator('.properties-panel .face-depth .properties-field').filter({ hasText: label }).locator('input'),
+  stockSpan: (page: Page) => page.getByTestId('stock-z-span'),
+  changeFaceDialog: (page: Page) => page.getByRole('dialog', { name: /^Move / }),
+}

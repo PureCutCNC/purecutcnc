@@ -81,6 +81,9 @@ const RATIO_CHECKS: readonly RatioCheck[] = [
   { id: 'role-line-text', label: 'Line role text on panels', fg: 'role-line-text', bg: ['surface-panel', 'surface-app'], warnBelow: 4.5 },
   { id: 'role-region-text', label: 'Region role text on panels', fg: 'role-region-text', bg: ['surface-panel', 'surface-app'], warnBelow: 4.5 },
   { id: 'role-construction-text', label: 'Construction role text on panels', fg: 'role-construction-text', bg: ['surface-panel', 'surface-app'], warnBelow: 4.5 },
+  { id: 'face-bottom-text', label: 'Bottom face text on panels', fg: 'face-bottom-text', bg: ['surface-panel', 'surface-app'], warnBelow: 4.5 },
+  { id: 'face-bottom-canvas', label: 'Bottom face ghost on canvas', fg: 'canvas.ghostBottom', bg: ['canvas.background'], warnBelow: 3 },
+  { id: 'face-top-canvas', label: 'Top face ghost on canvas', fg: 'canvas.ghostTop', bg: ['canvas.background'], warnBelow: 3 },
   { id: 'add-panel', label: 'Positive/add color on panels', fg: 'add', bg: ['surface-panel', 'surface-app'], warnBelow: 3 },
   { id: 'cut-panel', label: 'Cut color on panels', fg: 'cut', bg: ['surface-panel', 'surface-app'], warnBelow: 3 },
   { id: 'role-line-canvas', label: 'Line role on canvas', fg: 'role-line', bg: ['canvas.background'], warnBelow: 2 },
@@ -98,6 +101,13 @@ const DISTANCE_CHECKS: readonly DistanceCheck[] = [
   { id: 'line-vs-construction', label: 'Line vs. construction role', a: 'role-line', b: 'role-construction', base: 'canvas.background', warnBelow: 12 },
   { id: 'region-vs-construction', label: 'Region vs. construction role', a: 'role-region', b: 'role-construction', base: 'canvas.background', warnBelow: 12 },
   { id: 'add-vs-cut', label: 'Add vs. cut operation color', a: 'add', b: 'cut', base: 'surface-panel', warnBelow: 12 },
+  // The Bottom face colour marks a place, not a problem: it must never read
+  // as a warning, an error or a cutting move (issue #945).
+  { id: 'face-bottom-vs-warning', label: 'Bottom face vs. warning text', a: 'face-bottom-text', b: 'warning-text', base: 'surface-panel', warnBelow: 12 },
+  { id: 'face-bottom-vs-danger', label: 'Bottom face vs. danger text', a: 'face-bottom-text', b: 'danger-text', base: 'surface-panel', warnBelow: 12 },
+  { id: 'face-bottom-vs-accent', label: 'Bottom face vs. Top face accent', a: 'face-bottom', b: 'accent', base: 'surface-panel', warnBelow: 12 },
+  { id: 'ghost-bottom-vs-cut', label: 'Bottom face ghost vs. cutting move', a: 'canvas.ghostBottom', b: 'canvas.toolpathCut', base: 'canvas.background', warnBelow: 12 },
+  { id: 'ghost-bottom-vs-top', label: 'Bottom vs. Top face ghost', a: 'canvas.ghostBottom', b: 'canvas.ghostTop', base: 'canvas.background', warnBelow: 12 },
 ]
 
 export interface ContrastFinding {

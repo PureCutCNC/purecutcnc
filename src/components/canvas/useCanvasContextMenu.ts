@@ -24,7 +24,7 @@ import type {
   SelectionState,
 } from '../../store/types'
 import type { Project } from '../../types/project'
-import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { editableProjectFeatures } from '../../store/helpers/activeFace'
 import {
   findHitClampId,
   findHitTabId,
@@ -32,7 +32,7 @@ import {
 } from './hitTest'
 import {
   canvasToWorld,
-  computeViewTransform,
+  computeSketchViewTransform,
 } from './viewTransform'
 import type { CanvasPoint, SketchViewState } from './viewTransform'
 
@@ -101,7 +101,7 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
     const point: CanvasPoint = { cx: clientX - rect.left, cy: clientY - rect.top }
     const project = projectRef.current
     const selection = selectionRef.current
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+    const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewStateRef.current)
     const world = canvasToWorld(point.cx, point.cy, vt)
     const hitClampId = findHitClampId(world, project.clamps)
     if (hitClampId) {
@@ -125,7 +125,7 @@ export function useCanvasContextMenu(ctx: CanvasContextMenuCtx): UseCanvasContex
     // outline wins, an interior click takes the topmost (hover-highlighted)
     // feature. Coincident outlines cannot show the picker here, so fall back
     // to the topmost candidate.
-    const featureHit = resolveFeatureSelectionHit(world, resolvedProjectFeatures(project), vt)
+    const featureHit = resolveFeatureSelectionHit(world, editableProjectFeatures(project), vt)
     if (featureHit.kind === 'none') return
     const hitId = featureHit.kind === 'direct' ? featureHit.featureId : featureHit.candidateIds[0]
 

@@ -485,4 +485,13 @@ export const canvasZhCN: Record<keyof typeof canvasEn, string> = {
   'canvas.nest.improve.took': '共搜索 {elapsed}。',
   'canvas.nest.improve.stalled': '已停止：一段时间内没有找到更好的排样。',
   'canvas.nest.improve.changed': '设计已更改，已停止。',
+
+  // ── Stock faces on the sketch (issue #945) ──
+  'canvas.face.through': '贯穿',
+  'canvas.face.topOriginLanding': '翻面后顶面原点位于此处',
+  'canvas.face.flippedAboutX': '毛坯绕 X 轴翻转（前边 ↔ 后边）。',
+  'canvas.face.flippedAboutY': '毛坯绕 Y 轴翻转（左边 ↔ 右边）。',
+  'canvas.face.topIsGhost': '顶面特征以虚影显示，无法在此编辑。',
+  'canvas.face.drawingOnTop': '正在顶面上绘制',
+  'canvas.face.drawingOnBottom': '正在底面上绘制',
 }
