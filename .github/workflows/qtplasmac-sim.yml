@@ -1,0 +1,80 @@
+name: QtPlasmaC Simulator
+
+# Runs plasma programs through LinuxCNC's own QtPlasmaC simulator configuration
+# in a container (issue #954): QtPlasmaC's load filter, the interpreter, then a
+# real run whose torch sequence is judged from a servo-rate trace. Nobody on
+# the project owns a plasma table, so this is the verification the plasma post
+# output (#959) rests on.
+#
+# A separate workflow from gcode-conformance.yml on purpose. It shares nothing
+# with those jobs (no validator build, no Debian rs274), it is slower, and a
+# path filter keeps it off pull requests that cannot change its outcome.
+#
+# Not a required check, for the same reason as G-code Conformance: the image is
+# built from third-party package archives, and a transient upstream failure
+# must not be able to wedge merges.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - scripts/gcode-conformance/qtplasmac/**
+      - src/engine/**
+      - src/types/**
+      - package.json
+      - package-lock.json
+      - .github/workflows/qtplasmac-sim.yml
+  push:
+    branches: [main]
+    paths:
+      - scripts/gcode-conformance/qtplasmac/**
+      - src/engine/**
+      - src/types/**
+      - package.json
+      - package-lock.json
+      - .github/workflows/qtplasmac-sim.yml
+
+concurrency:
+  group: qtplasmac-sim-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  qtplasmac-sim:
+    name: qtplasmac-sim
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The runner has Docker; the check builds the simulator image itself.
+      # REQUIRED turns "no container runtime, nothing verified" — a pass on a
+      # developer machine — into a failure here, so this job cannot go green
+      # without having run the programs.
+      - name: Run plasma programs through the QtPlasmaC simulator
+        env:
+          QTPLASMAC_SIM_REQUIRED: '1'
+          QTPLASMAC_SIM_RUNTIME: docker
+        run: npm run check:gcode:qtplasmac
+
+      - name: Upload programs and simulator reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qtplasmac-sim
+          path: .gcode-conformance/qtplasmac
+          # The output directory is a dot-directory, which upload-artifact
+          # skips unless told otherwise.
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: ignore

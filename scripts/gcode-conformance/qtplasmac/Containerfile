@@ -1,0 +1,63 @@
+# Copyright 2026 Franja (Frank) Povazanj
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# LinuxCNC's own QtPlasmaC simulator configuration, runnable headless
+# (issue #954). Built and run by `npm run check:gcode:qtplasmac`; see README.md.
+#
+# The LinuxCNC version is pinned to a *release* from linuxcnc.org rather than
+# Debian's own `linuxcnc-uspace`, which is a 2.9.0 pre-release snapshot from
+# February 2023. QtPlasmaC kept changing through the 2.9.x releases, and those
+# are what a plasma table actually runs. linuxcnc.org keeps every release in
+# its archive, so the exact version stays installable.
+
+FROM docker.io/library/debian:bookworm
+
+ARG LINUXCNC_VERSION=1:2.9.10
+
+# The bookworm suite on linuxcnc.org is signed by the 2008 "EMC Archive Signing
+# Key". The key is committed beside this file so the build does not depend on a
+# keyserver, and its fingerprint is checked so a swapped file fails the build.
+COPY sim/linuxcnc-archive-key.asc /tmp/linuxcnc-archive-key.asc
+
+RUN set -eu; \
+    export DEBIAN_FRONTEND=noninteractive; \
+    apt-get update -qq; \
+    apt-get install -y -qq --no-install-recommends ca-certificates gnupg >/dev/null; \
+    gpg --show-keys --with-colons /tmp/linuxcnc-archive-key.asc \
+      | grep -q '^fpr:::::::::EEDD0D29F81DCAA0D258661F3CB9FD148F374FEF:'; \
+    gpg --dearmor -o /usr/share/keyrings/linuxcnc.gpg /tmp/linuxcnc-archive-key.asc; \
+    echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/linuxcnc.gpg] https://www.linuxcnc.org/ bookworm base 2.9-uspace' \
+      > /etc/apt/sources.list.d/linuxcnc.list; \
+    apt-get update -qq; \
+    apt-get install -y -qq --no-install-recommends \
+      "linuxcnc-uspace=${LINUXCNC_VERSION}" xvfb xauth libgl1-mesa-dri >/dev/null; \
+    rm -rf /var/lib/apt/lists/* /tmp/linuxcnc-archive-key.asc
+
+# LinuxCNC refuses to run as root, and Xvfb needs its socket directory to exist
+# before an unprivileged user starts it.
+RUN set -eu; \
+    useradd -m cnc; \
+    mkdir -p /tmp/.X11-unix; chmod 1777 /tmp/.X11-unix; \
+    cp -r /usr/share/doc/linuxcnc/examples/sample-configs/sim/qtplasmac /home/cnc/sim; \
+    mkdir -p /home/cnc/linuxcnc/nc_files
+
+COPY sim/materials-metric.cfg /home/cnc/sim/qtplasmac-metric_material.cfg
+COPY sim/materials-imperial.cfg /home/cnc/sim/qtplasmac-imperial_material.cfg
+COPY sim/driver.py sim/filter_capture.py /opt/qtplasmac-check/
+
+RUN chown -R cnc:cnc /home/cnc
+
+USER cnc
+WORKDIR /home/cnc/sim
+ENTRYPOINT ["python3", "/opt/qtplasmac-check/driver.py"]

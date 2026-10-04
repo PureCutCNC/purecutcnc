@@ -1,0 +1,26 @@
+(missing material select)
+(PureCutCNC NEGATIVE fixture for the QtPlasmaC simulator check, issue #954.)
+(The check MUST reject this program. It is single-outline.ngc with one defect:)
+(there is no M190, so the torch fires on whatever material was loaded.)
+
+(Manual: Preamble and Postamble Codes)
+G21 G40 G49 G64 P0.1 G80 G90 G92.1 G94 G97
+(Manual: Paused Motion)
+M52 P1
+(DEFECT: no material select before the first torch-on)
+F#<_hal[plasmac.cut-feed-rate]>
+
+G0 X15 Y50
+M3 $0 S1
+G1 X20 Y50
+G1 X20 Y80
+G1 X120 Y80
+G1 X120 Y20
+G1 X20 Y20
+G1 X20 Y50
+M5 $0
+
+(Manual: Preamble and Postamble Codes)
+G0 X0 Y0
+G21 G40 G49 G64 P0.1 G80 G90 G92.1 G94 G97
+M2

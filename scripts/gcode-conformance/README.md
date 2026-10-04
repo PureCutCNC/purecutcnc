@@ -80,6 +80,15 @@ an unchecked case must never read as a verified one.
 Mach3 and UCCNC have no offline interpreter: closed-source, Windows-only, and
 line-limited demos. They stay a manual pre-release step.
 
+## Plasma: the QtPlasmaC simulator
+
+Plasma programs are checked separately, by `npm run check:gcode:qtplasmac`
+(issue #954). `rs274` cannot run QtPlasmaC's `M190` material select or read
+`#<_hal[...]>`, so that check runs LinuxCNC's whole QtPlasmaC simulator
+configuration in a container and judges the torch sequence from a trace of the
+run. It has its own corpus, runner and workflow, and shares nothing with the
+validators above: see [`qtplasmac/README.md`](qtplasmac/README.md).
+
 ## Notes
 
 - Output lives in `.gcode-conformance/` (gitignored). `corpus/` is wiped each
