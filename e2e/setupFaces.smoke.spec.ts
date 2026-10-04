@@ -255,6 +255,31 @@ test('the face switch is reachable and operable from the keyboard', async ({ app
   await expect(ui.face.otherSideToggle(page)).toHaveAttribute('aria-pressed', 'false')
 })
 
+test('a 3D view parked on the Top or Bottom preset follows the face; other views stay put', async ({ app, ui }) => {
+  const { page } = app
+  await drawRect(page, 1, 1, 3, 2)
+  await ui.viewMenu.tab3d(page).click()
+  const checked = async (label: string) => {
+    await ui.viewMenu.trigger3d(page).click()
+    const value = await ui.viewMenu.option3d(page, label).getAttribute('aria-checked')
+    await page.keyboard.press('Escape')
+    return value
+  }
+
+  // The default isometric view is left where it is.
+  await ui.face.segment(page, 'Bottom').click()
+  expect(await checked('Isometric view')).toBe('true')
+  await ui.face.segment(page, 'Top').click()
+
+  // A plan view turns over with the stock.
+  await ui.viewMenu.trigger3d(page).click()
+  await ui.viewMenu.option3d(page, 'Top view').click()
+  await ui.face.segment(page, 'Bottom').click()
+  expect(await checked('Bottom view')).toBe('true')
+  await ui.face.segment(page, 'Top').click()
+  expect(await checked('Top view')).toBe('true')
+})
+
 test.describe('landscape tablet', () => {
   test.use({ viewport: { width: 1024, height: 768 }, hasTouch: true })
 
