@@ -41,7 +41,8 @@
  */
 
 import { newProject, defaultTool, rectProfile } from '../../src/types/project'
-import type { Operation, Project, SketchFeature, Units } from '../../src/types/project'
+import type { Operation, Project, SketchFeature } from '../../src/types/project'
+import type { Units } from '../../src/utils/units'
 import { projectWithFeatures } from '../../src/test/projectFixtures'
 import { generateEdgeRouteToolpath } from '../../src/engine/toolpaths/edge'
 import { generatePocketToolpath } from '../../src/engine/toolpaths/pocket'
@@ -49,10 +50,10 @@ import { normalizeToolForProject } from '../../src/engine/toolpaths/geometry'
 import { runPostProcessor } from '../../src/engine/gcode/postprocessor'
 import { BUNDLED_DEFINITIONS } from '../../src/engine/gcode/definitions'
 import type { MachineDefinition } from '../../src/engine/gcode/types'
-import type { ToolpathMove, ToolpathPoint, ToolpathResult } from '../../src/engine/toolpaths/types'
+import type { DrillCycle, ToolpathMove, ToolpathPoint, ToolpathResult } from '../../src/engine/toolpaths/types'
 
 export interface CorpusCase {
-  /** File-safe identifier; becomes `<name>.nc`. */
+  /** File-safe identifier; uses the machine definition extension. */
   name: string
   /** Why this case exists — printed alongside failures. */
   covers: string
@@ -64,6 +65,10 @@ export interface CorpusCase {
   definitionOverrides?: (base: MachineDefinition) => MachineDefinition
   moves: ToolpathMove[]
   operationOverrides?: Partial<Operation>
+  /** SBP corpus also exercises two real tool numbers and macro syntax. */
+  emitToolChanges?: boolean
+  secondTool?: boolean
+  drillCycles?: DrillCycle[]
 }
 
 function pt(x: number, y: number, z = -1): ToolpathPoint {
@@ -307,6 +312,19 @@ function cornerReliefMoves(): ToolpathMove[] {
   return cachedCornerReliefMoves
 }
 
+/** Expanded two-peck drill motion, including a retract between pecks. */
+function drillMoves(units: Units): ToolpathMove[] {
+  const scale = units === 'mm' ? 1 : 1 / 25.4
+  const at = (z: number) => pt(10 * scale, 12 * scale, z * scale)
+  return [
+    { kind: 'rapid', from: pt(0, 0, 5 * scale), to: at(5) },
+    { kind: 'plunge', from: at(5), to: at(-2) },
+    { kind: 'rapid', from: at(-2), to: at(1) },
+    { kind: 'plunge', from: at(1), to: at(-4) },
+    { kind: 'rapid', from: at(-4), to: at(5) },
+  ]
+}
+
 export const CORPUS: CorpusCase[] = [
   {
     name: 'issue-447-small-radius-trochoidal',
@@ -445,6 +463,39 @@ export const CORPUS: CorpusCase[] = [
     moves: cornerReliefMoves(),
     operationOverrides: { arcFittingEnabled: false },
   },
+  ...(['mm', 'inch'] as const).flatMap((units): CorpusCase[] => {
+    const scale = units === 'mm' ? 1 : 1 / 25.4
+    return [
+      ...([90, -90] as const).map((sweep): CorpusCase => ({
+        name: `sbp-${units}-${sweep > 0 ? 'cw' : 'ccw'}-arc`,
+        covers: 'native CG arc syntax and direction, speeds, units guard, CRLF',
+        units,
+        machineId: 'shopbot',
+        moves: leadInAndCut(arcChords(10 * scale, 0, sweep, 16, 0, 0, -scale)),
+      })),
+      {
+        name: `sbp-${units}-tool-change`,
+        covers: 'two tools: &Tool assignment, C9, TR, C6/C7 and speed restatement',
+        units,
+        machineId: 'shopbot',
+        moves: leadInAndCut([pt(0, 0, -scale), pt(10 * scale, 10 * scale, -scale)]),
+        emitToolChanges: true,
+        secondTool: true,
+      },
+      {
+        name: `sbp-${units}-drilling`,
+        covers: 'drill cycles expand to MS/M3/JZ/J2 rather than canned G-code',
+        units,
+        machineId: 'shopbot',
+        operationOverrides: { kind: 'drilling', drillType: 'peck', peckDepth: 2 * scale },
+        moves: drillMoves(units),
+        drillCycles: [{
+          x: 10 * scale, y: 12 * scale, clearZ: 5 * scale,
+          retractZ: scale, bottomZ: -4 * scale, drillType: 'peck', peckDepth: 2 * scale,
+        }],
+      },
+    ]
+  }),
 ]
 
 function machineDefinition(entry: CorpusCase): MachineDefinition {
@@ -498,16 +549,29 @@ export function renderCase(entry: CorpusCase): { gcode: string; warnings: string
     warnings: [],
     bounds: null,
     moves: entry.moves,
+    ...(entry.drillCycles ? { drillCycles: entry.drillCycles } : null),
+  }
+
+  const operations = [{ operation, tool, toolpath }]
+  if (entry.secondTool) {
+    const secondTool = { ...defaultTool(entry.units, 2), id: 't2', name: 'Second Tool' }
+    project.tools.push(secondTool)
+    const secondOp = { ...operation, id: 'op2', toolRef: secondTool.id, name: 'Second Tool Op' }
+    operations.push({
+      operation: secondOp,
+      tool: normalizeToolForProject(secondTool, project),
+      toolpath: { ...toolpath, operationId: secondOp.id },
+    })
   }
 
   const result = runPostProcessor({
     project,
     definition: machineDefinition(entry),
-    operations: [{ operation, tool, toolpath }],
+    operations,
     options: {
       // Tool changes emit M0, a genuine program pause that a controller
-      // interpreter blocks on forever. They are not what this corpus tests.
-      emitToolChanges: false,
+      // interpreter blocks on forever. Only SBP cases opt into macro syntax.
+      emitToolChanges: entry.emitToolChanges ?? false,
       emitCoolant: false,
       programName: entry.name,
     },
