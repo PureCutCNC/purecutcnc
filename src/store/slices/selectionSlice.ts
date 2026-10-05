@@ -18,6 +18,7 @@ import type { StateCreator } from 'zustand'
 import type { Project } from '../../types/project'
 import type { ProjectStore, SelectionState } from '../types'
 import { cloneProject } from '../helpers/normalize'
+import { keepWorkspaceFace } from '../helpers/provisionalSetup'
 import { featuresFormConnectedOverlapGroup, featuresOverlapForCut } from '../helpers/clipping'
 import { resolveFeatureInstance, type ResolvedSketchFeature } from '../helpers/resolveFeatures'
 
@@ -1113,7 +1114,8 @@ export function createSelectionSlice(
           }
         }
 
-        const restored = deps.normalizeProject(cloneProject(s.sketchEditSession.snapshot))
+        // Like undo: the snapshot is restored onto the face in view (#945).
+        const restored = keepWorkspaceFace(deps.normalizeProject(cloneProject(s.sketchEditSession.snapshot)), s.project)
         return {
           project: restored,
           selection: {

@@ -131,6 +131,8 @@ const DARK_CSS_VALUES: Record<string, string> = {
   'role-region-text': '#c4a6e0',
   'role-construction': '#8a9aab',
   'role-construction-text': '#a9b6c4',
+  'face-bottom': '#e3a564',
+  'face-bottom-text': '#f3c38c',
 }
 
 const LIGHT_CSS_VALUES: Record<string, string> = {
@@ -183,6 +185,8 @@ const LIGHT_CSS_VALUES: Record<string, string> = {
   'role-region-text': '#673b8c',
   'role-construction': '#64748b',
   'role-construction-text': '#4e5c70',
+  'face-bottom': '#b06a1c',
+  'face-bottom-text': '#8a4f0f',
 }
 
 function completeValues(family: ThemeFamily, cssValues: Record<string, string>): ThemeValues {

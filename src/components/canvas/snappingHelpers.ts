@@ -17,7 +17,7 @@
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
 import { profileVertices, rectProfile } from '../../types/project'
 import type { AnchorTarget, ConstraintIntersectionReference, DimensionAnchor, Point, Project, SketchProfile } from '../../types/project'
-import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { activeOriginInStock, editableProjectFeatures } from '../../store/helpers/activeFace'
 import { resolveProfileSegments } from '../../store/helpers/resolveProfileSegments'
 import { segmentIntersections } from '../../store/helpers/segmentIntersection'
 import { distance2 } from './hitTest'
@@ -442,7 +442,7 @@ export function resolveSketchSnap(input: {
   snapProfiles.push({ profile: project.stock.profile, source: { source: 'stock' } })
   addProfileSnapCandidates(candidates, project.stock.profile, rawPoint, vt, snapRadiusPx, activeModes, referencePoint, { source: 'stock' })
 
-  for (const feature of resolvedProjectFeatures(project)) {
+  for (const feature of editableProjectFeatures(project)) {
     if (!feature.visible || feature.id === excludeFeatureId) {
       continue
     }
@@ -469,7 +469,8 @@ export function resolveSketchSnap(input: {
   }
 
   if (activeModes.has('point') && project.origin.visible) {
-    pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'point', { x: project.origin.x, y: project.origin.y }, undefined, undefined, { kind: 'origin' })
+    const origin = activeOriginInStock(project)
+    pushSnapCandidate(candidates, rawPoint, vt, snapRadiusPx, 'point', { x: origin.x, y: origin.y }, undefined, undefined, { kind: 'origin' })
   }
 
   if (activeModes.has('intersection')) {

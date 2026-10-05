@@ -23,6 +23,7 @@ import type {
   Project,
   SketchFeature,
 } from '../../types/project'
+import { activeFace } from '../helpers/activeFace'
 import type { ProjectStore } from '../types'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import {
@@ -497,9 +498,12 @@ export function createFeatureSlice(
         if (effectiveFolderSection !== sectionForOperation(featureForInsert.operation)) {
           effectiveFolderId = null
         }
+        // A new feature belongs to the face the workspace is on (issue #945);
+        // one that names its face — a copy of derived geometry — keeps it.
+        const authoringFace = featureForInsert.authoringFace ?? activeFace(s.project)
         const safeFeatureBase: SketchFeature = isFirstSolidFeature && !preserveImportedModelOperation
-          ? normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId, operation: 'add' })
-          : normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId })
+          ? normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId, authoringFace, operation: 'add' })
+          : normalizeFeatureZRange({ ...featureForInsert, id: safeId, folderId: effectiveFolderId, authoringFace })
         const nextModelAssets = { ...s.project.modelAssets }
         const safeFeature: SketchFeature = {
           ...safeFeatureBase,

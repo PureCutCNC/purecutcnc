@@ -14,9 +14,12 @@
  * limitations under the License.
  */
 
+import { useMemo } from 'react'
 import type { FeatureDistributionPlan, FeatureDistributionSpec } from '../../sketch/featureDistribution'
 import type { PendingFeatureDistribution } from '../../store/types'
 import { useI18n } from '../../i18n/i18nContext'
+import { activeSetup, faceAngles, faceOffsets } from '../../store/helpers/activeFace'
+import { useProjectStore } from '../../store/projectStore'
 import { CanvasWorkflowAction, CanvasWorkflowCancel, CanvasWorkflowConfirm } from './CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
@@ -51,6 +54,14 @@ export function FeatureDistributionPanel({
   onComplete,
   onCancel,
 }: FeatureDistributionPanelProps) {
+  // The face maps depend on the active setup and the stock alone; subscribing
+  // to those keeps the panel from re-rendering on every other project change.
+  const setup = useProjectStore((state) => activeSetup(state.project))
+  const stock = useProjectStore((state) => state.project.stock)
+  const { face, offsets } = useMemo(() => {
+    const view = { setups: [setup], activeSetupId: setup.id, stock }
+    return { face: faceAngles(view), offsets: faceOffsets(view) }
+  }, [setup, stock])
   const { t } = useI18n()
   const { spec } = pending
   const planError = plan.ok ? null : {
@@ -101,8 +112,9 @@ export function FeatureDistributionPanel({
             <div className="canvas-workflow-panel__grid">
               <NumberField label={t('canvas.featureDistribution.rows')} value={spec.rows} onChange={(event) => onUpdate({ ...spec, rows: inputNumber(event) })} />
               <NumberField label={t('canvas.featureDistribution.columns')} value={spec.columns} onChange={(event) => onUpdate({ ...spec, columns: inputNumber(event) })} />
-              <NumberField label={t('canvas.featureDistribution.spacingX')} value={spec.spacingX} onChange={(event) => onUpdate({ ...spec, spacingX: inputNumber(event) })} />
-              <NumberField label={t('canvas.featureDistribution.spacingY')} value={spec.spacingY} onChange={(event) => onUpdate({ ...spec, spacingY: inputNumber(event) })} />
+              {/* Spacing is typed as it steps on the face being drawn on; the spec keeps it in stock space (#945). */}
+              <NumberField label={t('canvas.featureDistribution.spacingX')} value={offsets.x(spec.spacingX)} onChange={(event) => onUpdate({ ...spec, spacingX: offsets.x(inputNumber(event)) })} />
+              <NumberField label={t('canvas.featureDistribution.spacingY')} value={offsets.y(spec.spacingY)} onChange={(event) => onUpdate({ ...spec, spacingY: offsets.y(inputNumber(event)) })} />
             </div>
           )}
 
@@ -118,7 +130,8 @@ export function FeatureDistributionPanel({
                 </PickerSelection>
               </div>
               <NumberField label={t('canvas.featureDistribution.instanceCount')} value={spec.copyCount} integer onChange={(event) => onUpdate({ ...spec, copyCount: inputNumber(event) })} />
-              <NumberField label={t('canvas.featureDistribution.sweep')} value={spec.sweepDegrees} onChange={(event) => onUpdate({ ...spec, sweepDegrees: inputNumber(event) })} />
+              {/* The sweep is typed as it turns on the face being drawn on; the spec keeps it in stock space (#945). */}
+              <NumberField label={t('canvas.featureDistribution.sweep')} value={face.turn(spec.sweepDegrees)} onChange={(event) => onUpdate({ ...spec, sweepDegrees: face.turn(inputNumber(event)) })} />
               <OrientationField value={spec.orientation} onChange={(orientation) => onUpdate({ ...spec, orientation })} />
             </div>
           )}

@@ -24,6 +24,7 @@ import type { PendingAddTool } from '../../store/types'
 import type { Point, Project } from '../../types/project'
 import { parseLengthInput } from '../../utils/units'
 import { computeDimensionEditPreviewPoint, type DimensionEditState } from './manualEntry'
+import { faceAngles } from '../../store/helpers/activeFace'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
 
 export interface CreationWorkflowCtx {
@@ -152,7 +153,7 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
   function commitCreationDimensionEdit() {
     const edit = dimensionEditRef.current
     if (!edit) return
-    const pt = computeDimensionEditPreviewPoint(edit, projectRef.current.meta.units)
+    const pt = computeDimensionEditPreviewPoint(edit, projectRef.current.meta.units, faceAngles(projectRef.current))
     const curr = pendingAddRef.current
     if ((edit.shape === 'polygon' || edit.shape === 'spline') && (curr?.shape === 'polygon' || curr?.shape === 'spline')) {
       addPendingPolygonPoint(pt)
@@ -203,7 +204,8 @@ export function useCreationWorkflow(ctx: CreationWorkflowCtx): CreationWorkflow 
     } else if (curr?.shape === 'slot' && 'points' in curr && curr.points.length === 1 && edit.arcStart && !edit.arcEnd) {
       const units = projectRef.current.meta.units
       const len = parseLengthInput(edit.length, units)
-      const angleDeg = parseFloat(edit.angle)
+      // The field holds the angle as it reads on the active face (issue #945).
+      const angleDeg = faceAngles(projectRef.current).direction(parseFloat(edit.angle))
       const slotWidth = parseLengthInput(edit.radius, units)
       if (len != null && len > 0 && !Number.isNaN(angleDeg) && slotWidth != null && slotWidth > 0) {
         const angleRad = angleDeg * Math.PI / 180

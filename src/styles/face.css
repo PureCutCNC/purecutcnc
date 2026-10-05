@@ -1,0 +1,446 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Top / Bottom machining faces (issue #945). Top keeps the accent blue;
+ * Bottom has its own amber, which marks a place and never a problem —
+ * warnings stay on --warning-text and errors on --danger-text. */
+
+/* ── Workspace face switch ── */
+
+.face-switch {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 0 8px;
+}
+
+.face-switch__label {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.face-switch__segments {
+  display: flex;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.face-switch__segment,
+.face-switch__ghost {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.face-switch__segment {
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-subtle);
+}
+
+.face-switch__segment:last-child {
+  border-right: 0;
+}
+
+.face-switch__segment:hover:not(:disabled),
+.face-switch__ghost:hover {
+  color: var(--text);
+}
+
+.face-switch__segment:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.face-switch__segment:focus-visible,
+.face-switch__ghost:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: -2px;
+}
+
+.face-switch__segment--top.face-switch__segment--active {
+  background: var(--accent-soft);
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent-strong);
+}
+
+.face-switch__segment--bottom.face-switch__segment--active {
+  background: color-mix(in srgb, var(--face-bottom) 18%, transparent);
+  color: var(--face-bottom-text);
+  box-shadow: inset 0 -2px 0 var(--face-bottom);
+}
+
+.face-switch__ghost {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-subtle);
+}
+
+/* The toggle wears the colour of the face it shows or hides. */
+.face-switch__ghost--top.face-switch__ghost--on {
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  color: var(--accent-strong);
+}
+
+.face-switch__ghost--bottom.face-switch__ghost--on {
+  border-color: color-mix(in srgb, var(--face-bottom) 65%, transparent);
+  color: var(--face-bottom-text);
+}
+
+@media (max-width: 1180px) {
+  .face-switch__label {
+    display: none;
+  }
+
+  .face-switch__ghost span {
+    display: none;
+  }
+}
+
+/* Tablet shells carry the switch in the sketch's face row: full tap targets,
+ * no label, and the row grows to hold them. */
+[data-shell-mode='tablet'] .face-switch,
+[data-shell-mode='tablet-compact'] .face-switch {
+  padding: 0;
+}
+
+[data-shell-mode='tablet'] .centre-view--face-banner,
+[data-shell-mode='tablet-compact'] .centre-view--face-banner {
+  --face-banner-height: 56px;
+}
+
+[data-shell-mode='tablet'] .face-switch__segment,
+[data-shell-mode='tablet-compact'] .face-switch__segment,
+[data-shell-mode='tablet'] .face-switch__ghost,
+[data-shell-mode='tablet-compact'] .face-switch__ghost {
+  min-width: var(--touch-target, 44px);
+  min-height: var(--touch-target, 44px);
+}
+
+[data-shell-mode='tablet'] .face-switch__label,
+[data-shell-mode='tablet-compact'] .face-switch__label,
+[data-shell-mode='tablet'] .face-switch__ghost span,
+[data-shell-mode='tablet-compact'] .face-switch__ghost span {
+  display: none;
+}
+
+/* ── Sketch face row: how the stock is turned, and which face is drawn on ──
+ * A fixed-height row above the canvas, present on both faces once the project
+ * uses both, so switching face never resizes the canvas. Plain block layout
+ * with a calc() height: no flex or grid percentages for WebKit to disagree on. */
+
+.centre-view--face-banner {
+  --face-banner-height: 44px;
+}
+
+.centre-view--face-banner > .sketch-canvas-container {
+  height: calc(100% - var(--face-banner-height));
+}
+
+/* The first-run overlay covers the canvas, not the row above it: on a tablet
+ * shell the row carries the face switch and must stay reachable. */
+.centre-view--face-banner > .empty-state-overlay {
+  top: var(--face-banner-height);
+}
+
+.face-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--face-banner-height, 44px);
+  padding: 0 10px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-subtle);
+  font-size: 12.5px;
+}
+
+.face-banner__note,
+.face-banner__hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border: 1px solid var(--line-strong);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.face-banner__note {
+  min-width: 0;
+  flex: 0 1 auto;
+  border-radius: 8px;
+}
+
+.face-banner__note span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.face-banner__hint {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border-radius: 16px;
+}
+
+.face-banner--top .face-banner__hint {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  color: var(--accent-strong);
+}
+
+.face-banner--bottom .face-banner__note,
+.face-banner--bottom .face-banner__hint {
+  border-color: color-mix(in srgb, var(--face-bottom) 60%, transparent);
+  background: color-mix(in srgb, var(--face-bottom) 9%, transparent);
+  color: var(--face-bottom-text);
+}
+
+.face-banner svg {
+  flex-shrink: 0;
+}
+
+/* ── Face chips: TOP / BOTTOM / THRU and the layer state ── */
+
+.face-chip {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  height: 16px;
+  line-height: 15px;
+  border-radius: 4px;
+  border: 1px solid var(--line-strong);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.face-chip--top {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.face-chip--bottom {
+  border-color: color-mix(in srgb, var(--face-bottom) 60%, transparent);
+  background: color-mix(in srgb, var(--face-bottom) 14%, transparent);
+  color: var(--face-bottom-text);
+}
+
+.face-chip--thru {
+  border-color: color-mix(in srgb, var(--role-region) 60%, transparent);
+  background: color-mix(in srgb, var(--role-region) 12%, transparent);
+  color: var(--role-region-text);
+}
+
+/* ── Project tree: face layers and ghost rows ── */
+
+/* The group is a grid item of the tree list: without a zero minimum its
+ * nowrap header would set the whole tree's width and push the row buttons
+ * out of the panel. */
+.tree-face-group {
+  min-width: 0;
+}
+
+.tree-face-children {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tree-face-layer {
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 2px 4px 2px 6px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.tree-face-layer__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-face-layer--top {
+  color: var(--accent-strong);
+}
+
+.tree-face-layer--bottom {
+  color: var(--face-bottom-text);
+}
+
+.tree-face-layer--top.tree-face-layer--active {
+  background: var(--accent-soft);
+}
+
+.tree-face-layer--bottom.tree-face-layer--active {
+  background: color-mix(in srgb, var(--face-bottom) 14%, transparent);
+}
+
+.tree-face-layer:not(.tree-face-layer--active) {
+  opacity: 0.85;
+}
+
+.tree-face-layer__count {
+  font-weight: 500;
+}
+
+.tree-face-layer__spacer {
+  flex: 1;
+}
+
+.tree-face-layer svg {
+  flex-shrink: 0;
+}
+
+.tree-row--ghost {
+  cursor: default;
+}
+
+.tree-row--ghost .tree-label,
+.tree-row--ghost .tree-branch {
+  opacity: 0.55;
+}
+
+/* ── Properties: authoring face, and the Z range of a Bottom feature ── */
+
+.face-row__value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.face-z-range {
+  display: grid;
+  gap: 6px;
+}
+
+.face-z-range__span {
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+  font-size: 12px;
+}
+
+.face-z-range__hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* ── Change authoring face confirmation ── */
+
+.dialog--change-face {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.dialog-body.change-face {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.change-face__route {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.change-face__arrow {
+  color: var(--text-dim);
+}
+
+.change-face__intro,
+.change-face__more {
+  margin: 0;
+  color: var(--status-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.change-face__table {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  border-collapse: separate;
+  border-spacing: 0;
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+
+.change-face__table th,
+.change-face__table td {
+  padding: 4px 6px;
+  text-align: left;
+  font-weight: 400;
+}
+
+.change-face__table thead th {
+  color: var(--text-dim);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.change-face__table tbody th {
+  color: var(--text-dim);
+}
+
+.change-face__value {
+  font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+}
+
+/* A shape shared with linked copies on the other face (issue #945). */
+.change-face__linked,
+.properties-linked-face-note {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border-left: 2px solid var(--face-bottom);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.change-face__linked {
+  font-size: 13px;
+}

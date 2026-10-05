@@ -26,6 +26,10 @@ import { loadVersion } from '../../utils/version'
 import { PanelSplit } from '../cam/PanelSplit'
 import { isTabletMode, useShellMode } from './useShellMode'
 import { Icon } from '../Icon'
+import { ChangeFaceDialog } from '../feature-tree/ChangeFaceDialog'
+import { projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { FaceBanner } from './FaceBanner'
+import { FaceSwitch } from './FaceSwitch'
 import { TopCommandBar } from './TopCommandBar'
 import { ToolRail } from './ToolRail'
 import type { SnapMode, SnapSettings } from '../../sketch/snapping'
@@ -118,6 +122,9 @@ export function AppShell({
   const shellMode = useShellMode()
   const { t } = useI18n()
   const tabletShell = isTabletMode(shellMode)
+  // The sketch gets a face row above the canvas once both faces are in use,
+  // and always on a tablet shell, where the row carries the face switch (#945).
+  const bothFaces = useProjectStore((state) => projectUsesBothFaces(state.project))
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false)
   const [expandedPanel, setExpandedPanel] = useState<null | 'properties'>(null)
@@ -590,6 +597,8 @@ export function AppShell({
                 </button>
               </div>
               <div className="panel-tabs-spacer" />
+              {/* Tablet shells hide this header; their switch sits in the sketch's face row. */}
+              {!tabletShell && <FaceSwitch />}
               {!tabletShell && (
                 <button
                   id="panel-handle-right"
@@ -608,12 +617,14 @@ export function AppShell({
             <div className="centre-stage">
               <div
                 id="workspace-panel-sketch"
-                className={`centre-view ${centerTab === 'sketch' ? 'centre-view--active' : ''}`}
+                className={`centre-view ${centerTab === 'sketch' ? 'centre-view--active' : ''}${bothFaces || tabletShell ? ' centre-view--face-banner' : ''}`}
                 role="tabpanel"
                 aria-labelledby="workspace-tab-sketch"
                 aria-hidden={centerTab !== 'sketch'}
               >
+                <FaceBanner withSwitch={tabletShell} />
                 {sketchCanvas}
+                <ChangeFaceDialog />
               </div>
               <div
                 id="workspace-panel-preview3d"

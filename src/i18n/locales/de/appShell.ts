@@ -178,4 +178,15 @@ export const appShellDe: Record<keyof typeof appShellEn, string> = {
   'appShell.toolRail.fillet': 'Verrundung',
   'appShell.toolRail.trim': 'Stutzen',
   'appShell.toolRail.extend': 'Dehnen',
+
+  // ── Workspace face switch (issue #945) ──
+  'appShell.face.label': 'Seite',
+  'appShell.face.top': 'Oben',
+  'appShell.face.bottom': 'Unten',
+  'appShell.face.switchToTop': 'Auf der Oberseite arbeiten',
+  'appShell.face.switchToBottom': 'Auf der Unterseite arbeiten',
+  'appShell.face.busy': 'Aktuelle Bearbeitung abschließen, bevor die Seite gewechselt wird',
+  'appShell.face.otherSide': 'Andere Seite',
+  'appShell.face.showOtherSide': 'Andere Seite als Geisterbild anzeigen',
+  'appShell.face.hideOtherSide': 'Andere Seite ausblenden',
 }

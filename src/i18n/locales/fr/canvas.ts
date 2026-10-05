@@ -479,4 +479,13 @@ export const canvasFr: Record<keyof typeof canvasEn, string> = {
   'canvas.nest.improve.took': 'Recherche de {elapsed}.',
   'canvas.nest.improve.stalled': 'Arrêté : aucune meilleure disposition depuis un moment.',
   'canvas.nest.improve.changed': 'Arrêté, car la conception a changé.',
+
+  // ── Stock faces on the sketch (issue #945) ──
+  'canvas.face.through': 'TRAV.',
+  'canvas.face.topOriginLanding': 'L’origine du dessus se retrouve ici après le retournement',
+  'canvas.face.flippedAboutX': 'Brut retourné autour de X (bord avant ↔ bord arrière).',
+  'canvas.face.flippedAboutY': 'Brut retourné autour de Y (bord gauche ↔ bord droit).',
+  'canvas.face.topIsGhost': 'Les entités du dessus sont affichées en fantôme et ne peuvent pas être modifiées ici.',
+  'canvas.face.drawingOnTop': 'Dessin sur la face supérieure',
+  'canvas.face.drawingOnBottom': 'Dessin sur la face inférieure',
 }

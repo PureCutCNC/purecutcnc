@@ -537,4 +537,13 @@ export const canvasEn = {
   'canvas.nest.improve.took': 'Searched for {elapsed}.',
   'canvas.nest.improve.stalled': 'Stopped: no better layout turned up for a while.',
   'canvas.nest.improve.changed': 'Stopped because the design changed.',
+
+  // ── Stock faces on the sketch (issue #945) ──
+  'canvas.face.through': 'THRU',
+  'canvas.face.topOriginLanding': 'Top origin lands here after the flip',
+  'canvas.face.flippedAboutX': 'Stock flipped about X (front edge ↔ back edge).',
+  'canvas.face.flippedAboutY': 'Stock flipped about Y (left edge ↔ right edge).',
+  'canvas.face.topIsGhost': 'Top features are a ghost and cannot be edited here.',
+  'canvas.face.drawingOnTop': 'Drawing on top face',
+  'canvas.face.drawingOnBottom': 'Drawing on bottom face',
 } as const satisfies Record<string, string>

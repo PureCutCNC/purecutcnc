@@ -21,6 +21,7 @@ import type { ToolpathVisibility } from '../toolpathVisibility'
 import { canvasColors } from './canvasPalette'
 import { drawToolpath } from './previewPrimitives'
 import type { SketchToolpathSurface } from './useSketchToolpathRenderer'
+import { applyViewMirror } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 import type { CanvasDrawSample } from './toolpathGpuSuggestion'
 
@@ -36,12 +37,25 @@ export function renderSketchToolpaths(
     const emphasized = toolpath.operationId === selectedId
     return { toolpath, emphasized, selectedLevel: emphasized ? selectedLevel : null, slotScale: percent === null ? 1 : percent / 100 }
   })
+  // A Bottom view shows the stock turned over (issue #945). The toolpath
+  // caches are built for an unmirrored view, so a mirrored one is drawn on
+  // the Canvas path through a mirrored context; #947 makes the preview
+  // setup-aware.
+  const mirrored = vt.mirrorX !== undefined || vt.mirrorY !== undefined
   let gpuActive = false
   if (surface) {
+    // The foreground overlay holds what the last GPU frame drew above the
+    // toolpaths. It is cleared every frame, GPU or not: left alone, the Top
+    // view's overlay stays on screen over the Bottom view.
     const foreground = surface.foreground
     if (foreground.canvas.width !== ctx.canvas.width) foreground.canvas.width = ctx.canvas.width
     if (foreground.canvas.height !== ctx.canvas.height) foreground.canvas.height = ctx.canvas.height
     foreground.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
+  }
+  if (surface && mirrored) {
+    surface.gpu.canvas.hidden = true
+    if (!surface.failed) surface.report(false)
+  } else if (surface) {
     try {
       gpuActive = !surface.failed && surface.gpu.render(entries, vt, ctx.canvas.width, ctx.canvas.height, visible, canvasColors(), deferArrows)
     } catch (error) {
@@ -50,13 +64,26 @@ export function renderSketchToolpaths(
     }
     surface.gpu.canvas.hidden = !gpuActive
     if (!surface.failed) surface.report(gpuActive)
-    if (gpuActive) ctx = foreground
+    if (gpuActive) ctx = surface.foreground
   }
   if (!gpuActive) {
     const start = observeCanvasDraw && entries.length > 0 ? performance.now() : null
+    if (mirrored) {
+      ctx.save()
+      // Reflect about the canvas line the mirrored world axis maps onto.
+      ctx.translate(
+        vt.mirrorX === undefined ? 0 : 2 * vt.offsetX + vt.mirrorX * vt.scale,
+        vt.mirrorY === undefined ? 0 : 2 * vt.offsetY + vt.mirrorY * vt.scale,
+      )
+      applyViewMirror(ctx, vt)
+    }
+    // `drawToolpath` places geometry by scale and offset alone — the context
+    // carries the mirror — and reads the view's mirror only to cull, so the
+    // mirrored view is what it must be given.
     for (const { toolpath, emphasized, selectedLevel: entryLevel, slotScale } of entries) {
       drawToolpath(ctx, toolpath, vt, emphasized, visible, slotScale, { deferArrows, selectedLevel: entryLevel })
     }
+    if (mirrored) ctx.restore()
     if (start !== null) {
       const now = performance.now()
       observeCanvasDraw?.({ durationMs: now - start, now, navigating: deferArrows })

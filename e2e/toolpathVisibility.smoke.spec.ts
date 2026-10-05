@@ -210,6 +210,44 @@ test('GPU renderer opts in, retains buffers through navigation and falls back on
   await expect(page.locator('canvas.sketch-toolpath-gpu')).toHaveCount(0)
 })
 
+// The review's finding 4 on PR #978 (issue #945): the Top view's GPU
+// foreground stayed on screen over the mirrored Bottom view, and the renderer
+// never reported that Canvas had taken over.
+test('GPU renderer hands a Bottom view to Canvas and clears its Top overlay', async ({ app, ui }) => {
+  const page = app.page
+  await page.goto('/?toolpathRenderer=gpu')
+  await seedToolpathVisProject(page)
+  const base = page.locator('canvas.sketch-canvas')
+  const gpu = page.locator('canvas.sketch-toolpath-gpu')
+  const paintedPixels = () => page.locator('canvas.sketch-toolpath-foreground').evaluate((canvas) => {
+    const element = canvas as HTMLCanvasElement
+    const { data } = element.getContext('2d')!.getImageData(0, 0, element.width, element.height)
+    let painted = 0
+    for (let index = 3; index < data.length; index += 4) if (data[index] !== 0) painted += 1
+    return painted
+  })
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+
+  // The foreground carries whatever the frame drew above the toolpaths — a
+  // marquee, a snap marker, a preview. Stand in for that with painted pixels,
+  // and turn to Bottom before another Top frame can clear them.
+  await ui.face.segment(page, 'Bottom').evaluate((button) => {
+    const foreground = document.querySelector<HTMLCanvasElement>('canvas.sketch-toolpath-foreground')!
+    const context = foreground.getContext('2d')!
+    context.fillStyle = 'rgb(255, 0, 255)'
+    context.fillRect(0, 0, foreground.width, foreground.height)
+    ;(button as HTMLButtonElement).click()
+  })
+  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
+  await expect(gpu).toBeHidden()
+  await expect.poll(paintedPixels).toBe(0)
+
+  await ui.face.segment(page, 'Top').click()
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  await expect(gpu).toBeVisible()
+})
+
 test('GPU renderer initialization failure leaves Canvas toolpaths available', async ({ app, ui }) => {
   const page = app.page
   await page.addInitScript(() => {

@@ -628,13 +628,15 @@ function testActiveSetupStaysOutOfHistory(): void {
   assertEqual(store().project.setups[1].name, 'Underside', 'cancel restores the content')
   assertEqual(store().project.activeSetupId, BOTTOM_SETUP_ID, 'cancel does not switch setups')
 
-  // The one case the face has to move: the setup it was on is undone away.
+  // The setup the workspace was on is undone away: the workspace stays on
+  // that face, on a setup that exists (issue #945 — it used to drop to the
+  // first setup, which turned the stock back over under the user).
   const createdId = store().createSetup({ orientation: { axis: 'y', angleDeg: 180 } })
   assert(createdId, 'fixture: a third setup')
   store().setActiveSetup(createdId)
   store().undo()
   assert(!store().project.setups.some((setup) => setup.id === createdId), 'undo removes the created setup')
-  assertEqual(store().project.activeSetupId, DEFAULT_SETUP_ID, 'and the workspace falls back to a setup that exists')
+  assertEqual(store().project.activeSetupId, BOTTOM_SETUP_ID, 'and the workspace stays on that face, on a setup that exists')
 }
 
 testLegacyMigration()

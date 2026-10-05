@@ -16,6 +16,7 @@
 
 import { useI18n } from '../../i18n/i18nContext'
 import type { MessageKey } from '../../i18n/locales/en'
+import { linkedCopiesOffFace } from '../../store/helpers/activeFace'
 import { useProjectStore } from '../../store/projectStore'
 import type { SketchEditTool } from '../../store/types'
 import { useSketchCommands } from '../../commands/sketchCommands'
@@ -134,6 +135,16 @@ export function EditSketchPanel({
   const pendingSketchEdit = useProjectStore((state) => state.pendingSketchEdit)
   const units = useProjectStore((state) => state.project.meta.units)
   const setSketchEditTool = useProjectStore((state) => state.setSketchEditTool)
+  // A linked copy on the other face is the same shape, so this edit changes
+  // it too (issue #945): say so, with the face and the count.
+  const editedFace = useProjectStore((state) => (
+    state.project.features.find((feature) => feature.id === state.selection.selectedFeatureId)?.authoringFace ?? 'top'
+  ))
+  const linkedOnOtherFace = useProjectStore((state) => (
+    state.selection.selectedFeatureId
+      ? linkedCopiesOffFace(state.project, [state.selection.selectedFeatureId], editedFace)
+      : 0
+  ))
   // Desktop renders the tool row as an icon toolbar with hover tooltips;
   // touch has no hover, so the tablet keeps icon + visible label buttons.
   const isTablet = isTabletMode(useShellMode())
@@ -258,6 +269,14 @@ export function EditSketchPanel({
         </>
       )}
     >
+      {linkedOnOtherFace > 0 ? (
+        <p className="canvas-workflow-panel__hint" data-testid="edit-linked-other-face-note">
+          {t(
+            `featureTree.face.linkedOtherFace.${editedFace === 'top' ? 'bottom' : 'top'}.${linkedOnOtherFace === 1 ? 'one' : 'other'}`,
+            { count: linkedOnOtherFace },
+          )}
+        </p>
+      ) : null}
       <div className="canvas-workflow-panel__tool-row">
         {rowTools.map(({ key, icon, label, active, disabled, onClick }) =>
           isTablet ? (

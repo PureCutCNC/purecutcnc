@@ -35,6 +35,7 @@ import {
   type Stock,
 } from '../types/project'
 import { resolveAnchor, isDimensionDangling, measureValue } from './dimensions'
+import { isGhostFeature } from '../store/helpers/activeFace'
 import { resolvedFeatureMap } from '../store/helpers/resolveFeatures'
 
 // ────────────────────────────────────────────────────────────
@@ -242,6 +243,13 @@ export function resolveDrivingDimensionEdit(
   if (!annotation.visible) return { disabled: true, reason: 'Dimension is hidden' }
   if (isDimensionDangling(annotation, project)) return { disabled: true, reason: 'Dimension is dangling' }
 
+  return onActiveFace(resolveByType(annotation, project), project)
+}
+
+function resolveByType(
+  annotation: DimensionAnnotation,
+  project: Project,
+): DrivingDimensionEdit | DisabledReason | null {
   // ── Angle ──
   if (annotation.type === 'angle') {
     return resolveAngleDrivingEdit(annotation, project)
@@ -258,6 +266,23 @@ export function resolveDrivingDimensionEdit(
   }
 
   return null
+}
+
+/**
+ * A dimension on a feature from the other face still reads its value, but it
+ * does not drive: the feature is a ghost here, and a ghost is never edited
+ * (issue #945). Driving edits reach geometry by feature id, not through the
+ * selection, so the selection guard does not cover them.
+ */
+function onActiveFace(
+  edit: DrivingDimensionEdit | DisabledReason | null,
+  project: Project,
+): DrivingDimensionEdit | DisabledReason | null {
+  if (!edit || 'disabled' in edit || edit.kind === 'stock_dimension') return edit
+  const feature = project.features.find((entry) => entry.id === edit.featureId)
+  return feature && isGhostFeature(project, feature)
+    ? { disabled: true, reason: 'Feature is on the other face' }
+    : edit
 }
 
 function resolveRadiusDrivingEdit(

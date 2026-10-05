@@ -89,6 +89,7 @@ import {
   canvasToWorld,
   computeBaseViewTransform,
   computeFitViewState,
+  computeSketchViewTransform,
   computeViewTransform,
   worldToCanvas,
 } from './viewTransform'
@@ -165,6 +166,9 @@ import {
   pasteClipboardFeatures,
   type FeatureClipboardPayload,
 } from '../../platform/featureClipboard'
+import { activeOriginInStock, editableProjectFeatures, faceAngles, faceArtworkMirror } from '../../store/helpers/activeFace'
+import { useFaceViewStore } from '../../store/faceViewStore'
+import { drawOtherFace } from './faceOverlay'
 import { resolveFeatureInstance, resolveFeatureInstances, resolveFeatureRow, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
@@ -390,6 +394,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const stlImageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
   const toolpathsRef = useRef(toolpaths)
   const selectedOperationIdRef = useRef(selectedOperationId)
+  const showOtherSide = useFaceViewStore((state) => state.showOtherSide)
   const collidingClampIdsRef = useRef(collidingClampIds)
   const snapSettingsRef = useRef(snapSettings)
   const copyCountDraftRef = useRef(copyCountDraft)
@@ -868,7 +873,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
 
   useEffect(() => {
     scheduleDraw()
-  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, pendingClipboardPlacement, pendingTextLayout, pendingFeatureDistribution, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, toolpathLevel, operationHighlightKind, canvasPalette])
+  }, [scheduleDraw, project, selection, pendingAdd, pendingMove, pendingTransform, pendingOffset, pendingClipboardPlacement, pendingTextLayout, pendingFeatureDistribution, viewState, backdropImage, stlImageRevision, toolpaths, selectedOperationId, collidingClampIds, snapSettings, copyCountDraft, dimEdit.dimensionEdit, toolpathVisibility, toolpathLevel, operationHighlightKind, canvasPalette, showOtherSide])
 
   useEffect(() => {
     sketchEditPreviewRef.current = null
@@ -975,7 +980,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       : null
 
     const { width, height } = canvas
-    const vt = computeViewTransform(project.stock, width, height, viewState)
+    const vt = computeSketchViewTransform(project, width, height, viewState)
     const collidingClampIdSet = new Set(collidingClampIdsRef.current)
 
     ctx.clearRect(0, 0, width, height)
@@ -1009,13 +1014,13 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       drawStockOutline(ctx, project.stock, vt, project.meta.units, anyFeatureExceedsStock, canvasPalette, stockLabelRectsRef.current)
     }
 
-    if (project.origin.visible) {
-      drawOriginMarker(ctx, project.origin, vt, canvasPalette)
-    }
+    // The other face's features, as reference under everything editable (#945).
+    const ghostIds = drawOtherFace(ctx, project, features, vt, useFaceViewStore.getState().showOtherSide, t('canvas.face.through'), t('canvas.face.topOriginLanding'))
+    if (project.origin.visible) drawOriginMarker(ctx, activeOriginInStock(project), vt, canvasPalette)
 
     const batchedLineFeatures: SketchFeature[] = []
     for (const feature of features) {
-      if (!feature.visible || hiddenDistributionSourceIds?.has(feature.id)) continue
+      if (!feature.visible || ghostIds.has(feature.id) || hiddenDistributionSourceIds?.has(feature.id)) continue
 
       const selected = selection.selectedFeatureIds.includes(feature.id)
       const hovered = feature.id === selection.hoveredFeatureId
@@ -1031,7 +1036,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (batchLine) {
         batchedLineFeatures.push(feature)
       } else {
-        drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected)
+        drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected, project.stock.thickness)
       }
 
       // A1.3: when an operation is armed in the CAM menu, ring the features it
@@ -1108,7 +1113,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     drawLineFeatureBatch(ctx, batchedLineFeatures, vt)
     if (project.meta.showFeatureInfo) {
       for (const feature of batchedLineFeatures) {
-        drawFeatureInfo(ctx, feature, vt, project.meta.units)
+        drawFeatureInfo(ctx, feature, vt, project.meta.units, project.stock.thickness)
       }
     }
 
@@ -1167,7 +1172,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     // Reset label rects before rebuilding
     constraintLabelRectsRef.current = []
     for (const feature of features) {
-      if (!feature.visible) continue
+      if (!feature.visible || ghostIds.has(feature.id)) continue
       for (const c of feature.sketch.constraints) {
         if (c.type !== 'fixed_distance' || !c.anchor_point || !c.reference_point) continue
         const isInvalid = !!c.is_invalid
@@ -1280,7 +1285,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const dimensionEdit = dimEdit.dimensionEditRef.current
     const currentPreviewPoint =
       dimensionEdit
-        ? computeDimensionEditPreviewPoint(dimensionEdit, project.meta.units)
+        ? computeDimensionEditPreviewPoint(dimensionEdit, project.meta.units, faceAngles(project))
         : pendingAdd?.shape === 'origin'
           ? (
               originPreviewPointRef.current && originPreviewPointRef.current.session === pendingAdd.session
@@ -1398,8 +1403,9 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       }
     } else if (pendingAdd?.shape === 'text' && currentPreviewPoint) {
       const previewShapes = generateTextShapes(pendingAdd.config, currentPreviewPoint)
+      const faceMirror = faceArtworkMirror(project, currentPreviewPoint)
       for (const shape of previewShapes) {
-        drawPreviewProfile(ctx, shape.profile, vt, '')
+        drawPreviewProfile(ctx, faceMirror ? transformProfile(shape.profile, faceMirror) : shape.profile, vt, '')
       }
       drawPendingPoint(ctx, currentPreviewPoint, vt, snap.isActiveSnapPoint(currentPreviewPoint))
     } else if (pendingAdd && currentPreviewPoint) {
@@ -2003,7 +2009,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     getVisibleWorldBounds: () => {
       const canvas = canvasRef.current
       if (!canvas || canvas.width === 0 || canvas.height === 0) return null
-      const vt = computeViewTransform(projectRef.current.stock, canvas.width, canvas.height, viewStateRef.current)
+      const vt = computeSketchViewTransform(projectRef.current, canvas.width, canvas.height, viewStateRef.current)
       const a = canvasToWorld(0, 0, vt)
       const b = canvasToWorld(canvas.width, canvas.height, vt)
       return {
@@ -2126,7 +2132,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     let best: OpenEndpointHit | null = null
     let bestDistance = OPEN_ENDPOINT_JOIN_HIT_RADIUS * OPEN_ENDPOINT_JOIN_HIT_RADIUS
 
-    const features = resolvedProjectFeatures(project)
+    const features = editableProjectFeatures(project)
     for (let index = features.length - 1; index >= 0; index -= 1) {
       const feature = features[index]
       if (
@@ -2216,7 +2222,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           : null
     if (!profile || (feature && feature.locked)) return null
 
-    const vt = computeViewTransform(projectRef.current.stock, canvas.width, canvas.height, viewStateRef.current)
+    const vt = computeSketchViewTransform(projectRef.current, canvas.width, canvas.height, viewStateRef.current)
     const worldPoint = canvasToWorld(point.cx, point.cy, vt)
     const vertices = profileVertices(profile)
     let bestControl: SketchControlRef | null = null
@@ -2313,7 +2319,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const pendingMove = pendingMoveRef.current
     const pendingTransform = pendingTransformRef.current
     const pendingOffset = pendingOffsetRef.current
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewStateRef.current)
+    const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewStateRef.current)
     const pendingConstraintLive = pendingConstraintRef.current
     const constraintAnchorPicking = !!pendingConstraintLive && !pendingConstraintLive.anchor
     const constraintRefPicking = !!pendingConstraintLive && !!pendingConstraintLive.anchor && !pendingConstraintLive.reference

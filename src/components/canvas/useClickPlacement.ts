@@ -36,10 +36,11 @@ import type { DimensionAnchor, DimensionAnnotation, Point, Project, SketchFeatur
 import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { chamferDistanceFromPoint, filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
-import { resolveFeatureInstance, resolveFeatureInstances, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
+import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 import {
   canvasToWorld,
-  computeViewTransform,
+  computeSketchViewTransform,
 } from './viewTransform'
 import type { CanvasPoint, SketchViewState, ViewTransform } from './viewTransform'
 import { findSketchInsertTarget, isLoopCloseCandidate, projectPointOntoLine, resolveOffsetPreview } from './draftGeometry'
@@ -376,7 +377,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
 
     clearOverlapFeaturePicker()
 
-    const vt = computeViewTransform(project.stock, canvas.width, canvas.height, viewState)
+    const vt = computeSketchViewTransform(project, canvas.width, canvas.height, viewState)
     const world = canvasToWorld(point.cx, point.cy, vt)
     const pendingConstraint = pendingConstraintRef.current
     const constraintRefPickingClick = !!pendingConstraint && !!pendingConstraint.anchor && !pendingConstraint.reference
@@ -391,7 +392,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     }
 
     if (pendingFeatureDistribution?.pickTarget === 'guide') {
-      const guideHit = resolveFeatureSelectionHit(world, resolvedProjectFeatures(project), vt)
+      const guideHit = resolveFeatureSelectionHit(world, editableProjectFeatures(project), vt)
       if (guideHit.kind === 'direct') {
         setFeatureDistributionGuide(guideHit.featureId)
       } else if (guideHit.kind === 'ambiguous') {
@@ -406,7 +407,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     // guide hit — text cannot follow its own outline.
     const pendingTextLayout = pendingTextLayoutRef.current
     if (pendingTextLayout?.pickTarget === 'guide') {
-      const guideHit = resolveFeatureSelectionHit(world, resolvedProjectFeatures(project), vt)
+      const guideHit = resolveFeatureSelectionHit(world, editableProjectFeatures(project), vt)
       if (guideHit.kind === 'direct' && guideHit.featureId !== pendingTextLayout.featureId) {
         setTextLayoutGuide(guideHit.featureId)
       } else if (guideHit.kind === 'ambiguous') {
@@ -576,7 +577,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
         return
       }
       const lockedPickedPoint = applyLock(pickedPoint, pendingConstraint.anchor.point)
-      const targetFeatureId = findHitFeatureId(lockedPickedPoint, resolvedProjectFeatures(project), vt)
+      const targetFeatureId = findHitFeatureId(lockedPickedPoint, editableProjectFeatures(project), vt)
       const targetId =
         targetFeatureId && targetFeatureId !== pendingConstraint.featureId
           ? targetFeatureId
@@ -982,7 +983,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
       return
     }
 
-    const resolvedFeatures = resolvedProjectFeatures(project)
+    const resolvedFeatures = editableProjectFeatures(project)
     const featureHit = resolveFeatureSelectionHit(world, resolvedFeatures, vt)
     const additive = event.metaKey || event.ctrlKey || event.shiftKey || multiSelectMode || !!pendingShapeAction
 

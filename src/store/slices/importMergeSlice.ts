@@ -23,6 +23,7 @@ import type {
   Project,
   SketchFeature,
 } from '../../types/project'
+import { activeFace } from '../helpers/activeFace'
 import { createDefinitionForFeatureWithId, createFeatureInstance } from '../helpers/featureDefinitions'
 import { genId } from '../helpers/ids'
 import { cloneProject, normalizeFeatureZRange, syncFeatureTreeProject } from '../helpers/normalize'
@@ -124,6 +125,7 @@ export function createImportMergeSlice(
               shape.operation,
             ),
             id: allocateId('f'),
+            authoringFace: activeFace(state.project),
           }))
         }
       } else {
@@ -154,6 +156,7 @@ export function createImportMergeSlice(
                 operation,
               ),
               id: allocateId('f'),
+              authoringFace: activeFace(state.project),
             }))
           }
         }

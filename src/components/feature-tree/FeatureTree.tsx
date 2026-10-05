@@ -15,8 +15,8 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent, MouseEvent as ReactMouseEvent } from 'react'
-import type { FeatureOperation, RegionMaskMode } from '../../types/project'
+import type { DragEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import type { FeatureOperation, RegionMaskMode, SetupFace } from '../../types/project'
 import { useProjectStore } from '../../store/projectStore'
 import { getDefinitionId, getInstanceIdsForDefinition } from '../../store/helpers/featureDefinitions'
 import { canChooseSubtract, isConstruction, isMachinable, isRegion, isSolid, sectionForOperation } from '../../store/helpers/featureRoles'
@@ -24,6 +24,9 @@ import { Icon } from '../Icon'
 import { isTabletMode, useShellMode } from '../layout/useShellMode'
 import { resolveFeatureInstance, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
+import { activeFace, isThroughFeature, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { useFaceViewStore } from '../../store/faceViewStore'
+import { FaceChip } from './FaceChip'
 
 interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
@@ -81,6 +84,12 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
   } = useProjectStore()
   const features = useMemo(() => resolvedProjectFeatures(project), [project])
   const { t } = useI18n()
+  // Face layers, ghost rows and face chips exist only once the project uses
+  // both faces; a Top-only project renders the tree it always did (#945).
+  const bothFaces = projectUsesBothFaces(project)
+  const workspaceFace = activeFace(project)
+  const showOtherSide = useFaceViewStore((state) => state.showOtherSide)
+  const setShowOtherSide = useFaceViewStore((state) => state.setShowOtherSide)
 
   const shellMode = useShellMode()
   const tabletShell = isTabletMode(shellMode)
@@ -345,10 +354,46 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
     return feature !== undefined && isConstruction(feature) && feature.folderId === null
   })
 
-  function renderFeatureRow(featureId: string, depth: number, siblingIndex?: number, siblingCount?: number) {
+  function renderFeatureRow(featureId: string, depth: number, siblingIndex?: number, siblingCount?: number, layered = false) {
     const feature = features.find((entry) => entry.id === featureId)
     if (!feature) {
       return null
+    }
+
+    const through = bothFaces && isThroughFeature(project, feature)
+    const throughChip = through
+      ? <span className="face-chip face-chip--thru" title={t('featureTree.face.throughTooltip')}>{t('featureTree.face.chipThrough')}</span>
+      : null
+    if (feature.authoringFace !== workspaceFace) {
+      // A ghost: listed for reference, with the way to its own face on the
+      // row menu. It cannot be selected, dragged or edited from here.
+      const openGhostMenu = onFeatureContextMenu
+        ? (x: number, y: number) => onFeatureContextMenu(feature.id, x, y)
+        : undefined
+      return (
+        <TreeRow
+          key={feature.id}
+          label={feature.name}
+          kind="feature"
+          depth={depth}
+          ghost
+          title={t(feature.authoringFace === 'bottom' ? 'featureTree.face.ghostRowBottom' : 'featureTree.face.ghostRowTop')}
+          chips={<>{layered ? null : <FaceChip face={feature.authoringFace} />}{throughChip}</>}
+          isSelected={false}
+          isDragging={false}
+          dataFeatureId={feature.id}
+          visible={feature.visible}
+          operation={feature.operation}
+          profileClosed={feature.sketch.profile.closed}
+          regionMaskMode={feature.regionMaskMode ?? 'include'}
+          onClick={() => {}}
+          onMouseEnter={() => hoverFeature(null)}
+          onMouseLeave={() => hoverFeature(null)}
+          onToggleVisible={() => updateFeature(feature.id, { visible: !feature.visible })}
+          onContextMenu={(event) => openGhostMenu?.(event.clientX, event.clientY)}
+          onMoreMenu={openGhostMenu}
+        />
+      )
     }
 
     const defId = getDefinitionId(feature)
@@ -376,6 +421,7 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         isFirstFeature={feature.id === firstSolidFeature?.id}
         subtractDisabled={feature.operation !== 'subtract' && !canChooseSubtract(features, feature.id)}
         linkedCount={linkedCount}
+        chips={throughChip}
         onClick={(event) => selectFeature(feature.id, event.metaKey || event.ctrlKey || event.shiftKey, false)}
         onMouseEnter={() => hoverFeature(feature.id)}
         onMouseLeave={() => hoverFeature(null)}
@@ -407,6 +453,118 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
         onDrop={handleDrop}
       />
     )
+  }
+
+  /**
+   * The machining features and folders under "Features". `face` null lists
+   * them all (a Top-only project); a face lists only that face's, under its
+   * layer row. Rows keep the section's own depth either way: the layer row is
+   * a heading, not another level of indent the narrow panel cannot spare.
+   */
+  function renderMachiningEntries(face: SetupFace | null) {
+    const baseDepth = 1
+    return rootEntries.map((entry, rootIdx) => {
+              if (entry.type === 'feature') {
+                const entryFeature = features.find((item) => item.id === entry.featureId)
+                if (face !== null && entryFeature?.authoringFace !== face) return null
+                return renderFeatureRow(entry.featureId, baseDepth, rootIdx, rootEntries.length, face !== null)
+              }
+
+              const folder = project.featureFolders.find((item) => item.id === entry.folderId)
+              if (!folder) {
+                return null
+              }
+
+              const allFolderFeatures = features.filter((feature) => feature.folderId === folder.id && isMachinable(feature))
+              // A folder shows in each layer it has features on; an empty one
+              // belongs to the layer being worked on.
+              const folderFeatures = face === null
+                ? allFolderFeatures
+                : allFolderFeatures.filter((feature) => feature.authoringFace === face)
+              if (face !== null && folderFeatures.length === 0 && (allFolderFeatures.length > 0 || face !== workspaceFace)) {
+                return null
+              }
+              if (face !== null && face !== workspaceFace) {
+                return (
+                  <div key={folder.id}>
+                    <TreeRow
+                      label={folder.name}
+                      kind="folder"
+                      depth={baseDepth}
+                      ghost
+                      isSelected={false}
+                      isDragging={false}
+                      onClick={() => {}}
+                      collapsed={folder.collapsed}
+                      onToggleCollapsed={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
+                      onMouseEnter={() => hoverFeature(null)}
+                      onMouseLeave={() => hoverFeature(null)}
+                    />
+                    {!folder.collapsed ? (
+                      <div className="tree-children">
+                        {folderFeatures.map((feature, fIdx) => renderFeatureRow(feature.id, baseDepth + 1, fIdx, folderFeatures.length, true))}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              }
+              const folderVisible = folderFeatures.some((f) => f.visible)
+              const canMoveFolderUp = tabletShell && rootIdx > 0
+              const canMoveFolderDown = tabletShell && rootIdx < rootEntries.length - 1
+              return (
+                <div key={folder.id}>
+                  <TreeRow
+                    label={folder.name}
+                    kind="folder"
+                    depth={baseDepth}
+                    isSelected={selection.selectedNode?.type === 'folder' && selection.selectedNode.folderId === folder.id}
+                    isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
+
+                    visible={folderVisible}
+                    onClick={() => { if (folder.grouped) { selectFolderFeatures(folder.id) } else { selectFeatureFolder(folder.id) } }}
+                    collapsed={folder.collapsed}
+                    onToggleCollapsed={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
+                    onMouseEnter={() => hoverFeature(null)}
+                    onMouseLeave={() => hoverFeature(null)}
+                    onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFolderFeatures(folder.id) : undefined}
+                    onToggleVisible={folderFeatures.length > 0 ? () => toggleFolderVisible(folder.id) : undefined}
+                    grouped={folder.grouped ?? false}
+                    onToggleGrouped={() => toggleFolderGrouped(folder.id)}
+                    onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
+                    onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
+                    draggable
+                    onDragStart={() => handleFolderDragStart(folder.id)}
+                    onDragEnd={() => setDragItem(null)}
+                    onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
+                    onDrop={handleDrop}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      if (folder.grouped && folderFeatures.length > 0) {
+                        if (selection.groupFolderId !== folder.id) {
+                          selectFolderFeatures(folder.id)
+                        }
+                        onFeatureContextMenu?.(folderFeatures[0].id, event.clientX, event.clientY)
+                      }
+                    }}
+                    onMoreMenu={tabletShell && onFeatureContextMenu && folder.grouped && folderFeatures.length > 0 ? (x, y) => {
+                      if (selection.groupFolderId !== folder.id) {
+                        selectFolderFeatures(folder.id)
+                      }
+                      onFeatureContextMenu(folderFeatures[0].id, x, y)
+                    } : undefined}
+                  />
+                  {!folder.collapsed ? (
+                    <div className="tree-children">
+                      {folderFeatures.length === 0 ? (
+                        <div className="feature-tree-empty">{t('featureTree.tree.empty.folder')}</div>
+                      ) : (
+                        folderFeatures.map((feature, fIdx) => renderFeatureRow(feature.id, baseDepth + 1, fIdx, folderFeatures.length))
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })
   }
 
   return (
@@ -500,74 +658,44 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
                 {t('featureTree.tree.warning.firstFeaturePrefix')}<strong>{t('featureTree.operation.add')}</strong>{t('featureTree.tree.warning.firstFeatureSuffix')}
               </div>
             )}
-            {rootEntries.map((entry, rootIdx) => {
-              if (entry.type === 'feature') {
-                return renderFeatureRow(entry.featureId, 1, rootIdx, rootEntries.length)
-              }
-
-              const folder = project.featureFolders.find((item) => item.id === entry.folderId)
-              if (!folder) {
-                return null
-              }
-
-              const folderFeatures = features.filter((feature) => feature.folderId === folder.id && isMachinable(feature))
-              const folderVisible = folderFeatures.some((f) => f.visible)
-              const canMoveFolderUp = tabletShell && rootIdx > 0
-              const canMoveFolderDown = tabletShell && rootIdx < rootEntries.length - 1
-              return (
-                <div key={folder.id}>
-                  <TreeRow
-                    label={folder.name}
-                    kind="folder"
-                    depth={1}
-                    isSelected={selection.selectedNode?.type === 'folder' && selection.selectedNode.folderId === folder.id}
-                    isDragging={dragItem?.kind === 'folder' && dragItem.id === folder.id}
-
-                    visible={folderVisible}
-                    onClick={() => { if (folder.grouped) { selectFolderFeatures(folder.id) } else { selectFeatureFolder(folder.id) } }}
-                    collapsed={folder.collapsed}
-                    onToggleCollapsed={() => updateFeatureFolder(folder.id, { collapsed: !folder.collapsed })}
-                    onMouseEnter={() => hoverFeature(null)}
-                    onMouseLeave={() => hoverFeature(null)}
-                    onSelectAllFeatures={folderFeatures.length > 0 ? () => selectFolderFeatures(folder.id) : undefined}
-                    onToggleVisible={folderFeatures.length > 0 ? () => toggleFolderVisible(folder.id) : undefined}
-                    grouped={folder.grouped ?? false}
-                    onToggleGrouped={() => toggleFolderGrouped(folder.id)}
-                    onMoveUp={canMoveFolderUp ? () => handleMoveFolder(folder.id, -1) : undefined}
-                    onMoveDown={canMoveFolderDown ? () => handleMoveFolder(folder.id, 1) : undefined}
-                    draggable
-                    onDragStart={() => handleFolderDragStart(folder.id)}
-                    onDragEnd={() => setDragItem(null)}
-                    onDragOver={(event) => handleDragOver(event, { kind: 'folder', id: folder.id })}
-                    onDrop={handleDrop}
-                    onContextMenu={(event) => {
-                      event.preventDefault()
-                      if (folder.grouped && folderFeatures.length > 0) {
-                        if (selection.groupFolderId !== folder.id) {
-                          selectFolderFeatures(folder.id)
-                        }
-                        onFeatureContextMenu?.(folderFeatures[0].id, event.clientX, event.clientY)
-                      }
-                    }}
-                    onMoreMenu={tabletShell && onFeatureContextMenu && folder.grouped && folderFeatures.length > 0 ? (x, y) => {
-                      if (selection.groupFolderId !== folder.id) {
-                        selectFolderFeatures(folder.id)
-                      }
-                      onFeatureContextMenu(folderFeatures[0].id, x, y)
-                    } : undefined}
-                  />
-                  {!folder.collapsed ? (
-                    <div className="tree-children">
-                      {folderFeatures.length === 0 ? (
-                        <div className="feature-tree-empty">{t('featureTree.tree.empty.folder')}</div>
-                      ) : (
-                        folderFeatures.map((feature, fIdx) => renderFeatureRow(feature.id, 2, fIdx, folderFeatures.length))
-                      )}
+            {bothFaces
+              ? (['top', 'bottom'] as const).map((face) => {
+                  const count = machiningFeatures.filter((feature) => feature.authoringFace === face).length
+                  const active = face === workspaceFace
+                  return (
+                    <div key={face} className="tree-face-group" data-face={face}>
+                      <div
+                        className={`tree-face-layer tree-face-layer--${face}${active ? ' tree-face-layer--active' : ''}`}
+                        data-face-layer={face}
+                        data-face-state={active ? 'active' : 'ghost'}
+                      >
+                        <Icon id={face === 'top' ? 'face-top' : 'face-bottom'} size={16} />
+                        <span className="tree-face-layer__label">
+                          {t(face === 'top' ? 'featureTree.face.topFace' : 'featureTree.face.bottomFace')}
+                        </span>
+                        <span className="tree-face-layer__count">{count}</span>
+                        <span className="tree-face-layer__spacer" />
+                        <span className={`face-chip ${active ? `face-chip--${face}` : ''}`}>
+                          {t(active ? 'featureTree.face.stateActive' : 'featureTree.face.stateGhost')}
+                        </span>
+                        {active ? null : (
+                          <button
+                            type="button"
+                            className={`tree-action-btn${showOtherSide ? '' : ' tree-action-btn--muted'}`}
+                            aria-pressed={showOtherSide}
+                            title={t(showOtherSide ? 'appShell.face.hideOtherSide' : 'appShell.face.showOtherSide')}
+                            aria-label={t(showOtherSide ? 'appShell.face.hideOtherSide' : 'appShell.face.showOtherSide')}
+                            onClick={() => setShowOtherSide(!showOtherSide)}
+                          >
+                            <Icon id={showOtherSide ? 'eye' : 'eye-off'} />
+                          </button>
+                        )}
+                      </div>
+                      <div className="tree-face-children">{renderMachiningEntries(face)}</div>
                     </div>
-                  ) : null}
-                </div>
-              )
-            })}
+                  )
+                })
+              : renderMachiningEntries(null)}
           </div>
         )}
         <TreeRow
@@ -855,6 +983,11 @@ interface TreeRowProps {
   label: string
   kind: 'project' | 'grid' | 'stock' | 'origin' | 'backdrop' | 'features' | 'regions' | 'constructions' | 'tabs' | 'clamps' | 'folder' | 'feature' | 'tab' | 'clamp'
   depth?: number
+  /** A row from the face the workspace is not on: shown, never editable (issue #945). */
+  ghost?: boolean
+  /** Small tags after the label: the face a ghost is on, THRU. */
+  chips?: ReactNode
+  title?: string
   isSelected: boolean
   isDragging: boolean
   dataFeatureId?: string
@@ -898,6 +1031,9 @@ function TreeRow({
   label,
   kind,
   depth = 0,
+  ghost = false,
+  chips,
+  title,
   isSelected,
   isDragging,
   dataFeatureId,
@@ -972,10 +1108,13 @@ function TreeRow({
         isSelected ? 'tree-row--selected' : '',
         isGroupSelected ? 'tree-row--group-selected' : '',
         isDragging ? 'tree-row--dragging' : '',
+        ghost ? 'tree-row--ghost' : '',
         kind === 'feature' && operation === 'region' ? 'tree-row--region' : '',
         kind === 'feature' && operation === 'construction' ? 'tree-row--construction' : '',
       ].join(' ')}
       data-feature-id={dataFeatureId}
+      data-ghost={ghost ? 'true' : undefined}
+      title={title}
       onClick={onClick}
       onMouseDown={(event) => {
         if (event.shiftKey) {
@@ -1116,6 +1255,7 @@ function TreeRow({
             <Icon id="link" className="tree-icon--link" />
           </span>
         ) : null}
+        {chips}
       </div>
       <div className="tree-row-actions">
         {(kind === 'features' || kind === 'regions' || kind === 'constructions' || kind === 'tabs' || kind === 'clamps') && onShowAll ? (

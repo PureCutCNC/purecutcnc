@@ -22,6 +22,7 @@ import {
   stockFromFeature,
   type FeatureInstance,
 } from '../../types/project'
+import { originPlacementFromStock } from '../helpers/activeFace'
 import type { ProjectStore } from '../types'
 import { nextPlacementSession } from '../helpers/ids'
 import { cloneProject, projectsEqual, syncFeatureTreeProject } from '../helpers/normalize'
@@ -94,12 +95,14 @@ export function createWorkpieceSlice(
 
     placeOriginAt: (point) =>
       set((s) => {
+        // The origin is stored relative to the face that is up (issue #945).
+        const placed = originPlacementFromStock(s.project, point)
         const nextProject = {
           ...s.project,
           origin: {
             ...s.project.origin,
-            x: point.x,
-            y: point.y,
+            x: placed.x,
+            y: placed.y,
           },
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }

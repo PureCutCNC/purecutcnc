@@ -22,6 +22,8 @@ import type { FeatureTreeActions } from '../../app/useFeatureTreeActions'
 import type { MenuPosition, QuickOpsSubmenuPosition, FolderSubmenuPosition, OperationTargetSubmenuPosition, MenuFolderEntry } from '../../app/useTreeContextMenu'
 import type { Clamp, Operation, SketchFeature, Tab } from '../../types/project'
 import { useI18n } from '../../i18n/i18nContext'
+import { useProjectStore } from '../../store/projectStore'
+import { activeFace, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
 
 interface FeatureContextMenuProps {
   menuRef: RefObject<HTMLDivElement | null>
@@ -93,6 +95,11 @@ export function FeatureContextMenu({
   onCloseRemoveFromOperationSubmenu,
 }: FeatureContextMenuProps) {
   const { t } = useI18n()
+  const workspaceFace = useProjectStore((state) => activeFace(state.project))
+  const bothFaces = useProjectStore((state) => projectUsesBothFaces(state.project))
+  // The face of the workspace, and of a feature, stays put while an edit is
+  // in progress — the same rule the header switch follows.
+  const faceBusy = useProjectStore(isFaceEditInProgress)
 
   // 2D/3D headings only when the submenu actually spans both halves; for a
   // plain sketch feature (2D only) the list stays flat, as before.
@@ -101,6 +108,40 @@ export function FeatureContextMenu({
 
   if (!position || !primaryId || (!menuFeature && !menuTab && !menuClamp)) {
     return null
+  }
+
+  // A feature from the other face is a ghost here: the menu offers the way
+  // to its own face and the explicit face change, and no edit (issue #945).
+  const menuFeatureFace = menuFeature?.authoringFace ?? 'top'
+  if (menuFeature && menuFeatureFace !== workspaceFace) {
+    return (
+      <div
+        ref={menuRef}
+        className="feature-context-menu feature-context-menu--ghost"
+        style={position}
+        onContextMenu={(event) => event.preventDefault()}
+      >
+        <button
+          className="feature-context-menu__item"
+          type="button"
+          onClick={() => actions.switchFaceToEdit(menuFeature.id)}
+          disabled={faceBusy}
+          title={faceBusy ? t('appShell.face.busy') : undefined}
+        >
+          {t(menuFeatureFace === 'bottom' ? 'featureTree.face.switchToBottomToEdit' : 'featureTree.face.switchToTopToEdit')}
+        </button>
+        <div className="feature-context-menu__separator" />
+        <button
+          className="feature-context-menu__item"
+          type="button"
+          onClick={() => actions.changeAuthoringFace([menuFeature.id])}
+          disabled={menuFeature.locked || faceBusy}
+          title={menuFeature.locked ? t('featureTree.contextMenu.lockedTooltip') : faceBusy ? t('featureTree.face.changeBusy') : undefined}
+        >
+          {t('featureTree.face.changeAuthoringFace')}
+        </button>
+      </div>
+    )
   }
 
   return (
@@ -452,6 +493,20 @@ export function FeatureContextMenu({
           >
             {t('featureTree.contextMenu.useAsStock')}
           </button>
+          {bothFaces ? (
+            <>
+              <div className="feature-context-menu__separator" />
+              <button
+                className="feature-context-menu__item"
+                type="button"
+                onClick={() => actions.changeAuthoringFace([...ids])}
+                disabled={menuHasLockedSelection || faceBusy}
+                title={menuHasLockedSelection ? t('featureTree.contextMenu.lockedTooltip') : faceBusy ? t('featureTree.face.changeBusy') : undefined}
+              >
+                {t('featureTree.face.changeAuthoringFace')}
+              </button>
+            </>
+          ) : null}
           <div className="feature-context-menu__separator" />
           <button
             className="feature-context-menu__item feature-context-menu__item--danger"

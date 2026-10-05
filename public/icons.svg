@@ -241,6 +241,15 @@
     <path d="M 1 12 C 1 12, 5 4, 12 4 C 19 4, 23 12, 23 12 C 23 12, 19 20, 12 20 C 5 20, 1 12, 1 12 Z" />
     <path d="M 15 12 C 15 13.65685424949238, 13.65685424949238 15, 12 15 C 10.34314575050762 15, 9 13.65685424949238, 9 12 C 9 10.34314575050762, 10.34314575050762 9, 12 9 C 13.65685424949238 9, 15 10.34314575050762, 15 12 Z" />
   </symbol>
+  <symbol id="face-bottom" viewBox="0 0 24 24">
+    <path d="M 3.5 8 L 12 3.75 L 20.5 8 L 20.5 15 L 12 19.25 L 3.5 15 Z" />
+    <path d="M 3.5 15 L 12 19.25 L 20.5 15 L 12 10.75 Z" fill="currentColor" fill-opacity="0.55" />
+  </symbol>
+  <symbol id="face-top" viewBox="0 0 24 24">
+    <path d="M 3.5 9 L 12 4.75 L 20.5 9 L 20.5 16 L 12 20.25 L 3.5 16 Z" />
+    <path d="M 3.5 9 L 12 13.25 L 20.5 9 L 12 4.75 Z" fill="currentColor" fill-opacity="0.55" />
+    <path d="M 12 13.25 L 12 20.25" />
+  </symbol>
   <symbol id="feature-distribution" viewBox="0 0 24 24">
     <rect x="3" y="4" width="4" height="4" rx=".5"/>
     <rect x="17" y="4" width="4" height="4" rx=".5"/>

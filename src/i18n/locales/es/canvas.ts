@@ -479,4 +479,13 @@ export const canvasEs: Record<keyof typeof canvasEn, string> = {
   'canvas.nest.improve.took': 'Búsqueda de {elapsed}.',
   'canvas.nest.improve.stalled': 'Detenido: hace rato que no aparece una disposición mejor.',
   'canvas.nest.improve.changed': 'Detenido porque el diseño cambió.',
+
+  // ── Stock faces on the sketch (issue #945) ──
+  'canvas.face.through': 'PASANTE',
+  'canvas.face.topOriginLanding': 'El origen de la cara superior queda aquí tras el volteo',
+  'canvas.face.flippedAboutX': 'Material en bruto volteado sobre X (borde frontal ↔ borde trasero).',
+  'canvas.face.flippedAboutY': 'Material en bruto volteado sobre Y (borde izquierdo ↔ borde derecho).',
+  'canvas.face.topIsGhost': 'Los elementos de la cara superior se muestran como fantasma y no se pueden editar aquí.',
+  'canvas.face.drawingOnTop': 'Dibujando en la cara superior',
+  'canvas.face.drawingOnBottom': 'Dibujando en la cara inferior',
 }
