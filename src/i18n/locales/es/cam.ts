@@ -20,7 +20,7 @@ import type { camEn } from '../en/cam'
 export const camEs: Record<keyof typeof camEn, string> = {
   'cam.plasma.title': 'Corte pasante por plasma',
   'cam.plasma.closedOnly': 'El corte por plasma requiere contornos cerrados de Añadir, Sustraer o Línea. Las trayectorias abiertas aún no están admitidas.',
-  'cam.plasma.help': 'Plasma experimental: una pasada a la altura nominal. Lado automático: exterior para Añadir/Línea e interior para Sustraer. Con consumibles estándar, contornos exteriores en sentido horario y agujeros antihorario, vistos desde arriba. Entrada predeterminada: máx(3 mm, espesor); salida: un ancho de corte fuera y ninguna en agujeros. Sin ralentización en esquinas, sobrecorte, micropuentes ni compensación de bisel. Las piezas cortadas pueden volcar sobre los soportes.',
+  'cam.plasma.help': 'Plasma experimental: una pasada a la altura nominal. Lado automático: exterior para Añadir/Línea e interior para Sustraer. Con consumibles estándar, contornos exteriores en sentido horario y agujeros antihorario, vistos desde arriba. Entrada predeterminada: máx(3 mm, espesor); salida: un ancho de corte fuera y ninguna en agujeros. Sin ralentización en esquinas, sobrecorte, micropuentes ni compensación de bisel. Las piezas cortadas pueden volcar sobre los soportes. Solo montajes superiores. Si un arco de agujero no permite perforar con seguridad, se prueba una entrada recta antes de perforar en el centro.',
   'cam.plasma.side': 'Lado del ancho de corte',
   'cam.plasma.auto': 'Automático',
   'cam.plasma.outside': 'Exterior (contorno)',
@@ -35,7 +35,7 @@ export const camEs: Record<keyof typeof camEn, string> = {
   'cam.plasma.start': 'Elegir inicio del contorno por XY',
   'cam.plasma.startX': 'Inicio X',
   'cam.plasma.startY': 'Inicio Y',
-  'cam.plasma.startHelp': 'XY se proyecta sobre el contorno. La perforación queda en el descarte, al extremo de la entrada. Borre las longitudes para restaurar los valores automáticos.',
+  'cam.plasma.startHelp': 'XY se proyecta sobre el contorno. La perforación queda en el descarte, al extremo de la entrada. Borre las longitudes para restaurar los valores automáticos. Un único XY se aplica a todas las trayectorias seleccionadas. Si el inicio proyectado no es seguro, se omite esa trayectoria con una advertencia.',
   'cam.opDesc.plasmaProfile.title': 'Corte pasante por plasma',
   'cam.opDesc.plasmaProfile.shortSummary': 'El corte por plasma requiere contornos cerrados de Añadir, Sustraer o Línea. Las trayectorias abiertas aún no están admitidas.',
   'cam.opDesc.plasmaProfile.fullDescription': 'Plasma experimental: una pasada a la altura nominal. Lado automático: exterior para Añadir/Línea e interior para Sustraer. Con consumibles estándar, contornos exteriores en sentido horario y agujeros antihorario, vistos desde arriba. Entrada predeterminada: máx(3 mm, espesor); salida: un ancho de corte fuera y ninguna en agujeros. Sin ralentización en esquinas, sobrecorte, micropuentes ni compensación de bisel. Las piezas cortadas pueden volcar sobre los soportes.',

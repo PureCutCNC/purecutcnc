@@ -323,9 +323,9 @@ export function convertToolUnits(tool: Tool, toUnits: Units): Tool {
 function convertOperation(operation: Operation, from: Units, to: Units): Operation {
   return {
     ...operation,
-    plasmaLeadInLength: operation.plasmaLeadInLength === undefined ? undefined : convertLength(operation.plasmaLeadInLength, from, to),
-    plasmaLeadOutLength: operation.plasmaLeadOutLength === undefined ? undefined : convertLength(operation.plasmaLeadOutLength, from, to),
-    plasmaStartPoint: operation.plasmaStartPoint === undefined ? undefined : { x: convertLength(operation.plasmaStartPoint.x, from, to), y: convertLength(operation.plasmaStartPoint.y, from, to) },
+    ...(operation.plasmaLeadInLength === undefined ? {} : { plasmaLeadInLength: convertLength(operation.plasmaLeadInLength, from, to) }),
+    ...(operation.plasmaLeadOutLength === undefined ? {} : { plasmaLeadOutLength: convertLength(operation.plasmaLeadOutLength, from, to) }),
+    ...(operation.plasmaStartPoint === undefined ? {} : { plasmaStartPoint: { x: convertLength(operation.plasmaStartPoint.x, from, to), y: convertLength(operation.plasmaStartPoint.y, from, to) } }),
     stepdown: convertLength(operation.stepdown, from, to),
     feed: convertLength(operation.feed, from, to),
     plungeFeed: convertLength(operation.plungeFeed, from, to),

@@ -625,7 +625,6 @@ export function CAMPanel({
         }
       }
       return [
-        button('plasma_profile'),
         button('pocket'),
         button('v_carve'),
         button('v_carve_medial'),
@@ -637,6 +636,7 @@ export function CAMPanel({
         button('rough_surface'),
         button('finish_surface_cleanup'),
         button('finish_surface'),
+        button('plasma_profile'),
       ]
     },
     [project, selection]

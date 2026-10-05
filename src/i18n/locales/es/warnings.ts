@@ -18,6 +18,10 @@ import type { warningsEn } from '../en/warnings'
 
 /** Spanish toolpath and postprocessor warnings. */
 export const warningsEs: Record<keyof typeof warningsEn, string> = {
+  'warnings.plasmaTopOnly': '{name}: el corte pasante por plasma solo admite montajes superiores. No se generó trayectoria.',
+  'warnings.plasmaHoleBeforePart': '{name}: esta sustracción está antes de la pieza que la contiene y no forma un agujero en ella. Colóquela después de la pieza; se omitió esta trayectoria.',
+  'warnings.plasmaPartialDepth': '{name}: esta sustracción tiene profundidad parcial, pero el corte pasante por plasma atraviesa toda la chapa.',
+  'warnings.plasmaStraightLead': '{name}: el arco solicitado no permite perforar con separación segura del borde; se usó una entrada recta.',
   'warnings.plasmaInvalid': '{name}: parámetros o destinos de plasma no válidos. No se generó trayectoria.',
   'warnings.plasmaOpenPath': '{name}: las trayectorias de plasma abiertas aún no están admitidas. No se generó trayectoria.',
   'warnings.plasmaNoLead': '{name}: no cabe una perforación y entrada seguras en el descarte, o otra pieza/ranura bloquea el contorno. Se omitió este contorno.',

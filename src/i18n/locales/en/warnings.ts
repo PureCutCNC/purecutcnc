@@ -23,6 +23,10 @@
  * never translated.
  */
 export const warningsEn = {
+  'warnings.plasmaTopOnly': '{name}: plasma through-cut supports top setups only. No toolpath generated.',
+  'warnings.plasmaHoleBeforePart': '{name}: this subtract is ordered before its enclosing part and is not a hole in that part. Move it after the part; this contour was skipped.',
+  'warnings.plasmaPartialDepth': '{name}: this subtract has partial depth, but plasma through-cut cuts through the whole sheet.',
+  'warnings.plasmaStraightLead': '{name}: the requested arc cannot pierce with safe edge clearance; a straight lead-in was used.',
   'warnings.plasmaInvalid': '{name}: invalid plasma parameters or targets. No toolpath generated.',
   'warnings.plasmaOpenPath': '{name}: open plasma paths are not supported yet. No toolpath generated.',
   'warnings.plasmaNoLead': '{name}: no safe scrap-side pierce and lead fits, or a neighbouring part/kerf blocks the contour. This contour was skipped.',

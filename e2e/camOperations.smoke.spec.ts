@@ -1104,12 +1104,12 @@ test.describe('CAM operation browser smoke', () => {
     await unavailableToggle.click()
     const unavailable = ui.operations.addMenuUnavailableRows(app.page)
     await expect(ui.operations.addMenuRowLabels(unavailable)).toHaveText([
-      'Plasma through-cut',
       'Pocket',
       'V-carve offset',
       'V-carve medial',
       'Edge in',
       'Drill',
+      'Plasma through-cut',
     ])
     // Expanding shows today's rows unchanged: an inline reason each, and the
     // add control still disabled.
@@ -1138,6 +1138,10 @@ test.describe('CAM operation browser smoke', () => {
     await expect(unavailableToggle).toHaveText('Not available for this selection (12)')
     await unavailableToggle.click()
     await expect(ui.operations.addMenuUnavailableRows(app.page)).toHaveCount(12)
+    await expect(ui.operations.addMenuRowLabels(ui.operations.addMenuUnavailableRows(app.page))).toHaveText([
+      'Pocket', 'V-carve offset', 'V-carve medial', 'Edge in', 'Edge out', 'Surface', 'Engrave', 'Drill',
+      '3D surface rough', '3D surface cleanup', '3D surface finish', 'Plasma through-cut',
+    ])
 
     // "Select all" is the recovery path out of a wrong selection, so it has to
     // survive inside the collapsed section: it fixes the selection, and the

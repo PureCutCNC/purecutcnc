@@ -18,6 +18,10 @@ import type { warningsEn } from '../en/warnings'
 
 /** French structured toolpath and postprocessor warnings. */
 export const warningsFr: Record<keyof typeof warningsEn, string> = {
+  'warnings.plasmaTopOnly': '{name} : la découpe traversante plasma ne prend en charge que les montages supérieurs. Aucun parcours généré.',
+  'warnings.plasmaHoleBeforePart': '{name} : cette soustraction précède la pièce qui la contient et ne forme pas de trou dans cette pièce. Placez-la après la pièce ; ce contour a été ignoré.',
+  'warnings.plasmaPartialDepth': '{name} : cette soustraction est de profondeur partielle, mais la découpe plasma traverse toute la tôle.',
+  'warnings.plasmaStraightLead': '{name} : l’arc demandé ne permet pas un perçage à distance sûre du bord ; une entrée droite a été utilisée.',
   'warnings.plasmaInvalid': '{name} : paramètres ou cibles plasma invalides. Aucun parcours généré.',
   'warnings.plasmaOpenPath': '{name} : les tracés plasma ouverts ne sont pas encore pris en charge. Aucun parcours généré.',
   'warnings.plasmaNoLead': '{name} : aucun perçage et aucune entrée sûrs dans la chute, ou une pièce voisine/saignée bloque le contour. Ce contour est ignoré.',

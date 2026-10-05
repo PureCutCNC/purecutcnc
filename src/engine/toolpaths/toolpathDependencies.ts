@@ -317,6 +317,12 @@ export interface OperationFootprint {
  *   is expressed in tool diameters, so a diameter-less tool has no measure).
  */
 export function operationFootprint(project: Project, operation: Operation): OperationFootprint {
+  // Plasma reads all neighbouring outlines and holes; editable leads/start XY
+  // have no milling-sized spatial bound. Keep every feature edit invalidating.
+  if (operation.kind === 'plasma_profile') {
+    return { bounds: null, targetFeatureIds: new Set(operation.target.source === 'features' ? operation.target.featureIds : []), readsWholeModel: false }
+  }
+
   // Stock-targeted surface operations cut the whole model: no per-feature
   // narrowing applies. `bounds` carries the stock's world rectangle so the
   // `bounds === null` rule in `operationAffectedByChange` never fires for

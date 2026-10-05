@@ -20,7 +20,7 @@ import type { camEn } from '../en/cam'
 export const camFr: Record<keyof typeof camEn, string> = {
   'cam.plasma.title': 'Découpe traversante plasma',
   'cam.plasma.closedOnly': 'Le plasma exige des contours fermés Ajouter, Soustraire ou Ligne. Les tracés ouverts ne sont pas encore pris en charge.',
-  'cam.plasma.help': 'Plasma expérimental : une passe à la hauteur nominale. Côté automatique : extérieur pour Ajouter/Ligne, intérieur pour Soustraire. Avec les consommables standards, contours extérieurs horaires et trous antihoraires, vus du dessus. Entrée par défaut : max(3 mm, épaisseur) ; sortie : une largeur de saignée à l’extérieur, aucune pour les trous. Aucun ralentissement aux angles, surcoupe, micro-attache ni compensation du biseau. Les pièces découpées peuvent basculer sur les supports.',
+  'cam.plasma.help': 'Plasma expérimental : une passe à la hauteur nominale. Côté automatique : extérieur pour Ajouter/Ligne, intérieur pour Soustraire. Avec les consommables standards, contours extérieurs horaires et trous antihoraires, vus du dessus. Entrée par défaut : max(3 mm, épaisseur) ; sortie : une largeur de saignée à l’extérieur, aucune pour les trous. Aucun ralentissement aux angles, surcoupe, micro-attache ni compensation du biseau. Les pièces découpées peuvent basculer sur les supports. Montages supérieurs uniquement. Si un arc de trou ne permet pas un perçage sûr, une entrée droite est essayée avant le perçage au centre.',
   'cam.plasma.side': 'Côté de la saignée',
   'cam.plasma.auto': 'Automatique',
   'cam.plasma.outside': 'Extérieur (contour)',
@@ -35,7 +35,7 @@ export const camFr: Record<keyof typeof camEn, string> = {
   'cam.plasma.start': 'Choisir le départ du contour par XY',
   'cam.plasma.startX': 'Départ X',
   'cam.plasma.startY': 'Départ Y',
-  'cam.plasma.startHelp': 'XY est projeté sur le contour. Le perçage reste dans la chute, au bout de l’entrée. Effacez les longueurs pour rétablir les valeurs automatiques.',
+  'cam.plasma.startHelp': 'XY est projeté sur le contour. Le perçage reste dans la chute, au bout de l’entrée. Effacez les longueurs pour rétablir les valeurs automatiques. Un seul XY s’applique à tous les contours sélectionnés. Un contour dont le départ projeté est dangereux est ignoré avec un avertissement.',
   'cam.opDesc.plasmaProfile.title': 'Découpe traversante plasma',
   'cam.opDesc.plasmaProfile.shortSummary': 'Le plasma exige des contours fermés Ajouter, Soustraire ou Ligne. Les tracés ouverts ne sont pas encore pris en charge.',
   'cam.opDesc.plasmaProfile.fullDescription': 'Plasma expérimental : une passe à la hauteur nominale. Côté automatique : extérieur pour Ajouter/Ligne, intérieur pour Soustraire. Avec les consommables standards, contours extérieurs horaires et trous antihoraires, vus du dessus. Entrée par défaut : max(3 mm, épaisseur) ; sortie : une largeur de saignée à l’extérieur, aucune pour les trous. Aucun ralentissement aux angles, surcoupe, micro-attache ni compensation du biseau. Les pièces découpées peuvent basculer sur les supports.',

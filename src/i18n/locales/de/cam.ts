@@ -20,7 +20,7 @@ import type { camEn } from '../en/cam'
 export const camDe: Record<keyof typeof camEn, string> = {
   'cam.plasma.title': 'Plasma-Durchschnitt',
   'cam.plasma.closedOnly': 'Plasma benötigt geschlossene Hinzufügen-, Abziehen- oder Linienkonturen. Offene Pfade werden noch nicht unterstützt.',
-  'cam.plasma.help': 'Experimentelles Plasma: ein Durchgang auf nomineller Schnitthöhe. Automatische Seite: außen bei Hinzufügen/Linie, innen bei Abziehen. Mit Standard-Verbrauchsteilen außen im Uhrzeigersinn, Löcher gegen den Uhrzeigersinn, von oben gesehen. Standard-Einlauf: max(3 mm, Materialdicke); Auslauf: eine Schnittfugenbreite außen, keiner bei Löchern. Keine Eckverlangsamung, kein Überbrand, keine Mikrostege oder Fasenkompensation. Geschnittene Teile können auf den Auflagen kippen.',
+  'cam.plasma.help': 'Experimentelles Plasma: ein Durchgang auf nomineller Schnitthöhe. Automatische Seite: außen bei Hinzufügen/Linie, innen bei Abziehen. Mit Standard-Verbrauchsteilen außen im Uhrzeigersinn, Löcher gegen den Uhrzeigersinn, von oben gesehen. Standard-Einlauf: max(3 mm, Materialdicke); Auslauf: eine Schnittfugenbreite außen, keiner bei Löchern. Keine Eckverlangsamung, kein Überbrand, keine Mikrostege oder Fasenkompensation. Geschnittene Teile können auf den Auflagen kippen. Nur obere Aufspannungen. Ist ein sicherer Bogeneinstich nicht möglich, wird vor dem Mitteneinstich ein gerader Einlauf versucht.',
   'cam.plasma.side': 'Schnittfugenseite',
   'cam.plasma.auto': 'Automatisch',
   'cam.plasma.outside': 'Außen (Umriss)',
@@ -35,7 +35,7 @@ export const camDe: Record<keyof typeof camEn, string> = {
   'cam.plasma.start': 'Konturstart über XY wählen',
   'cam.plasma.startX': 'Start X',
   'cam.plasma.startY': 'Start Y',
-  'cam.plasma.startHelp': 'XY wird auf die Kontur projiziert. Der Einstich liegt im Abfall am entfernten Ende des Einlaufs. Längen leeren, um automatische Vorgaben wiederherzustellen.',
+  'cam.plasma.startHelp': 'XY wird auf die Kontur projiziert. Der Einstich liegt im Abfall am entfernten Ende des Einlaufs. Längen leeren, um automatische Vorgaben wiederherzustellen. Ein XY-Punkt gilt für jede gewählte Kontur. Eine Kontur mit unsicherem projiziertem Start wird mit einer Warnung übersprungen.',
   'cam.opDesc.plasmaProfile.title': 'Plasma-Durchschnitt',
   'cam.opDesc.plasmaProfile.shortSummary': 'Plasma benötigt geschlossene Hinzufügen-, Abziehen- oder Linienkonturen. Offene Pfade werden noch nicht unterstützt.',
   'cam.opDesc.plasmaProfile.fullDescription': 'Experimentelles Plasma: ein Durchgang auf nomineller Schnitthöhe. Automatische Seite: außen bei Hinzufügen/Linie, innen bei Abziehen. Mit Standard-Verbrauchsteilen außen im Uhrzeigersinn, Löcher gegen den Uhrzeigersinn, von oben gesehen. Standard-Einlauf: max(3 mm, Materialdicke); Auslauf: eine Schnittfugenbreite außen, keiner bei Löchern. Keine Eckverlangsamung, kein Überbrand, keine Mikrostege oder Fasenkompensation. Geschnittene Teile können auf den Auflagen kippen.',

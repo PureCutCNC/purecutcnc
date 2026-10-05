@@ -15,13 +15,14 @@
  */
 
 import type { Operation, Point, Project } from '../../types/project'
+import { setupFace, setupForOperation } from '../setupOrientation'
 import { resolveProject } from '../../store/helpers/resolveFeatures'
 import { expandFeatureGeometry } from '../../text'
 import { findOperationTool } from '../../toolPolicy'
 import { convertLength } from '../../utils/units'
-import { flattenProfile, fromClipperPath, getOperationSafeZ, normalizeToolForProject, normalizeWinding, offsetKeepOutPaths, toClipperPath, DEFAULT_CLIPPER_SCALE } from './geometry'
+import { flattenProfile, fromClipperPath, getOperationSafeZ, normalizeToolForProject, normalizeWinding, resolveDimensionRef, offsetKeepOutPaths, toClipperPath, DEFAULT_CLIPPER_SCALE } from './geometry'
 import { buildTangentLeadPath } from './tangentLink'
-import { distanceToContour, insideContour, pathClearOfContour, pathOnScrap, plasmaArrivals, pointDistance } from './plasmaGeometry'
+import { distanceToContour, insideContour, pathClearOfContour, pathOnScrap, plasmaArrivals } from './plasmaGeometry'
 import type { ToolpathMove, ToolpathResult } from './types'
 
 export function plasmaLeadLength(project: Project, operation: Operation): number {
@@ -43,7 +44,11 @@ function lead(start: Point, tangent: Point, normal: Point, length: number, style
 
 export function generatePlasmaProfileToolpath(authoritativeProject: Project, operation: Operation): ToolpathResult {
   const result: ToolpathResult = { operationId: operation.id, moves: [], warnings: [], bounds: null }
-  const warn = (code: 'plasmaInvalid' | 'plasmaOpenPath' | 'plasmaNoLead' | 'plasmaSmallHole' | 'plasmaCentrePierce' | 'plasmaLeadOutOmitted', name = operation.name): void => { result.warnings.push({ code, params: { name } }) }
+  const warn = (code: 'plasmaInvalid' | 'plasmaOpenPath' | 'plasmaNoLead' | 'plasmaSmallHole' | 'plasmaCentrePierce' | 'plasmaLeadOutOmitted' | 'plasmaTopOnly' | 'plasmaHoleBeforePart' | 'plasmaPartialDepth' | 'plasmaStraightLead', name = operation.name): void => { result.warnings.push({ code, params: { name } }) }
+  try {
+    const setup = setupForOperation(authoritativeProject, operation)
+    if (setup && setupFace(setup) !== 'top') { warn('plasmaTopOnly'); return result }
+  } catch { warn('plasmaTopOnly'); return result }
   const rawTool = findOperationTool(authoritativeProject, operation)
   if (operation.kind !== 'plasma_profile' || rawTool?.type !== 'plasma') { result.warnings.push({ code: 'noToolAssigned' }); return result }
   const tool = normalizeToolForProject(rawTool, authoritativeProject)
@@ -75,6 +80,14 @@ export function generatePlasmaProfileToolpath(authoritativeProject: Project, ope
     if (!target) continue
     const shape = shapes.find((s) => s.feature.id === target.id)
     if (!shape || shape.ring.length < 3 || shape.ring.some((p) => !Number.isFinite(p.x) || !Number.isFinite(p.y))) { warn('plasmaInvalid', target.name); continue }
+    if (target.operation === 'subtract') {
+      if (shapes.some((s) => s.feature.operation === 'add' && shapes.indexOf(s) > shapes.indexOf(shape)
+        && shape.ring.every((point) => insideContour(point, s.ring)))) { warn('plasmaHoleBeforePart', target.name); continue }
+      let bottom: number
+      try { bottom = resolveDimensionRef(authoritativeProject, target.z_bottom) } catch { warn('plasmaInvalid', target.name); continue }
+      if (!Number.isFinite(bottom)) { warn('plasmaInvalid', target.name); continue }
+      if (bottom > 0) warn('plasmaPartialDepth', target.name)
+    }
     const inside = operation.plasmaSide === 'inside' || ((operation.plasmaSide ?? 'auto') === 'auto' && target.operation === 'subtract')
     const outLength = operation.plasmaLeadOutLength ?? (inside ? 0 : tool.diameter)
     // Separate calls per target: ClipperOffset must never orient a hole from an outside contour (#909).
@@ -89,34 +102,46 @@ export function generatePlasmaProfileToolpath(authoritativeProject: Project, ope
       const holes = shapes.filter((h) => h.feature.operation === 'subtract' && shapes.indexOf(h) > shapes.indexOf(s)
         && h.ring.every((p) => insideContour(p, s.ring)))
       // A hole in an enclosing part is scrap. A distinct part nested in that hole remains protected.
-      if (holes.some((h) => pathOnScrap(path, h.ring, true, tool.radius))) return true
+      if (holes.some((h) => pathOnScrap(path, h.ring, true, h.feature.id === target.id ? tool.radius : tool.diameter))) return true
       return path.every((p) => !insideContour(p, s.ring)) && pathClearOfContour(path, s.ring, tool.diameter)
     })
     if (!neighbourSafe([...ring, ring[0]])) { warn('plasmaNoLead', target.name); continue }
     const xs = shape.ring.map((p) => p.x), ys = shape.ring.map((p) => p.y)
     const diameter = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys))
     if (inside && diameter < 1.5 * project.stock.thickness) warn('plasmaSmallHole', target.name)
-    let chosen: { ring: Point[]; entry: Point[]; exit: Point[] } | null = null
+    let chosen: { ring: Point[]; entry: Point[]; exit: Point[]; centrePierce: boolean; straightFallback: boolean } | null = null
     const arrivals = plasmaArrivals(ring, operation.plasmaStartPoint)
     for (const arrival of operation.plasmaStartPoint ? arrivals.slice(0, 1) : arrivals) {
       const normal = inside ? { x: -arrival.normal.x, y: -arrival.normal.y } : arrival.normal
       const start = arrival.ring[0]
-      let entry = lead(start, arrival.tangent, normal, inLength, operation.plasmaLeadIn ?? (inside ? 'arc' : 'line'), true)
-      if (!pathOnScrap(entry, shape.ring, inside, tool.radius) || distanceToContour(entry[0], shape.ring) + 2 / DEFAULT_CLIPPER_SCALE < inLength || !neighbourSafe(entry)) {
+      const entrySafe = (path: Point[]): boolean => pathOnScrap(path, shape.ring, inside, tool.radius)
+        && distanceToContour(path[0], shape.ring) + 2 / DEFAULT_CLIPPER_SCALE >= inLength && neighbourSafe(path)
+      const style = operation.plasmaLeadIn ?? 'arc'
+      let entry = lead(start, arrival.tangent, normal, inLength, style, true)
+      let centrePierce = false, straightFallback = false
+      // A tangent arc can fit but pierce too close to the hole edge. Try a
+      // square-on line before the exceptional, warned centre pierce.
+      if (inside && style === 'arc' && !entrySafe(entry)) {
+        entry = lead(start, arrival.tangent, normal, inLength, 'line', true)
+        straightFallback = true
+      }
+      if (!entrySafe(entry)) {
         if (!inside) continue
         const centre = { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 }
         // The centre exception is only for a hole too small for the requested lead.
         if (distanceToContour(centre, shape.ring) >= inLength || operation.plasmaStartPoint) continue
         entry = [centre, start]
         if (!pathOnScrap(entry, shape.ring, true, tool.radius) || !neighbourSafe(entry)) continue
+        centrePierce = true
       }
       let exit = outLength > 0 ? lead(start, arrival.tangent, normal, outLength, operation.plasmaLeadOut ?? 'line', false) : []
       if (exit.length && (!pathOnScrap(exit, shape.ring, inside, tool.radius) || !neighbourSafe(exit))) exit = []
-      chosen = { ring: arrival.ring, entry, exit }
+      chosen = { ring: arrival.ring, entry, exit, centrePierce, straightFallback }
       break
     }
     if (!chosen) { warn('plasmaNoLead', target.name); continue }
-    if (inside && pointDistance(chosen.entry[0], chosen.entry[chosen.entry.length - 1]) < inLength) warn('plasmaCentrePierce', target.name)
+    if (chosen.centrePierce) warn('plasmaCentrePierce', target.name)
+    else if (chosen.straightFallback) warn('plasmaStraightLead', target.name)
     if (outLength > 0 && chosen.exit.length === 0) warn('plasmaLeadOutOmitted', target.name)
     const pierce = chosen.entry[0]
     const previous = result.moves[result.moves.length - 1]?.to

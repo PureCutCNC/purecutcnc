@@ -26,7 +26,7 @@ import type { camEn } from '../en/cam'
 export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.plasma.title': '等离子贯穿切割',
   'cam.plasma.closedOnly': '等离子贯穿切割需要闭合的添加、减去或线条轮廓。暂不支持开放路径。',
-  'cam.plasma.help': '实验性等离子：以名义切割高度单次切割。自动侧别：添加/线条轮廓走外侧，减去孔走内侧。使用标准耗材时，从板材上方看，外轮廓顺时针、孔逆时针。默认引入长度为 3 毫米与板厚的较大值；外轮廓引出长度为一个割缝宽度，孔不引出。不支持拐角减速、过切、微连接或坡口补偿。切下的零件可能在支撑条上翘起。',
+  'cam.plasma.help': '实验性等离子：以名义切割高度单次切割。自动侧别：添加/线条轮廓走外侧，减去孔走内侧。使用标准耗材时，从板材上方看，外轮廓顺时针、孔逆时针。默认引入长度为 3 毫米与板厚的较大值；外轮廓引出长度为一个割缝宽度，孔不引出。不支持拐角减速、过切、微连接或坡口补偿。切下的零件可能在支撑条上翘起。 仅支持顶面装夹。若孔的圆弧引入无法安全穿孔，则先尝试直线引入，再尝试中心穿孔。',
   'cam.plasma.side': '割缝侧别',
   'cam.plasma.auto': '自动',
   'cam.plasma.outside': '外侧（轮廓）',
@@ -41,7 +41,7 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
   'cam.plasma.start': '通过 XY 选择轮廓起点',
   'cam.plasma.startX': '起点 X',
   'cam.plasma.startY': '起点 Y',
-  'cam.plasma.startHelp': 'XY 会投影到轮廓上。穿孔点位于废料侧的引入远端。清空长度可恢复自动默认值。',
+  'cam.plasma.startHelp': 'XY 会投影到轮廓上。穿孔点位于废料侧的引入远端。清空长度可恢复自动默认值。 同一个 XY 点应用于所有选定轮廓。若某个轮廓的投影起点不安全，将跳过该轮廓并给出警告。',
   'cam.opDesc.plasmaProfile.title': '等离子贯穿切割',
   'cam.opDesc.plasmaProfile.shortSummary': '等离子贯穿切割需要闭合的添加、减去或线条轮廓。暂不支持开放路径。',
   'cam.opDesc.plasmaProfile.fullDescription': '实验性等离子：以名义切割高度单次切割。自动侧别：添加/线条轮廓走外侧，减去孔走内侧。使用标准耗材时，从板材上方看，外轮廓顺时针、孔逆时针。默认引入长度为 3 毫米与板厚的较大值；外轮廓引出长度为一个割缝宽度，孔不引出。不支持拐角减速、过切、微连接或坡口补偿。切下的零件可能在支撑条上翘起。',

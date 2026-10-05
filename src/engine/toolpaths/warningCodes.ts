@@ -24,6 +24,10 @@
  * translated.
  */
 export type ToolpathWarningCode =
+  | 'plasmaTopOnly'
+  | 'plasmaHoleBeforePart'
+  | 'plasmaPartialDepth'
+  | 'plasmaStraightLead'
   | 'plasmaInvalid'
   | 'plasmaOpenPath'
   | 'plasmaNoLead'

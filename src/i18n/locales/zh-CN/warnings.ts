@@ -22,6 +22,10 @@ import type { warningsEn } from '../en/warnings'
  * passthrough and stays untranslated by design.
  */
 export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
+  'warnings.plasmaTopOnly': '{name}：等离子贯穿切割仅支持顶面装夹。未生成刀具路径。',
+  'warnings.plasmaHoleBeforePart': '{name}：此减料特征排在其外部零件之前，因此不是该零件中的孔。请将其移到零件之后；已跳过此轮廓。',
+  'warnings.plasmaPartialDepth': '{name}：此减料特征的深度未贯穿，但等离子贯穿切割仍会切穿整张板材。',
+  'warnings.plasmaStraightLead': '{name}：所选圆弧无法在安全离边距离处穿孔，已改用直线引入。',
   'warnings.plasmaInvalid': '{name}：等离子参数或目标无效。未生成刀路。',
   'warnings.plasmaOpenPath': '{name}：暂不支持开放的等离子路径。未生成刀路。',
   'warnings.plasmaNoLead': '{name}：无法在废料侧安排安全的穿孔与引入，或相邻零件/割缝阻挡轮廓。已跳过此轮廓。',

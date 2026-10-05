@@ -24,7 +24,7 @@
 export const camEn = {
   'cam.plasma.title': 'Plasma through-cut',
   'cam.plasma.closedOnly': 'Plasma through-cut requires closed add, subtract or line contours. Open paths are not supported yet.',
-  'cam.plasma.help': 'Experimental plasma: one pass at nominal cut height. Auto side cuts outside add/line outlines and inside subtract holes. Standard consumables cut outside clockwise and holes counter-clockwise, viewed above the sheet. Default lead-in: max(3 mm, stock thickness); lead-out: one kerf outside, none for holes. No corner slowdown, overburn, micro-joints or bevel compensation. Cut parts can tip up on the slats.',
+  'cam.plasma.help': 'Experimental plasma: one pass at nominal cut height. Auto side cuts outside add/line outlines and inside subtract holes. Standard consumables cut outside clockwise and holes counter-clockwise, viewed above the sheet. Default lead-in: max(3 mm, stock thickness); lead-out: one kerf outside, none for holes. No corner slowdown, overburn, micro-joints or bevel compensation. Cut parts can tip up on the slats. Top setups only. If a hole arc cannot pierce safely, a straight lead is tried before centre piercing.',
   'cam.plasma.side': 'Kerf side',
   'cam.plasma.auto': 'Automatic',
   'cam.plasma.outside': 'Outside (outline)',
@@ -39,7 +39,7 @@ export const camEn = {
   'cam.plasma.start': 'Choose contour start by XY',
   'cam.plasma.startX': 'Start X',
   'cam.plasma.startY': 'Start Y',
-  'cam.plasma.startHelp': 'XY is projected onto the contour. The pierce stays on scrap at the far end of the lead-in. Clear lengths to restore automatic defaults.',
+  'cam.plasma.startHelp': 'XY is projected onto the contour. The pierce stays on scrap at the far end of the lead-in. Clear lengths to restore automatic defaults. One XY applies to every selected contour. A contour with an unsafe projected start is skipped with a warning.',
   'cam.opDesc.plasmaProfile.title': 'Plasma through-cut',
   'cam.opDesc.plasmaProfile.shortSummary': 'Cut closed contours through the sheet with scrap-side kerf.',
   'cam.opDesc.plasmaProfile.fullDescription': 'Experimental plasma profile: half-kerf offset, scrap-side pierce and line or arc leads. One nominal-height pass; no tabs, ramps or finishing passes. No corner slowdown, overburn, micro-joints or bevel compensation; a loose part can tip on the slats.',

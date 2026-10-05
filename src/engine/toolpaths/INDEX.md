@@ -160,4 +160,4 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 
 Generators and rest calculations resolve tools through `src/toolPolicy.ts` so milling refuses plasma consumables, including hand-edited references. `geometry.ts` normalizes plasma kerf to half-width radius and carries torch heights/delay while ignoring milling defaults. `src/plasmaTool.test.ts` exercises every generator, using the real cone fixture for model operations.
 
-- `plasma.ts` / `plasmaGeometry.ts` — experimental closed-contour plasma profiles: independent half-kerf offsets, physical swirl direction, scrap-side line/arc leads, centre piercing and exact neighbour clearance; `plasma.test.ts` pins the rules, units and persistence.
+- `plasma.ts` / `plasmaGeometry.ts` — experimental closed-contour plasma profiles: independent half-kerf offsets, physical swirl direction, scrap-side arc/line/centre lead fallback and exact neighbour kerf clearance on Top setups only; `plasma.test.ts` pins the real export direction, independent safety boundaries, conservative cache, units and persistence.

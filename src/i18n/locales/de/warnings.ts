@@ -23,6 +23,10 @@ import type { warningsEn } from '../en/warnings'
  * passthrough and stays `{text}`.
  */
 export const warningsDe: Record<keyof typeof warningsEn, string> = {
+  'warnings.plasmaTopOnly': '{name}: Plasma-Durchschnitt unterstützt nur obere Aufspannungen. Keine Werkzeugbahn erzeugt.',
+  'warnings.plasmaHoleBeforePart': '{name}: diese Subtraktion liegt vor ihrem umschließenden Teil und bildet darin kein Loch. Nach dem Teil anordnen; diese Kontur wurde übersprungen.',
+  'warnings.plasmaPartialDepth': '{name}: diese Subtraktion hat eine Teiltiefe, aber der Plasma-Durchschnitt schneidet das gesamte Blech durch.',
+  'warnings.plasmaStraightLead': '{name}: der gewünschte Bogen erlaubt kein sicheres Einstechen mit Randabstand; ein gerader Einlauf wurde verwendet.',
   'warnings.plasmaInvalid': '{name}: ungültige Plasma-Parameter oder Ziele. Kein Werkzeugweg erzeugt.',
   'warnings.plasmaOpenPath': '{name}: offene Plasma-Pfade werden noch nicht unterstützt. Kein Werkzeugweg erzeugt.',
   'warnings.plasmaNoLead': '{name}: kein sicherer Einstich und Einlauf im Abfall möglich, oder ein Nachbarteil/eine Schnittfuge blockiert die Kontur. Kontur übersprungen.',

@@ -17,16 +17,22 @@
 /** #957: physical winding, kerf-edge dimensions, pierce/lead clearance and persistence.
  * Mutations run separately: invert offset, use full kerf, reverse direction,
  * put pierce on the contour, bypass neighbours, remove centre fallback.
+ * Review regressions separately kill M1/M2/M4/M5/M8/M10, enclosing-hole
+ * half-clearance, export Y convention, non-Top generation and bounded cache.
  */
 import assert from 'node:assert/strict'
 import type { Operation, Project, SketchFeature, SketchProfile } from '../../types/project'
-import { newProject, defaultTool } from '../../types/project'
+import { newProject, defaultTool, circleProfile } from '../../types/project'
 import { defaultPlasmaTool } from '../../toolPolicy'
 import { projectWithFeatures } from '../../test/projectFixtures'
 import { defaultOperationForTarget, isOperationTargetValid } from '../../store/helpers/operationDefaults'
 import { decodeProjectFormat, normalizeProject } from '../../store/helpers/projectFormat'
 import { useProjectStore } from '../../store/projectStore'
 import { convertProjectUnits, convertToolUnits } from '../../utils/units'
+import { projectToMachinePoint } from '../gcode/utils'
+import { BUNDLED_DEFINITIONS } from '../gcode/definitions'
+import { setupFrameForOperation } from '../setupOrientation'
+import { operationAffectedByChange, operationFootprint } from './toolpathDependencies'
 import { computeOperationToolpath } from './generateOperation'
 import { generatePlasmaProfileToolpath, plasmaLeadLength } from './plasma'
 import { distanceToContour, pathClearOfContour, pathOnScrap, pointDistance } from './plasmaGeometry'
@@ -54,9 +60,17 @@ function op(p: Project, ids = ['part'], patch: Partial<Operation> = {}): Operati
 }
 const generate = (p: Project, operation = op(p)): ToolpathResult => generatePlasmaProfileToolpath(p, operation)
 function cutPoints(result: ToolpathResult) { return result.moves.filter((m) => m.kind === 'cut').map((m) => m.from) }
-function physicalArea(result: ToolpathResult): number {
-  // Independent machine-plane calculation: x is unchanged, physical Y is -screen Y.
-  return result.moves.filter((m) => m.kind === 'cut').reduce((sum, m) => sum + m.from.x * -m.to.y - m.to.x * -m.from.y, 0) / 2
+function physicalArea(result: ToolpathResult, project = p, operation = op(project)): number {
+  const machine = BUNDLED_DEFINITIONS.find((definition) => definition.id === 'grbl')!
+  assert.ok(machine, 'direction fixture uses the bundled GRBL machine')
+  const frame = setupFrameForOperation(project, operation) ?? undefined
+  // Pin physical direction through the real export conversion, including origin
+  // and setup, rather than duplicating its Y convention in this test.
+  return result.moves.filter((m) => m.kind === 'cut').reduce((sum, m) => {
+    const from = projectToMachinePoint(m.from, project.origin, machine, frame)
+    const to = projectToMachinePoint(m.to, project.origin, machine, frame)
+    return sum + from.x * to.y - to.x * from.y
+  }, 0) / 2
 }
 const outline = [{ x: 20, y: 20 }, { x: 80, y: 20 }, { x: 80, y: 80 }, { x: 20, y: 80 }]
 const p = fixture()
@@ -102,7 +116,7 @@ const smallResult = generate(small, op(small, ['tiny']))
 assert.ok(smallResult.moves.length, 'small hole warns but still cuts')
 assert.deepEqual(smallResult.moves.find((m) => m.kind === 'plunge')!.to, { x: 39, y: 39, z: 7.5 }, 'small hole pierces at centre')
 assert.equal(smallResult.moves.filter((m) => m.kind === 'lead_in').length, 1)
-for (const code of ['plasmaSmallHole', 'plasmaCentrePierce']) assert.ok(smallResult.warnings.some((w) => w.code === code))
+for (const code of ['plasmaSmallHole', 'plasmaCentrePierce']) assert.ok(smallResult.warnings.some((w) => w.code === code), `${code}: small hole warning is present`)
 const overridden = generate(p, op(p, ['part'], { plasmaSide: 'inside' }))
 assert.ok(physicalArea(overridden) > 0, 'inside override owns compensation and direction')
 const custom = generate(p, op(p, ['part'], { plasmaStartPoint: { x: 50, y: 20 }, plasmaLeadIn: 'line', plasmaLeadInLength: 10, plasmaLeadOutLength: 0 }))
@@ -165,4 +179,90 @@ assert.deepEqual(inch.operations[0].plasmaStartPoint, { x: 50 / 25.4, y: 20 / 25
 // Native tool units are preserved but converted for generation.
 const inchTool = { ...p, tools: [convertToolUnits(p.tools[0], 'inch')] }
 assert.deepEqual(generate(inchTool).moves, outside.moves)
-console.log('plasma profile: physical direction, kerf, leads, neighbours, schema and UI policy passed')
+// Review #982: target every independent safety boundary, not just the whole guard.
+// Arc -> line -> centre keeps ordinary holes cutting while retaining the crater clearance.
+for (const thickness of [6, 12]) {
+  for (const diameter of thickness === 6 ? [14, 20, 30, 40, 48] : [30, 50]) {
+    const round = fixture([feature('round', 'subtract', circleProfile(50, 50, diameter / 2))])
+    round.stock.thickness = thickness
+    const roundOp = op(round, ['round'])
+    const result = generate(round, roundOp)
+    assert.ok(result.moves.length, `default ${diameter} mm round hole in ${thickness} mm plate generates`)
+    const points = Array.from({ length: 360 }, (_, i) => ({ x: 50 + diameter / 2 * Math.cos(i * Math.PI / 180), y: 50 + diameter / 2 * Math.sin(i * Math.PI / 180) }))
+    assert.ok(distanceToContour(result.moves.find((m) => m.kind === 'plunge')!.to, points) >= plasmaLeadLength(round, roundOp) - 0.02, 'round hole pierce clears the requested lead length')
+  }
+}
+for (const width of [14, 20]) {
+  const mid = fixture([feature('mid', 'subtract', square(35, 35, width))])
+  const result = generate(mid, op(mid, ['mid']))
+  assert.ok(result.moves.length, 'mid-size square hole uses straight fallback')
+  assert.equal(result.moves.filter((m) => m.kind === 'lead_in').length, 1, 'arc pierce too close to an edge falls back to line')
+  assert.ok(result.warnings.some((w) => w.code === 'plasmaStraightLead'))
+  const drawn = [{ x: 35, y: 35 }, { x: 35 + width, y: 35 }, { x: 35 + width, y: 35 + width }, { x: 35, y: 35 + width }]
+  assert.ok(distanceToContour(result.moves.find((m) => m.kind === 'plunge')!.to, drawn) >= 6, 'M2: pierce must clear lead length even when the arc kerf itself fits')
+}
+const requested = { plasmaStartPoint: { x: 50, y: 20 }, plasmaLeadIn: 'line' as const, plasmaLeadOutLength: 0 }
+const nearKerf = fixture([feature('part', 'add'), feature('near', 'add', square(48, 10, 4, 1.6))])
+assert.equal(generate(nearKerf, op(nearKerf, ['part'], requested)).moves.length, 0, 'M1: a lead 1.4 mm from a separate neighbour is inside its 2 mm kerf')
+const nested = fixture([feature('enclosing', 'add', square(0, 0, 100)), feature('scrap-hole', 'subtract', square(10, 10, 80)), feature('part', 'add')])
+const nestedResult = generate(nested, op(nested, ['part'], { ...requested, plasmaLeadInLength: 7.6 }))
+assert.equal(nestedResult.moves.length, 0, 'enclosing-hole wall requires full kerf too: pierce y=11.4 is only 1.4 mm from its edge')
+const nestedSafe = generate(nested, op(nested, ['part'], requested))
+assert.ok(nestedSafe.moves.length, 'same nested part cuts with the 3 mm clearance of the default lead')
+const deepInside = fixture([feature('part', 'add'), feature('enclosing', 'add', square(0, 0, 200))])
+assert.equal(generate(deepInside, op(deepInside, ['part'], requested)).moves.length, 0, 'M4: clearance from neighbour boundary cannot authorize a path inside its material')
+const crossingContour = fixture([feature('part', 'add'), feature('side-neighbour', 'add', square(81.5, 40, 3, 5))])
+assert.equal(generate(crossingContour, op(crossingContour, ['part'], requested)).moves.length, 0, 'M5: the entire contour is checked even when its chosen entry and exit are clear')
+const unrelatedHole = fixture([feature('enclosing', 'add', square(0, 0, 200)), feature('remote-hole', 'subtract', square(10, 10, 20)), feature('part', 'add')])
+assert.equal(generate(unrelatedHole, op(unrelatedHole, ['part'], requested)).moves.length, 0, 'M10: a hole exempts only paths actually inside that hole')
+const notch: SketchProfile = { start: { x: 20, y: 20 }, segments: [
+  { type: 'line', to: { x: 40, y: 20 } }, { type: 'line', to: { x: 40, y: 40 } },
+  { type: 'line', to: { x: 60, y: 40 } }, { type: 'line', to: { x: 60, y: 20 } },
+  { type: 'line', to: { x: 80, y: 20 } }, { type: 'line', to: { x: 80, y: 80 } },
+  { type: 'line', to: { x: 20, y: 80 } }, { type: 'line', to: { x: 20, y: 20 } },
+], closed: true }
+const notched = fixture([feature('part', 'add', notch)])
+const curledExit = generate(notched, op(notched, ['part'], { plasmaStartPoint: { x: 50, y: 40 }, plasmaLeadIn: 'line', plasmaLeadOut: 'arc', plasmaLeadOutLength: 20 }))
+assert.ok(curledExit.moves.length, 'concave part entry still cuts')
+assert.ok(curledExit.warnings.some((w) => w.code === 'plasmaLeadOutOmitted'), 'M8: an outside exit curling into its own part is warned')
+assert.ok(!curledExit.moves.some((m) => m.kind === 'lead_out'), 'unsafe curled exit cannot be emitted')
+const topOp = op(p, ['part'], { setupId: p.setups![0].id })
+assert.ok(physicalArea(generate(p, topOp), p, topOp) < 0, 'explicit Top setup keeps clockwise export direction')
+for (const axis of ['x', 'y'] as const) {
+  const bottom = { ...p, setups: [{ ...p.setups![0], orientation: { axis, angleDeg: 180 as const } }] }
+  const result = generate(bottom, topOp)
+  assert.equal(result.moves.length, 0, 'turned setup never emits nominal Top plasma geometry')
+  assert.ok(result.warnings.some((w) => w.code === 'plasmaTopOnly'))
+  const dispatched = computeOperationToolpath(bottom, topOp)!.result
+  assert.equal(dispatched.moves.length, 0, 'dispatch must check original setup before any coordinate transform')
+  assert.ok(dispatched.warnings.some((w) => w.code === 'plasmaTopOnly'))
+}
+const beforePart = fixture([feature('hole', 'subtract', square(35, 35, 30)), feature('part', 'add')])
+const misordered = generate(beforePart, op(beforePart, ['hole']))
+assert.equal(misordered.moves.length, 0)
+assert.ok(misordered.warnings.some((w) => w.code === 'plasmaHoleBeforePart'), 'misordered hole is diagnosed specifically')
+assert.ok(!misordered.warnings.some((w) => w.code === 'plasmaNoLead'))
+const partial = fixture([feature('part', 'add'), { ...feature('hole', 'subtract', square(35, 35, 30)), z_bottom: 2 }])
+const partialResult = generate(partial, op(partial, ['hole']))
+assert.ok(partialResult.moves.length && partialResult.warnings.some((w) => w.code === 'plasmaPartialDepth'), 'partial-depth subtract warns that plasma still cuts through')
+const namedPartial = fixture([feature('part', 'add'), { ...feature('hole', 'subtract', square(35, 35, 30)), z_bottom: 'hole_floor' }])
+namedPartial.dimensions.hole_floor = { id: 'hole_floor', name: 'Hole floor', value: 2, formula: 'stock_thickness - 4' }
+const namedResult = generate(namedPartial, op(namedPartial, ['hole']))
+assert.ok(namedResult.moves.length && namedResult.warnings.some((w) => w.code === 'plasmaPartialDepth'), 'partial-depth warning resolves named/formula-backed dimensions')
+const missingDepth = { ...namedPartial, dimensions: {} }
+assert.equal(generate(missingDepth, op(missingDepth, ['hole'])).moves.length, 0, 'unknown depth reference refuses motion')
+assert.ok(generate(missingDepth, op(missingDepth, ['hole'])).warnings.some((w) => w.code === 'plasmaInvalid'), 'unknown depth reference has a clear warning')
+const absentDefault = op(p); delete absentDefault.plasmaLeadIn
+assert.deepEqual(generate(p, absentDefault).moves, outside.moves, 'absent and stored outside lead defaults agree')
+const previous = fixture([feature('part', 'add'), feature('far', 'add', square(1000, -83, 4))])
+const next = fixture([feature('part', 'add'), feature('far', 'add', square(48, -83, 4))])
+const longLead = op(previous, ['part'], { ...requested, plasmaLeadInLength: 100 })
+assert.ok(generate(previous, longLead).moves.length)
+assert.equal(generate(next, longLead).moves.length, 0, 'far-away edit can invalidate a long plasma lead')
+const footprint = operationFootprint(previous, longLead)
+assert.equal(footprint.bounds, null, 'plasma cache remains conservative independently of the milling tool lookup')
+assert.ok(operationAffectedByChange(footprint, previous, next, new Set(['far'])), 'neighbour changes beyond a milling margin invalidate plasma')
+const milling = { ...p, operations: [defaultOperationForTarget(p, 'pocket', 'rough', { source: 'features', featureIds: ['part'] }, 0)] }
+const convertedMilling = convertProjectUnits(milling, 'inch').operations[0]
+for (const key of ['plasmaLeadInLength', 'plasmaLeadOutLength', 'plasmaStartPoint']) assert.equal(Object.hasOwn(convertedMilling, key), false, 'unit conversion does not add absent plasma keys to milling')
+console.log('plasma profile: physical export direction, independent safety guards, fallback, cache, schema and UI policy passed')
