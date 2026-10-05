@@ -25,6 +25,8 @@ import {
 } from 'react'
 import type { PendingTransformTool } from '../../store/types'
 import type { Point } from '../../types/project'
+import { faceAngles } from '../../store/helpers/activeFace'
+import { useProjectStore } from '../../store/projectStore'
 import { computeRotatePreviewPoint, computeScalePreviewPoint } from './manualEntry'
 import type { OperationDimEdit } from './manualEntry'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
@@ -154,6 +156,7 @@ export function useTransformExactWorkflow(ctx: TransformExactWorkflowCtx): Trans
         pt.referenceStart,
         pt.referenceEnd,
         angleDegrees,
+        faceAngles(useProjectStore.getState().project),
       )
       if (pt.keepOriginals) {
         setPendingRotateCopyPoint(previewPoint)
@@ -232,6 +235,7 @@ export function useTransformExactWorkflow(ctx: TransformExactWorkflowCtx): Trans
         pt.referenceStart,
         pt.referenceEnd,
         angleDegrees,
+        faceAngles(useProjectStore.getState().project),
       ),
       session: pt.session,
     })

@@ -220,6 +220,72 @@ export function isThroughFeature(
   return depth.start <= epsilon && depth.end >= project.stock.thickness - epsilon
 }
 
+// ── Face-local angles ─────────────────────────────────────────
+
+/**
+ * How an angle reads on the face the workspace is on (issue #945). Stored
+ * angles stay in stock space; a typed or displayed angle is converted here, at
+ * the UI boundary, so that on Bottom a positive angle turns the same way on
+ * screen as it does on Top.
+ *
+ * Every map is its own inverse — the same call takes a stored angle to the
+ * field and a typed angle back to storage — so "applied twice" is a no-op and
+ * shows up at once as an unconverted value.
+ */
+export interface FaceAngles {
+  /** A direction, in degrees from +X: a line's heading, an orientation. */
+  direction: (degrees: number) => number
+  /** A turn about an in-plane point: a rotation amount, a sweep. */
+  turn: (degrees: number) => number
+  /** A 3D rotation about a stock axis, for the model orientation fields. */
+  axisTurn: (axis: 'x' | 'y' | 'z', degrees: number) => number
+}
+
+function withoutNegativeZero(value: number): number {
+  return value === 0 ? 0 : value
+}
+
+/** Top, and anything stored: angles read as they are. */
+export const STOCK_ANGLES: FaceAngles = {
+  direction: (degrees) => degrees,
+  turn: (degrees) => degrees,
+  axisTurn: (_axis, degrees) => degrees,
+}
+
+/**
+ * The angle maps for the active setup, read off the #944 transform: which
+ * stock axes the turn reverses. The arithmetic is exact (a sign, or 180° less
+ * the angle), so a typed 30 is stored as -30, not as a rounded neighbour.
+ */
+export function faceAngles(project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>): FaceAngles {
+  const setup = activeSetup(project)
+  if (setupFace(setup) === 'top') return STOCK_ANGLES
+  const frame = setupFrame(setup.orientation, project.stock)
+  const origin = canonicalToSetupPoint({ x: 0, y: 0, z: 0 }, frame)
+  const reversed = {
+    x: canonicalToSetupPoint({ x: 1, y: 0, z: 0 }, frame).x < origin.x,
+    y: canonicalToSetupPoint({ x: 0, y: 1, z: 0 }, frame).y < origin.y,
+    z: canonicalToSetupPoint({ x: 0, y: 0, z: 1 }, frame).z < origin.z,
+  }
+  // Seen from above the turned stock is a mirror, so in-plane turns reverse
+  // whenever exactly one of X and Y does.
+  const handedness = reversed.x !== reversed.y ? -1 : 1
+  return {
+    direction: (degrees) => {
+      const flippedY = reversed.y ? -degrees : degrees
+      const flipped = reversed.x ? 180 - flippedY : flippedY
+      // Keep the (-180, 180] range the fields already show.
+      const wrapped = flipped > 180 ? flipped - 360 : flipped <= -180 ? flipped + 360 : flipped
+      return withoutNegativeZero(wrapped)
+    },
+    turn: (degrees) => withoutNegativeZero(handedness * degrees),
+    // The setup-local frame is the stock frame turned as a rigid body, so a
+    // rotation about a stock axis keeps its sense about that axis only where
+    // the axis itself still points the same way.
+    axisTurn: (axis, degrees) => withoutNegativeZero(reversed[axis] ? -degrees : degrees),
+  }
+}
+
 /** A Z range as heights above the table with the stock flipped, bottom face up. */
 export interface FlippedZRange {
   top: number

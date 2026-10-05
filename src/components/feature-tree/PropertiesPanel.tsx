@@ -42,7 +42,7 @@ import { useRequestUnitConversion } from '../project/UnitConversionContext'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
-import { activeFace, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { activeFace, faceAngles, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { AuthoringFaceRow } from './FaceChip'
 import { FaceZRange } from './FaceZRange'
 
@@ -92,6 +92,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   // The face rows appear only once the project uses both faces (issue #945).
   const bothFaces = useProjectStore((s) => projectUsesBothFaces(s.project))
   const workspaceFace = useProjectStore((s) => activeFace(s.project))
+  const face = faceAngles(project)
   const deleteFeature = useProjectStore((s) => s.deleteFeature)
   const deleteFeatures = useProjectStore((s) => s.deleteFeatures)
   const beginHistoryTransaction = useProjectStore((s) => s.beginHistoryTransaction)
@@ -761,13 +762,14 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
           <label className="properties-field">
             <span>{t("featureTree.properties.angle")}</span>
             <DraftTextInput
-              key={`backdrop-angle-${backdrop?.orientationAngle ?? 90}`}
-              value={String(Math.round((backdrop?.orientationAngle ?? 90) * 1000) / 1000)}
+              key={`backdrop-angle-${backdrop?.orientationAngle ?? 90}-${workspaceFace}`}
+              // Shown as the backdrop points on the face in view; stored in stock space (#945).
+              value={String(Math.round(face.direction(backdrop?.orientationAngle ?? 90) * 1000) / 1000)}
               disabled={!backdrop}
               onCommit={(next) => {
                 const parsed = Number(next)
                 if (Number.isFinite(parsed)) {
-                  updateBackdrop({ orientationAngle: parsed })
+                  updateBackdrop({ orientationAngle: face.direction(parsed) })
                 }
               }}
             />
@@ -1392,6 +1394,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
         </DisclosureSection>
         {selectedFeature.operation === 'model' && selectedFeature.stl?.meshAssetId ? (
           <ModelOrientationSection
+            face={face}
             featureId={selectedFeature.id}
             orientation={selectedFeature.stl.orientation}
             zTop={zTop}

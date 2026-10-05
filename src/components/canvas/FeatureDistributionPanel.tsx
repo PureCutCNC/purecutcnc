@@ -17,6 +17,8 @@
 import type { FeatureDistributionPlan, FeatureDistributionSpec } from '../../sketch/featureDistribution'
 import type { PendingFeatureDistribution } from '../../store/types'
 import { useI18n } from '../../i18n/i18nContext'
+import { faceAngles } from '../../store/helpers/activeFace'
+import { useProjectStore } from '../../store/projectStore'
 import { CanvasWorkflowAction, CanvasWorkflowCancel, CanvasWorkflowConfirm } from './CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
 import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
@@ -51,6 +53,7 @@ export function FeatureDistributionPanel({
   onComplete,
   onCancel,
 }: FeatureDistributionPanelProps) {
+  const face = faceAngles(useProjectStore((state) => state.project))
   const { t } = useI18n()
   const { spec } = pending
   const planError = plan.ok ? null : {
@@ -118,7 +121,8 @@ export function FeatureDistributionPanel({
                 </PickerSelection>
               </div>
               <NumberField label={t('canvas.featureDistribution.instanceCount')} value={spec.copyCount} integer onChange={(event) => onUpdate({ ...spec, copyCount: inputNumber(event) })} />
-              <NumberField label={t('canvas.featureDistribution.sweep')} value={spec.sweepDegrees} onChange={(event) => onUpdate({ ...spec, sweepDegrees: inputNumber(event) })} />
+              {/* The sweep is typed as it turns on the face being drawn on; the spec keeps it in stock space (#945). */}
+              <NumberField label={t('canvas.featureDistribution.sweep')} value={face.turn(spec.sweepDegrees)} onChange={(event) => onUpdate({ ...spec, sweepDegrees: face.turn(inputNumber(event)) })} />
               <OrientationField value={spec.orientation} onChange={(orientation) => onUpdate({ ...spec, orientation })} />
             </div>
           )}

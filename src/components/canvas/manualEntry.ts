@@ -18,6 +18,7 @@ import { addPoint, scalePoint, subtractPoint } from './draftGeometry'
 import type { CanvasPoint } from './viewTransform'
 import type { Point, Segment } from '../../types/project'
 import { parseLengthInput } from '../../utils/units'
+import type { FaceAngles } from '../../store/helpers/activeFace'
 
 export interface DimensionEditState {
   shape: 'rect' | 'circle' | 'ellipse' | 'tab' | 'clamp' | 'polygon' | 'spline' | 'composite' | 'slot' | 'ngon' | 'gear'
@@ -40,6 +41,21 @@ export type OperationDimEdit =
   | { kind: 'scale'; factor: string }
   | { kind: 'rotate'; angle: string }
   | { kind: 'offset'; distance: string }
+
+/** Degrees as the angle fields show them: two decimals, trailing zeros dropped. */
+export function formatAngleField(degrees: number): string {
+  const text = degrees.toFixed(2).replace(/\.?0+$/, '')
+  return text === '-0' ? '0' : text
+}
+
+/**
+ * The heading of a stock-space vector as an angle field shows it on the
+ * active face (issue #945). The reverse is `face.direction(parsed)` on the
+ * typed value: one map, both ways.
+ */
+export function formatDirectionAngle(dx: number, dy: number, face: FaceAngles): string {
+  return formatAngleField(face.direction(Math.atan2(dy, dx) * (180 / Math.PI)))
+}
 
 export function unitDirection(from: Point, to: Point): Point {
   const dx = to.x - from.x
@@ -96,6 +112,7 @@ export function arcHandleFromRadius(
 export function computeDimensionEditPreviewPoint(
   edit: DimensionEditState,
   units: 'mm' | 'inch',
+  face: FaceAngles,
 ): Point {
   if (edit.shape === 'circle') {
     const r = Math.max(parseLengthInput(edit.radius, units) ?? 0, 0)
@@ -156,7 +173,8 @@ export function computeDimensionEditPreviewPoint(
 
   if (edit.shape === 'polygon' || edit.shape === 'spline' || edit.shape === 'composite') {
     const len = Math.max(parseLengthInput(edit.length, units) ?? 0, 0)
-    const angleDeg = parseFloat(edit.angle) || 0
+    // The field holds the angle as it reads on the active face.
+    const angleDeg = face.direction(parseFloat(edit.angle) || 0)
     const angleRad = angleDeg * (Math.PI / 180)
     return {
       x: edit.anchor.x + len * Math.cos(angleRad),
@@ -166,7 +184,7 @@ export function computeDimensionEditPreviewPoint(
 
   if (edit.shape === 'slot' && edit.arcStart && !edit.arcEnd) {
     const len = Math.max(parseLengthInput(edit.length, units) ?? 0, 0)
-    const angleDeg = parseFloat(edit.angle) || 0
+    const angleDeg = face.direction(parseFloat(edit.angle) || 0)
     const angleRad = angleDeg * (Math.PI / 180)
     const p1 = edit.arcStart
     return { x: p1.x + len * Math.cos(angleRad), y: p1.y + len * Math.sin(angleRad) }
@@ -186,7 +204,7 @@ export function computeDimensionEditPreviewPoint(
 
   if (edit.shape === 'ngon' || edit.shape === 'gear') {
     const r = Math.max(parseLengthInput(edit.radius, units) ?? 0, 0)
-    const angleDeg = parseFloat(edit.angle) || 0
+    const angleDeg = face.direction(parseFloat(edit.angle) || 0)
     const angleRad = angleDeg * (Math.PI / 180)
     return { x: edit.anchor.x + r * Math.cos(angleRad), y: edit.anchor.y + r * Math.sin(angleRad) }
   }
@@ -237,13 +255,15 @@ export function computeScaleFactorFromPreview(
   return factor.toFixed(4).replace(/\.?0+$/, '')
 }
 
+/** `angleDegrees` is the typed rotation, as it reads on the active face. */
 export function computeRotatePreviewPoint(
   referenceStart: Point,
   referenceEnd: Point,
   angleDegrees: number,
+  face: FaceAngles,
 ): Point {
   const refVec = subtractPoint(referenceEnd, referenceStart)
-  const rotated = rotateVector(refVec, angleDegrees * Math.PI / 180)
+  const rotated = rotateVector(refVec, face.turn(angleDegrees) * Math.PI / 180)
   return addPoint(referenceStart, rotated)
 }
 
@@ -251,6 +271,7 @@ export function computeRotateDegreesFromPreview(
   referenceStart: Point,
   referenceEnd: Point,
   previewPoint: Point,
+  face: FaceAngles,
 ): string {
   const startVec = subtractPoint(referenceEnd, referenceStart)
   const previewVec = subtractPoint(previewPoint, referenceStart)
@@ -259,7 +280,7 @@ export function computeRotateDegreesFromPreview(
   let delta = (previewAngle - startAngle) * (180 / Math.PI)
   while (delta <= -180) delta += 360
   while (delta > 180) delta -= 360
-  return delta.toFixed(2).replace(/\.?0+$/, '')
+  return formatAngleField(face.turn(delta))
 }
 
 function normalizeReadableAngle(rawAngle: number): number {

@@ -45,11 +45,13 @@ import { buildArcSegmentFromThreePoints } from './draftHelpers'
 import { resolveOffsetPreview } from './draftGeometry'
 import {
   computeRotateDegreesFromPreview,
+  formatDirectionAngle,
   computeScaleFactorFromPreview,
   type OperationDimEdit,
 } from './manualEntry'
 import type { ResolvedSnap } from './snappingHelpers'
 import { computeSketchViewTransform, type SketchViewState } from './viewTransform'
+import { faceAngles } from '../../store/helpers/activeFace'
 import type { ConstraintWorkflow } from './useConstraintWorkflow'
 import type { DimensionEditWorkflow } from './useDimensionEditWorkflow'
 import type { FilletWorkflow } from './useFilletWorkflow'
@@ -339,7 +341,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
           const dx = previewPoint.x - fromPoint.x
           const dy = previewPoint.y - fromPoint.y
           const len = Math.hypot(dx, dy)
-          const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI)
+          const angleText = formatDirectionAngle(dx, dy, faceAngles(projectRef.current))
           dimEdit.setDimensionEdit({
             shape: pendingAdd.shape,
             anchor: fromPoint,
@@ -350,7 +352,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
             height: '',
             radius: '',
             length: formatLength(len, units),
-            angle: angleDeg.toFixed(2).replace(/\.?0+$/, ''),
+            angle: angleText,
           })
         } else if (currentEdit.activeField === 'length') {
           dimEdit.setDimensionEdit({ ...currentEdit, activeField: 'angle' })
@@ -421,7 +423,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
           const dx = previewPoint.x - fromPoint.x
           const dy = previewPoint.y - fromPoint.y
           const len = Math.hypot(dx, dy)
-          const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI)
+          const angleText = formatDirectionAngle(dx, dy, faceAngles(projectRef.current))
           dimEdit.setDimensionEdit({
             shape: 'composite',
             anchor: fromPoint,
@@ -432,7 +434,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
             height: '',
             radius: '',
             length: formatLength(len, units),
-            angle: angleDeg.toFixed(2).replace(/\.?0+$/, ''),
+            angle: angleText,
           })
         } else if (currentEdit.activeField === 'length') {
           dimEdit.setDimensionEdit({ ...currentEdit, activeField: 'angle' })
@@ -452,7 +454,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
           const dy = previewPoint ? previewPoint.y - p1.y : 0
           const len = Math.hypot(dx, dy)
           const defaultLen = len > 1e-10 ? len : (units === 'mm' ? 20 : 1)
-          const angleDeg = len > 1e-10 ? (Math.atan2(dy, dx) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '') : '0'
+          const angleDeg = len > 1e-10 ? formatDirectionAngle(dx, dy, faceAngles(projectRef.current)) : '0'
           dimEdit.setDimensionEdit({ shape: 'slot', anchor: p1, arcStart: p1, signX: 1, signY: 1, activeField: 'length', length: formatLength(defaultLen, units), angle: angleDeg, radius: formatLength(units === 'mm' ? 6 : 0.25, units), width: '', height: '' })
         } else if (currentEdit.activeField === 'length') {
           dimEdit.setDimensionEdit({ ...currentEdit, activeField: 'angle' })
@@ -490,7 +492,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
         if (!currentEdit) {
           const previewPoint = pendingPreviewPointRef.current?.point ?? pendingAdd.anchor
           const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
-          const angleDeg = (Math.atan2(previewPoint.y - pendingAdd.anchor.y, previewPoint.x - pendingAdd.anchor.x) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '')
+          const angleDeg = formatDirectionAngle(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y, faceAngles(projectRef.current))
           dimEdit.setDimensionEdit({ shape: 'ngon', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: angleDeg })
         } else {
           dimEdit.setDimensionEdit(null)
@@ -507,7 +509,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
             : pendingAdd.anchor
           const previewPoint = pendingPreviewPointRef.current?.point ?? fallbackPoint
           const r = Math.hypot(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y)
-          const angleDeg = (Math.atan2(previewPoint.y - pendingAdd.anchor.y, previewPoint.x - pendingAdd.anchor.x) * (180 / Math.PI)).toFixed(2).replace(/\.?0+$/, '')
+          const angleDeg = formatDirectionAngle(previewPoint.x - pendingAdd.anchor.x, previewPoint.y - pendingAdd.anchor.y, faceAngles(projectRef.current))
           dimEdit.setDimensionEdit({ shape: 'gear', anchor: pendingAdd.anchor, signX: 1, signY: 1, activeField: 'radius', width: '', height: '', radius: formatLength(r, units), length: '', angle: angleDeg })
         } else {
           dimEdit.setDimensionEdit(null)
@@ -561,6 +563,7 @@ export function useCanvasKeyboard(ctx: CanvasKeyboardCtx): {
             pendingTransform.referenceStart,
             pendingTransform.referenceEnd,
             previewPoint,
+            faceAngles(projectRef.current),
           )
         }
         setOperationDimEdit({ kind: 'rotate', angle })

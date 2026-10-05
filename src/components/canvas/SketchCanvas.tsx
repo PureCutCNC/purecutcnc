@@ -166,7 +166,7 @@ import {
   pasteClipboardFeatures,
   type FeatureClipboardPayload,
 } from '../../platform/featureClipboard'
-import { activeOriginInStock, editableProjectFeatures, faceArtworkMirror } from '../../store/helpers/activeFace'
+import { activeOriginInStock, editableProjectFeatures, faceAngles, faceArtworkMirror } from '../../store/helpers/activeFace'
 import { useFaceViewStore } from '../../store/faceViewStore'
 import { drawOtherFace } from './faceOverlay'
 import { resolveFeatureInstance, resolveFeatureInstances, resolveFeatureRow, resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
@@ -1285,7 +1285,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     const dimensionEdit = dimEdit.dimensionEditRef.current
     const currentPreviewPoint =
       dimensionEdit
-        ? computeDimensionEditPreviewPoint(dimensionEdit, project.meta.units)
+        ? computeDimensionEditPreviewPoint(dimensionEdit, project.meta.units, faceAngles(project))
         : pendingAdd?.shape === 'origin'
           ? (
               originPreviewPointRef.current && originPreviewPointRef.current.session === pendingAdd.session

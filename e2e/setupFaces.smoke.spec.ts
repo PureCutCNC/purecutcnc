@@ -25,6 +25,7 @@ import { test, expect } from './fixtures'
 import {
   getHoveredFeatureId,
   getProject,
+  seedProject,
   placePendingAddAt,
   setPendingAddAnchor,
   startAddRectPlacement,
@@ -264,6 +265,56 @@ test('the face switch is reachable and operable from the keyboard', async ({ app
   await expect(ui.face.otherSideToggle(page)).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(ui.face.otherSideToggle(page)).toHaveAttribute('aria-pressed', 'false')
+})
+
+test('angle fields on Bottom read and turn as they do on Top', async ({ app, ui }) => {
+  const { page } = app
+  // A backdrop gives the properties panel an Angle field; 90 is its unrotated value.
+  const saved = await getProject(page)
+  await seedProject(page, JSON.stringify({
+    ...saved,
+    backdrop: {
+      name: 'Backdrop',
+      mimeType: 'image/png',
+      imageDataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+      intrinsicWidth: 1,
+      intrinsicHeight: 1,
+      center: { x: 2, y: 1.5 },
+      width: 2,
+      height: 1,
+      orientationAngle: 90,
+      opacity: 0.5,
+      visible: true,
+    },
+  }))
+  const angle = page.locator('.properties-panel .properties-field').filter({ hasText: 'Angle' }).locator('input')
+  await page.locator('.tree-row--backdrop').click()
+  await expect(angle).toHaveValue('90')
+
+  // Flipped about X the backdrop points the other way up; the field says so,
+  // and a typed angle is stored back in stock space.
+  await ui.face.segment(page, 'Bottom').click()
+  await page.locator('.tree-row--backdrop').click()
+  await expect(angle).toHaveValue('-90')
+  await angle.fill('-80')
+  await angle.press('Enter')
+  await expect.poll(async () => ((await getProject(page)).backdrop as { orientationAngle: number }).orientationAngle).toBe(80)
+  await expect(angle).toHaveValue('-80')
+  await ui.face.segment(page, 'Top').click()
+  await page.locator('.tree-row--backdrop').click()
+  await expect(angle).toHaveValue('80')
+
+  // A radial sweep: positive in its field on Bottom, as on Top, and it stays
+  // what was typed (the stored value is the reversed stock-space turn).
+  await ui.face.segment(page, 'Bottom').click()
+  await drawRect(page, 0.4, 0.4, 0.9, 0.9)
+  await page.getByRole('button', { name: 'Distribute selected features', exact: true }).first().click()
+  await page.getByRole('menu').getByRole('button', { name: 'Radial', exact: true }).click()
+  const sweep = page.locator('.canvas-workflow-panel--feature-distribution').getByLabel('Sweep')
+  await expect(sweep).toHaveValue('360')
+  await sweep.fill('90')
+  await expect(sweep).toHaveValue('90')
+  await page.keyboard.press('Escape')
 })
 
 test('a 3D view parked on the Top or Bottom preset follows the face; other views stay put', async ({ app, ui }) => {

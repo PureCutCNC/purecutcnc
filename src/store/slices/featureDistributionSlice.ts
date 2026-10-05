@@ -23,6 +23,7 @@ import {
   profilePathLength,
   type FeatureDistributionSpec,
 } from '../../sketch/featureDistribution'
+import { faceAngles } from '../helpers/activeFace'
 import { buildTransformedCopiedFeatures, extractClonedDefinitions } from '../helpers/copyFeatures'
 import { createFeatureInstance } from '../helpers/featureDefinitions'
 import { nextPlacementSession } from '../helpers/ids'
@@ -46,6 +47,17 @@ export type FeatureDistributionSlice = Pick<
 function resolvedFeatures(project: Project, ids: string[]): ResolvedSketchFeature[] | null {
   const features = ids.map((id) => resolveFeatureInstance(project, id))
   return features.every((feature): feature is ResolvedSketchFeature => feature !== null) ? features : null
+}
+
+/**
+ * A new radial sweep starts as a positive turn on the face being drawn on
+ * (issue #945): the spec keeps it in stock space, where a Bottom setup's
+ * turns run the other way.
+ */
+function faceLocalDefaults(spec: FeatureDistributionSpec, project: Project): FeatureDistributionSpec {
+  return spec.mode === 'radial'
+    ? { ...spec, sweepDegrees: faceAngles(project).turn(spec.sweepDegrees) }
+    : spec
 }
 
 export function createFeatureDistributionSlice(
@@ -75,7 +87,7 @@ export function createFeatureDistributionSlice(
           guideId: null,
           pickTarget: null,
           radialCenterPicked: false,
-          spec: createFeatureDistributionSpec(mode, s.project.meta.units, sourcePivot),
+          spec: faceLocalDefaults(createFeatureDistributionSpec(mode, s.project.meta.units, sourcePivot), s.project),
           session: nextPlacementSession(),
         },
         selection: {
