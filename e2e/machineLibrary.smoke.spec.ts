@@ -32,6 +32,8 @@ import {
 const CUSTOM_MACHINES_KEY = 'purecutcnc.machines.customMachines'
 
 async function openManager(page: Page, ui: typeof import('./selectors')): Promise<void> {
+  const drawerButton = ui.tree.openProjectPanelButton(page)
+  if (await drawerButton.isVisible()) await drawerButton.click()
   await ui.tree.projectRow(page).click()
   await ui.properties.manageMachines(page).click()
   await expect(ui.machineManager.dialog(page)).toBeVisible()
@@ -194,4 +196,98 @@ test('a project machine missing from the library stays usable and can be saved b
 
   await ui.machineManager.doneButton(app.page).click()
   await expect(ui.properties.machineStatus(app.page)).not.toContainText('Not in my machines')
+})
+
+for (const tablet of [false, true]) {
+  test.describe(tablet ? 'plasma machine on landscape tablet' : 'plasma machine on desktop', () => {
+    test.use({ viewport: tablet ? { width: 1180, height: 820 } : { width: 1440, height: 900 }, hasTouch: tablet })
+
+    test('QtPlasmaC kind and commands survive focused edits, JSON edits, selection and restart', async ({ app, ui }) => {
+      await seedMachineProject(app.page)
+      await openManager(app.page, ui)
+      await expect(ui.machineManager.item(app.page, 'GRBL 1.1')).toContainText('Router')
+      const bundled = ui.machineManager.item(app.page, 'QtPlasmaC (experimental)')
+      await expect(bundled).toContainText('Plasma')
+      await bundled.click()
+      await ui.machineManager.duplicateButton(app.page).click()
+      const editor = ui.machineEditor.dialog(app.page)
+      const field = (label: string) => ui.machineEditor.field(app.page, label)
+      await expect(field('Machine kind')).toHaveValue('plasma')
+      await expect(field('Pierce mode')).toHaveValue('controller')
+      await expect(field('Torch on command')).toHaveValue('M3 $0 S1')
+      await expect(field('Torch off command')).toHaveValue('M5 $0')
+      await expect(field('Material select command')).toHaveValue('M190 P{materialNumber}')
+      await expect(editor).toContainText('plasma output is not yet implemented')
+      await expect(ui.machineEditor.saveButton(app.page)).toBeInViewport()
+      await editor.screenshot({ path: test.info().outputPath('plasma-machine.png') })
+      // A mandatory command cannot be silently omitted.
+      await field('Torch on command').fill('')
+      await expect(ui.machineEditor.saveButton(app.page)).toBeDisabled()
+      await field('Torch on command').fill('M3 $0 S1')
+      await field('Torch off command').fill('M5 $-1')
+      await field('THC on command (optional)').fill('')
+      await field('THC off command (optional)').fill('')
+      await ui.machineEditor.advancedToggle(app.page).click()
+      const json = ui.machineEditor.advancedJson(app.page)
+      const definition = JSON.parse(await json.inputValue())
+      expect(definition.plasma.thcOnCommand).toBeUndefined()
+      expect(definition.plasma.thcOffCommand).toBeUndefined()
+      definition.coordinateSystem.xAxis = '-X'
+      definition.plasma.materialSelectCommand = 'M190 P{materialNumber} (selected)'
+      await json.fill(JSON.stringify(definition, null, 2))
+      await field('Name').fill('My Plasma Table')
+      await field('Torch on command').fill('')
+      await expect(ui.machineEditor.saveButton(app.page)).toBeDisabled()
+      await field('Torch on command').fill('M3 $0 S1')
+      // A later form edit must preserve the current advanced fields.
+      expect(JSON.parse(await json.inputValue()).coordinateSystem.xAxis).toBe('-X')
+      await ui.machineEditor.saveButton(app.page).click()
+      await expect(editor).toBeHidden()
+      await ui.machineManager.useButton(app.page).click()
+      const embedded = (await embeddedMachine(app.page)).definitions[0]
+      expect(embedded.machineKind).toBe('plasma')
+      expect(embedded.plasma).toEqual({ torchOnCommand: 'M3 $0 S1', torchOffCommand: 'M5 $-1', materialSelectCommand: 'M190 P{materialNumber} (selected)', pierceMode: 'controller' })
+      expect(embedded.coordinateSystem).toEqual({ xAxis: '-X', yAxis: 'Y', zAxis: 'Z' })
+      await ui.machineManager.doneButton(app.page).click()
+      await app.page.reload()
+      await app.page.waitForSelector('canvas', { timeout: 15000 })
+      await openManager(app.page, ui)
+      await ui.machineManager.item(app.page, 'My Plasma Table').click()
+      await ui.machineManager.editButton(app.page).click()
+      await expect(field('Torch off command')).toHaveValue('M5 $-1')
+      await expect(field('Material select command')).toHaveValue('M190 P{materialNumber} (selected)')
+      await expect(field('THC on command (optional)')).toHaveValue('')
+      await ui.machineEditor.cancelButton(app.page).click()
+    })
+  })
+}
+
+test('machine kind switches create a validated plasma block and remove it on router conversion', async ({ app, ui }) => {
+  await seedMachineProject(app.page)
+  await openManager(app.page, ui)
+  await ui.machineManager.item(app.page, 'GRBL 1.1').click()
+  await ui.machineManager.duplicateButton(app.page).click()
+  const field = (label: string) => ui.machineEditor.field(app.page, label)
+  await expect(field('Machine kind')).toHaveValue('router')
+  await field('Machine kind').selectOption('plasma')
+  await expect(ui.machineEditor.saveButton(app.page)).toBeDisabled()
+  await field('Torch on command').fill('M3 $0 S1')
+  await field('Torch off command').fill('M5 $0')
+  await field('Material select command').fill('M190 P{materialNumber}')
+  await expect(ui.machineEditor.saveButton(app.page)).toBeEnabled()
+  await ui.machineEditor.advancedToggle(app.page).click()
+  const json = ui.machineEditor.advancedJson(app.page)
+  const definition = JSON.parse(await json.inputValue())
+  definition.plasma.pierceMode = 'gcode'
+  await json.fill(JSON.stringify(definition))
+  await expect(ui.machineEditor.saveButton(app.page)).toBeDisabled()
+  await expect(ui.machineEditor.dialog(app.page)).toContainText('G-code-owned piercing is not supported')
+  definition.plasma.pierceMode = 'controller'
+  await json.fill(JSON.stringify(definition))
+  await field('Machine kind').selectOption('router')
+  await expect(field('Torch on command')).toHaveCount(0)
+  expect(JSON.parse(await json.inputValue()).plasma).toBeUndefined()
+  await ui.machineEditor.saveButton(app.page).click()
+  await ui.machineManager.useButton(app.page).click()
+  expect((await embeddedMachine(app.page)).definitions[0].plasma).toBeUndefined()
 })

@@ -15,7 +15,7 @@
  */
 
 import type { MachineDefinition } from '../../engine/gcode/types'
-import { validateMachineDefinition } from '../../engine/gcode/types'
+import { resolveMachineKind, validateMachineDefinition } from '../../engine/gcode/types'
 
 /**
  * Focused-form representation of a MachineDefinition. Only the fields most
@@ -23,6 +23,13 @@ import { validateMachineDefinition } from '../../engine/gcode/types'
  * Advanced (raw JSON) editor.
  */
 export interface MachineFormData {
+  machineKind: 'router' | 'plasma'
+  torchOnCommand: string
+  torchOffCommand: string
+  materialSelectCommand: string
+  thcOnCommand: string
+  thcOffCommand: string
+  pierceMode: 'controller' | 'gcode'
   name: string
   fileExtension: string
   mmCommand: string
@@ -51,6 +58,13 @@ export function splitLines(text: string): string[] {
 /** Extract focused form fields from a full MachineDefinition. */
 export function toFormData(def: MachineDefinition): MachineFormData {
   return {
+    machineKind: resolveMachineKind(def),
+    torchOnCommand: def.plasma?.torchOnCommand ?? '',
+    torchOffCommand: def.plasma?.torchOffCommand ?? '',
+    materialSelectCommand: def.plasma?.materialSelectCommand ?? '',
+    thcOnCommand: def.plasma?.thcOnCommand ?? '',
+    thcOffCommand: def.plasma?.thcOffCommand ?? '',
+    pierceMode: def.plasma?.pierceMode ?? 'controller',
     name: def.name,
     fileExtension: def.fileExtension,
     mmCommand: def.units.mmCommand ?? '',
@@ -73,8 +87,26 @@ export function mergeFormData(
   def: MachineDefinition,
   form: MachineFormData,
 ): MachineDefinition {
+  const { machineKind, plasma: _plasma, ...base } = def
+  // Empty arrays and a single blank line look alike in the form; an
+  // unchanged field must preserve its original representation and output.
+  const mergeLines = (text: string, original: string[]) => text === joinLines(original) ? original : splitLines(text)
   return {
-    ...def,
+    ...base,
+    // Preserve absence on legacy router definitions; no format migration.
+    ...(form.machineKind === 'plasma'
+      ? {
+          machineKind: 'plasma',
+          plasma: {
+            torchOnCommand: form.torchOnCommand,
+            torchOffCommand: form.torchOffCommand,
+            materialSelectCommand: form.materialSelectCommand,
+            ...(form.thcOnCommand ? { thcOnCommand: form.thcOnCommand } : {}),
+            ...(form.thcOffCommand ? { thcOffCommand: form.thcOffCommand } : {}),
+            pierceMode: form.pierceMode,
+          },
+        }
+      : machineKind ? { machineKind: 'router' } : {}),
     name: form.name,
     fileExtension: form.fileExtension,
     units: {
@@ -84,13 +116,13 @@ export function mergeFormData(
     },
     program: {
       ...def.program,
-      header: splitLines(form.header),
-      footer: splitLines(form.footer),
-      operationHeader: splitLines(form.operationHeader),
+      header: mergeLines(form.header, def.program.header),
+      footer: mergeLines(form.footer, def.program.footer),
+      operationHeader: mergeLines(form.operationHeader, def.program.operationHeader),
     },
     toolChange: {
       ...def.toolChange,
-      commands: splitLines(form.toolChangeCommands),
+      commands: mergeLines(form.toolChangeCommands, def.toolChange.commands),
     },
     coolant:
       def.coolant || form.floodOnCommand || form.mistOnCommand || form.coolantOffCommand

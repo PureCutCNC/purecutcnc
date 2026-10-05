@@ -70,6 +70,28 @@ A definition may describe:
 Unknown or invalid capabilities produce validation errors or warnings; they are
 not guessed by the exporter.
 
+### Plasma machine metadata (#956)
+
+`machineKind` is optional: absent means `router`, and validation leaves the
+field absent on existing definitions. `plasma` holds `torchOnCommand`,
+`torchOffCommand`, `materialSelectCommand` (with `{materialNumber}`), optional
+`thcOnCommand` / `thcOffCommand`, and `pierceMode`. A plasma machine requires
+this block. Only `controller` piercing is supported in 0.6.0; validation
+rejects the reserved `gcode` mode. Format remains 3.3, with no injected defaults
+or version-based migration.
+
+The bundled **QtPlasmaC (experimental)** machine uses controller-owned pierce
+height, delay and THC, following the
+[LinuxCNC QtPlasmaC command reference](https://linuxcnc.org/docs/2.9/html/plasma/qtplasmac.html#_qtplasmac_specific_g_codes).
+These commands are metadata only: legacy spindle-start words are comments,
+spindle-off and tool-change commands are empty, and no torch, material or THC
+sequence is emitted by this change.
+Plasma sequencing belongs to `motionPipeline.ts` in #959.
+
+The library shows machine kind for every row, including legacy routers and
+project-only snapshots. The focused editor exposes kind and the plasma block;
+imports, custom storage and project snapshots retain the same validated data.
+
 ## Output dialects
 
 A machine definition describes G-code word syntax, and that is not every

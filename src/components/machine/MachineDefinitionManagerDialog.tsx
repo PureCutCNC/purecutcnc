@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { MachineDefinition } from '../../engine/gcode/types'
+import { resolveMachineKind, type MachineDefinition } from '../../engine/gcode/types'
 import { getActiveMachineDefinition } from '../../engine/gcode/definitions'
 import {
   duplicateMachineAsCustom,
@@ -46,6 +46,8 @@ const MACHINE_FIELD_LABEL_KEYS: Record<string, keyof typeof dialogsEn> = {
   builtin: 'dialogs.machineManager.field.builtin',
   fileExtension: 'dialogs.machineManager.field.fileExtension',
   outputDialect: 'dialogs.machineManager.field.outputDialect',
+  machineKind: 'dialogs.machineManager.field.machineKind',
+  plasma: 'dialogs.machineManager.field.plasma',
   coordinateSystem: 'dialogs.machineManager.field.coordinateSystem',
   numberFormat: 'dialogs.machineManager.field.numberFormat',
   units: 'dialogs.machineManager.field.units',
@@ -219,6 +221,9 @@ export function MachineDefinitionManagerDialog({
         onClick={() => { setPreviewId(definition.id); setError(null) }}
       >
         <div className="machine-manager-item-name">{definition.name}</div>
+        <span className="machine-manager-badge">
+          {td(resolveMachineKind(definition) === 'plasma' ? 'dialogs.machineEditor.kindPlasma' : 'dialogs.machineEditor.kindRouter')}
+        </span>
         {projectOnly ? (
           <span className="machine-manager-badge machine-manager-badge--missing">
             {td('dialogs.machineManager.notInLibrary')}
@@ -289,6 +294,8 @@ export function MachineDefinitionManagerDialog({
                 </div>
 
                 <dl className="machine-manager-meta">
+                  <dt>{td('dialogs.machineEditor.machineKind')}</dt>
+                  <dd>{td(resolveMachineKind(previewDef) === 'plasma' ? 'dialogs.machineEditor.kindPlasma' : 'dialogs.machineEditor.kindRouter')}</dd>
                   <dt>{td('dialogs.machineManager.fileExtension')}</dt>
                   <dd>.{previewDef.fileExtension}</dd>
                   {previewDef.description ? (
