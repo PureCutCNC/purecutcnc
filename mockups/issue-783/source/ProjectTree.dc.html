@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Project tree with face layers</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.wrap{width:900px;height:760px;box-sizing:border-box;background:#0a1016;color:#d8e4ef;font-family:'Avenir Next','IBM Plex Sans',sans-serif;font-size:13px;display:flex;gap:24px;padding:28px;overflow:hidden}
+.wrap *{box-sizing:border-box}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.panel{background:#0f1820;border:1px solid #2a3a49;border-radius:10px;display:flex;flex-direction:column;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;height:40px;padding:0 12px;border-bottom:1px solid #2a3a49;flex-shrink:0}
+.lbl{font-size:11px;letter-spacing:.14em;color:#94aabc;text-transform:uppercase}
+.cnt{color:#78b0e8;font-weight:600;font-size:12px}
+.tr{display:flex;align-items:center;gap:8px;height:28px;padding:0 6px 0 8px;border-radius:6px;font-size:13px}
+.tr.sel{background:#1c2b3a;outline:1px solid #3c5265}
+.tr.dim{opacity:.55}
+.dot{width:12px;height:12px;border-radius:50%;border:1.5px solid #5a7a96;flex-shrink:0}
+.sb{width:26px;height:22px;border:1px solid #2a3a49;border-radius:6px;display:flex;align-items:center;justify-content:center;background:linear-gradient(#24374a,#13202c);color:#94aabc;padding:0;flex-shrink:0}
+.sb svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.sb.sub{color:#78b0e8}
+.sb.on{color:#e3a564;border-color:#8a5f30}
+.sp{flex:1}
+.chip{font-size:10px;font-weight:600;letter-spacing:.06em;padding:2px 6px;border-radius:4px;border:1px solid #3c5265;color:#94aabc;white-space:nowrap;line-height:14px}
+.chip.top{color:#9ccaf5;border-color:#3b6a96;background:#12263a}
+.chip.bot{color:#f3c38c;border-color:#8a5f30;background:#2a1d10}
+.chip.thru{color:#cdb3ea;border-color:#5d4580;background:#1e1530}
+.fgrp{display:flex;align-items:center;gap:7px;height:30px;padding:0 6px 0 8px;font-size:12px;font-weight:600;letter-spacing:.03em;border-radius:6px}
+.fgrp.ton{background:#12263a;color:#cfe4fa}
+.menu{position:absolute;width:250px;background:#16222e;border:1px solid #3c5265;border-radius:9px;padding:5px;box-shadow:0 12px 32px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:1px}
+.mi{display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-radius:6px;font-size:13px;color:#d8e4ef}
+.mi.hi{background:#24374a}
+.mi.off{color:#5c6f82}
+.msep{height:1px;background:#2a3a49;margin:4px 6px}
+.btn{height:34px;padding:0 14px;border:1px solid #2a3a49;border-radius:8px;background:linear-gradient(#24374a,#13202c);color:#d8e4ef;font:inherit;font-size:13px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn.pri{background:linear-gradient(#3a6d9e,#24507a);border-color:#4f93d6;color:#fff}
+.kv{display:grid;grid-template-columns:120px 1fr 1fr;gap:6px 12px;font-size:12.5px;align-items:center}
+.kh{font-size:10.5px;letter-spacing:.1em;color:#94aabc;text-transform:uppercase}
+.k{color:#94aabc}
+</style>
+</helmet>
+<div class="wrap">
+
+<section class="panel" style="width: 330px; position: relative; overflow: visible">
+<div class="ph"><span class="lbl">Project tree</span><span class="cnt">16</span></div>
+<div style="padding: 6px; display: flex; flex-direction: column; gap: 1px">
+<div class="tr"><span class="dot"></span>Project</div>
+<div class="tr"><span class="dot" style="border-color: #4f93d6"></span>Grid</div>
+<div class="tr"><span class="dot" style="border-color: #4f93d6"></span>Stock<span class="sp"></span><span class="chip">4 × 3 × 0.75</span></div>
+<div class="tr"><span class="dot"></span>Origin<span class="sp"></span><span class="chip">shared · both faces</span></div>
+<div class="tr"><span class="dot"></span>Backdrop</div>
+<div class="tr" style="margin-top: 2px"><span class="dot"></span>Features<span class="sp"></span><span class="sb"><svg viewBox="0 0 16 16"><path d="M1 8s2.7-4.5 7-4.5S15 8 15 8s-2.7 4.5-7 4.5S1 8 1 8z"></path><circle cx="8" cy="8" r="2"></circle></svg></span><span class="sb"><svg viewBox="0 0 16 16"><path d="M1.5 4h5l1.5 1.5h6.5v8h-13z"></path></svg></span></div>
+
+<div class="fgrp ton" style="margin-left: 14px"><svg viewBox="0 0 16 16" style="width: 16px; height: 16px; fill: none; stroke: #78b0e8; stroke-width: 1.3; stroke-linejoin: round"><path d="M2 6 8 3l6 3v5l-6 3-6-3z"></path><path d="M2 6l6 3 6-3-6-3z" style="fill: #78b0e8; fill-opacity: .55"></path></svg>Top face<span class="cnt" style="font-weight: 500">5</span><span class="sp"></span><span class="chip top">ACTIVE</span></div>
+<div class="tr" style="margin-left: 30px"><span class="sb sub"><svg viewBox="0 0 16 16"><path d="M3 8h10"></path></svg></span>Tray</div>
+<div class="tr" style="margin-left: 30px"><span class="sb sub"><svg viewBox="0 0 16 16"><path d="M3 8h10"></path></svg></span>Pin A<span class="sp"></span><span class="chip thru">THRU</span></div>
+<div class="tr" style="margin-left: 30px"><span class="sb sub"><svg viewBox="0 0 16 16"><path d="M3 8h10"></path></svg></span>Pin B<span class="sp"></span><span class="chip thru">THRU</span></div>
+<div class="tr" style="margin-left: 30px"><span class="sb sub"><svg viewBox="0 0 16 16"><path d="M3 8h10"></path></svg></span>Cable hole<span class="sp"></span><span class="chip thru">THRU</span></div>
+<div class="tr" style="margin-left: 30px"><span class="sb sub"><svg viewBox="0 0 16 16"><path d="M3 8h10"></path></svg></span>PC-01</div>
+
+<div class="fgrp" style="margin-left: 14px; color: #c9a37a; margin-top: 3px"><svg viewBox="0 0 16 16" style="width: 16px; height: 16px; fill: none; stroke: #e3a564; stroke-width: 1.3; stroke-linejoin: round"><path d="M2 5 8 2l6 3v5l-6 3-6-3z"></path><path d="M2 10l6 3 6-3-6-3z" style="fill: #e3a564; fill-opacity: .45"></path></svg>Bottom face<span class="cnt" style="font-weight: 500; color: #c9a37a">5</span><span class="sp"></span><span class="chip">GHOST</span><span class="sb on" aria-label="Ghost visible"><svg viewBox="0 0 16 16"><path d="M1 8s2.7-4.5 7-4.5S15 8 15 8s-2.7 4.5-7 4.5S1 8 1 8z" stroke-dasharray="2 2"></path><circle cx="8" cy="8" r="2"></circle></svg></span></div>
+<div class="tr sel" style="margin-left: 30px"><span class="sb sub" style="opacity: .6"><svg viewBox="0 0 16 16"><path d="M3 8h10"></path></svg></span><span style="opacity: .75">Battery recess</span><span class="sp"></span><span class="chip bot">BOTTOM</span></div>
+<div class="tr dim" style="margin-left: 30px"><span class="sb"><svg viewBox="0 0 16 16"><path d="M1.5 4h5l1.5 1.5h6.5v8h-13z"></path></svg></span>Feet<span class="sp"></span><span class="chip">4</span></div>
+
+<div class="tr" style="margin-top: 3px"><span class="dot" style="border-color: #9966cc"></span>Regions</div>
+</div>
+
+<div class="menu" style="left: 180px; top: 432px" role="menu" aria-label="Battery recess actions">
+<div class="mi hi" role="menuitem"><svg viewBox="0 0 16 16" style="width: 14px; height: 14px; fill: none; stroke: #e3a564; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round"><path d="M3 6a5 5 0 0 1 9-1.5M13 10a5 5 0 0 1-9 1.5M12 1.5v3h-3M4 14.5v-3h3"></path></svg>Switch to Bottom to edit</div>
+<div class="mi" role="menuitem">Zoom to feature</div>
+<div class="mi" role="menuitem">Select its operations</div>
+<div class="msep"></div>
+<div class="mi" role="menuitem">Change authoring face…</div>
+<div class="msep"></div>
+<div class="mi off" role="menuitem" aria-disabled="true">Edit shape<span class="sp"></span><span style="font-size: 11px">on Bottom only</span></div>
+<div class="mi off" role="menuitem" aria-disabled="true">Delete<span class="sp"></span><span style="font-size: 11px">on Bottom only</span></div>
+</div>
+</section>
+
+<div style="flex: 1; display: flex; flex-direction: column; justify-content: center">
+<section class="panel" role="dialog" aria-label="Change authoring face" style="box-shadow: 0 18px 50px rgba(0,0,0,.55); border-color: #3c5265">
+<div class="ph"><span style="font-size: 15px; font-weight: 600">Move “Battery recess” to the Top face?</span></div>
+<div style="padding: 16px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: center; gap: 10px">
+<span class="chip bot" style="font-size: 11px; padding: 4px 8px">▼ BOTTOM</span>
+<svg viewBox="0 0 30 20" style="width: 30px; height: 20px; fill: none; stroke: #94aabc; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round"><path d="M3 10h22M19 4l6 6-6 6"></path></svg>
+<span class="chip top" style="font-size: 11px; padding: 4px 8px">▲ TOP</span>
+</div>
+<div style="font-size: 13px; color: #aebfcd; line-height: 1.5">The pocket stays where it is in the stock. Only the face you draw and measure it from changes.</div>
+<div class="kv" style="border: 1px solid #2a3a49; border-radius: 8px; padding: 12px">
+<span></span><span class="kh">Now</span><span class="kh">After</span>
+<span class="k">Measured from</span><span>Bottom face</span><span>Top face</span>
+<span class="k">Depth field</span><span class="mono">0.250</span><span class="mono">0.500 → 0.750</span>
+<span class="k">Stock Z span</span><span class="mono">−0.750 → −0.500</span><span class="mono">−0.750 → −0.500</span>
+</div>
+<div style="border: 1px solid #8a5f30; background: #22180d; border-radius: 8px; padding: 10px 12px; font-size: 12.5px; line-height: 1.5; color: #f6d3a8">
+<div style="font-weight: 600">1 operation loses its target</div>
+Bottom › Pocket Rough — Battery recess. The pocket doesn’t reach the top face, so a Bottom operation can’t cut it any more. Moving removes it from that operation’s targets.
+</div>
+<div style="display: flex; gap: 8px; justify-content: flex-end">
+<button class="btn">Cancel</button>
+<button class="btn">Show operation</button>
+<button class="btn pri">Move to Top</button>
+</div>
+</div>
+</section>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":900,"height":760}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Setup settings and export</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.wrap{width:1100px;height:760px;box-sizing:border-box;background:#0a1016;color:#d8e4ef;font-family:'Avenir Next','IBM Plex Sans',sans-serif;font-size:13px;display:flex;gap:24px;padding:28px;overflow:hidden}
+.wrap *{box-sizing:border-box}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.panel{background:#0f1820;border:1px solid #2a3a49;border-radius:10px;display:flex;flex-direction:column;overflow:hidden}
+.ph{display:flex;align-items:center;gap:8px;height:42px;padding:0 14px;border-bottom:1px solid #2a3a49;flex-shrink:0}
+.lbl{font-size:11px;letter-spacing:.14em;color:#94aabc;text-transform:uppercase}
+.sp{flex:1}
+.chip{font-size:10px;font-weight:600;letter-spacing:.06em;padding:2px 6px;border-radius:4px;border:1px solid #3c5265;color:#94aabc;white-space:nowrap;line-height:14px}
+.chip.top{color:#9ccaf5;border-color:#3b6a96;background:#12263a}
+.chip.bot{color:#f3c38c;border-color:#8a5f30;background:#2a1d10}
+.chip.thru{color:#cdb3ea;border-color:#5d4580;background:#1e1530}
+.chip.ok{color:#9ad3a9;border-color:#3d6b4a;background:#13251a}
+.prow{display:grid;grid-template-columns:120px 1fr;align-items:start;gap:12px;padding:7px 16px}
+.pl{color:#94aabc;font-size:12px;padding-top:8px}
+.field{min-height:32px;border:1px solid #2a3a49;border-radius:7px;background:#0a1016;display:flex;align-items:center;gap:8px;padding:0 10px;font-size:13px;color:#d8e4ef}
+.seg{display:flex;border:1px solid #3c5265;border-radius:8px;overflow:hidden}
+.seg button{height:32px;padding:0 11px;display:flex;align-items:center;gap:6px;border:0;background:#0d141c;color:#94aabc;font:inherit;font-size:12.5px;border-right:1px solid #2a3a49}
+.seg button:last-child{border-right:0}
+.seg button.bon{background:#3a2814;color:#f8dab4;box-shadow:inset 0 -2px 0 #e3a564}
+.seg button.on{background:#1c2b3a;color:#d8e4ef;box-shadow:inset 0 -2px 0 #78b0e8}
+.seg button.off{color:#5c6f82}
+.hint{font-size:11.5px;color:#94aabc;line-height:1.45;margin-top:6px}
+.btn{height:32px;padding:0 12px;border:1px solid #2a3a49;border-radius:8px;background:linear-gradient(#24374a,#13202c);color:#d8e4ef;font:inherit;font-size:12.5px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn.pri{background:linear-gradient(#3a6d9e,#24507a);border-color:#4f93d6;color:#fff}
+.ref{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border:1px solid #2a3a49;border-radius:7px;background:#0a1016;font-size:13px}
+.prog{border:1px solid #2a3a49;border-radius:9px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.prog.t{border-color:#3b6a96}
+.prog.b{border-color:#8a5f30}
+.cb{width:16px;height:16px;border-radius:4px;background:#4f93d6;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.meta{font-size:12px;color:#94aabc}
+.warn{border:1px solid #8a5f30;background:#22180d;border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.5;color:#f6d3a8}
+</style>
+</helmet>
+<div class="wrap">
+
+<section class="panel" style="width: 520px">
+<div class="ph">
+<svg viewBox="0 0 20 20" style="width: 18px; height: 18px; fill: none; stroke: #e3a564; stroke-width: 1.4; stroke-linejoin: round"><path d="M3 6.5 10 3l7 3.5v6L10 16l-7-3.5z"></path><path d="M3 12.5 10 16l7-3.5L10 9z" style="fill: #e3a564; fill-opacity: .55"></path></svg>
+<span class="lbl" style="color: #f3c38c">Setup · Bottom</span><span class="sp"></span><span class="chip bot">PROGRAM 02</span>
+</div>
+<div style="padding: 8px 0">
+<div class="prow"><span class="pl">Name</span><div class="field">Bottom</div></div>
+<div class="prow"><span class="pl">Face up</span>
+<div>
+<div class="seg" role="group" aria-label="Face up">
+<button>Top</button><button class="bon" aria-pressed="true">Bottom</button><button class="off" disabled>Left</button><button class="off" disabled>Right</button><button class="off" disabled>Front</button><button class="off" disabled>Back</button>
+</div>
+<div class="hint">Left, Right, Front and Back come later. They need their own sketch planes.</div>
+</div>
+</div>
+<div class="prow"><span class="pl">Flip about</span>
+<div>
+<div class="seg" role="group" aria-label="Flip direction">
+<button class="on" aria-pressed="true">Stock X · front ↔ back</button><button>Stock Y · left ↔ right</button>
+</div>
+<div style="display: flex; align-items: center; gap: 14px; margin-top: 10px">
+<svg viewBox="0 0 120 70" style="width: 120px; height: 70px" role="img" aria-label="Before flip">
+<rect x="10" y="12" width="100" height="46" fill="#12263a" stroke="#3b6a96"></rect>
+<line x1="4" y1="35" x2="116" y2="35" stroke="#e3a564" stroke-dasharray="6 3 2 3"></line>
+<circle cx="10" cy="58" r="4" fill="#78b0e8"></circle><text x="16" y="54" fill="#9ccaf5" font-size="9" font-family="IBM Plex Mono">A</text>
+<circle cx="110" cy="12" r="4" fill="none" stroke="#94aabc"></circle><text x="96" y="22" fill="#94aabc" font-size="9" font-family="IBM Plex Mono">B</text>
+<text x="60" y="8" fill="#94aabc" font-size="9" text-anchor="middle" font-family="IBM Plex Sans">TOP UP</text>
+</svg>
+<svg viewBox="0 0 30 20" style="width: 30px; height: 20px; fill: none; stroke: #e3a564; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round"><path d="M3 10h22M19 4l6 6-6 6"></path></svg>
+<svg viewBox="0 0 120 70" style="width: 120px; height: 70px" role="img" aria-label="After flip about X">
+<rect x="10" y="12" width="100" height="46" fill="#2a1d10" stroke="#8a5f30"></rect>
+<line x1="4" y1="35" x2="116" y2="35" stroke="#e3a564" stroke-dasharray="6 3 2 3"></line>
+<circle cx="10" cy="12" r="4" fill="none" stroke="#78b0e8"></circle><text x="16" y="22" fill="#9ccaf5" font-size="9" font-family="IBM Plex Mono">A</text>
+<circle cx="110" cy="58" r="4" fill="none" stroke="#94aabc"></circle><text x="96" y="54" fill="#94aabc" font-size="9" font-family="IBM Plex Mono">B</text>
+<circle cx="10" cy="58" r="4" fill="#e3a564"></circle>
+<text x="60" y="8" fill="#f3c38c" font-size="9" text-anchor="middle" font-family="IBM Plex Sans">BOTTOM UP</text>
+</svg>
+</div>
+<div class="hint">Corner A moves from front-left to back-left. Toolpaths, preview and G-code all use this same flip.</div>
+</div>
+</div>
+<div class="prow"><span class="pl">Origin</span>
+<div>
+<div class="field">Bottom-left of the face<span class="sp"></span><span class="chip">SHARED WITH TOP</span></div>
+<div class="hint">One origin position for both faces. Here it falls on a different stock corner, so touch off again after flipping.</div>
+</div>
+</div>
+<div class="prow"><span class="pl">Registration</span>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<div class="ref"><span class="chip thru">DOWEL</span>Pin A · Ø0.250 through<span class="sp"></span><span class="chip ok">ON FLIP AXIS</span></div>
+<div class="ref"><span class="chip thru">DOWEL</span>Pin B · Ø0.250 through<span class="sp"></span><span class="chip ok">ON FLIP AXIS</span></div>
+<div style="display: flex; gap: 6px"><button class="btn">+ Dowel hole</button><button class="btn">+ Fence edge</button><button class="btn">+ Corner</button></div>
+</div>
+</div>
+<div class="prow"><span class="pl">Operator notes</span>
+<div class="field" style="min-height: 58px; align-items: flex-start; padding-top: 8px; line-height: 1.45">Flip toward you. Seat on the spoilboard dowels and clamp the long edges.</div>
+</div>
+</div>
+</section>
+
+<section class="panel" style="flex: 1">
+<div class="ph"><span class="lbl">Export G-code</span><span class="sp"></span><span class="meta">GRBL · inch</span></div>
+<div style="padding: 16px; display: flex; flex-direction: column; gap: 12px; flex: 1">
+<div style="font-size: 13px; color: #aebfcd; line-height: 1.5">One program per setup. You flip the part by hand between programs. Nothing in the G-code rotates it.</div>
+
+<div class="prog t">
+<div style="display: flex; align-items: center; gap: 10px">
+<span class="cb"><svg viewBox="0 0 12 12" style="width: 11px; height: 11px; fill: none; stroke: #fff; stroke-width: 2"><path d="m2.5 6 2.5 2.5 4.5-5"></path></svg></span>
+<span class="chip top">01</span><span style="font-weight: 600">Top setup</span><span class="sp"></span><span class="meta">5 operations</span>
+</div>
+<div class="field mono" style="font-size: 12px">pin-plate_01_top.nc</div>
+<div class="meta">Origin: bottom-left of top face · Tools: 1/4" flat, 1/8" flat, 60° V</div>
+</div>
+
+<div class="prog b">
+<div style="display: flex; align-items: center; gap: 10px">
+<span class="cb"><svg viewBox="0 0 12 12" style="width: 11px; height: 11px; fill: none; stroke: #fff; stroke-width: 2"><path d="m2.5 6 2.5 2.5 4.5-5"></path></svg></span>
+<span class="chip bot">02</span><span style="font-weight: 600">Bottom setup</span><span class="sp"></span><span class="meta">3 operations</span>
+</div>
+<div class="field mono" style="font-size: 12px">pin-plate_02_bottom.nc</div>
+<div class="meta">Flipped about X · registers on Pin A + Pin B · 1 cross-face operation</div>
+</div>
+
+<div class="warn">
+<div style="font-weight: 600; margin-bottom: 2px">Written at the top of program 02</div>
+<div class="mono" style="font-size: 11.5px; color: #e9c79c">(SETUP 02 BOTTOM - FLIP STOCK ABOUT X)<br>(SEAT ON PIN A + PIN B, TOUCH OFF BOTTOM-LEFT)<br>(NOTE: FLIP TOWARD YOU. SEAT ON THE SPOILBOARD DOWELS...)</div>
+</div>
+
+<span class="sp"></span>
+<div style="display: flex; gap: 8px; justify-content: flex-end">
+<button class="btn">Cancel</button>
+<button class="btn pri">Export 2 files</button>
+</div>
+</div>
+</section>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1100,"height":760}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>
