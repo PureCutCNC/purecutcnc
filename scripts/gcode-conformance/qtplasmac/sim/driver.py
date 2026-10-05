@@ -89,6 +89,7 @@ INI_FILES = {
 # defined as number 0 in sim/materials-*.cfg). The check resets to it before
 # every run, so a torch that fires on it means the program never selected one.
 DEFAULT_MATERIAL = 0
+MATERIAL_PIN = 'qtplasmac.material_change_number'
 RESULT_MARKER = '@@RESULT@@'
 BOOT_TIMEOUT = 180
 # An accidental realtime hiccup is reported by LinuxCNC on the same channel as
@@ -190,7 +191,7 @@ class Trace(threading.Thread):
                     # Read at the moment the program's first M3 takes effect:
                     # which material QtPlasmaC has loaded, and its cut feed.
                     self.first_torch_on = {
-                        'material': int(self.hal.get_value('qtplasmac.material_change_number')),
+                        'material': int(self.hal.get_value(MATERIAL_PIN)),
                         'cutFeedRate': float(self.hal.get_value('plasmac.cut-feed-rate')),
                     }
 
@@ -332,7 +333,8 @@ class Simulator:
         self.attach_sampler()
         self.attach_float_switch()
         self.power_up()
-        self.default_cut_feed = float(hal.get_value('plasmac.cut-feed-rate'))
+        self.material_feeds = self.read_material_feeds()
+        self.default_cut_feed = self.material_feeds[DEFAULT_MATERIAL]
         # plasmac truncates Z to 0.01 mm on a metric machine and 0.001 in on an
         # imperial one (`offset_res` in plasmac.comp); this is that step in
         # counts, the spacing of the heights it can stall on.
@@ -548,7 +550,7 @@ class Simulator:
         linuxcnc, command = self.linuxcnc, self.command
         command.mode(linuxcnc.MODE_MANUAL)
         command.wait_complete()
-        self.hal.set_p('qtplasmac.material_change_number', '2')
+        self.hal.set_p(MATERIAL_PIN, '2')
 
     # ── one program ─────────────────────────────────────────────────────
 
@@ -593,14 +595,95 @@ class Simulator:
         self.select_default_material()
         self.drain_errors()
 
-    def select_default_material(self):
-        hal = self.hal
-        hal.set_p('qtplasmac.material_change_number', str(DEFAULT_MATERIAL))
+    def material_shown(self, number):
+        """Whether the GUI has finished loading this material.
 
-        def default_loaded():
-            return (int(hal.get_value('qtplasmac.material_change_number')) == DEFAULT_MATERIAL
-                    and float(hal.get_value('plasmac.cut-feed-rate')) == self.default_cut_feed)
-        wait_for(default_loaded, 10, 'QtPlasmaC to load its default material')
+        The pin alone does not say so: this driver and the load filter write
+        it to ask for a material, before the GUI has done anything. The cut
+        feed is set by the GUI as part of the change, and each material in
+        sim/materials-*.cfg has its own.
+        """
+        hal = self.hal
+        return (int(hal.get_value(MATERIAL_PIN)) == number
+                and float(hal.get_value('plasmac.cut-feed-rate')) == self.material_feeds[number])
+
+    def let_gui_load_selected_material(self):
+        """Wait for the GUI to finish a material change someone else asked for.
+
+        QtPlasmaC's load filter selects the program's first material by
+        writing the material pin, and the GUI acts on it when it next polls.
+        At the end of that change the GUI writes the pin itself
+        (`change_material` in qtplasmac_handler.py). A request made while it
+        is still working is therefore overwritten and lost: the pin goes back
+        to the filter's material, the GUI sees nothing new, and it never
+        switches. So one request at a time: let this one finish first.
+        """
+        number = int(self.hal.get_value(MATERIAL_PIN))
+        if number not in self.material_feeds:
+            # A material the simulator's file does not define (the load filter
+            # reports it), or a temporary one made by the program: there is no
+            # feed to recognise it by. Give the GUI time to decline it.
+            time.sleep(0.5)
+            return
+        # Held for a few GUI polls: the feed changes part-way through the
+        # GUI's change, and its own write to the pin comes at the end.
+        if not self.holds(lambda: self.material_shown(number), hold=0.3, within=10):
+            raise HarnessError('QtPlasmaC did not load material %d, which its load filter selected' % number)
+
+    def select_default_material(self):
+        """Put the GUI back on its default material, and make sure it stays there.
+
+        A request is a write to a pin the GUI polls and also writes, so the
+        answer has to be watched rather than assumed: the default must be
+        shown and stay shown for several GUI polls. If the pin is overwritten
+        the request is repeated; if the GUI ignored it (it does while it is
+        busy reloading its materials) the pin is moved to -1, QtPlasmaC's own
+        "default material" value, so that the next request is a change it
+        will see.
+        """
+        hal = self.hal
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            hal.set_p(MATERIAL_PIN, str(DEFAULT_MATERIAL))
+            if self.holds(lambda: self.material_shown(DEFAULT_MATERIAL), hold=0.4, within=2):
+                return
+            hal.set_p(MATERIAL_PIN, '-1')
+            time.sleep(0.3)
+        raise HarnessError(
+            'QtPlasmaC did not load its default material (material pin %s, cut feed %s)'
+            % (hal.get_value(MATERIAL_PIN), hal.get_value('plasmac.cut-feed-rate')))
+
+    @staticmethod
+    def holds(predicate, hold, within):
+        """Whether `predicate` becomes true and stays true for `hold` seconds."""
+        deadline = time.time() + within
+        true_since = None
+        while time.time() < deadline:
+            if not predicate():
+                true_since = None
+            elif true_since is None:
+                true_since = time.time()
+            elif time.time() - true_since >= hold:
+                return True
+            time.sleep(0.02)
+        return False
+
+    def read_material_feeds(self):
+        """Cut feed of each material in the simulator's material file."""
+        feeds = {}
+        number = None
+        path = os.path.join(SIM_DIR, self.ini.find('EMC', 'MACHINE') + '_material.cfg')
+        with open(path) as source:
+            for line in source:
+                line = line.strip()
+                if line.startswith('[MATERIAL_NUMBER_'):
+                    number = int(line[len('[MATERIAL_NUMBER_'):-1])
+                elif line.startswith('CUT_SPEED') and number is not None:
+                    feeds[number] = float(line.split('=', 1)[1])
+        if DEFAULT_MATERIAL not in feeds or len(set(feeds.values())) != len(feeds):
+            raise HarnessError('the material file must define material %d and give each material '
+                               'its own CUT_SPEED: %s' % (DEFAULT_MATERIAL, feeds))
+        return feeds
 
     def run_filter(self, source_path):
         try:
@@ -712,7 +795,9 @@ class Simulator:
         with open(filtered_path, 'w') as out:
             out.write(filtered)
         # The filter pre-selects the program's first material while loading.
-        # Undo that, so the run itself has to select it before the torch fires.
+        # Undo that, so the run itself has to select it before the torch fires
+        # - but only once the GUI has finished acting on the filter's request.
+        self.let_gui_load_selected_material()
         self.select_default_material()
 
         report = {
