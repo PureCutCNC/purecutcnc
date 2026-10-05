@@ -34,6 +34,10 @@
  * - `computeRotatePreviewPoint` / `computeRotateDegreesFromPreview` not
  *   converting → the rotate assertions fail;
  * - the radial default left in stock space → "a new radial sweep reads 360" fails;
+ * - `faceOffsets` returning the stock distance on Bottom, or reversing the
+ *   wrong axis → "a typed grid spacing steps the same way on screen" fails;
+ * - the grid default left in stock space → "a new grid steps the same way on
+ *   screen as on Top" fails;
  * - `axisTurn` flipping the wrong axes → the model orientation assertions fail;
  * - a conversion added to the text-on-arc angle → "text on an arc" fails.
  *
@@ -42,7 +46,7 @@
 
 import { rotatePointByModelOrientation } from '../../engine/importedModelTransform'
 import { canonicalToSetupPoint, setupFrame } from '../../engine/setupOrientation'
-import { STOCK_ANGLES, faceAngles } from '../../store/helpers/activeFace'
+import { STOCK_ANGLES, STOCK_OFFSETS, faceAngles, faceOffsets } from '../../store/helpers/activeFace'
 import { resolveFeatureInstance } from '../../store/helpers/resolveFeatures'
 import { useProjectStore } from '../../store/projectStore'
 import type { ProjectStore } from '../../store/types'
@@ -216,6 +220,57 @@ for (const face of ['top', 'bottom'] as const) {
   assert(spec?.mode === 'radial', 'the radial workflow starts')
   assert(faceAngles(store().project).turn(spec.sweepDegrees) === 360, `on ${face}: a new radial sweep reads 360 in its field`)
   assert(spec.sweepDegrees === (face === 'top' ? 360 : -360), `on ${face}: and is stored in stock space`)
+}
+
+// ── Grid spacing: a signed distance along a stock axis ────────
+
+{
+  assert(faceOffsets(TOP) === STOCK_OFFSETS, 'Top reads distances as they are stored')
+  const pivot = { x: 1, y: 1 }
+  for (const axis of ['x', 'y'] as const) {
+    const bottom = projectOn('bottom', axis)
+    const offsets = faceOffsets(bottom)
+    for (const typed of [0.7, -0.4]) {
+      // The panel stores what the map makes of the typed value, and shows
+      // what the map makes of the stored one.
+      const stored = { x: offsets.x(typed), y: offsets.y(typed) }
+      assert(offsets.x(stored.x) === typed && offsets.y(stored.y) === typed, `flip about ${axis}: a typed spacing reads back as typed`)
+      assert(
+        sameOnScreen(onScreen(bottom, pivot, { x: pivot.x + stored.x, y: pivot.y }), onScreen(TOP, pivot, { x: pivot.x + typed, y: pivot.y }))
+          && sameOnScreen(onScreen(bottom, pivot, { x: pivot.x, y: pivot.y + stored.y }), onScreen(TOP, pivot, { x: pivot.x, y: pivot.y + typed })),
+        `flip about ${axis}: a typed grid spacing of ${typed} steps the same way on screen as on Top`,
+      )
+    }
+    // Only the axis the turn reverses changes sign: the stored value stays in stock space.
+    assert(offsets.x(1) === (axis === 'y' ? -1 : 1) && offsets.y(1) === (axis === 'x' ? -1 : 1), `flip about ${axis}: only the reversed axis changes sign`)
+    assert(Object.is(offsets.x(0), 0) && Object.is(offsets.y(0), 0), `flip about ${axis}: zero stays a plain zero`)
+  }
+
+  // A new grid steps the same way on screen on every face.
+  const gridSpec = (project: Project) => {
+    resetStore(project)
+    const store = () => useProjectStore.getState()
+    store().addRectFeature('Part', 1, 1, 0.5, 0.5, store().project.stock.thickness)
+    store().startFeatureDistribution('grid')
+    const spec = store().pendingFeatureDistribution?.spec
+    assert(spec?.mode === 'grid', 'the grid workflow starts')
+    return spec
+  }
+  const onTop = gridSpec(TOP)
+  assert(onTop.spacingX > 0 && onTop.spacingY > 0, 'fixture: a new grid on Top steps the positive way')
+  for (const axis of ['x', 'y'] as const) {
+    const bottom = projectOn('bottom', axis)
+    const spec = gridSpec(bottom)
+    const offsets = faceOffsets(bottom)
+    assert(
+      offsets.x(spec.spacingX) === onTop.spacingX && offsets.y(spec.spacingY) === onTop.spacingY,
+      `flip about ${axis}: a new grid reads the same spacing in its fields as on Top`,
+    )
+    assert(
+      sameOnScreen(onScreen(bottom, pivot, { x: pivot.x + spec.spacingX, y: pivot.y + spec.spacingY }), onScreen(TOP, pivot, { x: pivot.x + onTop.spacingX, y: pivot.y + onTop.spacingY })),
+      `flip about ${axis}: a new grid steps the same way on screen as on Top`,
+    )
+  }
 }
 
 for (const axis of ['x', 'y'] as const) {

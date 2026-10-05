@@ -429,3 +429,18 @@
 .change-face__value {
   font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
 }
+
+/* A shape shared with linked copies on the other face (issue #945). */
+.change-face__linked,
+.properties-linked-face-note {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border-left: 2px solid var(--face-bottom);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.change-face__linked {
+  font-size: 13px;
+}

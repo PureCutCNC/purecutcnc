@@ -18,6 +18,7 @@ import type { StateCreator } from 'zustand'
 import type { Project } from '../../types/project'
 import type { ProjectStore } from '../types'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
+import { keepWorkspaceFace } from '../helpers/provisionalSetup'
 import { sanitizeSelection } from './selectionSlice'
 
 export interface HistorySliceDependencies {
@@ -43,10 +44,14 @@ export function createHistorySlice(
   } = deps
 
   // Which setup the workspace is on is a view choice, not an edit (issue
-  // #944): a snapshot is restored onto the face the user is looking at, and
-  // normalising falls back to another setup when that one no longer exists.
+  // #944): a snapshot is restored onto the face the user is looking at. When
+  // the snapshot has no setup for that face — the undone edit was the one
+  // that made it — the face stays in view provisionally (issue #945).
   const restoreSnapshot = (snapshot: Project, current: Project): Project =>
-    normalizeProject({ ...cloneProject(snapshot), activeSetupId: current.activeSetupId })
+    keepWorkspaceFace(
+      normalizeProject({ ...cloneProject(snapshot), activeSetupId: current.activeSetupId }),
+      current,
+    )
 
   return {
     undo: () =>

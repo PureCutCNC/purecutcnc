@@ -416,4 +416,13 @@ export const featureTreeDe: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.face.dialog.lockedSkipped': 'Gesperrte Features werden nicht verschoben ({count}).',
   'featureTree.face.dialog.moveToTop': 'Nach Oben verschieben',
   'featureTree.face.dialog.moveToBottom': 'Nach Unten verschieben',
+  'featureTree.face.changeBusy': 'Aktuelle Bearbeitung abschließen, bevor die Seite geändert wird',
+  'featureTree.face.linkedOtherFace.top.one': 'Diese Form wird mit {count} verknüpften Kopie auf der Oberseite geteilt. Eine Änderung der Form ändert auch diese Kopie.',
+  'featureTree.face.linkedOtherFace.top.other': 'Diese Form wird mit {count} verknüpften Kopien auf der Oberseite geteilt. Eine Änderung der Form ändert auch diese Kopien.',
+  'featureTree.face.linkedOtherFace.bottom.one': 'Diese Form wird mit {count} verknüpften Kopie auf der Unterseite geteilt. Eine Änderung der Form ändert auch diese Kopie.',
+  'featureTree.face.linkedOtherFace.bottom.other': 'Diese Form wird mit {count} verknüpften Kopien auf der Unterseite geteilt. Eine Änderung der Form ändert auch diese Kopien.',
+  'featureTree.face.dialog.linkedStay.top.one': '{count} verknüpfte Kopie bleibt auf der Oberseite. Sie teilt sich weiterhin diese Form, daher ändert eine Bearbeitung der Form auf einer der Seiten beide.',
+  'featureTree.face.dialog.linkedStay.top.other': '{count} verknüpfte Kopien bleiben auf der Oberseite. Sie teilen sich weiterhin diese Form, daher ändert eine Bearbeitung der Form auf einer der Seiten alle.',
+  'featureTree.face.dialog.linkedStay.bottom.one': '{count} verknüpfte Kopie bleibt auf der Unterseite. Sie teilt sich weiterhin diese Form, daher ändert eine Bearbeitung der Form auf einer der Seiten beide.',
+  'featureTree.face.dialog.linkedStay.bottom.other': '{count} verknüpfte Kopien bleiben auf der Unterseite. Sie teilen sich weiterhin diese Form, daher ändert eine Bearbeitung der Form auf einer der Seiten alle.',
 }

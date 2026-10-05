@@ -27,8 +27,8 @@ import { isSupportedSetupOrientation, setupFace } from '../../engine/setupOrient
 import type { MachiningSetup, Project } from '../../types/project'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
-import { dropGhostSelection } from '../helpers/activeFace'
-import { syncProjectSetups } from '../helpers/setups'
+import { dropGhostSelection, findSetupForFace, isFaceEditInProgress } from '../helpers/activeFace'
+import { provisionalSetupId, realizeProvisionalSetup, syncWorkspaceSetups } from '../helpers/provisionalSetup'
 import type { ProjectStore, SelectionState } from '../types'
 
 export type SetupsSlice = Pick<
@@ -47,20 +47,19 @@ type SetFn = Parameters<StateCreator<ProjectStore>>[0]
  * Wrap the store's `set` so every project it writes has its setups in their
  * invariant: a new operation joins the active setup, a deleted one leaves its
  * setup's list, a reorder is reflected in it. The operation actions therefore
- * never have to know setups exist.
+ * never have to know setups exist. A face that is only being looked at stays
+ * provisional, and gets its setup with the first content created on it
+ * (issue #945).
  */
 export function withSetupSync<S extends { project: Project }>(
   set: (update: Partial<S> | ((state: S) => Partial<S>)) => void,
 ): (update: Partial<S> | ((state: S) => Partial<S>)) => void {
-  const sync = (patch: Partial<S>): Partial<S> => {
+  return (update) => set((state) => {
+    const patch = typeof update === 'function' ? update(state) : update
     if (!patch.project) return patch
-    const project = syncProjectSetups(patch.project)
+    const project = syncWorkspaceSetups(state.project, patch.project)
     return project === patch.project ? patch : { ...patch, project }
-  }
-  return (update) => {
-    if (typeof update === 'function') set((state) => sync(update(state)))
-    else set(sync(update))
-  }
+  })
 }
 
 /**
@@ -131,13 +130,18 @@ export function createSetupsSlice(
       return commit((current) => ({ ...current, setups: [...current.setups, setup] })) ? id : null
     },
 
+    // Editing a setup that is only being looked at makes it a real one first,
+    // in the same undo step (issue #945).
     renameSetup: (id, name) => {
       const trimmed = name.trim()
       if (!trimmed) return
-      commit((project) => ({
-        ...project,
-        setups: project.setups.map((setup) => (setup.id === id ? { ...setup, name: trimmed } : setup)),
-      }))
+      commit((current) => {
+        const { project, id: setupId } = realizeProvisionalSetup(current, id)
+        return {
+          ...project,
+          setups: project.setups.map((setup) => (setup.id === setupId ? { ...setup, name: trimmed } : setup)),
+        }
+      })
     },
 
     // A setup takes its operations with it, as one undo step. They are not
@@ -154,29 +158,38 @@ export function createSetupsSlice(
 
     // Which face the workspace is on is a view choice that travels with the
     // file: it adds no undo step and does not mark the project as changed.
+    // A face the project has no setup for is looked at provisionally — the
+    // project itself is not touched.
     setActiveSetup: (id) =>
-      set((s) => (
-        s.project.activeSetupId === id || !s.project.setups.some((setup) => setup.id === id)
+      set((s) => {
+        const known = s.project.setups.some((setup) => setup.id === id)
+          || (['top', 'bottom'] as const).some((face) => (
+            id === provisionalSetupId(face) && !findSetupForFace(s.project, face)
+          ))
+        return s.project.activeSetupId === id || !known
           ? {}
           : { project: { ...s.project, activeSetupId: id }, dirty: s.dirty }
-      )),
+      }),
 
     assignOperationToSetup: (operationId, setupId) => {
-      commit((project) => (
-        project.setups.some((setup) => setup.id === setupId)
+      commit((current) => {
+        const { project, id } = realizeProvisionalSetup(current, setupId)
+        return project.setups.some((setup) => setup.id === id)
           ? {
               ...project,
               operations: project.operations.map((operation) => (
-                operation.id === operationId ? { ...operation, setupId } : operation
+                operation.id === operationId ? { ...operation, setupId: id } : operation
               )),
             }
           : null
-      ))
+      })
     },
 
     // Only where the feature is drawn changes. `z_top`/`z_bottom` are the
     // feature's stock-space span and are deliberately left alone.
     setFeatureAuthoringFace: (featureIds, face) => {
+      // A feature under a pending edit keeps its face until the edit is done.
+      if (isFaceEditInProgress(get())) return
       const ids = new Set(featureIds)
       commit((project) => ({
         ...project,

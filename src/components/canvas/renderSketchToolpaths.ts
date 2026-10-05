@@ -43,13 +43,19 @@ export function renderSketchToolpaths(
   // setup-aware.
   const mirrored = vt.mirrorX !== undefined || vt.mirrorY !== undefined
   let gpuActive = false
-  if (surface && mirrored) {
-    surface.gpu.canvas.hidden = true
-  } else if (surface) {
+  if (surface) {
+    // The foreground overlay holds what the last GPU frame drew above the
+    // toolpaths. It is cleared every frame, GPU or not: left alone, the Top
+    // view's overlay stays on screen over the Bottom view.
     const foreground = surface.foreground
     if (foreground.canvas.width !== ctx.canvas.width) foreground.canvas.width = ctx.canvas.width
     if (foreground.canvas.height !== ctx.canvas.height) foreground.canvas.height = ctx.canvas.height
     foreground.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
+  }
+  if (surface && mirrored) {
+    surface.gpu.canvas.hidden = true
+    if (!surface.failed) surface.report(false)
+  } else if (surface) {
     try {
       gpuActive = !surface.failed && surface.gpu.render(entries, vt, ctx.canvas.width, ctx.canvas.height, visible, canvasColors(), deferArrows)
     } catch (error) {
@@ -58,7 +64,7 @@ export function renderSketchToolpaths(
     }
     surface.gpu.canvas.hidden = !gpuActive
     if (!surface.failed) surface.report(gpuActive)
-    if (gpuActive) ctx = foreground
+    if (gpuActive) ctx = surface.foreground
   }
   if (!gpuActive) {
     const start = observeCanvasDraw && entries.length > 0 ? performance.now() : null
@@ -71,9 +77,11 @@ export function renderSketchToolpaths(
       )
       applyViewMirror(ctx, vt)
     }
-    const plainView = mirrored ? { scale: vt.scale, offsetX: vt.offsetX, offsetY: vt.offsetY } : vt
+    // `drawToolpath` places geometry by scale and offset alone — the context
+    // carries the mirror — and reads the view's mirror only to cull, so the
+    // mirrored view is what it must be given.
     for (const { toolpath, emphasized, selectedLevel: entryLevel, slotScale } of entries) {
-      drawToolpath(ctx, toolpath, plainView, emphasized, visible, slotScale, { deferArrows, selectedLevel: entryLevel })
+      drawToolpath(ctx, toolpath, vt, emphasized, visible, slotScale, { deferArrows, selectedLevel: entryLevel })
     }
     if (mirrored) ctx.restore()
     if (start !== null) {

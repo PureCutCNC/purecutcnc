@@ -335,4 +335,13 @@ export const featureTreeEs: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.face.dialog.lockedSkipped': 'Los elementos bloqueados no se mueven ({count}).',
   'featureTree.face.dialog.moveToTop': 'Mover a Superior',
   'featureTree.face.dialog.moveToBottom': 'Mover a Inferior',
+  'featureTree.face.changeBusy': 'Termina la edición actual antes de cambiar la cara',
+  'featureTree.face.linkedOtherFace.top.one': 'Esta forma se comparte con {count} copia vinculada en la cara superior. Editar la forma también cambia esa copia.',
+  'featureTree.face.linkedOtherFace.top.other': 'Esta forma se comparte con {count} copias vinculadas en la cara superior. Editar la forma también las cambia.',
+  'featureTree.face.linkedOtherFace.bottom.one': 'Esta forma se comparte con {count} copia vinculada en la cara inferior. Editar la forma también cambia esa copia.',
+  'featureTree.face.linkedOtherFace.bottom.other': 'Esta forma se comparte con {count} copias vinculadas en la cara inferior. Editar la forma también las cambia.',
+  'featureTree.face.dialog.linkedStay.top.one': '{count} copia vinculada se queda en la cara superior. Sigue compartiendo esta forma, así que editar la forma en cualquiera de las caras cambia ambas.',
+  'featureTree.face.dialog.linkedStay.top.other': '{count} copias vinculadas se quedan en la cara superior. Siguen compartiendo esta forma, así que editar la forma en cualquiera de las caras las cambia todas.',
+  'featureTree.face.dialog.linkedStay.bottom.one': '{count} copia vinculada se queda en la cara inferior. Sigue compartiendo esta forma, así que editar la forma en cualquiera de las caras cambia ambas.',
+  'featureTree.face.dialog.linkedStay.bottom.other': '{count} copias vinculadas se quedan en la cara inferior. Siguen compartiendo esta forma, así que editar la forma en cualquiera de las caras las cambia todas.',
 }

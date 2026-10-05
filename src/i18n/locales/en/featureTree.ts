@@ -421,4 +421,13 @@ export const featureTreeEn = {
   'featureTree.face.dialog.lockedSkipped': 'Locked features are not moved ({count}).',
   'featureTree.face.dialog.moveToTop': 'Move to top face',
   'featureTree.face.dialog.moveToBottom': 'Move to bottom face',
+  'featureTree.face.changeBusy': 'Finish the current edit before changing the face',
+  'featureTree.face.linkedOtherFace.top.one': 'This shape is shared with {count} linked copy on the top face. Editing the shape changes that copy too.',
+  'featureTree.face.linkedOtherFace.top.other': 'This shape is shared with {count} linked copies on the top face. Editing the shape changes them too.',
+  'featureTree.face.linkedOtherFace.bottom.one': 'This shape is shared with {count} linked copy on the bottom face. Editing the shape changes that copy too.',
+  'featureTree.face.linkedOtherFace.bottom.other': 'This shape is shared with {count} linked copies on the bottom face. Editing the shape changes them too.',
+  'featureTree.face.dialog.linkedStay.top.one': '{count} linked copy stays on the top face. It keeps sharing this shape, so editing the shape on either face changes both.',
+  'featureTree.face.dialog.linkedStay.top.other': '{count} linked copies stay on the top face. They keep sharing this shape, so editing the shape on either face changes all of them.',
+  'featureTree.face.dialog.linkedStay.bottom.one': '{count} linked copy stays on the bottom face. It keeps sharing this shape, so editing the shape on either face changes both.',
+  'featureTree.face.dialog.linkedStay.bottom.other': '{count} linked copies stay on the bottom face. They keep sharing this shape, so editing the shape on either face changes all of them.',
 } as const satisfies Record<string, string>

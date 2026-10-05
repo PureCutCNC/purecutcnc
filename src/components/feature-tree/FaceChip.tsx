@@ -15,7 +15,9 @@
  */
 
 import { useI18n } from '../../i18n/i18nContext'
-import { useFaceViewStore } from '../../store/faceViewStore'
+import { isFaceEditInProgress } from '../../store/helpers/activeFace'
+import { useProjectStore } from '../../store/projectStore'
+import { requestAuthoringFaceChange } from '../../store/workspaceFace'
 import type { SetupFace } from '../../types/project'
 
 /** The small TOP / BOTTOM tag that names a stock face (issue #945). */
@@ -35,13 +37,19 @@ export function FaceChip({ face }: { face: SetupFace }) {
  */
 export function AuthoringFaceRow({ face, featureIds }: { face: SetupFace; featureIds: readonly string[] }) {
   const { t } = useI18n()
-  const requestFaceChange = useFaceViewStore((state) => state.requestFaceChange)
+  const busy = useProjectStore(isFaceEditInProgress)
   return (
     <div className="properties-field face-row">
       <span>{t('featureTree.face.authoringFace')}</span>
       <div className="face-row__value">
         <FaceChip face={face} />
-        <button className="feat-btn face-row__change" type="button" onClick={() => requestFaceChange(featureIds)}>
+        <button
+          className="feat-btn face-row__change"
+          type="button"
+          onClick={() => requestAuthoringFaceChange(featureIds)}
+          disabled={busy}
+          title={busy ? t('featureTree.face.changeBusy') : undefined}
+        >
           {t('featureTree.face.change')}
         </button>
       </div>

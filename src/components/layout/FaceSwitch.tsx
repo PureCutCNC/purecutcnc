@@ -16,7 +16,7 @@
 
 import { useProjectStore } from '../../store/projectStore'
 import { useFaceViewStore } from '../../store/faceViewStore'
-import { activeFace, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { activeFace, isFaceEditInProgress, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { switchWorkspaceFace } from '../../store/workspaceFace'
 import { useI18n } from '../../i18n/i18nContext'
 import type { SetupFace } from '../../types/project'
@@ -34,16 +34,7 @@ export function FaceSwitch() {
   const bothFaces = useProjectStore((state) => projectUsesBothFaces(state.project))
   // A feature being edited, moved or combined belongs to the face it is on:
   // finishing that first keeps an edit from landing on a ghost.
-  const busy = useProjectStore((state) => (
-    state.selection.mode === 'sketch_edit'
-    || state.pendingMove !== null
-    || state.pendingTransform !== null
-    || state.pendingOffset !== null
-    || state.pendingShapeAction !== null
-    || state.pendingFeatureDistribution !== null
-    || state.pendingNest !== null
-    || state.pendingTextLayout !== null
-  ))
+  const busy = useProjectStore(isFaceEditInProgress)
   const showOtherSide = useFaceViewStore((state) => state.showOtherSide)
   const setShowOtherSide = useFaceViewStore((state) => state.setShowOtherSide)
 

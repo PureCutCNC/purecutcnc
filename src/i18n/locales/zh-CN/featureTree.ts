@@ -422,4 +422,13 @@ export const featureTreeZhCN: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.face.dialog.lockedSkipped': '锁定的特征不会移动（{count} 个）。',
   'featureTree.face.dialog.moveToTop': '移到顶面',
   'featureTree.face.dialog.moveToBottom': '移到底面',
+  'featureTree.face.changeBusy': '请先完成当前编辑，再更改加工面',
+  'featureTree.face.linkedOtherFace.top.one': '此形状与顶面上的 {count} 个关联副本共享。编辑形状也会更改该副本。',
+  'featureTree.face.linkedOtherFace.top.other': '此形状与顶面上的 {count} 个关联副本共享。编辑形状也会更改这些副本。',
+  'featureTree.face.linkedOtherFace.bottom.one': '此形状与底面上的 {count} 个关联副本共享。编辑形状也会更改该副本。',
+  'featureTree.face.linkedOtherFace.bottom.other': '此形状与底面上的 {count} 个关联副本共享。编辑形状也会更改这些副本。',
+  'featureTree.face.dialog.linkedStay.top.one': '{count} 个关联副本留在顶面。它仍共享此形状，因此在任一面编辑形状都会同时更改两者。',
+  'featureTree.face.dialog.linkedStay.top.other': '{count} 个关联副本留在顶面。它们仍共享此形状，因此在任一面编辑形状都会更改全部副本。',
+  'featureTree.face.dialog.linkedStay.bottom.one': '{count} 个关联副本留在底面。它仍共享此形状，因此在任一面编辑形状都会同时更改两者。',
+  'featureTree.face.dialog.linkedStay.bottom.other': '{count} 个关联副本留在底面。它们仍共享此形状，因此在任一面编辑形状都会更改全部副本。',
 }

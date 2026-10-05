@@ -42,7 +42,7 @@ import { useRequestUnitConversion } from '../project/UnitConversionContext'
 import type { FeatureOperation, RegionMaskMode } from '../../types/project'
 import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
-import { activeFace, faceAngles, projectUsesBothFaces } from '../../store/helpers/activeFace'
+import { activeFace, faceAngles, linkedCopiesOffFace, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { AuthoringFaceRow } from './FaceChip'
 import { FaceZRange } from './FaceZRange'
 
@@ -1237,6 +1237,9 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
   const selectedDefId = getDefinitionId(selectedFeature)
   const linkedInstanceCount = getInstanceIdsForDefinition(project, selectedDefId).length
   const hasLinkedInstances = linkedInstanceCount > 1
+  // Copies of this shape on the other face change with it (issue #945).
+  const selectedFace = selectedFeature.authoringFace ?? 'top'
+  const linkedOnOtherFace = hasLinkedInstances ? linkedCopiesOffFace(project, [selectedFeature.id], selectedFace) : 0
 
   return (
     <div className="properties-panel">
@@ -1379,6 +1382,14 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               <span className="properties-construction-note__badge">{t('featureTree.properties.constructionNote.badge')}</span>
               <span>{t('featureTree.properties.constructionNote.text')}</span>
             </div>
+          ) : null}
+          {linkedOnOtherFace > 0 ? (
+            <p className="properties-linked-face-note" data-testid="linked-other-face-note">
+              {t(
+                `featureTree.face.linkedOtherFace.${selectedFace === 'top' ? 'bottom' : 'top'}.${linkedOnOtherFace === 1 ? 'one' : 'other'}`,
+                { count: linkedOnOtherFace },
+              )}
+            </p>
           ) : null}
           {hasLinkedInstances ? (
             <div className="properties-actions" style={{ marginTop: '8px' }}>

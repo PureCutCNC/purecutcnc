@@ -18,7 +18,7 @@ import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useI18n } from '../../i18n/i18nContext'
 import { useFaceViewStore } from '../../store/faceViewStore'
-import { flippedZRange, resolveStockSpan } from '../../store/helpers/activeFace'
+import { flippedZRange, linkedCopiesOffFace, resolveStockSpan } from '../../store/helpers/activeFace'
 import { useProjectStore } from '../../store/projectStore'
 import type { FeatureInstance, Project, SetupFace } from '../../types/project'
 import { formatLength } from '../../utils/units'
@@ -71,6 +71,8 @@ function ChangeFaceDialogBody({ featureIds }: { featureIds: readonly string[] })
   // One direction per confirmation: the features on the first one's face.
   const movable = requested.filter((feature) => feature.authoringFace === fromFace && !feature.locked)
   const lockedCount = requested.filter((feature) => feature.locked).length
+  // Linked copies that stay behind keep sharing the shape across the faces.
+  const linkedStaying = linkedCopiesOffFace(project, movable.map((feature) => feature.id), toFace)
   const faceName = (face: SetupFace) => t(face === 'top' ? 'featureTree.face.topFace' : 'featureTree.face.bottomFace')
 
   useEffect(() => {
@@ -162,6 +164,14 @@ function ChangeFaceDialogBody({ featureIds }: { featureIds: readonly string[] })
           ) : null}
           {movable.length > 1 ? (
             <p className="change-face__more">{t('featureTree.face.dialog.spanUnchanged')}</p>
+          ) : null}
+          {linkedStaying > 0 ? (
+            <p className="change-face__linked" data-testid="change-face-linked">
+              {t(
+                `featureTree.face.dialog.linkedStay.${fromFace}.${linkedStaying === 1 ? 'one' : 'other'}`,
+                { count: linkedStaying },
+              )}
+            </p>
           ) : null}
           {lockedCount > 0 ? (
             <p className="change-face__more">{t('featureTree.face.dialog.lockedSkipped', { count: lockedCount })}</p>

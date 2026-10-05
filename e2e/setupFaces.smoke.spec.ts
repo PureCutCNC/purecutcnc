@@ -23,8 +23,13 @@
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import {
+  clickMenuItem,
+  completePendingMove,
+  enterSketchEdit,
   getHoveredFeatureId,
+  getPendingMove,
   getProject,
+  openRowContextMenu,
   seedProject,
   placePendingAddAt,
   setPendingAddAnchor,
@@ -35,10 +40,24 @@ import {
 interface SavedFeature {
   id: string
   name: string
+  definitionId: string
   authoringFace: 'top' | 'bottom'
   z_top: number
   z_bottom: number
-  transform: unknown
+  transform: { a: number; b: number; c: number; d: number; e: number; f: number }
+}
+
+interface SavedSetup { id: string; orientation: { axis: string; angleDeg: number } }
+
+/** A saved project without the timestamp every save renews. */
+function withoutModified(project: Record<string, unknown>): Record<string, unknown> {
+  const { modified: _modified, ...meta } = project.meta as Record<string, unknown>
+  void _modified
+  return { ...project, meta }
+}
+
+function featureRow(page: Page, id: string) {
+  return page.locator(`.tree-row--feature[data-feature-id="${id}"]`)
 }
 
 async function features(page: Page): Promise<SavedFeature[]> {
@@ -103,16 +122,19 @@ test('switching to Bottom, drawing a pocket and setting its Z range the way Top 
   await expect(ui.face.layer(page, 'top')).toHaveAttribute('data-face-state', 'ghost')
   await expect(ui.face.ghostRows(page)).toHaveCount(1)
 
-  const saved = await getProject(page)
-  const setups = saved.setups as Array<{ id: string; orientation: { axis: string; angleDeg: number } }>
-  expect(setups).toHaveLength(2)
-  expect(setups[1].orientation).toEqual({ axis: 'x', angleDeg: 180 })
-  expect(saved.activeSetupId).toBe(setups[1].id)
+  // Looking at Bottom has not given the project a setup yet.
+  expect((await getProject(page)).setups as SavedSetup[]).toHaveLength(1)
 
-  // Draw the pocket on Bottom, away from the centre.
+  // Draw the pocket on Bottom, away from the centre: the first Bottom content
+  // is what makes the Bottom setup real.
   await drawRect(page, 0.2, 0.2, 0.9, 0.9)
   const pocket = (await features(page))[1]
   expect(pocket.authoringFace).toBe('bottom')
+  const saved = await getProject(page)
+  const setups = saved.setups as SavedSetup[]
+  expect(setups).toHaveLength(2)
+  expect(setups[1].orientation).toEqual({ axis: 'x', angleDeg: 180 })
+  expect(saved.activeSetupId).toBe(setups[1].id)
   await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveCount(1)
 
   // The Z range is the control Top uses, read with the stock flipped: a new
@@ -155,6 +177,125 @@ test('switching to Bottom, drawing a pocket and setting its Z range the way Top 
   await expect(ui.face.layer(page, 'bottom')).toHaveAttribute('data-face-state', 'ghost')
   await expect(ui.face.ghostRows(page)).toHaveCount(1)
   await expect(ui.face.ghostRows(page)).toHaveAttribute('data-feature-id', pocket.id)
+})
+
+// The review's finding 5: the first switch to Bottom used to add the Bottom
+// setup, which dirtied a clean project and left an undo entry.
+test('looking at Bottom leaves a clean project untouched until something is drawn there', async ({ app, ui }) => {
+  const { page } = app
+  const undo = page.getByRole('button', { name: 'Undo', exact: true }).first()
+  const cleanSave = page.getByRole('button', { name: 'Save project', exact: true }).first()
+  const before = withoutModified(await getProject(page))
+  await expect(undo).toBeDisabled()
+  await expect(cleanSave).toBeVisible()
+
+  await ui.face.segment(page, 'Bottom').click()
+  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
+  await expect(ui.face.banner(page)).toContainText('Stock flipped about X')
+  await expect(undo).toBeDisabled()
+  await expect(cleanSave).toBeVisible()
+  expect(withoutModified(await getProject(page))).toEqual(before)
+
+  await ui.face.segment(page, 'Top').click()
+  await expect(ui.face.banner(page)).toHaveCount(0)
+  await expect(ui.face.otherSideToggle(page)).toHaveCount(0)
+  await expect(undo).toBeDisabled()
+  await expect(cleanSave).toBeVisible()
+  expect(withoutModified(await getProject(page))).toEqual(before)
+
+  // The first feature drawn on Bottom brings the setup with it, as one edit.
+  await ui.face.segment(page, 'Bottom').click()
+  await drawRect(page, 0.2, 0.2, 0.9, 0.9)
+  const drawn = await getProject(page)
+  const setups = drawn.setups as SavedSetup[]
+  expect(setups).toHaveLength(2)
+  expect(setups[1].orientation).toEqual({ axis: 'x', angleDeg: 180 })
+  expect(drawn.activeSetupId).toBe(setups[1].id)
+  expect((drawn.features as SavedFeature[])[0].authoringFace).toBe('bottom')
+  await expect(page.getByRole('button', { name: 'Save project with unsaved changes', exact: true }).first()).toBeVisible()
+
+  // One undo takes the feature and the setup away, and the view stays on Bottom.
+  await undo.click()
+  const undone = await getProject(page)
+  expect(undone.features as unknown[]).toHaveLength(0)
+  expect(undone.setups as unknown[]).toHaveLength(1)
+  await expect(undo).toBeDisabled()
+  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
+  await expect(ui.face.banner(page)).toContainText('Stock flipped about X')
+})
+
+// The review's finding 1: the header switch was disabled during a move, but a
+// ghost row's menu still switched face, and the move then landed on a ghost.
+test('a ghost row cannot switch or change a face while a move is in progress', async ({ app, ui }) => {
+  const { page } = app
+  await drawRect(page, 1, 1, 3, 2)
+  await ui.face.segment(page, 'Bottom').click()
+  await drawRect(page, 0.2, 0.2, 0.9, 0.9)
+  const [base, pocket] = await features(page)
+
+  await (await openRowContextMenu(page, featureRow(page, pocket.id))).getByRole('button', { name: 'Move', exact: true }).click()
+  expect((await getPendingMove(page))?.entityIds).toEqual([pocket.id])
+  await expect(ui.face.segment(page, 'Top')).toBeDisabled()
+
+  await ui.face.ghostRows(page).click({ button: 'right' })
+  await expect(page.getByRole('button', { name: 'Switch to top face to edit' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Change authoring face…' })).toBeDisabled()
+  expect((await getPendingMove(page))?.entityIds).toEqual([pocket.id])
+
+  // The move finishes on the feature it started on; the ghost is untouched.
+  await completePendingMove(page, 0.2, 0.1)
+  const [baseAfter, pocketAfter] = await features(page)
+  expect(baseAfter).toEqual(base)
+  expect(pocketAfter.authoringFace).toBe('bottom')
+  expect(pocketAfter.transform).not.toEqual(pocket.transform)
+  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
+  await expect(ui.face.segment(page, 'Top')).toBeEnabled()
+})
+
+// The review's finding 6, as decided: a linked copy stays linked on the other
+// face, and the UI says how many copies there share the shape.
+test('a shape shared with linked copies on the other face says so where it is moved and edited', async ({ app, ui }) => {
+  const { page } = app
+  await drawRect(page, 0.5, 0.5, 1.5, 1.2)
+  const [plate] = await features(page)
+  await clickMenuItem(await openRowContextMenu(page, featureRow(page, plate.id)), 'Copy')
+  await completePendingMove(page, 2, 0)
+  const copy = (await features(page))[1]
+  expect(copy.definitionId).toBe(plate.definitionId)
+
+  // From Bottom both are ghosts. Moving one across names the copy that stays.
+  await ui.face.segment(page, 'Bottom').click()
+  await featureRow(page, copy.id).click({ button: 'right' })
+  await page.getByRole('button', { name: 'Change authoring face…' }).click()
+  const dialog = ui.face.changeFaceDialog(page)
+  await expect(dialog.getByTestId('change-face-linked')).toContainText('1 linked copy stays on the top face')
+  await dialog.getByRole('button', { name: 'Move to bottom face' }).click()
+  await expect(dialog).toHaveCount(0)
+  const moved = (await features(page))[1]
+  expect(moved.authoringFace).toBe('bottom')
+  expect(moved.definitionId).toBe(plate.definitionId)
+  // A feature moved to Bottom is Bottom content: the setup is real now.
+  expect((await getProject(page)).setups as SavedSetup[]).toHaveLength(2)
+
+  // Where the shape is edited, it says the copy on the other face changes
+  // too: in the Shape properties, and in the sketch-edit panel.
+  await featureRow(page, copy.id).click()
+  await page.locator('.properties-panel').getByRole('button', { name: /^Shape/ }).click()
+  await expect(page.getByTestId('linked-other-face-note')).toContainText('1 linked copy on the top face')
+  await enterSketchEdit(page, copy.id)
+  await expect(page.getByTestId('edit-linked-other-face-note')).toContainText('1 linked copy on the top face')
+  await page.locator('.canvas-workflow-panel--edit').getByRole('button', { name: 'Cancel editing', exact: true }).click()
+  await expect(page.locator('.canvas-workflow-panel--edit')).toHaveCount(0)
+  await ui.face.segment(page, 'Top').click()
+  await featureRow(page, plate.id).click()
+  await expect(page.getByTestId('linked-other-face-note')).toContainText('1 linked copy on the bottom face')
+
+  // With every copy on one face there is nothing to say.
+  await featureRow(page, plate.id).click({ button: 'right' })
+  await page.getByRole('button', { name: 'Change authoring face…' }).click()
+  await expect(ui.face.changeFaceDialog(page)).toBeVisible()
+  await expect(ui.face.changeFaceDialog(page).getByTestId('change-face-linked')).toHaveCount(0)
+  await ui.face.changeFaceDialog(page).getByRole('button', { name: 'Cancel' }).click()
 })
 
 test('the ghost toggle hides and shows the other side, and a ghost cannot be picked or dragged', async ({ app, ui }) => {
@@ -315,6 +456,51 @@ test('angle fields on Bottom read and turn as they do on Top', async ({ app, ui 
   await sweep.fill('90')
   await expect(sweep).toHaveValue('90')
   await page.keyboard.press('Escape')
+})
+
+test('grid spacing on Bottom steps the way it does on Top', async ({ app, ui }) => {
+  const { page } = app
+  /** Where a feature's first point sits in the stock. */
+  const placed = async (index: number) => {
+    const project = await getProject(page)
+    const feature = (project.features as SavedFeature[])[index]
+    const definitions = project.featureDefinitions as Record<string, { profile: { start: { x: number; y: number } } }>
+    const { start } = definitions[feature.definitionId].profile
+    const { a, b, c, d, e, f } = feature.transform
+    return { x: a * start.x + c * start.y + e, y: b * start.x + d * start.y + f }
+  }
+  const grid = async () => {
+    await page.getByRole('button', { name: 'Distribute selected features', exact: true }).first().click()
+    await page.getByRole('menu').getByRole('button', { name: 'Grid', exact: true }).click()
+    return page.locator('.canvas-workflow-panel--feature-distribution')
+  }
+
+  // Top, as the control: one row up by a typed 0.5 is +0.5 in the stock.
+  await drawRect(page, 0.4, 1.4, 0.8, 1.8)
+  let panel = await grid()
+  await panel.getByLabel('Rows').fill('2')
+  await panel.getByLabel('Columns').fill('1')
+  await panel.getByLabel('Y spacing').fill('0.5')
+  await panel.getByRole('button', { name: 'Create copies', exact: true }).click()
+  expect((await placed(1)).y - (await placed(0)).y).toBeCloseTo(0.5, 9)
+
+  // Bottom, flipped about X: the field reads a positive default, and the same
+  // typed 0.5 steps the same way on screen, which is −0.5 in the stock.
+  await ui.face.segment(page, 'Bottom').click()
+  await drawRect(page, 2.4, 1.4, 2.8, 1.8)
+  panel = await grid()
+  const spacingY = panel.getByLabel('Y spacing')
+  await expect(spacingY).not.toHaveValue(/^-/)
+  await expect(panel.getByLabel('X spacing')).not.toHaveValue(/^-/)
+  await panel.getByLabel('Rows').fill('2')
+  await panel.getByLabel('Columns').fill('1')
+  await spacingY.fill('0.5')
+  await expect(spacingY).toHaveValue('0.5')
+  await panel.getByRole('button', { name: 'Create copies', exact: true }).click()
+  const source = await placed(2)
+  const copy = await placed(3)
+  expect(copy.y - source.y).toBeCloseTo(-0.5, 9)
+  expect(copy.x - source.x).toBeCloseTo(0, 9)
 })
 
 test('a 3D view parked on the Top or Bottom preset follows the face; other views stay put', async ({ app, ui }) => {

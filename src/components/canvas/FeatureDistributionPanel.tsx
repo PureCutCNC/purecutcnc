@@ -17,7 +17,7 @@
 import type { FeatureDistributionPlan, FeatureDistributionSpec } from '../../sketch/featureDistribution'
 import type { PendingFeatureDistribution } from '../../store/types'
 import { useI18n } from '../../i18n/i18nContext'
-import { faceAngles } from '../../store/helpers/activeFace'
+import { faceAngles, faceOffsets } from '../../store/helpers/activeFace'
 import { useProjectStore } from '../../store/projectStore'
 import { CanvasWorkflowAction, CanvasWorkflowCancel, CanvasWorkflowConfirm } from './CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
@@ -53,7 +53,9 @@ export function FeatureDistributionPanel({
   onComplete,
   onCancel,
 }: FeatureDistributionPanelProps) {
-  const face = faceAngles(useProjectStore((state) => state.project))
+  const project = useProjectStore((state) => state.project)
+  const face = faceAngles(project)
+  const offsets = faceOffsets(project)
   const { t } = useI18n()
   const { spec } = pending
   const planError = plan.ok ? null : {
@@ -104,8 +106,9 @@ export function FeatureDistributionPanel({
             <div className="canvas-workflow-panel__grid">
               <NumberField label={t('canvas.featureDistribution.rows')} value={spec.rows} onChange={(event) => onUpdate({ ...spec, rows: inputNumber(event) })} />
               <NumberField label={t('canvas.featureDistribution.columns')} value={spec.columns} onChange={(event) => onUpdate({ ...spec, columns: inputNumber(event) })} />
-              <NumberField label={t('canvas.featureDistribution.spacingX')} value={spec.spacingX} onChange={(event) => onUpdate({ ...spec, spacingX: inputNumber(event) })} />
-              <NumberField label={t('canvas.featureDistribution.spacingY')} value={spec.spacingY} onChange={(event) => onUpdate({ ...spec, spacingY: inputNumber(event) })} />
+              {/* Spacing is typed as it steps on the face being drawn on; the spec keeps it in stock space (#945). */}
+              <NumberField label={t('canvas.featureDistribution.spacingX')} value={offsets.x(spec.spacingX)} onChange={(event) => onUpdate({ ...spec, spacingX: offsets.x(inputNumber(event)) })} />
+              <NumberField label={t('canvas.featureDistribution.spacingY')} value={offsets.y(spec.spacingY)} onChange={(event) => onUpdate({ ...spec, spacingY: offsets.y(inputNumber(event)) })} />
             </div>
           )}
 

@@ -335,4 +335,13 @@ export const featureTreeFr: Record<keyof typeof featureTreeEn, string> = {
   'featureTree.face.dialog.lockedSkipped': 'Les entités verrouillées ne sont pas déplacées ({count}).',
   'featureTree.face.dialog.moveToTop': 'Déplacer vers le dessus',
   'featureTree.face.dialog.moveToBottom': 'Déplacer vers le dessous',
+  'featureTree.face.changeBusy': 'Terminez la modification en cours avant de changer la face',
+  'featureTree.face.linkedOtherFace.top.one': 'Cette forme est partagée avec {count} copie liée sur la face supérieure. Modifier la forme modifie aussi cette copie.',
+  'featureTree.face.linkedOtherFace.top.other': 'Cette forme est partagée avec {count} copies liées sur la face supérieure. Modifier la forme les modifie aussi.',
+  'featureTree.face.linkedOtherFace.bottom.one': 'Cette forme est partagée avec {count} copie liée sur la face inférieure. Modifier la forme modifie aussi cette copie.',
+  'featureTree.face.linkedOtherFace.bottom.other': 'Cette forme est partagée avec {count} copies liées sur la face inférieure. Modifier la forme les modifie aussi.',
+  'featureTree.face.dialog.linkedStay.top.one': '{count} copie liée reste sur la face supérieure. Elle continue de partager cette forme : la modifier sur l’une ou l’autre face modifie les deux.',
+  'featureTree.face.dialog.linkedStay.top.other': '{count} copies liées restent sur la face supérieure. Elles continuent de partager cette forme : la modifier sur l’une ou l’autre face les modifie toutes.',
+  'featureTree.face.dialog.linkedStay.bottom.one': '{count} copie liée reste sur la face inférieure. Elle continue de partager cette forme : la modifier sur l’une ou l’autre face modifie les deux.',
+  'featureTree.face.dialog.linkedStay.bottom.other': '{count} copies liées restent sur la face inférieure. Elles continuent de partager cette forme : la modifier sur l’une ou l’autre face les modifie toutes.',
 }

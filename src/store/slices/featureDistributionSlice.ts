@@ -23,7 +23,7 @@ import {
   profilePathLength,
   type FeatureDistributionSpec,
 } from '../../sketch/featureDistribution'
-import { faceAngles } from '../helpers/activeFace'
+import { faceAngles, faceOffsets } from '../helpers/activeFace'
 import { buildTransformedCopiedFeatures, extractClonedDefinitions } from '../helpers/copyFeatures'
 import { createFeatureInstance } from '../helpers/featureDefinitions'
 import { nextPlacementSession } from '../helpers/ids'
@@ -50,14 +50,18 @@ function resolvedFeatures(project: Project, ids: string[]): ResolvedSketchFeatur
 }
 
 /**
- * A new radial sweep starts as a positive turn on the face being drawn on
- * (issue #945): the spec keeps it in stock space, where a Bottom setup's
- * turns run the other way.
+ * A new radial sweep starts as a positive turn, and a new grid steps the
+ * positive way, on the face being drawn on (issue #945): the spec keeps both
+ * in stock space, where a Bottom setup's turns and one of its axes run the
+ * other way.
  */
 function faceLocalDefaults(spec: FeatureDistributionSpec, project: Project): FeatureDistributionSpec {
-  return spec.mode === 'radial'
-    ? { ...spec, sweepDegrees: faceAngles(project).turn(spec.sweepDegrees) }
-    : spec
+  if (spec.mode === 'radial') return { ...spec, sweepDegrees: faceAngles(project).turn(spec.sweepDegrees) }
+  if (spec.mode === 'grid') {
+    const offsets = faceOffsets(project)
+    return { ...spec, spacingX: offsets.x(spec.spacingX), spacingY: offsets.y(spec.spacingY) }
+  }
+  return spec
 }
 
 export function createFeatureDistributionSlice(

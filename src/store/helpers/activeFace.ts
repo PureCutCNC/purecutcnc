@@ -42,15 +42,24 @@ import type {
   SketchFeature,
   Stock,
 } from '../../types/project'
+import { getDefinitionId } from './featureDefinitions'
+import { provisionalSetupFor } from './provisionalSetup'
 import { resolvedProjectFeatures } from './resolveFeatures'
 import type { ResolvedSketchFeature } from './resolveFeatures'
-import type { SelectionState } from '../types'
+import type { ProjectStore, SelectionState } from '../types'
 
 type FaceProject = Pick<Project, 'setups' | 'activeSetupId'>
 
-/** The setup the workspace is on. A project always has one. */
+/**
+ * The setup the workspace is on. A project always has one — but it is not
+ * always one of `project.setups`: while the workspace looks at a face the
+ * project has no setup for, this is that face's provisional setup (see
+ * `provisionalSetup.ts`), which becomes a real one with the first content
+ * created there.
+ */
 export function activeSetup(project: FaceProject): MachiningSetup {
   return project.setups.find((setup) => setup.id === project.activeSetupId)
+    ?? provisionalSetupFor(project)
     ?? project.setups[0]
     ?? defaultTopSetup()
 }
@@ -66,18 +75,73 @@ export function findSetupForFace(project: Pick<Project, 'setups'>, face: SetupFa
 }
 
 /**
- * Whether the project works on both faces: it has a Bottom setup, or a
- * feature drawn on Bottom. A Top-only project answers false, and the
- * workspace then shows no face layers, ghosts or face chips at all.
+ * Whether the workspace shows both faces: the project has a Bottom setup or
+ * a feature drawn on Bottom, or the Bottom face is being looked at. A
+ * Top-only project seen from Top answers false, and the workspace then shows
+ * no face layers, ghosts or face chips at all.
  */
-export function projectUsesBothFaces(project: Pick<Project, 'setups' | 'features'>): boolean {
+export function projectUsesBothFaces(project: Pick<Project, 'setups' | 'activeSetupId' | 'features'>): boolean {
   return project.setups.some((setup) => setupFace(setup) === 'bottom')
     || project.features.some((feature) => feature.authoringFace === 'bottom')
+    || activeFace(project) === 'bottom'
+}
+
+/**
+ * True while a feature is being edited, moved or combined. That work belongs
+ * to the face it started on: changing the workspace face, or a feature's
+ * authoring face, is refused until it is finished or cancelled, so it can
+ * never complete on a ghost.
+ */
+export function isFaceEditInProgress(state: Pick<
+  ProjectStore,
+  | 'selection'
+  | 'pendingMove'
+  | 'pendingTransform'
+  | 'pendingOffset'
+  | 'pendingShapeAction'
+  | 'pendingFeatureDistribution'
+  | 'pendingNest'
+  | 'pendingTextLayout'
+>): boolean {
+  return state.selection.mode === 'sketch_edit'
+    || state.pendingMove !== null
+    || state.pendingTransform !== null
+    || state.pendingOffset !== null
+    || state.pendingShapeAction !== null
+    || state.pendingFeatureDistribution !== null
+    || state.pendingNest !== null
+    || state.pendingTextLayout !== null
 }
 
 /** True for a feature authored on the face the workspace is not on. */
 export function isGhostFeature(project: FaceProject, feature: { authoringFace?: SetupFace }): boolean {
   return (feature.authoringFace ?? 'top') !== activeFace(project)
+}
+
+/**
+ * How many linked copies of these features' shapes are authored on a face
+ * other than `face`. A linked copy is the same shape wherever it sits, the
+ * other face included: editing one changes all of them. The ghost guard
+ * keeps a ghost from being picked or moved; it does not unlink a shared
+ * shape, so wherever a shape can be edited or a copy moved across, the UI
+ * says how many copies on the other face go with it.
+ */
+export function linkedCopiesOffFace(
+  project: Pick<Project, 'features'>,
+  featureIds: readonly string[],
+  face: SetupFace,
+): number {
+  const ids = new Set(featureIds)
+  const definitions = new Set<string>()
+  for (const feature of project.features) {
+    if (ids.has(feature.id)) definitions.add(getDefinitionId(feature))
+  }
+  if (definitions.size === 0) return 0
+  return project.features.filter((feature) => (
+    !ids.has(feature.id)
+    && (feature.authoringFace ?? 'top') !== face
+    && definitions.has(getDefinitionId(feature))
+  )).length
 }
 
 /**
@@ -245,6 +309,52 @@ function withoutNegativeZero(value: number): number {
   return value === 0 ? 0 : value
 }
 
+/**
+ * Which stock axes the active setup's turn reverses, read off the #944
+ * transform, or null on Top where none is.
+ */
+function reversedStockAxes(
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
+): Record<'x' | 'y' | 'z', boolean> | null {
+  const setup = activeSetup(project)
+  if (setupFace(setup) === 'top') return null
+  const frame = setupFrame(setup.orientation, project.stock)
+  const origin = canonicalToSetupPoint({ x: 0, y: 0, z: 0 }, frame)
+  return {
+    x: canonicalToSetupPoint({ x: 1, y: 0, z: 0 }, frame).x < origin.x,
+    y: canonicalToSetupPoint({ x: 0, y: 1, z: 0 }, frame).y < origin.y,
+    z: canonicalToSetupPoint({ x: 0, y: 0, z: 1 }, frame).z < origin.z,
+  }
+}
+
+/**
+ * How a signed distance along a stock axis reads on the face the workspace
+ * is on (issue #945): a grid's Spacing X / Spacing Y. Like the angles, the
+ * stored value stays in stock space and is converted at the UI boundary, so
+ * a positive step goes the same way on screen on Bottom as it does on Top.
+ * Each map is its own inverse.
+ */
+export interface FaceOffsets {
+  x: (distance: number) => number
+  y: (distance: number) => number
+}
+
+/** Top, and anything stored: distances read as they are. */
+export const STOCK_OFFSETS: FaceOffsets = {
+  x: (distance) => distance,
+  y: (distance) => distance,
+}
+
+/** The signed-distance maps for the active setup: an axis the turn reverses changes sign. */
+export function faceOffsets(project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>): FaceOffsets {
+  const reversed = reversedStockAxes(project)
+  if (!reversed) return STOCK_OFFSETS
+  return {
+    x: (distance) => withoutNegativeZero(reversed.x ? -distance : distance),
+    y: (distance) => withoutNegativeZero(reversed.y ? -distance : distance),
+  }
+}
+
 /** Top, and anything stored: angles read as they are. */
 export const STOCK_ANGLES: FaceAngles = {
   direction: (degrees) => degrees,
@@ -258,15 +368,8 @@ export const STOCK_ANGLES: FaceAngles = {
  * the angle), so a typed 30 is stored as -30, not as a rounded neighbour.
  */
 export function faceAngles(project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>): FaceAngles {
-  const setup = activeSetup(project)
-  if (setupFace(setup) === 'top') return STOCK_ANGLES
-  const frame = setupFrame(setup.orientation, project.stock)
-  const origin = canonicalToSetupPoint({ x: 0, y: 0, z: 0 }, frame)
-  const reversed = {
-    x: canonicalToSetupPoint({ x: 1, y: 0, z: 0 }, frame).x < origin.x,
-    y: canonicalToSetupPoint({ x: 0, y: 1, z: 0 }, frame).y < origin.y,
-    z: canonicalToSetupPoint({ x: 0, y: 0, z: 1 }, frame).z < origin.z,
-  }
+  const reversed = reversedStockAxes(project)
+  if (!reversed) return STOCK_ANGLES
   // Seen from above the turned stock is a mirror, so in-plane turns reverse
   // whenever exactly one of X and Y does.
   const handedness = reversed.x !== reversed.y ? -1 : 1

@@ -32,30 +32,53 @@
  *   round" fails; the mirror applied twice → the same;
  * - the ghost selection guard removed → "a ghost cannot be selected" and
  *   "switching face drops the selection" fail;
- * - `switchWorkspaceFace` not creating the Bottom setup → "the first switch
- *   to Bottom creates the setup" fails;
+ * - `switchWorkspaceFace` creating the Bottom setup again (the review's
+ *   finding 5) → "looking at Bottom adds no setup", "does not dirty" and "is
+ *   not an undo step" fail;
+ * - `syncWorkspaceSetups` never making the setup real → "the first feature
+ *   drawn on Bottom makes the setup real" fails; making it real on any edit
+ *   → "an edit that is not Bottom content leaves it provisional" fails;
+ *   making it real without an edit → "looking at Bottom makes no setup, even
+ *   when a feature is already authored there" fails;
+ * - `keepWorkspaceFace` removed from undo/redo → "undo leaves the workspace
+ *   on Bottom" fails; `keepWorkspaceFace` not looking for a setup on the same
+ *   face → "a snapshot with a Bottom setup is restored onto it" fails (through
+ *   the store that one is masked: the reconciler moves the workspace anyway);
+ * - `renameSetup` not realizing the setup → "editing the setup makes it real"
+ *   fails;
+ * - the busy guard removed from `switchWorkspaceFace` (finding 1) → "the face
+ *   cannot be switched during a move" fails; removed from
+ *   `setFeatureAuthoringFace` → "a feature being moved keeps its face" fails;
  * - `placeOriginAt` storing the stock-space point on Bottom → "an origin
  *   placed on Bottom" fails;
- * - paste keeping the source's face → "a paste lands on the active face" fails.
+ * - paste keeping the source's face → "a paste lands on the active face" fails;
+ * - `setFeatureAuthoringFace` detaching the definition → "a linked copy moved
+ *   to the other face keeps its link" fails;
+ * - `linkedCopiesOffFace` counting copies on the same face, or the feature
+ *   itself → the count assertions fail.
  *
  * Run with: npx tsx src/store/workspaceFace.test.ts
  */
 
-import { depthFromFace, setupFace, spanFromFaceDepth } from '../engine/setupOrientation'
+import { depthFromFace, orientationForFace, setupFace, spanFromFaceDepth } from '../engine/setupOrientation'
 import { computeSketchViewTransform, worldToCanvas } from '../components/canvas/viewTransform'
 import { pasteClipboardFeatures } from '../platform/featureClipboard'
 import { defaultTextToolConfig, resolveTextFeatureShapes } from '../text'
-import { getProfileBounds, newProject } from '../types/project'
+import { getProfileBounds, newProject, rectProfile } from '../types/project'
 import type { Project } from '../types/project'
 import {
   activeFace,
   activeOriginInStock,
+  activeSetup,
   editableProjectFeatures,
   flippedZRange,
   isGhostFeature,
   isThroughFeature,
+  linkedCopiesOffFace,
   projectUsesBothFaces,
 } from './helpers/activeFace'
+import { getDefinitionId } from './helpers/featureDefinitions'
+import { isProvisionalSetupActive, keepWorkspaceFace, provisionalSetupId } from './helpers/provisionalSetup'
 import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
 import { useProjectStore } from './projectStore'
 import type { ProjectStore } from './types'
@@ -96,26 +119,196 @@ const lastFeature = () => project().features[project().features.length - 1]
 
 // ── The face switch ───────────────────────────────────────────
 
+/** The file a save would write, without the timestamp every save renews. */
+function savedFile(): string {
+  const saved = JSON.parse(store().saveProject()) as { meta: { modified?: string } }
+  delete saved.meta.modified
+  return JSON.stringify(saved)
+}
+
+/** True when nothing but the face in view differs between two projects. */
+function sameDocument(a: Project, b: Project): boolean {
+  const left = a as unknown as Record<string, unknown>
+  const right = b as unknown as Record<string, unknown>
+  return Object.keys(left).every((key) => key === 'activeSetupId' || left[key] === right[key])
+}
+
+const bottomSetups = () => project().setups.filter((setup) => setupFace(setup) === 'bottom')
+
+// Looking at Bottom does not change the project (the review's finding 5):
+// a clean Top-only project stays clean, Top-only and without an undo entry.
 {
   resetStore()
-  assert(activeFace(project()) === 'top', 'a new project is on Top')
-  assert(!projectUsesBothFaces(project()), 'a new project uses one face')
+  store().addRectFeature('Base', 0, 0, 100, 80, project().stock.thickness)
+  useProjectStore.setState({ dirty: false, history: { past: [], future: [], transactionStart: null } })
+  const before = project()
+  const fileBefore = savedFile()
+  assert(activeFace(before) === 'top', 'a new project is on Top')
+  assert(!projectUsesBothFaces(before), 'a new project uses one face')
 
   assert(switchWorkspaceFace('bottom'), 'Bottom can be shown')
-  const bottom = project().setups.find((setup) => setupFace(setup) === 'bottom')
-  assert(bottom !== undefined, 'the first switch to Bottom creates the setup')
+  assert(activeFace(project()) === 'bottom', 'the workspace is on Bottom')
+  const shown = activeSetup(project())
+  assert(shown.orientation.axis === 'x' && shown.orientation.angleDeg === 180, 'Bottom is shown flipped about X')
+  assert(isProvisionalSetupActive(project()), 'the Bottom setup is provisional')
+  assert(project().setups.length === 1 && bottomSetups().length === 0, 'looking at Bottom adds no setup')
+  assert(sameDocument(project(), before), 'looking at Bottom changes nothing but the face in view')
+  assert(store().dirty === false, 'looking at Bottom does not dirty the project')
+  assert(store().history.past.length === 0, 'looking at Bottom is not an undo step')
+  assert(savedFile() === fileBefore, 'a project that is only being looked at saves exactly as before')
+  assert(projectUsesBothFaces(project()), 'the workspace shows both faces while Bottom is in view')
+
+  switchWorkspaceFace('top')
+  assert(project().activeSetupId === before.activeSetupId && sameDocument(project(), before), 'back on Top the project is what it was')
+  assert(!projectUsesBothFaces(project()), 'and uses one face again')
+  assert(store().dirty === false, 'looking at Bottom and back does not dirty the project')
+  assert(store().history.past.length === 0, 'and leaves no undo step')
+
+  // An edit that is not Bottom content leaves the setup provisional.
+  switchWorkspaceFace('bottom')
+  store().setProjectName('Renamed')
+  assert(isProvisionalSetupActive(project()) && project().setups.length === 1, 'an edit that is not Bottom content leaves it provisional')
+  assert(store().history.past.length === 1, 'fixture: the edit is one undo step')
+  store().undo()
+  assert(activeFace(project()) === 'bottom' && isProvisionalSetupActive(project()), 'undoing it leaves the workspace on Bottom')
+  assert(savedFile() === fileBefore, 'and the project saves as before')
+}
+
+// The first feature drawn on Bottom makes the setup real, in the same undo step.
+{
+  resetStore()
+  const thickness = project().stock.thickness
+  switchWorkspaceFace('bottom')
+  store().addRectFeature('Recess', 20, 20, 40, 30, thickness)
+  assert(bottomSetups().length === 1, 'the first feature drawn on Bottom makes the setup real')
+  const bottom = bottomSetups()[0]
   assert(bottom.orientation.axis === 'x' && bottom.orientation.angleDeg === 180, 'the new Bottom setup is flipped about X')
-  assert(project().activeSetupId === bottom.id && activeFace(project()) === 'bottom', 'the workspace is on Bottom')
-  assert(projectUsesBothFaces(project()), 'the project now uses both faces')
-  assert(store().history.past.length === 1, 'creating the Bottom setup is one undo step')
+  assert(bottom.name === 'Bottom' && bottom.id !== activeSetup({ ...project(), setups: [] }).id, 'it is a setup of its own, named Bottom')
+  assert(project().activeSetupId === bottom.id && !isProvisionalSetupActive(project()), 'the workspace is on the real setup')
+  assert(lastFeature().authoringFace === 'bottom', 'the feature is authored on Bottom')
+  assert(store().dirty === true, 'creating Bottom content dirties the project')
+  assert(store().history.past.length === 1, 'the feature and its setup are one undo step')
+
+  store().undo()
+  assert(project().features.length === 0 && project().setups.length === 1, 'undo removes the feature and the setup together')
+  assert(activeFace(project()) === 'bottom' && isProvisionalSetupActive(project()), 'undo leaves the workspace on Bottom')
+  store().redo()
+  assert(bottomSetups().length === 1 && bottomSetups()[0].id === bottom.id, 'redo brings the setup back')
+  assert(project().activeSetupId === bottom.id, 'redo puts the workspace on the restored setup')
+  assert(project().features.length === 1, 'and the feature with it')
 
   const setupCount = project().setups.length
+  const pastCount = store().history.past.length
   useProjectStore.setState({ dirty: false })
   switchWorkspaceFace('top')
   switchWorkspaceFace('bottom')
-  assert(project().setups.length === setupCount, 'switching back and forth reuses the setups')
-  assert(store().history.past.length === 1, 'switching face is not an undo step')
+  assert(project().setups.length === setupCount && project().activeSetupId === bottom.id, 'switching back and forth reuses the setup')
+  assert(store().history.past.length === pastCount, 'switching face is not an undo step')
   assert(store().dirty === false, 'switching face does not dirty the project')
+}
+
+// An operation added on Bottom makes the setup real too.
+{
+  resetStore()
+  store().addRectFeature('Base', 0, 0, 100, 80, project().stock.thickness)
+  const baseId = lastFeature().id
+  switchWorkspaceFace('bottom')
+  const pastCount = store().history.past.length
+  const operationId = store().addOperation('edge_route_outside', 'rough', { source: 'features', featureIds: [baseId] })
+  assert(operationId !== null, 'fixture: an operation is added')
+  assert(bottomSetups().length === 1, 'the first operation added on Bottom makes the setup real')
+  const operation = project().operations.find((entry) => entry.id === operationId)!
+  assert(operation.setupId === bottomSetups()[0].id, 'the operation belongs to the Bottom setup')
+  assert(bottomSetups()[0].operationIds.join() === operationId, 'and the setup lists it')
+  assert(store().history.past.length === pastCount + 1, 'the operation and its setup are one undo step')
+  store().undo()
+  assert(project().operations.length === 0 && bottomSetups().length === 0, 'undo removes the operation and the setup together')
+}
+
+// Editing the setup itself makes it real.
+{
+  resetStore()
+  switchWorkspaceFace('bottom')
+  store().renameSetup(activeSetup(project()).id, 'Underside')
+  assert(bottomSetups().length === 1 && bottomSetups()[0].name === 'Underside', 'editing the setup makes it real')
+  assert(project().activeSetupId === bottomSetups()[0].id, 'and the workspace stays on it')
+  assert(store().history.past.length === 1 && store().dirty === true, 'as one undoable, dirtying edit')
+}
+
+// A project that already has a Bottom setup is switched to it, never to a provisional one.
+{
+  resetStore()
+  const bottomId = store().createSetup({ orientation: orientationForFace('bottom', 'y') })
+  assert(bottomId !== null, 'fixture: a Bottom setup')
+  switchWorkspaceFace('bottom')
+  assert(project().activeSetupId === bottomId && !isProvisionalSetupActive(project()), 'an existing Bottom setup is the one switched to')
+}
+
+// A restored snapshot is put on the face in view by `keepWorkspaceFace` itself,
+// whatever the store's reconciler would do with the result afterwards.
+{
+  resetStore()
+  const topOnly = project()
+  const bottomId = store().createSetup({ orientation: orientationForFace('bottom', 'y') })
+  assert(bottomId !== null, 'fixture: a Bottom setup')
+  const bothFaces = project()
+  const lookingAtBottom = { ...topOnly, activeSetupId: provisionalSetupId('bottom') }
+  assert(keepWorkspaceFace(bothFaces, lookingAtBottom).activeSetupId === bottomId, 'a snapshot with a Bottom setup is restored onto it')
+  assert(
+    keepWorkspaceFace(topOnly, { ...bothFaces, activeSetupId: bottomId }).activeSetupId === provisionalSetupId('bottom'),
+    'a snapshot without one is looked at provisionally',
+  )
+  assert(keepWorkspaceFace(bothFaces, topOnly).activeSetupId === topOnly.activeSetupId, 'a snapshot that has the setup in view stays on it')
+}
+
+// Cancelling a sketch edit restores a snapshot too, and stays on the face in view.
+{
+  resetStore()
+  store().addRectFeature('Plate', 10, 10, 20, 10, project().stock.thickness)
+  const plateId = lastFeature().id
+  // A Bottom feature in a project with no Bottom setup: moved across from Top.
+  store().setFeatureAuthoringFace([plateId], 'bottom')
+  switchWorkspaceFace('bottom')
+  assert(isProvisionalSetupActive(project()), 'fixture: Bottom is being looked at provisionally')
+  store().enterSketchEdit(plateId)
+  store().cancelSketchEdit()
+  assert(activeFace(project()) === 'bottom', 'cancelling a sketch edit leaves the workspace on Bottom')
+}
+
+// ── The face stays put during an edit (the review's finding 1) ──
+
+{
+  resetStore()
+  const thickness = project().stock.thickness
+  store().addRectFeature('Base', 0, 0, 100, 80, thickness)
+  const topId = lastFeature().id
+  switchWorkspaceFace('bottom')
+  store().addRectFeature('Recess', 20, 20, 40, 30, thickness)
+  const bottomId = lastFeature().id
+  const placed = () => resolveFeatureInstance(project(), bottomId)!.sketch.profile.start
+
+  // A move is under way: its source point is picked.
+  store().startMoveFeature(bottomId)
+  store().setPendingMoveFrom({ x: 0, y: 0 })
+  assert(store().pendingMove !== null, 'fixture: a move is pending')
+  // Every caller goes through `switchWorkspaceFace` — the header control and
+  // the ghost row's "Switch to top face to edit" alike.
+  assert(!switchWorkspaceFace('top'), 'the face cannot be switched during a move')
+  assert(activeFace(project()) === 'bottom', 'the workspace stays on the face the move started on')
+  store().setFeatureAuthoringFace([bottomId], 'top')
+  assert(project().features.find((feature) => feature.id === bottomId)!.authoringFace === 'bottom', 'a feature being moved keeps its face')
+
+  const before = placed()
+  store().completePendingMove({ x: 5, y: 3 })
+  const after = placed()
+  assert(near(after.x - before.x, 5) && near(after.y - before.y, 3), 'the move completes on the feature it started on')
+  assert(!isGhostFeature(project(), project().features.find((feature) => feature.id === bottomId)!), 'which is not a ghost')
+  const base = resolveFeatureInstance(project(), topId)!.sketch.profile.start
+  assert(near(base.x, 0) && near(base.y, 0), 'and no ghost moved')
+
+  assert(switchWorkspaceFace('top'), 'once the move is finished the face can be switched')
+  store().enterSketchEdit(topId)
+  assert(!switchWorkspaceFace('bottom'), 'the face cannot be switched during a sketch edit')
 }
 
 // ── New features take the active face and a span measured from it ──
@@ -216,6 +409,65 @@ const lastFeature = () => project().features[project().features.length - 1]
   assert(store().selection.selectedFeatureIds.length === 0, 'a feature moved to the other face is no longer selected')
 }
 
+// ── A linked copy is one shape on both faces ──────────────────
+
+// The maintainer's decision on the review's finding 6: a linked copy is the
+// same shape wherever it sits. Moving a copy to the other face keeps the
+// link, and editing one copy changes all of them — the copy on the other
+// face included. The ghost guard still keeps that copy from being picked.
+// What the UI owes the user is the count, which `linkedCopiesOffFace` gives.
+{
+  resetStore()
+  const thickness = project().stock.thickness
+  store().addRectFeature('Plate', 10, 10, 20, 10, thickness)
+  const originalId = lastFeature().id
+  for (const offset of [40, 80]) {
+    store().startCopyFeature(originalId, 'reference')
+    store().setPendingMoveFrom({ x: 0, y: 0 })
+    store().completePendingMove({ x: offset, y: 0 }, 1)
+  }
+  const [, secondId, thirdId] = project().features.map((feature) => feature.id)
+  const definitionOf = (id: string) => getDefinitionId(project().features.find((feature) => feature.id === id)!)
+  const sizeOf = (id: string) => {
+    const bounds = getProfileBounds(resolveFeatureInstance(project(), id)!.sketch.profile)
+    return `${bounds.maxX - bounds.minX} × ${bounds.maxY - bounds.minY}`
+  }
+  assert(project().features.length === 3 && definitionOf(secondId) === definitionOf(originalId), 'fixture: three linked copies of one shape')
+  assert(linkedCopiesOffFace(project(), [originalId], 'top') === 0, 'copies on the same face are not counted')
+
+  // Before the move the confirmation counts the copies that will stay behind.
+  assert(linkedCopiesOffFace(project(), [thirdId], 'bottom') === 2, 'moving one copy to Bottom leaves two linked copies on Top')
+  assert(linkedCopiesOffFace(project(), [secondId, thirdId], 'bottom') === 1, 'moving two leaves one, and the moved ones are not counted')
+  assert(linkedCopiesOffFace(project(), [originalId, secondId, thirdId], 'bottom') === 0, 'moving them all leaves none')
+
+  store().setFeatureAuthoringFace([thirdId], 'bottom')
+  assert(project().features.find((feature) => feature.id === thirdId)!.authoringFace === 'bottom', 'fixture: the copy is on Bottom')
+  assert(definitionOf(thirdId) === definitionOf(originalId), 'a linked copy moved to the other face keeps its link')
+  assert(linkedCopiesOffFace(project(), [thirdId], 'bottom') === 2, 'the Bottom copy shares its shape with two copies on Top')
+  assert(linkedCopiesOffFace(project(), [originalId], 'top') === 1, 'a Top copy shares its shape with one copy on Bottom')
+
+  // Editing the shape on Bottom changes the Top copies too: intended.
+  const pastBeforeLooking = store().history.past.length
+  switchWorkspaceFace('bottom')
+  assert(
+    isProvisionalSetupActive(project()) && store().history.past.length === pastBeforeLooking,
+    'looking at Bottom makes no setup, even when a feature is already authored there',
+  )
+  store().selectFeature(thirdId)
+  const edited = resolveFeatureInstance(project(), thirdId)!
+  store().updateFeature(thirdId, { sketch: { ...edited.sketch, profile: rectProfile(10, 10, 40, 30) } })
+  assert(sizeOf(thirdId) === '40 × 30', 'fixture: the Bottom copy is edited')
+  assert(sizeOf(originalId) === '40 × 30' && sizeOf(secondId) === '40 × 30', 'editing a linked copy changes the copies on the other face')
+  store().selectFeature(originalId)
+  assert(!store().selection.selectedFeatureIds.includes(originalId), 'the copies on the other face are still ghosts')
+
+  // Make unique is the way out of the link, on either face.
+  store().makeUnique(thirdId)
+  assert(definitionOf(thirdId) !== definitionOf(originalId), 'make unique detaches the copy')
+  assert(linkedCopiesOffFace(project(), [thirdId], 'bottom') === 0, 'and it no longer shares a shape across the faces')
+  assert(linkedCopiesOffFace(project(), [originalId], 'top') === 0, 'in either direction')
+}
+
 // ── Text reads the right way round from below ─────────────────
 
 for (const axis of ['x', 'y'] as const) {
@@ -229,18 +481,10 @@ for (const axis of ['x', 'y'] as const) {
   const topView = computeSketchViewTransform(project(), 800, 600, { zoom: 1, panX: 0, panY: 0 })
   const topAnchor = worldToCanvas(anchor, topView)
 
+  // Flipped about X is what a first look at Bottom shows; about Y is a setup of its own.
+  if (axis === 'y') store().createSetup({ orientation: orientationForFace('bottom', 'y') })
   switchWorkspaceFace('bottom')
-  if (axis === 'y') {
-    const bottomId = project().activeSetupId
-    useProjectStore.setState({
-      project: {
-        ...project(),
-        setups: project().setups.map((setup) => (
-          setup.id === bottomId ? { ...setup, orientation: { axis: 'y', angleDeg: 180 } } : setup
-        )),
-      },
-    })
-  }
+  assert(activeSetup(project()).orientation.axis === axis, `fixture: Bottom is flipped about ${axis}`)
   store().startAddTextPlacement(config)
   const [bottomTextId] = store().placePendingTextAt(anchor)
   const bottomFeature = resolveFeatureInstance(project(), bottomTextId)!
@@ -282,6 +526,7 @@ for (const axis of ['x', 'y'] as const) {
   const pasted = pasteClipboardFeatures(store(), clipboard, { x: 60, y: 40 })
   assert(pasted.length === 1, 'the copy is pasted')
   assert(project().features.find((feature) => feature.id === pasted[0])?.authoringFace === 'bottom', 'a paste lands on the active face')
+  assert(bottomSetups().length === 1 && !isProvisionalSetupActive(project()), 'and, as the first Bottom content, makes the Bottom setup real')
   assert(store().selection.selectedFeatureIds.join() === pasted.join(), 'and is selected there')
 }
 

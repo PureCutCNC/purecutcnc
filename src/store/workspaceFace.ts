@@ -14,24 +14,41 @@
  * limitations under the License.
  */
 
-import { orientationForFace } from '../engine/setupOrientation'
 import type { SetupFace } from '../types/project'
-import { findSetupForFace } from './helpers/activeFace'
+import { useFaceViewStore } from './faceViewStore'
+import { activeFace, findSetupForFace, isFaceEditInProgress } from './helpers/activeFace'
+import { provisionalSetupId } from './helpers/provisionalSetup'
 import { useProjectStore } from './projectStore'
 
 /**
  * Put the workspace on `face` (issue #945). The workspace face switch is the
- * one place the UI changes the active setup. A project that has never been
- * machined from below gets its Bottom setup here, flipped about X — a real,
- * undoable edit; the switch itself stays a view choice. The setup's own
- * properties (flip axis, registration, notes) are edited in the CAM panel.
- * Returns false when the face cannot be shown.
+ * one place the UI changes the active setup, and every caller — the header
+ * control, a ghost row's "switch to edit" — goes through here, so the rules
+ * have one home:
+ *
+ * - while a feature is being edited, moved or combined the face stays where
+ *   it is, or the edit would land on a ghost;
+ * - looking at a face is a view choice. A face the project has no setup for
+ *   is shown provisionally; the project is not changed until something is
+ *   created there (see `helpers/provisionalSetup.ts`).
+ *
+ * Returns false when the face cannot be shown right now.
  */
 export function switchWorkspaceFace(face: SetupFace): boolean {
   const store = useProjectStore.getState()
-  const setupId = findSetupForFace(store.project, face)?.id
-    ?? store.createSetup({ orientation: orientationForFace(face, 'x') })
-  if (!setupId) return false
-  useProjectStore.getState().setActiveSetup(setupId)
+  if (activeFace(store.project) === face) return true
+  if (isFaceEditInProgress(store)) return false
+  store.setActiveSetup(findSetupForFace(store.project, face)?.id ?? provisionalSetupId(face))
+  return activeFace(useProjectStore.getState().project) === face
+}
+
+/**
+ * Ask for the confirmation that moves features to the other face. Refused
+ * while an edit is in progress, for the same reason the switch is: the
+ * feature being edited would become a ghost under the edit.
+ */
+export function requestAuthoringFaceChange(featureIds: readonly string[]): boolean {
+  if (isFaceEditInProgress(useProjectStore.getState())) return false
+  useFaceViewStore.getState().requestFaceChange(featureIds)
   return true
 }

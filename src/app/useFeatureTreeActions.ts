@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-import { useFaceViewStore } from '../store/faceViewStore'
-import { switchWorkspaceFace } from '../store/workspaceFace'
+import { requestAuthoringFaceChange, switchWorkspaceFace } from '../store/workspaceFace'
 import { useMemo } from 'react'
 import type { QuickOperation } from '../components/cam/operationValidity'
 import { useProjectStore } from '../store/projectStore'
@@ -165,7 +164,7 @@ export function createFeatureTreeActions({
       closeTreeContextMenu()
     },
     changeAuthoringFace: (featureIds: string[]) => {
-      useFaceViewStore.getState().requestFaceChange(featureIds)
+      requestAuthoringFaceChange(featureIds)
       closeTreeContextMenu()
     },
     editSketch: (featureId: string) => {
