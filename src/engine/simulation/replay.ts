@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { findMillingOperationTool } from '../../toolPolicy'
 import type { Operation, Project } from '../../types/project'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { normalizeToolForProject } from '../toolpaths/geometry'
@@ -47,6 +48,7 @@ export function applyMoveToGrid(
   toolType: SimulationReplayItem['toolType'],
   vBitAngle: number | null,
 ): ApplyMoveResult {
+  if (toolType === 'plasma') return { changedCount: 0, dirtyRegion: null }
   const minX = Math.min(move.from.x, move.to.x) + -toolRadius
   const maxX = Math.max(move.from.x, move.to.x) + toolRadius
   const minY = Math.min(move.from.y, move.to.y) + -toolRadius
@@ -169,6 +171,7 @@ function computeStats(grid: SimulationGrid, processedMoveCount: number): Simulat
 function replayItemIntoGrid(grid: SimulationGrid, item: SimulationReplayItem): { processedMoveCount: number; warnings: ToolpathWarning[] } {
   const warnings: ToolpathWarning[] = []
   let processedMoveCount = 0
+  if (item.toolType === 'plasma') return { processedMoveCount, warnings }
   for (const move of item.toolpath.moves) {
     if (!moveIsMaterialRemoving(move)) {
       continue
@@ -211,9 +214,7 @@ export function simulateOperationHeightfield(
 ): SimulationResult {
   const grid = createSimulationGrid(project, options)
   const warnings: ToolpathWarning[] = []
-  const toolRecord = operation.toolRef
-    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
-    : null
+  const toolRecord = findMillingOperationTool(project, operation)
 
   if (!toolRecord) {
     warnings.push({ code: 'replayNoTool' })

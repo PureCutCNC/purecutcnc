@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { findOperationTool } from '../../toolPolicy'
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import {
@@ -577,9 +578,7 @@ export function generatePocketRestRegionDrafts(project: Project, operation: Oper
   }
 
   const resolved = resolvePocketRegions(project, operation)
-  const toolRecord = operation.toolRef
-    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
-    : null
+  const toolRecord = findOperationTool(project, operation)
 
   if (!toolRecord) {
     return { drafts: [], warnings: [...resolved.warnings, { code: 'noToolAssigned' }] }
@@ -685,9 +684,7 @@ export function generateEdgeRestRegionDrafts(project: Project, operation: Operat
     }
   }
 
-  const toolRecord = operation.toolRef
-    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
-    : null
+  const toolRecord = findOperationTool(project, operation)
 
   if (!toolRecord) {
     return { drafts: [], warnings: [{ code: 'noToolAssigned' }] }

@@ -26,6 +26,7 @@ import type {
   Tool,
 } from '../../types/project'
 import { sampleProfilePoints } from '../../types/project'
+import { isToolCompatibleWithOperation } from '../../toolPolicy'
 import { convertToolUnits } from '../../utils/units'
 import type {
   ClipperPath,
@@ -152,6 +153,7 @@ export function resolveFeatureZSpan(project: Pick<Project, 'dimensions'>, featur
 
 export function normalizeToolForProject(tool: Tool, project: Project): NormalizedTool {
   const normalizedTool = tool.units === project.meta.units ? tool : convertToolUnits(tool, project.meta.units)
+  const milling = normalizedTool.type !== 'plasma'
   return {
     id: tool.id,
     name: tool.name,
@@ -160,15 +162,19 @@ export function normalizeToolForProject(tool: Tool, project: Project): Normalize
     type: normalizedTool.type,
     diameter: normalizedTool.diameter,
     radius: normalizedTool.diameter / 2,
+    ...(!milling ? {
+      pierceHeight: normalizedTool.pierceHeight ?? 0, cutHeight: normalizedTool.cutHeight ?? 0,
+      pierceDelay: normalizedTool.pierceDelay ?? 0, qtplasmacMaterialNumber: normalizedTool.qtplasmacMaterialNumber,
+    } : {}),
     vBitAngle: normalizedTool.type === 'v_bit' ? normalizedTool.vBitAngle ?? 60 : null,
-    flutes: normalizedTool.flutes,
+    flutes: milling ? normalizedTool.flutes : 0,
     material: normalizedTool.material,
-    defaultRpm: normalizedTool.defaultRpm,
+    defaultRpm: milling ? normalizedTool.defaultRpm : 0,
     defaultFeed: normalizedTool.defaultFeed,
-    defaultPlungeFeed: normalizedTool.defaultPlungeFeed,
-    defaultStepdown: normalizedTool.defaultStepdown,
-    defaultStepover: normalizedTool.defaultStepover,
-    maxCutDepth: normalizedTool.maxCutDepth,
+    defaultPlungeFeed: milling ? normalizedTool.defaultPlungeFeed : 0,
+    defaultStepdown: milling ? normalizedTool.defaultStepdown : 0,
+    defaultStepover: milling ? normalizedTool.defaultStepover : 0,
+    maxCutDepth: milling ? normalizedTool.maxCutDepth : 0,
   }
 }
 
@@ -176,7 +182,7 @@ export function resolveOperationTool(project: Project, operation: Operation): Re
   const tool = operation.toolRef ? project.tools.find((c) => c.id === operation.toolRef) ?? null : null
   return {
     operation,
-    tool: tool ? normalizeToolForProject(tool, project) : null,
+    tool: tool && isToolCompatibleWithOperation(tool, operation.kind) ? normalizeToolForProject(tool, project) : null,
     units: project.meta.units,
   }
 }

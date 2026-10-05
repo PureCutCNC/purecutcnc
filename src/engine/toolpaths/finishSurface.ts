@@ -21,6 +21,7 @@
  * - finishSurfaceConstantScallop.ts
  */
 
+import { findOperationTool } from '../../toolPolicy'
 import { surfaceSlopeRange } from './finishSurfaceSlope'
 import type { Operation, Point, Project } from '../../types/project'
 import type { ToolpathWarning } from './warningCodes'
@@ -207,8 +208,7 @@ export function generateFinishSurfaceToolpath(
     }
   }
 
-  const toolRecord =
-    operation.toolRef ? project.tools.find((t) => t.id === operation.toolRef) ?? null : null
+  const toolRecord = findOperationTool(project, operation)
   if (!toolRecord) {
     return {
       operationId: operation.id,

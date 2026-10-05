@@ -54,13 +54,13 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `nestApply.ts` — pure apply/discard of a nest: linked copies in a nest folder, copies joined to their sources' operations, intra-part constraint references re-pointed at sibling copies, originals moved or kept, and exact restoration on discard
   - `instanceTransforms.ts` — affine matrix builders and transform-delta composition for feature instances
   - `resolveFeatures.ts` — strict definition+instance resolver, ephemeral world-space read model, and commit boundary back to lightweight instances
-  - `projectFormat.ts` — validates format 3.x projects, performs the one-way 1.0/2.0/2.1 legacy conversion without retaining baked rows, and migrates pre-3.1 absolute `retractHeight` values to distances above the material on load (issue #481) It also migrates files without machining setups — keyed on the missing fields, not the version — to a single Top setup (issue #944)
+  - `projectFormat.ts` — validates format 3.x projects, performs the one-way 1.0/2.0/2.1 legacy conversion without retaining baked rows, and migrates pre-3.1 absolute `retractHeight` values to distances above the material on load (issue #481) Plasma consumables backfill missing heights/delay without changing milling tools (issue #955). It also migrates files without machining setups — keyed on the missing fields, not the version — to a single Top setup (issue #944)
   - `profileEdit.ts` — pure profile and segment-editing helpers used by sketch editing and pending composite drafts
   - `buildShapeFeature.ts` — shared feature builder for the addRect/Circle/Ellipse/… constructors; consolidates duplicated shape-construction logic
   - `manualFeatureOperation.ts` — resolves existing world-space Add/Subtract instances and applies the shared strict-containment classifier to default a newly-created closed feature; also `inferLineTopZFromEnclosingFeature` (issue #351) picks a newly-created Line's initial `z_top` from the smallest enclosing solid (subtract floor / add top)
   - `setups.ts` — machining-setup bookkeeping (issue #944): `decodeSetups` (strict validation of the setups a file carries; an orientation or indexing mode this build cannot machine is an error, not a fallback), `syncProjectSetups` (the reconciler — at least one setup, a valid active setup, every operation in a setup, `operationIds` rebuilt from membership and project order, references to deleted features dropped), and `findSetupWithTurn`, which places an operation imported from another project on a setup turned the way its source was — with no fallback, so the importer adds that setup rather than move the operation to another face
   - `ids.ts` — ID generation/uniqueness
-  - `normalize.ts` — lower-level project normalization helpers: cloning, ID deduplication, cache clearing, equality checks, and feature tree/sync helpers
+  - `normalize.ts` — lower-level project normalization helpers: incompatible tool-reference repair, cloning, ID deduplication, cache clearing, equality checks, and feature tree/sync helpers
   - `polygonSplit.ts` — splits polygons (e.g. for boolean ops)
 
 ## Tests

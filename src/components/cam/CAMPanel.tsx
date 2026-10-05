@@ -43,7 +43,8 @@ import type {
   ToolType,
   XyLeadStrategy,
 } from '../../types/project'
-import { defaultRetractOffset, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
+import { findMillingOperationTool, isToolCompatibleWithOperation, defaultPlasmaTool } from '../../toolPolicy'
+import { defaultTool, defaultRetractOffset, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
 import { offeredPocketPatterns, TROCHOIDAL_RING_STEPOVER } from '../../engine/toolpaths/pocketPatterns'
@@ -314,6 +315,8 @@ function toolTypeLabel(type: ToolType): string {
       return camT('cam.toolType.vBit')
     case 'drill':
       return camT('cam.toolType.drill')
+    case 'plasma':
+      return camT('cam.toolType.plasma')
   }
 }
 
@@ -947,9 +950,7 @@ export function CAMPanel({
       const outcome = await runBookletExport({
         requestToolpath: () => requestToolpath(operationId, 'booklet'),
         normalizeTool: () => {
-          const toolRecord = captured.operation.toolRef
-            ? captured.project.tools.find((tool) => tool.id === captured.operation.toolRef) ?? null
-            : null
+          const toolRecord = findMillingOperationTool(captured.project, captured.operation)
           return toolRecord ? normalizeToolForProject(toolRecord, captured.project) : null
         },
         renderSnapshot: (toolpath) => renderOperationSnapshotPng(captured.project, captured.operation, toolpath),
@@ -1173,10 +1174,8 @@ export function CAMPanel({
             value={operation.toolRef ?? ''}
             options={[
               { value: '', label: camT('cam.operation.noTool') },
-              ...(operation.kind === 'v_carve' || operation.kind === 'v_carve_medial'
-                ? project.tools.filter((tool) => tool.type === 'v_bit')
-                : project.tools
-              ).map((tool) => ({ value: tool.id, label: tool.name })),
+              ...project.tools.filter((tool) => isToolCompatibleWithOperation(tool, operation.kind)
+                && (operation.kind !== 'v_carve' && operation.kind !== 'v_carve_medial' || tool.type === 'v_bit')).map((tool) => ({ value: tool.id, label: tool.name })),
             ]}
             onChange={(newToolId) => {
               const id = newToolId || null
@@ -1984,8 +1983,12 @@ export function CAMPanel({
                             { value: 'ball_endmill', label: toolTypeLabel('ball_endmill') },
                             { value: 'v_bit', label: toolTypeLabel('v_bit') },
                             { value: 'drill', label: toolTypeLabel('drill') },
+                            { value: 'plasma', label: toolTypeLabel('plasma') },
                           ]}
                           onChange={(nextType) => updateTool(selectedTool.id, {
+                            ...(nextType === 'plasma' ? defaultPlasmaTool(selectedTool.units)
+                              : selectedTool.type === 'plasma' ? defaultTool(selectedTool.units) : {}),
+                            id: selectedTool.id, name: selectedTool.name,
                             type: nextType,
                             vBitAngle: nextType === 'v_bit' ? (selectedTool.vBitAngle ?? 60) : null,
                           })}
@@ -2003,7 +2006,7 @@ export function CAMPanel({
                         />
                       </label>
                       <label className="properties-field">
-                        <span>{camT('cam.tool.diameter')}</span>
+                        <span>{camT(selectedTool.type === 'plasma' ? 'cam.tool.kerfWidth' : 'cam.tool.diameter')}</span>
                         <DraftLengthInput
                           value={selectedTool.diameter}
                           units={selectedTool.units}
@@ -2011,6 +2014,40 @@ export function CAMPanel({
                           onCommit={(value) => updateTool(selectedTool.id, { diameter: value })}
                         />
                       </label>
+                      {selectedTool.type === 'plasma' ? (
+                        <>
+                          <label className="properties-field">
+                            <span>{camT('cam.tool.cutFeed')}</span>
+                            <DraftLengthInput value={selectedTool.defaultFeed} units={selectedTool.units} min={0}
+                              onCommit={(value) => updateTool(selectedTool.id, { defaultFeed: value })} />
+                          </label>
+                          <label className="properties-field">
+                            <span>{camT('cam.tool.pierceHeight')}</span>
+                            <DraftLengthInput value={selectedTool.pierceHeight ?? 0} units={selectedTool.units} min={0}
+                              onCommit={(value) => updateTool(selectedTool.id, { pierceHeight: value })} />
+                          </label>
+                          <label className="properties-field">
+                            <span>{camT('cam.tool.cutHeight')}</span>
+                            <DraftLengthInput value={selectedTool.cutHeight ?? 0} units={selectedTool.units} min={0}
+                              onCommit={(value) => updateTool(selectedTool.id, { cutHeight: value })} />
+                          </label>
+                          <label className="properties-field">
+                            <span>{camT('cam.tool.pierceDelay')}</span>
+                            <DraftNumberInput value={selectedTool.pierceDelay ?? 0} min={0}
+                              onCommit={(value) => updateTool(selectedTool.id, { pierceDelay: value })} />
+                          </label>
+                          <label className="properties-field">
+                            <span>{camT('cam.tool.qtplasmacMaterialNumber')}</span>
+                            <input type="number" min={0} step={1} value={selectedTool.qtplasmacMaterialNumber ?? ''}
+                              onChange={(event) => {
+                                const value = event.target.value === '' ? undefined : event.target.valueAsNumber
+                                if (value === undefined || Number.isSafeInteger(value) && value >= 0) {
+                                  updateTool(selectedTool.id, { qtplasmacMaterialNumber: value })
+                                }
+                              }} />
+                          </label>
+                        </>
+                      ) : <>
                       {selectedTool.type === 'v_bit' ? (
                         <label className="properties-field">
                           <span>{camT('cam.tool.vAngle')}</span>
@@ -2095,6 +2132,7 @@ export function CAMPanel({
                           onCommit={(value) => updateTool(selectedTool.id, { defaultStepover: value })}
                         />
                       </label>
+                      </>}
                       </div>
       </div>
     )
@@ -2440,7 +2478,7 @@ export function CAMPanel({
                               <span className="tree-label cam-tool-label" title={tool.name}>
                                 <span className="cam-tool-label__name">{tool.name}</span>
                                 <span className="cam-tool-label__meta">
-                                  {toolTypeLabel(tool.type)} · ⌀{formatLength(tool.diameter, tool.units)} {toolUnitsLabel(tool.units)}{tool.maxCutDepth > 0 ? ` · max ${formatLength(tool.maxCutDepth, tool.units)} ${toolUnitsLabel(tool.units)}` : ''}
+                                  {toolTypeLabel(tool.type)} · {tool.type === 'plasma' ? camT('cam.tool.kerfWidth') + ' ' : '⌀'}{formatLength(tool.diameter, tool.units)} {toolUnitsLabel(tool.units)}{tool.type !== 'plasma' && tool.maxCutDepth > 0 ? ` · max ${formatLength(tool.maxCutDepth, tool.units)} ${toolUnitsLabel(tool.units)}` : ''}
                                 </span>
                               </span>
                               <div className="tree-row-actions" onClick={(e) => e.stopPropagation()}>

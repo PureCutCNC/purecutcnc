@@ -22,6 +22,7 @@ import { defaultRetractOffset, defaultTool } from '../../types/project'
 import { isConstruction, isMachinable, isRegion, sectionForOperation } from './featureRoles'
 import { isVCarveCompatibleFeature } from './vcarveTargets'
 import { resolveProject } from './resolveFeatures'
+import { samePlasmaParameters } from '../../toolPolicy'
 import type {
   FeatureOperation,
   Operation,
@@ -54,6 +55,7 @@ export function resolveFolderAssignments(authoritativeProject: Project, featureI
 }
 
 export function toolMatchesTemplate(existingTool: Tool, candidate: Omit<Tool, 'id'>): boolean {
+  if (existingTool.type === 'plasma' || candidate.type === 'plasma') return samePlasmaParameters(existingTool, candidate)
   return (
     existingTool.name === candidate.name
     && existingTool.units === candidate.units
@@ -283,8 +285,9 @@ export function defaultOperationForTarget(
   index: number,
   resolved?: { tool: Tool; toolRef: string | null },
 ): Operation {
-  const tool = resolved?.tool ?? project.tools[0] ?? defaultTool(project.meta.units, 1)
-  const toolRef = resolved ? resolved.toolRef : (project.tools[0]?.id ?? null)
+  const firstTool = project.tools.find((candidate) => candidate.type !== 'plasma')
+  const tool = resolved?.tool ?? firstTool ?? defaultTool(project.meta.units, 1)
+  const toolRef = resolved ? resolved.toolRef : (firstTool?.id ?? null)
 
   const isVCarve = kind === 'v_carve' || kind === 'v_carve_medial'
   const isRoughEdge = pass === 'rough' && (kind === 'edge_route_inside' || kind === 'edge_route_outside')

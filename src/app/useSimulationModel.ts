@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { findMillingOperationTool } from '../toolPolicy'
 import { useEffect, useMemo, useState } from 'react'
 import type { SimulationPlaybackInput } from '../components/simulation/SimulationViewport'
 import {
@@ -91,7 +92,7 @@ export function useSimulationModel({
   const requiredOperationIds = useMemo(() => {
     if (centerTab !== 'simulation') return []
     const eligible = (operation: Operation): boolean =>
-      operation.enabled && operation.showToolpath && operation.toolRef !== null
+      operation.enabled && operation.showToolpath && findMillingOperationTool(project, operation) !== null
     if (simulationMode === 'visible') {
       return project.operations.filter(eligible).map((operation) => operation.id)
     }
@@ -99,7 +100,7 @@ export function useSimulationModel({
     const selectedIndex = project.operations.findIndex((operation) => operation.id === selectedOperation.id)
     const prior = selectedIndex >= 0 ? project.operations.slice(0, selectedIndex) : []
     return prior.filter(eligible).map((operation) => operation.id)
-  }, [centerTab, project.operations, selectedOperation, simulationMode])
+  }, [centerTab, project, selectedOperation, simulationMode])
 
   const requiredKey = requiredOperationIds.join(',')
 
@@ -160,7 +161,7 @@ export function useSimulationModel({
     }
 
     if (simulationMode === 'selected') {
-      if (!selectedOperation || !selectedToolpath) {
+      if (!selectedOperation || !selectedToolpath || !findMillingOperationTool(project, selectedOperation)) {
         return emptySimulationResult
       }
 
@@ -173,9 +174,7 @@ export function useSimulationModel({
       .filter((operation) => operation.enabled && operation.showToolpath && operation.toolRef)
       .map((operation) => {
         const toolpath = paths?.get(operation.id) ?? null
-        const toolRecord = operation.toolRef
-          ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
-          : null
+        const toolRecord = findMillingOperationTool(project, operation)
 
         if (!toolpath || !toolRecord) {
           return null
@@ -204,23 +203,23 @@ export function useSimulationModel({
   }, [centerTab, paths, project, selectedOperation, selectedToolpath, simulationDetailCells, simulationMode])
 
   const simulationOperationCount = useMemo(() => {
+    const hasPlasmaTool = (operation: Operation): boolean =>
+      project.tools.some((tool) => tool.id === operation.toolRef && tool.type === 'plasma')
     if (simulationMode === 'selected') {
-      return selectedOperation && selectedToolpath ? 1 : 0
+      return selectedOperation && selectedToolpath && !hasPlasmaTool(selectedOperation) ? 1 : 0
     }
 
-    return project.operations.filter((operation) => operation.enabled && operation.showToolpath).length
-  }, [project.operations, selectedOperation, selectedToolpath, simulationMode])
+    return project.operations.filter((operation) => operation.enabled && operation.showToolpath && !hasPlasmaTool(operation)).length
+  }, [project, selectedOperation, selectedToolpath, simulationMode])
 
   const simulationPlaybackInput = useMemo<SimulationPlaybackInput | null>(() => {
     if (centerTab !== 'simulation' || simulationMode !== 'selected') {
       return null
     }
-    if (!selectedOperation || !selectedToolpath) {
+    if (!selectedOperation || !selectedToolpath || !findMillingOperationTool(project, selectedOperation)) {
       return null
     }
-    const toolRecord = selectedOperation.toolRef
-      ? project.tools.find((tool) => tool.id === selectedOperation.toolRef) ?? null
-      : null
+    const toolRecord = findMillingOperationTool(project, selectedOperation)
     if (!toolRecord || toolRecord.type === 'drill') {
       return null
     }
@@ -257,9 +256,7 @@ export function useSimulationModel({
           // supplier that could start work would be generation on the playback
           // path — the thing acquiring these up front exists to prevent.
           const toolpath = resolvedPaths.get(operation.id) ?? null
-          const operationTool = operation.toolRef
-            ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
-            : null
+          const operationTool = findMillingOperationTool(project, operation)
           if (!toolpath || !operationTool) {
             return null
           }

@@ -3,6 +3,28 @@
   "version": "1",
   "tools": [
     {
+      "key": "plasma_powermax45xp_45a_mild_steel_2mm_in",
+      "name": "Powermax45 XP 45 A — 2 mm mild steel (example) — inch units",
+      "units": "inch",
+      "type": "plasma",
+      "diameter": 0.05511811023622047,
+      "defaultFeed": 218.8976377952756,
+      "pierceHeight": 0.14960629921259844,
+      "cutHeight": 0.05905511811023623,
+      "pierceDelay": 0.2
+    },
+    {
+      "key": "plasma_powermax45xp_45a_mild_steel_2mm",
+      "name": "Powermax45 XP 45 A — 2 mm mild steel (example)",
+      "units": "mm",
+      "type": "plasma",
+      "diameter": 1.4,
+      "defaultFeed": 5560,
+      "pierceHeight": 3.8,
+      "cutHeight": 1.5,
+      "pierceDelay": 0.2
+    },
+    {
       "key": "flat_1_16_in",
       "name": "1/16\" Endmill",
       "units": "inch",

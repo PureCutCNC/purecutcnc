@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { findOperationTool } from '../../toolPolicy'
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import { appendUniqueWarning } from './warningDedup'
@@ -487,9 +488,7 @@ function resolveSurfaceCleanRegions(project: Project, operation: Operation): Sur
   const modelFeatures = resolvedFeatures.filter(
     (feature) => feature.operation === 'model' && feature.kind === 'stl',
   )
-  const modelSectionTool = operation.toolRef
-    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
-    : null
+  const modelSectionTool = findOperationTool(project, operation)
   const modelSectionTolerance = modelSectionTool
     ? sliceDecimationTolerance(normalizeToolForProject(modelSectionTool, project).radius)
     : 0
@@ -1609,9 +1608,7 @@ function generateSurfaceCleanToolpathSingle(
   trochoidalBudget: TrochoidalOperationBudget | null = null,
 ): PocketToolpathResult {
   const resolved = resolveSurfaceCleanRegions(project, operation)
-  const toolRecord = operation.toolRef
-    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
-    : null
+  const toolRecord = findOperationTool(project, operation)
 
   if (!toolRecord) {
     return {

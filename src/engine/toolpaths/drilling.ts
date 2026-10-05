@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { findOperationTool } from '../../toolPolicy'
 import { defaultRetractOffset } from '../../types/project'
 import type { DrillType, Operation, Point, Project, SketchFeature, SketchProfile } from '../../types/project'
 import type { ToolpathWarning } from './warningCodes'
@@ -468,9 +469,7 @@ export function generateDrillingToolpath(project: Project, operation: Operation)
     }
   }
 
-  const toolRecord = operation.toolRef
-    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
-    : null
+  const toolRecord = findOperationTool(project, operation)
 
   if (!toolRecord) {
     return {

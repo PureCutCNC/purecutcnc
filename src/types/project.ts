@@ -577,18 +577,25 @@ export interface GridSettings {
 // Tools
 // ============================================================
 
-export type ToolType = 'flat_endmill' | 'ball_endmill' | 'v_bit' | 'drill'
+export type ToolType = 'flat_endmill' | 'ball_endmill' | 'v_bit' | 'drill' | 'plasma'
 
 export interface Tool {
   id: string
   name: string
   units: ProjectMeta['units']
   type: ToolType
+  /** Cutter diameter, or full kerf width for plasma consumables. */
   diameter: number
+  /** Plasma heights in tool units; delay in seconds. Absent on milling tools. */
+  pierceHeight?: number
+  cutHeight?: number
+  pierceDelay?: number
+  qtplasmacMaterialNumber?: number
   vBitAngle: number | null
   flutes: number
   material: 'hss' | 'carbide'
   defaultRpm: number
+  /** Milling feed, or plasma cut feed, in tool units per minute. */
   defaultFeed: number
   defaultPlungeFeed: number
   defaultStepdown: number

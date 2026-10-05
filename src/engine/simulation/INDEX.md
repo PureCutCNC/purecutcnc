@@ -9,14 +9,14 @@ builders — no React.
 - `types.ts` — `SimulationGrid`, `DirtyRegion`, `SimulationBuildOptions`, `SimulationStats`
 - `grid.ts` — grid spec resolution and `createSimulationGrid` allocation
 - `tools.ts` — `cutterSurfaceZ`: the cutter's lower-surface profile used to lower cells
-- `replay.ts` — applies toolpath moves to the grid (`applyMoveToGrid`, `simulateReplayItemsHeightfield`); the cell loop is allocation-free with per-move cutter dispatch (see `replay.test.ts` for the reference-parity contract)
+- `replay.ts` — applies toolpath moves to the grid (`applyMoveToGrid`, `simulateReplayItemsHeightfield`); plasma is excluded from cutter replay; the cell loop is allocation-free with per-move cutter dispatch (see `replay.test.ts` for the reference-parity contract)
 - `playback.ts` — playback state: poses, options, grid cloning for stepped playback. Forward seeks advance incrementally (cuts are monotonic); the dirty region accumulates until the caller uploads and clears it
 
 ## Rendering (Three.js)
 - `gpuMesh.ts` — builds a `DataTexture` over the grid's `topZ` array and an instanced row-strip surface with one flat top per cell (no shared corners that can collapse narrow tab bridges); bounds cover the shader-displaced Y range; `uploadHeightfieldRegion` pushes only the dirty rectangle to the GPU via `texSubImage2D`
 - `instancedBoundary.ts` — boundary walls + stock underside as instanced row-strips whose geometry the vertex shader derives from `gl_InstanceID` + the heightfield texture (GLSL3 `texelFetch`); O(cols) template memory at any detail, no CPU rebuilds while cutting. The sole boundary path for both static and playback views. A step gets a wall lit by its own normal; a riser inside a slope is drawn too, but lit as the surface it belongs to
 - `heightfieldShader.ts` — the heightfield surface shader material (`createHeightfieldMaterial`) plus the GLSL both meshes share: the `LIGHTING_GLSL` light rig, the `STEP_GLSL` step/slope predicate (`edgeIsStep`), and the smoothed surface normal (`SLOPE_GRADIENT_GLSL` + `SURFACE_NORMAL_GLSL`). The surface takes a lighting gradient only across an edge `edgeIsStep` calls a slope, interpolated across the cell so it is continuous over cell borders and widened when a cell is under a pixel; `instancedBoundary.ts` lights the steps it leaves flat, so the two meshes cannot disagree about which of them shades an edge
-- `toolMesh.ts` — builds/disposes the moving cutter mesh group
+- `toolMesh.ts` — builds/disposes the moving cutter mesh group; plasma has no milling cutter mesh
 
 ## Supporting
 - `index.ts` — barrel export

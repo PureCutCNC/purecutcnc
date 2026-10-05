@@ -47,6 +47,8 @@ function toolTypeLabel(type: ToolType): string {
       return camT('cam.toolType.vBit')
     case 'drill':
       return camT('cam.toolType.drill')
+    case 'plasma':
+      return camT('cam.toolType.plasma')
   }
 }
 
@@ -299,6 +301,7 @@ export function ToolLibraryDialog({
                     { value: 'ball_endmill', label: toolTypeLabel('ball_endmill') },
                     { value: 'v_bit', label: toolTypeLabel('v_bit') },
                     { value: 'drill', label: toolTypeLabel('drill') },
+                    { value: 'plasma', label: toolTypeLabel('plasma') },
                   ]}
                   onChange={(value) => setTypeFilter(value as ToolType | 'all')}
                 />
@@ -366,17 +369,17 @@ export function ToolLibraryDialog({
                         <span className="tl-row__name">{entry.name}</span>
                         <span className="tl-row__meta">
                           {toolTypeLabel(entry.type)}
-                          {' · ⌀'}
-                          {formatLength(entry.diameter, entry.units)}
+                          {entry.type === 'plasma' ? ' · ' : ' · ⌀'}
+                          {entry.type === 'plasma' ? camT('cam.tool.kerfWidth') + ' ' : ''}{formatLength(entry.diameter, entry.units)}
                           {' '}
                           {toolUnitsLabel(entry.units)}
-                          {entry.maxCutDepth > 0
+                          {entry.type !== 'plasma' && entry.maxCutDepth > 0
                             ? ` · ${camT('cam.tools.maxCutDepthPrefix')} ${formatLength(entry.maxCutDepth, entry.units)} ${toolUnitsLabel(entry.units)}`
                             : ''}
                           {' · '}
-                          {camTPlural(entry.flutes, 'cam.tools.fluteCount.one', 'cam.tools.fluteCount.other')}
-                          {' · '}
-                          {materialLabel(entry.material)}
+                          {entry.type === 'plasma' ? camT('cam.tool.cutFeed') + ' ' + formatLength(entry.defaultFeed, entry.units)
+                            : camTPlural(entry.flutes, 'cam.tools.fluteCount.one', 'cam.tools.fluteCount.other')}
+                          {entry.type !== 'plasma' ? <> · {materialLabel(entry.material)}</> : null}
                         </span>
                         <span className="tl-row__status">
                           {entry.alreadyImported ? camT('cam.tools.inProject') : camT('cam.tools.new')}

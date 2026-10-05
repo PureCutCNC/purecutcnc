@@ -486,6 +486,7 @@ function reportWarnings(tool: NormalizedTool | null, toolpath: ToolpathResult | 
 
 export function buildOperationBookletReport(input: OperationBookletInput): OperationBookletReport {
   const generatedAt = input.generatedAt ?? new Date()
+  const tool = input.tool?.type === 'plasma' ? null : input.tool
   return {
     projectName: input.project.meta.name,
     operationName: input.operation.name,
@@ -496,9 +497,9 @@ export function buildOperationBookletReport(input: OperationBookletInput): Opera
     stockSizeSummary: stockSizeSummary(input.project),
     targetSummary: targetSummary(input.project, input.operation.target),
     targetFeatureNames: targetFeatureNames(input.project, input.operation.target),
-    toolRows: toolRows(input.tool, input.project.meta.units),
-    settingRows: settingRows(input.operation, input.project, input.tool),
-    warnings: reportWarnings(input.tool, input.toolpath),
-    toolpathStats: statsRows(input.toolpath, input.operation, input.project.meta.units, input.tool),
+    toolRows: toolRows(tool, input.project.meta.units),
+    settingRows: settingRows(input.operation, input.project, tool),
+    warnings: reportWarnings(tool, input.toolpath),
+    toolpathStats: statsRows(input.toolpath, input.operation, input.project.meta.units, tool),
   }
 }

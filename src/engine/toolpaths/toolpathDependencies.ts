@@ -37,6 +37,7 @@
  * (`modelAssetsEquivalent` below).
  */
 
+import { findMillingOperationTool } from '../../toolPolicy'
 import type {
   Bounds2D,
   FeatureInstance,
@@ -384,9 +385,7 @@ export function operationFootprint(project: Project, operation: Operation): Oper
     ? growBoundsThroughTouchingSubtracts(project, targetUnion, targetFeatureIds)
     : targetUnion
 
-  const tool = operation.toolRef
-    ? project.tools.find((candidate) => candidate.id === operation.toolRef) ?? null
-    : null
+  const tool = findMillingOperationTool(project, operation)
   if (!tool) {
     return { bounds: null, targetFeatureIds, readsWholeModel: false }
   }

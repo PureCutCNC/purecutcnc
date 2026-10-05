@@ -115,7 +115,7 @@ function supportsPlanTool(operation: Operation, candidate: CamPlanTool): boolean
   if (operation.kind === 'rough_surface' || operation.kind === 'finish_surface') {
     return candidate.tool.type === 'flat_endmill' || candidate.tool.type === 'ball_endmill'
   }
-  return true
+  return candidate.tool.type !== 'plasma'
 }
 
 function surfaceToolConstraintReason(draft: CamPlanOperationDraft, candidate: CamPlanTool, units: Tool['units']): string | null {

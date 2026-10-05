@@ -155,3 +155,7 @@ Toolpath generators. Each file owns one strategy. `index.ts` re-exports everythi
 2. Add `export * from './myStrategy'` to `index.ts`.
 3. Add a sibling `myStrategy.test.ts` with unit tests (required by `AGENTS.md`).
 4. Update this INDEX.
+
+## Tool compatibility (issue #955)
+
+Generators and rest calculations resolve tools through `src/toolPolicy.ts` so milling refuses plasma consumables, including hand-edited references. `geometry.ts` normalizes plasma kerf to half-width radius and carries torch heights/delay while ignoring milling defaults. `src/plasmaTool.test.ts` exercises every generator, using the real cone fixture for model operations.

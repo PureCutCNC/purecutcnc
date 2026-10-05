@@ -113,6 +113,10 @@ export interface NormalizedTool {
   name: string
   sourceUnits: Units
   units: Units
+  pierceHeight?: number
+  cutHeight?: number
+  pierceDelay?: number
+  qtplasmacMaterialNumber?: number
   type: Tool['type']
   diameter: number
   radius: number

@@ -30,6 +30,7 @@ Application source. React + TypeScript + Zustand. Tauri-wrapped for desktop.
 - [test/](test/INDEX.md) — shared helpers for constructing strict current-format test projects
 
 ## Loose files
+- `toolPolicy.ts` — new plasma defaults, missing-field migration, operation/tool family guards and equality (issue #955); `plasmaTool.test.ts` covers defaults/library, persistence/units, creation/import/history, generation and cutter-only readers
 - `toolLibrary.ts` — built-in tool definitions and tool-library helpers
 - `toolLibrary.test.ts` — structural test over `public/tool-library.json`: every entry must survive parsing (the parser drops invalid ones silently), keys and names are unique, and every V-bit's `maxCutDepth` reaches its own cone height so it can cut a full-diameter countersink
 

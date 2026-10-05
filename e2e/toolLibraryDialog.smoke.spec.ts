@@ -15,6 +15,8 @@
  */
 
 import { test, expect } from './fixtures'
+import { getProject, seedProject, openRowContextMenu, rowByName, clickMenuItem } from './helpers'
+import { seedCamQuickOperationProject } from './camOperations.helpers'
 
 test.describe('Tool library import dialog smoke', () => {
   test('opens and closes by button, Escape and backdrop without mutation', async ({ app }) => {
@@ -488,4 +490,105 @@ test.describe('Tool library import dialog — tablet', () => {
     await expect(cancelBtn).toBeInViewport()
     await expect(importBtn).toBeInViewport()
   })
+})
+
+
+test('plasma tool editor persists consumable fields and hides milling controls (#955)', async ({ app }) => {
+  await app.page.getByRole('tab', { name: 'Tools' }).click()
+  await app.page.getByRole('button', { name: 'Add tool', exact: true }).click()
+  const panel = app.page.locator('.cam-tool-properties')
+  const field = (label: string) => panel.locator('.properties-field').filter({ has: app.page.getByText(label, { exact: true }) })
+  await field('Units').locator('.ui-select__trigger').click()
+  await field('Units').getByRole('option', { name: 'Millimeters', exact: true }).click()
+  await field('Type').locator('.ui-select__trigger').click()
+  await field('Type').getByRole('option', { name: 'Plasma', exact: true }).click()
+  for (const label of ['Kerf width', 'Cut feed', 'Pierce height', 'Cut height', 'Pierce delay (s)', 'QtPlasmaC material number (optional)']) {
+    await expect(panel.getByLabel(label, { exact: true })).toBeVisible()
+  }
+  for (const label of ['Diameter', 'Flutes', 'Material', 'Default RPM', 'Default feed', 'Plunge feed', 'Stepdown', 'Max cut depth', 'Stepover ratio']) {
+    await expect(panel.getByText(label, { exact: true })).toHaveCount(0)
+  }
+  for (const [label, value] of [['Kerf width', '1.4'], ['Cut feed', '5560'], ['Pierce height', '3.8'],
+    ['Cut height', '1.5'], ['Pierce delay (s)', '0.2']]) {
+    await expect(panel.getByLabel(label, { exact: true })).toHaveValue(value)
+  }
+  await expect(panel.getByLabel('QtPlasmaC material number (optional)')).toHaveValue('')
+  for (const [label, value] of [['Name', 'Plasma 45 A'], ['Kerf width', '1.2'], ['Cut feed', '2200'],
+    ['Pierce height', '3.8'], ['Cut height', '1.5'], ['Pierce delay (s)', '0.65']]) {
+    await panel.getByLabel(label, { exact: true }).fill(value)
+    await panel.getByLabel(label, { exact: true }).press('Tab')
+  }
+  await panel.getByLabel('QtPlasmaC material number (optional)').fill('12')
+  const project = await getProject(app.page)
+  const tools = project.tools as Array<Record<string, unknown>>
+  const plasma = tools.find((tool) => tool.name === 'Plasma 45 A')!
+  expect(plasma).toMatchObject({ type: 'plasma', diameter: 1.2, defaultFeed: 2200,
+    pierceHeight: 3.8, cutHeight: 1.5, pierceDelay: 0.65, qtplasmacMaterialNumber: 12 })
+  await field('Units').locator('.ui-select__trigger').click()
+  await field('Units').getByRole('option', { name: 'Inches', exact: true }).click()
+  const inchProject = await getProject(app.page)
+  const inch = (inchProject.tools as Array<Record<string, unknown>>).find((tool) => tool.id === plasma.id)!
+  expect(inch.cutHeight as number).toBeCloseTo(1.5 / 25.4, 9)
+  expect(inch.pierceDelay).toBe(0.65)
+  expect(inch.qtplasmacMaterialNumber).toBe(12)
+  await seedProject(app.page, JSON.stringify(inchProject))
+  await app.page.locator('.cam-tool-tree .tree-row--feature').filter({ hasText: 'Plasma 45 A' }).click()
+  await expect(panel.getByLabel('Pierce delay (s)')).toHaveValue('0.65')
+  await expect(panel.getByLabel('QtPlasmaC material number (optional)')).toHaveValue('12')
+  await panel.getByLabel('QtPlasmaC material number (optional)').fill('')
+  const cleared = await getProject(app.page)
+  expect((cleared.tools as Array<Record<string, unknown>>).find((tool) => tool.id === plasma.id)!.qtplasmacMaterialNumber).toBeUndefined()
+})
+
+test('milling operation selector excludes plasma consumables (#955)', async ({ app, ui }) => {
+  await seedCamQuickOperationProject(app.page)
+  const project = await getProject(app.page)
+  const tools = project.tools as Array<Record<string, unknown>>
+  tools.unshift({ ...tools[0], id: 'plasma-ui', name: 'Plasma excluded', type: 'plasma', diameter: 1.2,
+    defaultFeed: 2200, pierceHeight: 3.8, cutHeight: 1.5, pierceDelay: 0.65 })
+  await seedProject(app.page, JSON.stringify(project))
+  // The fixture has geometry; create an operation through its context menu.
+  const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
+  await ui.contextMenu.item(menu, 'Create operation').hover()
+  await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create outside route')
+  await expect(ui.operations.rows(app.page)).toHaveCount(1)
+  const selector = ui.cam.operationField(app.page, 'Tool')
+  await expect(selector).toBeVisible()
+  await selector.locator('.ui-select__trigger').click()
+  await expect(selector.getByRole('option', { name: 'Plasma excluded', exact: true })).toHaveCount(0)
+  await expect(selector.getByRole('option')).not.toHaveCount(1)
+})
+
+
+test('bundled plasma consumable filters and imports with starting settings (#955)', async ({ app }) => {
+  await app.page.getByRole('tab', { name: 'Tools' }).click()
+  await app.page.getByRole('button', { name: /Import from library/ }).click()
+  const dialog = app.page.getByRole('dialog')
+  await dialog.locator('.tl-filter-selects .ui-select__trigger').first().click()
+  await dialog.getByRole('option', { name: 'Plasma', exact: true }).click()
+  await dialog.locator('.tl-filter-selects .ui-select__trigger').nth(1).click()
+  await dialog.getByRole('option', { name: 'mm', exact: true }).click()
+  const row = dialog.locator('.tl-row').filter({ hasText: 'Powermax45 XP' })
+  await expect(row).toHaveCount(1)
+  await row.getByRole('checkbox').check()
+  await dialog.getByRole('button', { name: 'Import tool', exact: true }).click()
+  const project = await getProject(app.page)
+  expect((project.tools as Array<Record<string, unknown>>).find((tool) => tool.type === 'plasma')).toMatchObject({
+    diameter: 1.4, defaultFeed: 5560, pierceHeight: 3.8, cutHeight: 1.5, pierceDelay: 0.2,
+  })
+})
+
+test('milling creation with only plasma tools and no library remains unassigned (#955)', async ({ app, ui }) => {
+  await app.page.route('**/tool-library.json', (route) => route.fulfill({ json: { tools: [] } }))
+  await seedCamQuickOperationProject(app.page)
+  const project = await getProject(app.page)
+  const tools = project.tools as Array<Record<string, unknown>>
+  project.tools = [{ ...tools[0], id: 'only-plasma', type: 'plasma', defaultFeed: 5560,
+    diameter: 1.4, pierceHeight: 3.8, cutHeight: 1.5, pierceDelay: 0.2 }]
+  await seedProject(app.page, JSON.stringify(project))
+  const menu = await openRowContextMenu(app.page, rowByName(app.page, 'Machinable Add'))
+  await ui.contextMenu.item(menu, 'Create operation').hover()
+  await clickMenuItem(ui.contextMenu.submenu(app.page), 'Create outside route')
+  const current = await getProject(app.page)
+  expect((current.operations as Array<Record<string, unknown>>)[0].toolRef).toBeNull()
 })

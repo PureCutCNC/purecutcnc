@@ -28,6 +28,9 @@ export function cutterSurfaceZ(
   }
 
   switch (toolType) {
+    case 'plasma':
+      // Torch motion has no milling cutter surface; plasma preview is #961.
+      return null
     case 'flat_endmill':
       return toolCenterZ
     case 'ball_endmill': {

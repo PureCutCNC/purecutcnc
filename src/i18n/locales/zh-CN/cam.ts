@@ -297,6 +297,13 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
 
   // ── Tool property labels ──
   'cam.tool.name': '名称',
+  'cam.toolType.plasma': '等离子',
+  'cam.tool.kerfWidth': '割缝宽度',
+  'cam.tool.cutFeed': '切割进给',
+  'cam.tool.pierceHeight': '穿孔高度',
+  'cam.tool.cutHeight': '切割高度',
+  'cam.tool.pierceDelay': '穿孔延时（秒）',
+  'cam.tool.qtplasmacMaterialNumber': 'QtPlasmaC 材料编号（可选）',
   'cam.tool.type': '类型',
   'cam.tool.units': '单位',
   'cam.tool.unitsMm': '毫米',

@@ -296,6 +296,13 @@ export const camEn = {
 
   // ── Tool property labels ──
   'cam.tool.name': 'Name',
+  'cam.toolType.plasma': 'Plasma',
+  'cam.tool.kerfWidth': 'Kerf width',
+  'cam.tool.cutFeed': 'Cut feed',
+  'cam.tool.pierceHeight': 'Pierce height',
+  'cam.tool.cutHeight': 'Cut height',
+  'cam.tool.pierceDelay': 'Pierce delay (s)',
+  'cam.tool.qtplasmacMaterialNumber': 'QtPlasmaC material number (optional)',
   'cam.tool.type': 'Type',
   'cam.tool.units': 'Units',
   'cam.tool.unitsMm': 'Millimeters',

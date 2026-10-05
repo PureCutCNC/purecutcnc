@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { findMillingOperationTool } from '../../toolPolicy'
 import type { Clamp, Operation, Project } from '../../types/project'
 import type { ToolpathWarning } from './warningCodes'
 import type { ToolpathBounds, ToolpathMove, ToolpathPoint, ToolpathResult } from './types'
@@ -42,9 +43,7 @@ export interface ExpandedClampBounds {
 
 /** The tool radius `operation` is checked with; `0` when it has no usable tool. */
 export function clampCheckToolRadius(project: Project, operation?: Operation | null): number {
-  const toolRecord = operation?.toolRef
-    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
-    : null
+  const toolRecord = operation ? findMillingOperationTool(project, operation) : null
   return toolRecord ? Math.max(0, normalizeToolForProject(toolRecord, project).radius) : 0
 }
 

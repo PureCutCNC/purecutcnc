@@ -293,6 +293,13 @@ export const camDe: Record<keyof typeof camEn, string> = {
 
   // ── Tool property labels ──
   'cam.tool.name': 'Name',
+  'cam.toolType.plasma': 'Plasma',
+  'cam.tool.kerfWidth': 'Schnittfugenbreite',
+  'cam.tool.cutFeed': 'Schnittvorschub',
+  'cam.tool.pierceHeight': 'Einstechhöhe',
+  'cam.tool.cutHeight': 'Schneidhöhe',
+  'cam.tool.pierceDelay': 'Einstechverzögerung (s)',
+  'cam.tool.qtplasmacMaterialNumber': 'QtPlasmaC-Materialnummer (optional)',
   'cam.tool.type': 'Typ',
   'cam.tool.units': 'Einheiten',
   'cam.tool.unitsMm': 'Millimeter',

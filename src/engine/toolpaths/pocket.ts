@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { findOperationTool } from '../../toolPolicy'
 import ClipperLib from 'clipper-lib'
 import type { ToolpathWarning } from './warningCodes'
 import { appendUniqueWarning } from './warningDedup'
@@ -5161,9 +5162,7 @@ export function createSharedEngagementTelemetry(
   operation: Operation,
 ): EngagementTelemetryAccumulator | null {
   if (!(clearingControlApplies(operation.kind, 'engagementMode') && operation.pocketFeedReduction === 'engagement')) return null
-  const toolRecord = operation.toolRef
-    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
-    : null
+  const toolRecord = findOperationTool(project, operation)
   if (!toolRecord) return null
   const tool = normalizeToolForProject(toolRecord, project)
   if (!(tool.diameter > 0)) return null
@@ -5186,9 +5185,7 @@ function generatePocketToolpathSingle(
   const regionMask = operation.target.source === 'features'
     ? buildRegionMask(splitFeatureTargets(project, operation.target.featureIds).regionFeatures)
     : null
-  const toolRecord = operation.toolRef
-    ? project.tools.find((tool) => tool.id === operation.toolRef) ?? null
-    : null
+  const toolRecord = findOperationTool(project, operation)
 
   if (!toolRecord) {
     return {
