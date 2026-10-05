@@ -74,9 +74,11 @@ not guessed by the exporter.
 
 `machineKind` is optional: absent means `router`, and validation leaves the
 field absent on existing definitions. `plasma` holds `torchOnCommand`,
-`torchOffCommand`, `materialSelectCommand` (with `{materialNumber}`), optional
+`torchOffCommand`, `materialSelectCommand` (with the reserved `{materialNumber}`),
+`materialWaitCommand`, `materialFeedCommand`, optional
 `thcOnCommand` / `thcOffCommand`, and `pierceMode`. A plasma machine requires
-this block. Only `controller` piercing is supported in 0.6.0; validation
+this block, and the block requires plasma kind and G-code dialect. Command text
+is preserved verbatim; blank optional THC fields are absent. Only `controller` piercing is supported in 0.6.0; validation
 rejects the reserved `gcode` mode. Format remains 3.3, with no injected defaults
 or version-based migration.
 
@@ -86,7 +88,15 @@ height, delay and THC, following the
 These commands are metadata only: legacy spindle-start words are comments,
 spindle-off and tool-change commands are empty, and no torch, material or THC
 sequence is emitted by this change.
-Plasma sequencing belongs to `motionPipeline.ts` in #959.
+The bundled block describes the full material sequence: select → wait
+(`M66 P3 L3 Q1`) → controller feed (`F#<_hal[plasmac.cut-feed-rate]>`).
+#959 must consume those three fields in that order in `motionPipeline.ts`; no
+QtPlasmaC command hardcoding or further schema change is needed. `{materialNumber}`
+is reserved for that metadata, not a current header or operation substitution.
+The export dialog warns that no torch/material sequence is emitted; a subsequent
+tool change without executable commands raises its own warning. The preamble
+includes `G92.1`, `G97` and `M52 P1`; QtPlasmaC supplies its documented default
+path tolerance when `G64` is absent.
 
 The library shows machine kind for every row, including legacy routers and
 project-only snapshots. The focused editor exposes kind and the plasma block;

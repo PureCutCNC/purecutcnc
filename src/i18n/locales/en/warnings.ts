@@ -228,6 +228,8 @@ export const warningsEn = {
   'warnings.postWcsNullSelect': 'Machine definition requests {wcsCommand} in header but selectCommand is null.',
   'warnings.postToolChangesDisabled': 'Operation "{operation}" needs tool "{tool}", but tool changes are disabled: the program keeps cutting with the previous tool. Turn tool changes on, or export one operation at a time.',
   'warnings.postNoCoolantCommands': 'Coolant emission requested but machine definition has no coolant commands.',
+  'warnings.postPlasmaOutputPending': 'Plasma output is not yet implemented: this export emits no torch or material sequence. The torch will not fire.',
+  'warnings.postNoToolChangeCommands': 'Operation "{operation}" needs tool "{tool}", but this machine has no executable tool-change commands. The program keeps the previous tool; export one tool at a time.',
   'warnings.postCannedCycleUnsupported': 'Operation "{operation}": {drillType} canned cycle not supported by machine "{machine}"; emitting expanded moves.',
   'warnings.postArcNoCapability': 'Operation "{operation}" contains linear moves that could be fitted as arcs, but the selected machine does not support arc interpolation (G2/G3). Emitting linear moves instead.',
   'warnings.postArcFallbackLinear': 'Operation "{operation}" had {count} fitted arc run(s) that the selected controller would reject after number rounding. Those spans were emitted as linear moves instead.',

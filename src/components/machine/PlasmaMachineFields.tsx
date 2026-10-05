@@ -25,7 +25,7 @@ interface Props {
 /** Machine-kind and plasma metadata form; no command emission happens here. */
 export function PlasmaMachineFields({ form, onChange }: Props) {
   const { t } = useI18n()
-  function commandField(key: 'torchOnCommand' | 'torchOffCommand' | 'materialSelectCommand' | 'thcOnCommand' | 'thcOffCommand', label: string) {
+  function commandField(key: 'torchOnCommand' | 'torchOffCommand' | 'materialSelectCommand' | 'materialWaitCommand' | 'materialFeedCommand' | 'thcOnCommand' | 'thcOffCommand', label: string) {
     return (
       <label className="machine-editor-field">
         <span className="machine-editor-label">{label}</span>
@@ -50,6 +50,8 @@ export function PlasmaMachineFields({ form, onChange }: Props) {
           {commandField('torchOnCommand', t('dialogs.machineEditor.torchOn'))}
           {commandField('torchOffCommand', t('dialogs.machineEditor.torchOff'))}
           {commandField('materialSelectCommand', t('dialogs.machineEditor.materialSelect'))}
+          {commandField('materialWaitCommand', t('dialogs.machineEditor.materialWait'))}
+          {commandField('materialFeedCommand', t('dialogs.machineEditor.materialFeed'))}
           <p className="machine-editor-note">{t('dialogs.machineEditor.materialNumberHint')}</p>
           {commandField('thcOnCommand', t('dialogs.machineEditor.thcOn'))}
           {commandField('thcOffCommand', t('dialogs.machineEditor.thcOff'))}

@@ -36,7 +36,8 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   emitter: templates, modal tracking, canned drill cycles, line numbers.
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
-  feed and speed fallbacks, and their warnings), `planOperationMotion`
+  feed and speed fallbacks, pending plasma output and unexecutable tool-change
+  warnings), `planOperationMotion`
   (project → machine transform, arc fitting, the emitted-arc fallback and its
   warnings, the motion trace), `planDrillCycles` (drill cycles in machine
   coordinates, for a dialect with canned cycles), `splitRapid` (the safe-Z

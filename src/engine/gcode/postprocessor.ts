@@ -19,7 +19,7 @@ import type {
   PostProcessorResult,
   OperationMotionTrace,
 } from './types'
-import { resolveOutputDialect } from './types'
+import { resolveMachineKind, resolveOutputDialect } from './types'
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { formatGCodeNumber } from './utils'
 import type { ToolpathPoint } from '../toolpaths/types'
@@ -230,7 +230,18 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   }
 
   // 4. Operations
-  const sequence = planProgramSequence(input, { coolant: definition.coolant !== null })
+  const plasmaOutputPending = resolveMachineKind(definition) === 'plasma'
+  const sequence = planProgramSequence(input, {
+    coolant: definition.coolant !== null,
+    plasmaOutputPending,
+    toolChange: !plasmaOutputPending || [
+      ...definition.toolChange.commands,
+      ...(definition.toolChange.pauseAfterChange ? [definition.toolChange.pauseCommand] : []),
+    ].some((line) => {
+      const command = line.trim()
+      return command.length > 0 && !command.startsWith(';') && !(definition.program.commentPrefix && command.startsWith(definition.program.commentPrefix))
+    }),
+  })
   operations.forEach(({ operation, tool, toolpath }, opIndex) => {
     const step = sequence[opIndex]
     const { rpm } = step

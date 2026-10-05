@@ -54,6 +54,8 @@ export function MachineDefinitionEditorDialog({
   const textAreaRef = useRef<HTMLTextAreaElement>(null)
   // Preserve Advanced settings while a required command is temporarily blank.
   const lastValidDefinition = useRef(definition)
+  // An invalid raw edit must stay visible, never be replaced by the older form.
+  const invalidAdvancedEdit = useRef(false)
 
   // Escape key closes the dialog.
   useEffect(() => {
@@ -94,6 +96,7 @@ export function MachineDefinitionEditorDialog({
   function handleFormChange(patch: Partial<MachineFormData>) {
     const next = { ...form, ...patch }
     setForm(next)
+    if (invalidAdvancedEdit.current) return
     // Merge against the current valid JSON so advanced edits survive a
     // later focused edit, including changes to the optional plasma block.
     try {
@@ -109,12 +112,14 @@ export function MachineDefinitionEditorDialog({
   }
 
   function handleJsonChange(value: string) {
+    invalidAdvancedEdit.current = true
     setAdvancedJson(value)
     try {
       const parsed = JSON.parse(value)
       // Also sync the focused form from the JSON.
       const result = validateDef(parsed)
       if (result.ok) {
+        invalidAdvancedEdit.current = false
         lastValidDefinition.current = result.ok
         setForm(toFormData(result.ok))
       }
@@ -135,6 +140,7 @@ export function MachineDefinitionEditorDialog({
       const parsed = JSON.parse(advancedJson)
       const result = validateDef(parsed)
       if (result.ok) {
+        invalidAdvancedEdit.current = false
         lastValidDefinition.current = result.ok
         setForm(toFormData(result.ok))
       }
@@ -243,7 +249,7 @@ function renderVar(name: string, desc: string, context?: string) {
               ) : null}
             </div>
 
-            <PlasmaMachineFields form={form} onChange={handleFormChange} />
+            {usesGcodeFields ? <PlasmaMachineFields form={form} onChange={handleFormChange} /> : null}
 
             {usesGcodeFields ? (
               <>
@@ -349,6 +355,7 @@ function renderVar(name: string, desc: string, context?: string) {
                   {renderVar('feed', 'Cutting feed rate (formatted)', 'operation header')}
                   {renderVar('plungeFeed', 'Plunge feed rate (formatted)', 'operation header')}
                   {renderVar('rpm', 'Spindle RPM (formatted)', 'tool change, op header')}
+                  {form.machineKind === 'plasma' ? renderVar('materialNumber', td('dialogs.machineEditor.materialNumberReference'), 'plasma.materialSelectCommand') : null}
                 </div>
               </DisclosureSection>
             ) : null}

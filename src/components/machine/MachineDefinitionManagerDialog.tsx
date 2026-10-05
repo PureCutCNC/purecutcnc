@@ -221,7 +221,7 @@ export function MachineDefinitionManagerDialog({
         onClick={() => { setPreviewId(definition.id); setError(null) }}
       >
         <div className="machine-manager-item-name">{definition.name}</div>
-        <span className="machine-manager-badge">
+        <span className="machine-manager-badge machine-manager-badge--kind">
           {td(resolveMachineKind(definition) === 'plasma' ? 'dialogs.machineEditor.kindPlasma' : 'dialogs.machineEditor.kindRouter')}
         </span>
         {projectOnly ? (

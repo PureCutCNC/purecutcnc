@@ -228,6 +228,8 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.postWcsNullSelect': 'Maschinendefinition fordert {wcsCommand} in der Kopfzeile an, aber selectCommand ist null.',
   'warnings.postToolChangesDisabled': 'Operation „{operation}" benötigt das Werkzeug „{tool}", aber Werkzeugwechsel sind deaktiviert: Das Programm schneidet weiter mit dem vorherigen Werkzeug. Aktivieren Sie die Werkzeugwechsel, oder exportieren Sie jeweils nur eine Operation.',
   'warnings.postNoCoolantCommands': 'Kühlmittelausgabe angefordert, aber die Maschinendefinition hat keine Kühlmittelbefehle.',
+  'warnings.postPlasmaOutputPending': 'Die Plasmaausgabe ist noch nicht implementiert: Dieser Export enthält keine Brenner- oder Materialsequenz. Der Brenner zündet nicht.',
+  'warnings.postNoToolChangeCommands': 'Operation „{operation}“ benötigt Werkzeug „{tool}“, aber diese Maschine hat keine ausführbaren Werkzeugwechselbefehle. Das vorherige Werkzeug bleibt aktiv; exportieren Sie jeweils nur ein Werkzeug.',
   'warnings.postCannedCycleUnsupported': 'Operation „{operation}": {drillType}-Festzyklus wird von Maschine „{machine}" nicht unterstützt; erweiterte Bewegungen werden ausgegeben.',
   'warnings.postArcNoCapability': 'Operation „{operation}" enthält lineare Bewegungen, die als Bögen ausgegeben werden könnten, aber die ausgewählte Maschine unterstützt keine Kreisinterpolation (G2/G3). Stattdessen werden lineare Bewegungen ausgegeben.',
   'warnings.postArcFallbackLinear': 'Bei Operation „{operation}" hätte die ausgewählte Steuerung {count} angepasste Bogenabschnitt(e) nach der Zahlenrundung abgelehnt. Diese Abschnitte wurden stattdessen als lineare Bewegungen ausgegeben.',

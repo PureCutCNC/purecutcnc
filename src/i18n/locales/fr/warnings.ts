@@ -208,6 +208,8 @@ export const warningsFr: Record<keyof typeof warningsEn, string> = {
   'warnings.postWcsNullSelect': 'La définition de machine demande {wcsCommand} dans l’en-tête, mais selectCommand est nul.',
   'warnings.postToolChangesDisabled': 'L’opération « {operation} » nécessite l’outil « {tool} », mais les changements d’outil sont désactivés : le programme continue de couper avec l’outil précédent. Activez les changements d’outil, ou exportez une opération à la fois.',
   'warnings.postNoCoolantCommands': 'L’émission de liquide de refroidissement est demandée, mais la définition de machine ne contient aucune commande correspondante.',
+  'warnings.postPlasmaOutputPending': 'La sortie plasma n’est pas encore implémentée : cet export ne contient aucune séquence de torche ou de matériau. La torche ne s’allumera pas.',
+  'warnings.postNoToolChangeCommands': 'L’opération « {operation} » nécessite l’outil « {tool} », mais cette machine n’a aucune commande de changement d’outil exécutable. Le programme conserve l’outil précédent ; exportez un seul outil à la fois.',
   'warnings.postCannedCycleUnsupported': 'Opération « {operation} » : cycle fixe {drillType} non pris en charge par la machine « {machine} » ; émission des mouvements développés.',
   'warnings.postArcNoCapability': "L'opération « {operation} » contient des mouvements linéaires qui pourraient être ajustés en arcs, mais la machine sélectionnée ne prend pas en charge l'interpolation circulaire (G2/G3). Émission de mouvements linéaires à la place.",
   'warnings.postArcFallbackLinear': "L'opération « {operation} » comportait {count} section(s) d'arc ajustée(s) que le contrôleur sélectionné aurait rejetée(s) après l'arrondi des nombres. Ces sections ont été émises sous forme de mouvements linéaires.",

@@ -300,6 +300,8 @@ export type ToolpathWarningCode =
   | 'postWcsNullSelect'
   | 'postToolChangesDisabled'
   | 'postNoCoolantCommands'
+  | 'postPlasmaOutputPending'
+  | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
   | 'postArcFallbackLinear'

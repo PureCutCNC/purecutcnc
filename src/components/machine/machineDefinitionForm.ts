@@ -27,6 +27,8 @@ export interface MachineFormData {
   torchOnCommand: string
   torchOffCommand: string
   materialSelectCommand: string
+  materialWaitCommand: string
+  materialFeedCommand: string
   thcOnCommand: string
   thcOffCommand: string
   pierceMode: 'controller' | 'gcode'
@@ -62,6 +64,8 @@ export function toFormData(def: MachineDefinition): MachineFormData {
     torchOnCommand: def.plasma?.torchOnCommand ?? '',
     torchOffCommand: def.plasma?.torchOffCommand ?? '',
     materialSelectCommand: def.plasma?.materialSelectCommand ?? '',
+    materialWaitCommand: def.plasma?.materialWaitCommand ?? '',
+    materialFeedCommand: def.plasma?.materialFeedCommand ?? '',
     thcOnCommand: def.plasma?.thcOnCommand ?? '',
     thcOffCommand: def.plasma?.thcOffCommand ?? '',
     pierceMode: def.plasma?.pierceMode ?? 'controller',
@@ -101,8 +105,10 @@ export function mergeFormData(
             torchOnCommand: form.torchOnCommand,
             torchOffCommand: form.torchOffCommand,
             materialSelectCommand: form.materialSelectCommand,
-            ...(form.thcOnCommand ? { thcOnCommand: form.thcOnCommand } : {}),
-            ...(form.thcOffCommand ? { thcOffCommand: form.thcOffCommand } : {}),
+            materialWaitCommand: form.materialWaitCommand,
+            materialFeedCommand: form.materialFeedCommand,
+            ...(form.thcOnCommand.trim() ? { thcOnCommand: form.thcOnCommand } : {}),
+            ...(form.thcOffCommand.trim() ? { thcOffCommand: form.thcOffCommand } : {}),
             pierceMode: form.pierceMode,
           },
         }

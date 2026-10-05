@@ -165,3 +165,18 @@ test.describe('Export G-code operation checklist smoke', () => {
     await expect(preview).not.toContainText(/^(G0|G1|G21|G20|M30)\b/m)
   })
 })
+
+
+test('QtPlasmaC export discloses missing torch output and unexecuted tool changes', async ({ app, ui }) => {
+  await seedGcodeExportProject(app.page, { machineId: 'qtplasmac', routeBOnSecondTool: true })
+  await ui.operations.headerExportButton(app.page).click()
+  const warnings = ui.exportDialog.warnings(app.page)
+  await expect(warnings.filter({ hasText: 'The torch will not fire' })).toBeVisible()
+  await expect(warnings.filter({ hasText: 'no executable tool-change commands' })).toBeVisible()
+  await expect(warnings.filter({ hasText: 'Route B' })).toBeVisible()
+  await expect(ui.exportPreview.body(app.page)).toContainText('G92.1 G94 G97')
+  await expect(ui.exportPreview.body(app.page)).toContainText('M52 P1')
+  await ui.exportDialog.operationCheckbox(app.page, 'Route B').uncheck()
+  await expect(warnings.filter({ hasText: 'no executable tool-change commands' })).toHaveCount(0)
+  await expect(warnings.filter({ hasText: 'The torch will not fire' })).toBeVisible()
+})

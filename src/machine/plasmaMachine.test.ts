@@ -32,6 +32,7 @@ assert.equal(resolveMachineKind(plasma), 'plasma')
 assert.deepEqual(plasma.plasma, {
   torchOnCommand: 'M3 $0 S1', torchOffCommand: 'M5 $0',
   materialSelectCommand: 'M190 P{materialNumber}',
+  materialWaitCommand: 'M66 P3 L3 Q1', materialFeedCommand: 'F#<_hal[plasmac.cut-feed-rate]>',
   thcOnCommand: 'M63 P2', thcOffCommand: 'M62 P2', pierceMode: 'controller',
 })
 const { plasma: block, ...missingBlock } = plasma
@@ -42,9 +43,10 @@ assert.equal(validateCustomMachine({ ...missingBlock, id: 'invalid-plasma' }).ok
 assert.equal(parseMachineImport(JSON.stringify(missingBlock), []).ok, undefined)
 for (const patch of [
   { plasma: null }, { machineKind: 'laser' },
+  { machineKind: undefined }, { machineKind: 'router' }, { outputDialect: 'opensbp' },
   { plasma: { ...block, pierceMode: 'gcode' } },
   { plasma: { ...block, pierceMode: 'unknown' } },
-  ...['torchOnCommand', 'torchOffCommand', 'materialSelectCommand'].flatMap((key) => [
+  ...['torchOnCommand', 'torchOffCommand', 'materialSelectCommand', 'materialWaitCommand', 'materialFeedCommand'].flatMap((key) => [
     { plasma: { ...block, [key]: undefined } }, { plasma: { ...block, [key]: '  ' } },
   ]),
   { plasma: { ...block, thcOnCommand: 123 } },
@@ -53,6 +55,19 @@ for (const patch of [
 }
 const { thcOnCommand: _on, thcOffCommand: _off, ...requiredBlock } = block
 assert.equal(MachineDefinitionSchema.safeParse({ ...plasma, plasma: requiredBlock }).success, true, 'THC overrides are optional')
+
+// Invalid raw/imported combinations must fail at every persisted boundary.
+for (const invalid of [{ ...plasma, machineKind: undefined }, { ...plasma, machineKind: 'router' }, { ...plasma, outputDialect: 'opensbp' }]) {
+  assert.equal(validateDef(invalid).ok, undefined)
+  assert.equal(validateCustomMachine(invalid).ok, undefined)
+  assert.equal(parseMachineImport(JSON.stringify(invalid), []).ok, undefined)
+  assert.deepEqual(sanitizeStoredCustomMachines({ schemaVersion: CUSTOM_MACHINES_SCHEMA_VERSION, machines: [{ ...invalid, id: 'orphan' }] }), [])
+}
+const padded = validateMachineDefinition({ ...plasma, plasma: { ...block, torchOnCommand: '  M3 $0 S1  ', materialWaitCommand: '  M66 P3 L3 Q2  ', thcOnCommand: '  ', thcOffCommand: '\t' } })
+assert.equal(padded.plasma?.torchOnCommand, '  M3 $0 S1  ', 'validation does not rewrite command text')
+assert.equal(padded.plasma?.materialWaitCommand, '  M66 P3 L3 Q2  ')
+assert.ok(!('thcOnCommand' in padded.plasma!))
+assert.ok(!('thcOffCommand' in padded.plasma!))
 
 const duplicate = duplicateMachineAsCustom(plasma, [])
 assert.equal(duplicate.machineKind, 'plasma')
@@ -84,8 +99,10 @@ const form = toFormData(duplicate)
 assert.equal(form.machineKind, 'plasma')
 assert.equal(form.pierceMode, 'controller')
 assert.deepEqual(mergeFormData(duplicate, form), duplicate)
-const changed = mergeFormData(duplicate, { ...form, torchOffCommand: 'M5 $-1', thcOnCommand: '', thcOffCommand: '', materialSelectCommand: 'M190 P{materialNumber} (material)' })
+const changed = mergeFormData(duplicate, { ...form, torchOffCommand: 'M5 $-1', thcOnCommand: '  ', thcOffCommand: '\t', materialWaitCommand: 'M66 P3 L3 Q2', materialFeedCommand: 'F#<_hal[plasmac.cut-feed-rate]> (loaded)', materialSelectCommand: 'M190 P{materialNumber} (material)' })
 assert.equal(changed.plasma?.torchOffCommand, 'M5 $-1')
+assert.equal(changed.plasma?.materialWaitCommand, 'M66 P3 L3 Q2')
+assert.equal(changed.plasma?.materialFeedCommand, 'F#<_hal[plasmac.cut-feed-rate]> (loaded)')
 assert.equal(changed.plasma?.materialSelectCommand, 'M190 P{materialNumber} (material)')
 assert.ok(!('thcOnCommand' in changed.plasma!))
 assert.ok(!('thcOffCommand' in changed.plasma!))
@@ -100,7 +117,11 @@ assert.equal(validateDef(newPlasma).ok?.machineKind, 'plasma', 'focused form can
 // through a legacy spindle word or through new template substitution.
 const fixture = CORPUS.find((entry) => entry.name === 'sbp-mm-tool-change')
 assert.ok(fixture)
-const output = renderCase({ ...fixture, machineId: 'qtplasmac' }).gcode
+const rendered = renderCase({ ...fixture, machineId: 'qtplasmac' })
+const output = rendered.gcode
+assert.equal(rendered.warnings.filter((warning) => warning.includes('postPlasmaOutputPending')).length, 1, 'all plasma exports disclose the absent torch path once')
+assert.equal(rendered.warnings.filter((warning) => warning.includes('postNoToolChangeCommands')).length, 1, 'an unexecuted real tool change is disclosed')
+for (const word of ['G92.1', 'G97', 'M52 P1']) assert.ok(output.includes(word), 'QtPlasmaC preamble includes ' + word)
 assert.ok(/G[01] /.test(output), 'fixture actually exports motion')
 assert.ok(!/\bM(?:3|4|5|190|62|63|64|65|66)\b/.test(output), 'no torch/material/THC sequence is emitted by metadata')
 console.log('plasmaMachine.test.ts: schema, library, storage, snapshot, form and no-torch assertions passed')

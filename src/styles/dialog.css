@@ -2201,6 +2201,7 @@
   color: var(--accent);
 }
 
+.machine-manager-badge--kind,
 .machine-manager-badge--custom {
   background: var(--surface-hover);
   color: var(--text-dim);

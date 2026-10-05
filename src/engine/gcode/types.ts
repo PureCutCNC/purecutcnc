@@ -64,18 +64,30 @@ export type OutputDialect = (typeof OUTPUT_DIALECTS)[number]
 export const MACHINE_KINDS = ['router', 'plasma'] as const
 export type MachineKind = (typeof MACHINE_KINDS)[number]
 
+const PlasmaCommandSchema = z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.')
+const OptionalPlasmaCommandSchema = z.preprocess(
+  (value) => typeof value === 'string' && !value.trim() ? undefined : value,
+  PlasmaCommandSchema.optional(),
+)
+
 const PlasmaDefinitionSchema = z.object({
-  torchOnCommand: z.string().trim().min(1),
-  torchOffCommand: z.string().trim().min(1),
-  materialSelectCommand: z.string().trim().min(1),
-  thcOnCommand: z.string().trim().min(1).optional(),
-  thcOffCommand: z.string().trim().min(1).optional(),
+  torchOnCommand: PlasmaCommandSchema,
+  torchOffCommand: PlasmaCommandSchema,
+  materialSelectCommand: PlasmaCommandSchema,
+  materialWaitCommand: PlasmaCommandSchema,
+  materialFeedCommand: PlasmaCommandSchema,
+  thcOnCommand: OptionalPlasmaCommandSchema,
+  thcOffCommand: OptionalPlasmaCommandSchema,
   // Reserve the mode name, but refuse unsupported controller-independent
   // piercing rather than silently treating it as controller-owned in 0.6.0.
   pierceMode: z.enum(['controller', 'gcode']).superRefine((mode, context) => {
     if (mode === 'gcode') context.addIssue({ code: 'custom', message: 'G-code-owned piercing is not supported in 0.6.0.' })
   }),
-})
+}).transform(({ thcOnCommand, thcOffCommand, ...block }) => ({
+  ...block,
+  ...(thcOnCommand === undefined ? {} : { thcOnCommand }),
+  ...(thcOffCommand === undefined ? {} : { thcOffCommand }),
+}))
 
 export const MachineDefinitionSchema = z.object({
   id: z.string(),
@@ -159,6 +171,12 @@ export const MachineDefinitionSchema = z.object({
     programEndCommand: z.string(),
   }),
 }).superRefine((definition, context) => {
+  if (definition.plasma && definition.machineKind !== 'plasma') {
+    context.addIssue({ code: 'custom', path: ['machineKind'], message: 'A plasma block requires machineKind: plasma.' })
+  }
+  if (definition.machineKind === 'plasma' && definition.outputDialect === 'opensbp') {
+    context.addIssue({ code: 'custom', path: ['machineKind'], message: 'Plasma machines require the G-code output dialect.' })
+  }
   if (definition.machineKind === 'plasma' && !definition.plasma) {
     context.addIssue({ code: 'custom', path: ['plasma'], message: 'A plasma machine requires a plasma block.' })
   }
