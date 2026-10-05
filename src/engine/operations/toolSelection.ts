@@ -69,6 +69,7 @@ function hasAutoToolCeiling(kind: OperationKind): boolean {
       return true
     // Drills are sized to the hole, a V-bit's reach comes from its angle rather
     // than its diameter, and facing the stock wants a wide cutter.
+    case 'plasma_profile':
     case 'drilling':
     case 'v_carve':
     case 'v_carve_medial':
@@ -83,6 +84,8 @@ function hasAutoToolCeiling(kind: OperationKind): boolean {
  */
 export function preferredToolTypes(kind: OperationKind): ToolType[] {
   switch (kind) {
+    case 'plasma_profile':
+      return ['plasma']
     case 'v_carve':
     case 'v_carve_medial':
       return ['v_bit']

@@ -23,6 +23,12 @@ import type { warningsEn } from '../en/warnings'
  * passthrough and stays `{text}`.
  */
 export const warningsDe: Record<keyof typeof warningsEn, string> = {
+  'warnings.plasmaInvalid': '{name}: ungültige Plasma-Parameter oder Ziele. Kein Werkzeugweg erzeugt.',
+  'warnings.plasmaOpenPath': '{name}: offene Plasma-Pfade werden noch nicht unterstützt. Kein Werkzeugweg erzeugt.',
+  'warnings.plasmaNoLead': '{name}: kein sicherer Einstich und Einlauf im Abfall möglich, oder ein Nachbarteil/eine Schnittfuge blockiert die Kontur. Kontur übersprungen.',
+  'warnings.plasmaSmallHole': '{name}: Lochdurchmesser kleiner als 1,5 × Materialdicke; das Loch kann konisch und unrund werden. Die Steuerung übernimmt die Lochverlangsamung.',
+  'warnings.plasmaCentrePierce': '{name}: Loch zu klein für den gewünschten Einlauf; Einstich in der Mitte und gerader Einlauf zur Kontur.',
+  'warnings.plasmaLeadOutOmitted': '{name}: der gewünschte Auslauf würde das Teil oder ein Nachbarteil beschädigen; Auslauf weggelassen.',
   'warnings.finishSlopeInvalid': 'Neigungsgrenzen müssen endliche Winkel von 0 bis 90° sein; das Minimum darf das Maximum nicht überschreiten. Kein Werkzeugweg erzeugt.',
   'warnings.finishScallopHeightOutOfRange': 'Die Riefenhöhe muss größer als null und kleiner als der Radius des Kugelfräsers sein. Kein Werkzeugweg erzeugt.',
   'warnings.finishSlopeEmpty': 'Keine erreichbare Oberfläche entspricht dem gewählten Neigungsbereich.',

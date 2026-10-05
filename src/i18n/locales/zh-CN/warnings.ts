@@ -22,6 +22,12 @@ import type { warningsEn } from '../en/warnings'
  * passthrough and stays untranslated by design.
  */
 export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
+  'warnings.plasmaInvalid': '{name}：等离子参数或目标无效。未生成刀路。',
+  'warnings.plasmaOpenPath': '{name}：暂不支持开放的等离子路径。未生成刀路。',
+  'warnings.plasmaNoLead': '{name}：无法在废料侧安排安全的穿孔与引入，或相邻零件/割缝阻挡轮廓。已跳过此轮廓。',
+  'warnings.plasmaSmallHole': '{name}：孔径小于板厚的 1.5 倍；等离子切割可能产生锥度和失圆。孔减速由控制器负责。',
+  'warnings.plasmaCentrePierce': '{name}：孔太小，无法容纳指定引入；在孔中心穿孔并直线引入轮廓。',
+  'warnings.plasmaLeadOutOmitted': '{name}：指定引出会切伤零件或相邻零件；已省略引出。',
   'warnings.finishSlopeInvalid': '曲面坡度限值必须为 0 至 90° 的有限角度，且最小值不得大于最大值。未生成刀具路径。',
   'warnings.finishScallopHeightOutOfRange': '残脊高度必须大于零且小于球头铣刀半径。未生成刀具路径。',
   'warnings.finishSlopeEmpty': '没有可达曲面符合所选坡度范围。',

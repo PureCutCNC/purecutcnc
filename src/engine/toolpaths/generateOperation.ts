@@ -37,6 +37,8 @@
  * shared sequence — focused engine suites own the behaviour of each one.
  */
 
+import { generatePlasmaProfileToolpath } from './plasma'
+
 import { applyClampWarnings } from './clamps'
 import { applyEdgeRouteTabs, applyTabsToEdgeRoute, applyTabWarnings } from './tabs'
 import { optimizeLinearMoves } from './linearMoveOptimization'
@@ -104,7 +106,9 @@ export function computeOperationToolpath(
 
   let result: ToolpathResult | null = null
 
-  if (operation.kind === 'pocket') {
+  if (operation.kind === 'plasma_profile') {
+    result = applyClampWarnings(project, optimizeAndCapture(generatePlasmaProfileToolpath(project, operation)), operation)
+  } else if (operation.kind === 'pocket') {
     result = applyClampWarnings(project, optimizeAndCapture(applyTabWarnings(project, operation, generatePocketToolpath(project, operation))), operation)
   } else if (operation.kind === 'v_carve') {
     result = applyClampWarnings(project, optimizeAndCapture(generateVCarveToolpath(project, operation)), operation)

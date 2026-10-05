@@ -45,3 +45,5 @@ React UI. Components are organized by feature area. Plain CSS for styling — no
 - Heavy compute (CSG, toolpath gen, sim) is debounced. See `Viewport3D` (150–300ms typical).
 - Mutations go through `projectStore` actions only — never mutate Zustand state directly from components.
 - For touch/tablet styling see `src/styles/tablet.css` and [`planning/TABLET_UX_DESIGN.md`](../../planning/TABLET_UX_DESIGN.md).
+
+- `cam/PlasmaOperationFields.tsx` — plasma-only kerf side, swirl reversal, line/arc leads and optional contour-start XY; milling controls are excluded by the field policy.

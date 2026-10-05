@@ -28,6 +28,7 @@ function assert(condition: boolean, message: string): void {
 // is checked against the catalog, and the exhaustiveness helper below
 // ensures the list IS the union.
 const ALL_CODES = [
+  'plasmaInvalid', 'plasmaOpenPath', 'plasmaNoLead', 'plasmaSmallHole', 'plasmaCentrePierce', 'plasmaLeadOutOmitted',
   'finishScallopHeightOutOfRange', 'finishSlopeInvalid', 'finishSlopeEmpty', 'finishSlopeTooComplex',
   'targetsMissingOrWrongRole', 'closedProfilesOnly', 'bandEmptySubject', 'bandNoRegions', 'resolverNoBands',
   'regionExtendedBySubtractDepth',

@@ -80,6 +80,7 @@ function doesNotApply(reason: string): ControlSupport {
 // (which is why #616 blocks every other sub-issue).
 
 export const CLEARING_CONTROL_SUPPORT: Readonly<Record<OperationKind, ClearingKindSupport>> = {
+  plasma_profile: { clears: false, reason: 'Plasma cuts a closed contour in one pass; it does not clear material.' },
   pocket: {
     clears: true,
     controls: {

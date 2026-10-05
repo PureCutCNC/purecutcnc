@@ -64,6 +64,7 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 const ALL_KINDS: OperationKind[] = [
+  'plasma_profile',
   'pocket',
   'v_carve',
   'v_carve_medial',

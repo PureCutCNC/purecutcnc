@@ -215,7 +215,7 @@ export function OperationAddMenu({
         {/* Expanded card */}
         {isExpanded && description && (
           <div className="cam-operation-details" ref={expandedRef}>
-            <div className="cam-operation-details__image-container">
+            {description.exampleImageName ? <div className="cam-operation-details__image-container">
               {imageErrors.has(button.kind) ? (
                 <div className="cam-operation-details__image-fallback">
                   {camT('cam.addMenu.missingImage')}<br />
@@ -229,7 +229,7 @@ export function OperationAddMenu({
                   onError={() => setImageErrors((prev) => new Set(prev).add(button.kind))}
                 />
               )}
-            </div>
+            </div> : null}
 
             <p className="cam-operation-details__description">
               {camT(opDescKey(button.kind, 'fullDescription'))}

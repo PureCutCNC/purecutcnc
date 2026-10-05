@@ -608,6 +608,7 @@ export interface Tool {
 // ============================================================
 
 export type OperationKind =
+  | 'plasma_profile'
   | 'pocket'
   | 'v_carve'
   | 'v_carve_medial'
@@ -697,6 +698,15 @@ export interface Operation {
    */
   setupId?: string
   kind: OperationKind
+  /** Plasma distances are in project units; absent values derive from stock/tool. */
+  plasmaSide?: 'auto' | 'outside' | 'inside'
+  plasmaReverseDirection?: boolean
+  plasmaLeadIn?: 'line' | 'arc'
+  plasmaLeadInLength?: number
+  plasmaLeadOut?: 'line' | 'arc'
+  plasmaLeadOutLength?: number
+  /** Optional desired contour start, in resolved project XY; projected onto the contour. */
+  plasmaStartPoint?: Point
   pass: OperationPass
   enabled: boolean
   showToolpath: boolean

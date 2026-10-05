@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { PlasmaOperationFields } from './PlasmaOperationFields'
+
 import { SurfaceSlopeFields } from './SurfaceSlopeFields'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
@@ -348,6 +350,8 @@ function resolvedWaterlineAdaptiveSpacing(
 
 function operationAddButtonLabel(kind: OperationKind): string {
   switch (kind) {
+    case 'plasma_profile':
+      return camT('cam.plasma.title')
     case 'pocket':
       return camT('cam.opButton.pocket')
     case 'v_carve':
@@ -374,7 +378,7 @@ function operationAddButtonLabel(kind: OperationKind): string {
 }
 
 function operationSupportsPassSelection(kind: OperationKind): boolean {
-  return kind !== 'follow_line'
+  return kind !== 'plasma_profile' && kind !== 'follow_line'
     && kind !== 'v_carve'
     && kind !== 'v_carve_medial'
     && kind !== 'drilling'
@@ -621,6 +625,7 @@ export function CAMPanel({
         }
       }
       return [
+        button('plasma_profile'),
         button('pocket'),
         button('v_carve'),
         button('v_carve_medial'),
@@ -1926,6 +1931,7 @@ export function CAMPanel({
             ) : null}
           </div>
         ) : null}
+        {operation.kind === 'plasma_profile' ? <PlasmaOperationFields operation={operation} project={project} onChange={(patch) => updateOperation(operation.id, patch)} /> : null}
         <div className="properties-group">
           {OPERATION_FIELD_GROUPS.map((group) => {
             const fields = operationFieldsForGroup(group.id, operation, selectedOperationTool)

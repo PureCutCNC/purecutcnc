@@ -26,6 +26,7 @@ import { SurfaceSlopeFields } from './SurfaceSlopeFields'
 
 function operationLabel(kind: OperationKind): string {
   switch (kind) {
+    case 'plasma_profile': return camT('cam.plasma.title')
     case 'pocket': return camT('cam.opLabel.pocket')
     case 'v_carve': return camT('cam.opLabel.vCarve')
     case 'v_carve_medial': return camT('cam.opLabel.vCarveMedial')

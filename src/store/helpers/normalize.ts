@@ -248,6 +248,12 @@ export function normalizeOperation(rawOperation: Operation, project: Project, in
   const normalized = {
     ...defaults,
     ...withCompatibleOperationTool(project, operation),
+    ...(operation.kind === 'plasma_profile' ? {
+      plasmaSide: operation.plasmaSide ?? 'auto' as const,
+      plasmaReverseDirection: operation.plasmaReverseDirection ?? false,
+      plasmaLeadIn: operation.plasmaLeadIn ?? 'arc' as const,
+      plasmaLeadOut: operation.plasmaLeadOut ?? 'line' as const,
+    } : {}),
     description: operation.description ?? '',
     roundOutsideCorners: operation.roundOutsideCorners ?? true,
     roundLinkCorners: operation.roundLinkCorners ?? true,
@@ -280,6 +286,9 @@ export function normalizeOperation(rawOperation: Operation, project: Project, in
       ? ('arc' as const)
       : undefined,
   }
+
+  // Never silently retarget a plasma cut when saved geometry becomes open or missing.
+  if (normalized.kind === 'plasma_profile') return normalized
 
   if (!isOperationTargetValid(project, normalized.kind, normalized.target)) {
     return {

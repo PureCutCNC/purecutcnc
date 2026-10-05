@@ -34,6 +34,7 @@ interface OperationDescription {
  * which holds them in step.
  */
 export const OPERATION_DESCRIPTION_SEGMENT: Record<OperationKind, string> = {
+  plasma_profile: 'plasmaProfile',
   pocket: 'pocket',
   v_carve: 'vCarve',
   v_carve_medial: 'vCarveMedial',
@@ -48,6 +49,7 @@ export const OPERATION_DESCRIPTION_SEGMENT: Record<OperationKind, string> = {
 }
 
 export const operationDescriptions: Record<OperationKind, OperationDescription> = {
+  plasma_profile: { title: 'Plasma through-cut', shortSummary: 'Cut a closed contour through the sheet', fullDescription: 'Experimental plasma profile with scrap-side kerf and leads.', keyPoints: [], exampleImageName: '' },
   pocket: {
     title: 'Pocket',
     shortSummary: 'Clear material from inside a closed profile to a fixed depth',

@@ -74,6 +74,8 @@ export function toolMatchesTemplate(existingTool: Tool, candidate: Omit<Tool, 'i
 
 export function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
+    case 'plasma_profile':
+      return 'Plasma through-cut'
     case 'pocket':
       return 'Pocket'
     case 'v_carve':
@@ -108,6 +110,16 @@ export function isOperationTargetValid(authoritativeProject: Project, kind: Oper
     return feature !== undefined && isConstruction(feature)
   })) {
     return false
+  }
+
+  if (kind === 'plasma_profile') {
+    return target.source === 'features' && target.featureIds.length > 0
+      && target.featureIds.every((id) => {
+        const feature = project.features.find((entry) => entry.id === id)
+        return feature !== undefined && feature.kind !== 'stl'
+          && ['add', 'subtract', 'line'].includes(feature.operation)
+          && featureHasClosedGeometry(feature)
+      })
   }
 
   if (kind === 'drilling') {
@@ -258,7 +270,7 @@ export function isOperationTargetValid(authoritativeProject: Project, kind: Oper
 }
 
 export function defaultOperationName(kind: OperationKind, pass: OperationPass, operations: Operation[]): string {
-  const baseName = kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_medial' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface'
+  const baseName = kind === 'plasma_profile' || kind === 'follow_line' || kind === 'v_carve' || kind === 'v_carve_medial' || kind === 'drilling' || kind === 'rough_surface' || kind === 'finish_surface'
     || kind === 'finish_surface_cleanup'
     ? operationKindLabel(kind)
     : `${operationKindLabel(kind)} ${pass === 'rough' ? 'Rough' : 'Finish'}`
@@ -285,7 +297,7 @@ export function defaultOperationForTarget(
   index: number,
   resolved?: { tool: Tool; toolRef: string | null },
 ): Operation {
-  const firstTool = project.tools.find((candidate) => candidate.type !== 'plasma')
+  const firstTool = project.tools.find((candidate) => kind === 'plasma_profile' ? candidate.type === 'plasma' : candidate.type !== 'plasma')
   const tool = resolved?.tool ?? firstTool ?? defaultTool(project.meta.units, 1)
   const toolRef = resolved ? resolved.toolRef : (firstTool?.id ?? null)
 
@@ -311,11 +323,12 @@ export function defaultOperationForTarget(
       ? convertLength(1, 'mm', project.meta.units)
       : tool.defaultStepdown,
     stepover: tool.defaultStepover,
-    feed: tool.defaultFeed,
+    feed: kind === 'plasma_profile' ? convertLength(tool.defaultFeed, tool.units, project.meta.units) : tool.defaultFeed,
     plungeFeed: tool.defaultPlungeFeed,
     rpm: tool.defaultRpm,
     pocketPattern: kind === 'finish_surface' || kind === 'finish_surface_cleanup' ? 'parallel' : 'offset',
     pocketAngle: 0,
+    ...(kind === 'plasma_profile' ? { plasmaSide: 'auto' as const, plasmaReverseDirection: false, plasmaLeadIn: 'arc' as const, plasmaLeadOut: 'line' as const } : {}),
     ...(isEdge ? { edgeStrategy: 'contour' as const } : {}),
     ...(kind === 'follow_line' ? { carveStrategy: 'direct' as const } : {}),
     // trochoidalCutWidth and trochoidalAdvance are deliberately NOT seeded.
@@ -380,6 +393,7 @@ export function defaultOperationForTarget(
 }
 
 export function fallbackOperationTarget(authoritativeProject: Project, kind: OperationKind): OperationTarget {
+  if (kind === 'plasma_profile') return { source: 'features', featureIds: [] }
   const project = resolveProject(authoritativeProject)
   if (kind === 'drilling') {
     const firstCircle = project.features.find((feature) => feature.kind === 'circle')

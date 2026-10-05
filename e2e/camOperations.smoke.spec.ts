@@ -1097,13 +1097,14 @@ test.describe('CAM operation browser smoke', () => {
 
     // The rest sit behind one labelled disclosure, collapsed until asked for.
     const unavailableToggle = ui.operations.addMenuUnavailableToggle(app.page)
-    await expect(unavailableToggle).toHaveText('Not available for this selection (5)')
+    await expect(unavailableToggle).toHaveText('Not available for this selection (6)')
     await expect(unavailableToggle).toHaveAttribute('aria-expanded', 'false')
     await expect(ui.operations.addMenuUnavailableRows(app.page)).toHaveCount(0)
 
     await unavailableToggle.click()
     const unavailable = ui.operations.addMenuUnavailableRows(app.page)
     await expect(ui.operations.addMenuRowLabels(unavailable)).toHaveText([
+      'Plasma through-cut',
       'Pocket',
       'V-carve offset',
       'V-carve medial',
@@ -1112,7 +1113,7 @@ test.describe('CAM operation browser smoke', () => {
     ])
     // Expanding shows today's rows unchanged: an inline reason each, and the
     // add control still disabled.
-    await expect(unavailable.locator('.cam-operation-hint')).toHaveCount(5)
+    await expect(unavailable.locator('.cam-operation-hint')).toHaveCount(6)
     const drillRow = unavailable.filter({
       has: app.page.locator('.cam-operation-label', { hasText: 'Drill' }),
     })
@@ -1134,9 +1135,9 @@ test.describe('CAM operation browser smoke', () => {
     await expect(ui.operations.addMenuUnavailableRows(app.page)).toHaveCount(0)
 
     const unavailableToggle = ui.operations.addMenuUnavailableToggle(app.page)
-    await expect(unavailableToggle).toHaveText('Not available for this selection (11)')
+    await expect(unavailableToggle).toHaveText('Not available for this selection (12)')
     await unavailableToggle.click()
-    await expect(ui.operations.addMenuUnavailableRows(app.page)).toHaveCount(11)
+    await expect(ui.operations.addMenuUnavailableRows(app.page)).toHaveCount(12)
 
     // "Select all" is the recovery path out of a wrong selection, so it has to
     // survive inside the collapsed section: it fixes the selection, and the
@@ -1151,4 +1152,47 @@ test.describe('CAM operation browser smoke', () => {
       ui.operations.addMenuRowLabels(ui.operations.addMenuAvailableRows(app.page)),
     ).toContainText(['Drill'])
   })
+})
+
+
+test('plasma add menu and dedicated properties persist editable controls (#957)', async ({ app, ui }) => {
+  await seedCamQuickOperationProject(app.page)
+  const fixture = await getProject(app.page)
+  const meta = fixture.meta as Record<string, unknown>
+  meta.units = 'mm'
+  const tools = fixture.tools as Array<Record<string, unknown>>
+  fixture.tools = [...tools, { ...tools[0], id: 'torch-e2e', name: 'Plasma torch', type: 'plasma', units: 'mm', diameter: 1.2, pierceHeight: 3, cutHeight: 1.5, pierceDelay: 0.6, defaultFeed: 2200 }]
+  await seedProject(app.page, JSON.stringify(fixture))
+  await selectFeatures(app.page, ['f-machinable-add'])
+  await ui.operations.headerAddButton(app.page).click()
+  const row = ui.operations.addMenuAvailableRows(app.page).filter({ hasText: 'Plasma through-cut' })
+  await row.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect(ui.operations.rowByName(app.page, 'Plasma through-cut')).toBeVisible()
+  await expect(ui.cam.operationField(app.page, 'Kerf side')).toBeVisible()
+  await expect(ui.cam.operationField(app.page, 'Stepdown')).toHaveCount(0)
+  await expect(ui.cam.operationField(app.page, 'RPM')).toHaveCount(0)
+  await expect(ui.cam.operationField(app.page, 'Tabs')).toHaveCount(0)
+  await expect(ui.cam.operationField(app.page, 'Pass')).toHaveCount(0)
+  const side = ui.cam.operationField(app.page, 'Kerf side')
+  await side.locator('.ui-select__trigger').click()
+  await app.page.getByRole('option', { name: 'Inside (hole)', exact: true }).click()
+  const length = ui.cam.operationField(app.page, 'Lead-in length / arc radius (mm)').locator('input')
+  await length.fill('8')
+  await length.press('Enter')
+  await ui.cam.plasmaReverse(app.page).check()
+  await ui.cam.plasmaStart(app.page).check()
+  await ui.cam.operationField(app.page, 'Start X (mm)').locator('input').fill('-10')
+  await ui.cam.operationField(app.page, 'Start X (mm)').locator('input').press('Enter')
+  const saved = await getProject(app.page)
+  const operation = (saved.operations as Array<Record<string, unknown>>)[0]
+  expect(operation.toolRef).toBe('torch-e2e')
+  expect(operation.plasmaSide).toBe('inside')
+  expect(operation.plasmaLeadInLength).toBe(8)
+  expect(operation.plasmaReverseDirection).toBe(true)
+  expect(operation.plasmaStartPoint).toEqual({ x: -10, y: 0 })
+  await seedProject(app.page, JSON.stringify(saved))
+  if (!await ui.cam.plasmaReverse(app.page).isVisible()) await ui.operations.rowByName(app.page, 'Plasma through-cut').click()
+  await expect(ui.cam.plasmaReverse(app.page)).toBeChecked()
+  await expect(ui.cam.operationField(app.page, 'Lead-in length / arc radius (mm)').locator('input')).toHaveValue('8')
+  await expect(ui.cam.plasmaHelp(app.page)).toContainText('No corner slowdown, overburn, micro-joints or bevel compensation')
 })

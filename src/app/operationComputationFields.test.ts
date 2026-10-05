@@ -81,6 +81,13 @@ const BASE: Operation = {
 }
 
 const OPERATION_FIELDS: Record<keyof Required<Operation>, FieldProbe> = {
+  plasmaSide: { role: 'computation', change: { plasmaSide: 'inside' } },
+  plasmaReverseDirection: { role: 'computation', change: { plasmaReverseDirection: true } },
+  plasmaLeadIn: { role: 'computation', change: { plasmaLeadIn: 'line' } },
+  plasmaLeadInLength: { role: 'computation', change: { plasmaLeadInLength: 5 } },
+  plasmaLeadOut: { role: 'computation', change: { plasmaLeadOut: 'arc' } },
+  plasmaLeadOutLength: { role: 'computation', change: { plasmaLeadOutLength: 2 } },
+  plasmaStartPoint: { role: 'computation', change: { plasmaStartPoint: { x: 10, y: 5 } } },
   id: { role: 'identity', change: { id: 'op-2' } },
   name: { role: 'display', change: { name: 'Renamed' } },
   description: { role: 'display', change: { description: 'note' } },

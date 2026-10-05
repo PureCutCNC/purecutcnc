@@ -90,6 +90,7 @@ const CLEARING_PATTERNS: OperationPatternSupport = {
 }
 
 export const OPERATION_PATTERN_SUPPORT: Readonly<Record<OperationKind, OperationPatternSupport | null>> = {
+  plasma_profile: null,
   pocket: CLEARING_PATTERNS,
   surface_clean: CLEARING_PATTERNS,
   // 3D surface finishing is a choice between three strategies, none of which

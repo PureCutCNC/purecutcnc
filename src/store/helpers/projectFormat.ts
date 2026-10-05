@@ -719,6 +719,7 @@ export function normalizeProject(input: ProjectFormatInput, migrationInfo?: Proj
       : defaultOrigin(authoritativeProject.stock),
   })
   const normalizedBase = syncFeatureTreeProject(deduped)
+  // Plasma operation defaults also key on missing fields, including mid-release 3.3 files.
   const operations = authoritativeProject.operations.map((operation, index) => normalizeOperation(operation, normalizedBase, index))
   assertOperationSetupsExist(operations, setups)
   // Stamps every operation with its setup and rebuilds each setup's list.

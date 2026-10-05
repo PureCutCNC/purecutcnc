@@ -24,6 +24,12 @@
  * translated.
  */
 export type ToolpathWarningCode =
+  | 'plasmaInvalid'
+  | 'plasmaOpenPath'
+  | 'plasmaNoLead'
+  | 'plasmaSmallHole'
+  | 'plasmaCentrePierce'
+  | 'plasmaLeadOutOmitted'
   // resolver
   | 'targetsMissingOrWrongRole'
   | 'closedProfilesOnly'
