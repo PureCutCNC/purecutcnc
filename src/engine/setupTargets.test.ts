@@ -25,6 +25,8 @@
  * - `pinA`   — Top, through: 0 → 20
  * - `slot`   — Bottom, through: 0 → 20
  * - `almost` — Top, stops 0.01 short of the bottom face: not through
+ * - `island` — Top, an **add** standing the full height 0 → 20: material, not
+ *   a cut, so not a through-feature
  *
  * Run with: npx tsx src/engine/setupTargets.test.ts
  */
@@ -39,6 +41,7 @@ import {
   crossFaceTargetIds,
   isThroughFeature,
   judgeTargetFromFace,
+  spanReachesBothFaces,
   operationTargetVerdicts,
   rejectedOperationTargets,
   setupGenerationBlock,
@@ -126,6 +129,7 @@ function makeProject(operations: Operation[]): Project {
     feature('pinA', 'circle', circleProfile(20, 60, 6), 'thickness', 0, 'top'),
     feature('slot', 'rect', rectProfile(60, 10, 24, 16), 20, 0, 'bottom'),
     feature('almost', 'rect', rectProfile(40, 60, 10, 10), 20, 0.01, 'top'),
+    { ...feature('island', 'rect', rectProfile(88, 62, 8, 8), 20, 0, 'top'), operation: 'add' },
   ])
   return withBottomSetup(syncProjectSetups({ ...project, operations }), {
     operationIds: operations.filter((entry) => entry.setupId === BOTTOM_SETUP_ID).map((entry) => entry.id),
@@ -144,12 +148,20 @@ function testThroughFeature(): void {
   assert(through('pinA'), 'a span given by a named dimension resolves and is through')
   assert(through('slot'), 'a Bottom-drawn through slot is through')
   assert(!through('almost'), 'a span that stops short of a face is not through')
-  // Past the faces still reaches them.
-  assert(isThroughFeature(project, { z_top: 21, z_bottom: -1 }), 'a span past both faces is through')
-  assert(isThroughFeature(project, { z_top: 0, z_bottom: 20 }), 'a span stored bottom-first is still judged by its extent')
-  assert(!isThroughFeature(project, { z_top: 'unknown', z_bottom: 0 }), 'an unresolvable span is not through')
+  // Only a cut goes through: material standing the full height does not.
+  assert(!through('island'), 'a full-height add is not a through-feature')
+  // The span test on its own: past the faces still reaches them.
+  const stock = project.stock
+  assert(spanReachesBothFaces({ z_top: 21, z_bottom: -1 }, stock), 'a span past both faces reaches both')
+  assert(!spanReachesBothFaces({ z_top: 20, z_bottom: 0.01 }, stock), 'a span short of the bottom face does not')
+  assert(!spanReachesBothFaces({ z_top: 19.99, z_bottom: 0 }, stock), 'nor one short of the top face')
   // Computed spans: thickness − depth can land a hair inside the face.
-  assert(isThroughFeature(project, { z_top: 20 - 1e-9, z_bottom: 1e-9 }), 'rounding noise does not unmake a through-feature')
+  assert(spanReachesBothFaces({ z_top: 20 - 1e-9, z_bottom: 1e-9 }, stock), 'rounding noise does not unmake a through-feature')
+  // A row whose span is stored bottom-first, or cannot be resolved.
+  const tray = project.features.find((entry) => entry.id === 'tray')!
+  assert(isThroughFeature(project, { definitionId: tray.definitionId, z_top: 0, z_bottom: 20 }), 'a span stored bottom-first is still judged by its extent')
+  assert(!isThroughFeature(project, { definitionId: tray.definitionId, z_top: 'unknown', z_bottom: 0 }), 'an unresolvable span is not through')
+  assert(!isThroughFeature(project, { definitionId: 'gone', z_top: 20, z_bottom: 0 }), 'a row without a definition is not through')
 }
 
 function testVerdicts(): void {
@@ -170,6 +182,13 @@ function testVerdicts(): void {
 
   const top = project.operations[0]
   const bottom = project.operations[1]
+  // The full-height island is a target of its own face only.
+  const island = project.features.find((entry) => entry.id === 'island')!
+  assertEqual(
+    [judgeTargetFromFace(project, island, 'top').status, judgeTargetFromFace(project, island, 'bottom').status, judgeTargetFromFace(project, island, 'bottom').rejection],
+    ['same-face', 'rejected', 'crossFaceNotThrough'],
+    'a full-height add can be targeted from its own face and not from the other',
+  )
   assertEqual(crossFaceTargetIds(project, top), ['slot'], 'cross-face targets from Top are marked')
   assertEqual(crossFaceTargetIds(project, bottom), ['pinA'], 'cross-face targets from Bottom are marked')
   const rejected = rejectedOperationTargets(project, bottom)
@@ -208,23 +227,23 @@ function testGenerationBlock(): void {
   assert(block?.reason === 'crossFaceNotThrough', 'a blind Top feature from Bottom is blocked')
   assertEqual(block.features.map((verdict) => verdict.featureName), ['tray'], 'and only the offending feature is named')
 
-  // An imported model is not turned with the stock.
+  // An imported 3D model has a back face: either setup may target it.
   const definitionId = project.features[0].definitionId
   const withModel: Project = {
     ...project,
     featureDefinitions: {
       ...project.featureDefinitions,
-      [definitionId]: { ...project.featureDefinitions[definitionId], kind: 'stl' },
+      [definitionId]: { ...project.featureDefinitions[definitionId], kind: 'stl', operation: 'model' },
     },
   }
-  assertEqual(setupGenerationBlock(withModel, withModel.operations[2])?.reason, 'modelNotTurned', 'a turned setup refuses a project holding an imported model')
-  const generated = computeOperationToolpath(withModel, withModel.operations[2])
-  assertEqual(generated?.result.warnings.map((warning) => warning.code), ['setupModelNotTurned'], 'and generation says so')
-  assert(generated?.result.moves.length === 0, 'with no motion')
-  // …but Top is not refused for it: the block is about the turn.
-  const topOnly = operation('top-only', ['slot'])
-  const withTop = { ...withModel, operations: [...withModel.operations, { ...topOnly, setupId: TOP_SETUP_ID }] }
-  assert(setupGenerationBlock(withTop, withTop.operations[3]) === null, 'the Top setup still generates beside a model')
+  const model = withModel.features[0]
+  const fromBottom = judgeTargetFromFace(withModel, model, 'bottom')
+  assertEqual([fromBottom.status, fromBottom.model, fromBottom.through, fromBottom.rejection], ['cross-face', true, false, null], 'a Top-authored model is a cross-face target from Bottom')
+  assertEqual(judgeTargetFromFace(withModel, model, 'top').status, 'same-face', 'and an ordinary one from Top')
+  assert(setupGenerationBlock(withModel, withModel.operations[1]) === null, 'an operation targeting a model from the other face is not blocked')
+  assert(targetAllowedInSetup(withModel, { source: 'features', featureIds: [model.id] }, BOTTOM_SETUP_ID), 'and the store accepts it')
+  // The same feature as a plain blind pocket is still refused.
+  assert(!targetAllowedInSetup(project, { source: 'features', featureIds: [model.id] }, BOTTOM_SETUP_ID), 'fixture: without the model role the same target is refused')
 }
 
 // ── Move ──────────────────────────────────────────────────────
@@ -277,13 +296,14 @@ function testMovePlan(): void {
   assertEqual(planOperationMove(project, 'mixed', 'gone').blocked, 'unknownSetup', 'an unknown setup is refused')
   assertEqual(planOperationMove(project, 'gone', BOTTOM_SETUP_ID).blocked, 'unknownOperation', 'an unknown operation is refused')
 
+  // A model moves with its operation: it is reachable from both faces.
   const definitionId = project.features[0].definitionId
   const withModel: Project = {
     ...project,
-    featureDefinitions: { ...project.featureDefinitions, [definitionId]: { ...project.featureDefinitions[definitionId], kind: 'stl' } },
+    featureDefinitions: { ...project.featureDefinitions, [definitionId]: { ...project.featureDefinitions[definitionId], kind: 'stl', operation: 'model' } },
   }
-  assertEqual(planOperationMove(withModel, 'through', BOTTOM_SETUP_ID).blocked, 'modelNotTurned', 'a move into a turned setup is refused beside an imported model')
-  assertEqual(planOperationMove(withModel, 'under', TOP_SETUP_ID).blocked, null, 'but a move to Top is not')
+  const modelMove = planOperationMove(withModel, 'blind', BOTTOM_SETUP_ID)
+  assertEqual([modelMove.removed.length, modelMove.kept.map((verdict) => `${verdict.featureId}:${verdict.status}`)], [0, ['tray:cross-face']], 'an operation on a model keeps its target when it moves')
 }
 
 // ── Reach ─────────────────────────────────────────────────────

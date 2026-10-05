@@ -29,7 +29,7 @@
 import type { MachiningSetup, Operation, OperationTarget, Project, SetupFace } from '../types/project'
 import { isOperationTargetValid } from '../store/helpers/operationDefaults'
 import { setupFace } from './setupOrientation'
-import { judgeTargetsFromFace, projectHasImportedModel } from './setupTargets'
+import { judgeTargetsFromFace } from './setupTargets'
 import type { TargetFaceVerdict } from './setupTargets'
 
 export type OperationMoveBlock =
@@ -39,8 +39,6 @@ export type OperationMoveBlock =
   | 'sameSetup'
   /** Dropping the targets the new face cannot reach leaves no valid target. */
   | 'noValidTargets'
-  /** The destination is turned and the project holds an imported 3D model. */
-  | 'modelNotTurned'
 
 /** What moving one operation to another setup would do. Nothing is changed by planning it. */
 export interface OperationMovePlan {
@@ -89,8 +87,6 @@ export function planOperationMove(project: Project, operationId: string, toSetup
   let blocked: OperationMoveBlock | null = null
   if (operation.setupId === toSetupId) {
     blocked = 'sameSetup'
-  } else if (toSetup.orientation.angleDeg !== 0 && projectHasImportedModel(project)) {
-    blocked = 'modelNotTurned'
   } else if (removed.length > 0 && !isOperationTargetValid(project, operation.kind, target)) {
     blocked = 'noValidTargets'
   }

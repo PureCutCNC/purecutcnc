@@ -124,7 +124,7 @@ export const bookletZhCN: Record<keyof typeof bookletEn, string> = {
   'booklet.section.operationSettings': '加工操作设置',
   'booklet.section.toolpath': '刀路',
   'booklet.section.warnings': '警告',
-  'booklet.target.crossFace': '{name}（贯穿，从另一面加工）',
+  'booklet.target.crossFace': '{name}（从另一面加工）',
   'booklet.label.setup': '装夹',
   'booklet.label.setupTurn': '毛坯',
   'booklet.label.registration': '定位',

@@ -19,15 +19,22 @@
  * owns the rule, and the store, the CAM panel and generation all ask it:
  *
  * - an operation targets features authored on the face its setup turns up;
- * - a **true through-feature** — one whose stock-space Z span reaches both
- *   stock faces — may also be targeted from the other setup. That use is
- *   reported as cross-face so it can be marked, never passed off as an
- *   ordinary target;
+ * - a **true through-feature** — a subtract whose stock-space Z span reaches
+ *   both stock faces — may also be targeted from the other setup;
+ * - an **imported 3D model** may be targeted from either setup: it has a back
+ *   face, and a Bottom setup machines it;
  * - anything else on the other face is rejected, with a reason.
  *
- * The rule is geometric and has no exceptions by role: a region or an add
- * feature is judged exactly like a subtract. A stock-targeted operation has
- * no feature targets and is always allowed.
+ * A target reached from the other face is reported as cross-face so it can be
+ * marked, never passed off as an ordinary target.
+ *
+ * Only a *cut* that goes through earns the exception. Material that happens
+ * to fill the stock's height — an add standing from top to bottom as an
+ * island on both sides — is not a through-feature and stays a target of its
+ * own face. It is still in every setup's project when toolpaths are generated
+ * (`setupFrameProject.ts` turns every feature), so both sides machine around
+ * it; it just cannot be picked as a target from the other one. A
+ * stock-targeted operation has no feature targets and is always allowed.
  *
  * Moving an operation to another setup re-judges its targets from the new
  * face; that lives in `setupOperationMove.ts`, apart from this module, so the
@@ -66,19 +73,58 @@ export function featureStockSpan(
   return { z_top: Math.max(top, bottom), z_bottom: Math.min(top, bottom) }
 }
 
-/**
- * True when the feature's span reaches both stock faces: its top at or above
- * the top face and its bottom at or below the bottom face. A span that cannot
- * be resolved is not through — unknown never earns the exception.
- */
-export function isThroughFeature(
-  project: Pick<Project, 'dimensions' | 'stock'>,
-  feature: Pick<FeatureInstance, 'z_top' | 'z_bottom'>,
-): boolean {
-  const span = featureStockSpan(project, feature)
-  if (!span) return false
-  return span.z_top >= project.stock.thickness - THROUGH_FEATURE_TOLERANCE
+/** What the rule reads of a feature: its row, whose definition says what it is. */
+type TargetFeature = Pick<FeatureInstance, 'definitionId' | 'z_top' | 'z_bottom'>
+type TargetProject = Pick<Project, 'dimensions' | 'stock' | 'featureDefinitions'>
+
+/** True when a span reaches both stock faces: its top at or above the top face, its bottom at or below the bottom one. */
+export function spanReachesBothFaces(span: StockZSpan, stock: Pick<Project['stock'], 'thickness'>): boolean {
+  return span.z_top >= stock.thickness - THROUGH_FEATURE_TOLERANCE
     && span.z_bottom <= THROUGH_FEATURE_TOLERANCE
+}
+
+/**
+ * True for a cut that goes right through the stock: a **subtract** whose span
+ * reaches both stock faces. A span that cannot be resolved is not through —
+ * unknown never earns the exception — and neither is a feature of any other
+ * role, however tall.
+ */
+export function isThroughFeature(project: TargetProject, feature: TargetFeature): boolean {
+  return crossFaceReach(project, feature).through
+}
+
+/** True for an imported 3D model, which both setups may machine. */
+export function isImportedModel(project: Pick<Project, 'featureDefinitions'>, feature: Pick<FeatureInstance, 'definitionId'>): boolean {
+  return project.featureDefinitions[feature.definitionId]?.kind === 'stl'
+}
+
+/**
+ * The two ways a feature can be reached from the face it was not drawn on.
+ * One definition read answers both: the rule runs once per feature whenever
+ * the CAM panel scans a whole project.
+ */
+function crossFaceReach(project: TargetProject, feature: TargetFeature): { through: boolean; model: boolean } {
+  const definition = project.featureDefinitions[feature.definitionId]
+  const model = definition?.kind === 'stl'
+  if (definition?.operation !== 'subtract') return { through: false, model }
+  const span = featureStockSpan(project, feature)
+  return { through: span !== null && spanReachesBothFaces(span, project.stock), model }
+}
+
+/**
+ * Whether `face` may target a feature at all. The same answer as
+ * `judgeTargetFromFace(...).status !== 'rejected'`, without building the
+ * verdict — and without reading anything for a feature drawn on that face,
+ * so a project that uses one face pays nothing for the question.
+ */
+export function featureReachableFromFace(
+  project: TargetProject,
+  feature: TargetFeature & Pick<FeatureInstance, 'authoringFace'>,
+  face: SetupFace,
+): boolean {
+  if ((feature.authoringFace ?? 'top') === face) return true
+  const reach = crossFaceReach(project, feature)
+  return reach.through || reach.model
 }
 
 export type TargetRejection =
@@ -92,8 +138,10 @@ export interface TargetFaceVerdict {
   featureId: string
   featureName: string
   authoringFace: SetupFace
-  /** Reaches both stock faces. */
+  /** A subtract that reaches both stock faces. */
   through: boolean
+  /** An imported 3D model: machined from either face. */
+  model: boolean
   status: TargetFaceStatus
   /** Set exactly when `status` is `'rejected'`. */
   rejection: TargetRejection | null
@@ -109,20 +157,21 @@ export function operationFace(project: Pick<Project, 'setups'>, operation: Pick<
 
 /** Judge one feature as a target from `face`. */
 export function judgeTargetFromFace(
-  project: Pick<Project, 'dimensions' | 'stock'>,
-  feature: Pick<FeatureInstance, 'id' | 'name' | 'authoringFace' | 'z_top' | 'z_bottom'>,
+  project: TargetProject,
+  feature: TargetFeature & Pick<FeatureInstance, 'id' | 'name' | 'authoringFace'>,
   face: SetupFace,
 ): TargetFaceVerdict {
   // A hand-built row without the field reads as Top, like a pre-setup file.
   const authoringFace: SetupFace = feature.authoringFace ?? 'top'
-  const through = isThroughFeature(project, feature)
+  const { through, model } = crossFaceReach(project, feature)
   const span = featureStockSpan(project, feature)
-  const status: TargetFaceStatus = authoringFace === face ? 'same-face' : through ? 'cross-face' : 'rejected'
+  const status: TargetFaceStatus = authoringFace === face ? 'same-face' : through || model ? 'cross-face' : 'rejected'
   return {
     featureId: feature.id,
     featureName: feature.name,
     authoringFace,
     through,
+    model,
     status,
     rejection: status === 'rejected' ? 'crossFaceNotThrough' : null,
     depth: span ? depthFromFace(span, face, project.stock) : null,
@@ -135,7 +184,7 @@ export function judgeTargetFromFace(
  * a face question.
  */
 export function judgeTargetsFromFace(
-  project: Pick<Project, 'dimensions' | 'stock' | 'features'>,
+  project: TargetProject & Pick<Project, 'features'>,
   target: OperationTarget,
   face: SetupFace,
 ): TargetFaceVerdict[] {
@@ -179,13 +228,10 @@ export function targetAllowedInSetup(project: Project, target: OperationTarget, 
 // ── Generation ────────────────────────────────────────────────
 
 /** Why an operation generates nothing in its setup. */
-export type SetupGenerationBlock =
-  | { reason: 'crossFaceNotThrough'; face: SetupFace; features: TargetFaceVerdict[] }
-  | { reason: 'modelNotTurned'; face: SetupFace }
-
-/** True when the project holds an imported 3D model, whose mesh a turned setup cannot use. */
-export function projectHasImportedModel(project: Pick<Project, 'features' | 'featureDefinitions'>): boolean {
-  return project.features.some((feature) => project.featureDefinitions[feature.definitionId]?.kind === 'stl')
+export interface SetupGenerationBlock {
+  reason: 'crossFaceNotThrough'
+  face: SetupFace
+  features: TargetFaceVerdict[]
 }
 
 /**
@@ -193,22 +239,9 @@ export function projectHasImportedModel(project: Pick<Project, 'features' | 'fea
  * time as well as when a target is edited: a feature's span or face can
  * change after the operation was built, and an operation left targeting the
  * wrong face must produce no motion rather than motion for the wrong side.
- *
- * Two refusals:
- *
- * - a target on the other face that is not a through-feature;
- * - a turned setup in a project that holds an imported 3D model. The mesh is
- *   not turned with the stock (see `setupFrameProject.ts`), and generators
- *   read it for more than the surface kinds, so nothing is generated against
- *   a model that would be upside down.
  */
 export function setupGenerationBlock(project: Project, operation: Operation): SetupGenerationBlock | null {
-  const setup = setupForOperation(project, operation)
-  const face: SetupFace = setup ? setupFace(setup) : 'top'
+  const face = operationFace(project, operation)
   const rejected = judgeTargetsFromFace(project, operation.target, face).filter((verdict) => verdict.status === 'rejected')
-  if (rejected.length > 0) return { reason: 'crossFaceNotThrough', face, features: rejected }
-  if (setup && setup.orientation.angleDeg !== 0 && projectHasImportedModel(project)) {
-    return { reason: 'modelNotTurned', face }
-  }
-  return null
+  return rejected.length > 0 ? { reason: 'crossFaceNotThrough', face, features: rejected } : null
 }

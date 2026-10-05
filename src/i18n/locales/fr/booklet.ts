@@ -124,7 +124,7 @@ export const bookletFr: Record<keyof typeof bookletEn, string> = {
   'booklet.section.operationSettings': 'Réglages de l’opération',
   'booklet.section.toolpath': 'Parcours d’outil',
   'booklet.section.warnings': 'Avertissements',
-  'booklet.target.crossFace': '{name} (débouchant, usiné depuis l’autre face)',
+  'booklet.target.crossFace': '{name} (usiné depuis l’autre face)',
   'booklet.label.setup': 'Montage',
   'booklet.label.setupTurn': 'Brut',
   'booklet.label.registration': 'Repositionnement',

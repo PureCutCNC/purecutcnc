@@ -35,7 +35,7 @@
  * Run with: npx tsx src/engine/toolpaths/setupGeneration.test.ts
  */
 
-import { circleProfile, defaultTool, newProject, polygonProfile, rectProfile } from '../../types/project'
+import { circleProfile, defaultTool, IDENTITY_MATRIX, newProject, polygonProfile, rectProfile } from '../../types/project'
 import type {
   Clamp,
   Operation,
@@ -47,8 +47,11 @@ import type {
   SketchProfile,
   Tab,
 } from '../../types/project'
-import { BOTTOM_SETUP_ID, projectWithFeatures, withBottomSetup, withoutSetupFields } from '../../test/projectFixtures'
+import { BOTTOM_SETUP_ID, projectWithFeatures, resolvedFeature, withBottomSetup, withoutSetupFields } from '../../test/projectFixtures'
+import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { syncProjectSetups } from '../../store/helpers/setups'
+import { loadSTLTransformedGeometry } from '../csg'
+import { computeMeshBounds, serializeImportedMesh } from '../importedMesh'
 import { BUNDLED_DEFINITIONS } from '../gcode/definitions'
 import { runPostProcessor } from '../gcode/postprocessor'
 import { validateMachineDefinition } from '../gcode/types'
@@ -407,6 +410,149 @@ function testTabsAndClampsTurnWithTheStock(): void {
   }
 }
 
+// ── Imported models ───────────────────────────────────────────
+
+/**
+ * A model with no symmetry: both its underside and its top are sloped, and
+ * differently. Raw heights at the four corners, bottom then top.
+ */
+const MODEL_POSITIONS = new Float32Array([
+  0, 0, 0, 40, 0, 2, 40, 30, 3, 0, 30, 1,
+  0, 0, 6, 40, 0, 9, 40, 30, 13, 0, 30, 10,
+])
+const MODEL_INDEX = new Uint32Array([
+  0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7,
+  0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5,
+  2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7,
+])
+
+/** The stock with the model placed at (25, 20), filling stock Z 3 → 17, and one surface operation on it. */
+function modelProject(op: Operation): Project {
+  const base = newProject('setup-generation-model', 'mm')
+  base.meta = { ...base.meta, created: '2026-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z' }
+  base.stock = { ...base.stock, profile: rectProfile(0, 0, WIDTH, HEIGHT), thickness: THICKNESS }
+  base.origin = { name: 'Origin', x: 0, y: HEIGHT, z: THICKNESS, visible: true }
+  base.tools = [{ ...defaultTool('mm', 1), id: 't1', name: 'Ball 6', type: 'ball_endmill', diameter: 6, maxCutDepth: 30 }]
+  return syncProjectSetups({
+    ...base,
+    modelAssets: { asset: serializeImportedMesh({ positions: MODEL_POSITIONS, index: MODEL_INDEX, bounds: computeMeshBounds(MODEL_POSITIONS) }, 'stl') },
+    featureDefinitions: {
+      model: {
+        id: 'model',
+        kind: 'stl',
+        profile: rectProfile(0, 0, 40, 30),
+        dimensions: [],
+        text: null,
+        stl: {
+          format: 'stl',
+          scale: 1,
+          axisSwap: 'none',
+          meshAssetId: 'asset',
+          silhouettePaths: [[{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 30 }, { x: 0, y: 30 }]],
+        },
+        operation: 'model',
+      },
+    },
+    features: [{
+      id: 'model',
+      name: 'Model',
+      definitionId: 'model',
+      transform: { ...IDENTITY_MATRIX, e: 25, f: 20 },
+      constraints: [],
+      z_top: 17,
+      z_bottom: 3,
+      authoringFace: 'top',
+      folderId: null,
+      visible: true,
+      locked: false,
+    }],
+    featureTree: [{ type: 'feature', featureId: 'model' }],
+    operations: [op],
+  })
+}
+
+/**
+ * The model's surface in stock space at (x, y), read straight off the mesh as
+ * drawn: its lowest and highest Z there, or null outside it. Brute force over
+ * the triangles, and independent of everything the setup frame does.
+ */
+function modelSurfaceAt(project: Project, x: number, y: number): { low: number; high: number } | null {
+  const geometry = loadSTLTransformedGeometry(resolvedFeature(project, 'model'), project)
+  assert(geometry, 'fixture: the model loads')
+  const { positions, index } = geometry
+  let low = Infinity
+  let high = -Infinity
+  for (let t = 0; t < index.length; t += 3) {
+    const [a, b, c] = [index[t] * 3, index[t + 1] * 3, index[t + 2] * 3]
+    const [ax, ay, bx, by, cx, cy] = [positions[a], positions[a + 1], positions[b], positions[b + 1], positions[c], positions[c + 1]]
+    const det = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+    if (Math.abs(det) < 1e-12) continue
+    const u = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / det
+    const v = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / det
+    const w = 1 - u - v
+    if (u < -1e-9 || v < -1e-9 || w < -1e-9) continue
+    const z = u * positions[a + 2] + v * positions[b + 2] + w * positions[c + 2]
+    low = Math.min(low, z)
+    high = Math.max(high, z)
+  }
+  return Number.isFinite(low) ? { low, high } : null
+}
+
+function testModelIsMachinedFromItsBackFace(): void {
+  console.log('Testing an imported model is machined from its back face in a Bottom setup...')
+  const template = modelProject(operation({ kind: 'pocket', target: { source: 'stock' } }))
+  // Well inside the model's outline, (25, 20) → (65, 50), clear of its walls.
+  const overModel = (move: ToolpathMove): boolean => (
+    (move.kind === 'cut' || move.kind === 'plunge')
+    && move.to.x > 31 && move.to.x < 59 && move.to.y > 26 && move.to.y < 44
+  )
+
+  for (const [kind, pass] of [['finish_surface', 'finish'], ['rough_surface', 'rough']] as const) {
+    const op: Operation = {
+      ...defaultOperationForTarget(template, kind, pass, { source: 'features', featureIds: ['model'] }, 0),
+      id: 'op1',
+      toolRef: 't1',
+    }
+    const topProject = modelProject(op)
+    const top = generate(topProject).moves.filter(overModel)
+    assert(top.length > 0, `${kind}: fixture: the Top operation cuts over the model`)
+    // From Top the cutter never goes below the model's upper surface.
+    for (const move of top) {
+      const surface = modelSurfaceAt(topProject, move.to.x, move.to.y)
+      assert(surface && move.to.z >= surface.high - 1e-3, `${kind} from Top: tip at Z ${move.to.z} is inside the model (surface ${surface?.high}) at (${move.to.x}, ${move.to.y})`)
+    }
+
+    for (const axis of ['x', 'y'] as const) {
+      const bottomProject = inBottomSetup(topProject, axis)
+      const result = generate(bottomProject)
+      assert(!result.warnings.some((warning) => warning.code === 'setupTargetNotThrough'), `${kind} about ${axis}: a model is not refused from the other face`)
+      const bottom = result.moves.filter(overModel)
+      assert(bottom.length > 0, `${kind} about ${axis}: the Bottom operation cuts over the model`)
+      // From Bottom the cutter comes up from under the stock and stops at the
+      // model's underside: in stock space the tip is never above that surface.
+      let closest = Infinity
+      for (const move of bottom) {
+        const surface = modelSurfaceAt(bottomProject, move.to.x, move.to.y)
+        assert(surface, `${kind} about ${axis}: (${move.to.x}, ${move.to.y}) is over the model`)
+        assert(
+          move.to.z <= surface.low + 1e-3,
+          `${kind} about ${axis}: tip at stock Z ${move.to.z} is inside the model (underside ${surface.low}) at (${move.to.x}, ${move.to.y})`,
+        )
+        closest = Math.min(closest, surface.low - move.to.z)
+      }
+      // …and it does reach that surface: this is the back face being cut, not air under it.
+      assert(closest < 1.5, `${kind} about ${axis}: the cutter comes within ${closest} of the model's underside`)
+      // The underside is not the top surface mirrored: the two programs differ in depth.
+      const topDepths = top.map((move) => THICKNESS - move.to.z)
+      const bottomDepths = bottom.map((move) => move.to.z)
+      assert(
+        Math.abs(Math.max(...topDepths) - Math.max(...bottomDepths)) > 0.5,
+        `${kind} about ${axis}: fixture: the two faces are cut to different depths`,
+      )
+    }
+  }
+}
+
 // ── Target rules at generation ────────────────────────────────
 
 function testCrossFaceThroughFeature(): void {
@@ -483,6 +629,7 @@ testPocketParity()
 testStockSpaceResultSitsOnTheFeature()
 testDrillingParity()
 testTabsAndClampsTurnWithTheStock()
+testModelIsMachinedFromItsBackFace()
 testCrossFaceThroughFeature()
 testCrossFaceBlindFeatureIsRefused()
 testTopIsUntouched()

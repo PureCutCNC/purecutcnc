@@ -122,7 +122,7 @@ export const bookletEn = {
   'booklet.section.operationSettings': 'Operation settings',
   'booklet.section.toolpath': 'Toolpath',
   'booklet.section.warnings': 'Warnings',
-  'booklet.target.crossFace': '{name} (through, cut from the other face)',
+  'booklet.target.crossFace': '{name} (cut from the other face)',
   'booklet.label.setup': 'Setup',
   'booklet.label.setupTurn': 'Stock',
   'booklet.label.registration': 'Registration',

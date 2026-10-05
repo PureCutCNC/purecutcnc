@@ -39,15 +39,16 @@
  * - **the origin is not turned** — it is one placement shared by every setup,
  *   already read in the setup-local frame (see `setupOrientation.ts`).
  *
- * What is not turned: an imported 3D model's mesh. Its silhouette and Z span
- * turn like any feature's, but the mesh itself stays as imported, and
- * generators read it for more than the 3D surface kinds (a pocket sections it
- * too). So a project holding an imported model generates nothing in a turned
- * setup: `setupGenerationBlock` in `setupTargets.ts` refuses it with a reason
- * rather than cut against a model that is upside down.
+ * - **imported 3D models** — a model has a back face, and a Bottom setup
+ *   machines it. Its silhouette and Z span turn like any feature's; the mesh
+ *   is what is left, and it is turned at the one place every generator loads
+ *   it. The model's data is marked turned over (`modelDataTurnedOver`), and
+ *   `loadSTLTransformedGeometry` reflects the mesh inside its already
+ *   reflected span — with the plan mirror, exactly the half turn.
  */
 
-import type { Clamp, FeatureInstance, Matrix2D, Point, Project, Tab } from '../types/project'
+import type { Clamp, FeatureDefinition, FeatureInstance, Matrix2D, Point, Project, Tab } from '../types/project'
+import { modelDataTurnedOver } from './importedModelTransform'
 import { multiplyMatrix } from '../store/helpers/instanceTransforms'
 import { mirrorProfile } from '../store/helpers/transform'
 import { resolveDimensionRef } from './toolpaths/geometry'
@@ -100,6 +101,20 @@ function turnClamp(clamp: Clamp, frame: SetupFrame): Clamp {
 }
 
 /**
+ * Definitions with every imported model marked turned over. The record is
+ * returned untouched for a project without models, which is most of them.
+ */
+function turnModelDefinitions(definitions: Project['featureDefinitions']): Project['featureDefinitions'] {
+  let turned: Record<string, FeatureDefinition> | null = null
+  for (const [id, definition] of Object.entries(definitions)) {
+    if (definition.kind !== 'stl' || !definition.stl) continue
+    turned ??= { ...definitions }
+    turned[id] = { ...definition, stl: modelDataTurnedOver(definition.stl) }
+  }
+  return turned ?? definitions
+}
+
+/**
  * The project turned into a setup's frame. `frame` is undefined for a Top
  * setup, and the project is then returned as it is — the same object — so a
  * Top operation cannot generate differently from how it did before setups
@@ -128,6 +143,7 @@ export function projectInSetupFrame(project: Project, frame: SetupFrame | undefi
         ? turnFeature(project, project.stock.sourceFeature, mirror, frame)
         : project.stock.sourceFeature,
     },
+    featureDefinitions: turnModelDefinitions(project.featureDefinitions),
     features: project.features.map((feature) => turnFeature(project, feature, mirror, frame)),
     tabs: project.tabs.map((tab) => turnTab(tab, frame)),
     clamps: project.clamps.map((clamp) => turnClamp(clamp, frame)),

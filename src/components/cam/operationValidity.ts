@@ -25,13 +25,13 @@
  */
 
 import type { SelectionState } from '../../store/types'
-import type { Operation, OperationKind, OperationPass, OperationTarget, Project } from '../../types/project'
+import type { Operation, OperationKind, OperationPass, OperationTarget, Project, SetupFace } from '../../types/project'
 import { isConstruction, isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { isVCarveCompatibleFeature } from '../../store/helpers/vcarveTargets'
 import { featureHasClosedGeometry, featureHasShapeWithOperation } from '../../text'
 import { resolvedFeatureMap, resolveFeatureInstances, type ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { setupFace } from '../../engine/setupOrientation'
-import { judgeTargetsFromFace } from '../../engine/setupTargets'
+import { featureReachableFromFace, judgeTargetsFromFace } from '../../engine/setupTargets'
 import { camT } from './camI18n'
 
 type ResolvedFeatureMap = ReadonlyMap<string, ResolvedSketchFeature>
@@ -91,6 +91,12 @@ function emptySelectionHint(kind: OperationKind): string {
   }
 }
 
+/** The face the active setup turns up. A project without setups has only Top. */
+function activeSetupFace(project: Project): SetupFace {
+  const setup = project.setups?.find((entry) => entry.id === project.activeSetupId)
+  return setup ? setupFace(setup) : 'top'
+}
+
 /**
  * Why the active setup cannot cut a selection, or null when it can (issue
  * #946). A new operation joins the active setup, so its targets have to be
@@ -99,8 +105,7 @@ function emptySelectionHint(kind: OperationKind): string {
  * that passes here is never refused by `addOperation` for its face.
  */
 export function activeSetupTargetHint(project: Project, featureIds: readonly string[]): string | null {
-  const setup = project.setups?.find((entry) => entry.id === project.activeSetupId)
-  const face = setup ? setupFace(setup) : 'top'
+  const face = activeSetupFace(project)
   const rejected = judgeTargetsFromFace(project, { source: 'features', featureIds: [...featureIds] }, face)
     .filter((verdict) => verdict.status === 'rejected')
   if (rejected.length === 0) return null
@@ -489,6 +494,7 @@ function compatibleFeatureIdsForOperationWithMap(
   kind: OperationKind,
   featureById: ResolvedFeatureMap,
 ): string[] {
+  const face = activeSetupFace(project)
   return project.features
     .filter((feature) => getOperationAddHintWithMap(
       singleFeatureSelection(feature.id),
@@ -497,7 +503,7 @@ function compatibleFeatureIdsForOperationWithMap(
     ) === null)
     // Only what the active setup may target: the highlight and "Select all"
     // must not offer a feature the store would refuse (issue #946).
-    .filter((feature) => activeSetupTargetHint(project, [feature.id]) === null)
+    .filter((feature) => featureReachableFromFace(project, feature, face))
     .map((feature) => feature.id)
 }
 

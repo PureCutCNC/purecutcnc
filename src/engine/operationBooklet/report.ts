@@ -142,8 +142,8 @@ function targetFeatureNames(project: Project, operation: Operation): string[] {
     return [translate('booklet.target.stock')]
   }
 
-  // A through-feature cut from the other face is said to be, not listed as
-  // if it were drawn on this one (issue #946).
+  // A through cut or a model reached from the other face is said to be, not
+  // listed as if it were drawn on this one (issue #946).
   const crossFace = new Set(crossFaceTargetIds(project, operation))
   return target.featureIds.map((id) => {
     const name = project.features.find((feature) => feature.id === id)?.name

@@ -405,8 +405,8 @@ export const camZhCN: Record<keyof typeof camEn, string> = {
 
   // ── Validation hints: construction ──
   'cam.hint.construction': '构造几何体不会被加工——请先取消选择构造特征',
-  'cam.hint.otherFaceFromTop': '{features} 绘制在底面且未贯穿毛坯，因此顶面装夹无法加工它。请切换到底面进行加工。',
-  'cam.hint.otherFaceFromBottom': '{features} 绘制在顶面且未贯穿毛坯，因此底面装夹无法加工它。请切换到顶面进行加工。',
+  'cam.hint.otherFaceFromTop': '{features} 绘制在底面且不是贯穿毛坯的切除特征，因此顶面装夹无法加工它。请切换到底面进行加工。',
+  'cam.hint.otherFaceFromBottom': '{features} 绘制在顶面且不是贯穿毛坯的切除特征，因此底面装夹无法加工它。请切换到顶面进行加工。',
 
   // ── Validation hints: drilling ──
   'cam.hint.drilling': '钻孔需要圆形特征；闭合区域为可选过滤器',

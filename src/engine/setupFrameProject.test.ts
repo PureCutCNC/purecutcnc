@@ -31,7 +31,10 @@
 
 import { circleProfile, defaultTool, IDENTITY_MATRIX, newProject, polygonProfile, rectProfile } from '../types/project'
 import type { Point, Project, SketchFeature, SketchProfile } from '../types/project'
-import { projectWithFeatures, withBottomSetup } from '../test/projectFixtures'
+import { projectWithFeatures, resolvedFeature, withBottomSetup } from '../test/projectFixtures'
+import { loadSTLTransformedGeometry } from './csg'
+import { computeMeshBounds, serializeImportedMesh } from './importedMesh'
+import { isModelTurnedOver, modelDataTurnedOver } from './importedModelTransform'
 import { resolvedProjectFeatures } from '../store/helpers/resolveFeatures'
 import { getFeatureGeometryProfiles, getTextFrameProfile } from '../text'
 import { projectInSetupFrame, setupPlanMirror, toolpathInStockFrame } from './setupFrameProject'
@@ -304,7 +307,122 @@ function testToolpathBackToStockSpace(): void {
   assert(toolpathInStockFrame({ ...local, bounds: null }, frame).bounds === null, 'no bounds stays no bounds')
 }
 
+/**
+ * An imported model is turned over with the stock (issue #946): what a
+ * generator loads for the turned project is, vertex for vertex, the half turn
+ * of what it loads for the project as drawn. The mesh is a wedge with no
+ * symmetry at all — every vertex has its own height — placed off-centre,
+ * scaled and rotated in plan, so a missing mirror, an unreflected Z or a turn
+ * about the wrong point each move a vertex.
+ */
+function testModelTurnsOver(): void {
+  console.log('Testing an imported model is turned over with the stock...')
+  const positions = new Float32Array([
+    0, 0, 0, 4, 0, 0, 4, 3, 0, 0, 3, 0,
+    0, 0, 1, 4, 0, 2, 4, 3, 5, 0, 3, 3,
+  ])
+  const index = new Uint32Array([
+    0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7,
+    0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5,
+    2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7,
+  ])
+  const base = newProject('Model', 'mm')
+  base.stock = { ...base.stock, profile: rectProfile(10, 5, 100, 80), thickness: 20 }
+  const project: Project = withBottomSetup({
+    ...base,
+    modelAssets: { asset: serializeImportedMesh({ positions, index, bounds: computeMeshBounds(positions) }, 'stl') },
+    featureDefinitions: {
+      model: {
+        id: 'model',
+        kind: 'stl',
+        profile: rectProfile(0, 0, 8, 6),
+        dimensions: [],
+        text: null,
+        stl: {
+          format: 'stl',
+          scale: 2,
+          axisSwap: 'none',
+          orientation: { rx: 0, ry: 0, rz: 90 },
+          meshAssetId: 'asset',
+          silhouettePaths: [[{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 6 }, { x: 0, y: 6 }]],
+        },
+        operation: 'model',
+      },
+    },
+    features: [{
+      id: 'model',
+      name: 'Model',
+      definitionId: 'model',
+      // Rotated 90° in plan and moved off the stock centre.
+      transform: { a: 0, b: 1, c: -1, d: 0, e: 70, f: 20 },
+      constraints: [],
+      z_top: 17,
+      z_bottom: 4,
+      authoringFace: 'top',
+      folderId: null,
+      visible: true,
+      locked: false,
+    }],
+    featureTree: [{ type: 'feature', featureId: 'model' }],
+  })
+
+  const asDrawn = loadSTLTransformedGeometry(resolvedFeature(project, 'model'), project)
+  assert(asDrawn, 'fixture: the model loads')
+  const zs = Array.from(asDrawn.positions).filter((_, i) => i % 3 === 2)
+  assert(Math.min(...zs) === 4 && Math.max(...zs) === 17, 'fixture: the model fills its span, stock Z 4 → 17')
+
+  for (const axis of ['x', 'y'] as const) {
+    const frame = setupFrame({ axis, angleDeg: 180 }, project.stock)
+    const turnedProject = projectInSetupFrame(project, frame)
+    const turned = loadSTLTransformedGeometry(resolvedFeature(turnedProject, 'model'), turnedProject)
+    assert(turned, `about ${axis}: the turned model loads`)
+    assert(turned !== asDrawn, `about ${axis}: turned geometry is not served from the as-drawn cache entry`)
+    assert(turned.positions.length === asDrawn.positions.length, `about ${axis}: same vertex count`)
+    for (let i = 0; i < asDrawn.positions.length; i += 3) {
+      const expected = canonicalToSetupPoint({ x: asDrawn.positions[i], y: asDrawn.positions[i + 1], z: asDrawn.positions[i + 2] }, frame)
+      const got = { x: turned.positions[i], y: turned.positions[i + 1], z: turned.positions[i + 2] }
+      assert(
+        Math.abs(got.x - expected.x) < 1e-4 && Math.abs(got.y - expected.y) < 1e-4 && Math.abs(got.z - expected.z) < 1e-4,
+        `about ${axis}: vertex ${i / 3} is (${got.x}, ${got.y}, ${got.z}), expected the half turn (${expected.x}, ${expected.y}, ${expected.z})`,
+      )
+    }
+    // The flat base, at stock Z 4, is now the top of the model: 20 − 4.
+    const turnedZs = Array.from(turned.positions).filter((_, i) => i % 3 === 2)
+    assert(Math.max(...turnedZs) === 16 && Math.min(...turnedZs) === 3, `about ${axis}: the model occupies the reflected span, 3 → 16`)
+    assert(turnedZs.filter((z) => z === 16).length === 4, `about ${axis}: its flat base is the face that is up`)
+    assert(Array.from(turned.index).join() === Array.from(asDrawn.index).join(), `about ${axis}: triangles keep their winding — a half turn is a rotation`)
+    // The silhouette a 2.5D operation reads is the mirror of the original.
+    const before = resolvedFeature(project, 'model').stl?.silhouettePaths?.[0] ?? []
+    const after = resolvedFeature(turnedProject, 'model').stl?.silhouettePaths?.[0] ?? []
+    assertEqual(after, before.map((point) => (axis === 'x' ? { x: point.x, y: 90 - point.y } : { x: 120 - point.x, y: point.y })), `about ${axis}: the silhouette is mirrored`)
+  }
+
+  // The mark alone — same placement, same span — is other geometry, so it
+  // must not be answered from the as-drawn cache entry: reflected in Z only.
+  const drawnFeature = resolvedFeature(project, 'model')
+  const markedOnly = loadSTLTransformedGeometry({ ...drawnFeature, stl: modelDataTurnedOver(drawnFeature.stl!) }, project)
+  assert(markedOnly && markedOnly !== asDrawn, 'marked data at the same placement is not served the as-drawn geometry')
+  for (let i = 0; i < asDrawn.positions.length; i += 3) {
+    assert(
+      markedOnly.positions[i] === asDrawn.positions[i] && markedOnly.positions[i + 1] === asDrawn.positions[i + 1]
+      && Math.abs(markedOnly.positions[i + 2] - (21 - asDrawn.positions[i + 2])) < 1e-4,
+      `the mark reflects vertex ${i / 3} inside the model's own span, 4 → 17`,
+    )
+  }
+
+  // The source is untouched, and still loads as drawn.
+  assert(loadSTLTransformedGeometry(resolvedFeature(project, 'model'), project) === asDrawn, 'the project as drawn still loads its own geometry')
+  assert(!isModelTurnedOver(project.featureDefinitions.model.stl), 'the source definition is not marked')
+  // The mark cannot be saved or sent to the worker by accident.
+  const marked = projectInSetupFrame(project, setupFrame({ axis: 'x', angleDeg: 180 }, project.stock)).featureDefinitions.model.stl
+  assert(isModelTurnedOver(marked), 'the turned definition is marked')
+  assert(!isModelTurnedOver(JSON.parse(JSON.stringify(marked))), 'the mark does not survive serialization')
+  assert(!isModelTurnedOver(structuredClone(marked)), 'nor a structured clone')
+  assert(JSON.stringify(marked) === JSON.stringify(project.featureDefinitions.model.stl), 'and the saved form is unchanged')
+}
+
 testTopIsTheSameObject()
+testModelTurnsOver()
 testFeaturesTurn()
 testStockTabsAndClamps()
 testPlanMirrorMatchesThePointTransform()

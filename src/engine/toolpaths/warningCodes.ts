@@ -310,15 +310,12 @@ export type ToolpathWarningCode =
    *  so the operation's setup cannot reach it. Nothing is generated: motion
    *  for the wrong side is worse than no motion. */
   | 'setupTargetNotThrough'
-  /** The project holds an imported 3D model, whose mesh is not turned over
-   *  with the stock, so a turned setup generates nothing. */
-  | 'setupModelNotTurned'
   /** A program was asked to hold operations of more than one setup. The
    *  operator turns the part by hand between setups, so one program must
    *  never run across the turn. */
   | 'postMixedSetups'
   /** An operation in the program generated nothing because its setup may not
-   *  cut it (see the two `setup*` codes). The file would be missing a pass. */
+   *  cut it (`setupTargetNotThrough`). The file would be missing a pass. */
   | 'postSetupOperationRefused'
   /** The program is for a second setup that declares no registration
    *  reference: nothing records how the turned part is located. */

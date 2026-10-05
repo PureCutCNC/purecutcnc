@@ -95,9 +95,7 @@ export interface OperationToolpathEnvelope {
 }
 
 function setupBlockWarning(block: SetupGenerationBlock): ToolpathWarning {
-  return block.reason === 'crossFaceNotThrough'
-    ? { code: 'setupTargetNotThrough', params: { features: block.features.map((feature) => feature.featureName).join(', ') } }
-    : { code: 'setupModelNotTurned' }
+  return { code: 'setupTargetNotThrough', params: { features: block.features.map((feature) => feature.featureName).join(', ') } }
 }
 
 /**
