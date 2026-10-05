@@ -22,6 +22,7 @@
  * number, default/library settings, and all reviewed cutter-only readers.
  */
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { useSimulationModel } from './app/useSimulationModel'
@@ -317,7 +318,11 @@ assert.deepEqual(grid.topZ, before)
 assert.ok(applyMoveToGrid(grid, move, 2, 'flat_endmill', null).changedCount > 0, 'control: the same move cuts with a mill')
 const emptyPath = generatePocketToolpath(malformed, badOperation)
 const cachedPath = { ...emptyPath, moves: [move] }
-assert.equal(simulateOperationHeightfield(malformed, badOperation, cachedPath, { targetLongAxisCells: 30 }).stats.processedMoveCount, 0)
+const rejectedSimulation = simulateOperationHeightfield(malformed, badOperation, cachedPath, { targetLongAxisCells: 30 })
+assert.equal(rejectedSimulation.stats.processedMoveCount, 0)
+assert.deepEqual(rejectedSimulation.warnings, [{ code: 'replayNoTool' }],
+  'static simulation rejects an incompatible tool at lookup, before the replay guard')
+assert.deepEqual(rejectedSimulation.grid.topZ, before, 'rejected static simulation preserves the stock')
 assert.equal(simulateReplayItemsHeightfield(malformed, [{ operationId: badOperation.id, operationName: badOperation.name,
   toolRef: plasma.id, toolType: 'plasma', toolRadius: 2, vBitAngle: null, toolpath: cachedPath }],
 { targetLongAxisCells: 30 }).stats.processedMoveCount, 0, 'replay refuses stale plasma cutter moves')
@@ -335,6 +340,119 @@ assert.equal(simulationProbe(malformed), '<span>{&quot;count&quot;:0,&quot;playb
   'real simulation hook excludes plasma playback even with a cached path')
 assert.ok(simulationProbe({ ...project, operations: [operation] }).includes('&quot;playback&quot;:true'),
   'milling playback remains available')
+// Isolate the independent lookup boundaries: outer preflight/acquisition guards
+// otherwise hide a broken lookup behind another rejection. Module mocks live in
+// a child process, so neither the real hook above nor other tests are affected.
+function assertPlaybackLookupBoundary(boundary: 'selected' | 'prior', source: Project): void {
+  const probe = `
+    import assert from 'node:assert/strict'
+    import { mock } from 'node:test'
+    import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+    import { tmpdir } from 'node:os'
+    import { join } from 'node:path'
+    import { pathToFileURL } from 'node:url'
+    import ts from 'typescript'
+    import * as React from 'react'
+    import { renderToString } from 'react-dom/server'
+    const { boundary, project, cachedPath, root } = JSON.parse(process.argv[1])
+    const policyUrl = new URL('src/toolPolicy.ts', root).href
+    const geometryUrl = new URL('src/engine/toolpaths/geometry.ts', root).href
+    const policy = await import(policyUrl)
+    const geometry = await import(geometryUrl)
+    // Keep static simulation's dependencies real; isolate only the hook boundary.
+    await import(new URL('src/engine/simulation/index.ts', root).href)
+    // Fresh dependency aliases avoid Node 20's already-loaded ESM cache. The
+    // hook's source is unchanged apart from import paths and type erasure.
+    const directory = mkdtempSync(join(tmpdir(), 'purecut-plasma-lookup-'))
+    const aliases = Object.fromEntries(['policy', 'react', 'geometry'].map((name) => {
+      const path = join(directory, name + '.mjs')
+      writeFileSync(path, 'export {}')
+      return [name, pathToFileURL(path).href]
+    }))
+    const selected = project.operations.at(-1)
+    const normalizedTools = []
+    const exportsFor = (namespace) => Object.fromEntries(Object.entries(namespace)
+      .filter(([name]) => name !== 'default' && name !== 'module.exports'))
+    // Assume the two outer selected-operation preflights already passed. The
+    // selected-tool lookup must still independently refuse the plasma record.
+    let preflightPasses = boundary === 'selected' ? 2 : 0
+    mock.module(aliases.policy, { cache: true, namedExports: { ...exportsFor(policy),
+      findMillingOperationTool(project, operation) {
+        if (operation.id === selected.id && preflightPasses > 0) {
+          preflightPasses--
+          return project.tools.find((tool) => tool.id === operation.toolRef)
+        }
+        return policy.findMillingOperationTool(project, operation)
+      },
+    } })
+    // Seed already-acquired paths, including a stale incompatible prior path.
+    // This exercises deferred replay's own guard rather than acquisition's.
+    mock.module(aliases.react, { cache: true, namedExports: { ...exportsFor(React),
+      useState(initial) {
+        return React.useState(initial === null ? { project,
+          paths: new Map(project.operations.map((operation) => [operation.id,
+            { ...cachedPath, operationId: operation.id }])) } : initial)
+      },
+    } })
+    mock.module(aliases.geometry, { cache: true, namedExports: { ...exportsFor(geometry),
+      normalizeToolForProject(tool, project) {
+        assert.notEqual(tool.type, 'plasma', boundary + ' playback must reject plasma before cutter normalization')
+        normalizedTools.push(tool.id)
+        return geometry.normalizeToolForProject(tool, project)
+      },
+    } })
+    const hookUrl = new URL('src/app/useSimulationModel.ts', root)
+    const source = ts.transpileModule(readFileSync(hookUrl, 'utf8'), { compilerOptions: {
+      target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext,
+    } }).outputText
+      .replace("'../toolPolicy'", JSON.stringify(aliases.policy))
+      .replace("'react'", JSON.stringify(aliases.react))
+      .replace("'../engine/simulation'", JSON.stringify(new URL('src/engine/simulation/index.ts', root).href))
+      .replace("'../engine/toolpaths/geometry'", JSON.stringify(aliases.geometry))
+    const hookPath = join(directory, 'hook.mjs')
+    writeFileSync(hookPath, source)
+    try {
+      const { useSimulationModel } = await import(pathToFileURL(hookPath).href)
+      let result
+      function Probe() {
+        result = useSimulationModel({ project, centerTab: 'simulation', simulationMode: 'selected',
+          simulationDetailCells: 30, selectedOperation: selected, selectedToolpath: cachedPath,
+          requestToolpath: async () => { throw new Error('deferred playback must not generate paths') } })
+        return null
+      }
+      renderToString(React.createElement(Probe))
+      if (boundary === 'selected') {
+        assert.equal(preflightPasses, 0, 'selected boundary probe must pass both outer preflights')
+        assert.equal(result.simulationPlaybackInput, null, 'selected lookup rejects plasma even after a passed preflight')
+        assert.deepEqual(normalizedTools, [], 'rejected selected tool never reaches cutter normalization')
+      } else {
+        const playback = result.simulationPlaybackInput
+        assert.ok(playback, 'control: a selected milling tool still has playback')
+        const beforeReplay = normalizedTools.length
+        const grid = playback.getBaseGrid()
+        assert.ok(normalizedTools.length > beforeReplay, 'calling deferred getBaseGrid actually replays the prior mill')
+        assert.ok(grid.topZ.some((z) => z < project.stock.thickness), 'prior mill removes material from the base grid')
+        assert.equal(playback.getBaseGrid(), grid, 'deferred base grid is cached')
+      }
+    } finally {
+      mock.restoreAll()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  `
+  const run = spawnSync(process.execPath, ['--experimental-test-module-mocks', '--import', 'tsx',
+    '--input-type=module', '--eval', probe, JSON.stringify({ boundary, project: source, cachedPath,
+      root: new URL('../', import.meta.url).href })], {
+    cwd: new URL('../', import.meta.url), encoding: 'utf8', timeout: 30000,
+  })
+  assert.equal(run.status, 0, boundary + ' playback lookup boundary: ' + (run.error?.message ?? '') + run.stdout + run.stderr)
+}
+assertPlaybackLookupBoundary('selected', malformed)
+assertPlaybackLookupBoundary('prior', { ...project, operations: [
+  { ...operation, id: 'prior-mill' },
+  { ...badOperation, id: 'prior-plasma' },
+  { ...operation, id: 'selected-mill' },
+] })
+
 const report = buildOperationBookletReport({ project: malformed, operation: badOperation,
   tool: normalized, toolpath: cachedPath, generatedAt: new Date('2026-10-04T00:00:00Z') })
 const noToolReport = buildOperationBookletReport({ project: malformed, operation: badOperation,
