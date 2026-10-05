@@ -26,6 +26,8 @@
  * - `newFeatureSpan` returning the Top span on Bottom → "a Line drawn in a
  *   Bottom pocket" fails;
  * - the Line inference reading the Top surface on Bottom → the same;
+ * - `flippedZRange` returning the stored span → "a Bottom pocket reads like
+ *   the same pocket on Top" fails;
  * - text placed without the face mirror → "Bottom text reads the right way
  *   round" fails; the mirror applied twice → the same;
  * - the ghost selection guard removed → "a ghost cannot be selected" and
@@ -49,6 +51,7 @@ import {
   activeFace,
   activeOriginInStock,
   editableProjectFeatures,
+  flippedZRange,
   isGhostFeature,
   isThroughFeature,
   projectUsesBothFaces,
@@ -142,6 +145,15 @@ const lastFeature = () => project().features[project().features.length - 1]
   assert(readBack.start === 0 && readBack.end === depth, 'and reads back as that depth from the bottom')
   assert(!isThroughFeature(project(), resolveFeatureInstance(project(), recess.id)!), 'a partial-depth cut is not through')
   assert(spanFromFaceDepth({ start: depth * 2, end: depth }, 'bottom', project().stock) === null, 'an inside-out depth is refused, not swapped')
+
+  // The Z range a Bottom feature shows is the stock flipped: the pocket reads
+  // exactly as a pocket of the same depth cut from the top is stored.
+  const flipped = flippedZRange({ z_top: depth, z_bottom: 0 }, project().stock)
+  assert(flipped.top === thickness && near(flipped.bottom, thickness - depth), `a Bottom pocket reads like the same pocket on Top: got ${flipped.top} → ${flipped.bottom}`)
+  const floating = flippedZRange({ z_top: thickness / 2, z_bottom: depth / 2 }, project().stock)
+  assert(near(floating.top, thickness - depth / 2) && near(floating.bottom, thickness / 2), 'a floating Bottom feature keeps both ends when flipped')
+  const backToStock = spanFromFaceDepth({ start: thickness - floating.top, end: thickness - floating.bottom }, 'bottom', project().stock)
+  assert(backToStock !== null && near(backToStock.z_bottom, depth / 2) && near(backToStock.z_top, thickness / 2), 'and the flipped range maps back to the stored span')
 
   // A Line drawn inside the Bottom pocket engraves on its floor: from the
   // floor to the far face, not from the top of the stock.

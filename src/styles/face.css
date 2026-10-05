@@ -338,7 +338,7 @@
   opacity: 0.55;
 }
 
-/* ── Properties: authoring face and depth from the face ── */
+/* ── Properties: authoring face, and the Z range of a Bottom feature ── */
 
 .face-row__value {
   display: flex;
@@ -348,12 +348,12 @@
   min-width: 0;
 }
 
-.face-depth {
+.face-z-range {
   display: grid;
   gap: 6px;
 }
 
-.face-depth__span {
+.face-z-range__span {
   border-style: dashed;
   background: transparent;
   color: var(--text-dim);
@@ -361,7 +361,7 @@
   font-size: 12px;
 }
 
-.face-depth__hint {
+.face-z-range__hint {
   margin: 0;
   color: var(--text-dim);
   font-size: 11.5px;

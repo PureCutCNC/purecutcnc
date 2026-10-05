@@ -40,6 +40,7 @@ import type {
   Project,
   SetupFace,
   SketchFeature,
+  Stock,
 } from '../../types/project'
 import { resolvedProjectFeatures } from './resolveFeatures'
 import type { ResolvedSketchFeature } from './resolveFeatures'
@@ -217,6 +218,24 @@ export function isThroughFeature(
   const depth = depthFromFace(span, 'top', project.stock)
   const epsilon = 1e-9
   return depth.start <= epsilon && depth.end >= project.stock.thickness - epsilon
+}
+
+/** A Z range as heights above the table with the stock flipped, bottom face up. */
+export interface FlippedZRange {
+  top: number
+  bottom: number
+}
+
+/**
+ * A stock span as a Bottom setup presents it: the stock turned over, Z still
+ * measured up from the table, so the bottom face is at `thickness` and a
+ * Bottom feature reads the way the same feature reads on Top. Derived from
+ * the #944 depth view — a height is the thickness less the depth from the
+ * bottom face — and, like it, never stored.
+ */
+export function flippedZRange(span: { z_top: number; z_bottom: number }, stock: Pick<Stock, 'thickness'>): FlippedZRange {
+  const depth = depthFromFace(span, 'bottom', stock)
+  return { top: stock.thickness - depth.start, bottom: stock.thickness - depth.end }
 }
 
 function resolveZ(project: Pick<Project, 'dimensions'>, value: DimensionRef): number | null {

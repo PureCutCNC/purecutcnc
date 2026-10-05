@@ -44,7 +44,7 @@ import { resolvedProjectFeatures } from '../../store/helpers/resolveFeatures'
 import { useI18n } from '../../i18n/i18nContext'
 import { activeFace, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { AuthoringFaceRow } from './FaceChip'
-import { FaceDepthFields } from './FaceDepthFields'
+import { FaceZRange } from './FaceZRange'
 
 /**
  * Memoised because `App` subscribes to the whole store without a selector and
@@ -1132,7 +1132,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
             ) : null}
             {bothFaces ? <AuthoringFaceRow face={workspaceFace} featureIds={selectedFeatureIds} /> : null}
             {selectedZEditableFeatures.length > 0 && workspaceFace === 'bottom' ? (
-              <FaceDepthFields features={selectedZEditableFeatures} />
+              <FaceZRange features={selectedZEditableFeatures} />
             ) : selectedZEditableFeatures.length > 0 ? (
               <ZRangeSlider
                 selectionKey={`features-${selectedZEditableFeatureIds.join(',')}`}
@@ -1431,7 +1431,7 @@ export const PropertiesPanel = memo(function PropertiesPanel() {
               </label>
             </>
           ) : selectedFeature.authoringFace === 'bottom' ? (
-            <FaceDepthFields features={[selectedFeature]} />
+            <FaceZRange features={[selectedFeature]} />
           ) : !selectedFeature.sketch.profile.closed || selectedFeature.operation === 'line' ? (
             <ZRangeSlider
               selectionKey={`feature-${selectedFeature.id}`}

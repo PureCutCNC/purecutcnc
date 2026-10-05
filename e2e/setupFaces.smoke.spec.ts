@@ -16,8 +16,8 @@
 
 /**
  * Top / Bottom faces in the workspace (issue #945): the face switch, drawing
- * on Bottom with a depth from the bottom, the ghost of the other face, and
- * the explicit change of a feature's authoring face.
+ * on Bottom with the same Z range control Top uses, the ghost of the other
+ * face, and the explicit change of a feature's authoring face.
  */
 
 import type { Page } from '@playwright/test'
@@ -84,10 +84,10 @@ test('a Top-only project shows the face switch and nothing else about faces', as
   await openInstanceProperties(page)
   await expect(page.locator('.properties-panel .z-range-slider')).toBeVisible()
   await expect(page.locator('.properties-panel .face-row')).toHaveCount(0)
-  await expect(page.locator('.properties-panel .face-depth')).toHaveCount(0)
+  await expect(ui.face.zRange(page)).toHaveCount(0)
 })
 
-test('switching to Bottom, drawing a pocket and giving it a depth from the bottom', async ({ app, ui }) => {
+test('switching to Bottom, drawing a pocket and setting its Z range the way Top does', async ({ app, ui }) => {
   const { page } = app
   // A base covering the middle of the stock, so the canvas centre is on it in both views.
   await drawRect(page, 1, 1, 3, 2)
@@ -114,28 +114,38 @@ test('switching to Bottom, drawing a pocket and giving it a depth from the botto
   expect(pocket.authoringFace).toBe('bottom')
   await expect(page.locator('.tree-row--feature.tree-row--selected')).toHaveCount(1)
 
-  // Depth from the bottom writes the stock span [0, 0.25] and never swaps it.
+  // The Z range is the control Top uses, read with the stock flipped: a new
+  // pocket runs the full height, 0.75 → 0, just as it would on Top.
   await openInstanceProperties(page)
-  const depth = ui.face.depthField(page, 'Depth from bottom')
-  await depth.fill('0.25')
-  await depth.press('Enter')
-  await expect(ui.face.stockSpan(page)).toHaveText('0 → 0.25 in')
+  const zTop = ui.face.zField(page, 'top')
+  const zBottom = ui.face.zField(page, 'bottom')
+  await expect(ui.face.zRange(page).locator('.z-range-slider')).toBeVisible()
+  await expect(zTop).toHaveValue('0.75')
+  await expect(zBottom).toHaveValue('0')
+
+  // Z bottom 0.5 is a pocket 0.25 deep from the face in front of you — on
+  // Bottom that is the stock span 0.25 → 0, shown read-only beneath.
+  await zBottom.fill('0.5')
+  await zBottom.press('Enter')
+  await expect(ui.face.stockSpan(page)).toHaveText('0.25 → 0 in')
   const dimensioned = (await features(page))[1]
   expect(dimensioned.z_bottom).toBe(0)
   expect(dimensioned.z_top).toBe(0.25)
 
-  // A start beyond the far side is refused: the span stays as it was.
-  const start = ui.face.depthField(page, 'Start from bottom')
-  await start.fill('0.5')
-  await start.press('Enter')
-  await expect(ui.face.stockSpan(page)).toHaveText('0 → 0.25 in')
+  // A top below the bottom is refused: nothing is swapped, the span stays.
+  await zTop.fill('0.4')
+  await zTop.press('Enter')
+  await expect(zTop).toHaveValue('0.75')
+  await expect(ui.face.stockSpan(page)).toHaveText('0.25 → 0 in')
   const refused = (await features(page))[1]
   expect([refused.z_bottom, refused.z_top]).toEqual([0, 0.25])
 
   // A floating pocket keeps both ends.
-  await start.fill('0.1')
-  await start.press('Enter')
-  await expect(ui.face.stockSpan(page)).toHaveText('0.1 → 0.25 in')
+  await zTop.fill('0.65')
+  await zTop.press('Enter')
+  await expect(ui.face.stockSpan(page)).toHaveText('0.25 → 0.1 in')
+  const floating = (await features(page))[1]
+  expect([floating.z_bottom, floating.z_top]).toEqual([0.1, 0.25])
 
   // Back on Top the same feature is the ghost and the base is editable again.
   await ui.face.segment(page, 'Top').click()
@@ -197,10 +207,10 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
   await drawRect(page, 0.2, 0.2, 0.9, 0.9)
   const pocket = (await features(page))[1]
   await openInstanceProperties(page)
-  const depth = ui.face.depthField(page, 'Depth from bottom')
-  await depth.fill('0.25')
-  await depth.press('Enter')
-  await expect(ui.face.stockSpan(page)).toHaveText('0 → 0.25 in')
+  const zBottom = ui.face.zField(page, 'bottom')
+  await zBottom.fill('0.5')
+  await zBottom.press('Enter')
+  await expect(ui.face.stockSpan(page)).toHaveText('0.25 → 0 in')
 
   // From Top, the Bottom pocket's row menu switches the workspace to its face.
   await ui.face.segment(page, 'Top').click()
@@ -213,10 +223,11 @@ test('a ghost row leads to its own face, and changing a face is confirmed and ke
   await page.locator('.properties-panel .face-row').getByRole('button', { name: 'Change…' }).click()
   const dialog = ui.face.changeFaceDialog(page)
   await expect(dialog).toBeVisible()
-  await expect(dialog.getByTestId('change-face-depth-now')).toHaveText('0.25')
-  await expect(dialog.getByTestId('change-face-depth-after')).toHaveText('0.5 → 0.75')
-  await expect(dialog.getByTestId('change-face-span-now')).toHaveText('0 → 0.25')
-  await expect(dialog.getByTestId('change-face-span-after')).toHaveText('0 → 0.25')
+  // On Bottom it reads 0.75 → 0.5 (stock flipped); on Top it will read its stored span.
+  await expect(dialog.getByTestId('change-face-z-now')).toHaveText('0.75 → 0.5')
+  await expect(dialog.getByTestId('change-face-z-after')).toHaveText('0.25 → 0')
+  await expect(dialog.getByTestId('change-face-span-now')).toHaveText('0.25 → 0')
+  await expect(dialog.getByTestId('change-face-span-after')).toHaveText('0.25 → 0')
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(dialog).toHaveCount(0)
   expect((await features(page))[1].authoringFace).toBe('bottom')

@@ -736,8 +736,10 @@ export const face = {
   banner: (page: Page) => page.locator('.face-banner'),
   layer: (page: Page, which: 'top' | 'bottom') => page.locator(`[data-face-layer="${which}"]`),
   ghostRows: (page: Page) => page.locator('.tree-row--feature[data-ghost="true"]'),
-  depthField: (page: Page, label: string): Locator =>
-    page.locator('.properties-panel .face-depth .properties-field').filter({ hasText: label }).locator('input'),
+  /** The Z range of a Bottom feature: the same slider Top uses, read with the stock flipped. */
+  zRange: (page: Page): Locator => page.locator('.properties-panel .face-z-range'),
+  zField: (page: Page, which: 'top' | 'bottom'): Locator =>
+    face.zRange(page).locator(which === 'top' ? '.z-range-slider__field--top' : '.z-range-slider__field--bot'),
   stockSpan: (page: Page) => page.getByTestId('stock-z-span'),
   changeFaceDialog: (page: Page) => page.getByRole('dialog', { name: /^Move / }),
 }

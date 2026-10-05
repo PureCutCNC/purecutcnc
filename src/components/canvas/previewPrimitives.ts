@@ -48,6 +48,7 @@ import { pointsEqual } from './hitTest'
 import { appendProfilePath, traceProfilePath } from './profilePrimitives'
 import { worldArcToCanvas, worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
+import { flippedZRange } from '../../store/helpers/activeFace'
 import { canvasColors, canvasRgba, parseRgb } from './canvasPalette'
 import { canvasFeedColour, feedColourStep } from '../../theme/palette'
 import { zMatchesToolpathLevel } from '../toolpathLevels'
@@ -83,9 +84,17 @@ export function drawFeatureInfo(
   feature: SketchFeature,
   vt: ViewTransform,
   units: 'mm' | 'inch',
+  stockThickness?: number,
 ): void {
-  const zTop = typeof feature.z_top === 'number' ? feature.z_top : 5
-  const zBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
+  const stockTop = typeof feature.z_top === 'number' ? feature.z_top : 5
+  const stockBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
+  // A Bottom feature is labelled the way its Z range is edited: as the stock
+  // sits flipped, so it reads like the same feature on Top (issue #945).
+  const flipped = feature.authoringFace === 'bottom' && stockThickness !== undefined
+    ? flippedZRange({ z_top: stockTop, z_bottom: stockBottom }, { thickness: stockThickness })
+    : null
+  const zTop = flipped ? flipped.top : stockTop
+  const zBottom = flipped ? flipped.bottom : stockBottom
   const bounds = getFeatureGeometryBounds(feature)
   const center = worldToCanvas(
     { x: bounds.minX + (bounds.maxX - bounds.minX) / 2, y: bounds.minY + (bounds.maxY - bounds.minY) / 2 },
@@ -142,6 +151,7 @@ export function drawFeature(
   hovered: boolean,
   editing: boolean,
   groupSelected: boolean,
+  stockThickness?: number,
 ): void {
   const zTop = typeof feature.z_top === 'number' ? feature.z_top : 5
   const zBottom = typeof feature.z_bottom === 'number' ? feature.z_bottom : 0
@@ -223,7 +233,7 @@ export function drawFeature(
   }
 
   if (showInfo) {
-    drawFeatureInfo(ctx, feature, vt, units)
+    drawFeatureInfo(ctx, feature, vt, units, stockThickness)
   }
 }
 

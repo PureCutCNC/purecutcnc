@@ -1036,7 +1036,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       if (batchLine) {
         batchedLineFeatures.push(feature)
       } else {
-        drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected)
+        drawFeature(ctx, feature, vt, project.meta.units, project.meta.showFeatureInfo, selected, hovered, editing, groupSelected, project.stock.thickness)
       }
 
       // A1.3: when an operation is armed in the CAM menu, ring the features it
@@ -1113,7 +1113,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     drawLineFeatureBatch(ctx, batchedLineFeatures, vt)
     if (project.meta.showFeatureInfo) {
       for (const feature of batchedLineFeatures) {
-        drawFeatureInfo(ctx, feature, vt, project.meta.units)
+        drawFeatureInfo(ctx, feature, vt, project.meta.units, project.stock.thickness)
       }
     }
 

@@ -16,10 +16,9 @@
 
 import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { depthFromFace } from '../../engine/setupOrientation'
 import { useI18n } from '../../i18n/i18nContext'
 import { useFaceViewStore } from '../../store/faceViewStore'
-import { resolveStockSpan } from '../../store/helpers/activeFace'
+import { flippedZRange, resolveStockSpan } from '../../store/helpers/activeFace'
 import { useProjectStore } from '../../store/projectStore'
 import type { FeatureInstance, Project, SetupFace } from '../../types/project'
 import { formatLength } from '../../utils/units'
@@ -32,27 +31,27 @@ function oppositeFace(face: SetupFace): SetupFace {
   return face === 'top' ? 'bottom' : 'top'
 }
 
-/** A depth span as the depth fields show it: one value when it opens at the face. */
-function formatDepth(project: Project, feature: FeatureInstance, face: SetupFace): string {
+/**
+ * A feature's Z range as its face shows it, top → bottom like the canvas
+ * label: the stored span on Top, the stock flipped on Bottom.
+ */
+function formatZRange(project: Project, feature: FeatureInstance, face: SetupFace): string {
   const span = resolveStockSpan(project, feature)
   if (!span) return '—'
-  const depth = depthFromFace(span, face, project.stock)
-  const units = project.meta.units
-  return Math.abs(depth.start) < 1e-9
-    ? formatLength(depth.end, units)
-    : `${formatLength(depth.start, units)} → ${formatLength(depth.end, units)}`
+  const range = face === 'bottom' ? flippedZRange(span, project.stock) : { top: span.z_top, bottom: span.z_bottom }
+  return `${formatLength(range.top, project.meta.units)} → ${formatLength(range.bottom, project.meta.units)}`
 }
 
 function formatSpan(project: Project, feature: FeatureInstance): string {
   const span = resolveStockSpan(project, feature)
   if (!span) return '—'
-  return `${formatLength(span.z_bottom, project.meta.units)} → ${formatLength(span.z_top, project.meta.units)}`
+  return `${formatLength(span.z_top, project.meta.units)} → ${formatLength(span.z_bottom, project.meta.units)}`
 }
 
 /**
  * The confirmation every authoring-face change goes through (issue #945).
- * It shows what changes — the face a feature is drawn and measured from —
- * and what does not: its place in the stock.
+ * It shows what changes — the face a feature is drawn on, and so how its Z
+ * range reads — and what does not: its place in the stock.
  */
 export function ChangeFaceDialog() {
   const request = useFaceViewStore((state) => state.faceChangeRequest)
@@ -135,9 +134,9 @@ function ChangeFaceDialogBody({ featureIds }: { featureIds: readonly string[] })
                     <td>{faceName(toFace)}</td>
                   </tr>
                   <tr>
-                    <th scope="row">{t('featureTree.face.dialog.depthField')}</th>
-                    <td className="change-face__value" data-testid="change-face-depth-now">{formatDepth(project, movable[0], fromFace)}</td>
-                    <td className="change-face__value" data-testid="change-face-depth-after">{formatDepth(project, movable[0], toFace)}</td>
+                    <th scope="row">{t('featureTree.properties.zRange')}</th>
+                    <td className="change-face__value" data-testid="change-face-z-now">{formatZRange(project, movable[0], fromFace)}</td>
+                    <td className="change-face__value" data-testid="change-face-z-after">{formatZRange(project, movable[0], toFace)}</td>
                   </tr>
                   <tr>
                     <th scope="row">{t('featureTree.face.stockSpan')}</th>
@@ -150,8 +149,8 @@ function ChangeFaceDialogBody({ featureIds }: { featureIds: readonly string[] })
                   {movable.slice(0, LISTED_FEATURES).map((feature) => (
                     <tr key={feature.id}>
                       <th scope="row">{feature.name}</th>
-                      <td className="change-face__value">{formatDepth(project, feature, fromFace)}</td>
-                      <td className="change-face__value">{formatDepth(project, feature, toFace)}</td>
+                      <td className="change-face__value">{formatZRange(project, feature, fromFace)}</td>
+                      <td className="change-face__value">{formatZRange(project, feature, toFace)}</td>
                     </tr>
                   ))}
                 </tbody>
