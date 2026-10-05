@@ -15,7 +15,9 @@
  */
 
 import type { StateCreator } from 'zustand'
+import type { FeatureInstance } from '../../types/project'
 import type { ProjectStore } from '../types'
+import { ghostPredicate } from '../helpers/activeFace'
 import { isConstruction } from '../helpers/featureRoles'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
 import { resolvedFeatureMap } from '../helpers/resolveFeatures'
@@ -85,15 +87,18 @@ export function createTreeVisibilitySlice(
       }
     }),
 
+  // A folder's eye works on the face in view (issue #945): it reads and
+  // toggles the folder's features there, and leaves its ghosts as they are.
   toggleFolderVisible: (folderId) =>
     set((s) => {
-      const folderFeatures = s.project.features.filter((f) => f.folderId === folderId)
-      const anyVisible = folderFeatures.some((f) => f.visible)
+      const isGhost = ghostPredicate(s.project)
+      const inFolder = (f: FeatureInstance) => f.folderId === folderId && !isGhost(f)
+      const anyVisible = s.project.features.some((f) => inFolder(f) && f.visible)
       const nextVisible = !anyVisible
       const nextProject = {
         ...s.project,
         features: s.project.features.map((f) =>
-          f.folderId === folderId ? { ...f, visible: nextVisible } : f
+          inFolder(f) ? { ...f, visible: nextVisible } : f
         ),
         meta: { ...s.project.meta, modified: new Date().toISOString() },
       }

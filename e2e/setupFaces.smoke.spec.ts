@@ -252,6 +252,22 @@ test('a ghost row cannot switch or change a face while a move is in progress', a
   await expect(ui.face.segment(page, 'Top')).toBeEnabled()
 })
 
+// Second review: the face could be switched half-way through drawing a shape,
+// which left an outline picked in two views.
+test('the face is held once a shape has a point on the canvas', async ({ app, ui }) => {
+  const { page } = app
+  await startAddRectPlacement(page)
+  // An armed tool belongs to no face yet.
+  await expect(ui.face.segment(page, 'Bottom')).toBeEnabled()
+  await setPendingAddAnchor(page, 1, 1)
+  await expect(ui.face.segment(page, 'Bottom')).toBeDisabled()
+  await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('title', 'Finish the current edit before switching face')
+  await placePendingAddAt(page, 3, 2)
+  await cancelPendingAdd(page)
+  await expect(ui.face.segment(page, 'Bottom')).toBeEnabled()
+  expect((await features(page))[0].authoringFace).toBe('top')
+})
+
 // The review's finding 6, as decided: a linked copy stays linked on the other
 // face, and the UI says how many copies there share the shape.
 test('a shape shared with linked copies on the other face says so where it is moved and edited', async ({ app, ui }) => {

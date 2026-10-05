@@ -17,7 +17,9 @@
 import { getProfileBounds } from '../types/project'
 import type { FeatureDefinition, Point, Project } from '../types/project'
 import { buildCopiedFeatures, type ReferencedSketchFeature } from '../store/helpers/copyFeatures'
-import { activeFace } from '../store/helpers/activeFace'
+import { transformProfile } from '../geometry/profile'
+import { activeFace, crossFaceArtworkMirror, crossFaceArtworkTransform } from '../store/helpers/activeFace'
+import { multiplyMatrix } from '../store/helpers/instanceTransforms'
 import type { ProjectStore } from '../store/types'
 import { resolvedProjectFeatures, type ResolvedSketchFeature } from '../store/helpers/resolveFeatures'
 
@@ -128,7 +130,30 @@ export function buildPlacedClipboardFeatures(
       throw new Error(`Clipboard feature ${feature.id} is missing definition ${feature.definitionId}`)
     }
     return { ...feature, _clonedDefinition: definition }
-  })
+  }).map((feature) => readableOnActiveFace(feature, project))
+}
+
+/**
+ * Text has a reading direction, so a run pasted onto the other face than the
+ * one it was copied from is mirrored once, in place (issue #945): it then
+ * reads correctly there, as a run typed on that face does. A run pasted back
+ * onto its own face, and every other kind of feature, is left as it is — a
+ * shape pasted across is the same shape, seen from behind.
+ */
+function readableOnActiveFace<T extends ReferencedSketchFeature>(feature: T, project: Project): T {
+  if (feature.kind !== 'text' || (feature.authoringFace ?? 'top') === activeFace(project)) return feature
+  const bounds = getProfileBounds(feature.sketch.profile)
+  const centre = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }
+  const mirror = crossFaceArtworkMirror(project, centre)
+  return {
+    ...feature,
+    transform: multiplyMatrix(crossFaceArtworkTransform(project, centre), feature.transform),
+    sketch: {
+      ...feature.sketch,
+      origin: mirror(feature.sketch.origin),
+      profile: transformProfile(feature.sketch.profile, mirror),
+    },
+  }
 }
 
 export function copySelectedFeatures(store: ProjectStore): FeatureClipboardPayload | null {

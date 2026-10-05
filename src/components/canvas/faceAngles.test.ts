@@ -34,6 +34,9 @@
  * - `computeRotatePreviewPoint` / `computeRotateDegreesFromPreview` not
  *   converting → the rotate assertions fail;
  * - the radial default left in stock space → "a new radial sweep reads 360" fails;
+ * - `drawAngleMeasurement` printing the stock-space turn in a mirrored view
+ *   (the review's finding on PR #978) → "the rotate label reads the turn as
+ *   the field does" fails;
  * - `faceOffsets` returning the stock distance on Bottom, or reversing the
  *   wrong axis → "a typed grid spacing steps the same way on screen" fails;
  * - the grid default left in stock space → "a new grid steps the same way on
@@ -62,6 +65,7 @@ import {
   formatDirectionAngle,
 } from './manualEntry'
 import type { DimensionEditState } from './manualEntry'
+import { drawAngleMeasurement } from './measurements'
 import { computeSketchViewTransform, worldToCanvas } from './viewTransform'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -220,6 +224,45 @@ for (const face of ['top', 'bottom'] as const) {
   assert(spec?.mode === 'radial', 'the radial workflow starts')
   assert(faceAngles(store().project).turn(spec.sweepDegrees) === 360, `on ${face}: a new radial sweep reads 360 in its field`)
   assert(spec.sweepDegrees === (face === 'top' ? 360 : -360), `on ${face}: and is stored in stock space`)
+}
+
+// ── The rotate preview label reads like the rotate field ──────
+
+// The review's case: on Bottom the canvas label showed the stock-space turn
+// while the typed field showed the turn as seen, so the two disagreed in sign.
+{
+  const labelFor = (project: Project, origin: Point, from: Point, to: Point): string | undefined => {
+    const labels: string[] = []
+    const noop = () => undefined
+    const ctx = {
+      save: noop, restore: noop, translate: noop, rotate: noop, beginPath: noop, closePath: noop, moveTo: noop,
+      lineTo: noop, arcTo: noop, quadraticCurveTo: noop, roundRect: noop, rect: noop, fill: noop, stroke: noop,
+      fillRect: noop, strokeRect: noop, setLineDash: noop,
+      measureText: () => ({ width: 10 }),
+      fillText: (text: string) => { labels.push(text) },
+      font: '', textAlign: '', textBaseline: '', fillStyle: '', strokeStyle: '', lineWidth: 0, globalAlpha: 1,
+    } as unknown as CanvasRenderingContext2D
+    drawAngleMeasurement(ctx, origin, from, to, computeSketchViewTransform(project, 800, 600, VIEW))
+    return labels[0]
+  }
+  const origin = { x: 1, y: 1 }
+  const from = { x: 2, y: 1 }
+  const turned = (degrees: number) => ({ x: 1 + Math.cos((degrees * Math.PI) / 180), y: 1 + Math.sin((degrees * Math.PI) / 180) })
+
+  assert(labelFor(TOP, origin, from, turned(30)) === '+30°', 'on Top the label reads the stock-space turn')
+  for (const axis of ['x', 'y'] as const) {
+    const project = projectOn('bottom', axis)
+    for (const stockTurn of [30, -45]) {
+      // What Tab puts in the rotate field, as a number.
+      const field = Number.parseFloat(computeRotateDegreesFromPreview(origin, from, turned(stockTurn), faceAngles(project)))
+      const label = labelFor(project, origin, from, turned(stockTurn))
+      assert(label !== undefined, `flip about ${axis}: the rotate label is drawn`)
+      assert(
+        near(Number.parseFloat(label), field, 0.05) && near(field, -stockTurn),
+        `flip about ${axis}: the rotate label reads the turn as the field does (label ${label}, field ${field})`,
+      )
+    }
+  }
 }
 
 // ── Grid spacing: a signed distance along a stock axis ────────

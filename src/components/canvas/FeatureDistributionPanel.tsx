@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
+import { useMemo } from 'react'
 import type { FeatureDistributionPlan, FeatureDistributionSpec } from '../../sketch/featureDistribution'
 import type { PendingFeatureDistribution } from '../../store/types'
 import { useI18n } from '../../i18n/i18nContext'
-import { faceAngles, faceOffsets } from '../../store/helpers/activeFace'
+import { activeSetup, faceAngles, faceOffsets } from '../../store/helpers/activeFace'
 import { useProjectStore } from '../../store/projectStore'
 import { CanvasWorkflowAction, CanvasWorkflowCancel, CanvasWorkflowConfirm } from './CanvasWorkflowAction'
 import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
@@ -53,9 +54,14 @@ export function FeatureDistributionPanel({
   onComplete,
   onCancel,
 }: FeatureDistributionPanelProps) {
-  const project = useProjectStore((state) => state.project)
-  const face = faceAngles(project)
-  const offsets = faceOffsets(project)
+  // The face maps depend on the active setup and the stock alone; subscribing
+  // to those keeps the panel from re-rendering on every other project change.
+  const setup = useProjectStore((state) => activeSetup(state.project))
+  const stock = useProjectStore((state) => state.project.stock)
+  const { face, offsets } = useMemo(() => {
+    const view = { setups: [setup], activeSetupId: setup.id, stock }
+    return { face: faceAngles(view), offsets: faceOffsets(view) }
+  }, [setup, stock])
   const { t } = useI18n()
   const { spec } = pending
   const planError = plan.ok ? null : {

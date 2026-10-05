@@ -52,6 +52,7 @@ import {
   splitArcSegment,
   type ProfileBreakResult,
 } from '../helpers/profileEdit'
+import { isGhostFeature } from '../helpers/activeFace'
 import { gcOrphanedDefinitions, makeUnique as makeUniqueHelper } from '../helpers/featureDefinitions'
 import { invertMatrix } from '../helpers/instanceTransforms'
 import {
@@ -234,7 +235,9 @@ export function createFeatureGeometrySlice(
       const nextProject: ResolvedProject = {
         ...editableProject,
         features: editableProject.features.map((feature) => {
-          if (feature.id !== featureId || feature.locked) return feature
+          // Reached by feature id, not through the selection: a ghost is
+          // refused here as a locked feature is (issue #945).
+          if (feature.id !== featureId || feature.locked || isGhostFeature(s.project, feature)) return feature
 
           const { profile } = feature.sketch
           const nextProfile = {

@@ -14,14 +14,13 @@
  * limitations under the License.
  */
 
-import { spanFromFaceDepth } from '../../engine/setupOrientation'
-import type { StockZSpan } from '../../engine/setupOrientation'
 import { useI18n } from '../../i18n/i18nContext'
 import { flippedZRange, resolveStockSpan } from '../../store/helpers/activeFace'
-import type { FlippedZRange } from '../../store/helpers/activeFace'
 import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { useProjectStore } from '../../store/projectStore'
 import { convertLength, formatLength } from '../../utils/units'
+import { planFaceZEdit } from './faceZRangeEdit'
+import type { FaceZRow } from './faceZRangeEdit'
 import { ZRangeSlider } from './ZRangeSlider'
 
 interface FaceZRangeProps {
@@ -29,21 +28,12 @@ interface FaceZRangeProps {
   features: readonly ResolvedSketchFeature[]
 }
 
-interface Row {
+interface Row extends FaceZRow {
   feature: ResolvedSketchFeature
-  span: StockZSpan
-  z: FlippedZRange
-  /** Open paths and Lines engrave on one surface: only their top is theirs to set. */
-  surfaceOnly: boolean
 }
 
 function common(values: readonly number[]): number | null {
   return values.length > 0 && values.every((value) => Math.abs(value - values[0]) < 1e-9) ? values[0] : null
-}
-
-/** Drop the float noise `thickness − z` leaves behind, far below any real length. */
-function tidy(value: number): number {
-  return Math.round(value * 1e9) / 1e9
 }
 
 /**
@@ -54,9 +44,8 @@ function tidy(value: number): number {
  * exactly as that pocket reads on Top.
  *
  * It is a view of the stored stock span, which is shown beneath it: every
- * edit goes back through `spanFromFaceDepth`, an entry that would turn the
- * span inside out is refused rather than swapped, and only the side that
- * changed is written.
+ * edit goes back through `planFaceZEdit`, which refuses an entry that would
+ * turn the span inside out rather than swapping it.
  */
 export function FaceZRange({ features }: FaceZRangeProps) {
   const { t } = useI18n()
@@ -73,6 +62,7 @@ export function FaceZRange({ features }: FaceZRangeProps) {
     return span
       ? [{
           feature,
+          featureId: feature.id,
           span,
           z: flippedZRange(span, stock),
           surfaceOnly: !feature.sketch.profile.closed || feature.operation === 'line',
@@ -85,24 +75,10 @@ export function FaceZRange({ features }: FaceZRangeProps) {
   const bottomLocked = solidRows.length === 0
 
   function commit(patch: { top?: number; bottom?: number }): boolean {
-    const planned: Array<{ row: Row; span: StockZSpan }> = []
-    for (const row of rows) {
-      const top = patch.top ?? row.z.top
-      const bottom = row.surfaceOnly ? 0 : (patch.bottom ?? row.z.bottom)
-      // Flipped height back to a depth from the bottom face.
-      const span = spanFromFaceDepth({ start: thickness - top, end: thickness - bottom }, 'bottom', stock)
-      if (!span) return false
-      planned.push({ row, span })
-    }
+    const writes = planFaceZEdit(rows, patch, stock)
+    if (!writes) return false
     beginHistoryTransaction()
-    for (const { row, span } of planned) {
-      // Write back only the side the edit changed, so the untouched side
-      // keeps its stored value — a named dimension included.
-      const next: { z_top?: number; z_bottom?: number } = {}
-      if (patch.bottom !== undefined && !row.surfaceOnly) next.z_top = tidy(span.z_top)
-      if (patch.top !== undefined) next.z_bottom = tidy(span.z_bottom)
-      if (next.z_top !== undefined || next.z_bottom !== undefined) updateFeature(row.feature.id, next)
-    }
+    for (const write of writes) updateFeature(write.featureId, write.patch)
     commitHistoryTransaction()
     return true
   }

@@ -23,19 +23,24 @@ import {
   normalizeWinding,
   toClipperPath,
 } from '../../engine/toolpaths/geometry'
-import { activeFace } from './activeFace'
+import { activeFace, featuresAtActiveFace } from './activeFace'
 import { resolveFeatureInstances } from './resolveFeatures'
 
 const clipperPointInPolygon = (ClipperLib.Clipper as unknown as {
   PointInPolygon(point: { X: number; Y: number }, path: Array<{ X: number; Y: number }>): number
 }).PointInPolygon
 
-/** Infer a newly-created closed feature's role from resolved existing solids. */
+/**
+ * Infer a newly-created closed feature's role from resolved existing solids —
+ * the ones present at the face being drawn on (issue #945): a pocket cut
+ * part-way in from the other face is solid material here, so a shape drawn
+ * over its outline is not an island in it.
+ */
 export function inferManualFeatureOperation(
   project: Project,
   profile: SketchProfile,
 ): FeatureOperation {
-  const existingSolids = resolveFeatureInstances(project)
+  const existingSolids = featuresAtActiveFace(project, resolveFeatureInstances(project))
     .filter((feature) => feature.operation === 'add' || feature.operation === 'subtract')
     .map((feature) => ({
       profile: feature.sketch.profile,
@@ -73,7 +78,9 @@ function safeResolveZ(project: Pick<Project, 'dimensions'>, value: DimensionRef)
  * The result is a height above the face being drawn on (issue #945): on
  * Bottom the stock is read turned over, so a pocket's floor is its stock-space
  * `z_top` and the height is measured down from the top face. Callers turn it
- * into a stock span with `newFeatureSpan`.
+ * into a stock span with `newFeatureSpan`. Only solids present at that face
+ * are considered: a pocket that opens on the other face and stops short of
+ * this one has no floor here.
  */
 export function inferLineTopZFromEnclosingFeature(
   project: Project,
@@ -92,7 +99,7 @@ export function inferLineTopZFromEnclosingFeature(
   let bestZ: number | null = null
   const onTop = activeFace(project) === 'top'
 
-  for (const feature of resolveFeatureInstances(project)) {
+  for (const feature of featuresAtActiveFace(project, resolveFeatureInstances(project))) {
     if (feature.operation !== 'add' && feature.operation !== 'subtract') continue
     if (!feature.sketch.profile.closed) continue
 

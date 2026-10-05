@@ -78,7 +78,7 @@ import {
   projectUsesBothFaces,
 } from './helpers/activeFace'
 import { getDefinitionId } from './helpers/featureDefinitions'
-import { isProvisionalSetupActive, keepWorkspaceFace, provisionalSetupId } from './helpers/provisionalSetup'
+import { keepWorkspaceFace, provisionalSetupFor, provisionalSetupId } from './helpers/provisionalSetup'
 import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
 import { useProjectStore } from './projectStore'
 import type { ProjectStore } from './types'
@@ -134,6 +134,8 @@ function sameDocument(a: Project, b: Project): boolean {
 }
 
 const bottomSetups = () => project().setups.filter((setup) => setupFace(setup) === 'bottom')
+/** True while the workspace looks at a face the project has no setup for. */
+const isProvisionalSetupActive = (candidate: Project): boolean => provisionalSetupFor(candidate) !== undefined
 
 // Looking at Bottom does not change the project (the review's finding 5):
 // a clean Top-only project stays clean, Top-only and without an undo entry.

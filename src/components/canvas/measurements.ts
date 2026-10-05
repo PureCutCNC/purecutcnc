@@ -18,7 +18,7 @@ import type { SketchControlRef } from '../../store/types'
 import type { Point, SketchProfile } from '../../types/project'
 import { formatLength } from '../../utils/units'
 import { arcControlPoint, anchorPointForIndex } from './profilePrimitives'
-import { worldAngleToCanvas, worldToCanvas } from './viewTransform'
+import { viewIsMirrored, worldAngleToCanvas, worldToCanvas } from './viewTransform'
 import type { ViewTransform } from './viewTransform'
 import { canvasColors, canvasRgba } from './canvasPalette'
 
@@ -196,9 +196,12 @@ export function drawAngleMeasurement(
       56,
     )
 
+  // The label reads the turn as it is seen: a mirrored view (a Bottom setup)
+  // reverses it, the same way the typed rotate field does (issue #945).
+  const shown = viewIsMirrored(vt) ? -delta : delta
   drawMeasurementLabel(
     ctx,
-    `${delta >= 0 ? '+' : ''}${delta.toFixed(1).replace(/\.0$/, '')}°`,
+    `${shown >= 0 ? '+' : ''}${shown.toFixed(1).replace(/\.0$/, '')}°`,
     originCanvas.cx + Math.cos(angleMid) * radius,
     originCanvas.cy + Math.sin(angleMid) * radius,
   )

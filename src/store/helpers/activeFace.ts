@@ -43,10 +43,10 @@ import type {
   Stock,
 } from '../../types/project'
 import { getDefinitionId } from './featureDefinitions'
-import { provisionalSetupFor } from './provisionalSetup'
+import { defaultSetupForFace, provisionalSetupFor } from './provisionalSetup'
 import { resolvedProjectFeatures } from './resolveFeatures'
 import type { ResolvedSketchFeature } from './resolveFeatures'
-import type { ProjectStore, SelectionState } from '../types'
+import type { PendingAddTool, ProjectStore, SelectionState } from '../types'
 
 type FaceProject = Pick<Project, 'setups' | 'activeSetupId'>
 
@@ -87,14 +87,27 @@ export function projectUsesBothFaces(project: Pick<Project, 'setups' | 'activeSe
 }
 
 /**
- * True while a feature is being edited, moved or combined. That work belongs
- * to the face it started on: changing the workspace face, or a feature's
- * authoring face, is refused until it is finished or cancelled, so it can
- * never complete on a ghost.
+ * True once a shape being drawn has a point on the canvas. An armed tool with
+ * nothing placed yet belongs to no face; a half-drawn outline does, because
+ * its points were picked in that face's view.
+ */
+function placementUnderWay(pendingAdd: PendingAddTool | null): boolean {
+  if (!pendingAdd) return false
+  if ('anchor' in pendingAdd) return pendingAdd.anchor !== null
+  if ('points' in pendingAdd) return pendingAdd.points.length > 0
+  return pendingAdd.shape === 'composite' && pendingAdd.start !== null
+}
+
+/**
+ * True while a feature is being drawn, edited, moved or combined. That work
+ * belongs to the face it started on: changing the workspace face, or a
+ * feature's authoring face, is refused until it is finished or cancelled, so
+ * it can never complete on a ghost or with an outline picked in two views.
  */
 export function isFaceEditInProgress(state: Pick<
   ProjectStore,
   | 'selection'
+  | 'pendingAdd'
   | 'pendingMove'
   | 'pendingTransform'
   | 'pendingOffset'
@@ -104,6 +117,7 @@ export function isFaceEditInProgress(state: Pick<
   | 'pendingTextLayout'
 >): boolean {
   return state.selection.mode === 'sketch_edit'
+    || placementUnderWay(state.pendingAdd)
     || state.pendingMove !== null
     || state.pendingTransform !== null
     || state.pendingOffset !== null
@@ -113,9 +127,19 @@ export function isFaceEditInProgress(state: Pick<
     || state.pendingTextLayout !== null
 }
 
+/**
+ * The ghost rule, resolved once for a project: true for a feature authored on
+ * the face the workspace is not on. A feature that names no face is on Top.
+ * Every "is this a ghost" question in the app is this predicate.
+ */
+export function ghostPredicate(project: FaceProject): (feature: { authoringFace?: SetupFace }) => boolean {
+  const face = activeFace(project)
+  return (feature) => (feature.authoringFace ?? 'top') !== face
+}
+
 /** True for a feature authored on the face the workspace is not on. */
 export function isGhostFeature(project: FaceProject, feature: { authoringFace?: SetupFace }): boolean {
-  return (feature.authoringFace ?? 'top') !== activeFace(project)
+  return ghostPredicate(project)(feature)
 }
 
 /**
@@ -153,10 +177,8 @@ export function editableFeatures<T extends { authoringFace?: SetupFace }>(
   project: FaceProject,
   features: readonly T[],
 ): readonly T[] {
-  const face = activeFace(project)
-  return features.some((feature) => (feature.authoringFace ?? 'top') !== face)
-    ? features.filter((feature) => (feature.authoringFace ?? 'top') === face)
-    : features
+  const isGhost = ghostPredicate(project)
+  return features.some(isGhost) ? features.filter((feature) => !isGhost(feature)) : features
 }
 
 /**
@@ -169,12 +191,37 @@ export function editableProjectFeatures(project: Project): readonly ResolvedSket
 
 /** Ids of the project's ghost features, empty for a Top-only project. */
 export function ghostFeatureIds(project: Pick<Project, 'setups' | 'activeSetupId' | 'features'>): Set<string> {
-  const face = activeFace(project)
+  const isGhost = ghostPredicate(project)
   const ids = new Set<string>()
   for (const feature of project.features) {
-    if (feature.authoringFace !== face) ids.add(feature.id)
+    if (isGhost(feature)) ids.add(feature.id)
   }
   return ids
+}
+
+/**
+ * The features a shape newly drawn on the active face is judged against —
+ * which solid it sits in, which surface a Line lands on. Those authored on
+ * this face, and those from the other face whose span reaches it: a base
+ * that fills the stock is material on both faces, but a pocket cut part-way
+ * in from Top is not there at all when the stock is seen from Bottom.
+ * Returns the input array itself when nothing is left out, so a Top-only
+ * project takes exactly the path it always did.
+ */
+export function featuresAtActiveFace<T extends Pick<SketchFeature, 'z_top' | 'z_bottom'> & { authoringFace?: SetupFace }>(
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock' | 'dimensions'>,
+  features: readonly T[],
+): readonly T[] {
+  const face = activeFace(project)
+  const isGhost = ghostPredicate(project)
+  const epsilon = 1e-9
+  const atFace = (feature: T): boolean => {
+    if (!isGhost(feature)) return true
+    const span = resolveStockSpan(project, feature)
+    if (!span) return false
+    return face === 'top' ? span.z_top >= project.stock.thickness - epsilon : span.z_bottom <= epsilon
+  }
+  return features.every(atFace) ? features : features.filter(atFace)
 }
 
 /**
@@ -207,7 +254,29 @@ export function faceArtworkMirror(
 ): ((point: Point) => Point) | null {
   const setup = activeSetup(project)
   if (setupFace(setup) === 'top') return null
-  const frame = setupFrame(setup.orientation, project.stock)
+  return flipAxisMirror(setup, project.stock, anchor)
+}
+
+/**
+ * The mirror that carries anchored artwork from one face to the other: the
+ * Bottom setup's, whichever face is in view. It is its own inverse, so the
+ * same map puts the mirror on a text run that goes to Bottom and takes it
+ * off one that comes back to Top.
+ */
+export function crossFaceArtworkMirror(
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
+  anchor: Point,
+): (point: Point) => Point {
+  const active = activeSetup(project)
+  const bottom = setupFace(active) === 'bottom'
+    ? active
+    : findSetupForFace(project, 'bottom') ?? defaultSetupForFace('bottom')
+  return flipAxisMirror(bottom, project.stock, anchor)
+}
+
+/** A setup's own XY mirror, re-centred on `anchor` so the anchor stays put. */
+function flipAxisMirror(setup: MachiningSetup, stock: Stock, anchor: Point): (point: Point) => Point {
+  const frame = setupFrame(setup.orientation, stock)
   // The turn's own XY mirror, re-centred on the anchor so the anchor stays put.
   const turnedAnchor = setupToCanonicalPoint({ x: anchor.x, y: anchor.y, z: 0 }, frame)
   const dx = anchor.x - turnedAnchor.x
@@ -252,10 +321,22 @@ export function faceArtworkTransform(
   anchor: Point,
 ): Matrix2D | null {
   const mirror = faceArtworkMirror(project, anchor)
-  if (!mirror) return null
-  const origin = mirror({ x: 0, y: 0 })
-  const unitX = mirror({ x: 1, y: 0 })
-  const unitY = mirror({ x: 0, y: 1 })
+  return mirror ? affineMatrixOf(mirror) : null
+}
+
+/** {@link crossFaceArtworkMirror} as a matrix to compose onto an instance transform. */
+export function crossFaceArtworkTransform(
+  project: Pick<Project, 'setups' | 'activeSetupId' | 'stock'>,
+  anchor: Point,
+): Matrix2D {
+  return affineMatrixOf(crossFaceArtworkMirror(project, anchor))
+}
+
+/** The matrix of an affine point map, read off where it sends the origin and the unit axes. */
+function affineMatrixOf(map: (point: Point) => Point): Matrix2D {
+  const origin = map({ x: 0, y: 0 })
+  const unitX = map({ x: 1, y: 0 })
+  const unitY = map({ x: 0, y: 1 })
   return {
     a: unitX.x - origin.x,
     b: unitX.y - origin.y,
