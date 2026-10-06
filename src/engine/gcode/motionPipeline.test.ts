@@ -383,3 +383,24 @@ testSplitRapid()
 testGcodeRapidsUseTheSplit()
 
 console.log('motion pipeline tests passed')
+
+
+// Metadata-only plasma support must disclose both the dry export and a tool
+// change which this definition cannot execute, even with changes requested.
+{
+  const input = programInput([['t1', 12000], ['t2', 12000]])
+  const definition = bundled('qtplasmac')
+  const result = runPostProcessor({ ...input, definition })
+  assertEqual(result.warnings.filter((warning) => warning.code === 'postPlasmaOutputPending').length, 1, 'plasma pending warning once per program')
+  assertEqual(result.warnings.filter((warning) => warning.code === 'postNoToolChangeCommands'), [{ code: 'postNoToolChangeCommands', params: { operation: 'Op op2', tool: 'Tool 2' } }], 'empty change commands disclose the actual second tool')
+  const sameTool = runPostProcessor({ ...programInput([['t1', 12000], ['t1', 12000]]), definition })
+  assert(!sameTool.warnings.some((warning) => warning.code === 'postNoToolChangeCommands'), 'no false change warning on one tool')
+  for (const commands of [[], [' ', '(comment only)', '; also a comment']]) {
+    const silent = runPostProcessor({ ...input, definition: { ...definition, toolChange: { ...definition.toolChange, commands } } })
+    assert(silent.warnings.some((warning) => warning.code === 'postNoToolChangeCommands'), 'comments do not execute a tool change')
+  }
+  for (const toolChange of [{ ...definition.toolChange, commands: ['T{toolNumber} M6'] }, { ...definition.toolChange, pauseAfterChange: true }]) {
+    const executable = runPostProcessor({ ...input, definition: { ...definition, toolChange } })
+    assert(!executable.warnings.some((warning) => warning.code === 'postNoToolChangeCommands'), 'executable change or pause clears warning')
+  }
+}

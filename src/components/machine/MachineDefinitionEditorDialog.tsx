@@ -28,6 +28,7 @@ import type { MachineFormData } from './machineDefinitionForm'
 import { dialogsEn } from '../../i18n/locales/en/dialogs'
 import type { MessageParams } from '../../i18n/catalog'
 import { useI18n } from '../../i18n/i18nContext'
+import { PlasmaMachineFields } from './PlasmaMachineFields'
 
 export interface MachineDefinitionEditorDialogProps {
   definition: MachineDefinition
@@ -51,6 +52,10 @@ export function MachineDefinitionEditorDialog({
     JSON.stringify(definition, null, 2),
   )
   const textAreaRef = useRef<HTMLTextAreaElement>(null)
+  // Preserve Advanced settings while a required command is temporarily blank.
+  const lastValidDefinition = useRef(definition)
+  // An invalid raw edit must stay visible, never be replaced by the older form.
+  const invalidAdvancedEdit = useRef(false)
 
   // Escape key closes the dialog.
   useEffect(() => {
@@ -89,29 +94,33 @@ export function MachineDefinitionEditorDialog({
   }, [advancedJson, definition, form, languageTag])
 
   function handleFormChange(patch: Partial<MachineFormData>) {
-    setForm((prev) => {
-      const next = { ...prev, ...patch }
-      // When the focused form changes, also update the Advanced JSON view
-      // so both stay in sync. Only sync if the JSON view doesn't have a
-      // syntax error (if it does, keep the user's broken JSON).
-      try {
-        JSON.parse(advancedJson)
-        const merged = mergeFormData(definition, next)
-        setAdvancedJson(JSON.stringify(merged, null, 2))
-      } catch {
-        // Syntax error in JSON editor — don't overwrite; user is editing raw.
-      }
-      return next
-    })
+    const next = { ...form, ...patch }
+    setForm(next)
+    if (invalidAdvancedEdit.current) return
+    // Merge against the current valid JSON so advanced edits survive a
+    // later focused edit, including changes to the optional plasma block.
+    try {
+      const parsed = JSON.parse(advancedJson)
+      const base = validateDef(parsed).ok ?? lastValidDefinition.current
+      const merged = mergeFormData(base, next)
+      const valid = validateDef(merged).ok
+      if (valid) lastValidDefinition.current = valid
+      setAdvancedJson(JSON.stringify(merged, null, 2))
+    } catch {
+      // Keep a syntax error intact while the user is editing raw JSON.
+    }
   }
 
   function handleJsonChange(value: string) {
+    invalidAdvancedEdit.current = true
     setAdvancedJson(value)
     try {
       const parsed = JSON.parse(value)
       // Also sync the focused form from the JSON.
       const result = validateDef(parsed)
       if (result.ok) {
+        invalidAdvancedEdit.current = false
+        lastValidDefinition.current = result.ok
         setForm(toFormData(result.ok))
       }
     } catch {
@@ -131,6 +140,8 @@ export function MachineDefinitionEditorDialog({
       const parsed = JSON.parse(advancedJson)
       const result = validateDef(parsed)
       if (result.ok) {
+        invalidAdvancedEdit.current = false
+        lastValidDefinition.current = result.ok
         setForm(toFormData(result.ok))
       }
     } catch {
@@ -238,6 +249,8 @@ function renderVar(name: string, desc: string, context?: string) {
               ) : null}
             </div>
 
+            {usesGcodeFields ? <PlasmaMachineFields form={form} onChange={handleFormChange} /> : null}
+
             {usesGcodeFields ? (
               <>
                 <div className="dialog-section-group">
@@ -301,6 +314,7 @@ function renderVar(name: string, desc: string, context?: string) {
               <textarea
                 ref={textAreaRef}
                 className="machine-editor-json"
+                aria-label={td('dialogs.machineEditor.advanced')}
                 value={advancedJson}
                 onChange={(e) => handleJsonChange(e.target.value)}
                 onBlur={handleJsonBlur}
@@ -341,6 +355,7 @@ function renderVar(name: string, desc: string, context?: string) {
                   {renderVar('feed', 'Cutting feed rate (formatted)', 'operation header')}
                   {renderVar('plungeFeed', 'Plunge feed rate (formatted)', 'operation header')}
                   {renderVar('rpm', 'Spindle RPM (formatted)', 'tool change, op header')}
+                  {form.machineKind === 'plasma' ? renderVar('materialNumber', td('dialogs.machineEditor.materialNumberReference'), 'plasma.materialSelectCommand') : null}
                 </div>
               </DisclosureSection>
             ) : null}

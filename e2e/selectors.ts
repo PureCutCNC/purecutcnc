@@ -350,6 +350,9 @@ export const machineManager = {
 }
 
 export const machineEditor = {
+  field: (page: Page, label: string) => machineEditor.dialog(page).getByRole(label === 'Machine kind' || label === 'Pierce mode' ? 'combobox' : 'textbox', { name: label, exact: true }),
+  advancedToggle: (page: Page) => machineEditor.dialog(page).getByRole('button', { name: 'Advanced (raw JSON)' }),
+  advancedJson: (page: Page) => machineEditor.dialog(page).getByRole('textbox', { name: 'Advanced (raw JSON)' }),
   dialog: (page: Page) => page.getByRole('dialog', { name: /^Edit machine/ }),
   saveButton: (page: Page) =>
     machineEditor.dialog(page).getByRole('button', { name: 'Save', exact: true }),

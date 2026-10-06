@@ -30,13 +30,14 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 
 - `index.ts` — public API.
 - `types.ts` — `MachineDefinition` and its zod schema (`motion.arcInterpolation`,
-  `arcFormat`, the optional `outputDialect`), `resolveOutputDialect`,
+  `arcFormat`, the optional `outputDialect`, `machineKind` and `plasma` block), `resolveOutputDialect`,
   `PostProcessorInput`/`Options`/`Result`, and `OperationMotionTrace`.
 - `postprocessor.ts` — `runPostProcessor` (the dialect switch) and the G-code
   emitter: templates, modal tracking, canned drill cycles, line numbers.
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
-  feed and speed fallbacks, and their warnings), `planOperationMotion`
+  feed and speed fallbacks, pending plasma output and unexecutable tool-change
+  warnings), `planOperationMotion`
   (project → machine transform, arc fitting, the emitted-arc fallback and its
   warnings, the motion trace), `planDrillCycles` (drill cycles in machine
   coordinates, for a dialect with canned cycles), `splitRapid` (the safe-Z
@@ -65,7 +66,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   frame before the origin offset, and Top passes none.
 - `definitions/` — bundled machine definitions (`BUNDLED_DEFINITIONS`) and
   `getActiveMachineDefinition`, the export boundary. `shopbot.json` is the one
-  non-G-code definition; see the note below.
+  non-G-code definition; see the note below. `qtplasmac.json` adds the experimental
+  plasma table metadata, with controller-owned piercing and no torch emission.
+- `legacyMachineParity.test.ts` + `legacyMachineParity.json` — 42 frozen pre-#956 output cases across every existing machine, both units, arcs, tool changes and drilling; only the clock date is normalized.
 - `*.test.ts` — `postprocessor.test.ts` (G-code), `motionPipeline.test.ts`
   (sequencing, drill-cycle transform, rapid split, and both emitters checked
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect

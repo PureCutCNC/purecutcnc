@@ -23,6 +23,7 @@ import linuxcnc from './linuxcnc.json'
 import grblhal from './grblhal.json'
 import uccnc from './uccnc.json'
 import shopbot from './shopbot.json'
+import qtplasmac from './qtplasmac.json'
 
 export const BUNDLED_DEFINITIONS: MachineDefinition[] = [
   generic as unknown as MachineDefinition,
@@ -37,6 +38,8 @@ export const BUNDLED_DEFINITIONS: MachineDefinition[] = [
   // build that predates `outputDialect` — which ignores that field and takes
   // the G-code path — writes a file of comments, not G-code, into a `.sbp`.
   shopbot as unknown as MachineDefinition,
+  // Metadata only (#956). Torch sequencing belongs to motionPipeline (#959).
+  qtplasmac as unknown as MachineDefinition,
 ]
 
 /**

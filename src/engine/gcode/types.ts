@@ -60,6 +60,35 @@ const DecimalPlacesSchema = z.union([
 export const OUTPUT_DIALECTS = ['gcode', 'opensbp'] as const
 export type OutputDialect = (typeof OUTPUT_DIALECTS)[number]
 
+/** Machine kind is optional: legacy snapshots retain their original keys. */
+export const MACHINE_KINDS = ['router', 'plasma'] as const
+export type MachineKind = (typeof MACHINE_KINDS)[number]
+
+const PlasmaCommandSchema = z.string().refine((value) => value.trim().length > 0, 'Command must not be blank.')
+const OptionalPlasmaCommandSchema = z.preprocess(
+  (value) => typeof value === 'string' && !value.trim() ? undefined : value,
+  PlasmaCommandSchema.optional(),
+)
+
+const PlasmaDefinitionSchema = z.object({
+  torchOnCommand: PlasmaCommandSchema,
+  torchOffCommand: PlasmaCommandSchema,
+  materialSelectCommand: PlasmaCommandSchema,
+  materialWaitCommand: PlasmaCommandSchema,
+  materialFeedCommand: PlasmaCommandSchema,
+  thcOnCommand: OptionalPlasmaCommandSchema,
+  thcOffCommand: OptionalPlasmaCommandSchema,
+  // Reserve the mode name, but refuse unsupported controller-independent
+  // piercing rather than silently treating it as controller-owned in 0.6.0.
+  pierceMode: z.enum(['controller', 'gcode']).superRefine((mode, context) => {
+    if (mode === 'gcode') context.addIssue({ code: 'custom', message: 'G-code-owned piercing is not supported in 0.6.0.' })
+  }),
+}).transform(({ thcOnCommand, thcOffCommand, ...block }) => ({
+  ...block,
+  ...(thcOnCommand === undefined ? {} : { thcOnCommand }),
+  ...(thcOffCommand === undefined ? {} : { thcOffCommand }),
+}))
+
 export const MachineDefinitionSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -72,6 +101,8 @@ export const MachineDefinitionSchema = z.object({
   // snapshot stays byte-for-byte what it was. Read it through
   // `resolveOutputDialect`, never directly.
   outputDialect: z.enum(OUTPUT_DIALECTS).optional(),
+  machineKind: z.enum(MACHINE_KINDS).optional(),
+  plasma: PlasmaDefinitionSchema.optional(),
   coordinateSystem: z.object({
     xAxis: z.enum(['X', 'Y', 'Z', '-X', '-Y', '-Z']),
     yAxis: z.enum(['X', 'Y', 'Z', '-X', '-Y', '-Z']),
@@ -139,12 +170,27 @@ export const MachineDefinitionSchema = z.object({
   stop: z.object({
     programEndCommand: z.string(),
   }),
+}).superRefine((definition, context) => {
+  if (definition.plasma && definition.machineKind !== 'plasma') {
+    context.addIssue({ code: 'custom', path: ['machineKind'], message: 'A plasma block requires machineKind: plasma.' })
+  }
+  if (definition.machineKind === 'plasma' && definition.outputDialect === 'opensbp') {
+    context.addIssue({ code: 'custom', path: ['machineKind'], message: 'Plasma machines require the G-code output dialect.' })
+  }
+  if (definition.machineKind === 'plasma' && !definition.plasma) {
+    context.addIssue({ code: 'custom', path: ['plasma'], message: 'A plasma machine requires a plasma block.' })
+  }
 })
 
 export type MachineDefinition = z.infer<typeof MachineDefinitionSchema>
 
 export function validateMachineDefinition(data: unknown): MachineDefinition {
   return MachineDefinitionSchema.parse(data)
+}
+
+/** An absent kind means router without adding a field to old snapshots. */
+export function resolveMachineKind(definition: Pick<MachineDefinition, 'machineKind'>): MachineKind {
+  return definition.machineKind ?? 'router'
 }
 
 /** The dialect a definition exports; a definition without the field is G-code. */

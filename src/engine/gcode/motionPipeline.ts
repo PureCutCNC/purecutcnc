@@ -118,6 +118,10 @@ export interface OperationSequence {
 export interface SequenceCapabilities {
   /** The dialect has coolant commands to write for this machine. */
   coolant: boolean
+  /** False when this definition cannot execute a requested tool change. */
+  toolChange?: boolean
+  /** Metadata-only plasma support until the torch path lands in #959. */
+  plasmaOutputPending?: boolean
 }
 
 /**
@@ -136,11 +140,15 @@ export function planProgramSequence(
 
   return operations.map(({ operation, tool }, opIndex) => {
     const warnings: ToolpathWarning[] = []
+    if (opIndex === 0 && capabilities.plasmaOutputPending) warnings.push({ code: 'postPlasmaOutputPending' })
     const toolIndex = project.tools.findIndex((candidate) => candidate.id === tool.id) + 1
     const rpm = operation.rpm || tool.defaultRpm
 
     // Tool change
     const toolChanged = currentToolId !== tool.id
+    if (toolChanged && opIndex > 0 && capabilities.toolChange === false) {
+      warnings.push({ code: 'postNoToolChangeCommands', params: { operation: operation.name, tool: tool.name } })
+    }
     const changeTool = toolChanged && options.emitToolChanges
     const spindleRunningAtToolChange = changeTool && spindleOn
     if (changeTool) {

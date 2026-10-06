@@ -212,6 +212,8 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.postWcsNullSelect': '机床定义在程序头中请求 {wcsCommand}，但 selectCommand 为 null。',
   'warnings.postToolChangesDisabled': '加工操作“{operation}”需要刀具“{tool}”，但换刀已禁用：程序会继续使用上一把刀具切削。请启用换刀，或每次只导出一个加工操作。',
   'warnings.postNoCoolantCommands': '已请求冷却液输出，但机床定义没有冷却液指令。',
+  'warnings.postPlasmaOutputPending': '等离子输出尚未实现：此导出不包含割炬或材料指令序列。割炬不会点火。',
+  'warnings.postNoToolChangeCommands': '加工操作“{operation}”需要刀具“{tool}”，但此机床没有可执行的换刀指令。程序继续使用上一把刀具；请每次仅导出一把刀具。',
   'warnings.postCannedCycleUnsupported': '加工操作“{operation}”：机床“{machine}”不支持 {drillType} 固定循环；已输出展开的移动。',
   'warnings.postArcNoCapability': '加工操作”{operation}”包含可拟合为圆弧的直线移动，但所选机床不支持圆弧插补（G2/G3）。已改用直线移动输出。',
   'warnings.postArcFallbackLinear': '加工操作”{operation}”中有 {count} 段拟合圆弧在数字舍入后会被所选控制器拒绝。这些区段已改用直线移动输出。',
