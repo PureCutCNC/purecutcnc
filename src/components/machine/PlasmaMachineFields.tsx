@@ -25,11 +25,20 @@ interface Props {
 /** Machine-kind and plasma metadata form; no command emission happens here. */
 export function PlasmaMachineFields({ form, onChange }: Props) {
   const { t } = useI18n()
-  function commandField(key: 'torchOnCommand' | 'torchOffCommand' | 'materialSelectCommand' | 'materialWaitCommand' | 'materialFeedCommand' | 'thcOnCommand' | 'thcOffCommand', label: string) {
+  function commandField(key: 'torchOnCommand' | 'torchOffCommand' | 'materialSelectCommand' | 'materialWaitCommand' | 'materialFeedCommand' | 'thcOnCommand' | 'thcOffCommand' | 'probeCommand' | 'setZeroCommand', label: string) {
     return (
       <label className="machine-editor-field">
         <span className="machine-editor-label">{label}</span>
         <input className="machine-editor-input" type="text" value={form[key]}
+          onChange={(event) => onChange({ [key]: event.target.value })} />
+      </label>
+    )
+  }
+  function numberField(key: 'probeDepth' | 'probeFeed' | 'switchOffset', label: string) {
+    return (
+      <label className="machine-editor-field">
+        <span className="machine-editor-label">{label}</span>
+        <input className="machine-editor-input" type="number" min={0} step="any" value={form[key]}
           onChange={(event) => onChange({ [key]: event.target.value })} />
       </label>
     )
@@ -49,21 +58,34 @@ export function PlasmaMachineFields({ form, onChange }: Props) {
           <span className="dialog-section-title">{t('dialogs.machineEditor.plasma')}</span>
           {commandField('torchOnCommand', t('dialogs.machineEditor.torchOn'))}
           {commandField('torchOffCommand', t('dialogs.machineEditor.torchOff'))}
-          {commandField('materialSelectCommand', t('dialogs.machineEditor.materialSelect'))}
-          {commandField('materialWaitCommand', t('dialogs.machineEditor.materialWait'))}
-          {commandField('materialFeedCommand', t('dialogs.machineEditor.materialFeed'))}
-          <p className="machine-editor-note">{t('dialogs.machineEditor.materialNumberHint')}</p>
           {commandField('thcOnCommand', t('dialogs.machineEditor.thcOn'))}
           {commandField('thcOffCommand', t('dialogs.machineEditor.thcOff'))}
           <label className="machine-editor-field">
             <span className="machine-editor-label">{t('dialogs.machineEditor.pierceMode')}</span>
             <select className="machine-editor-input" value={form.pierceMode}
-              onChange={() => onChange({ pierceMode: 'controller' })}>
+              onChange={(event) => onChange({ pierceMode: event.target.value === 'gcode' ? 'gcode' : 'controller' })}>
               <option value="controller">{t('dialogs.machineEditor.pierceController')}</option>
-              <option value="gcode" disabled>{t('dialogs.machineEditor.pierceGcode')}</option>
+              <option value="gcode">{t('dialogs.machineEditor.pierceGcode')}</option>
             </select>
           </label>
-          <p className="machine-editor-note">{t('dialogs.machineEditor.plasmaNote')}</p>
+          {form.pierceMode === 'controller' ? (
+            <>
+              {commandField('materialSelectCommand', t('dialogs.machineEditor.materialSelect'))}
+              {commandField('materialWaitCommand', t('dialogs.machineEditor.materialWait'))}
+              {commandField('materialFeedCommand', t('dialogs.machineEditor.materialFeed'))}
+              <p className="machine-editor-note">{t('dialogs.machineEditor.materialNumberHint')}</p>
+              <p className="machine-editor-note">{t('dialogs.machineEditor.plasmaNote')}</p>
+            </>
+          ) : (
+            <>
+              {commandField('probeCommand', t('dialogs.machineEditor.probeCommand'))}
+              {numberField('probeDepth', t('dialogs.machineEditor.probeDepth'))}
+              {numberField('probeFeed', t('dialogs.machineEditor.probeFeed'))}
+              {commandField('setZeroCommand', t('dialogs.machineEditor.setZeroCommand'))}
+              {numberField('switchOffset', t('dialogs.machineEditor.switchOffset'))}
+              <p className="machine-editor-note">{t('dialogs.machineEditor.touchOffNote')}</p>
+            </>
+          )}
         </>
       ) : null}
     </div>
