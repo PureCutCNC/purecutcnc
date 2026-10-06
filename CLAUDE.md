@@ -9,7 +9,7 @@ reference.
 **Critical Path — read this first, then the full AGENTS.md:**
 - **Issue first.** Open a GitHub issue (#NN) before any code. Fast lane skips Plan/Approve **only** if `npm run check:fast-lane` is green.
 - **Branch, never `main`.** Work on a feature branch; the `main-requires-pr` ruleset blocks merge without a PR.
-- **Build green.** `npm run build` (lint + tsc + tests + icons) must pass before committing.
+- **Build green.** `npm run build` (lint + tsc + tests + icons) must pass before the PR — locally, or `npm run build:gates` locally plus `pr-check.yml` dispatched on the pushed branch (AGENTS.md § Build & Verify).
 - **Worktrees only.** Never edit the primary checkout's working tree — use `git worktree add` outside the repo.
 - **Protected paths → full lane.** `AGENTS.md`, the agent entrypoints (this file included), and engine/gcode/machine/format code — plan + approve required.
 - **Close with a PR.** End with a PR containing `Closes #NN`; rebase onto `main` first.
