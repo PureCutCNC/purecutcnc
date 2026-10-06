@@ -57,17 +57,25 @@ for (const patch of [
   { plasma: { ...block, touchOff: undefined } },
   { plasma: { ...block, materialSelectCommand: 'M190 P{materialNumber}' } },
   { plasma: { ...block, materialWaitCommand: 'M66 P3 L3 Q1' } },
+  { plasma: { ...block, materialFeedCommand: 'F#<_hal[plasmac.cut-feed-rate]>' } },
   { plasma: { ...qtBlock, touchOff } },
   { plasma: { ...block, touchOff: { ...touchOff, probeCommand: '  ' } } },
   { plasma: { ...block, touchOff: { ...touchOff, setZeroCommand: '' } } },
   ...(['probeDepth', 'probeFeed'] as const).flatMap((key) => [0, -1, Number.NaN, '30', undefined].map((value) => ({ plasma: { ...block, touchOff: { ...touchOff, [key]: value } } }))),
-  ...[-0.5, Number.NaN, Number.POSITIVE_INFINITY, undefined].map((switchOffset) => ({ plasma: { ...block, touchOff: { ...touchOff, switchOffset } } })),
+  ...[-0.5, Number.NaN, Number.POSITIVE_INFINITY, '0'].map((switchOffset) => ({ plasma: { ...block, touchOff: { ...touchOff, switchOffset } } })),
 ]) {
   assert.equal(MachineDefinitionSchema.safeParse({ ...plasma, ...patch }).success, false, JSON.stringify(patch))
 }
 const blankMaterial = validateMachineDefinition({ ...plasma, plasma: { ...block, materialSelectCommand: '  ' } })
 assert.ok(!('materialSelectCommand' in blankMaterial.plasma!), 'a blank material command is absent, as for THC')
 assert.equal(validateMachineDefinition({ ...plasma, plasma: { ...block, touchOff: { ...touchOff, switchOffset: 1.5 } } }).plasma?.touchOff?.switchOffset, 1.5)
+const { switchOffset: _offset, ...touchOffWithoutOffset } = touchOff
+const noOffset = validateMachineDefinition({ ...plasma, plasma: { ...block, touchOff: touchOffWithoutOffset } })
+assert.ok(!('switchOffset' in noOffset.plasma!.touchOff!), 'an omitted switch offset (meaning 0) is accepted and stays absent')
+
+// Validation errors reach the editor as the schema's sentence and path, not the raw issue JSON.
+assert.equal(validateDef({ ...plasma, plasma: { ...block, touchOff: undefined } }).error, 'G-code piercing requires touch-off settings. (at plasma.touchOff)')
+assert.equal(validateDef({ ...plasma, plasma: { ...block, touchOff: { ...touchOff, probeDepth: 0 } } }).error?.endsWith('(at plasma.touchOff.probeDepth)'), true)
 
 const duplicate = duplicateMachineAsCustom(plasma, [])
 const imported = parseMachineImport(serializeMachineExport(duplicate), [])
@@ -79,9 +87,14 @@ assert.equal(form.pierceMode, 'gcode')
 assert.deepEqual(mergeFormData(duplicate, form), duplicate)
 const edited = validateDef(mergeFormData(duplicate, { ...form, switchOffset: '1.5', probeDepth: '40', probeFeed: '150', probeCommand: 'G38.3' }))
 assert.deepEqual(edited.ok?.plasma?.touchOff, { ...touchOff, switchOffset: 1.5, probeDepth: 40, probeFeed: 150, probeCommand: 'G38.3' })
-for (const bad of [{ probeDepth: '' }, { probeFeed: 'abc' }, { switchOffset: '-1' }, { switchOffset: '' }]) {
+for (const bad of [{ probeDepth: '' }, { probeDepth: '0' }, { probeFeed: 'abc' }, { switchOffset: '-1' }]) {
   assert.equal(validateDef(mergeFormData(duplicate, { ...form, ...bad })).ok, undefined, JSON.stringify(bad))
 }
+const blankOffset = validateDef(mergeFormData(duplicate, { ...form, switchOffset: '  ' })).ok
+assert.ok(blankOffset && !('switchOffset' in blankOffset.plasma!.touchOff!), 'a blank offset field saves no offset')
+const offsetless = duplicateMachineAsCustom(noOffset, [])
+assert.equal(toFormData(offsetless).switchOffset, '', 'an absent offset shows as blank')
+assert.deepEqual(mergeFormData(offsetless, toFormData(offsetless)), offsetless, 'and round-trips without gaining one')
 const qt = duplicateMachineAsCustom(validateMachineDefinition(qtplasmacRaw), [])
 const qtForm = toFormData(qt)
 assert.equal(qtForm.probeCommand, 'G38.2', 'touch-off is prefilled for a controller machine')

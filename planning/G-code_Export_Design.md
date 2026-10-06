@@ -88,7 +88,10 @@ whatever the project units; the exporter converts them. Before each cut the
 program probes `probeDepth` below the current Z zero, then writes
 `setZeroCommand Z<-switchOffset>`, so Z zero lands on the sheet surface even
 when a floating head travels past it before its switch trips (0 for ohmic
-sensing). `setZeroCommand` therefore carries no Z word.
+sensing). `setZeroCommand` therefore carries no Z word. `switchOffset` may be
+omitted, which means 0; it stays absent rather than being filled in. THC
+commands stay optional in both modes: a Grbl table can switch an external
+height controller from a spare output.
 
 A plasma machine requires this block, and the block requires plasma kind and
 G-code dialect. Command text is preserved verbatim; blank optional commands are

@@ -76,6 +76,8 @@ const OptionalPlasmaCommandSchema = z.preprocess(
  * converts them. Before each pierce the program probes `probeDepth` below the
  * current Z zero, then sets Z zero at the trigger point plus `switchOffset`
  * (the travel a floating head makes before its switch trips; 0 for ohmic).
+ * An absent `switchOffset` means 0 and stays absent: validation injects no
+ * default, so a definition saved without it is stored without it.
  */
 const PlasmaTouchOffSchema = z.object({
   probeCommand: PlasmaCommandSchema,
@@ -83,7 +85,7 @@ const PlasmaTouchOffSchema = z.object({
   probeFeed: z.number().finite().positive(),
   /** Written before ` Z<-switchOffset>`, so it carries no Z word itself. */
   setZeroCommand: PlasmaCommandSchema,
-  switchOffset: z.number().finite().min(0),
+  switchOffset: z.number().finite().min(0).optional(),
 })
 export type PlasmaTouchOff = z.infer<typeof PlasmaTouchOffSchema>
 

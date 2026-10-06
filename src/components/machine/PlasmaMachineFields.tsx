@@ -34,11 +34,12 @@ export function PlasmaMachineFields({ form, onChange }: Props) {
       </label>
     )
   }
+  // Depth and feed must be positive; the switch offset may be 0.
   function numberField(key: 'probeDepth' | 'probeFeed' | 'switchOffset', label: string) {
     return (
       <label className="machine-editor-field">
         <span className="machine-editor-label">{label}</span>
-        <input className="machine-editor-input" type="number" min={0} step="any" value={form[key]}
+        <input className="machine-editor-input" type="number" min={key === 'switchOffset' ? 0 : 0.001} step="any" value={form[key]}
           onChange={(event) => onChange({ [key]: event.target.value })} />
       </label>
     )

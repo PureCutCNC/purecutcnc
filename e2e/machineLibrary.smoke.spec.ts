@@ -293,7 +293,8 @@ test('machine kind switches create a validated plasma block and remove it on rou
   definition.plasma.pierceMode = 'gcode'
   await json.fill(JSON.stringify(definition))
   await expect(ui.machineEditor.saveButton(app.page)).toBeDisabled()
-  await expect(ui.machineEditor.dialog(app.page)).toContainText('G-code piercing requires touch-off settings')
+  await expect(ui.machineEditor.dialog(app.page)).toContainText('G-code piercing has no material sequence. (at plasma.materialSelectCommand)')
+  await expect(ui.machineEditor.dialog(app.page)).not.toContainText('"code"')
   definition.plasma.pierceMode = 'controller'
   await json.fill(JSON.stringify(definition))
   await expect(ui.machineEditor.saveButton(app.page)).toBeEnabled()
@@ -316,6 +317,9 @@ test('G-code piercing swaps the material sequence for touch-off settings', async
   await expect(field('Probe command')).toHaveValue('G38.2')
   await expect(field('Probe depth below Z zero (mm)')).toHaveValue('30')
   await expect(field('Touch-off switch offset (mm)')).toHaveValue('0')
+  await expect(field('Probe depth below Z zero (mm)')).toHaveAttribute('min', '0.001')
+  await expect(field('Probe feed (mm/min)')).toHaveAttribute('min', '0.001')
+  await expect(field('Touch-off switch offset (mm)')).toHaveAttribute('min', '0')
   await field('Touch-off switch offset (mm)').fill('1.5')
   await ui.machineEditor.advancedToggle(app.page).click()
   const json = ui.machineEditor.advancedJson(app.page)

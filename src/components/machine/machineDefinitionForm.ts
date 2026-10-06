@@ -96,7 +96,7 @@ export function toFormData(def: MachineDefinition): MachineFormData {
     probeDepth: String(touchOff.probeDepth),
     probeFeed: String(touchOff.probeFeed),
     setZeroCommand: touchOff.setZeroCommand,
-    switchOffset: String(touchOff.switchOffset),
+    switchOffset: touchOff.switchOffset === undefined ? '' : String(touchOff.switchOffset),
     name: def.name,
     fileExtension: def.fileExtension,
     mmCommand: def.units.mmCommand ?? '',
@@ -149,7 +149,8 @@ export function mergeFormData(
                     probeDepth: parseFormNumber(form.probeDepth),
                     probeFeed: parseFormNumber(form.probeFeed),
                     setZeroCommand: form.setZeroCommand,
-                    switchOffset: parseFormNumber(form.switchOffset),
+                    // Blank means no offset (0) and leaves the key absent.
+                    ...(form.switchOffset.trim() ? { switchOffset: parseFormNumber(form.switchOffset) } : {}),
                   },
                 }
               : {}),
@@ -212,8 +213,9 @@ function formatZodMessage(message: string): string {
   // first useful sentence or return the raw message.
   const trimmed = message.trim()
 
-  // Detect JSON-encoded issues array at the start.
-  const issuesMatch = trimmed.match(/^\[[\s\S]*?\]/)
+  // Detect a JSON-encoded issues array. Greedy: an issue's own `path` or
+  // `values` array closes with `]` long before the outer array does.
+  const issuesMatch = trimmed.match(/^\[[\s\S]*\]/)
   if (!issuesMatch) {
     return trimmed
   }
