@@ -343,9 +343,9 @@ function testCutRange(): void {
   ])
   assertEqual(operationCutRange(project, fromBottom, bottom, 'pinA'), { min: 0, max: 9 }, 'from Bottom: the bottom face up to the highest tip position')
 
-  // One tool diameter of margin around the outline, no more.
-  assertEqual(operationCutRange(project, fromTop, toolpath('fromTop', [cutAt(30, 60, 3)]), 'pinA'), { min: 3, max: 20 }, 'a cut one diameter outside the outline still counts')
-  assert(operationCutRange(project, fromTop, toolpath('fromTop', [cutAt(30.5, 60, 3)]), 'pinA') === null, 'a cut beyond that does not')
+  // Only actual cutter overlap counts; full-diameter margin would credit air.
+  assertEqual(operationCutRange(project, fromTop, toolpath('fromTop', [cutAt(27.9, 60, 3)]), 'pinA'), { min: 3, max: 20 }, 'a cut less than one radius outside the outline intersects it')
+  assert(operationCutRange(project, fromTop, toolpath('fromTop', [cutAt(28.1, 60, 3)]), 'pinA') === null, 'a cut beyond one cutter radius does not')
   assert(operationCutRange(project, fromTop, toolpath('fromTop', []), 'pinA') === null, 'no moves: nothing is cut')
   // A feed move that never enters the stock cuts nothing.
   assert(operationCutRange(project, fromTop, toolpath('fromTop', [cutAt(20, 60, 22, 'plunge'), cutAt(20, 60, 20)]), 'pinA') === null, 'from Top: motion at or above the top face is air')

@@ -43,10 +43,10 @@
 
 import type { Operation, Project, SetupFace } from '../types/project'
 import { resolveFeatureInstances } from '../store/helpers/resolveFeatures'
-import { getFeatureGeometryBounds } from '../text'
 import { normalizeToolForProject } from './toolpaths/geometry'
 import type { ToolpathResult } from './toolpaths/types'
 import { isThroughFeature, operationFace } from './setupTargets'
+import { cutMoveZAtFeature, featureReachFootprint } from './setupReachGeometry'
 
 /** A range of stock Z: 0 at the stock's bottom face, `thickness` at its top face. */
 export interface StockZRange {
@@ -65,9 +65,11 @@ export const REACH_TOLERANCE = 1e-6
  * removes everything between that face and its tip: from Top the range runs
  * from the deepest tip position up to the top face, from Bottom from the
  * bottom face up to the highest tip position. Only feeding moves count, and
- * only those ending inside the feature's outline grown by one tool diameter —
- * wide enough for an outside route's offset, tight enough that a neighbouring
- * feature's depth is not credited to this one.
+ * only the portions intersecting the resolved target geometry expanded by the
+ * cutter's radius. Curves and rounded offsets reserve approximation error,
+ * so ambiguous boundary contact is not presented as verified reach. For
+ * pointed/ball tools only the tip centre is credited at its deepest Z.
+ * This measures intersecting tip depths, not complete area removal (#947).
  */
 export function operationCutRange(
   project: Project,
@@ -78,19 +80,19 @@ export function operationCutRange(
   const [feature] = resolveFeatureInstances(project, [featureId])
   if (!feature) return null
   const toolRecord = project.tools.find((tool) => tool.id === operation.toolRef)
-  const margin = toolRecord ? normalizeToolForProject(toolRecord, project).diameter : 0
-  const bounds = getFeatureGeometryBounds(feature)
+  const tool = toolRecord ? normalizeToolForProject(toolRecord, project) : null
+  const radius = tool?.type === 'flat_endmill' || tool?.type === 'plasma' ? tool.radius : 0
+  const footprint = featureReachFootprint(feature, radius)
   const thickness = project.stock.thickness
   const face: SetupFace = operationFace(project, operation)
 
   let reached: number | null = null
   for (const move of toolpath.moves) {
-    if (move.kind === 'rapid') continue
-    const { x, y, z } = move.to
-    if (x < bounds.minX - margin || x > bounds.maxX + margin || y < bounds.minY - margin || y > bounds.maxY + margin) continue
-    // Above the face that is up the cutter is in air.
-    if (face === 'top' ? z >= thickness : z <= 0) continue
-    reached = reached === null ? z : face === 'top' ? Math.min(reached, z) : Math.max(reached, z)
+    for (const z of cutMoveZAtFeature(footprint, move)) {
+      // Above the face that is up the cutter is in air.
+      if (face === 'top' ? z >= thickness : z <= 0) continue
+      reached = reached === null ? z : face === 'top' ? Math.min(reached, z) : Math.max(reached, z)
+    }
   }
   if (reached === null) return null
   return face === 'top'
