@@ -603,3 +603,8 @@
   letter-spacing: 0.025em;
   text-transform: uppercase;
 }
+
+/* One short instruction and the shared drag/cancel header, like sketch editing. */
+.canvas-workflow-panel--plasma-start {
+  width: min(340px, calc(100% - 24px));
+}

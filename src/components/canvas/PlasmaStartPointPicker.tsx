@@ -24,7 +24,9 @@ import { activeSetup } from '../../store/helpers/activeFace'
 import { setupFace } from '../../engine/setupOrientation'
 import { plasmaStartPointForContour } from '../../engine/toolpaths/plasmaStartPoint'
 import { pickPlasmaStartPoint, plasmaStartContours } from './plasmaStartPoint'
-import { CanvasWorkflowAction } from './CanvasWorkflowAction'
+import { CanvasWorkflowCancel } from './CanvasWorkflowAction'
+import { CanvasWorkflowPanel } from './CanvasWorkflowPanel'
+import { useCanvasWorkflowPanel } from './useCanvasWorkflowPanel'
 
 /** Captures only the armed pick gesture, so clicking a contour cannot edit/select it. */
 export function PlasmaStartPointPicker({ canvasRef, project, projectKey, viewState, selectedOperationId, available }: {
@@ -32,6 +34,10 @@ export function PlasmaStartPointPicker({ canvasRef, project, projectKey, viewSta
   viewState: SketchViewState; selectedOperationId: string | null; available: boolean
 }) {
   const request = usePlasmaStartPointPick((state) => state.request)
+  const panel = useCanvasWorkflowPanel({
+    open: !!request && available, phaseKey: request?.operationId ?? null,
+    containerRef: canvasRef, canvasRef, clearTransientCanvasState: () => {}, pageLevel: true,
+  })
   const latest = useRef({ project, projectKey, viewState, selectedOperationId, available })
   const [size, setSize] = useState({ width: 0, height: 0, left: 0, top: 0, cssWidth: 0, cssHeight: 0 })
   const operation = project.operations.find((entry) => entry.id === selectedOperationId && entry.kind === 'plasma_profile')
@@ -116,11 +122,15 @@ export function PlasmaStartPointPicker({ canvasRef, project, projectKey, viewSta
   })
   if (!points.length && operation.plasmaStartPoint) points.push({ id: 'legacy', point: operation.plasmaStartPoint })
   return <>
-    {request?.operationId === operation.id && <div className="canvas-workflow-panel" data-testid="plasma-pick-controls" style={{ position: 'absolute', left: 12, top: 12, zIndex: 20, maxWidth: 'min(360px, calc(100% - 24px))' }}>
-      <div className="canvas-workflow-panel__body"><p role="status">{camT('cam.plasma.pickHelp')}</p>
-        <CanvasWorkflowAction label={camT('cam.plasma.cancelPick')} variant="cancel" onClick={() => usePlasmaStartPointPick.getState().cancel()} />
-      </div>
-    </div>}
+    {request?.operationId === operation.id && <CanvasWorkflowPanel
+      title={camT('cam.plasma.pickStart')}
+      position={panel.position} panelRef={panel.panelRef} handleProps={panel.handleProps} actionRowProps={panel.actionRowProps}
+      className="canvas-workflow-panel--plasma-start" pageLevel
+      dialogAria={{ label: camT('cam.plasma.pickStart'), modal: false }}
+      actions={<CanvasWorkflowCancel label={camT('cam.plasma.cancelPick')} onClick={() => usePlasmaStartPointPick.getState().cancel()} />}
+    >
+      <p className="canvas-workflow-panel__hint" role="status">{camT('cam.plasma.pickHelp')}</p>
+    </CanvasWorkflowPanel>}
     {points.length > 0 && <svg aria-label={camT('cam.plasma.selectedStart')} role="img" data-testid="plasma-start-marker"
     viewBox={`0 0 ${size.width} ${size.height}`} style={{ position: 'absolute', left: size.left, top: size.top, width: size.cssWidth, height: size.cssHeight, pointerEvents: 'none' }}>
     {points.map(({ point, id }) => {

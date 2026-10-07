@@ -1209,8 +1209,28 @@ for (const pointer of ['mouse', 'touch'] as const) {
         await app.page.locator('.dialog--panel-expand').getByRole('button', { name: 'Pick start point', exact: true }).click()
         await expect(app.page.locator('.dialog--panel-expand')).toHaveCount(0)
       } else await ui.cam.plasmaStart(app.page).click()
+      const pickPanel = app.page.getByRole('dialog', { name: 'Pick start point', exact: true })
+      await expect(pickPanel).toBeVisible()
+      const panelBefore = (await pickPanel.boundingBox())!
+      expect(panelBefore.width).toBeLessThanOrEqual(341)
+      expect(panelBefore.height).toBeLessThan(140)
+      const handle = (await pickPanel.locator('.canvas-workflow-panel__handle').boundingBox())!
+      const dragStart = { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 }
+      if (pointer === 'mouse') {
+        await app.page.mouse.move(dragStart.x, dragStart.y); await app.page.mouse.down()
+        await app.page.mouse.move(dragStart.x + 100, dragStart.y + 70, { steps: 5 }); await app.page.mouse.up()
+      } else {
+        const session = await app.page.context().newCDPSession(app.page)
+        await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...dragStart, id: 0 }] })
+        await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: dragStart.x + 100, y: dragStart.y + 70, id: 0 }] })
+        await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await session.detach()
+      }
+      await expect.poll(async () => (await pickPanel.boundingBox())!.x).toBeCloseTo(panelBefore.x + 100, 0)
+      await expect.poll(async () => (await pickPanel.boundingBox())!.y).toBeCloseTo(panelBefore.y + 70, 0)
+      expect((await getProject(app.page)).features).toEqual(fixture.features)
+      expect(((await getProject(app.page)).operations as Array<Record<string, unknown>>)[0].plasmaStartPoints).toBeUndefined()
       await choose({ x: 140, y: 70 }) // unrelated drill contour: no pick or geometry edit
-      await expect(app.page.getByTestId('plasma-pick-controls')).toBeVisible()
+      await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toBeVisible()
       expect((await getProject(app.page)).features).toEqual(fixture.features)
       const startScreen = await plasmaCanvasPoint(app.page, { x: 50, y: 30 })
       if (pointer === 'mouse') {
@@ -1221,7 +1241,7 @@ for (const pointer of ['mouse', 'touch'] as const) {
         await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: startScreen.x, y: startScreen.y, id: 0 }, { x: startScreen.x + 40, y: startScreen.y + 25, id: 1 }] })
         await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await session.detach()
       }
-      await expect(app.page.getByTestId('plasma-pick-controls')).toBeVisible()
+      await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toBeVisible()
       expect(((await getProject(app.page)).operations as Array<Record<string, unknown>>)[0].plasmaStartPoints).toBeUndefined()
       await choose({ x: 50, y: 30 })
       if (pointer === 'touch') await app.page.getByRole('button', { name: 'Open operations panel', exact: true }).click()
@@ -1235,7 +1255,7 @@ for (const pointer of ['mouse', 'touch'] as const) {
       expect(operation.plasmaStartPoint).toBeUndefined()
       await ui.cam.plasmaStart(app.page).click()
       if (pointer === 'mouse') await ui.canvas.sketch(app.page).press('Escape')
-      else await app.page.getByTestId('plasma-pick-controls').getByRole('button', { name: 'Cancel pick', exact: true }).click()
+      else await app.page.locator('.canvas-workflow-panel--plasma-start').getByRole('button', { name: 'Cancel pick', exact: true }).click()
       expect((await getProject(app.page)).operations).toEqual(saved.operations)
       if (pointer === 'touch') await app.page.getByRole('button', { name: 'Open operations panel', exact: true }).click()
       await ui.cam.plasmaStart(app.page).click()
@@ -1274,7 +1294,7 @@ for (const pointer of ['mouse', 'touch'] as const) {
       expect(((await getProject(app.page)).operations as Array<Record<string, unknown>>)[0].plasmaStartPoints).toBeUndefined()
       await ui.cam.plasmaStart(app.page).click()
       await seedProject(app.page, JSON.stringify(saved))
-      await expect(app.page.getByTestId('plasma-pick-controls')).toHaveCount(0)
+      await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toHaveCount(0)
       const operations = saved.operations as Array<Record<string, unknown>>
       saved.operations = [...operations, { ...operations[0], id: 'other-plasma', name: 'Other plasma', plasmaStartPoints: undefined }]
       await seedProject(app.page, JSON.stringify(saved))
@@ -1283,10 +1303,10 @@ for (const pointer of ['mouse', 'touch'] as const) {
       await ui.cam.plasmaStart(app.page).click()
       if (pointer === 'touch') await app.page.getByRole('button', { name: 'Open operations panel', exact: true }).click()
       await ui.operations.rowByName(app.page, 'Other plasma').click()
-      await expect(app.page.getByTestId('plasma-pick-controls')).toHaveCount(0)
+      await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toHaveCount(0)
       await ui.cam.plasmaStart(app.page).click()
       await app.page.getByRole('button', { name: 'Bottom', exact: true }).click()
-      await expect(app.page.getByTestId('plasma-pick-controls')).toHaveCount(0)
+      await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toHaveCount(0)
     })
   })
 }
