@@ -91,6 +91,14 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
   if (a === b) return true
   return (
     a.kind === b.kind
+    && a.plasmaSide === b.plasmaSide
+    && a.plasmaReverseDirection === b.plasmaReverseDirection
+    && a.plasmaLeadIn === b.plasmaLeadIn
+    && a.plasmaLeadInLength === b.plasmaLeadInLength
+    && a.plasmaLeadOut === b.plasmaLeadOut
+    && a.plasmaLeadOutLength === b.plasmaLeadOutLength
+    && projectsEqual(a.plasmaStartPoint ?? null, b.plasmaStartPoint ?? null)
+    && projectsEqual(a.plasmaStartPoints ?? null, b.plasmaStartPoints ?? null)
     && a.pass === b.pass
     && a.target === b.target
     && a.toolRef === b.toolRef

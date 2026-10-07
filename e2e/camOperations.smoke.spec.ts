@@ -16,6 +16,8 @@
 
 import { test, expect } from './fixtures'
 import { readFileSync } from 'node:fs'
+import type { Page } from '@playwright/test'
+import type { Project } from '../src/types/project'
 import {
   seedCamQuickOperationProject,
   seedCamQuickOperationProjectWithLowTab,
@@ -1097,7 +1099,7 @@ test.describe('CAM operation browser smoke', () => {
 
     // The rest sit behind one labelled disclosure, collapsed until asked for.
     const unavailableToggle = ui.operations.addMenuUnavailableToggle(app.page)
-    await expect(unavailableToggle).toHaveText('Not available for this selection (5)')
+    await expect(unavailableToggle).toHaveText('Not available for this selection (6)')
     await expect(unavailableToggle).toHaveAttribute('aria-expanded', 'false')
     await expect(ui.operations.addMenuUnavailableRows(app.page)).toHaveCount(0)
 
@@ -1109,10 +1111,11 @@ test.describe('CAM operation browser smoke', () => {
       'V-carve medial',
       'Edge in',
       'Drill',
+      'Plasma through-cut',
     ])
     // Expanding shows today's rows unchanged: an inline reason each, and the
     // add control still disabled.
-    await expect(unavailable.locator('.cam-operation-hint')).toHaveCount(5)
+    await expect(unavailable.locator('.cam-operation-hint')).toHaveCount(6)
     const drillRow = unavailable.filter({
       has: app.page.locator('.cam-operation-label', { hasText: 'Drill' }),
     })
@@ -1134,9 +1137,13 @@ test.describe('CAM operation browser smoke', () => {
     await expect(ui.operations.addMenuUnavailableRows(app.page)).toHaveCount(0)
 
     const unavailableToggle = ui.operations.addMenuUnavailableToggle(app.page)
-    await expect(unavailableToggle).toHaveText('Not available for this selection (11)')
+    await expect(unavailableToggle).toHaveText('Not available for this selection (12)')
     await unavailableToggle.click()
-    await expect(ui.operations.addMenuUnavailableRows(app.page)).toHaveCount(11)
+    await expect(ui.operations.addMenuUnavailableRows(app.page)).toHaveCount(12)
+    await expect(ui.operations.addMenuRowLabels(ui.operations.addMenuUnavailableRows(app.page))).toHaveText([
+      'Pocket', 'V-carve offset', 'V-carve medial', 'Edge in', 'Edge out', 'Surface', 'Engrave', 'Drill',
+      '3D surface rough', '3D surface cleanup', '3D surface finish', 'Plasma through-cut',
+    ])
 
     // "Select all" is the recovery path out of a wrong selection, so it has to
     // survive inside the collapsed section: it fixes the selection, and the
@@ -1152,3 +1159,154 @@ test.describe('CAM operation browser smoke', () => {
     ).toContainText(['Drill'])
   })
 })
+
+
+/** Load-project fitting uses the same viewport transform; no approximate screen coordinates. */
+async function plasmaCanvasPoint(page: Page, point: { x: number; y: number }) {
+  const project = await getProject(page)
+  return page.evaluate(async ({ project, point }) => {
+    const modulePath = '/src/components/canvas/viewTransform.ts'
+    const view = await import(modulePath) as typeof import('../src/components/canvas/viewTransform')
+    const canvas = document.querySelector<HTMLCanvasElement>('canvas.sketch-canvas')!
+    const rect = canvas.getBoundingClientRect()
+    const snapshot = project as unknown as Project
+    const vt = view.computeSketchViewTransform(snapshot, canvas.width, canvas.height, view.computeFitViewState(snapshot, canvas.width, canvas.height))
+    const screen = view.worldToCanvas(point, vt)
+    return { x: rect.left + screen.cx * rect.width / canvas.width, y: rect.top + screen.cy * rect.height / canvas.height }
+  }, { project, point })
+}
+
+for (const pointer of ['mouse', 'touch'] as const) {
+  test.describe(`plasma picker ${pointer}`, () => {
+    test.use({ hasTouch: pointer === 'touch', viewport: pointer === 'touch' ? { width: 1180, height: 820 } : { width: 1440, height: 900 } })
+    test('plasma add menu and graphical per-contour starts persist (#957)', async ({ app, ui }) => {
+      await seedCamQuickOperationProject(app.page)
+      const fixture = await getProject(app.page)
+      const meta = fixture.meta as Record<string, unknown>; meta.units = 'mm'
+      const tools = fixture.tools as Array<Record<string, unknown>>
+      fixture.tools = [...tools, { ...tools[0], id: 'torch-e2e', name: 'Plasma torch', type: 'plasma', units: 'mm', diameter: 1.2, pierceHeight: 3, cutHeight: 1.5, pierceDelay: 0.6, defaultFeed: 2200 }]
+      await seedProject(app.page, JSON.stringify(fixture))
+      await selectFeatures(app.page, ['f-machinable-add', 'f-carve-target'])
+      if (pointer === 'touch') await app.page.getByRole('button', { name: 'Open operations panel', exact: true }).click()
+      await ui.operations.headerAddButton(app.page).click()
+      const row = ui.operations.addMenuAvailableRows(app.page).filter({ hasText: 'Plasma through-cut' })
+      await row.getByRole('button', { name: 'Add', exact: true }).click()
+      await expect(ui.operations.rowByName(app.page, 'Plasma through-cut')).toBeVisible()
+      for (const field of ['Stepdown', 'RPM', 'Tabs', 'Pass', 'Start X (mm)', 'Start Y (mm)']) await expect(ui.cam.operationField(app.page, field)).toHaveCount(0)
+      const side = ui.cam.operationField(app.page, 'Kerf side')
+      await side.locator('.ui-select__trigger').click()
+      await app.page.getByRole('option', { name: 'Inside (hole)', exact: true }).click()
+      const length = ui.cam.operationField(app.page, 'Lead-in length / arc radius (mm)').locator('input')
+      await length.fill('8'); await length.press('Enter')
+      await ui.cam.plasmaReverse(app.page).check()
+      const choose = async (point: { x: number; y: number }) => {
+        const screen = await plasmaCanvasPoint(app.page, point)
+        if (pointer === 'touch') await app.page.touchscreen.tap(screen.x, screen.y)
+        else await app.page.mouse.click(screen.x, screen.y)
+      }
+      if (pointer === 'touch') {
+        await app.page.getByRole('button', { name: 'Expand operation properties', exact: true }).click()
+        await app.page.locator('.dialog--panel-expand').getByRole('button', { name: 'Pick start point', exact: true }).click()
+        await expect(app.page.locator('.dialog--panel-expand')).toHaveCount(0)
+      } else await ui.cam.plasmaStart(app.page).click()
+      const pickPanel = app.page.getByRole('dialog', { name: 'Pick start point', exact: true })
+      await expect(pickPanel).toBeVisible()
+      const panelBefore = (await pickPanel.boundingBox())!
+      expect(panelBefore.width).toBeLessThanOrEqual(341)
+      expect(panelBefore.height).toBeLessThan(140)
+      const handle = (await pickPanel.locator('.canvas-workflow-panel__handle').boundingBox())!
+      const dragStart = { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 }
+      if (pointer === 'mouse') {
+        await app.page.mouse.move(dragStart.x, dragStart.y); await app.page.mouse.down()
+        await app.page.mouse.move(dragStart.x + 100, dragStart.y + 70, { steps: 5 }); await app.page.mouse.up()
+      } else {
+        const session = await app.page.context().newCDPSession(app.page)
+        await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...dragStart, id: 0 }] })
+        await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: dragStart.x + 100, y: dragStart.y + 70, id: 0 }] })
+        await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await session.detach()
+      }
+      await expect.poll(async () => (await pickPanel.boundingBox())!.x).toBeCloseTo(panelBefore.x + 100, 0)
+      await expect.poll(async () => (await pickPanel.boundingBox())!.y).toBeCloseTo(panelBefore.y + 70, 0)
+      expect((await getProject(app.page)).features).toEqual(fixture.features)
+      expect(((await getProject(app.page)).operations as Array<Record<string, unknown>>)[0].plasmaStartPoints).toBeUndefined()
+      await choose({ x: 140, y: 70 }) // unrelated drill contour: no pick or geometry edit
+      await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toBeVisible()
+      expect((await getProject(app.page)).features).toEqual(fixture.features)
+      const startScreen = await plasmaCanvasPoint(app.page, { x: 50, y: 30 })
+      if (pointer === 'mouse') {
+        await app.page.mouse.move(startScreen.x, startScreen.y); await app.page.mouse.down()
+        await app.page.mouse.move(startScreen.x + 40, startScreen.y + 25); await app.page.mouse.up()
+      } else {
+        const session = await app.page.context().newCDPSession(app.page)
+        await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: startScreen.x, y: startScreen.y, id: 0 }, { x: startScreen.x + 40, y: startScreen.y + 25, id: 1 }] })
+        await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await session.detach()
+      }
+      await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toBeVisible()
+      expect(((await getProject(app.page)).operations as Array<Record<string, unknown>>)[0].plasmaStartPoints).toBeUndefined()
+      await choose({ x: 50, y: 30 })
+      if (pointer === 'touch') await app.page.getByRole('button', { name: 'Open operations panel', exact: true }).click()
+      await expect(ui.cam.plasmaStart(app.page)).toBeVisible()
+      await expect(app.page.getByTestId('plasma-start-dot')).toHaveCount(1)
+      let saved = await getProject(app.page)
+      let operation = (saved.operations as Array<Record<string, unknown>>)[0]
+      const points = operation.plasmaStartPoints as Record<string, { x: number; y: number }>
+      expect(Object.keys(points)).toEqual(['f-machinable-add'])
+      expect(points['f-machinable-add'].x).toBeCloseTo(20, 2); expect(points['f-machinable-add'].y).toBe(0)
+      expect(operation.plasmaStartPoint).toBeUndefined()
+      await ui.cam.plasmaStart(app.page).click()
+      if (pointer === 'mouse') await ui.canvas.sketch(app.page).press('Escape')
+      else await app.page.locator('.canvas-workflow-panel--plasma-start').getByRole('button', { name: 'Cancel pick', exact: true }).click()
+      expect((await getProject(app.page)).operations).toEqual(saved.operations)
+      if (pointer === 'touch') await app.page.getByRole('button', { name: 'Open operations panel', exact: true }).click()
+      await ui.cam.plasmaStart(app.page).click()
+      await choose({ x: 120, y: 30 })
+      await expect(app.page.getByTestId('plasma-start-dot')).toHaveCount(2)
+      if (pointer === 'touch') await app.page.getByRole('button', { name: 'Open operations panel', exact: true }).click()
+      saved = await getProject(app.page); operation = (saved.operations as Array<Record<string, unknown>>)[0]
+      expect(operation.toolRef).toBe('torch-e2e'); expect(operation.plasmaSide).toBe('inside')
+      expect(operation.plasmaLeadInLength).toBe(8); expect(operation.plasmaReverseDirection).toBe(true)
+      const bothPoints = operation.plasmaStartPoints as Record<string, { x: number; y: number }>
+      expect(Object.keys(bothPoints).sort()).toEqual(['f-carve-target', 'f-machinable-add'])
+      for (const value of Object.values(bothPoints)) { expect(value.x).toBeCloseTo(20, 2); expect(value.y).toBe(0) }
+      await seedProject(app.page, JSON.stringify(saved))
+      if (!await ui.cam.plasmaReverse(app.page).isVisible()) await ui.operations.rowByName(app.page, 'Plasma through-cut').click()
+      await expect(app.page.getByTestId('plasma-start-dot')).toHaveCount(2)
+      const instances = saved.features as Array<Record<string, unknown>>
+      const moved = instances.find((feature) => feature.id === 'f-machinable-add')!
+      moved.transform = { a: 0, b: 1.5, c: -1.5, d: 0, e: 95, f: 15 }
+      await seedProject(app.page, JSON.stringify(saved))
+      if (!await ui.cam.plasmaReverse(app.page).isVisible()) await ui.operations.rowByName(app.page, 'Plasma through-cut').click()
+      const expected = await plasmaCanvasPoint(app.page, { x: 95, y: 45 })
+      const marker = app.page.locator('[data-contour-id="f-machinable-add"] circle')
+      await expect(marker).toBeVisible()
+      await expect.poll(async () => {
+        const box = await marker.boundingBox()
+        return box ? Math.hypot(box.x + box.width / 2 - expected.x, box.y + box.height / 2 - expected.y) : Infinity
+      }).toBeLessThan(1)
+      await expect(ui.cam.plasmaReverse(app.page)).toBeChecked()
+      await expect(ui.cam.operationField(app.page, 'Lead-in length / arc radius (mm)').locator('input')).toHaveValue('8')
+      await expect(ui.cam.plasmaHelp(app.page)).toContainText('No corner slowdown, overburn, micro-joints or bevel compensation')
+      await app.page.getByRole('group', { name: 'Machinable Add', exact: true }).getByRole('button', { name: 'Use automatic start', exact: true }).click()
+      await expect(app.page.getByTestId('plasma-start-dot')).toHaveCount(1)
+      expect(((await getProject(app.page)).operations as Array<Record<string, unknown>>)[0].plasmaStartPoints).toEqual({ 'f-carve-target': bothPoints['f-carve-target'] })
+      await app.page.getByRole('button', { name: 'Reset all starts', exact: true }).click()
+      await expect(app.page.getByTestId('plasma-start-marker')).toHaveCount(0)
+      expect(((await getProject(app.page)).operations as Array<Record<string, unknown>>)[0].plasmaStartPoints).toBeUndefined()
+      await ui.cam.plasmaStart(app.page).click()
+      await seedProject(app.page, JSON.stringify(saved))
+      await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toHaveCount(0)
+      const operations = saved.operations as Array<Record<string, unknown>>
+      saved.operations = [...operations, { ...operations[0], id: 'other-plasma', name: 'Other plasma', plasmaStartPoints: undefined }]
+      await seedProject(app.page, JSON.stringify(saved))
+      if (pointer === 'touch') await app.page.getByRole('button', { name: 'Open operations panel', exact: true }).click()
+      if (!await ui.cam.plasmaStart(app.page).isVisible()) await ui.operations.rowByName(app.page, 'Plasma through-cut').click()
+      await ui.cam.plasmaStart(app.page).click()
+      if (pointer === 'touch') await app.page.getByRole('button', { name: 'Open operations panel', exact: true }).click()
+      await ui.operations.rowByName(app.page, 'Other plasma').click()
+      await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toHaveCount(0)
+      await ui.cam.plasmaStart(app.page).click()
+      await app.page.getByRole('button', { name: 'Bottom', exact: true }).click()
+      await expect(app.page.locator('.canvas-workflow-panel--plasma-start')).toHaveCount(0)
+    })
+  })
+}

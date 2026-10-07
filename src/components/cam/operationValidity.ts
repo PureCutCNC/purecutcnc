@@ -36,6 +36,8 @@ type ResolvedFeatureMap = ReadonlyMap<string, ResolvedSketchFeature>
 
 export function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
+    case 'plasma_profile':
+      return camT('cam.plasma.title')
     case 'pocket':
       return camT('cam.opLabel.pocket')
     case 'v_carve':
@@ -112,6 +114,13 @@ function getOperationAddHintWithMap(
     return feature !== undefined && isConstruction(feature)
   })) {
     return camT('cam.hint.construction')
+  }
+
+  if (kind === 'plasma_profile') {
+    const features = selection.selectedFeatureIds.map((id) => featureById.get(id))
+    return features.length > 0 && features.every((feature) => feature !== undefined
+      && feature.kind !== 'stl' && ['add', 'subtract', 'line'].includes(feature.operation)
+      && featureHasClosedGeometry(feature)) ? null : camT('cam.plasma.closedOnly')
   }
 
   if (kind === 'drilling') {
@@ -314,6 +323,7 @@ export type QuickOperationGroup = '2d' | '3d'
  * instead of silently defaulting into the 2D half of the menu.
  */
 const QUICK_OPERATION_GROUP: Record<OperationKind, QuickOperationGroup> = {
+  plasma_profile: '2d',
   pocket: '2d',
   edge_route_inside: '2d',
   edge_route_outside: '2d',

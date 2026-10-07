@@ -75,6 +75,14 @@ type FieldClass = 'compare' | 'ignore'
 
 const OPERATION_FIELD_CLASSIFICATION: Record<keyof Operation, FieldClass> = {
   // display / lifecycle only — never read by a resolver
+  plasmaSide: 'compare',
+  plasmaReverseDirection: 'compare',
+  plasmaLeadIn: 'compare',
+  plasmaLeadInLength: 'compare',
+  plasmaLeadOut: 'compare',
+  plasmaLeadOutLength: 'compare',
+  plasmaStartPoint: 'compare',
+  plasmaStartPoints: 'compare',
   id: 'ignore',
   name: 'ignore',
   description: 'ignore',

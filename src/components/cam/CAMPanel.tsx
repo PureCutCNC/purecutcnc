@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+import { usePlasmaStartPointPick } from './plasmaStartPointPick'
+import { PlasmaOperationFields } from './PlasmaOperationFields'
+
 import { SurfaceSlopeFields } from './SurfaceSlopeFields'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
@@ -348,6 +351,8 @@ function resolvedWaterlineAdaptiveSpacing(
 
 function operationAddButtonLabel(kind: OperationKind): string {
   switch (kind) {
+    case 'plasma_profile':
+      return camT('cam.plasma.title')
     case 'pocket':
       return camT('cam.opButton.pocket')
     case 'v_carve':
@@ -374,7 +379,7 @@ function operationAddButtonLabel(kind: OperationKind): string {
 }
 
 function operationSupportsPassSelection(kind: OperationKind): boolean {
-  return kind !== 'follow_line'
+  return kind !== 'plasma_profile' && kind !== 'follow_line'
     && kind !== 'v_carve'
     && kind !== 'v_carve_medial'
     && kind !== 'drilling'
@@ -498,6 +503,9 @@ export function CAMPanel({
   const [exportingBookletOperationId, setExportingBookletOperationId] = useState<string | null>(null)
   const [bookletExportStage, setBookletExportStage] = useState<BookletStage | null>(null)
   const [expandedCamSection, setExpandedCamSection] = useState<null | 'operation' | 'tool'>(null)
+  useEffect(() => usePlasmaStartPointPick.subscribe(({ request }) => {
+    if (request) setExpandedCamSection(null)
+  }), [])
   const importLibraryButtonRef = useRef<HTMLButtonElement>(null)
   const camPlanButtonRef = useRef<HTMLButtonElement>(null)
   const shellMode = useShellMode()
@@ -632,6 +640,7 @@ export function CAMPanel({
         button('rough_surface'),
         button('finish_surface_cleanup'),
         button('finish_surface'),
+        button('plasma_profile'),
       ]
     },
     [project, selection]
@@ -1926,6 +1935,7 @@ export function CAMPanel({
             ) : null}
           </div>
         ) : null}
+        {operation.kind === 'plasma_profile' ? <PlasmaOperationFields operation={operation} project={project} onChange={(patch) => updateOperation(operation.id, patch)} /> : null}
         <div className="properties-group">
           {OPERATION_FIELD_GROUPS.map((group) => {
             const fields = operationFieldsForGroup(group.id, operation, selectedOperationTool)

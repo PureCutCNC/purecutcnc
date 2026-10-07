@@ -18,6 +18,16 @@ import type { warningsEn } from '../en/warnings'
 
 /** Spanish toolpath and postprocessor warnings. */
 export const warningsEs: Record<keyof typeof warningsEn, string> = {
+  'warnings.plasmaTopOnly': '{name}: el corte pasante por plasma solo admite montajes superiores. No se generó trayectoria.',
+  'warnings.plasmaHoleBeforePart': '{name}: esta sustracción está antes de la pieza que la contiene y no forma un agujero en ella. Colóquela después de la pieza; se omitió esta trayectoria.',
+  'warnings.plasmaPartialDepth': '{name}: esta sustracción tiene profundidad parcial, pero el corte pasante por plasma atraviesa toda la chapa.',
+  'warnings.plasmaStraightLead': '{name}: el arco solicitado no permite perforar con separación segura del borde; se usó una entrada recta.',
+  'warnings.plasmaInvalid': '{name}: parámetros o destinos de plasma no válidos. No se generó trayectoria.',
+  'warnings.plasmaOpenPath': '{name}: las trayectorias de plasma abiertas aún no están admitidas. No se generó trayectoria.',
+  'warnings.plasmaNoLead': '{name}: no cabe una perforación y entrada seguras en el descarte, o otra pieza/ranura bloquea el contorno. Se omitió este contorno.',
+  'warnings.plasmaSmallHole': '{name}: diámetro del agujero inferior a 1,5 × espesor; puede quedar cónico y ovalado. El controlador gestiona la ralentización.',
+  'warnings.plasmaCentrePierce': '{name}: el agujero es demasiado pequeño para la entrada solicitada; se perfora en el centro y se entra en línea recta.',
+  'warnings.plasmaLeadOutOmitted': '{name}: la salida solicitada dañaría la pieza o una vecina; se omitió la salida.',
   'warnings.finishSlopeInvalid': 'Los límites de pendiente deben ser ángulos finitos entre 0 y 90°, con el mínimo no mayor que el máximo. No se ha generado trayectoria.',
   'warnings.finishScallopHeightOutOfRange': 'La altura de cresta debe ser mayor que cero y menor que el radio de la fresa esférica. No se ha generado trayectoria.',
   'warnings.finishSlopeEmpty': 'Ninguna superficie accesible coincide con el intervalo de pendiente seleccionado.',

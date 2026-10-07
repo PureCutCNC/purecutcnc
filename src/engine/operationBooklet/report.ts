@@ -33,6 +33,7 @@ import type { OperationBookletInput, OperationBookletReport, OperationBookletRow
 
 function operationKindLabel(kind: OperationKind): string {
   switch (kind) {
+    case 'plasma_profile': return translate('cam.plasma.title')
     case 'pocket': return translate('booklet.operation.pocket')
     case 'v_carve': return translate('booklet.operation.vCarve')
     case 'v_carve_medial': return translate('booklet.operation.vCarveMedial')

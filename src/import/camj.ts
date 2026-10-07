@@ -472,6 +472,15 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
         }
       : operation.target
     const toolRef = operation.toolRef ? (toolIdMap.get(operation.toolRef) ?? null) : null
+    const plasmaStartPoints = operation.plasmaStartPoints === undefined ? undefined : Object.fromEntries(
+      Object.entries(operation.plasmaStartPoints).map(([contourId, point]) => {
+        const parentId = operation.target.source === 'features'
+          ? operation.target.featureIds.find((id) => contourId.startsWith(`${id}:text:`)) : undefined
+        const id = featureIdMap.get(contourId) ?? (parentId
+          ? `${featureIdMap.get(parentId) ?? parentId}${contourId.slice(parentId.length)}` : contourId)
+        return [id, point]
+      }),
+    )
     newOperations.push({
       ...operation,
       id: newOpId,
@@ -479,6 +488,7 @@ export function mergeCamjFolders(input: MergeCamjFoldersInput): MergeCamjFolders
       target,
       toolRef,
       setupId: setupIdFor(operation),
+      ...(plasmaStartPoints === undefined ? {} : { plasmaStartPoints }),
     })
   }
 

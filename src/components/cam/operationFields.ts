@@ -64,7 +64,8 @@ import type { OperationParamRefKind } from './operationParamRefData'
  *  where the pass cuts full depth in one go (finish edge routes). */
 export function showStepdown(operation: Operation): boolean {
   if (
-    operation.kind === 'v_carve'
+    operation.kind === 'plasma_profile'
+    || operation.kind === 'v_carve'
     || operation.kind === 'v_carve_medial'
     || operation.kind === 'drilling'
     || operation.kind === 'finish_surface_cleanup'
@@ -616,6 +617,7 @@ export function operationFieldsForGroup(
 ): OperationFieldSpec[] {
   return OPERATION_FIELDS.filter((field) => {
     const fieldGroup = typeof field.group === 'function' ? field.group(operation) : field.group
+    if (operation.kind === 'plasma_profile' && !['name', 'description', 'kind', 'enabled', 'target', 'targetSource', 'tool', 'feed', 'arcFitting'].includes(field.id)) return false
     return fieldGroup === group && field.appliesTo(operation, tool)
   })
 }

@@ -23,6 +23,16 @@
  * never translated.
  */
 export const warningsEn = {
+  'warnings.plasmaTopOnly': '{name}: plasma through-cut supports top setups only. No toolpath generated.',
+  'warnings.plasmaHoleBeforePart': '{name}: this subtract is ordered before its enclosing part and is not a hole in that part. Move it after the part; this contour was skipped.',
+  'warnings.plasmaPartialDepth': '{name}: this subtract has partial depth, but plasma through-cut cuts through the whole sheet.',
+  'warnings.plasmaStraightLead': '{name}: the requested arc cannot pierce with safe edge clearance; a straight lead-in was used.',
+  'warnings.plasmaInvalid': '{name}: invalid plasma parameters or targets. No toolpath generated.',
+  'warnings.plasmaOpenPath': '{name}: open plasma paths are not supported yet. No toolpath generated.',
+  'warnings.plasmaNoLead': '{name}: no safe scrap-side pierce and lead fits, or a neighbouring part/kerf blocks the contour. This contour was skipped.',
+  'warnings.plasmaSmallHole': '{name}: hole diameter is below 1.5 × stock thickness; plasma may leave a tapered, out-of-round hole. Controller hole handling owns any slowdown.',
+  'warnings.plasmaCentrePierce': '{name}: the hole is too small for the requested lead; pierce at its centre and lead straight to the contour.',
+  'warnings.plasmaLeadOutOmitted': '{name}: the requested lead-out would gouge the part or a neighbour; lead-out omitted.',
   'warnings.finishSlopeInvalid': 'Surface slope bounds must be finite angles from 0 to 90°, with minimum no greater than maximum. No toolpath generated.',
   'warnings.finishScallopHeightOutOfRange': 'Scallop height must be greater than zero and smaller than the ball-endmill radius. No toolpath generated.',
   'warnings.finishSlopeEmpty': 'No reachable surface matches the selected slope range.',

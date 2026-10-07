@@ -42,6 +42,7 @@ function operationSelection(key: string): SelectedPlanItem {
 function operationKindLabel(operation: Operation): string {
   const kind = operation.kind
   switch (kind) {
+    case 'plasma_profile': return camT('cam.plasma.title')
     case 'pocket': return camT('cam.opLabel.pocket')
     case 'edge_route_inside': return camT('cam.opLabel.edgeRouteInside')
     case 'edge_route_outside': return camT('cam.opLabel.edgeRouteOutside')
