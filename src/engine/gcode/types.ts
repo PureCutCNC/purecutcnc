@@ -70,24 +70,62 @@ const OptionalPlasmaCommandSchema = z.preprocess(
   PlasmaCommandSchema.optional(),
 )
 
+/**
+ * Per-cut touch-off for G-code-owned piercing (#983). Lengths are millimetres
+ * and feeds millimetres per minute whatever the project units; the exporter
+ * converts them. Before each pierce the program probes `probeDepth` below the
+ * current Z zero, then sets Z zero at the trigger point plus `switchOffset`
+ * (the travel a floating head makes before its switch trips; 0 for ohmic).
+ * An absent `switchOffset` means 0 and stays absent: validation injects no
+ * default, so a definition saved without it is stored without it.
+ */
+const PlasmaTouchOffSchema = z.object({
+  probeCommand: PlasmaCommandSchema,
+  probeDepth: z.number().finite().positive(),
+  probeFeed: z.number().finite().positive(),
+  /** Written before ` Z<-switchOffset>`, so it carries no Z word itself. */
+  setZeroCommand: PlasmaCommandSchema,
+  switchOffset: z.number().finite().min(0).optional(),
+})
+export type PlasmaTouchOff = z.infer<typeof PlasmaTouchOffSchema>
+
+const MATERIAL_COMMAND_KEYS = ['materialSelectCommand', 'materialWaitCommand', 'materialFeedCommand'] as const
+
+// `controller`: the controller's material table owns pierce and height
+// (QtPlasmaC), so the material sequence is required and touch-off is absent.
+// `gcode`: the program owns pierce and height (Grbl), so touch-off is required
+// and the material sequence, which nothing would consume, is absent.
 const PlasmaDefinitionSchema = z.object({
   torchOnCommand: PlasmaCommandSchema,
   torchOffCommand: PlasmaCommandSchema,
-  materialSelectCommand: PlasmaCommandSchema,
-  materialWaitCommand: PlasmaCommandSchema,
-  materialFeedCommand: PlasmaCommandSchema,
+  materialSelectCommand: OptionalPlasmaCommandSchema,
+  materialWaitCommand: OptionalPlasmaCommandSchema,
+  materialFeedCommand: OptionalPlasmaCommandSchema,
   thcOnCommand: OptionalPlasmaCommandSchema,
   thcOffCommand: OptionalPlasmaCommandSchema,
-  // Reserve the mode name, but refuse unsupported controller-independent
-  // piercing rather than silently treating it as controller-owned in 0.6.0.
-  pierceMode: z.enum(['controller', 'gcode']).superRefine((mode, context) => {
-    if (mode === 'gcode') context.addIssue({ code: 'custom', message: 'G-code-owned piercing is not supported in 0.6.0.' })
-  }),
-}).transform(({ thcOnCommand, thcOffCommand, ...block }) => ({
-  ...block,
-  ...(thcOnCommand === undefined ? {} : { thcOnCommand }),
-  ...(thcOffCommand === undefined ? {} : { thcOffCommand }),
-}))
+  pierceMode: z.enum(['controller', 'gcode']),
+  touchOff: PlasmaTouchOffSchema.optional(),
+}).superRefine((block, context) => {
+  for (const key of MATERIAL_COMMAND_KEYS) {
+    if (block.pierceMode === 'controller' && block[key] === undefined) {
+      context.addIssue({ code: 'custom', path: [key], message: 'Controller piercing requires the material sequence.' })
+    }
+    if (block.pierceMode === 'gcode' && block[key] !== undefined) {
+      context.addIssue({ code: 'custom', path: [key], message: 'G-code piercing has no material sequence.' })
+    }
+  }
+  if (block.pierceMode === 'gcode' && !block.touchOff) {
+    context.addIssue({ code: 'custom', path: ['touchOff'], message: 'G-code piercing requires touch-off settings.' })
+  }
+  if (block.pierceMode === 'controller' && block.touchOff) {
+    context.addIssue({ code: 'custom', path: ['touchOff'], message: 'Controller piercing owns touch-off; remove the touch-off block.' })
+  }
+}).transform(({ thcOnCommand, thcOffCommand, touchOff, ...block }) => Object.fromEntries(
+  // Blank optional commands parse as absent, so the saved block never grows an
+  // empty key. THC stays after pierce mode, where #956 wrote it, so existing
+  // snapshots serialize byte-for-byte as before.
+  Object.entries({ ...block, thcOnCommand, thcOffCommand, touchOff }).filter(([, value]) => value !== undefined),
+) as typeof block & { thcOnCommand?: string, thcOffCommand?: string, touchOff?: PlasmaTouchOff })
 
 export const MachineDefinitionSchema = z.object({
   id: z.string(),

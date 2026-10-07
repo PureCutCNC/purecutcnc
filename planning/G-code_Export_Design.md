@@ -74,13 +74,30 @@ not guessed by the exporter.
 
 `machineKind` is optional: absent means `router`, and validation leaves the
 field absent on existing definitions. `plasma` holds `torchOnCommand`,
-`torchOffCommand`, `materialSelectCommand` (with the reserved `{materialNumber}`),
-`materialWaitCommand`, `materialFeedCommand`, optional
-`thcOnCommand` / `thcOffCommand`, and `pierceMode`. A plasma machine requires
-this block, and the block requires plasma kind and G-code dialect. Command text
-is preserved verbatim; blank optional THC fields are absent. Only `controller` piercing is supported in 0.6.0; validation
-rejects the reserved `gcode` mode. Format remains 3.3, with no injected defaults
-or version-based migration.
+`torchOffCommand`, optional `thcOnCommand` / `thcOffCommand`, and
+`pierceMode`, which decides the rest of the block (#983):
+
+| `pierceMode` | who owns pierce and height | required | must be absent |
+| --- | --- | --- | --- |
+| `controller` | the controller's material table (QtPlasmaC) | `materialSelectCommand` (with the reserved `{materialNumber}`), `materialWaitCommand`, `materialFeedCommand` | `touchOff` |
+| `gcode` | the program (Grbl, no THC) | `touchOff` | the three material commands |
+
+`touchOff` is `probeCommand`, `probeDepth`, `probeFeed`, `setZeroCommand` and
+`switchOffset`. Its lengths are millimetres and its feed millimetres per minute
+whatever the project units; the exporter converts them. Before each cut the
+program probes `probeDepth` below the current Z zero, then writes
+`setZeroCommand Z<-switchOffset>`, so Z zero lands on the sheet surface even
+when a floating head travels past it before its switch trips (0 for ohmic
+sensing). `setZeroCommand` therefore carries no Z word. `switchOffset` may be
+omitted, which means 0; it stays absent rather than being filled in. THC
+commands stay optional in both modes: a Grbl table can switch an external
+height controller from a spare output.
+
+A plasma machine requires this block, and the block requires plasma kind and
+G-code dialect. Command text is preserved verbatim; blank optional commands are
+absent, and THC keys keep the position #956 gave them so existing snapshots
+serialize unchanged. Format remains 3.3, with no injected defaults or
+version-based migration.
 
 The bundled **QtPlasmaC (experimental)** machine uses controller-owned pierce
 height, delay and THC, following the
@@ -97,6 +114,14 @@ The export dialog warns that no torch/material sequence is emitted; a subsequent
 tool change without executable commands raises its own warning. The preamble
 includes `G92.1`, `G97` and `M52 P1`; QtPlasmaC supplies its documented default
 path tolerance when `G64` is absent.
+
+The bundled **Grbl plasma (OpenBuilds CONTROL) (experimental)** machine is the
+`gcode` counterpart, from a requester's OpenBuilds CONTROL table (#983). Its
+word syntax is a copy of `grbl.json` (a test keeps the shared fields equal, so
+GRBL's own parser verdicts apply), with `.gcode` files, torch `M3 S1000` / `M5`,
+and touch-off `G38.2`, 30 mm, 100 mm/min, `G10 L20 P0`, offset 0. Like
+QtPlasmaC it is metadata only until the torch path lands: spindle words are
+comments and no torch, probe or zeroing sequence is emitted.
 
 The library shows machine kind for every row, including legacy routers and
 project-only snapshots. The focused editor exposes kind and the plasma block;

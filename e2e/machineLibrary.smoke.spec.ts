@@ -293,9 +293,11 @@ test('machine kind switches create a validated plasma block and remove it on rou
   definition.plasma.pierceMode = 'gcode'
   await json.fill(JSON.stringify(definition))
   await expect(ui.machineEditor.saveButton(app.page)).toBeDisabled()
-  await expect(ui.machineEditor.dialog(app.page)).toContainText('G-code-owned piercing is not supported')
+  await expect(ui.machineEditor.dialog(app.page)).toContainText('G-code piercing has no material sequence. (at plasma.materialSelectCommand)')
+  await expect(ui.machineEditor.dialog(app.page)).not.toContainText('"code"')
   definition.plasma.pierceMode = 'controller'
   await json.fill(JSON.stringify(definition))
+  await expect(ui.machineEditor.saveButton(app.page)).toBeEnabled()
   await field('Machine kind').selectOption('router')
   await expect(field('Torch on command')).toHaveCount(0)
   expect(JSON.parse(await json.inputValue()).plasma).toBeUndefined()
@@ -304,6 +306,40 @@ test('machine kind switches create a validated plasma block and remove it on rou
   expect((await embeddedMachine(app.page)).definitions[0].plasma).toBeUndefined()
 })
 
+test('G-code piercing swaps the material sequence for touch-off settings', async ({ app, ui }) => {
+  await seedMachineProject(app.page)
+  await openManager(app.page, ui)
+  await ui.machineManager.item(app.page, 'Grbl plasma (OpenBuilds CONTROL) (experimental)').click()
+  await ui.machineManager.duplicateButton(app.page).click()
+  const field = (label: string) => ui.machineEditor.field(app.page, label)
+  await expect(field('Pierce mode')).toHaveValue('gcode')
+  await expect(field('Material select command')).toHaveCount(0)
+  await expect(field('Probe command')).toHaveValue('G38.2')
+  await expect(field('Probe depth below Z zero (mm)')).toHaveValue('30')
+  await expect(field('Touch-off switch offset (mm)')).toHaveValue('0')
+  await expect(field('Probe depth below Z zero (mm)')).toHaveAttribute('min', '0.001')
+  await expect(field('Probe feed (mm/min)')).toHaveAttribute('min', '0.001')
+  await expect(field('Touch-off switch offset (mm)')).toHaveAttribute('min', '0')
+  await field('Touch-off switch offset (mm)').fill('1.5')
+  await ui.machineEditor.advancedToggle(app.page).click()
+  const json = ui.machineEditor.advancedJson(app.page)
+  expect(JSON.parse(await json.inputValue()).plasma.touchOff.switchOffset).toBe(1.5)
+  await field('Probe depth below Z zero (mm)').fill('')
+  await expect(ui.machineEditor.saveButton(app.page)).toBeDisabled()
+  await field('Probe depth below Z zero (mm)').fill('40')
+  await expect(ui.machineEditor.saveButton(app.page)).toBeEnabled()
+  await field('Pierce mode').selectOption('controller')
+  await expect(field('Probe command')).toHaveCount(0)
+  await expect(field('Material select command')).toHaveValue('')
+  await expect(ui.machineEditor.saveButton(app.page)).toBeDisabled()
+  await field('Pierce mode').selectOption('gcode')
+  await expect(ui.machineEditor.saveButton(app.page)).toBeEnabled()
+  await ui.machineEditor.saveButton(app.page).click()
+  await ui.machineManager.useButton(app.page).click()
+  expect((await embeddedMachine(app.page)).definitions[0].plasma.touchOff).toEqual({
+    probeCommand: 'G38.2', probeDepth: 40, probeFeed: 100, setZeroCommand: 'G10 L20 P0', switchOffset: 1.5,
+  })
+})
 
 test('invalid Advanced plasma metadata stays invalid across focused edits until corrected', async ({ app, ui }) => {
   await seedMachineProject(app.page)

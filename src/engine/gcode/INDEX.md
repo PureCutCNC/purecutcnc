@@ -67,7 +67,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 - `definitions/` — bundled machine definitions (`BUNDLED_DEFINITIONS`) and
   `getActiveMachineDefinition`, the export boundary. `shopbot.json` is the one
   non-G-code definition; see the note below. `qtplasmac.json` adds the experimental
-  plasma table metadata, with controller-owned piercing and no torch emission.
+  plasma table metadata, with controller-owned piercing and no torch emission;
+  `grbl-plasma.json` is the G-code-owned counterpart (per-cut touch-off, #983),
+  also metadata only.
 - `legacyMachineParity.test.ts` + `legacyMachineParity.json` — 42 frozen pre-#956 output cases across every existing machine, both units, arcs, tool changes and drilling; only the clock date is normalized.
 - `*.test.ts` — `postprocessor.test.ts` (G-code), `motionPipeline.test.ts`
   (sequencing, drill-cycle transform, rapid split, and both emitters checked

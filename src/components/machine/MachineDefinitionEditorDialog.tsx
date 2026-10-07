@@ -355,7 +355,7 @@ function renderVar(name: string, desc: string, context?: string) {
                   {renderVar('feed', 'Cutting feed rate (formatted)', 'operation header')}
                   {renderVar('plungeFeed', 'Plunge feed rate (formatted)', 'operation header')}
                   {renderVar('rpm', 'Spindle RPM (formatted)', 'tool change, op header')}
-                  {form.machineKind === 'plasma' ? renderVar('materialNumber', td('dialogs.machineEditor.materialNumberReference'), 'plasma.materialSelectCommand') : null}
+                  {form.machineKind === 'plasma' && form.pierceMode === 'controller' ? renderVar('materialNumber', td('dialogs.machineEditor.materialNumberReference'), 'plasma.materialSelectCommand') : null}
                 </div>
               </DisclosureSection>
             ) : null}

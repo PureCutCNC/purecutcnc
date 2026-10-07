@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { MachineDefinition } from '../../engine/gcode/types'
+import type { MachineDefinition, PlasmaTouchOff } from '../../engine/gcode/types'
 import { resolveMachineKind, validateMachineDefinition } from '../../engine/gcode/types'
 
 /**
@@ -32,6 +32,12 @@ export interface MachineFormData {
   thcOnCommand: string
   thcOffCommand: string
   pierceMode: 'controller' | 'gcode'
+  /** Touch-off fields as typed text; lengths in mm, feed in mm/min. */
+  probeCommand: string
+  probeDepth: string
+  probeFeed: string
+  setZeroCommand: string
+  switchOffset: string
   name: string
   fileExtension: string
   mmCommand: string
@@ -57,8 +63,25 @@ export function splitLines(text: string): string[] {
     .map((line) => line.replace(/\r$/, ''))
 }
 
+/** Grbl touch-off as OpenBuilds CAM writes it, with no switch offset. */
+export const DEFAULT_TOUCH_OFF: PlasmaTouchOff = {
+  probeCommand: 'G38.2',
+  probeDepth: 30,
+  probeFeed: 100,
+  setZeroCommand: 'G10 L20 P0',
+  switchOffset: 0,
+}
+
+/** Blank or malformed text becomes NaN, which validation then rejects. */
+function parseFormNumber(text: string): number {
+  return text.trim() ? Number(text) : Number.NaN
+}
+
 /** Extract focused form fields from a full MachineDefinition. */
 export function toFormData(def: MachineDefinition): MachineFormData {
+  // Prefilled so switching a machine to G-code piercing starts from values
+  // that run, not blanks; they only reach the definition in that mode.
+  const touchOff = def.plasma?.touchOff ?? DEFAULT_TOUCH_OFF
   return {
     machineKind: resolveMachineKind(def),
     torchOnCommand: def.plasma?.torchOnCommand ?? '',
@@ -69,6 +92,11 @@ export function toFormData(def: MachineDefinition): MachineFormData {
     thcOnCommand: def.plasma?.thcOnCommand ?? '',
     thcOffCommand: def.plasma?.thcOffCommand ?? '',
     pierceMode: def.plasma?.pierceMode ?? 'controller',
+    probeCommand: touchOff.probeCommand,
+    probeDepth: String(touchOff.probeDepth),
+    probeFeed: String(touchOff.probeFeed),
+    setZeroCommand: touchOff.setZeroCommand,
+    switchOffset: touchOff.switchOffset === undefined ? '' : String(touchOff.switchOffset),
     name: def.name,
     fileExtension: def.fileExtension,
     mmCommand: def.units.mmCommand ?? '',
@@ -104,12 +132,28 @@ export function mergeFormData(
           plasma: {
             torchOnCommand: form.torchOnCommand,
             torchOffCommand: form.torchOffCommand,
-            materialSelectCommand: form.materialSelectCommand,
-            materialWaitCommand: form.materialWaitCommand,
-            materialFeedCommand: form.materialFeedCommand,
+            ...(form.pierceMode === 'controller'
+              ? {
+                  materialSelectCommand: form.materialSelectCommand,
+                  materialWaitCommand: form.materialWaitCommand,
+                  materialFeedCommand: form.materialFeedCommand,
+                }
+              : {}),
             ...(form.thcOnCommand.trim() ? { thcOnCommand: form.thcOnCommand } : {}),
             ...(form.thcOffCommand.trim() ? { thcOffCommand: form.thcOffCommand } : {}),
             pierceMode: form.pierceMode,
+            ...(form.pierceMode === 'gcode'
+              ? {
+                  touchOff: {
+                    probeCommand: form.probeCommand,
+                    probeDepth: parseFormNumber(form.probeDepth),
+                    probeFeed: parseFormNumber(form.probeFeed),
+                    setZeroCommand: form.setZeroCommand,
+                    // Blank means no offset (0) and leaves the key absent.
+                    ...(form.switchOffset.trim() ? { switchOffset: parseFormNumber(form.switchOffset) } : {}),
+                  },
+                }
+              : {}),
           },
         }
       : machineKind ? { machineKind: 'router' } : {}),
@@ -169,8 +213,9 @@ function formatZodMessage(message: string): string {
   // first useful sentence or return the raw message.
   const trimmed = message.trim()
 
-  // Detect JSON-encoded issues array at the start.
-  const issuesMatch = trimmed.match(/^\[[\s\S]*?\]/)
+  // Detect a JSON-encoded issues array. Greedy: an issue's own `path` or
+  // `values` array closes with `]` long before the outer array does.
+  const issuesMatch = trimmed.match(/^\[[\s\S]*\]/)
   if (!issuesMatch) {
     return trimmed
   }

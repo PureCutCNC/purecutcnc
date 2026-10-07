@@ -24,6 +24,7 @@ import grblhal from './grblhal.json'
 import uccnc from './uccnc.json'
 import shopbot from './shopbot.json'
 import qtplasmac from './qtplasmac.json'
+import grblPlasma from './grbl-plasma.json'
 
 export const BUNDLED_DEFINITIONS: MachineDefinition[] = [
   generic as unknown as MachineDefinition,
@@ -40,6 +41,7 @@ export const BUNDLED_DEFINITIONS: MachineDefinition[] = [
   shopbot as unknown as MachineDefinition,
   // Metadata only (#956). Torch sequencing belongs to motionPipeline (#959).
   qtplasmac as unknown as MachineDefinition,
+  grblPlasma as unknown as MachineDefinition,
 ]
 
 /**
