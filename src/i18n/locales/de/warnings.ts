@@ -235,6 +235,10 @@ export const warningsDe: Record<keyof typeof warningsEn, string> = {
   'warnings.pocketWallCornerCleanupFallback': 'Eine abgerundete Taschenwandecke konnte nicht sicher nachbearbeitet werden; für diesen Ring wurde die scharfe Wandbahn beibehalten',
   'warnings.pocketFinishIslandWallTooTight': 'Der Fräser passt nicht zwischen eine Insel und die Taschenwand; der Schlichtgang an der Insel wurde auf den Bereich gekürzt, in den er passt, sodass dort Material stehen bleibt',
   // postprocessor
+  'warnings.setupTargetNotThrough': '{features}: auf der anderen Seite gezeichnet und kein durchgehender Ausschnitt, daher kann diese Aufspannung es nicht erreichen. Nur ein Abzug, der beide Rohteilseiten erreicht, oder ein importiertes 3D-Modell kann von der anderen Seite bearbeitet werden. Es wurde nichts erzeugt.',
+  'warnings.postMixedSetups': 'Das Programm enthält Operationen aus mehr als einer Aufspannung ({setups}). Das Teil wird zwischen den Aufspannungen von Hand gewendet, daher wird jede Aufspannung als eigenes Programm exportiert.',
+  'warnings.postSetupOperationRefused': 'Operation „{operation}" hat keine Werkzeugbahn, weil ihre Aufspannung sie nicht schneiden kann. Korrigieren oder entfernen Sie die Operation vor dem Export.',
+  'warnings.postSetupNoRegistration': 'Aufspannung „{setup}" hat keine Ausrichtreferenz, daher ist nicht festgehalten, wie das Teil nach dem Wenden positioniert wird. Fügen Sie in den Aufspannungseinstellungen eine Passstift-, Anschlag- oder Eckreferenz hinzu.',
   'warnings.postWcsNullSelect': 'Maschinendefinition fordert {wcsCommand} in der Kopfzeile an, aber selectCommand ist null.',
   'warnings.postToolChangesDisabled': 'Operation „{operation}" benötigt das Werkzeug „{tool}", aber Werkzeugwechsel sind deaktiviert: Das Programm schneidet weiter mit dem vorherigen Werkzeug. Aktivieren Sie die Werkzeugwechsel, oder exportieren Sie jeweils nur eine Operation.',
   'warnings.postNoCoolantCommands': 'Kühlmittelausgabe angefordert, aber die Maschinendefinition hat keine Kühlmittelbefehle.',

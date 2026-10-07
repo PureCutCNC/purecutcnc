@@ -33,6 +33,7 @@ import { nextUniqueGeneratedId } from '../helpers/ids'
 import { cloneProject, normalizeFeatureZRange, projectsEqual, syncFeatureTreeProject } from '../helpers/normalize'
 import { uniqueFolderName } from '../helpers/naming'
 import { defaultOperationForTarget, defaultOperationName, isOperationTargetValid, toolMatchesTemplate } from '../helpers/operationDefaults'
+import { rejectedOperationTargets, targetAllowedInSetup } from '../../engine/setupTargets'
 import { createDefinitionForFeature, createFeatureInstance } from '../helpers/featureDefinitions'
 import { resolveFeatureInstance } from '../helpers/resolveFeatures'
 import type { ProjectStore } from '../types'
@@ -86,6 +87,11 @@ export function createOperationsSlice(
     addOperation: (kind, pass, target, libraryTools) => {
       const state = get()
       if (!isOperationTargetValid(state.project, kind, target)) {
+        return null
+      }
+      // A new operation joins the active setup, so its targets are judged
+      // from that setup's face (issue #946).
+      if (!targetAllowedInSetup(state.project, target, state.project.activeSetupId)) {
         return null
       }
 
@@ -167,9 +173,21 @@ export function createOperationsSlice(
             }
 
             const nextOperation = withCompatibleOperationTool(s.project, { ...operation, ...patch })
-            return isOperationTargetValid(s.project, nextOperation.kind, nextOperation.target)
-              ? nextOperation
-              : operation
+            if (!isOperationTargetValid(s.project, nextOperation.kind, nextOperation.target)) {
+              return operation
+            }
+            // A target or setup edit may not hand the operation a feature its
+            // setup cannot reach (issue #946). Judged on what the edit adds: a
+            // target that became unreachable some other way — its feature was
+            // made shallower — must not lock every later edit out, including
+            // the one that removes it.
+            if (patch.target !== undefined || patch.setupId !== undefined) {
+              const before = new Set(rejectedOperationTargets(s.project, operation).map((verdict) => verdict.featureId))
+              const introduced = rejectedOperationTargets(s.project, nextOperation)
+                .some((verdict) => !before.has(verdict.featureId))
+              if (introduced) return operation
+            }
+            return nextOperation
           }),
           meta: { ...s.project.meta, modified: new Date().toISOString() },
         }

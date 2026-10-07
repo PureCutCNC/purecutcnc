@@ -35,6 +35,8 @@ interface OperationButton {
 }
 
 interface OperationAddMenuProps {
+  setupName?: string
+  targetPicker?: import('react').ReactNode
   operationButtons: OperationButton[]
   selectedNewOperationKind: OperationKind | null
   selectedNewOperationHint: string | null
@@ -54,6 +56,8 @@ interface OperationAddMenuProps {
 }
 
 export function OperationAddMenu({
+  setupName,
+  targetPicker,
   operationButtons,
   selectedNewOperationKind,
   selectedNewOperationHint,
@@ -258,6 +262,8 @@ export function OperationAddMenu({
   return (
     <div className="cam-add-menu cam-add-menu--vertical">
       <div className="cam-add-menu__section">
+        {setupName ? <p>{camT('cam.setup.addTo', { name: setupName })}</p> : null}
+        {targetPicker}
         <span className="cam-add-menu__label">{camT('cam.addMenu.operation')}</span>
 
         {/* #732: an empty selection is one precondition, not eleven separate

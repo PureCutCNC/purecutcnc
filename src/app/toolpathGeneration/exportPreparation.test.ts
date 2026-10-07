@@ -37,10 +37,13 @@ import {
   exportOptionsKey,
   prepareExport,
   programHasError,
+  exportHasError,
   tokenMatchesContext,
   type ExportPostOptions,
 } from './exportPreparation'
 import { makeOperation, makeResult, projectWith } from './testSupport'
+import { syncProjectSetups } from '../../store/helpers/setups'
+import { withBottomSetup } from '../../test/projectFixtures'
 import type { Operation, Project, Tool } from '../../types/project'
 import { defaultTool } from '../../types/project'
 
@@ -128,11 +131,15 @@ async function main(): Promise<void> {
     const preparation = await pending
     assert(preparation.status === 'ready', `expected ready, got ${preparation.status}`)
     assert(
-      preparation.status === 'ready' && preparation.operations.length === 2,
+      preparation.status === 'ready' && preparation.programs.length === 1,
+      'a project with one setup posts one program',
+    )
+    assert(
+      preparation.status === 'ready' && preparation.programs[0].operations.length === 2,
       'both operations must reach the postprocessor',
     )
     assert(
-      preparation.status === 'ready' && preparation.result.gcode.length > 0,
+      preparation.status === 'ready' && preparation.programs[0].result.gcode.length > 0,
       'a program should be emitted',
     )
   })
@@ -215,9 +222,39 @@ async function main(): Promise<void> {
     const preparation = await pending
     assert(
       preparation.status === 'ready'
-        && preparation.operations.map((row) => row.operation.id).join(',') === 'a,b',
+        && preparation.programs[0].operations.map((row) => row.operation.id).join(',') === 'a,b',
       'the posted order must follow the token',
     )
+  })
+
+  await test('two setups post two programs, each with its own operations, name and header', async () => {
+    const opC = { ...makeOperation('c'), toolRef: 't1' }
+    // b is cut from Bottom; a and c from Top, with b between them in project order.
+    const twoSetups = withBottomSetup(syncProjectSetups(withTools([opA, opB, opC])), { operationIds: ['b'] })
+    const h = harness(twoSetups)
+    const token = createExportToken(1, h.context, ['a', 'b', 'c'], definition, OPTIONS)
+    const pending = prepareExport(h.service, h.context, token, definition, OPTIONS)
+    for (const id of ['a', 'b', 'c']) {
+      await flush()
+      h.executor().release({ status: 'completed', result: makeResult(id, 4), raw: null })
+    }
+    const preparation = await pending
+    assert(preparation.status === 'ready', `expected ready, got ${preparation.status}`)
+    if (preparation.status !== 'ready') return
+    assert(preparation.programs.length === 2, `one program per setup, got ${preparation.programs.length}`)
+    const [top, bottom] = preparation.programs
+    assert(top.operations.map((row) => row.operation.id).join(',') === 'a,c', 'the Top program holds the Top operations, in project order')
+    assert(bottom.operations.map((row) => row.operation.id).join(',') === 'b', 'the Bottom program holds the Bottom operation')
+    const stem = twoSetups.meta.name.replace(/\s+/g, '_')
+    assert(top.fileStem === `${stem}_01_top` && bottom.fileStem === `${stem}_02_bottom`, `file names carry the setup: ${top.fileStem}, ${bottom.fileStem}`)
+    assert([top.programNumber, top.face, bottom.programNumber, bottom.face].join(',') === '1,top,2,bottom', 'each program says which setup it is')
+    assert(top.result.gcode.includes('SETUP 01: Top') && !top.result.gcode.includes('SETUP 02'), 'the Top program is headed as setup 01')
+    assert(bottom.result.gcode.includes('SETUP 02: Bottom') && !bottom.result.gcode.includes('SETUP 01'), 'the Bottom program is headed as setup 02')
+    assert(top.result.stats.operationCount === 2 && bottom.result.stats.operationCount === 1, 'no program holds an operation of the other setup')
+    assert(!exportHasError(preparation.programs), 'a complete two-setup export is saveable')
+    // An error in one program blocks every file of the export.
+    const broken = [top, { ...bottom, result: { ...bottom.result, warnings: [{ code: 'postSetupOperationRefused' as const }] } }]
+    assert(exportHasError(broken), 'an error in one program blocks the whole export')
   })
 
   await test('an error code blocks the export and a warning does not', () => {

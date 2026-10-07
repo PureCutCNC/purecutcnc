@@ -213,10 +213,14 @@ const isProvisionalSetupActive = (candidate: Project): boolean => provisionalSet
 {
   resetStore()
   store().addRectFeature('Base', 0, 0, 100, 80, project().stock.thickness)
+  // A through subtract is reachable from Bottom without creating content there.
+  store().addRectFeature('Through', 10, 10, 20, 20, project().stock.thickness)
   const baseId = lastFeature().id
+  assert(isThroughFeature(project(), resolveFeatureInstance(project(), baseId)!), 'fixture: a true through subtract')
   switchWorkspaceFace('bottom')
+  assert(bottomSetups().length === 0, 'the Bottom setup remains provisional before Add')
   const pastCount = store().history.past.length
-  const operationId = store().addOperation('edge_route_outside', 'rough', { source: 'features', featureIds: [baseId] })
+  const operationId = store().addOperation('edge_route_inside', 'rough', { source: 'features', featureIds: [baseId] })
   assert(operationId !== null, 'fixture: an operation is added')
   assert(bottomSetups().length === 1, 'the first operation added on Bottom makes the setup real')
   const operation = project().operations.find((entry) => entry.id === operationId)!

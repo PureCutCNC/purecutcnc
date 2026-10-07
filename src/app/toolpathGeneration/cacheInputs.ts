@@ -45,7 +45,7 @@ import {
   type OperationFootprint,
 } from '../../engine/toolpaths'
 import type { ToolpathResult } from '../../engine/toolpaths'
-import type { Clamp, Operation, Project, Stock, Tab, Tool } from '../../types/project'
+import type { Clamp, Operation, Project, SetupOrientation, Stock, Tab, Tool } from '../../types/project'
 import { projectsEqual } from '../../store/helpers/normalize'
 
 /**
@@ -77,6 +77,16 @@ export interface ToolpathCacheInputs {
    * own row.
    */
   machinedElsewhere: ReadonlySet<string>
+  /**
+   * How the operation's setup turns the stock (issue #946), or null for an
+   * operation without a setup.
+   *
+   * The operation row only names its setup. The turn lives on the setup, and
+   * changing a Bottom setup's flip axis keeps its id — so `setupId` comparing
+   * equal says nothing about whether the path was generated in the frame the
+   * setup has now.
+   */
+  setupOrientation: SetupOrientation | null
 }
 
 /** Captured inputs plus the result they produced. */
@@ -151,6 +161,17 @@ export function operationComputationEquals(a: Operation, b: Operation): boolean 
   )
 }
 
+/** The turn of the setup an operation belongs to; null when it names none that exists. */
+function operationSetupOrientation(project: Project, operation: Operation): SetupOrientation | null {
+  if (operation.setupId === undefined) return null
+  return project.setups?.find((setup) => setup.id === operation.setupId)?.orientation ?? null
+}
+
+function sameOrientation(a: SetupOrientation | null, b: SetupOrientation | null): boolean {
+  if (a === b) return true
+  return a !== null && b !== null && a.axis === b.axis && a.angleDeg === b.angleDeg
+}
+
 /**
  * Capture the inputs an operation is about to be generated from.
  *
@@ -168,6 +189,7 @@ export function captureCacheInputs(project: Project, operation: Operation): Tool
     tabs: project.tabs,
     clamps: project.clamps,
     machinedElsewhere: subtractsMachinedElsewhere(project, operation),
+    setupOrientation: operationSetupOrientation(project, operation),
   }
 }
 
@@ -197,6 +219,8 @@ export function cacheInputsValid(
     || inputs.stock !== project.stock
     || inputs.tabs !== project.tabs
     || inputs.clamps !== project.clamps
+    // The same setup id, turned another way, is another frame (issue #946).
+    || !sameOrientation(inputs.setupOrientation, operationSetupOrientation(project, operation))
   ) {
     return false
   }

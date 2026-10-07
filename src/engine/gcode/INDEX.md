@@ -46,7 +46,16 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   the only place an operation's machining setup is applied (issue #944): the
   setup's frame is resolved once per operation and passed to the transform,
   for moves and drill cycles alike. `planDrillCycles` takes the operation for
-  that reason.
+  that reason. `planProgramSetup` (issue #946) decides what a program says
+  about its setup, for every dialect: the header comment lines, an error when
+  a program holds operations of more than one setup or one its setup refused
+  to cut, and a warning for a second setup with no registration. It returns
+  nothing for a project with a single setup.
+- `setupPrograms.ts` — one program per setup (issue #946):
+  `planSetupPrograms` splits an export's operations by setup and names each
+  file (`<project>_01_top`; a single-setup project keeps exactly today's
+  name), and `setupHeaderLines` / `describeTouchOff` / `describeRegistration`
+  build the plain-text header each dialect writes as comments.
 - `opensbpEmitter.ts` — ShopBot part-file emitter. Its header comment cites
   where the syntax comes from and what was deliberately not consulted; keep it
   accurate when the emitter changes.
@@ -79,7 +88,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   `trochoidalArcExport.test.ts`, `setupExport.test.ts` (a Bottom operation
   exports turned for both dialects, the shared origin on and off the flip
   centreline, arc direction reversal, drill cycles, and Top with setups
-  byte-identical to a project without them).
+  byte-identical to a project without them), `setupPrograms.test.ts` (how an
+  export is split and named, the touch-off and registration wording, the
+  header in G-code, parenthesised and SBP comments, a single-setup program
+  byte-identical with no header, and the mixed-setup and refused-operation
+  errors).
 
 ## Adding a dialect
 

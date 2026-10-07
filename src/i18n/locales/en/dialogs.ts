@@ -226,6 +226,14 @@ export const dialogsEn = {
 
   // ── Export: exported-motion debug view (issue #356) ──
   'dialogs.export.inspectMotion': 'Inspect exported motion',
+  'dialogs.export.programs': 'Programs',
+  'dialogs.export.perSetupNote': 'One program per setup. You turn the part by hand between programs; nothing in a program turns it.',
+  'dialogs.export.programLabel': '{number} · {setup}',
+  'dialogs.export.programOperations.one': '{count} operation',
+  'dialogs.export.programOperations.other': '{count} operations',
+  'dialogs.export.programSaved': 'saved',
+  'dialogs.export.exportFiles': 'Export {count} files',
+  'dialogs.export.error.saveFailed': 'Could not save {file}. Press export again to continue with the remaining files.',
   'dialogs.motionDebug.title': 'Exported motion — {operation}',
   'dialogs.motionDebug.layerGenerated': 'Generated (raw)',
   'dialogs.motionDebug.layerOptimized': 'Optimized',

@@ -305,6 +305,21 @@ export type ToolpathWarningCode =
    * and gouged it (issue #746). Trimming is silent stock left behind unless it
    * is said out loud, hence the warning rather than a quiet clip. */
   | 'pocketFinishIslandWallTooTight'
+  // machining setups (issue #946)
+  /** A target was drawn on the other face and does not go through the stock,
+   *  so the operation's setup cannot reach it. Nothing is generated: motion
+   *  for the wrong side is worse than no motion. */
+  | 'setupTargetNotThrough'
+  /** A program was asked to hold operations of more than one setup. The
+   *  operator turns the part by hand between setups, so one program must
+   *  never run across the turn. */
+  | 'postMixedSetups'
+  /** An operation in the program generated nothing because its setup may not
+   *  cut it (`setupTargetNotThrough`). The file would be missing a pass. */
+  | 'postSetupOperationRefused'
+  /** The program is for a second setup that declares no registration
+   *  reference: nothing records how the turned part is located. */
+  | 'postSetupNoRegistration'
   // clamps travel / postprocessor
   | 'clampTravelLimitExceeded'
   | 'postWcsNullSelect'
@@ -342,9 +357,17 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * - `postToolChangesDisabled` — the G-code cuts the second operation's paths
  *   with the first operation's tool. Nothing in the program pauses the machine
  *   for a change, so the part is machined with the wrong cutter.
+ * - `postMixedSetups` — the program runs operations of two setups back to
+ *   back, with nothing between them to turn the part: the second setup's
+ *   paths are cut into the wrong face (issue #946).
+ * - `postSetupOperationRefused` — an operation in the program has no motion
+ *   because its setup may not cut it, so the saved file would quietly lack a
+ *   pass the operation list promises (issue #946).
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
   'postToolChangesDisabled',
+  'postMixedSetups',
+  'postSetupOperationRefused',
 ])
 
 /**

@@ -28,7 +28,7 @@
  */
 
 import { orientationForFace, setupFace } from '../../engine/setupOrientation'
-import { uniqueName } from '../../import'
+import { uniqueName } from '../../import/normalize'
 import type { MachiningSetup, Project, SetupFace } from '../../types/project'
 import { nextUniqueGeneratedId } from './ids'
 import { syncProjectSetups } from './setups'

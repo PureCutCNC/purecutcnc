@@ -15,15 +15,18 @@
  */
 
 /**
- * Machining-setup actions (issue #944). Only what the Top/Bottom UI and CAM
- * slices build on: no cross-face validation lives here — moving an operation
- * or a feature to another face is accepted as asked, and the rules for what
- * may target what arrive with the CAM grouping slice (#946).
+ * Machining-setup actions (issue #944). Moving an operation to another setup
+ * is validated (issue #946): its targets are re-judged from the new face by
+ * `planOperationMove`, and the move is refused when nothing valid would be
+ * left. Changing a feature's authoring face is still accepted as asked — an
+ * operation left targeting a face it cannot reach generates nothing and says
+ * why (`setupGenerationBlock`).
  */
 
 import type { StateCreator } from 'zustand'
 import { uniqueName } from '../../import'
 import { isSupportedSetupOrientation, setupFace } from '../../engine/setupOrientation'
+import { applyOperationMove, planOperationMove } from '../../engine/setupOperationMove'
 import type { MachiningSetup, Project } from '../../types/project'
 import { nextUniqueGeneratedId } from '../helpers/ids'
 import { cloneProject, projectsEqual } from '../helpers/normalize'
@@ -35,6 +38,7 @@ export type SetupsSlice = Pick<
   ProjectStore,
   | 'createSetup'
   | 'renameSetup'
+  | 'updateSetup'
   | 'deleteSetup'
   | 'setActiveSetup'
   | 'assignOperationToSetup'
@@ -144,6 +148,23 @@ export function createSetupsSlice(
       })
     },
 
+    updateSetup: (id, patch) => commit((current) => {
+      if (patch.name !== undefined && !patch.name.trim()) return null
+      if (patch.flipAxis !== undefined && patch.flipAxis !== 'x' && patch.flipAxis !== 'y') return null
+      const { project, id: setupId } = realizeProvisionalSetup(current, id)
+      if (!project.setups.some((setup) => setup.id === setupId)) return null
+      return {
+        ...project,
+        setups: project.setups.map((setup) => setup.id === setupId ? {
+          ...setup,
+          ...(patch.name === undefined ? {} : { name: patch.name.trim() }),
+          ...(patch.flipAxis === undefined ? {} : { orientation: { ...setup.orientation, axis: patch.flipAxis } }),
+          ...(patch.registration === undefined ? {} : { registration: structuredClone(patch.registration) }),
+          ...(patch.notes === undefined ? {} : { notes: patch.notes }),
+        } : setup),
+      }
+    }),
+
     // A setup takes its operations with it, as one undo step. They are not
     // moved to another setup: that is a cross-face move, and a move needs the
     // validation an explicit Move action brings (#946).
@@ -171,17 +192,13 @@ export function createSetupsSlice(
           : { project: { ...s.project, activeSetupId: id }, dirty: s.dirty }
       }),
 
+    // The move is planned against the project it is applied to, so the
+    // store cannot commit a move the plan would have blocked. Targets the new
+    // face cannot reach are dropped with it, as one undo step.
     assignOperationToSetup: (operationId, setupId) => {
       commit((current) => {
         const { project, id } = realizeProvisionalSetup(current, setupId)
-        return project.setups.some((setup) => setup.id === id)
-          ? {
-              ...project,
-              operations: project.operations.map((operation) => (
-                operation.id === operationId ? { ...operation, setupId: id } : operation
-              )),
-            }
-          : null
+        return applyOperationMove(project, planOperationMove(project, operationId, id))
       })
     },
 

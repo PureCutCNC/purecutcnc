@@ -87,6 +87,8 @@ const ALL_CODES = [
   'cleanupStockToLeaveOffsets', 'cleanupNoContours',
   'pocketNoFloorRegion', 'pocketNoFloorSegments', 'pocketWallCornerCleanupFallback',
   'pocketFinishIslandWallTooTight',
+  'setupTargetNotThrough', 'postMixedSetups', 'postSetupOperationRefused',
+  'postSetupNoRegistration',
   'postPlasmaOutputPending', 'postNoToolChangeCommands', 'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
   'postArcNoCapability', 'postArcFallbackLinear',
   'replayNoTool', 'bookletNoTool', 'bookletNoToolpath',

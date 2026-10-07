@@ -235,6 +235,10 @@ export const warningsEn = {
   'warnings.pocketWallCornerCleanupFallback': 'A rounded pocket wall corner could not be cleaned safely; the sharp wall path was kept for that ring',
   'warnings.pocketFinishIslandWallTooTight': 'The cutter does not fit between an island and the pocket wall; the island finish pass was trimmed to where it fits, so stock is left in that gap',
   // postprocessor
+  'warnings.setupTargetNotThrough': '{features}: drawn on the other face and not a cut that goes through the stock, so this setup cannot reach it. Only a subtract that reaches both stock faces, or an imported 3D model, can be machined from the other side. Nothing was generated.',
+  'warnings.postMixedSetups': 'The program holds operations from more than one setup ({setups}). The part is turned by hand between setups, so each setup is exported as its own program.',
+  'warnings.postSetupOperationRefused': 'Operation "{operation}" has no toolpath because its setup cannot cut it. Fix or remove the operation before exporting.',
+  'warnings.postSetupNoRegistration': 'Setup "{setup}" has no registration reference, so nothing records how the part is located after it is turned. Add a dowel, fence or corner reference in the setup settings.',
   'warnings.postWcsNullSelect': 'Machine definition requests {wcsCommand} in header but selectCommand is null.',
   'warnings.postToolChangesDisabled': 'Operation "{operation}" needs tool "{tool}", but tool changes are disabled: the program keeps cutting with the previous tool. Turn tool changes on, or export one operation at a time.',
   'warnings.postNoCoolantCommands': 'Coolant emission requested but machine definition has no coolant commands.',

@@ -17,6 +17,12 @@
 import { usePlasmaStartPointPick } from './plasmaStartPointPick'
 import { PlasmaOperationFields } from './PlasmaOperationFields'
 
+import { activeSetup } from '../../store/helpers/activeFace'
+import { camSetupSections, crossFaceTargets } from './setupSections'
+import { CamSetupSectionView } from './CamSetupSectionView'
+import { SetupPropertiesDialog } from './SetupPropertiesDialog'
+import { SetupOperationControls } from './SetupOperationControls'
+import { CrossFaceTargetPicker } from './CrossFaceTargetPicker'
 import { SurfaceSlopeFields } from './SurfaceSlopeFields'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
@@ -86,7 +92,7 @@ interface CAMPanelProps {
   mode: 'operations' | 'tools'
   selectedOperationId: string | null
   onSelectedOperationIdChange: (operationId: string | null) => void
-  onExport: () => void
+  onExport: (operationIds?: string[]) => void
   /** Open the Export G-code dialog scoped to a single operation. */
   onExportOperation: (operationId: string) => void
   /**
@@ -483,6 +489,8 @@ export function CAMPanel({
   const [libraryError, setLibraryError] = useState<string | null>(null)
   const [showLibraryDialog, setShowLibraryDialog] = useState(false)
   const [showAddOperationMenu, setShowAddOperationMenu] = useState(false)
+  const [pickedTargetIds, setPickedTargetIds] = useState<string[] | null>(null)
+  const [editingSetupId, setEditingSetupId] = useState<string | null>(null)
   const [showCamPlan, setShowCamPlan] = useState(false)
   const [camPlan, setCamPlan] = useState<CamPlanDraft | null>(null)
   const [selectedNewOperationKind, setSelectedNewOperationKind] = useState<OperationKind | null>(null)
@@ -537,6 +545,11 @@ export function CAMPanel({
   // The export action is named after what the project's machine exports:
   // G-code, or a ShopBot part file (issue #953).
   const exportLabels = exportDialectLabels(getActiveMachineDefinition(project))
+  const setupSections = camSetupSections(project)
+  const currentSetup = activeSetup(project)
+  const editingSetup = setupSections.sections.find((section) => section.setup.id === editingSetupId)?.setup
+  const closeSetupProperties = useCallback(() => setEditingSetupId(null), [])
+  const addSelection = useMemo(() => pickedTargetIds === null ? selection : { ...selection, selectedFeatureIds: pickedTargetIds, selectedFeatureId: pickedTargetIds[0] ?? null }, [selection, pickedTargetIds])
 
   const selectedToolId =
     selectedToolIdState && project.tools.some((tool) => tool.id === selectedToolIdState)
@@ -618,7 +631,7 @@ export function CAMPanel({
   const operationButtons = useMemo<Array<{ kind: OperationKind; label: string; hint?: string; selectAllFeatureIds: string[] }>>(
     () => {
       const button = (kind: OperationKind) => {
-        const hint = getOperationAddHint(project, selection, kind)
+        const hint = getOperationAddHint(project, addSelection, kind)
         return {
           kind,
           label: operationAddButtonLabel(kind),
@@ -643,17 +656,17 @@ export function CAMPanel({
         button('plasma_profile'),
       ]
     },
-    [project, selection]
+    [project, addSelection]
   )
 
   const selectedNewOperationHint = selectedNewOperationKind
-    ? getOperationAddHint(project, selection, selectedNewOperationKind)
+    ? getOperationAddHint(project, addSelection, selectedNewOperationKind)
     : null
 
   // #732: with nothing selected every kind is invalid for the same reason, so
   // the Add menu states that precondition once instead of drawing eleven
   // per-kind `cam.hint.empty.*` rows.
-  const emptySelectionHint = selection.selectedFeatureIds.length === 0
+  const emptySelectionHint = addSelection.selectedFeatureIds.length === 0
     ? camT('cam.addMenu.selectFirst')
     : null
 
@@ -755,7 +768,7 @@ export function CAMPanel({
   }
 
   async function handleAddOperation(kind: OperationKind, mode: OperationPass | 'pair' = 'rough') {
-    const target = operationTargetFromSelection(project, selection, kind)
+    const target = operationTargetFromSelection(project, addSelection, kind)
     if (!target) {
       setSelectedNewOperationKind(kind)
       return
@@ -797,7 +810,7 @@ export function CAMPanel({
   function handleChooseOperationForAdd(kind: OperationKind) {
     setSelectedNewOperationKind(kind)
 
-    const target = operationTargetFromSelection(project, selection, kind)
+    const target = operationTargetFromSelection(project, addSelection, kind)
     if (!target) {
       return
     }
@@ -1116,6 +1129,7 @@ export function CAMPanel({
       ),
       target: () => (
         <>
+          <SetupOperationControls key={operation.id} operation={operation} requestToolpath={requestToolpath} />
           <label className="properties-field">
             <span>{camT('cam.operation.target')}</span>
             <input type="text" value={operationTargetSummary(project, operation.target)} readOnly />
@@ -2194,10 +2208,11 @@ export function CAMPanel({
                   <button
                     className="cam-header-action"
                     type="button"
-                    onClick={onExport}
+                    onClick={() => onExport()}
                   >
                     {camT('cam.panel.export')}
                   </button>
+                  <button type="button" className="cam-header-action" onClick={() => setEditingSetupId(currentSetup?.id ?? null)}>{camT('cam.setup.properties')}</button>
                   <button
                     className={`cam-header-action${selection.selectedFeatureIds.length === 0 ? ' cam-header-action--warn' : ''}`}
                     type="button"
@@ -2206,13 +2221,16 @@ export function CAMPanel({
                     aria-haspopup="dialog"
                     onClick={() => {
                       setSelectedNewOperationKind(null)
+                      setPickedTargetIds(null)
                       setShowAddOperationMenu((value) => !value)
                     }}
                   >
-                    {camT('cam.panel.add')}
+                    {setupSections.grouped ? camT('cam.setup.addTo', { name: currentSetup?.name ?? '' }) : camT('cam.panel.add')}
                   </button>
                     {showAddOperationMenu ? (
                       <OperationAddMenu
+                        setupName={setupSections.grouped ? currentSetup?.name : undefined}
+                        targetPicker={<CrossFaceTargetPicker project={project} face={currentSetup?.orientation.angleDeg === 180 ? 'bottom' : 'top'} selectedIds={addSelection.selectedFeatureIds} onChange={setPickedTargetIds} />}
                         operationButtons={operationButtons}
                         selectedNewOperationKind={selectedNewOperationKind}
                         selectedNewOperationHint={selectedNewOperationHint}
@@ -2227,7 +2245,7 @@ export function CAMPanel({
                   </div>
                 </div>
                 <div className="cam-section-body">
-                {project.operations.length === 0 ? (
+                {project.operations.length === 0 && !setupSections.grouped ? (
                   <div className="panel-empty">
                     {camT('cam.panel.operationsEmpty')}
                   </div>
@@ -2235,7 +2253,9 @@ export function CAMPanel({
                   <div className="feature-tree-panel cam-operation-tree">
                     <div className="tree-root-label">{camT('cam.panel.cam')}</div>
                     <div className="tree-list">
-                      {project.operations.map((operation) => (
+                      {setupSections.sections.map((section) => (
+                        <CamSetupSectionView key={section.setup.id} section={section} grouped={setupSections.grouped} selectedOperationId={selectedOperationId} onExport={onExport} onProperties={() => setEditingSetupId(section.setup.id)}>
+                        {section.operations.map((operation) => (
                         <div
                           key={operation.id}
                           className={[
@@ -2315,8 +2335,9 @@ export function CAMPanel({
                               </svg>
                             </button>
                           ) : null}
-                          <span className="tree-label">
-                            {operation.name}
+                          <span className="tree-label cam-operation-label">
+                            <span className="cam-operation-name">{operation.name}</span>
+                            {crossFaceTargets(project, operation).length > 0 ? <span className="face-chip face-chip--thru">{camT('cam.setup.crossFace')}</span> : null}
                           </span>
                           <span className="tree-row-actions">
                             {generatingOperationIds?.has(operation.id) ? (
@@ -2371,6 +2392,8 @@ export function CAMPanel({
                             </button>
                           </span>
                         </div>
+                      ))}
+                        </CamSetupSectionView>
                       ))}
                     </div>
                   </div>
@@ -2566,6 +2589,8 @@ export function CAMPanel({
         </div>,
         document.body,
       )}
+
+      {editingSetup ? <SetupPropertiesDialog key={editingSetup.id} setup={editingSetup} onClose={closeSetupProperties} /> : null}
 
       {showLibraryDialog && (
         <ToolLibraryDialog

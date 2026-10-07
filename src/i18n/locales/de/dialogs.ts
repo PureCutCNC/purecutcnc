@@ -222,6 +222,14 @@ export const dialogsDe: Record<keyof typeof dialogsEn, string> = {
 
   // ── Export: exported-motion debug view (issue #356) ──
   'dialogs.export.inspectMotion': 'Exportierte Bewegung prüfen',
+  'dialogs.export.programs': 'Programme',
+  'dialogs.export.perSetupNote': 'Ein Programm pro Aufspannung. Sie wenden das Teil zwischen den Programmen von Hand; kein Programm wendet es.',
+  'dialogs.export.programLabel': '{number} · {setup}',
+  'dialogs.export.programOperations.one': '{count} Operation',
+  'dialogs.export.programOperations.other': '{count} Operationen',
+  'dialogs.export.programSaved': 'gespeichert',
+  'dialogs.export.exportFiles': '{count} Dateien exportieren',
+  'dialogs.export.error.saveFailed': '{file} konnte nicht gespeichert werden. Drücken Sie erneut auf Exportieren, um mit den übrigen Dateien fortzufahren.',
   'dialogs.motionDebug.title': 'Exportierte Bewegung — {operation}',
   'dialogs.motionDebug.layerGenerated': 'Generiert (roh)',
   'dialogs.motionDebug.layerOptimized': 'Optimiert',

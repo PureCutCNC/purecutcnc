@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { CornerReliefStyle, Operation, OperationKind, OperationPass, OperationTarget, Project } from '../../types/project'
+import type { CornerReliefStyle, Operation, OperationKind, OperationPass, Project } from '../../types/project'
 // Presentation exception: the booklet report is a user-facing document, so
 // it maps structured warnings to localized text here via the i18n layer.
 import { translate } from '../../i18n/store'
@@ -29,6 +29,10 @@ import { takesPocketPattern, usesTangentLinks } from '../toolpaths/pocketPattern
 import { clearingControlApplies } from '../toolpaths/clearingControls'
 import { resolvedEntryStrategy, supportsEntryStrategy } from '../toolpaths/entry'
 import { supportsXyLead } from '../toolpaths/xyLead'
+import { formatProgramNumber, projectExportsPerSetup, setupProgramNumber } from '../gcode/setupPrograms'
+import { toolpathInSetupFrame } from '../setupFrameProject'
+import { setupFace, setupForOperation, setupFrameForOperation } from '../setupOrientation'
+import { crossFaceTargetIds } from '../setupTargets'
 import type { OperationBookletInput, OperationBookletReport, OperationBookletRow } from './types'
 
 function operationKindLabel(kind: OperationKind): string {
@@ -124,22 +128,67 @@ function operationUsesRoundOutsideCorners(operation: Operation): boolean {
   )
 }
 
-function targetSummary(project: Project, target: OperationTarget): string {
-  if (target.source === 'stock') {
+function targetSummary(project: Project, operation: Operation): string {
+  if (operation.target.source === 'stock') {
     return translate('booklet.target.stock')
   }
 
-  return targetFeatureNames(project, target).join(', ')
+  return targetFeatureNames(project, operation).join(', ')
 }
 
-function targetFeatureNames(project: Project, target: OperationTarget): string[] {
+function targetFeatureNames(project: Project, operation: Operation): string[] {
+  const { target } = operation
   if (target.source === 'stock') {
     return [translate('booklet.target.stock')]
   }
 
-  return target.featureIds.map((id) => (
-    project.features.find((feature) => feature.id === id)?.name ?? translate('booklet.target.missingFeature', { id })
-  ))
+  // A through cut or a model reached from the other face is said to be, not
+  // listed as if it were drawn on this one (issue #946).
+  const crossFace = new Set(crossFaceTargetIds(project, operation))
+  return target.featureIds.map((id) => {
+    const name = project.features.find((feature) => feature.id === id)?.name
+    if (name === undefined) return translate('booklet.target.missingFeature', { id })
+    return crossFace.has(id) ? translate('booklet.target.crossFace', { name }) : name
+  })
+}
+
+/**
+ * The setup an operation is cut in, for a project that has more than one
+ * (issue #946). A booklet is read at the machine, so it says which program
+ * this is and how the stock must be turned before any setting.
+ */
+function setupRows(project: Project, operation: Operation): OperationBookletRow[] {
+  if (!projectExportsPerSetup(project)) return []
+  const setup = setupForOperation(project, operation)
+  if (!setup) return []
+
+  const rows: OperationBookletRow[] = [
+    {
+      label: translate('booklet.label.setup'),
+      value: `${formatProgramNumber(setupProgramNumber(project, setup.id))} · ${setup.name}`,
+    },
+    {
+      label: translate('booklet.label.setupTurn'),
+      value: setupFace(setup) === 'top'
+        ? translate('booklet.value.setupTop')
+        : translate('booklet.value.setupBottom', { axis: setup.orientation.axis.toUpperCase() }),
+    },
+    {
+      label: translate('booklet.label.registration'),
+      value: setup.registration.length === 0
+        ? translate('booklet.value.registrationNone')
+        : setup.registration.map((reference) => {
+          const kind = translate(`booklet.registration.${reference.kind}`)
+          if (reference.target.type !== 'feature') return kind
+          const featureId = reference.target.featureId
+          const name = project.features.find((feature) => feature.id === featureId)?.name
+          return name === undefined ? kind : `${kind} ${name}`
+        }).join(', '),
+    },
+  ]
+  const notes = setup.notes.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0).join(' ')
+  if (notes.length > 0) rows.push({ label: translate('booklet.label.setupNotes'), value: notes })
+  return rows
 }
 
 function lengthWithUnits(value: number, units: Units): string {
@@ -277,7 +326,7 @@ function settingRows(operation: Operation, project: Project, tool: NormalizedToo
   const rows: OperationBookletRow[] = [
     { label: translate('booklet.label.kind'), value: operationKindLabel(operation.kind) },
     { label: translate('booklet.label.pass'), value: operationPassLabel(operation.pass) },
-    { label: translate('booklet.label.target'), value: targetSummary(project, operation.target) },
+    { label: translate('booklet.label.target'), value: targetSummary(project, operation) },
     { label: translate('booklet.label.feed'), value: feedWithUnits(operation.feed, units) },
     { label: translate('booklet.label.plungeFeed'), value: feedWithUnits(operation.plungeFeed, units) },
     { label: translate('booklet.label.rpm'), value: `${Math.round(operation.rpm)} rpm` },
@@ -488,6 +537,12 @@ function reportWarnings(tool: NormalizedTool | null, toolpath: ToolpathResult | 
 export function buildOperationBookletReport(input: OperationBookletInput): OperationBookletReport {
   const generatedAt = input.generatedAt ?? new Date()
   const tool = input.tool?.type === 'plasma' ? null : input.tool
+  // Heights are reported as the machine runs them in the operation's setup —
+  // up from the bed, cutter coming down — not in stock space, where a Bottom
+  // operation's clearance is below zero. Top passes through untouched.
+  const toolpath = input.toolpath
+    ? toolpathInSetupFrame(input.toolpath, setupFrameForOperation(input.project, input.operation))
+    : input.toolpath
   return {
     projectName: input.project.meta.name,
     operationName: input.operation.name,
@@ -496,11 +551,12 @@ export function buildOperationBookletReport(input: OperationBookletInput): Opera
     units: input.project.meta.units === 'inch' ? translate('booklet.units.inch') : translate('booklet.units.millimeter'),
     originZSummary: originZSummary(input.project),
     stockSizeSummary: stockSizeSummary(input.project),
-    targetSummary: targetSummary(input.project, input.operation.target),
-    targetFeatureNames: targetFeatureNames(input.project, input.operation.target),
+    targetSummary: targetSummary(input.project, input.operation),
+    targetFeatureNames: targetFeatureNames(input.project, input.operation),
+    setupRows: setupRows(input.project, input.operation),
     toolRows: toolRows(tool, input.project.meta.units),
     settingRows: settingRows(input.operation, input.project, tool),
-    warnings: reportWarnings(tool, input.toolpath),
-    toolpathStats: statsRows(input.toolpath, input.operation, input.project.meta.units, tool),
+    warnings: reportWarnings(tool, toolpath),
+    toolpathStats: statsRows(toolpath, input.operation, input.project.meta.units, tool),
   }
 }

@@ -14,23 +14,25 @@
  * limitations under the License.
  */
 
-import { useState, useMemo } from 'react'
+import { Fragment, useState, useMemo } from 'react'
 import { useProjectStore } from '../../store/projectStore'
 import { useRestoreCanvasFocus } from '../../utils/useRestoreCanvasFocus'
 import { platform } from '../../platform'
 import {
+  formatProgramNumber,
   getActiveMachineDefinition,
   getExportedMotionEligibility,
+  projectExportsPerSetup,
 } from '../../engine/gcode'
 import type { ToolpathResult, ToolpathGenerationTrace, NormalizedTool } from '../../engine/toolpaths/types'
 import type { Operation } from '../../types/project'
 import type { GenerationContext, ToolpathGenerationService } from '../../app/toolpathGeneration/service'
-import { programHasError, type ExportPostOptions } from '../../app/toolpathGeneration/exportPreparation'
+import { exportHasError, type ExportPostOptions, type PreparedProgram } from '../../app/toolpathGeneration/exportPreparation'
 import { useExportPreparation } from '../../app/toolpathGeneration/useExportPreparation'
 import {
+  groupExportOperationOptions,
   listExportOperationOptions,
   reusableExportPath,
-  suggestGcodeFileName,
 } from './exportOperationSelection'
 import { ExportedMotionDebugDialog } from './ExportedMotionDebugDialog'
 import { exportDialectLabels } from './exportDialectLabels'
@@ -104,11 +106,31 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     revision: project,
   })
 
-  const previewResult = preparation?.status === 'ready' ? preparation.result : null
-  const activeOperations = useMemo(
-    () => (preparation?.status === 'ready' ? preparation.operations : []),
+  // One program per setup (issue #946). A project with a single setup has
+  // exactly one, and the dialog then looks as it always did.
+  const programs = useMemo<PreparedProgram[]>(
+    () => (preparation?.status === 'ready' ? preparation.programs : []),
     [preparation],
   )
+  const perSetup = projectExportsPerSetup(project)
+  const [previewProgramNumber, setPreviewProgramNumber] = useState<number | null>(null)
+  const previewProgram = programs.find((program) => program.programNumber === previewProgramNumber) ?? programs[0] ?? null
+  const previewResult = previewProgram?.result ?? null
+  const activeOperations = useMemo(() => programs.flatMap((program) => program.operations), [programs])
+  // Files already written from the programs on screen. A browser may refuse a
+  // second save dialog from one click, so an export can take more than one
+  // press; this keeps a later press from writing a file twice.
+  const [saved, setSaved] = useState<{ tokenId: number; programNumbers: number[] } | null>(null)
+  const preparedTokenId = preparation?.status === 'ready' ? preparation.token.id : null
+  const savedProgramNumbers = saved !== null && saved.tokenId === preparedTokenId ? saved.programNumbers : []
+  const [saveFailedFile, setSaveFailedFile] = useState<string | null>(null)
+
+  function programLabel(program: Pick<PreparedProgram, 'programNumber' | 'setupName'>): string {
+    return td('dialogs.export.programLabel', {
+      number: formatProgramNumber(program.programNumber),
+      setup: program.setupName ?? '',
+    })
+  }
 
   type ActiveOperation = { operation: Operation; tool: NormalizedTool; toolpath: ToolpathResult }
   const [debugOperation, setDebugOperation] = useState<ActiveOperation | null>(null)
@@ -127,10 +149,19 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     const errors: string[] = []
     const warnings: string[] = []
 
-    for (const warning of previewResult?.warnings ?? []) {
-      const text = toolpathWarningText(warning)
-      if (warningSeverity(warning.code) === 'error') errors.push(text)
-      else warnings.push(text)
+    // Every program's findings, not only the previewed one's: an error in
+    // any of them blocks the whole export, so it has to be on screen.
+    for (const program of programs) {
+      for (const warning of program.result.warnings) {
+        const text = programs.length > 1
+          ? `${programLabel(program)}: ${toolpathWarningText(warning)}`
+          : toolpathWarningText(warning)
+        if (warningSeverity(warning.code) === 'error') errors.push(text)
+        else warnings.push(text)
+      }
+    }
+    if (saveFailedFile !== null) {
+      errors.push(td('dialogs.export.error.saveFailed', { file: saveFailedFile }))
     }
 
     // A blocked preparation used to just disable Export. The reason is the only
@@ -153,11 +184,11 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
 
     return { errors, warnings }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- td wraps stable context t; languageTag drives locale recomputes
-  }, [activeDefinition, operationOptions, preparation, previewResult, project, selectedOperationIds, languageTag])
+  }, [activeDefinition, operationOptions, preparation, programs, project, selectedOperationIds, saveFailedFile, languageTag])
 
   // The same predicate the save path re-checks, so the button and the bytes
-  // cannot disagree about whether this program may be written.
-  const hasProgramError = previewResult !== null && programHasError(previewResult.warnings)
+  // cannot disagree about whether these programs may be written.
+  const hasProgramError = exportHasError(programs)
 
   function toggleOperationSelected(operationId: string, selected: boolean) {
     setSelectedOperationIds((current) => {
@@ -170,6 +201,10 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
       return next
     })
   }
+
+  // Operations under the setup that cuts them; one unlabelled group for a
+  // project with a single setup.
+  const operationGroups = useMemo(() => groupExportOperationOptions(project, operationOptions), [project, operationOptions])
 
   const exportableOperationIds = useMemo(() => (
     operationOptions
@@ -191,28 +226,46 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     // rendered: an edit between the two would otherwise write a file describing
     // a project that no longer exists.
     const exportable = takeExportable()
-    if (!exportable) return
+    if (!exportable || preparedTokenId === null) return
 
-    const suggestedName = suggestGcodeFileName(project.meta.name, exportable.operationNames)
     const ext = activeDefinition.fileExtension
-    // `exportable.gcode` was copied out above and is not re-read from state; the
-    // bytes are frozen for this file action even if the preview moves on.
-    const exportedPath = await platform.saveTextFile(
-      suggestedName,
-      exportable.gcode,
-      ext,
-      reusableExportPath(lastExportPath, ext),
-    )
-    if (!exportedPath) return
+    setSaveFailedFile(null)
+    // `exportable` was copied out above and is not re-read from state; the
+    // bytes are frozen for these file actions even if the preview moves on.
+    const written = [...savedProgramNumbers]
+    let lastPath: string | null = null
+    for (const program of exportable.programs) {
+      if (written.includes(program.programNumber)) continue
+      let exportedPath: string | null
+      try {
+        exportedPath = await platform.saveTextFile(
+          program.fileStem,
+          program.gcode,
+          ext,
+          // Only a single-setup project overwrites its last export in place:
+          // with one file per setup there is no one path to reuse.
+          perSetup ? null : reusableExportPath(lastExportPath, ext),
+        )
+      } catch {
+        // The files written so far stay recorded, so pressing Export again
+        // carries on with the rest.
+        setSaveFailedFile(`${program.fileStem}.${ext}`)
+        return
+      }
+      if (!exportedPath) return
 
-    // The platform dialog is asynchronous, and another document can be opened
-    // while it is up. Marking *that* document exported would attribute this
-    // file to a project it did not come from.
-    if (contextRef.current.documentKey !== exportable.documentKey) {
-      onClose()
-      return
+      // The platform dialog is asynchronous, and another document can be opened
+      // while it is up. Marking *that* document exported would attribute this
+      // file to a project it did not come from.
+      if (contextRef.current.documentKey !== exportable.documentKey) {
+        onClose()
+        return
+      }
+      written.push(program.programNumber)
+      setSaved({ tokenId: preparedTokenId, programNumbers: [...written] })
+      lastPath = exportedPath
     }
-    markExported(exportedPath)
+    if (lastPath && !perSetup) markExported(lastPath)
     onClose()
   }
 
@@ -220,6 +273,8 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
     selectProject()
     onClose()
   }
+
+  const remainingPrograms = programs.filter((program) => !savedProgramNumbers.includes(program.programNumber)).length
 
   const previewLines = previewResult
     ? previewResult.gcode.split('\n').slice(0, 30).join('\n')
@@ -287,20 +342,29 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
                 </div>
               ) : (
                 <div className="export-option-group export-operation-list">
-                  {operationOptions.map(({ operation, exportable, reasonKey }) => (
-                    <label
-                      key={operation.id}
-                      className={`export-option${exportable ? '' : ' export-option--disabled'}`}
-                    >
-                      <input
-                        type="checkbox"
-                        disabled={!exportable}
-                        checked={exportable && selectedOperationIds.has(operation.id)}
-                        onChange={(event) => toggleOperationSelected(operation.id, event.target.checked)}
-                      />
-                      <span className="export-option-label">{operation.name}</span>
-                      {reasonKey ? <span className="export-option-note">{td(reasonKey)}</span> : null}
-                    </label>
+                  {operationGroups.map((group) => (
+                    <Fragment key={group.setup?.id ?? 'all'}>
+                      {group.setup ? (
+                        <div className="export-setup-heading" data-setup-face={group.face}>
+                          {programLabel({ programNumber: group.programNumber, setupName: group.setup.name })}
+                        </div>
+                      ) : null}
+                      {group.options.map(({ operation, exportable, reasonKey }) => (
+                        <label
+                          key={operation.id}
+                          className={`export-option${exportable ? '' : ' export-option--disabled'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            disabled={!exportable}
+                            checked={exportable && selectedOperationIds.has(operation.id)}
+                            onChange={(event) => toggleOperationSelected(operation.id, event.target.checked)}
+                          />
+                          <span className="export-option-label">{operation.name}</span>
+                          {reasonKey ? <span className="export-option-note">{td(reasonKey)}</span> : null}
+                        </label>
+                      ))}
+                    </Fragment>
                   ))}
                 </div>
               )}
@@ -351,6 +415,34 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
                 </div>
               </div>
             )}
+            {perSetup && programs.length > 0 ? (
+              <div className="dialog-section-group">
+                <label className="dialog-section-title">{td('dialogs.export.programs')}</label>
+                <div className="export-setup-note">{td('dialogs.export.perSetupNote')}</div>
+                <div className="export-program-list" role="group" aria-label={td('dialogs.export.programs')}>
+                  {programs.map((program) => (
+                    <button
+                      key={program.programNumber}
+                      type="button"
+                      className={`export-program${program === previewProgram ? ' export-program--active' : ''}`}
+                      data-setup-face={program.face}
+                      aria-pressed={program === previewProgram}
+                      onClick={() => setPreviewProgramNumber(program.programNumber)}
+                    >
+                      <span className="export-program-title">{programLabel(program)}</span>
+                      <span className="export-program-file">{`${program.fileStem}.${activeDefinition?.fileExtension ?? ''}`}</span>
+                      <span className="export-program-meta">
+                        {td(
+                          program.operations.length === 1 ? 'dialogs.export.programOperations.one' : 'dialogs.export.programOperations.other',
+                          { count: program.operations.length },
+                        )}
+                        {savedProgramNumbers.includes(program.programNumber) ? ` · ${td('dialogs.export.programSaved')}` : ''}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <label className="dialog-section-title">{td('dialogs.export.preview')}</label>
             <div className="dialog-preview">
               {previewLines}
@@ -382,7 +474,9 @@ export function ExportDialog({ onClose, service, contextRef, requestGenerationTr
             disabled={!previewResult || !activeDefinition || activeOperations.length === 0 || hasProgramError}
             type="button"
           >
-            {td('dialogs.export.export', { ext: activeDefinition ? `.${activeDefinition.fileExtension}` : '' })}
+            {remainingPrograms > 1
+              ? td('dialogs.export.exportFiles', { count: remainingPrograms })
+              : td('dialogs.export.export', { ext: activeDefinition ? `.${activeDefinition.fileExtension}` : '' })}
           </button>
         </div>
       </div>

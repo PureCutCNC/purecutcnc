@@ -25,6 +25,8 @@
 import type { ToolpathResult } from '../../engine/toolpaths'
 import type { NormalizedTool } from '../../engine/toolpaths/types'
 import type { Operation, Project } from '../../types/project'
+import { formatProgramNumber, projectExportsPerSetup, setupProgramNumber } from '../../engine/gcode/setupPrograms'
+import { setupForOperation } from '../../engine/setupOrientation'
 
 export type BookletStage = 'toolpath' | 'snapshot' | 'pdf' | 'saving'
 
@@ -88,9 +90,17 @@ export function afterNextPaint(): Promise<void> {
   })
 }
 
-/** Project and operation names made safe for the saved file name. */
+/**
+ * Project and operation names made safe for the saved file name. In a project
+ * with more than one setup the operation's setup sits between them, numbered
+ * as its program is, so a folder of booklets sorts by setup (issue #946).
+ */
 export function bookletFileName(project: Project, operation: Operation): string {
   const safe = (name: string, fallback: string): string =>
     name.trim().replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '') || fallback
-  return `${safe(project.meta.name, 'project')}_${safe(operation.name, 'operation')}_booklet`
+  const setup = projectExportsPerSetup(project) ? setupForOperation(project, operation) : null
+  const setupPart = setup
+    ? `${formatProgramNumber(setupProgramNumber(project, setup.id))}_${safe(setup.name, 'setup')}_`
+    : ''
+  return `${safe(project.meta.name, 'project')}_${setupPart}${safe(operation.name, 'operation')}_booklet`
 }

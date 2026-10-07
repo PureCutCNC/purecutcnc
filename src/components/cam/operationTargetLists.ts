@@ -20,11 +20,14 @@
  *
  * Both lists are computed with `isOperationTargetValid` — the exact
  * validator the store's `updateOperation` enforces — so a menu can never
- * offer a target mutation the store would silently reject. Operations whose
+ * offer a target mutation the store would silently reject. For the same
+ * reason "Add" also asks the setup rule (issue #946): an operation is only a
+ * candidate when its setup can reach every selected feature. Operations whose
  * target is the stock never appear in either list.
  */
 
 import { isOperationTargetValid } from '../../store/helpers/operationDefaults'
+import { targetAllowedInSetup } from '../../engine/setupTargets'
 import type { Operation, Project } from '../../types/project'
 
 export interface RemoveFromOperationCandidate {
@@ -56,6 +59,12 @@ export function addToOperationCandidates(project: Project, featureIds: string[])
 
     const missing = featureIds.filter((id) => !target.featureIds.includes(id))
     if (missing.length === 0) {
+      return false
+    }
+
+    // Judged on the features being added, from the face of the operation's
+    // own setup — not the active one: the menu lists operations of every setup.
+    if (!targetAllowedInSetup(project, { source: 'features', featureIds: missing }, operation.setupId)) {
       return false
     }
 

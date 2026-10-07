@@ -38,12 +38,27 @@
  * fitter can degenerate on, and the surrounding motion is what decides whether
  * the fitter sees the reversal at all. Hand-picking those points would be
  * asserting the emitted shape rather than exporting it.
+ *
+ * The Bottom-setup cases (issue #946) export an operation that belongs to a
+ * setup which turns the stock over. Two things only a real interpreter can
+ * settle ride on them: the setup header is written as comments in each
+ * dialect's own syntax, with operator notes that are free text; and a Bottom
+ * toolpath reaches the exporter through two half turns — into stock space
+ * when it is generated, back out when it is exported — so every coordinate has
+ * been through `2·pivot − value` twice. That round trip is exact only up to
+ * floating-point rounding, and GRBL's arc tolerance is the tightest we know.
+ * The hand-built Bottom cases take the same path a generated one does
+ * (`toolpathInStockFrame`), and one case is generated end to end.
  */
 
-import { newProject, defaultTool, rectProfile } from '../../src/types/project'
-import type { Operation, Project, SketchFeature } from '../../src/types/project'
+import { newProject, defaultTool, getStockBounds, rectProfile } from '../../src/types/project'
+import type { Operation, Project, SetupOrientation, SketchFeature } from '../../src/types/project'
 import type { Units } from '../../src/utils/units'
-import { projectWithFeatures } from '../../src/test/projectFixtures'
+import { projectWithFeatures, withBottomSetup } from '../../src/test/projectFixtures'
+import { syncProjectSetups } from '../../src/store/helpers/setups'
+import { toolpathInStockFrame } from '../../src/engine/setupFrameProject'
+import { setupFrame } from '../../src/engine/setupOrientation'
+import { computeOperationToolpath } from '../../src/engine/toolpaths/generateOperation'
 import { generateEdgeRouteToolpath } from '../../src/engine/toolpaths/edge'
 import { generatePocketToolpath } from '../../src/engine/toolpaths/pocket'
 import { normalizeToolForProject } from '../../src/engine/toolpaths/geometry'
@@ -69,6 +84,31 @@ export interface CorpusCase {
   emitToolChanges?: boolean
   secondTool?: boolean
   drillCycles?: DrillCycle[]
+  /**
+   * Export the operation from a Bottom setup (issue #946). `moves` are then
+   * the path as the machine runs it in that setup; they are carried into
+   * stock space the way generation does, and the exporter turns them back.
+   */
+  bottomSetup?: BottomSetupCase
+  /**
+   * Build the whole export input instead of using `moves` — for a case whose
+   * point is the real generated toolpath of a real project.
+   */
+  generated?: () => { project: Project; operation: Operation; toolpath: ToolpathResult }
+}
+
+export interface BottomSetupCase {
+  /** Stock axis the part is flipped about. */
+  axis: SetupOrientation['axis']
+  /** Operator notes for the setup header. Free text: whatever a user types. */
+  notes?: string
+  /**
+   * Where the shared origin sits on the face that is up: `'centre'` puts it
+   * on the flip centreline, where it stays put when the part is turned;
+   * the default is the front-left corner, which lands on a different stock
+   * corner after the flip.
+   */
+  origin?: 'frontLeft' | 'centre' | 'offCentre'
 }
 
 function pt(x: number, y: number, z = -1): ToolpathPoint {
@@ -325,6 +365,80 @@ function drillMoves(units: Units): ToolpathMove[] {
   ]
 }
 
+/** Notes a user could plausibly type, chosen to stress comment syntax. */
+const AWKWARD_NOTES = 'Flip toward you (long edge first); seat on the dowels.\nClamp at X=10 / Y=20 - 50% torque, "snug" not tight'
+
+let cachedBottomPocket: { project: Project; operation: Operation; toolpath: ToolpathResult } | null = null
+
+/**
+ * A pocket drawn on the bottom face, generated and exported from a Bottom
+ * setup — the whole path a user's Bottom operation takes, with nothing
+ * hand-built. The slot has round ends so the rings carry fitted arcs.
+ */
+function generatedBottomPocket(): { project: Project; operation: Operation; toolpath: ToolpathResult } {
+  if (cachedBottomPocket) return cachedBottomPocket
+  const base = newProject('Conformance bottom pocket', 'mm')
+  base.stock = { ...base.stock, profile: rectProfile(0, 0, 120, 80), thickness: 18 }
+  base.origin = { name: 'Origin', x: 0, y: 80, z: 18, visible: true }
+  base.tools = [{ ...defaultTool('mm', 1), id: 't1', name: 'Conformance Tool', diameter: 6, maxCutDepth: 20 }]
+  const slot: SketchFeature = {
+    id: 'slot',
+    name: 'slot',
+    kind: 'composite',
+    folderId: null,
+    sketch: {
+      profile: {
+        start: { x: 30, y: 20 },
+        segments: [
+          { type: 'line', to: { x: 80, y: 20 } },
+          { type: 'arc', to: { x: 80, y: 44 }, center: { x: 80, y: 32 }, clockwise: true },
+          { type: 'line', to: { x: 30, y: 44 } },
+          { type: 'arc', to: { x: 30, y: 20 }, center: { x: 30, y: 32 }, clockwise: true },
+        ],
+        closed: true,
+      },
+      origin: { x: 0, y: 0 },
+      orientationAngle: 0,
+      dimensions: [],
+      constraints: [],
+    },
+    operation: 'subtract',
+    // 5 deep from the bottom face.
+    z_top: 5,
+    z_bottom: 0,
+    authoringFace: 'bottom',
+    visible: true,
+    locked: false,
+  }
+  const { operation: template } = buildOperation(base, {
+    target: { source: 'features', featureIds: ['slot'] },
+    stepdown: 2.5,
+    stepover: 0.4,
+  })
+  const project = withBottomSetup(
+    syncProjectSetups({ ...projectWithFeatures(base, [slot]), operations: [template] }),
+    {
+      axis: 'x',
+      operationIds: [template.id],
+      setup: {
+        notes: AWKWARD_NOTES,
+        registration: [{ id: 'r1', kind: 'dowel', target: { type: 'point', point: { x: 100.5, y: 40.25 } } }],
+      },
+    },
+  )
+  const operation = project.operations[0]
+  const envelope = computeOperationToolpath(project, operation)
+  if (!envelope || envelope.result.moves.length === 0 || envelope.result.warnings.length > 0) {
+    throw new Error(`bottom pocket corpus fixture did not generate cleanly: ${JSON.stringify(envelope?.result.warnings)}`)
+  }
+  // The point of the case: the stored path is under the stock, and it cuts.
+  if (!envelope.result.bounds || envelope.result.bounds.minZ >= 0 || envelope.result.bounds.maxZ > 5 + 1e-9) {
+    throw new Error('bottom pocket corpus fixture is not a Bottom toolpath in stock space — the case would prove nothing')
+  }
+  cachedBottomPocket = { project, operation, toolpath: envelope.result }
+  return cachedBottomPocket
+}
+
 export const CORPUS: CorpusCase[] = [
   {
     name: 'issue-447-small-radius-trochoidal',
@@ -496,6 +610,98 @@ export const CORPUS: CorpusCase[] = [
       },
     ]
   }),
+  {
+    name: 'bottom-setup-small-radius-arcs',
+    covers: 'issue #946 - the #447 arcs after the Bottom round trip through stock space; '
+      + 'GRBL has the tightest measured arc tolerance',
+    units: 'mm',
+    machineId: 'grbl',
+    moves: leadInAndCut(issue447Points()),
+    bottomSetup: { axis: 'x', notes: AWKWARD_NOTES },
+  },
+  {
+    name: 'bottom-setup-full-circle-about-y',
+    covers: 'issue #946 - a Bottom setup flipped about Y, origin on the flip centreline',
+    units: 'mm',
+    machineId: 'grbl',
+    moves: leadInAndCut(arcChords(10, 0, 360, 32)),
+    bottomSetup: { axis: 'y', origin: 'centre' },
+  },
+  {
+    name: 'bottom-setup-off-centre-origin',
+    covers: 'issue #946 - an off-centre origin: the touch-off line carries measurements, '
+      + 'and machine coordinates go negative',
+    units: 'mm',
+    machineId: 'grbl',
+    moves: concentricPasses(),
+    bottomSetup: { axis: 'x', origin: 'offCentre' },
+  },
+  {
+    name: 'bottom-setup-inch',
+    covers: 'issue #946 - the Bottom round trip on the coarser inch grid',
+    units: 'inch',
+    machineId: 'grbl',
+    moves: leadInAndCut(issue447PointsInch()),
+    bottomSetup: { axis: 'x', notes: AWKWARD_NOTES },
+  },
+  {
+    name: 'bottom-setup-linuxcnc',
+    covers: 'issue #946 - the setup header and free-text notes as (parenthesised) comments',
+    units: 'mm',
+    machineId: 'linuxcnc',
+    moves: leadInAndCut(arcChords(10, 0, 360, 32)),
+    bottomSetup: { axis: 'x', notes: AWKWARD_NOTES },
+  },
+  {
+    name: 'bottom-setup-grblhal',
+    covers: 'issue #946 - the same header through grblHAL\'s parenthesised comments',
+    units: 'mm',
+    machineId: 'grblhal',
+    moves: leadInAndCut(issue447Points()),
+    bottomSetup: { axis: 'y', notes: AWKWARD_NOTES },
+  },
+  {
+    name: 'bottom-setup-mach3',
+    covers: 'issue #946 - the setup header under line numbers and the %% wrapper',
+    units: 'mm',
+    machineId: 'mach3',
+    moves: leadInAndCut(arcChords(10, 0, 360, 32)),
+    bottomSetup: { axis: 'x', notes: AWKWARD_NOTES },
+  },
+  {
+    name: 'bottom-setup-generated-pocket',
+    covers: 'issue #946 - a pocket drawn on the bottom face, generated through the setup '
+      + 'transform and exported: mirrored coordinates, depth and safe-Z end to end',
+    units: 'mm',
+    machineId: 'grbl',
+    moves: [],
+    generated: generatedBottomPocket,
+  },
+  {
+    name: 'bottom-setup-generated-pocket-linuxcnc',
+    covers: 'issue #946 - the same generated Bottom pocket through a second arc dialect',
+    units: 'mm',
+    machineId: 'linuxcnc',
+    moves: [],
+    generated: generatedBottomPocket,
+  },
+  {
+    name: 'bottom-setup-sbp',
+    covers: 'issue #946 - the setup header and free-text notes as ShopBot part-file comments, '
+      + 'and a Bottom program in the SBP dialect',
+    units: 'mm',
+    machineId: 'shopbot',
+    moves: leadInAndCut(arcChords(10, 0, 360, 32)),
+    bottomSetup: { axis: 'x', notes: AWKWARD_NOTES },
+  },
+  {
+    name: 'bottom-setup-generated-pocket-sbp',
+    covers: 'issue #946 - the generated Bottom pocket as a ShopBot part file',
+    units: 'mm',
+    machineId: 'shopbot',
+    moves: [],
+    generated: generatedBottomPocket,
+  },
 ]
 
 function machineDefinition(entry: CorpusCase): MachineDefinition {
@@ -540,15 +746,84 @@ function buildOperation(project: Project, overrides?: Partial<Operation>): {
   return { operation, tool: normalizeToolForProject(toolRecord, project) }
 }
 
+/**
+ * Put a case's operation in a Bottom setup and carry its moves into stock
+ * space, exactly as a generated Bottom toolpath arrives at the exporter.
+ */
+function inBottomSetup(
+  project: Project,
+  operation: Operation,
+  moves: ToolpathMove[],
+  bottom: BottomSetupCase,
+): { project: Project; operation: Operation; moves: ToolpathMove[] } {
+  const bounds = getStockBounds(project.stock)
+  const centre = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }
+  const origin = bottom.origin === 'centre'
+    ? { ...project.origin, ...centre }
+    : bottom.origin === 'offCentre'
+      // Off both centrelines and off every corner, on a 3-decimal fraction.
+      ? { ...project.origin, x: bounds.minX + (bounds.maxX - bounds.minX) * 0.3125, y: bounds.minY + (bounds.maxY - bounds.minY) * 0.6875 }
+      : project.origin
+  const turned = withBottomSetup(
+    syncProjectSetups({ ...project, origin, operations: [operation] }),
+    {
+      axis: bottom.axis,
+      operationIds: [operation.id],
+      setup: {
+        notes: bottom.notes ?? '',
+        // A declared reference, so the header's registration line carries
+        // real content and the export raises no missing-registration warning.
+        registration: [
+          { id: 'r1', kind: 'corner', target: { type: 'point', point: { x: bounds.minX, y: bounds.maxY } } },
+          { id: 'r2', kind: 'fence', target: { type: 'edge', start: { x: bounds.minX, y: bounds.maxY }, end: { x: bounds.maxX, y: bounds.maxY } } },
+        ],
+      },
+    },
+  )
+  const frame = setupFrame({ axis: bottom.axis, angleDeg: 180 }, turned.stock)
+  const stockSpace = toolpathInStockFrame({ operationId: operation.id, warnings: [], bounds: null, moves }, frame)
+  return { project: turned, operation: turned.operations[0], moves: stockSpace.moves }
+}
+
 /** Export one corpus case to G-code text. */
 export function renderCase(entry: CorpusCase): { gcode: string; warnings: string[] } {
-  const project = newProject(`Conformance ${entry.name}`, entry.units)
-  const { operation, tool } = buildOperation(project, entry.operationOverrides)
+  const definition = machineDefinition(entry)
+  const options = {
+    // Tool changes emit M0, a genuine program pause that a controller
+    // interpreter blocks on forever. Only SBP cases opt into macro syntax.
+    emitToolChanges: entry.emitToolChanges ?? false,
+    emitCoolant: false,
+    programName: entry.name,
+  }
+
+  if (entry.generated) {
+    const generated = entry.generated()
+    const toolRecord = generated.project.tools.find((tool) => tool.id === generated.operation.toolRef)
+    if (!toolRecord) throw new Error(`corpus case "${entry.name}" generated an operation without a tool`)
+    const result = runPostProcessor({
+      project: generated.project,
+      definition,
+      operations: [{
+        operation: generated.operation,
+        tool: normalizeToolForProject(toolRecord, generated.project),
+        toolpath: generated.toolpath,
+      }],
+      options,
+    })
+    return { gcode: result.gcode, warnings: result.warnings.map((w) => w.code) }
+  }
+
+  const base = newProject(`Conformance ${entry.name}`, entry.units)
+  const built = buildOperation(base, entry.operationOverrides)
+  const { project, operation, moves } = entry.bottomSetup
+    ? inBottomSetup(base, built.operation, entry.moves, entry.bottomSetup)
+    : { project: base, operation: built.operation, moves: entry.moves }
+  const tool = built.tool
   const toolpath: ToolpathResult = {
     operationId: operation.id,
     warnings: [],
     bounds: null,
-    moves: entry.moves,
+    moves,
     ...(entry.drillCycles ? { drillCycles: entry.drillCycles } : null),
   }
 
@@ -566,15 +841,9 @@ export function renderCase(entry: CorpusCase): { gcode: string; warnings: string
 
   const result = runPostProcessor({
     project,
-    definition: machineDefinition(entry),
+    definition,
     operations,
-    options: {
-      // Tool changes emit M0, a genuine program pause that a controller
-      // interpreter blocks on forever. Only SBP cases opt into macro syntax.
-      emitToolChanges: entry.emitToolChanges ?? false,
-      emitCoolant: false,
-      programName: entry.name,
-    },
+    options,
   })
 
   return {

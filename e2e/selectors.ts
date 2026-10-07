@@ -752,3 +752,12 @@ export const face = {
   stockSpan: (page: Page) => page.getByTestId('stock-z-span'),
   changeFaceDialog: (page: Page) => page.getByRole('dialog', { name: /^Move / }),
 }
+
+// CAM setup sections, scoped Add targets and setup dialogs (#946).
+export const setupCam = {
+  section: (page: Page, face: 'top' | 'bottom') => page.locator(`.cam-setup-group[data-setup-face="${face}"]`),
+  properties: (page: Page) => page.locator('.cam-section--properties'),
+  add: (page: Page) => page.getByRole('button', { name: /^Add to (Top|Bottom)$/ }),
+  addMenu: (page: Page) => page.locator('.cam-add-menu'),
+  dialog: (page: Page) => page.locator('.dialog--setup'),
+}

@@ -35,9 +35,16 @@
  * `useToolpathGeneration`. Their differences are deliberate and load-bearing;
  * each one carries the comment that explains it. Do not "tidy" them into a
  * shared sequence — focused engine suites own the behaviour of each one.
+ *
+ * Machining setups (issue #946) are handled here and nowhere below: an
+ * operation in a setup that turns the stock is generated against the project
+ * turned into that setup's frame (`projectInSetupFrame`), by the same chains,
+ * and its result is carried back into stock space. The chains and the
+ * generators under them only ever see a top-down project, so none of them
+ * branches on a face.
  */
 
-import { generatePlasmaProfileToolpath } from './plasma'
+import { generatePlasmaProfileToolpath, plasmaSetupIsTop } from './plasma'
 
 import { applyClampWarnings } from './clamps'
 import { applyEdgeRouteTabs, applyTabsToEdgeRoute, applyTabWarnings } from './tabs'
@@ -53,7 +60,12 @@ import { generateSurfaceCleanToolpath } from './surface'
 import { generateVCarveMedialToolpath } from './vcarveMedial'
 import { generateVCarveToolpath } from './vcarve'
 import type { ToolpathResult } from './types'
+import type { ToolpathWarning } from './warningCodes'
 import type { Operation, Project } from '../../types/project'
+import { projectInSetupFrame, toolpathInStockFrame } from '../setupFrameProject'
+import { setupFrameForOperation } from '../setupOrientation'
+import { setupGenerationBlock } from '../setupTargets'
+import type { SetupGenerationBlock } from '../setupTargets'
 
 export interface ComputeOperationOptions {
   /**
@@ -82,6 +94,10 @@ export interface OperationToolpathEnvelope {
   raw: ToolpathResult | null
 }
 
+function setupBlockWarning(block: SetupGenerationBlock): ToolpathWarning {
+  return { code: 'setupTargetNotThrough', params: { features: block.features.map((feature) => feature.featureName).join(', ') } }
+}
+
 /**
  * Generate one operation's toolpath, post-processing included.
  *
@@ -89,11 +105,51 @@ export interface OperationToolpathEnvelope {
  * how the caller distinguishes "nothing to generate" from a generated empty
  * path. An empty path with warnings is a *successful* result and comes back as
  * a normal envelope — infrastructure failures must never be encoded that way.
+ *
+ * The result is always in stock space, whichever setup the operation is cut
+ * in. A Top operation takes the path it always did: the project and the
+ * result are passed through untouched, not copied.
  */
 export function computeOperationToolpath(
   project: Project,
   operation: Operation,
   options: ComputeOperationOptions = {},
+): OperationToolpathEnvelope | null {
+  // Plasma is Top-only: diagnose its original setup before target checks or
+  // the Bottom transform, which makes every setup top-down for milling.
+  if (operation.kind === 'plasma_profile' && !plasmaSetupIsTop(project, operation)) {
+    return computeTopDownToolpath(project, operation, options)
+  }
+
+  // An operation its setup may not cut produces no motion, and says why.
+  const block = setupGenerationBlock(project, operation)
+  if (block) {
+    return {
+      result: { operationId: operation.id, moves: [], warnings: [setupBlockWarning(block)], bounds: null },
+      raw: null,
+    }
+  }
+
+  const frame = setupFrameForOperation(project, operation)
+  if (!frame) return computeTopDownToolpath(project, operation, options)
+
+  const envelope = computeTopDownToolpath(projectInSetupFrame(project, frame), operation, options)
+  if (!envelope) return null
+  return {
+    result: toolpathInStockFrame(envelope.result, frame),
+    raw: envelope.raw ? toolpathInStockFrame(envelope.raw, frame) : null,
+  }
+}
+
+/**
+ * The per-kind dispatch, for a project in the conventional top-down frame:
+ * the cutter comes down onto the face that is up. A turned setup's project
+ * has already been turned into that frame by the time it gets here.
+ */
+function computeTopDownToolpath(
+  project: Project,
+  operation: Operation,
+  options: ComputeOperationOptions,
 ): OperationToolpathEnvelope | null {
   let raw: ToolpathResult | null = null
 

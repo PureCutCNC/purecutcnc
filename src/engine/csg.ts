@@ -27,6 +27,7 @@ import {
   importedModelMatrix4,
   importedModelTransformKey,
   isIdentityModelOrientation,
+  isModelTurnedOver,
   modelOrientationKey,
   modelOrientationAroundBoundsMatrix4,
   transformImportedModelPoint,
@@ -248,6 +249,8 @@ function stlTransformedGeometryCacheKey(
     modelOrientationKey(stl?.orientation),
     stl?.scale ?? 1,
     importedModelTransformKey(transform),
+    // The same model turned over is other geometry at the same placement.
+    isModelTurnedOver(stl) ? 'turned-over' : 'as-placed',
     zTop,
     zBottom,
     stl?.meshAssetId ?? 'missing',
@@ -339,6 +342,12 @@ export function loadSTLTransformedGeometry(
   const targetHeight = Math.max(0.1, Math.abs(zTop - zBottom))
   const zScale = targetHeight / ((meshHeight || 1) * scale)
   const bottomZ = Math.min(zTop, zBottom)
+  // A model in a project turned into a Bottom setup's frame (issue #946): its
+  // transform already mirrors it in plan and its span is already reflected,
+  // so reflecting the mesh inside that span completes the half turn — the
+  // model's back face is the one the cutter now meets.
+  const turnedOver = isModelTurnedOver(stl)
+  const spanSum = zTop + zBottom
 
   // Apply transforms to vertex positions
   const positions = new Float32Array(rawPos.length)
@@ -358,7 +367,7 @@ export function loadSTLTransformedGeometry(
 
     positions[ix] = xy.x
     positions[iy] = xy.y
-    positions[iz] = z
+    positions[iz] = turnedOver ? spanSum - z : z
   }
 
   const index = new Uint32Array(sourceMesh.index)

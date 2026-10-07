@@ -71,6 +71,7 @@ import type { Operation, Project, SketchFeature } from '../types/project'
 import { setupFace } from '../engine/setupOrientation'
 import { convertProjectUnits } from '../utils/units'
 import { BOTTOM_SETUP_ID, projectWithFeatures, withBottomSetup, withoutSetupFields } from '../test/projectFixtures'
+import { camjImportWarnings } from '../components/project/camjImportWarnings'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -411,6 +412,9 @@ function testStoreActions(): void {
   assertEqual(store().dirty, false, 'switching setups does not mark the project changed')
 
   console.log('Testing operations follow their setup...')
+  // A setup's operations target features drawn on its face (issue #946), so
+  // the pocket that opens at the bottom is first made a Bottom feature.
+  store().setFeatureAuthoringFace(['f-bottom'], 'bottom')
   const newId = store().addOperation('pocket', 'rough', { source: 'features', featureIds: ['f-bottom'] })
   assert(newId, 'addOperation created an operation')
   const setupOf = (id: string) => store().project.operations.find((operation) => operation.id === id)?.setupId
@@ -577,6 +581,13 @@ function testImportKeepsOperationFace(): void {
   seed(normalizeProject(newProject('Target', 'mm')))
   const targetTop = store().project.setups[0].id
 
+  // What the import dialog shows the user (issue #946): the setup it adds.
+  const before = store().project
+  const warnings = camjImportWarnings({ currentProject: before, sourceProject, selectedFolderIds: ['fd-src'] })
+  assertEqual(warnings, ['Added setup "Bottom" for the imported operations.'], 'the import says it adds a setup')
+  assert(store().project === before && before.setups.length === 1, 'asking what an import will say changes nothing')
+  assertEqual(camjImportWarnings({ currentProject: before, sourceProject, selectedFolderIds: [] }), ['No folders selected for import.'], 'and an import that does nothing says why')
+
   const createdIds = store().importCamjFolders({ fileName: 'source.camj', sourceProject, selectedFolderIds: ['fd-src'] })
   assertEqual(createdIds.length, 1, 'fixture: one feature imported')
   const project = store().project
@@ -589,6 +600,9 @@ function testImportKeepsOperationFace(): void {
   assertEqual(project.setups[0].operationIds, [], 'the Top setup does not')
   assertEqual(project.features.find((feature) => feature.id === createdIds[0])?.authoringFace, 'bottom', 'the feature stays authored on Bottom')
   assertEqual(project.activeSetupId, targetTop, 'importing does not switch the workspace')
+
+  // Into a project that already has that setup, there is nothing to report.
+  assertEqual(camjImportWarnings({ currentProject: project, sourceProject, selectedFolderIds: ['fd-src'] }), [], 'no warning when the setup already exists')
 
   // The added setup belongs to the import's undo step.
   store().undo()
@@ -648,12 +662,104 @@ function testActiveSetupStaysOutOfHistory(): void {
   assertEqual(store().project.activeSetupId, BOTTOM_SETUP_ID, 'and the workspace stays on that face, on a setup that exists')
 }
 
+/**
+ * The store never accepts a target an operation's setup cannot reach (issue
+ * #946). Features: `f-top` blind from Top (14 → 20), `f-float` floating,
+ * `f-bottom` blind from Bottom (0 → 5), `f-through` through (0 → 20).
+ *
+ * Mutations these assertions were checked against:
+ * - the face check removed from `addOperation` → "a blind Top feature cannot
+ *   be targeted from Bottom" fails;
+ * - `updateOperation` not checking the target → "an edit cannot add a feature
+ *   the setup cannot reach" fails;
+ * - `updateOperation` refusing every edit of an operation with a stale target
+ *   → "an unrelated edit still lands" / "and the stale target can be removed"
+ *   fail;
+ * - `assignOperationToSetup` moving without the plan → "the blind Top feature
+ *   is dropped by the move" and "a move that would leave nothing is refused"
+ *   fail.
+ */
+function testTargetRules(): void {
+  console.log('Testing the store enforces setup target rules...')
+  const base = makeProject()
+  const withThrough = projectWithFeatures(base, [
+    makeFeature('f-top', 20, 14),
+    makeFeature('f-float', 12, 5),
+    makeFeature('f-bottom', 5, 0),
+    makeFeature('f-through', 20, 0),
+  ])
+  seed(normalizeProject({ ...withThrough, operations: base.operations }))
+  const bottomId = store().createSetup({ orientation: { axis: 'x', angleDeg: 180 } })
+  assert(bottomId, 'fixture: a Bottom setup')
+  store().setFeatureAuthoringFace(['f-bottom'], 'bottom')
+  const targetOf = (id: string) => {
+    const target = store().project.operations.find((operation) => operation.id === id)?.target
+    return target?.source === 'features' ? target.featureIds : null
+  }
+  const setupOf = (id: string) => store().project.operations.find((operation) => operation.id === id)?.setupId
+
+  // Adding: the new operation joins the active setup and is judged from its face.
+  let steps = store().history.past.length
+  assertEqual(store().addOperation('pocket', 'rough', { source: 'features', featureIds: ['f-bottom'] }), null, 'a blind Bottom feature cannot be targeted from Top')
+  assertEqual(store().history.past.length, steps, 'a refused add is not an undo step')
+  const topThrough = store().addOperation('pocket', 'rough', { source: 'features', featureIds: ['f-top', 'f-through'] })
+  assert(topThrough, 'Top takes a Top feature and a through-feature')
+
+  store().setActiveSetup(bottomId)
+  steps = store().history.past.length
+  assertEqual(store().addOperation('pocket', 'rough', { source: 'features', featureIds: ['f-top'] }), null, 'a blind Top feature cannot be targeted from Bottom')
+  assertEqual(store().addOperation('pocket', 'rough', { source: 'features', featureIds: ['f-through', 'f-top'] }), null, 'nor alongside a through-feature')
+  assertEqual(store().history.past.length, steps, 'refused adds are not undo steps')
+  const crossFace = store().addOperation('pocket', 'rough', { source: 'features', featureIds: ['f-through'] })
+  assert(crossFace, 'a through-feature drawn on Top can be targeted from Bottom')
+  assertEqual(setupOf(crossFace), bottomId, 'and the operation is in the Bottom setup')
+  const bottomOp = store().addOperation('pocket', 'rough', { source: 'features', featureIds: ['f-bottom'] })
+  assert(bottomOp, 'Bottom takes a Bottom feature')
+
+  // Editing a target.
+  store().updateOperation(bottomOp, { target: { source: 'features', featureIds: ['f-bottom', 'f-top'] } })
+  assertEqual(targetOf(bottomOp), ['f-bottom'], 'an edit cannot add a feature the setup cannot reach')
+  store().updateOperation(bottomOp, { target: { source: 'features', featureIds: ['f-bottom', 'f-through'] } })
+  assertEqual(targetOf(bottomOp), ['f-bottom', 'f-through'], 'but it can add a through-feature')
+  store().updateOperation(topThrough, { setupId: bottomId })
+  assertEqual(setupOf(topThrough), DEFAULT_SETUP_ID, 'a raw setup change that strands a target is refused')
+
+  // A target that went stale — its feature was moved to the other face —
+  // must not lock the operation.
+  store().setFeatureAuthoringFace(['f-bottom'], 'top')
+  store().updateOperation(bottomOp, { stepdown: 3 })
+  assertEqual(store().project.operations.find((operation) => operation.id === bottomOp)?.stepdown, 3, 'an unrelated edit still lands on an operation with a stale target')
+  // A target edit that adds nothing unreachable lands too, stale target and all:
+  // the user can fix the operation one step at a time.
+  store().updateOperation(bottomOp, { target: { source: 'features', featureIds: ['f-bottom'] } })
+  assertEqual(targetOf(bottomOp), ['f-bottom'], 'a target edit that introduces nothing unreachable still lands beside a stale target')
+  store().updateOperation(bottomOp, { target: { source: 'features', featureIds: ['f-bottom', 'f-top'] } })
+  assertEqual(targetOf(bottomOp), ['f-bottom'], 'but it still cannot add another unreachable feature')
+  store().updateOperation(bottomOp, { target: { source: 'features', featureIds: ['f-through'] } })
+  assertEqual(targetOf(bottomOp), ['f-through'], 'and the stale target can be removed')
+  store().setFeatureAuthoringFace(['f-bottom'], 'bottom')
+
+  // Moving between setups.
+  steps = store().history.past.length
+  store().assignOperationToSetup(topThrough, bottomId)
+  assertEqual([setupOf(topThrough), targetOf(topThrough)], [bottomId, ['f-through']], 'the blind Top feature is dropped by the move')
+  assertEqual(store().history.past.length, steps + 1, 'as one undo step')
+  store().undo()
+  assertEqual([setupOf(topThrough), targetOf(topThrough)], [DEFAULT_SETUP_ID, ['f-top', 'f-through']], 'undo restores the setup and the target together')
+
+  steps = store().history.past.length
+  store().assignOperationToSetup('op1', bottomId)
+  assertEqual([setupOf('op1'), targetOf('op1')], [DEFAULT_SETUP_ID, ['f-top']], 'a move that would leave nothing is refused')
+  assertEqual(store().history.past.length, steps, 'and is not an undo step')
+}
+
 testLegacyMigration()
 testFixtureFilesMigrate()
 testBottomRoundTrip()
 testStrictDecode()
 testSync()
 testStoreActions()
+testTargetRules()
 testImportKeepsOperationFace()
 testActiveSetupStaysOutOfHistory()
 testFaceSurvivesTheResolvedReadModel()
