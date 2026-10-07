@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { PlasmaStartPointPicker } from './PlasmaStartPointPicker'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { SketchToolpathControls } from './SketchToolpathControls'
 import { useSketchToolpathRenderer } from './useSketchToolpathRenderer'
@@ -95,10 +96,7 @@ import {
 } from './viewTransform'
 import type { CanvasPoint, ViewTransform } from './viewTransform'
 import { findSketchInsertTarget, isLoopCloseCandidate, nearestPointOnSegmentWithT, projectPointOntoLine, resolveOffsetPreview } from './draftGeometry'
-import {
-  distance2,
-  segmentHitTest,
-} from './hitTest'
+import { distance2, segmentHitTest } from './hitTest'
 import { drawStlTopViewImage } from './stlTopViewRenderer'
 import { triggerDimensionEdit as triggerDimensionEditFn } from './triggerDimensionEdit'
 import { CreationTargetBadge } from './CreationTargetBadge'
@@ -3061,6 +3059,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
           onCancel={featureDistribution.cancelFeatureDistributionFromPanel}
         />
       )}
+      <PlasmaStartPointPicker canvasRef={canvasRef} project={project} projectKey={projectKey} viewState={viewState} selectedOperationId={selectedOperationId} available={isActive && !pendingAdd && !pendingMove && !pendingTransform && !pendingOffset && !pendingShapeAction && !pendingClipboardPlacement && !pendingFeatureDistribution && !pendingTextLayout && !pendingConstraint && !pendingDimension && !tapeMeasure && selection.mode === 'feature'} />
       <NestPanelHost containerRef={containerRef} canvasRef={canvasRef} clearTransientCanvasState={clearTransientCanvasState} />
       {pendingTextLayout && textLayoutConfig && (
         <TextLayoutPanel

@@ -326,6 +326,7 @@ function convertOperation(operation: Operation, from: Units, to: Units): Operati
     ...(operation.plasmaLeadInLength === undefined ? {} : { plasmaLeadInLength: convertLength(operation.plasmaLeadInLength, from, to) }),
     ...(operation.plasmaLeadOutLength === undefined ? {} : { plasmaLeadOutLength: convertLength(operation.plasmaLeadOutLength, from, to) }),
     ...(operation.plasmaStartPoint === undefined ? {} : { plasmaStartPoint: { x: convertLength(operation.plasmaStartPoint.x, from, to), y: convertLength(operation.plasmaStartPoint.y, from, to) } }),
+    ...(operation.plasmaStartPoints === undefined ? {} : { plasmaStartPoints: Object.fromEntries(Object.entries(operation.plasmaStartPoints).map(([id, point]) => [id, { x: convertLength(point.x, from, to), y: convertLength(point.y, from, to) }])) }),
     stepdown: convertLength(operation.stepdown, from, to),
     feed: convertLength(operation.feed, from, to),
     plungeFeed: convertLength(operation.plungeFeed, from, to),

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { usePlasmaStartPointPick } from '../cam/plasmaStartPointPick'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ExpandedPanelContext } from './expandedPanelContext'
 import { useProjectStore } from '../../store/projectStore'
@@ -128,6 +129,9 @@ export function AppShell({
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false)
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(false)
   const [expandedPanel, setExpandedPanel] = useState<null | 'properties'>(null)
+  useEffect(() => usePlasmaStartPointPick.subscribe(({ request }) => {
+    if (request) { setRightDrawerOpen(false); setLeftDrawerOpen(false) }
+  }), [])
   const expandedPanelContextValue = useMemo(
     () => ({ closeExpandedPanel: () => setExpandedPanel(null) }),
     [],

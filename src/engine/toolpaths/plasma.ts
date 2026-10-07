@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { plasmaStartPointForContour } from './plasmaStartPoint'
 import type { Operation, Point, Project } from '../../types/project'
 import { setupFace, setupForOperation } from '../setupOrientation'
 import { resolveProject } from '../../store/helpers/resolveFeatures'
@@ -110,8 +111,15 @@ export function generatePlasmaProfileToolpath(authoritativeProject: Project, ope
     const diameter = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys))
     if (inside && diameter < 1.5 * project.stock.thickness) warn('plasmaSmallHole', target.name)
     let chosen: { ring: Point[]; entry: Point[]; exit: Point[]; centrePierce: boolean; straightFallback: boolean } | null = null
-    const arrivals = plasmaArrivals(ring, operation.plasmaStartPoint)
-    for (const arrival of operation.plasmaStartPoint ? arrivals.slice(0, 1) : arrivals) {
+    const owner = selected.find((feature) => feature && expandFeatureGeometry(feature, false).some((shape) => shape.id === target.id))
+    const hasLocalStart = !!operation.plasmaStartPoints && Object.hasOwn(operation.plasmaStartPoints, target.id)
+    const localStart = hasLocalStart ? operation.plasmaStartPoints![target.id] : undefined
+    const startPoint = hasLocalStart
+      ? localStart && owner ? plasmaStartPointForContour(target.sketch.profile, owner.transform, localStart) : null
+      : operation.plasmaStartPoint
+    if (hasLocalStart && !startPoint) { warn('plasmaInvalid', target.name); continue }
+    const arrivals = plasmaArrivals(ring, startPoint ?? undefined)
+    for (const arrival of startPoint ? arrivals.slice(0, 1) : arrivals) {
       const normal = inside ? { x: -arrival.normal.x, y: -arrival.normal.y } : arrival.normal
       const start = arrival.ring[0]
       const entrySafe = (path: Point[]): boolean => pathOnScrap(path, shape.ring, inside, tool.radius)
@@ -129,7 +137,7 @@ export function generatePlasmaProfileToolpath(authoritativeProject: Project, ope
         if (!inside) continue
         const centre = { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 }
         // The centre exception is only for a hole too small for the requested lead.
-        if (distanceToContour(centre, shape.ring) >= inLength || operation.plasmaStartPoint) continue
+        if (distanceToContour(centre, shape.ring) >= inLength || startPoint) continue
         entry = [centre, start]
         if (!pathOnScrap(entry, shape.ring, true, tool.radius) || !neighbourSafe(entry)) continue
         centrePierce = true

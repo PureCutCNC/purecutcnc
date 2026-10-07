@@ -215,7 +215,7 @@ export const newProjectDialog = {
 
 export const cam = {
   plasmaReverse: (page: Page) => page.getByRole('checkbox', { name: 'Reverse direction (opposite swirl consumables)', exact: true }),
-  plasmaStart: (page: Page) => page.getByRole('checkbox', { name: 'Choose contour start by XY', exact: true }),
+  plasmaStart: (page: Page) => page.getByRole('button', { name: 'Pick start point', exact: true }),
   plasmaHelp: (page: Page) => page.locator('.cam-operation-properties .cam-field-note').filter({ hasText: 'Experimental plasma:' }),
   /**
    * The operation-properties row whose label is exactly `label`. Anchored on the

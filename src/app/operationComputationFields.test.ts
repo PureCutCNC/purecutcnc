@@ -88,6 +88,7 @@ const OPERATION_FIELDS: Record<keyof Required<Operation>, FieldProbe> = {
   plasmaLeadOut: { role: 'computation', change: { plasmaLeadOut: 'arc' } },
   plasmaLeadOutLength: { role: 'computation', change: { plasmaLeadOutLength: 2 } },
   plasmaStartPoint: { role: 'computation', change: { plasmaStartPoint: { x: 10, y: 5 } } },
+  plasmaStartPoints: { role: 'computation', change: { plasmaStartPoints: { 'feature-1': { x: 10, y: 5 } } } },
   id: { role: 'identity', change: { id: 'op-2' } },
   name: { role: 'display', change: { name: 'Renamed' } },
   description: { role: 'display', change: { description: 'note' } },

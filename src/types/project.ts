@@ -707,6 +707,8 @@ export interface Operation {
   plasmaLeadOutLength?: number
   /** Optional desired contour start, in resolved project XY; projected onto the contour. */
   plasmaStartPoint?: Point
+  /** Optional contour-ID keyed starts in the owning instance's definition space. Missing entries stay automatic. */
+  plasmaStartPoints?: Record<string, Point>
   pass: OperationPass
   enabled: boolean
   showToolpath: boolean

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { usePlasmaStartPointPick } from './plasmaStartPointPick'
 import { PlasmaOperationFields } from './PlasmaOperationFields'
 
 import { SurfaceSlopeFields } from './SurfaceSlopeFields'
@@ -502,6 +503,9 @@ export function CAMPanel({
   const [exportingBookletOperationId, setExportingBookletOperationId] = useState<string | null>(null)
   const [bookletExportStage, setBookletExportStage] = useState<BookletStage | null>(null)
   const [expandedCamSection, setExpandedCamSection] = useState<null | 'operation' | 'tool'>(null)
+  useEffect(() => usePlasmaStartPointPick.subscribe(({ request }) => {
+    if (request) setExpandedCamSection(null)
+  }), [])
   const importLibraryButtonRef = useRef<HTMLButtonElement>(null)
   const camPlanButtonRef = useRef<HTMLButtonElement>(null)
   const shellMode = useShellMode()

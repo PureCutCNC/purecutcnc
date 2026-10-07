@@ -82,6 +82,7 @@ const OPERATION_FIELD_CLASSIFICATION: Record<keyof Operation, FieldClass> = {
   plasmaLeadOut: 'compare',
   plasmaLeadOutLength: 'compare',
   plasmaStartPoint: 'compare',
+  plasmaStartPoints: 'compare',
   id: 'ignore',
   name: 'ignore',
   description: 'ignore',
