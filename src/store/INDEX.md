@@ -107,7 +107,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `updateFeatureOperationPropagation.test.ts` — P1b regression: operation change on a linked instance propagates to the definition + all siblings via updateFeature
 - `unitChange.test.ts` — explicit convert-vs-reinterpret project unit changes, history/undo behavior, and same-unit no-op coverage
 - `vcarveTargets.test.ts` — `isVCarveCompatibleFeature` predicate: closed subtract/line valid, open/invalid operations rejected (issue #270 S2)
-- `setups.test.ts` — machining setups (issue #944): a 3.2 file and a 3.3 file saved before setups both load as one Top setup, every checked-in `.camj` does too, a project with a Bottom setup round-trips through save/open, files this build cannot honour are refused, the reconciler, and the store actions including undo. The header lists the mutations each assertion was checked against
+- `setups.test.ts` — machining setups (issue #944): a 3.2 file and a 3.3 file saved before setups both load as one Top setup, every checked-in `.camj` does too, a project with a Bottom setup round-trips through save/open, files this build cannot honour are refused, the reconciler, and the store actions including undo; face-edit fixtures select the matching setup and assert actual resolved geometry changes. The header lists the mutations each assertion was checked against
 
 ## Gotchas
 - The store owns history — call actions, do not bypass them.

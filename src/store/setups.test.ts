@@ -47,6 +47,9 @@
  * - undo, redo or cancel restoring the snapshot's `activeSetupId` → "undo /
  *   redo / cancel does not switch setups" fail.
  *
+ * - the Top geometry edit refused while viewing Bottom → the resolved profile
+ *   change assertion fails, even when a timestamp creates a history entry.
+ *
  * Run with: npx tsx src/store/setups.test.ts
  */
 
@@ -446,11 +449,17 @@ function testStoreActions(): void {
   const faceOf = (id: string) => store().project.features.find((feature) => feature.id === id)?.authoringFace
   // A geometry edit rebuilds every row from the resolved read model, so the
   // face has to ride through it — for the rows that were not edited too.
+  store().setActiveSetup(DEFAULT_SETUP_ID)
+  const profileBefore = JSON.stringify(resolvedProjectFeatures(store().project).find((feature) => feature.id === 'f-top')!.sketch.profile)
   const editSteps = store().history.past.length
   store().moveFeatureControl('f-top', { kind: 'anchor', index: 0 }, { x: 8, y: 8 })
+  const profileAfter = resolvedProjectFeatures(store().project).find((feature) => feature.id === 'f-top')!.sketch.profile
+  assert(JSON.stringify(profileAfter) !== profileBefore, 'fixture: the resolved profile actually changed')
+  assertEqual(profileAfter.start, { x: 8, y: 8 }, 'fixture: the edited anchor reached the intended point')
   assertEqual(store().history.past.length, editSteps + 1, 'fixture: the geometry edit happened')
   assertEqual(['f-top', 'f-float', 'f-bottom'].map(faceOf), ['top', 'bottom', 'bottom'], 'a geometry edit leaves every face as it was')
   // Geometry derived from a Bottom feature is drawn on Bottom.
+  store().setActiveSetup(bottomId)
   store().selectFeature('f-bottom')
   const offsetIds = store().offsetSelectedFeatures(2)
   assert(offsetIds.length === 1, 'fixture: the offset created one feature')
