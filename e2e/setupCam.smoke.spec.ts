@@ -74,7 +74,7 @@ for (const machine of ['grbl','shopbot']) {
     await ui.setupCam.properties(page).getByRole('button',{ name:'Check generated reach' }).click()
     await expect(ui.setupCam.properties(page)).toContainText('Generated reach in stock Z:')
     await expect(ui.setupCam.properties(page)).toContainText('Meets the other pass')
-    await page.screenshot({ path:'/private/tmp/issue946-bottom-cam.png' })
+    await page.screenshot({ path:testInfo.outputPath('bottom-cam.png') })
     await page.evaluate(() => { Object.defineProperty(window,'showSaveFilePicker',{ value:undefined,configurable:true }) })
     await ui.operations.headerExportButton(page).click()
     await expect(ui.exportDialog.exportButton(page)).toBeEnabled()
@@ -160,7 +160,7 @@ test('Bottom Add explicitly targets an imported model without selecting its ghos
 test.describe('landscape touch tablet', () => {
   test.use({ viewport:{ width:1024,height:768 },hasTouch:true })
 
-test('setup properties fit a landscape tablet and keyboard cancel restores focus', async ({ app, ui }) => {
+test('setup properties fit a landscape tablet and keyboard cancel restores focus', async ({ app, ui },testInfo) => {
   const { page } = app
   await page.setViewportSize({ width:1024,height:768 })
   await seed(page,false)
@@ -178,7 +178,7 @@ test('setup properties fit a landscape tablet and keyboard cancel restores focus
   expect(topFaceBox!.y).toBe(bottomFaceBox!.y)
   const saveBox = await dialog.getByRole('button',{ name:'Save setup' }).boundingBox()
   expect(saveBox!.height).toBeGreaterThanOrEqual(44)
-  await page.screenshot({ path:'/private/tmp/issue946-tablet-dialog.png' })
+  await page.screenshot({ path:testInfo.outputPath('tablet-dialog.png') })
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
   await expect(trigger).toBeFocused()
