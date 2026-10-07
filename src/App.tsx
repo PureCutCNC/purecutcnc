@@ -470,7 +470,7 @@ function App() {
             mode={rightTab === 'tools' ? 'tools' : 'operations'}
             selectedOperationId={effectiveSelectedOperationId}
             onSelectedOperationIdChange={handleSelectedOperationIdChange}
-            onExport={() => setExportDialogRequest({})}
+            onExport={(operationIds) => setExportDialogRequest({ operationIds })}
             onExportOperation={(operationId) => setExportDialogRequest({ operationIds: [operationId] })}
             requestToolpath={requestToolpath}
             documentKey={projectKey}

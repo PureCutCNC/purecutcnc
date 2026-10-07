@@ -61,6 +61,7 @@ Current smoke targets:
 - `featureReferences.smoke.spec.ts` — linked-feature tree badges, context menu wiring, properties grouping, and load round-trip.
 - `camOperations.smoke.spec.ts` — feature-row quick operation wiring into CAM operation state.
 - `creationTargets.smoke.spec.ts` — dedicated Line creation target wiring, active drawing badge, and landscape-tablet availability.
+- `setupCam.smoke.spec.ts` — CAM setup grouping, provisional Bottom Add, explicit cross-face targets, reach, Move/delete confirmation, setup properties and separate G-code/SBP downloads (#946).
 - `setupFaces.smoke.spec.ts` — Top / Bottom faces (issue #945): a Top-only project shows only the switch; switching to Bottom, drawing a pocket and dimensioning it from the bottom; the ghost toggle and a ghost that cannot be picked or dragged; the confirmed authoring-face change; keyboard operation of the switch; the 3D Top/Bottom preset following the face; landscape-tablet tap targets.
 - `gcodeExport.smoke.spec.ts` — Export G-code dialog operation checklist: per-operation entry point, default set, none-selected disabled state.
 - `importGeometry.smoke.spec.ts` — real-user import flow: dialog open/close, button state, file upload via hidden input, SVG/DXF mode selection with classification summary verification (Auto/Paths/Solid regions), real Import button, project-role verification through existing `getProject` seam, and landscape tablet layout. Synthetic inline fixtures only.

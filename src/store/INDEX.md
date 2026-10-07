@@ -30,7 +30,7 @@ Zustand store. The single source of truth for the current `.camj` project. **All
   - `backdropSlice.ts` — backdrop CRUD: load/set/update/delete backdrop image
   - `machineDefsSlice.ts` — the project's machine snapshot: one `setProjectMachine` action that atomically embeds or clears the single selected definition (history-tracked). The machine *library* lives in [`src/machine/`](../machine/INDEX.md) as an application preference and never touches the project.
   - `operationsSlice.ts` — operation CRUD (a new or edited target the operation's machining setup cannot reach is refused, issue #946), rest-operation creation, toolpath visibility, duplication, ordering, and the single-history-transition `applyCamPlan` action
-  - `setupsSlice.ts` — machining setups (issue #944): create/rename/delete setup, the active setup, move an operation to another setup (validated since #946: `planOperationMove` re-judges its targets from the new face, drops the unreachable ones and refuses a move that would leave none), set a feature's authoring face; plus `withSetupSync`, the `set` wrapper that reconciles setups after every project change. The wrapper uses syncWorkspaceSetups to keep a face being looked at provisional; withGhostSelectionGuard prevents ghost selection (#945)
+  - `setupsSlice.ts` — machining setups (issue #944): create/rename/update/delete setup, the active setup, move an operation to another setup (validated since #946: `planOperationMove` re-judges its targets from the new face, drops the unreachable ones and refuses a move that would leave none), set a feature's authoring face; plus `withSetupSync`, the `set` wrapper that reconciles setups after every project change. The wrapper uses syncWorkspaceSetups to keep a face being looked at provisional; withGhostSelectionGuard prevents ghost selection (#945)
   - `projectLifecycleSlice.ts` — project lifecycle and persistence actions: create/load/open/save, metadata display settings, and export path markers
   - `historySlice.ts` — undo/redo and history transaction lifecycle. The active machining setup is a view choice (issue #944): a snapshot is restored onto the setup the workspace is on, and a transaction that only switched setups leaves no undo step
   - `workpieceSlice.ts` — stock, stock-source sketch editing, grid/units, origin placement, and creation target actions
@@ -108,6 +108,8 @@ Zustand store. The single source of truth for the current `.camj` project. **All
 - `unitChange.test.ts` — explicit convert-vs-reinterpret project unit changes, history/undo behavior, and same-unit no-op coverage
 - `vcarveTargets.test.ts` — `isVCarveCompatibleFeature` predicate: closed subtract/line valid, open/invalid operations rejected (issue #270 S2)
 - `setups.test.ts` — machining setups (issue #944): a 3.2 file and a 3.3 file saved before setups both load as one Top setup, every checked-in `.camj` does too, a project with a Bottom setup round-trips through save/open, files this build cannot honour are refused, the reconciler, and the store actions including undo; face-edit fixtures select the matching setup and assert actual resolved geometry changes. The header lists the mutations each assertion was checked against
+
+- `setupUi.test.ts` — provisional CAM sections/targeting, shared through-feature rule, Bottom CAM Plan refusal, atomic setup property edits, provisional realization, history and validated moves (#946).
 
 ## Gotchas
 - The store owns history — call actions, do not bypass them.

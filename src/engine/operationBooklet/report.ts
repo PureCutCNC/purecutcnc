@@ -543,3 +543,20 @@ export function buildOperationBookletReport(input: OperationBookletInput): Opera
   const toolpath = input.toolpath
     ? toolpathInSetupFrame(input.toolpath, setupFrameForOperation(input.project, input.operation))
     : input.toolpath
+  return {
+    projectName: input.project.meta.name,
+    operationName: input.operation.name,
+    operationDescription: input.operation.description ?? '',
+    generatedDate: generatedTimestamp(generatedAt),
+    units: input.project.meta.units === 'inch' ? translate('booklet.units.inch') : translate('booklet.units.millimeter'),
+    originZSummary: originZSummary(input.project),
+    stockSizeSummary: stockSizeSummary(input.project),
+    targetSummary: targetSummary(input.project, input.operation),
+    targetFeatureNames: targetFeatureNames(input.project, input.operation),
+    setupRows: setupRows(input.project, input.operation),
+    toolRows: toolRows(tool, input.project.meta.units),
+    settingRows: settingRows(input.operation, input.project, tool),
+    warnings: reportWarnings(tool, toolpath),
+    toolpathStats: statsRows(toolpath, input.operation, input.project.meta.units, tool),
+  }
+}

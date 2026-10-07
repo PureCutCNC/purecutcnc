@@ -43,13 +43,18 @@ function lead(start: Point, tangent: Point, normal: Point, length: number, style
   return entering ? points.reverse() : points
 }
 
+/** Check the saved setup before a machining-frame transform can erase its face. */
+export function plasmaSetupIsTop(project: Project, operation: Operation): boolean {
+  try {
+    const setup = setupForOperation(project, operation)
+    return !setup || setupFace(setup) === 'top'
+  } catch { return false }
+}
+
 export function generatePlasmaProfileToolpath(authoritativeProject: Project, operation: Operation): ToolpathResult {
   const result: ToolpathResult = { operationId: operation.id, moves: [], warnings: [], bounds: null }
   const warn = (code: 'plasmaInvalid' | 'plasmaOpenPath' | 'plasmaNoLead' | 'plasmaSmallHole' | 'plasmaCentrePierce' | 'plasmaLeadOutOmitted' | 'plasmaTopOnly' | 'plasmaHoleBeforePart' | 'plasmaPartialDepth' | 'plasmaStraightLead', name = operation.name): void => { result.warnings.push({ code, params: { name } }) }
-  try {
-    const setup = setupForOperation(authoritativeProject, operation)
-    if (setup && setupFace(setup) !== 'top') { warn('plasmaTopOnly'); return result }
-  } catch { warn('plasmaTopOnly'); return result }
+  if (!plasmaSetupIsTop(authoritativeProject, operation)) { warn('plasmaTopOnly'); return result }
   const rawTool = findOperationTool(authoritativeProject, operation)
   if (operation.kind !== 'plasma_profile' || rawTool?.type !== 'plasma') { result.warnings.push({ code: 'noToolAssigned' }); return result }
   const tool = normalizeToolForProject(rawTool, authoritativeProject)

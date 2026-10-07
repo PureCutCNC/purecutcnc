@@ -31,6 +31,7 @@ import {
   setupToCanonicalPoint,
 } from '../../engine/setupOrientation'
 import { defaultTopSetup } from '../../types/project'
+import { isThroughFeature as setupIsThroughFeature } from '../../engine/setupTargets'
 import type {
   DimensionRef,
   MachineOrigin,
@@ -58,6 +59,7 @@ type FaceProject = Pick<Project, 'setups' | 'activeSetupId'>
  * created there.
  */
 export function activeSetup(project: FaceProject): MachiningSetup {
+  if (!project.setups) return defaultTopSetup()
   return project.setups.find((setup) => setup.id === project.activeSetupId)
     ?? provisionalSetupFor(project)
     ?? project.setups[0]
@@ -357,12 +359,7 @@ export function isThroughFeature(
   project: Pick<Project, 'stock' | 'dimensions'>,
   feature: Pick<SketchFeature, 'z_top' | 'z_bottom' | 'operation'>,
 ): boolean {
-  if (feature.operation !== 'subtract') return false
-  const span = resolveStockSpan(project, feature)
-  if (!span) return false
-  const depth = depthFromFace(span, 'top', project.stock)
-  const epsilon = 1e-9
-  return depth.start <= epsilon && depth.end >= project.stock.thickness - epsilon
+  return setupIsThroughFeature(project, feature)
 }
 
 // ── Face-local angles ─────────────────────────────────────────

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { activeSetup } from '../../../store/helpers/activeFace'
 import type { ToolLibraryEntry } from '../../../toolLibrary'
 import { defaultTool, getStockBounds, type Operation, type OperationKind, type OperationPass, type OperationTarget, type Project, type Tab } from '../../../types/project'
 import { getFeatureGeometryBounds } from '../../../text'
@@ -53,7 +54,7 @@ export function camPlanProjectFingerprint(project: Project): string {
     modified: project.meta.modified,
     features: project.features.map((feature) => [feature.id, feature.definitionId, feature.transform, feature.z_top, feature.z_bottom, feature.authoringFace]),
     // Planned operations join the active setup, so the plan is for that setup (issue #946).
-    setup: [project.activeSetupId, project.setups?.find((setup) => setup.id === project.activeSetupId)?.orientation],
+    setup: [project.activeSetupId, activeSetup(project)?.orientation],
     definitions: Object.values(project.featureDefinitions).map((definition) => [definition.id, definition.operation, definition.kind, definition.stl]),
     modelAssets: Object.entries(project.modelAssets ?? {}).sort(([a], [b]) => a.localeCompare(b)),
     tools: project.tools.map((tool) => [tool.id, tool.type, tool.units, tool.diameter, tool.maxCutDepth]),
@@ -696,9 +697,6 @@ function coverageFor(
  */
 const TURNED_SETUP_ERROR = 'CAM Plan proposes operations for the Top setup only. Switch the workspace to Top, or add this operation by hand.'
 
-function activeSetup(project: Project) {
-  return project.setups?.find((setup) => setup.id === project.activeSetupId)
-}
 
 function activeSetupTurnsStock(project: Project): boolean {
   const setup = activeSetup(project)

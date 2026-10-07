@@ -444,3 +444,64 @@
 .change-face__linked {
   font-size: 13px;
 }
+
+/* CAM setup grouping and property dialogs (#946). */
+.cam-setup-group { min-width: 0; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; }
+.cam-setup-group--active { border-color: var(--accent); }
+.cam-setup-group--bottom.cam-setup-group--active { border-color: var(--face-bottom); }
+.cam-setup-group__header { display: flex; align-items: center; gap: 4px; padding: 4px; }
+.cam-setup-group__toggle { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; border: 0; background: transparent; color: var(--accent-strong); text-align: left; font-size: 12px; }
+.cam-setup-group--bottom .cam-setup-group__toggle { color: var(--face-bottom-text); }
+.cam-setup-group--active .cam-setup-group__header { background: var(--accent-soft); }
+.cam-setup-group--bottom.cam-setup-group--active .cam-setup-group__header { background: color-mix(in srgb, var(--face-bottom) 12%, transparent); }
+.cam-setup-group__body { display: grid; gap: 4px; padding: 4px; }
+.cam-setup-group__status { display: flex; flex-wrap: wrap; gap: 6px; justify-content: space-between; font-size: 11px; padding: 4px; }
+.cam-cross-face-picker { margin: 4px 0; border: 1px solid var(--line); border-radius: 6px; padding: 8px; min-width: 0; }
+.cam-cross-face-picker legend { font-size: 12px; color: var(--text-dim); }
+.cam-cross-face-picker .properties-check { flex-wrap: wrap; padding: 4px 0; }
+.setup-operation-controls { display: grid; gap: 6px; min-width: 0; }
+.cam-setup-reach { font-size: 12px; }
+.cam-setup-reach__target { margin: 6px 0; padding: 6px; border: 1px dashed var(--line-strong); border-radius: 6px; }
+.cam-setup-reach__target p { margin: 4px 0; }
+.cam-setup-coverage--meets { color: var(--success-text); }
+.cam-setup-coverage--gap { color: var(--warning-text); }
+.cam-setup-coverage--unverified { color: var(--text-dim); }
+.dialog--setup { width: min(660px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); }
+.setup-dialog-body { display: grid; gap: 12px; overflow-y: auto; min-height: 0; }
+.setup-face-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.setup-face-options button { min-height: 30px; }
+.setup-flip-sketch { margin: 0; font-size: 12px; color: var(--text-dim); }
+.setup-flip-sketch svg { width: 100%; max-height: 130px; }
+.setup-registration { min-width: 0; border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+.setup-registration ul { padding-left: 18px; }
+.setup-registration li { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.setup-registration__add { display: grid; gap: 8px; }
+.setup-registration__add label { display: grid; gap: 4px; min-width: 0; }
+.setup-registration__coordinates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+[data-shell-mode='tablet'] .cam-setup-group button,
+[data-shell-mode='tablet-compact'] .cam-setup-group button,
+[data-shell-mode='tablet'] .dialog--setup button,
+[data-shell-mode='tablet-compact'] .dialog--setup button,
+[data-shell-mode='tablet'] .cam-cross-face-picker .properties-check,
+[data-shell-mode='tablet-compact'] .cam-cross-face-picker .properties-check { min-height: 44px; }
+
+.cam-operations-shell .cam-section-header-actions { flex-wrap: wrap; min-width: 0; }
+.cam-setup-group__toggle { flex-wrap: wrap; }
+.dialog--setup .setup-dialog-body { grid-template-columns: minmax(0, 1fr); }
+.dialog--setup .setup-face-options button { width: auto; flex: 0 0 auto; padding: 6px 12px; }
+.dialog--setup select, .dialog--setup input, .dialog--setup textarea { min-width: 0; border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px; background: var(--surface); color: var(--text); font: inherit; }
+
+.cam-operation-tree .tree-label { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.cam-operation-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cam-operation-tree .tree-label .face-chip { flex: 0 0 auto; font-size: 9px; }
+
+/* Setup dialogs are portaled outside the shell; use the device query there. */
+@media (pointer: coarse) {
+  .dialog--setup :is(button, input, select, textarea) { min-height: 44px; }
+}
+
+.dialog--setup .properties-field .setup-face-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.dialog--setup .setup-face-options .face-chip[aria-pressed='true'] { opacity: 1; color: var(--accent-strong); border-color: var(--accent); background: var(--accent-soft); }
+.dialog--setup .setup-face-options .face-chip--bottom[aria-pressed='true'] { color: var(--face-bottom-text); border-color: var(--face-bottom); background: color-mix(in srgb, var(--face-bottom) 12%, transparent); }
+.cam-operation-tree .cam-operation-label { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.cam-operation-tree .cam-operation-name { width: 100%; }

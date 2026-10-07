@@ -24,13 +24,13 @@
  * extracted verbatim from `CAMPanel.tsx` so the panel's hints are unchanged.
  */
 
+import { activeFace } from '../../store/helpers/activeFace'
 import type { SelectionState } from '../../store/types'
 import type { Operation, OperationKind, OperationPass, OperationTarget, Project, SetupFace } from '../../types/project'
 import { isConstruction, isMachinable, isRegion } from '../../store/helpers/featureRoles'
 import { isVCarveCompatibleFeature } from '../../store/helpers/vcarveTargets'
 import { featureHasClosedGeometry, featureHasShapeWithOperation } from '../../text'
 import { resolvedFeatureMap, resolveFeatureInstances, type ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
-import { setupFace } from '../../engine/setupOrientation'
 import { featureReachableFromFace, judgeTargetsFromFace } from '../../engine/setupTargets'
 import { camT } from './camI18n'
 
@@ -93,8 +93,7 @@ function emptySelectionHint(kind: OperationKind): string {
 
 /** The face the active setup turns up. A project without setups has only Top. */
 function activeSetupFace(project: Project): SetupFace {
-  const setup = project.setups?.find((entry) => entry.id === project.activeSetupId)
-  return setup ? setupFace(setup) : 'top'
+  return activeFace(project)
 }
 
 /**

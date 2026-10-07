@@ -44,7 +44,7 @@
  * branches on a face.
  */
 
-import { generatePlasmaProfileToolpath } from './plasma'
+import { generatePlasmaProfileToolpath, plasmaSetupIsTop } from './plasma'
 
 import { applyClampWarnings } from './clamps'
 import { applyEdgeRouteTabs, applyTabsToEdgeRoute, applyTabWarnings } from './tabs'
@@ -115,6 +115,12 @@ export function computeOperationToolpath(
   operation: Operation,
   options: ComputeOperationOptions = {},
 ): OperationToolpathEnvelope | null {
+  // Plasma is Top-only: diagnose its original setup before target checks or
+  // the Bottom transform, which makes every setup top-down for milling.
+  if (operation.kind === 'plasma_profile' && !plasmaSetupIsTop(project, operation)) {
+    return computeTopDownToolpath(project, operation, options)
+  }
+
   // An operation its setup may not cut produces no motion, and says why.
   const block = setupGenerationBlock(project, operation)
   if (block) {

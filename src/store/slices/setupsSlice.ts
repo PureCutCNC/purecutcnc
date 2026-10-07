@@ -38,6 +38,7 @@ export type SetupsSlice = Pick<
   ProjectStore,
   | 'createSetup'
   | 'renameSetup'
+  | 'updateSetup'
   | 'deleteSetup'
   | 'setActiveSetup'
   | 'assignOperationToSetup'
@@ -147,6 +148,23 @@ export function createSetupsSlice(
       })
     },
 
+    updateSetup: (id, patch) => commit((current) => {
+      if (patch.name !== undefined && !patch.name.trim()) return null
+      if (patch.flipAxis !== undefined && patch.flipAxis !== 'x' && patch.flipAxis !== 'y') return null
+      const { project, id: setupId } = realizeProvisionalSetup(current, id)
+      if (!project.setups.some((setup) => setup.id === setupId)) return null
+      return {
+        ...project,
+        setups: project.setups.map((setup) => setup.id === setupId ? {
+          ...setup,
+          ...(patch.name === undefined ? {} : { name: patch.name.trim() }),
+          ...(patch.flipAxis === undefined ? {} : { orientation: { ...setup.orientation, axis: patch.flipAxis } }),
+          ...(patch.registration === undefined ? {} : { registration: structuredClone(patch.registration) }),
+          ...(patch.notes === undefined ? {} : { notes: patch.notes }),
+        } : setup),
+      }
+    }),
+
     // A setup takes its operations with it, as one undo step. They are not
     // moved to another setup: that is a cross-face move, and a move needs the
     // validation an explicit Move action brings (#946).
@@ -182,3 +200,22 @@ export function createSetupsSlice(
         const { project, id } = realizeProvisionalSetup(current, setupId)
         return applyOperationMove(project, planOperationMove(project, operationId, id))
       })
+    },
+
+    // Only where the feature is drawn changes. `z_top`/`z_bottom` are the
+    // feature's stock-space span and are deliberately left alone.
+    setFeatureAuthoringFace: (featureIds, face) => {
+      // A feature under a pending edit keeps its face until the edit is done.
+      if (isFaceEditInProgress(get())) return
+      const ids = new Set(featureIds)
+      commit((project) => ({
+        ...project,
+        features: project.features.map((feature) => (
+          ids.has(feature.id) && !feature.locked && feature.authoringFace !== face
+            ? { ...feature, authoringFace: face }
+            : feature
+        )),
+      }))
+    },
+  }
+}

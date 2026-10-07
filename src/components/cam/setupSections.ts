@@ -25,6 +25,7 @@
  * face switch owns that, and the panel only reflects `activeSetupId`.
  */
 
+import { activeSetup } from '../../store/helpers/activeFace'
 import type { MachiningSetup, Operation, Project, SetupFace } from '../../types/project'
 import { projectExportsPerSetup, setupLacksRegistration, setupProgramNumber } from '../../engine/gcode/setupPrograms'
 import { setupFace, setupForOperation } from '../../engine/setupOrientation'
@@ -60,18 +61,20 @@ export interface CamSetupSection {
  * the flat list it always has, with no section header.
  */
 export function camSetupSections(project: Project): { grouped: boolean; sections: CamSetupSection[] } {
-  const setups = project.setups ?? []
+  const current = activeSetup(project)
+  const saved = project.setups ?? []
+  const setups = current && !saved.some((setup) => setup.id === current.id) ? [...saved, current] : saved
   const sections = setups.map((setup): CamSetupSection => ({
     setup,
     face: setupFace(setup),
-    programNumber: setupProgramNumber(project, setup.id),
+    programNumber: saved.includes(setup) ? setupProgramNumber(project, setup.id) : setups.length,
     active: setup.id === project.activeSetupId,
     operations: project.operations.filter((operation) => (setupForOperation(project, operation) ?? setups[0]) === setup),
     flipAxis: setup.orientation.angleDeg === 0 ? null : setup.orientation.axis,
     registrationCount: setup.registration.length,
-    registrationMissing: setupLacksRegistration(project, setup),
+    registrationMissing: setupLacksRegistration(project, setup) || (!saved.includes(setup) && saved.length > 0),
   }))
-  return { grouped: projectExportsPerSetup(project), sections }
+  return { grouped: projectExportsPerSetup(project) || setups.length > saved.length, sections }
 }
 
 /** The targets of an operation that are through-features cut from the other face. */

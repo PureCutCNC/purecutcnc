@@ -42,6 +42,7 @@
  * store's target validator.
  */
 
+import { activeSetup } from '../store/helpers/activeFace'
 import type {
   FeatureInstance,
   Operation,
@@ -89,8 +90,13 @@ export function spanReachesBothFaces(span: StockZSpan, stock: Pick<Project['stoc
  * unknown never earns the exception — and neither is a feature of any other
  * role, however tall.
  */
-export function isThroughFeature(project: TargetProject, feature: TargetFeature): boolean {
-  return crossFaceReach(project, feature).through
+export function isThroughFeature(
+  project: Pick<Project, 'dimensions' | 'stock'> & Partial<Pick<Project, 'featureDefinitions'>>,
+  feature: Pick<FeatureInstance, 'z_top' | 'z_bottom'> & (Pick<FeatureInstance, 'definitionId'> | { operation: string }),
+): boolean {
+  const role = 'operation' in feature ? feature.operation : project.featureDefinitions?.[feature.definitionId]?.operation
+  const span = featureStockSpan(project, feature)
+  return role === 'subtract' && span !== null && spanReachesBothFaces(span, project.stock)
 }
 
 /** True for an imported 3D model, which both setups may machine. */
@@ -106,9 +112,7 @@ export function isImportedModel(project: Pick<Project, 'featureDefinitions'>, fe
 function crossFaceReach(project: TargetProject, feature: TargetFeature): { through: boolean; model: boolean } {
   const definition = project.featureDefinitions[feature.definitionId]
   const model = definition?.kind === 'stl'
-  if (definition?.operation !== 'subtract') return { through: false, model }
-  const span = featureStockSpan(project, feature)
-  return { through: span !== null && spanReachesBothFaces(span, project.stock), model }
+  return { through: isThroughFeature(project, feature), model }
 }
 
 /**
@@ -220,7 +224,7 @@ export function crossFaceTargetIds(project: Project, operation: Operation): stri
  * answers as Top, matching `setupForOperation`'s reading of a missing one.
  */
 export function targetAllowedInSetup(project: Project, target: OperationTarget, setupId: string | undefined): boolean {
-  const setup = setupId === undefined ? undefined : project.setups?.find((entry) => entry.id === setupId)
+  const setup = setupId === project.activeSetupId ? activeSetup(project) : project.setups?.find((entry) => entry.id === setupId)
   const face: SetupFace = setup ? setupFace(setup) : 'top'
   return judgeTargetsFromFace(project, target, face).every((verdict) => verdict.status !== 'rejected')
 }

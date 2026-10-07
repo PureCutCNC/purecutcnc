@@ -44,3 +44,231 @@ Defined in `src/types/project.ts`:
     - **The workspace face** (issue #945). The face the active setup turns up is where the user draws; `src/store/helpers/activeFace.ts` is the one module that answers what that means. A feature authored on the other face is a *ghost*: drawn dashed for reference (or hidden), and excluded from hit-testing, snapping and selection. The ghost rule is one predicate (`ghostPredicate` / `isGhostFeature`). The selection rule has a single home — `withGhostSelectionGuard` wraps the store's `set`, so no write can leave a ghost selected and no selection-driven edit can reach one; edits that reach geometry by feature id instead (a driving dimension, `moveFeatureControl`) check the predicate themselves, and a folder's eye works on the face in view only. Changing a feature's face is only ever the explicit, confirmed `setFeatureAuthoringFace`. A shape drawn on a face is judged against the solids present at that face (`featuresAtActiveFace`): its own face's features, and the other face's only where their span reaches this one. New features take the active face (`addFeature`), with a span measured from that face (`newFeatureSpan`). The 2D sketch shows the setup-local frame: `computeSketchViewTransform` derives its mirror from `canonicalToSetupPoint`, so geometry stays canonical and only the view turns over; pan and zoom live in the setup-local frame, so the stock does not move on screen when the face changes. Text placed on Bottom carries one mirror in its instance transform (`faceArtworkTransform`), which the turned view undoes, so it reads correctly from below; text pasted onto the other face gains or loses that mirror (`crossFaceArtworkTransform`), other pasted shapes do not. Angles follow the same rule as depth: stored in stock space, and converted at the UI boundary by `faceAngles` so that on Bottom a positive typed angle turns the same way on screen as on Top (a heading mirrors across the flip axis, an in-plane turn reverses, a rotation about a stock axis keeps its sense only about the flip axis). Signed distances along a stock axis (a grid's spacing) are converted the same way by `faceOffsets`. `switchWorkspaceFace` (`src/store/workspaceFace.ts`) is the only UI caller of `setActiveSetup`, and refuses while a feature is being drawn (once it has a point on the canvas), edited, moved or combined (`isFaceEditInProgress`), as does `setFeatureAuthoringFace`. **Looking at a face does not change the project.** A face the project has no setup for is shown through a *provisional* setup (`src/store/helpers/provisionalSetup.ts`): `activeSetupId` names a provisional id, `activeSetup()` answers with that face's default setup (Bottom is flipped about X), and `project.setups` stays exactly the document — no undo entry, not dirty, and a save normalises the id away. `syncWorkspaceSetups` (the store's reconciler) makes the setup real, inside the same undo step, when a write *creates* content on that face: a feature drawn, pasted or moved there, an operation added there, or a setup property edited. Content that is merely present does not count, and a snapshot restored by undo, redo or a cancelled edit comes back exactly as recorded. Undo and redo keep the workspace on the face in view (`keepWorkspaceFace`). So `activeSetup(project)` is not always a member of `project.setups`; read the active setup and face through `activeFace.ts`, never by looking the id up in `setups`. A linked copy is the same shape on either face: moving a copy across keeps the link, and the change-face confirmation, the Shape properties and the sketch-edit panel say how many copies on the other face share the shape (`linkedCopiesOffFace`).
     - **What a setup may target** (issue #946, `src/engine/setupTargets.ts`). An operation targets features authored on the face its setup turns up. A **true through-feature** — a *subtract* whose stock-space span reaches both stock faces — may also be targeted from the other setup, and so may an **imported 3D model**, which has a back face; both are reported as cross-face so the UI can mark them. Anything else on the other face is rejected with a reason. Material that merely stands the full height (an add acting as an island on both sides) is not a through-feature: both setups machine around it, because generation sees every feature, but only its own face may target it. One module owns the rule and three places ask it: the store (a new or edited target the setup cannot reach is refused; `updateOperation` judges only what an edit *adds*, so a target that went stale can still be removed), the Move plan (`src/engine/setupOperationMove.ts`: targets are re-judged from the destination face, the unreachable ones are dropped and listed, and the move is blocked when nothing valid would remain), and generation (`setupGenerationBlock`: an operation its setup may not cut produces no motion and a warning, because motion for the wrong side is worse than none).
     - **Generation runs in the setup's frame; results are stored in stock space** (issue #946). `computeOperationToolpath` hands the generators the whole project turned into the operation's setup frame (`projectInSetupFrame`, `src/engine/setupFrameProject.ts`: every feature, the stock outline, tabs and clamps mirrored in plan and reflected in Z; the shared origin left alone) and carries the result back with `toolpathInStockFrame`. Generators therefore never branch on a face, and a Bottom pocket is by construction the toolpath of that pocket drawn mirrored on a Top-only project. A stored Bottom toolpath approaches from under the stock (clearance at negative stock Z); the export pipeline turns it again (§8). An imported 3D model is turned over too: its silhouette and span turn like any feature's, and its data is marked (`modelDataTurnedOver`, a symbol key that cannot be serialized) so that `loadSTLTransformedGeometry` — the one place generators load a mesh — reflects it inside its reflected span. A Bottom setup therefore machines the model's back face.
+    - **One program per setup** (issue #946, `src/engine/gcode/setupPrograms.ts`). The operator turns the part by hand, so a project with more than one setup exports one file per setup (`<project>_01_top`, `<project>_02_bottom`), each headed with comments naming the setup, the turn, the registration, the touch-off point and the operator's notes. A program holding operations of two setups is an error that blocks the save. A project with a single setup is not split, renamed or annotated: its output is byte-identical to what it was before setups existed.
+    - **Reach is measured, not inferred** (`src/engine/setupReach.ts`). For a through-feature cut from both setups, whether the Top and Bottom ranges meet is read from the generated toolpaths in stock Z. Without a toolpath for every operation involved the answer is "unverified"; only measured ranges that meet are reported as meeting.
+    - **Registration references** are a tagged union — a feature, a free point, or an edge — under a `dowel` / `fence` / `corner` kind. They record intent only; a reference to a deleted feature is dropped.
+- **Machine snapshot** (issue #403): `meta.machineDefinitions` holds **zero or one** complete definition — the machine selected for this project — and `meta.selectedMachineId` always equals `machineDefinitions[0]?.id ?? null`. The pickable *library* (bundled definitions from the current build plus the app-local **My Machines** list) lives in `src/machine/` as an application preference and is never serialized into a `.camj`. `getActiveMachineDefinition(project)` is the export boundary and reads only the embedded snapshot, so library edits and app upgrades cannot change an existing project's G-code; replacing the snapshot is always an explicit, dirtying, undoable user action. A definition may carry an optional `outputDialect` (issue #953): absent means G-code, and `opensbp` exports ShopBot part files. Because the snapshot is what export reads, the dialect travels with the project. Read it with `resolveOutputDialect`; parsing a definition never adds the key, so existing snapshots are unchanged. Legacy files that stored a whole library are compacted on decode, with their custom definitions migrated into My Machines. See [`planning/G-code_Export_Design.md`](planning/G-code_Export_Design.md).
+
+## 4. Feature References (Definitions & Instances)
+
+PureCutCNC supports SketchUp-style **linked copies**: editing a shared shape updates every copy, while placement (move/rotate/resize/mirror), name, visibility, lock, and Z stay per-copy. The former monolithic feature is split into a **definition** (the shared shape) and **instances** (placed copies). The contract below is current; the completed migration plan and slice ledger are retained only as historical context in [`planning/archive/FEATURE_REFERENCES_Plan.md`](planning/archive/FEATURE_REFERENCES_Plan.md) and [`planning/archive/FEATURE_REFERENCES_Ledger.md`](planning/archive/FEATURE_REFERENCES_Ledger.md).
+
+- **`FeatureDefinition`** (`project.featureDefinitions: Record<id, def>`): the shared, canonical, *untransformed* shape — `kind`, `profile`, `dimensions`, `text`, `stl`, `operation`.
+- **`FeatureInstance`** (`project.features: FeatureInstance[]`) = every feature-tree row: `definitionId` + `transform` (a `Matrix2D` mapping definition-local geometry into world space), plus per-instance `name`, `folderId`, `visible`, `locked`, `z_top`/`z_bottom`, and `constraints`.
+- A **linked copy** is another instance with the **same `definitionId`**. **Make Unique** clones the definition and repoints one instance. **Copy** makes a linked (reference) copy by default — governed by project `meta.copyMode` (default `'reference'`).
+
+**Resolver boundary.** Canonical world geometry comes from `resolveFeatureInstance(project, id)` / `resolveProfile(definition, transform)` (`src/store/helpers/resolveFeatures.ts`), which composes definition + transform into a `ResolvedSketchFeature`. Toolpaths, hit-testing, rendering, export, and geometry-aware UI reads go through this boundary. A missing definition or invalid instance is rejected or skipped; there is no feature-ID identity fallback and no raw-row geometry fallback.
+
+**Imported-model transforms.** Persisted STL/OBJ/STEP mesh vertices remain definition-local. A STEP model is tessellated once at import (Open CASCADE in a worker, `src/import/stepImportClient.ts`) and stored as a mesh like the others — never as the STEP file — so reopening a project needs no STEP runtime. `stl.scale` is applied to the raw mesh first, then the instance `Matrix2D` supplies the complete world-space X/Y affine placement for the Sketch top-view image, 3D preview, CSG, surface CAM/gouge checks, and model export; `z_top`/`z_bottom` continue to own the independent Z fit. `src/engine/importedModelTransform.ts` is the shared matrix adapter for 3D/mesh consumers, while `src/components/canvas/stlTopViewRenderer.ts` composes the same matrix with the canvas view transform. Legacy conversion inverse-rebases baked profile and silhouette geometry into the definition so `resolveStlData()` applies the instance matrix exactly once.
+
+**Imported-model 3D orientation is per-definition — deliberately unlike 2D placement** (issue #241). `stl.orientation` (`{ rx, ry, rz }` degrees, applied X→Y→Z, absent = identity) rotates the definition-local mesh before `stl.scale` and the Z fit. It is a *shape* property, not placement: `silhouettePaths`, `profile`, and `topViewDataUrl` are all definition-level artifacts derived from mesh orientation, so a per-instance orientation would need a per-instance copy of each and would break the definition/instance split. The asymmetry with the 2D rotate tool — which *is* per-instance placement — is the price; **Make Unique** is the escape hatch for orienting one copy on its own. Rotation is **rigid**: `z_top`/`z_bottom` are recomputed from the rotated mesh's Z extent, anchored at `z_bottom`, because the Z fit would otherwise restretch the rotated mesh into the old band and silently distort the model. The orientation must appear in `stlTransformedGeometryCacheKey`; omitting it serves stale geometry to CAM and export. `src/components/project/importedModelArtifacts.ts` owns the one derivation shared by first import and re-orientation.
+
+**Baked geometry is internal only.** Some existing rendering, editing, constraint, and copy paths still materialize a geometry-bearing `ResolvedSketchFeature`/`SketchFeature` as a derived cache or short-lived draft. That materialization is allowed only inside the runtime path that requires it. It must never be written into `Project.features`, undo/redo snapshots, or `.camj` output. Definition geometry remains the sole source of truth, and edited resolved views are folded back into definition data and/or instance transforms before project state is committed.
+
+**Versioning and compatibility.** `Project.version` `3.0` was the first strict lightweight-instance format; `LATEST_PROJECT_VERSION` in `src/types/project.ts` tracks the newest schema this build understands (currently `3.3`). Saved 3.0 files contain canonical `featureDefinitions` and lightweight `features[]` only; older PureCutCNC builds that expect `features[].sketch` cannot open them correctly. Files from 1.0, 2.0, and 2.1 are decoded one way into the current model in memory. Opening such a file shows a compatibility warning and marks the project dirty; the original file remains untouched until the user saves, at which point the output is the current version. Current files open without that warning. Version `3.1` reinterpreted drilling's `retractHeight` as a distance above the material surface (issue #481); older files are migrated in memory on load, keyed on the on-disk version so relative files are never rewritten. Version `3.2` marks files whose edge-route `entryStrategy` is live (issue #891). Version `3.3` changes no stored data: it marks files whose machine snapshot may carry `outputDialect` (issue #953), so that a build which would drop that field and take the G-code path shows the newer-version warning first. A version bump is a warning in older builds, not a refusal, which is why the bundled ShopBot definition is also written so that the G-code path produces only comments (see `src/engine/gcode/INDEX.md`). Machining setups (issue #944) added fields **without** a new number: 0.6.0 ships a single format version, so that migration keys on the fields being absent rather than on the version — a file with no `setups` (a 3.2 file, or a 3.3 file saved before setups existed) loads as one Top setup holding every operation in order, with every feature `authoringFace: 'top'`. Later 0.6.0 schema additions follow the same rule. Loading a future version still shows the newer-version warning and proceeds only when its rows satisfy the current strict shape. When bumping the schema, update `LATEST_PROJECT_VERSION`, the version union, and `src/store/helpers/projectFormat.ts` together.
+
+**Key files.** `src/store/helpers/projectFormat.ts` (strict decode/legacy conversion), `resolveFeatures.ts` (resolved read model and commit boundary), `featureDefinitions.ts` (mint / clone / make-unique / GC), `instanceTransforms.ts` (matrix helpers incl. `invertMatrix`); the split types in `src/types/project.ts`; creation/transform/edit/snapshot/constraint wiring across `src/store/slices/*` and `src/store/helpers/*`.
+
+## 5. Directory Map
+- `src/store/`: Zustand state logic, split into functional slices (selection, pending actions, etc.).
+- `src/engine/toolpaths/`: The heart of CAM logic (pocketing, profiling, v-carve, etc.).
+- `src/engine/gcode/`: Post-processors and G-code generation logic.
+- `src/components/canvas/`: Complex 2D interaction logic, snapping, and viewport transformations.
+- `src/import/`: SVG, DXF, STL/OBJ and STEP importers that normalize external geometry into the `.camj` format (STEP is tessellated by Open CASCADE in a worker).
+- `src/text/`: Logic for converting text and fonts into machinable geometry.
+- `src/i18n/`: Typed localization layer — catalogs, locale registry, custom language packs, store/provider (see §9).
+- `src/machine/`: Application machine library — bundled + **My Machines** registry, versioned local-storage persistence, and project-snapshot comparison (see §3).
+- `src/components/language/`: Language manager + custom-language editor dialogs (mirrors `src/components/theme/`).
+- `src/styles/tablet.css`: Tablet-optimized styles for touch/mobile-friendly UI (see [`planning/TABLET_UX_DESIGN.md`](planning/TABLET_UX_DESIGN.md) for the current tablet UX contract).
+
+## 6. Icon System
+
+Icons are **SVG-first**: editable per-icon SVG files are the source of truth and the build assembles them into a sprite. (Reworked in issue #176 — the previous `src/assets/icons.camj` CAD-profile source has been removed; see `src/assets/icons/README.md` for the contributor guide.)
+
+- **Source of truth:** `src/assets/icons/<name>.svg` — one standalone, editor-friendly SVG per icon on a 24×24 viewBox. These open and edit directly in Inkscape/Illustrator and can carry colours/fills (not just monochrome outlines).
+- **Build output:** `public/icons.svg` — an SVG `<symbol>` sprite generated from the folder. This file is **generated; do not edit it directly**. The sprite root carries **no `display:none`** so the same file works both as an external `<use>` target (this app's `Icon.tsx`) and as a fetch+inline sprite (the purecutcnc.github.io guide loader).
+- **Build command:** `npm run sync-icons` (also runs first in the full `npm run build`).
+- **Generator:** `scripts/build-icon-sprite.ts` reads each `src/assets/icons/*.svg`, strips its outer `<svg>` wrapper (and editor cruft), and wraps the contents in `<symbol id="<name>" viewBox="…">`. The pure assembly logic lives in `src/components/iconSprite.ts` (unit-tested by `iconSprite.test.ts`).
+- **Icon naming:** The filename becomes the symbol `id` (e.g. `view-top.svg` → `<symbol id="view-top">`).
+- **Monochrome vs colour:** `Icon.tsx` defaults to `fill="none" stroke="currentColor" strokeWidth="1.5"`, so outline icons inherit text colour. Pass `<Icon id="…" fullColor />` to drop those defaults and let an icon's own per-element paint render.
+- **Usage in components:** Import `Icon` from `src/components/Icon.tsx` and pass the filename (sans `.svg`) as the `id` prop: `<Icon id="view-top" size={18} />`. The component renders a `<use href="icons.svg#id" />` reference.
+- **Adding new icons:** Drop a `<name>.svg` into `src/assets/icons/`, then run `npm run sync-icons`. See `src/assets/icons/README.md` for sizing/colour conventions.
+- **Legacy:** the original `src/assets/icons.camj` CAD-profile source and its camj-based scripts (`convert-camj-to-icons.js`, `seed-icons-from-camj.js`, `redraw-icons.js`, `convert-icons-to-camj.js`) have been removed — the per-icon SVGs are now the sole source. The migration history lives in git (issue #176).
+
+## 7. Coding Standards & Conventions
+- **Strict TypeScript:** No `any`. Use interfaces and types defined in `src/types/project.ts`.
+- **State Mutation:** All modifications to the project must go through the `projectStore` actions to ensure consistency and history tracking.
+- **UI:** React for component structure + Vanilla CSS for styling. Avoid heavy UI libraries.
+- **Testing:** New features or bug fixes in the `engine/` must include corresponding unit tests.
+
+## 8. Operational Gotchas
+- **Clipper Scaling:** `clipper-lib` uses integer math. Always use the internal scaling factor when performing clipping operations.
+- **Region resolution is typed per operation domain.** `regionDomain.ts` offers three resolvers (`resolveRegionDomainArea` / `resolveRegionDomainCentre` / `resolveRegionDomainCurve`); choosing the wrong one is a silent clearance bug — see the resolver table in [`planning/REGION_FEATURE_SEMANTICS.md`](planning/REGION_FEATURE_SEMANTICS.md). Never re-implement mask composition or dilation per operation: a clearance-rule fix in `regionDomain.ts` must reach every operation kind, and duplicated logic drifts (issue #476).
+- **Coordinate Systems:**
+    - **Internal:** Uses a screen-coordinate system where (0,0) is top-left, and **positive Y increases downwards**.
+    - **Machine:** Standard Cartesian CAM system where **positive Y increases upwards**.
+    - The `MachineOrigin` and G-code export logic are responsible for this inversion.
+- **Unit Handling:** Use helpers in `src/utils/units.ts`. The project can be in `mm` or `inch`; always check `project.meta.units`.
+- **CSG Debouncing:** 3D model generation is expensive. The `Viewport3D` updates are typically debounced (150ms-300ms).
+
+## 9. Localization (i18n)
+
+The interface is multi-language (issue #314); machining output is not. The
+model mirrors the theme system: a typed registry of built-ins plus
+user-created overlay packs, stored as application-local preferences —
+switching language never dirties a project, never enters undo history, and
+never changes `.camj` data or machine-facing output.
+
+- **Catalog contract** (`src/i18n/catalog.ts`, `locales/`): flat
+  dot-namespaced keys (`file.saveProject`), `{placeholder}` interpolation
+  (params inserted verbatim; unknown tokens stay visible), and explicit
+  `….one`/`….other` plural-variant keys selected via `Intl.PluralRules`.
+  English is the canonical catalog — `MessageKey` derives from it, every
+  other locale resolves against it per key, so a missing translation renders
+  English, never a blank. One module per UI area (`shell.ts`, `sketch.ts`,
+  `cam.ts`, …) merged in `locales/<locale>/index.ts`; zh-CN and de modules are
+  typed as complete records of their English counterparts, and tests enforce
+  completeness and placeholder parity.
+- **Custom language packs** (`src/i18n/registry.ts`,
+  `src/components/language/`): overrides-only overlays on a built-in base,
+  with a versioned import/export envelope. Override keys unknown to the
+  running build are preserved (catalogs grow per release; packs round-trip
+  across versions), and a stale active-locale id falls back to a built-in.
+  The manager/editor dialogs mirror the theme manager/editor: the
+  placeholder-parity gate is the analogue of the theme contrast gate, and
+  "Preview in app" persists the draft (Cancel restores the on-open
+  snapshot) because language has no presentation-only preview channel.
+- **Layering**: the engine stays free of i18n. Toolpath/postprocessor
+  warnings are structured `{ code, params }` (`src/engine/toolpaths/
+  warningCodes.ts`) translated at presentation by `src/i18n/warningText.ts`.
+  Components translate via `useI18n()` (`t`/`tPlural`) so they re-render on
+  locale change; module-level `translate()` exists only for non-React call
+  sites (platform confirm dialogs, the pre-React fatal-error screen).
+  `bootstrap.ts` resolves the locale and sets `document.documentElement.lang`
+  before React mounts.
+- **Deliberate boundaries** (never translated): serialized identifiers, enum
+  values, feature/tool/operation type ids, user-authored names, filenames
+  and file-type descriptors, unit symbols, G-code text, raw-JSON validation
+  messages, registry-data display names (built-in theme names, theme
+  token/group/contrast-check labels), and text drawn into the 2D canvas.
+- **Rules for new UI**: every new user-facing string gets a key in its area
+  module with zh-CN and de landing in the same change; no per-file translation
+  wrappers; no hardcoded locale checks (`localeId === 'zh-CN' ? … : …` is
+  forbidden — missing variants get their own keys); memoized translated
+  content includes `languageTag` in its dependency array; count-bearing
+  strings use `tPlural`. Terminology lives in `src/i18n/GLOSSARY.md`.
+
+## 10. AI & MCP Integration (not yet implemented)
+There is **no MCP server or agent-facing tool surface in the app today**. Earlier drafts of this document described an aspirational design; treat it as a future direction, not current behavior. When that work begins, the guiding principles will be:
+- All mutations should flow through `projectStore` actions (same rule as the UI).
+- An agent will need a project-state inspection call before making changes.
+- Geometric modifications must produce valid closed profiles, except for explicit open-path engrave features.
+
+## 11. End-to-End Pipeline (UI action → G-code)
+
+Sections 2–8 own each layer's contract in isolation. This section owns the
+**ordering between them**: the path one operation takes from a user action to
+emitted G-code. Each stage names its entry point; per-stage detail stays in the
+area `INDEX.md` files rather than being restated here.
+
+### The path
+
+1. **User action → store.** All mutations go through `projectStore` actions
+   (`src/store/projectStore.ts`, slices under `src/store/slices/`). Operation
+   target selection filters with `isMachinable` in `operationsSlice.ts` — this
+   is where construction geometry stops being eligible for CAM (§3).
+2. **Generation dispatch is engine-level.**
+   `computeOperationToolpath` (`src/engine/toolpaths/generateOperation.ts`) is
+   the single entry point and dispatches on `operation.kind` to exactly one
+   generator. The app still decides *when* it runs: the service in
+   `src/app/toolpathGeneration/` owns the queue and cache and runs through the
+   inline or worker backend. Cache validity lives in
+   `toolpathGeneration/cacheInputs.ts`; `isCacheHit` remains a wrapper.
+
+   **Toolpath-cache contract.** `isCacheHit` is deliberately only the app-level
+   wrapper around `cacheInputsValid`. `buildToolpathCacheEntry` captures
+   `ToolpathCacheInputs` once with the generated result, so every operation
+   compares the current project with the particular immutable project snapshot
+   it was generated from. `cacheInputsValid` is the sole authority for those
+   comparisons: it first checks direct operation, stock, tab, clamp, and tool
+   inputs, then uses the recorded operation footprint to narrow geometry and
+   subtract-ownership changes. An unknown or unbounded dependency has a null
+   footprint and invalidates rather than risking a stale toolpath.
+
+   The footprint is intentionally a static conservative description of engine
+   reads, including the operation's cutter reach and chained non-target
+   subtracts. It is the permanent cache contract, not a planned resolver
+   read-set implementation: over-invalidation is acceptable; an unproven
+   dependency must remain fail-closed.
+3. **Inside a generator**, using `generatePocketToolpath` (`pocket.ts`) as the
+   reference shape:
+   1. `resolveFeatureInstance` (`src/store/helpers/resolveFeatures.ts`) —
+      definition + transform into world geometry (§4 resolver boundary).
+   2. `resolvePocketRegions` / `resolveInsideEdgeRegions` (`resolver.ts`) —
+      features and operation into Clipper input regions. The fold they
+      apply — feature order, parent material, non-target subtracts, and the
+      material silhouette — is owned by
+      [`planning/BAND_RESOLVER_SEMANTICS.md`](planning/BAND_RESOLVER_SEMANTICS.md).
+   3. `buildRegionMask` (`regions.ts`) — compose the region mask.
+   4. `resolveRegionDomainArea` / `…Centre` / `…Curve` (`regionDomain.ts`) —
+      mask into a typed operation domain. Which resolver a kind uses is owned
+      by the table in [`planning/REGION_FEATURE_SEMANTICS.md`](planning/REGION_FEATURE_SEMANTICS.md), not by the
+      generator (§8).
+   5. The pattern branch, dispatched through `OPERATION_PATTERN_SUPPORT`
+      (`pocketPatterns.ts`) — kind → generator is step 2's job; pattern *within*
+      a kind is this table's.
+4. **Post-generation, inside `computeOperationToolpath`**, runs in this order:
+   tab warnings → tab motion → `optimizeLinearMoves` → clamp warnings. The
+   order is load-bearing —
+   `applyTabWarnings` judges each tab against the cut Z range and the tab
+   appliers raise that range, so warning after applying would report every
+   applied tab as lying outside the range it just created.
+5. **Emission.** `ExportDialog` drives `useExportPreparation`, which uses
+   `toolpathGeneration/exportPreparation.ts` to resolve the machine through
+   `getActiveMachineDefinition(project)` — the export boundary (§3) — and call
+   `runPostProcessor` (`src/engine/gcode/postprocessor.ts`). A program contains
+   all of its operations or it is not written. `runPostProcessor` only chooses
+   the definition's output dialect — G-code by default, ShopBot part files for
+   `opensbp` — and hands over to that dialect's emitter. What the machine is
+   asked to do is the same for every dialect and lives in
+   `motionPipeline.ts`: the program's sequence (tool changes, spindle start,
+   restate and stop, coolant), the machine-coordinate transform, arc fitting
+   with its emitted-arc fallback, their warnings, the safe-Z split of a rapid,
+   and the motion trace. An emitter owns line syntax only (for G-code:
+   templates, modal tracking, canned cycles). The result's `gcode` field is the program text in
+   whichever dialect was chosen.
+6. **Parallel consumers.** Simulation
+   (`simulateOperationHeightfield`, `src/engine/simulation/replay.ts`), the
+   operation booklet, and exported-motion debug all request their paths through
+   `service.request`. They are not stages on the export path.
+
+### Three crossings worth knowing
+
+- **Y-down → Y-up happens exactly once**, at `projectToMachinePoint`
+  (`src/engine/gcode/utils.ts`), called during export only from the shared
+  `motionPipeline.ts`, for every move and drill cycle of every dialect.
+  Everything upstream — resolver, region mask, generators, simulation — is
+  internal Y-down (§8).
+- **The setup turn happens at the same place.** `motionPipeline.ts` resolves
+  the operation's setup (`setupFrameForOperation`) and hands its frame to
+  `projectToMachinePoint`, which turns the canonical point into the
+  setup-local frame *before* the origin offset and axis mapping (§3). A Top
+  operation has no frame and takes the unturned path. Arc direction needs no
+  rule of its own: arcs are fitted after the transform, so the mirrored plan
+  view of a Bottom setup yields the reversed sense. No emitter knows how a
+  setup turns the stock; what each writes about the setup — the header
+  comments, and the refusal to run one program across a manual turn — is
+  decided once by `planProgramSetup` in the same file (issue #946).
+- **Units are not converted per stage.** A project is stored in one system and
+  every generator works in it unchanged. `convertProjectUnits` runs only on an
+  explicit unit switch (`workpieceSlice.ts`) and on import merge
+  (`src/import/camj.ts`); the postprocessor reads `project.meta.units` once as
+  its output units. A generator that converts units is a bug, not a stage.
+- **Construction geometry is excluded at each point of use, not filtered once
+  upstream.** `isMachinable` gates CAM target selection
+  (`operationsSlice.ts`); `modelFeatures()` gates CSG (`src/engine/csg.ts`) and
+  the 3D viewport. Use those predicates rather than ad-hoc checks (§3).
+
+Toolpath warnings raised anywhere in stages 3–4 are structured
+`{ code, params }` (`warningCodes.ts`) and are translated only at presentation
+by `src/i18n/warningText.ts` — the engine stays free of i18n (§9).

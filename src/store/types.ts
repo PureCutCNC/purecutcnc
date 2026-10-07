@@ -38,6 +38,7 @@ import type {
   Segment,
   SetupFace,
   SetupOrientation,
+  MachiningSetup,
   SketchFeature,
   Stock,
   Tab,
@@ -495,6 +496,8 @@ export interface ProjectStore {
   /** Add a setup. Returns its id, or null when the orientation is not one this build can machine. */
   createSetup: (input: { name?: string; orientation: SetupOrientation }) => string | null
   renameSetup: (id: string, name: string) => void
+  /** Atomic setup property edit; realizes a provisional setup in the same undo step. */
+  updateSetup: (id: string, patch: { name?: string; flipAxis?: 'x' | 'y'; registration?: MachiningSetup['registration']; notes?: string }) => boolean
   /**
    * Remove a setup together with its operations, as one undo step. False for
    * the last setup or an unknown id. Destructive: a UI that calls this must

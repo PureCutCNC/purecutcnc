@@ -237,6 +237,18 @@ for (const axis of ['x', 'y'] as const) {
   assert.equal(dispatched.moves.length, 0, 'dispatch must check original setup before any coordinate transform')
   assert.ok(dispatched.warnings.some((w) => w.code === 'plasmaTopOnly'))
 }
+// Through subtracts pass #946's reach guard. The plasma refusal must still
+// happen before the Bottom transform; it cannot hide behind that guard.
+for (const axis of ['x', 'y'] as const) {
+  const through = fixture([feature('hole', 'subtract', square(35, 35, 30))])
+  const operation = op(through, ['hole'], { setupId: through.setups[0].id })
+  assert.ok(computeOperationToolpath(through, operation)!.result.moves.length, 'through plasma fixture generates on Top')
+  const bottom = { ...through, setups: [{ ...through.setups[0], orientation: { axis, angleDeg: 180 as const } }] }
+  const envelope = computeOperationToolpath(bottom, operation, { trace: true })!
+  assert.equal(envelope.result.moves.length, 0, 'reachable through target still refuses Bottom plasma')
+  assert.equal(envelope.raw?.moves.length ?? 0, 0, 'no Bottom plasma trace motion')
+  assert.deepEqual(envelope.result.warnings.map(warning => warning.code), ['plasmaTopOnly'], 'plasma face refusal, not an unrelated target guard')
+}
 const beforePart = fixture([feature('hole', 'subtract', square(35, 35, 30)), feature('part', 'add')])
 const misordered = generate(beforePart, op(beforePart, ['hole']))
 assert.equal(misordered.moves.length, 0)

@@ -164,3 +164,5 @@ Generators and rest calculations resolve tools through `src/toolPolicy.ts` so mi
 - `plasma.ts` / `plasmaGeometry.ts` — experimental closed-contour plasma profiles: independent half-kerf offsets, physical swirl direction, scrap-side arc/line/centre lead fallback and exact neighbour kerf clearance on Top setups only; `plasma.test.ts` pins the real export direction, independent safety boundaries, conservative cache, units and persistence.
 
 - `plasmaStartPoint.ts` — resolves optional contour-local start overrides through each instance transform, preserving move/rotate/scale attachment; focused pick/persistence/units coverage lives in `components/canvas/plasmaStartPoint.test.ts` and `plasmaStartPoint.test.ts`.
+
+- `plasmaSetupIsTop` in `plasma.ts` checks the authoritative setup before the #946 dispatch transforms a Bottom project; both direct plasma generation and dispatch refuse non-Top plasma.

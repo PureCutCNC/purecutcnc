@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { useProjectStore } from '../../store/projectStore'
+import { activeSetup } from '../../store/helpers/activeFace'
 import type { CamPlanOperationDraft, CamPlanTool } from '../../engine/operations/camPlan'
 import { offeredPocketPatterns } from '../../engine/toolpaths/pocketPatterns'
 import type { DrillType, EntryStrategy, Operation, OperationKind, PocketPattern, Tool } from '../../types/project'
@@ -140,6 +142,7 @@ function surfaceToolConstraintReason(draft: CamPlanOperationDraft, candidate: Ca
 }
 
 export function CAMPlanOperationEditor({ draft, tools, units, onPatch, onUseRecommendedRestTool }: CAMPlanOperationEditorProps) {
+  const setup = activeSetup(useProjectStore((state) => state.project))
   const operation = draft.operation
   const selectedTool = tools.find((candidate) => candidate.id === operation.toolRef)?.tool ?? null
   const ballRadius = selectedTool?.type === 'ball_endmill' ? selectedTool.diameter / 2 : null
@@ -164,6 +167,7 @@ export function CAMPlanOperationEditor({ draft, tools, units, onPatch, onUseReco
         <div>
           <span className="cam-plan-eyebrow">{operationLabel(operation.kind)} · {camT(`cam.pass.${operation.pass}`)}</span>
           <h3>{operation.name}</h3>
+      <p>{camT('cam.setup.setup')}: {setup?.name}</p>
         </div>
         <span className="cam-plan-status-chip">{draft.targetLabel}</span>
       </div>
