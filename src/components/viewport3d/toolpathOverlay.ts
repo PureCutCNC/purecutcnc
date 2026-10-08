@@ -158,6 +158,16 @@ export interface ToolpathLinePositionChunk {
   segmentCount: number
 }
 
+/**
+ * A 3D toolpath layer's line opacity. The selected operation keeps the
+ * layer's own; other operations of the active setup draw lighter; a muted one
+ * — cut in a setup the workspace is not on (issue #947) — lighter still.
+ */
+export function toolpathOverlayOpacity(layerOpacity: number, emphasized: boolean, muted = false): number {
+  if (emphasized) return layerOpacity
+  return muted ? layerOpacity * 0.2 : Math.max(layerOpacity * 0.55, 0.45)
+}
+
 export function toolpathPointToWorldTuple(point: ToolpathPoint): [number, number, number] {
   return [point.x, point.z, point.y]
 }

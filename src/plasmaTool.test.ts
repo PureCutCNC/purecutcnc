@@ -387,9 +387,15 @@ function assertPlaybackLookupBoundary(boundary: 'selected' | 'prior', source: Pr
     } })
     // Seed already-acquired paths, including a stale incompatible prior path.
     // This exercises deferred replay's own guard rather than acquisition's.
+    // The seed carries the requirement stamp the hook computes (#947): the
+    // eligible operations before the selected one, all in its one setup.
+    const requiredKey = project.operations.slice(0, -1)
+      .filter((operation) => operation.enabled && operation.showToolpath
+        && policy.findMillingOperationTool(project, operation) !== null)
+      .map((operation) => operation.id).join(',')
     mock.module(aliases.react, { cache: true, namedExports: { ...exportsFor(React),
       useState(initial) {
-        return React.useState(initial === null ? { project,
+        return React.useState(initial === null ? { project, requiredKey,
           paths: new Map(project.operations.map((operation) => [operation.id,
             { ...cachedPath, operationId: operation.id }])) } : initial)
       },
@@ -409,6 +415,8 @@ function assertPlaybackLookupBoundary(boundary: 'selected' | 'prior', source: Pr
       .replace("'react'", JSON.stringify(aliases.react))
       .replace("'../engine/simulation'", JSON.stringify(new URL('src/engine/simulation/index.ts', root).href))
       .replace("'../engine/toolpaths/geometry'", JSON.stringify(aliases.geometry))
+      // Any other relative import resolves where the hook really lives.
+      .replace(/from '(\\.\\.?\\/[^']+)'/g, (_, specifier) => 'from ' + JSON.stringify(new URL(specifier + '.ts', hookUrl).href))
     const hookPath = join(directory, 'hook.mjs')
     writeFileSync(hookPath, source)
     try {

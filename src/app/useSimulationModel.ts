@@ -16,7 +16,7 @@
 
 import { findMillingOperationTool } from '../toolPolicy'
 import { useEffect, useMemo, useState } from 'react'
-import type { SimulationPlaybackInput } from '../components/simulation/SimulationViewport'
+import type { SimulationPlaybackInput, SimulationSetupPicker } from '../components/simulation/SimulationViewport'
 import {
   createSimulationGrid,
   simulateOperationHeightfield,
@@ -27,7 +27,15 @@ import {
 } from '../engine/simulation'
 import type { ToolpathResult } from '../engine/toolpaths'
 import { normalizeToolForProject } from '../engine/toolpaths/geometry'
-import type { Operation, Project } from '../types/project'
+import { setupFace } from '../engine/setupOrientation'
+import type { Clamp, Operation, Project } from '../types/project'
+import {
+  buildSimulationSetupInput,
+  resolveSimulationSetup,
+  setupOperations,
+  simulationSetups,
+  type SimulationSetupInput,
+} from './simulationSetup'
 
 /** Stable empty set, so "nothing to acquire" does not churn the memos below. */
 const NO_PATHS: ReadonlyMap<string, ToolpathResult> = new Map()
@@ -40,6 +48,19 @@ function lazyOnce<T>(compute: () => T): () => T {
       cached = { value: compute() }
     }
     return cached.value
+  }
+}
+
+/**
+ * A setup's operations, or none when an operation names a setup the project
+ * does not define. The export refuses such a project; the simulation shows
+ * nothing for it rather than taking the workspace down.
+ */
+function scopedOperations(project: Project, setup: Parameters<typeof setupOperations>[1]): Operation[] {
+  try {
+    return setupOperations(project, setup)
+  } catch {
+    return []
   }
 }
 
@@ -72,7 +93,38 @@ export function useSimulationModel({
   simulationPlaybackInput: SimulationPlaybackInput | null
   /** True while the paths simulation needs are still being produced. */
   simulationInputPending: boolean
+  /** The setups the simulation can show, and which one it shows (issue #947). */
+  simulationSetupPicker: SimulationSetupPicker
+  /** Visible clamps, placed where they sit in the simulated setup's frame. */
+  simulationClamps: Clamp[]
 } {
+  /**
+   * The simulated setup (issue #947). A pick from the panel holds while the
+   * same operation stays selected; selecting another operation hands the
+   * choice back to `resolveSimulationSetup`, which follows that operation's
+   * setup — so selecting a Bottom operation never shows it on Top stock.
+   */
+  const [choice, setChoice] = useState<{ setupId: string; operationId: string | null } | null>(null)
+  const selectedOperationId = selectedOperation?.id ?? null
+  // Dropped, not just ignored, once the selection moves on: reselecting the
+  // operation the pick was made with must not bring a stale pick back.
+  if (choice !== null && choice.operationId !== selectedOperationId) setChoice(null)
+  const chosenSetupId = choice !== null && choice.operationId === selectedOperationId ? choice.setupId : null
+  const simulationSetup = useMemo(
+    () => resolveSimulationSetup(project, chosenSetupId, selectedOperation),
+    [chosenSetupId, project, selectedOperation],
+  )
+  const setupScopedOperations = useMemo(
+    () => scopedOperations(project, simulationSetup),
+    [project, simulationSetup],
+  )
+  // The selected operation takes part only when it is cut in the simulated
+  // setup. One from another setup would be simulated on the wrong face.
+  const selectedInSetup = selectedOperation && setupScopedOperations.some((operation) => operation.id === selectedOperation.id)
+    ? selectedOperation
+    : null
+  const selectedCanonicalToolpath = selectedInSetup ? selectedToolpath : null
+
   /**
    * The toolpaths simulation needs, acquired in an effect (issue #675).
    *
@@ -82,10 +134,13 @@ export function useSimulationModel({
    * playback callback — the base-grid supplier below closes over what has
    * already been resolved and can never start work of its own.
    *
-   * `resolvedFor` stamps which project the paths belong to, so a set acquired
-   * for an older revision is never mixed into a simulation of the current one.
+   * Each set is stamped with the project revision and the requirement it
+   * answers, so a set acquired for an older revision — or for another setup or
+   * selection of the same revision (issue #947: the picker changes the
+   * requirement without changing the project) — is never mixed into the
+   * simulation now asked for.
    */
-  const [acquired, setAcquired] = useState<{ project: Project; paths: Map<string, ToolpathResult> } | null>(null)
+  const [acquired, setAcquired] = useState<{ project: Project; requiredKey: string; paths: Map<string, ToolpathResult> } | null>(null)
 
   // Every operation simulation may need: the visible set for 'visible' mode,
   // and the prior operations for 'selected' playback's starting stock.
@@ -93,14 +148,16 @@ export function useSimulationModel({
     if (centerTab !== 'simulation') return []
     const eligible = (operation: Operation): boolean =>
       operation.enabled && operation.showToolpath && findMillingOperationTool(project, operation) !== null
+    // Only the simulated setup's operations: each setup starts from fresh
+    // stock, so another setup's cuts are never part of its starting state.
     if (simulationMode === 'visible') {
-      return project.operations.filter(eligible).map((operation) => operation.id)
+      return setupScopedOperations.filter(eligible).map((operation) => operation.id)
     }
-    if (!selectedOperation) return []
-    const selectedIndex = project.operations.findIndex((operation) => operation.id === selectedOperation.id)
-    const prior = selectedIndex >= 0 ? project.operations.slice(0, selectedIndex) : []
+    if (!selectedInSetup) return []
+    const selectedIndex = setupScopedOperations.findIndex((operation) => operation.id === selectedInSetup.id)
+    const prior = selectedIndex >= 0 ? setupScopedOperations.slice(0, selectedIndex) : []
     return prior.filter(eligible).map((operation) => operation.id)
-  }, [centerTab, project, selectedOperation, simulationMode])
+  }, [centerTab, project, selectedInSetup, setupScopedOperations, simulationMode])
 
   const requiredKey = requiredOperationIds.join(',')
 
@@ -121,7 +178,7 @@ export function useSimulationModel({
       for (const { operationId, toolpath } of entries) {
         if (toolpath) paths.set(operationId, toolpath)
       }
-      setAcquired({ project, paths })
+      setAcquired({ project, requiredKey, paths })
     })()
     return () => {
       cancelled = true
@@ -130,7 +187,7 @@ export function useSimulationModel({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- requiredKey stands in for the id list; `project` identity is what a re-acquire keys on
   }, [centerTab, requiredKey, project, requestToolpath])
 
-  // Only paths acquired for *this* project revision may be used. A pending or
+  // Only paths acquired for *this* project revision and requirement may be used. A pending or
   // superseded acquisition leaves this null, which is what stops a playback
   // starting on a mixed input set.
   //
@@ -140,20 +197,44 @@ export function useSimulationModel({
   // that does not exist.
   const paths: ReadonlyMap<string, ToolpathResult> | null = requiredOperationIds.length === 0
     ? NO_PATHS
-    : acquired && acquired.project === project ? acquired.paths : null
+    : acquired && acquired.project === project && acquired.requiredKey === requiredKey ? acquired.paths : null
   const simulationInputPending = centerTab === 'simulation' && paths === null
+
+  /**
+   * Everything below reads the simulated setup's frame (issue #947): the
+   * acquired stock-space paths, and the selected operation's path, are turned
+   * into it once here and nowhere else. Paths still being acquired are simply
+   * absent, as they were before setups.
+   */
+  const setupInput = useMemo<SimulationSetupInput | null>(() => {
+    if (centerTab !== 'simulation') return null
+    const canonical = new Map(paths ?? NO_PATHS)
+    // The selected path is the preview's; an acquired one always wins over it.
+    if (selectedInSetup && selectedCanonicalToolpath && !canonical.has(selectedInSetup.id)) {
+      canonical.set(selectedInSetup.id, selectedCanonicalToolpath)
+    }
+    try {
+      return buildSimulationSetupInput(project, simulationSetup, canonical)
+    } catch {
+      return null
+    }
+  }, [centerTab, paths, project, selectedCanonicalToolpath, selectedInSetup, simulationSetup])
+
   const simulationResult = useMemo(() => {
     if (centerTab !== 'simulation') {
       return null
     }
+    // The simulated setup's frame: for Top, the project and paths as they are.
+    const localProject = setupInput?.project ?? project
+    const localPaths = setupInput?.toolpaths ?? NO_PATHS
 
     const emptySimulationResult = {
-      grid: createSimulationGrid(project, {
+      grid: createSimulationGrid(localProject, {
         targetLongAxisCells: simulationDetailCells,
       }),
       stats: {
         removedCellCount: 0,
-        minTopZ: project.stock.thickness,
+        minTopZ: localProject.stock.thickness,
         maxRemovedDepth: 0,
         processedMoveCount: 0,
       },
@@ -161,26 +242,27 @@ export function useSimulationModel({
     }
 
     if (simulationMode === 'selected') {
-      if (!selectedOperation || !selectedToolpath || !findMillingOperationTool(project, selectedOperation)) {
+      const selectedLocalToolpath = selectedInSetup ? localPaths.get(selectedInSetup.id) ?? null : null
+      if (!selectedInSetup || !selectedLocalToolpath || !findMillingOperationTool(localProject, selectedInSetup)) {
         return emptySimulationResult
       }
 
-      return simulateOperationHeightfield(project, selectedOperation, selectedToolpath, {
+      return simulateOperationHeightfield(localProject, selectedInSetup, selectedLocalToolpath, {
         targetLongAxisCells: simulationDetailCells,
       })
     }
 
-    const replayItems = project.operations
+    const replayItems = (setupInput?.operations ?? [])
       .filter((operation) => operation.enabled && operation.showToolpath && operation.toolRef)
       .map((operation) => {
-        const toolpath = paths?.get(operation.id) ?? null
-        const toolRecord = findMillingOperationTool(project, operation)
+        const toolpath = paths === null ? null : localPaths.get(operation.id) ?? null
+        const toolRecord = findMillingOperationTool(localProject, operation)
 
         if (!toolpath || !toolRecord) {
           return null
         }
 
-        const normalizedTool = normalizeToolForProject(toolRecord, project)
+        const normalizedTool = normalizeToolForProject(toolRecord, localProject)
         return {
           operationId: operation.id,
           operationName: operation.name,
@@ -197,29 +279,31 @@ export function useSimulationModel({
       return emptySimulationResult
     }
 
-    return simulateReplayItemsHeightfield(project, replayItems, {
+    return simulateReplayItemsHeightfield(localProject, replayItems, {
       targetLongAxisCells: simulationDetailCells,
     })
-  }, [centerTab, paths, project, selectedOperation, selectedToolpath, simulationDetailCells, simulationMode])
+  }, [centerTab, paths, project, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
 
   const simulationOperationCount = useMemo(() => {
     const hasPlasmaTool = (operation: Operation): boolean =>
       project.tools.some((tool) => tool.id === operation.toolRef && tool.type === 'plasma')
     if (simulationMode === 'selected') {
-      return selectedOperation && selectedToolpath && !hasPlasmaTool(selectedOperation) ? 1 : 0
+      return selectedInSetup && selectedCanonicalToolpath && !hasPlasmaTool(selectedInSetup) ? 1 : 0
     }
 
-    return project.operations.filter((operation) => operation.enabled && operation.showToolpath && !hasPlasmaTool(operation)).length
-  }, [project, selectedOperation, selectedToolpath, simulationMode])
+    return setupScopedOperations.filter((operation) => operation.enabled && operation.showToolpath && !hasPlasmaTool(operation)).length
+  }, [project, selectedCanonicalToolpath, selectedInSetup, setupScopedOperations, simulationMode])
 
   const simulationPlaybackInput = useMemo<SimulationPlaybackInput | null>(() => {
-    if (centerTab !== 'simulation' || simulationMode !== 'selected') {
+    if (centerTab !== 'simulation' || simulationMode !== 'selected' || !setupInput) {
       return null
     }
-    if (!selectedOperation || !selectedToolpath || !findMillingOperationTool(project, selectedOperation)) {
+    const localProject = setupInput.project
+    const selectedLocalToolpath = selectedInSetup ? setupInput.toolpaths.get(selectedInSetup.id) ?? null : null
+    if (!selectedInSetup || !selectedLocalToolpath || !findMillingOperationTool(localProject, selectedInSetup)) {
       return null
     }
-    const toolRecord = findMillingOperationTool(project, selectedOperation)
+    const toolRecord = findMillingOperationTool(localProject, selectedInSetup)
     if (!toolRecord || toolRecord.type === 'drill') {
       return null
     }
@@ -230,20 +314,22 @@ export function useSimulationModel({
     if (paths === null) {
       return null
     }
-    const resolvedPaths = paths
+    const resolvedPaths = setupInput.toolpaths
+    const setupOperationsInOrder = setupInput.operations
 
-    const normalizedSelectedTool = normalizeToolForProject(toolRecord, project)
+    const normalizedSelectedTool = normalizeToolForProject(toolRecord, localProject)
 
-    // Starting stock state for playback: all operations BEFORE the selected one
-    // in the feature tree order, replayed into a fresh grid — operations listed
+    // Starting stock state for playback: the simulated setup's operations
+    // BEFORE the selected one, replayed into a fresh grid — operations listed
     // after the selection haven't run yet at this point in the cycle, so their
-    // cuts shouldn't appear. The replay is deferred until the viewport actually
+    // cuts shouldn't appear, and another setup's never do (fresh stock,
+    // issue #947). The replay is deferred until the viewport actually
     // starts playback (lazyOnce): while the simulation tab is open this memo
     // re-runs on every project change, and eagerly replaying prior operations
     // each time made ordinary edits pay for a full heightfield replay.
     const getBaseGrid = lazyOnce((): SimulationGrid => {
-      const selectedIndex = project.operations.findIndex((operation) => operation.id === selectedOperation.id)
-      const priorOperations = selectedIndex >= 0 ? project.operations.slice(0, selectedIndex) : []
+      const selectedIndex = setupOperationsInOrder.findIndex((operation) => operation.id === selectedInSetup.id)
+      const priorOperations = selectedIndex >= 0 ? setupOperationsInOrder.slice(0, selectedIndex) : []
 
       const priorItems: SimulationReplayItem[] = priorOperations
         .filter((operation) =>
@@ -256,11 +342,11 @@ export function useSimulationModel({
           // supplier that could start work would be generation on the playback
           // path — the thing acquiring these up front exists to prevent.
           const toolpath = resolvedPaths.get(operation.id) ?? null
-          const operationTool = findMillingOperationTool(project, operation)
+          const operationTool = findMillingOperationTool(localProject, operation)
           if (!toolpath || !operationTool) {
             return null
           }
-          const normalizedTool = normalizeToolForProject(operationTool, project)
+          const normalizedTool = normalizeToolForProject(operationTool, localProject)
           return {
             operationId: operation.id,
             operationName: operation.name,
@@ -273,7 +359,7 @@ export function useSimulationModel({
         })
         .filter((item): item is SimulationReplayItem => item !== null)
 
-      return simulateReplayItemsHeightfield(project, priorItems, {
+      return simulateReplayItemsHeightfield(localProject, priorItems, {
         targetLongAxisCells: simulationDetailCells,
       }).grid
     })
@@ -299,14 +385,14 @@ export function useSimulationModel({
     // Operation feed is stored in project-units-per-minute. The viewport works in
     // units-per-second, so divide by 60. This becomes the "1×" playback speed so
     // users can intuitively speed up or slow down relative to the real feed rate.
-    const feedPerSecond = selectedOperation.feed > 0 ? selectedOperation.feed / 60 : undefined
-    const plungeFeedPerSecond = selectedOperation.plungeFeed > 0 ? selectedOperation.plungeFeed / 60 : undefined
+    const feedPerSecond = selectedInSetup.feed > 0 ? selectedInSetup.feed / 60 : undefined
+    const plungeFeedPerSecond = selectedInSetup.plungeFeed > 0 ? selectedInSetup.plungeFeed / 60 : undefined
     // `project.meta.units` uses 'inch'; the playback UI shows the short label 'in'.
-    const units: 'mm' | 'in' = project.meta.units === 'inch' ? 'in' : 'mm'
+    const units: 'mm' | 'in' = localProject.meta.units === 'inch' ? 'in' : 'mm'
 
     return {
       getBaseGrid,
-      moves: selectedToolpath.moves,
+      moves: selectedLocalToolpath.moves,
       toolType: toolRecord.type,
       toolRadius: normalizedSelectedTool.radius,
       vBitAngle: normalizedSelectedTool.vBitAngle,
@@ -317,12 +403,25 @@ export function useSimulationModel({
       feedPerSecond,
       plungeFeedPerSecond,
     }
-  }, [centerTab, paths, project, selectedOperation, selectedToolpath, simulationDetailCells, simulationMode])
+  }, [centerTab, paths, selectedInSetup, setupInput, simulationDetailCells, simulationMode])
+
+  const simulationSetupPicker = useMemo<SimulationSetupPicker>(() => ({
+    options: simulationSetups(project).map((setup) => ({ id: setup.id, name: setup.name, face: setupFace(setup) })),
+    selectedId: simulationSetup.id,
+    onChange: (setupId: string) => setChoice({ setupId, operationId: selectedOperationId }),
+  }), [project, selectedOperationId, simulationSetup.id])
+
+  const simulationClamps = useMemo(
+    () => (setupInput?.project ?? project).clamps.filter((clamp) => clamp.visible),
+    [project, setupInput],
+  )
 
   return {
     simulationResult,
     simulationOperationCount,
     simulationPlaybackInput,
     simulationInputPending,
+    simulationSetupPicker,
+    simulationClamps,
   }
 }

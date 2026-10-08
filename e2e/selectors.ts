@@ -753,6 +753,15 @@ export const face = {
   changeFaceDialog: (page: Page) => page.getByRole('dialog', { name: /^Move / }),
 }
 
+// Simulation setup picker and its fresh-stock note (#947).
+export const simSetup = {
+  viewport: (page: Page) => page.locator('#workspace-panel-simulation .simulation-viewport'),
+  picker: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('combobox', { name: 'Setup' }),
+  note: (page: Page) => page.locator('#workspace-panel-simulation .simulation-setup-note'),
+  modeVisible: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Visible', exact: true }),
+  playTool: (page: Page) => page.locator('#workspace-panel-simulation').getByRole('button', { name: 'Play tool', exact: true }),
+}
+
 // CAM setup sections, scoped Add targets and setup dialogs (#946).
 export const setupCam = {
   section: (page: Page, face: 'top' | 'bottom') => page.locator(`.cam-setup-group[data-setup-face="${face}"]`),

@@ -33,3 +33,19 @@ export function toolpathStrokeWidth(base: number, emphasized: boolean): number {
   return emphasized ? base + 0.35 : Math.max(1, base - 0.35)
 }
 
+/**
+ * Stroke opacity for a toolpath. The selected operation draws at full
+ * strength wherever it is cut; other operations of the active setup at the
+ * ordinary unselected strength; a muted operation — cut in another setup
+ * (issue #947) — fainter still, so the active setup's passes read on top.
+ */
+export function toolpathStrokeAlpha(emphasized: boolean, muted = false): number {
+  if (emphasized) return 1
+  return muted ? 0.12 : 0.34
+}
+
+/** Collision overlays stay visible on a muted path, just weaker. */
+export function toolpathCollisionAlpha(emphasized: boolean, muted = false): number {
+  if (emphasized) return 1
+  return muted ? 0.3 : 0.55
+}

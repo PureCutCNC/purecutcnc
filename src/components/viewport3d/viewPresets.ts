@@ -16,6 +16,7 @@
 
 import type * as THREE from 'three'
 import type { MessageKey } from '../../i18n/locales/en'
+import type { SetupFace } from '../../types/project'
 
 /**
  * Camera view presets shared by the 3D preview and simulation viewports.
@@ -86,6 +87,22 @@ export const VIEW_PRESETS: Record<ViewPreset, ViewPresetSpherical> = {
     phi: Math.PI / 2,
     up: [0, 1, 0],
   },
+}
+
+/**
+ * A preset as seen while the workspace is on `face` (issue #947). The 3D
+ * preview stays in canonical stock space, so a Bottom setup's passes come
+ * from under the stock: its isometric view looks up at the bottom face from
+ * the same side the Top one looks down from. Plan, side and Top/Bottom views
+ * are fixed directions and read the same on either face; the preview turns a
+ * parked Top or Bottom view over itself (issue #945).
+ */
+export function viewPresetSpherical(preset: ViewPreset, face: SetupFace = 'top'): ViewPresetSpherical {
+  const state = VIEW_PRESETS[preset]
+  if (face === 'bottom' && preset === 'iso') {
+    return { theta: state.theta, phi: Math.PI - state.phi, up: [...state.up] }
+  }
+  return state
 }
 
 /**
