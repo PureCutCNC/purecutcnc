@@ -25,7 +25,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { boundaryDistance, judge, mismatch } from './verdict'
+import { boundaryDistance, holeReduction, judge, mismatch } from './verdict'
 import type { Rule, SimProgramReport, SimRun, SimStall, TraceEvent } from './verdict'
 
 const FILTERED = [
@@ -44,9 +44,9 @@ const FILTERED = [
 /** A trace event; a cutting move runs at the loaded material's feed unless told otherwise. */
 function ev(
   sample: number, spindleOn: number, torchOn: number, motionType: number, line: number, moving: number,
-  feed = moving === 1 && motionType >= 2 ? 5000 : 0, materialFeed = 5000,
+  feed = moving === 1 && motionType >= 2 ? 5000 : 0, materialFeed = 5000, adaptiveFeed = 1,
 ): TraceEvent {
-  return [sample, spindleOn, torchOn, motionType, line, moving, feed, materialFeed]
+  return [sample, spindleOn, torchOn, motionType, line, moving, feed, materialFeed, adaptiveFeed]
 }
 
 /** A clean run: rapid, M3, held feed, torch fires, cut, stop, M5, rapid home. */
@@ -283,6 +283,64 @@ function withMismatchFor(periods: number): TraceEvent[] {
 }
 assert.deepEqual(rules(report({ run: cleanRun({ events: withMismatchFor(1) }) })), [])
 assert.deepEqual(rules(report({ run: cleanRun({ events: withMismatchFor(10) }) })), ['feed'])
+
+// QtPlasmaC's own small-hole reduction is proven by the run, not by the
+// `#<holes>` header: the factor it applied while a cutting move was travelling.
+assert.equal(holeReduction(cleanRun()), null)
+{
+  const events: TraceEvent[] = [
+    ...CLEAN_EVENTS.slice(0, 7),
+    ev(4700, 1, 1, 2, 6, 1, 3000, 5000, 0.6),
+    ev(5200, 1, 1, 2, 6, 1, 5000, 5000, 1),
+    ...CLEAN_EVENTS.slice(7),
+  ]
+  assert.deepEqual(holeReduction(cleanRun({ events })), { line: 6, factor: 0.6 })
+}
+// A factor on a move that is not cutting — torch off, or held rather than
+// travelling — says nothing about a hole.
+{
+  const events: TraceEvent[] = [
+    ...CLEAN_EVENTS.slice(0, 5),
+    ev(4100, 1, 0, 2, 6, 0, 0, 5000, 0.6),
+    ...CLEAN_EVENTS.slice(5),
+  ]
+  assert.equal(holeReduction(cleanRun({ events })), null)
+}
+{
+  const events: TraceEvent[] = [
+    ...CLEAN_EVENTS.slice(0, 6),
+    ev(4300, 1, 1, 2, 6, 0, 0, 5000, 0.6),
+    ...CLEAN_EVENTS.slice(6),
+  ]
+  assert.equal(holeReduction(cleanRun({ events })), null, 'the torch is on but QtPlasmaC holds the move')
+}
+// A factor on a rapid is not a hole; neither is one on torch-off travel.
+{
+  const events: TraceEvent[] = [
+    ...CLEAN_EVENTS.slice(0, 6),
+    ev(4300, 1, 1, 1, 6, 1, 0, 5000, 0.6),
+    ...CLEAN_EVENTS.slice(6),
+  ]
+  assert.equal(holeReduction(cleanRun({ events })), null, 'a rapid is not a cut')
+}
+{
+  const events: TraceEvent[] = [
+    ...CLEAN_EVENTS.slice(0, 6),
+    ev(4300, 1, 0, 2, 6, 1, 5000, 5000, 0.6),
+    ...CLEAN_EVENTS.slice(6),
+  ]
+  assert.equal(holeReduction(cleanRun({ events })), null, 'a moving feed with the torch off is travel')
+}
+// The strongest reduction wins when a run cuts more than one hole.
+{
+  const events: TraceEvent[] = [
+    ...CLEAN_EVENTS.slice(0, 7),
+    ev(4700, 1, 1, 2, 6, 1, 3000, 5000, 0.6),
+    ev(4800, 1, 1, 2, 6, 1, 2500, 5000, 0.5),
+    ...CLEAN_EVENTS.slice(7),
+  ]
+  assert.deepEqual(holeReduction(cleanRun({ events })), { line: 6, factor: 0.5 })
+}
 
 // Expectations: a negative case must fail for exactly its own rules.
 assert.equal(mismatch('pass', []), null)

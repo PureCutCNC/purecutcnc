@@ -48,8 +48,9 @@ import type { DrillCycle, ToolpathMove, ToolpathPoint, ToolpathResult } from '..
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
 import { applyEmittedArcFallback, fitArcsInMachineMoves } from './arcFitting'
-import type { EmittedArcOptions, FittedMoveDescriptor } from './arcFitting'
+import type { ArcMoveDescriptor, EmittedArcOptions, FittedMoveDescriptor } from './arcFitting'
 import type { MachineDefinition, OperationMotionTrace, PostProcessorInput } from './types'
+import { isSelectableQtPlasmacMaterialNumber } from '../../toolPolicy'
 import { setupForOperation, setupFrameForOperation } from '../setupOrientation'
 import { setupGenerationBlock } from '../setupTargets'
 import { projectExportsPerSetup, setupHeaderLines, setupLacksRegistration } from './setupPrograms'
@@ -126,7 +127,8 @@ export interface OperationSequence {
 export interface PlasmaOperationSequence {
   /** Not a plasma operation: leave it out of the program. */
   skip: boolean
-  /** The tool's QtPlasmaC material, or null when it has none. */
+  /** The tool's selectable QtPlasmaC material, or null when it has none (an
+   *  absent number, 0, or the reserved 1000000+ temporary range). */
   materialNumber: number | null
   /** Write the material handshake before this operation's first torch-on:
    *  it is the first plasma operation, or the material differs from the one
@@ -276,8 +278,12 @@ function planPlasmaSequence(
       warnings.push({ code: 'postNoToolChangeCommands', params: { operation: operation.name, tool: tool.name } })
     }
     currentToolId = tool.id
+    // A stored number outside the selectable range is not a material: 0 is the
+    // simulator's "nothing selected" sentinel and 1000000+ belongs to
+    // QtPlasmaC's own temporary materials, which CAM must not emit. Both are
+    // reported exactly like an absent number, so the export blocks.
     const material = tool.qtplasmacMaterialNumber
-    const materialNumber = Number.isInteger(material) && (material as number) >= 0 ? material as number : null
+    const materialNumber = isSelectableQtPlasmacMaterialNumber(material) ? material : null
     if (materialNumber === null) {
       warnings.push({ code: 'postPlasmaMaterialMissing', params: { operation: operation.name, tool: tool.name } })
     }
@@ -332,6 +338,61 @@ export function planPlasmaPath(steps: readonly FittedMoveDescriptor[]): PlasmaPa
     position = end
   }
   return items
+}
+
+/** Two machine points on the same spot, within the fitting tolerance. */
+function sameMachinePoint(a: ToolpathPoint, b: ToolpathPoint): boolean {
+  return Math.abs(a.x - b.x) <= 1e-6 && Math.abs(a.y - b.y) <= 1e-6 && Math.abs(a.z - b.z) <= 1e-6
+}
+
+/**
+ * Emit a complete counter-clockwise circle as a single arc block.
+ *
+ * QtPlasmaC's automatic hole handling (`#<holes>`, plan decision 3) only
+ * recognises a hole from one G2/G3 block whose end is the point the previous
+ * block left the torch at: its load filter reduces the feed when an arc's
+ * declared end equals the current position (`check_if_hole` in
+ * `qtplasmac_gcode.py`). Arc fitting splits every fitted run into ≤ 90°
+ * sub-arcs, so a hole would be four quarter arcs and that reduction would
+ * never run even though the header asked for it. Folding the sub-arcs of one
+ * complete counter-clockwise circle back into one block makes the controller's
+ * own reduction work, and matches the full-circle form the QtPlasmaC manual
+ * uses for holes.
+ *
+ * Clockwise complete circles are deliberately left split. A closed clockwise
+ * circle is a hole cut the wrong way round, which the same filter warns about,
+ * and an outside contour is legitimately clockwise; folding only
+ * counter-clockwise circles therefore cannot introduce that warning.
+ *
+ * Applied to plasma programs only, and before the motion trace is captured, so
+ * the debug view reads the same descriptors the emitter writes.
+ */
+export function foldFullCircleArcs(moves: readonly FittedMoveDescriptor[]): FittedMoveDescriptor[] {
+  const folded: FittedMoveDescriptor[] = []
+  let index = 0
+  while (index < moves.length) {
+    const first = moves[index]
+    if (first.kind !== 'arc' || first.clockwise) {
+      folded.push(first)
+      index += 1
+      continue
+    }
+    let end = index + 1
+    while (end < moves.length) {
+      const next = moves[end]
+      if (next.kind !== 'arc' || next.clockwise || next.runId !== first.runId) break
+      end += 1
+    }
+    const run = moves.slice(index, end) as ArcMoveDescriptor[]
+    const last = run[run.length - 1]
+    if (run.length > 1 && sameMachinePoint(last.endPoint, first.startPoint)) {
+      folded.push({ ...first, endPoint: { ...first.startPoint } })
+    } else {
+      folded.push(...run)
+    }
+    index = end
+  }
+  return folded
 }
 
 // ── The program's setup ───────────────────────────────────────
@@ -522,6 +583,14 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
       source: move.source,
       feedScale: move.feedScale,
     }))
+  }
+
+  // QtPlasmaC identifies a hole from a single closed arc block; a plasma
+  // program folds one back together so its own feed reduction can run (see
+  // `foldFullCircleArcs`). Done before the trace is captured so the exported
+  // motion the debug view compares is the motion that was emitted.
+  if (definition.plasma?.pierceMode === 'controller') {
+    steps = foldFullCircleArcs(steps)
   }
 
   if (!captureTrace) {

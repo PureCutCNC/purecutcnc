@@ -28,7 +28,8 @@ import { defaultTool } from '../../types/project'
 import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
 import { normalizeToolForProject } from '../toolpaths/geometry'
 import { runPostProcessor } from './postprocessor'
-import { planPlasmaPath } from './motionPipeline'
+import { foldFullCircleArcs, planPlasmaPath } from './motionPipeline'
+import type { ArcMoveDescriptor } from './arcFitting'
 
 const TORCH_ON = 'M3 $0 S1'
 const TORCH_OFF = 'M5 $0'
@@ -119,17 +120,68 @@ for (const [name, scenario] of Object.entries(PLASMA_EXPORT_SCENARIOS)) {
   assert.deepEqual(thirdOp.map((warning) => warning.code), ['postNoToolChangeCommands', 'postNoToolChangeCommands'], 'a different consumable is disclosed, not paused for')
 }
 
-// A tool with no material number blocks the export; material 0 is a real
-// QtPlasmaC material and is selected.
+// A tool with no material number, or one outside the selectable range, blocks
+// the export. QtPlasmaC reserves 1000000+ for the temporary materials it
+// numbers itself, and this project's simulator reserves 0 for "nothing
+// selected" — neither may be selected by CAM. This is the project's contract:
+// it is not a claim that every controller forbids material 0.
 {
   const spec = PLASMA_EXPORT_SCENARIOS['single-outline']()
-  const missing = exportPlasma({ ...spec, operations: [{ featureIds: ['plate'], tool: { qtplasmacMaterialNumber: undefined } }] }).result
-  assert.deepEqual(missing.warnings, [{ code: 'postPlasmaMaterialMissing', params: { operation: 'Cut 1', tool: 'Torch 1' } }])
+  const blocked = (material: number | undefined) =>
+    exportPlasma({ ...spec, operations: [{ featureIds: ['plate'], tool: { qtplasmacMaterialNumber: material } }] }).result
+  const missingWarning = [{ code: 'postPlasmaMaterialMissing' as const, params: { operation: 'Cut 1', tool: 'Torch 1' } }]
+
+  const missing = blocked(undefined)
+  assert.deepEqual(missing.warnings, missingWarning)
   assert.equal(warningSeverity('postPlasmaMaterialMissing'), 'error', 'a missing material blocks saving')
   assert.ok(!missing.gcode.includes('M190'), 'no material is invented')
-  const zero = exportPlasma({ ...spec, operations: [{ featureIds: ['plate'], tool: { qtplasmacMaterialNumber: 0 } }] }).result
-  assert.deepEqual(zero.warnings, [])
-  assert.ok(codeLines(zero.gcode).includes('M190 P0'))
+
+  for (const reserved of [0, 1000000]) {
+    const result = blocked(reserved)
+    assert.deepEqual(result.warnings, missingWarning, `material ${reserved} is not selectable and blocks the export`)
+    assert.equal(warningSeverity('postPlasmaMaterialMissing'), 'error', `material ${reserved} is an error, not a warning`)
+    assert.ok(!codeLines(result.gcode).some((line) => line.startsWith('M190')), `material ${reserved} must not be selected`)
+  }
+
+  // The boundary: the highest permanent material is selectable, one past it is
+  // the first reserved temporary number.
+  const top = blocked(999999)
+  assert.deepEqual(top.warnings, [])
+  assert.ok(codeLines(top.gcode).includes('M190 P999999'), 'the highest permanent material is selected')
+}
+
+// A hole under QtPlasmaC's 32 mm default is written as one closed arc block.
+// Its load filter only recognises a hole from a single G2/G3 whose end is the
+// point the previous block left the torch at, and only inspects lines carrying
+// the G-code word itself; the simulator then asserts the speed reduction
+// actually runs. Arc fitting's ≤ 90° sub-arcs are folded back together here.
+{
+  const { result } = exportPlasma(PLASMA_EXPORT_SCENARIOS['small-hole']())
+  assert.deepEqual(result.warnings, [])
+  const moves = cuts(result.gcode)[0].moves
+  assert.equal(moves.length, 2, 'a straight lead-in, then the whole hole')
+  const lead = /^G1 X(-?[\d.]+) Y(-?[\d.]+)$/.exec(moves[0])
+  const circle = /^G3 X(-?[\d.]+) Y(-?[\d.]+) I(-?[\d.]+) J(-?[\d.]+)$/.exec(moves[1])
+  assert.ok(lead, `the lead-in is a line, got ${moves[0]}`)
+  assert.ok(circle, `the hole is one explicit G3 block, got ${moves[1]}`)
+  assert.equal(circle[1], lead[1], 'the circle ends on its own start X')
+  assert.equal(circle[2], lead[2], 'the circle ends on its own start Y')
+  const diameter = 2 * Math.hypot(Number(circle[3]), Number(circle[4]))
+  assert.ok(diameter > 0 && diameter < 32, `the hole is under QtPlasmaC's 32 mm default, got ${diameter}`)
+}
+
+// An outside contour in the real exporter keeps its sub-arcs: its cut run is
+// closed by the lead-out rather than by the fitted run itself, so there is no
+// single closed G2 block for QtPlasmaC's "cut a hole clockwise?" warning. The
+// clockwise guard itself is pinned by the fold unit test above.
+{
+  const { result } = exportPlasma(PLASMA_EXPORT_SCENARIOS['arc-lead-ins']())
+  const moves = cuts(result.gcode)[0].moves
+  const g2 = moves.filter((line) => line.startsWith('G2'))
+  assert.equal(g2.length, 1, 'the clockwise disc still starts with an explicit G2')
+  const end = /X(-?[\d.]+) Y(-?[\d.]+)/.exec(g2[0])!
+  const before = /X(-?[\d.]+) Y(-?[\d.]+)/.exec(moves[moves.indexOf(g2[0]) - 1])!
+  assert.ok(end[1] !== before[1] || end[2] !== before[2], 'the clockwise disc is not folded into a closed block')
 }
 
 // A milling operation in a plasma program is left out with a warning; the
@@ -179,6 +231,34 @@ for (const [name, scenario] of Object.entries(PLASMA_EXPORT_SCENARIOS)) {
   assert.ok(Math.abs(mirroredArea - unmirroredArea) < 1e-6, 'the mirrored program, mapped back, cuts the same direction')
 }
 
+// The fold: a complete counter-clockwise circle becomes one closed block; a
+// clockwise or open run is left exactly as it was.
+{
+  const arc = (from: number[], to: number[], clockwise: boolean, runId: number): ArcMoveDescriptor => ({
+    kind: 'arc', startPoint: { x: from[0], y: from[1], z: 1 }, endPoint: { x: to[0], y: to[1], z: 1 },
+    centerOffsets: { i: 0, j: 0 }, clockwise, runId, runFallback: [],
+  })
+  const square = (clockwise: boolean, runId: number, close: boolean) => [
+    arc([0, 0], [1, 0], clockwise, runId),
+    arc([1, 0], [1, 1], clockwise, runId),
+    arc([1, 1], [0, 1], clockwise, runId),
+    arc([0, 1], close ? [0, 0] : [0, 2], clockwise, runId),
+  ]
+
+  const folded = foldFullCircleArcs(square(false, 1, true))
+  assert.equal(folded.length, 1, 'a complete counter-clockwise circle is one block')
+  const only = folded[0]
+  assert.ok(only.kind === 'arc' && only.endPoint.x === only.startPoint.x && only.endPoint.y === only.startPoint.y, 'the block ends on its own start')
+
+  assert.equal(foldFullCircleArcs(square(true, 2, true)).length, 4, 'a clockwise complete circle stays split')
+  assert.equal(foldFullCircleArcs(square(false, 3, false)).length, 4, 'an open counter-clockwise run stays split')
+  const twoRuns = [...square(false, 4, true), ...square(false, 5, true)]
+  const both = foldFullCircleArcs(twoRuns)
+  assert.equal(both.length, 2, 'two runs are not merged across their run ids')
+  assert.deepEqual(both.filter((d) => d.kind === 'linear'), [], 'no linear pass-through is invented')
+  assert.deepEqual(foldFullCircleArcs([{ kind: 'linear', point: { x: 0, y: 0, z: 0 }, moveKind: 'cut' }]).length, 1, 'linear moves pass through')
+}
+
 // The cut planner: travel, then a cut from each plunge to the next rapid.
 {
   const point = (x: number, y: number, z: number) => ({ x, y, z })
@@ -200,4 +280,4 @@ for (const [name, scenario] of Object.entries(PLASMA_EXPORT_SCENARIOS)) {
 // A rectangle helper sanity check keeps the fixtures honest.
 assert.equal(rectangle(0, 0, 2, 3).segments.length, 4)
 
-console.log('plasmaOutput.test.ts: QtPlasmaC handshake, torch pairs, no Z/F, skips, material errors and mirrored direction passed')
+console.log('plasmaOutput.test.ts: QtPlasmaC handshake, torch pairs, no Z/F, skips, material range, small-hole fold and mirrored direction passed')

@@ -116,9 +116,16 @@ the spindle path. What the machine is asked to do is decided in
 - `planProgramSequence` takes its plasma branch (`planPlasmaSequence`): no
   spindle, coolant or tool-change word is written. A non-`plasma_profile`
   operation is left out with `postPlasmaOperationSkipped`. A plasma tool with
-  no `qtplasmacMaterialNumber` raises `postPlasmaMaterialMissing`, which blocks
-  the export. A different plasma tool raises `postNoToolChangeCommands`: a
-  consumable swap is not paused for.
+  no selectable `qtplasmacMaterialNumber` raises `postPlasmaMaterialMissing`,
+  which blocks the export. A different plasma tool raises
+  `postNoToolChangeCommands`: a consumable swap is not paused for.
+- A persistent QtPlasmaC material number must be an integer from 1 to 999999.
+  The manual reserves 1000000 and above for the temporary materials QtPlasmaC
+  numbers itself, whose material change CAM must never emit; 0 is the sentinel
+  this project's simulator reserves for "nothing selected" (not a general
+  QtPlasmaC prohibition). A stored number outside the range is cleared at the
+  load/import boundary rather than thrown, so the file still opens and the
+  export blocks with `postPlasmaMaterialMissing` until a real material is set.
 - The material handshake is written before an operation's first cut when the
   material differs from the one selected before: `materialSelectCommand` with
   `{materialNumber}` substituted, then `materialWaitCommand`, then
@@ -129,6 +136,13 @@ the spindle path. What the machine is asked to do is decided in
   next `rapid` (#957 writes each contour that way), so the lead-in, contour and
   lead-out are all cut with the torch on. Arc fitting never joins moves of
   different kinds, so no fitted arc spans a cut boundary.
+- A complete counter-clockwise circle is folded into one G2/G3 block
+  (`foldFullCircleArcs`, plasma only). QtPlasmaC recognises a hole only from a
+  single closed arc block, and only inspects lines that carry the G-code word,
+  so the ≤ 90° sub-arcs arc fitting produces would otherwise leave the
+  controller's `#<holes>` reduction unexecuted. Clockwise complete circles stay
+  split: a closed clockwise circle is a hole cut the wrong way round, which the
+  controller warns about.
 - Each cut is an XY rapid to the pierce point, `torchOnCommand`, the cut moves,
   then `torchOffCommand`. No Z word is written, because QtPlasmaC probes,
   pierces and drops to cut height itself and its load filter strips Z motion.
@@ -138,10 +152,11 @@ the spindle path. What the machine is asked to do is decided in
   over the sheet.
 
 The exported programs run through the QtPlasmaC simulator
-(`scripts/gcode-conformance/qtplasmac/`, `EXPORTED_CASES`), one exported twin
-per reference program. `pierceMode: gcode` (#983) is still metadata only and
-keeps `postPlasmaOutputPending` until its torch path lands on the same
-pipeline.
+(`scripts/gcode-conformance/qtplasmac/`, `EXPORTED_CASES`), the exporter's own
+program for each reference subject. The exported small-hole case must show the
+controller's automatic feed reduction in the run trace, not merely carry the
+`#<holes>` header. `pierceMode: gcode` (#983) is still metadata only and keeps
+`postPlasmaOutputPending` until its torch path lands on the same pipeline.
 
 The bundled **Grbl plasma (OpenBuilds CONTROL) (experimental)** machine is the
 `gcode` counterpart, from a requester's OpenBuilds CONTROL table (#983). Its

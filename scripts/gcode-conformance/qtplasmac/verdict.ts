@@ -26,20 +26,22 @@
 
 /**
  * One change in the run trace:
- * `[sample, spindleOn, torchOn, motionType, programLine, moving, feed, materialFeed]`.
+ * `[sample, spindleOn, torchOn, motionType, programLine, moving, feed, materialFeed, adaptiveFeed]`.
  *
  * Sampled every servo period (1 kHz); an event is kept only when something
  * changed, so each one holds until the next. `spindleOn` is the program's own
  * M3/M5 (`spindle.0.on`), `torchOn` is QtPlasmaC's torch output
  * (`plasmac.torch-on`), `motionType` is LinuxCNC's `motion.motion-type`,
  * `feed` is the F word in effect for the move being executed, with
- * QtPlasmaC's velocity reduction divided out, and `materialFeed` is the cut
- * feed of the material QtPlasmaC has loaded (`plasmac.cut-feed-rate`), both
- * in machine units per minute.
+ * QtPlasmaC's velocity reduction divided out, `materialFeed` is the cut
+ * feed of the material QtPlasmaC has loaded (`plasmac.cut-feed-rate`), and
+ * `adaptiveFeed` is the dimensionless factor QtPlasmaC is scaling the feed
+ * by (`plasmac.adaptive-feed`). The two feeds are in machine units per
+ * minute.
  */
 export type TraceEvent = [
   sample: number, spindleOn: number, torchOn: number, motionType: number, programLine: number, moving: number,
-  feed: number, materialFeed: number,
+  feed: number, materialFeed: number, adaptiveFeed: number,
 ]
 
 /** What QtPlasmaC's own sequence was doing when a run ran out of time. */
@@ -192,6 +194,27 @@ function judgeMaterial(run: SimRun): Finding[] {
     message: `the torch fired on QtPlasmaC's default material (${DEFAULT_MATERIAL}): `
       + 'no material select took effect before the first torch-on',
   }]
+}
+
+/**
+ * The strongest feed reduction QtPlasmaC applied while actually cutting, as a
+ * fraction of the material feed (its small-hole default is 0.6), or null when
+ * none was observed.
+ *
+ * The header `#<holes> = 1` only asks for hole handling; whether QtPlasmaC
+ * recognised a hole and reduced the feed is observable in the run and nowhere
+ * else. An exported small-hole program must show this, or the header claim is
+ * unproven.
+ */
+export function holeReduction(run: SimRun): { line: number; factor: number } | null {
+  let strongest: { line: number; factor: number } | null = null
+  for (const [, , torchOn, motionType, line, moving, , , adaptiveFeed] of run.events) {
+    if (moving !== 1 || torchOn !== 1) continue
+    if (motionType !== MOTION_FEED && motionType !== MOTION_ARC) continue
+    if (!(adaptiveFeed > 0) || adaptiveFeed >= 1) continue
+    if (!strongest || adaptiveFeed < strongest.factor) strongest = { line, factor: adaptiveFeed }
+  }
+  return strongest
 }
 
 /** A program line with its comments and spacing removed, upper-cased. */

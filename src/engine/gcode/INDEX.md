@@ -37,9 +37,11 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
   feed and speed fallbacks, pending plasma output and unexecutable tool-change
-  warnings; its plasma branch decides skipped operations and the QtPlasmaC
-  material handshake, #959), `planPlasmaPath` (torch-off travel and torch-on
-  cuts, #959), `planOperationMotion`
+  warnings; its plasma branch decides skipped operations, the selectable
+  QtPlasmaC material range and the material handshake, #959), `planPlasmaPath`
+  (torch-off travel and torch-on cuts, #959), `foldFullCircleArcs` (a complete
+  counter-clockwise circle as one block, so QtPlasmaC's hole handling can
+  recognise it), `planOperationMotion`
   (project → machine transform, arc fitting, the emitted-arc fallback and its
   warnings, the motion trace), `planDrillCycles` (drill cycles in machine
   coordinates, for a dialect with canned cycles), `splitRapid` (the safe-Z
@@ -82,7 +84,7 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   `grbl-plasma.json` is the G-code-owned counterpart (per-cut touch-off, #983),
   still metadata only.
 - `legacyMachineParity.test.ts` + `legacyMachineParity.json` — 42 frozen pre-#956 output cases across every existing machine, both units, arcs, tool changes and drilling; only the clock date is normalized.
-- `plasmaOutput.test.ts` — the QtPlasmaC torch path (#959): material handshake order and when it repeats, one torch pair per contour, no Z or numeric F, skipped milling operations, the blocking missing-material error, and physical direction under a mirrored axis.
+- `plasmaOutput.test.ts` — the QtPlasmaC torch path (#959): material handshake order and when it repeats, the selectable material range (0 and 1000000+ block), one torch pair per contour, no Z or numeric F, the small hole folded to one closed G3, skipped milling operations, the blocking missing-material error, and physical direction under a mirrored axis.
 - `*.test.ts` — `postprocessor.test.ts` (G-code), `motionPipeline.test.ts`
   (sequencing, drill-cycle transform, rapid split, and both emitters checked
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect

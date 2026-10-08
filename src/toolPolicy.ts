@@ -42,6 +42,31 @@ export function withCompatibleOperationTool(project: Project, operation: Operati
   return tool && !isToolCompatibleWithOperation(tool, operation.kind) ? { ...operation, toolRef: null } : operation
 }
 
+/**
+ * Bounds of a persistent QtPlasmaC material number.
+ *
+ * The QtPlasmaC manual ("Material File") reserves 1000000 and above for the
+ * temporary materials QtPlasmaC numbers itself: "the material change will also
+ * be done by QtPlasmaC and should not be added to the G-code file by CAM
+ * software or otherwise". CAM must therefore never emit one.
+ *
+ * 0 is not a QtPlasmaC rule: it is the sentinel this project's QtPlasmaC
+ * simulator reserves for "nothing selected" (`DEFAULT_MATERIAL` in
+ * `verdict.ts`, defined as material 0 in `sim/materials-*.cfg`). The approved
+ * #959 contract blocks an export whose tool has no material number, so a
+ * stored 0 is treated as unset rather than as a selectable material. Do not
+ * read this as every controller forbidding material 0.
+ */
+export const QTPLASMAC_MATERIAL_MIN = 1
+export const QTPLASMAC_MATERIAL_MAX = 999999
+
+/** A material number the export may select: a positive integer below the
+ *  range QtPlasmaC reserves for its own temporary materials. */
+export function isSelectableQtPlasmacMaterialNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value)
+    && value >= QTPLASMAC_MATERIAL_MIN && value <= QTPLASMAC_MATERIAL_MAX
+}
+
 /** Shape defaults for migration/import: absent consumable settings stay unconfigured. */
 export function plasmaToolDefaults(units: Tool['units']): Omit<Tool, 'id' | 'name'> {
   return {
@@ -83,9 +108,14 @@ export function normalizePlasmaTool(tool: Tool): Tool {
       throw new Error(`Invalid plasma tool ${tool.id}: ${field} must be finite and non-negative.`)
     }
   }
+  // A stored material number that is not selectable is cleared, never thrown:
+  // a project file must still open when it carries one (0, a negative value or
+  // a reserved 1000000+ temporary), and the export then blocks with
+  // `postPlasmaMaterialMissing` until the operator sets a real material. See
+  // `isSelectableQtPlasmacMaterialNumber` for why the range is what it is.
   if (normalized.qtplasmacMaterialNumber !== undefined
-    && (!Number.isSafeInteger(normalized.qtplasmacMaterialNumber) || normalized.qtplasmacMaterialNumber < 0)) {
-    throw new Error(`Invalid plasma tool ${tool.id}: QtPlasmaC material number must be a non-negative integer.`)
+    && !isSelectableQtPlasmacMaterialNumber(normalized.qtplasmacMaterialNumber)) {
+    delete normalized.qtplasmacMaterialNumber
   }
   return normalized
 }

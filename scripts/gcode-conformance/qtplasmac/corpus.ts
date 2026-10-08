@@ -54,6 +54,12 @@ export interface PlasmaCase {
    */
   fault?: 'refused-start'
   startAttempts?: number
+  /**
+   * The program must make QtPlasmaC apply its automatic small-hole feed
+   * reduction at run time. Set on the exported small-hole case; the header
+   * alone (`#<holes> = 1`) is not evidence that the reduction happened.
+   */
+  expectHoleReduction?: boolean
 }
 
 const FIXTURE_DIR = join(import.meta.dirname, 'fixtures')
@@ -155,21 +161,37 @@ export const NEGATIVE_CASES: PlasmaCase[] = [
 /**
  * Programs produced by the plasma exporter (#959), generated on demand from
  * the current exporter so this checks what we emit today rather than a
- * committed snapshot. Each mirrors the reference case of the same name, so a
- * difference between a hand-written program and its exported twin is visible
- * in one place. The scenarios live in `src/test/plasmaExportFixtures.ts`, where
- * the unit test (`src/engine/gcode/plasmaOutput.test.ts`) exports the same
- * projects.
+ * committed snapshot. Each is the exporter's program for the *subject* of the
+ * reference case of the same name; the two are written independently, so a
+ * contour count may differ and neither is a line-for-line copy of the other:
+ *
+ * - `nested-sheet`: the reference cuts three parts and a hole (four pierces),
+ *   the exported scenario three plain parts (three pierces);
+ * - `arc-lead-ins`: the reference is a rounded plate with a hole, the exported
+ *   scenario a single disc;
+ * - `inch-output`: the reference cuts a hole and an outline (two contours), the
+ *   exported scenario a single outline;
+ * - `single-outline` and `part-with-holes`: same subject and contour count as
+ *   their reference.
+ *
+ * The scenarios live in `src/test/plasmaExportFixtures.ts`, where the unit
+ * test (`src/engine/gcode/plasmaOutput.test.ts`) exports the same projects.
  *
  * Constraints the simulator imposes, which the scenarios keep:
  * - material 1 or 2 (`sim/materials-*.cfg`); material 0 is reserved as
- *   "nothing selected" and fails the `material` rule by design;
+ *   "nothing selected" and fails the `material` rule by design, while the
+ *   exporter also refuses 1000000+ (QtPlasmaC's temporary-material range);
  * - X/Y within 0-1200 mm (0-48 in on the imperial machine);
  * - small, because the run is real time.
  */
-const exported = (name: string, machine: SimMachine, covers: string): PlasmaCase => ({
+const exported = (
+  name: string,
+  machine: SimMachine,
+  covers: string,
+  options: { expectHoleReduction?: boolean } = {},
+): PlasmaCase => ({
   name: `exported-${name}${machine === 'metric' && name === 'inch-output' ? '-on-metric-machine' : ''}`,
-  covers: `exported twin of ${name}: ${covers}`,
+  covers: `exported program for the ${name} subject: ${covers}`,
   machine,
   program: () => {
     const { result } = exportPlasma(PLASMA_EXPORT_SCENARIOS[name]())
@@ -179,6 +201,7 @@ const exported = (name: string, machine: SimMachine, covers: string): PlasmaCase
     return result.gcode
   },
   expect: 'pass',
+  ...options,
 })
 
 export const EXPORTED_CASES: PlasmaCase[] = [
@@ -186,6 +209,7 @@ export const EXPORTED_CASES: PlasmaCase[] = [
   exported('part-with-holes', 'metric', 'two holes before the outline, arc-fitted circles'),
   exported('nested-sheet', 'metric', 'three parts, three pierces under one material select'),
   exported('arc-lead-ins', 'metric', 'a disc with arc lead-in and arc lead-out'),
+  exported('small-hole', 'metric', 'a 20 mm hole, which QtPlasmaC must reduce to 60% of the cut feed', { expectHoleReduction: true }),
   exported('inch-output', 'imperial', 'a G20 program on an inch machine'),
   exported('inch-output', 'metric', 'the same G20 program on a metric machine'),
 ]
