@@ -119,6 +119,33 @@ test('simulation follows the selected setup, cuts Bottom from the top of the fli
   await expect(ui.simSetup.picker(page)).toHaveValue('setup-bottom')
 })
 
+// Review of PR #992: the picker changes what must be acquired without
+// changing the project, so a set acquired for the other setup must not count
+// as ready. Here Bottom's earlier operation is still being produced when the
+// picker returns to Bottom: playback must wait for it, not start on fresh
+// stock without that operation's cut.
+test('switching setups waits for the new setup\'s acquisition before offering playback', async ({ app }) => {
+  const { page } = app
+  const project = await seedTwoSetups(page)
+  const bottom = project.operations.find((operation) => operation.id === 'op-bottom')!
+  project.operations.push({ ...bottom, id: 'op-bottom-2', name: 'Bottom pass 2' })
+  const steps = await page.evaluate(async ({ project, topId }) => {
+    const probeUrl = '/e2e/setupSimulationProbe.ts'
+    const { runPickerTransitionProbe } = await import(probeUrl) as typeof import('./setupSimulationProbe')
+    return runPickerTransitionProbe(project, 'op-bottom-2', topId)
+  }, { project, topId: project.setups[0].id })
+
+  expect(steps.initial).toMatchObject({ setup: 'setup-bottom', pending: true, playback: false })
+  expect(steps.acquired).toMatchObject({ setup: 'setup-bottom', pending: false, playback: true })
+  expect(steps.acquired.baseCutCells).toBeGreaterThan(0)
+  // Top: the selected Bottom operation is not simulated there.
+  expect(steps.other).toMatchObject({ setup: project.setups[0].id, playback: false })
+  // Back on Bottom with its earlier operation still held: not ready.
+  expect(steps.backHeld).toMatchObject({ setup: 'setup-bottom', pending: true, playback: false })
+  expect(steps.backAcquired).toMatchObject({ setup: 'setup-bottom', pending: false, playback: true })
+  expect(steps.backAcquired.baseCutCells).toBe(steps.acquired.baseCutCells)
+})
+
 test('a single-setup project simulates as before, with no picker and no note', async ({ app, ui }) => {
   const { page } = app
   await seedTwoSetups(page, false)

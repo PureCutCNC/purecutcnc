@@ -134,10 +134,13 @@ export function useSimulationModel({
    * playback callback — the base-grid supplier below closes over what has
    * already been resolved and can never start work of its own.
    *
-   * `resolvedFor` stamps which project the paths belong to, so a set acquired
-   * for an older revision is never mixed into a simulation of the current one.
+   * Each set is stamped with the project revision and the requirement it
+   * answers, so a set acquired for an older revision — or for another setup or
+   * selection of the same revision (issue #947: the picker changes the
+   * requirement without changing the project) — is never mixed into the
+   * simulation now asked for.
    */
-  const [acquired, setAcquired] = useState<{ project: Project; paths: Map<string, ToolpathResult> } | null>(null)
+  const [acquired, setAcquired] = useState<{ project: Project; requiredKey: string; paths: Map<string, ToolpathResult> } | null>(null)
 
   // Every operation simulation may need: the visible set for 'visible' mode,
   // and the prior operations for 'selected' playback's starting stock.
@@ -175,7 +178,7 @@ export function useSimulationModel({
       for (const { operationId, toolpath } of entries) {
         if (toolpath) paths.set(operationId, toolpath)
       }
-      setAcquired({ project, paths })
+      setAcquired({ project, requiredKey, paths })
     })()
     return () => {
       cancelled = true
@@ -184,7 +187,7 @@ export function useSimulationModel({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- requiredKey stands in for the id list; `project` identity is what a re-acquire keys on
   }, [centerTab, requiredKey, project, requestToolpath])
 
-  // Only paths acquired for *this* project revision may be used. A pending or
+  // Only paths acquired for *this* project revision and requirement may be used. A pending or
   // superseded acquisition leaves this null, which is what stops a playback
   // starting on a mixed input set.
   //
@@ -194,7 +197,7 @@ export function useSimulationModel({
   // that does not exist.
   const paths: ReadonlyMap<string, ToolpathResult> | null = requiredOperationIds.length === 0
     ? NO_PATHS
-    : acquired && acquired.project === project ? acquired.paths : null
+    : acquired && acquired.project === project && acquired.requiredKey === requiredKey ? acquired.paths : null
   const simulationInputPending = centerTab === 'simulation' && paths === null
 
   /**
