@@ -67,6 +67,8 @@ import { useClickPlacement } from './useClickPlacement'
 import { usePointerGestures } from './usePointerGestures'
 import { useNavigationViewState } from './useNavigationViewState'
 import { useSnapPreview } from './useSnapPreview'
+import { referencePickContext } from './referencePickIntent'
+import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
 import { useCanvasContextMenu } from './useCanvasContextMenu'
 import { drawDimensionAnchorDots, drawDimensions, drawPendingDimensionPreview, drawTapeMeasure } from './dimensionRendering'
 import {
@@ -556,7 +558,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     return n === 0 ? t('canvas.dimension.step.firstPoint') : n === 1 ? t('canvas.dimension.step.secondPoint') : t('canvas.dimension.step.setOffset')
   })()
 
-  const snap = useSnapPreview({
+  const snap = useSnapPreview({ ...referencePickContext,
     snapSettingsRef,
     projectRef,
     selectionRef,
@@ -2434,7 +2436,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
             : null
         } else if (pending && pending.phase === 'pick-reference' && pending.subject) {
           // Keep subject point highlighted + show reference candidate
-          const hit = segmentHitTest(livePoint, project, vt, { openOnly: false })
+          const hit = segmentHitTest(livePoint, project, vt, { openOnly: false, referenceFeatures: referenceProjectFeatures(project, useFaceViewStore.getState().showOtherSide) })
           sketchEditPreviewRef.current = hit
             ? { point: hit.point, mode: sketchEditTool }
             : { point: pending.subject.point, mode: sketchEditTool }
@@ -2763,7 +2765,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     resetLock,
   })
 
-  const gestures = usePointerGestures({
+  const gestures = usePointerGestures({ ...referencePickContext,
     isDraggingNodeRef,
     dragStartWorldRef,
     touchDragPendingRef,
@@ -2842,7 +2844,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
     onZoomWindowComplete,
   })
 
-  const clickPlacement = useClickPlacement({
+  const clickPlacement = useClickPlacement({ ...referencePickContext,
     suppressClickRef,
     didPanRef,
     isDraggingNodeRef,

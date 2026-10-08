@@ -20,6 +20,8 @@
  * face, and the explicit change of a feature's authoring face.
  */
 
+import type { DimensionAnnotation } from '../src/types/project'
+import { seedConstructionReferences, referenceCanvasPoint, pickReference, referenceSnapshot, referenceSnapIndicator } from './constructionReferences.helpers'
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import {
@@ -574,4 +576,142 @@ test.describe('landscape tablet', () => {
     await ui.face.segment(page, 'Top').tap()
     await expect(ui.face.segment(page, 'Top')).toHaveAttribute('aria-pressed', 'true')
   })
+})
+
+for (const face of ['top', 'bottom'] as const) {
+  for (const axis of ['x', 'y'] as const) {
+    test(`#994 ${face}/${axis}: reference point preview and capture keep construction read-only`, async ({ app, ui }) => {
+      const { page } = app
+      const options = { face, axis }
+      await seedConstructionReferences(page, options)
+      const canvas = page.locator('canvas.sketch-canvas')
+      const before = withoutModified(await getProject(page))
+      const guideBefore = referenceSnapshot(before)
+      // Normal click, double-click, row click and Delete cannot enter foreign editing.
+      await pickReference(canvas, options, 20, 15)
+      await canvas.dblclick({ position: await referenceCanvasPoint(canvas, options, 20, 15) })
+      await featureRow(page, 'reference-guide').click()
+      await page.keyboard.press('Delete')
+      await expect(featureRow(page, 'reference-guide')).not.toHaveClass(/tree-row--selected/)
+      await expect(page.locator('.canvas-workflow-panel--edit')).toHaveCount(0)
+      expect(withoutModified(await getProject(page))).toEqual(before)
+      await startAddRectPlacement(page)
+      const nearCorner = await referenceCanvasPoint(canvas, options, 20.3, 15.2)
+      await canvas.hover({ position: nearCorner })
+      await expect(referenceSnapIndicator(page)).toHaveCount(1)
+      await ui.face.otherSideToggle(page).click()
+      await canvas.hover({ position: nearCorner })
+      await expect(referenceSnapIndicator(page)).toHaveCount(0)
+      await ui.face.otherSideToggle(page).click()
+      await canvas.hover({ position: nearCorner })
+      await expect(referenceSnapIndicator(page)).toHaveCount(1)
+      await canvas.click({ position: nearCorner })
+      expect(withoutModified(await getProject(page))).toEqual(before)
+      await cancelPendingAdd(page)
+      expect(withoutModified(await getProject(page))).toEqual(before)
+      await startAddRectPlacement(page)
+      await canvas.click({ position: nearCorner })
+      await pickReference(canvas, options, 50, 25)
+      await cancelPendingAdd(page)
+      const after = await getProject(page)
+      expect(referenceSnapshot(after)).toEqual(guideBefore)
+      const rows = after.features as Array<{ id: string; definitionId: string; authoringFace: string }>
+      const created = rows.find(row => !['reference-source', 'reference-guide', 'reference-cutter', 'reference-subject', 'reference-run'].includes(row.id))!
+      expect(created.authoringFace).toBe(face)
+      const definitions = after.featureDefinitions as Record<string, { profile: { start: { x: number; y: number } } }>
+      // New definitions are local; resolve the saved instance to check the actual stock point.
+      const saved = rows.find(row => row.id === created.id) as typeof created & { transform: { a: number; b: number; c: number; d: number; e: number; f: number } }
+      const { start } = definitions[created.definitionId].profile
+      const m = saved.transform
+      expect(m.a * start.x + m.c * start.y + m.e).toBeCloseTo(20, 7)
+      expect(m.b * start.x + m.d * start.y + m.f).toBeCloseTo(15, 7)
+      expect(definitions[created.definitionId]).toBeDefined()
+      await page.getByRole('button', { name: 'Undo', exact: true }).first().click()
+      expect(withoutModified(await getProject(page))).toEqual(before)
+    })
+  }
+}
+
+for (const variant of [{ hidden: true }, { role: 'line' as const }]) {
+  test(`#994 hidden/nonconstruction reference cannot snap ${JSON.stringify(variant)}`, async ({ app }) => {
+    const options = { face: 'bottom' as const, axis: 'y' as const, ...variant }
+    await seedConstructionReferences(app.page, options)
+    await startAddRectPlacement(app.page)
+    const canvas = app.page.locator('canvas.sketch-canvas')
+    await canvas.hover({ position: await referenceCanvasPoint(canvas, options, 20.3, 15.2) })
+    await expect(referenceSnapIndicator(app.page)).toHaveCount(0)
+    const before = withoutModified(await getProject(app.page))
+    await pickReference(canvas, options, 20.3, 15.2)
+    await cancelPendingAdd(app.page)
+    expect(withoutModified(await getProject(app.page))).toEqual(before)
+  })
+}
+
+test('#994 a cross-face anchored dimension stays a measurement and construction remains an invalid CAM target', async ({ app, ui }) => {
+  const options = { face: 'bottom' as const, axis: 'x' as const, locked: false }
+  await seedConstructionReferences(app.page, options)
+  const canvas = app.page.locator('canvas.sketch-canvas')
+  const before = referenceSnapshot(await getProject(app.page))
+  await app.page.getByRole('button', { name: 'Add dimension', exact: true }).first().click()
+  await app.page.getByRole('button', { name: 'Horizontal dimension', exact: true }).click()
+  await pickReference(canvas, options, 20, 15)
+  await pickReference(canvas, options, 50, 15)
+  await pickReference(canvas, options, 35, 8)
+  const project = await getProject(app.page)
+  const annotations = project.annotations as DimensionAnnotation[]
+  expect(annotations).toHaveLength(1)
+  expect(annotations[0].a).toMatchObject({ kind: 'vertex', target: { source: 'feature', featureId: 'reference-guide' } })
+  expect(annotations[0].b).toMatchObject({ kind: 'vertex', target: { source: 'feature', featureId: 'reference-guide' } })
+  await pickReference(canvas, options, 35, 8)
+  await expect(app.page.locator('.canvas-workflow-panel--driving-edit')).toHaveCount(0)
+  expect(referenceSnapshot(await getProject(app.page))).toEqual(before)
+  await ui.face.segment(app.page, 'Top').click()
+  await featureRow(app.page, 'reference-guide').click()
+  await app.page.getByRole('button', { name: 'Add to Top', exact: true }).click()
+  await expect(ui.operations.addMenuAvailableRows(app.page)).toHaveCount(0)
+  await ui.operations.addMenuUnavailableToggle(app.page).click()
+  const addButtons = ui.operations.addMenuUnavailableRows(app.page).getByRole('button', { name: 'Add', exact: true })
+  expect(await addButtons.count()).toBeGreaterThan(0)
+  for (const button of await addButtons.all()) await expect(button).toBeDisabled()
+})
+
+test('#994 a foreign construction point cannot become a fixed-distance constraint reference', async ({ app }) => {
+  const options = { face: 'bottom' as const, axis: 'y' as const }
+  await seedConstructionReferences(app.page, options)
+  const before = withoutModified(await getProject(app.page))
+  const menu = await openRowContextMenu(app.page, featureRow(app.page, 'reference-source'))
+  await menu.getByRole('button', { name: 'Add constraint', exact: true }).click()
+  const canvas = app.page.locator('canvas.sketch-canvas')
+  await pickReference(canvas, options, 80, 40)
+  await canvas.hover({ position: await referenceCanvasPoint(canvas, options, 20.3, 15.2) })
+  await expect(referenceSnapIndicator(app.page)).toHaveCount(0)
+  await pickReference(canvas, options, 20.3, 15.2)
+  await expect(app.page.getByText('Tap a snap point on another feature.', { exact: true })).toBeVisible()
+  expect(withoutModified(await getProject(app.page))).toEqual(before)
+  await app.page.keyboard.press('Escape')
+  await expect(app.page.getByText('Tap a snap point on another feature.', { exact: true })).toHaveCount(0)
+  await app.page.getByRole('button', { name: 'Cancel editing', exact: true }).click()
+  expect(withoutModified(await getProject(app.page))).toEqual(before)
+})
+
+test.describe('#994 landscape construction references', () => {
+  test.use({ viewport: { width: 1024, height: 768 }, hasTouch: true })
+  for (const face of ['top', 'bottom'] as const) {
+    test(`${face}: touch captures a foreign point without pan or edit selection`, async ({ app }) => {
+      const options = { face, axis: 'y' as const }
+      await seedConstructionReferences(app.page, options)
+      const canvas = app.page.locator('canvas.sketch-canvas')
+      const before = referenceSnapshot(await getProject(app.page))
+      await startAddRectPlacement(app.page)
+      await pickReference(canvas, options, 20.3, 15.2, true)
+      await pickReference(canvas, options, 50, 25, true)
+      await cancelPendingAdd(app.page)
+      const project = await getProject(app.page)
+      expect((project.features as unknown[]).length).toBe(6)
+      expect(referenceSnapshot(project)).toEqual(before)
+      await expect(featureRow(app.page, 'reference-guide')).not.toHaveClass(/tree-row--selected/)
+      await app.page.getByRole('button', { name: 'Undo', exact: true }).first().click()
+      expect((await features(app.page)).length).toBe(5)
+    })
+  }
 })

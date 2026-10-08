@@ -19,6 +19,7 @@ import type { Project } from '../../types/project'
 import type { ProjectStore, SelectionState } from '../types'
 import { cloneProject } from '../helpers/normalize'
 import { keepWorkspaceFace } from '../helpers/provisionalSetup'
+import { isGhostFeature } from '../helpers/activeFace'
 import { featuresFormConnectedOverlapGroup, featuresOverlapForCut } from '../helpers/clipping'
 import { resolveFeatureInstance, type ResolvedSketchFeature } from '../helpers/resolveFeatures'
 
@@ -975,6 +976,8 @@ export function createSelectionSlice(
 
     enterSketchEdit: (id) =>
       set((s) => {
+        const feature = featureById(s.project, id)
+        if (!feature || feature.locked || isGhostFeature(s.project, feature)) return {}
         return {
           pendingTransform: null,
           pendingOffset: null,
@@ -1171,6 +1174,8 @@ export function createSelectionSlice(
 
     setPendingSketchSubject: (subject) =>
       set((s) => {
+        const feature = featureById(s.project, subject.featureId)
+        if (!feature || feature.locked || isGhostFeature(s.project, feature)) return {}
         if (!s.pendingSketchEdit || s.pendingSketchEdit.phase !== 'pick-subject') {
           return {}
         }

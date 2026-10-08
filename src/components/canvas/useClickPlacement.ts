@@ -37,6 +37,8 @@ import type { FeatureClipboardPayload } from '../../platform/featureClipboard'
 import { formatLength, parseLengthInput } from '../../utils/units'
 import { chamferDistanceFromPoint, filletRadiusFromPoint } from '../../store/helpers/referenceTransforms'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
+import type { ReferencePickIntent } from './referencePickIntent'
 import { resolveFeatureInstance, resolveFeatureInstances } from '../../store/helpers/resolveFeatures'
 import {
   canvasToWorld,
@@ -110,6 +112,8 @@ export interface ClickPlacementCtx {
   clearOverlapFeaturePicker: () => void
   openOverlapFeaturePicker: (candidates: readonly OverlapFeatureCandidate[], additive: boolean) => void
   selectionRef: MutableRefObject<SelectionState>
+  getReferencePickIntent: () => ReferencePickIntent
+  showOtherSide: () => boolean
   projectRef: MutableRefObject<Project>
   pendingAddRef: MutableRefObject<PendingAddTool | null>
   pendingMoveRef: MutableRefObject<PendingMoveTool | null>
@@ -252,6 +256,8 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     openOverlapFeaturePicker,
     selectionRef,
     projectRef,
+    getReferencePickIntent,
+    showOtherSide,
     pendingAddRef,
     pendingMoveRef,
     pendingTransformRef,
@@ -392,7 +398,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     }
 
     if (pendingFeatureDistribution?.pickTarget === 'guide') {
-      const guideHit = resolveFeatureSelectionHit(world, editableProjectFeatures(project), vt)
+      const guideHit = resolveFeatureSelectionHit(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt)
       if (guideHit.kind === 'direct') {
         setFeatureDistributionGuide(guideHit.featureId)
       } else if (guideHit.kind === 'ambiguous') {
@@ -407,7 +413,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
     // guide hit — text cannot follow its own outline.
     const pendingTextLayout = pendingTextLayoutRef.current
     if (pendingTextLayout?.pickTarget === 'guide') {
-      const guideHit = resolveFeatureSelectionHit(world, editableProjectFeatures(project), vt)
+      const guideHit = resolveFeatureSelectionHit(world, getReferencePickIntent() ? referenceProjectFeatures(project, showOtherSide()) : editableProjectFeatures(project), vt)
       if (guideHit.kind === 'direct' && guideHit.featureId !== pendingTextLayout.featureId) {
         setTextLayoutGuide(guideHit.featureId)
       } else if (guideHit.kind === 'ambiguous') {
@@ -692,7 +698,7 @@ export function useClickPlacement(ctx: ClickPlacementCtx): UseClickPlacementRetu
             return
           }
           if (pending && pending.phase === 'pick-reference' && pending.subject) {
-            const hit = segmentHitTest(world, project, vt, { openOnly: false })
+            const hit = segmentHitTest(world, project, vt, { openOnly: false, referenceFeatures: getReferencePickIntent() === 'segment' ? referenceProjectFeatures(project, showOtherSide()) : undefined })
             if (hit) {
               const ref = {
                 featureId: hit.featureId,

@@ -15,7 +15,10 @@
  */
 
 import { newProject, rectProfile, type Project } from '../types/project'
-import { projectWithFeatures } from '../test/projectFixtures'
+import { DEFAULT_SETUP_ID } from '../types/project'
+import { BOTTOM_SETUP_ID, withBottomSetup, projectWithFeatures } from '../test/projectFixtures'
+import { normalizeProject } from './helpers/projectFormat'
+import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import { useProjectStore } from './projectStore'
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -172,3 +175,40 @@ testIndependentDistributionClonesDefinitionsAndLeavesGuideUntouched()
 testCancelDoesNotChangeTheProject()
 testInchDefaultsAndRadialCenterPickingStayTransientUntilConfirmed()
 testGroupedSourcesCreateOneIndividuallySelectableMemberPerSource()
+
+for (const face of ['top', 'bottom'] as const) {
+  const project = withBottomSetup(makeProject())
+  project.activeSetupId = face === 'top' ? DEFAULT_SETUP_ID : BOTTOM_SETUP_ID
+  project.features.forEach(f => { f.authoringFace = f.id === 'guide' ? (face === 'top' ? 'bottom' : 'top') : face })
+  const guideRow = project.features.find(f => f.id === 'guide')!
+  guideRow.locked = true
+  project.featureDefinitions[guideRow.definitionId].operation = 'construction'
+  const guideSnapshot = JSON.stringify(resolveFeatureInstance(project, 'guide'))
+  const snapshot = JSON.stringify(project)
+  resetStore(project)
+  const pick = () => {
+    useProjectStore.getState().startFeatureDistribution('path')
+    useProjectStore.getState().updateFeatureDistribution({ mode: 'path', copyCount: 3, startOffset: 0, endOffset: 0, orientation: 'follow', startScale: 100, endScale: 100 })
+    useProjectStore.getState().setFeatureDistributionPickTarget('guide')
+    useProjectStore.getState().setFeatureDistributionGuide('source')
+    assert(useProjectStore.getState().pendingFeatureDistribution?.guideId === null, 'self-guide remains refused')
+    useProjectStore.getState().setFeatureDistributionGuide('guide')
+    assert(useProjectStore.getState().pendingFeatureDistribution?.guideId === 'guide', `${face}: locked foreign construction can be read as a guide`)
+    assert(JSON.stringify(useProjectStore.getState().project) === snapshot && !useProjectStore.getState().dirty && useProjectStore.getState().history.past.length === 0, 'guide picking changes no document, history or dirty flag')
+  }
+  pick()
+  useProjectStore.getState().cancelFeatureDistribution()
+  assert(JSON.stringify(useProjectStore.getState().project) === snapshot, 'cancel retains the complete source and reference document')
+  pick()
+  const ids = useProjectStore.getState().completeFeatureDistribution()
+  const after = useProjectStore.getState()
+  assert(ids.length === 2 && after.history.past.length === 1, 'path apply creates two copies in one history step')
+  assert(JSON.stringify(resolveFeatureInstance(after.project, 'guide')) === guideSnapshot, 'apply never mutates the reference definition, transform or face')
+  assert(ids.every(id => after.project.features.find(f => f.id === id)?.authoringFace === face), 'output keeps the subject face')
+  const reopened = normalizeProject(JSON.parse(JSON.stringify(after.project)) as Project)
+  assert(JSON.stringify(resolveFeatureInstance(reopened, 'guide')) === guideSnapshot, 'save/reopen keeps the reference geometry and authoring face')
+  after.undo()
+  assert(JSON.stringify(useProjectStore.getState().project) === snapshot, 'one undo restores the complete pre-pick document')
+  useProjectStore.getState().redo()
+  assert(JSON.stringify(resolveFeatureInstance(useProjectStore.getState().project, 'guide')) === guideSnapshot, 'redo keeps the read-only guide')
+}

@@ -15,7 +15,8 @@
  */
 
 import { IDENTITY_MATRIX, getProfileBounds, newProject, rectProfile, type Project, type TextLayout } from '../types/project'
-import { projectWithFeatures } from '../test/projectFixtures'
+import { DEFAULT_SETUP_ID } from '../types/project'
+import { BOTTOM_SETUP_ID, withBottomSetup, projectWithFeatures } from '../test/projectFixtures'
 import { normalizeProject } from './helpers/projectFormat'
 import { resolveFeatureInstance } from './helpers/resolveFeatures'
 import { getFeatureGeometryBounds } from '../text'
@@ -468,3 +469,44 @@ testTheBakedGuideDoesNotAliasTheGuideFeature()
 testSwitchingModesRestartsTheGesture()
 testLayoutSurvivesAProjectRoundTripWithoutAliasing()
 testCurvingOneCopyLeavesTheOtherStraight()
+
+for (const face of ['top', 'bottom'] as const) {
+  const project = withBottomSetup(makeProject())
+  project.activeSetupId = face === 'top' ? DEFAULT_SETUP_ID : BOTTOM_SETUP_ID
+  project.features.forEach(f => { f.authoringFace = f.id === 'run' ? face : (face === 'top' ? 'bottom' : 'top') })
+  const guide = project.features.find(f => f.id === 'guide')!
+  guide.locked = true
+  guide.transform = { a: 0, b: 1, c: -1, d: 0, e: 80, f: 10 }
+  project.featureDefinitions[guide.definitionId].operation = 'construction'
+  const reference = resolveFeatureInstance(project, 'guide')!
+  const guideSnapshot = JSON.stringify(reference)
+  const snapshot = JSON.stringify(project)
+  useProjectStore.setState({ project, pendingTextLayout: null, pendingAdd: null, history: { past: [], future: [], transactionStart: null }, dirty: false })
+  const pick = () => {
+    startLayout('path')
+    useProjectStore.getState().setTextLayoutPickTarget('guide')
+    useProjectStore.getState().setTextLayoutGuide('run')
+    assert(pendingLayout().guideId === null, 'text cannot follow its own outline')
+    useProjectStore.getState().setTextLayoutGuide('guide')
+    const layout = pendingLayout().layout
+    assert(layout?.kind === 'path' && pendingLayout().guideId === 'guide', `${face}: text reads a foreign construction guide`)
+    assert(JSON.stringify(layout.path) === JSON.stringify(reference.sketch.profile), 'the baked guide uses transformed canonical stock-space points')
+    assert(layout.path !== reference.sketch.profile, 'the baked guide is a copy')
+    assert(JSON.stringify(useProjectStore.getState().project) === snapshot && !useProjectStore.getState().dirty && useProjectStore.getState().history.past.length === 0, 'text guide picking is transient')
+  }
+  pick()
+  useProjectStore.getState().cancelTextLayout()
+  assert(JSON.stringify(useProjectStore.getState().project) === snapshot, 'cancelling leaves the full document unchanged')
+  pick()
+  assert(useProjectStore.getState().completeTextLayout().join() === 'run', 'apply edits only the selected text run')
+  const after = useProjectStore.getState()
+  assert(after.history.past.length === 1, 'text layout is one undo step')
+  assert(JSON.stringify(resolveFeatureInstance(after.project, 'guide')) === guideSnapshot, 'text apply never edits the guide')
+  assert(after.project.features.find(f => f.id === 'run')!.authoringFace === face, 'the run retains its authoring face')
+  const reopened = normalizeProject(JSON.parse(JSON.stringify(after.project)) as Project)
+  assert(JSON.stringify(resolveFeatureInstance(reopened, 'guide')) === guideSnapshot && resolveFeatureInstance(reopened, 'run')!.textLayout?.kind === 'path', 'save/reopen keeps the guide and the baked text layout')
+  after.undo()
+  assert(JSON.stringify(useProjectStore.getState().project) === snapshot, 'one undo restores the complete text and reference document')
+  useProjectStore.getState().redo()
+  assert(JSON.stringify(resolveFeatureInstance(useProjectStore.getState().project, 'guide')) === guideSnapshot, 'redo leaves the guide intact')
+}

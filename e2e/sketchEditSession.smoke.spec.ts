@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { seedConstructionReferences, pickReference, referenceSnapshot } from './constructionReferences.helpers'
 import { test, expect } from './fixtures'
 import {
   enterSketchEdit,
@@ -213,3 +214,32 @@ test('segment edits are live inside the session and Cancel editing discards them
   await expect(panel).toHaveCount(0)
   await expect.poll(async () => defProfile(await getProject(app.page)).segments[0].to.x).toBe(60)
 })
+
+for (const face of ['top', 'bottom'] as const) {
+  for (const tool of ['trim', 'extend'] as const) {
+  test(`#994 ${face}/${tool}: real segment reference capture keeps the foreign guide and one undo step`, async ({ app }) => {
+    const options = { face, axis: 'y' as const, subjectEnd: tool === 'trim' ? 55 : 35 }
+    await seedConstructionReferences(app.page, options)
+    const before = await getProject(app.page)
+    const guide = referenceSnapshot(before)
+    await enterSketchEdit(app.page, 'reference-subject')
+    const panel = app.page.locator(EDIT_PANEL)
+    await panel.getByRole('button', { name: tool === 'trim' ? 'Trim to cutting edge' : 'Extend to target' }).click()
+    const canvas = app.page.locator('canvas.sketch-canvas')
+    // A foreign open construction segment cannot be the subject.
+    await pickReference(canvas, options, 45, 45)
+    expect((await getSketchEditState(app.page)).pending?.phase).toBe('pick-subject')
+    await pickReference(canvas, options, tool === 'trim' ? 52 : 33, 50)
+    expect((await getSketchEditState(app.page)).pending?.phase).toBe('pick-reference')
+    await pickReference(canvas, options, 45, 45)
+    const after = await getProject(app.page)
+    const definitions = after.featureDefinitions as Record<string, { profile: { segments: Array<{ to: { x: number; y: number } }> } }>
+    expect(definitions['reference-subject'].profile.segments[0].to).toEqual({ x: 45, y: 50 })
+    expect(referenceSnapshot(after)).toEqual(guide)
+    await panel.getByRole('button', { name: 'Finish editing' }).click()
+    await app.page.getByRole('button', { name: 'Undo', exact: true }).first().click()
+    expect((await getProject(app.page)).featureDefinitions).toEqual(before.featureDefinitions)
+    expect(referenceSnapshot(await getProject(app.page))).toEqual(guide)
+  })
+}
+}

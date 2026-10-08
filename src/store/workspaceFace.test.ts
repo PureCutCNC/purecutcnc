@@ -77,6 +77,7 @@ import {
   linkedCopiesOffFace,
   projectUsesBothFaces,
 } from './helpers/activeFace'
+import { referenceProjectFeatures } from './helpers/referenceFeatures'
 import { getDefinitionId } from './helpers/featureDefinitions'
 import { keepWorkspaceFace, provisionalSetupFor, provisionalSetupId } from './helpers/provisionalSetup'
 import { resolveFeatureInstance, resolvedProjectFeatures } from './helpers/resolveFeatures'
@@ -558,3 +559,20 @@ for (const axis of ['x', 'y'] as const) {
 }
 
 console.log('workspaceFace tests passed')
+
+// #994: looking through a provisional face at a construction reference is not content creation.
+{
+  resetStore()
+  store().addRectFeature('Construction guide', 10, 10, 20, 10, project().stock.thickness)
+  const id = lastFeature().id
+  store().updateFeature(id, { operation: 'construction' })
+  useProjectStore.setState({ history: { past: [], future: [], transactionStart: null }, dirty: false })
+  const before = savedFile()
+  switchWorkspaceFace('bottom')
+  const candidates = referenceProjectFeatures(project(), true)
+  assert(candidates.some(f => f.id === id), 'a provisional Bottom view can read Top construction')
+  store().selectFeature(id)
+  assert(store().selection.selectedFeatureIds.length === 0, 'reading a reference cannot become ordinary edit selection')
+  assert(project().setups.length === 1 && store().history.past.length === 0 && !store().dirty, 'reference access cannot materialise the provisional setup')
+  assert(savedFile() === before, 'save normalises the viewed face without changing the construction document')
+}

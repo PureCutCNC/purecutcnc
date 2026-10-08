@@ -50,6 +50,7 @@ remains the full local-suite command.
 | `fixtures.ts` | Playwright `test` extension. Every spec imports `test` / `expect` from **here**, not `@playwright/test`. Provides `app` (booted page + error guard) and `ui` (selector module). |
 | `selectors.ts` | **Single source of truth** for DOM selectors. Logical name → `Locator`. When the UI moves a class, update it **here** — every spec picks it up. |
 | `helpers.ts` | Generic primitives: `seedProject`, `getProject`, `getHoveredFeatureId`, `getPendingMove`, `completePendingMove`, `openRowContextMenu`, `clickMenuItem`, `rowByName`, `featureRowCount`, `assertNoConsoleErrors`. Domain-agnostic. |
+| `constructionReferences.helpers.ts` | Canonical two-face fixture and mirrored pointer mapping for #994 construction reference smoke checks. |
 | `featureReferences.helpers.ts` | FR-specific helpers (e.g. `seedLinkedProject`). Built on the generic primitives. A new feature area gets its own `<area>.helpers.ts`. |
 | `camOperations.helpers.ts` | CAM-specific fixture helpers for operation workflow smoke tests. |
 | `gcodeExport.helpers.ts` | Export-dialog fixture: tool + two toolpath-producing operations + bundled GRBL machine selected. |
@@ -121,3 +122,5 @@ future change adds Tauri IPC calls at boot time that are not guarded by
 - No screenshot/pixel diffing; no WebGL canvas-content assertions.
 - No Tauri native file-dialog flows — project state is seeded via the
   guarded `window.__pcTest` dev seam.
+
+- #994 coverage stays in the existing `test:e2e:project-input` lane: `setupFaces.smoke.spec.ts` checks both directions/flip axes, desktop preview/capture, landscape touch, visibility/overlay, edit refusal and measurement-only annotations; `featureDistribution.smoke.spec.ts` checks canvas/tree guide capture, cancellation and Apply/undo; `textLayout.smoke.spec.ts` checks read-only path guides and Apply/undo; `sketchEditSession.smoke.spec.ts` checks foreign reference trim capture and subject refusal. The fixtures preserve authoring faces and guide definitions.

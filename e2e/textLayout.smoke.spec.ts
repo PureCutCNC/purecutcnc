@@ -15,6 +15,7 @@
  */
 
 import type { Page } from '@playwright/test'
+import { seedConstructionReferences, pickReference, referenceSnapshot } from './constructionReferences.helpers'
 import { expect, test } from './fixtures'
 import { getFeatureCount, getProject } from './helpers'
 import { clickCanvasWorld, seedOverlapFeatureProject } from './overlapFeatureSelection.helpers'
@@ -296,3 +297,40 @@ test('An open construction spline works as a guide', async ({ app }) => {
   await expect(panel.getByRole('button', { name: 'Change guide', exact: true })).toBeVisible()
   await expect(panel.getByRole('button', { name: 'Apply', exact: true })).toBeEnabled()
 })
+
+for (const face of ['top', 'bottom'] as const) {
+  for (const overlap of [false, true]) {
+    test(`#994 ${face}/${overlap ? 'overlap' : 'direct'}: text applies and undoes a foreign construction path from canvas and tree`, async ({ app, ui }) => {
+      const options = { face, axis: 'x' as const, overlap }
+      await seedConstructionReferences(app.page, options)
+      await startLayout(app.page, 'path', 'AB')
+      const before = await getProject(app.page)
+      const guide = referenceSnapshot(before)
+      const panel = app.page.locator(PANEL)
+      await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
+      await pickReference(app.page.locator('canvas.sketch-canvas'), options, overlap ? 40 : 35, 15)
+      if (overlap) {
+        await expect(ui.overlapFeaturePicker.root(app.page)).toHaveCount(0)
+        await expect(app.page.locator('.tree-row--feature[data-feature-id="reference-guide"]')).not.toHaveClass(/tree-row--selected/)
+      }
+      await expect(panel.getByRole('button', { name: 'Change guide', exact: true })).toBeVisible()
+      await expect(panel.getByText('reference-guide', { exact: true })).toBeVisible()
+      expect(referenceSnapshot(await getProject(app.page))).toEqual(guide)
+      await panel.getByRole('button', { name: 'Apply', exact: true }).click()
+      expect(await storedTextLayout(app.page)).toMatchObject({ kind: 'path' })
+      expect(referenceSnapshot(await getProject(app.page))).toEqual(guide)
+      await app.page.getByRole('button', { name: 'Undo', exact: true }).first().click()
+      expect((await getProject(app.page)).features).toEqual(before.features)
+      // The same explicit guide picker works from a named row while its overlay is off.
+      await startLayout(app.page, 'path', 'AB')
+      await ui.face.otherSideToggle(app.page).click()
+      await panel.getByRole('button', { name: 'Pick guide', exact: true }).click()
+      const row = app.page.locator('.tree-row--feature[data-feature-id="reference-guide"]')
+      await row.click()
+      await expect(row).not.toHaveClass(/tree-row--selected/)
+      await expect(panel.getByRole('button', { name: 'Change guide', exact: true })).toBeVisible()
+      await panel.getByRole('button', { name: 'Cancel', exact: true }).click()
+      expect(referenceSnapshot(await getProject(app.page))).toEqual(guide)
+    })
+  }
+}
