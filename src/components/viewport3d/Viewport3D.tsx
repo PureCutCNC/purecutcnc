@@ -35,6 +35,7 @@ import {
   buildToolpathOverlayLayers,
   moveMatchesZFilter,
   toolpathLayerBuckets,
+  toolpathOverlayOpacity,
   toolpathPointToWorldTuple,
   type ToolpathLayerZFilter,
   type ToolpathOverlayLayerKey,
@@ -44,6 +45,7 @@ import { feedColourStep, pocketSlotFeedPercent, threeFeedColour, type ThreeTheme
 import { ARROW_KINDS, buildArrowBatch, type ArrowPlacement } from './arrowBatch'
 import { createOrbitControls, type OrbitControls } from './orbitControls'
 import { activeFace } from '../../store/helpers/activeFace'
+import { mutedToolpathOperationIds } from '../toolpathSetupMuting'
 import type { ViewPreset } from './viewPresets'
 import { ViewPresetMenu } from './ViewPresetMenu'
 import { attachWebglContextGuard } from './webglContextGuard'
@@ -301,6 +303,9 @@ function buildToolpathOverlay(
   resolution: THREE.Vector2,
   slotScale: number,
   selectedLevel: number | null,
+  // Cut in a setup the workspace is not on (issue #947): faint and thin, so
+  // the active setup's passes read through the other setup's.
+  muted = false,
 ): THREE.Object3D[] {
   const schemaLayers = buildToolpathOverlayLayers(visibility)
   const layers: Array<{
@@ -324,7 +329,7 @@ function buildToolpathOverlay(
       layer.key === 'cuts' || layer.key === 'leadIns' ? 2.5
       : layer.key === 'rapids' || layer.key === 'retractions' ? 1.8
       : 2.0
-    const linewidth = emphasized ? baseLinewidth + 0.5 : Math.max(1.2, baseLinewidth - 0.5)
+    const linewidth = emphasized ? baseLinewidth + 0.5 : muted ? 1 : Math.max(1.2, baseLinewidth - 0.5)
     return { key: layer.key, kinds: layer.kinds, color, opacity, linewidth, visible: layer.visible, zFilter: layer.zFilter }
   })
   // Feed colours are on when the toggle says so, or by default for the
@@ -353,7 +358,7 @@ function buildToolpathOverlay(
         worldUnits: false,
         resolution,
         transparent: true,
-        opacity: emphasized ? layer.opacity : Math.max(layer.opacity * 0.55, 0.45),
+        opacity: toolpathOverlayOpacity(layer.opacity, emphasized, muted),
         depthWrite: false,
         depthTest: false,
       })
@@ -436,9 +441,10 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
   // frames it. See the projectKey effect below.
   const fitPendingRef = useRef(false)
   const [activePreset, setActivePreset] = useState<ViewPreset | null>('iso')
-  // The plan-view presets follow the workspace face (issue #945): a view
-  // parked on Top or Bottom turns over with the stock; any other view is left
-  // where the user put it.
+  // The presets follow the workspace face (issues #945, #947): a view parked
+  // on Top or Bottom turns over with the stock, the isometric view moves to
+  // the side of the stock the active setup cuts from, and any other view is
+  // left where the user put it.
   const activePresetRef = useRef(activePreset)
   activePresetRef.current = activePreset
   const [webglStatus, setWebglStatus] = useState<WebglStatus>('ok')
@@ -448,10 +454,18 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
 
   const { project, selection, projectKey } = useProjectStore()
   const workspaceFace = activeFace(project)
+  const workspaceFaceRef = useRef(workspaceFace)
+  workspaceFaceRef.current = workspaceFace
+  const mutedKey = [...mutedToolpathOperationIds(project)].join('\n')
+  const presetFaceRef = useRef(workspaceFace)
   useEffect(() => {
+    if (presetFaceRef.current === workspaceFace) return
+    presetFaceRef.current = workspaceFace
     const preset = activePresetRef.current
     if ((preset === 'top' || preset === 'bottom') && preset !== workspaceFace) {
       controlsRef.current?.setPreset(workspaceFace)
+    } else if (preset === 'iso') {
+      controlsRef.current?.setPreset('iso')
     }
   }, [workspaceFace])
   // The toolpath overlay effect reads the project through this ref so the
@@ -544,6 +558,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       },
       isInteractionBlocked: () => zoomWindowActiveRef.current,
       initialTarget: [50, 0, 40],
+      presetFace: () => workspaceFaceRef.current,
     })
     controlsRef.current = controls
 
@@ -899,6 +914,9 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
       mount?.clientWidth || window.innerWidth,
       mount?.clientHeight || window.innerHeight,
     )
+    // Every setup's passes, in stock space as generated: a Bottom pass comes
+    // from under the stock. Another setup's are muted (issue #947).
+    const muted = mutedToolpathOperationIds(projectRef.current)
     const nextObjects = toolpaths.flatMap((toolpath) => {
       if (toolpath.moves.length === 0) {
         return []
@@ -914,6 +932,7 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
         resolution,
         slotFeedPercent === null ? 1 : slotFeedPercent / 100,
         toolpathLevel,
+        muted.has(toolpath.operationId),
       )
     })
     if (nextObjects.length === 0) {
@@ -928,8 +947,11 @@ export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function
     return () => {
       clearToolpathObjects(scene)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- threePalette is stable per theme; adding would recreate overlay on theme toggle
-  }, [clearToolpathObjects, selectedOperationId, toolpaths, toolpathVisibility, toolpathLevel])
+  // threePalette is stable per theme; adding it would recreate the overlay on a
+  // theme toggle. mutedKey stands in for the muted set read through projectRef:
+  // a face switch changes it without changing toolpaths (issue #947).
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
+  }, [clearToolpathObjects, selectedOperationId, toolpaths, toolpathVisibility, toolpathLevel, mutedKey])
 
   useEffect(() => {
     const scene = sceneRef.current

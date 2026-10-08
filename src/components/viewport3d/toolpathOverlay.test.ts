@@ -29,6 +29,7 @@ import {
   movesForToolpathLayer,
   splitMovesIntoLayers,
   toolpathLayerBuckets,
+  toolpathOverlayOpacity,
   toolpathPointToWorldTuple,
   TOOLPATH_LAYER_Z_EPSILON,
   type ToolpathOverlayLayerKey,
@@ -306,5 +307,21 @@ testDescendingRapidFollowsTheRapidsToggle()
 testZFilterPredicate()
 testSplitAgreesWithMovesForToolpathLayer()
 testLayerBucketsCachesOnToolpathIdentity()
+
+// Issue #947: another setup's passes draw muted in 3D, below the ordinary
+// unselected strength; the selected operation keeps full strength anywhere.
+function testMutedOverlayOpacity(): void {
+  for (const layer of [0.98, 0.9, 0.75]) {
+    const selected = toolpathOverlayOpacity(layer, true)
+    const ordinary = toolpathOverlayOpacity(layer, false)
+    const muted = toolpathOverlayOpacity(layer, false, true)
+    assert(selected === layer, `selected keeps the layer opacity ${layer}`)
+    assert(ordinary === Math.max(layer * 0.55, 0.45), `unselected opacity is unchanged for ${layer}`)
+    assert(muted > 0 && muted < ordinary / 2, `muted (${muted}) is well below unselected (${ordinary})`)
+    assert(toolpathOverlayOpacity(layer, true, true) === layer, 'a selected muted operation is drawn at full strength')
+  }
+}
+
+testMutedOverlayOpacity()
 
 console.log('toolpathOverlay tests passed')

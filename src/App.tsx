@@ -165,11 +165,6 @@ function App() {
     [effectiveSelectedOperationId, project.operations]
   )
 
-  const visibleClamps = useMemo(
-    () => project.clamps.filter((clamp) => clamp.visible),
-    [project.clamps]
-  )
-
   const selectedClampId = selection.selectedNode?.type === 'clamp' ? selection.selectedNode.clampId : null
 
   const handleCenterTabChange = useCallback((tab: 'sketch' | 'preview3d' | 'simulation') => {
@@ -249,7 +244,7 @@ function App() {
 
   const toolpathLevelSelection = useToolpathLevelSelection(selectedOperation, selectedToolpath)
 
-  const { simulationResult, simulationOperationCount, simulationPlaybackInput } = useSimulationModel({
+  const { simulationResult, simulationOperationCount, simulationPlaybackInput, simulationSetupPicker, simulationClamps } = useSimulationModel({
     project,
     centerTab,
     simulationMode,
@@ -451,7 +446,8 @@ function App() {
             mode={simulationMode}
             onModeChange={(mode) => startSimulationTransition(() => setSimulationMode(mode))}
             operationCount={simulationOperationCount}
-            clamps={visibleClamps}
+            clamps={simulationClamps}
+            setupPicker={simulationSetupPicker}
             selectedClampId={selectedClampId}
             collidingClampIds={collidingClampIds}
             origin={project.origin}

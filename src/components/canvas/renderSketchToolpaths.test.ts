@@ -31,14 +31,29 @@
  *   mirror (the original code) → the same;
  * - culling switched off for a mirrored view → "is culled" fails;
  * - the foreground cleared only on the GPU path (the original code) → "the
- *   Top overlay is cleared" fails;
- * - no report from the mirrored branch → "Canvas is reported" fails.
+ *   Top overlay is cleared" fails.
+ *
+ * Issue #947 made the preview setup-aware: the GPU renderer now draws a
+ * Bottom view itself, through a mirrored view map, instead of handing it to
+ * Canvas; and another setup's toolpaths draw muted, beneath the active
+ * setup's. Mutations checked:
+ * - the muted flag dropped from the entries → "muted on GPU" and "muted on
+ *   Canvas" fail;
+ * - muted entries not painted first → "painted beneath" fails;
+ * - `mutedToolpathOperationIds` muting the active setup instead → every
+ *   muted assertion fails;
+ * - the GPU hidden again for a mirrored view → "the GPU draws the Bottom
+ *   view" fails.
  *
  * Run with: npx tsx src/components/canvas/renderSketchToolpaths.test.ts
  */
 
 import type { ToolpathResult } from '../../engine/toolpaths/types'
-import { newProject } from '../../types/project'
+import { syncProjectSetups } from '../../store/helpers/setups'
+import { BOTTOM_SETUP_ID, withBottomSetup } from '../../test/projectFixtures'
+import { newProject, type Operation, type Project } from '../../types/project'
+import type { GpuToolpathEntry } from './gpuToolpathRenderer'
+import { toolpathStrokeAlpha } from './toolpathStyles'
 import type { ToolpathVisibility } from '../toolpathVisibility'
 import { renderSketchToolpaths } from './renderSketchToolpaths'
 import type { SketchToolpathSurface } from './useSketchToolpathRenderer'
@@ -48,7 +63,7 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
 
-interface DrawnSegment { fromX: number; fromY: number; toX: number; toY: number }
+interface DrawnSegment { fromX: number; fromY: number; toX: number; toY: number; alpha?: number }
 
 /**
  * A 2D context that applies `translate` / `scale` the way a canvas does and
@@ -59,6 +74,7 @@ function screenContext(width: number, height: number) {
   const cleared: Array<{ width: number; height: number }> = []
   let transform = { a: 1, d: 1, e: 0, f: 0 }
   const stack: Array<typeof transform> = []
+  let pathStart = 0
   const toScreen = (x: number, y: number) => ({ x: transform.a * x + transform.e, y: transform.d * y + transform.f })
   const ctx = {
     canvas: { width, height },
@@ -66,7 +82,7 @@ function screenContext(width: number, height: number) {
     restore: () => { transform = stack.pop() ?? transform },
     translate: (x: number, y: number) => { transform = { ...transform, e: transform.e + transform.a * x, f: transform.f + transform.d * y } },
     scale: (x: number, y: number) => { transform = { ...transform, a: transform.a * x, d: transform.d * y } },
-    beginPath: () => undefined,
+    beginPath: () => { pathStart = segments.length },
     closePath: () => undefined,
     moveTo: (x: number, y: number) => {
       const point = toScreen(x, y)
@@ -77,7 +93,9 @@ function screenContext(width: number, height: number) {
       const last = segments[segments.length - 1]
       if (last) { last.toX = point.x; last.toY = point.y }
     },
-    stroke: () => undefined,
+    stroke: () => {
+      for (let index = pathStart; index < segments.length; index += 1) segments[index].alpha ??= ctx.globalAlpha
+    },
     fill: () => undefined,
     setLineDash: () => undefined,
     clearRect: (_x: number, _y: number, w: number, h: number) => { cleared.push({ width: w, height: h }) },
@@ -87,6 +105,16 @@ function screenContext(width: number, height: number) {
     globalAlpha: 1,
   }
   return { ctx: ctx as unknown as CanvasRenderingContext2D, segments, cleared }
+}
+
+function newOperation(id: string): Operation {
+  return {
+    id, name: id, kind: 'pocket', pass: 'rough', enabled: true, showToolpath: true, debugToolpath: false,
+    target: { source: 'features', featureIds: [] }, toolRef: null, stepdown: 1, stepover: 0.4, feed: 800,
+    plungeFeed: 300, rpm: 18000, pocketPattern: 'offset', pocketAngle: 0, stockToLeaveRadial: 0,
+    stockToLeaveAxial: 0, finishWalls: true, finishFloor: true, carveDepth: 1, maxCarveDepth: 1,
+    cutDirection: 'conventional', machiningOrder: 'level_first',
+  }
 }
 
 const CUTS_ONLY: ToolpathVisibility = { cuts: true, leadIns: false, rapids: false, plunges: false, retractions: false, directions: false }
@@ -177,21 +205,74 @@ for (const axis of ['x', 'y'] as const) {
   assert(!gpuHidden() && reports.at(-1) === true, 'and the GPU renderer is reported active')
   assert(foreground.ctx.canvas.width === 320 && foreground.ctx.canvas.height === 200, 'the foreground matches the sketch canvas')
 
-  // Bottom: Canvas takes over. The Top overlay must not stay on screen.
+  // Bottom: the GPU draws the mirrored view itself (issue #947). The Top
+  // overlay must still not stay on screen.
   foreground.cleared.length = 0
   const bottomTarget = renderSketchToolpaths(surface, base.ctx, project, toolpaths, null, null, { scale: 1, offsetX: 0, offsetY: 0, mirrorY: 200 }, CUTS_ONLY, false)
-  assert(bottomTarget === base.ctx, 'on Bottom the frame is drawn on the sketch canvas')
+  assert(bottomTarget === foreground.ctx, 'the GPU draws the Bottom view, and the frame continues on its foreground')
   assert(
     foreground.cleared.some((rect) => rect.width === 320 && rect.height === 200),
     'the Top overlay is cleared when the view turns to Bottom',
   )
-  assert(gpuHidden(), 'the GPU layer is hidden on Bottom')
-  assert(reports.at(-1) === false, 'Canvas is reported as the active renderer on Bottom')
-  assert(base.segments.length === 1, 'and the toolpath is drawn by Canvas')
+  assert(!gpuHidden() && reports.at(-1) === true, 'the GPU renderer stays active on Bottom')
+  assert(base.segments.length === 0, 'and Canvas draws nothing under it')
 
   // Back on Top the GPU renderer is reported again.
   renderSketchToolpaths(surface, base.ctx, project, toolpaths, null, null, { scale: 1, offsetX: 0, offsetY: 0 }, CUTS_ONLY, false)
   assert(!gpuHidden() && reports.at(-1) === true, 'back on Top the GPU renderer is active again')
+}
+
+// ── Another setup's toolpaths draw muted (issue #947) ────────
+
+{
+  const twoSetups = withBottomSetup(syncProjectSetups({
+    ...newProject(),
+    operations: [
+      { ...newOperation('top-op'), name: 'Top op' },
+      { ...newOperation('bottom-op'), name: 'Bottom op' },
+    ],
+  }), { axis: 'x', operationIds: ['bottom-op'] })
+  const onTop: Project = { ...twoSetups, activeSetupId: twoSetups.setups[0].id }
+  const onBottom: Project = { ...twoSetups, activeSetupId: BOTTOM_SETUP_ID }
+  const topPath = cut('top-op', { x: 10, y: 10 }, { x: 20, y: 10 })
+  const bottomPath = cut('bottom-op', { x: 10, y: 30 }, { x: 20, y: 30 })
+  const plain: ViewTransform = { scale: 1, offsetX: 0, offsetY: 0 }
+
+  // Canvas: the active setup's path at the ordinary strength, the other's faint and first.
+  const top = screenContext(100, 100)
+  renderSketchToolpaths(null, top.ctx, onTop, [topPath, bottomPath], null, null, plain, CUTS_ONLY, false)
+  assert(top.segments.length === 2, 'both setups\' toolpaths are drawn')
+  assert(top.segments[0].fromY === 30 && top.segments[1].fromY === 10, 'the muted Bottom path is painted beneath the active Top path')
+  assert(top.segments[1].alpha === toolpathStrokeAlpha(false), `the active setup's path is not muted (alpha ${top.segments[1].alpha})`)
+  assert(top.segments[0].alpha === toolpathStrokeAlpha(false, true), `muted on Canvas: the other setup's path is faint (alpha ${top.segments[0].alpha})`)
+  assert(toolpathStrokeAlpha(false, true) < toolpathStrokeAlpha(false), 'muted is fainter than unselected')
+
+  // Turning to Bottom swaps which one is muted; selection always draws at full strength.
+  const bottom = screenContext(100, 100)
+  renderSketchToolpaths(null, bottom.ctx, onBottom, [topPath, bottomPath], 'top-op', null, plain, CUTS_ONLY, false)
+  const topSegment = bottom.segments.find((segment) => segment.fromY === 10)
+  const bottomSegment = bottom.segments.find((segment) => segment.fromY === 30)
+  assert(bottomSegment?.alpha === toolpathStrokeAlpha(false), 'on Bottom the Bottom path is active')
+  assert(topSegment?.alpha === 1, 'a selected operation from the other setup is still drawn at full strength')
+
+  // A single-setup project mutes nothing: every path as before setups.
+  const single = screenContext(100, 100)
+  renderSketchToolpaths(null, single.ctx, project, [topPath, bottomPath], null, null, plain, CUTS_ONLY, false)
+  assert(single.segments.every((segment) => segment.alpha === toolpathStrokeAlpha(false)), 'a single-setup project mutes nothing')
+
+  // GPU: the same flags reach the renderer, muted entries first.
+  let entries: GpuToolpathEntry[] = []
+  const surface: SketchToolpathSurface = {
+    gpu: { canvas: { hidden: false }, render: (next: GpuToolpathEntry[]) => { entries = next; return true } } as unknown as SketchToolpathSurface['gpu'],
+    foreground: screenContext(100, 100).ctx,
+    failed: false,
+    report: () => undefined,
+  }
+  renderSketchToolpaths(surface, screenContext(100, 100).ctx, onTop, [topPath, bottomPath], null, null, plain, CUTS_ONLY, false)
+  assert(
+    JSON.stringify(entries.map((entry) => [entry.toolpath.operationId, entry.muted])) === JSON.stringify([['bottom-op', true], ['top-op', false]]),
+    `muted on GPU: the other setup's entry is muted and first (got ${JSON.stringify(entries.map((entry) => [entry.toolpath.operationId, entry.muted]))})`,
+  )
 }
 
 console.log('renderSketchToolpaths tests passed')

@@ -32,7 +32,7 @@ import type { PlaybackPose } from '../../engine/simulation/playback'
 import type { SimulationGrid, SimulationResult } from '../../engine/simulation'
 import type { ToolpathMove } from '../../engine/toolpaths/types'
 import { effectiveFeed } from '../../engine/toolpaths/feed'
-import type { Clamp, MachineOrigin, Operation, ToolType } from '../../types/project'
+import type { Clamp, MachineOrigin, Operation, SetupFace, ToolType } from '../../types/project'
 import { useTheme } from '../../theme/themeContext'
 import { useI18n } from '../../i18n/i18nContext'
 
@@ -70,6 +70,25 @@ export interface SimulationPlaybackInput {
   plungeFeedPerSecond?: number
 }
 
+/** One entry of the setup picker (issue #947). */
+export interface SimulationSetupOption {
+  id: string
+  name: string
+  face: SetupFace
+}
+
+/**
+ * The setups the simulation can show and the one it shows. Each runs alone,
+ * in its own frame, on fresh stock — the panel says so whenever there is
+ * more than one, because the operator turns the same part over and the
+ * other setup's cuts are really there.
+ */
+export interface SimulationSetupPicker {
+  options: SimulationSetupOption[]
+  selectedId: string
+  onChange: (setupId: string) => void
+}
+
 interface SimulationViewportProps {
   operation: Operation | null
   simulation: SimulationResult | null
@@ -87,6 +106,8 @@ interface SimulationViewportProps {
   zoomWindowActive?: boolean
   onZoomWindowComplete?: () => void
   playbackInput: SimulationPlaybackInput | null
+  /** The setup picker; hidden, with its fresh-stock note, for a single-setup project. */
+  setupPicker?: SimulationSetupPicker
   /** True while a new simulation result is being computed (e.g. detail slider change). */
   isComputing?: boolean
   /** True while the simulation tab is the active centre tab. When false the
@@ -243,6 +264,7 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
   zoomWindowActive = false,
   onZoomWindowComplete,
   playbackInput,
+  setupPicker,
   isComputing = false,
   isActive = true,
   projectKey,
@@ -1054,8 +1076,20 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
       }
     : null
 
+  // A single-setup project has nothing to pick and nothing carried over to
+  // explain; the panel then looks as it did before setups (issue #947).
+  const showSetupPicker = (setupPicker?.options.length ?? 0) > 1
+  const simulatedSetupName = setupPicker?.options.find((option) => option.id === setupPicker.selectedId)?.name ?? null
+
   return (
-    <div className="simulation-viewport">
+    <div
+      className="simulation-viewport"
+      // Read by the setup simulation e2e (issue #947): which setup is shown
+      // and what the heightfield removed, without sampling WebGL pixels.
+      data-simulation-setup={setupPicker?.selectedId}
+      data-simulation-removed-cells={simulation?.stats.removedCellCount}
+      data-simulation-min-z={simulation?.stats.minTopZ}
+    >
       <div ref={mountRef} className="simulation-viewport__canvas" />
       {(isComputing || isPlaybackBuilding) && (
         <div className="simulation-viewport__computing-overlay">
@@ -1130,6 +1164,20 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
               {t('viewport.sim.modeVisible')}
             </button>
           </div>
+          {showSetupPicker && setupPicker ? (
+            <label className="simulation-detail-control simulation-setup-control" title={t('viewport.sim.setupTitle')}>
+              <span className="simulation-detail-control__label">{t('viewport.sim.setupLabel')}</span>
+              <select
+                className="simulation-setup-control__select"
+                value={setupPicker.selectedId}
+                onChange={(event) => setupPicker.onChange(event.target.value)}
+              >
+                {setupPicker.options.map((option) => (
+                  <option key={option.id} value={option.id}>{option.name}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label className="simulation-detail-control" title={t('viewport.sim.detailTitle')}>
             <span className="simulation-detail-control__label">{t('viewport.sim.detailLabel')}</span>
             <input
@@ -1168,6 +1216,11 @@ export const SimulationViewport = forwardRef<SimulationViewportHandle, Simulatio
             }}
           />
         </div>
+        {showSetupPicker && simulatedSetupName !== null ? (
+          <p className="simulation-setup-note" role="note">
+            {t('viewport.sim.freshStockNote', { setup: simulatedSetupName })}
+          </p>
+        ) : null}
       </div>
       {playbackEnabled && playbackInput && (
         <div

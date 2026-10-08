@@ -1081,6 +1081,29 @@
   color: var(--text);
 }
 
+.simulation-setup-control__select {
+  max-width: 140px;
+  min-height: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-input);
+  color: var(--text);
+  font-size: 12px;
+}
+
+/* Fresh-stock limitation (issue #947): a full-width line under the controls. */
+.simulation-setup-note {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface-translucent);
+  color: var(--text-dim);
+  font-size: 11px;
+  text-align: right;
+}
+
 .simulation-mode-toggle {
   box-sizing: border-box;
   display: inline-flex;
