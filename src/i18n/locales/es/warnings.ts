@@ -224,6 +224,8 @@ export const warningsEs: Record<keyof typeof warningsEn, string> = {
   'warnings.postNoCoolantCommands': 'Se solicitó la emisión de refrigerante, pero la definición de la máquina no tiene comandos de refrigerante.',
   'warnings.postPlasmaOutputPending': 'La salida de plasma aún no está implementada: esta exportación no emite secuencias de antorcha ni de material. La antorcha no se encenderá.',
   'warnings.postNoToolChangeCommands': 'La operación "{operation}" necesita la herramienta "{tool}", pero esta máquina no tiene comandos ejecutables de cambio de herramienta. El programa mantiene la herramienta anterior; exporte una herramienta a la vez.',
+  'warnings.postPlasmaOperationSkipped': 'La operación "{operation}" no es un corte por plasma, por lo que se omite en este programa de plasma.',
+  'warnings.postPlasmaMaterialMissing': 'La operación "{operation}" usa la herramienta "{tool}", que no tiene número de material de QtPlasmaC. Indique el número de material en la herramienta: sin él, la antorcha se encendería con el material que esté cargado.',
   'warnings.postCannedCycleUnsupported': 'Operación "{operation}": el ciclo encapsulado {drillType} no es compatible con la máquina "{machine}"; se emiten movimientos expandidos.',
   'warnings.postArcNoCapability': 'La operación "{operation}" contiene movimientos lineales que podrían ajustarse como arcos, pero la máquina seleccionada no admite interpolación circular (G2/G3). Se emiten movimientos lineales en su lugar.',
   'warnings.postArcFallbackLinear': 'La operación "{operation}" tenía {count} tramo(s) de arco ajustado(s) que el controlador seleccionado habría rechazado tras el redondeo numérico. Esos tramos se emitieron como movimientos lineales.',

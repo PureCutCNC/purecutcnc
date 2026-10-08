@@ -244,6 +244,8 @@ export const warningsEn = {
   'warnings.postNoCoolantCommands': 'Coolant emission requested but machine definition has no coolant commands.',
   'warnings.postPlasmaOutputPending': 'Plasma output is not yet implemented: this export emits no torch or material sequence. The torch will not fire.',
   'warnings.postNoToolChangeCommands': 'Operation "{operation}" needs tool "{tool}", but this machine has no executable tool-change commands. The program keeps the previous tool; export one tool at a time.',
+  'warnings.postPlasmaOperationSkipped': 'Operation "{operation}" is not a plasma cut, so it is left out of this plasma program.',
+  'warnings.postPlasmaMaterialMissing': 'Operation "{operation}" uses tool "{tool}", which has no material number. Set it on the tool: without it the torch would fire on whatever material is loaded.',
   'warnings.postCannedCycleUnsupported': 'Operation "{operation}": {drillType} canned cycle not supported by machine "{machine}"; emitting expanded moves.',
   'warnings.postArcNoCapability': 'Operation "{operation}" contains linear moves that could be fitted as arcs, but the selected machine does not support arc interpolation (G2/G3). Emitting linear moves instead.',
   'warnings.postArcFallbackLinear': 'Operation "{operation}" had {count} fitted arc run(s) that the selected controller would reject after number rounding. Those spans were emitted as linear moves instead.',

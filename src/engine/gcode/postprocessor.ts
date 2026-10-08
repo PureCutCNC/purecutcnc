@@ -15,6 +15,7 @@
  */
 
 import type {
+  MachineDefinition,
   PostProcessorInput,
   PostProcessorResult,
   OperationMotionTrace,
@@ -33,10 +34,12 @@ import {
   createEmittedValueFormatter,
   planDrillCycles,
   planOperationMotion,
+  planPlasmaPath,
   planProgramSequence,
   planProgramSetup,
   splitRapid,
 } from './motionPipeline'
+import type { PlasmaOperationSequence } from './motionPipeline'
 import { emitOpenSbpProgram } from './opensbpEmitter'
 
 // What the emitter has written so far. Which tool is held and whether the
@@ -239,10 +242,15 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
   }
 
   // 4. Operations
-  const plasmaOutputPending = resolveMachineKind(definition) === 'plasma'
+  // A plasma table either has its torch path written (controller piercing,
+  // #959) or is still metadata only (G-code piercing, #983).
+  const plasma = resolveMachineKind(definition) === 'plasma' ? definition.plasma : undefined
+  const plasmaTorch = plasma?.pierceMode === 'controller'
+  const plasmaOutputPending = plasma !== undefined && !plasmaTorch
   const sequence = planProgramSequence(input, {
     coolant: definition.coolant !== null,
     plasmaOutputPending,
+    plasmaTorch,
     toolChange: !plasmaOutputPending || [
       ...definition.toolChange.commands,
       ...(definition.toolChange.pauseAfterChange ? [definition.toolChange.pauseCommand] : []),
@@ -251,10 +259,139 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       return command.length > 0 && !command.startsWith(';') && !(definition.program.commentPrefix && command.startsWith(definition.program.commentPrefix))
     }),
   })
+
+  // Emit a single arc (G2/G3) with I/J or R, respecting modal state. A plasma
+  // cut passes no feed: it runs at the material's feed word.
+  const emitArcLine = (arc: ArcMoveDescriptor, feed?: number) => {
+    const lineSegments: string[] = []
+    const motionCmd = arc.clockwise
+      ? definition.motion.cwArcCommand
+      : definition.motion.ccwArcCommand
+
+    if (!definition.motion.modalMotion || state.motionCommand !== motionCmd) {
+      lineSegments.push(motionCmd)
+      state.motionCommand = motionCmd
+    }
+
+    // I/J are relative to where the controller actually is — the formatted
+    // endpoint of the preceding block — not to the arc's declared start.
+    const start = emittedPosition ?? {
+      x: formatValue(arc.startPoint.x),
+      y: formatValue(arc.startPoint.y),
+    }
+    const emitted = resolveEmittedArc(arc, start, arcEmitOptions)
+
+    lineSegments.push(`X${formatGCodeNumber(arc.endPoint.x, definition, outputUnits)}`)
+    lineSegments.push(`Y${formatGCodeNumber(arc.endPoint.y, definition, outputUnits)}`)
+
+    if (definition.motion.arcFormat === 'ij') {
+      lineSegments.push(`I${formatGCodeNumber(emitted.i, definition, outputUnits)}`)
+      lineSegments.push(`J${formatGCodeNumber(emitted.j, definition, outputUnits)}`)
+    } else {
+      lineSegments.push(`R${formatGCodeNumber(emitted.radius, definition, outputUnits)}`)
+    }
+
+    if (feed !== undefined && motionCmd !== definition.motion.rapidCommand) {
+      const feedChanged = state.feedRate !== feed
+      if (!definition.feedSpeed.modalFeedSpeed || feedChanged) {
+        const fWord = `${definition.feedSpeed.feedCommand}${formatGCodeNumber(feed, definition, outputUnits)}`
+        if (definition.feedSpeed.inlineWithMotion) {
+          lineSegments.push(fWord)
+        } else if (feedChanged) {
+          emitLine(fWord)
+        }
+        state.feedRate = feed
+      }
+    }
+
+    if (lineSegments.length > 0) {
+      emitLine(lineSegments.join(' '))
+      moveCount += 1
+    }
+
+    state.currentPosition = {
+      x: arc.endPoint.x,
+      y: arc.endPoint.y,
+      z: state.currentPosition?.z ?? 0,
+    }
+
+    emittedPosition = {
+      x: formatValue(arc.endPoint.x),
+      y: formatValue(arc.endPoint.y),
+    }
+  }
+
+  const comment = (text: string) => {
+    const suffix = definition.program.commentSuffix
+    emitLine(`${definition.program.commentPrefix} ${safeCommentText(text)}${suffix ? ` ${suffix}` : ''}`)
+  }
+
+  // One plasma operation with the torch path written (issue #959). QtPlasmaC
+  // owns pierce height, pierce delay, cut height and THC through its material
+  // table, so the program is XY motion, the material handshake and torch
+  // on/off: no Z word (its load filter strips Z motion anyway) and no numeric
+  // F on a cut (the cut runs at the material's feed).
+  const emitPlasmaOperation = (
+    operation: PostProcessorInput['operations'][number]['operation'],
+    tool: PostProcessorInput['operations'][number]['tool'],
+    toolpath: PostProcessorInput['operations'][number]['toolpath'],
+    sequence: PlasmaOperationSequence,
+    block: NonNullable<MachineDefinition['plasma']>,
+  ) => {
+    const kerf = `${formatGCodeNumber(tool.diameter, definition, outputUnits)} ${outputUnits}`
+    comment(sequence.materialNumber === null
+      ? `Plasma: kerf ${kerf}, no material number`
+      : `Plasma: kerf ${kerf}, material ${sequence.materialNumber}`)
+    if (sequence.selectMaterial && sequence.materialNumber !== null) {
+      // Select, wait, then take the feed: the interpreter reads ahead, so a
+      // feed word ahead of the wait takes the previous material's feed.
+      emitLine(substituteTemplates(block.materialSelectCommand ?? '', { materialNumber: sequence.materialNumber }))
+      emitLine(block.materialWaitCommand ?? '')
+      emitLine(block.materialFeedCommand ?? '')
+      state.feedRate = null
+    }
+    const plan = planOperationMotion({
+      project,
+      definition,
+      operation,
+      toolpath,
+      arcEmitOptions,
+      startPosition: emittedPosition,
+      captureTrace,
+    })
+    warnings.push(...plan.warnings)
+    const travelTo = (point: ToolpathPoint) => {
+      const at = state.currentPosition
+      if (at === null || at.x !== point.x || at.y !== point.y) {
+        emitMotionLine(definition.motion.rapidCommand, { x: point.x, y: point.y })
+      }
+    }
+    for (const item of planPlasmaPath(plan.steps)) {
+      if (item.kind === 'travel') {
+        travelTo(item.to)
+        continue
+      }
+      travelTo(item.pierce)
+      emitLine(block.torchOnCommand)
+      for (const move of item.moves) {
+        if (move.kind === 'linear') {
+          emitMotionLine(definition.motion.linearCommand, { x: move.point.x, y: move.point.y })
+        } else {
+          emitArcLine(move)
+        }
+      }
+      emitLine(block.torchOffCommand)
+    }
+    if (plan.trace) {
+      motionTraces.push(plan.trace)
+    }
+  }
+
   operations.forEach(({ operation, tool, toolpath }, opIndex) => {
     const step = sequence[opIndex]
     const { rpm } = step
     warnings.push(...step.warnings)
+    if (step.plasma?.skip) return
     const operationContext = {
       ...commonContext,
       operationIndex: opIndex + 1,
@@ -275,6 +412,11 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       emitTemplateLines(definition.program.operationHeader, operationContext, descriptionLines)
     } else {
       emitLine(`${definition.program.commentPrefix} Operation: ${operationContext.operationName}${definition.program.commentSuffix}`)
+    }
+
+    if (step.plasma && plasma) {
+      emitPlasmaOperation(operation, tool, toolpath, step.plasma, plasma)
+      return
     }
 
     // Tool change
@@ -444,66 +586,6 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       const emitRapid = (pt: ToolpathPoint) => {
         for (const axes of splitRapid(state.currentPosition, pt)) {
           emitMotionLine(definition.motion.rapidCommand, axes)
-        }
-      }
-
-      // Emit a single arc (G2/G3) with I/J or R, respecting modal state.
-      const emitArcLine = (arc: ArcMoveDescriptor, feed: number) => {
-        const lineSegments: string[] = []
-        const motionCmd = arc.clockwise
-          ? definition.motion.cwArcCommand
-          : definition.motion.ccwArcCommand
-
-        if (!definition.motion.modalMotion || state.motionCommand !== motionCmd) {
-          lineSegments.push(motionCmd)
-          state.motionCommand = motionCmd
-        }
-
-        // I/J are relative to where the controller actually is — the formatted
-        // endpoint of the preceding block — not to the arc's declared start.
-        const start = emittedPosition ?? {
-          x: formatValue(arc.startPoint.x),
-          y: formatValue(arc.startPoint.y),
-        }
-        const emitted = resolveEmittedArc(arc, start, arcEmitOptions)
-
-        lineSegments.push(`X${formatGCodeNumber(arc.endPoint.x, definition, outputUnits)}`)
-        lineSegments.push(`Y${formatGCodeNumber(arc.endPoint.y, definition, outputUnits)}`)
-
-        if (definition.motion.arcFormat === 'ij') {
-          lineSegments.push(`I${formatGCodeNumber(emitted.i, definition, outputUnits)}`)
-          lineSegments.push(`J${formatGCodeNumber(emitted.j, definition, outputUnits)}`)
-        } else {
-          lineSegments.push(`R${formatGCodeNumber(emitted.radius, definition, outputUnits)}`)
-        }
-
-        if (feed !== undefined && motionCmd !== definition.motion.rapidCommand) {
-          const feedChanged = state.feedRate !== feed
-          if (!definition.feedSpeed.modalFeedSpeed || feedChanged) {
-            const fWord = `${definition.feedSpeed.feedCommand}${formatGCodeNumber(feed, definition, outputUnits)}`
-            if (definition.feedSpeed.inlineWithMotion) {
-              lineSegments.push(fWord)
-            } else if (feedChanged) {
-              emitLine(fWord)
-            }
-            state.feedRate = feed
-          }
-        }
-
-        if (lineSegments.length > 0) {
-          emitLine(lineSegments.join(' '))
-          moveCount += 1
-        }
-
-        state.currentPosition = {
-          x: arc.endPoint.x,
-          y: arc.endPoint.y,
-          z: state.currentPosition?.z ?? 0,
-        }
-
-        emittedPosition = {
-          x: formatValue(arc.endPoint.x),
-          y: formatValue(arc.endPoint.y),
         }
       }
 

@@ -113,15 +113,15 @@ assert.ok(!('machineKind' in mergeFormData(router, toFormData(router))), 'editin
 const newPlasma = mergeFormData(router, { ...form, name: 'New plasma' })
 assert.equal(validateDef(newPlasma).ok?.machineKind, 'plasma', 'focused form can create a plasma definition')
 
-// Even with tool changes requested, this metadata PR cannot turn on a torch
-// through a legacy spindle word or through new template substitution.
+// A QtPlasmaC export of milling operations (#959): each is left out, so no
+// motion, spindle, torch or material word reaches the program.
 const fixture = CORPUS.find((entry) => entry.name === 'sbp-mm-tool-change')
 assert.ok(fixture)
 const rendered = renderCase({ ...fixture, machineId: 'qtplasmac' })
 const output = rendered.gcode
-assert.equal(rendered.warnings.filter((warning) => warning.includes('postPlasmaOutputPending')).length, 1, 'all plasma exports disclose the absent torch path once')
-assert.equal(rendered.warnings.filter((warning) => warning.includes('postNoToolChangeCommands')).length, 1, 'an unexecuted real tool change is disclosed')
-for (const word of ['G92.1', 'G97', 'M52 P1']) assert.ok(output.includes(word), 'QtPlasmaC preamble includes ' + word)
-assert.ok(/G[01] /.test(output), 'fixture actually exports motion')
-assert.ok(!/\bM(?:3|4|5|190|62|63|64|65|66)\b/.test(output), 'no torch/material/THC sequence is emitted by metadata')
+assert.equal(rendered.warnings.filter((warning) => warning.includes('postPlasmaOutputPending')).length, 0, 'the torch path is written, so nothing is pending')
+assert.ok(rendered.warnings.length > 0 && rendered.warnings.every((warning) => warning.includes('postPlasmaOperationSkipped')), 'every milling operation is skipped')
+for (const word of ['G92.1', 'G97', 'M52 P1', '#<holes> = 1']) assert.ok(output.includes(word), 'QtPlasmaC preamble includes ' + word)
+assert.ok(!/^G[0-3]\b/m.test(output), 'skipped operations export no motion')
+assert.ok(!/\bM(?:3|4|5|190|62|63|64|65|66)\b/.test(output), 'no torch/material/THC sequence without a plasma cut')
 console.log('plasmaMachine.test.ts: schema, library, storage, snapshot, form and no-torch assertions passed')

@@ -37,7 +37,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
   feed and speed fallbacks, pending plasma output and unexecutable tool-change
-  warnings), `planOperationMotion`
+  warnings; its plasma branch decides skipped operations and the QtPlasmaC
+  material handshake, #959), `planPlasmaPath` (torch-off travel and torch-on
+  cuts, #959), `planOperationMotion`
   (project → machine transform, arc fitting, the emitted-arc fallback and its
   warnings, the motion trace), `planDrillCycles` (drill cycles in machine
   coordinates, for a dialect with canned cycles), `splitRapid` (the safe-Z
@@ -75,11 +77,12 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   frame before the origin offset, and Top passes none.
 - `definitions/` — bundled machine definitions (`BUNDLED_DEFINITIONS`) and
   `getActiveMachineDefinition`, the export boundary. `shopbot.json` is the one
-  non-G-code definition; see the note below. `qtplasmac.json` adds the experimental
-  plasma table metadata, with controller-owned piercing and no torch emission;
+  non-G-code definition; see the note below. `qtplasmac.json` is the experimental
+  QtPlasmaC table, controller-owned piercing, whose torch path is written (#959);
   `grbl-plasma.json` is the G-code-owned counterpart (per-cut touch-off, #983),
-  also metadata only.
+  still metadata only.
 - `legacyMachineParity.test.ts` + `legacyMachineParity.json` — 42 frozen pre-#956 output cases across every existing machine, both units, arcs, tool changes and drilling; only the clock date is normalized.
+- `plasmaOutput.test.ts` — the QtPlasmaC torch path (#959): material handshake order and when it repeats, one torch pair per contour, no Z or numeric F, skipped milling operations, the blocking missing-material error, and physical direction under a mirrored axis.
 - `*.test.ts` — `postprocessor.test.ts` (G-code), `motionPipeline.test.ts`
   (sequencing, drill-cycle transform, rapid split, and both emitters checked
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect
@@ -133,5 +136,5 @@ fields it does read are reachable under Advanced.
 - `npm run check:gcode:qtplasmac` runs plasma programs through LinuxCNC's
   QtPlasmaC simulator in a container
   (`scripts/gcode-conformance/qtplasmac/`, #954). It holds hand-written
-  reference programs today; the plasma post output (#959) adds its exported
-  programs to that corpus and must keep it green.
+  reference programs and, since #959, the exported twin of each
+  (`EXPORTED_CASES`, built from `src/test/plasmaExportFixtures.ts`).

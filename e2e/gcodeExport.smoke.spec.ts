@@ -167,16 +167,26 @@ test.describe('Export G-code operation checklist smoke', () => {
 })
 
 
-test('QtPlasmaC export discloses missing torch output and unexecuted tool changes', async ({ app, ui }) => {
-  await seedGcodeExportProject(app.page, { machineId: 'qtplasmac', routeBOnSecondTool: true })
+test('QtPlasmaC export writes the torch path and leaves milling operations out', async ({ app, ui }) => {
+  await seedGcodeExportProject(app.page, { machineId: 'qtplasmac', plasmaCut: { materialNumber: 1 } })
   await ui.operations.headerExportButton(app.page).click()
   const warnings = ui.exportDialog.warnings(app.page)
-  await expect(warnings.filter({ hasText: 'The torch will not fire' })).toBeVisible()
-  await expect(warnings.filter({ hasText: 'no executable tool-change commands' })).toBeVisible()
-  await expect(warnings.filter({ hasText: 'Route B' })).toBeVisible()
-  await expect(ui.exportPreview.body(app.page)).toContainText('G92.1 G94 G97')
-  await expect(ui.exportPreview.body(app.page)).toContainText('M52 P1')
-  await ui.exportDialog.operationCheckbox(app.page, 'Route B').uncheck()
-  await expect(warnings.filter({ hasText: 'no executable tool-change commands' })).toHaveCount(0)
-  await expect(warnings.filter({ hasText: 'The torch will not fire' })).toBeVisible()
+  const preview = ui.exportPreview.body(app.page)
+  await expect(warnings.filter({ hasText: 'Route A' })).toContainText('is not a plasma cut')
+  await expect(warnings.filter({ hasText: 'The torch will not fire' })).toHaveCount(0)
+  for (const line of ['#<holes> = 1', 'M190 P1', 'M66 P3 L3 Q1', 'F#<_hal[plasmac.cut-feed-rate]>', 'M3 $0 S1', 'M5 $0']) {
+    await expect(preview).toContainText(line)
+  }
+  await expect(preview).not.toContainText(/\bZ-?[\d.]/)
+  await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+  await ui.exportDialog.operationCheckbox(app.page, 'Route A').uncheck()
+  await expect(warnings.filter({ hasText: 'Route A' })).toHaveCount(0)
+})
+
+test('a QtPlasmaC torch without a material number blocks the export', async ({ app, ui }) => {
+  await seedGcodeExportProject(app.page, { machineId: 'qtplasmac', plasmaCut: { materialNumber: null } })
+  await ui.operations.headerExportButton(app.page).click()
+  await expect(ui.exportDialog.errors(app.page).filter({ hasText: 'Plasma Torch' })).toContainText('no material number')
+  await expect(ui.exportDialog.exportButton(app.page)).toBeDisabled()
+  await expect(ui.exportPreview.body(app.page)).not.toContainText('M190')
 })

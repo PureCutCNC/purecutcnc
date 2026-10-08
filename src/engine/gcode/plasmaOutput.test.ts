@@ -1,0 +1,203 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * QtPlasmaC torch path (issue #959): the emitted sequence of a controller-
+ * pierced plasma program. The QtPlasmaC simulator (`check:gcode:qtplasmac`)
+ * runs the same scenarios; these assertions pin the rules without a container.
+ */
+
+import assert from 'node:assert/strict'
+import { exportPlasma, PLASMA_EXPORT_SCENARIOS, rectangle } from '../../test/plasmaExportFixtures'
+import type { PlasmaExportSpec } from '../../test/plasmaExportFixtures'
+import { warningSeverity } from '../toolpaths/warningCodes'
+import { defaultTool } from '../../types/project'
+import { defaultOperationForTarget } from '../../store/helpers/operationDefaults'
+import { normalizeToolForProject } from '../toolpaths/geometry'
+import { runPostProcessor } from './postprocessor'
+import { planPlasmaPath } from './motionPipeline'
+
+const TORCH_ON = 'M3 $0 S1'
+const TORCH_OFF = 'M5 $0'
+
+function codeLines(gcode: string): string[] {
+  return gcode.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('('))
+}
+
+/** Every torch-on/off pair, with the motion lines between them. */
+function cuts(gcode: string): Array<{ before: string; moves: string[] }> {
+  const lines = codeLines(gcode)
+  const result: Array<{ before: string; moves: string[] }> = []
+  let open: { before: string; moves: string[] } | null = null
+  lines.forEach((line, index) => {
+    if (line === TORCH_ON) {
+      assert.equal(open, null, 'torch-on while the torch is already on')
+      open = { before: lines[index - 1], moves: [] }
+      result.push(open)
+    } else if (line === TORCH_OFF) {
+      assert.ok(open, 'torch-off without a torch-on')
+      open = null
+    } else if (open) {
+      open.moves.push(line)
+    }
+  })
+  assert.equal(open, null, 'the program ends with the torch off')
+  return result
+}
+
+/** Motion words: an explicit G0-G3, or a modal continuation (a line of axis words). */
+const isMotion = (line: string) => /^G[0-3]\b/.test(line) || /^[XYIJ]-?\d/.test(line)
+
+for (const [name, scenario] of Object.entries(PLASMA_EXPORT_SCENARIOS)) {
+  const { result, input } = exportPlasma(scenario())
+  const lines = codeLines(result.gcode)
+  assert.deepEqual(result.warnings, [], `${name}: a clean plasma export raises nothing (the torch path is written)`)
+
+  // Material handshake: select, wait, then the feed word, before the first torch-on.
+  const select = lines.indexOf('M190 P1')
+  const wait = lines.indexOf('M66 P3 L3 Q1')
+  const feed = lines.indexOf('F#<_hal[plasmac.cut-feed-rate]>')
+  const firstTorch = lines.indexOf(TORCH_ON)
+  assert.ok(select >= 0 && select < wait && wait < feed && feed < firstTorch, `${name}: select -> wait -> feed -> first torch-on`)
+
+  // QtPlasmaC owns Z and the cut feed.
+  assert.ok(!lines.some((line) => /\bZ-?[\d.]/.test(line)), `${name}: no Z word anywhere`)
+  assert.ok(!lines.some((line) => /\bF-?[\d.]/.test(line)), `${name}: no numeric feed anywhere`)
+  assert.ok(!lines.some((line) => /^M[345]\b/.test(line) && line !== TORCH_ON && line !== TORCH_OFF), `${name}: no spindle words`)
+  assert.ok(lines.includes('#<holes> = 1'), `${name}: QtPlasmaC hole handling is switched on`)
+
+  // One torch-on per contour, every cut move inside a pair, travel outside.
+  const contours = input.operations.reduce((sum, op) => sum + (op.operation.target.source === 'features' ? op.operation.target.featureIds.length : 0), 0)
+  const pairs = cuts(result.gcode)
+  assert.equal(pairs.length, contours, `${name}: one torch-on per contour`)
+  for (const pair of pairs) {
+    assert.ok(/^G0 X-?[\d.]+ Y-?[\d.]+$/.test(pair.before), `${name}: each torch-on follows an XY rapid to the pierce point, got ${pair.before}`)
+    assert.ok(pair.moves.length > 0 && pair.moves.every((line) => isMotion(line) && !/^G0\b/.test(line)), `${name}: only feed and arc moves while the torch is on`)
+  }
+  let torch = false
+  for (const line of lines) {
+    if (line === TORCH_ON) torch = true
+    else if (line === TORCH_OFF) torch = false
+    else if (!torch && isMotion(line)) assert.ok(/^G0\b/.test(line), `${name}: travel with the torch off is rapid only, got ${line}`)
+  }
+}
+
+// The pierce point is where #957 put it, lead-in included: the first point of
+// the toolpath's plunge, unchanged in machine XY.
+{
+  const { input, result } = exportPlasma(PLASMA_EXPORT_SCENARIOS['single-outline']())
+  const plunge = input.operations[0].toolpath.moves.find((move) => move.kind === 'plunge')!
+  const machineY = input.project.origin.y - plunge.to.y
+  assert.equal(cuts(result.gcode)[0].before, `G0 X${plunge.to.x.toFixed(3)} Y${machineY.toFixed(3)}`, 'the torch fires at the toolpath pierce point')
+}
+
+// The handshake is written again only when the material changes.
+{
+  const two: PlasmaExportSpec = {
+    ...PLASMA_EXPORT_SCENARIOS['nested-sheet'](),
+    operations: [{ featureIds: ['part-a'] }, { featureIds: ['part-b'], tool: { qtplasmacMaterialNumber: 2 } }, { featureIds: ['part-c'], tool: { qtplasmacMaterialNumber: 2 } }],
+  }
+  const lines = codeLines(exportPlasma(two).result.gcode)
+  assert.deepEqual(lines.filter((line) => line.startsWith('M190')), ['M190 P1', 'M190 P2'], 'one select per material change')
+  assert.equal(lines.filter((line) => line.startsWith('M66')).length, 2, 'every select is followed by its wait')
+  const second = lines.indexOf('M190 P2')
+  assert.deepEqual(lines.slice(second, second + 3), ['M190 P2', 'M66 P3 L3 Q1', 'F#<_hal[plasmac.cut-feed-rate]>'], 'the second handshake keeps its order')
+  const thirdOp = exportPlasma(two).result.warnings
+  assert.deepEqual(thirdOp.map((warning) => warning.code), ['postNoToolChangeCommands', 'postNoToolChangeCommands'], 'a different consumable is disclosed, not paused for')
+}
+
+// A tool with no material number blocks the export; material 0 is a real
+// QtPlasmaC material and is selected.
+{
+  const spec = PLASMA_EXPORT_SCENARIOS['single-outline']()
+  const missing = exportPlasma({ ...spec, operations: [{ featureIds: ['plate'], tool: { qtplasmacMaterialNumber: undefined } }] }).result
+  assert.deepEqual(missing.warnings, [{ code: 'postPlasmaMaterialMissing', params: { operation: 'Cut 1', tool: 'Torch 1' } }])
+  assert.equal(warningSeverity('postPlasmaMaterialMissing'), 'error', 'a missing material blocks saving')
+  assert.ok(!missing.gcode.includes('M190'), 'no material is invented')
+  const zero = exportPlasma({ ...spec, operations: [{ featureIds: ['plate'], tool: { qtplasmacMaterialNumber: 0 } }] }).result
+  assert.deepEqual(zero.warnings, [])
+  assert.ok(codeLines(zero.gcode).includes('M190 P0'))
+}
+
+// A milling operation in a plasma program is left out with a warning; the
+// plasma cut around it is still written.
+{
+  const { input } = exportPlasma(PLASMA_EXPORT_SCENARIOS['single-outline']())
+  const router = { ...defaultTool('mm'), id: 'mill', name: 'Mill' }
+  const project = { ...input.project, tools: [...input.project.tools, router] }
+  const pocket = { ...defaultOperationForTarget(project, 'pocket', 'rough', { source: 'features', featureIds: ['plate'] }, 0), id: 'pocket', name: 'Pocket', toolRef: 'mill' }
+  const mixed = runPostProcessor({
+    ...input,
+    project,
+    operations: [
+      { operation: pocket, tool: normalizeToolForProject(router, project), toolpath: { operationId: 'pocket', moves: [{ kind: 'cut', from: { x: 0, y: 0, z: 0 }, to: { x: 5, y: 5, z: 0 } }], warnings: [], bounds: null } },
+      ...input.operations,
+    ],
+  })
+  assert.deepEqual(mixed.warnings, [{ code: 'postPlasmaOperationSkipped', params: { operation: 'Pocket' } }])
+  assert.ok(!mixed.gcode.includes('Pocket'), 'nothing of the skipped operation is written')
+  assert.equal(cuts(mixed.gcode).length, 1, 'the plasma cut is still written')
+}
+
+// Physical direction survives a mirrored machine axis (#957: outside contours
+// clockwise viewed from above). The machine's own X runs the other way, so
+// its coordinates mirror and every arc swaps G2/G3; mapped back through the
+// same axis, the path turns the same way.
+{
+  const disc = PLASMA_EXPORT_SCENARIOS['arc-lead-ins']()
+  const plain = cuts(exportPlasma(disc).result.gcode)[0].moves
+  const mirrored = cuts(exportPlasma({ ...disc, definition: (d) => ({ ...d, coordinateSystem: { ...d.coordinateSystem, xAxis: '-X' } }) }).result.gcode)[0].moves
+  const arcs = (moves: string[], word: string) => moves.filter((line) => line.startsWith(word)).length
+  assert.ok(arcs(plain, 'G2') > 0, 'the disc is cut with clockwise arcs')
+  assert.equal(arcs(mirrored, 'G3'), arcs(plain, 'G2'), 'mirrored X turns every G2 into a G3')
+  assert.equal(arcs(mirrored, 'G2'), arcs(plain, 'G3'))
+  // Linear moves only, to read the signed area straight off the program.
+  const linear = { ...disc, operations: [{ featureIds: ['disc'], operation: { arcFittingEnabled: false } }] }
+  const area = (gcode: string, flipX: boolean) => {
+    const points = cuts(gcode)[0].moves.map((line) => {
+      const x = Number(/X(-?[\d.]+)/.exec(line)![1])
+      return { x: flipX ? -x : x, y: Number(/Y(-?[\d.]+)/.exec(line)![1]) }
+    })
+    return points.reduce((sum, p, i) => { const q = points[(i + 1) % points.length]; return sum + p.x * q.y - q.x * p.y }, 0) / 2
+  }
+  const unmirroredArea = area(exportPlasma(linear).result.gcode, false)
+  const mirroredArea = area(exportPlasma({ ...linear, definition: (d) => ({ ...d, coordinateSystem: { ...d.coordinateSystem, xAxis: '-X' } }) }).result.gcode, true)
+  assert.ok(unmirroredArea < 0, 'outside contour: clockwise viewed from above')
+  assert.ok(Math.abs(mirroredArea - unmirroredArea) < 1e-6, 'the mirrored program, mapped back, cuts the same direction')
+}
+
+// The cut planner: travel, then a cut from each plunge to the next rapid.
+{
+  const point = (x: number, y: number, z: number) => ({ x, y, z })
+  const items = planPlasmaPath([
+    { kind: 'linear', point: point(0, 0, 10), moveKind: 'rapid' },
+    { kind: 'linear', point: point(0, 0, 3), moveKind: 'plunge' },
+    { kind: 'linear', point: point(5, 0, 3), moveKind: 'lead_in' },
+    { kind: 'linear', point: point(5, 5, 3), moveKind: 'cut' },
+    { kind: 'linear', point: point(5, 5, 10), moveKind: 'rapid' },
+    { kind: 'linear', point: point(9, 9, 10), moveKind: 'rapid' },
+    { kind: 'linear', point: point(9, 1, 3), moveKind: 'cut' },
+  ])
+  assert.deepEqual(items.map((item) => item.kind), ['travel', 'cut', 'travel', 'travel', 'cut'])
+  const [, first, , , second] = items
+  assert.ok(first.kind === 'cut' && first.moves.length === 2 && first.pierce.x === 0 && first.pierce.y === 0)
+  assert.ok(second.kind === 'cut' && second.pierce.x === 9 && second.pierce.y === 9, 'a cut with no plunge fires where the head already is')
+}
+
+// A rectangle helper sanity check keeps the fixtures honest.
+assert.equal(rectangle(0, 0, 2, 3).segments.length, 4)
+
+console.log('plasmaOutput.test.ts: QtPlasmaC handshake, torch pairs, no Z/F, skips, material errors and mirrored direction passed')

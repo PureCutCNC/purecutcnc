@@ -102,18 +102,46 @@ version-based migration.
 The bundled **QtPlasmaC (experimental)** machine uses controller-owned pierce
 height, delay and THC, following the
 [LinuxCNC QtPlasmaC command reference](https://linuxcnc.org/docs/2.9/html/plasma/qtplasmac.html#_qtplasmac_specific_g_codes).
-These commands are metadata only: legacy spindle-start words are comments,
-spindle-off and tool-change commands are empty, and no torch, material or THC
-sequence is emitted by this change.
-The bundled block describes the full material sequence: select → wait
-(`M66 P3 L3 Q1`) → controller feed (`F#<_hal[plasmac.cut-feed-rate]>`).
-#959 must consume those three fields in that order in `motionPipeline.ts`; no
-QtPlasmaC command hardcoding or further schema change is needed. `{materialNumber}`
-is reserved for that metadata, not a current header or operation substitution.
-The export dialog warns that no torch/material sequence is emitted; a subsequent
-tool change without executable commands raises its own warning. The preamble
-includes `G92.1`, `G97` and `M52 P1`; QtPlasmaC supplies its documented default
-path tolerance when `G64` is absent.
+Its header switches on QtPlasmaC's own hole handling (`#<holes> = 1`) and
+states that the output is experimental, including the LinuxCNC 2.9.10 stall
+found by #954. The preamble includes `G92.1`, `G97` and `M52 P1`; QtPlasmaC
+supplies its documented default path tolerance when `G64` is absent.
+
+### Plasma torch path (#959)
+
+A plasma machine with `pierceMode: controller` exports a torch path instead of
+the spindle path. What the machine is asked to do is decided in
+`motionPipeline.ts`; the G-code emitter only spells it:
+
+- `planProgramSequence` takes its plasma branch (`planPlasmaSequence`): no
+  spindle, coolant or tool-change word is written. A non-`plasma_profile`
+  operation is left out with `postPlasmaOperationSkipped`. A plasma tool with
+  no `qtplasmacMaterialNumber` raises `postPlasmaMaterialMissing`, which blocks
+  the export. A different plasma tool raises `postNoToolChangeCommands`: a
+  consumable swap is not paused for.
+- The material handshake is written before an operation's first cut when the
+  material differs from the one selected before: `materialSelectCommand` with
+  `{materialNumber}` substituted, then `materialWaitCommand`, then
+  `materialFeedCommand`. The order matters because the interpreter reads ahead:
+  a feed word ahead of the wait takes the previous material's feed.
+- `planPlasmaPath` groups an operation's planned moves into torch-off travel
+  and torch-on cuts. A cut starts at the toolpath's `plunge` and ends at the
+  next `rapid` (#957 writes each contour that way), so the lead-in, contour and
+  lead-out are all cut with the torch on. Arc fitting never joins moves of
+  different kinds, so no fitted arc spans a cut boundary.
+- Each cut is an XY rapid to the pierce point, `torchOnCommand`, the cut moves,
+  then `torchOffCommand`. No Z word is written, because QtPlasmaC probes,
+  pierces and drops to cut height itself and its load filter strips Z motion.
+  No numeric F is written on a plasma move: the cut runs at the material feed.
+- The direction is physical: arcs are fitted after the machine transform, so
+  a mirrored axis mapping swaps G2 and G3 and the path still turns the same way
+  over the sheet.
+
+The exported programs run through the QtPlasmaC simulator
+(`scripts/gcode-conformance/qtplasmac/`, `EXPORTED_CASES`), one exported twin
+per reference program. `pierceMode: gcode` (#983) is still metadata only and
+keeps `postPlasmaOutputPending` until its torch path lands on the same
+pipeline.
 
 The bundled **Grbl plasma (OpenBuilds CONTROL) (experimental)** machine is the
 `gcode` counterpart, from a requester's OpenBuilds CONTROL table (#983). Its

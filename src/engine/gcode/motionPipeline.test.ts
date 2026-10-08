@@ -385,17 +385,18 @@ testGcodeRapidsUseTheSplit()
 console.log('motion pipeline tests passed')
 
 
-// Metadata-only plasma support must disclose both the dry export and a tool
-// change which this definition cannot execute, even with changes requested.
+// Metadata-only plasma support (G-code piercing until #983) must disclose both
+// the dry export and a tool change which this definition cannot execute, even
+// with changes requested.
 {
   const input = programInput([['t1', 12000], ['t2', 12000]])
-  const definition = bundled('qtplasmac')
+  const definition = bundled('grbl-plasma')
   const result = runPostProcessor({ ...input, definition })
   assertEqual(result.warnings.filter((warning) => warning.code === 'postPlasmaOutputPending').length, 1, 'plasma pending warning once per program')
   assertEqual(result.warnings.filter((warning) => warning.code === 'postNoToolChangeCommands'), [{ code: 'postNoToolChangeCommands', params: { operation: 'Op op2', tool: 'Tool 2' } }], 'empty change commands disclose the actual second tool')
   const sameTool = runPostProcessor({ ...programInput([['t1', 12000], ['t1', 12000]]), definition })
   assert(!sameTool.warnings.some((warning) => warning.code === 'postNoToolChangeCommands'), 'no false change warning on one tool')
-  for (const commands of [[], [' ', '(comment only)', '; also a comment']]) {
+  for (const commands of [[], [' ', '; comment only', ';also a comment']]) {
     const silent = runPostProcessor({ ...input, definition: { ...definition, toolChange: { ...definition.toolChange, commands } } })
     assert(silent.warnings.some((warning) => warning.code === 'postNoToolChangeCommands'), 'comments do not execute a tool change')
   }
@@ -403,4 +404,16 @@ console.log('motion pipeline tests passed')
     const executable = runPostProcessor({ ...input, definition: { ...definition, toolChange } })
     assert(!executable.warnings.some((warning) => warning.code === 'postNoToolChangeCommands'), 'executable change or pause clears warning')
   }
+}
+
+// A QtPlasmaC program writes its torch path (#959): milling operations have
+// none, so each is left out with a warning and nothing of it is emitted.
+{
+  const input = programInput([['t1', 12000], ['t2', 12000]])
+  const result = runPostProcessor({ ...input, definition: bundled('qtplasmac') })
+  assertEqual(result.warnings, [
+    { code: 'postPlasmaOperationSkipped', params: { operation: 'Op op1' } },
+    { code: 'postPlasmaOperationSkipped', params: { operation: 'Op op2' } },
+  ], 'every milling operation is skipped, and nothing else is reported')
+  assert(!/^G[0-3]\b|^M[345]\b/m.test(result.gcode), 'a skipped operation emits no motion, spindle or torch')
 }
