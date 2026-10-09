@@ -36,6 +36,7 @@
 
 import { canonicalToSetupPoint, setupFrame } from '../../engine/setupOrientation'
 import { DEFAULT_SNAP_SETTINGS } from '../../sketch/snapping'
+import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
 import { BOTTOM_SETUP_ID, projectWithFeatures, withBottomSetup } from '../../test/projectFixtures'
 import { DEFAULT_SETUP_ID, newProject, rectProfile } from '../../types/project'
@@ -198,6 +199,43 @@ for (const axis of ['x', 'y'] as const) {
   // A Top-only project takes the unfiltered path: same array, nothing dropped.
   const topOnly = projectWithFeatures(newProject(), [topFeature])
   assert(editableProjectFeatures(topOnly).length === 1, 'a Top-only project keeps every feature editable')
+}
+
+// Explicit construction references keep canonical points, indices and parameters.
+for (const face of ['top', 'bottom'] as const) {
+  for (const axis of ['x', 'y'] as const) {
+    for (const units of ['mm', 'inch'] as const) {
+      const guide = makeFeature('reference-guide', face === 'top' ? 'bottom' : 'top', rectProfile(13, 21, 7, 4))
+      guide.operation = 'construction'
+      guide.locked = true
+      const project = projectOn(face, axis, [guide])
+      project.meta.units = units
+      project.features[0].transform = { a: 0, b: 1, c: -1, d: 0, e: 70, f: 10 }
+      const snapshot = JSON.stringify(project)
+      const vt = computeSketchViewTransform(project, CANVAS_W, CANVAS_H, VIEW)
+      const canonical = { x: 49, y: 23 }
+      const drawn = worldToCanvas(canonical, vt)
+      const pointer = canvasToWorld(drawn.cx + 0.3, drawn.cy - 0.2, vt)
+      const settings = { enabled: true, modes: ['point' as const], pixelRadius: 6 }
+      const input = { rawPoint: pointer, vt, snapSettings: settings, project, referencePoint: null }
+      const candidates = referenceProjectFeatures(project, true)
+      const snap = resolveSketchSnap({ ...input, referenceFeatures: candidates })
+      assert(snap.mode === 'point' && near(snap.point.x, canonical.x) && near(snap.point.y, canonical.y), `${face}/${axis}/${units}: reference snap is canonical, mirrored only by the view`)
+      assert(snap.anchor?.kind === 'vertex' && snap.anchor.target.source === 'feature' && snap.anchor.target.featureId === guide.id && snap.anchor.vertexIndex === 0, 'reference snap keeps its source vertex identity')
+      const segmentCanvas = worldToCanvas({ x: 49, y: 26.5 }, vt)
+      const segmentPointer = canvasToWorld(segmentCanvas.cx, segmentCanvas.cy, vt)
+      const hit = segmentHitTest(segmentPointer, project, vt, { openOnly: false, referenceFeatures: candidates })
+      assert(hit?.featureId === guide.id && hit.segmentIndex === 0 && near(hit.t, 0.5), `${face}/${axis}/${units}: reference edge retains canonical segment index and t`)
+      assert(segmentHitTest(segmentPointer, project, vt, { openOnly: false }) === null, 'default segment subject picker stays edit-only')
+      assert(resolveSketchSnap(input).mode === null, 'ordinary snapping keeps ghosts excluded')
+      assert(resolveSketchSnap({ ...input, referenceFeatures: referenceProjectFeatures(project, false) }).mode === null, 'hidden other-side overlay cannot snap')
+      assert(segmentHitTest(segmentPointer, project, vt, { openOnly: false, referenceFeatures: referenceProjectFeatures(project, false) }) === null, 'hidden other-side overlay cannot hit')
+      assert(JSON.stringify(project) === snapshot, 'all reference queries are read-only')
+      project.features[0].visible = false
+      assert(resolveSketchSnap({ ...input, referenceFeatures: referenceProjectFeatures(project, true) }).mode === null, 'hidden construction cannot snap even with the overlay on')
+      assert(segmentHitTest(segmentPointer, project, vt, { openOnly: false, referenceFeatures: referenceProjectFeatures(project, true) }) === null, 'hidden construction cannot hit')
+    }
+  }
 }
 
 console.log('faceView tests passed')

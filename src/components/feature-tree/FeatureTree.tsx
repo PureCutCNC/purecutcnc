@@ -27,6 +27,7 @@ import { useI18n } from '../../i18n/i18nContext'
 import { activeFace, isThroughFeature, projectUsesBothFaces } from '../../store/helpers/activeFace'
 import { useFaceViewStore } from '../../store/faceViewStore'
 import { FaceChip } from './FaceChip'
+import { referencePickIntent } from '../canvas/referencePickIntent'
 
 interface FeatureTreeProps {
   onFeatureContextMenu?: (featureId: string, x: number, y: number) => void
@@ -386,7 +387,13 @@ export function FeatureTree({ onFeatureContextMenu, onTabContextMenu, onClampCon
           operation={feature.operation}
           profileClosed={feature.sketch.profile.closed}
           regionMaskMode={feature.regionMaskMode ?? 'include'}
-          onClick={() => {}}
+          onClick={() => {
+            if (!feature.visible || !isConstruction(feature)) return
+            const state = useProjectStore.getState()
+            const intent = referencePickIntent(state)
+            if (intent === 'distribution-guide') state.setFeatureDistributionGuide(feature.id)
+            if (intent === 'text-guide') state.setTextLayoutGuide(feature.id)
+          }}
           onMouseEnter={() => hoverFeature(null)}
           onMouseLeave={() => hoverFeature(null)}
           onToggleVisible={() => updateFeature(feature.id, { visible: !feature.visible })}

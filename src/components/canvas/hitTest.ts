@@ -18,6 +18,7 @@ import { rectProfile, sampleProfilePoints } from '../../types/project'
 import type { Clamp, Point, Project, SketchProfile, Tab } from '../../types/project'
 import type { CanvasPoint, ViewTransform } from './viewTransform'
 import { editableProjectFeatures } from '../../store/helpers/activeFace'
+import type { ResolvedSketchFeature } from '../../store/helpers/resolveFeatures'
 import { resolveProfileSegments } from '../../store/helpers/resolveProfileSegments'
 import type { ArcSeg } from '../../store/helpers/segmentIntersection'
 
@@ -223,10 +224,10 @@ export function segmentHitTest(
   worldPoint: Point,
   project: Project,
   vt: ViewTransform,
-  opts: { openOnly: boolean },
+  opts: { openOnly: boolean; referenceFeatures?: readonly ResolvedSketchFeature[] },
   tolerancePx = 8,
 ): SegmentHitResult | null {
-  const features = editableProjectFeatures(project)
+  const features = opts.referenceFeatures ?? editableProjectFeatures(project)
   const toleranceWorld = tolerancePx / Math.max(vt.scale, 1e-6)
 
   let bestDist = Infinity

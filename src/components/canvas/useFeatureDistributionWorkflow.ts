@@ -62,7 +62,7 @@ export function useFeatureDistributionWorkflow({
     if (!pendingFeatureDistribution || !(event.target instanceof Element)) {
       return
     }
-    if (event.target.closest('.toolbar-group--snap, .snap-popover-host--snap')) {
+    if (event.target.closest('.toolbar-group--snap, .snap-popover-host--snap, .top-cmd-btn--project-panel')) {
       return
     }
     if (event.target.closest('.toolbar, .toolbar-popover, .tool-rail, .tool-rail__popover, .app-toolbar')) {

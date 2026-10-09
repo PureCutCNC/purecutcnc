@@ -49,7 +49,10 @@ import { fallbackOperationTarget, isOperationTargetValid } from '../store/helper
 import { isFirstFeatureValid } from '../store/helpers/normalize'
 import { getOperationAddHint } from '../components/cam/operationValidity'
 import type { SelectionState } from '../store/types'
-import { projectWithFeatures } from '../test/projectFixtures'
+import { referenceProjectFeatures } from '../store/helpers/referenceFeatures'
+import { modelFeatures } from '../store/helpers/featureRoles'
+import { DEFAULT_SETUP_ID } from '../types/project'
+import { BOTTOM_SETUP_ID, withBottomSetup, projectWithFeatures } from '../test/projectFixtures'
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
@@ -241,5 +244,28 @@ assert(
   viewportSource.includes('modelFeatures(resolvedProjectFeatures(project))'),
   'Viewport3D camera-fit must exclude construction via modelFeatures()',
 )
+
+// #994 reference eligibility never changes machining, region or model eligibility.
+for (const face of ['top', 'bottom'] as const) {
+  const foreign = face === 'top' ? 'bottom' : 'top'
+  const project = withBottomSetup(projectWithFeatures(newProject(), [
+    { ...makeFeature('foreign-guide', 'construction'), authoringFace: foreign },
+  ]))
+  project.activeSetupId = face === 'top' ? DEFAULT_SETUP_ID : BOTTOM_SETUP_ID
+  const references = referenceProjectFeatures(project, true)
+  assert(references.length === 1, 'fixture: foreign construction is a reference candidate')
+  assert(modelFeatures([...references]).length === 0, 'reference candidates still cannot contribute CSG/simulation geometry')
+  const split = splitFeatureTargets(project, ['foreign-guide'])
+  assert(split.machiningFeatures.length === 0 && split.regionFeatures.length === 0, 'reference candidates are neither machining targets nor region masks')
+  // The existing single-target fast path retains the operation; target splitting
+  // is still authoritative and yields no machining geometry from that reference.
+  for (const op of perFeatureOperations({ ...multiOperation, target: { source: 'features', featureIds: ['foreign-guide'] } }, project)) {
+    assert(op.target.source === 'features' && splitFeatureTargets(project, op.target.featureIds).machiningFeatures.length === 0, 'per-feature reference operations have no machining geometry')
+  }
+  for (const kind of ALL_KINDS) {
+    assert(!isOperationTargetValid(project, kind, { source: 'features', featureIds: ['foreign-guide'] }), `${face}/${kind}: reference picking does not broaden CAM eligibility`)
+    assert(getOperationAddHint(project, selectionOf(['foreign-guide']), kind) !== null, `${face}/${kind}: reference cannot be added to CAM`)
+  }
+}
 
 console.log('constructionExclusion.test.ts passed')

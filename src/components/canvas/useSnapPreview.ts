@@ -29,11 +29,15 @@ import { resolveSketchSnap } from './snappingHelpers'
 import type { ResolvedSnap } from './snappingHelpers'
 import { pointsEqual } from './hitTest'
 import type { ViewTransform } from './viewTransform'
+import { referenceProjectFeatures } from '../../store/helpers/referenceFeatures'
+import type { ReferencePickIntent } from './referencePickIntent'
 
 const SNAP_LABEL_VISIBLE_MS = 2500
 
 export interface SnapPreviewCtx {
   snapSettingsRef: MutableRefObject<SnapSettings>
+  getReferencePickIntent: () => ReferencePickIntent
+  showOtherSide: () => boolean
   projectRef: MutableRefObject<Project>
   selectionRef: MutableRefObject<SelectionState>
   pendingMoveRef: MutableRefObject<PendingMoveTool | null>
@@ -62,6 +66,8 @@ export function useSnapPreview(ctx: SnapPreviewCtx): UseSnapPreviewReturn {
   const {
     snapSettingsRef,
     projectRef,
+    getReferencePickIntent,
+    showOtherSide,
     selectionRef,
     pendingMoveRef,
     pendingTransformRef,
@@ -182,6 +188,8 @@ export function useSnapPreview(ctx: SnapPreviewCtx): UseSnapPreviewReturn {
       vt,
       snapSettings: snapSettingsRef.current,
       project: projectRef.current,
+      referenceFeatures: getReferencePickIntent()
+        ? referenceProjectFeatures(projectRef.current, showOtherSide()) : undefined,
       referencePoint: currentSnapReferencePoint(),
       excludeFeatureId,
       excludeTabId,

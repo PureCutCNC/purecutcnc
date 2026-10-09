@@ -211,19 +211,23 @@ test('GPU renderer opts in, retains buffers through navigation and falls back on
 })
 
 // The review's finding 4 on PR #978 (issue #945): the Top view's GPU
-// foreground stayed on screen over the mirrored Bottom view, and the renderer
-// never reported that Canvas had taken over.
-test('GPU renderer hands a Bottom view to Canvas and clears its Top overlay', async ({ app, ui }) => {
+// foreground stayed on screen over the mirrored Bottom view. Since #947 the
+// GPU renderer draws the Bottom view itself; the Top overlay must still go.
+test('GPU renderer draws a Bottom view and clears its Top overlay', async ({ app, ui }) => {
   const page = app.page
   await page.goto('/?toolpathRenderer=gpu')
   await seedToolpathVisProject(page)
   const base = page.locator('canvas.sketch-canvas')
   const gpu = page.locator('canvas.sketch-toolpath-gpu')
-  const paintedPixels = () => page.locator('canvas.sketch-toolpath-foreground').evaluate((canvas) => {
+  // The stand-in overlay is pure magenta; the next frame's own overlay may
+  // paint the foreground, but never with that colour.
+  const magentaPixels = () => page.locator('canvas.sketch-toolpath-foreground').evaluate((canvas) => {
     const element = canvas as HTMLCanvasElement
     const { data } = element.getContext('2d')!.getImageData(0, 0, element.width, element.height)
     let painted = 0
-    for (let index = 3; index < data.length; index += 4) if (data[index] !== 0) painted += 1
+    for (let index = 0; index < data.length; index += 4) {
+      if (data[index] === 255 && data[index + 1] === 0 && data[index + 2] === 255 && data[index + 3] === 255) painted += 1
+    }
     return painted
   })
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
@@ -239,9 +243,9 @@ test('GPU renderer hands a Bottom view to Canvas and clears its Top overlay', as
     ;(button as HTMLButtonElement).click()
   })
   await expect(ui.face.segment(page, 'Bottom')).toHaveAttribute('aria-pressed', 'true')
-  await expect(base).toHaveAttribute('data-toolpath-renderer', 'canvas-fallback')
-  await expect(gpu).toBeHidden()
-  await expect.poll(paintedPixels).toBe(0)
+  await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')
+  await expect(gpu).toBeVisible()
+  await expect.poll(magentaPixels).toBe(0)
 
   await ui.face.segment(page, 'Top').click()
   await expect(base).toHaveAttribute('data-toolpath-renderer', 'gpu')

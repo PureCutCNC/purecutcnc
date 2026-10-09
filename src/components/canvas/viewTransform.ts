@@ -109,6 +109,35 @@ export function applyViewMirror(ctx: CanvasRenderingContext2D, vt: ViewTransform
 }
 
 /**
+ * Reflect a context so geometry placed by scale and offset alone — as the
+ * toolpath caches place it — lands where a mirrored view draws it: about the
+ * canvas line each mirrored world axis maps onto. A no-op for an unmirrored
+ * view. The caller saves and restores the context around it.
+ */
+export function reflectContextForView(ctx: CanvasRenderingContext2D, vt: ViewTransform): void {
+  if (vt.mirrorX === undefined && vt.mirrorY === undefined) return
+  ctx.translate(
+    vt.mirrorX === undefined ? 0 : 2 * vt.offsetX + vt.mirrorX * vt.scale,
+    vt.mirrorY === undefined ? 0 : 2 * vt.offsetY + vt.mirrorY * vt.scale,
+  )
+  applyViewMirror(ctx, vt)
+}
+
+/**
+ * The view as a per-axis linear map, canvas = world × scale + offset, with a
+ * mirrored axis carrying a negative scale. The GPU renderer takes this form,
+ * so a mirrored view needs no second set of buffers.
+ */
+export function viewLinearMap(vt: ViewTransform): { scaleX: number; scaleY: number; offsetX: number; offsetY: number } {
+  return {
+    scaleX: vt.mirrorX === undefined ? vt.scale : -vt.scale,
+    scaleY: vt.mirrorY === undefined ? vt.scale : -vt.scale,
+    offsetX: vt.mirrorX === undefined ? vt.offsetX : vt.offsetX + vt.mirrorX * vt.scale,
+    offsetY: vt.mirrorY === undefined ? vt.offsetY : vt.offsetY + vt.mirrorY * vt.scale,
+  }
+}
+
+/**
  * The mirrors a setup's turn puts on the view, read off the #944 transform:
  * where the stock-space origin and unit axes land in the setup-local frame.
  */

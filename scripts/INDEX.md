@@ -54,3 +54,5 @@ The remaining TypeScript, Python, JSON, and `.camj` files are focused import,
 surface-toolpath, waterline, roughing, and legacy V-carve diagnostics. They may
 have special inputs or emit local artifacts. They are outside the default lint
 gate; use `npm run lint:scripts` when intentionally maintaining them.
+
+- `issue-947-dsh-handoff.md` — bounded DSH simulation-input execution handoff for approved #947; the issue remains the plan of record.

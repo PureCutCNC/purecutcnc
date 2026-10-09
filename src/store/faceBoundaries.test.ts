@@ -406,3 +406,63 @@ for (const axis of ['x', 'y'] as const) {
 }
 
 console.log('faceBoundaries tests passed')
+
+// #994: direct-id edit entry and subject transitions must not capture ghosts.
+for (const face of ['top', 'bottom'] as const) {
+  resetStore()
+  store().addRectFeature('Guide', 10, 10, 20, 10, project().stock.thickness)
+  const guideId = lastFeature().id
+  store().updateFeature(guideId, { operation: 'construction' })
+  switchWorkspaceFace('bottom')
+  store().addRectFeature('Bottom subject', 50, 30, 10, 10, project().stock.thickness)
+  const bottomId = lastFeature().id
+  if (face === 'top') {
+    store().updateFeature(bottomId, { operation: 'construction' })
+    switchWorkspaceFace('top')
+  }
+  const foreignId = face === 'top' ? bottomId : guideId
+  const ownId = face === 'top' ? guideId : bottomId
+  useProjectStore.setState({ sketchEditSession: null, pendingSketchEdit: null, pendingTransform: null, pendingOffset: null,
+    history: { past: [], future: [], transactionStart: null }, dirty: false })
+  const snapshot = JSON.stringify(project())
+  store().enterSketchEdit(foreignId)
+  assert(store().sketchEditSession === null && store().selection.mode === 'feature', `${face}: ghost edit entry cannot leave a session`)
+  store().enterSketchEdit(ownId)
+  assert(store().sketchEditSession?.entityId === ownId, 'own-face edit entry still works')
+  store().setSketchEditTool('trim')
+  const pendingBefore = JSON.stringify(store().pendingSketchEdit)
+  store().setPendingSketchSubject({ featureId: foreignId, segmentIndex: 0, point: { x: 10, y: 10 }, t: 0.5 })
+  assert(JSON.stringify(store().pendingSketchEdit) === pendingBefore, 'a ghost cannot become the trim subject through a direct call')
+  assert(JSON.stringify(project()) === snapshot && store().history.past.length === 0 && !store().dirty, 'reference refusal writes no geometry, setup, history or dirty flag')
+  store().cancelPendingSketchEdit()
+  store().cancelSketchEdit()
+  store().selectFeature(foreignId)
+  store().hoverFeature(foreignId)
+  assert(!store().selection.selectedFeatureIds.includes(foreignId) && store().selection.hoveredFeatureId === null, 'ordinary ghost selection and hover remain refused')
+}
+
+// #994 review: locking an own-face sketch does not remove its existing edit session entry.
+for (const face of ['top', 'bottom'] as const) {
+  resetStore()
+  if (face === 'bottom') switchWorkspaceFace('bottom')
+  store().addRectFeature('Locked own sketch', 10, 10, 20, 10, project().stock.thickness)
+  const id = lastFeature().id
+  store().updateFeature(id, { locked: true })
+  useProjectStore.setState({ sketchEditSession: null, pendingSketchEdit: null, pendingTransform: null, pendingOffset: null,
+    history: { past: [], future: [], transactionStart: null }, dirty: false })
+  const before = JSON.stringify(project())
+  store().enterSketchEdit(id)
+  assert(store().selection.mode === 'sketch_edit' && store().sketchEditSession?.entityId === id, `${face}: locked own-face sketch still opens its session`)
+  assert(JSON.stringify(project()) === before && store().history.past.length === 0 && !store().dirty, 'locked entry alone leaves document and history unchanged')
+  const geometryBefore = outlineOf(id)
+  store().moveFeatureControl(id, { kind: 'anchor', index: 1 }, { x: 80, y: 10 })
+  assert(outlineOf(id) === geometryBefore, 'locked control cannot move geometry')
+  store().setSketchEditTool('trim')
+  const pending = JSON.stringify(store().pendingSketchEdit)
+  store().setPendingSketchSubject({ featureId: id, segmentIndex: 0, point: { x: 20, y: 10 }, t: 0.5 })
+  assert(JSON.stringify(store().pendingSketchEdit) === pending, 'locked geometry cannot become a writable trim subject')
+  assert(outlineOf(id) === geometryBefore, 'locked subject refusal preserves geometry')
+  store().cancelPendingSketchEdit()
+  store().cancelSketchEdit()
+  assert(store().sketchEditSession === null && store().selection.mode === 'feature', 'locked session exits normally')
+}

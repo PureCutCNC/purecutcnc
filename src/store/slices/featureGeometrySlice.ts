@@ -803,7 +803,7 @@ export function createFeatureGeometrySlice(
     const hints: string[] = []
     set((s) => {
       const subjectFeature = resolveFeatureInstance(s.project, subjectRef.featureId)
-      if (!subjectFeature || subjectFeature.locked) {
+      if (!subjectFeature || subjectFeature.locked || isGhostFeature(s.project, subjectFeature)) {
         hints.push('Subject feature not found or locked')
         return {}
       }
@@ -1044,7 +1044,7 @@ export function createFeatureGeometrySlice(
     const hints: string[] = []
     set((s) => {
       const subjectFeature = resolveFeatureInstance(s.project, subjectRef.featureId)
-      if (!subjectFeature || subjectFeature.locked) {
+      if (!subjectFeature || subjectFeature.locked || isGhostFeature(s.project, subjectFeature)) {
         hints.push('Subject feature not found or locked')
         return {}
       }

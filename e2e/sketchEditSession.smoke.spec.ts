@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { seedConstructionReferences, pickReference, referenceSnapshot } from './constructionReferences.helpers'
 import { test, expect } from './fixtures'
 import {
   enterSketchEdit,
@@ -213,3 +214,53 @@ test('segment edits are live inside the session and Cancel editing discards them
   await expect(panel).toHaveCount(0)
   await expect.poll(async () => defProfile(await getProject(app.page)).segments[0].to.x).toBe(60)
 })
+
+for (const face of ['top', 'bottom'] as const) {
+  for (const tool of ['trim', 'extend'] as const) {
+  test(`#994 ${face}/${tool}: real segment reference capture keeps the foreign guide and one undo step`, async ({ app }) => {
+    const options = { face, axis: 'y' as const, subjectEnd: tool === 'trim' ? 55 : 35 }
+    await seedConstructionReferences(app.page, options)
+    const before = await getProject(app.page)
+    const guide = referenceSnapshot(before)
+    await enterSketchEdit(app.page, 'reference-subject')
+    const panel = app.page.locator(EDIT_PANEL)
+    await panel.getByRole('button', { name: tool === 'trim' ? 'Trim to cutting edge' : 'Extend to target' }).click()
+    const canvas = app.page.locator('canvas.sketch-canvas')
+    // A foreign open construction segment cannot be the subject.
+    await pickReference(canvas, options, 45, 45)
+    expect((await getSketchEditState(app.page)).pending?.phase).toBe('pick-subject')
+    await pickReference(canvas, options, tool === 'trim' ? 52 : 33, 50)
+    expect((await getSketchEditState(app.page)).pending?.phase).toBe('pick-reference')
+    await pickReference(canvas, options, 45, 45)
+    const after = await getProject(app.page)
+    const definitions = after.featureDefinitions as Record<string, { profile: { segments: Array<{ to: { x: number; y: number } }> } }>
+    expect(definitions['reference-subject'].profile.segments[0].to).toEqual({ x: 45, y: 50 })
+    expect(referenceSnapshot(after)).toEqual(guide)
+    await panel.getByRole('button', { name: 'Finish editing' }).click()
+    await app.page.getByRole('button', { name: 'Undo', exact: true }).first().click()
+    expect((await getProject(app.page)).featureDefinitions).toEqual(before.featureDefinitions)
+    expect(referenceSnapshot(await getProject(app.page))).toEqual(guide)
+  })
+}
+}
+
+// #994 review: the enabled Properties action retains locked own-face entry.
+for (const face of ['top', 'bottom'] as const) {
+  test(`#994 locked own-face ${face}: Properties Edit sketch opens and cancels without writes`, async ({ app }) => {
+    const { page } = app
+    const saved = await seedConstructionReferences(page, { face, axis: 'x' })
+    saved.features = (saved.features as Array<{ id: string; locked: boolean }>).map(row => row.id === 'reference-source' ? { ...row, locked: true } : row)
+    await seedProject(page, JSON.stringify(saved))
+    const before = await getProject(page)
+    await page.locator('.tree-row--feature[data-feature-id="reference-source"]').click()
+    const edit = page.locator('.properties-panel').getByRole('button', { name: 'Edit sketch', exact: true })
+    await expect(edit).toBeEnabled()
+    await edit.click()
+    await expect(page.locator(EDIT_PANEL)).toBeVisible()
+    expect(await getSketchEditState(page)).toMatchObject({ mode: 'sketch_edit' })
+    await page.locator(EDIT_PANEL).getByRole('button', { name: 'Cancel editing', exact: true }).click()
+    await expect(page.locator(EDIT_PANEL)).toHaveCount(0)
+    const after = await getProject(page)
+    expect({ ...after, meta: { ...(after.meta as object), modified: '' } }).toEqual({ ...before, meta: { ...(before.meta as object), modified: '' } })
+  })
+}

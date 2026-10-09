@@ -50,6 +50,7 @@ remains the full local-suite command.
 | `fixtures.ts` | Playwright `test` extension. Every spec imports `test` / `expect` from **here**, not `@playwright/test`. Provides `app` (booted page + error guard) and `ui` (selector module). |
 | `selectors.ts` | **Single source of truth** for DOM selectors. Logical name → `Locator`. When the UI moves a class, update it **here** — every spec picks it up. |
 | `helpers.ts` | Generic primitives: `seedProject`, `getProject`, `getHoveredFeatureId`, `getPendingMove`, `completePendingMove`, `openRowContextMenu`, `clickMenuItem`, `rowByName`, `featureRowCount`, `assertNoConsoleErrors`. Domain-agnostic. |
+| `constructionReferences.helpers.ts` | Canonical two-face fixture and mirrored pointer mapping for #994 construction reference smoke checks. |
 | `featureReferences.helpers.ts` | FR-specific helpers (e.g. `seedLinkedProject`). Built on the generic primitives. A new feature area gets its own `<area>.helpers.ts`. |
 | `camOperations.helpers.ts` | CAM-specific fixture helpers for operation workflow smoke tests. |
 | `gcodeExport.helpers.ts` | Export-dialog fixture: tool + two toolpath-producing operations + bundled GRBL machine selected. |
@@ -61,6 +62,7 @@ Current smoke targets:
 - `featureReferences.smoke.spec.ts` — linked-feature tree badges, context menu wiring, properties grouping, and load round-trip.
 - `camOperations.smoke.spec.ts` — feature-row quick operation wiring into CAM operation state.
 - `creationTargets.smoke.spec.ts` — dedicated Line creation target wiring, active drawing badge, and landscape-tablet availability.
+- `setupPreview.smoke.spec.ts` — setup-aware preview and simulation (#947): the simulation follows the selected operation's setup, cuts Bottom from the top of the flipped stock, shows the picker and fresh-stock note only with two setups; mirrored, muted GPU drawing matches Canvas; the GPU renderer keeps a Bottom view; a setup switch waits for the new setup's held acquisition before offering playback (through `setupSimulationProbe.ts`, a browser-side render of the real `useSimulationModel`).
 - `setupCam.smoke.spec.ts` — CAM setup grouping, provisional Bottom Add, explicit cross-face targets, reach, Move/delete confirmation, setup properties and separate G-code/SBP downloads (#946).
 - `setupFaces.smoke.spec.ts` — Top / Bottom faces (issue #945): a Top-only project shows only the switch; switching to Bottom, drawing a pocket and dimensioning it from the bottom; the ghost toggle and a ghost that cannot be picked or dragged; the confirmed authoring-face change; keyboard operation of the switch; the 3D Top/Bottom preset following the face; landscape-tablet tap targets.
 - `gcodeExport.smoke.spec.ts` — Export G-code dialog operation checklist: per-operation entry point, default set, none-selected disabled state.
@@ -120,3 +122,5 @@ future change adds Tauri IPC calls at boot time that are not guarded by
 - No screenshot/pixel diffing; no WebGL canvas-content assertions.
 - No Tauri native file-dialog flows — project state is seeded via the
   guarded `window.__pcTest` dev seam.
+
+- #994 coverage stays in the existing `test:e2e:project-input` lane: `setupFaces.smoke.spec.ts` checks both directions/flip axes, desktop preview/capture, landscape touch, visibility/overlay, edit refusal and measurement-only annotations; `featureDistribution.smoke.spec.ts` checks canvas/tree guide capture, cancellation and Apply/undo; `textLayout.smoke.spec.ts` checks read-only path guides and Apply/undo; `sketchEditSession.smoke.spec.ts` checks foreign reference trim capture and subject refusal. The fixtures preserve authoring faces and guide definitions.

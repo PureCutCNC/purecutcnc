@@ -14,18 +14,25 @@
  * limitations under the License.
  */
 
-/** Screen-space butt-capped line quads; no depth or perspective. */
+/**
+ * Screen-space butt-capped line quads; no depth or perspective. `view` is
+ * (scaleX, scaleY, offsetX, offsetY): a mirrored axis (a Bottom setup's view,
+ * issue #947) carries a negative scale, so the quad is built from canvas
+ * endpoints rather than world ones.
+ */
 export const maskVertexShader = `
   attribute vec4 endpoints;
-  uniform vec3 view;
+  uniform vec4 view;
   uniform vec2 viewport;
   uniform float lineWidth;
   varying float along;
   void main() {
-    vec2 delta = endpoints.zw - endpoints.xy;
-    float lengthPx = length(delta) * view.x;
-    vec2 direction = delta / max(length(delta), 0.000001);
-    vec2 point = mix(endpoints.xy, endpoints.zw, position.x) * view.x + view.yz;
+    vec2 startPx = endpoints.xy * view.xy + view.zw;
+    vec2 endPx = endpoints.zw * view.xy + view.zw;
+    vec2 delta = endPx - startPx;
+    float lengthPx = length(delta);
+    vec2 direction = delta / max(lengthPx, 0.000001);
+    vec2 point = mix(startPx, endPx, position.x);
     point += vec2(-direction.y, direction.x) * position.y * lineWidth;
     along = position.x * lengthPx;
     gl_Position = vec4(point.x / viewport.x * 2.0 - 1.0, 1.0 - point.y / viewport.y * 2.0, 0.0, 1.0);

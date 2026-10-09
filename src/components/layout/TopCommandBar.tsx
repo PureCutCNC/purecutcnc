@@ -94,7 +94,7 @@ export function TopCommandBar({
         {/* Left section: project drawer + project name */}
         <div className="top-command-bar__left">
           <button
-            className="top-cmd-btn"
+            className="top-cmd-btn top-cmd-btn--project-panel"
             type="button"
             aria-label={t('shell.topBar.openProjectPanel')}
             onClick={onOpenLeftDrawer}

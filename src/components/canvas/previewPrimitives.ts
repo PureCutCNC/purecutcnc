@@ -20,7 +20,7 @@ import {
   buildToolpathOverlayLayers,
 } from '../viewport3d/toolpathOverlay'
 import { toolpathArrowPlacements } from './toolpathArrows'
-import { toolpathLayerStyles, toolpathStrokeWidth } from './toolpathStyles'
+import { toolpathCollisionAlpha, toolpathLayerStyles, toolpathStrokeAlpha, toolpathStrokeWidth } from './toolpathStyles'
 import {
   canvasDisplayViewport,
   expandDisplayViewport,
@@ -609,6 +609,8 @@ export interface ToolpathDisplayRenderOptions {
   simplifyForDisplay?: boolean
   /** Selected planar Z level, or All when null. Display-only (issue #752). */
   selectedLevel?: number | null
+  /** Cut in a setup the workspace is not on: drawn faint (issue #947). */
+  muted?: boolean
 }
 
 export function drawToolpath(
@@ -621,7 +623,7 @@ export function drawToolpath(
   // operation (issue #498 S5). Optional for un-threaded callers, which keep
   // the pre-S5 40% ladder; the renderers pass the operation's real slot feed.
   slotScale = 0.4,
-  { deferArrows = false, simplifyForDisplay = true, selectedLevel = null }: ToolpathDisplayRenderOptions = {},
+  { deferArrows = false, simplifyForDisplay = true, selectedLevel = null, muted = false }: ToolpathDisplayRenderOptions = {},
 ): void {
   // Layer membership comes from the shared declaration both renderers use; only
   // the styling below is 2D's own. This file used to re-declare the five layers
@@ -662,7 +664,7 @@ export function drawToolpath(
         ctx.lineTo(move.toX + vt.offsetX, move.toY + vt.offsetY)
       }
       ctx.strokeStyle = stroke
-      ctx.globalAlpha = emphasized ? 1 : 0.34
+      ctx.globalAlpha = toolpathStrokeAlpha(emphasized, muted)
       ctx.lineWidth = toolpathStrokeWidth(layer.lineWidth, emphasized)
       ctx.setLineDash(layer.dash)
       ctx.stroke()
@@ -702,7 +704,7 @@ export function drawToolpath(
       ctx.lineTo(move.toX + vt.offsetX, move.toY + vt.offsetY)
     }
     ctx.strokeStyle = canvasColors().toolpathCollision
-    ctx.globalAlpha = emphasized ? 1 : 0.55
+    ctx.globalAlpha = toolpathCollisionAlpha(emphasized, muted)
     ctx.lineWidth = emphasized ? 3 : 2.2
     ctx.setLineDash([])
     ctx.stroke()

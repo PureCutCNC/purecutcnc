@@ -1,7 +1,7 @@
 ---
 status: current
 authoritative-for: GPU heightfield simulation rendering and playback update design
-last-verified: 2026-10-03
+last-verified: 2026-10-08
 ---
 
 # Simulation GPU Heightfield Design
@@ -75,6 +75,13 @@ Implementation is centered in `src/engine/simulation/` and
 - Empty/cut-away cells do not create false top surfaces or invalid normals.
 - Stock top, bottom, units, grid transforms, and tool pose use one coordinate
   convention.
+- Simulation runs one machining setup at a time, in that setup's local frame:
+  `src/app/simulationSetup.ts` turns the project and the stock-space toolpaths
+  into it once, so the grid always sees a top-down stock and a Bottom setup
+  cuts from the top of the turned stock. Each setup starts from fresh stock —
+  an approximation, since the operator turns the same part over — and the
+  panel says so whenever there is more than one setup (issue #947). Combined
+  remaining-stock simulation across the flip is out of scope.
 - GPU resources are disposed when grids or viewports are replaced.
 - Detail controls remain bounded by memory, upload, and rendering cost; higher
   nominal resolution is not automatically safe on every device.

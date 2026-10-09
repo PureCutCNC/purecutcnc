@@ -243,6 +243,12 @@ export function resolveDrivingDimensionEdit(
   if (!annotation.visible) return { disabled: true, reason: 'Dimension is hidden' }
   if (isDimensionDangling(annotation, project)) return { disabled: true, reason: 'Dimension is dangling' }
 
+  const features = resolvedFeatureMap(project)
+  if ([annotation.a, annotation.b, annotation.c].some((anchor) => {
+    const id = anchor ? anchorFeatureId(anchor) : null
+    const feature = id ? features.get(id) : null
+    return feature?.operation === 'construction' && isGhostFeature(project, feature)
+  })) return { disabled: true, reason: 'Construction reference is on the other face' }
   return onActiveFace(resolveByType(annotation, project), project)
 }
 
