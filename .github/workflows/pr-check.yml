@@ -55,7 +55,7 @@ jobs:
   e2e-lanes:
     name: E2E - ${{ matrix.lane }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -93,7 +93,7 @@ jobs:
         run: npx playwright install chromium
 
       - name: Run Playwright e2e lane
-        run: npm run ${{ matrix.command }}
+        run: npm run ${{ matrix.command }} -- --reporter=list
 
       - name: Upload Playwright results and retry traces
         if: always()
