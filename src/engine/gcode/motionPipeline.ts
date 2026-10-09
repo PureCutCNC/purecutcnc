@@ -48,8 +48,9 @@ import type { DrillCycle, ToolpathMove, ToolpathPoint, ToolpathResult } from '..
 import type { ToolpathWarning } from '../toolpaths/warningCodes'
 import { exportGeometryTolerance, MM_PER_INCH } from '../../utils/units'
 import { applyEmittedArcFallback, fitArcsInMachineMoves } from './arcFitting'
-import type { EmittedArcOptions, FittedMoveDescriptor } from './arcFitting'
+import type { ArcMoveDescriptor, EmittedArcOptions, FittedMoveDescriptor } from './arcFitting'
 import type { MachineDefinition, OperationMotionTrace, PostProcessorInput } from './types'
+import { isSelectableQtPlasmacMaterialNumber } from '../../toolPolicy'
 import { setupForOperation, setupFrameForOperation } from '../setupOrientation'
 import { setupGenerationBlock } from '../setupTargets'
 import { projectExportsPerSetup, setupHeaderLines, setupLacksRegistration } from './setupPrograms'
@@ -117,6 +118,22 @@ export interface OperationSequence {
   stopSpindleAfter: boolean
   /** Raised for this operation, in order; the caller appends them to its own. */
   warnings: ToolpathWarning[]
+  /** Present on a plasma machine whose torch path is written (issue #959).
+   *  Every spindle, coolant and tool-change flag above is then false. */
+  plasma?: PlasmaOperationSequence
+}
+
+/** What a plasma program writes around one operation's cuts (issue #959). */
+export interface PlasmaOperationSequence {
+  /** Not a plasma operation: leave it out of the program. */
+  skip: boolean
+  /** The tool's selectable QtPlasmaC material, or null when it has none (an
+   *  absent number, 0, or the reserved 1000000+ temporary range). */
+  materialNumber: number | null
+  /** Write the material handshake before this operation's first torch-on:
+   *  it is the first plasma operation, or the material differs from the one
+   *  selected before. */
+  selectMaterial: boolean
 }
 
 /** What the sequence needs to know about the machine a dialect writes for. */
@@ -125,8 +142,11 @@ export interface SequenceCapabilities {
   coolant: boolean
   /** False when this definition cannot execute a requested tool change. */
   toolChange?: boolean
-  /** Metadata-only plasma support until the torch path lands in #959. */
+  /** Metadata-only plasma support: the definition describes a plasma table
+   *  whose torch path is not written yet (G-code piercing, #983). */
   plasmaOutputPending?: boolean
+  /** A plasma table whose torch path is written (issue #959). */
+  plasmaTorch?: boolean
 }
 
 /**
@@ -138,6 +158,9 @@ export function planProgramSequence(
   capabilities: SequenceCapabilities,
 ): OperationSequence[] {
   const { project, operations, options } = input
+  if (capabilities.plasmaTorch) {
+    return planPlasmaSequence(input, capabilities)
+  }
   let currentToolId: string | null = null
   let spindleOn = false
   let spindleSpeed: number | null = null
@@ -210,6 +233,172 @@ export function planProgramSequence(
       warnings,
     }
   })
+}
+
+/**
+ * The plasma half of `planProgramSequence` (issue #959). A torch is not a
+ * spindle: nothing is started, restated or stopped around an operation, and no
+ * tool-change or coolant word is written. The torch goes on and off per cut
+ * (`planPlasmaPath`), and what changes between operations is the material.
+ */
+function planPlasmaSequence(
+  input: Pick<PostProcessorInput, 'project' | 'operations' | 'options'>,
+  capabilities: SequenceCapabilities,
+): OperationSequence[] {
+  const { project, operations, options } = input
+  let currentToolId: string | null = null
+  let selectedMaterial: number | null = null
+  let coolantWarned = false
+  return operations.map(({ operation, tool }) => {
+    const warnings: ToolpathWarning[] = []
+    const toolIndex = project.tools.findIndex((candidate) => candidate.id === tool.id) + 1
+    const base = {
+      toolNumber: toolIndex > 0 ? toolIndex : 1,
+      rpm: 0,
+      cutFeed: operation.feed || tool.defaultFeed,
+      plungeFeed: operation.plungeFeed || tool.defaultPlungeFeed,
+      changeTool: false,
+      spindleRunningAtToolChange: false,
+      startSpindle: false,
+      startCoolant: false,
+      stopSpindleAfter: false,
+      warnings,
+    }
+    if (operation.kind !== 'plasma_profile') {
+      warnings.push({ code: 'postPlasmaOperationSkipped', params: { operation: operation.name } })
+      return { ...base, plasma: { skip: true, materialNumber: null, selectMaterial: false } }
+    }
+    if (options.emitCoolant && !capabilities.coolant && !coolantWarned) {
+      warnings.push({ code: 'postNoCoolantCommands' })
+      coolantWarned = true
+    }
+    // A different plasma tool is a different consumable set. Nothing in the
+    // program pauses for the swap, so say so, as for any unexecuted change.
+    if (currentToolId !== null && currentToolId !== tool.id) {
+      warnings.push({ code: 'postNoToolChangeCommands', params: { operation: operation.name, tool: tool.name } })
+    }
+    currentToolId = tool.id
+    // A stored number outside the selectable range is not a material: 0 is the
+    // simulator's "nothing selected" sentinel and 1000000+ belongs to
+    // QtPlasmaC's own temporary materials, which CAM must not emit. Both are
+    // reported exactly like an absent number, so the export blocks.
+    const material = tool.qtplasmacMaterialNumber
+    const materialNumber = isSelectableQtPlasmacMaterialNumber(material) ? material : null
+    if (materialNumber === null) {
+      warnings.push({ code: 'postPlasmaMaterialMissing', params: { operation: operation.name, tool: tool.name } })
+    }
+    const selectMaterial = materialNumber !== null && materialNumber !== selectedMaterial
+    if (selectMaterial) selectedMaterial = materialNumber
+    return { ...base, plasma: { skip: false, materialNumber, selectMaterial } }
+  })
+}
+
+// ── Plasma cuts ───────────────────────────────────────────────
+
+/** One step of a plasma operation, in machine coordinates (issue #959). */
+export type PlasmaPathItem =
+  /** Travel with the torch off: only where it ends matters. */
+  | { kind: 'travel'; to: ToolpathPoint }
+  /** Fire at `pierce`, follow `moves` with the torch on, then turn it off. */
+  | { kind: 'cut'; pierce: ToolpathPoint; moves: FittedMoveDescriptor[] }
+
+/**
+ * Group an operation's planned moves into torch-off travel and torch-on cuts.
+ *
+ * The plasma toolpath (`generatePlasmaProfileToolpath`, #957) writes each
+ * contour as a rapid to the pierce point, a plunge to cut height, the lead-in,
+ * the contour and the lead-out, then a rapid up. A cut therefore starts at a
+ * plunge and ends at the next rapid; everything between, arcs included, is
+ * cut with the torch on. Arc fitting never joins moves of different kinds, so
+ * a fitted arc never spans a cut boundary.
+ */
+export function planPlasmaPath(steps: readonly FittedMoveDescriptor[]): PlasmaPathItem[] {
+  const items: PlasmaPathItem[] = []
+  let cut: Extract<PlasmaPathItem, { kind: 'cut' }> | null = null
+  let position: ToolpathPoint | null = null
+  for (const step of steps) {
+    const end: ToolpathPoint = step.kind === 'linear'
+      ? step.point
+      : { x: step.endPoint.x, y: step.endPoint.y, z: position?.z ?? 0 }
+    if (step.kind === 'linear' && step.moveKind === 'rapid') {
+      cut = null
+      items.push({ kind: 'travel', to: end })
+    } else if (step.kind === 'linear' && step.moveKind === 'plunge') {
+      cut = { kind: 'cut', pierce: end, moves: [] }
+      items.push(cut)
+    } else {
+      // A cutting move with no plunge before it still needs the torch: it is
+      // pierced where the head already is.
+      if (!cut) {
+        cut = { kind: 'cut', pierce: position ?? end, moves: [] }
+        items.push(cut)
+      }
+      cut.moves.push(step)
+    }
+    position = end
+  }
+  return items
+}
+
+/** Two machine points on the same spot, within the fitting tolerance. */
+function sameMachinePoint(a: ToolpathPoint, b: ToolpathPoint): boolean {
+  return Math.abs(a.x - b.x) <= 1e-6 && Math.abs(a.y - b.y) <= 1e-6 && Math.abs(a.z - b.z) <= 1e-6
+}
+
+/**
+ * Emit a complete counter-clockwise circle as a single arc block.
+ *
+ * QtPlasmaC's automatic hole handling (`#<holes>`, plan decision 3) only
+ * recognises a hole from one G2/G3 block whose end is the point the previous
+ * block left the torch at: its load filter reduces the feed when an arc's
+ * declared end equals the current position (`check_if_hole` in
+ * `qtplasmac_gcode.py`). Arc fitting splits every fitted run into ≤ 90°
+ * sub-arcs, so a hole would be four quarter arcs and that reduction would
+ * never run even though the header asked for it. Folding the sub-arcs of one
+ * complete counter-clockwise circle back into one block makes the controller's
+ * own reduction work, and matches the full-circle form the QtPlasmaC manual
+ * uses for holes.
+ *
+ * Clockwise complete circles are deliberately left split. A closed clockwise
+ * circle is a hole cut the wrong way round, which the same filter warns about,
+ * and an outside contour is legitimately clockwise; folding only
+ * counter-clockwise circles therefore cannot introduce that warning.
+ *
+ * Center format only. In radius format LinuxCNC makes an arc whose end is its
+ * current point an error, so folding there would produce a block the
+ * controller rejects. The caller leaves an R-format machine the ≤ 90° sub-arcs
+ * the emitted-arc fallback already validated: folding runs after that
+ * validation, so the representation it creates is never itself checked.
+ *
+ * Applied to plasma programs only, and before the motion trace is captured, so
+ * the debug view reads the same descriptors the emitter writes.
+ */
+export function foldFullCircleArcs(moves: readonly FittedMoveDescriptor[]): FittedMoveDescriptor[] {
+  const folded: FittedMoveDescriptor[] = []
+  let index = 0
+  while (index < moves.length) {
+    const first = moves[index]
+    if (first.kind !== 'arc' || first.clockwise) {
+      folded.push(first)
+      index += 1
+      continue
+    }
+    let end = index + 1
+    while (end < moves.length) {
+      const next = moves[end]
+      if (next.kind !== 'arc' || next.clockwise || next.runId !== first.runId) break
+      end += 1
+    }
+    const run = moves.slice(index, end) as ArcMoveDescriptor[]
+    const last = run[run.length - 1]
+    if (run.length > 1 && sameMachinePoint(last.endPoint, first.startPoint)) {
+      folded.push({ ...first, endPoint: { ...first.startPoint } })
+    } else {
+      folded.push(...run)
+    }
+    index = end
+  }
+  return folded
 }
 
 // ── The program's setup ───────────────────────────────────────
@@ -400,6 +589,17 @@ export function planOperationMotion(args: PlanOperationMotionArgs): OperationMot
       source: move.source,
       feedScale: move.feedScale,
     }))
+  }
+
+  // QtPlasmaC identifies a hole from a single closed arc block; a plasma
+  // program folds one back together so its own feed reduction can run (see
+  // `foldFullCircleArcs`). Folding runs after the emitted-arc fallback, so it
+  // is limited to center format: an R-format full circle is a LinuxCNC error,
+  // and only the sub-arcs the fallback validated may be emitted there. Done
+  // before the trace is captured so the exported motion the debug view
+  // compares is the motion that was emitted.
+  if (definition.plasma?.pierceMode === 'controller' && arcEmitOptions.arcFormat === 'ij') {
+    steps = foldFullCircleArcs(steps)
   }
 
   if (!captureTrace) {

@@ -167,16 +167,95 @@ test.describe('Export G-code operation checklist smoke', () => {
 })
 
 
-test('QtPlasmaC export discloses missing torch output and unexecuted tool changes', async ({ app, ui }) => {
-  await seedGcodeExportProject(app.page, { machineId: 'qtplasmac', routeBOnSecondTool: true })
+test('QtPlasmaC export writes the torch path and leaves milling operations out', async ({ app, ui }) => {
+  await seedGcodeExportProject(app.page, { machineId: 'qtplasmac', plasmaCut: { materialNumber: 1 } })
   await ui.operations.headerExportButton(app.page).click()
   const warnings = ui.exportDialog.warnings(app.page)
-  await expect(warnings.filter({ hasText: 'The torch will not fire' })).toBeVisible()
-  await expect(warnings.filter({ hasText: 'no executable tool-change commands' })).toBeVisible()
-  await expect(warnings.filter({ hasText: 'Route B' })).toBeVisible()
-  await expect(ui.exportPreview.body(app.page)).toContainText('G92.1 G94 G97')
-  await expect(ui.exportPreview.body(app.page)).toContainText('M52 P1')
-  await ui.exportDialog.operationCheckbox(app.page, 'Route B').uncheck()
-  await expect(warnings.filter({ hasText: 'no executable tool-change commands' })).toHaveCount(0)
-  await expect(warnings.filter({ hasText: 'The torch will not fire' })).toBeVisible()
+  const preview = ui.exportPreview.body(app.page)
+  await expect(warnings.filter({ hasText: 'Route A' })).toContainText('is not a plasma cut')
+  await expect(warnings.filter({ hasText: 'The torch will not fire' })).toHaveCount(0)
+  for (const line of ['#<holes> = 1', 'M190 P1', 'M66 P3 L3 Q1', 'F#<_hal[plasmac.cut-feed-rate]>', 'M3 $0 S1', 'M5 $0']) {
+    await expect(preview).toContainText(line)
+  }
+  await expect(preview).not.toContainText(/\bZ-?[\d.]/)
+  await expect(ui.exportDialog.exportButton(app.page)).toBeEnabled()
+  await ui.exportDialog.operationCheckbox(app.page, 'Route A').uncheck()
+  await expect(warnings.filter({ hasText: 'Route A' })).toHaveCount(0)
 })
+
+test('a QtPlasmaC torch without a material number blocks the export', async ({ app, ui }) => {
+  await seedGcodeExportProject(app.page, { machineId: 'qtplasmac', plasmaCut: { materialNumber: null } })
+  await ui.operations.headerExportButton(app.page).click()
+  await expect(ui.exportDialog.errors(app.page).filter({ hasText: 'Plasma Torch' })).toContainText('no material number')
+  await expect(ui.exportDialog.exportButton(app.page)).toBeDisabled()
+  await expect(ui.exportPreview.body(app.page)).not.toContainText('M190')
+})
+
+// #959 / PR #993: long preview lines must scroll inside their own column,
+// while blocking errors remain readable inside the export dialog.
+for (const layout of [
+  { name: 'desktop', viewport: { width: 1440, height: 900 }, hasTouch: false },
+  { name: 'landscape tablet', viewport: { width: 1024, height: 768 }, hasTouch: true },
+]) {
+  test.describe(`export layout ${layout.name}`, () => {
+    test.use({ viewport: layout.viewport, hasTouch: layout.hasTouch })
+
+    test('long QtPlasmaC errors and preview stay inside the dialog', async ({ app, ui }, testInfo) => {
+      const { page } = app
+      const toolName = `Powermax45 XP 45 A — 2 mm mild steel (example) — inch units — PMX45-${'X'.repeat(80)}`
+      await seedGcodeExportProject(page, { machineId: 'qtplasmac', plasmaCut: { materialNumber: null, toolName } })
+      const trigger = ui.operations.headerExportButton(page)
+      if (layout.hasTouch) await ui.operations.openPanelButton(page).click()
+      await trigger.click()
+      const dialog = ui.exportDialog.root(page)
+      const error = ui.exportDialog.errors(page).filter({ hasText: toolName })
+      const preview = ui.exportPreview.body(page)
+      await expect(error).toContainText('no material number')
+      await expect(preview).toContainText(`PMX45-${'X'.repeat(80)}`)
+      await expect(ui.exportDialog.exportButton(page)).toBeDisabled()
+      await expect(preview).not.toContainText('M190')
+      await dialog.screenshot({ path: testInfo.outputPath('export-layout.png') })
+
+      const geometry = await preview.evaluate((element) => {
+        const column = element.parentElement!
+        const body = column.parentElement!
+        const root = body.parentElement!
+        const bounds = (node: Element) => {
+          const rect = node.getBoundingClientRect()
+          return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+        }
+        return { root: bounds(root), body: bounds(body), column: bounds(column), preview: bounds(element),
+          bodyScrollWidth: body.scrollWidth, bodyClientWidth: body.clientWidth,
+          previewScrollWidth: element.scrollWidth, previewClientWidth: element.clientWidth }
+      })
+      expect(geometry.root.left).toBeGreaterThanOrEqual(0)
+      expect(geometry.root.right).toBeLessThanOrEqual(layout.viewport.width)
+      expect(geometry.column.right).toBeLessThanOrEqual(geometry.body.right + 1)
+      expect(geometry.preview.left).toBeGreaterThanOrEqual(geometry.body.left)
+      expect(geometry.preview.right).toBeLessThanOrEqual(geometry.body.right + 1)
+      expect(geometry.bodyScrollWidth).toBeLessThanOrEqual(geometry.bodyClientWidth + 1)
+
+      const message = await error.evaluate((element) => {
+        const range = document.createRange()
+        range.selectNodeContents(element)
+        const bounds = element.getBoundingClientRect()
+        return { scrollWidth: element.scrollWidth, clientWidth: element.clientWidth,
+          left: bounds.left, right: bounds.right,
+          lines: Array.from(range.getClientRects(), rect => ({ left: rect.left, right: rect.right })) }
+      })
+      expect(message.right).toBeLessThanOrEqual(geometry.body.right + 1)
+      expect(message.scrollWidth).toBeLessThanOrEqual(message.clientWidth + 1)
+      for (const line of message.lines) {
+        expect(line.left).toBeGreaterThanOrEqual(message.left)
+        expect(line.right).toBeLessThanOrEqual(message.right + 1)
+      }
+      // G-code retains its exact lines: horizontal scrolling belongs to the preview.
+      expect(geometry.previewScrollWidth).toBeGreaterThan(geometry.previewClientWidth)
+      expect(await preview.evaluate(element => { element.scrollLeft = element.scrollWidth; return element.scrollLeft })).toBeGreaterThan(0)
+      await expect(ui.exportDialog.exportButton(page)).toBeVisible()
+      const button = await ui.exportDialog.exportButton(page).boundingBox()
+      expect(button!.x + button!.width).toBeLessThanOrEqual(layout.viewport.width)
+      expect(button!.y + button!.height).toBeLessThanOrEqual(layout.viewport.height)
+    })
+  })
+}

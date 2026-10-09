@@ -52,7 +52,7 @@ import type {
   ToolType,
   XyLeadStrategy,
 } from '../../types/project'
-import { findMillingOperationTool, isToolCompatibleWithOperation, defaultPlasmaTool } from '../../toolPolicy'
+import { findMillingOperationTool, isSelectableQtPlasmacMaterialNumber, isToolCompatibleWithOperation, defaultPlasmaTool } from '../../toolPolicy'
 import { defaultTool, defaultRetractOffset, isTrochoidalEdgeRoughing, isTrochoidalPocket } from '../../types/project'
 import type { ToolpathResult } from '../../engine/toolpaths'
 import { normalizeToolForProject } from '../../engine/toolpaths/geometry'
@@ -2062,10 +2062,10 @@ export function CAMPanel({
                           </label>
                           <label className="properties-field">
                             <span>{camT('cam.tool.qtplasmacMaterialNumber')}</span>
-                            <input type="number" min={0} step={1} value={selectedTool.qtplasmacMaterialNumber ?? ''}
+                            <input type="number" min={1} max={999999} step={1} value={selectedTool.qtplasmacMaterialNumber ?? ''}
                               onChange={(event) => {
                                 const value = event.target.value === '' ? undefined : event.target.valueAsNumber
-                                if (value === undefined || Number.isSafeInteger(value) && value >= 0) {
+                                if (value === undefined || isSelectableQtPlasmacMaterialNumber(value)) {
                                   updateTool(selectedTool.id, { qtplasmacMaterialNumber: value })
                                 }
                               }} />

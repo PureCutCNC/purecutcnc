@@ -57,7 +57,9 @@ During the run a realtime `sampler` records ten signals on every servo period
                         executed, in machine units whatever the program's
     plasmac.adaptive-feed  the factor QtPlasmaC is scaling that feed by (its
                         velocity reduction for small holes, for one). Dividing
-                        it out leaves the F word the program set.
+                        it out leaves the F word the program set. Each trace
+                        event carries this factor too, so the host can see that
+                        a reduction ran rather than only its effect.
     plasmac.cut-feed-rate  the cut feed of the material QtPlasmaC has loaded.
                         It differs from the program's F when the feed was read
                         from the material before the material change took
@@ -168,8 +170,11 @@ class Trace(threading.Thread):
                 self.programmed_feed = 0.0
             elif adaptive > 0:
                 self.programmed_feed = round(scaled_feed / adaptive, 3)
+            # `adaptive` is kept in the event as well, so the host can see
+            # QtPlasmaC's own velocity reduction (its small-hole handling)
+            # rather than only the corrected feed it leaves behind.
             state = (int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4]), moving,
-                     self.programmed_feed, round(float(parts[7]), 3))
+                     self.programmed_feed, round(float(parts[7]), 3), round(adaptive, 4))
             with self.lock:
                 if self.last_index is not None and index != self.last_index + 1:
                     self.gaps += 1

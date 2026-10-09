@@ -326,6 +326,12 @@ export type ToolpathWarningCode =
   | 'postToolChangesDisabled'
   | 'postNoCoolantCommands'
   | 'postPlasmaOutputPending'
+  /** A milling operation was exported to a plasma machine. It has no torch
+   *  path, so it is left out of the program (issue #959). */
+  | 'postPlasmaOperationSkipped'
+  /** A plasma operation's tool has no QtPlasmaC material number, so the
+   *  program cannot select the material it cuts with (issue #959). */
+  | 'postPlasmaMaterialMissing'
   | 'postNoToolChangeCommands'
   | 'postCannedCycleUnsupported'
   | 'postArcNoCapability'
@@ -363,11 +369,15 @@ export type ToolpathWarningSeverity = 'warning' | 'error'
  * - `postSetupOperationRefused` — an operation in the program has no motion
  *   because its setup may not cut it, so the saved file would quietly lack a
  *   pass the operation list promises (issue #946).
+ * - `postPlasmaMaterialMissing` — QtPlasmaC would fire the torch with
+ *   whatever material happens to be loaded: the wrong cut feed, heights and
+ *   pierce delay for the sheet on the table (issue #959).
  */
 const ERROR_CODES: ReadonlySet<ToolpathWarningCode> = new Set<ToolpathWarningCode>([
   'postToolChangesDisabled',
   'postMixedSetups',
   'postSetupOperationRefused',
+  'postPlasmaMaterialMissing',
 ])
 
 /**

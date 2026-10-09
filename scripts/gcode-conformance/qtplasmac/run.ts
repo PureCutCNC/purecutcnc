@@ -37,7 +37,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join, resolve } from 'node:path'
 import { PLASMA_CORPUS } from './corpus'
 import type { PlasmaCase, SimMachine } from './corpus'
-import { boundaryDistance, judge, mismatch } from './verdict'
+import { boundaryDistance, holeReduction, judge, mismatch } from './verdict'
 import type { SimProgramReport } from './verdict'
 
 const HERE = import.meta.dirname
@@ -145,7 +145,9 @@ function describeRun(report: SimProgramReport): string {
   // More than one press means the GUI got in ahead of a Cycle Start. The
   // driver recovered, but it is worth seeing when it happens.
   const presses = run.startAttempts > 1 ? `, started on Cycle Start ${run.startAttempts}` : ''
-  return `ran ${run.seconds} s, ${loaded}${presses}`
+  const reduced = holeReduction(run)
+  const reduction = reduced ? `, reduced to ${Math.round(reduced.factor * 100)}% feeding` : ''
+  return `ran ${run.seconds} s, ${loaded}${presses}${reduction}`
 }
 
 /** A harness self-check states how many Cycle Start presses its fault must cost. */
@@ -155,6 +157,21 @@ function wrongStartAttempts(entry: PlasmaCase, report: SimProgramReport): string
   if (seen === entry.startAttempts) return null
   return `expected ${entry.startAttempts} Cycle Start press(es), saw ${seen ?? 'no run'}: `
     + 'a refused start was not noticed'
+}
+
+/**
+ * A case that asks for hole handling must show the reduction in the run, not
+ * merely carry `#<holes> = 1` in its header: QtPlasmaC's load filter only
+ * reduces a hole it actually recognises, and a program cut as several sub-arcs
+ * is not recognised as one.
+ */
+function wrongHoleReduction(entry: PlasmaCase, report: SimProgramReport): string | null {
+  if (!entry.expectHoleReduction) return null
+  const run = report.run
+  if (!run) return 'no run, so the small-hole feed reduction was never observed'
+  if (holeReduction(run)) return null
+  return 'QtPlasmaC applied no small-hole feed reduction: expected a cutting move below the '
+    + 'material feed (its 60% default), saw none'
 }
 
 function selectCases(): PlasmaCase[] {
@@ -228,6 +245,7 @@ function main(): void {
 
       const findings = judge(report)
       const wrong = mismatch(entry.expect, findings) ?? wrongStartAttempts(entry, report)
+        ?? wrongHoleReduction(entry, report)
       if (wrong) {
         problems += 1
         console.error(`  FAIL ${entry.name}: ${wrong} (${describeRun(report)})`)

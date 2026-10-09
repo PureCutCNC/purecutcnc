@@ -70,6 +70,31 @@ export interface GcodeExportSeedOptions {
    * one bundled machine that does not export G-code (issue #953).
    */
   machineId?: string
+  /**
+   * Add a plasma through-cut of the same feature on a torch tool (issue #959).
+   * `materialNumber: null` leaves the tool without a QtPlasmaC material.
+   */
+  plasmaCut?: { materialNumber: number | null; toolName?: string }
+}
+
+const PLASMA_TORCH = {
+  id: 'torch',
+  name: 'Plasma Torch',
+  units: 'inch',
+  type: 'plasma',
+  diameter: 0.055,
+  pierceHeight: 0.15,
+  cutHeight: 0.06,
+  pierceDelay: 0.2,
+  vBitAngle: null,
+  flutes: 0,
+  material: 'carbide',
+  defaultRpm: 0,
+  defaultFeed: 200,
+  defaultPlungeFeed: 0,
+  defaultStepdown: 0,
+  defaultStepover: 0,
+  maxCutDepth: 0,
 }
 
 /**
@@ -165,6 +190,13 @@ function buildGcodeExportProjectJson(options: GcodeExportSeedOptions): string {
         defaultStepover: 0.125,
         maxCutDepth: 1,
       },
+      ...(options.plasmaCut
+        ? [{
+          ...PLASMA_TORCH,
+          name: options.plasmaCut.toolName ?? PLASMA_TORCH.name,
+          ...(options.plasmaCut.materialNumber === null ? {} : { qtplasmacMaterialNumber: options.plasmaCut.materialNumber }),
+        }]
+        : []),
       ...(options.routeBOnSecondTool
         ? [{
           id: 'tool-2',
@@ -185,6 +217,9 @@ function buildGcodeExportProjectJson(options: GcodeExportSeedOptions): string {
         : []),
     ],
     operations: [
+      ...(options.plasmaCut
+        ? [{ ...outsideRouteOperation('op-plasma', 'Plasma Cut', 'torch'), kind: 'plasma_profile', feed: 200, rpm: 0 }]
+        : []),
       outsideRouteOperation('op-route-a', 'Route A', 'tool-1'),
       outsideRouteOperation('op-route-b', 'Route B', options.routeBOnSecondTool ? 'tool-2' : 'tool-1'),
     ],

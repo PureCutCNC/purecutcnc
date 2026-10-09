@@ -105,10 +105,30 @@ for (const field of ['diameter', 'defaultFeed', 'pierceHeight', 'cutHeight', 'pi
     assert.throws(() => normalizeTool({ ...plasma, [field]: invalid } as Tool, 'mm', 0), /Invalid plasma tool/)
   }
 }
-for (const invalid of [-1, 1.5, NaN, Infinity, null, '12']) {
-  assert.throws(() => normalizeTool({ ...plasma, qtplasmacMaterialNumber: invalid } as Tool, 'mm', 0), /material number/)
+// A material number outside the selectable range is cleared, never thrown: a
+// project file carrying one must still open, and the export then blocks with
+// `postPlasmaMaterialMissing`. 0 is the simulator's "nothing selected"
+// sentinel; 1000000+ belongs to QtPlasmaC's own temporary materials.
+for (const invalid of [-1, 0, 1.5, NaN, Infinity, null, '12', 1000000, 1000001, Number.MAX_SAFE_INTEGER + 1]) {
+  assert.equal(normalizeTool({ ...plasma, qtplasmacMaterialNumber: invalid } as Tool, 'mm', 0).qtplasmacMaterialNumber, undefined,
+    `material ${String(invalid)} is not selectable and is cleared`)
 }
-assert.equal(normalizeTool({ ...plasma, qtplasmacMaterialNumber: 0 }, 'mm', 0).qtplasmacMaterialNumber, 0)
+for (const valid of [1, 12, 999999]) {
+  assert.equal(normalizeTool({ ...plasma, qtplasmacMaterialNumber: valid }, 'mm', 0).qtplasmacMaterialNumber, valid,
+    `material ${valid} is selectable`)
+}
+// The real open path recovers too: a stored reserved number opens the project
+// with the material unset instead of failing the load.
+for (const material of [0, 1000000]) {
+  const stored = structuredClone(file)
+  stored.tools[0].qtplasmacMaterialNumber = material
+  const opened = decodeProjectFormat(stored).project
+  assert.equal(opened.tools[0].qtplasmacMaterialNumber, undefined, `a saved material ${material} is cleared on open`)
+  assert.deepEqual(opened.tools[1], milling, 'the milling tool is untouched')
+  seed(project)
+  store().openProjectFromText(JSON.stringify(stored), null)
+  assert.equal(store().project.tools[0].qtplasmacMaterialNumber, undefined, `the store opens a saved material ${material}`)
+}
 
 const inch = convertToolUnits(plasma, 'inch')
 for (const field of ['diameter', 'defaultFeed', 'pierceHeight', 'cutHeight'] as const) {

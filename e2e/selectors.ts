@@ -454,6 +454,9 @@ export const unitConversionDialog = {
 // ── CAM operations ──────────────────────────────────────────────────
 
 export const operations = {
+  /** Tablet drawer entry point for the operations/export panel. */
+  openPanelButton: (page: Page) => page.getByRole('button', { name: 'Open operations panel', exact: true }),
+
   /** Visible operation-count badge in the CAM panel. */
   countBadge: (page: Page) =>
     page.locator('.cam-panel .cam-section--tree .cam-section-header .feature-count'),
