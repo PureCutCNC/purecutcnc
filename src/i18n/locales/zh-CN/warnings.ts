@@ -230,6 +230,8 @@ export const warningsZhCN: Record<keyof typeof warningsEn, string> = {
   'warnings.postNoToolChangeCommands': '加工操作“{operation}”需要刀具“{tool}”，但此机床没有可执行的换刀指令。程序继续使用上一把刀具；请每次仅导出一把刀具。',
   'warnings.postPlasmaOperationSkipped': '加工操作“{operation}”不是等离子切割，因此不包含在此等离子程序中。',
   'warnings.postPlasmaMaterialMissing': '加工操作“{operation}”使用的刀具“{tool}”没有 QtPlasmaC 材料编号。请在刀具上设置材料编号：否则割炬会按当前加载的材料点火。',
+  'warnings.postPlasmaCutFeedMissing': '加工操作“{operation}”没有正的切割进给，等离子程序将以 F0 切割。请在导出前为操作或刀具设置切割进给。',
+  'warnings.postPlasmaPlungeFeedMissing': '加工操作“{operation}”没有正的下扎进给，等离子割炬将以 F0 下降到切割高度。请在导出前为等离子刀具设置下扎（下降）进给。',
   'warnings.postCannedCycleUnsupported': '加工操作“{operation}”：机床“{machine}”不支持 {drillType} 固定循环；已输出展开的移动。',
   'warnings.postArcNoCapability': '加工操作”{operation}”包含可拟合为圆弧的直线移动，但所选机床不支持圆弧插补（G2/G3）。已改用直线移动输出。',
   'warnings.postArcFallbackLinear': '加工操作”{operation}”中有 {count} 段拟合圆弧在数字舍入后会被所选控制器拒绝。这些区段已改用直线移动输出。',

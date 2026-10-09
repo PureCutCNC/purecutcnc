@@ -73,8 +73,10 @@ export interface GcodeExportSeedOptions {
   /**
    * Add a plasma through-cut of the same feature on a torch tool (issue #959).
    * `materialNumber: null` leaves the tool without a QtPlasmaC material.
+   * `plungeFeed` sets both the torch's drop feed and the operation's own: 0
+   * models an unconfigured G-code pierce, which blocks the export (#983).
    */
-  plasmaCut?: { materialNumber: number | null; toolName?: string }
+  plasmaCut?: { materialNumber: number | null; toolName?: string; plungeFeed?: number }
 }
 
 const PLASMA_TORCH = {
@@ -194,6 +196,7 @@ function buildGcodeExportProjectJson(options: GcodeExportSeedOptions): string {
         ? [{
           ...PLASMA_TORCH,
           name: options.plasmaCut.toolName ?? PLASMA_TORCH.name,
+          defaultPlungeFeed: options.plasmaCut.plungeFeed ?? PLASMA_TORCH.defaultPlungeFeed,
           ...(options.plasmaCut.materialNumber === null ? {} : { qtplasmacMaterialNumber: options.plasmaCut.materialNumber }),
         }]
         : []),
@@ -218,7 +221,11 @@ function buildGcodeExportProjectJson(options: GcodeExportSeedOptions): string {
     ],
     operations: [
       ...(options.plasmaCut
-        ? [{ ...outsideRouteOperation('op-plasma', 'Plasma Cut', 'torch'), kind: 'plasma_profile', feed: 200, rpm: 0 }]
+        ? [{
+          ...outsideRouteOperation('op-plasma', 'Plasma Cut', 'torch'),
+          kind: 'plasma_profile', feed: 200, rpm: 0,
+          ...(options.plasmaCut.plungeFeed === undefined ? {} : { plungeFeed: options.plasmaCut.plungeFeed }),
+        }]
         : []),
       outsideRouteOperation('op-route-a', 'Route A', 'tool-1'),
       outsideRouteOperation('op-route-b', 'Route B', options.routeBOnSecondTool ? 'tool-2' : 'tool-1'),

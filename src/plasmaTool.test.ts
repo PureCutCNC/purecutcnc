@@ -144,9 +144,13 @@ const staleMilling = { ...plasma, flutes: 17, defaultRpm: 19000, defaultStepdown
   defaultPlungeFeed: 800, defaultStepover: 0.8, maxCutDepth: 90 }
 const normalized = normalizeToolForProject(staleMilling, project)
 assert.equal(normalized.radius, 0.6, 'offset radius is half the full kerf')
-for (const field of ['flutes', 'defaultRpm', 'defaultStepdown', 'defaultPlungeFeed', 'defaultStepover', 'maxCutDepth'] as const) {
+for (const field of ['flutes', 'defaultRpm', 'defaultStepdown', 'defaultStepover', 'maxCutDepth'] as const) {
   assert.equal(normalized[field], 0, 'normalized plasma ignores milling field ' + field)
 }
+// The plunge feed is not a milling-only field on a plasma tool: it is the drop
+// feed a G-code pierce writes (#983), so it survives normalization instead of
+// being zeroed. Zero still means unconfigured and blocks the export.
+assert.equal(normalized.defaultPlungeFeed, 800, 'the plasma drop feed is preserved, not zeroed')
 assert.equal(normalized.defaultFeed, 2200)
 assert.equal(normalized.pierceHeight, 3.8)
 assert.equal(normalized.cutHeight, 1.5)

@@ -246,6 +246,8 @@ export const warningsEn = {
   'warnings.postNoToolChangeCommands': 'Operation "{operation}" needs tool "{tool}", but this machine has no executable tool-change commands. The program keeps the previous tool; export one tool at a time.',
   'warnings.postPlasmaOperationSkipped': 'Operation "{operation}" is not a plasma cut, so it is left out of this plasma program.',
   'warnings.postPlasmaMaterialMissing': 'Operation "{operation}" uses tool "{tool}", which has no material number. Set it on the tool: without it the torch would fire on whatever material is loaded.',
+  'warnings.postPlasmaCutFeedMissing': 'Operation "{operation}" has no positive cut feed for this plasma program. The torch would cut with F0: set the cut feed on the operation or the tool before exporting.',
+  'warnings.postPlasmaPlungeFeedMissing': 'Operation "{operation}" has no positive plunge feed for this G-code plasma program. The torch would drop to cut height with F0: set the plunge (drop) feed on the plasma tool before exporting.',
   'warnings.postCannedCycleUnsupported': 'Operation "{operation}": {drillType} canned cycle not supported by machine "{machine}"; emitting expanded moves.',
   'warnings.postArcNoCapability': 'Operation "{operation}" contains linear moves that could be fitted as arcs, but the selected machine does not support arc interpolation (G2/G3). Emitting linear moves instead.',
   'warnings.postArcFallbackLinear': 'Operation "{operation}" had {count} fitted arc run(s) that the selected controller would reject after number rounding. Those spans were emitted as linear moves instead.',

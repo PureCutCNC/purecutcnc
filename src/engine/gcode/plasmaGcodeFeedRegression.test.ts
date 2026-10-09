@@ -1,0 +1,271 @@
+/**
+ * Copyright 2026 Franja (Frank) Povazanj
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * #983 feed repair: the drop feed through the real store -> generation -> export
+ * path, with no fixture override.
+ *
+ * The verified finding was that `normalizeToolForProject` zeroed a plasma
+ * tool's plunge feed, so configuring the tool after an operation existed still
+ * emitted `G1 Z... F0.000`, and nothing blocked the export. The existing plasma
+ * fixtures set `defaultPlungeFeed` when they build the operation, which masked
+ * it: the operation's own value won before normalization mattered.
+ *
+ * These cases drive the production actions (`addTool`, `updateTool`,
+ * `addOperation`) and the inline generation service, so the values and the
+ * normalized tool are exactly what a user produces. They assert the emitted
+ * feed, the blocking error codes, and that the QtPlasmaC controller path is
+ * unchanged.
+ */
+
+import assert from 'node:assert/strict'
+import { newProject, rectProfile } from '../../types/project'
+import { projectWithFeatures } from '../../test/projectFixtures'
+import { sheetFeature, exportPlasma, PLASMA_EXPORT_SCENARIOS } from '../../test/plasmaExportFixtures'
+import { defaultPlasmaTool } from '../../toolPolicy'
+import { useProjectStore } from '../../store/projectStore'
+import { convertLength } from '../../utils/units'
+import { BUNDLED_DEFINITIONS, getActiveMachineDefinition } from './definitions'
+import { runPostProcessor } from './postprocessor'
+import { createToolpathGenerationService } from '../../app/toolpathGeneration/service'
+import {
+  createExportToken,
+  exportHasError,
+  prepareExport,
+  programHasError,
+  type ExportPreparation,
+} from '../../app/toolpathGeneration/exportPreparation'
+
+type Units = 'mm' | 'inch'
+
+interface RunOptions {
+  units: Units
+  machineId: string
+  /** The tool's own units when they differ from the project's. */
+  toolUnits?: Units
+  /** Set on the tool before the operation is created. */
+  feedBefore?: number
+  /** Set on the tool after the operation is created (the zero-fallback path). */
+  feedAfter?: number
+  /** Set on the tool's cut feed before the operation is created. */
+  cutFeedBefore?: number
+  /** Override the operation's own plunge feed after creation. */
+  operationPlungeFeed?: number
+  /** Override the operation's own cut feed after creation. */
+  operationFeed?: number
+  /** QtPlasmaC blocks without a material number; give it one where needed. */
+  materialNumber?: number
+}
+
+/** Build the project with the production actions and post it, as the export does. */
+async function runExport(options: RunOptions): Promise<ExportPreparation> {
+  const base = newProject('Plasma feed regression', options.units)
+  base.stock.thickness = 5
+  base.origin = { ...base.origin, x: 0, y: 100, z: 5 }
+  const project = projectWithFeatures(base, [sheetFeature('part', 'add', rectProfile(10, 10, 40, 30), 5)])
+  const store = () => useProjectStore.getState()
+  store().loadProject(project)
+
+  const toolId = store().addTool()
+  // Exactly the tool-type change the CAM panel performs.
+  store().updateTool(toolId, {
+    ...defaultPlasmaTool(options.toolUnits ?? options.units),
+    type: 'plasma',
+    ...(options.materialNumber === undefined ? {} : { qtplasmacMaterialNumber: options.materialNumber }),
+  })
+  if (options.feedBefore !== undefined) store().updateTool(toolId, { defaultPlungeFeed: options.feedBefore })
+  if (options.cutFeedBefore !== undefined) store().updateTool(toolId, { defaultFeed: options.cutFeedBefore })
+
+  const machine = BUNDLED_DEFINITIONS.find((candidate) => candidate.id === options.machineId)
+  assert.ok(machine, `bundled machine ${options.machineId}`)
+  store().setProjectMachine(machine)
+
+  const operationId = store().addOperation('plasma_profile', 'rough', { source: 'features', featureIds: ['part'] }, [])
+  assert.ok(operationId, 'the plasma operation is accepted')
+  if (options.operationPlungeFeed !== undefined || options.operationFeed !== undefined) {
+    store().updateOperation(operationId, {
+      ...(options.operationPlungeFeed === undefined ? {} : { plungeFeed: options.operationPlungeFeed }),
+      ...(options.operationFeed === undefined ? {} : { feed: options.operationFeed }),
+    })
+  }
+  if (options.feedAfter !== undefined) store().updateTool(toolId, { defaultPlungeFeed: options.feedAfter })
+
+  const context = { project: store().project, documentKey: store().projectKey }
+  const definition = getActiveMachineDefinition(context.project)
+  assert.ok(definition)
+  const postOptions = { emitToolChanges: false, emitCoolant: false, programName: 'feed983', captureMotionTrace: false }
+  const service = createToolpathGenerationService({ getCurrentContext: () => context, executor: 'inline' })
+  try {
+    return await prepareExport(service, context, createExportToken(1, context, [operationId], definition, postOptions), definition, postOptions)
+  } finally {
+    service.dispose()
+  }
+}
+
+function ready(prepared: ExportPreparation): Extract<ExportPreparation, { status: 'ready' }> {
+  assert.equal(prepared.status, 'ready')
+  if (prepared.status !== 'ready') throw new Error('unreachable')
+  return prepared
+}
+
+function warningCodes(prepared: ExportPreparation): string[] {
+  return ready(prepared).programs.flatMap((program) => program.result.warnings.map((warning) => warning.code))
+}
+
+function gcode(prepared: ExportPreparation): string {
+  const programs = ready(prepared).programs
+  assert.equal(programs.length, 1, 'one program')
+  return programs[0].result.gcode
+}
+
+function codeLines(program: string): string[] {
+  return program.split('\n').map((line) => line.trim())
+    .filter((line) => line && !line.startsWith(';') && !line.startsWith('('))
+}
+
+/** The `G1 Z...` drop line after the first torch-on. */
+function dropLine(program: string): string {
+  const lines = codeLines(program)
+  const torchOn = lines.indexOf('M3 S1000')
+  assert.ok(torchOn >= 0, 'the program turns the torch on')
+  const drop = lines.slice(torchOn + 1).find((line) => /^G1\s.*Z/.test(line))
+  assert.ok(drop, 'a drop line follows torch-on')
+  return drop
+}
+
+/** The numeric F word of a line, or null when it carries none. */
+function feedOf(line: string): number | null {
+  const match = /F(-?[\d.]+)/.exec(line)
+  return match ? Number(match[1]) : null
+}
+
+async function main(): Promise<void> {
+  // 1. Unconfigured: an unset drop feed is missing, and the export is blocked
+  //    instead of writing F0 (the verified finding). The bundled cut feed is
+  //    configured, so only the plunge feed is missing.
+  {
+    const prepared = await runExport({ units: 'mm', machineId: 'grbl-plasma' })
+    assert.deepEqual(warningCodes(prepared), ['postPlasmaPlungeFeedMissing'], 'an unset drop feed blocks the export')
+    assert.equal(exportHasError(ready(prepared).programs), true, 'the block reaches exportHasError')
+    assert.equal(feedOf(dropLine(gcode(prepared))), 0, 'the unblocked bytes would have carried F0')
+  }
+
+  // 2. Configured before creation: the operation is seeded from the tool and a
+  //    clean program is emitted at that feed.
+  {
+    const prepared = await runExport({ units: 'mm', machineId: 'grbl-plasma', feedBefore: 300 })
+    assert.deepEqual(warningCodes(prepared), [], 'a configured drop feed raises nothing')
+    assert.equal(exportHasError(ready(prepared).programs), false)
+    assert.equal(feedOf(dropLine(gcode(prepared))), 300, 'the drop runs at the configured feed')
+  }
+
+  // 3. Configured after a zero-feed operation was created: the operation's own
+  //    zero falls back to the normalized tool, which now keeps the configured
+  //    value instead of zeroing it.
+  {
+    const prepared = await runExport({ units: 'mm', machineId: 'grbl-plasma', feedAfter: 300 })
+    assert.deepEqual(warningCodes(prepared), [], 'the tool fallback is not zeroed by normalization')
+    assert.equal(feedOf(dropLine(gcode(prepared))), 300, 'the fallback reaches the emitted drop')
+  }
+
+  // 4. Units. A tool in the project's units emits its value unchanged; a tool
+  //    in another unit is converted, both when the operation is created and when
+  //    the tool is configured afterwards.
+  {
+    const inchValue = 300
+    const sameUnits = await runExport({ units: 'inch', machineId: 'grbl-plasma', feedBefore: inchValue })
+    assert.equal(feedOf(dropLine(gcode(sameUnits))), inchValue, 'an inch tool emits the stored inch feed')
+
+    const converted = convertLength(2000, 'mm', 'inch')
+    const before = await runExport({ units: 'inch', machineId: 'grbl-plasma', toolUnits: 'mm', feedBefore: 2000 })
+    assert.ok(Math.abs(feedOf(dropLine(gcode(before)))! - converted) < 1e-3, 'a millimetre tool seeds an inch operation converted')
+
+    const after = await runExport({ units: 'inch', machineId: 'grbl-plasma', toolUnits: 'mm', feedAfter: 2000 })
+    assert.ok(Math.abs(feedOf(dropLine(gcode(after)))! - converted) < 1e-3, 'the after-create fallback is converted too')
+  }
+
+  // 5. Invalid feeds are blocked: missing (case 1), non-finite, non-positive,
+  //    and a positive value that rounds to zero at the emitted precision.
+  {
+    const invalidPlunge: Array<[string, RunOptions]> = [
+      ['NaN', { units: 'mm', machineId: 'grbl-plasma', feedBefore: NaN }],
+      ['Infinity', { units: 'mm', machineId: 'grbl-plasma', feedBefore: Infinity }],
+      ['negative', { units: 'mm', machineId: 'grbl-plasma', operationPlungeFeed: -300 }],
+      ['rounds to zero', { units: 'mm', machineId: 'grbl-plasma', operationPlungeFeed: 0.0004 }],
+    ]
+    for (const [label, options] of invalidPlunge) {
+      const prepared = await runExport(options)
+      assert.deepEqual(warningCodes(prepared), ['postPlasmaPlungeFeedMissing'], `plunge ${label} blocks`)
+      assert.equal(exportHasError(ready(prepared).programs), true, `plunge ${label} reaches exportHasError`)
+    }
+
+    const invalidCut: Array<[string, RunOptions]> = [
+      ['missing', { units: 'mm', machineId: 'grbl-plasma', feedBefore: 300, cutFeedBefore: 0 }],
+      ['negative', { units: 'mm', machineId: 'grbl-plasma', feedBefore: 300, operationFeed: -300 }],
+      ['rounds to zero', { units: 'mm', machineId: 'grbl-plasma', feedBefore: 300, operationFeed: 0.0004 }],
+    ]
+    for (const [label, options] of invalidCut) {
+      const prepared = await runExport(options)
+      assert.deepEqual(warningCodes(prepared), ['postPlasmaCutFeedMissing'], `cut ${label} blocks`)
+      assert.equal(exportHasError(ready(prepared).programs), true, `cut ${label} reaches exportHasError`)
+    }
+
+    // A non-finite cut feed is refused at the store boundary
+    // (`normalizePlasmaTool` throws), so it can only reach the emitter through a
+    // malformed file or a future caller. The emitter guard still blocks it,
+    // which is the property defence-in-depth needs; mutate a valid render to
+    // drive the post-processor directly.
+    const nonFiniteCut = (value: number) => {
+      const { input } = exportPlasma({ ...PLASMA_EXPORT_SCENARIOS['single-outline'](), machineId: 'grbl-plasma' })
+      input.operations[0].operation.feed = value
+      input.operations[0].tool.defaultFeed = value
+      const { warnings } = runPostProcessor(input)
+      assert.deepEqual(warnings.map((warning) => warning.code), ['postPlasmaCutFeedMissing'], `cut ${value} blocks`)
+      assert.equal(programHasError(warnings), true, `cut ${value} reaches exportHasError`)
+    }
+    nonFiniteCut(NaN)
+    nonFiniteCut(Infinity)
+  }
+
+  // 6. A valid configured feed alongside an invalid one still blocks, and the
+  //    error names a plasma code rather than surfacing only through the
+  //    conformance judge.
+  {
+    const prepared = await runExport({ units: 'mm', machineId: 'grbl-plasma', feedBefore: 300, operationFeed: 0.0004 })
+    assert.deepEqual(warningCodes(prepared), ['postPlasmaCutFeedMissing'], 'the cut feed blocks even with a good drop feed')
+  }
+
+  // 7. QtPlasmaC is unchanged: controller piercing takes its feed from the
+  //    material table, so an unconfigured tool plots no Z and no numeric F, and
+  //    the feed validation never runs for it.
+  {
+    const prepared = await runExport({ units: 'mm', machineId: 'qtplasmac', materialNumber: 12 })
+    assert.deepEqual(warningCodes(prepared), [], 'the controller path raises no feed error')
+    assert.equal(exportHasError(ready(prepared).programs), false)
+    const lines = codeLines(gcode(prepared))
+    assert.ok(lines.includes('M3 $0 S1') && lines.includes('M5 $0'), 'the torch path is written')
+    assert.ok(lines.includes('M190 P12'), 'the material handshake is written')
+    assert.ok(!lines.some((line) => /\bF-?\d/.test(line)), 'no numeric F')
+    assert.ok(!lines.some((line) => /\bZ-?\d/.test(line)), 'no Z word')
+  }
+
+  console.log('plasmaGcodeFeedRegression.test.ts: store -> generation -> export drop feed, units, invalid feeds and QtPlasmaC parity passed')
+}
+
+main().catch((error) => {
+  console.error(error)
+  process.exitCode = 1
+})

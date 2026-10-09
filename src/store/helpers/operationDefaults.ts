@@ -324,7 +324,11 @@ export function defaultOperationForTarget(
       : tool.defaultStepdown,
     stepover: tool.defaultStepover,
     feed: kind === 'plasma_profile' ? convertLength(tool.defaultFeed, tool.units, project.meta.units) : tool.defaultFeed,
-    plungeFeed: tool.defaultPlungeFeed,
+    // A plasma tool's plunge feed is its drop feed (#983) and follows the same
+    // tool-units -> project-units conversion as the cut feed above: a tool the
+    // operator switched to another unit must not seed an operation in the wrong
+    // scale. The operation's own zero still falls back to the tool at export.
+    plungeFeed: kind === 'plasma_profile' ? convertLength(tool.defaultPlungeFeed, tool.units, project.meta.units) : tool.defaultPlungeFeed,
     rpm: tool.defaultRpm,
     pocketPattern: kind === 'finish_surface' || kind === 'finish_surface_cleanup' ? 'parallel' : 'offset',
     pocketAngle: 0,

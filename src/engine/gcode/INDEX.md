@@ -33,7 +33,9 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   `arcFormat`, the optional `outputDialect`, `machineKind` and `plasma` block), `resolveOutputDialect`,
   `PostProcessorInput`/`Options`/`Result`, and `OperationMotionTrace`.
 - `postprocessor.ts` — `runPostProcessor` (the dialect switch) and the G-code
-  emitter: templates, modal tracking, canned drill cycles, line numbers.
+  emitter: templates, modal tracking, canned drill cycles, line numbers. Its
+  G-code plasma branch blocks a missing, non-finite, non-positive or
+  round-to-zero effective drop/cut feed as an error before export (#983).
 - `motionPipeline.ts` — the dialect-neutral half of export:
   `planProgramSequence` (tool changes, spindle start/restate/stop, coolant,
   feed and speed fallbacks, and unexecutable tool-change
@@ -96,6 +98,13 @@ the G-code emitter restated. An emitter keeps only what it has written so far
   touch-off fields at emission, configured heights emitted even when pierce is
   below cut, line and arc leads, mirrored-axis direction, skipped milling
   operations, and no M4.
+- `plasmaGcodeFeedRegression.test.ts` — the #983 drop feed through the real
+  store → generation → export path, with no fixture feed override: unconfigured
+  blocks, configuring the tool before or after operation creation succeeds,
+  mm/inch conversion including a tool in another unit, and every invalid
+  effective feed (missing, NaN, Infinity, negative, positive-but-rounds-to-zero)
+  blocks with `postPlasmaPlungeFeedMissing` / `postPlasmaCutFeedMissing` while
+  QtPlasmaC stays unaffected.
 - `*.test.ts` — `postprocessor.test.ts` (G-code), `motionPipeline.test.ts`
   (sequencing, drill-cycle transform, rapid split, and both emitters checked
   against one sequence), `opensbpEmitter.test.ts` (SBP and the dialect

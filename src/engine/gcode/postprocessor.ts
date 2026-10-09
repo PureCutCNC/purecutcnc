@@ -385,6 +385,20 @@ function emitGcodeProgram(input: PostProcessorInput): PostProcessorResult {
       }
     }
     if (block.pierceMode === 'gcode') {
+      // G-code piercing writes the drop and every cut move as explicit F words.
+      // A feed that is missing, non-finite, non-positive, or positive but
+      // rounds to zero at the definition's precision would command a move with
+      // F0: the torch fires, then the machine does not move. That program must
+      // not be saved, so both feeds are raised as errors here, where the
+      // effective values and the emitted-precision formatter are both in scope.
+      for (const [code, feed] of [
+        ['postPlasmaCutFeedMissing', step.cutFeed],
+        ['postPlasmaPlungeFeedMissing', step.plungeFeed],
+      ] as const) {
+        if (!Number.isFinite(feed) || feed <= 0 || formatValue(feed) <= 0) {
+          warnings.push({ code, params: { operation: operation.name } })
+        }
+      }
       // The touch-off block is required for this mode by the schema; the guard
       // covers a definition that reached the emitter without validation.
       const touchOff = block.touchOff

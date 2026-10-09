@@ -89,7 +89,7 @@ const ALL_CODES = [
   'pocketFinishIslandWallTooTight',
   'setupTargetNotThrough', 'postMixedSetups', 'postSetupOperationRefused',
   'postSetupNoRegistration',
-  'postPlasmaOutputPending', 'postPlasmaOperationSkipped', 'postPlasmaMaterialMissing', 'postNoToolChangeCommands', 'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
+  'postPlasmaOutputPending', 'postPlasmaOperationSkipped', 'postPlasmaMaterialMissing', 'postPlasmaCutFeedMissing', 'postPlasmaPlungeFeedMissing', 'postNoToolChangeCommands', 'postWcsNullSelect', 'postToolChangesDisabled', 'postNoCoolantCommands', 'postCannedCycleUnsupported',
   'postArcNoCapability', 'postArcFallbackLinear',
   'replayNoTool', 'bookletNoTool', 'bookletNoToolpath',
   'restOperationNotFound', 'restOnlyPocketEdgeTargets', 'restTrochoidalUnsupported',
